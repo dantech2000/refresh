@@ -7,35 +7,34 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/urfave/cli/v2"
 	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
+	"github.com/urfave/cli/v2"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-
 type NodegroupInfo struct {
-	Name        string
-	Status      string
+	Name         string
+	Status       string
 	InstanceType string
-	Desired     int32
-	CurrentAmi  string
-	AmiStatus   string
+	Desired      int32
+	CurrentAmi   string
+	AmiStatus    string
 }
 
 func main() {
 	app := &cli.App{
-		Name:    "refresh",
-		Usage:   "Manage and monitor AWS EKS node groups",
+		Name:  "refresh",
+		Usage: "Manage and monitor AWS EKS node groups",
 		Commands: []*cli.Command{
 			{
 				Name:  "list",
@@ -78,12 +77,12 @@ func main() {
 						EnvVars: []string{"EKS_CLUSTER_NAME"},
 					},
 					&cli.StringFlag{
-						Name:    "nodegroup",
-						Usage:   "Nodegroup name (if not set, update all)",
+						Name:  "nodegroup",
+						Usage: "Nodegroup name (if not set, update all)",
 					},
 					&cli.BoolFlag{
-						Name:    "force",
-						Usage:   "Force update if possible",
+						Name:  "force",
+						Usage: "Force update if possible",
 					},
 				},
 				Action: func(c *cli.Context) error {
@@ -208,7 +207,7 @@ func fetchNodegroups(ctx context.Context, awsCfg aws.Config, clusterName string)
 		Name: aws.String(clusterName),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Failed to describe cluster: %v", err)
+		return nil, fmt.Errorf("failed to describe cluster: %v", err)
 	}
 	k8sVersion := *clusterOut.Cluster.Version
 
@@ -216,7 +215,7 @@ func fetchNodegroups(ctx context.Context, awsCfg aws.Config, clusterName string)
 		ClusterName: aws.String(clusterName),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Failed to list nodegroups: %v", err)
+		return nil, fmt.Errorf("failed to list nodegroups: %v", err)
 	}
 
 	var nodegroups []NodegroupInfo
@@ -254,12 +253,12 @@ func fetchNodegroups(ctx context.Context, awsCfg aws.Config, clusterName string)
 			amiStatus = color.YellowString("⚠️ Updating")
 		}
 		info := NodegroupInfo{
-			Name:        *ng.NodegroupName,
-			Status:      statusStr,
+			Name:         *ng.NodegroupName,
+			Status:       statusStr,
 			InstanceType: instanceType,
-			Desired:     desired,
-			CurrentAmi:  currentAmiId,
-			AmiStatus:   amiStatus,
+			Desired:      desired,
+			CurrentAmi:   currentAmiId,
+			AmiStatus:    amiStatus,
 		}
 		nodegroups = append(nodegroups, info)
 	}
