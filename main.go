@@ -168,15 +168,15 @@ func getClusterName(cliFlag string) (string, error) {
 	)
 	rawConfig, err := clientConfig.RawConfig()
 	if err != nil {
-		return "", fmt.Errorf("Failed to load kubeconfig: %v", err)
+		return "", fmt.Errorf("failed to load kubeconfig: %v", err)
 	}
 	currentContext := rawConfig.Contexts[rawConfig.CurrentContext]
 	if currentContext == nil {
-		return "", fmt.Errorf("No current context in kubeconfig")
+		return "", fmt.Errorf("no current context in kubeconfig")
 	}
 	clusterRef := currentContext.Cluster
 	if clusterRef == "" {
-		return "", fmt.Errorf("Could not determine EKS cluster name from kubeconfig context")
+		return "", fmt.Errorf("could not determine EKS cluster name from kubeconfig context")
 	}
 	awsNameRe := "^[0-9A-Za-z][A-Za-z0-9-_]*$"
 	if matched := regexp.MustCompile(awsNameRe).MatchString(clusterRef); matched {
@@ -193,7 +193,7 @@ func getClusterName(cliFlag string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("Could not determine valid EKS cluster name. Please use --cluster flag.")
+	return "", fmt.Errorf("could not determine valid EKS cluster name; please use --cluster flag")
 }
 
 func fetchNodegroups(ctx context.Context, awsCfg aws.Config, clusterName string) ([]NodegroupInfo, error) {
