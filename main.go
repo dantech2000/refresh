@@ -60,6 +60,17 @@ func main() {
 					}
 					nodegroups, err := fetchNodegroups(ctx, awsCfg, clusterName)
 					if err != nil {
+						errStr := fmt.Sprintf("%v", err)
+						// Friendly error handling for common AWS credential and cluster errors
+						if strings.Contains(errStr, "no EC2 IMDS role found") ||
+						   strings.Contains(errStr, "failed to refresh cached credentials") ||
+						   strings.Contains(errStr, "NoCredentialProviders") ||
+						   strings.Contains(errStr, "could not find") ||
+						   strings.Contains(errStr, "request canceled") ||
+						   strings.Contains(errStr, "context deadline exceeded") {
+							color.Red("Could not authenticate to AWS or access the cluster. Please ensure your AWS credentials are set up correctly and that your network allows access to AWS EKS. See https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html for help.")
+							return fmt.Errorf("authentication or cluster access error: %v", err)
+						}
 						color.Red("%v", err)
 						return err
 					}
