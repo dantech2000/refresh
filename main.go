@@ -31,6 +31,18 @@ type NodegroupInfo struct {
 	AmiStatus    string
 }
 
+type VersionInfo struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit,omitempty"`
+	BuildDate string `json:"build_date,omitempty"`
+}
+
+var versionInfo = VersionInfo{
+	Version:   "v0.1.2",
+	Commit:    "",
+	BuildDate: "",
+}
+
 func main() {
 	app := &cli.App{
 		Name:  "refresh",
@@ -63,11 +75,11 @@ func main() {
 						errStr := fmt.Sprintf("%v", err)
 						// Friendly error handling for common AWS credential and cluster errors
 						if strings.Contains(errStr, "no EC2 IMDS role found") ||
-						   strings.Contains(errStr, "failed to refresh cached credentials") ||
-						   strings.Contains(errStr, "NoCredentialProviders") ||
-						   strings.Contains(errStr, "could not find") ||
-						   strings.Contains(errStr, "request canceled") ||
-						   strings.Contains(errStr, "context deadline exceeded") {
+							strings.Contains(errStr, "failed to refresh cached credentials") ||
+							strings.Contains(errStr, "NoCredentialProviders") ||
+							strings.Contains(errStr, "could not find") ||
+							strings.Contains(errStr, "request canceled") ||
+							strings.Contains(errStr, "context deadline exceeded") {
 							color.Red("Could not authenticate to AWS or access the cluster. Please ensure your AWS credentials are set up correctly and that your network allows access to AWS EKS. See https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html for help.")
 							return fmt.Errorf("authentication or cluster access error: %v", err)
 						}
@@ -75,6 +87,21 @@ func main() {
 						return err
 					}
 					printNodegroupsTable(nodegroups)
+					return nil
+				},
+			},
+			{
+				Name:  "version",
+				Usage: "Print the version of this CLI",
+				Action: func(c *cli.Context) error {
+					fmt.Printf("refresh version: %s", versionInfo.Version)
+					if versionInfo.Commit != "" {
+						fmt.Printf(" (commit: %s)", versionInfo.Commit)
+					}
+					if versionInfo.BuildDate != "" {
+						fmt.Printf(" (built: %s)", versionInfo.BuildDate)
+					}
+					fmt.Println()
 					return nil
 				},
 			},
