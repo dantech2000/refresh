@@ -1,0 +1,47 @@
+# GoReleaser config for the 'refresh' CLI tool
+# See https://goreleaser.com/customization/ for full docs
+
+version: 2
+
+dist: dist
+
+builds:
+  - id: refresh
+    main: ./main.go
+    binary: refresh
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - id: default
+    builds:
+      - refresh
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: desc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: "Daniel Rodriguez"
+    name: refresh
