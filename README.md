@@ -1,4 +1,4 @@
-# refresh
+# Refresh
 
 A Go-based CLI tool to manage and monitor AWS EKS node groups using your local kubeconfig and AWS credentials.
 
@@ -12,7 +12,7 @@ A Go-based CLI tool to manage and monitor AWS EKS node groups using your local k
 
 ## Requirements
 
--   Go 1.18+
+-   Go 1.23+
 -   AWS credentials (`~/.aws/credentials` or environment variables)
 -   kubeconfig (`~/.kube/config`)
 
@@ -70,4 +70,4 @@ Update started for nodegroup ng-backend
 
 ---
 
-This is a work in progress. See the PRD for full requirements and future features.
+This is a work in progress...
