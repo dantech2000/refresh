@@ -117,8 +117,21 @@ func main() {
 					}
 
 					for _, ng := range nodegroups {
+						// Check nodegroup status before updating
+						ngDesc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
+							ClusterName:   aws.String(clusterName),
+							NodegroupName: aws.String(ng),
+						})
+						if err != nil {
+							color.Red("Failed to describe nodegroup %s: %v", ng, err)
+							continue
+						}
+						if ngDesc.Nodegroup.Status == types.NodegroupStatusUpdating {
+							color.Yellow("Nodegroup %s is already UPDATING. Skipping update.", ng)
+							continue
+						}
 						color.Cyan("Updating nodegroup %s...", ng)
-						_, err := eksClient.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
+						_, err = eksClient.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
 							ClusterName:   aws.String(clusterName),
 							NodegroupName: aws.String(ng),
 							Force:         force,
@@ -234,9 +247,15 @@ func fetchNodegroups(ctx context.Context, awsCfg aws.Config, clusterName string)
 		if currentAmiId != "" && latestAmiId != "" && currentAmiId == latestAmiId {
 			amiStatus = green("✅ Latest")
 		}
+
+		statusStr := string(ng.Status)
+		if ng.Status == types.NodegroupStatusUpdating {
+			statusStr = color.YellowString("UPDATING")
+			amiStatus = color.YellowString("⚠️ Updating")
+		}
 		info := NodegroupInfo{
 			Name:        *ng.NodegroupName,
-			Status:      string(ng.Status),
+			Status:      statusStr,
 			InstanceType: instanceType,
 			Desired:     desired,
 			CurrentAmi:  currentAmiId,
