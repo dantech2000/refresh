@@ -1,0 +1,69 @@
+name: Auto-merge Dependabot PRs
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    
+    steps:
+      - name: Check PR title for auto-merge eligibility
+        id: check-title
+        run: |
+          title="${{ github.event.pull_request.title }}"
+          echo "PR title: $title"
+          
+          # Auto-merge patch and minor updates
+          if [[ "$title" =~ ^deps.*bump.*from.*to.*\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
+             [[ "$title" =~ ^deps.*bump.*from.*to.*\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
+             [[ "$title" =~ ^ci.*bump.*from.*to.* ]]; then
+            echo "eligible=true" >> $GITHUB_OUTPUT
+          else
+            echo "eligible=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Wait for checks to complete
+        if: steps.check-title.outputs.eligible == 'true'
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-for-checks
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: "Run golangci-lint"
+          ref: ${{ github.event.pull_request.head.sha }}
+          timeoutSeconds: 600
+
+      - name: Wait for security checks
+        if: steps.check-title.outputs.eligible == 'true'
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-for-security
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: "CodeQL Analysis"
+          ref: ${{ github.event.pull_request.head.sha }}
+          timeoutSeconds: 600
+
+      - name: Auto-merge Dependabot PR
+        if: |
+          steps.check-title.outputs.eligible == 'true' &&
+          steps.wait-for-checks.outputs.conclusion == 'success' &&
+          steps.wait-for-security.outputs.conclusion == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "All checks passed. Auto-merging Dependabot PR..."
+          gh pr merge ${{ github.event.pull_request.number }} --auto --squash --delete-branch
+      
+      - name: Comment on non-eligible PR
+        if: steps.check-title.outputs.eligible == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body "⚠️ This Dependabot PR requires manual review due to major version update or security-sensitive dependency." 

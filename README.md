@@ -2,6 +2,7 @@
 
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/releases/latest)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/dantech2000/refresh/release.yml?style=flat-square&label=build)](https://github.com/dantech2000/refresh/actions/workflows/release.yml)
+[![Security Scan](https://img.shields.io/github/actions/workflow/status/dantech2000/refresh/security.yml?style=flat-square&label=security&color=green)](https://github.com/dantech2000/refresh/actions/workflows/security.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/dantech2000/refresh?style=flat-square)](https://goreportcard.com/report/github.com/dantech2000/refresh)
 [![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/blob/main/go.mod)
 [![License](https://img.shields.io/github/license/dantech2000/refresh?style=flat-square&color=green)](https://github.com/dantech2000/refresh/blob/main/LICENSE)
@@ -343,6 +344,7 @@ The badges at the top of this README provide a quick overview of the project's h
 |-------|---------------|-------------------|
 | **Release** | Latest version number | New releases, version progression |
 | **Build Status** | GitHub Actions workflow status | ✅ Green = builds passing, ❌ Red = build issues |
+| **Security Scan** | CodeQL, Trivy, govulncheck results | ✅ Green = no vulnerabilities, ❌ Red = security issues |
 | **Go Report Card** | Code quality grade (A+ to F) | Aim for A+ rating, watch for downgrades |
 | **Go Version** | Minimum Go version required | Compatibility with current Go releases |
 | **License** | Project license (MIT) | License compliance information |
@@ -351,8 +353,18 @@ The badges at the top of this README provide a quick overview of the project's h
 
 ### Quick Health Check
 - **Green Build Badge** ✅ = Latest code builds successfully, releases work
+- **Green Security Badge** ✅ = No known vulnerabilities, security scans passing
 - **A+ Go Report** ✅ = Code quality is excellent
 - **Current Go Version** ✅ = Using modern Go features and best practices
+
+### Security Features
+This project includes comprehensive security scanning:
+- **CodeQL** - GitHub's semantic analysis for code vulnerabilities
+- **Trivy** - Vulnerability scanner for dependencies and container images  
+- **govulncheck** - Go's official vulnerability checker
+- **Nancy** - Dependency vulnerability scanner
+- **Dependabot** - Automated dependency updates with security patches
+- **Dependency Review** - Blocks PRs with vulnerable dependencies
 
 ## Security
 
