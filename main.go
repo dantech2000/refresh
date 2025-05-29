@@ -515,7 +515,10 @@ func confirmNodegroupSelection(matches []string, pattern string) ([]string, erro
 
 	color.Cyan("Update all %d matching nodegroups? (y/N): ", len(matches))
 	var response string
-	fmt.Scanln(&response)
+	if _, err := fmt.Scanln(&response); err != nil {
+		// If there's an error reading input, treat as cancellation
+		return nil, fmt.Errorf("operation cancelled: failed to read input")
+	}
 
 	response = strings.ToLower(strings.TrimSpace(response))
 	if response == "y" || response == "yes" {
@@ -572,7 +575,10 @@ func confirmClusterSelection(matches []string, pattern string) (string, error) {
 
 	color.Cyan("Select cluster number (1-%d) or press Enter to cancel: ", len(matches))
 	var response string
-	fmt.Scanln(&response)
+	if _, err := fmt.Scanln(&response); err != nil {
+		// If there's an error reading input, treat as cancellation
+		return "", fmt.Errorf("operation cancelled: failed to read input")
+	}
 
 	if response == "" {
 		return "", fmt.Errorf("operation cancelled by user")
