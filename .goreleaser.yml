@@ -5,6 +5,9 @@ version: 2
 
 dist: dist
 
+env:
+  - GITHUB_TOKEN={{ .Env.GH_PAT }}
+
 builds:
   - id: refresh
     main: ./main.go
@@ -17,7 +20,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X main.versionInfo.Version={{.Version}}
     env:
       - CGO_ENABLED=0
 
@@ -41,7 +44,23 @@ changelog:
       - "^docs:"
       - "^test:"
 
+brews:
+  - name: refresh
+    repository:
+      owner: dantech2000
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.GH_PAT }}"
+    folder: Formula
+    homepage: "https://github.com/dantech2000/refresh"
+    description: "Manage and monitor AWS EKS node groups using your local kubeconfig and AWS credentials"
+    license: "MIT"
+    test: |
+      system "#{bin}/refresh version"
+    install: |
+      bin.install "refresh"
+
 release:
   github:
-    owner: "Daniel Rodriguez"
+    owner: dantech2000
     name: refresh

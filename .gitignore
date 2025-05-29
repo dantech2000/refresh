@@ -1,44 +1,37 @@
-# Binaries
+# Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+
+# Test binary, built with `go test -c`
 *.test
-*.out
 
 # Output of the go coverage tool, specifically when used with LiteIDE
-*.cov
+*.out
 
-# Dependency directories (remove the comment below if you use Go modules)
-/vendor/
+# Dependency directories (remove the comment below to include it)
+# vendor/
 
 # Go workspace file
 go.work
 
-# Go build cache
-/cache/
+# Build artifacts
+dist/
+refresh
+coverage.out
+coverage.html
 
-# IDE/editor files
-.idea/
+# IDE files
 .vscode/
+.idea/
 *.swp
 *.swo
 
-# OS generated files
+# OS files
 .DS_Store
 Thumbs.db
 
-# Test binary
-main.test
-
-# Logs
-*.log
-
-# GoLand project files
-*.iml
-
-# Module dependencies
-/go.sum
-
-refresh
+# Documentation artifacts
+docs/CLI_HELP.md

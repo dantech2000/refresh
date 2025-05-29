@@ -1,0 +1,261 @@
+version: '3'
+
+vars:
+  BINARY_NAME: refresh
+  BUILD_DIR: ./dist
+  DEFAULT_CLUSTER: development-blue
+
+env:
+  CGO_ENABLED: 0
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # Build tasks
+  build:
+    desc: Build the binary
+    cmds:
+      - go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .
+    generates:
+      - "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
+
+  build:release:
+    desc: Build release binary with optimizations
+    cmds:
+      - go build -ldflags="-s -w -X main.versionInfo.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty
+    generates:
+      - "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
+
+  # Development tasks
+  dev:
+    desc: Build and install locally for development
+    deps: [build]
+    cmds:
+      - cp {{.BUILD_DIR}}/{{.BINARY_NAME}} .
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+      - rm -f {{.BINARY_NAME}}
+
+  # Code quality tasks
+  fmt:
+    desc: Format Go code
+    cmds:
+      - go fmt ./...
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  test:coverage:
+    desc: Run tests with coverage
+    cmds:
+      - go test -v -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - echo "Coverage report generated: coverage.html"
+
+  # Dependency management
+  deps:
+    desc: Download and tidy dependencies
+    cmds:
+      - go mod download
+      - go mod tidy
+
+  deps:update:
+    desc: Update dependencies
+    cmds:
+      - go get -u ./...
+      - go mod tidy
+
+  # Local testing commands
+  run:version:
+    desc: Test version command
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} version
+
+  run:help:
+    desc: Show help
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} --help
+
+  run:list:
+    desc: Test list command (requires AWS credentials and cluster)
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} list --cluster {{.DEFAULT_CLUSTER}}
+    vars:
+      DEFAULT_CLUSTER: '{{.DEFAULT_CLUSTER | default "development-blue"}}'
+
+  run:list:filter:
+    desc: Test list command with filtering
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} list --cluster {{.CLUSTER}} --nodegroup {{.PATTERN}}
+    vars:
+      CLUSTER: '{{.CLUSTER | default .DEFAULT_CLUSTER}}'
+      PATTERN: '{{.PATTERN | default "group"}}'
+
+  run:list:custom:
+    desc: Test list command with custom parameters
+    deps: [build]
+    prompt: Enter cluster pattern (or press enter for {{.DEFAULT_CLUSTER}})
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} list --cluster {{.CLI_ARGS}}
+
+  # Development shortcuts
+  dev:quick-test:
+    desc: Quick development test cycle
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: build
+      - task: run:version
+
+  dev:full-check:
+    desc: Full development check (format, lint, test, build)
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: test
+      - task: build
+
+  # AWS/EKS testing helpers
+  aws:check:
+    desc: Check AWS credentials and configuration
+    cmds:
+      - aws sts get-caller-identity
+      - aws eks list-clusters --query 'clusters[*]' --output table
+
+  aws:regions:
+    desc: List available AWS regions with EKS
+    cmds:
+      - aws ec2 describe-regions --query 'Regions[*].RegionName' --output table
+
+  eks:clusters:
+    desc: List EKS clusters in current region
+    cmds:
+      - aws eks list-clusters --query 'clusters[*]' --output table
+
+  eks:nodegroups:
+    desc: List nodegroups for a specific cluster
+    cmds:
+      - aws eks list-nodegroups --cluster-name {{.CLUSTER}} --query 'nodegroups[*]' --output table
+    vars:
+      CLUSTER: '{{.CLUSTER | default .DEFAULT_CLUSTER}}'
+
+  # Release tasks
+  release:check:
+    desc: Check if ready for release
+    cmds:
+      - task: dev:full-check
+      - git status --porcelain
+      - echo "Ready for release!"
+
+  release:test:
+    desc: Test GoReleaser configuration without releasing
+    cmds:
+      - goreleaser check
+      - goreleaser build --snapshot --clean
+
+  release:dry-run:
+    desc: Dry run of the full release process
+    cmds:
+      - goreleaser release --snapshot --clean
+
+  release:tag:
+    desc: Create a new release tag
+    cmds:
+      - git tag -a {{.VERSION}} -m "Release {{.VERSION}}"
+      - git push origin {{.VERSION}}
+    vars:
+      VERSION: '{{.VERSION | default "v0.1.3"}}'
+    requires:
+      vars: [VERSION]
+
+  # Documentation
+  docs:help:
+    desc: Generate help documentation
+    deps: [build]
+    cmds:
+      - echo "# CLI Help Documentation" > docs/CLI_HELP.md
+      - echo "" >> docs/CLI_HELP.md
+      - echo "## Main Help" >> docs/CLI_HELP.md
+      - echo '```' >> docs/CLI_HELP.md
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} --help >> docs/CLI_HELP.md
+      - echo '```' >> docs/CLI_HELP.md
+      - echo "" >> docs/CLI_HELP.md
+      - echo "## List Command Help" >> docs/CLI_HELP.md
+      - echo '```' >> docs/CLI_HELP.md
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} list --help >> docs/CLI_HELP.md
+      - echo '```' >> docs/CLI_HELP.md
+      - echo "" >> docs/CLI_HELP.md
+      - echo "## Update-AMI Command Help" >> docs/CLI_HELP.md
+      - echo '```' >> docs/CLI_HELP.md
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} update-ami --help >> docs/CLI_HELP.md
+      - echo '```' >> docs/CLI_HELP.md
+
+  # Utility tasks
+  install:task:
+    desc: Install Task runner (if not already installed)
+    cmds:
+      - |
+        if ! command -v task &> /dev/null; then
+          echo "Installing Task runner..."
+          go install github.com/go-task/task/v3/cmd/task@latest
+        else
+          echo "Task runner already installed: $(task --version)"
+        fi
+
+  install:golangci-lint:
+    desc: Install golangci-lint (if not already installed)
+    cmds:
+      - |
+        if ! command -v golangci-lint &> /dev/null; then
+          echo "Installing golangci-lint..."
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+        else
+          echo "golangci-lint already installed: $(golangci-lint --version)"
+        fi
+
+  # Homebrew tap tasks
+  tap:test-local:
+    desc: Test the Homebrew formula locally
+    cmds:
+      - |
+        echo "Testing Homebrew formula..."
+        echo "Note: This requires the formula to be published first"
+        echo "Run: brew install dantech2000/tap/refresh"
+
+  tap:validate:
+    desc: Validate the Homebrew formula syntax
+    cmds:
+      - |
+        if [ -f "homebrew-tap/Formula/refresh.rb" ]; then
+          ruby -c homebrew-tap/Formula/refresh.rb
+          echo "Formula syntax is valid!"
+        else
+          echo "Formula file not found!"
+          exit 1
+        fi 

@@ -3,22 +3,35 @@ name: Release
 on:
     release:
         types: [created]
+    push:
+        tags:
+            - 'v*'
+
+permissions:
+    contents: write
+    packages: write
 
 jobs:
     goreleaser:
         name: Run GoReleaser
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
             - name: Set up Go
               uses: actions/setup-go@v5
               with:
                   go-version: "1.23"
-            - name: Install GoReleaser
-              uses: goreleaser/goreleaser-action@v5
-              with:
-                  version: latest
+
             - name: Run GoReleaser
-              run: goreleaser release --clean
+              uses: goreleaser/goreleaser-action@v6
+              with:
+                  distribution: goreleaser
+                  version: "~> v2"
+                  args: release --clean
               env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  GH_PAT: ${{ secrets.GH_PAT }}
+                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
