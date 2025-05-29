@@ -1,5 +1,13 @@
 # Refresh
 
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/releases/latest)
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/dantech2000/refresh/release.yml?style=flat-square&label=build)](https://github.com/dantech2000/refresh/actions/workflows/release.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/dantech2000/refresh?style=flat-square)](https://goreportcard.com/report/github.com/dantech2000/refresh)
+[![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/blob/main/go.mod)
+[![License](https://img.shields.io/github/license/dantech2000/refresh?style=flat-square&color=green)](https://github.com/dantech2000/refresh/blob/main/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/dantech2000/refresh?style=flat-square&color=yellow)](https://github.com/dantech2000/refresh/stargazers)
+[![Homebrew](https://img.shields.io/badge/homebrew-available-orange?style=flat-square)](https://github.com/dantech2000/homebrew-tap)
+
 A Go-based CLI tool to manage and monitor AWS EKS node groups using your local kubeconfig and AWS credentials.
 
 ## Features
@@ -253,6 +261,25 @@ After a successful release:
 - **Permission Issues**: Verify `GH_PAT` token has correct permissions
 - **Homebrew Formula Issues**: Run `task tap:validate` to check syntax
 - **Version Conflicts**: Ensure version in `main.go` matches git tag
+
+## Project Status & Health
+
+The badges at the top of this README provide a quick overview of the project's health:
+
+| Badge | What It Shows | What to Watch For |
+|-------|---------------|-------------------|
+| **Release** | Latest version number | New releases, version progression |
+| **Build Status** | GitHub Actions workflow status | ✅ Green = builds passing, ❌ Red = build issues |
+| **Go Report Card** | Code quality grade (A+ to F) | Aim for A+ rating, watch for downgrades |
+| **Go Version** | Minimum Go version required | Compatibility with current Go releases |
+| **License** | Project license (MIT) | License compliance information |
+| **Stars** | GitHub stars count | Community interest and growth |
+| **Homebrew** | Homebrew installation availability | Package distribution status |
+
+### Quick Health Check
+- **Green Build Badge** ✅ = Latest code builds successfully, releases work
+- **A+ Go Report** ✅ = Code quality is excellent
+- **Current Go Version** ✅ = Using modern Go features and best practices
 
 ## Security
 
