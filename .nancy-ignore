@@ -1,6 +1,0 @@
-# Nancy vulnerability ignore file
-# Add CVE IDs here that you want to ignore after manual review
-# Format: CVE-YYYY-NNNNN
-
-# Example (remove if not needed):
-# CVE-2021-12345  # False positive for development dependency 

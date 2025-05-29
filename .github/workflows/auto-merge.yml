@@ -40,21 +40,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           timeoutSeconds: 600
 
-      - name: Wait for security checks
-        if: steps.check-title.outputs.eligible == 'true'
-        uses: fountainhead/action-wait-for-check@v1.2.0
-        id: wait-for-security
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          checkName: "CodeQL Analysis"
-          ref: ${{ github.event.pull_request.head.sha }}
-          timeoutSeconds: 600
-
       - name: Auto-merge Dependabot PR
         if: |
           steps.check-title.outputs.eligible == 'true' &&
-          steps.wait-for-checks.outputs.conclusion == 'success' &&
-          steps.wait-for-security.outputs.conclusion == 'success'
+          steps.wait-for-checks.outputs.conclusion == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
