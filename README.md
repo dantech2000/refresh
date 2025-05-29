@@ -24,6 +24,83 @@ A Go-based CLI tool to manage and monitor AWS EKS node groups using your local k
 -   AWS credentials (`~/.aws/credentials` or environment variables)
 -   kubeconfig (`~/.kube/config`)
 
+## Installation
+
+### 🍺 Homebrew (Recommended)
+
+The easiest way to install `refresh` is via Homebrew:
+
+```bash
+# Add the tap
+brew tap dantech2000/tap
+
+# Install refresh
+brew install refresh
+
+# Verify installation
+refresh version
+```
+
+### 📦 Download from Releases
+
+Alternatively, download pre-built binaries from the [releases page](https://github.com/dantech2000/refresh/releases/latest):
+
+1. Go to the [latest release](https://github.com/dantech2000/refresh/releases/latest)
+2. Download the appropriate binary for your platform:
+   - `refresh_v0.1.4_darwin_amd64.tar.gz` (macOS Intel)
+   - `refresh_v0.1.4_darwin_arm64.tar.gz` (macOS Apple Silicon)
+   - `refresh_v0.1.4_linux_amd64.tar.gz` (Linux x64)
+   - `refresh_v0.1.4_windows_amd64.tar.gz` (Windows x64)
+3. Extract and move to your PATH:
+   ```bash
+   # Example for macOS/Linux
+   tar -xzf refresh_v0.1.4_darwin_arm64.tar.gz
+   sudo mv refresh /usr/local/bin/
+   chmod +x /usr/local/bin/refresh
+   ```
+
+### 🔧 Build from Source
+
+If you have Go installed:
+
+```bash
+# Clone the repository
+git clone https://github.com/dantech2000/refresh.git
+cd refresh
+
+# Build and install
+go build -o refresh .
+sudo mv refresh /usr/local/bin/
+
+# Or install directly
+go install github.com/dantech2000/refresh@latest
+```
+
+### ✅ Verify Installation
+
+After installation, verify it works:
+
+```bash
+refresh version
+refresh --help
+```
+
+You should see output showing the version and available commands.
+
+### 🔄 Updating
+
+To update to the latest version:
+
+```bash
+# If installed via Homebrew
+brew update && brew upgrade refresh
+
+# If installed via go install
+go install github.com/dantech2000/refresh@latest
+
+# If manually installed, download the latest release and replace the binary
+```
+
 ## Usage
 
 ### List Nodegroups
@@ -247,13 +324,9 @@ task deps                    # Download and tidy dependencies
 After a successful release:
 
 1. **Check GitHub Release**: Verify release appears with all artifacts
-2. **Test Homebrew Installation**:
-   ```bash
-   brew tap dantech2000/tap
-   brew install refresh
-   refresh version
-   ```
-3. **Update Documentation**: If needed, update examples in README
+2. **Test Homebrew Installation**: Follow the [Installation instructions](#installation) to test the Homebrew tap
+3. **Verify Version**: Run `refresh version` to confirm the new version is available
+4. **Update Documentation**: If needed, update examples in README
 
 ### Troubleshooting
 
