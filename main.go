@@ -37,7 +37,7 @@ type VersionInfo struct {
 }
 
 var versionInfo = VersionInfo{
-	Version:   "v0.1.4",
+	Version:   "v0.1.5",
 	Commit:    "",
 	BuildDate: "",
 }
