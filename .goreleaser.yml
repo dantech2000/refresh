@@ -28,7 +28,7 @@ archives:
   - id: default
     builds:
       - refresh
-    format: tar.gz
+    formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
@@ -51,7 +51,7 @@ brews:
       name: homebrew-tap
       branch: main
       token: "{{ .Env.GH_PAT }}"
-    folder: Formula
+    directory: Formula
     homepage: "https://github.com/dantech2000/refresh"
     description: "Manage and monitor AWS EKS node groups using your local kubeconfig and AWS credentials"
     license: "MIT"
