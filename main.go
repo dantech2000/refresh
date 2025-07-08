@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
@@ -34,6 +37,34 @@ type VersionInfo struct {
 	Version   string `json:"version"`
 	Commit    string `json:"commit,omitempty"`
 	BuildDate string `json:"build_date,omitempty"`
+}
+
+type UpdateProgress struct {
+	NodegroupName string
+	UpdateID      string
+	ClusterName   string
+	Status        types.UpdateStatus
+	StartTime     time.Time
+	LastChecked   time.Time
+	ErrorMessage  string
+}
+
+type ProgressMonitor struct {
+	Updates     []UpdateProgress
+	StartTime   time.Time
+	Quiet       bool
+	NoWait      bool
+	Timeout     time.Duration
+	LastPrinted int // Track lines printed in last update
+}
+
+type MonitorConfig struct {
+	PollInterval    time.Duration
+	MaxRetries      int
+	BackoffMultiple float64
+	Quiet           bool
+	NoWait          bool
+	Timeout         time.Duration
 }
 
 var versionInfo = VersionInfo{
@@ -157,6 +188,24 @@ func main() {
 						Name:  "force",
 						Usage: "Force update if possible",
 					},
+					&cli.BoolFlag{
+						Name:  "no-wait",
+						Usage: "Don't wait for update completion (original behavior)",
+					},
+					&cli.BoolFlag{
+						Name:  "quiet",
+						Usage: "Minimal output mode",
+					},
+					&cli.DurationFlag{
+						Name:  "timeout",
+						Usage: "Maximum time to wait for update completion",
+						Value: 40 * time.Minute,
+					},
+					&cli.DurationFlag{
+						Name:  "poll-interval",
+						Usage: "Polling interval for checking update status",
+						Value: 15 * time.Second,
+					},
 				},
 				Action: func(c *cli.Context) error {
 					ctx := context.Background()
@@ -172,8 +221,13 @@ func main() {
 					}
 					eksClient := eks.NewFromConfig(awsCfg)
 
+					// Parse command flags
 					nodegroupPattern := c.String("nodegroup")
 					force := c.Bool("force")
+					noWait := c.Bool("no-wait")
+					quiet := c.Bool("quiet")
+					timeout := c.Duration("timeout")
+					pollInterval := c.Duration("poll-interval")
 
 					// Get all nodegroups first
 					ngOut, err := eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
@@ -192,6 +246,26 @@ func main() {
 						return err
 					}
 
+					// Create monitor configuration
+					config := MonitorConfig{
+						PollInterval:    pollInterval,
+						MaxRetries:      3,
+						BackoffMultiple: 2.0,
+						Quiet:           quiet,
+						NoWait:          noWait,
+						Timeout:         timeout,
+					}
+
+					// Initialize progress monitor
+					monitor := &ProgressMonitor{
+						Updates:   make([]UpdateProgress, 0),
+						StartTime: time.Now(),
+						Quiet:     quiet,
+						NoWait:    noWait,
+						Timeout:   timeout,
+					}
+
+					// Start updates and collect update IDs
 					for _, ng := range selectedNodegroups {
 						// Check nodegroup status before updating
 						ngDesc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
@@ -206,19 +280,54 @@ func main() {
 							color.Yellow("Nodegroup %s is already UPDATING. Skipping update.", ng)
 							continue
 						}
-						color.Cyan("Updating nodegroup %s...", ng)
-						_, err = eksClient.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
+
+						if !quiet {
+							color.Cyan("Starting update for nodegroup %s...", ng)
+						}
+
+						updateResp, err := eksClient.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
 							ClusterName:   aws.String(clusterName),
 							NodegroupName: aws.String(ng),
 							Force:         force,
 						})
 						if err != nil {
 							color.Red("Failed to update nodegroup %s: %v", ng, err)
-						} else {
-							color.Green("Update started for nodegroup %s", ng)
+							continue
+						}
+
+						// Add to monitoring list
+						updateProgress := UpdateProgress{
+							NodegroupName: ng,
+							UpdateID:      *updateResp.Update.Id,
+							ClusterName:   clusterName,
+							Status:        updateResp.Update.Status,
+							StartTime:     time.Now(),
+							LastChecked:   time.Now(),
+						}
+						monitor.Updates = append(monitor.Updates, updateProgress)
+
+						if !quiet {
+							color.Green("Update started for nodegroup %s (ID: %s)", ng, *updateResp.Update.Id)
 						}
 					}
-					return nil
+
+					// If no updates were started, return
+					if len(monitor.Updates) == 0 {
+						color.Yellow("No nodegroup updates were started")
+						return nil
+					}
+
+					// If no-wait flag is set, return after starting updates
+					if noWait {
+						if !quiet {
+							fmt.Printf("Started %d nodegroup update(s). Use 'refresh list --cluster %s' to check status.\n",
+								len(monitor.Updates), clusterName)
+						}
+						return nil
+					}
+
+					// Monitor progress
+					return monitorUpdates(ctx, eksClient, monitor, config)
 				},
 			},
 		},
@@ -593,4 +702,336 @@ func confirmClusterSelection(matches []string, pattern string) (string, error) {
 	}
 
 	return "", fmt.Errorf("invalid selection: %s", response)
+}
+
+// monitorUpdates monitors the progress of multiple nodegroup updates
+func monitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *ProgressMonitor, config MonitorConfig) error {
+	// Set up signal handling for graceful cancellation
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Create a cancellable context with timeout
+	monitorCtx, cancel := context.WithTimeout(ctx, config.Timeout)
+	defer cancel()
+
+	if !config.Quiet {
+		fmt.Printf("\nMonitoring %d nodegroup update(s)...\n", len(monitor.Updates))
+		fmt.Printf("Timeout: %v | Poll interval: %v\n", config.Timeout, config.PollInterval)
+		fmt.Printf("Press Ctrl+C to stop monitoring (updates will continue)\n\n")
+	}
+
+	ticker := time.NewTicker(config.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-sigChan:
+			if !config.Quiet {
+				color.Yellow("\nMonitoring cancelled by user. Updates are still running in AWS.")
+				fmt.Printf("Use 'refresh list --cluster %s' to check status manually.\n", monitor.Updates[0].ClusterName)
+			}
+			return nil
+
+		case <-monitorCtx.Done():
+			if !config.Quiet {
+				color.Red("\nMonitoring timeout reached after %v", config.Timeout)
+				fmt.Printf("Updates may still be running. Use 'refresh list' to check status.\n")
+			}
+			return fmt.Errorf("monitoring timeout reached")
+
+		case <-ticker.C:
+			allComplete, err := checkAndUpdateProgress(monitorCtx, eksClient, monitor, config)
+			if err != nil {
+				if !config.Quiet {
+					color.Red("Error checking update progress: %v", err)
+				}
+				// Continue monitoring unless it's a critical error
+				continue
+			}
+
+			if allComplete {
+				return displayCompletionSummary(monitor, config)
+			}
+		}
+	}
+}
+
+// checkAndUpdateProgress checks the status of all updates and updates the display
+func checkAndUpdateProgress(ctx context.Context, eksClient *eks.Client, monitor *ProgressMonitor, config MonitorConfig) (bool, error) {
+	allComplete := true
+	now := time.Now()
+
+	for i := range monitor.Updates {
+		update := &monitor.Updates[i]
+
+		// Skip if already completed or failed
+		if update.Status == types.UpdateStatusSuccessful ||
+			update.Status == types.UpdateStatusFailed ||
+			update.Status == types.UpdateStatusCancelled {
+			continue
+		}
+
+		// Check update status with retry logic
+		updateStatus, err := checkUpdateWithRetry(ctx, eksClient, update, config)
+		if err != nil {
+			update.ErrorMessage = err.Error()
+			continue
+		}
+
+		// Update progress
+		update.Status = updateStatus.Update.Status
+		update.LastChecked = now
+
+		// Check for errors
+		if len(updateStatus.Update.Errors) > 0 {
+			var errorMessages []string
+			for _, e := range updateStatus.Update.Errors {
+				if e.ErrorMessage != nil {
+					errorMessages = append(errorMessages, *e.ErrorMessage)
+				}
+			}
+			update.ErrorMessage = strings.Join(errorMessages, "; ")
+		}
+
+		// Still in progress
+		if update.Status == types.UpdateStatusInProgress {
+			allComplete = false
+		}
+	}
+
+	// Display current status
+	if !config.Quiet {
+		displayProgressUpdate(monitor)
+	}
+
+	return allComplete, nil
+}
+
+// checkUpdateWithRetry checks update status with exponential backoff retry
+func checkUpdateWithRetry(ctx context.Context, eksClient *eks.Client, update *UpdateProgress, config MonitorConfig) (*eks.DescribeUpdateOutput, error) {
+	var lastErr error
+	backoff := time.Second
+
+	for attempt := 0; attempt < config.MaxRetries; attempt++ {
+		updateStatus, err := eksClient.DescribeUpdate(ctx, &eks.DescribeUpdateInput{
+			Name:          aws.String(update.ClusterName),
+			NodegroupName: aws.String(update.NodegroupName),
+			UpdateId:      aws.String(update.UpdateID),
+		})
+
+		if err == nil {
+			return updateStatus, nil
+		}
+
+		lastErr = err
+
+		// Don't retry on context cancellation or timeout
+		if ctx.Err() != nil {
+			break
+		}
+
+		// Exponential backoff
+		if attempt < config.MaxRetries-1 {
+			time.Sleep(backoff)
+			backoff = time.Duration(float64(backoff) * config.BackoffMultiple)
+		}
+	}
+
+	return nil, lastErr
+}
+
+// displayProgressUpdate shows current progress in a live updating format with tree structure
+func displayProgressUpdate(monitor *ProgressMonitor) {
+	// Clear previous output if we have printed before
+	if monitor.LastPrinted > 0 {
+		fmt.Printf("\033[%dA", monitor.LastPrinted)
+		fmt.Print("\033[J")
+	}
+
+	// Count lines as we print them
+	lineCount := 0
+	
+	elapsed := time.Since(monitor.StartTime)
+	fmt.Printf("Elapsed: %v\n", elapsed.Round(time.Second))
+	lineCount++
+	
+	// Print cluster name as root (get from first update)
+	if len(monitor.Updates) > 0 {
+		fmt.Printf("%s\n", color.CyanString(monitor.Updates[0].ClusterName))
+		lineCount++
+		
+		additionalLines := printUpdateProgressTree(monitor.Updates)
+		lineCount += additionalLines
+	}
+
+	fmt.Println() // Extra line for readability
+	lineCount++
+	
+	// Store the number of lines we printed for next iteration
+	monitor.LastPrinted = lineCount
+}
+
+// printUpdateProgressTree displays update progress in tree format similar to list command
+func printUpdateProgressTree(updates []UpdateProgress) int {
+	lineCount := 0
+	
+	for i, update := range updates {
+		isLast := i == len(updates)-1
+		var prefix, itemPrefix string
+
+		if isLast {
+			prefix = "└── "
+			itemPrefix = "    "
+		} else {
+			prefix = "├── "
+			itemPrefix = "│   "
+		}
+
+		// Print nodegroup name with status
+		statusPrefix := getStatusPrefix(update.Status)
+		fmt.Printf("%s%s %s\n", prefix, statusPrefix, color.YellowString(update.NodegroupName))
+		lineCount++
+
+		// Print update details
+		duration := time.Since(update.StartTime).Round(time.Second)
+		statusColor := getStatusColor(update.Status)
+		
+		statusText := statusColor(string(update.Status))
+		if update.ErrorMessage != "" {
+			statusText = color.RedString("FAILED: %s", update.ErrorMessage)
+		}
+
+		fmt.Printf("%s├── Status: %s\n", itemPrefix, statusText)
+		fmt.Printf("%s├── Duration: %s\n", itemPrefix, color.BlueString(duration.String()))
+		fmt.Printf("%s├── Update ID: %s\n", itemPrefix, color.WhiteString(update.UpdateID))
+		fmt.Printf("%s└── Last Checked: %s\n", itemPrefix, color.GreenString(update.LastChecked.Format("15:04:05")))
+		lineCount += 4
+
+		// Add spacing between nodegroups except for the last one
+		if !isLast {
+			fmt.Println()
+			lineCount++
+		}
+	}
+	
+	return lineCount
+}
+
+// displayCompletionSummary shows the final summary when all updates are complete in tree format
+func displayCompletionSummary(monitor *ProgressMonitor, config MonitorConfig) error {
+	if !config.Quiet {
+		totalDuration := time.Since(monitor.StartTime)
+
+		fmt.Printf("\nAll updates completed in %v\n\n", totalDuration.Round(time.Second))
+		
+		// Print cluster name as root
+		if len(monitor.Updates) > 0 {
+			fmt.Printf("%s\n", color.CyanString(monitor.Updates[0].ClusterName))
+			printCompletionSummaryTree(monitor.Updates)
+		}
+
+		// Print results summary
+		successful := 0
+		failed := 0
+		for _, update := range monitor.Updates {
+			switch update.Status {
+			case types.UpdateStatusSuccessful:
+				successful++
+			case types.UpdateStatusFailed, types.UpdateStatusCancelled:
+				failed++
+			}
+		}
+
+		fmt.Printf("\nResults: %s successful, %s failed\n",
+			color.GreenString("%d", successful),
+			color.RedString("%d", failed))
+	}
+
+	// Return error if any updates failed
+	for _, update := range monitor.Updates {
+		if update.Status == types.UpdateStatusFailed {
+			return fmt.Errorf("one or more nodegroup updates failed")
+		}
+	}
+
+	return nil
+}
+
+// printCompletionSummaryTree displays completion summary in tree format
+func printCompletionSummaryTree(updates []UpdateProgress) {
+	for i, update := range updates {
+		isLast := i == len(updates)-1
+		var prefix, itemPrefix string
+
+		if isLast {
+			prefix = "└── "
+			itemPrefix = "    "
+		} else {
+			prefix = "├── "
+			itemPrefix = "│   "
+		}
+
+		// Print nodegroup name with status
+		statusPrefix := getStatusPrefix(update.Status)
+		fmt.Printf("%s%s %s\n", prefix, statusPrefix, color.YellowString(update.NodegroupName))
+
+		// Print completion details
+		duration := time.Since(update.StartTime).Round(time.Second)
+		
+		var statusText string
+		switch update.Status {
+		case types.UpdateStatusSuccessful:
+			statusText = color.GreenString("SUCCESSFUL")
+		case types.UpdateStatusFailed:
+			statusText = color.RedString("FAILED")
+			if update.ErrorMessage != "" {
+				statusText = color.RedString("FAILED: %s", update.ErrorMessage)
+			}
+		case types.UpdateStatusCancelled:
+			statusText = color.YellowString("CANCELLED")
+		default:
+			statusText = color.WhiteString(string(update.Status))
+		}
+
+		fmt.Printf("%s├── Status: %s\n", itemPrefix, statusText)
+		fmt.Printf("%s├── Duration: %s\n", itemPrefix, color.BlueString(duration.String()))
+		fmt.Printf("%s└── Update ID: %s\n", itemPrefix, color.WhiteString(update.UpdateID))
+
+		// Add spacing between nodegroups except for the last one
+		if !isLast {
+			fmt.Println()
+		}
+	}
+}
+
+// getStatusPrefix returns an appropriate text prefix for the update status
+func getStatusPrefix(status types.UpdateStatus) string {
+	switch status {
+	case types.UpdateStatusInProgress:
+		return "[IN PROGRESS]"
+	case types.UpdateStatusSuccessful:
+		return "[SUCCESSFUL]"
+	case types.UpdateStatusFailed:
+		return "[FAILED]"
+	case types.UpdateStatusCancelled:
+		return "[CANCELLED]"
+	default:
+		return "[UNKNOWN]"
+	}
+}
+
+// getStatusColor returns a color function for the update status
+func getStatusColor(status types.UpdateStatus) func(format string, a ...interface{}) string {
+	switch status {
+	case types.UpdateStatusInProgress:
+		return color.CyanString
+	case types.UpdateStatusSuccessful:
+		return color.GreenString
+	case types.UpdateStatusFailed:
+		return color.RedString
+	case types.UpdateStatusCancelled:
+		return color.YellowString
+	default:
+		return color.WhiteString
+	}
 }
