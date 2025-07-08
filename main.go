@@ -68,7 +68,7 @@ type MonitorConfig struct {
 }
 
 var versionInfo = VersionInfo{
-	Version:   "v0.1.5",
+	Version:   "v0.1.6",
 	Commit:    "",
 	BuildDate: "",
 }
@@ -850,23 +850,23 @@ func displayProgressUpdate(monitor *ProgressMonitor) {
 
 	// Count lines as we print them
 	lineCount := 0
-	
+
 	elapsed := time.Since(monitor.StartTime)
 	fmt.Printf("Elapsed: %v\n", elapsed.Round(time.Second))
 	lineCount++
-	
+
 	// Print cluster name as root (get from first update)
 	if len(monitor.Updates) > 0 {
 		fmt.Printf("%s\n", color.CyanString(monitor.Updates[0].ClusterName))
 		lineCount++
-		
+
 		additionalLines := printUpdateProgressTree(monitor.Updates)
 		lineCount += additionalLines
 	}
 
 	fmt.Println() // Extra line for readability
 	lineCount++
-	
+
 	// Store the number of lines we printed for next iteration
 	monitor.LastPrinted = lineCount
 }
@@ -874,7 +874,7 @@ func displayProgressUpdate(monitor *ProgressMonitor) {
 // printUpdateProgressTree displays update progress in tree format similar to list command
 func printUpdateProgressTree(updates []UpdateProgress) int {
 	lineCount := 0
-	
+
 	for i, update := range updates {
 		isLast := i == len(updates)-1
 		var prefix, itemPrefix string
@@ -895,7 +895,7 @@ func printUpdateProgressTree(updates []UpdateProgress) int {
 		// Print update details
 		duration := time.Since(update.StartTime).Round(time.Second)
 		statusColor := getStatusColor(update.Status)
-		
+
 		statusText := statusColor(string(update.Status))
 		if update.ErrorMessage != "" {
 			statusText = color.RedString("FAILED: %s", update.ErrorMessage)
@@ -913,7 +913,7 @@ func printUpdateProgressTree(updates []UpdateProgress) int {
 			lineCount++
 		}
 	}
-	
+
 	return lineCount
 }
 
@@ -923,7 +923,7 @@ func displayCompletionSummary(monitor *ProgressMonitor, config MonitorConfig) er
 		totalDuration := time.Since(monitor.StartTime)
 
 		fmt.Printf("\nAll updates completed in %v\n\n", totalDuration.Round(time.Second))
-		
+
 		// Print cluster name as root
 		if len(monitor.Updates) > 0 {
 			fmt.Printf("%s\n", color.CyanString(monitor.Updates[0].ClusterName))
@@ -977,7 +977,7 @@ func printCompletionSummaryTree(updates []UpdateProgress) {
 
 		// Print completion details
 		duration := time.Since(update.StartTime).Round(time.Second)
-		
+
 		var statusText string
 		switch update.Status {
 		case types.UpdateStatusSuccessful:
