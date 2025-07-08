@@ -8,6 +8,10 @@
 [![GitHub stars](https://img.shields.io/github/stars/dantech2000/refresh?style=flat-square&color=yellow)](https://github.com/dantech2000/refresh/stargazers)
 [![Homebrew](https://img.shields.io/badge/homebrew-available-orange?style=flat-square)](https://github.com/dantech2000/homebrew-tap)
 
+
+![Alt](https://repobeats.axiom.co/api/embed/bc73e7cb2ef4f089dc943258dc6511f76ad86a35.svg "Repobeats analytics image")
+
+
 A Go-based CLI tool to manage and monitor AWS EKS node groups using your local kubeconfig and AWS credentials.
 
 ## Features
