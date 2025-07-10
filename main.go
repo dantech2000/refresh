@@ -189,6 +189,10 @@ func main() {
 						Usage: "Force update if possible",
 					},
 					&cli.BoolFlag{
+						Name:  "dry-run",
+						Usage: "Preview changes without executing them",
+					},
+					&cli.BoolFlag{
 						Name:  "no-wait",
 						Usage: "Don't wait for update completion (original behavior)",
 					},
@@ -224,6 +228,7 @@ func main() {
 					// Parse command flags
 					nodegroupPattern := c.String("nodegroup")
 					force := c.Bool("force")
+					dryRun := c.Bool("dry-run")
 					noWait := c.Bool("no-wait")
 					quiet := c.Bool("quiet")
 					timeout := c.Duration("timeout")
@@ -263,6 +268,11 @@ func main() {
 						Quiet:     quiet,
 						NoWait:    noWait,
 						Timeout:   timeout,
+					}
+
+					// If dry run mode, show what would be updated with details
+					if dryRun {
+						return performDryRun(ctx, eksClient, clusterName, selectedNodegroups, force, quiet)
 					}
 
 					// Start updates and collect update IDs
@@ -1034,4 +1044,113 @@ func getStatusColor(status types.UpdateStatus) func(format string, a ...interfac
 	default:
 		return color.WhiteString
 	}
+}
+
+// performDryRun shows what would be updated without making changes
+func performDryRun(ctx context.Context, eksClient *eks.Client, clusterName string, selectedNodegroups []string, force bool, quiet bool) error {
+	// Get AWS clients for AMI checking
+	awsCfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load AWS config: %v", err)
+	}
+	ec2Client := ec2.NewFromConfig(awsCfg)
+	autoscalingClient := autoscaling.NewFromConfig(awsCfg)
+	ssmClient := ssm.NewFromConfig(awsCfg)
+
+	// Get cluster info for Kubernetes version
+	clusterOut, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
+		Name: aws.String(clusterName),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to describe cluster: %v", err)
+	}
+	k8sVersion := *clusterOut.Cluster.Version
+
+	if !quiet {
+		color.Cyan("DRY RUN: Preview of nodegroup updates for cluster %s\n", clusterName)
+		if force {
+			color.Yellow("Force update would be enabled")
+		}
+		fmt.Println()
+	}
+
+	var updatesNeeded []string
+	var updatesSkipped []string
+	var alreadyLatest []string
+
+	for _, ng := range selectedNodegroups {
+		// Check nodegroup status before updating (read-only operation)
+		ngDesc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(clusterName),
+			NodegroupName: aws.String(ng),
+		})
+		if err != nil {
+			color.Red("Failed to describe nodegroup %s: %v", ng, err)
+			continue
+		}
+
+		if ngDesc.Nodegroup.Status == types.NodegroupStatusUpdating {
+			updatesSkipped = append(updatesSkipped, ng)
+			if !quiet {
+				color.Yellow("SKIP: Nodegroup %s is already UPDATING", ng)
+			}
+			continue
+		}
+
+		// Check if update is actually needed (unless force is enabled)
+		if !force {
+			currentAmiId := currentAmiID(ctx, ngDesc.Nodegroup, ec2Client, autoscalingClient)
+			latestAmiId := latestAmiID(ctx, ssmClient, k8sVersion)
+			
+			if currentAmiId != "" && latestAmiId != "" && currentAmiId == latestAmiId {
+				alreadyLatest = append(alreadyLatest, ng)
+				if !quiet {
+					color.Green("SKIP: Nodegroup %s is already on latest AMI", ng)
+				}
+				continue
+			}
+		}
+
+		updatesNeeded = append(updatesNeeded, ng)
+		if !quiet {
+			if force {
+				color.Green("UPDATE: Nodegroup %s would be force updated", ng)
+			} else {
+				color.Green("UPDATE: Nodegroup %s would be updated (AMI outdated)", ng)
+			}
+		}
+	}
+
+	if !quiet {
+		fmt.Println()
+		color.Cyan("Summary:")
+		fmt.Printf("- Nodegroups that would be updated: %d\n", len(updatesNeeded))
+		fmt.Printf("- Nodegroups that would be skipped (already updating): %d\n", len(updatesSkipped))
+		fmt.Printf("- Nodegroups already on latest AMI: %d\n", len(alreadyLatest))
+
+		if len(updatesNeeded) > 0 {
+			fmt.Println("\nWould update:")
+			for _, ng := range updatesNeeded {
+				fmt.Printf("  - %s\n", ng)
+			}
+		}
+
+		if len(updatesSkipped) > 0 {
+			fmt.Println("\nWould skip (already updating):")
+			for _, ng := range updatesSkipped {
+				fmt.Printf("  - %s\n", ng)
+			}
+		}
+
+		if len(alreadyLatest) > 0 {
+			fmt.Println("\nAlready on latest AMI:")
+			for _, ng := range alreadyLatest {
+				fmt.Printf("  - %s\n", ng)
+			}
+		}
+
+		fmt.Println("\nTo execute these updates, run the same command without --dry-run")
+	}
+
+	return nil
 }

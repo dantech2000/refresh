@@ -20,6 +20,7 @@ A Go-based CLI tool to manage and monitor AWS EKS node groups using your local k
 -   See AMI status for each nodegroup (✅ Latest, ❌ Outdated, ⚠️ Updating)
 -   Detect and show nodegroups that are currently being updated
 -   Update the AMI for all or specific nodegroups (rolling by default, with optional force)
+-   **Dry run mode**: Preview what changes would be made without executing them
 -   Color-coded, readable CLI output
 
 ## Requirements
@@ -164,6 +165,10 @@ go run main.go update-ami --cluster <cluster-name> --nodegroup <partial-name>
 
 # Force update (replace all nodes, even if already latest)
 go run main.go update-ami --cluster <cluster-name> --force
+
+# Preview changes without executing (dry run)
+go run main.go update-ami --cluster <cluster-name> --dry-run
+go run main.go update-ami --cluster <cluster-name> --nodegroup <partial-name> --dry-run
 ```
 
 **Example output:**
@@ -187,6 +192,25 @@ Updating nodegroup dev-blue-groupE-20230815204000720600000007...
 Update started for nodegroup dev-blue-groupE-20230815204000720600000007
 Updating nodegroup dev-blue-groupF-20230815230923929900000007...
 Update started for nodegroup dev-blue-groupF-20230815230923929900000007
+
+# Dry run preview
+$ go run main.go update-ami --cluster development-blue --nodegroup group --dry-run
+DRY RUN: Preview of nodegroup updates for cluster development-blue
+
+UPDATE: Nodegroup dev-blue-groupD-20230814214633237700000007 would be updated
+UPDATE: Nodegroup dev-blue-groupE-20230815204000720600000007 would be updated
+UPDATE: Nodegroup dev-blue-groupF-20230815230923929900000007 would be updated
+
+Summary:
+- Nodegroups that would be updated: 3
+- Nodegroups that would be skipped: 0
+
+Would update:
+  - dev-blue-groupD-20230814214633237700000007
+  - dev-blue-groupE-20230815204000720600000007
+  - dev-blue-groupF-20230815230923929900000007
+
+To execute these updates, run the same command without --dry-run
 ```
 
 **Partial Name Matching:**
