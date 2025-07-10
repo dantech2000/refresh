@@ -2,6 +2,9 @@ package main
 
 import (
 	"testing"
+
+	awsClient "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/types"
 )
 
 func TestMatchingNodegroups(t *testing.T) {
@@ -41,7 +44,7 @@ func TestMatchingNodegroups(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := matchingNodegroups(nodegroups, tt.pattern)
+			result := awsClient.MatchingNodegroups(nodegroups, tt.pattern)
 			if len(result) != len(tt.expected) {
 				t.Errorf("matchingNodegroups() = %v, want %v", result, tt.expected)
 				return
@@ -89,7 +92,7 @@ func TestMatchingClusters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := matchingClusters(clusters, tt.pattern)
+			result := awsClient.MatchingClusters(clusters, tt.pattern)
 			if len(result) != len(tt.expected) {
 				t.Errorf("matchingClusters() = %v, want %v", result, tt.expected)
 				return
@@ -108,27 +111,27 @@ func TestMatchingClusters(t *testing.T) {
 func TestAMIStatusString(t *testing.T) {
 	tests := []struct {
 		name     string
-		status   AMIStatus
+		status   types.AMIStatus
 		expected string
 	}{
 		{
 			name:     "AMILatest shows Latest",
-			status:   AMILatest,
+			status:   types.AMILatest,
 			expected: "Latest",
 		},
 		{
 			name:     "AMIOutdated shows Outdated",
-			status:   AMIOutdated,
+			status:   types.AMIOutdated,
 			expected: "Outdated",
 		},
 		{
 			name:     "AMIUpdating shows Updating",
-			status:   AMIUpdating,
+			status:   types.AMIUpdating,
 			expected: "Updating",
 		},
 		{
 			name:     "AMIUnknown shows Unknown",
-			status:   AMIUnknown,
+			status:   types.AMIUnknown,
 			expected: "Unknown",
 		},
 	}
@@ -147,27 +150,27 @@ func TestAMIStatusString(t *testing.T) {
 func TestDryRunActionString(t *testing.T) {
 	tests := []struct {
 		name     string
-		action   DryRunAction
+		action   types.DryRunAction
 		expected string
 	}{
 		{
 			name:     "ActionUpdate shows UPDATE",
-			action:   ActionUpdate,
+			action:   types.ActionUpdate,
 			expected: "UPDATE",
 		},
 		{
 			name:     "ActionSkipUpdating shows SKIP",
-			action:   ActionSkipUpdating,
+			action:   types.ActionSkipUpdating,
 			expected: "SKIP",
 		},
 		{
 			name:     "ActionSkipLatest shows SKIP",
-			action:   ActionSkipLatest,
+			action:   types.ActionSkipLatest,
 			expected: "SKIP",
 		},
 		{
 			name:     "ActionForceUpdate shows FORCE UPDATE",
-			action:   ActionForceUpdate,
+			action:   types.ActionForceUpdate,
 			expected: "FORCE UPDATE",
 		},
 	}
