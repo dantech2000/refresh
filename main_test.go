@@ -104,3 +104,100 @@ func TestMatchingClusters(t *testing.T) {
 		})
 	}
 }
+
+func TestAMIStatusString(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   AMIStatus
+		expected string
+	}{
+		{
+			name:     "AMILatest shows Latest",
+			status:   AMILatest,
+			expected: "Latest",
+		},
+		{
+			name:     "AMIOutdated shows Outdated",
+			status:   AMIOutdated,
+			expected: "Outdated",
+		},
+		{
+			name:     "AMIUpdating shows Updating",
+			status:   AMIUpdating,
+			expected: "Updating",
+		},
+		{
+			name:     "AMIUnknown shows Unknown",
+			status:   AMIUnknown,
+			expected: "Unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.status.String()
+			// Check if the expected text is contained in the colored output
+			if !containsText(result, tt.expected) {
+				t.Errorf("AMIStatus.String() = %v, want to contain %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDryRunActionString(t *testing.T) {
+	tests := []struct {
+		name     string
+		action   DryRunAction
+		expected string
+	}{
+		{
+			name:     "ActionUpdate shows UPDATE",
+			action:   ActionUpdate,
+			expected: "UPDATE",
+		},
+		{
+			name:     "ActionSkipUpdating shows SKIP",
+			action:   ActionSkipUpdating,
+			expected: "SKIP",
+		},
+		{
+			name:     "ActionSkipLatest shows SKIP",
+			action:   ActionSkipLatest,
+			expected: "SKIP",
+		},
+		{
+			name:     "ActionForceUpdate shows FORCE UPDATE",
+			action:   ActionForceUpdate,
+			expected: "FORCE UPDATE",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.action.String()
+			// Check if the expected text is contained in the colored output
+			if !containsText(result, tt.expected) {
+				t.Errorf("DryRunAction.String() = %v, want to contain %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// Helper function to check if colored text contains expected string
+func containsText(coloredText, expectedText string) bool {
+	// Remove ANSI color codes for comparison
+	// This is a simple check - in real scenarios you might want a more robust ANSI stripper
+	cleanText := coloredText
+	for i := 0; i < len(cleanText); i++ {
+		if cleanText[i] == '\033' {
+			// Find the end of the ANSI sequence
+			for j := i; j < len(cleanText); j++ {
+				if cleanText[j] == 'm' {
+					cleanText = cleanText[:i] + cleanText[j+1:]
+					break
+				}
+			}
+		}
+	}
+	return cleanText == expectedText
+}

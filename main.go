@@ -30,7 +30,7 @@ type NodegroupInfo struct {
 	InstanceType string
 	Desired      int32
 	CurrentAmi   string
-	AmiStatus    string
+	AmiStatus    AMIStatus
 }
 
 type VersionInfo struct {
@@ -65,6 +65,56 @@ type MonitorConfig struct {
 	Quiet           bool
 	NoWait          bool
 	Timeout         time.Duration
+}
+
+// AMIStatus represents the status of a nodegroup's AMI
+type AMIStatus int
+
+const (
+	AMILatest AMIStatus = iota
+	AMIOutdated
+	AMIUpdating
+	AMIUnknown
+)
+
+func (s AMIStatus) String() string {
+	switch s {
+	case AMILatest:
+		return color.GreenString("Latest")
+	case AMIOutdated:
+		return color.RedString("Outdated")
+	case AMIUpdating:
+		return color.YellowString("Updating")
+	case AMIUnknown:
+		return color.WhiteString("Unknown")
+	default:
+		return color.WhiteString("Unknown")
+	}
+}
+
+// DryRunAction represents what action would be taken in dry run mode
+type DryRunAction int
+
+const (
+	ActionUpdate DryRunAction = iota
+	ActionSkipUpdating
+	ActionSkipLatest
+	ActionForceUpdate
+)
+
+func (a DryRunAction) String() string {
+	switch a {
+	case ActionUpdate:
+		return color.GreenString("UPDATE")
+	case ActionSkipUpdating:
+		return color.YellowString("SKIP")
+	case ActionSkipLatest:
+		return color.GreenString("SKIP")
+	case ActionForceUpdate:
+		return color.CyanString("FORCE UPDATE")
+	default:
+		return color.WhiteString("UNKNOWN")
+	}
 }
 
 var versionInfo = VersionInfo{
@@ -447,8 +497,6 @@ func nodegroups(ctx context.Context, awsCfg aws.Config, clusterName string) ([]N
 	ec2Client := ec2.NewFromConfig(awsCfg)
 	autoscalingClient := autoscaling.NewFromConfig(awsCfg)
 	ssmClient := ssm.NewFromConfig(awsCfg)
-	green := color.New(color.FgGreen).SprintFunc()
-	red := color.New(color.FgRed).SprintFunc()
 
 	clusterOut, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
 		Name: aws.String(clusterName),
@@ -489,15 +537,22 @@ func nodegroups(ctx context.Context, awsCfg aws.Config, clusterName string) ([]N
 			color.Yellow("[WARN] Could not determine AMI ID for nodegroup %s", *ng.NodegroupName)
 		}
 		latestAmiId := latestAmiID(ctx, ssmClient, k8sVersion)
-		amiStatus := red("❌ Outdated")
-		if currentAmiId != "" && latestAmiId != "" && currentAmiId == latestAmiId {
-			amiStatus = green("✅ Latest")
+
+		// Determine AMI status using enum
+		var amiStatus AMIStatus
+		if ng.Status == types.NodegroupStatusUpdating {
+			amiStatus = AMIUpdating
+		} else if currentAmiId == "" || latestAmiId == "" {
+			amiStatus = AMIUnknown
+		} else if currentAmiId == latestAmiId {
+			amiStatus = AMILatest
+		} else {
+			amiStatus = AMIOutdated
 		}
 
 		statusStr := string(ng.Status)
 		if ng.Status == types.NodegroupStatusUpdating {
 			statusStr = color.YellowString("UPDATING")
-			amiStatus = color.YellowString("⚠️ Updating")
 		}
 		info := NodegroupInfo{
 			Name:         *ng.NodegroupName,
@@ -1092,7 +1147,7 @@ func performDryRun(ctx context.Context, eksClient *eks.Client, clusterName strin
 		if ngDesc.Nodegroup.Status == types.NodegroupStatusUpdating {
 			updatesSkipped = append(updatesSkipped, ng)
 			if !quiet {
-				color.Yellow("SKIP: Nodegroup %s is already UPDATING", ng)
+				fmt.Printf("%s: Nodegroup %s is already UPDATING\n", ActionSkipUpdating, ng)
 			}
 			continue
 		}
@@ -1101,11 +1156,11 @@ func performDryRun(ctx context.Context, eksClient *eks.Client, clusterName strin
 		if !force {
 			currentAmiId := currentAmiID(ctx, ngDesc.Nodegroup, ec2Client, autoscalingClient)
 			latestAmiId := latestAmiID(ctx, ssmClient, k8sVersion)
-			
+
 			if currentAmiId != "" && latestAmiId != "" && currentAmiId == latestAmiId {
 				alreadyLatest = append(alreadyLatest, ng)
 				if !quiet {
-					color.Green("SKIP: Nodegroup %s is already on latest AMI", ng)
+					fmt.Printf("%s: Nodegroup %s is already on latest AMI\n", ActionSkipLatest, ng)
 				}
 				continue
 			}
@@ -1114,9 +1169,9 @@ func performDryRun(ctx context.Context, eksClient *eks.Client, clusterName strin
 		updatesNeeded = append(updatesNeeded, ng)
 		if !quiet {
 			if force {
-				color.Green("UPDATE: Nodegroup %s would be force updated", ng)
+				fmt.Printf("%s: Nodegroup %s would be force updated\n", ActionForceUpdate, ng)
 			} else {
-				color.Green("UPDATE: Nodegroup %s would be updated (AMI outdated)", ng)
+				fmt.Printf("%s: Nodegroup %s would be updated (AMI outdated)\n", ActionUpdate, ng)
 			}
 		}
 	}
