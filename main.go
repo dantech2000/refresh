@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/signal"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
+	"github.com/yarlson/pin"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -154,7 +156,49 @@ func main() {
 						color.Red("%v", err)
 						return err
 					}
+
+					// Start spinner with funny messages
+					messages := []string{
+						"Interrogating EKS nodes... they're staying silent for now",
+						"Asking AWS politely for nodegroup secrets...",
+						"Counting how many nodes are having an existential crisis...",
+						"Checking if the nodes have been doing their AMI homework...",
+						"Waiting for AWS to stop procrastinating and return our data...",
+						"Convincing stubborn nodes to reveal their status...",
+						"Performing digital archaeology on your cluster...",
+						"Teaching nodes to communicate in human language...",
+						"Decoding the ancient art of EKS hieroglyphics...",
+						"Bribing AWS APIs with virtual coffee for faster responses...",
+					}
+
+					spinner := pin.New("Gathering nodegroup information...",
+						pin.WithSpinnerColor(pin.ColorCyan),
+						pin.WithTextColor(pin.ColorYellow),
+					)
+
+					// Start spinner with message cycling
+					cancel := spinner.Start(ctx)
+					defer cancel()
+
+					// Update messages periodically with random selection
+					go func() {
+						ticker := time.NewTicker(2 * time.Second)
+						defer ticker.Stop()
+						for {
+							select {
+							case <-ctx.Done():
+								return
+							case <-ticker.C:
+								randomMsg := messages[rand.Intn(len(messages))]
+								spinner.UpdateMessage(randomMsg)
+							}
+						}
+					}()
+
 					allNodegroups, err := nodegroups(ctx, awsCfg, clusterName)
+
+					// Stop spinner
+					spinner.Stop("Nodegroup information gathered!")
 					if err != nil {
 						errStr := fmt.Sprintf("%v", err)
 						// Friendly error handling for common AWS credential and cluster errors
