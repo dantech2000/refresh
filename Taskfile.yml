@@ -72,6 +72,40 @@ tasks:
       - go test -v -coverprofile=coverage.out ./...
       - go tool cover -html=coverage.out -o coverage.html
 
+  test-suite:
+    desc: Run comprehensive test suite
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: test
+      - task: build
+      - task: run-version
+      - task: run-help
+      - echo "✅ All tests passed!"
+
+  test-suite-quick:
+    desc: Run quick test suite (no lint)
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: test
+      - task: build
+      - task: run-version
+      - echo "✅ Quick test suite passed!"
+
+  test-suite-coverage:
+    desc: Run test suite with coverage report
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: test-coverage
+      - task: build
+      - task: run-version
+      - task: run-help
+      - echo "✅ Test suite with coverage completed!"
+
   # Dependency management
   deps:
     desc: Download and tidy dependencies
@@ -103,6 +137,12 @@ tasks:
     deps: [build]
     cmds:
       - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} list --cluster {{.DEFAULT_CLUSTER}}
+
+  run-dry-run:
+    desc: Test dry run functionality (requires AWS credentials and cluster)
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} update-ami --cluster {{.DEFAULT_CLUSTER}} --dry-run
 
   # Development shortcuts
   dev-quick-test:
