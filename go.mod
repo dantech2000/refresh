@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.58.2
 	github.com/fatih/color v1.18.0
 	github.com/urfave/cli/v2 v2.27.6
+	github.com/yarlson/pin v0.9.1
 	k8s.io/client-go v0.29.0
 )
 
@@ -41,7 +42,6 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
-	github.com/yarlson/pin v0.9.1 // indirect
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/oauth2 v0.10.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect
