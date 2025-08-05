@@ -12,22 +12,31 @@
 ![Alt](https://repobeats.axiom.co/api/embed/bc73e7cb2ef4f089dc943258dc6511f76ad86a35.svg "Repobeats analytics image")
 
 
-A Go-based CLI tool to manage and monitor AWS EKS node groups using your local kubeconfig and AWS credentials.
+A Go-based CLI tool to manage and monitor AWS EKS node groups with comprehensive pre-flight health checks using default AWS metrics.
 
 ## Features
 
--   List all managed node groups in your EKS cluster
--   See AMI status for each nodegroup (✅ Latest, ❌ Outdated, ⚠️ Updating)
--   Detect and show nodegroups that are currently being updated
--   Update the AMI for all or specific nodegroups (rolling by default, with optional force)
--   **Dry run mode**: Preview what changes would be made without executing them
--   Color-coded, readable CLI output
+-   **🔍 Pre-flight Health Checks**: Validate cluster readiness before AMI updates using default EC2 metrics (no additional setup required)
+-   **📊 Real-time Monitoring**: Live progress tracking with professional spinner displays and clean completion summaries
+-   **📋 Cluster Management**: List all managed node groups with AMI status (✅ Latest, ❌ Outdated, ⚠️ Updating)
+-   **🔄 Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode
+-   **👀 Dry Run Mode**: Preview changes with comprehensive details before execution
+-   **⚡ Short Flags**: Convenient short flags for all commands (`-c`, `-n`, `-d`, `-f`, etc.)
+-   **🎨 Enhanced UI**: Color-coded output with progress bars and clear status indicators
+-   **🛡️ Graceful Degradation**: Works with just AWS credentials, provides clear guidance for optional features
 
 ## Requirements
 
--   Go 1.23+
--   AWS credentials (`~/.aws/credentials` or environment variables)
--   kubeconfig (`~/.kube/config`)
+### ✅ Required (Core Functionality)
+-   Go 1.24+
+-   AWS credentials (`~/.aws/credentials`, environment variables, or IAM roles)
+
+### ⚠️ Optional (Enhanced Features)
+-   `kubectl` and kubeconfig (`~/.kube/config`) - for Kubernetes workload validation
+-   Container Insights setup - for memory utilization metrics
+-   CloudWatch agent - for advanced memory and disk metrics
+
+> **Note**: The tool works with just AWS credentials! Health checks use default EC2 metrics and provide clear guidance for enabling optional features.
 
 ## Installation
 
@@ -52,14 +61,14 @@ Alternatively, download pre-built binaries from the [releases page](https://gith
 
 1. Go to the [latest release](https://github.com/dantech2000/refresh/releases/latest)
 2. Download the appropriate binary for your platform:
-   - `refresh_v0.1.4_darwin_amd64.tar.gz` (macOS Intel)
-   - `refresh_v0.1.4_darwin_arm64.tar.gz` (macOS Apple Silicon)
-   - `refresh_v0.1.4_linux_amd64.tar.gz` (Linux x64)
-   - `refresh_v0.1.4_windows_amd64.tar.gz` (Windows x64)
+   - `refresh_v0.1.7_darwin_amd64.tar.gz` (macOS Intel)
+   - `refresh_v0.1.7_darwin_arm64.tar.gz` (macOS Apple Silicon)
+   - `refresh_v0.1.7_linux_amd64.tar.gz` (Linux x64)
+   - `refresh_v0.1.7_windows_amd64.tar.gz` (Windows x64)
 3. Extract and move to your PATH:
    ```bash
    # Example for macOS/Linux
-   tar -xzf refresh_v0.1.4_darwin_arm64.tar.gz
+   tar -xzf refresh_v0.1.7_darwin_arm64.tar.gz
    sudo mv refresh /usr/local/bin/
    chmod +x /usr/local/bin/refresh
    ```
@@ -257,6 +266,102 @@ development-blue
 
 When multiple nodegroups match in update commands, the tool will show all matches and ask for confirmation before proceeding.
 
+## 🔍 Health Checks
+
+The refresh tool includes comprehensive pre-flight health checks that validate cluster readiness before AMI updates using **default AWS metrics** (no additional setup required).
+
+### Health Check Commands
+
+```bash
+# Run health check only (no update)
+refresh update-ami -c development-blue -H
+refresh update-ami --cluster development-blue --health-only
+
+# Update with health checks (default behavior)
+refresh update-ami -c development-blue
+refresh update-ami --cluster development-blue
+
+# Skip health checks
+refresh update-ami -c development-blue -s
+refresh update-ami --cluster development-blue --skip-health-check
+
+# Force update (bypasses health checks)
+refresh update-ami -c development-blue -f
+refresh update-ami --cluster development-blue --force
+```
+
+### Sample Health Check Output
+
+```
+Cluster Health Assessment:
+
+[████████████████████] Node Health          PASS
+[████████████████████] Cluster Capacity     PASS  
+[████████████████████] Critical Workloads   PASS
+[██████████████████▒▒] Pod Disruption Budgets WARN
+[█████████████████▒▒▒] Resource Balance     WARN
+
+Status: READY WITH WARNINGS (2 issues found)
+
+Using default EC2 metrics (CPU only)
+Memory metrics require Container Insights setup
+
+Details:
+- Average CPU utilization: 45.2%
+- CPU distribution and utilization within acceptable ranges
+- 9 deployments missing PDBs
+
+Warnings:
+- 9 deployments missing PDBs
+- Moderate CPU utilization detected
+```
+
+### Health Check Categories
+
+**✅ Works Out-of-the-Box (Default AWS Metrics)**:
+- **Node Health**: All nodegroups must be in ACTIVE status (EKS API)
+- **Cluster Capacity**: Sufficient CPU resources using default EC2 metrics (minimum 30% headroom)
+- **Resource Balance**: CPU utilization distribution across nodes using default EC2 metrics
+
+**⚠️ Requires Additional Setup**:
+- **Critical Workloads**: All kube-system pods running (requires kubectl access)
+- **Pod Disruption Budgets**: Missing PDBs for user workloads (requires kubectl access)
+- **Memory Metrics**: Requires Container Insights or CloudWatch agent setup
+
+### Graceful Degradation
+
+When optional services aren't available, the tool provides helpful guidance:
+- **No kubectl access**: "Install kubectl and configure cluster access to enable this check"
+- **No Container Insights**: "Memory metrics require Container Insights setup"
+- **Limited metrics**: "Using default EC2 metrics (CPU only)"
+
+## ⚡ CLI Short Flags
+
+All commands support convenient short flags for faster typing:
+
+```bash
+# List with short flags
+refresh list -c prod -n web
+
+# Quick update with dry-run
+refresh update-ami -c staging -n api -d -q
+
+# Force update with health check skip
+refresh update-ami -c prod -f -s
+
+# Health check only with quiet mode
+refresh update-ami -c test -H -q
+```
+
+**Common Short Flags**:
+- `-c, --cluster` - EKS cluster name or pattern
+- `-n, --nodegroup` - Nodegroup name or pattern
+- `-f, --force` - Force update if possible
+- `-d, --dry-run` - Preview changes without executing
+- `-q, --quiet` - Minimal output mode
+- `-s, --skip-health-check` - Skip pre-flight validation
+- `-H, --health-only` - Run health checks only
+
 ## Release Process
 
 ### Prerequisites
@@ -393,4 +498,4 @@ This project includes automated dependency management:
 
 ---
 
-This is a work in progress...
+**Refresh** is a production-ready CLI tool for managing AWS EKS node groups with comprehensive monitoring, dry-run capabilities, and intelligent partial name matching.

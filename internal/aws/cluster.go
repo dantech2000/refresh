@@ -69,7 +69,7 @@ func ClusterName(ctx context.Context, awsCfg aws.Config, cliFlag string) (string
 	// Get available clusters
 	clusters, err := availableClusters(ctx, awsCfg)
 	if err != nil {
-		return "", fmt.Errorf("failed to list available clusters: %v", err)
+		return "", FormatAWSError(err, "listing EKS clusters")
 	}
 
 	if len(clusters) == 0 {
@@ -113,7 +113,7 @@ func availableClusters(ctx context.Context, awsCfg aws.Config) ([]string, error)
 
 	out, err := eksClient.ListClusters(ctx, &eks.ListClustersInput{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list clusters: %v", err)
+		return nil, err // Let the caller handle error formatting
 	}
 
 	return out.Clusters, nil

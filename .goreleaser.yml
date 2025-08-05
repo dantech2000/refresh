@@ -20,14 +20,12 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X main.versionInfo.Version={{.Version}}
+      - -s -w -X github.com/dantech2000/refresh/internal/commands.VersionInfo.Version={{.Version}} -X github.com/dantech2000/refresh/internal/commands.VersionInfo.Commit={{.Commit}} -X github.com/dantech2000/refresh/internal/commands.VersionInfo.BuildDate={{.Date}}
     env:
       - CGO_ENABLED=0
 
 archives:
   - id: default
-    builds:
-      - refresh
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:

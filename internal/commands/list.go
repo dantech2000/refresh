@@ -24,12 +24,14 @@ func ListCommand() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "cluster",
+				Aliases: []string{"c"},
 				Usage:   "EKS cluster name or partial name pattern (overrides kubeconfig)",
 				EnvVars: []string{"EKS_CLUSTER_NAME"},
 			},
 			&cli.StringFlag{
-				Name:  "nodegroup",
-				Usage: "Nodegroup name or partial name pattern to filter results",
+				Name:    "nodegroup",
+				Aliases: []string{"n"},
+				Usage:   "Nodegroup name or partial name pattern to filter results",
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -38,6 +40,14 @@ func ListCommand() *cli.Command {
 			if err != nil {
 				color.Red("Failed to load AWS config: %v", err)
 				return err
+			}
+
+			// Validate AWS credentials early to provide better error messages
+			if err := awsClient.ValidateAWSCredentials(ctx, awsCfg); err != nil {
+				color.Red("%v", err)
+				fmt.Println()
+				awsClient.PrintCredentialHelp()
+				return fmt.Errorf("AWS credential validation failed")
 			}
 			clusterName, err := awsClient.ClusterName(ctx, awsCfg, c.String("cluster"))
 			if err != nil {

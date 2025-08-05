@@ -7,6 +7,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/fatih/color"
@@ -14,8 +16,10 @@ import (
 
 	awsClient "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/dryrun"
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func UpdateAmiCommand() *cli.Command {
@@ -25,38 +29,56 @@ func UpdateAmiCommand() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "cluster",
+				Aliases: []string{"c"},
 				Usage:   "EKS cluster name or partial name pattern (overrides kubeconfig)",
 				EnvVars: []string{"EKS_CLUSTER_NAME"},
 			},
 			&cli.StringFlag{
-				Name:  "nodegroup",
-				Usage: "Nodegroup name or partial name pattern (if not set, update all)",
+				Name:    "nodegroup",
+				Aliases: []string{"n"},
+				Usage:   "Nodegroup name or partial name pattern (if not set, update all)",
 			},
 			&cli.BoolFlag{
-				Name:  "force",
-				Usage: "Force update if possible",
+				Name:    "force",
+				Aliases: []string{"f"},
+				Usage:   "Force update if possible",
 			},
 			&cli.BoolFlag{
-				Name:  "dry-run",
-				Usage: "Preview changes without executing them",
+				Name:    "dry-run",
+				Aliases: []string{"d"},
+				Usage:   "Preview changes without executing them",
 			},
 			&cli.BoolFlag{
-				Name:  "no-wait",
-				Usage: "Don't wait for update completion (original behavior)",
+				Name:    "no-wait",
+				Aliases: []string{"w"},
+				Usage:   "Don't wait for update completion (original behavior)",
 			},
 			&cli.BoolFlag{
-				Name:  "quiet",
-				Usage: "Minimal output mode",
+				Name:    "quiet",
+				Aliases: []string{"q"},
+				Usage:   "Minimal output mode",
 			},
 			&cli.DurationFlag{
-				Name:  "timeout",
-				Usage: "Maximum time to wait for update completion",
-				Value: 40 * time.Minute,
+				Name:    "timeout",
+				Aliases: []string{"t"},
+				Usage:   "Maximum time to wait for update completion",
+				Value:   40 * time.Minute,
 			},
 			&cli.DurationFlag{
-				Name:  "poll-interval",
-				Usage: "Polling interval for checking update status",
-				Value: 15 * time.Second,
+				Name:    "poll-interval",
+				Aliases: []string{"p"},
+				Usage:   "Polling interval for checking update status",
+				Value:   15 * time.Second,
+			},
+			&cli.BoolFlag{
+				Name:    "skip-health-check",
+				Aliases: []string{"s"},
+				Usage:   "Skip pre-flight health validation",
+			},
+			&cli.BoolFlag{
+				Name:    "health-only",
+				Aliases: []string{"H"},
+				Usage:   "Run health check only, don't update",
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -65,6 +87,14 @@ func UpdateAmiCommand() *cli.Command {
 			if err != nil {
 				color.Red("Failed to load AWS config: %v", err)
 				return err
+			}
+
+			// Validate AWS credentials early to provide better error messages
+			if err := awsClient.ValidateAWSCredentials(ctx, awsCfg); err != nil {
+				color.Red("%v", err)
+				fmt.Println()
+				awsClient.PrintCredentialHelp()
+				return fmt.Errorf("AWS credential validation failed")
 			}
 			clusterName, err := awsClient.ClusterName(ctx, awsCfg, c.String("cluster"))
 			if err != nil {
@@ -81,6 +111,70 @@ func UpdateAmiCommand() *cli.Command {
 			quiet := c.Bool("quiet")
 			timeout := c.Duration("timeout")
 			pollInterval := c.Duration("poll-interval")
+			skipHealthCheck := c.Bool("skip-health-check")
+			healthOnly := c.Bool("health-only")
+
+			// Run pre-flight health checks (unless skipped or in dry-run mode)
+			if !skipHealthCheck && !dryRun && !force {
+				if !quiet {
+					ui.DisplayHealthCheckStart(clusterName)
+				}
+
+				// Create health checker with available clients
+				cwClient := cloudwatch.NewFromConfig(awsCfg)
+				asgClient := autoscaling.NewFromConfig(awsCfg)
+				k8sClient, k8sErr := health.GetKubernetesClient()
+				if k8sClient == nil && !quiet {
+					color.Yellow("Warning: Kubernetes client not available (%v)", k8sErr)
+					color.Yellow("Health checks will be limited to AWS-only validations")
+				}
+				healthChecker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
+
+				// Run health checks with spinner
+				spinner := ui.NewHealthSpinner("Validating update readiness...")
+				if !quiet {
+					_ = spinner.Start()
+				}
+
+				summary := healthChecker.RunAllChecks(ctx, clusterName)
+
+				if !quiet {
+					_ = spinner.Stop()
+				}
+
+				// Display results
+				if !quiet {
+					ui.DisplayHealthResults(summary)
+				}
+
+				// Handle results based on decision
+				switch summary.Decision {
+				case health.DecisionBlock:
+					ui.DisplayHealthCheckComplete(summary.Decision)
+					return fmt.Errorf("pre-flight health checks failed")
+
+				case health.DecisionWarn:
+					if healthOnly {
+						return nil // Just show results and exit
+					}
+					if !quiet && !ui.PromptContinueWithWarnings(summary.Warnings) {
+						color.Yellow("Update cancelled by user")
+						return fmt.Errorf("update cancelled")
+					}
+
+				case health.DecisionProceed:
+					if healthOnly {
+						ui.DisplayHealthCheckComplete(summary.Decision)
+						return nil // Just show results and exit
+					}
+					if !quiet {
+						ui.DisplayHealthCheckComplete(summary.Decision)
+					}
+				}
+			} else if healthOnly {
+				color.Yellow("Health check skipped due to --skip-health-check, --dry-run, or --force flags")
+				return nil
+			}
 
 			// Get all nodegroups first
 			ngOut, err := eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{

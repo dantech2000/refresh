@@ -91,6 +91,13 @@ func printUpdateProgressTree(updates []refreshTypes.UpdateProgress) int {
 // DisplayCompletionSummary shows the final summary when all updates are complete in tree format
 func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	if !config.Quiet {
+		// Clear previous progress output if any was printed
+		if monitor.LastPrinted > 0 {
+			fmt.Printf("\033[%dA", monitor.LastPrinted)
+			fmt.Print("\033[J")
+			monitor.LastPrinted = 0
+		}
+
 		totalDuration := time.Since(monitor.StartTime)
 
 		fmt.Printf("\nAll updates completed in %v\n\n", totalDuration.Round(time.Second))
