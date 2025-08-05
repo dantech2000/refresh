@@ -199,6 +199,5 @@ tasks:
       - git tag -a {{.VERSION}} -m "Release {{.VERSION}}"
       - git push origin {{.VERSION}}
     vars:
-      VERSION: '{{.VERSION | default "v0.1.3"}}'
-    requires:
-      vars: [VERSION]
+      VERSION:
+        sh: grep -o 'Version:[[:space:]]*"[^"]*"' internal/commands/version.go | sed 's/Version:[[:space:]]*"\(.*\)"/\1/'
