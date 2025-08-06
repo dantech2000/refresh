@@ -54,12 +54,18 @@ func main() {
 
 	app := &cli.App{
 		Name:  "refresh",
-		Usage: "Manage and monitor AWS EKS node groups",
+		Usage: "Manage and monitor AWS EKS clusters and node groups",
 		Commands: []*cli.Command{
+			// Existing commands
 			commands.ListCommand(),
 			commands.VersionCommand(),
 			commands.UpdateAmiCommand(),
 			commands.ManPageCommand(),
+
+			// New cluster operations commands
+			commands.DescribeClusterCommand(),
+			commands.ListClustersCommand(),
+			commands.CompareClustersCommand(),
 		},
 	}
 

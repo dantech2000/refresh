@@ -9,7 +9,7 @@ import (
 )
 
 var VersionInfo = types.VersionInfo{
-	Version:   "v0.1.9",
+	Version:   "v0.2.0",
 	Commit:    "",
 	BuildDate: "",
 }

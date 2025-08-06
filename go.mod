@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.211.3
 	github.com/aws/aws-sdk-go-v2/service/eks v1.63.2
+	github.com/aws/aws-sdk-go-v2/service/iam v1.45.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.58.2
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.19
 	github.com/aws/smithy-go v1.22.5
@@ -18,6 +19,7 @@ require (
 	github.com/theckman/yacspin v0.13.12
 	github.com/urfave/cli/v2 v2.27.6
 	github.com/yarlson/pin v0.9.1
+	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/apimachinery v0.33.3
 	k8s.io/client-go v0.33.3
 )
@@ -68,7 +70,6 @@ require (
 	google.golang.org/protobuf v1.36.5 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.33.3 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
