@@ -2,13 +2,22 @@ package commands
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
+)
+
+const (
+	// ManPageFileMode defines the file permissions for the man page file
+	ManPageFileMode = 0644
+	// ManPageDirMode defines the directory permissions for man page directories
+	ManPageDirMode = 0755
 )
 
 func ManPageCommand() *cli.Command {
@@ -43,7 +52,7 @@ func installManPage(c *cli.Context) error {
 	}
 
 	// Write the man page file
-	if err := os.WriteFile(manPath, []byte(manContent), 0644); err != nil {
+	if err := os.WriteFile(manPath, []byte(manContent), ManPageFileMode); err != nil {
 		return fmt.Errorf("failed to write man page to %s: %w", manPath, err)
 	}
 
@@ -70,6 +79,10 @@ func installManPage(c *cli.Context) error {
 func getManPageDir() string {
 	// Priority list of user-writable directories
 	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		// Fallback to current directory if HOME is not set
+		homeDir = "."
+	}
 	userDirs := []string{
 		filepath.Join(homeDir, ".local/share/man/man1"),
 		filepath.Join(homeDir, ".local/man/man1"),
@@ -89,18 +102,22 @@ func getManPageDir() string {
 
 func isWritableDir(dir string) bool {
 	// Create parent directories if they don't exist
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, ManPageDirMode); err != nil {
 		return false
 	}
 
-	// Test write permission by creating a temporary file
-	testFile := filepath.Join(dir, ".write_test")
+	// Test write permission by creating a temporary file with unique name
+	testFile := filepath.Join(dir, fmt.Sprintf(".write_test_%d", time.Now().UnixNano()))
 	file, err := os.Create(testFile)
 	if err != nil {
 		return false
 	}
 	_ = file.Close() // Ignore close error for test file
-	_ = os.Remove(testFile) // Ignore remove error for test file
+	
+	// Clean up temporary file with error logging
+	if err := os.Remove(testFile); err != nil {
+		log.Printf("Warning: failed to clean up temporary file %s: %v", testFile, err)
+	}
 	return true
 }
 

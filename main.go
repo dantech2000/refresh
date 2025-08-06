@@ -13,6 +13,12 @@ import (
 	"github.com/dantech2000/refresh/internal/commands"
 )
 
+var (
+	// Compile regex patterns once at package initialization
+	sectionRegex = regexp.MustCompile(`(?m)^(NAME|USAGE|COMMANDS|GLOBAL OPTIONS|OPTIONS|DESCRIPTION|VERSION|COPYRIGHT):`)
+	commandRegex = regexp.MustCompile(`(?m)^(\s+)([a-zA-Z][a-zA-Z0-9-_]*(?:,\s*[a-zA-Z][a-zA-Z0-9-_]*)*)(\s+.*)$`)
+)
+
 func coloredHelpPrinter(w io.Writer, templ string, data interface{}) {
 	// First, render the template using the default printer to a buffer
 	var buf bytes.Buffer
@@ -26,13 +32,11 @@ func coloredHelpPrinter(w io.Writer, templ string, data interface{}) {
 	yellow := color.New(color.FgYellow)
 
 	// Apply colors to section headers
-	sectionRegex := regexp.MustCompile(`(?m)^(NAME|USAGE|COMMANDS|GLOBAL OPTIONS|OPTIONS|DESCRIPTION|VERSION|COPYRIGHT):`)
 	helpText = sectionRegex.ReplaceAllStringFunc(helpText, func(match string) string {
 		return cyan.Sprint(match)
 	})
 
 	// Color command names (looking for lines with command format)
-	commandRegex := regexp.MustCompile(`(?m)^(\s+)([a-zA-Z][a-zA-Z0-9-_]*(?:,\s*[a-zA-Z][a-zA-Z0-9-_]*)*)(\s+.*)$`)
 	helpText = commandRegex.ReplaceAllStringFunc(helpText, func(match string) string {
 		parts := commandRegex.FindStringSubmatch(match)
 		if len(parts) >= 4 {

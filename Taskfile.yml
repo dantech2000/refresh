@@ -202,23 +202,9 @@ tasks:
       VERSION:
         sh: grep -o 'Version:[[:space:]]*"[^"]*"' internal/commands/version.go | sed 's/Version:[[:space:]]*"\(.*\)"/\1/'
 
-  build-man:
-    desc: Generate man page
+  install-man-page:
+    desc: Install man page using the new built-in command (no sudo required)
     cmds:
       - go build -o refresh .
-      - ./refresh --man > refresh.1
-      - gzip -k refresh.1
-      - 'echo "Man page generated: refresh.1.gz"'
-
-  install-man:
-    desc: Install man page to system
-    deps: [build-man]
-    cmds:
-      - sudo install -m 644 refresh.1.gz /usr/local/share/man/man1/
-      - command -v mandb > /dev/null 2>&1 && sudo mandb || true
-      - 'echo "Man page installed. Try: man refresh"'
-    
-  clean-man:
-    desc: Remove generated man files
-    cmds:
-      - rm -f refresh.1 refresh.1.gz
+      - ./refresh install-man
+      - rm -f refresh  # Clean up temporary binary
