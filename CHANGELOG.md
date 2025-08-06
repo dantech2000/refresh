@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2025-08-06
+
+### Added
+- **Man Page Installation**: New `install-man` (alias: `install-manpage`) command for installing comprehensive offline documentation
+- **User-First Installation**: Man pages install to user-writable directories (`$HOME/.local/share/man/man1`) without requiring sudo
+- **Cross-Platform Support**: Man page installation works seamlessly on macOS, Linux, and Unix-like systems
+- **Auto-Discovery**: Installed man pages are automatically found by the `man` command via standard MANPATH
+- **Smart Directory Selection**: Automatically selects first writable directory with fallback hierarchy
+- **Permission Checking**: Verifies write permissions before installation with clear error messages
+
+### Enhanced
+- **CLI Documentation**: Users can now access complete documentation offline with `man refresh`
+- **Installation Experience**: No more permission denied errors when installing documentation
+- **Directory Structure**: Automatic creation of man page directory structure if it doesn't exist
+
+### Removed
+- **Deprecated --man Flag**: Removed the old `--man` flag that output raw man page content in favor of proper installation command
+
+### Technical Improvements
+- **Write Permission Validation**: Pre-installation checks ensure successful man page installation
+- **MANPATH Integration**: Automatic detection of whether setup instructions are needed
+- **Directory Priority Logic**: Smart selection from `$HOME/.local/share/man/man1` → `$HOME/.local/man/man1` → `$HOME/man/man1`
+
 ## [0.1.8] - 2025-08-05
 
 ### Added
