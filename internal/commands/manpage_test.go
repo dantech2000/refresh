@@ -35,17 +35,17 @@ func TestGetManPageDir(t *testing.T) {
 			originalHome := os.Getenv("HOME")
 			defer func() {
 				if originalHome != "" {
-					os.Setenv("HOME", originalHome)
+					_ = os.Setenv("HOME", originalHome)
 				} else {
-					os.Unsetenv("HOME")
+					_ = os.Unsetenv("HOME")
 				}
 			}()
 
 			// Set test HOME
 			if tt.homeEnv != "" {
-				os.Setenv("HOME", tt.homeEnv)
+				_ = os.Setenv("HOME", tt.homeEnv)
 			} else {
-				os.Unsetenv("HOME")
+				_ = os.Unsetenv("HOME")
 			}
 
 			result := getManPageDir()
@@ -60,7 +60,9 @@ func TestGetManPageDir(t *testing.T) {
 func TestIsWritableDir(t *testing.T) {
 	// Create a temporary directory for testing
 	tempDir := filepath.Join(os.TempDir(), "test_manpage_"+time.Now().Format("20060102_150405"))
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+	}()
 
 	tests := []struct {
 		name     string
@@ -103,7 +105,9 @@ func TestIsWritableDir(t *testing.T) {
 func TestIsWritableDirConcurrentSafe(t *testing.T) {
 	// Test that multiple concurrent calls don't interfere with each other
 	tempDir := filepath.Join(os.TempDir(), "test_concurrent_"+time.Now().Format("20060102_150405"))
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+	}()
 
 	// Create the directory first
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
@@ -197,10 +201,12 @@ func TestManPageConstants(t *testing.T) {
 // BenchmarkIsWritableDir benchmarks the isWritableDir function
 func BenchmarkIsWritableDir(b *testing.B) {
 	tempDir := filepath.Join(os.TempDir(), "bench_manpage")
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+	}()
 	
 	// Create directory once
-	os.MkdirAll(tempDir, 0755)
+	_ = os.MkdirAll(tempDir, 0755)
 	
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
