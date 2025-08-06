@@ -201,3 +201,10 @@ tasks:
     vars:
       VERSION:
         sh: grep -o 'Version:[[:space:]]*"[^"]*"' internal/commands/version.go | sed 's/Version:[[:space:]]*"\(.*\)"/\1/'
+
+  install-man-page:
+    desc: Install man page using the new built-in command (no sudo required)
+    cmds:
+      - go build -o refresh .
+      - ./refresh install-man
+      - rm -f refresh  # Clean up temporary binary

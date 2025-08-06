@@ -191,7 +191,6 @@ func (hc *HealthChecker) analyzeResourceDistribution(metrics []NodeMetrics) Reso
 	return analysis
 }
 
-
 // InstanceData represents an EC2 instance with its associated node name
 type InstanceData struct {
 	InstanceID string

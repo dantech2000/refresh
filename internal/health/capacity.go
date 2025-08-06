@@ -117,7 +117,6 @@ func (hc *HealthChecker) getEC2ClusterCPUMetrics(ctx context.Context, clusterNam
 	return allValues, nil
 }
 
-
 // calculateAverage calculates the average of a slice of float64 values
 func calculateAverage(values []float64) float64 {
 	if len(values) == 0 {
@@ -163,7 +162,7 @@ func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName 
 				if asg.Name != nil {
 					asgInstanceIDs, err := hc.getASGInstanceIDs(ctx, *asg.Name)
 					if err != nil {
-						continue // Skip failed ASGs  
+						continue // Skip failed ASGs
 					}
 					instanceIDs = append(instanceIDs, asgInstanceIDs...)
 				}
@@ -173,7 +172,6 @@ func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName 
 
 	return instanceIDs, nil
 }
-
 
 // getASGInstanceIDs retrieves instance IDs from an Auto Scaling Group
 func (hc *HealthChecker) getASGInstanceIDs(ctx context.Context, asgName string) ([]string, error) {
