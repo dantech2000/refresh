@@ -43,8 +43,7 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 
 	// Check if expired
 	if time.Now().After(item.ExpiresAt) {
-		// Remove expired item
-		delete(c.items, key)
+		// Do not mutate under read lock; treat as miss and let cleanup remove it
 		return nil, false
 	}
 

@@ -11,9 +11,9 @@
 
 | Feature | Status | Effort | AWS APIs | Dependencies | Champion |
 |---------|--------|--------|-----------|-------------|----------|
-| Enhanced Cluster Operations | 📋 Not Started | L | EKS, EC2, IAM | None | TBD |
-| Advanced Nodegroup Management | 📋 Not Started | XL | EKS, EC2, ASG, CW | Cluster Ops | TBD |
-| EKS Add-ons Management | 📋 Not Started | L | EKS | None | TBD |
+| Enhanced Cluster Operations | ✅ Complete (Phase 1 scope) | L | EKS, EC2, IAM | None | TBD |
+| Advanced Nodegroup Management | 🚧 In Progress | XL | EKS, EC2, ASG, CW, Pricing | Cluster Ops | TBD |
+| EKS Add-ons Management | 🚧 In Progress | M | EKS | None | TBD |
 
 ### Phase 2: Identity & Security (v0.3.x)  
 *Target Release: Q2 2025 | Priority: HIGH*
@@ -63,7 +63,7 @@
 ### Phase 1 Additions (v0.2.x)
 ```go
 "github.com/aws/aws-sdk-go-v2/service/iam"           // Enhanced cluster/nodegroup ops
-"github.com/aws/aws-sdk-go-v2/service/logs"         // Add-on logging analysis
+// removed for now
 ```
 
 ### Phase 2 Additions (v0.3.x)
@@ -76,7 +76,7 @@
 ### Phase 3 Additions (v0.4.x)
 ```go
 "github.com/aws/aws-sdk-go-v2/service/costexplorer"  // Cost analysis
-"github.com/aws/aws-sdk-go-v2/service/pricing"      // Pricing data
+"github.com/aws/aws-sdk-go-v2/service/pricing"      // Pricing data (in use for Phase 1)
 "github.com/aws/aws-sdk-go-v2/service/xray"         // Distributed tracing
 "github.com/aws/aws-sdk-go-v2/service/applicationinsights" // App monitoring
 ```
@@ -110,15 +110,15 @@ graph TD
 
 ## Performance Benchmarks
 
-### Target Performance vs eksctl
+### Target Performance
 
-| Operation | eksctl Time | refresh Target | Improvement Goal |
-|-----------|-------------|----------------|------------------|
-| List clusters | 5-8 seconds | 1-2 seconds | **4x faster** |
-| Cluster details | 3-5 seconds | 1 second | **5x faster** |
-| Nodegroup list | 4-6 seconds | 1-2 seconds | **3x faster** |
-| Add-on operations | 2-5 minutes | 30-60 seconds | **4x faster** |
-| Scaling operations | 3-10 minutes | 1-3 minutes | **3x faster** |
+| Operation | Typical Time | Target | Goal |
+|-----------|--------------|--------|------|
+| List clusters | ~3-5 seconds | 1-2 seconds | Faster |
+| Cluster details | ~2-3 seconds | ~1 second | Faster |
+| Nodegroup list | ~3-5 seconds | 1-2 seconds | Faster |
+| Add-on operations | ~2-5 minutes | 30-60 seconds | Faster |
+| Scaling operations | ~3-10 minutes | 1-3 minutes | Faster |
 
 ### Success Criteria
 - ✅ **Performance**: Meet or exceed all benchmark targets
@@ -218,12 +218,12 @@ graph TD
 - ✅ **v0.1.7**: Real-time progress monitoring for AMI updates
 
 ### In Development
-- 📋 **All Phase 1 features**: Waiting for development to begin
+- 🚧 **EKS Add-ons Management**: list/describe/update implemented; bulk update/security scan pending
 
 ### Next Planned Features (by Priority)
 1. **Enhanced Cluster Operations** - Foundation for all other features
 2. **EKS Add-ons Management** - High user demand, quick wins
-3. **Advanced Nodegroup Management** - Core value proposition vs eksctl
+3. **Advanced Nodegroup Management** - Core value proposition
 
 ---
 

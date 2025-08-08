@@ -1,3 +1,22 @@
+## Unreleased
+
+### Changed
+- CLI refactor to resource-first groups with verbs as subcommands:
+  - `refresh cluster` (list, describe, compare)
+  - `refresh nodegroup` (list, describe, scale, update-ami, recommendations)
+  - `refresh addon` (list, describe, update)
+- Removed legacy top-level commands (e.g., `list-nodegroups`, `list-clusters`, etc.). Use grouped form above.
+
+## v0.2.0 - Nodegroup Intelligence (WIP)
+
+- Added `list-nodegroups`, `describe-nodegroup`, `scale-nodegroup`, and `nodegroup-recommendations` commands
+- Optional utilization (CPU via EC2 metrics) and cost (AWS Pricing) in list/describe
+- Health-aware scaling with optional wait and PDB pre-checks
+- Instance details in describe (ID/type/launch/lifecycle/state)
+- Timeframe flag for utilization (1h/3h/24h); outputs show selected window
+- Table alignment improvements (dynamic widths, ANSI-aware headers)
+- Workloads/PDB output is experimental and gated pending kubeconfig handling
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -6,6 +25,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+- Global `--timeout, -t` flag (with `REFRESH_TIMEOUT`) to cap operation durations
+- `list-clusters`: `--max-concurrency, -C` (and `REFRESH_MAX_CONCURRENCY`) to limit concurrent region requests
+- `list-clusters`: `REFRESH_EKS_REGIONS` env var to override the default region set for `-A/--all-regions`
+- Global `--max-concurrency, -C` flag to set a default concurrency for multi-region operations
+
+### Enhanced
+- Accurate node readiness: when kubeconfig is available, readiness reflects Kubernetes `NodeReady==True` count
+- Robust AWS pagination for clusters, nodegroups, and add-ons to avoid truncated results
+- Concurrency limiting in multi-region listing to reduce throttling and stabilize latencies
+- Deterministic cache keys for stable caching behavior across runs
+- Improved AWS error messages via unified formatting in nodegroup flows
+- Monitoring retry backoff respects context cancellation
+- Documentation updates for partition awareness (commercial default; Gov/China via explicit regions/env)
+
+### Fixed
+- Cache race in `internal/services/cluster/cache.go` by avoiding writes under `RLock`
+- Colored table alignment for STATUS column in `list-clusters`
 
 ## [0.1.9] - 2025-08-06
 

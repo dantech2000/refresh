@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/dantech2000/refresh/internal/commands"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
 var (
@@ -55,17 +56,30 @@ func main() {
 	app := &cli.App{
 		Name:  "refresh",
 		Usage: "Manage and monitor AWS EKS clusters and node groups",
+		Flags: []cli.Flag{
+			&cli.DurationFlag{
+				Name:    "timeout",
+				Aliases: []string{"t"},
+				Usage:   "Operation timeout for API calls (e.g. 60s, 2m)",
+				Value:   appconfig.DefaultTimeout,
+				EnvVars: []string{"REFRESH_TIMEOUT"},
+			},
+			&cli.IntFlag{
+				Name:    "max-concurrency",
+				Aliases: []string{"C"},
+				Usage:   "Global max concurrency for multi-region operations",
+				Value:   appconfig.DefaultMaxConcurrency,
+				EnvVars: []string{"REFRESH_MAX_CONCURRENCY"},
+			},
+		},
 		Commands: []*cli.Command{
-			// Existing commands
-			commands.ListCommand(),
+			// Resource-first groups
+			commands.ClusterCommand(),
+			commands.NodegroupCommand(),
+			commands.AddonCommand(),
+			// Misc
 			commands.VersionCommand(),
-			commands.UpdateAmiCommand(),
 			commands.ManPageCommand(),
-
-			// New cluster operations commands
-			commands.DescribeClusterCommand(),
-			commands.ListClustersCommand(),
-			commands.CompareClustersCommand(),
 		},
 	}
 

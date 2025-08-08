@@ -6,18 +6,17 @@
 
 ## Executive Summary
 
-This document outlines the implementation strategy for expanding the refresh tool from a specialized nodegroup AMI management tool into a comprehensive EKS operational platform. Our approach focuses on addressing eksctl limitations while leveraging new AWS features and providing superior user experience.
+This document outlines the implementation strategy for expanding the refresh tool from a specialized nodegroup AMI management tool into a comprehensive EKS operational platform. Our approach focuses on leveraging AWS features and providing superior user experience.
 
 ## Market Positioning
 
 ### Current Tool Comparison
-- **eksctl**: Cluster lifecycle management (creation/deletion) with CloudFormation dependency
 - **AWS CLI**: Low-level API wrapper, complex multi-step operations  
 - **kubectl**: Kubernetes operations, no AWS-specific context
 - **refresh**: ✨ **EKS operational excellence** - health, monitoring, optimization
 
 ### Our Competitive Advantages
-1. **🚀 Performance**: Direct API calls vs CloudFormation overhead
+1. **🚀 Performance**: Direct API calls with no CloudFormation dependency
 2. **🎯 User Experience**: Superior error handling and guidance (already proven)
 3. **📊 Health-First**: Pre-flight checks and validation for all operations
 4. **⚡ Real-Time Monitoring**: Live progress tracking and status updates
@@ -29,27 +28,27 @@ This document outlines the implementation strategy for expanding the refresh too
 *Timeline: 2 months | Priority: High*
 
 #### 1.1 Enhanced Cluster Operations
-**Address eksctl pain points: Slow information retrieval, limited cluster insights**
+**Address common pain points: Slow information retrieval, limited cluster insights**
 
 ```bash
-# Better cluster information (faster than eksctl get cluster)
+# Better cluster information
 refresh describe-cluster -c my-cluster --detailed
 refresh cluster-status -c my-cluster --show-versions --show-endpoints
 refresh cluster-health -c my-cluster --comprehensive
 
-# Multi-cluster operations (eksctl limitation)
+# Multi-cluster operations
 refresh list-clusters --all-regions --show-health
 refresh compare-clusters -c cluster1 -c cluster2
 ```
 
-**Key Improvements over eksctl**:
-- ✅ **3x faster** cluster information retrieval (direct API vs CloudFormation)
+**Key Improvements**:
+- ✅ **Fast** cluster information retrieval (direct API)
 - ✅ **Real-time health status** integrated into cluster information
 - ✅ **Cross-region visibility** without complex configuration
 - ✅ **Comprehensive endpoint analysis** including security configuration
 
 #### 1.2 Advanced Nodegroup Management  
-**Address eksctl limitations: Immutable nodegroups, slow scaling, limited insights**
+**Address limitations: Immutable nodegroups, slow scaling, limited insights**
 
 ```bash
 # Enhanced nodegroup operations
@@ -58,12 +57,12 @@ refresh describe-nodegroup -c my-cluster -n my-ng --show-instances --show-utiliz
 refresh scale-nodegroup -c my-cluster -n my-ng --desired 5 --health-check --wait
 refresh nodegroup-recommendations -c my-cluster -n my-ng --cost-optimization
 
-# Smart operations (eksctl can't do this)
+# Smart operations
 refresh right-size-nodegroups -c my-cluster --analyze-workloads
 refresh optimize-nodegroups -c my-cluster --spot-integration --dry-run
 ```
 
-**Key Improvements over eksctl**:
+**Key Improvements**:
 - ✅ **Health-validated scaling** with pre/post verification
 - ✅ **Cost analysis integration** during nodegroup operations
 - ✅ **Instance-level visibility** and utilization metrics
@@ -71,21 +70,21 @@ refresh optimize-nodegroups -c my-cluster --spot-integration --dry-run
 - ✅ **Workload-aware operations** considering pod disruption budgets
 
 #### 1.3 EKS Add-ons Management
-**Address eksctl limitation: CloudFormation dependency for add-ons**
+**Address limitation: CloudFormation dependency for add-ons**
 
 ```bash
-# Lightweight add-on management (faster than eksctl)
+# Lightweight add-on management
 refresh list-addons -c my-cluster --show-versions --show-health
 refresh describe-addon -c my-cluster -a vpc-cni --show-configuration
 refresh update-addon -c my-cluster -a vpc-cni --version latest --health-check
 refresh addon-compatibility -c my-cluster --k8s-version 1.30
 
-# Bulk operations (eksctl limitation) 
+# Bulk operations
 refresh update-all-addons -c my-cluster --dry-run --health-check
 refresh addon-security-scan -c my-cluster
 ```
 
-**Key Improvements over eksctl**:
+**Key Improvements**:
 - ✅ **No CloudFormation overhead** - direct API operations
 - ✅ **Health validation** before/after add-on operations
 - ✅ **Compatibility checking** with Kubernetes versions
@@ -96,7 +95,7 @@ refresh addon-security-scan -c my-cluster
 *Timeline: 2 months | Priority: High*
 
 #### 2.1 EKS Access Entries (New AWS Feature)
-**Competitive advantage: eksctl recently added basic support, we can do better**
+**Competitive advantage: recently added basic support elsewhere; we can do better**
 
 ```bash
 # Modern access management
@@ -105,12 +104,12 @@ refresh create-access-entry -c my-cluster --principal-arn <arn> --username dev-u
 refresh associate-policy -c my-cluster --entry <id> --policy-arn <policy>
 refresh access-audit -c my-cluster --security-analysis
 
-# Migration assistance (eksctl doesn't help with this)
+# Migration assistance
 refresh migrate-aws-auth -c my-cluster --from-configmap --dry-run
 refresh access-recommendations -c my-cluster --least-privilege
 ```
 
-**Key Improvements over eksctl**:
+**Key Improvements**:
 - ✅ **Migration assistance** from aws-auth ConfigMap
 - ✅ **Security analysis** and least-privilege recommendations  
 - ✅ **Bulk policy management** with validation
@@ -141,7 +140,7 @@ refresh encryption-audit -c my-cluster --kms-analysis
 *Timeline: 3 months | Priority: Medium*
 
 #### 3.1 Fargate Profile Management
-**Address eksctl limitation: Basic Fargate support**
+**Address limitation: Basic Fargate support elsewhere**
 
 ```bash
 refresh list-fargate-profiles -c my-cluster --show-utilization
@@ -151,7 +150,7 @@ refresh fargate-recommendations -c my-cluster --workload-analysis
 ```
 
 #### 3.2 Cost Optimization & Analysis
-**Competitive advantage: No EKS-specific cost tools exist**
+**Competitive advantage: Few EKS-specific cost tools exist**
 
 ```bash
 refresh cost-analysis -c my-cluster --timeframe 30d --breakdown-by service
@@ -161,7 +160,7 @@ refresh cost-forecast -c my-cluster --growth-projections
 ```
 
 #### 3.3 Multi-Region Operations  
-**Address eksctl limitation: Single region focus**
+**Address limitation: Single region focus**
 
 ```bash
 refresh multi-region-health --show-all-clusters
@@ -252,34 +251,34 @@ type HealthChecker interface {
 "github.com/aws/aws-sdk-go-v2/service/organizations"
 ```
 
-## Specific eksctl Improvements We Can Deliver
+## Specific Improvements We Can Deliver
 
 ### Performance Improvements
-| Operation | eksctl Time | refresh Target | Improvement |
-|-----------|-------------|----------------|-------------|
-| List clusters | 5-8 seconds | 1-2 seconds | **4x faster** |
-| Cluster info | 3-5 seconds | 1 second | **5x faster** |
-| Nodegroup list | 4-6 seconds | 1-2 seconds | **3x faster** |
-| Add-on operations | 2-5 minutes | 30-60 seconds | **4x faster** |
+| Operation | Typical Time | Target | Goal |
+|-----------|--------------|--------|------|
+| List clusters | ~3-5 seconds | 1-2 seconds | Faster |
+| Cluster info | ~2-3 seconds | ~1 second | Faster |
+| Nodegroup list | ~3-5 seconds | 1-2 seconds | Faster |
+| Add-on operations | ~2-5 minutes | 30-60 seconds | Faster |
 
 ### User Experience Improvements
-1. **Error Handling**: Already superior to eksctl with detailed guidance
-2. **Progress Monitoring**: Real-time updates vs eksctl's basic waiting
+1. **Error Handling**: Detailed guidance
+2. **Progress Monitoring**: Real-time updates
 3. **Health Validation**: Pre-flight checks prevent failed operations
 4. **Contextual Help**: Embedded best practices and recommendations
 5. **Cross-Region Support**: Native multi-region operations
 
 ### Operational Gaps We Fill
-1. **Day-2 Operations**: eksctl focuses on creation/deletion
-2. **Cost Visibility**: No cost analysis in eksctl
-3. **Security Posture**: Basic security features in eksctl
-4. **Performance Analysis**: No performance monitoring in eksctl
-5. **Workload Intelligence**: eksctl is infrastructure-only
+1. **Day-2 Operations**
+2. **Cost Visibility**
+3. **Security Posture**
+4. **Performance Analysis**
+5. **Workload Intelligence**
 
 ## Success Metrics
 
 ### Phase 1 Success Criteria
-- [ ] **Performance**: 3x faster than eksctl for basic operations
+- [ ] **Performance**: Meets aggressive targets for basic operations
 - [ ] **Adoption**: 1000+ downloads in first month
 - [ ] **User Satisfaction**: >90% positive feedback on UX improvements
 - [ ] **Feature Parity**: Match eksctl's core cluster/nodegroup operations
@@ -300,11 +299,11 @@ type HealthChecker interface {
 
 ### Technical Risks
 1. **API Changes**: Monitor AWS SDK updates, maintain compatibility layer
-2. **Performance**: Benchmark against eksctl, optimize bottlenecks
+2. **Performance**: Benchmark continuously, optimize bottlenecks
 3. **Complexity**: Maintain simple CLI interface despite advanced features
 
 ### Market Risks  
-1. **eksctl Improvements**: AWS may improve eksctl performance
+1. **Market Improvements**: Others may improve performance
 2. **Competition**: New tools may emerge in EKS space
 3. **AWS Integration**: AWS may build competing features
 
@@ -325,9 +324,9 @@ type HealthChecker interface {
 ### Development Process
 1. **Feature Branches**: Each phase developed in parallel
 2. **User Testing**: Beta features with existing user base
-3. **Performance Testing**: Continuous benchmarking vs eksctl
-4. **Documentation**: Maintain comprehensive migration guides from eksctl
+3. **Performance Testing**: Continuous benchmarking
+4. **Documentation**: Maintain comprehensive migration guides
 
 ---
 
-*This roadmap positions refresh as the definitive EKS operational tool, complementing eksctl's lifecycle management with superior day-2 operations, performance, and user experience.*
+*This roadmap positions refresh as the definitive EKS operational tool, with superior day-2 operations, performance, and user experience.*

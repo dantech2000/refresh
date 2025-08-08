@@ -111,12 +111,20 @@ func ClusterName(ctx context.Context, awsCfg aws.Config, cliFlag string) (string
 func availableClusters(ctx context.Context, awsCfg aws.Config) ([]string, error) {
 	eksClient := eks.NewFromConfig(awsCfg)
 
-	out, err := eksClient.ListClusters(ctx, &eks.ListClustersInput{})
-	if err != nil {
-		return nil, err // Let the caller handle error formatting
+	var clusters []string
+	var nextToken *string
+	for {
+		out, err := eksClient.ListClusters(ctx, &eks.ListClustersInput{NextToken: nextToken})
+		if err != nil {
+			return nil, err // Caller handles formatting
+		}
+		clusters = append(clusters, out.Clusters...)
+		if out.NextToken == nil {
+			break
+		}
+		nextToken = out.NextToken
 	}
-
-	return out.Clusters, nil
+	return clusters, nil
 }
 
 // MatchingClusters returns cluster names that contain the given pattern.

@@ -1,3 +1,4 @@
+//go:build ignore
 package commands
 
 import (
@@ -13,29 +14,17 @@ import (
 	"github.com/yarlson/pin"
 
 	awsClient "github.com/dantech2000/refresh/internal/aws"
+    // appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func ListCommand() *cli.Command {
-	return &cli.Command{
-		Name:  "list",
-		Usage: "List all managed node groups",
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:    "cluster",
-				Aliases: []string{"c"},
-				Usage:   "EKS cluster name or partial name pattern (overrides kubeconfig)",
-				EnvVars: []string{"EKS_CLUSTER_NAME"},
-			},
-			&cli.StringFlag{
-				Name:    "nodegroup",
-				Aliases: []string{"n"},
-				Usage:   "Nodegroup name or partial name pattern to filter results",
-			},
-		},
-		Action: func(c *cli.Context) error {
-			ctx := context.Background()
+// Deprecated: legacy top-level list command. Use `refresh nodegroup list`.
+// Kept unregistered; helper retained for reference.
+// deadcode: legacy helper retained for reference only (not compiled)
+// func listNodegroupsTopLevel(c *cli.Context) error {
+			ctx, cancelTimeout := context.WithTimeout(context.Background(), c.Duration("timeout"))
+			defer cancelTimeout()
 			awsCfg, err := config.LoadDefaultConfig(ctx)
 			if err != nil {
 				color.Red("Failed to load AWS config: %v", err)
@@ -78,13 +67,15 @@ func ListCommand() *cli.Command {
 			cancel := spinner.Start(ctx)
 			defer cancel()
 
-			// Update messages periodically with random selection
+			// Update messages periodically with a cancellable context
+			messageCtx, msgCancel := context.WithCancel(ctx)
+			defer msgCancel()
 			go func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()
 				for {
 					select {
-					case <-ctx.Done():
+					case <-messageCtx.Done():
 						return
 					case <-ticker.C:
 						randomMsg := messages[rand.Intn(len(messages))]
@@ -95,7 +86,8 @@ func ListCommand() *cli.Command {
 
 			allNodegroups, err := awsClient.Nodegroups(ctx, awsCfg, clusterName)
 
-			// Stop spinner
+			// Stop spinner and cancel message updater
+			msgCancel()
 			spinner.Stop("Nodegroup information gathered!")
 			if err != nil {
 				errStr := fmt.Sprintf("%v", err)
@@ -145,7 +137,5 @@ func ListCommand() *cli.Command {
 			} else {
 				ui.PrintNodegroupsTree(clusterName, allNodegroups)
 			}
-			return nil
-		},
-	}
-}
+//            return nil
+// }

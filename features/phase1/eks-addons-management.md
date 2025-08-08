@@ -5,19 +5,19 @@
 
 ## Executive Summary
 
-**One-sentence value proposition**: Provide lightning-fast EKS add-on management with health validation, compatibility checking, and bulk operations that eliminate eksctl's CloudFormation overhead and complexity.
+**One-sentence value proposition**: Provide lightning-fast EKS add-on management with health validation, compatibility checking, and bulk operations.
 
 **Target Users**: DevOps Engineers, SREs, Platform Engineers
 
-**Competitive Advantage**: 4x faster operations than eksctl, no CloudFormation dependency, comprehensive health validation, and bulk operations that eksctl cannot perform
+**Competitive Advantage**: Direct API usage (no CloudFormation dependency), comprehensive health validation, and bulk operations
 
-**Success Metric**: 4x faster add-on operations than eksctl with zero failed updates due to pre-flight validation, 90%+ user satisfaction with speed and reliability
+**Success Metric**: Achieve 30–60s add-on operations with zero failed updates due to pre-flight validation, 90%+ user satisfaction with speed and reliability
 
 ## Problem Statement
 
 ### Current Pain Points
-- **eksctl CloudFormation overhead**: Add-on operations take 2-5 minutes due to CloudFormation stack management
-- **No health validation**: eksctl doesn't validate add-on health before/after operations, leading to failed clusters
+- **CloudFormation overhead**: Add-on operations can take 2–5 minutes due to stack management
+- **No health validation**: Many tools don’t validate add-on health before/after operations, leading to failed clusters
 - **Limited bulk operations**: No way to update multiple add-ons with dependency awareness
 - **No compatibility checking**: eksctl doesn't verify Kubernetes version compatibility before add-on updates
 - **Poor error handling**: Generic CloudFormation errors provide no actionable guidance
@@ -32,21 +32,21 @@ As a Platform engineer, I want to perform bulk add-on operations across multiple
 ```
 
 ### Market Context
-- **eksctl limitation**: CloudFormation dependency makes simple add-on operations take 2-5 minutes vs 30-60 seconds with direct API calls
+- **Common limitation**: CloudFormation dependency makes simple add-on operations take 2–5 minutes vs 30–60 seconds with direct API calls
 - **AWS CLI complexity**: Requires multiple commands and manual compatibility checking
 - **User demand**: Consistent requests for faster add-on management and better error handling
 
 ## Solution Overview
 
 ### Core Functionality
-EKS Add-ons Management transforms add-on operations from slow, error-prone CloudFormation-based processes to fast, intelligent, health-validated operations. The feature uses direct EKS API calls to achieve 4x performance improvement while adding comprehensive health validation, compatibility checking, and bulk operations that eksctl simply cannot provide.
+EKS Add-ons Management transforms add-on operations from slow, error-prone CloudFormation-based processes to fast, intelligent, health-validated operations. The feature uses direct EKS API calls while adding comprehensive health validation, compatibility checking, and bulk operations.
 
 Key capabilities include lightning-fast add-on listing with health status, intelligent compatibility checking before updates, health-validated add-on updates with pre/post validation, bulk operations with dependency resolution, and comprehensive security posture analysis for add-on configurations.
 
 The feature integrates with the existing health check framework to ensure all add-on operations maintain cluster health and stability.
 
 ### Key Benefits
-1. **Performance**: 4x faster than eksctl (30-60 seconds vs 2-5 minutes) due to direct API calls
+1. **Performance**: 30–60 seconds due to direct API calls
 2. **User Experience**: Health validation prevents failed operations and provides clear error guidance
 3. **Operational Value**: Bulk operations and compatibility checking save hours of manual work
 4. **Strategic Advantage**: Foundation for advanced security and compliance features in later phases
@@ -55,19 +55,19 @@ The feature integrates with the existing health check framework to ensure all ad
 
 ### Primary Commands
 ```bash
-# Fast add-on listing with health (replaces eksctl get addon)
-refresh list-addons -c my-cluster --show-versions --show-health
+# Fast add-on listing with health
+refresh addon list -c my-cluster --show-versions --show-health
 
 # Comprehensive add-on details (new capability)
-refresh describe-addon -c my-cluster -a vpc-cni --show-configuration
+refresh addon describe -c my-cluster -a vpc-cni --show-configuration
 
-# Health-validated add-on updates (improves eksctl create/update addon)
-refresh update-addon -c my-cluster -a vpc-cni --version latest --health-check
+# Health-validated add-on updates
+refresh addon update -c my-cluster -a vpc-cni --version latest --health-check
 
 # Compatibility analysis (new capability)
 refresh addon-compatibility -c my-cluster --k8s-version 1.30
 
-# Bulk operations (eksctl limitation)
+# Bulk operations
 refresh update-all-addons -c my-cluster --dry-run --health-check
 
 # Security analysis (new capability)
@@ -76,12 +76,12 @@ refresh addon-security-scan -c my-cluster
 
 ### Detailed Command Specifications
 
-#### Command 1: `refresh list-addons`
+#### Command 1: `refresh addon list`
 **Purpose**: Provide fast, comprehensive add-on overview with health and compatibility status
 
 **Syntax**:
 ```bash
-refresh list-addons -c CLUSTER [options]
+refresh addon list -c CLUSTER [options]
 ```
 
 **Required Arguments**:
@@ -97,11 +97,11 @@ refresh list-addons -c CLUSTER [options]
 
 **Examples**:
 ```bash
-# Basic add-on listing (faster than eksctl)
-refresh list-addons -c my-cluster
+# Basic add-on listing
+refresh addon list -c my-cluster
 
 # Comprehensive view with health and versions
-refresh list-addons -c my-cluster --show-versions --show-health --show-compatibility
+refresh addon list -c my-cluster --show-versions --show-health --show-compatibility
 
 # Filter by add-on status
 refresh list-addons -c my-cluster --filter status=Active
@@ -122,15 +122,15 @@ Add-ons for cluster: my-cluster (Kubernetes 1.30)
 
 Summary: 4 healthy, 1 degraded | 3 updates available | 1 compatibility warning
 Actions: ⚡ Use 'refresh update-all-addons --dry-run' to see update plan
-         🔍 Use 'refresh describe-addon -a aws-efs-csi' to diagnose issues
+         🔍 Use 'refresh addon describe -a aws-efs-csi' to diagnose issues
 ```
 
-#### Command 2: `refresh describe-addon`
+#### Command 2: `refresh addon describe`
 **Purpose**: Comprehensive add-on analysis with configuration, health, and compatibility details
 
 **Syntax**:
 ```bash
-refresh describe-addon -c CLUSTER -a ADDON [options]
+refresh addon describe -c CLUSTER -a ADDON [options]
 ```
 
 **Required Arguments**:
@@ -147,18 +147,18 @@ refresh describe-addon -c CLUSTER -a ADDON [options]
 **Examples**:
 ```bash
 # Comprehensive add-on analysis
-refresh describe-addon -c my-cluster -a vpc-cni --show-configuration --show-health
+refresh addon describe -c my-cluster -a vpc-cni --show-configuration --show-health
 
 # Focus on compatibility for upgrade planning
-refresh describe-addon -c my-cluster -a aws-ebs-csi --show-compatibility --show-dependencies
+refresh addon describe -c my-cluster -a aws-ebs-csi --show-compatibility --show-dependencies
 ```
 
-#### Command 3: `refresh update-addon`
+#### Command 3: `refresh addon update`
 **Purpose**: Health-validated add-on updates with comprehensive pre/post validation
 
 **Syntax**:
 ```bash
-refresh update-addon -c CLUSTER -a ADDON [options]
+refresh addon update -c CLUSTER -a ADDON [options]
 ```
 
 **Required Arguments**:
@@ -178,13 +178,13 @@ refresh update-addon -c CLUSTER -a ADDON [options]
 **Examples**:
 ```bash
 # Safe update with health validation
-refresh update-addon -c my-cluster -a vpc-cni --version latest --health-check --wait
+refresh addon update -c my-cluster -a vpc-cni --version latest --health-check --wait
 
 # Update with custom configuration
-refresh update-addon -c my-cluster -a aws-ebs-csi --configuration config.yaml --dry-run
+refresh addon update -c my-cluster -a aws-ebs-csi --configuration config.yaml --dry-run
 
 # Quick update without waiting
-refresh update-addon -c my-cluster -a coredns --version v1.11.1-eks
+refresh addon update -c my-cluster -a coredns --version v1.11.1-eks
 ```
 
 #### Command 4: `refresh update-all-addons`
@@ -454,7 +454,7 @@ internal/
 ### Phase 5: Testing & Validation (Estimated: 12 days)
 - [ ] **Task 5.1**: Write comprehensive unit tests (>90% coverage)
 - [ ] **Task 5.2**: Create integration tests with real EKS add-on operations
-- [ ] **Task 5.3**: Implement performance benchmarks vs eksctl
+- [ ] **Task 5.3**: Implement performance benchmarks
 - [ ] **Task 5.4**: Add compatibility validation testing across Kubernetes versions
 - [ ] **Task 5.5**: Test bulk operations with dependency resolution
 - [ ] **Task 5.6**: Validate health checking integration
@@ -464,7 +464,7 @@ internal/
 - [ ] **Task 6.1**: Write comprehensive user documentation and tutorials
 - [ ] **Task 6.2**: Create add-on management best practices guide
 - [ ] **Task 6.3**: Update CLI help and man pages
-- [ ] **Task 6.4**: Prepare performance comparison vs eksctl
+- [ ] **Task 6.4**: Prepare performance comparison materials
 - [ ] **Task 6.5**: Create demo videos showing bulk operations
 - [ ] **Task 6.6**: Plan feature launch highlighting speed improvements
 
@@ -510,7 +510,7 @@ internal/
 
 ### Functional Requirements
 - [ ] **Core Functionality**: All add-on commands work with comprehensive health validation
-- [ ] **Performance**: 4x faster than eksctl for equivalent operations
+- [ ] **Performance**: Meets defined targets for equivalent operations
 - [ ] **Compatibility**: Accurate version compatibility checking prevents failed updates
 - [ ] **Bulk Operations**: Successful dependency-ordered bulk updates
 - [ ] **Health Integration**: Zero failed updates due to health pre-checks
@@ -518,9 +518,9 @@ internal/
 
 ### Non-Functional Requirements
 - [ ] **Performance**: 
-  - `list-addons` completes in <2 seconds (vs eksctl's 30+ seconds)
-  - `update-addon` completes in 30-60 seconds (vs eksctl's 2-5 minutes)
-  - Bulk operations complete 3x faster than sequential eksctl operations
+  - `list-addons` completes in <2 seconds
+  - `update-addon` completes in 30-60 seconds
+  - Bulk operations complete significantly faster than sequential operations
 - [ ] **Reliability**: 99.9% success rate for add-on operations with health validation
 - [ ] **Accuracy**: 100% accuracy in compatibility checking prevents failed updates
 - [ ] **Usability**: Zero-config operation with existing AWS credentials
@@ -528,7 +528,7 @@ internal/
 ### Quality Gates
 - [ ] **Test Coverage**: >90% unit test coverage for all service components
 - [ ] **Integration Testing**: Full test suite with real EKS add-on operations
-- [ ] **Performance Testing**: Benchmarks demonstrate 4x improvement vs eksctl
+- [ ] **Performance Testing**: Benchmarks demonstrate improvements vs targets
 - [ ] **Compatibility Testing**: Validation across all supported Kubernetes versions
 - [ ] **Health Validation**: Zero failed operations due to health issues in testing
 - [ ] **User Validation**: Beta users confirm speed and reliability improvements
@@ -561,21 +561,21 @@ internal/
 - **User Trust**: Failed bulk operations could damage confidence
   - *Mitigation*: Extensive testing, dry-run capabilities, rollback features
 
-- **eksctl Improvements**: AWS may improve eksctl add-on performance
-  - *Mitigation*: Focus on features eksctl can't provide (health validation, bulk ops, etc.)
+- **Market Improvements**: Others may improve add-on performance
+  - *Mitigation*: Focus on health validation, bulk ops, and UX
 
 ## Metrics & KPIs
 
 ### Performance Metrics
-- **Response Time**: Average time for add-on operations (target: 4x faster than eksctl)
-- **Bulk Operation Efficiency**: Time savings vs sequential eksctl operations
+- **Response Time**: Average time for add-on operations (target: meets SLA)
+- **Bulk Operation Efficiency**: Time savings vs sequential operations
 - **Success Rate**: Percentage of successful operations (target: 99.9%)
 
 ### Business Metrics
 - **Feature Adoption**: Number of users performing bulk add-on operations
 - **Error Reduction**: Decrease in failed add-on updates due to health validation
-- **Time Savings**: Total time saved vs eksctl operations
+- **Time Savings**: Total time saved vs alternatives
 
 ---
 
-This feature establishes refresh as the fastest, most reliable EKS add-on management tool while providing capabilities that eksctl fundamentally cannot match due to its CloudFormation architecture.
+This feature establishes refresh as a fast, reliable EKS add-on management tool while providing capabilities enabled by direct API usage.

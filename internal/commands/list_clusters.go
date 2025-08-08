@@ -6,21 +6,21 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 	"github.com/yarlson/pin"
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // ListClustersCommand creates the list-clusters command
@@ -30,14 +30,38 @@ func ListClustersCommand() *cli.Command {
 		Aliases: []string{"lc"},
 		Usage:   "List EKS clusters with health status (multi-region support)",
 		Description: `Fast cluster discovery across regions with integrated health validation.
-Direct API calls provide 4x performance improvement over eksctl while adding
-comprehensive health monitoring and multi-region capabilities.`,
+Direct EKS API calls provide high performance along with comprehensive
+health monitoring and multi-region capabilities.`,
 		Flags: []cli.Flag{
+			&cli.DurationFlag{
+				Name:    "timeout",
+				Aliases: []string{"t"},
+				Usage:   "Operation timeout (e.g. 60s, 2m)",
+				Value:   60 * time.Second,
+				EnvVars: []string{"REFRESH_TIMEOUT"},
+			},
+			&cli.IntFlag{
+				Name:    "max-concurrency",
+				Aliases: []string{"C"},
+				Usage:   "Max concurrent region requests (ListAllRegions)",
+				Value:   appconfig.DefaultMaxConcurrency,
+				EnvVars: []string{"REFRESH_MAX_CONCURRENCY"},
+			},
 			&cli.BoolFlag{
 				Name:    "all-regions",
 				Aliases: []string{"A"},
 				Usage:   "Query all EKS-supported regions",
 				Value:   false,
+			},
+			&cli.StringFlag{
+				Name:  "sort",
+				Usage: "Sort by field: name,status,version,region",
+				Value: "name",
+			},
+			&cli.BoolFlag{
+				Name:  "desc",
+				Usage: "Sort descending",
+				Value: false,
 			},
 			&cli.StringSliceFlag{
 				Name:    "region",
@@ -69,7 +93,8 @@ comprehensive health monitoring and multi-region capabilities.`,
 }
 
 func runListClusters(c *cli.Context) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	defer cancel()
 
 	// Load AWS config
 	awsCfg, err := config.LoadDefaultConfig(ctx)
@@ -87,22 +112,10 @@ func runListClusters(c *cli.Context) error {
 	}
 
 	// Create logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelWarn, // Only show warnings and errors
-	}))
-
-	// Create health checker if needed
-	var healthChecker *health.HealthChecker
-	if c.Bool("show-health") {
-		// Create clients needed for health checker
-		eksClient := eks.NewFromConfig(awsCfg)
-		cwClient := cloudwatch.NewFromConfig(awsCfg)
-		asgClient := autoscaling.NewFromConfig(awsCfg)
-		healthChecker = health.NewChecker(eksClient, nil, cwClient, asgClient) // k8sClient is optional
-	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	// Create cluster service
-	clusterService := cluster.NewService(awsCfg, healthChecker, logger)
+	clusterService := newClusterService(awsCfg, c.Bool("show-health"), logger)
 
 	// Parse filters
 	filters := make(map[string]string)
@@ -115,10 +128,11 @@ func runListClusters(c *cli.Context) error {
 
 	// Set up options
 	options := cluster.ListOptions{
-		Regions:    c.StringSlice("region"),
-		ShowHealth: c.Bool("show-health"),
-		Filters:    filters,
-		AllRegions: c.Bool("all-regions"),
+		Regions:        c.StringSlice("region"),
+		ShowHealth:     c.Bool("show-health"),
+		Filters:        filters,
+		AllRegions:     c.Bool("all-regions"),
+		MaxConcurrency: c.Int("max-concurrency"),
 	}
 
 	// Create spinner
@@ -134,8 +148,10 @@ func runListClusters(c *cli.Context) error {
 		pin.WithTextColor(pin.ColorYellow),
 	)
 
-	cancel := spinner.Start(ctx)
-	defer cancel()
+	startSpinner := spinner.Start
+	stopSpinner := spinner.Stop
+	cancelSpinner := startSpinner(ctx)
+	defer cancelSpinner()
 
 	// Get cluster list
 	startTime := time.Now()
@@ -147,11 +163,14 @@ func runListClusters(c *cli.Context) error {
 		summaries, err = clusterService.List(ctx, options)
 	}
 
-	spinner.Stop("Cluster information gathered!")
+	stopSpinner("Cluster information gathered!")
 	if err != nil {
 		return err
 	}
 	elapsed := time.Since(startTime)
+
+	// Apply sorting
+	summaries = sortClusterSummaries(summaries, c.String("sort"), c.Bool("desc"))
 
 	// Output results based on format
 	switch strings.ToLower(c.String("format")) {
@@ -160,7 +179,7 @@ func runListClusters(c *cli.Context) error {
 	case "yaml":
 		return outputClustersYAML(summaries)
 	default:
-		return outputClustersTable(summaries, elapsed, c.Bool("all-regions"))
+		return outputClustersTable(summaries, elapsed, c.Bool("all-regions"), c.Bool("show-health"))
 	}
 }
 
@@ -185,7 +204,7 @@ func outputClustersYAML(summaries []cluster.ClusterSummary) error {
 	})
 }
 
-func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Duration, multiRegion bool) error {
+func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
 	if len(summaries) == 0 {
 		color.Yellow("No EKS clusters found")
 		return nil
@@ -208,33 +227,54 @@ func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Durati
 		fmt.Printf("EKS Clusters (%d clusters)\n", len(summaries))
 	}
 
-	// Performance indicator
-	fmt.Printf("Retrieved in %s (eksctl equivalent: ~%ds)\n\n",
-		color.GreenString(elapsed.String()),
-		estimateEksctlTime(len(summaries)))
+	// Performance indicator (formatted to one decimal place)
+	fmt.Printf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
-	// Table header
+	// Build table using shared renderer
+	headerColor := func(s string) string { return color.CyanString(s) }
 	if multiRegion {
-		printClustersMultiRegionHeader()
+		columns := []ui.Column{{Title: "CLUSTER", Min: 14, Max: 0, Align: ui.AlignLeft}, {Title: "REGION", Min: 10, Max: 0, Align: ui.AlignLeft}, {Title: "STATUS", Min: 7, Max: 0, Align: ui.AlignLeft}, {Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft}}
+		if showHealth {
+			columns = append(columns, ui.Column{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft})
+		}
+		columns = append(columns, ui.Column{Title: "READY/DESIRED", Min: 15, Max: 0, Align: ui.AlignRight})
+		table := ui.NewTable(columns, ui.WithHeaderColor(headerColor))
+		for _, summary := range summaries {
+			nodes := formatNodeCount(summary.NodeCount)
+			if showHealth {
+				healthText := formatClusterHealth(summary.Health)
+				table.AddRow(summary.Name, summary.Region, formatStatus(summary.Status), summary.Version, healthText, nodes)
+			} else {
+				table.AddRow(summary.Name, summary.Region, formatStatus(summary.Status), summary.Version, nodes)
+			}
+		}
+		table.Render()
 	} else {
-		printClustersSingleRegionHeader()
+		columns := []ui.Column{{Title: "CLUSTER", Min: 14, Max: 0, Align: ui.AlignLeft}, {Title: "STATUS", Min: 7, Max: 0, Align: ui.AlignLeft}, {Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft}}
+		if showHealth {
+			columns = append(columns, ui.Column{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft})
+		}
+		columns = append(columns, ui.Column{Title: "READY/DESIRED", Min: 15, Max: 0, Align: ui.AlignRight})
+		table := ui.NewTable(columns, ui.WithHeaderColor(headerColor))
+		for _, summary := range summaries {
+			nodes := formatNodeCount(summary.NodeCount)
+			if showHealth {
+				healthText := formatClusterHealth(summary.Health)
+				table.AddRow(summary.Name, formatStatus(summary.Status), summary.Version, healthText, nodes)
+			} else {
+				table.AddRow(summary.Name, formatStatus(summary.Status), summary.Version, nodes)
+			}
+		}
+		table.Render()
 	}
 
-	// Table rows
+	// Count statuses for summary line
 	healthyCount := 0
 	warningCount := 0
 	criticalCount := 0
 	updatingCount := 0
-
 	for _, summary := range summaries {
-		if multiRegion {
-			printClusterMultiRegionRow(summary)
-		} else {
-			printClusterSingleRegionRow(summary)
-		}
-
-		// Count health status
-		if summary.Health != nil {
+		if showHealth && summary.Health != nil {
 			switch summary.Health.Decision {
 			case health.DecisionProceed:
 				healthyCount++
@@ -244,94 +284,66 @@ func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Durati
 				criticalCount++
 			}
 		}
-
 		if strings.Contains(strings.ToUpper(summary.Status), "UPDAT") {
 			updatingCount++
 		}
 	}
 
-	// Close table
-	if multiRegion {
-		fmt.Printf("└────────────────┴────────────┴─────────┴─────────┴──────────┴─────────────────┘\n")
-	} else {
-		fmt.Printf("└────────────────┴─────────┴─────────┴──────────┴─────────────────┘\n")
-	}
+	// Table printed by renderer
 
-	// Summary
-	fmt.Printf("\nSummary: ")
-	if healthyCount > 0 {
-		fmt.Printf("%s healthy", color.GreenString("%d", healthyCount))
-	}
-	if warningCount > 0 {
+	// Summary (only when health is requested)
+	if showHealth {
+		fmt.Printf("\nSummary: ")
 		if healthyCount > 0 {
-			fmt.Printf(", ")
+			fmt.Printf("%s healthy", color.GreenString("%d", healthyCount))
 		}
-		fmt.Printf("%s warning", color.YellowString("%d", warningCount))
-	}
-	if criticalCount > 0 {
-		if healthyCount > 0 || warningCount > 0 {
-			fmt.Printf(", ")
+		if warningCount > 0 {
+			if healthyCount > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Printf("%s warning", color.YellowString("%d", warningCount))
 		}
-		fmt.Printf("%s critical", color.RedString("%d", criticalCount))
-	}
-	if updatingCount > 0 {
-		if healthyCount > 0 || warningCount > 0 || criticalCount > 0 {
-			fmt.Printf(", ")
+		if criticalCount > 0 {
+			if healthyCount > 0 || warningCount > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Printf("%s critical", color.RedString("%d", criticalCount))
 		}
-		fmt.Printf("%s updating", color.CyanString("%d", updatingCount))
+		if updatingCount > 0 {
+			if healthyCount > 0 || warningCount > 0 || criticalCount > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Printf("%s updating", color.CyanString("%d", updatingCount))
+		}
+		fmt.Printf("\n")
 	}
-	fmt.Printf("\n")
 
 	return nil
 }
 
-func printClustersMultiRegionHeader() {
-	fmt.Printf("┌────────────────┬────────────┬─────────┬─────────┬──────────┬─────────────────┐\n")
-	fmt.Printf("│ %s │ %s │ %s │ %s │ %s │ %s │\n",
-		color.CyanString(fmt.Sprintf("%-14s", "CLUSTER")),
-		color.CyanString(fmt.Sprintf("%-10s", "REGION")),
-		color.CyanString(fmt.Sprintf("%-7s", "STATUS")),
-		color.CyanString(fmt.Sprintf("%-7s", "VERSION")),
-		color.CyanString(fmt.Sprintf("%-8s", "HEALTH")),
-		color.CyanString(fmt.Sprintf("%-15s", "NODES")))
-	fmt.Printf("├────────────────┼────────────┼─────────┼─────────┼──────────┼─────────────────┤\n")
+// sortClusterSummaries sorts by the requested key
+func sortClusterSummaries(items []cluster.ClusterSummary, key string, desc bool) []cluster.ClusterSummary {
+	less := func(i, j int) bool { return false }
+	switch strings.ToLower(key) {
+	case "status":
+		less = func(i, j int) bool { return items[i].Status < items[j].Status }
+	case "version":
+		less = func(i, j int) bool { return items[i].Version < items[j].Version }
+	case "region":
+		less = func(i, j int) bool { return items[i].Region < items[j].Region }
+	default: // name
+		less = func(i, j int) bool { return items[i].Name < items[j].Name }
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if desc {
+			return !less(i, j)
+		}
+		return less(i, j)
+	})
+	return items
 }
 
-func printClustersSingleRegionHeader() {
-	fmt.Printf("┌────────────────┬─────────┬─────────┬──────────┬─────────────────┐\n")
-	fmt.Printf("│ %s │ %s │ %s │ %s │ %s │\n",
-		color.CyanString(fmt.Sprintf("%-14s", "CLUSTER")),
-		color.CyanString(fmt.Sprintf("%-7s", "STATUS")),
-		color.CyanString(fmt.Sprintf("%-7s", "VERSION")),
-		color.CyanString(fmt.Sprintf("%-8s", "HEALTH")),
-		color.CyanString(fmt.Sprintf("%-15s", "NODES")))
-	fmt.Printf("├────────────────┼─────────┼─────────┼──────────┼─────────────────┤\n")
-}
-
-func printClusterMultiRegionRow(summary cluster.ClusterSummary) {
-	health := formatClusterHealth(summary.Health)
-	nodes := formatNodeCount(summary.NodeCount)
-
-	fmt.Printf("│ %-14s │ %-10s │ %-7s │ %-7s │ %s │ %s │\n",
-		truncateString(summary.Name, 14),
-		summary.Region,
-		formatStatus(summary.Status),
-		summary.Version,
-		padColoredString(health, 8),
-		padColoredString(nodes, 15))
-}
-
-func printClusterSingleRegionRow(summary cluster.ClusterSummary) {
-	health := formatClusterHealth(summary.Health)
-	nodes := formatNodeCount(summary.NodeCount)
-
-	fmt.Printf("│ %-14s │ %-7s │ %-7s │ %s │ %s │\n",
-		truncateString(summary.Name, 14),
-		formatStatus(summary.Status),
-		summary.Version,
-		padColoredString(health, 8),
-		padColoredString(nodes, 15))
-}
+// deprecated helpers removed after migration to ui.Table
 
 func formatClusterHealth(healthSummary *health.HealthSummary) string {
 	if healthSummary == nil {
@@ -365,7 +377,4 @@ func formatNodeCount(nodeCount cluster.NodeCountInfo) string {
 
 // Utility functions are in utils.go
 
-func estimateEksctlTime(clusterCount int) int {
-	// eksctl takes roughly 5-8 seconds per cluster due to CloudFormation
-	return clusterCount * 6
-}
+// (removed eksctl comparison helper)

@@ -4,17 +4,25 @@ import (
 	"context"
 	"fmt"
 	"strings"
+    "time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/services/common"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // getVpcCidr retrieves the CIDR block for a VPC
 func (s *ServiceImpl) getVpcCidr(ctx context.Context, vpcId string) (string, error) {
-	output, err := s.ec2Client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{
-		VpcIds: []string{vpcId},
+	output, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeVpcsOutput, error) {
+		return s.ec2Client.DescribeVpcs(rc, &ec2.DescribeVpcsInput{
+			VpcIds: []string{vpcId},
+		})
 	})
 	if err != nil {
 		return "", awsinternal.FormatAWSError(err, fmt.Sprintf("describing VPC %s", vpcId))
@@ -29,19 +37,34 @@ func (s *ServiceImpl) getVpcCidr(ctx context.Context, vpcId string) (string, err
 
 // getClusterAddons retrieves add-on information for a cluster
 func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) ([]AddonInfo, error) {
-	listOutput, err := s.eksClient.ListAddons(ctx, &eks.ListAddonsInput{
-		ClusterName: aws.String(clusterName),
-	})
-	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing add-ons for cluster %s", clusterName))
+	// List add-ons with pagination
+	var addonNames []string
+	var nextToken *string
+	for {
+		listOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListAddonsOutput, error) {
+			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
+				ClusterName: aws.String(clusterName),
+				NextToken:   nextToken,
+			})
+		})
+		if err != nil {
+			return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing add-ons for cluster %s", clusterName))
+		}
+		addonNames = append(addonNames, listOutput.Addons...)
+		if listOutput.NextToken == nil {
+			break
+		}
+		nextToken = listOutput.NextToken
 	}
 
 	var addons []AddonInfo
 
-	for _, addonName := range listOutput.Addons {
-		describeOutput, err := s.eksClient.DescribeAddon(ctx, &eks.DescribeAddonInput{
-			ClusterName: aws.String(clusterName),
-			AddonName:   aws.String(addonName),
+	for _, addonName := range addonNames {
+		describeOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
+			return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
+				ClusterName: aws.String(clusterName),
+				AddonName:   aws.String(addonName),
+			})
 		})
 		if err != nil {
 			s.logger.Warn("failed to describe add-on", "cluster", clusterName, "addon", addonName, "error", err)
@@ -53,13 +76,13 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 
 		// Determine health status based on add-on status
 		switch addon.Status {
-		case "ACTIVE":
+		case ekstypes.AddonStatusActive:
 			health = "Healthy"
-		case "DEGRADED":
+		case ekstypes.AddonStatusDegraded:
 			health = "Issues"
-		case "CREATE_FAILED", "DELETE_FAILED":
+		case ekstypes.AddonStatusCreateFailed, ekstypes.AddonStatusDeleteFailed:
 			health = "Failed"
-		case "CREATING", "DELETING", "UPDATING":
+		case ekstypes.AddonStatusCreating, ekstypes.AddonStatusDeleting, ekstypes.AddonStatusUpdating:
 			health = "Updating"
 		}
 
@@ -76,19 +99,34 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 
 // getClusterNodegroups retrieves nodegroup information for a cluster
 func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName string) ([]NodegroupSummary, error) {
-	listOutput, err := s.eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
-		ClusterName: aws.String(clusterName),
-	})
-	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
+	// List nodegroups with pagination
+	var nodegroupNames []string
+	var nextToken *string
+	for {
+		listOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListNodegroupsOutput, error) {
+			return s.eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
+				ClusterName: aws.String(clusterName),
+				NextToken:   nextToken,
+			})
+		})
+		if err != nil {
+			return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
+		}
+		nodegroupNames = append(nodegroupNames, listOutput.Nodegroups...)
+		if listOutput.NextToken == nil {
+			break
+		}
+		nextToken = listOutput.NextToken
 	}
 
 	var nodegroups []NodegroupSummary
 
-	for _, nodegroupName := range listOutput.Nodegroups {
-		describeOutput, err := s.eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(nodegroupName),
+	for _, nodegroupName := range nodegroupNames {
+		describeOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+			return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+				ClusterName:   aws.String(clusterName),
+				NodegroupName: aws.String(nodegroupName),
+			})
 		})
 		if err != nil {
 			s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", nodegroupName, "error", err)
@@ -99,7 +137,7 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 		readyNodes := int32(0)
 
 		// Calculate ready nodes based on scaling config and status
-		if ng.ScalingConfig != nil && ng.Status == "ACTIVE" {
+		if ng.ScalingConfig != nil && ng.Status == ekstypes.NodegroupStatusActive {
 			readyNodes = aws.ToInt32(ng.ScalingConfig.DesiredSize)
 		}
 
@@ -144,13 +182,21 @@ func (s *ServiceImpl) shouldSkipCluster(clusterName string, filters map[string]s
 
 // getClusterSummary creates a summary for a single cluster
 func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string, options ListOptions) (*ClusterSummary, error) {
-	// Get basic cluster information
-	output, err := s.eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
-		Name: aws.String(clusterName),
-	})
-	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s", clusterName))
-	}
+    // Get basic cluster information
+    output, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+        return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
+    })
+    if err != nil {
+        // Fallback: return minimal summary so list output remains complete even if a describe call fails
+        s.logger.Warn("failed to describe cluster, returning minimal summary", "cluster", clusterName, "error", err)
+        return &ClusterSummary{
+            Name:      clusterName,
+            Status:    "UNKNOWN",
+            Version:   "",
+            Region:    s.awsConfig.Region,
+            CreatedAt: time.Time{},
+        }, nil
+    }
 
 	cluster := output.Cluster
 	summary := &ClusterSummary{
@@ -172,9 +218,25 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 			totalReady += ng.ReadyNodes
 			totalDesired += ng.DesiredSize
 		}
-		summary.NodeCount = NodeCountInfo{
-			Ready: totalReady,
-			Total: totalDesired,
+		summary.NodeCount = NodeCountInfo{Ready: totalReady, Total: totalDesired}
+
+		// If a Kubernetes client is available, compute actual ready nodes
+		if k8sClient, kerr := health.GetKubernetesClient(); kerr == nil && k8sClient != nil {
+			if nodeList, lerr := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{}); lerr == nil {
+				var readyCount int32
+				for _, node := range nodeList.Items {
+					for _, cond := range node.Status.Conditions {
+						if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+							readyCount++
+							break
+						}
+					}
+				}
+				// Use actual ready node count but keep desired as total
+				summary.NodeCount.Ready = readyCount
+			} else {
+				s.logger.Debug("failed to list k8s nodes for readiness", "cluster", clusterName, "error", lerr)
+			}
 		}
 	}
 

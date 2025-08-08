@@ -10,9 +10,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 	"github.com/yarlson/pin"
@@ -21,6 +18,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // CompareClustersCommand creates the compare-clusters command
@@ -38,6 +36,11 @@ security, add-ons, and version configurations.`,
 				Aliases:  []string{"c"},
 				Usage:    "Cluster name or pattern (specify multiple times)",
 				Required: true,
+			},
+			&cli.BoolFlag{
+				Name:  "interactive",
+				Usage: "Interactively select clusters when multiple patterns match",
+				Value: false,
 			},
 			&cli.BoolFlag{
 				Name:    "show-differences",
@@ -64,7 +67,13 @@ security, add-ons, and version configurations.`,
 }
 
 func runCompareClusters(c *cli.Context) error {
-	ctx := context.Background()
+	// Honor global timeout if provided at app level; fallback to 60s
+	timeout := c.Duration("timeout")
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	clusterPatterns := c.StringSlice("cluster")
 	if len(clusterPatterns) < 2 {
@@ -87,22 +96,15 @@ func runCompareClusters(c *cli.Context) error {
 	}
 
 	// Create logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelWarn, // Only show warnings and errors
-	}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// Create health checker
-	eksClient := eks.NewFromConfig(awsCfg)
-	cwClient := cloudwatch.NewFromConfig(awsCfg)
-	asgClient := autoscaling.NewFromConfig(awsCfg)
-	healthChecker := health.NewChecker(eksClient, nil, cwClient, asgClient) // k8sClient is optional
-
-	// Create cluster service
-	clusterService := cluster.NewService(awsCfg, healthChecker, logger)
+	// Create cluster service with health
+	clusterService := newClusterService(awsCfg, true, logger)
 
 	// Resolve cluster names
 	var clusterNames []string
 	for _, pattern := range clusterPatterns {
+		// In interactive mode we allow ambiguous patterns and prompt via ClusterName helper
 		clusterName, err := awsinternal.ClusterName(ctx, awsCfg, pattern)
 		if err != nil {
 			return fmt.Errorf("failed to resolve cluster '%s': %w", pattern, err)
@@ -129,14 +131,16 @@ func runCompareClusters(c *cli.Context) error {
 		pin.WithTextColor(pin.ColorYellow),
 	)
 
-	cancel := spinner.Start(ctx)
-	defer cancel()
+	startSpinner := spinner.Start
+	stopSpinner := spinner.Stop
+	cancelSpinner := startSpinner(ctx)
+	defer cancelSpinner()
 
 	// Perform comparison
 	startTime := time.Now()
 	comparison, err := clusterService.Compare(ctx, clusterNames, options)
 
-	spinner.Stop("Analysis complete!")
+	stopSpinner("Analysis complete!")
 	if err != nil {
 		return err
 	}
@@ -176,7 +180,7 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 	}
 
 	fmt.Printf("Cluster Comparison: %s\n", color.CyanString(strings.Join(clusterNames, " vs ")))
-	fmt.Printf("Analyzed in %s\n\n", color.GreenString(elapsed.String()))
+	fmt.Printf("Analyzed in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
 	// Summary
 	summary := comparison.Summary
@@ -201,9 +205,34 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 
 	// Basic cluster information comparison
 	fmt.Printf("Basic Information:\n")
-	printClusterBasicInfoHeader(comparison.Clusters)
-	printClusterBasicInfoRows(comparison.Clusters)
-	fmt.Printf("└────────────────┴─────────┴─────────┴─────────────────┘\n\n")
+	columns := []ui.Column{
+		{Title: "CLUSTER", Min: 14, Max: 0, Align: ui.AlignLeft},
+		{Title: "STATUS", Min: 7, Max: 0, Align: ui.AlignLeft},
+		{Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft},
+		{Title: "HEALTH", Min: 15, Max: 0, Align: ui.AlignLeft},
+	}
+	table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+	for _, cl := range comparison.Clusters {
+		healthStatus := color.WhiteString("UNKNOWN")
+		if cl.Health != nil {
+			switch cl.Health.Decision {
+			case health.DecisionProceed:
+				healthStatus = color.GreenString("PASS")
+			case health.DecisionWarn:
+				healthStatus = color.YellowString("WARN")
+			case health.DecisionBlock:
+				healthStatus = color.RedString("FAIL")
+			}
+		}
+		table.AddRow(
+			truncateString(cl.Name, 14),
+			formatStatus(cl.Status),
+			cl.Version,
+			healthStatus,
+		)
+	}
+	table.Render()
+	fmt.Println()
 
 	// Detailed differences
 	if len(comparison.Differences) > 0 {
@@ -249,37 +278,7 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 	return nil
 }
 
-func printClusterBasicInfoHeader(clusters []cluster.ClusterDetails) {
-	fmt.Printf("┌────────────────┬─────────┬─────────┬─────────────────┐\n")
-	fmt.Printf("│ %s │ %s │ %s │ %s │\n",
-		padColoredString(color.CyanString("CLUSTER"), 14),
-		padColoredString(color.CyanString("STATUS"), 7),
-		padColoredString(color.CyanString("VERSION"), 7),
-		padColoredString(color.CyanString("HEALTH"), 15))
-	fmt.Printf("├────────────────┼─────────┼─────────┼─────────────────┤\n")
-}
-
-func printClusterBasicInfoRows(clusters []cluster.ClusterDetails) {
-	for _, cluster := range clusters {
-		healthStatus := color.WhiteString("UNKNOWN")
-		if cluster.Health != nil {
-			switch cluster.Health.Decision {
-			case health.DecisionProceed:
-				healthStatus = color.GreenString("PASS")
-			case health.DecisionWarn:
-				healthStatus = color.YellowString("WARN")
-			case health.DecisionBlock:
-				healthStatus = color.RedString("FAIL")
-			}
-		}
-
-		fmt.Printf("│ %-14s │ %s │ %-7s │ %-15s │\n",
-			truncateString(cluster.Name, 14),
-			padColoredString(formatStatus(cluster.Status), 7),
-			cluster.Version,
-			padColoredString(healthStatus, 15))
-	}
-}
+// migrated basic info table to ui.Table
 
 func printDifferences(differences []cluster.Difference) {
 	for _, diff := range differences {

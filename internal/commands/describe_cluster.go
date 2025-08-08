@@ -10,29 +10,36 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 	"github.com/yarlson/pin"
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // DescribeClusterCommand creates the describe-cluster command
 func DescribeClusterCommand() *cli.Command {
 	return &cli.Command{
-		Name:    "describe-cluster",
-		Aliases: []string{"dc"},
-		Usage:   "Describe comprehensive cluster information (4x faster than eksctl)",
+		Name:      "describe-cluster",
+		Aliases:   []string{"dc"},
+		Usage:     "Describe comprehensive cluster information",
+		ArgsUsage: "[cluster]",
 		Description: `Get detailed information about an EKS cluster including networking,
-security configuration, add-ons, and health status. Direct API calls 
-provide 4x performance improvement over eksctl's CloudFormation approach.`,
+security configuration, add-ons, and health status. Direct EKS API calls
+provide fast, comprehensive results without CloudFormation dependency.`,
 		Flags: []cli.Flag{
+			&cli.DurationFlag{
+				Name:    "timeout",
+				Aliases: []string{"t"},
+				Usage:   "Operation timeout (e.g. 60s, 2m)",
+				Value:   appconfig.DefaultTimeout,
+				EnvVars: []string{"REFRESH_TIMEOUT"},
+			},
 			&cli.StringFlag{
 				Name:     "cluster",
 				Aliases:  []string{"c"},
@@ -77,7 +84,8 @@ provide 4x performance improvement over eksctl's CloudFormation approach.`,
 }
 
 func runDescribeCluster(c *cli.Context) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	defer cancel()
 
 	// Load AWS config
 	awsCfg, err := config.LoadDefaultConfig(ctx)
@@ -87,36 +95,45 @@ func runDescribeCluster(c *cli.Context) error {
 	}
 
 	// Validate AWS credentials early to provide better error messages
-	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+    if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
+        color.Red("%v", err)
+        ui.Outln()
+        awsinternal.PrintCredentialHelp()
+        return fmt.Errorf("AWS credential validation failed")
+    }
+
+	// Create logger (early, we might need it for listing when no cluster given)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	// Prefer positional arg as cluster name; fallback to --cluster flag
+	requested := c.Args().First()
+	if requested == "" {
+		requested = c.String("cluster")
 	}
 
-	// Create logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelWarn, // Only show warnings and errors
-	}))
+	// If no cluster specified, list available clusters in the current region and exit
+    if strings.TrimSpace(requested) == "" {
+        // List clusters (no health) in current region
+        clusterService := newClusterService(awsCfg, false, logger)
+        start := time.Now()
+        summaries, err := clusterService.List(ctx, cluster.ListOptions{})
+        if err != nil {
+            return err
+        }
+        ui.Outln("No cluster specified. Available clusters:")
+        ui.Outln()
+        _ = outputClustersTable(summaries, time.Since(start), false, false)
+        return nil
+    }
 
-	// Get cluster name
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, c.String("cluster"))
+	// Resolve cluster name (supports patterns)
+	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
 	if err != nil {
 		return err
 	}
 
-	// Create health checker if needed
-	var healthChecker *health.HealthChecker
-	if c.Bool("show-health") {
-		// Create clients needed for health checker
-		eksClient := eks.NewFromConfig(awsCfg)
-		cwClient := cloudwatch.NewFromConfig(awsCfg)
-		asgClient := autoscaling.NewFromConfig(awsCfg)
-		healthChecker = health.NewChecker(eksClient, nil, cwClient, asgClient) // k8sClient is optional
-	}
-
 	// Create cluster service
-	clusterService := cluster.NewService(awsCfg, healthChecker, logger)
+	clusterService := newClusterService(awsCfg, c.Bool("show-health"), logger)
 
 	// Set up options
 	options := cluster.DescribeOptions{
@@ -132,14 +149,16 @@ func runDescribeCluster(c *cli.Context) error {
 		pin.WithTextColor(pin.ColorYellow),
 	)
 
-	cancel := spinner.Start(ctx)
-	defer cancel()
+	startSpinner := spinner.Start
+	stopSpinner := spinner.Stop
+	cancelSpinner := startSpinner(ctx)
+	defer cancelSpinner()
 
 	// Get cluster details
 	startTime := time.Now()
 	details, err := clusterService.Describe(ctx, clusterName, options)
 
-	spinner.Stop("Cluster information gathered!")
+	stopSpinner("Cluster information gathered!")
 	if err != nil {
 		return err
 	}
@@ -173,10 +192,10 @@ func outputYAML(details *cluster.ClusterDetails) error {
 
 func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 	// Print main cluster information
-	fmt.Printf("Cluster Information: %s\n", color.CyanString(details.Name))
+    ui.Outf("Cluster Information: %s\n", color.CyanString(details.Name))
 
-	// Performance indicator
-	fmt.Printf("Retrieved in %s (eksctl equivalent: ~5-8s)\n\n", color.GreenString(elapsed.String()))
+	// Performance indicator (formatted to one decimal place)
+    ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
 	// Basic information table
 	printTableRow("Status", formatStatus(details.Status))
@@ -239,12 +258,27 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 
 	// Add-ons table
 	if len(details.Addons) > 0 {
-		fmt.Println("\nAdd-ons:")
-		printAddonHeader()
-		for _, addon := range details.Addons {
-			printAddonRow(addon)
+        ui.Outln("\nAdd-ons:")
+		columns := []ui.Column{
+			{Title: "NAME", Min: 4, Max: 24, Align: ui.AlignLeft},
+			{Title: "VERSION", Min: 8, Max: 0, Align: ui.AlignLeft},
+			{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
+			{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft},
 		}
-		fmt.Printf("└──────────────────────┴───────────────┴────────────┴──────────┘\n")
+		table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+		for _, addon := range details.Addons {
+			health := addon.Health
+			if health == "" {
+				health = "Unknown"
+			}
+			table.AddRow(
+				truncateString(addon.Name, 24),
+				addon.Version,
+				addon.Status,
+				formatAddonHealth(health),
+			)
+		}
+		table.Render()
 	}
 
 	return nil
@@ -252,32 +286,10 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 
 func printTableRow(key, value string) {
 	coloredKey := color.YellowString(key)
-	fmt.Printf("%s │ %s\n", padColoredString(coloredKey, 16), value)
+    ui.Outf("%s │ %s\n", padColoredString(coloredKey, 16), value)
 }
 
-func printAddonHeader() {
-	fmt.Printf("┌──────────────────────┬───────────────┬────────────┬──────────┐\n")
-	fmt.Printf("│ %s │ %s │ %s │ %s │\n",
-		color.CyanString(fmt.Sprintf("%-20s", "NAME")),
-		color.CyanString(fmt.Sprintf("%-13s", "VERSION")),
-		color.CyanString(fmt.Sprintf("%-10s", "STATUS")),
-		color.CyanString(fmt.Sprintf("%-8s", "HEALTH")))
-	fmt.Printf("├──────────────────────┼───────────────┼────────────┼──────────┤\n")
-}
-
-func printAddonRow(addon cluster.AddonInfo) {
-	health := addon.Health
-	if health == "" {
-		health = "Unknown"
-	}
-
-	healthFormatted := formatAddonHealth(health)
-	fmt.Printf("│ %-20s │ %-13s │ %-10s │ %s │\n",
-		truncateString(addon.Name, 20),
-		truncateString(addon.Version, 13),
-		addon.Status,
-		padColoredString(healthFormatted, 8))
-}
+// removed printAddonHeader/printAddonRow in favor of ui.Table
 
 func formatStatus(status string) string {
 	switch strings.ToUpper(status) {
