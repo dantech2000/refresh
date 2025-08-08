@@ -26,7 +26,7 @@ A Go-based CLI tool to manage and monitor AWS EKS clusters and nodegroups with h
 -   **🎨 Enhanced UI**: Color-coded output with progress bars and clear status indicators
 -   **🛡️ Graceful Degradation**: Works with just AWS credentials, provides clear guidance for optional features
  -   **⏱️ Timeouts Everywhere**: Global and per-command `--timeout, -t` to avoid hangs on slow networks (default 60s)
- -   **🌍 Multi-Region Discovery**: `list-clusters` supports `-A/--all-regions` with a concurrency cap (`-C/--max-concurrency`)
+  -   **🌍 Multi-Region Discovery**: `cluster list` supports `-A/--all-regions` with a concurrency cap (`-C/--max-concurrency`)
  -   **✅ Accurate Node Readiness**: Uses Kubernetes API to compute actual ready node counts when kubeconfig is available
  -   **↕️ Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
 
@@ -127,22 +127,22 @@ Fast nodegroup operations with optional utilization and cost, plus safe scaling.
 
 ```bash
 # List nodegroups (table)
-refresh list-nodegroups -c <cluster>
+refresh nodegroup list -c <cluster>
 
 # Include utilization and costs (24h window by default)
-refresh list-nodegroups -c <cluster> --show-utilization --show-costs --timeframe 24h
+refresh nodegroup list -c <cluster> --show-utilization --show-costs --timeframe 24h
 
 # Describe a nodegroup (table)
-refresh describe-nodegroup -c <cluster> -n <nodegroup>
+refresh nodegroup describe -c <cluster> -n <nodegroup>
 
 # Include utilization and costs (and instances)
-refresh describe-nodegroup -c <cluster> -n <nodegroup> --show-utilization --show-costs --show-instances --timeframe 24h
+refresh nodegroup describe -c <cluster> -n <nodegroup> --show-utilization --show-costs --show-instances --timeframe 24h
 
 # Scale a nodegroup safely with health checks and wait
-refresh scale-nodegroup -c <cluster> -n <nodegroup> --desired 10 --health-check --wait --op-timeout 5m
+refresh nodegroup scale -c <cluster> -n <nodegroup> --desired 10 --health-check --wait --op-timeout 5m
 
 # Recommendations (placeholder output in Phase 1)
-refresh nodegroup-recommendations -c <cluster> --cost-optimization --right-sizing --spot-analysis --timeframe 30d
+refresh nodegroup recommendations -c <cluster> --cost-optimization --right-sizing --spot-analysis --timeframe 30d
 ```
 
 Notes:
@@ -158,13 +158,13 @@ Fast, direct EKS API operations for cluster add-ons:
 
 ```bash
 # List add-ons with status/versions
-refresh list-addons -c <cluster> -H
+refresh addon list -c <cluster> -H
 
 # Describe a specific add-on
-refresh describe-addon -c <cluster> -a vpc-cni -o yaml
+refresh addon describe -c <cluster> -a vpc-cni -o yaml
 
 # Update an add-on to latest version
-refresh update-addon -c <cluster> -a vpc-cni --version latest
+refresh addon update -c <cluster> -a vpc-cni --version latest
 ```
 
 
@@ -172,31 +172,31 @@ Quickly list EKS clusters in one or many regions, with optional health and perfo
 
 ```bash
 # Default region from AWS config
-refresh list-clusters
+refresh cluster list
 
 # Specific regions
-refresh list-clusters -r us-east-1 -r eu-west-1
+refresh cluster list -r us-east-1 -r eu-west-1
 
 # All supported regions with health and a 30s timeout
-refresh list-clusters -A -H -t 30s
+refresh cluster list -A -H -t 30s
 
 # Limit concurrent region queries (helps avoid throttling)
-refresh list-clusters -A -C 4
+refresh cluster list -A -C 4
 
 # Override the region set queried by -A via environment (commercial partition default)
-REFRESH_EKS_REGIONS="us-east-1,eu-west-1" refresh list-clusters -A
+REFRESH_EKS_REGIONS="us-east-1,eu-west-1" refresh cluster list -A
 
 # Machine-readable output
-refresh list-clusters -o json
+refresh cluster list -o json
 
 # Sorting
-refresh list-clusters --sort version
-refresh list-clusters --sort region --desc
+refresh cluster list --sort version
+refresh cluster list --sort region --desc
 ```
 
 Notes:
 - The `-t/--timeout` flag is available globally (applies to all commands) and per-command. Env override: `REFRESH_TIMEOUT`.
-- For `list-clusters`, control concurrency with `-C/--max-concurrency` or `REFRESH_MAX_CONCURRENCY`.
+- For `cluster list`, control concurrency with `-C/--max-concurrency` or `REFRESH_MAX_CONCURRENCY`.
 - When kubeconfig is available, node readiness reflects actual `NodeReady` counts from Kubernetes.
 - Region defaults are partition-aware for `-A/--all-regions`: commercial by default; if your current config region starts with `us-gov-` or `cn-`, the default set targets that partition. Override anytime via `-r` or `REFRESH_EKS_REGIONS`.
  - Default timeout and concurrency values come from centralized config and can be overridden via flags or env.
@@ -206,23 +206,23 @@ Notes:
 List all managed nodegroups in a cluster, showing their status and AMI state:
 
 ```sh
-refresh list --cluster <cluster-name>
+refresh nodegroup list --cluster <cluster-name>
 
 # Filter nodegroups using partial name matching
-refresh list --cluster <cluster-name> --nodegroup <partial-name>
+refresh nodegroup list --cluster <cluster-name> --nodegroup <partial-name>
 ```
 
 Sorting is supported for nodegroups as well:
 
 ```sh
-refresh list-nodegroups -c <cluster> --sort cpu --desc    # sort by CPU desc
-refresh list-nodegroups -c <cluster> --sort cost          # sort by monthly cost
-refresh list-nodegroups -c <cluster> --sort instance      # sort by instance type
+refresh nodegroup list -c <cluster> --sort cpu --desc    # sort by CPU desc
+refresh nodegroup list -c <cluster> --sort cost          # sort by monthly cost
+refresh nodegroup list -c <cluster> --sort instance      # sort by instance type
 ```
 
 Accepted sort keys:
-- list-clusters: `name`, `status`, `version`, `region`
-- list-nodegroups: `name`, `status`, `instance`, `nodes`, `cpu`, `cost`
+- cluster list: `name`, `status`, `version`, `region`
+- nodegroup list: `name`, `status`, `instance`, `nodes`, `cpu`, `cost`
 
 ### Compare Clusters
 
@@ -230,19 +230,19 @@ Compare configurations across clusters and focus on specific aspects:
 
 ```bash
 # Basic comparison (table)
-refresh compare-clusters -c dev -c prod
+refresh cluster compare -c dev -c prod
 
 # JSON output
-refresh compare-clusters -c dev -c prod -o json
+refresh cluster compare -c dev -c prod -o json
 
 # Focus comparison on networking and addons
-refresh compare-clusters -c dev -c prod -i networking -i addons
+refresh cluster compare -c dev -c prod -i networking -i addons
 
 # Show only differences
-refresh compare-clusters -c dev -c prod -d
+refresh cluster compare -c dev -c prod -d
 
 # Interactive selection when patterns match multiple clusters
-refresh compare-clusters -c dev -c prod --interactive
+refresh cluster compare -c dev -c prod --interactive
 ```
 
 **Example output:**
@@ -281,32 +281,32 @@ Trigger a rolling update to the latest AMI for all or a specific nodegroup:
 
 ```sh
 # Update all nodegroups
-refresh update-ami --cluster <cluster-name>
+refresh nodegroup update-ami --cluster <cluster-name>
 
 # Update a specific nodegroup
-refresh update-ami --cluster <cluster-name> --nodegroup <nodegroup-name>
+refresh nodegroup update-ami --cluster <cluster-name> --nodegroup <nodegroup-name>
 
 # Update nodegroups using partial name matching
-refresh update-ami --cluster <cluster-name> --nodegroup <partial-name>
+refresh nodegroup update-ami --cluster <cluster-name> --nodegroup <partial-name>
 
 # Force update (replace all nodes, even if already latest)
-refresh update-ami --cluster <cluster-name> --force
+refresh nodegroup update-ami --cluster <cluster-name> --force
 
 # Preview changes without executing (dry run)
-refresh update-ami --cluster <cluster-name> --dry-run
-refresh update-ami --cluster <cluster-name> --nodegroup <partial-name> --dry-run
+refresh nodegroup update-ami --cluster <cluster-name> --dry-run
+refresh nodegroup update-ami --cluster <cluster-name> --nodegroup <partial-name> --dry-run
 ```
 
 **Example output:**
 
 ```
 # Single nodegroup update
-$ refresh update-ami --cluster development-blue --nodegroup groupF
+$ refresh nodegroup update-ami --cluster development-blue --nodegroup groupF
 Updating nodegroup dev-blue-groupF-20230815230923929900000007...
 Update started for nodegroup dev-blue-groupF-20230815230923929900000007
 
 # Multiple matches with confirmation
-$ refresh update-ami --cluster development-blue --nodegroup group
+$ refresh nodegroup update-ami --cluster development-blue --nodegroup group
 Multiple nodegroups match pattern 'group':
   1) dev-blue-groupD-20230814214633237700000007
   2) dev-blue-groupE-20230815204000720600000007
@@ -320,7 +320,7 @@ Updating nodegroup dev-blue-groupF-20230815230923929900000007...
 Update started for nodegroup dev-blue-groupF-20230815230923929900000007
 
 # Dry run preview
-$ refresh update-ami --cluster development-blue --nodegroup group --dry-run
+$ refresh nodegroup update-ami --cluster development-blue --nodegroup group --dry-run
 DRY RUN: Preview of nodegroup updates for cluster development-blue
 
 UPDATE: Nodegroup dev-blue-groupD-20230814214633237700000007 would be updated
@@ -360,7 +360,7 @@ You can also filter the list output using the same partial matching:
 
 ```sh
 # Show only nodegroups containing "group"
-$ refresh list --cluster development-blue --nodegroup group
+$ refresh nodegroup list --cluster development-blue --nodegroup group
 development-blue
 ├── dev-blue-groupD-20230814214633237700000007
 │   ├── Status: ACTIVE
@@ -375,7 +375,7 @@ development-blue
     └── AMI Status: ❌ Outdated
 
 # Show only monolith nodegroups
-$ refresh list --cluster development-blue --nodegroup monolith
+$ refresh nodegroup list --cluster development-blue --nodegroup monolith
 development-blue
 ├── dev-blue-monolithD-20230816000007673100000007
 └── dev-blue-monolithE-20230816002441701900000007
@@ -391,20 +391,20 @@ The refresh tool includes comprehensive pre-flight health checks that validate c
 
 ```bash
 # Run health check only (no update)
-refresh update-ami -c development-blue -H
-refresh update-ami --cluster development-blue --health-only
+refresh nodegroup update-ami -c development-blue -H
+refresh nodegroup update-ami --cluster development-blue --health-only
 
 # Update with health checks (default behavior)
-refresh update-ami -c development-blue
-refresh update-ami --cluster development-blue
+refresh nodegroup update-ami -c development-blue
+refresh nodegroup update-ami --cluster development-blue
 
 # Skip health checks
-refresh update-ami -c development-blue -s
-refresh update-ami --cluster development-blue --skip-health-check
+refresh nodegroup update-ami -c development-blue -s
+refresh nodegroup update-ami --cluster development-blue --skip-health-check
 
 # Force update (bypasses health checks)
-refresh update-ami -c development-blue -f
-refresh update-ami --cluster development-blue --force
+refresh nodegroup update-ami -c development-blue -f
+refresh nodegroup update-ami --cluster development-blue --force
 ```
 
 ### Sample Health Check Output
@@ -458,16 +458,25 @@ All commands support convenient short flags for faster typing:
 
 ```bash
 # List with short flags
-refresh list -c prod -n web
+refresh nodegroup list -c prod -n web
 
 # Quick update with dry-run
-refresh update-ami -c staging -n api -d -q
+refresh nodegroup update-ami -c staging -n api -d -q
 
 # Force update with health check skip
-refresh update-ami -c prod -f -s
+refresh nodegroup update-ami -c prod -f -s
 
 # Health check only with quiet mode
-refresh update-ami -c test -H -q
+refresh nodegroup update-ami -c test -H -q
+## Command Structure
+
+```text
+refresh
+  cluster     list | describe | compare
+  nodegroup   (ng) list | describe | scale | update-ami | recommendations
+  addon       list | describe | update
+  version
+```
 ```
 
 **Common Short Flags**:
