@@ -73,27 +73,13 @@ func main() {
 			},
 		},
 		Commands: []*cli.Command{
-			// Existing commands
-			commands.ListCommand(),
+			// Resource-first groups
+			commands.ClusterCommand(),
+			commands.NodegroupCommand(),
+			commands.AddonCommand(),
+			// Misc
 			commands.VersionCommand(),
-			commands.UpdateAmiCommand(),
 			commands.ManPageCommand(),
-
-			// New cluster operations commands
-			commands.DescribeClusterCommand(),
-			commands.ListClustersCommand(),
-			commands.CompareClustersCommand(),
-
-			// Nodegroup intelligence (Phase 1 scaffolding)
-			commands.ListNodegroupsCommand(),
-			commands.DescribeNodegroupCommand(),
-			commands.ScaleNodegroupCommand(),
-			commands.NodegroupRecommendationsCommand(),
-
-			// EKS add-on management (Phase 1)
-			commands.ListAddonsCommand(),
-			commands.DescribeAddonCommand(),
-			commands.UpdateAddonCommand(),
 		},
 	}
 
