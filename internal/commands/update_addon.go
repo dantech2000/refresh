@@ -57,7 +57,7 @@ func runUpdateAddon(c *cli.Context) error {
 	}
 	if strings.TrimSpace(requested) == "" {
 		color.Yellow("No cluster specified. Available clusters:")
-		svc := cluster.NewService(cfg, nil, nil)
+		svc := newClusterService(cfg, false, nil)
 		summaries, err := svc.List(ctx, cluster.ListOptions{})
 		if err != nil {
 			return err

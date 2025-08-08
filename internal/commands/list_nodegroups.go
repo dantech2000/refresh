@@ -120,7 +120,7 @@ func runListNodegroups(c *cli.Context) error {
 		fmt.Println("No cluster specified. Available clusters:")
 		fmt.Println()
 		start := time.Now()
-		svcList := cluster.NewService(awsCfg, nil, nil)
+		svcList := newClusterService(awsCfg, false, nil)
 		summaries, err := svcList.List(ctx, cluster.ListOptions{})
 		if err != nil {
 			return err
@@ -134,8 +134,8 @@ func runListNodegroups(c *cli.Context) error {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	// Health checker optional for list
-	svc := nodegroup.NewService(awsCfg, nil, logger)
+	// Health checker optional for list (disabled by default)
+	svc := newNodegroupService(awsCfg, false, logger)
 
 	filters := make(map[string]string)
 	for _, f := range c.StringSlice("filter") {

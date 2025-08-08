@@ -180,8 +180,12 @@ func truncateANSI(s string, width int) string {
 
 	// Walk runes of the visible portion while preserving escape sequences
     var out strings.Builder
-    // Reserve approximate capacity to minimize reallocations
-    out.Grow(len(s))
+    // Reserve approximate capacity: width plus room for ANSI sequences and ellipsis
+    reserve := len(s)
+    if width+8 > reserve {
+        reserve = width + 8
+    }
+    out.Grow(reserve)
 	var visibleCount int
 	inEscape := false
 	for _, r := range s {

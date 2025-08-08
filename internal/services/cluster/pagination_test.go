@@ -12,6 +12,8 @@ import (
 	eksTypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 )
 
+const nextPageToken = "t2"
+
 // fakeEKSClient implements EKSAPI and returns paginated data for tests.
 type fakeEKSClient struct {
 	clustersPages   [][]string
@@ -20,11 +22,10 @@ type fakeEKSClient struct {
 }
 
 func (f *fakeEKSClient) ListClusters(ctx context.Context, in *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
-    const tokenNext = "t2"
-    // Use NextToken to index pages: "" -> 0, tokenNext -> 1, etc.
+    // Use NextToken to index pages: "" -> 0, nextPageToken -> 1, etc.
 	idx := 0
 	if in.NextToken != nil && *in.NextToken != "" {
-        if *in.NextToken == tokenNext {
+        if *in.NextToken == nextPageToken {
 			idx = 1
 		}
 	}
@@ -32,7 +33,7 @@ func (f *fakeEKSClient) ListClusters(ctx context.Context, in *eks.ListClustersIn
 	if idx < len(f.clustersPages) {
 		out.Clusters = append(out.Clusters, f.clustersPages[idx]...)
         if idx+1 < len(f.clustersPages) {
-            token := tokenNext
+            token := nextPageToken
 			out.NextToken = &token
 		}
 	}
@@ -58,10 +59,9 @@ func (f *fakeEKSClient) DescribeCluster(ctx context.Context, in *eks.DescribeClu
 func (f *fakeEKSClient) ListNodegroups(ctx context.Context, in *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
 	cluster := aws.ToString(in.ClusterName)
 	pages := f.nodegroupsPages[cluster]
-    const tokenNext = "t2"
 	idx := 0
 	if in.NextToken != nil && *in.NextToken != "" {
-        if *in.NextToken == tokenNext {
+        if *in.NextToken == nextPageToken {
 			idx = 1
 		}
 	}
@@ -69,7 +69,7 @@ func (f *fakeEKSClient) ListNodegroups(ctx context.Context, in *eks.ListNodegrou
 	if idx < len(pages) {
 		out.Nodegroups = append(out.Nodegroups, pages[idx]...)
         if idx+1 < len(pages) {
-            token := tokenNext
+            token := nextPageToken
 			out.NextToken = &token
 		}
 	}
@@ -90,10 +90,9 @@ func (f *fakeEKSClient) DescribeNodegroup(ctx context.Context, in *eks.DescribeN
 func (f *fakeEKSClient) ListAddons(ctx context.Context, in *eks.ListAddonsInput, _ ...func(*eks.Options)) (*eks.ListAddonsOutput, error) {
 	cluster := aws.ToString(in.ClusterName)
 	pages := f.addonsPages[cluster]
-    const tokenNext = "t2"
 	idx := 0
 	if in.NextToken != nil && *in.NextToken != "" {
-        if *in.NextToken == tokenNext {
+        if *in.NextToken == nextPageToken {
 			idx = 1
 		}
 	}
@@ -101,7 +100,7 @@ func (f *fakeEKSClient) ListAddons(ctx context.Context, in *eks.ListAddonsInput,
 	if idx < len(pages) {
 		out.Addons = append(out.Addons, pages[idx]...)
         if idx+1 < len(pages) {
-            token := tokenNext
+            token := nextPageToken
 			out.NextToken = &token
 		}
 	}

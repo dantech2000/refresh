@@ -70,7 +70,7 @@ func runListAddons(c *cli.Context) error {
 		fmt.Println("No cluster specified. Available clusters:")
 		fmt.Println()
 		start := time.Now()
-		svc := cluster.NewService(cfg, nil, nil)
+		svc := newClusterService(cfg, false, nil)
 		summaries, err := svc.List(ctx, cluster.ListOptions{})
 		if err != nil {
 			return err

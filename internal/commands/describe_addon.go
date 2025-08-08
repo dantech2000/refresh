@@ -71,7 +71,7 @@ func runDescribeAddon(c *cli.Context) error {
 	if strings.TrimSpace(requested) == "" {
 		fmt.Println("No cluster specified. Available clusters:")
 		fmt.Println()
-		svc := cluster.NewService(cfg, nil, nil)
+		svc := newClusterService(cfg, false, nil)
 		start := time.Now()
 		summaries, err := svc.List(ctx, cluster.ListOptions{})
 		if err != nil {

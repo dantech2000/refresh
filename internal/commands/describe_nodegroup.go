@@ -124,7 +124,7 @@ func runDescribeNodegroup(c *cli.Context) error {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	// Health checker not required for describe (yet)
-	svc := nodegroup.NewService(awsCfg, nil, logger)
+	svc := newNodegroupService(awsCfg, false, logger)
 
 	opts := nodegroup.DescribeOptions{
 		ShowInstances:    c.Bool("show-instances"),
