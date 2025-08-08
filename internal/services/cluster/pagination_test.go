@@ -20,18 +20,19 @@ type fakeEKSClient struct {
 }
 
 func (f *fakeEKSClient) ListClusters(ctx context.Context, in *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
-	// Use NextToken to index pages: "" -> 0, "t1" -> 1, etc.
+    const tokenNext = "t2"
+    // Use NextToken to index pages: "" -> 0, tokenNext -> 1, etc.
 	idx := 0
 	if in.NextToken != nil && *in.NextToken != "" {
-		if *in.NextToken == "t2" {
+        if *in.NextToken == tokenNext {
 			idx = 1
 		}
 	}
 	out := &eks.ListClustersOutput{Clusters: []string{}}
 	if idx < len(f.clustersPages) {
 		out.Clusters = append(out.Clusters, f.clustersPages[idx]...)
-		if idx+1 < len(f.clustersPages) {
-			token := "t2"
+        if idx+1 < len(f.clustersPages) {
+            token := tokenNext
 			out.NextToken = &token
 		}
 	}
@@ -57,17 +58,18 @@ func (f *fakeEKSClient) DescribeCluster(ctx context.Context, in *eks.DescribeClu
 func (f *fakeEKSClient) ListNodegroups(ctx context.Context, in *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
 	cluster := aws.ToString(in.ClusterName)
 	pages := f.nodegroupsPages[cluster]
+    const tokenNext = "t2"
 	idx := 0
 	if in.NextToken != nil && *in.NextToken != "" {
-		if *in.NextToken == "t2" {
+        if *in.NextToken == tokenNext {
 			idx = 1
 		}
 	}
 	out := &eks.ListNodegroupsOutput{Nodegroups: []string{}}
 	if idx < len(pages) {
 		out.Nodegroups = append(out.Nodegroups, pages[idx]...)
-		if idx+1 < len(pages) {
-			token := "t2"
+        if idx+1 < len(pages) {
+            token := tokenNext
 			out.NextToken = &token
 		}
 	}
@@ -88,17 +90,18 @@ func (f *fakeEKSClient) DescribeNodegroup(ctx context.Context, in *eks.DescribeN
 func (f *fakeEKSClient) ListAddons(ctx context.Context, in *eks.ListAddonsInput, _ ...func(*eks.Options)) (*eks.ListAddonsOutput, error) {
 	cluster := aws.ToString(in.ClusterName)
 	pages := f.addonsPages[cluster]
+    const tokenNext = "t2"
 	idx := 0
 	if in.NextToken != nil && *in.NextToken != "" {
-		if *in.NextToken == "t2" {
+        if *in.NextToken == tokenNext {
 			idx = 1
 		}
 	}
 	out := &eks.ListAddonsOutput{Addons: []string{}}
 	if idx < len(pages) {
 		out.Addons = append(out.Addons, pages[idx]...)
-		if idx+1 < len(pages) {
-			token := "t2"
+        if idx+1 < len(pages) {
+            token := tokenNext
 			out.NextToken = &token
 		}
 	}

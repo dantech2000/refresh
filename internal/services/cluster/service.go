@@ -82,7 +82,10 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 
 // buildListCacheKey returns a deterministic cache key for list options
 func buildListCacheKey(options ListOptions) string {
-	var parts []string
+    // Estimate capacity: regions + filters + booleans
+    builder := strings.Builder{}
+    builder.Grow(64)
+    var parts []string
 	// regions
 	if len(options.Regions) > 0 {
 		regions := append([]string(nil), options.Regions...)
@@ -105,10 +108,13 @@ func buildListCacheKey(options ListOptions) string {
 	// booleans
 	parts = append(parts, fmt.Sprintf("showHealth=%t", options.ShowHealth))
 	parts = append(parts, fmt.Sprintf("allRegions=%t", options.AllRegions))
-	if len(parts) == 0 {
-		return "list-default"
-	}
-	return "list-" + strings.Join(parts, "|")
+    if len(parts) == 0 {
+        return "list-default"
+    }
+    // Use builder to assemble final key
+    builder.WriteString("list-")
+    builder.WriteString(strings.Join(parts, "|"))
+    return builder.String()
 }
 
 // buildDescribeCacheKey returns a deterministic cache key for describe options

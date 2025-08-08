@@ -1,8 +1,9 @@
 package ui
 
 import (
-	"fmt"
-	"strings"
+    "fmt"
+    "os"
+    "strings"
 )
 
 // Alignment represents horizontal text alignment within a column.
@@ -49,7 +50,10 @@ func NewTable(columns []Column, opts ...Option) *Table {
 // AddRow appends a row. The number of cells must match the number of columns.
 func (t *Table) AddRow(cells ...string) {
 	if len(cells) != len(t.columns) {
-		// Ignore malformed rows to avoid panics; callers should ensure consistency
+        // Optionally log when row shape mismatches to aid debugging
+        if os.Getenv("REFRESH_DEBUG_TABLE") == "1" {
+            _, _ = fmt.Fprintf(os.Stderr, "table: dropped row with %d cells (expected %d)\n", len(cells), len(t.columns))
+        }
 		return
 	}
 	t.rows = append(t.rows, cells)
@@ -175,7 +179,9 @@ func truncateANSI(s string, width int) string {
 	}
 
 	// Walk runes of the visible portion while preserving escape sequences
-	var out strings.Builder
+    var out strings.Builder
+    // Reserve approximate capacity to minimize reallocations
+    out.Grow(len(s))
 	var visibleCount int
 	inEscape := false
 	for _, r := range s {
