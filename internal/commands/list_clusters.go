@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
 )
@@ -30,14 +32,38 @@ func ListClustersCommand() *cli.Command {
 		Aliases: []string{"lc"},
 		Usage:   "List EKS clusters with health status (multi-region support)",
 		Description: `Fast cluster discovery across regions with integrated health validation.
-Direct API calls provide 4x performance improvement over eksctl while adding
-comprehensive health monitoring and multi-region capabilities.`,
+Direct EKS API calls provide high performance along with comprehensive
+health monitoring and multi-region capabilities.`,
 		Flags: []cli.Flag{
+			&cli.DurationFlag{
+				Name:    "timeout",
+				Aliases: []string{"t"},
+				Usage:   "Operation timeout (e.g. 60s, 2m)",
+				Value:   60 * time.Second,
+				EnvVars: []string{"REFRESH_TIMEOUT"},
+			},
+			&cli.IntFlag{
+				Name:    "max-concurrency",
+				Aliases: []string{"C"},
+				Usage:   "Max concurrent region requests (ListAllRegions)",
+				Value:   appconfig.DefaultMaxConcurrency,
+				EnvVars: []string{"REFRESH_MAX_CONCURRENCY"},
+			},
 			&cli.BoolFlag{
 				Name:    "all-regions",
 				Aliases: []string{"A"},
 				Usage:   "Query all EKS-supported regions",
 				Value:   false,
+			},
+			&cli.StringFlag{
+				Name:  "sort",
+				Usage: "Sort by field: name,status,version,region",
+				Value: "name",
+			},
+			&cli.BoolFlag{
+				Name:  "desc",
+				Usage: "Sort descending",
+				Value: false,
 			},
 			&cli.StringSliceFlag{
 				Name:    "region",
@@ -69,7 +95,8 @@ comprehensive health monitoring and multi-region capabilities.`,
 }
 
 func runListClusters(c *cli.Context) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	defer cancel()
 
 	// Load AWS config
 	awsCfg, err := config.LoadDefaultConfig(ctx)
@@ -115,10 +142,11 @@ func runListClusters(c *cli.Context) error {
 
 	// Set up options
 	options := cluster.ListOptions{
-		Regions:    c.StringSlice("region"),
-		ShowHealth: c.Bool("show-health"),
-		Filters:    filters,
-		AllRegions: c.Bool("all-regions"),
+		Regions:        c.StringSlice("region"),
+		ShowHealth:     c.Bool("show-health"),
+		Filters:        filters,
+		AllRegions:     c.Bool("all-regions"),
+		MaxConcurrency: c.Int("max-concurrency"),
 	}
 
 	// Create spinner
@@ -134,8 +162,10 @@ func runListClusters(c *cli.Context) error {
 		pin.WithTextColor(pin.ColorYellow),
 	)
 
-	cancel := spinner.Start(ctx)
-	defer cancel()
+	startSpinner := spinner.Start
+	stopSpinner := spinner.Stop
+	cancelSpinner := startSpinner(ctx)
+	defer cancelSpinner()
 
 	// Get cluster list
 	startTime := time.Now()
@@ -147,11 +177,14 @@ func runListClusters(c *cli.Context) error {
 		summaries, err = clusterService.List(ctx, options)
 	}
 
-	spinner.Stop("Cluster information gathered!")
+	stopSpinner("Cluster information gathered!")
 	if err != nil {
 		return err
 	}
 	elapsed := time.Since(startTime)
+
+	// Apply sorting
+	summaries = sortClusterSummaries(summaries, c.String("sort"), c.Bool("desc"))
 
 	// Output results based on format
 	switch strings.ToLower(c.String("format")) {
@@ -208,10 +241,8 @@ func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Durati
 		fmt.Printf("EKS Clusters (%d clusters)\n", len(summaries))
 	}
 
-	// Performance indicator
-	fmt.Printf("Retrieved in %s (eksctl equivalent: ~%ds)\n\n",
-		color.GreenString(elapsed.String()),
-		estimateEksctlTime(len(summaries)))
+	// Performance indicator (formatted to one decimal place)
+	fmt.Printf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
 	// Table header
 	if multiRegion {
@@ -285,6 +316,28 @@ func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Durati
 	return nil
 }
 
+// sortClusterSummaries sorts by the requested key
+func sortClusterSummaries(items []cluster.ClusterSummary, key string, desc bool) []cluster.ClusterSummary {
+	less := func(i, j int) bool { return false }
+	switch strings.ToLower(key) {
+	case "status":
+		less = func(i, j int) bool { return items[i].Status < items[j].Status }
+	case "version":
+		less = func(i, j int) bool { return items[i].Version < items[j].Version }
+	case "region":
+		less = func(i, j int) bool { return items[i].Region < items[j].Region }
+	default: // name
+		less = func(i, j int) bool { return items[i].Name < items[j].Name }
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if desc {
+			return !less(i, j)
+		}
+		return less(i, j)
+	})
+	return items
+}
+
 func printClustersMultiRegionHeader() {
 	fmt.Printf("┌────────────────┬────────────┬─────────┬─────────┬──────────┬─────────────────┐\n")
 	fmt.Printf("│ %s │ %s │ %s │ %s │ %s │ %s │\n",
@@ -312,10 +365,10 @@ func printClusterMultiRegionRow(summary cluster.ClusterSummary) {
 	health := formatClusterHealth(summary.Health)
 	nodes := formatNodeCount(summary.NodeCount)
 
-	fmt.Printf("│ %-14s │ %-10s │ %-7s │ %-7s │ %s │ %s │\n",
+	fmt.Printf("│ %-14s │ %-10s │ %s │ %-7s │ %s │ %s │\n",
 		truncateString(summary.Name, 14),
 		summary.Region,
-		formatStatus(summary.Status),
+		padColoredString(formatStatus(summary.Status), 7),
 		summary.Version,
 		padColoredString(health, 8),
 		padColoredString(nodes, 15))
@@ -325,9 +378,9 @@ func printClusterSingleRegionRow(summary cluster.ClusterSummary) {
 	health := formatClusterHealth(summary.Health)
 	nodes := formatNodeCount(summary.NodeCount)
 
-	fmt.Printf("│ %-14s │ %-7s │ %-7s │ %s │ %s │\n",
+	fmt.Printf("│ %-14s │ %s │ %-7s │ %s │ %s │\n",
 		truncateString(summary.Name, 14),
-		formatStatus(summary.Status),
+		padColoredString(formatStatus(summary.Status), 7),
 		summary.Version,
 		padColoredString(health, 8),
 		padColoredString(nodes, 15))
@@ -365,7 +418,4 @@ func formatNodeCount(nodeCount cluster.NodeCountInfo) string {
 
 // Utility functions are in utils.go
 
-func estimateEksctlTime(clusterCount int) int {
-	// eksctl takes roughly 5-8 seconds per cluster due to CloudFormation
-	return clusterCount * 6
-}
+// (removed eksctl comparison helper)

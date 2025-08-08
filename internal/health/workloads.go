@@ -8,6 +8,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -116,33 +117,32 @@ func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResul
 
 // GetKubernetesClient creates a Kubernetes client from kubeconfig
 func GetKubernetesClient() (kubernetes.Interface, error) {
-	// Try to get kubeconfig path from environment or default location
+	// Prefer kubeconfig if present
 	kubeconfigPath := os.Getenv("KUBECONFIG")
 	if kubeconfigPath == "" {
-		// Default to ~/.kube/config
 		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("unable to get user home directory: %v", err)
+		if err == nil {
+			kubeconfigPath = filepath.Join(homeDir, ".kube", "config")
 		}
-		kubeconfigPath = filepath.Join(homeDir, ".kube", "config")
 	}
 
-	// Check if kubeconfig file exists
-	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("kubeconfig file not found at %s", kubeconfigPath)
+	if kubeconfigPath != "" {
+		if st, err := os.Stat(kubeconfigPath); err == nil && !st.IsDir() {
+			cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+			if err == nil {
+				if clientset, cerr := kubernetes.NewForConfig(cfg); cerr == nil {
+					return clientset, nil
+				}
+			}
+		}
 	}
 
-	// Load kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build config from kubeconfig: %v", err)
+	// Fall back to in-cluster configuration
+	if icCfg, err := rest.InClusterConfig(); err == nil {
+		if clientset, cerr := kubernetes.NewForConfig(icCfg); cerr == nil {
+			return clientset, nil
+		}
 	}
 
-	// Create Kubernetes client
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create kubernetes client: %v", err)
-	}
-
-	return clientset, nil
+	return nil, fmt.Errorf("unable to create kubernetes client: no kubeconfig found and in-cluster config not available")
 }

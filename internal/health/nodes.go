@@ -17,15 +17,25 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 		Details:    []string{},
 	}
 
-	// Get all nodegroups in the cluster
-	ngOut, err := hc.eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
-		ClusterName: aws.String(clusterName),
-	})
-	if err != nil {
-		result.Status = StatusFail
-		result.Score = 0
-		result.Message = fmt.Sprintf("Failed to list nodegroups: %v", err)
-		return result
+	// Get all nodegroups in the cluster (with pagination)
+	var nodegroupNames []string
+	var nextToken *string
+	for {
+		ngOut, err := hc.eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
+			ClusterName: aws.String(clusterName),
+			NextToken:   nextToken,
+		})
+		if err != nil {
+			result.Status = StatusFail
+			result.Score = 0
+			result.Message = fmt.Sprintf("Failed to list nodegroups: %v", err)
+			return result
+		}
+		nodegroupNames = append(nodegroupNames, ngOut.Nodegroups...)
+		if ngOut.NextToken == nil {
+			break
+		}
+		nextToken = ngOut.NextToken
 	}
 
 	totalNodes := 0
@@ -33,7 +43,7 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	var problemNodes []string
 
 	// Check each nodegroup
-	for _, ngName := range ngOut.Nodegroups {
+	for _, ngName := range nodegroupNames {
 		ngDesc, err := hc.eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
 			ClusterName:   aws.String(clusterName),
 			NodegroupName: aws.String(ngName),

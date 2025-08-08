@@ -5,22 +5,22 @@
 
 ## Executive Summary
 
-**One-sentence value proposition**: Provide intelligent, health-validated nodegroup operations with cost analysis, workload awareness, and optimization recommendations that surpass eksctl's immutable nodegroup limitations.
+**One-sentence value proposition**: Provide intelligent, health-validated nodegroup operations with cost analysis, workload awareness, and optimization recommendations.
 
 **Target Users**: DevOps Engineers, SREs, Platform Engineers
 
-**Competitive Advantage**: Health-validated scaling, workload-aware operations, cost optimization intelligence, and real-time utilization insights - capabilities eksctl cannot provide
+**Competitive Advantage**: Health-validated scaling, workload-aware operations, cost optimization intelligence, and real-time utilization insights.
 
-**Success Metric**: 3x faster nodegroup operations than eksctl with 95% user satisfaction on intelligent recommendations and zero failed scaling operations
+**Success Metric**: Achieve target response times for nodegroup operations with 95% user satisfaction on intelligent recommendations and zero failed scaling operations
 
 ## Problem Statement
 
 ### Current Pain Points
-- **eksctl immutable nodegroups**: Any configuration change requires nodegroup recreation, causing downtime
-- **Blind scaling**: eksctl scaling ignores Pod Disruption Budgets, workload capacity, and cluster health
+-- **Immutable nodegroups**: Any configuration change requires nodegroup recreation, causing downtime
+-- **Blind scaling**: Basic scaling ignores Pod Disruption Budgets, workload capacity, and cluster health
 - **No cost visibility**: No understanding of cost implications when scaling or optimizing nodegroups
 - **Limited insights**: No visibility into actual resource utilization, right-sizing opportunities, or Spot integration potential
-- **Slow operations**: eksctl nodegroup operations take 4-6 seconds due to CloudFormation dependencies
+- **Slow operations**: CloudFormation dependencies can add seconds to operations
 
 ### User Stories
 ```
@@ -32,21 +32,42 @@ As a Platform engineer, I want intelligent nodegroup optimization suggestions in
 ```
 
 ### Market Context
-- **eksctl limitation**: Treats nodegroups as immutable infrastructure, requires recreation for most changes
+- **Limitations in some tools**: Treat nodegroups as immutable infrastructure, requiring recreation for many changes
 - **AWS CLI complexity**: Requires 8+ commands to get comprehensive nodegroup information with utilization data
 - **User demand**: Platform teams consistently request better nodegroup cost optimization and scaling intelligence
 
 ## Solution Overview
 
 ### Core Functionality
-Advanced nodegroup management transforms nodegroup operations from basic infrastructure management to intelligent, workload-aware optimization. The feature integrates cost analysis, utilization monitoring, and workload health validation to provide recommendations and execute operations that eksctl simply cannot match. Operations are health-validated using the existing health check framework and include pre/post validation to ensure zero-downtime scaling.
+Advanced nodegroup management transforms nodegroup operations from basic infrastructure management to intelligent, workload-aware optimization. The feature integrates cost analysis, utilization monitoring, and workload health validation to provide recommendations and execute operations with strong guarantees. Operations are health-validated using the existing health check framework and include pre/post validation to ensure zero-downtime scaling.
 
 Key capabilities include intelligent scaling with Pod Disruption Budget awareness, real-time cost analysis and optimization recommendations, workload-aware right-sizing based on actual utilization patterns, Spot instance integration analysis, and comprehensive nodegroup health monitoring.
 
 The feature builds on the existing AMI management capabilities while adding operational intelligence that positions refresh as the definitive EKS nodegroup optimization tool.
 
+### Current Implementation Status (WIP)
+
+- CLI Commands in place:
+  - `list-nodegroups` (table/json/yaml) with optional utilization (CPU) and costs, dynamic table widths
+  - `describe-nodegroup` with optional utilization (CPU avg/current/peak), costs, and instance details
+  - `scale-nodegroup` with health-checked scaling and optional wait
+  - `nodegroup-recommendations` (placeholder output)
+
+- Integrations:
+  - EKS/ASG/EC2 wired (list/describe, instance mapping)
+  - CloudWatch EC2 CPU via `GetMetricData` (1h/3h/24h windows)
+  - Pricing via AWS Pricing (Linux/Shared) with region handling (us-east-1)
+
+- Not Ready Yet (flagged for follow-up):
+  - Workloads/PDB section requires kubeconfig and env-specific handling; add `--kubeconfig` and diagnostics
+  - Pricing static fallback map to ensure COST/MO in accounts without Pricing permissions
+  - Scale dry-run detailed impact (node delta, cost delta, PDB specifics)
+
+- UI
+  - Tables are dynamically sized and ANSI-aware; a shared table helper will consolidate logic across commands
+
 ### Key Benefits
-1. **Performance**: 3x faster than eksctl (1-2 seconds vs 4-6 seconds) for nodegroup operations
+1. **Performance**: Achieve 1-2 second responses for common nodegroup operations
 2. **User Experience**: Intelligent operations with cost and health awareness prevent common scaling mistakes
 3. **Operational Value**: Cost optimization recommendations can reduce nodegroup costs by 30-50%
 4. **Strategic Advantage**: Workload-aware operations and optimization intelligence that no other tool provides
@@ -55,13 +76,13 @@ The feature builds on the existing AMI management capabilities while adding oper
 
 ### Primary Commands
 ```bash
-# Enhanced nodegroup listing with intelligence (replaces eksctl get nodegroup)
+# Enhanced nodegroup listing with intelligence
 refresh list-nodegroups -c my-cluster --show-health --show-costs
 
 # Comprehensive nodegroup analysis (new capability)
 refresh describe-nodegroup -c my-cluster -n my-ng --show-instances --show-utilization
 
-# Intelligent scaling with health validation (improves eksctl scale nodegroup)
+# Intelligent scaling with health validation
 refresh scale-nodegroup -c my-cluster -n my-ng --desired 5 --health-check --wait
 
 # Smart optimization recommendations (new capability)
@@ -97,7 +118,7 @@ refresh list-nodegroups -c CLUSTER [options]
 
 **Examples**:
 ```bash
-# Basic nodegroup listing (faster than eksctl)
+# Basic nodegroup listing
 refresh list-nodegroups -c my-cluster
 
 # Comprehensive view with costs and health
@@ -469,7 +490,7 @@ internal/
 ### Phase 5: Testing & Validation (Estimated: 20 days)
 - [ ] **Task 5.1**: Write comprehensive unit tests for all components (>90% coverage)
 - [ ] **Task 5.2**: Create integration tests with real EKS clusters and nodegroups
-- [ ] **Task 5.3**: Implement performance benchmarks vs eksctl
+- [ ] **Task 5.3**: Implement performance benchmarks
 - [ ] **Task 5.4**: Add cost calculation accuracy validation
 - [ ] **Task 5.5**: Test scaling operations with health validation
 - [ ] **Task 5.6**: Validate workload analysis and PDB checking
@@ -532,7 +553,7 @@ internal/
 - [ ] **Cost Analysis**: Accurate cost calculations and optimization recommendations
 - [ ] **Health Validation**: Zero failed scaling operations due to health pre-checks
 - [ ] **Workload Awareness**: PDB validation prevents disruption during scaling
-- [ ] **Performance**: 3x faster than eksctl for equivalent operations
+- [ ] **Performance**: Meets defined response time targets for equivalent operations
 - [ ] **Optimization**: Recommendations achieve 30-50% cost savings when implemented
 
 ### Non-Functional Requirements
@@ -547,7 +568,7 @@ internal/
 ### Quality Gates
 - [ ] **Test Coverage**: >90% unit test coverage for all service components
 - [ ] **Integration Testing**: Full test suite with real scaling operations
-- [ ] **Performance Testing**: Benchmarks demonstrate 3x improvement vs eksctl
+- [ ] **Performance Testing**: Benchmarks demonstrate improvements against targets
 - [ ] **Cost Accuracy**: Validation against actual AWS billing data
 - [ ] **Health Validation**: Zero scaling failures due to health issues in testing
 - [ ] **User Validation**: Beta users confirm cost optimization value
@@ -586,7 +607,7 @@ internal/
 ## Metrics & KPIs
 
 ### Performance Metrics
-- **Response Time**: Average time for nodegroup operations (target: 3x faster than eksctl)
+- **Response Time**: Average time for nodegroup operations (target: meets defined SLAs)
 - **Scaling Success Rate**: Percentage of successful scaling operations (target: 99.9%)
 - **Cost Calculation Accuracy**: Difference from actual AWS billing (target: <5%)
 

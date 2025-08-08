@@ -116,9 +116,9 @@ The refresh CLI requires valid AWS credentials. Choose one of these methods:
 
 #### Performance Validation
 ```bash
-# Time the commands to verify performance claims
-time ./dist/refresh lc --all-regions  # Should be significantly faster than eksctl
-time ./dist/refresh dc -c your-cluster  # Should complete in ~1-2s
+# Time the commands to verify performance characteristics
+time ./dist/refresh lc --all-regions
+time ./dist/refresh dc -c your-cluster
 ```
 
 #### Error Handling
@@ -156,18 +156,14 @@ time ./dist/refresh dc -c your-cluster  # Should complete in ~1-2s
 ## Expected Performance Benchmarks
 
 ### Performance Targets
-- **describe-cluster**: < 2 seconds (vs eksctl: 5-8 seconds)
-- **list-clusters (single region)**: < 3 seconds
-- **list-clusters (all regions)**: < 10 seconds (vs eksctl: 30+ seconds)
-- **compare-clusters**: < 5 seconds for 2 clusters
+- **describe-cluster**: typically < 2 seconds
+- **list-clusters (single region)**: typically < 3 seconds
+- **list-clusters (all regions)**: typically < 10 seconds
+- **compare-clusters**: typically < 5 seconds for 2 clusters
 
 ### Performance Testing
 ```bash
-# Benchmark against eksctl
-time eksctl get clusters --region us-west-2
 time ./dist/refresh list-clusters
-
-time eksctl get cluster your-cluster --region us-west-2
 time ./dist/refresh describe-cluster -c your-cluster
 ```
 
@@ -199,6 +195,11 @@ task test-coverage
 
 # Run comprehensive test suite
 task test-suite
+ 
+# Run pagination tests only (no AWS credentials required)
+go test ./internal/services/cluster -run TestListClusters_PaginationMergesResults -v
+go test ./internal/services/cluster -run TestGetClusterNodegroups_Pagination -v
+go test ./internal/services/cluster -run TestGetClusterAddons_Pagination -v
 ```
 
 ### Linting and Quality
@@ -259,7 +260,7 @@ aws sts get-caller-identity
 - [ ] All three commands (describe-cluster, list-clusters, compare-clusters) work correctly
 - [ ] Command aliases (dc, lc, cc) function properly  
 - [ ] All output formats (table, JSON, YAML) render correctly
-- [ ] Performance targets are met (4x faster than eksctl)
+- [ ] Performance targets are met
 - [ ] Error handling provides clear, actionable messages
 - [ ] Multi-region functionality works without issues
 - [ ] Filtering and pattern matching work as expected

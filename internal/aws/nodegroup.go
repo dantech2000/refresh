@@ -26,19 +26,30 @@ func Nodegroups(ctx context.Context, awsCfg aws.Config, clusterName string) ([]r
 		Name: aws.String(clusterName),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster: %v", err)
+		return nil, FormatAWSError(err, "describing cluster")
 	}
 	k8sVersion := *clusterOut.Cluster.Version
 
-	ngOut, err := eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
-		ClusterName: aws.String(clusterName),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list nodegroups: %v", err)
+	// List nodegroups with pagination
+	var nodegroupNames []string
+	var nextToken *string
+	for {
+		ngOut, err := eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
+			ClusterName: aws.String(clusterName),
+			NextToken:   nextToken,
+		})
+		if err != nil {
+			return nil, FormatAWSError(err, "listing nodegroups")
+		}
+		nodegroupNames = append(nodegroupNames, ngOut.Nodegroups...)
+		if ngOut.NextToken == nil {
+			break
+		}
+		nextToken = ngOut.NextToken
 	}
 
 	var nodegroups []refreshTypes.NodegroupInfo
-	for _, ngName := range ngOut.Nodegroups {
+	for _, ngName := range nodegroupNames {
 		ngDesc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
 			ClusterName:   aws.String(clusterName),
 			NodegroupName: aws.String(ngName),

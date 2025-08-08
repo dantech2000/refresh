@@ -9,7 +9,7 @@
 
 **Target Users**: [DevOps Engineers / SREs / Platform Engineers / Security Teams]
 
-**Competitive Advantage**: [How this beats eksctl/AWS CLI/other tools]
+**Competitive Advantage**: [Clear benefits over alternatives (focus on user value)]
 
 **Success Metric**: [Specific, measurable outcome - performance, adoption, satisfaction]
 
@@ -26,7 +26,7 @@ As a [persona], I want to [action] so that [benefit].
 ```
 
 ### Market Context
-- **eksctl limitation**: [What eksctl can't do or does poorly]
+- **Limitations in existing tools**: [Gaps observed in common workflows]
 - **AWS CLI complexity**: [How many steps/commands this replaces]
 - **User demand**: [Evidence of need - GitHub issues, forum posts, surveys]
 
@@ -266,7 +266,7 @@ type [FeatureName]Config struct {
 ### Phase 4: Testing & Validation (Estimated: [X] days)
 - [ ] **Task 4.1**: Write comprehensive unit tests (>90% coverage)
 - [ ] **Task 4.2**: Create integration tests with real AWS resources
-- [ ] **Task 4.3**: Implement performance benchmarks vs eksctl
+- [ ] **Task 4.3**: Implement performance benchmarks
 - [ ] **Task 4.4**: Add end-to-end user scenario testing
 - [ ] **Task 4.5**: Security testing and validation
 - [ ] **Task 4.6**: Load testing and stress testing
@@ -317,7 +317,7 @@ type [FeatureName]Config struct {
 ### Functional Requirements
 - [ ] **Core Functionality**: All specified commands work as designed
 - [ ] **Error Handling**: Graceful handling of all error scenarios
-- [ ] **Performance**: Meets benchmark targets vs eksctl
+- [ ] **Performance**: Meets benchmark targets
 - [ ] **Output Formats**: Support for table, JSON, and YAML
 - [ ] **Health Integration**: Validates operations before/after execution
 - [ ] **Cross-Platform**: Works on macOS, Linux, and Windows
@@ -326,7 +326,7 @@ type [FeatureName]Config struct {
 - [ ] **Performance**: 
   - List operations complete in <2 seconds
   - Describe operations complete in <1 second
-  - 3x faster than equivalent eksctl operations
+  - Achieves target response times in common scenarios
 - [ ] **Reliability**: 99.9% success rate under normal conditions
 - [ ] **Usability**: 
   - Zero-config setup for basic usage
@@ -337,7 +337,7 @@ type [FeatureName]Config struct {
 ### Quality Gates
 - [ ] **Test Coverage**: >90% unit test coverage
 - [ ] **Integration Testing**: Full AWS integration test suite
-- [ ] **Performance Testing**: Benchmarks vs eksctl established
+- [ ] **Performance Testing**: Benchmarks established
 - [ ] **Security Review**: Security scan and review completed
 - [ ] **User Validation**: Beta user feedback incorporated
 - [ ] **Documentation**: Complete user and developer documentation
@@ -350,7 +350,7 @@ type [FeatureName]Config struct {
 - [ ] **Command Reference**: Complete CLI documentation
 - [ ] **Common Use Cases**: Real-world scenarios and solutions
 - [ ] **Troubleshooting**: Common issues and resolutions
-- [ ] **Migration Guide**: Migrating from eksctl/AWS CLI
+- [ ] **Migration Guide**: Migrating from other tools/AWS CLI
 
 ### Developer Documentation  
 - [ ] **Architecture Overview**: How the feature is implemented
@@ -381,7 +381,7 @@ type [FeatureName]Config struct {
 - **User Adoption**: Feature may not meet adoption targets
   - *Mitigation*: User research, beta testing, feedback integration
 
-- **Competitive Response**: eksctl may implement similar features
+- **Competitive Response**: Alternative tools may implement similar features
   - *Mitigation*: Focus on superior UX and performance
 
 ### Operational Risks

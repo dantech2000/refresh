@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -12,7 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // Service defines the interface for cluster operations
@@ -29,9 +33,19 @@ type Service interface {
 	Compare(ctx context.Context, clusterNames []string, options CompareOptions) (*ClusterComparison, error)
 }
 
+// EKSAPI abstracts the subset of EKS client methods used by this service for easier testing
+type EKSAPI interface {
+	ListClusters(ctx context.Context, params *eks.ListClustersInput, optFns ...func(*eks.Options)) (*eks.ListClustersOutput, error)
+	DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error)
+	ListNodegroups(ctx context.Context, params *eks.ListNodegroupsInput, optFns ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error)
+	DescribeNodegroup(ctx context.Context, params *eks.DescribeNodegroupInput, optFns ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error)
+	ListAddons(ctx context.Context, params *eks.ListAddonsInput, optFns ...func(*eks.Options)) (*eks.ListAddonsOutput, error)
+	DescribeAddon(ctx context.Context, params *eks.DescribeAddonInput, optFns ...func(*eks.Options)) (*eks.DescribeAddonOutput, error)
+}
+
 // ServiceImpl implements the cluster service
 type ServiceImpl struct {
-	eksClient     *eks.Client
+	eksClient     EKSAPI
 	ec2Client     *ec2.Client
 	iamClient     *iam.Client
 	stsClient     *sts.Client
@@ -41,6 +55,12 @@ type ServiceImpl struct {
 	awsConfig     aws.Config
 }
 
+const (
+	// Default cache TTLs (override via env if needed in future)
+	defaultCacheTTLDescribe = 5 * time.Minute
+	defaultCacheTTLList     = 2 * time.Minute
+)
+
 // NewService creates a new cluster service instance
 func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logger *slog.Logger) *ServiceImpl {
 	return &ServiceImpl{
@@ -49,10 +69,52 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 		iamClient:     iam.NewFromConfig(awsConfig),
 		stsClient:     sts.NewFromConfig(awsConfig),
 		healthChecker: healthChecker,
-		cache:         NewCache(5 * time.Minute), // 5 minute cache
+		cache:         NewCache(defaultCacheTTLDescribe),
 		logger:        logger,
 		awsConfig:     awsConfig,
 	}
+}
+
+// buildListCacheKey returns a deterministic cache key for list options
+func buildListCacheKey(options ListOptions) string {
+	var parts []string
+	// regions
+	if len(options.Regions) > 0 {
+		regions := append([]string(nil), options.Regions...)
+		sort.Strings(regions)
+		parts = append(parts, "regions="+strings.Join(regions, ","))
+	}
+	// filters
+	if len(options.Filters) > 0 {
+		keys := make([]string, 0, len(options.Filters))
+		for k := range options.Filters {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		filterParts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			filterParts = append(filterParts, fmt.Sprintf("%s=%s", k, options.Filters[k]))
+		}
+		parts = append(parts, "filters="+strings.Join(filterParts, ";"))
+	}
+	// booleans
+	parts = append(parts, fmt.Sprintf("showHealth=%t", options.ShowHealth))
+	parts = append(parts, fmt.Sprintf("allRegions=%t", options.AllRegions))
+	if len(parts) == 0 {
+		return "list-default"
+	}
+	return "list-" + strings.Join(parts, "|")
+}
+
+// buildDescribeCacheKey returns a deterministic cache key for describe options
+func buildDescribeCacheKey(name string, options DescribeOptions) string {
+	flags := []string{
+		fmt.Sprintf("health=%t", options.ShowHealth),
+		fmt.Sprintf("security=%t", options.ShowSecurity),
+		fmt.Sprintf("addons=%t", options.IncludeAddons),
+		fmt.Sprintf("detailed=%t", options.Detailed),
+	}
+	return fmt.Sprintf("describe-%s-%s", name, strings.Join(flags, ","))
 }
 
 // Describe provides comprehensive cluster information
@@ -60,7 +122,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 	s.logger.Info("describing cluster", "cluster", name, "options", options)
 
 	// Check cache first
-	cacheKey := fmt.Sprintf("describe-%s-%v", name, options)
+	cacheKey := buildDescribeCacheKey(name, options)
 	if cached, found := s.cache.Get(cacheKey); found {
 		if details, ok := cached.(*ClusterDetails); ok {
 			s.logger.Debug("returning cached cluster details", "cluster", name)
@@ -68,9 +130,9 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 		}
 	}
 
-	// Get basic cluster information
-	clusterOutput, err := s.eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
-		Name: aws.String(name),
+	// Get basic cluster information (with retry)
+	clusterOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(name)})
 	})
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s", name))
@@ -160,7 +222,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 	}
 
 	// Cache the result
-	s.cache.Set(cacheKey, details, 5*time.Minute)
+	s.cache.Set(cacheKey, details, defaultCacheTTLDescribe)
 
 	return details, nil
 }
@@ -170,7 +232,7 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 	s.logger.Info("listing clusters", "options", options)
 
 	// Check cache first
-	cacheKey := fmt.Sprintf("list-%v", options)
+	cacheKey := buildListCacheKey(options)
 	if cached, found := s.cache.Get(cacheKey); found {
 		if summaries, ok := cached.([]ClusterSummary); ok {
 			s.logger.Debug("returning cached cluster list")
@@ -178,16 +240,31 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 		}
 	}
 
-	// Get cluster names
-	listOutput, err := s.eksClient.ListClusters(ctx, &eks.ListClustersInput{})
-	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, "listing clusters")
+	// Get cluster names with pagination
+	var clusterNames []string
+	var nextToken *string
+	for {
+		listOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListClustersOutput, error) {
+			return s.eksClient.ListClusters(rc, &eks.ListClustersInput{NextToken: nextToken})
+		})
+		if err != nil {
+			return nil, awsinternal.FormatAWSError(err, "listing clusters")
+		}
+		clusterNames = append(clusterNames, listOutput.Clusters...)
+		// Some paginated APIs may return an empty string token to indicate end
+		if listOutput.NextToken == nil || (listOutput.NextToken != nil && aws.ToString(listOutput.NextToken) == "") {
+			break
+		}
+		nextToken = listOutput.NextToken
 	}
+
+	// Debug: ensure we collected all pages during tests
+	// s.logger.Debug("collected clusters", "count", len(clusterNames))
 
 	var summaries []ClusterSummary
 
 	// Process each cluster
-	for _, clusterName := range listOutput.Clusters {
+	for _, clusterName := range clusterNames {
 		// Apply filters
 		if s.shouldSkipCluster(clusterName, options.Filters) {
 			continue
@@ -203,7 +280,7 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 	}
 
 	// Cache the result
-	s.cache.Set(cacheKey, summaries, 2*time.Minute)
+	s.cache.Set(cacheKey, summaries, defaultCacheTTLList)
 
 	return summaries, nil
 }
@@ -212,16 +289,34 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) ([]ClusterSummary, error) {
 	s.logger.Info("listing clusters across all regions", "options", options)
 
-	eksRegions := []string{
+	// Default regions by partition (fallback). Prefer user-specified regions or env override.
+	regionsCommercial := []string{
 		"us-east-1", "us-east-2", "us-west-1", "us-west-2",
 		"eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-north-1",
 		"ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2", "ap-south-1",
 		"ca-central-1", "sa-east-1",
 	}
+	regionsGovCloud := []string{"us-gov-west-1", "us-gov-east-1"}
+	regionsChina := []string{"cn-north-1", "cn-northwest-1"}
+
+	eksRegions := regionsCommercial
+	currentRegion := s.awsConfig.Region
+	if strings.HasPrefix(currentRegion, "us-gov-") {
+		eksRegions = regionsGovCloud
+	} else if strings.HasPrefix(currentRegion, "cn-") {
+		eksRegions = regionsChina
+	}
+
+	// Allow overriding region set via environment (comma-separated)
+	if envRegions := appconfig.RegionsFromEnv(); len(envRegions) > 0 {
+		eksRegions = envRegions
+	}
 
 	if len(options.Regions) > 0 {
 		eksRegions = options.Regions
 	}
+
+	// Partition-aware defaults are applied above; users can still override via flags/env.
 
 	allSummaries := make([]ClusterSummary, 0)
 
@@ -234,9 +329,18 @@ func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (
 
 	resultChan := make(chan regionResult, len(eksRegions))
 
+	// Limit concurrency across regions to reduce throttling
+	maxConc := options.MaxConcurrency
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	sem := make(chan struct{}, maxConc)
+
 	// Query each region concurrently
 	for _, region := range eksRegions {
 		go func(r string) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			// Create region-specific config
 			regionConfig := s.awsConfig.Copy()
 			regionConfig.Region = r

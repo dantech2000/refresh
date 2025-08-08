@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-The refresh tool currently utilizes a subset of available AWS EKS APIs, focusing primarily on nodegroup AMI management. There are significant opportunities to expand functionality by leveraging underutilized AWS SDK v2 EKS operations, particularly in areas where eksctl has limitations or gaps.
+The refresh tool currently utilizes a subset of available AWS EKS APIs, focusing primarily on nodegroup AMI management. There are significant opportunities to expand functionality by leveraging underutilized AWS SDK v2 EKS operations.
 
 ## Current AWS SDK Usage Analysis
 
@@ -28,7 +28,7 @@ The refresh tool currently utilizes a subset of available AWS EKS APIs, focusing
 ## 🚀 High Priority Feature Opportunities
 
 ### 1. EKS Add-ons Management
-**Market Gap**: eksctl requires CloudFormation overhead; refresh could provide lightweight alternative
+**Market Gap**: Many workflows rely on CloudFormation when direct APIs would be faster; refresh can provide a lightweight alternative
 
 **Proposed Commands**:
 ```bash
@@ -197,17 +197,16 @@ refresh vulnerability-assessment -c my-cluster
 refresh encryption-audit -c my-cluster
 ```
 
-## 🎯 Competitive Advantages vs eksctl
+## 🎯 Differentiators
 
 ### Technical Advantages
 1. **No CloudFormation Dependency**: Direct API calls for faster, more reliable operations
 2. **Real-time Monitoring**: Existing progress monitoring can be extended to all operations
 3. **Health-First Approach**: Built-in pre-flight checks for all operations
 4. **Operational Focus**: Designed for day-2 operations rather than initial provisioning
-5. **Better Error Handling**: Already superior user experience with clear error messages
+5. **Better Error Handling**: Clear error messages and guidance
 
 ### Strategic Positioning
-- **eksctl**: Cluster lifecycle management (create, delete)
 - **refresh**: Cluster operational management (maintain, optimize, secure)
 
 ### Target Use Cases
@@ -260,7 +259,7 @@ All new features should be additive and not break existing workflows. Maintain t
 
 ## Market Research Summary
 
-Based on analysis of AWS documentation, eksctl capabilities, and community feedback:
+Based on analysis of AWS documentation and community feedback:
 
 1. **Gap in Operational Tooling**: Most tools focus on cluster creation; limited day-2 operations support
 2. **New AWS Features**: 2025 introduced several new EKS features with minimal tooling support
@@ -269,7 +268,7 @@ Based on analysis of AWS documentation, eksctl capabilities, and community feedb
 
 ## Conclusion
 
-The AWS EKS API surface area provides extensive opportunities for the refresh tool to become the premier operational management tool for EKS clusters. By focusing on areas where eksctl has limitations and leveraging new AWS features, refresh can establish a unique market position focused on day-2 operations, security, and operational excellence.
+The AWS EKS API surface area provides extensive opportunities for the refresh tool to become the premier operational management tool for EKS clusters. By focusing on areas with clear gaps and leveraging new AWS features, refresh can establish a unique market position focused on day-2 operations, security, and operational excellence.
 
 **Recommended Next Steps**:
 1. Begin with EKS Add-ons management (highest user demand, clear value proposition)

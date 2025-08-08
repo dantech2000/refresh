@@ -134,11 +134,12 @@ type DescribeOptions struct {
 
 // ListOptions controls cluster listing behavior
 type ListOptions struct {
-	Regions    []string          `json:"regions"`
-	ShowHealth bool              `json:"showHealth"`
-	ShowCosts  bool              `json:"showCosts"`
-	Filters    map[string]string `json:"filters"`
-	AllRegions bool              `json:"allRegions"`
+	Regions        []string          `json:"regions"`
+	ShowHealth     bool              `json:"showHealth"`
+	ShowCosts      bool              `json:"showCosts"`
+	Filters        map[string]string `json:"filters"`
+	AllRegions     bool              `json:"allRegions"`
+	MaxConcurrency int               `json:"maxConcurrency"`
 }
 
 // CompareOptions controls cluster comparison behavior

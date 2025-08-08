@@ -82,7 +82,13 @@ func UpdateAmiCommand() *cli.Command {
 			},
 		},
 		Action: func(c *cli.Context) error {
-			ctx := context.Background()
+			// Honor global timeout; fall back to command's own timeout for monitoring
+			globalTimeout := c.Duration("timeout")
+			if globalTimeout == 0 {
+				globalTimeout = 60 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+			defer cancel()
 			awsCfg, err := config.LoadDefaultConfig(ctx)
 			if err != nil {
 				color.Red("Failed to load AWS config: %v", err)

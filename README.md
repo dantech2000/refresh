@@ -12,18 +12,23 @@
 ![Alt](https://repobeats.axiom.co/api/embed/bc73e7cb2ef4f089dc943258dc6511f76ad86a35.svg "Repobeats analytics image")
 
 
-A Go-based CLI tool to manage and monitor AWS EKS node groups with comprehensive pre-flight health checks using default AWS metrics.
+A Go-based CLI tool to manage and monitor AWS EKS clusters and nodegroups with health checks, fast list/describe operations, and smart scaling.
 
 ## Features
 
 -   **🔍 Pre-flight Health Checks**: Validate cluster readiness before AMI updates using default EC2 metrics (no additional setup required)
 -   **📊 Real-time Monitoring**: Live progress tracking with professional spinner displays and clean completion summaries
--   **📋 Cluster Management**: List all managed node groups with AMI status (✅ Latest, ❌ Outdated, ⚠️ Updating)
+-   **📋 Cluster Management**: List clusters and nodegroups with status and versions
 -   **🔄 Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode
+-   **🧭 Nodegroup Intelligence (Phase 1)**: Fast list/describe with optional utilization and cost, and safe scaling with health checks
 -   **👀 Dry Run Mode**: Preview changes with comprehensive details before execution
 -   **⚡ Short Flags**: Convenient short flags for all commands (`-c`, `-n`, `-d`, `-f`, etc.)
 -   **🎨 Enhanced UI**: Color-coded output with progress bars and clear status indicators
 -   **🛡️ Graceful Degradation**: Works with just AWS credentials, provides clear guidance for optional features
+ -   **⏱️ Timeouts Everywhere**: Global and per-command `--timeout, -t` to avoid hangs on slow networks (default 60s)
+ -   **🌍 Multi-Region Discovery**: `list-clusters` supports `-A/--all-regions` with a concurrency cap (`-C/--max-concurrency`)
+ -   **✅ Accurate Node Readiness**: Uses Kubernetes API to compute actual ready node counts when kubeconfig is available
+ -   **↕️ Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
 
 ## Requirements
 
@@ -32,9 +37,9 @@ A Go-based CLI tool to manage and monitor AWS EKS node groups with comprehensive
 -   AWS credentials (`~/.aws/credentials`, environment variables, or IAM roles)
 
 ### ⚠️ Optional (Enhanced Features)
--   `kubectl` and kubeconfig (`~/.kube/config`) - for Kubernetes workload validation
--   Container Insights setup - for memory utilization metrics
--   CloudWatch agent - for advanced memory and disk metrics
+-   `kubectl` and kubeconfig (`~/.kube/config`) - for Kubernetes workload validation (Workloads/PDB currently experimental)
+-   CloudWatch metrics - for utilization (CPU supported now; memory via Container Insights in future)
+-   AWS Pricing API permissions - for on-demand cost estimates (static fallback planned)
 
 > **Note**: The tool works with just AWS credentials! Health checks use default EC2 metrics and provide clear guidance for enabling optional features.
 
@@ -116,16 +121,128 @@ go install github.com/dantech2000/refresh@latest
 ```
 
 ## Usage
+### Nodegroup Management (Phase 1)
+
+Fast nodegroup operations with optional utilization and cost, plus safe scaling.
+
+```bash
+# List nodegroups (table)
+refresh list-nodegroups -c <cluster>
+
+# Include utilization and costs (24h window by default)
+refresh list-nodegroups -c <cluster> --show-utilization --show-costs --timeframe 24h
+
+# Describe a nodegroup (table)
+refresh describe-nodegroup -c <cluster> -n <nodegroup>
+
+# Include utilization and costs (and instances)
+refresh describe-nodegroup -c <cluster> -n <nodegroup> --show-utilization --show-costs --show-instances --timeframe 24h
+
+# Scale a nodegroup safely with health checks and wait
+refresh scale-nodegroup -c <cluster> -n <nodegroup> --desired 10 --health-check --wait --op-timeout 5m
+
+# Recommendations (placeholder output in Phase 1)
+refresh nodegroup-recommendations -c <cluster> --cost-optimization --right-sizing --spot-analysis --timeframe 30d
+```
+
+Notes:
+- `--timeframe` supports `1h,3h,24h` for utilization. Default is `24h`.
+- Costs require `pricing:GetProducts`. If unavailable, costs may be hidden (static fallback planned).
+- Workloads/PDB output is currently experimental and gated; kubeconfig must point to the target cluster. A `--kubeconfig` flag and diagnostics will be added.
+
+
+### List Clusters (multi-region)
+### EKS Add-ons
+
+Fast, direct EKS API operations for cluster add-ons:
+
+```bash
+# List add-ons with status/versions
+refresh list-addons -c <cluster> -H
+
+# Describe a specific add-on
+refresh describe-addon -c <cluster> -a vpc-cni -o yaml
+
+# Update an add-on to latest version
+refresh update-addon -c <cluster> -a vpc-cni --version latest
+```
+
+
+Quickly list EKS clusters in one or many regions, with optional health and performance controls:
+
+```bash
+# Default region from AWS config
+refresh list-clusters
+
+# Specific regions
+refresh list-clusters -r us-east-1 -r eu-west-1
+
+# All supported regions with health and a 30s timeout
+refresh list-clusters -A -H -t 30s
+
+# Limit concurrent region queries (helps avoid throttling)
+refresh list-clusters -A -C 4
+
+# Override the region set queried by -A via environment (commercial partition default)
+REFRESH_EKS_REGIONS="us-east-1,eu-west-1" refresh list-clusters -A
+
+# Machine-readable output
+refresh list-clusters -o json
+
+# Sorting
+refresh list-clusters --sort version
+refresh list-clusters --sort region --desc
+```
+
+Notes:
+- The `-t/--timeout` flag is available globally (applies to all commands) and per-command. Env override: `REFRESH_TIMEOUT`.
+- For `list-clusters`, control concurrency with `-C/--max-concurrency` or `REFRESH_MAX_CONCURRENCY`.
+- When kubeconfig is available, node readiness reflects actual `NodeReady` counts from Kubernetes.
+- Region defaults are partition-aware for `-A/--all-regions`: commercial by default; if your current config region starts with `us-gov-` or `cn-`, the default set targets that partition. Override anytime via `-r` or `REFRESH_EKS_REGIONS`.
+ - Default timeout and concurrency values come from centralized config and can be overridden via flags or env.
 
 ### List Nodegroups
 
 List all managed nodegroups in a cluster, showing their status and AMI state:
 
 ```sh
-go run main.go list --cluster <cluster-name>
+refresh list --cluster <cluster-name>
 
 # Filter nodegroups using partial name matching
-go run main.go list --cluster <cluster-name> --nodegroup <partial-name>
+refresh list --cluster <cluster-name> --nodegroup <partial-name>
+```
+
+Sorting is supported for nodegroups as well:
+
+```sh
+refresh list-nodegroups -c <cluster> --sort cpu --desc    # sort by CPU desc
+refresh list-nodegroups -c <cluster> --sort cost          # sort by monthly cost
+refresh list-nodegroups -c <cluster> --sort instance      # sort by instance type
+```
+
+Accepted sort keys:
+- list-clusters: `name`, `status`, `version`, `region`
+- list-nodegroups: `name`, `status`, `instance`, `nodes`, `cpu`, `cost`
+
+### Compare Clusters
+
+Compare configurations across clusters and focus on specific aspects:
+
+```bash
+# Basic comparison (table)
+refresh compare-clusters -c dev -c prod
+
+# JSON output
+refresh compare-clusters -c dev -c prod -o json
+
+# Focus comparison on networking and addons
+refresh compare-clusters -c dev -c prod -i networking -i addons
+
+# Show only differences
+refresh compare-clusters -c dev -c prod -d
+
+# Interactive selection when patterns match multiple clusters
+refresh compare-clusters -c dev -c prod --interactive
 ```
 
 **Example output:**
@@ -164,32 +281,32 @@ Trigger a rolling update to the latest AMI for all or a specific nodegroup:
 
 ```sh
 # Update all nodegroups
-go run main.go update-ami --cluster <cluster-name>
+refresh update-ami --cluster <cluster-name>
 
 # Update a specific nodegroup
-go run main.go update-ami --cluster <cluster-name> --nodegroup <nodegroup-name>
+refresh update-ami --cluster <cluster-name> --nodegroup <nodegroup-name>
 
 # Update nodegroups using partial name matching
-go run main.go update-ami --cluster <cluster-name> --nodegroup <partial-name>
+refresh update-ami --cluster <cluster-name> --nodegroup <partial-name>
 
 # Force update (replace all nodes, even if already latest)
-go run main.go update-ami --cluster <cluster-name> --force
+refresh update-ami --cluster <cluster-name> --force
 
 # Preview changes without executing (dry run)
-go run main.go update-ami --cluster <cluster-name> --dry-run
-go run main.go update-ami --cluster <cluster-name> --nodegroup <partial-name> --dry-run
+refresh update-ami --cluster <cluster-name> --dry-run
+refresh update-ami --cluster <cluster-name> --nodegroup <partial-name> --dry-run
 ```
 
 **Example output:**
 
 ```
 # Single nodegroup update
-$ go run main.go update-ami --cluster development-blue --nodegroup groupF
+$ refresh update-ami --cluster development-blue --nodegroup groupF
 Updating nodegroup dev-blue-groupF-20230815230923929900000007...
 Update started for nodegroup dev-blue-groupF-20230815230923929900000007
 
 # Multiple matches with confirmation
-$ go run main.go update-ami --cluster development-blue --nodegroup group
+$ refresh update-ami --cluster development-blue --nodegroup group
 Multiple nodegroups match pattern 'group':
   1) dev-blue-groupD-20230814214633237700000007
   2) dev-blue-groupE-20230815204000720600000007
@@ -203,7 +320,7 @@ Updating nodegroup dev-blue-groupF-20230815230923929900000007...
 Update started for nodegroup dev-blue-groupF-20230815230923929900000007
 
 # Dry run preview
-$ go run main.go update-ami --cluster development-blue --nodegroup group --dry-run
+$ refresh update-ami --cluster development-blue --nodegroup group --dry-run
 DRY RUN: Preview of nodegroup updates for cluster development-blue
 
 UPDATE: Nodegroup dev-blue-groupD-20230814214633237700000007 would be updated
@@ -243,7 +360,7 @@ You can also filter the list output using the same partial matching:
 
 ```sh
 # Show only nodegroups containing "group"
-$ go run main.go list --cluster development-blue --nodegroup group
+$ refresh list --cluster development-blue --nodegroup group
 development-blue
 ├── dev-blue-groupD-20230814214633237700000007
 │   ├── Status: ACTIVE
@@ -258,7 +375,7 @@ development-blue
     └── AMI Status: ❌ Outdated
 
 # Show only monolith nodegroups
-$ go run main.go list --cluster development-blue --nodegroup monolith
+$ refresh list --cluster development-blue --nodegroup monolith
 development-blue
 ├── dev-blue-monolithD-20230816000007673100000007
 └── dev-blue-monolithE-20230816002441701900000007

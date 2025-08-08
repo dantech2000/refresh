@@ -132,20 +132,26 @@ func calculateAverage(values []float64) float64 {
 
 // getClusterInstanceIDs retrieves all EC2 instance IDs for the cluster
 func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName string) ([]string, error) {
-	// List all nodegroups in the cluster
-	listInput := &eks.ListNodegroupsInput{
-		ClusterName: aws.String(clusterName),
-	}
-
-	ngOutput, err := hc.eksClient.ListNodegroups(ctx, listInput)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list nodegroups: %v", err)
+	// List all nodegroups in the cluster (with pagination)
+	var nodegroupNames []string
+	var nextToken *string
+	for {
+		listInput := &eks.ListNodegroupsInput{ClusterName: aws.String(clusterName), NextToken: nextToken}
+		ngOutput, err := hc.eksClient.ListNodegroups(ctx, listInput)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list nodegroups: %v", err)
+		}
+		nodegroupNames = append(nodegroupNames, ngOutput.Nodegroups...)
+		if ngOutput.NextToken == nil {
+			break
+		}
+		nextToken = ngOutput.NextToken
 	}
 
 	var instanceIDs []string
 
 	// For each nodegroup, get the associated Auto Scaling Group and its instances
-	for _, ngName := range ngOutput.Nodegroups {
+	for _, ngName := range nodegroupNames {
 		descInput := &eks.DescribeNodegroupInput{
 			ClusterName:   aws.String(clusterName),
 			NodegroupName: aws.String(ngName),

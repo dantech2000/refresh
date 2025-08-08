@@ -115,9 +115,9 @@ Support multiple output formats:
 - Early credential validation
 
 ### 4. Performance Indicators
-Show performance compared to alternatives:
+Show performance in a friendly way:
 ```
-Retrieved in 1.2s (eksctl equivalent: ~5-8s)
+Retrieved in 1.2s
 ```
 
 ## Health Check Display Patterns
@@ -184,9 +184,7 @@ fmt.Printf("Retrieved in %s\n", color.GreenString(elapsed.String()))
 ```
 
 ### Comparison with Alternatives
-Include performance comparisons where relevant:
-- "4x faster than eksctl"
-- "(eksctl equivalent: ~5-8s)"
+Keep performance messaging neutral and data-driven; avoid competitor references.
 
 ## Text Formatting
 
@@ -225,7 +223,7 @@ Status: READY WITH WARNINGS (2 issues found)
 
 ### Good Progress Indication
 ```
-Retrieved in 1.2s (eksctl equivalent: ~5-8s)
+Retrieved in 1.2s
 ```
 
 ## Anti-Patterns (Avoid)

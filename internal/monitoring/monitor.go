@@ -22,6 +22,7 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 	// Set up signal handling for graceful cancellation
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
 	// Create a cancellable context with timeout
 	monitorCtx, cancel := context.WithTimeout(ctx, config.Timeout)
@@ -145,7 +146,11 @@ func checkUpdateWithRetry(ctx context.Context, eksClient *eks.Client, update *re
 
 		// Exponential backoff
 		if attempt < config.MaxRetries-1 {
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
 			backoff = time.Duration(float64(backoff) * config.BackoffMultiple)
 		}
 	}

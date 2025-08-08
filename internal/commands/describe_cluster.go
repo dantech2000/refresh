@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
 )
@@ -28,11 +29,18 @@ func DescribeClusterCommand() *cli.Command {
 	return &cli.Command{
 		Name:    "describe-cluster",
 		Aliases: []string{"dc"},
-		Usage:   "Describe comprehensive cluster information (4x faster than eksctl)",
+		Usage:   "Describe comprehensive cluster information",
 		Description: `Get detailed information about an EKS cluster including networking,
-security configuration, add-ons, and health status. Direct API calls 
-provide 4x performance improvement over eksctl's CloudFormation approach.`,
+security configuration, add-ons, and health status. Direct EKS API calls
+provide fast, comprehensive results without CloudFormation dependency.`,
 		Flags: []cli.Flag{
+			&cli.DurationFlag{
+				Name:    "timeout",
+				Aliases: []string{"t"},
+				Usage:   "Operation timeout (e.g. 60s, 2m)",
+				Value:   appconfig.DefaultTimeout,
+				EnvVars: []string{"REFRESH_TIMEOUT"},
+			},
 			&cli.StringFlag{
 				Name:     "cluster",
 				Aliases:  []string{"c"},
@@ -77,7 +85,8 @@ provide 4x performance improvement over eksctl's CloudFormation approach.`,
 }
 
 func runDescribeCluster(c *cli.Context) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	defer cancel()
 
 	// Load AWS config
 	awsCfg, err := config.LoadDefaultConfig(ctx)
@@ -132,14 +141,16 @@ func runDescribeCluster(c *cli.Context) error {
 		pin.WithTextColor(pin.ColorYellow),
 	)
 
-	cancel := spinner.Start(ctx)
-	defer cancel()
+	startSpinner := spinner.Start
+	stopSpinner := spinner.Stop
+	cancelSpinner := startSpinner(ctx)
+	defer cancelSpinner()
 
 	// Get cluster details
 	startTime := time.Now()
 	details, err := clusterService.Describe(ctx, clusterName, options)
 
-	spinner.Stop("Cluster information gathered!")
+	stopSpinner("Cluster information gathered!")
 	if err != nil {
 		return err
 	}
@@ -175,8 +186,8 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 	// Print main cluster information
 	fmt.Printf("Cluster Information: %s\n", color.CyanString(details.Name))
 
-	// Performance indicator
-	fmt.Printf("Retrieved in %s (eksctl equivalent: ~5-8s)\n\n", color.GreenString(elapsed.String()))
+	// Performance indicator (formatted to one decimal place)
+	fmt.Printf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
 	// Basic information table
 	printTableRow("Status", formatStatus(details.Status))

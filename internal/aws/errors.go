@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+	"github.com/dantech2000/refresh/internal/services/common"
 	"github.com/fatih/color"
 )
 
@@ -116,7 +117,7 @@ Please set up your AWS credentials using one of these methods:
 4. AWS SSO:
    aws sso login
 
-Current error: %s`, operation)
+    Current error: %s`, err)
 	}
 
 	// Check for network errors
@@ -167,7 +168,9 @@ func ValidateAWSCredentials(ctx context.Context, awsCfg aws.Config) error {
 
 	stsClient := sts.NewFromConfig(awsCfg)
 
-	_, err := stsClient.GetCallerIdentity(validationCtx, &sts.GetCallerIdentityInput{})
+	_, err := common.WithRetry(validationCtx, common.DefaultRetryConfig, func(rc context.Context) (*sts.GetCallerIdentityOutput, error) {
+		return stsClient.GetCallerIdentity(rc, &sts.GetCallerIdentityInput{})
+	})
 	if err != nil {
 		return FormatAWSError(err, "validating AWS credentials")
 	}

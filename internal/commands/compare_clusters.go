@@ -40,6 +40,11 @@ security, add-ons, and version configurations.`,
 				Required: true,
 			},
 			&cli.BoolFlag{
+				Name:  "interactive",
+				Usage: "Interactively select clusters when multiple patterns match",
+				Value: false,
+			},
+			&cli.BoolFlag{
 				Name:    "show-differences",
 				Aliases: []string{"d"},
 				Usage:   "Show only differences (hide identical configurations)",
@@ -64,7 +69,13 @@ security, add-ons, and version configurations.`,
 }
 
 func runCompareClusters(c *cli.Context) error {
-	ctx := context.Background()
+	// Honor global timeout if provided at app level; fallback to 60s
+	timeout := c.Duration("timeout")
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	clusterPatterns := c.StringSlice("cluster")
 	if len(clusterPatterns) < 2 {
@@ -103,6 +114,7 @@ func runCompareClusters(c *cli.Context) error {
 	// Resolve cluster names
 	var clusterNames []string
 	for _, pattern := range clusterPatterns {
+		// In interactive mode we allow ambiguous patterns and prompt via ClusterName helper
 		clusterName, err := awsinternal.ClusterName(ctx, awsCfg, pattern)
 		if err != nil {
 			return fmt.Errorf("failed to resolve cluster '%s': %w", pattern, err)
@@ -129,14 +141,16 @@ func runCompareClusters(c *cli.Context) error {
 		pin.WithTextColor(pin.ColorYellow),
 	)
 
-	cancel := spinner.Start(ctx)
-	defer cancel()
+	startSpinner := spinner.Start
+	stopSpinner := spinner.Stop
+	cancelSpinner := startSpinner(ctx)
+	defer cancelSpinner()
 
 	// Perform comparison
 	startTime := time.Now()
 	comparison, err := clusterService.Compare(ctx, clusterNames, options)
 
-	spinner.Stop("Analysis complete!")
+	stopSpinner("Analysis complete!")
 	if err != nil {
 		return err
 	}
@@ -176,7 +190,7 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 	}
 
 	fmt.Printf("Cluster Comparison: %s\n", color.CyanString(strings.Join(clusterNames, " vs ")))
-	fmt.Printf("Analyzed in %s\n\n", color.GreenString(elapsed.String()))
+	fmt.Printf("Analyzed in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
 	// Summary
 	summary := comparison.Summary
@@ -201,7 +215,7 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 
 	// Basic cluster information comparison
 	fmt.Printf("Basic Information:\n")
-	printClusterBasicInfoHeader(comparison.Clusters)
+	printClusterBasicInfoHeader()
 	printClusterBasicInfoRows(comparison.Clusters)
 	fmt.Printf("└────────────────┴─────────┴─────────┴─────────────────┘\n\n")
 
@@ -249,7 +263,7 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 	return nil
 }
 
-func printClusterBasicInfoHeader(clusters []cluster.ClusterDetails) {
+func printClusterBasicInfoHeader() {
 	fmt.Printf("┌────────────────┬─────────┬─────────┬─────────────────┐\n")
 	fmt.Printf("│ %s │ %s │ %s │ %s │\n",
 		padColoredString(color.CyanString("CLUSTER"), 14),
