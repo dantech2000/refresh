@@ -66,18 +66,18 @@ func runListAddons(c *cli.Context) error {
 	if requested == "" {
 		requested = c.String("cluster")
 	}
-	if strings.TrimSpace(requested) == "" {
-		fmt.Println("No cluster specified. Available clusters:")
-		fmt.Println()
-		start := time.Now()
-		svc := newClusterService(cfg, false, nil)
-		summaries, err := svc.List(ctx, cluster.ListOptions{})
-		if err != nil {
-			return err
-		}
-		_ = outputClustersTable(summaries, time.Since(start), false, false)
-		return nil
-	}
+    if strings.TrimSpace(requested) == "" {
+        ui.Outln("No cluster specified. Available clusters:")
+        ui.Outln()
+        start := time.Now()
+        svc := newClusterService(cfg, false, nil)
+        summaries, err := svc.List(ctx, cluster.ListOptions{})
+        if err != nil {
+            return err
+        }
+        _ = outputClustersTable(summaries, time.Since(start), false, false)
+        return nil
+    }
 	clusterName, err := awsinternal.ClusterName(ctx, cfg, requested)
 	if err != nil {
 		return err
@@ -159,8 +159,8 @@ func mapAddonHealth(s ekstypes.AddonStatus) string {
 }
 
 func outputAddonsTable(cluster string, rows []addonRow, elapsed time.Duration) error {
-	fmt.Printf("Add-ons for cluster: %s\n", color.CyanString(cluster))
-	fmt.Printf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+    ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
+    ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
 	if len(rows) == 0 {
 		color.Yellow("No add-ons found")

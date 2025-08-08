@@ -89,8 +89,8 @@ func runDescribeNodegroup(c *cli.Context) error {
 		requested = c.String("cluster")
 	}
     if strings.TrimSpace(requested) == "" {
-        fmt.Println("No cluster specified. Available clusters:")
-        fmt.Println()
+        ui.Outln("No cluster specified. Available clusters:")
+        ui.Outln()
         svc := newClusterService(awsCfg, false, nil)
         start := time.Now()
         summaries, err := svc.List(ctx, cluster.ListOptions{})
@@ -165,11 +165,11 @@ func runDescribeNodegroup(c *cli.Context) error {
 }
 
 func outputNodegroupDetailsTable(details *nodegroup.NodegroupDetails, elapsed time.Duration) error {
-	fmt.Printf("Nodegroup: %s\n", color.CyanString(details.Name))
+    ui.Outf("Nodegroup: %s\n", color.CyanString(details.Name))
 	if details.Utilization.TimeRange != "" {
-		fmt.Printf("Retrieved in %s (utilization window %s)\n\n", color.GreenString("%.1fs", elapsed.Seconds()), details.Utilization.TimeRange)
+        ui.Outf("Retrieved in %s (utilization window %s)\n\n", color.GreenString("%.1fs", elapsed.Seconds()), details.Utilization.TimeRange)
 	} else {
-		fmt.Printf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+        ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 	}
 
 	printTableRow("Status", details.Status)
@@ -200,8 +200,8 @@ func outputNodegroupDetailsTable(details *nodegroup.NodegroupDetails, elapsed ti
 
 		// Optional workloads
 		if details.Workloads.TotalPods > 0 || details.Workloads.PodDisruption != "" {
-			fmt.Println()
-			fmt.Println("Workloads:")
+            ui.Outln()
+            ui.Outln("Workloads:")
 			printTableRow("Total Pods", fmt.Sprintf("%d", details.Workloads.TotalPods))
 			printTableRow("Critical Pods", fmt.Sprintf("%d", details.Workloads.CriticalPods))
 			printTableRow("PDBs", details.Workloads.PodDisruption)
@@ -213,8 +213,8 @@ func outputNodegroupDetailsTable(details *nodegroup.NodegroupDetails, elapsed ti
 
 	// Optional instances
 	if len(details.Instances) > 0 {
-		fmt.Println()
-		fmt.Println("Instances:")
+        ui.Outln()
+        ui.Outln("Instances:")
 		columns := []ui.Column{
 			{Title: "INSTANCE ID", Min: 10, Max: 22, Align: ui.AlignLeft},
 			{Title: "TYPE", Min: 10, Max: 0, Align: ui.AlignLeft},

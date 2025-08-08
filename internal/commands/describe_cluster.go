@@ -95,12 +95,12 @@ func runDescribeCluster(c *cli.Context) error {
 	}
 
 	// Validate AWS credentials early to provide better error messages
-	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
-	}
+    if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
+        color.Red("%v", err)
+        ui.Outln()
+        awsinternal.PrintCredentialHelp()
+        return fmt.Errorf("AWS credential validation failed")
+    }
 
 	// Create logger (early, we might need it for listing when no cluster given)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -112,19 +112,19 @@ func runDescribeCluster(c *cli.Context) error {
 	}
 
 	// If no cluster specified, list available clusters in the current region and exit
-	if strings.TrimSpace(requested) == "" {
-		// List clusters (no health) in current region
-		clusterService := newClusterService(awsCfg, false, logger)
-		start := time.Now()
-		summaries, err := clusterService.List(ctx, cluster.ListOptions{})
-		if err != nil {
-			return err
-		}
-		fmt.Println("No cluster specified. Available clusters:")
-		fmt.Println()
-		_ = outputClustersTable(summaries, time.Since(start), false, false)
-		return nil
-	}
+    if strings.TrimSpace(requested) == "" {
+        // List clusters (no health) in current region
+        clusterService := newClusterService(awsCfg, false, logger)
+        start := time.Now()
+        summaries, err := clusterService.List(ctx, cluster.ListOptions{})
+        if err != nil {
+            return err
+        }
+        ui.Outln("No cluster specified. Available clusters:")
+        ui.Outln()
+        _ = outputClustersTable(summaries, time.Since(start), false, false)
+        return nil
+    }
 
 	// Resolve cluster name (supports patterns)
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
@@ -192,10 +192,10 @@ func outputYAML(details *cluster.ClusterDetails) error {
 
 func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 	// Print main cluster information
-	fmt.Printf("Cluster Information: %s\n", color.CyanString(details.Name))
+    ui.Outf("Cluster Information: %s\n", color.CyanString(details.Name))
 
 	// Performance indicator (formatted to one decimal place)
-	fmt.Printf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+    ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
 	// Basic information table
 	printTableRow("Status", formatStatus(details.Status))
@@ -258,7 +258,7 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 
 	// Add-ons table
 	if len(details.Addons) > 0 {
-		fmt.Println("\nAdd-ons:")
+        ui.Outln("\nAdd-ons:")
 		columns := []ui.Column{
 			{Title: "NAME", Min: 4, Max: 24, Align: ui.AlignLeft},
 			{Title: "VERSION", Min: 8, Max: 0, Align: ui.AlignLeft},
@@ -286,7 +286,7 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 
 func printTableRow(key, value string) {
 	coloredKey := color.YellowString(key)
-	fmt.Printf("%s │ %s\n", padColoredString(coloredKey, 16), value)
+    ui.Outf("%s │ %s\n", padColoredString(coloredKey, 16), value)
 }
 
 // removed printAddonHeader/printAddonRow in favor of ui.Table
