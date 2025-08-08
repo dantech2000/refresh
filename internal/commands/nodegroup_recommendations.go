@@ -17,6 +17,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // NodegroupRecommendationsCommand creates the nodegroup-recommendations command
@@ -106,70 +107,16 @@ func outputRecommendationsTable(cluster string, recs []nodegroup.Recommendation)
 		return nil
 	}
 
-	// Compute dynamic widths with caps
-	typeWidth := len("TYPE")
-	priorityWidth := len("PRIORITY")
-	impactWidth := len("IMPACT")
-	descWidth := len("DESCRIPTION")
+	columns := []ui.Column{
+		{Title: "TYPE", Min: 12, Max: 0, Align: ui.AlignLeft},
+		{Title: "PRIORITY", Min: 6, Max: 0, Align: ui.AlignLeft},
+		{Title: "IMPACT", Min: 6, Max: 0, Align: ui.AlignLeft},
+		{Title: "DESCRIPTION", Min: 8, Max: 60, Align: ui.AlignLeft},
+	}
+	table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
 	for _, r := range recs {
-		if l := len(r.Type); l > typeWidth {
-			typeWidth = l
-		}
-		if l := len(r.Priority); l > priorityWidth {
-			priorityWidth = l
-		}
-		if l := len(r.Impact); l > impactWidth {
-			impactWidth = l
-		}
-		if l := len(r.Description); l > descWidth {
-			descWidth = l
-		}
+		table.AddRow(r.Type, r.Priority, r.Impact, r.Description)
 	}
-	if typeWidth < 12 {
-		typeWidth = 12
-	}
-	if priorityWidth < 6 {
-		priorityWidth = 6
-	}
-	if impactWidth < 6 {
-		impactWidth = 6
-	}
-	if descWidth > 60 {
-		descWidth = 60
-	}
-
-	drawSep := func(left, mid, right string) {
-		fmt.Print(left)
-		fmt.Print(strings.Repeat("─", typeWidth+2))
-		fmt.Print(mid)
-		fmt.Print(strings.Repeat("─", priorityWidth+2))
-		fmt.Print(mid)
-		fmt.Print(strings.Repeat("─", impactWidth+2))
-		fmt.Print(mid)
-		fmt.Print(strings.Repeat("─", descWidth+2))
-		fmt.Println(right)
-	}
-
-	drawSep("┌", "┬", "┐")
-	hType := padColoredString(color.CyanString("TYPE"), typeWidth)
-	hPriority := padColoredString(color.CyanString("PRIORITY"), priorityWidth)
-	hImpact := padColoredString(color.CyanString("IMPACT"), impactWidth)
-	hDesc := padColoredString(color.CyanString("DESCRIPTION"), descWidth)
-	fmt.Printf("│ %s │ %s │ %s │ %s │\n", hType, hPriority, hImpact, hDesc)
-	drawSep("├", "┼", "┤")
-
-	for _, r := range recs {
-		desc := r.Description
-		if len(desc) > descWidth {
-			desc = desc[:descWidth]
-		}
-		fmt.Printf("│ %-*s │ %-*s │ %-*s │ %-*s │\n",
-			typeWidth, r.Type,
-			priorityWidth, r.Priority,
-			impactWidth, r.Impact,
-			descWidth, desc,
-		)
-	}
-	drawSep("└", "┴", "┘")
+	table.Render()
 	return nil
 }

@@ -21,6 +21,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // CompareClustersCommand creates the compare-clusters command
@@ -215,9 +216,34 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 
 	// Basic cluster information comparison
 	fmt.Printf("Basic Information:\n")
-	printClusterBasicInfoHeader()
-	printClusterBasicInfoRows(comparison.Clusters)
-	fmt.Printf("└────────────────┴─────────┴─────────┴─────────────────┘\n\n")
+	columns := []ui.Column{
+		{Title: "CLUSTER", Min: 14, Max: 0, Align: ui.AlignLeft},
+		{Title: "STATUS", Min: 7, Max: 0, Align: ui.AlignLeft},
+		{Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft},
+		{Title: "HEALTH", Min: 15, Max: 0, Align: ui.AlignLeft},
+	}
+	table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+	for _, cl := range comparison.Clusters {
+		healthStatus := color.WhiteString("UNKNOWN")
+		if cl.Health != nil {
+			switch cl.Health.Decision {
+			case health.DecisionProceed:
+				healthStatus = color.GreenString("PASS")
+			case health.DecisionWarn:
+				healthStatus = color.YellowString("WARN")
+			case health.DecisionBlock:
+				healthStatus = color.RedString("FAIL")
+			}
+		}
+		table.AddRow(
+			truncateString(cl.Name, 14),
+			formatStatus(cl.Status),
+			cl.Version,
+			healthStatus,
+		)
+	}
+	table.Render()
+	fmt.Println()
 
 	// Detailed differences
 	if len(comparison.Differences) > 0 {
@@ -263,37 +289,7 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 	return nil
 }
 
-func printClusterBasicInfoHeader() {
-	fmt.Printf("┌────────────────┬─────────┬─────────┬─────────────────┐\n")
-	fmt.Printf("│ %s │ %s │ %s │ %s │\n",
-		padColoredString(color.CyanString("CLUSTER"), 14),
-		padColoredString(color.CyanString("STATUS"), 7),
-		padColoredString(color.CyanString("VERSION"), 7),
-		padColoredString(color.CyanString("HEALTH"), 15))
-	fmt.Printf("├────────────────┼─────────┼─────────┼─────────────────┤\n")
-}
-
-func printClusterBasicInfoRows(clusters []cluster.ClusterDetails) {
-	for _, cluster := range clusters {
-		healthStatus := color.WhiteString("UNKNOWN")
-		if cluster.Health != nil {
-			switch cluster.Health.Decision {
-			case health.DecisionProceed:
-				healthStatus = color.GreenString("PASS")
-			case health.DecisionWarn:
-				healthStatus = color.YellowString("WARN")
-			case health.DecisionBlock:
-				healthStatus = color.RedString("FAIL")
-			}
-		}
-
-		fmt.Printf("│ %-14s │ %s │ %-7s │ %-15s │\n",
-			truncateString(cluster.Name, 14),
-			padColoredString(formatStatus(cluster.Status), 7),
-			cluster.Version,
-			padColoredString(healthStatus, 15))
-	}
-}
+// migrated basic info table to ui.Table
 
 func printDifferences(differences []cluster.Difference) {
 	for _, diff := range differences {

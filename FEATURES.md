@@ -11,9 +11,9 @@
 
 | Feature | Status | Effort | AWS APIs | Dependencies | Champion |
 |---------|--------|--------|-----------|-------------|----------|
-| Enhanced Cluster Operations | 📋 Not Started | L | EKS, EC2, IAM | None | TBD |
+| Enhanced Cluster Operations | ✅ Complete (Phase 1 scope) | L | EKS, EC2, IAM | None | TBD |
 | Advanced Nodegroup Management | 🚧 In Progress | XL | EKS, EC2, ASG, CW, Pricing | Cluster Ops | TBD |
-| EKS Add-ons Management | 📋 Not Started | L | EKS | None | TBD |
+| EKS Add-ons Management | 🚧 In Progress | M | EKS | None | TBD |
 
 ### Phase 2: Identity & Security (v0.3.x)  
 *Target Release: Q2 2025 | Priority: HIGH*
@@ -63,7 +63,7 @@
 ### Phase 1 Additions (v0.2.x)
 ```go
 "github.com/aws/aws-sdk-go-v2/service/iam"           // Enhanced cluster/nodegroup ops
-"github.com/aws/aws-sdk-go-v2/service/logs"         // Add-on logging analysis
+// removed for now
 ```
 
 ### Phase 2 Additions (v0.3.x)
@@ -218,7 +218,7 @@ graph TD
 - ✅ **v0.1.7**: Real-time progress monitoring for AMI updates
 
 ### In Development
-- 📋 **All Phase 1 features**: Waiting for development to begin
+- 🚧 **EKS Add-ons Management**: list/describe/update implemented; bulk update/security scan pending
 
 ### Next Planned Features (by Priority)
 1. **Enhanced Cluster Operations** - Foundation for all other features

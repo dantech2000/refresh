@@ -18,14 +18,17 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // ListNodegroupsCommand creates the list-nodegroups command
 func ListNodegroupsCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "list-nodegroups",
-		Usage: "List nodegroups in a cluster with optional health/cost/utilization",
+		Name:      "list-nodegroups",
+		Usage:     "List nodegroups in a cluster with optional health/cost/utilization",
+		ArgsUsage: "[cluster]",
 		Flags: []cli.Flag{
 			&cli.DurationFlag{
 				Name:    "timeout",
@@ -108,7 +111,24 @@ func runListNodegroups(c *cli.Context) error {
 		return fmt.Errorf("AWS credential validation failed")
 	}
 
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, c.String("cluster"))
+	// Positional cluster name support; list clusters if omitted
+	requested := c.Args().First()
+	if requested == "" {
+		requested = c.String("cluster")
+	}
+	if strings.TrimSpace(requested) == "" {
+		fmt.Println("No cluster specified. Available clusters:")
+		fmt.Println()
+		start := time.Now()
+		svcList := cluster.NewService(awsCfg, nil, nil)
+		summaries, err := svcList.List(ctx, cluster.ListOptions{})
+		if err != nil {
+			return err
+		}
+		_ = outputClustersTable(summaries, time.Since(start), false, false)
+		return nil
+	}
+	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
 	if err != nil {
 		return err
 	}
@@ -175,114 +195,36 @@ func outputNodegroupsTableWithWindow(clusterName, timeframe string, items []node
 	fmt.Printf("Nodegroups for cluster: %s\n", clusterName)
 	fmt.Printf("Retrieved in %s (utilization window %s)\n\n", color.GreenString("%.1fs", elapsed.Seconds()), timeframe)
 
-	// Determine dynamic column widths with sane caps
-	nameWidth := len("NAME")
-	statusWidth := len("STATUS")
-	instanceWidth := len("INSTANCE")
-	nodesWidth := len("NODES")
-	cpuWidth := len("CPU%")
-	costWidth := len("COST/MO")
+	// Define columns; widths computed dynamically with caps
+	columns := []ui.Column{
+		{Title: "NAME", Min: 4, Max: 60, Align: ui.AlignLeft},
+		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
+		{Title: "INSTANCE", Min: 10, Max: 0, Align: ui.AlignLeft},
+		{Title: "NODES", Min: 7, Max: 0, Align: ui.AlignRight},
+		{Title: "CPU%", Min: 0, Max: 0, Align: ui.AlignRight},
+		{Title: "COST/MO", Min: 0, Max: 0, Align: ui.AlignRight},
+	}
+	table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
 
 	for _, ng := range items {
-		if l := len(ng.Name); l > nameWidth {
-			nameWidth = l
-		}
-		if l := len(ng.Status); l > statusWidth {
-			statusWidth = l
-		}
-		if l := len(ng.InstanceType); l > instanceWidth {
-			instanceWidth = l
-		}
-		nodes := fmt.Sprintf("%d/%d", ng.ReadyNodes, ng.DesiredSize)
-		if l := len(nodes); l > nodesWidth {
-			nodesWidth = l
-		}
+		cpu := ""
 		if ng.Metrics.CPU > 0 {
-			if l := len(fmt.Sprintf("%.0f%%", ng.Metrics.CPU)); l > cpuWidth {
-				cpuWidth = l
-			}
+			cpu = fmt.Sprintf("%.0f%%", ng.Metrics.CPU)
 		}
+		cost := ""
 		if ng.Cost.Monthly > 0 {
-			if l := len(fmt.Sprintf("$%.0f", ng.Cost.Monthly)); l > costWidth {
-				costWidth = l
-			}
+			cost = fmt.Sprintf("$%.0f", ng.Cost.Monthly)
 		}
+		table.AddRow(
+			ng.Name,
+			ng.Status,
+			ng.InstanceType,
+			fmt.Sprintf("%d/%d", ng.ReadyNodes, ng.DesiredSize),
+			cpu,
+			cost,
+		)
 	}
-
-	// Caps to avoid overly wide tables
-	if nameWidth > 60 {
-		nameWidth = 60
-	}
-	if statusWidth < 10 {
-		statusWidth = 10
-	}
-	if instanceWidth < 10 {
-		instanceWidth = 10
-	}
-	if nodesWidth < 7 {
-		nodesWidth = 7
-	}
-
-	// Helper to draw separators
-	drawSep := func(left, mid, right string) {
-		fmt.Print(left)
-		fmt.Print(strings.Repeat("─", nameWidth+2))
-		fmt.Print(mid)
-		fmt.Print(strings.Repeat("─", statusWidth+2))
-		fmt.Print(mid)
-		fmt.Print(strings.Repeat("─", instanceWidth+2))
-		fmt.Print(mid)
-		fmt.Print(strings.Repeat("─", nodesWidth+2))
-		if cpuWidth > 0 || costWidth > 0 {
-			fmt.Print(mid)
-			fmt.Print(strings.Repeat("─", cpuWidth+2))
-			fmt.Print(mid)
-			fmt.Print(strings.Repeat("─", costWidth+2))
-		}
-		fmt.Println(right)
-	}
-
-	drawSep("┌", "┬", "┐")
-	// Header row (pad colored strings to visible widths)
-	hName := padColoredString(color.CyanString("NAME"), nameWidth)
-	hStatus := padColoredString(color.CyanString("STATUS"), statusWidth)
-	hInstance := padColoredString(color.CyanString("INSTANCE"), instanceWidth)
-	hNodes := padColoredString(color.CyanString("NODES"), nodesWidth)
-	headers := fmt.Sprintf("│ %s │ %s │ %s │ %s", hName, hStatus, hInstance, hNodes)
-	if cpuWidth > 0 || costWidth > 0 {
-		hCPU := padColoredString(color.CyanString("CPU%"), cpuWidth)
-		hCost := padColoredString(color.CyanString("COST/MO"), costWidth)
-		headers += fmt.Sprintf(" │ %s │ %s │", hCPU, hCost)
-	} else {
-		headers += " │"
-	}
-	fmt.Println(headers)
-	drawSep("├", "┼", "┤")
-
-	for _, ng := range items {
-		nodes := fmt.Sprintf("%d/%d", ng.ReadyNodes, ng.DesiredSize)
-		name := ng.Name
-		if len(name) > nameWidth {
-			// Hard truncate to fit table width without ellipsis to preserve grid
-			name = name[:nameWidth]
-		}
-		row := fmt.Sprintf("│ %-*s │ %-*s │ %-*s │ %-*s", nameWidth, name, statusWidth, ng.Status, instanceWidth, ng.InstanceType, nodesWidth, nodes)
-		if cpuWidth > 0 || costWidth > 0 {
-			cpu := ""
-			if ng.Metrics.CPU > 0 {
-				cpu = fmt.Sprintf("%.0f%%", ng.Metrics.CPU)
-			}
-			cost := ""
-			if ng.Cost.Monthly > 0 {
-				cost = fmt.Sprintf("$%.0f", ng.Cost.Monthly)
-			}
-			row += fmt.Sprintf(" │ %-*s │ %-*s │", cpuWidth, cpu, costWidth, cost)
-		} else {
-			row += " │"
-		}
-		fmt.Println(row)
-	}
-	drawSep("└", "┴", "┘")
+	table.Render()
 	return nil
 }
 

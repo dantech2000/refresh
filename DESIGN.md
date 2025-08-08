@@ -55,7 +55,7 @@ Use box-drawing characters for clean tables:
 └─────────────────┴─────────┴────────────┘
 ```
 
-### 5. Table Alignment with Colored Text
+### 6. Table Alignment with Colored Text
 
 **CRITICAL**: When using colored text in tables, proper alignment requires special handling:
 
@@ -79,6 +79,28 @@ fmt.Printf("│ %-14s │ %-7s │ %-7s │ %-15s │\n",
 - `padColoredString(s string, width int)`: Pads colored strings to exact width
 - `stripAnsiCodes(s string)`: Removes ANSI escape codes for length calculation
 - Always use these functions for colored text in table formatting
+
+### 7. Shared Table Renderer
+
+Use `internal/ui/table.go` for all tabular CLI output. It provides:
+- ANSI-aware width calculation, padding, and truncation
+- Per-column `Min`/`Max` width with dynamic sizing
+- Left/Right alignment (headers align with column alignment)
+- Consistent borders and header coloring
+
+Example:
+
+```go
+cols := []ui.Column{
+  {Title: "NAME", Min: 4, Max: 24, Align: ui.AlignLeft},
+  {Title: "READY/DESIRED", Min: 15, Max: 0, Align: ui.AlignRight},
+}
+tbl := ui.NewTable(cols, ui.WithHeaderColor(color.CyanString))
+tbl.AddRow(name, fmt.Sprintf("%d/%d", ready, desired))
+tbl.Render()
+```
+
+Avoid manual border construction or `fmt.Printf` alignment for tables in command code; use the shared renderer.
 
 **Headers and Data Consistency**:
 ```go

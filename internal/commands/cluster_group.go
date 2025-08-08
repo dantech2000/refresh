@@ -23,6 +23,7 @@ func clusterListCommand() *cli.Command {
 		Name:        "list",
 		Usage:       orig.Usage,
 		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
 		Flags:       orig.Flags,
 		Action:      func(c *cli.Context) error { return runListClusters(c) },
 	}
@@ -34,6 +35,7 @@ func clusterDescribeCommand() *cli.Command {
 		Name:        "describe",
 		Usage:       orig.Usage,
 		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
 		Flags:       orig.Flags,
 		Action:      func(c *cli.Context) error { return runDescribeCluster(c) },
 	}
@@ -45,6 +47,7 @@ func clusterCompareCommand() *cli.Command {
 		Name:        "compare",
 		Usage:       orig.Usage,
 		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
 		Flags:       orig.Flags,
 		Action:      func(c *cli.Context) error { return runCompareClusters(c) },
 	}

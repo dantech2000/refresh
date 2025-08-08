@@ -17,14 +17,17 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // DescribeNodegroupCommand creates the describe-nodegroup command
 func DescribeNodegroupCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "describe-nodegroup",
-		Usage: "Describe a nodegroup with optional instances/utilization/cost info",
+		Name:      "describe-nodegroup",
+		Usage:     "Describe a nodegroup with optional instances/utilization/cost info",
+		ArgsUsage: "[cluster] [nodegroup]",
 		Flags: []cli.Flag{
 			&cli.DurationFlag{
 				Name:    "timeout",
@@ -40,10 +43,9 @@ func DescribeNodegroupCommand() *cli.Command {
 				Required: false,
 			},
 			&cli.StringFlag{
-				Name:     "nodegroup",
-				Aliases:  []string{"n"},
-				Usage:    "Nodegroup name",
-				Required: true,
+				Name:    "nodegroup",
+				Aliases: []string{"n"},
+				Usage:   "Nodegroup name (can be provided as second positional)",
 			},
 			&cli.BoolFlag{Name: "show-instances"},
 			&cli.BoolFlag{Name: "show-utilization"},
@@ -81,12 +83,45 @@ func runDescribeNodegroup(c *cli.Context) error {
 		return fmt.Errorf("AWS credential validation failed")
 	}
 
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, c.String("cluster"))
+	// Positional cluster support; list clusters if omitted
+	requested := c.Args().First()
+	if requested == "" {
+		requested = c.String("cluster")
+	}
+	if strings.TrimSpace(requested) == "" {
+		fmt.Println("No cluster specified. Available clusters:")
+		fmt.Println()
+		svc := cluster.NewService(awsCfg, nil, nil)
+		start := time.Now()
+		summaries, err := svc.List(ctx, cluster.ListOptions{})
+		if err != nil {
+			return err
+		}
+		_ = outputClustersTable(summaries, time.Since(start), false, false)
+		return nil
+	}
+	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
 	if err != nil {
 		return err
 	}
 
 	ngName := c.String("nodegroup")
+	if strings.TrimSpace(ngName) == "" {
+		// Derive from second positional arg skipping flags
+		var nonFlags []string
+		for _, tok := range c.Args().Slice() {
+			if strings.HasPrefix(tok, "-") {
+				continue
+			}
+			nonFlags = append(nonFlags, tok)
+		}
+		if len(nonFlags) >= 2 {
+			ngName = nonFlags[1]
+		}
+	}
+	if strings.TrimSpace(ngName) == "" {
+		return fmt.Errorf("missing nodegroup name; pass as second argument or --nodegroup <name>")
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	// Health checker not required for describe (yet)
 	svc := nodegroup.NewService(awsCfg, nil, logger)
@@ -180,77 +215,24 @@ func outputNodegroupDetailsTable(details *nodegroup.NodegroupDetails, elapsed ti
 	if len(details.Instances) > 0 {
 		fmt.Println()
 		fmt.Println("Instances:")
-
-		// Compute dynamic widths
-		idWidth := len("INSTANCE ID")
-		typeWidth := len("TYPE")
-		launchWidth := len("LAUNCH")
-		lifecycleWidth := len("LIFECYCLE")
-		stateWidth := len("STATE")
+		columns := []ui.Column{
+			{Title: "INSTANCE ID", Min: 10, Max: 22, Align: ui.AlignLeft},
+			{Title: "TYPE", Min: 10, Max: 0, Align: ui.AlignLeft},
+			{Title: "LAUNCH", Min: 10, Max: 0, Align: ui.AlignLeft},
+			{Title: "LIFECYCLE", Min: 9, Max: 0, Align: ui.AlignLeft},
+			{Title: "STATE", Min: 8, Max: 0, Align: ui.AlignLeft},
+		}
+		table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
 		for _, inst := range details.Instances {
-			if l := len(inst.InstanceID); l > idWidth {
-				idWidth = l
-			}
-			if l := len(inst.InstanceType); l > typeWidth {
-				typeWidth = l
-			}
-			if l := len(inst.Lifecycle); l > lifecycleWidth {
-				lifecycleWidth = l
-			}
-			if l := len(inst.State); l > stateWidth {
-				stateWidth = l
-			}
-		}
-		// Launch is fixed date format YYYY-MM-DD
-		if launchWidth < 10 {
-			launchWidth = 10
-		}
-		// Caps to keep table tidy
-		if idWidth > 22 {
-			idWidth = 22
-		}
-		if typeWidth < 10 {
-			typeWidth = 10
-		}
-		if lifecycleWidth < 9 {
-			lifecycleWidth = 9
-		}
-		if stateWidth < 8 {
-			stateWidth = 8
-		}
-
-		drawSep := func(left, mid, right string) {
-			fmt.Print(left)
-			fmt.Print(strings.Repeat("─", idWidth+2))
-			fmt.Print(mid)
-			fmt.Print(strings.Repeat("─", typeWidth+2))
-			fmt.Print(mid)
-			fmt.Print(strings.Repeat("─", launchWidth+2))
-			fmt.Print(mid)
-			fmt.Print(strings.Repeat("─", lifecycleWidth+2))
-			fmt.Print(mid)
-			fmt.Print(strings.Repeat("─", stateWidth+2))
-			fmt.Println(right)
-		}
-
-		drawSep("┌", "┬", "┐")
-		hID := padColoredString(color.CyanString("INSTANCE ID"), idWidth)
-		hType := padColoredString(color.CyanString("TYPE"), typeWidth)
-		hLaunch := padColoredString(color.CyanString("LAUNCH"), launchWidth)
-		hLife := padColoredString(color.CyanString("LIFECYCLE"), lifecycleWidth)
-		hState := padColoredString(color.CyanString("STATE"), stateWidth)
-		fmt.Printf("│ %s │ %s │ %s │ %s │ %s │\n", hID, hType, hLaunch, hLife, hState)
-		drawSep("├", "┼", "┤")
-		for _, inst := range details.Instances {
-			fmt.Printf("│ %-*s │ %-*s │ %-*s │ %-*s │ %-*s │\n",
-				idWidth, truncateString(inst.InstanceID, idWidth),
-				typeWidth, inst.InstanceType,
-				launchWidth, inst.LaunchTime.Format("2006-01-02"),
-				lifecycleWidth, inst.Lifecycle,
-				stateWidth, inst.State,
+			table.AddRow(
+				truncateString(inst.InstanceID, 22),
+				inst.InstanceType,
+				inst.LaunchTime.Format("2006-01-02"),
+				inst.Lifecycle,
+				inst.State,
 			)
 		}
-		drawSep("└", "┴", "┘")
+		table.Render()
 	}
 	return nil
 }

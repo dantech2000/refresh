@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"sort"
 	"strings"
@@ -63,6 +64,10 @@ const (
 
 // NewService creates a new cluster service instance
 func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logger *slog.Logger) *ServiceImpl {
+	// Provide a default no-op logger to avoid panics when nil is passed
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	}
 	return &ServiceImpl{
 		eksClient:     eks.NewFromConfig(awsConfig),
 		ec2Client:     ec2.NewFromConfig(awsConfig),

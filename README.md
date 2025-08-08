@@ -157,13 +157,22 @@ Notes:
 Fast, direct EKS API operations for cluster add-ons:
 
 ```bash
-# List add-ons with status/versions
+# List add-ons with status/versions (positional cluster)
+refresh addon list <cluster> -H
+
+# Or with flag
 refresh addon list -c <cluster> -H
 
-# Describe a specific add-on
+# Describe a specific add-on (positional cluster/addon)
+refresh addon describe <cluster> vpc-cni -o yaml
+
+# Or with flags
 refresh addon describe -c <cluster> -a vpc-cni -o yaml
 
-# Update an add-on to latest version
+# Update an add-on to latest version (positional cluster/addon/version)
+refresh addon update <cluster> vpc-cni latest
+
+# Or with flags
 refresh addon update -c <cluster> -a vpc-cni --version latest
 ```
 

@@ -15,7 +15,8 @@ Notes (done): pagination, context timeouts, multi-region with concurrency cap, c
 ## EKS Add-ons Management (new)
 
 - [ ] Service package: `internal/services/addons` with list/describe/update APIs
-- [ ] Commands: `list-addons`, `describe-addon`, `update-addon`, `update-all-addons`, `addon-security-scan`
+- [x] Commands: `list-addons`, `describe-addon`, `update-addon`
+- [ ] Commands: `update-all-addons`, `addon-security-scan`
 - [ ] Health validation: pre/post checks integrated with health framework
 - [ ] Compatibility DB: versions matrix, validation helpers
 - [ ] Bulk operations: dependency resolution, optional parallel, dry-run, progress
@@ -35,12 +36,12 @@ Notes (done): pagination, context timeouts, multi-region with concurrency cap, c
 
 ### UI/Table Rendering Improvements
 
-- [ ] Abstract table rendering into a reusable helper that:
+- [x] Abstract table rendering into a reusable helper that:
   - Computes dynamic column widths from data and headers
   - Pads colored strings correctly (ANSI-aware)
   - Supports optional/conditional columns cleanly
   - Handles truncation with ellipsis and keeps grid intact
   - Provides common separators and alignment utilities
-- [ ] Replace ad-hoc prints in: `list-nodegroups`, `describe-nodegroup` (instances block), `nodegroup-recommendations`, and cluster list/describe outputs.
+- [x] Replace ad-hoc prints in: `list-nodegroups`, `describe-nodegroup` (instances block), `nodegroup-recommendations`, and cluster list/describe outputs.
 
 

@@ -26,6 +26,7 @@ func ngListCommand() *cli.Command {
 		Name:        "list",
 		Usage:       orig.Usage,
 		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
 		Flags:       orig.Flags,
 		Action:      func(c *cli.Context) error { return runListNodegroups(c) },
 	}

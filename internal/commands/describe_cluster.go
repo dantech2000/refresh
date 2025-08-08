@@ -22,14 +22,16 @@ import (
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // DescribeClusterCommand creates the describe-cluster command
 func DescribeClusterCommand() *cli.Command {
 	return &cli.Command{
-		Name:    "describe-cluster",
-		Aliases: []string{"dc"},
-		Usage:   "Describe comprehensive cluster information",
+		Name:      "describe-cluster",
+		Aliases:   []string{"dc"},
+		Usage:     "Describe comprehensive cluster information",
+		ArgsUsage: "[cluster]",
 		Description: `Get detailed information about an EKS cluster including networking,
 security configuration, add-ons, and health status. Direct EKS API calls
 provide fast, comprehensive results without CloudFormation dependency.`,
@@ -103,13 +105,32 @@ func runDescribeCluster(c *cli.Context) error {
 		return fmt.Errorf("AWS credential validation failed")
 	}
 
-	// Create logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelWarn, // Only show warnings and errors
-	}))
+	// Create logger (early, we might need it for listing when no cluster given)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// Get cluster name
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, c.String("cluster"))
+	// Prefer positional arg as cluster name; fallback to --cluster flag
+	requested := c.Args().First()
+	if requested == "" {
+		requested = c.String("cluster")
+	}
+
+	// If no cluster specified, list available clusters in the current region and exit
+	if strings.TrimSpace(requested) == "" {
+		// List clusters (no health) in current region
+		clusterService := cluster.NewService(awsCfg, nil, logger)
+		start := time.Now()
+		summaries, err := clusterService.List(ctx, cluster.ListOptions{})
+		if err != nil {
+			return err
+		}
+		fmt.Println("No cluster specified. Available clusters:")
+		fmt.Println()
+		_ = outputClustersTable(summaries, time.Since(start), false, false)
+		return nil
+	}
+
+	// Resolve cluster name (supports patterns)
+	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
 	if err != nil {
 		return err
 	}
@@ -251,11 +272,26 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 	// Add-ons table
 	if len(details.Addons) > 0 {
 		fmt.Println("\nAdd-ons:")
-		printAddonHeader()
-		for _, addon := range details.Addons {
-			printAddonRow(addon)
+		columns := []ui.Column{
+			{Title: "NAME", Min: 4, Max: 24, Align: ui.AlignLeft},
+			{Title: "VERSION", Min: 8, Max: 0, Align: ui.AlignLeft},
+			{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
+			{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft},
 		}
-		fmt.Printf("└──────────────────────┴───────────────┴────────────┴──────────┘\n")
+		table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+		for _, addon := range details.Addons {
+			health := addon.Health
+			if health == "" {
+				health = "Unknown"
+			}
+			table.AddRow(
+				truncateString(addon.Name, 24),
+				addon.Version,
+				addon.Status,
+				formatAddonHealth(health),
+			)
+		}
+		table.Render()
 	}
 
 	return nil
@@ -266,29 +302,7 @@ func printTableRow(key, value string) {
 	fmt.Printf("%s │ %s\n", padColoredString(coloredKey, 16), value)
 }
 
-func printAddonHeader() {
-	fmt.Printf("┌──────────────────────┬───────────────┬────────────┬──────────┐\n")
-	fmt.Printf("│ %s │ %s │ %s │ %s │\n",
-		color.CyanString(fmt.Sprintf("%-20s", "NAME")),
-		color.CyanString(fmt.Sprintf("%-13s", "VERSION")),
-		color.CyanString(fmt.Sprintf("%-10s", "STATUS")),
-		color.CyanString(fmt.Sprintf("%-8s", "HEALTH")))
-	fmt.Printf("├──────────────────────┼───────────────┼────────────┼──────────┤\n")
-}
-
-func printAddonRow(addon cluster.AddonInfo) {
-	health := addon.Health
-	if health == "" {
-		health = "Unknown"
-	}
-
-	healthFormatted := formatAddonHealth(health)
-	fmt.Printf("│ %-20s │ %-13s │ %-10s │ %s │\n",
-		truncateString(addon.Name, 20),
-		truncateString(addon.Version, 13),
-		addon.Status,
-		padColoredString(healthFormatted, 8))
-}
+// removed printAddonHeader/printAddonRow in favor of ui.Table
 
 func formatStatus(status string) string {
 	switch strings.ToUpper(status) {

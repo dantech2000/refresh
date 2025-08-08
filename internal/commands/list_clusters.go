@@ -23,6 +23,7 @@ import (
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // ListClustersCommand creates the list-clusters command
@@ -193,7 +194,7 @@ func runListClusters(c *cli.Context) error {
 	case "yaml":
 		return outputClustersYAML(summaries)
 	default:
-		return outputClustersTable(summaries, elapsed, c.Bool("all-regions"))
+		return outputClustersTable(summaries, elapsed, c.Bool("all-regions"), c.Bool("show-health"))
 	}
 }
 
@@ -218,7 +219,7 @@ func outputClustersYAML(summaries []cluster.ClusterSummary) error {
 	})
 }
 
-func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Duration, multiRegion bool) error {
+func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
 	if len(summaries) == 0 {
 		color.Yellow("No EKS clusters found")
 		return nil
@@ -244,28 +245,51 @@ func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Durati
 	// Performance indicator (formatted to one decimal place)
 	fmt.Printf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
-	// Table header
+	// Build table using shared renderer
+	headerColor := func(s string) string { return color.CyanString(s) }
 	if multiRegion {
-		printClustersMultiRegionHeader()
+		columns := []ui.Column{{Title: "CLUSTER", Min: 14, Max: 0, Align: ui.AlignLeft}, {Title: "REGION", Min: 10, Max: 0, Align: ui.AlignLeft}, {Title: "STATUS", Min: 7, Max: 0, Align: ui.AlignLeft}, {Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft}}
+		if showHealth {
+			columns = append(columns, ui.Column{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft})
+		}
+		columns = append(columns, ui.Column{Title: "READY/DESIRED", Min: 15, Max: 0, Align: ui.AlignRight})
+		table := ui.NewTable(columns, ui.WithHeaderColor(headerColor))
+		for _, summary := range summaries {
+			nodes := formatNodeCount(summary.NodeCount)
+			if showHealth {
+				healthText := formatClusterHealth(summary.Health)
+				table.AddRow(summary.Name, summary.Region, formatStatus(summary.Status), summary.Version, healthText, nodes)
+			} else {
+				table.AddRow(summary.Name, summary.Region, formatStatus(summary.Status), summary.Version, nodes)
+			}
+		}
+		table.Render()
 	} else {
-		printClustersSingleRegionHeader()
+		columns := []ui.Column{{Title: "CLUSTER", Min: 14, Max: 0, Align: ui.AlignLeft}, {Title: "STATUS", Min: 7, Max: 0, Align: ui.AlignLeft}, {Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft}}
+		if showHealth {
+			columns = append(columns, ui.Column{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft})
+		}
+		columns = append(columns, ui.Column{Title: "READY/DESIRED", Min: 15, Max: 0, Align: ui.AlignRight})
+		table := ui.NewTable(columns, ui.WithHeaderColor(headerColor))
+		for _, summary := range summaries {
+			nodes := formatNodeCount(summary.NodeCount)
+			if showHealth {
+				healthText := formatClusterHealth(summary.Health)
+				table.AddRow(summary.Name, formatStatus(summary.Status), summary.Version, healthText, nodes)
+			} else {
+				table.AddRow(summary.Name, formatStatus(summary.Status), summary.Version, nodes)
+			}
+		}
+		table.Render()
 	}
 
-	// Table rows
+	// Count statuses for summary line
 	healthyCount := 0
 	warningCount := 0
 	criticalCount := 0
 	updatingCount := 0
-
 	for _, summary := range summaries {
-		if multiRegion {
-			printClusterMultiRegionRow(summary)
-		} else {
-			printClusterSingleRegionRow(summary)
-		}
-
-		// Count health status
-		if summary.Health != nil {
+		if showHealth && summary.Health != nil {
 			switch summary.Health.Decision {
 			case health.DecisionProceed:
 				healthyCount++
@@ -275,43 +299,39 @@ func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Durati
 				criticalCount++
 			}
 		}
-
 		if strings.Contains(strings.ToUpper(summary.Status), "UPDAT") {
 			updatingCount++
 		}
 	}
 
-	// Close table
-	if multiRegion {
-		fmt.Printf("└────────────────┴────────────┴─────────┴─────────┴──────────┴─────────────────┘\n")
-	} else {
-		fmt.Printf("└────────────────┴─────────┴─────────┴──────────┴─────────────────┘\n")
-	}
+	// Table printed by renderer
 
-	// Summary
-	fmt.Printf("\nSummary: ")
-	if healthyCount > 0 {
-		fmt.Printf("%s healthy", color.GreenString("%d", healthyCount))
-	}
-	if warningCount > 0 {
+	// Summary (only when health is requested)
+	if showHealth {
+		fmt.Printf("\nSummary: ")
 		if healthyCount > 0 {
-			fmt.Printf(", ")
+			fmt.Printf("%s healthy", color.GreenString("%d", healthyCount))
 		}
-		fmt.Printf("%s warning", color.YellowString("%d", warningCount))
-	}
-	if criticalCount > 0 {
-		if healthyCount > 0 || warningCount > 0 {
-			fmt.Printf(", ")
+		if warningCount > 0 {
+			if healthyCount > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Printf("%s warning", color.YellowString("%d", warningCount))
 		}
-		fmt.Printf("%s critical", color.RedString("%d", criticalCount))
-	}
-	if updatingCount > 0 {
-		if healthyCount > 0 || warningCount > 0 || criticalCount > 0 {
-			fmt.Printf(", ")
+		if criticalCount > 0 {
+			if healthyCount > 0 || warningCount > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Printf("%s critical", color.RedString("%d", criticalCount))
 		}
-		fmt.Printf("%s updating", color.CyanString("%d", updatingCount))
+		if updatingCount > 0 {
+			if healthyCount > 0 || warningCount > 0 || criticalCount > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Printf("%s updating", color.CyanString("%d", updatingCount))
+		}
+		fmt.Printf("\n")
 	}
-	fmt.Printf("\n")
 
 	return nil
 }
@@ -338,53 +358,7 @@ func sortClusterSummaries(items []cluster.ClusterSummary, key string, desc bool)
 	return items
 }
 
-func printClustersMultiRegionHeader() {
-	fmt.Printf("┌────────────────┬────────────┬─────────┬─────────┬──────────┬─────────────────┐\n")
-	fmt.Printf("│ %s │ %s │ %s │ %s │ %s │ %s │\n",
-		color.CyanString(fmt.Sprintf("%-14s", "CLUSTER")),
-		color.CyanString(fmt.Sprintf("%-10s", "REGION")),
-		color.CyanString(fmt.Sprintf("%-7s", "STATUS")),
-		color.CyanString(fmt.Sprintf("%-7s", "VERSION")),
-		color.CyanString(fmt.Sprintf("%-8s", "HEALTH")),
-		color.CyanString(fmt.Sprintf("%-15s", "NODES")))
-	fmt.Printf("├────────────────┼────────────┼─────────┼─────────┼──────────┼─────────────────┤\n")
-}
-
-func printClustersSingleRegionHeader() {
-	fmt.Printf("┌────────────────┬─────────┬─────────┬──────────┬─────────────────┐\n")
-	fmt.Printf("│ %s │ %s │ %s │ %s │ %s │\n",
-		color.CyanString(fmt.Sprintf("%-14s", "CLUSTER")),
-		color.CyanString(fmt.Sprintf("%-7s", "STATUS")),
-		color.CyanString(fmt.Sprintf("%-7s", "VERSION")),
-		color.CyanString(fmt.Sprintf("%-8s", "HEALTH")),
-		color.CyanString(fmt.Sprintf("%-15s", "NODES")))
-	fmt.Printf("├────────────────┼─────────┼─────────┼──────────┼─────────────────┤\n")
-}
-
-func printClusterMultiRegionRow(summary cluster.ClusterSummary) {
-	health := formatClusterHealth(summary.Health)
-	nodes := formatNodeCount(summary.NodeCount)
-
-	fmt.Printf("│ %-14s │ %-10s │ %s │ %-7s │ %s │ %s │\n",
-		truncateString(summary.Name, 14),
-		summary.Region,
-		padColoredString(formatStatus(summary.Status), 7),
-		summary.Version,
-		padColoredString(health, 8),
-		padColoredString(nodes, 15))
-}
-
-func printClusterSingleRegionRow(summary cluster.ClusterSummary) {
-	health := formatClusterHealth(summary.Health)
-	nodes := formatNodeCount(summary.NodeCount)
-
-	fmt.Printf("│ %-14s │ %s │ %-7s │ %s │ %s │\n",
-		truncateString(summary.Name, 14),
-		padColoredString(formatStatus(summary.Status), 7),
-		summary.Version,
-		padColoredString(health, 8),
-		padColoredString(nodes, 15))
-}
+// deprecated helpers removed after migration to ui.Table
 
 func formatClusterHealth(healthSummary *health.HealthSummary) string {
 	if healthSummary == nil {

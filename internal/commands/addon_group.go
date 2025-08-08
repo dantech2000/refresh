@@ -23,6 +23,7 @@ func addonListCommand() *cli.Command {
 		Name:        "list",
 		Usage:       orig.Usage,
 		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
 		Flags:       orig.Flags,
 		Action:      func(c *cli.Context) error { return runListAddons(c) },
 	}
@@ -34,6 +35,7 @@ func addonDescribeCommand() *cli.Command {
 		Name:        "describe",
 		Usage:       orig.Usage,
 		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
 		Flags:       orig.Flags,
 		Action:      func(c *cli.Context) error { return runDescribeAddon(c) },
 	}
@@ -45,6 +47,7 @@ func addonUpdateCommand() *cli.Command {
 		Name:        "update",
 		Usage:       orig.Usage,
 		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
 		Flags:       orig.Flags,
 		Action:      orig.Action,
 	}
