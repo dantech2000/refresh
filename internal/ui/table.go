@@ -1,9 +1,9 @@
 package ui
 
 import (
-    "fmt"
-    "os"
-    "strings"
+	"fmt"
+	"os"
+	"strings"
 )
 
 // Alignment represents horizontal text alignment within a column.
@@ -50,10 +50,10 @@ func NewTable(columns []Column, opts ...Option) *Table {
 // AddRow appends a row. The number of cells must match the number of columns.
 func (t *Table) AddRow(cells ...string) {
 	if len(cells) != len(t.columns) {
-        // Optionally log when row shape mismatches to aid debugging
-        if os.Getenv("REFRESH_DEBUG_TABLE") == "1" {
-            _, _ = fmt.Fprintf(os.Stderr, "table: dropped row with %d cells (expected %d)\n", len(cells), len(t.columns))
-        }
+		// Optionally log when row shape mismatches to aid debugging
+		if os.Getenv("REFRESH_DEBUG_TABLE") == "1" {
+			_, _ = fmt.Fprintf(os.Stderr, "table: dropped row with %d cells (expected %d)\n", len(cells), len(t.columns))
+		}
 		return
 	}
 	t.rows = append(t.rows, cells)
@@ -179,13 +179,13 @@ func truncateANSI(s string, width int) string {
 	}
 
 	// Walk runes of the visible portion while preserving escape sequences
-    var out strings.Builder
-    // Reserve approximate capacity: width plus room for ANSI sequences and ellipsis
-    reserve := len(s)
-    if width+8 > reserve {
-        reserve = width + 8
-    }
-    out.Grow(reserve)
+	var out strings.Builder
+	// Reserve approximate capacity: width plus room for ANSI sequences and ellipsis
+	reserve := len(s)
+	if width+8 > reserve {
+		reserve = width + 8
+	}
+	out.Grow(reserve)
 	var visibleCount int
 	inEscape := false
 	for _, r := range s {

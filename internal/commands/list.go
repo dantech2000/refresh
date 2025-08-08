@@ -1,3 +1,4 @@
+//go:build ignore
 package commands
 
 import (
@@ -20,7 +21,8 @@ import (
 
 // Deprecated: legacy top-level list command. Use `refresh nodegroup list`.
 // Kept unregistered; helper retained for reference.
-func listNodegroupsTopLevel(c *cli.Context) error {
+// deadcode: legacy helper retained for reference only (not compiled)
+// func listNodegroupsTopLevel(c *cli.Context) error {
 			ctx, cancelTimeout := context.WithTimeout(context.Background(), c.Duration("timeout"))
 			defer cancelTimeout()
 			awsCfg, err := config.LoadDefaultConfig(ctx)
@@ -135,5 +137,5 @@ func listNodegroupsTopLevel(c *cli.Context) error {
 			} else {
 				ui.PrintNodegroupsTree(clusterName, allNodegroups)
 			}
-            return nil
-}
+//            return nil
+// }

@@ -117,9 +117,11 @@ func extractFirstUSD(onDemand map[string]any) float64 {
 					if d, ok := dim.(map[string]any); ok {
 						if unit, ok := d["pricePerUnit"].(map[string]any); ok {
 							if usd, ok := unit["USD"].(string); ok {
-								var f float64
-								fmt.Sscanf(usd, "%f", &f)
-								return f
+                            var f float64
+                            if _, err := fmt.Sscanf(usd, "%f", &f); err == nil {
+                                return f
+                            }
+                            return 0
 							}
 						}
 					}

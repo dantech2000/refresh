@@ -228,10 +228,11 @@ func outputNodegroupsTableWithWindow(clusterName, timeframe string, items []node
 	return nil
 }
 
-func outputNodegroupsTable(clusterName string, items []nodegroup.NodegroupSummary, elapsed time.Duration) error {
-	// Default rendering with 24h if caller didn't provide
-	return outputNodegroupsTableWithWindow(clusterName, "24h", items, elapsed)
-}
+// deadcode: retained for reference; use outputNodegroupsTableWithWindow instead
+// func outputNodegroupsTable(clusterName string, items []nodegroup.NodegroupSummary, elapsed time.Duration) error {
+//     // Default rendering with 24h if caller didn't provide
+//     return outputNodegroupsTableWithWindow(clusterName, "24h", items, elapsed)
+// }
 
 // sortNodegroupSummaries sorts nodegroup list output
 func sortNodegroupSummaries(items []nodegroup.NodegroupSummary, key string, desc bool) []nodegroup.NodegroupSummary {
