@@ -1,3 +1,12 @@
+## Unreleased
+
+### Changed
+- CLI refactor to resource-first groups with verbs as subcommands:
+  - `refresh cluster` (list, describe, compare)
+  - `refresh nodegroup` (list, describe, scale, update-ami, recommendations)
+  - `refresh addon` (list, describe, update)
+- Removed legacy top-level commands (e.g., `list-nodegroups`, `list-clusters`, etc.). Use grouped form above.
+
 ## v0.2.0 - Nodegroup Intelligence (WIP)
 
 - Added `list-nodegroups`, `describe-nodegroup`, `scale-nodegroup`, and `nodegroup-recommendations` commands

@@ -13,36 +13,14 @@ import (
 	"github.com/yarlson/pin"
 
 	awsClient "github.com/dantech2000/refresh/internal/aws"
-	appconfig "github.com/dantech2000/refresh/internal/config"
+    // appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func ListCommand() *cli.Command {
-	return &cli.Command{
-		Name:  "list",
-		Usage: "List all managed node groups",
-		Flags: []cli.Flag{
-			&cli.DurationFlag{
-				Name:    "timeout",
-				Aliases: []string{"t"},
-				Usage:   "Operation timeout (e.g. 60s, 2m)",
-				Value:   appconfig.DefaultTimeout,
-				EnvVars: []string{"REFRESH_TIMEOUT"},
-			},
-			&cli.StringFlag{
-				Name:    "cluster",
-				Aliases: []string{"c"},
-				Usage:   "EKS cluster name or partial name pattern (overrides kubeconfig)",
-				EnvVars: []string{"EKS_CLUSTER_NAME"},
-			},
-			&cli.StringFlag{
-				Name:    "nodegroup",
-				Aliases: []string{"n"},
-				Usage:   "Nodegroup name or partial name pattern to filter results",
-			},
-		},
-		Action: func(c *cli.Context) error {
+// Deprecated: legacy top-level list command. Use `refresh nodegroup list`.
+// Kept unregistered; helper retained for reference.
+func listNodegroupsTopLevel(c *cli.Context) error {
 			ctx, cancelTimeout := context.WithTimeout(context.Background(), c.Duration("timeout"))
 			defer cancelTimeout()
 			awsCfg, err := config.LoadDefaultConfig(ctx)
@@ -157,7 +135,5 @@ func ListCommand() *cli.Command {
 			} else {
 				ui.PrintNodegroupsTree(clusterName, allNodegroups)
 			}
-			return nil
-		},
-	}
+            return nil
 }

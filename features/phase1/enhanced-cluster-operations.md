@@ -53,7 +53,7 @@ Key capabilities include detailed cluster information with security and networki
 ### Primary Commands
 ```bash
 # Enhanced cluster information
-refresh describe-cluster -c my-cluster --detailed
+refresh cluster describe -c my-cluster --detailed
 
 # Cluster status with versions and health (new capability)
 refresh cluster-status -c my-cluster --show-versions --show-endpoints
@@ -62,20 +62,20 @@ refresh cluster-status -c my-cluster --show-versions --show-endpoints
 refresh cluster-health -c my-cluster --comprehensive
 
 # Multi-cluster operations
-refresh list-clusters --all-regions --show-health
+refresh cluster list --all-regions --show-health
 
 # Cluster comparison (new capability)
-refresh compare-clusters -c cluster1 -c cluster2
+refresh cluster compare -c cluster1 -c cluster2
 ```
 
 ### Detailed Command Specifications
 
-#### Command 1: `refresh describe-cluster`
+#### Command 1: `refresh cluster describe`
 **Purpose**: Provide comprehensive cluster information with operational intelligence
 
 **Syntax**:
 ```bash
-refresh describe-cluster -c CLUSTER [options]
+refresh cluster describe -c CLUSTER [options]
 ```
 
 **Required Arguments**:
@@ -91,13 +91,13 @@ refresh describe-cluster -c CLUSTER [options]
 **Examples**:
 ```bash
 # Basic cluster information
-refresh describe-cluster -c my-cluster
+refresh cluster describe -c my-cluster
 
 # Comprehensive view with health and security
-refresh describe-cluster -c my-cluster --detailed --show-health --show-security
+refresh cluster describe -c my-cluster --detailed --show-health --show-security
 
 # JSON output for automation
-refresh describe-cluster -c my-cluster --format json
+refresh cluster describe -c my-cluster --format json
 ```
 
 **Output Format - Table View**:
@@ -169,12 +169,12 @@ Add-ons:
 }
 ```
 
-#### Command 2: `refresh list-clusters`
+#### Command 2: `refresh cluster list`
 **Purpose**: Fast multi-region cluster discovery with health status
 
 **Syntax**:
 ```bash
-refresh list-clusters [options]
+refresh cluster list [options]
 ```
 
 **Optional Flags**:
@@ -188,13 +188,13 @@ refresh list-clusters [options]
 **Examples**:
 ```bash
 # Fast local region cluster list
-refresh list-clusters
+refresh cluster list
 
 # Multi-region with health status
-refresh list-clusters --all-regions --show-health
+refresh cluster list --all-regions --show-health
 
 # Filter by Kubernetes version
-refresh list-clusters --filter version=1.30
+refresh cluster list --filter version=1.30
 ```
 
 **Output Format - Table View**:
@@ -214,12 +214,12 @@ EKS Clusters (3 regions, 8 clusters)
 Summary: 6 healthy, 1 warning, 1 updating
 ```
 
-#### Command 3: `refresh compare-clusters`
+#### Command 3: `refresh cluster compare`
 **Purpose**: Side-by-side cluster comparison for consistency validation
 
 **Syntax**:
 ```bash
-refresh compare-clusters -c CLUSTER1 -c CLUSTER2 [options]
+refresh cluster compare -c CLUSTER1 -c CLUSTER2 [options]
 ```
 
 **Required Arguments**:
@@ -233,13 +233,13 @@ refresh compare-clusters -c CLUSTER1 -c CLUSTER2 [options]
 **Examples**:
 ```bash
 # Basic cluster comparison
-refresh compare-clusters -c prod-us-west -c prod-us-east
+refresh cluster compare -c prod-us-west -c prod-us-east
 
 # Focus on differences only
-refresh compare-clusters -c staging -c prod --show-differences
+refresh cluster compare -c staging -c prod --show-differences
 
 # Compare specific aspects
-refresh compare-clusters -c cluster1 -c cluster2 --include networking,security
+refresh cluster compare -c cluster1 -c cluster2 --include networking,security
 ```
 
 ## Technical Implementation

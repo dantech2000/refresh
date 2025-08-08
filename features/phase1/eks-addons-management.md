@@ -56,13 +56,13 @@ The feature integrates with the existing health check framework to ensure all ad
 ### Primary Commands
 ```bash
 # Fast add-on listing with health
-refresh list-addons -c my-cluster --show-versions --show-health
+refresh addon list -c my-cluster --show-versions --show-health
 
 # Comprehensive add-on details (new capability)
-refresh describe-addon -c my-cluster -a vpc-cni --show-configuration
+refresh addon describe -c my-cluster -a vpc-cni --show-configuration
 
 # Health-validated add-on updates
-refresh update-addon -c my-cluster -a vpc-cni --version latest --health-check
+refresh addon update -c my-cluster -a vpc-cni --version latest --health-check
 
 # Compatibility analysis (new capability)
 refresh addon-compatibility -c my-cluster --k8s-version 1.30
@@ -76,12 +76,12 @@ refresh addon-security-scan -c my-cluster
 
 ### Detailed Command Specifications
 
-#### Command 1: `refresh list-addons`
+#### Command 1: `refresh addon list`
 **Purpose**: Provide fast, comprehensive add-on overview with health and compatibility status
 
 **Syntax**:
 ```bash
-refresh list-addons -c CLUSTER [options]
+refresh addon list -c CLUSTER [options]
 ```
 
 **Required Arguments**:
@@ -98,10 +98,10 @@ refresh list-addons -c CLUSTER [options]
 **Examples**:
 ```bash
 # Basic add-on listing
-refresh list-addons -c my-cluster
+refresh addon list -c my-cluster
 
 # Comprehensive view with health and versions
-refresh list-addons -c my-cluster --show-versions --show-health --show-compatibility
+refresh addon list -c my-cluster --show-versions --show-health --show-compatibility
 
 # Filter by add-on status
 refresh list-addons -c my-cluster --filter status=Active
@@ -122,15 +122,15 @@ Add-ons for cluster: my-cluster (Kubernetes 1.30)
 
 Summary: 4 healthy, 1 degraded | 3 updates available | 1 compatibility warning
 Actions: ⚡ Use 'refresh update-all-addons --dry-run' to see update plan
-         🔍 Use 'refresh describe-addon -a aws-efs-csi' to diagnose issues
+         🔍 Use 'refresh addon describe -a aws-efs-csi' to diagnose issues
 ```
 
-#### Command 2: `refresh describe-addon`
+#### Command 2: `refresh addon describe`
 **Purpose**: Comprehensive add-on analysis with configuration, health, and compatibility details
 
 **Syntax**:
 ```bash
-refresh describe-addon -c CLUSTER -a ADDON [options]
+refresh addon describe -c CLUSTER -a ADDON [options]
 ```
 
 **Required Arguments**:
@@ -147,18 +147,18 @@ refresh describe-addon -c CLUSTER -a ADDON [options]
 **Examples**:
 ```bash
 # Comprehensive add-on analysis
-refresh describe-addon -c my-cluster -a vpc-cni --show-configuration --show-health
+refresh addon describe -c my-cluster -a vpc-cni --show-configuration --show-health
 
 # Focus on compatibility for upgrade planning
-refresh describe-addon -c my-cluster -a aws-ebs-csi --show-compatibility --show-dependencies
+refresh addon describe -c my-cluster -a aws-ebs-csi --show-compatibility --show-dependencies
 ```
 
-#### Command 3: `refresh update-addon`
+#### Command 3: `refresh addon update`
 **Purpose**: Health-validated add-on updates with comprehensive pre/post validation
 
 **Syntax**:
 ```bash
-refresh update-addon -c CLUSTER -a ADDON [options]
+refresh addon update -c CLUSTER -a ADDON [options]
 ```
 
 **Required Arguments**:
@@ -178,13 +178,13 @@ refresh update-addon -c CLUSTER -a ADDON [options]
 **Examples**:
 ```bash
 # Safe update with health validation
-refresh update-addon -c my-cluster -a vpc-cni --version latest --health-check --wait
+refresh addon update -c my-cluster -a vpc-cni --version latest --health-check --wait
 
 # Update with custom configuration
-refresh update-addon -c my-cluster -a aws-ebs-csi --configuration config.yaml --dry-run
+refresh addon update -c my-cluster -a aws-ebs-csi --configuration config.yaml --dry-run
 
 # Quick update without waiting
-refresh update-addon -c my-cluster -a coredns --version v1.11.1-eks
+refresh addon update -c my-cluster -a coredns --version v1.11.1-eks
 ```
 
 #### Command 4: `refresh update-all-addons`

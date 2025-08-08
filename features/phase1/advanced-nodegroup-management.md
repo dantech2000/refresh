@@ -77,16 +77,16 @@ The feature builds on the existing AMI management capabilities while adding oper
 ### Primary Commands
 ```bash
 # Enhanced nodegroup listing with intelligence
-refresh list-nodegroups -c my-cluster --show-health --show-costs
+refresh nodegroup list -c my-cluster --show-health --show-costs
 
 # Comprehensive nodegroup analysis (new capability)
-refresh describe-nodegroup -c my-cluster -n my-ng --show-instances --show-utilization
+refresh nodegroup describe -c my-cluster -n my-ng --show-instances --show-utilization
 
 # Intelligent scaling with health validation
-refresh scale-nodegroup -c my-cluster -n my-ng --desired 5 --health-check --wait
+refresh nodegroup scale -c my-cluster -n my-ng --desired 5 --health-check --wait
 
 # Smart optimization recommendations (new capability)
-refresh nodegroup-recommendations -c my-cluster -n my-ng --cost-optimization
+refresh nodegroup recommendations -c my-cluster -n my-ng --cost-optimization
 
 # Workload-aware right-sizing (new capability)
 refresh right-size-nodegroups -c my-cluster --analyze-workloads
@@ -97,12 +97,12 @@ refresh optimize-nodegroups -c my-cluster --spot-integration --dry-run
 
 ### Detailed Command Specifications
 
-#### Command 1: `refresh list-nodegroups`
+#### Command 1: `refresh nodegroup list`
 **Purpose**: Provide comprehensive nodegroup overview with health, costs, and utilization intelligence
 
 **Syntax**:
 ```bash
-refresh list-nodegroups -c CLUSTER [options]
+refresh nodegroup list -c CLUSTER [options]
 ```
 
 **Required Arguments**:
@@ -119,13 +119,13 @@ refresh list-nodegroups -c CLUSTER [options]
 **Examples**:
 ```bash
 # Basic nodegroup listing
-refresh list-nodegroups -c my-cluster
+refresh nodegroup list -c my-cluster
 
 # Comprehensive view with costs and health
-refresh list-nodegroups -c my-cluster --show-health --show-costs --show-utilization
+refresh nodegroup list -c my-cluster --show-health --show-costs --show-utilization
 
 # Filter by instance type
-refresh list-nodegroups -c my-cluster --filter instance-type=m5.large
+refresh nodegroup list -c my-cluster --filter instance-type=m5.large
 ```
 
 **Output Format - Table View**:
@@ -141,15 +141,15 @@ Nodegroups for cluster: my-cluster
 └─────────────────┴────────────┴─────────┴──────────┴────────────┴──────────┴─────────────┘
 
 Summary: 11/25 nodes (44% utilization), $2,943/month, 💡 3 optimization opportunities
-Recommendations: Use 'refresh nodegroup-recommendations' for detailed optimization suggestions
+Recommendations: Use 'refresh nodegroup recommendations' for detailed optimization suggestions
 ```
 
-#### Command 2: `refresh describe-nodegroup`
+#### Command 2: `refresh nodegroup describe`
 **Purpose**: Comprehensive nodegroup analysis with instance details and utilization patterns
 
 **Syntax**:
 ```bash
-refresh describe-nodegroup -c CLUSTER -n NODEGROUP [options]
+refresh nodegroup describe -c CLUSTER -n NODEGROUP [options]
 ```
 
 **Required Arguments**:
@@ -167,18 +167,18 @@ refresh describe-nodegroup -c CLUSTER -n NODEGROUP [options]
 **Examples**:
 ```bash
 # Comprehensive nodegroup analysis
-refresh describe-nodegroup -c my-cluster -n api-workers --show-instances --show-utilization
+refresh nodegroup describe -c my-cluster -n api-workers --show-instances --show-utilization
 
 # Focus on cost optimization
-refresh describe-nodegroup -c my-cluster -n batch-workers --show-costs --show-optimization
+refresh nodegroup describe -c my-cluster -n batch-workers --show-costs --show-optimization
 ```
 
-#### Command 3: `refresh scale-nodegroup`
+#### Command 3: `refresh nodegroup scale`
 **Purpose**: Intelligent, health-validated nodegroup scaling with workload awareness
 
 **Syntax**:
 ```bash
-refresh scale-nodegroup -c CLUSTER -n NODEGROUP --desired COUNT [options]
+refresh nodegroup scale -c CLUSTER -n NODEGROUP --desired COUNT [options]
 ```
 
 **Required Arguments**:
@@ -198,21 +198,21 @@ refresh scale-nodegroup -c CLUSTER -n NODEGROUP --desired COUNT [options]
 **Examples**:
 ```bash
 # Safe scaling with health validation
-refresh scale-nodegroup -c my-cluster -n api-workers --desired 5 --health-check --wait
+refresh nodegroup scale -c my-cluster -n api-workers --desired 5 --health-check --wait
 
 # Scale down with PDB validation
-refresh scale-nodegroup -c my-cluster -n batch-workers --desired 2 --check-pdbs --dry-run
+refresh nodegroup scale -c my-cluster -n batch-workers --desired 2 --check-pdbs --dry-run
 
 # Quick scaling without waiting
-refresh scale-nodegroup -c my-cluster -n spot-workers --desired 8
+refresh nodegroup scale -c my-cluster -n spot-workers --desired 8
 ```
 
-#### Command 4: `refresh nodegroup-recommendations`
+#### Command 4: `refresh nodegroup recommendations`
 **Purpose**: AI-driven optimization recommendations based on utilization patterns and cost analysis
 
 **Syntax**:
 ```bash
-refresh nodegroup-recommendations -c CLUSTER [options]
+refresh nodegroup recommendations -c CLUSTER [options]
 ```
 
 **Required Arguments**:
@@ -230,10 +230,10 @@ refresh nodegroup-recommendations -c CLUSTER [options]
 **Examples**:
 ```bash
 # Comprehensive optimization analysis
-refresh nodegroup-recommendations -c my-cluster --cost-optimization --spot-analysis
+refresh nodegroup recommendations -c my-cluster --cost-optimization --spot-analysis
 
 # Right-sizing recommendations for specific nodegroup
-refresh nodegroup-recommendations -c my-cluster -n api-workers --right-sizing --timeframe 30d
+refresh nodegroup recommendations -c my-cluster -n api-workers --right-sizing --timeframe 30d
 ```
 
 **Output Format - Recommendations**:
