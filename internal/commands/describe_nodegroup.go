@@ -88,18 +88,18 @@ func runDescribeNodegroup(c *cli.Context) error {
 	if requested == "" {
 		requested = c.String("cluster")
 	}
-	if strings.TrimSpace(requested) == "" {
-		fmt.Println("No cluster specified. Available clusters:")
-		fmt.Println()
-		svc := cluster.NewService(awsCfg, nil, nil)
-		start := time.Now()
-		summaries, err := svc.List(ctx, cluster.ListOptions{})
-		if err != nil {
-			return err
-		}
-		_ = outputClustersTable(summaries, time.Since(start), false, false)
-		return nil
-	}
+    if strings.TrimSpace(requested) == "" {
+        fmt.Println("No cluster specified. Available clusters:")
+        fmt.Println()
+        svc := newClusterService(awsCfg, false, nil)
+        start := time.Now()
+        summaries, err := svc.List(ctx, cluster.ListOptions{})
+        if err != nil {
+            return err
+        }
+        _ = outputClustersTable(summaries, time.Since(start), false, false)
+        return nil
+    }
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
 	if err != nil {
 		return err

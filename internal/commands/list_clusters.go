@@ -11,9 +11,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 	"github.com/yarlson/pin"
@@ -115,22 +112,10 @@ func runListClusters(c *cli.Context) error {
 	}
 
 	// Create logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelWarn, // Only show warnings and errors
-	}))
-
-	// Create health checker if needed
-	var healthChecker *health.HealthChecker
-	if c.Bool("show-health") {
-		// Create clients needed for health checker
-		eksClient := eks.NewFromConfig(awsCfg)
-		cwClient := cloudwatch.NewFromConfig(awsCfg)
-		asgClient := autoscaling.NewFromConfig(awsCfg)
-		healthChecker = health.NewChecker(eksClient, nil, cwClient, asgClient) // k8sClient is optional
-	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	// Create cluster service
-	clusterService := cluster.NewService(awsCfg, healthChecker, logger)
+	clusterService := newClusterService(awsCfg, c.Bool("show-health"), logger)
 
 	// Parse filters
 	filters := make(map[string]string)

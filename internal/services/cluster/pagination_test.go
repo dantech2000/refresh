@@ -12,7 +12,9 @@ import (
 	eksTypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 )
 
-const nextPageToken = "t2"
+// testNextPageToken is returned by the fake EKS API to indicate there is another page
+// of results available. Using a descriptive name avoids magic string usage in tests.
+const testNextPageToken = "test-next-page-token"
 
 // fakeEKSClient implements EKSAPI and returns paginated data for tests.
 type fakeEKSClient struct {
@@ -22,18 +24,18 @@ type fakeEKSClient struct {
 }
 
 func (f *fakeEKSClient) ListClusters(ctx context.Context, in *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
-    // Use NextToken to index pages: "" -> 0, nextPageToken -> 1, etc.
+	// Use NextToken to index pages: "" -> 0, testNextPageToken -> 1, etc.
 	idx := 0
 	if in.NextToken != nil && *in.NextToken != "" {
-        if *in.NextToken == nextPageToken {
+		if *in.NextToken == testNextPageToken {
 			idx = 1
 		}
 	}
 	out := &eks.ListClustersOutput{Clusters: []string{}}
 	if idx < len(f.clustersPages) {
 		out.Clusters = append(out.Clusters, f.clustersPages[idx]...)
-        if idx+1 < len(f.clustersPages) {
-            token := nextPageToken
+		if idx+1 < len(f.clustersPages) {
+			token := testNextPageToken
 			out.NextToken = &token
 		}
 	}
@@ -61,15 +63,15 @@ func (f *fakeEKSClient) ListNodegroups(ctx context.Context, in *eks.ListNodegrou
 	pages := f.nodegroupsPages[cluster]
 	idx := 0
 	if in.NextToken != nil && *in.NextToken != "" {
-        if *in.NextToken == nextPageToken {
+		if *in.NextToken == testNextPageToken {
 			idx = 1
 		}
 	}
 	out := &eks.ListNodegroupsOutput{Nodegroups: []string{}}
 	if idx < len(pages) {
 		out.Nodegroups = append(out.Nodegroups, pages[idx]...)
-        if idx+1 < len(pages) {
-            token := nextPageToken
+		if idx+1 < len(pages) {
+			token := testNextPageToken
 			out.NextToken = &token
 		}
 	}
@@ -92,15 +94,15 @@ func (f *fakeEKSClient) ListAddons(ctx context.Context, in *eks.ListAddonsInput,
 	pages := f.addonsPages[cluster]
 	idx := 0
 	if in.NextToken != nil && *in.NextToken != "" {
-        if *in.NextToken == nextPageToken {
+		if *in.NextToken == testNextPageToken {
 			idx = 1
 		}
 	}
 	out := &eks.ListAddonsOutput{Addons: []string{}}
 	if idx < len(pages) {
 		out.Addons = append(out.Addons, pages[idx]...)
-        if idx+1 < len(pages) {
-            token := nextPageToken
+		if idx+1 < len(pages) {
+			token := testNextPageToken
 			out.NextToken = &token
 		}
 	}

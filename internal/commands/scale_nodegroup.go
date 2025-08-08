@@ -8,16 +8,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 	"github.com/yarlson/pin"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	appconfig "github.com/dantech2000/refresh/internal/config"
-	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
 )
 
@@ -94,15 +90,9 @@ func runScaleNodegroup(c *cli.Context) error {
 
 	ngName := c.String("nodegroup")
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	// Build health checker if requested
-	var hc *health.HealthChecker
-	if c.Bool("health-check") || c.Bool("check-pdbs") || c.Bool("wait") {
-		eksClient := eks.NewFromConfig(awsCfg)
-		cwClient := cloudwatch.NewFromConfig(awsCfg)
-		asgClient := autoscaling.NewFromConfig(awsCfg)
-		hc = health.NewChecker(eksClient, nil, cwClient, asgClient)
-	}
-	svc := nodegroup.NewService(awsCfg, hc, logger)
+	// Centralized service init with optional health
+	withHealth := c.Bool("health-check") || c.Bool("check-pdbs") || c.Bool("wait")
+	svc := newNodegroupService(awsCfg, withHealth, logger)
 
 	// Convert optional desired/min/max to pointers (zero means not set)
 	var desiredPtr, minPtr, maxPtr *int32

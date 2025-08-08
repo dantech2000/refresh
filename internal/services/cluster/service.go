@@ -82,39 +82,95 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 
 // buildListCacheKey returns a deterministic cache key for list options
 func buildListCacheKey(options ListOptions) string {
-    // Estimate capacity: regions + filters + booleans
-    builder := strings.Builder{}
-    builder.Grow(64)
-    var parts []string
-	// regions
-	if len(options.Regions) > 0 {
-		regions := append([]string(nil), options.Regions...)
-		sort.Strings(regions)
-		parts = append(parts, "regions="+strings.Join(regions, ","))
-	}
-	// filters
-	if len(options.Filters) > 0 {
-		keys := make([]string, 0, len(options.Filters))
-		for k := range options.Filters {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		filterParts := make([]string, 0, len(keys))
-		for _, k := range keys {
-			filterParts = append(filterParts, fmt.Sprintf("%s=%s", k, options.Filters[k]))
-		}
-		parts = append(parts, "filters="+strings.Join(filterParts, ";"))
-	}
-	// booleans
-	parts = append(parts, fmt.Sprintf("showHealth=%t", options.ShowHealth))
-	parts = append(parts, fmt.Sprintf("allRegions=%t", options.AllRegions))
-    if len(parts) == 0 {
-        return "list-default"
+    // Build deterministic key with improved capacity estimation and without
+    // intermediate string slices/joins.
+    // Format: list- regions=..|filters=..|showHealth=x|allRegions=y
+
+    // Precompute boolean fragments (always included for stability)
+    showHealthFrag := fmt.Sprintf("showHealth=%t", options.ShowHealth)
+    allRegionsFrag := fmt.Sprintf("allRegions=%t", options.AllRegions)
+
+    // Estimate capacity
+    estimated := 5 /* list- */ + len(showHealthFrag) + 1 /* | */ + len(allRegionsFrag)
+
+    // Regions
+    if len(options.Regions) > 0 {
+        estimated += len("regions=")
+        for _, r := range options.Regions {
+            estimated += len(r)
+        }
+        estimated += len(options.Regions) - 1 // commas
+        estimated += 1                         // '|'
     }
-    // Use builder to assemble final key
-    builder.WriteString("list-")
-    builder.WriteString(strings.Join(parts, "|"))
-    return builder.String()
+
+    // Filters (sorted for determinism)
+    if len(options.Filters) > 0 {
+        estimated += len("filters=")
+        // sum of key=value plus separators
+        keys := make([]string, 0, len(options.Filters))
+        for k := range options.Filters {
+            keys = append(keys, k)
+        }
+        sort.Strings(keys)
+        for _, k := range keys {
+            estimated += len(k) + 1 /* '=' */ + len(options.Filters[k])
+        }
+        estimated += len(keys) - 1 // semicolons
+        estimated += 1              // '|'
+    }
+
+    var b strings.Builder
+    if estimated < 32 {
+        b.Grow(32)
+    } else {
+        b.Grow(estimated)
+    }
+    b.WriteString("list-")
+
+    wroteSep := false
+    if len(options.Regions) > 0 {
+        b.WriteString("regions=")
+        // Use a sorted copy for stable ordering
+        regions := append([]string(nil), options.Regions...)
+        sort.Strings(regions)
+        for i, r := range regions {
+            if i > 0 {
+                b.WriteByte(',')
+            }
+            b.WriteString(r)
+        }
+        wroteSep = true
+    }
+
+    if len(options.Filters) > 0 {
+        if wroteSep {
+            b.WriteByte('|')
+        }
+        b.WriteString("filters=")
+        keys := make([]string, 0, len(options.Filters))
+        for k := range options.Filters {
+            keys = append(keys, k)
+        }
+        sort.Strings(keys)
+        for i, k := range keys {
+            if i > 0 {
+                b.WriteByte(';')
+            }
+            b.WriteString(k)
+            b.WriteByte('=')
+            b.WriteString(options.Filters[k])
+        }
+        wroteSep = true
+    }
+
+    if wroteSep {
+        b.WriteByte('|')
+    }
+    b.WriteString(showHealthFrag)
+    b.WriteByte('|')
+    b.WriteString(allRegionsFrag)
+
+    return b.String()
 }
 
 // buildDescribeCacheKey returns a deterministic cache key for describe options

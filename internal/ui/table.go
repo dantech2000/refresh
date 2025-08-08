@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -62,8 +63,11 @@ func (t *Table) AddRow(cells ...string) {
 // Render prints the table to stdout.
 func (t *Table) Render() {
 	widths := t.computeColumnWidths()
+	w := bufio.NewWriterSize(os.Stdout, 64*1024)
+	defer w.Flush()
+
 	// Top border
-	fmt.Println(buildBorder("┌", "┬", "┐", widths))
+	fmt.Fprintln(w, buildBorder("┌", "┬", "┐", widths))
 
 	// Header row
 	var b strings.Builder
@@ -78,10 +82,10 @@ func (t *Table) Render() {
 		b.WriteString(" ")
 		b.WriteString("│")
 	}
-	fmt.Println(b.String())
+	fmt.Fprintln(w, b.String())
 
 	// Separator
-	fmt.Println(buildBorder("├", "┼", "┤", widths))
+	fmt.Fprintln(w, buildBorder("├", "┼", "┤", widths))
 
 	// Rows
 	for _, row := range t.rows {
@@ -93,11 +97,11 @@ func (t *Table) Render() {
 			rb.WriteString(" ")
 			rb.WriteString("│")
 		}
-		fmt.Println(rb.String())
+		fmt.Fprintln(w, rb.String())
 	}
 
 	// Bottom border
-	fmt.Println(buildBorder("└", "┴", "┘", widths))
+	fmt.Fprintln(w, buildBorder("└", "┴", "┘", widths))
 }
 
 // computeColumnWidths determines the width of each column based on headers and rows,
@@ -180,10 +184,19 @@ func truncateANSI(s string, width int) string {
 
 	// Walk runes of the visible portion while preserving escape sequences
 	var out strings.Builder
-	// Reserve approximate capacity: width plus room for ANSI sequences and ellipsis
-	reserve := len(s)
-	if width+8 > reserve {
-		reserve = width + 8
+	// Improved capacity estimate:
+	// - Assume up to ~3 bytes per visible rune in prefix (UTF-8 average)
+	// - Add ~8 bytes per ANSI escape sequence encountered in the source
+	// - Cap to original string length to avoid gross over-allocation
+	reserve := target*3 + len(ellipsis)
+	if esc := strings.Count(s, "\u001b"); esc > 0 {
+		reserve += esc * 8
+	}
+	if reserve > len(s) {
+		reserve = len(s)
+	}
+	if reserve < width { // ensure at least width capacity
+		reserve = width
 	}
 	out.Grow(reserve)
 	var visibleCount int

@@ -10,9 +10,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 	"github.com/yarlson/pin"
@@ -99,18 +96,10 @@ func runCompareClusters(c *cli.Context) error {
 	}
 
 	// Create logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelWarn, // Only show warnings and errors
-	}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// Create health checker
-	eksClient := eks.NewFromConfig(awsCfg)
-	cwClient := cloudwatch.NewFromConfig(awsCfg)
-	asgClient := autoscaling.NewFromConfig(awsCfg)
-	healthChecker := health.NewChecker(eksClient, nil, cwClient, asgClient) // k8sClient is optional
-
-	// Create cluster service
-	clusterService := cluster.NewService(awsCfg, healthChecker, logger)
+	// Create cluster service with health
+	clusterService := newClusterService(awsCfg, true, logger)
 
 	// Resolve cluster names
 	var clusterNames []string

@@ -10,9 +10,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 	"github.com/yarlson/pin"
@@ -117,7 +114,7 @@ func runDescribeCluster(c *cli.Context) error {
 	// If no cluster specified, list available clusters in the current region and exit
 	if strings.TrimSpace(requested) == "" {
 		// List clusters (no health) in current region
-		clusterService := cluster.NewService(awsCfg, nil, logger)
+		clusterService := newClusterService(awsCfg, false, logger)
 		start := time.Now()
 		summaries, err := clusterService.List(ctx, cluster.ListOptions{})
 		if err != nil {
@@ -135,18 +132,8 @@ func runDescribeCluster(c *cli.Context) error {
 		return err
 	}
 
-	// Create health checker if needed
-	var healthChecker *health.HealthChecker
-	if c.Bool("show-health") {
-		// Create clients needed for health checker
-		eksClient := eks.NewFromConfig(awsCfg)
-		cwClient := cloudwatch.NewFromConfig(awsCfg)
-		asgClient := autoscaling.NewFromConfig(awsCfg)
-		healthChecker = health.NewChecker(eksClient, nil, cwClient, asgClient) // k8sClient is optional
-	}
-
 	// Create cluster service
-	clusterService := cluster.NewService(awsCfg, healthChecker, logger)
+	clusterService := newClusterService(awsCfg, c.Bool("show-health"), logger)
 
 	// Set up options
 	options := cluster.DescribeOptions{

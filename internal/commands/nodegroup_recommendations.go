@@ -60,8 +60,8 @@ func runNodegroupRecommendations(c *cli.Context) error {
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	svc := nodegroup.NewService(awsCfg, nil, logger)
+    logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+    svc := newNodegroupService(awsCfg, false, logger)
 
 	opts := nodegroup.RecommendationOptions{
 		Nodegroup:               c.String("nodegroup"),
