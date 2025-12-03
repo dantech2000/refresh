@@ -80,7 +80,7 @@ t3a.large in us-west-2: $0.0752/hour
 
 ## Installation
 
-### 🍺 Homebrew (Recommended)
+### Homebrew (Recommended)
 
 The easiest way to install `refresh` is via Homebrew:
 
@@ -88,12 +88,14 @@ The easiest way to install `refresh` is via Homebrew:
 # Add the tap
 brew tap dantech2000/tap
 
-# Install refresh
-brew install refresh
+# Install refresh (as a cask)
+brew install --cask refresh
 
 # Verify installation
 refresh version
 ```
+
+**Note:** Starting with v0.2.2, `refresh` is distributed as a Homebrew Cask instead of a Formula.
 
 ### 📦 Download from Releases
 
@@ -141,13 +143,13 @@ refresh --help
 
 You should see output showing the version and available commands.
 
-### 🔄 Updating
+### Updating
 
 To update to the latest version:
 
 ```bash
-# If installed via Homebrew
-brew update && brew upgrade refresh
+# If installed via Homebrew Cask
+brew update && brew upgrade --cask refresh
 
 # If installed via go install
 go install github.com/dantech2000/refresh@latest
@@ -635,8 +637,8 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
    - GitHub Actions will automatically trigger
    - GoReleaser will build binaries for all platforms
    - GitHub release will be created with artifacts
-   - Homebrew formula will be updated in `homebrew-tap` repository
-   - Users can install with: `brew install dantech2000/tap/refresh`
+   - Homebrew Cask will be updated in `homebrew-tap` repository
+   - Users can install with: `brew install --cask dantech2000/tap/refresh`
 
 ### Useful Task Commands
 
