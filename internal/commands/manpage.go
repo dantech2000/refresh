@@ -113,7 +113,7 @@ func isWritableDir(dir string) bool {
 		return false
 	}
 	_ = file.Close() // Ignore close error for test file
-	
+
 	// Clean up temporary file with error logging
 	if err := os.Remove(testFile); err != nil {
 		log.Printf("Warning: failed to clean up temporary file %s: %v", testFile, err)

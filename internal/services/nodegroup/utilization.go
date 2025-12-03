@@ -34,15 +34,15 @@ func (u *UtilizationCollector) CollectBasicCPU(ctx context.Context, clusterName,
 		}
 	}
 
-    // Map timeframe
-    end := time.Now()
-    start := end.Add(-7 * 24 * time.Hour)
-    switch timeframe {
-    case "30d":
-        start = end.Add(-30 * 24 * time.Hour)
-    case "90d":
-        start = end.Add(-90 * 24 * time.Hour)
-    }
+	// Map timeframe
+	end := time.Now()
+	start := end.Add(-7 * 24 * time.Hour)
+	switch timeframe {
+	case "30d":
+		start = end.Add(-30 * 24 * time.Hour)
+	case "90d":
+		start = end.Add(-90 * 24 * time.Hour)
+	}
 
 	// Placeholder: fetch any metric to avoid AccessDenied on accounts without Container Insights
 	// If AccessDenied or metric missing, return zeroed data.
@@ -78,11 +78,14 @@ func (u *UtilizationCollector) CollectEC2CPUForInstances(ctx context.Context, in
 	if len(instanceIDs) == 0 {
 		return UtilizationData{}, false
 	}
-	// We’ll sample last 1 hour by default
+	// Default to 1 hour, support 3h and 24h windows
 	end := time.Now()
 	start := end.Add(-1 * time.Hour)
-	if window == "3h" {
+	switch window {
+	case "3h":
 		start = end.Add(-3 * time.Hour)
+	case "24h":
+		start = end.Add(-24 * time.Hour)
 	}
 
 	// Build a GetMetricData request with one query per instance (batching efficiently)

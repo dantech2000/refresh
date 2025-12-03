@@ -64,10 +64,11 @@ type EndpointAccessInfo struct {
 
 // SecurityInfo contains cluster security configuration
 type SecurityInfo struct {
-	EncryptionEnabled bool     `json:"encryptionEnabled"`
-	KmsKeyArn         string   `json:"kmsKeyArn,omitempty"`
-	ServiceRoleArn    string   `json:"serviceRoleArn"`
-	LoggingEnabled    []string `json:"loggingEnabled"`
+	EncryptionEnabled  bool     `json:"encryptionEnabled"`
+	KmsKeyArn          string   `json:"kmsKeyArn,omitempty"`
+	ServiceRoleArn     string   `json:"serviceRoleArn"`
+	LoggingEnabled     []string `json:"loggingEnabled"`
+	DeletionProtection bool     `json:"deletionProtection"`
 }
 
 // AddonInfo contains EKS add-on information

@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"github.com/yarlson/pin"
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -82,8 +81,14 @@ health monitoring and multi-region capabilities.`,
 			&cli.StringFlag{
 				Name:    "format",
 				Aliases: []string{"o"},
-				Usage:   "Output format (table, json, yaml)",
+				Usage:   "Output format (table, json, yaml, tree)",
 				Value:   "table",
+			},
+			&cli.BoolFlag{
+				Name:    "tree",
+				Aliases: []string{"T"},
+				Usage:   "Display results as hierarchical tree (implies --all-regions for best effect)",
+				Value:   false,
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -127,43 +132,34 @@ func runListClusters(c *cli.Context) error {
 	}
 
 	// Set up options
+	// Tree view implies all-regions for best visual effect
+	allRegions := c.Bool("all-regions") || c.Bool("tree") || c.String("format") == "tree"
+
 	options := cluster.ListOptions{
 		Regions:        c.StringSlice("region"),
 		ShowHealth:     c.Bool("show-health"),
 		Filters:        filters,
-		AllRegions:     c.Bool("all-regions"),
+		AllRegions:     allRegions,
 		MaxConcurrency: c.Int("max-concurrency"),
 	}
 
 	// Create spinner
-	var spinnerMsg string
-	if c.Bool("all-regions") {
-		spinnerMsg = "Gathering clusters across all regions..."
-	} else {
-		spinnerMsg = "Gathering cluster information..."
-	}
-
-	spinner := pin.New(spinnerMsg,
-		pin.WithSpinnerColor(pin.ColorCyan),
-		pin.WithTextColor(pin.ColorYellow),
-	)
-
-	startSpinner := spinner.Start
-	stopSpinner := spinner.Stop
-	cancelSpinner := startSpinner(ctx)
-	defer cancelSpinner()
-
-	// Get cluster list
+	// Get cluster list with appropriate progress indicator
 	startTime := time.Now()
 	var summaries []cluster.ClusterSummary
 
-	if c.Bool("all-regions") || len(c.StringSlice("region")) > 0 {
-		summaries, err = clusterService.ListAllRegions(ctx, options)
+	if allRegions || len(c.StringSlice("region")) > 0 {
+		// Multi-region operation - use progress tracker
+		summaries, err = runMultiRegionListWithProgress(ctx, clusterService, options)
 	} else {
-		summaries, err = clusterService.List(ctx, options)
-	}
+		// Single region operation - use simple spinner
+		spinner := ui.NewProgressSpinner("Querying EKS clusters...")
+		cancelSpinner := spinner.Start(ctx)
+		defer cancelSpinner()
 
-	stopSpinner("Cluster information gathered!")
+		summaries, err = clusterService.List(ctx, options)
+		spinner.Stop("Cluster information gathered!")
+	}
 	if err != nil {
 		return err
 	}
@@ -178,9 +174,210 @@ func runListClusters(c *cli.Context) error {
 		return outputClustersJSON(summaries)
 	case "yaml":
 		return outputClustersYAML(summaries)
+	case "tree":
+		return outputClustersTree(summaries, elapsed, allRegions, c.Bool("show-health"))
 	default:
-		return outputClustersTable(summaries, elapsed, c.Bool("all-regions"), c.Bool("show-health"))
+		// Check for --tree flag even with table format
+		if c.Bool("tree") {
+			return outputClustersTree(summaries, elapsed, allRegions, c.Bool("show-health"))
+		}
+		return outputClustersTable(summaries, elapsed, allRegions, c.Bool("show-health"))
 	}
+}
+
+// runMultiRegionListWithProgress executes multi-region cluster listing with progress tracking
+func runMultiRegionListWithProgress(ctx context.Context, clusterService cluster.Service, options cluster.ListOptions) ([]cluster.ClusterSummary, error) {
+	// Determine which regions to query
+	var regions []string
+	if options.AllRegions {
+		// Default regions by partition
+		regionsCommercial := []string{
+			"us-east-1", "us-east-2", "us-west-1", "us-west-2",
+			"eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-north-1",
+			"ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2", "ap-south-1",
+			"ca-central-1", "sa-east-1",
+		}
+		regions = regionsCommercial
+	} else {
+		regions = options.Regions
+	}
+
+	if len(regions) <= 1 {
+		// Fall back to simple operation for single region
+		return clusterService.ListAllRegions(ctx, options)
+	}
+
+	// Create fun spinner with cluster-specific entertaining messages
+	spinner := ui.NewFunSpinnerForCategory("cluster")
+	if err := spinner.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start spinner: %w", err)
+	}
+	defer spinner.Stop()
+
+	// Use a channel to collect results from concurrent region queries
+	type regionResult struct {
+		region    string
+		summaries []cluster.ClusterSummary
+		err       error
+	}
+
+	resultChan := make(chan regionResult, len(regions))
+
+	// Limit concurrency across regions to reduce throttling
+	maxConc := options.MaxConcurrency
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	sem := make(chan struct{}, maxConc)
+
+	// Query each region concurrently
+	for _, region := range regions {
+		go func(r string) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Execute single-region query
+			regionOptions := options
+			regionOptions.Regions = []string{r}
+			regionOptions.AllRegions = false
+
+			summaries, err := clusterService.ListAllRegions(ctx, regionOptions)
+
+			resultChan <- regionResult{
+				region:    r,
+				summaries: summaries,
+				err:       err,
+			}
+		}(region)
+	}
+
+	// Collect results
+	allSummaries := make([]cluster.ClusterSummary, 0)
+	for i := 0; i < len(regions); i++ {
+		result := <-resultChan
+		if result.err != nil {
+			slog.Warn("failed to list clusters in region", "region", result.region, "error", result.err)
+			continue
+		}
+		allSummaries = append(allSummaries, result.summaries...)
+	}
+
+	// Complete the spinner with success message
+	totalClusters := len(allSummaries)
+	if totalClusters > 0 {
+		spinner.Success(fmt.Sprintf("Found %d clusters across %d regions!", totalClusters, len(regions)))
+	} else {
+		spinner.Success("Search complete - no clusters found")
+	}
+
+	return allSummaries, nil
+}
+
+// outputClustersTree displays clusters in a hierarchical tree format
+func outputClustersTree(summaries []cluster.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
+	if len(summaries) == 0 {
+		color.Yellow("No EKS clusters found")
+		return nil
+	}
+
+	// Group clusters by region for tree display
+	regionGroups := make(map[string][]cluster.ClusterSummary)
+	for _, summary := range summaries {
+		region := summary.Region
+		if region == "" {
+			region = "unknown-region"
+		}
+		regionGroups[region] = append(regionGroups[region], summary)
+	}
+
+	// Build tree structure
+	regionTree := ui.NewRegionTreeBuilder()
+
+	// Sort regions for consistent display
+	regions := make([]string, 0, len(regionGroups))
+	for region := range regionGroups {
+		regions = append(regions, region)
+	}
+	sort.Strings(regions)
+
+	// Add each region and its clusters
+	for _, region := range regions {
+		clusters := regionGroups[region]
+		regionTree.AddRegion(region, len(clusters))
+
+		// Sort clusters within region
+		sort.Slice(clusters, func(i, j int) bool {
+			return clusters[i].Name < clusters[j].Name
+		})
+
+		// Add each cluster to the region
+		for _, cluster := range clusters {
+			status := cluster.Status
+			if showHealth && cluster.Health != nil {
+				// Enhance status with health info
+				switch string(cluster.Health.Decision) {
+				case "PROCEED":
+					status = "HEALTHY"
+				case "WARN":
+					status = "WARNING"
+				case "BLOCK":
+					status = "CRITICAL"
+				}
+			}
+
+			regionTree.AddClusterToRegion(cluster.Name, status, cluster.NodeCount.Ready)
+		}
+
+		regionTree.FinishRegion()
+	}
+
+	// Create header
+	totalRegions := len(regions)
+	totalClusters := len(summaries)
+
+	var title string
+	if multiRegion {
+		title = fmt.Sprintf("EKS Clusters (%d regions, %d clusters)", totalRegions, totalClusters)
+	} else {
+		title = fmt.Sprintf("EKS Clusters (%d clusters)", totalClusters)
+	}
+
+	// Render tree with title
+	err := regionTree.RenderWithTitle(title)
+	if err != nil {
+		return err
+	}
+
+	// Performance indicator
+	fmt.Printf("\n%s\n", ui.FormatTreeSummary(totalClusters, "clusters", elapsed.Seconds()))
+
+	// Summary statistics
+	healthyCount := 0
+	warningCount := 0
+	criticalCount := 0
+
+	if showHealth {
+		for _, summary := range summaries {
+			if summary.Health == nil {
+				continue
+			}
+			switch string(summary.Health.Decision) {
+			case "PROCEED":
+				healthyCount++
+			case "WARN":
+				warningCount++
+			case "BLOCK":
+				criticalCount++
+			}
+		}
+
+		fmt.Printf("\nHealth Summary: %s healthy, %s warnings, %s critical\n",
+			color.GreenString("%d", healthyCount),
+			color.YellowString("%d", warningCount),
+			color.RedString("%d", criticalCount))
+	}
+
+	return nil
 }
 
 func outputClustersJSON(summaries []cluster.ClusterSummary) error {
@@ -238,7 +435,7 @@ func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Durati
 			columns = append(columns, ui.Column{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft})
 		}
 		columns = append(columns, ui.Column{Title: "READY/DESIRED", Min: 15, Max: 0, Align: ui.AlignRight})
-		table := ui.NewTable(columns, ui.WithHeaderColor(headerColor))
+		table := ui.NewPTable(columns, ui.WithPTableHeaderColor(headerColor))
 		for _, summary := range summaries {
 			nodes := formatNodeCount(summary.NodeCount)
 			if showHealth {
@@ -255,7 +452,7 @@ func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Durati
 			columns = append(columns, ui.Column{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft})
 		}
 		columns = append(columns, ui.Column{Title: "READY/DESIRED", Min: 15, Max: 0, Align: ui.AlignRight})
-		table := ui.NewTable(columns, ui.WithHeaderColor(headerColor))
+		table := ui.NewPTable(columns, ui.WithPTableHeaderColor(headerColor))
 		for _, summary := range summaries {
 			nodes := formatNodeCount(summary.NodeCount)
 			if showHealth {

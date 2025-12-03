@@ -134,32 +134,32 @@ func TestIsWritableDirConcurrentSafe(t *testing.T) {
 
 func TestIsInManPath(t *testing.T) {
 	tests := []struct {
-		name        string
-		dir         string
-		mockOutput  string
-		mockError   bool
-		expected    bool
+		name       string
+		dir        string
+		mockOutput string
+		mockError  bool
+		expected   bool
 	}{
 		{
-			name:        "Directory in MANPATH",
-			dir:         "/usr/share/man",
-			mockOutput:  "/usr/share/man:/usr/local/share/man",
-			mockError:   false,
-			expected:    true,
+			name:       "Directory in MANPATH",
+			dir:        "/usr/share/man",
+			mockOutput: "/usr/share/man:/usr/local/share/man",
+			mockError:  false,
+			expected:   true,
 		},
 		{
-			name:        "Directory not in MANPATH",
-			dir:         "/home/user/.local/share/man",
-			mockOutput:  "/usr/share/man:/usr/local/share/man",
-			mockError:   false,
-			expected:    false,
+			name:       "Directory not in MANPATH",
+			dir:        "/home/user/.local/share/man",
+			mockOutput: "/usr/share/man:/usr/local/share/man",
+			mockError:  false,
+			expected:   false,
 		},
 		{
-			name:        "Command fails",
-			dir:         "/usr/share/man",
-			mockOutput:  "",
-			mockError:   true,
-			expected:    false,
+			name:       "Command fails",
+			dir:        "/usr/share/man",
+			mockOutput: "",
+			mockError:  true,
+			expected:   false,
 		},
 	}
 
@@ -168,7 +168,7 @@ func TestIsInManPath(t *testing.T) {
 			// Note: This test is simplified since we can't easily mock exec.Command
 			// In a real-world scenario, you'd want to refactor isInManPath to accept
 			// a command runner interface for better testability
-			
+
 			// For now, we'll test the string processing logic
 			if !tt.mockError && tt.mockOutput != "" {
 				paths := strings.Split(strings.TrimSpace(tt.mockOutput), ":")
@@ -192,7 +192,7 @@ func TestManPageConstants(t *testing.T) {
 	if ManPageFileMode != 0644 {
 		t.Errorf("ManPageFileMode = %v, want %v", ManPageFileMode, 0644)
 	}
-	
+
 	if ManPageDirMode != 0755 {
 		t.Errorf("ManPageDirMode = %v, want %v", ManPageDirMode, 0755)
 	}
@@ -204,10 +204,10 @@ func BenchmarkIsWritableDir(b *testing.B) {
 	defer func() {
 		_ = os.RemoveAll(tempDir)
 	}()
-	
+
 	// Create directory once
 	_ = os.MkdirAll(tempDir, 0755)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		isWritableDir(tempDir)
