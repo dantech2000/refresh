@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
-    "time"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -182,21 +182,21 @@ func (s *ServiceImpl) shouldSkipCluster(clusterName string, filters map[string]s
 
 // getClusterSummary creates a summary for a single cluster
 func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string, options ListOptions) (*ClusterSummary, error) {
-    // Get basic cluster information
-    output, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
-        return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
-    })
-    if err != nil {
-        // Fallback: return minimal summary so list output remains complete even if a describe call fails
-        s.logger.Warn("failed to describe cluster, returning minimal summary", "cluster", clusterName, "error", err)
-        return &ClusterSummary{
-            Name:      clusterName,
-            Status:    "UNKNOWN",
-            Version:   "",
-            Region:    s.awsConfig.Region,
-            CreatedAt: time.Time{},
-        }, nil
-    }
+	// Get basic cluster information
+	output, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
+	})
+	if err != nil {
+		// Fallback: return minimal summary so list output remains complete even if a describe call fails
+		s.logger.Warn("failed to describe cluster, returning minimal summary", "cluster", clusterName, "error", err)
+		return &ClusterSummary{
+			Name:      clusterName,
+			Status:    "UNKNOWN",
+			Version:   "",
+			Region:    s.awsConfig.Region,
+			CreatedAt: time.Time{},
+		}, nil
+	}
 
 	cluster := output.Cluster
 	summary := &ClusterSummary{

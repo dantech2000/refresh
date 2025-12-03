@@ -31,8 +31,8 @@ func shouldRetry(err error) bool {
 		return false
 	}
 	// Best-effort string checks for throttling/network glitches.
-    s := err.Error()
-    return containsAnyFold(s, []string{"throttl", "rate exceeded", "timeout", "temporarily unavailable", "connection reset"})
+	s := err.Error()
+	return containsAnyFold(s, []string{"throttl", "rate exceeded", "timeout", "temporarily unavailable", "connection reset"})
 }
 
 func containsAnyFold(haystack string, needles []string) bool {

@@ -63,11 +63,11 @@ func (t *Table) AddRow(cells ...string) {
 // Render prints the table to stdout.
 func (t *Table) Render() {
 	widths := t.computeColumnWidths()
-    w := bufio.NewWriterSize(os.Stdout, 64*1024)
-    defer func() { _ = w.Flush() }()
+	w := bufio.NewWriterSize(os.Stdout, 64*1024)
+	defer func() { _ = w.Flush() }()
 
 	// Top border
-    _, _ = fmt.Fprintln(w, buildBorder("┌", "┬", "┐", widths))
+	_, _ = fmt.Fprintln(w, buildBorder("┌", "┬", "┐", widths))
 
 	// Header row
 	var b strings.Builder
@@ -82,10 +82,10 @@ func (t *Table) Render() {
 		b.WriteString(" ")
 		b.WriteString("│")
 	}
-    _, _ = fmt.Fprintln(w, b.String())
+	_, _ = fmt.Fprintln(w, b.String())
 
 	// Separator
-    _, _ = fmt.Fprintln(w, buildBorder("├", "┼", "┤", widths))
+	_, _ = fmt.Fprintln(w, buildBorder("├", "┼", "┤", widths))
 
 	// Rows
 	for _, row := range t.rows {
@@ -97,11 +97,11 @@ func (t *Table) Render() {
 			rb.WriteString(" ")
 			rb.WriteString("│")
 		}
-        _, _ = fmt.Fprintln(w, rb.String())
+		_, _ = fmt.Fprintln(w, rb.String())
 	}
 
 	// Bottom border
-    _, _ = fmt.Fprintln(w, buildBorder("└", "┴", "┘", widths))
+	_, _ = fmt.Fprintln(w, buildBorder("└", "┴", "┘", widths))
 }
 
 // computeColumnWidths determines the width of each column based on headers and rows,

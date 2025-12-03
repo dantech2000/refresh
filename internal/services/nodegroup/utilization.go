@@ -34,15 +34,15 @@ func (u *UtilizationCollector) CollectBasicCPU(ctx context.Context, clusterName,
 		}
 	}
 
-    // Map timeframe
-    end := time.Now()
-    start := end.Add(-7 * 24 * time.Hour)
-    switch timeframe {
-    case "30d":
-        start = end.Add(-30 * 24 * time.Hour)
-    case "90d":
-        start = end.Add(-90 * 24 * time.Hour)
-    }
+	// Map timeframe
+	end := time.Now()
+	start := end.Add(-7 * 24 * time.Hour)
+	switch timeframe {
+	case "30d":
+		start = end.Add(-30 * 24 * time.Hour)
+	case "90d":
+		start = end.Add(-90 * 24 * time.Hour)
+	}
 
 	// Placeholder: fetch any metric to avoid AccessDenied on accounts without Container Insights
 	// If AccessDenied or metric missing, return zeroed data.

@@ -118,19 +118,19 @@ func (c *CostAnalyzer) queryPricing(ctx context.Context, instanceType, location 
 func regionToPricingLocation(region string) string {
 	m := map[string]string{
 		// US regions
-		"us-east-1":      "US East (N. Virginia)",
-		"us-east-2":      "US East (Ohio)",
-		"us-west-1":      "US West (N. California)",
-		"us-west-2":      "US West (Oregon)",
+		"us-east-1": "US East (N. Virginia)",
+		"us-east-2": "US East (Ohio)",
+		"us-west-1": "US West (N. California)",
+		"us-west-2": "US West (Oregon)",
 		// EU regions
-		"eu-west-1":      "EU (Ireland)",
-		"eu-west-2":      "EU (London)",
-		"eu-west-3":      "EU (Paris)",
-		"eu-central-1":   "EU (Frankfurt)",
-		"eu-central-2":   "EU (Zurich)",
-		"eu-north-1":     "EU (Stockholm)",
-		"eu-south-1":     "EU (Milan)",
-		"eu-south-2":     "EU (Spain)",
+		"eu-west-1":    "EU (Ireland)",
+		"eu-west-2":    "EU (London)",
+		"eu-west-3":    "EU (Paris)",
+		"eu-central-1": "EU (Frankfurt)",
+		"eu-central-2": "EU (Zurich)",
+		"eu-north-1":   "EU (Stockholm)",
+		"eu-south-1":   "EU (Milan)",
+		"eu-south-2":   "EU (Spain)",
 		// Asia Pacific regions
 		"ap-east-1":      "Asia Pacific (Hong Kong)",
 		"ap-southeast-1": "Asia Pacific (Singapore)",
@@ -143,15 +143,15 @@ func regionToPricingLocation(region string) string {
 		"ap-south-1":     "Asia Pacific (Mumbai)",
 		"ap-south-2":     "Asia Pacific (Hyderabad)",
 		// Middle East regions
-		"me-south-1":     "Middle East (Bahrain)",
-		"me-central-1":   "Middle East (UAE)",
-		"il-central-1":   "Israel (Tel Aviv)",
+		"me-south-1":   "Middle East (Bahrain)",
+		"me-central-1": "Middle East (UAE)",
+		"il-central-1": "Israel (Tel Aviv)",
 		// Africa regions
-		"af-south-1":     "Africa (Cape Town)",
+		"af-south-1": "Africa (Cape Town)",
 		// Americas regions
-		"ca-central-1":   "Canada (Central)",
-		"ca-west-1":      "Canada West (Calgary)",
-		"sa-east-1":      "South America (Sao Paulo)",
+		"ca-central-1": "Canada (Central)",
+		"ca-west-1":    "Canada West (Calgary)",
+		"sa-east-1":    "South America (Sao Paulo)",
 	}
 	return m[region]
 }
@@ -177,11 +177,11 @@ func extractFirstUSD(onDemand map[string]any) float64 {
 					if d, ok := dim.(map[string]any); ok {
 						if unit, ok := d["pricePerUnit"].(map[string]any); ok {
 							if usd, ok := unit["USD"].(string); ok {
-                            var f float64
-                            if _, err := fmt.Sscanf(usd, "%f", &f); err == nil {
-                                return f
-                            }
-                            return 0
+								var f float64
+								if _, err := fmt.Sscanf(usd, "%f", &f); err == nil {
+									return f
+								}
+								return 0
 							}
 						}
 					}
