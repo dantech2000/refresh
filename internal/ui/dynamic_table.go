@@ -122,18 +122,31 @@ func (dt *DynamicTable) IsEmpty() bool {
 }
 
 // calculateVisibleWidth returns the printable width of a string, excluding ANSI codes
+// This function is hardened against malformed ANSI escape sequences with bounds checking.
 func calculateVisibleWidth(s string) int {
 	visibleLen := 0
 	inEscape := false
+	escapeLen := 0
+	const maxEscapeLen = 32 // Maximum reasonable ANSI escape sequence length
+
 	for _, r := range s {
 		if r == '\u001b' { // ESC
 			inEscape = true
+			escapeLen = 0
 			continue
 		}
 		if inEscape {
-			// End on letter terminator
+			escapeLen++
+			// Safety: bail out of malformed sequences that are too long
+			if escapeLen > maxEscapeLen {
+				inEscape = false
+				escapeLen = 0
+				continue
+			}
+			// End on letter terminator (standard CSI sequences end with a letter)
 			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
 				inEscape = false
+				escapeLen = 0
 			}
 			continue
 		}

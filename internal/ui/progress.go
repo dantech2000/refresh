@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
@@ -283,6 +284,9 @@ type FunSpinner struct {
 	current  int
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+	stopOnce sync.Once
+	started  bool
+	mu       sync.Mutex
 }
 
 // NewFunSpinner creates a spinner that rotates through fun messages
@@ -303,16 +307,25 @@ func NewFunSpinner(messages []string) *FunSpinner {
 		current:  0,
 		stopCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
+		started:  false,
 	}
 }
 
 // Start begins the fun spinner with rotating messages
 func (fs *FunSpinner) Start() error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	if fs.started {
+		return nil // Already started
+	}
+
 	started, err := fs.spinner.Start(fs.messages[0])
 	if err != nil {
 		return err
 	}
 	fs.spinner = started
+	fs.started = true
 
 	// Start message rotation in background
 	go fs.rotateMessages()
@@ -356,13 +369,19 @@ func (fs *FunSpinner) Stop() {
 }
 
 func (fs *FunSpinner) stop() {
-	select {
-	case <-fs.stopCh:
-		return // already stopped
-	default:
+	fs.mu.Lock()
+	wasStarted := fs.started
+	fs.mu.Unlock()
+
+	// Only wait for goroutine if spinner was started
+	if !wasStarted {
+		return
+	}
+
+	fs.stopOnce.Do(func() {
 		close(fs.stopCh)
 		<-fs.doneCh // wait for rotation goroutine to finish
-	}
+	})
 }
 
 // FunMessages provides categorized entertaining messages for different operations

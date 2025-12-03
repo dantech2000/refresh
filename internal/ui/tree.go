@@ -40,10 +40,11 @@ type ComparisonTreeBuilder struct {
 	builder *TreeBuilder
 }
 
-// NewTreeBuilder creates a new tree builder
+// NewTreeBuilder creates a new tree builder with pre-allocated capacity
+// for typical tree sizes (reduces allocations for common use cases)
 func NewTreeBuilder() *TreeBuilder {
 	return &TreeBuilder{
-		leveledList: make(pterm.LeveledList, 0),
+		leveledList: make(pterm.LeveledList, 0, 16), // Pre-allocate for typical tree depth
 		level:       0,
 	}
 }

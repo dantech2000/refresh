@@ -33,12 +33,11 @@ func NewPTable(columns []Column, opts ...PTableOption) *PTable {
 }
 
 // AddRow appends a row. The number of cells must match the number of columns.
+// Mismatched rows are silently dropped to maintain table integrity.
 func (t *PTable) AddRow(cells ...string) {
 	if len(cells) != len(t.columns) {
-		// Maintain same debugging behavior as original
-		if len(cells) != len(t.columns) {
-			return
-		}
+		// Silent drop for mismatched column count (maintains original behavior)
+		return
 	}
 	t.rows = append(t.rows, cells)
 }
