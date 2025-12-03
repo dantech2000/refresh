@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"github.com/yarlson/pin"
+
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -126,21 +126,17 @@ func runCompareClusters(c *cli.Context) error {
 	}
 
 	// Create spinner
-	spinner := pin.New("Analyzing cluster configurations...",
-		pin.WithSpinnerColor(pin.ColorCyan),
-		pin.WithTextColor(pin.ColorYellow),
-	)
-
-	startSpinner := spinner.Start
-	stopSpinner := spinner.Stop
-	cancelSpinner := startSpinner(ctx)
-	defer cancelSpinner()
+	spinner := ui.NewFunSpinnerForCategory("cluster")
+	if err := spinner.Start(); err != nil {
+		return err
+	}
+	defer spinner.Stop()
 
 	// Perform comparison
 	startTime := time.Now()
 	comparison, err := clusterService.Compare(ctx, clusterNames, options)
 
-	stopSpinner("Analysis complete!")
+	spinner.Success("Analysis complete!")
 	if err != nil {
 		return err
 	}
@@ -182,19 +178,16 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 	fmt.Printf("Cluster Comparison: %s\n", color.CyanString(strings.Join(clusterNames, " vs ")))
 	fmt.Printf("Analyzed in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
-	// Summary
+	// Summary using dynamic table
 	summary := comparison.Summary
-	fmt.Printf("Comparison Summary:\n")
-	printTableRow("Total Differences", fmt.Sprintf("%d", summary.TotalDifferences))
-	printTableRow("Critical Issues", formatDifferenceCount(summary.CriticalDifferences, "critical"))
-	printTableRow("Warnings", formatDifferenceCount(summary.WarningDifferences, "warning"))
-	printTableRow("Informational", formatDifferenceCount(summary.InfoDifferences, "info"))
+	summaryTable := ui.NewDynamicTable()
+	summaryTable.Add("Total Differences", fmt.Sprintf("%d", summary.TotalDifferences)).
+		Add("Critical Issues", formatDifferenceCount(summary.CriticalDifferences, "critical")).
+		Add("Warnings", formatDifferenceCount(summary.WarningDifferences, "warning")).
+		Add("Informational", formatDifferenceCount(summary.InfoDifferences, "info")).
+		AddBool("Equivalent", summary.ClustersAreEquivalent)
 
-	equivalent := color.RedString("NO")
-	if summary.ClustersAreEquivalent {
-		equivalent = color.GreenString("YES")
-	}
-	printTableRow("Equivalent", equivalent)
+	summaryTable.RenderSection("Comparison Summary")
 	fmt.Println()
 
 	// If no differences, we're done
@@ -211,7 +204,7 @@ func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.D
 		{Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft},
 		{Title: "HEALTH", Min: 15, Max: 0, Align: ui.AlignLeft},
 	}
-	table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+	table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
 	for _, cl := range comparison.Clusters {
 		healthStatus := color.WhiteString("UNKNOWN")
 		if cl.Health != nil {

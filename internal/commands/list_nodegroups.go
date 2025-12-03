@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"github.com/yarlson/pin"
+
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -47,18 +47,25 @@ func ListNodegroupsCommand() *cli.Command {
 				Name:    "show-health",
 				Aliases: []string{"H"},
 				Usage:   "Include health status for each nodegroup",
+				Value:   false,
 			},
 			&cli.BoolFlag{
-				Name:  "show-costs",
-				Usage: "Include basic cost analysis (placeholder)",
+				Name:    "show-costs",
+				Aliases: []string{"C"},
+				Usage:   "Include cost analysis",
+				Value:   false,
 			},
 			&cli.BoolFlag{
-				Name:  "show-utilization",
-				Usage: "Include utilization metrics (placeholder)",
+				Name:    "show-utilization",
+				Aliases: []string{"U"},
+				Usage:   "Include CPU utilization metrics",
+				Value:   false,
 			},
 			&cli.BoolFlag{
-				Name:  "show-instances",
-				Usage: "Include instance details (placeholder)",
+				Name:    "show-instances",
+				Aliases: []string{"I"},
+				Usage:   "Include instance details",
+				Value:   false,
 			},
 			&cli.StringFlag{
 				Name:    "timeframe",
@@ -133,7 +140,8 @@ func runListNodegroups(c *cli.Context) error {
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	// Use Error level to avoid warnings cluttering spinner output
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	// Health checker optional for list (disabled by default)
 	svc := newNodegroupService(awsCfg, false, logger)
 
@@ -153,16 +161,15 @@ func runListNodegroups(c *cli.Context) error {
 		Timeframe:       c.String("timeframe"),
 	}
 
-	spinner := pin.New("Gathering nodegroup information...",
-		pin.WithSpinnerColor(pin.ColorCyan),
-		pin.WithTextColor(pin.ColorYellow),
-	)
-	cancelSpinner := spinner.Start(ctx)
-	defer cancelSpinner()
+	spinner := ui.NewFunSpinnerForCategory("nodegroup")
+	if err := spinner.Start(); err != nil {
+		return err
+	}
+	defer spinner.Stop()
 
 	start := time.Now()
 	items, err := svc.List(ctx, clusterName, opts)
-	spinner.Stop("Nodegroup information gathered!")
+	spinner.Success("Nodegroup information gathered!")
 	if err != nil {
 		return err
 	}
@@ -183,46 +190,83 @@ func runListNodegroups(c *cli.Context) error {
 		defer func() { _ = enc.Close() }()
 		return enc.Encode(map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)})
 	default:
-		return outputNodegroupsTableWithWindow(clusterName, c.String("timeframe"), items, time.Since(start))
+		return outputNodegroupsTableWithWindow(clusterName, c.String("timeframe"), items, time.Since(start), opts)
 	}
 }
 
-func outputNodegroupsTableWithWindow(clusterName, timeframe string, items []nodegroup.NodegroupSummary, elapsed time.Duration) error {
+func outputNodegroupsTableWithWindow(clusterName, timeframe string, items []nodegroup.NodegroupSummary, elapsed time.Duration, opts nodegroup.ListOptions) error {
 	if len(items) == 0 {
 		color.Yellow("No nodegroups found for cluster: %s", clusterName)
 		return nil
 	}
 	fmt.Printf("Nodegroups for cluster: %s\n", clusterName)
-	fmt.Printf("Retrieved in %s (utilization window %s)\n\n", color.GreenString("%.1fs", elapsed.Seconds()), timeframe)
 
-	// Define columns; widths computed dynamically with caps
+	// Show retrieval time with optional utilization window
+	if opts.ShowUtilization {
+		fmt.Printf("Retrieved in %s (utilization window %s)\n", color.GreenString("%.1fs", elapsed.Seconds()), timeframe)
+	} else {
+		fmt.Printf("Retrieved in %s\n", color.GreenString("%.1fs", elapsed.Seconds()))
+	}
+
+	// Show which optional data is being requested
+	if opts.ShowUtilization || opts.ShowCosts {
+		var extras []string
+		if opts.ShowUtilization {
+			extras = append(extras, "CPU metrics")
+		}
+		if opts.ShowCosts {
+			extras = append(extras, "cost estimates")
+		}
+		fmt.Printf("Including: %s\n", strings.Join(extras, ", "))
+	}
+	fmt.Println()
+
+	// Define base columns
 	columns := []ui.Column{
 		{Title: "NAME", Min: 4, Max: 60, Align: ui.AlignLeft},
 		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
 		{Title: "INSTANCE", Min: 10, Max: 0, Align: ui.AlignLeft},
+		{Title: "AMI STATUS", Min: 9, Max: 0, Align: ui.AlignLeft},
 		{Title: "NODES", Min: 7, Max: 0, Align: ui.AlignRight},
-		{Title: "CPU%", Min: 0, Max: 0, Align: ui.AlignRight},
-		{Title: "COST/MO", Min: 0, Max: 0, Align: ui.AlignRight},
 	}
-	table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+
+	// Add optional columns based on flags
+	if opts.ShowUtilization {
+		columns = append(columns, ui.Column{Title: "CPU%", Min: 5, Max: 0, Align: ui.AlignRight})
+	}
+	if opts.ShowCosts {
+		columns = append(columns, ui.Column{Title: "COST/MO", Min: 8, Max: 0, Align: ui.AlignRight})
+	}
+
+	table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
 
 	for _, ng := range items {
-		cpu := ""
-		if ng.Metrics.CPU > 0 {
-			cpu = fmt.Sprintf("%.0f%%", ng.Metrics.CPU)
-		}
-		cost := ""
-		if ng.Cost.Monthly > 0 {
-			cost = fmt.Sprintf("$%.0f", ng.Cost.Monthly)
-		}
-		table.AddRow(
+		// Build row with base columns
+		row := []string{
 			ng.Name,
 			ng.Status,
 			ng.InstanceType,
+			ng.AMIStatus.String(),
 			fmt.Sprintf("%d/%d", ng.ReadyNodes, ng.DesiredSize),
-			cpu,
-			cost,
-		)
+		}
+
+		// Add optional columns
+		if opts.ShowUtilization {
+			cpu := "-"
+			if ng.Metrics.CPU > 0 {
+				cpu = fmt.Sprintf("%.0f%%", ng.Metrics.CPU)
+			}
+			row = append(row, cpu)
+		}
+		if opts.ShowCosts {
+			cost := "-"
+			if ng.Cost.Monthly > 0 {
+				cost = fmt.Sprintf("$%.0f", ng.Cost.Monthly)
+			}
+			row = append(row, cost)
+		}
+
+		table.AddRow(row...)
 	}
 	table.Render()
 	return nil

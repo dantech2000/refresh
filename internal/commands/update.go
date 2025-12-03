@@ -138,14 +138,15 @@ func UpdateAmiCommand() *cli.Command {
 
 				// Run health checks with spinner
 				spinner := ui.NewHealthSpinner("Validating update readiness...")
+				var cancelSpinner func()
 				if !quiet {
-					_ = spinner.Start()
+					cancelSpinner = spinner.Start(ctx)
 				}
 
 				summary := healthChecker.RunAllChecks(ctx, clusterName)
 
-				if !quiet {
-					_ = spinner.Stop()
+				if !quiet && cancelSpinner != nil {
+					spinner.Stop("Health validation complete!")
 				}
 
 				// Display results

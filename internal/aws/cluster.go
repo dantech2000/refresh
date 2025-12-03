@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/dantech2000/refresh/internal/ui"
 	"github.com/fatih/color"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -67,7 +68,13 @@ func ClusterName(ctx context.Context, awsCfg aws.Config, cliFlag string) (string
 	}
 
 	// Get available clusters
+	spinner := ui.NewFunSpinnerForCategory("general")
+	if err := spinner.Start(); err != nil {
+		return "", err
+	}
+	defer spinner.Stop()
 	clusters, err := availableClusters(ctx, awsCfg)
+	spinner.Success("Cluster name resolved!")
 	if err != nil {
 		return "", FormatAWSError(err, "listing EKS clusters")
 	}

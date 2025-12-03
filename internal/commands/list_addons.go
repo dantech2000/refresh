@@ -14,7 +14,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"github.com/yarlson/pin"
+
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -66,34 +66,33 @@ func runListAddons(c *cli.Context) error {
 	if requested == "" {
 		requested = c.String("cluster")
 	}
-    if strings.TrimSpace(requested) == "" {
-        ui.Outln("No cluster specified. Available clusters:")
-        ui.Outln()
-        start := time.Now()
-        svc := newClusterService(cfg, false, nil)
-        summaries, err := svc.List(ctx, cluster.ListOptions{})
-        if err != nil {
-            return err
-        }
-        _ = outputClustersTable(summaries, time.Since(start), false, false)
-        return nil
-    }
+	if strings.TrimSpace(requested) == "" {
+		ui.Outln("No cluster specified. Available clusters:")
+		ui.Outln()
+		start := time.Now()
+		svc := newClusterService(cfg, false, nil)
+		summaries, err := svc.List(ctx, cluster.ListOptions{})
+		if err != nil {
+			return err
+		}
+		_ = outputClustersTable(summaries, time.Since(start), false, false)
+		return nil
+	}
 	clusterName, err := awsinternal.ClusterName(ctx, cfg, requested)
 	if err != nil {
 		return err
 	}
 	eksClient := eks.NewFromConfig(cfg)
 
-	spinner := pin.New("Gathering add-on information...",
-		pin.WithSpinnerColor(pin.ColorCyan),
-		pin.WithTextColor(pin.ColorYellow),
-	)
-	cancelSpin := spinner.Start(ctx)
-	defer cancelSpin()
+	spinner := ui.NewFunSpinnerForCategory("addon")
+	if err := spinner.Start(); err != nil {
+		return err
+	}
+	defer spinner.Stop()
 
 	start := time.Now()
 	rows, err := fetchAddons(ctx, eksClient, clusterName, c.Bool("show-health"))
-	spinner.Stop("Add-on information gathered!")
+	spinner.Success("Add-on information gathered!")
 	if err != nil {
 		return err
 	}
@@ -159,8 +158,8 @@ func mapAddonHealth(s ekstypes.AddonStatus) string {
 }
 
 func outputAddonsTable(cluster string, rows []addonRow, elapsed time.Duration) error {
-    ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
-    ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+	ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
+	ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
 	if len(rows) == 0 {
 		color.Yellow("No add-ons found")
@@ -173,7 +172,7 @@ func outputAddonsTable(cluster string, rows []addonRow, elapsed time.Duration) e
 		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
 		{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft},
 	}
-	table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+	table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
 	for _, r := range rows {
 		table.AddRow(r.Name, r.Version, r.Status, r.Health)
 	}

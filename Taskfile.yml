@@ -25,10 +25,14 @@ tasks:
   build-release:
     desc: Build release binary with optimizations
     cmds:
-      - go build -ldflags="-s -w -X main.versionInfo.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .
+      - go build -ldflags="-s -w -X github.com/dantech2000/refresh/internal/commands.version={{.VERSION}} -X github.com/dantech2000/refresh/internal/commands.commit={{.COMMIT}} -X github.com/dantech2000/refresh/internal/commands.buildDate={{.DATE}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .
     vars:
       VERSION:
         sh: git describe --tags --always --dirty
+      COMMIT:
+        sh: git rev-parse --short HEAD
+      DATE:
+        sh: date -u +%Y-%m-%dT%H:%M:%SZ
     generates:
       - "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
 

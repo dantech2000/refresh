@@ -13,9 +13,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/types"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -24,6 +26,7 @@ import (
 type EKSAPI interface {
 	ListNodegroups(ctx context.Context, params *eks.ListNodegroupsInput, optFns ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error)
 	DescribeNodegroup(ctx context.Context, params *eks.DescribeNodegroupInput, optFns ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error)
+	DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error)
 	UpdateNodegroupConfig(ctx context.Context, params *eks.UpdateNodegroupConfigInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupConfigOutput, error)
 }
 
@@ -46,6 +49,7 @@ type ServiceImpl struct {
 	cost          *CostAnalyzer
 	asgClient     *autoscaling.Client
 	ec2Client     *ec2.Client
+	ssmClient     *ssm.Client
 }
 
 // NewService creates a new nodegroup service
@@ -64,6 +68,7 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 		cache:         cache,
 		asgClient:     autoscaling.NewFromConfig(awsConfig),
 		ec2Client:     ec2.NewFromConfig(awsConfig),
+		ssmClient:     ssm.NewFromConfig(awsConfig),
 	}
 	svc.util = NewUtilizationCollector(cw, logger, cache)
 	svc.cost = NewCostAnalyzer(p, logger, cache, awsConfig.Region)
@@ -73,6 +78,17 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 // List returns basic nodegroup summaries for a cluster
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, error) {
 	s.logger.Info("listing nodegroups", "cluster", clusterName, "options", options)
+
+	// Get cluster information first for Kubernetes version (needed for AMI lookup)
+	clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{
+			Name: aws.String(clusterName),
+		})
+	})
+	if err != nil {
+		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
+	}
+	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
 	var nodegroupNames []string
 	var nextToken *string
@@ -114,14 +130,32 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		if len(ng.InstanceTypes) > 0 {
 			instanceType = string(ng.InstanceTypes[0])
 		}
+
+		// AMI Status Detection - Core functionality of refresh tool
+		currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
+		latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
+
+		var amiStatus types.AMIStatus
+		if ng.Status == ekstypes.NodegroupStatusUpdating {
+			amiStatus = types.AMIUpdating
+		} else if currentAmiId == "" || latestAmiId == "" {
+			amiStatus = types.AMIUnknown
+		} else if currentAmiId == latestAmiId {
+			amiStatus = types.AMILatest
+		} else {
+			amiStatus = types.AMIOutdated
+		}
+
 		summary := NodegroupSummary{
 			Name:         aws.ToString(ng.NodegroupName),
 			Status:       string(ng.Status),
 			InstanceType: instanceType,
 			DesiredSize:  aws.ToInt32(ng.ScalingConfig.DesiredSize),
 			ReadyNodes:   ready,
+			CurrentAMI:   currentAmiId,
+			AMIStatus:    amiStatus,
 		}
-		// Optional enrichments
+		// Optional enrichments (fail silently - missing data shown as "-" in output)
 		if options.ShowUtilization && s.util != nil {
 			window := normalizeWindow(options.Timeframe)
 			if ids, ok := s.getNodegroupInstanceIDs(ctx, clusterName, aws.ToString(ng.NodegroupName)); ok {
@@ -145,6 +179,17 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName string, options DescribeOptions) (*NodegroupDetails, error) {
 	s.logger.Info("describing nodegroup", "cluster", clusterName, "nodegroup", nodegroupName, "options", options)
 
+	// Get cluster information first for Kubernetes version (needed for AMI lookup)
+	clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{
+			Name: aws.String(clusterName),
+		})
+	})
+	if err != nil {
+		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
+	}
+	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
+
 	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
 		return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
 			ClusterName:   aws.String(clusterName),
@@ -156,12 +201,31 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	}
 
 	ng := out.Nodegroup
+
+	// AMI Status Detection - Core functionality of refresh tool
+	currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
+	latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
+
+	var amiStatus types.AMIStatus
+	if ng.Status == ekstypes.NodegroupStatusUpdating {
+		amiStatus = types.AMIUpdating
+	} else if currentAmiId == "" || latestAmiId == "" {
+		amiStatus = types.AMIUnknown
+	} else if currentAmiId == latestAmiId {
+		amiStatus = types.AMILatest
+	} else {
+		amiStatus = types.AMIOutdated
+	}
+
 	details := &NodegroupDetails{
 		Name:         aws.ToString(ng.NodegroupName),
 		Status:       string(ng.Status),
 		InstanceType: firstInstanceType(ng.InstanceTypes),
 		AmiType:      string(ng.AmiType),
 		CapacityType: string(ng.CapacityType),
+		CurrentAMI:   currentAmiId,
+		LatestAMI:    latestAmiId,
+		AMIStatus:    amiStatus,
 		Scaling: ScalingConfig{
 			DesiredSize: aws.ToInt32(ng.ScalingConfig.DesiredSize),
 			MinSize:     aws.ToInt32(ng.ScalingConfig.MinSize),

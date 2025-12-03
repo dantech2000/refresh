@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/types"
 )
 
 // ListOptions controls nodegroup listing behavior
@@ -117,6 +118,9 @@ type NodegroupSummary struct {
 	InstanceType string `json:"instanceType"`
 	DesiredSize  int32  `json:"desiredSize"`
 	ReadyNodes   int32  `json:"readyNodes"`
+	// AMI information - core functionality of refresh tool
+	CurrentAMI string          `json:"currentAmi"`
+	AMIStatus  types.AMIStatus `json:"amiStatus"`
 	// Optional enrichments for list output
 	Metrics SummaryMetrics `json:"metrics,omitempty"`
 	Cost    SummaryCost    `json:"cost,omitempty"`
@@ -139,6 +143,11 @@ type NodegroupDetails struct {
 	InstanceType string `json:"instanceType"`
 	AmiType      string `json:"amiType"`
 	CapacityType string `json:"capacityType"` // ON_DEMAND, SPOT
+
+	// AMI information - core functionality of refresh tool
+	CurrentAMI string          `json:"currentAmi"`
+	LatestAMI  string          `json:"latestAmi"`
+	AMIStatus  types.AMIStatus `json:"amiStatus"`
 
 	Scaling     ScalingConfig        `json:"scaling"`
 	Health      *health.HealthStatus `json:"health,omitempty"`

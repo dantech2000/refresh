@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"github.com/yarlson/pin"
+
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -60,8 +60,8 @@ func runNodegroupRecommendations(c *cli.Context) error {
 		return err
 	}
 
-    logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-    svc := newNodegroupService(awsCfg, false, logger)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	svc := newNodegroupService(awsCfg, false, logger)
 
 	opts := nodegroup.RecommendationOptions{
 		Nodegroup:               c.String("nodegroup"),
@@ -72,15 +72,14 @@ func runNodegroupRecommendations(c *cli.Context) error {
 		Timeframe:               c.String("timeframe"),
 	}
 
-	spinner := pin.New("Analyzing optimization opportunities...",
-		pin.WithSpinnerColor(pin.ColorCyan),
-		pin.WithTextColor(pin.ColorYellow),
-	)
-	cancelSpinner := spinner.Start(ctx)
-	defer cancelSpinner()
+	spinner := ui.NewFunSpinnerForCategory("nodegroup")
+	if err := spinner.Start(); err != nil {
+		return err
+	}
+	defer spinner.Stop()
 
 	recs, err := svc.GetRecommendations(ctx, clusterName, opts)
-	spinner.Stop("Analysis complete!")
+	spinner.Success("Analysis complete!")
 	if err != nil {
 		return err
 	}
@@ -113,7 +112,7 @@ func outputRecommendationsTable(cluster string, recs []nodegroup.Recommendation)
 		{Title: "IMPACT", Min: 6, Max: 0, Align: ui.AlignLeft},
 		{Title: "DESCRIPTION", Min: 8, Max: 60, Align: ui.AlignLeft},
 	}
-	table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+	table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
 	for _, r := range recs {
 		table.AddRow(r.Type, r.Priority, r.Impact, r.Description)
 	}

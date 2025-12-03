@@ -10,11 +10,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"github.com/yarlson/pin"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // ScaleNodegroupCommand creates the scale-nodegroup command
@@ -117,17 +117,16 @@ func runScaleNodegroup(c *cli.Context) error {
 		DryRun:      c.Bool("dry-run"),
 	}
 
-	spinner := pin.New("Scaling nodegroup...",
-		pin.WithSpinnerColor(pin.ColorCyan),
-		pin.WithTextColor(pin.ColorYellow),
-	)
-	cancelSpinner := spinner.Start(ctx)
-	defer cancelSpinner()
-
-	if err := svc.Scale(ctx, clusterName, ngName, desiredPtr, minPtr, maxPtr, opts); err != nil {
-		spinner.Stop("Scaling failed")
+	spinner := ui.NewFunSpinnerForCategory("nodegroup")
+	if err := spinner.Start(); err != nil {
 		return err
 	}
-	spinner.Stop("Scaling request submitted")
+	defer spinner.Stop()
+
+	if err := svc.Scale(ctx, clusterName, ngName, desiredPtr, minPtr, maxPtr, opts); err != nil {
+		spinner.Fail("Scaling failed")
+		return err
+	}
+	spinner.Success("Scaling request submitted")
 	return nil
 }

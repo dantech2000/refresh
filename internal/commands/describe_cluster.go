@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"github.com/yarlson/pin"
+
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -95,12 +95,12 @@ func runDescribeCluster(c *cli.Context) error {
 	}
 
 	// Validate AWS credentials early to provide better error messages
-    if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-        color.Red("%v", err)
-        ui.Outln()
-        awsinternal.PrintCredentialHelp()
-        return fmt.Errorf("AWS credential validation failed")
-    }
+	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
+		color.Red("%v", err)
+		ui.Outln()
+		awsinternal.PrintCredentialHelp()
+		return fmt.Errorf("AWS credential validation failed")
+	}
 
 	// Create logger (early, we might need it for listing when no cluster given)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -112,19 +112,19 @@ func runDescribeCluster(c *cli.Context) error {
 	}
 
 	// If no cluster specified, list available clusters in the current region and exit
-    if strings.TrimSpace(requested) == "" {
-        // List clusters (no health) in current region
-        clusterService := newClusterService(awsCfg, false, logger)
-        start := time.Now()
-        summaries, err := clusterService.List(ctx, cluster.ListOptions{})
-        if err != nil {
-            return err
-        }
-        ui.Outln("No cluster specified. Available clusters:")
-        ui.Outln()
-        _ = outputClustersTable(summaries, time.Since(start), false, false)
-        return nil
-    }
+	if strings.TrimSpace(requested) == "" {
+		// List clusters (no health) in current region
+		clusterService := newClusterService(awsCfg, false, logger)
+		start := time.Now()
+		summaries, err := clusterService.List(ctx, cluster.ListOptions{})
+		if err != nil {
+			return err
+		}
+		ui.Outln("No cluster specified. Available clusters:")
+		ui.Outln()
+		_ = outputClustersTable(summaries, time.Since(start), false, false)
+		return nil
+	}
 
 	// Resolve cluster name (supports patterns)
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
@@ -144,21 +144,17 @@ func runDescribeCluster(c *cli.Context) error {
 	}
 
 	// Create spinner
-	spinner := pin.New("Gathering cluster information...",
-		pin.WithSpinnerColor(pin.ColorCyan),
-		pin.WithTextColor(pin.ColorYellow),
-	)
-
-	startSpinner := spinner.Start
-	stopSpinner := spinner.Stop
-	cancelSpinner := startSpinner(ctx)
-	defer cancelSpinner()
+	spinner := ui.NewFunSpinnerForCategory("cluster")
+	if err := spinner.Start(); err != nil {
+		return err
+	}
+	defer spinner.Stop()
 
 	// Get cluster details
 	startTime := time.Now()
 	details, err := clusterService.Describe(ctx, clusterName, options)
 
-	stopSpinner("Cluster information gathered!")
+	spinner.Success("Cluster information gathered!")
 	if err != nil {
 		return err
 	}
@@ -192,20 +188,23 @@ func outputYAML(details *cluster.ClusterDetails) error {
 
 func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 	// Print main cluster information
-    ui.Outf("Cluster Information: %s\n", color.CyanString(details.Name))
+	ui.Outf("Cluster Information: %s\n", color.CyanString(details.Name))
 
 	// Performance indicator (formatted to one decimal place)
-    ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+	ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
-	// Basic information table
-	printTableRow("Status", formatStatus(details.Status))
-	printTableRow("Version", details.Version)
-	printTableRow("Platform", details.PlatformVersion)
-	printTableRow("Endpoint", truncateEndpoint(details.Endpoint))
+	// Use dynamic table for perfect alignment
+	table := ui.NewDynamicTable()
+
+	// Basic information
+	table.Add("Status", formatStatus(details.Status)).
+		Add("Version", details.Version).
+		Add("Platform", details.PlatformVersion).
+		Add("Endpoint", truncateEndpoint(details.Endpoint))
 
 	// Health status
 	if details.Health != nil {
-		printTableRow("Health", formatHealth(details.Health))
+		table.Add("Health", formatHealth(details.Health))
 	}
 
 	// Node information
@@ -218,7 +217,7 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 				activeNodegroups++
 			}
 		}
-		printTableRow("Nodegroups", fmt.Sprintf("%d active (%d nodes total)", activeNodegroups, totalNodes))
+		table.Add("Nodegroups", fmt.Sprintf("%d active (%d nodes total)", activeNodegroups, totalNodes))
 	}
 
 	// Networking information
@@ -227,14 +226,14 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 		if details.Networking.VpcCidr != "" {
 			vpcInfo += fmt.Sprintf(" (%s)", details.Networking.VpcCidr)
 		}
-		printTableRow("VPC", vpcInfo)
+		table.Add("VPC", vpcInfo)
 
 		if len(details.Networking.SubnetIds) > 0 {
-			printTableRow("Subnets", fmt.Sprintf("%d subnets", len(details.Networking.SubnetIds)))
+			table.Add("Subnets", fmt.Sprintf("%d subnets", len(details.Networking.SubnetIds)))
 		}
 
 		if len(details.Networking.SecurityGroupIds) > 0 {
-			printTableRow("Security Groups", fmt.Sprintf("%d groups", len(details.Networking.SecurityGroupIds)))
+			table.Add("Security Groups", fmt.Sprintf("%d groups", len(details.Networking.SecurityGroupIds)))
 		}
 	}
 
@@ -243,29 +242,36 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 	if len(details.Security.LoggingEnabled) > 0 {
 		loggingStatus = strings.Join(details.Security.LoggingEnabled, ", ") + " enabled"
 	}
-	printTableRow("Logging", loggingStatus)
+	table.Add("Logging", loggingStatus)
 
+	// Security status with custom formatting
 	encryptionStatus := color.RedString("DISABLED")
 	if details.Security.EncryptionEnabled {
 		encryptionStatus = color.GreenString("ENABLED") + " (at rest via KMS)"
 	}
-	printTableRow("Encryption", encryptionStatus)
+	table.Add("Encryption", encryptionStatus)
+
+	// Use built-in boolean method for deletion protection
+	table.AddBool("Deletion Protection", details.Security.DeletionProtection)
 
 	// Timestamps
-	printTableRow("Created", details.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
+	table.Add("Created", details.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
 	age := time.Since(details.CreatedAt)
-	printTableRow("Age", formatAge(age))
+	table.Add("Age", formatAge(age))
+
+	// Render with perfect alignment
+	table.Render()
 
 	// Add-ons table
 	if len(details.Addons) > 0 {
-        ui.Outln("\nAdd-ons:")
+		ui.Outln("\nAdd-ons:")
 		columns := []ui.Column{
 			{Title: "NAME", Min: 4, Max: 24, Align: ui.AlignLeft},
 			{Title: "VERSION", Min: 8, Max: 0, Align: ui.AlignLeft},
 			{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
 			{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft},
 		}
-		table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+		table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
 		for _, addon := range details.Addons {
 			health := addon.Health
 			if health == "" {
@@ -284,12 +290,7 @@ func outputTable(details *cluster.ClusterDetails, elapsed time.Duration) error {
 	return nil
 }
 
-func printTableRow(key, value string) {
-	coloredKey := color.YellowString(key)
-    ui.Outf("%s │ %s\n", padColoredString(coloredKey, 16), value)
-}
-
-// removed printAddonHeader/printAddonRow in favor of ui.Table
+// removed legacy printTableRow, printAddonHeader, printAddonRow in favor of ui.DynamicTable and ui.PTable
 
 func formatStatus(status string) string {
 	switch strings.ToUpper(status) {

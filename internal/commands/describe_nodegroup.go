@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"github.com/yarlson/pin"
+
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -88,18 +88,18 @@ func runDescribeNodegroup(c *cli.Context) error {
 	if requested == "" {
 		requested = c.String("cluster")
 	}
-    if strings.TrimSpace(requested) == "" {
-        ui.Outln("No cluster specified. Available clusters:")
-        ui.Outln()
-        svc := newClusterService(awsCfg, false, nil)
-        start := time.Now()
-        summaries, err := svc.List(ctx, cluster.ListOptions{})
-        if err != nil {
-            return err
-        }
-        _ = outputClustersTable(summaries, time.Since(start), false, false)
-        return nil
-    }
+	if strings.TrimSpace(requested) == "" {
+		ui.Outln("No cluster specified. Available clusters:")
+		ui.Outln()
+		svc := newClusterService(awsCfg, false, nil)
+		start := time.Now()
+		summaries, err := svc.List(ctx, cluster.ListOptions{})
+		if err != nil {
+			return err
+		}
+		_ = outputClustersTable(summaries, time.Since(start), false, false)
+		return nil
+	}
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
 	if err != nil {
 		return err
@@ -135,16 +135,15 @@ func runDescribeNodegroup(c *cli.Context) error {
 		Timeframe:        c.String("timeframe"),
 	}
 
-	spinner := pin.New("Gathering nodegroup details...",
-		pin.WithSpinnerColor(pin.ColorCyan),
-		pin.WithTextColor(pin.ColorYellow),
-	)
-	cancelSpinner := spinner.Start(ctx)
-	defer cancelSpinner()
+	spinner := ui.NewFunSpinnerForCategory("nodegroup")
+	if err := spinner.Start(); err != nil {
+		return err
+	}
+	defer spinner.Stop()
 
 	start := time.Now()
 	details, err := svc.Describe(ctx, clusterName, ngName, opts)
-	spinner.Stop("Nodegroup details gathered!")
+	spinner.Success("Nodegroup details gathered!")
 	if err != nil {
 		return err
 	}
@@ -165,56 +164,61 @@ func runDescribeNodegroup(c *cli.Context) error {
 }
 
 func outputNodegroupDetailsTable(details *nodegroup.NodegroupDetails, elapsed time.Duration) error {
-    ui.Outf("Nodegroup: %s\n", color.CyanString(details.Name))
+	ui.Outf("Nodegroup: %s\n", color.CyanString(details.Name))
 	if details.Utilization.TimeRange != "" {
-        ui.Outf("Retrieved in %s (utilization window %s)\n\n", color.GreenString("%.1fs", elapsed.Seconds()), details.Utilization.TimeRange)
+		ui.Outf("Retrieved in %s (utilization window %s)\n\n", color.GreenString("%.1fs", elapsed.Seconds()), details.Utilization.TimeRange)
 	} else {
-        ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+		ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 	}
 
-	printTableRow("Status", details.Status)
-	printTableRow("Instance", details.InstanceType)
-	printTableRow("AMI Type", details.AmiType)
-	printTableRow("Capacity", details.CapacityType)
-	printTableRow("Scaling", fmt.Sprintf("%d desired (%d-%d)", details.Scaling.DesiredSize, details.Scaling.MinSize, details.Scaling.MaxSize))
+	// Main information table
+	table := ui.NewDynamicTable()
+	table.AddStatus("Status", details.Status).
+		Add("Instance", details.InstanceType).
+		Add("AMI Type", details.AmiType).
+		Add("Capacity", details.CapacityType).
+		Add("Current AMI", details.CurrentAMI).
+		Add("Latest AMI", details.LatestAMI).
+		AddColored("AMI Status", details.AMIStatus.String(), func(s string) string { return details.AMIStatus.String() }).
+		Add("Scaling", fmt.Sprintf("%d desired (%d-%d)", details.Scaling.DesiredSize, details.Scaling.MinSize, details.Scaling.MaxSize))
 
-	// Optional utilization
+	// Add optional utilization information
 	if details.Utilization.TimeRange != "" || (details.Utilization.CPU.Average > 0 || details.Utilization.CPU.Current > 0) {
 		avg := details.Utilization.CPU.Average
 		cur := details.Utilization.CPU.Current
 		peak := details.Utilization.CPU.Peak
-		printTableRow("CPU (avg)", fmt.Sprintf("%.1f%%", avg))
+		table.Add("CPU (avg)", fmt.Sprintf("%.1f%%", avg))
 		if cur > 0 {
-			printTableRow("CPU (current)", fmt.Sprintf("%.1f%%", cur))
+			table.Add("CPU (current)", fmt.Sprintf("%.1f%%", cur))
 		}
 		if peak > 0 {
-			printTableRow("CPU (peak)", fmt.Sprintf("%.1f%%", peak))
+			table.Add("CPU (peak)", fmt.Sprintf("%.1f%%", peak))
 		}
 	}
 
-	// Optional costs
-	if details.Cost.CostPerNode > 0 || details.Cost.CurrentMonthlyCost > 0 {
-		if details.Cost.CostPerNode > 0 {
-			printTableRow("Cost per node", fmt.Sprintf("$%.0f/mo", details.Cost.CostPerNode))
-		}
+	// Add optional cost information
+	if details.Cost.CostPerNode > 0 {
+		table.Add("Cost per node", fmt.Sprintf("$%.0f/mo", details.Cost.CostPerNode))
+	}
+	if details.Cost.CurrentMonthlyCost > 0 {
+		table.Add("Cost/month", fmt.Sprintf("$%.0f", details.Cost.CurrentMonthlyCost))
+	}
 
-		// Optional workloads
-		if details.Workloads.TotalPods > 0 || details.Workloads.PodDisruption != "" {
-            ui.Outln()
-            ui.Outln("Workloads:")
-			printTableRow("Total Pods", fmt.Sprintf("%d", details.Workloads.TotalPods))
-			printTableRow("Critical Pods", fmt.Sprintf("%d", details.Workloads.CriticalPods))
-			printTableRow("PDBs", details.Workloads.PodDisruption)
-		}
-		if details.Cost.CurrentMonthlyCost > 0 {
-			printTableRow("Cost/month", fmt.Sprintf("$%.0f", details.Cost.CurrentMonthlyCost))
-		}
+	table.Render()
+
+	// Optional workload information in separate section
+	if details.Workloads.TotalPods > 0 || details.Workloads.PodDisruption != "" {
+		workloadTable := ui.NewDynamicTable()
+		workloadTable.Add("Total Pods", fmt.Sprintf("%d", details.Workloads.TotalPods)).
+			Add("Critical Pods", fmt.Sprintf("%d", details.Workloads.CriticalPods)).
+			Add("PDBs", details.Workloads.PodDisruption)
+		workloadTable.RenderSection("Workloads")
 	}
 
 	// Optional instances
 	if len(details.Instances) > 0 {
-        ui.Outln()
-        ui.Outln("Instances:")
+		ui.Outln()
+		ui.Outln("Instances:")
 		columns := []ui.Column{
 			{Title: "INSTANCE ID", Min: 10, Max: 22, Align: ui.AlignLeft},
 			{Title: "TYPE", Min: 10, Max: 0, Align: ui.AlignLeft},
@@ -222,7 +226,7 @@ func outputNodegroupDetailsTable(details *nodegroup.NodegroupDetails, elapsed ti
 			{Title: "LIFECYCLE", Min: 9, Max: 0, Align: ui.AlignLeft},
 			{Title: "STATE", Min: 8, Max: 0, Align: ui.AlignLeft},
 		}
-		table := ui.NewTable(columns, ui.WithHeaderColor(func(s string) string { return color.CyanString(s) }))
+		table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
 		for _, inst := range details.Instances {
 			table.AddRow(
 				truncateString(inst.InstanceID, 22),

@@ -5,31 +5,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/fatih/color"
-	"github.com/theckman/yacspin"
 
 	"github.com/dantech2000/refresh/internal/health"
 )
 
-// NewHealthSpinner creates a new spinner for health checks
-func NewHealthSpinner(message string) *yacspin.Spinner {
-	cfg := yacspin.Config{
-		Frequency:         100 * time.Millisecond,
-		CharSet:           yacspin.CharSets[14], // ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
-		Message:           message,
-		SuffixAutoColon:   false,
-		StopCharacter:     "",
-		StopColors:        []string{},
-		StopMessage:       "",
-		StopFailCharacter: "",
-		StopFailColors:    []string{},
-		StopFailMessage:   "",
-	}
-
-	spinner, _ := yacspin.New(cfg)
-	return spinner
+// NewHealthSpinner creates a new spinner for health checks (pterm-based)
+func NewHealthSpinner(message string) *ProgressSpinner {
+	return NewProgressSpinner(message)
 }
 
 // DisplayHealthResults displays the health check results in the specified format
@@ -192,12 +176,12 @@ func DisplayHealthCheckComplete(decision health.Decision) {
 
 	switch decision {
 	case health.DecisionProceed:
-		color.Green("✓ All health checks passed. Proceeding with AMI update...")
+		color.Green("[PASS] All health checks passed. Proceeding with AMI update...")
 	case health.DecisionWarn:
 		// User decision handled by prompt
 	case health.DecisionBlock:
-		color.Red("✗ Critical health issues detected. Please resolve before proceeding.")
+		color.Red("[FAIL] Critical health issues detected. Please resolve before proceeding.")
 		fmt.Println("\nRun with --force to bypass health checks (not recommended).")
-		fmt.Println("Use 'refresh list --cluster <cluster>' to monitor current status.")
+		fmt.Println("Use 'refresh nodegroup list --cluster <cluster>' to monitor current status.")
 	}
 }
