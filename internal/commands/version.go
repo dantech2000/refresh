@@ -11,7 +11,7 @@ import (
 // These variables are set at build time via -ldflags
 // Example: go build -ldflags "-X github.com/dantech2000/refresh/internal/commands.version=v1.0.0"
 var (
-	version   = "v0.2.2" // Set via: -X ...commands.version=v0.2.2
+	version   = "v0.3.0" // Set via: -X ...commands.version=v0.3.0
 	commit    = ""       // Set via: -X ...commands.commit=abc1234
 	buildDate = ""       // Set via: -X ...commands.buildDate=2024-01-01
 )

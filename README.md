@@ -3,7 +3,7 @@
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/releases/latest)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/dantech2000/refresh/release.yml?style=flat-square&label=build)](https://github.com/dantech2000/refresh/actions/workflows/release.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/dantech2000/refresh?style=flat-square)](https://goreportcard.com/report/github.com/dantech2000/refresh)
-[![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/blob/main/go.mod)
+[![GitHub go.mod Go version](https://img.shields.io/github/go-mod-go-version/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/blob/main/go.mod)
 [![License](https://img.shields.io/github/license/dantech2000/refresh?style=flat-square&color=green)](https://github.com/dantech2000/refresh/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/dantech2000/refresh?style=flat-square&color=yellow)](https://github.com/dantech2000/refresh/stargazers)
 [![Homebrew](https://img.shields.io/badge/homebrew-available-orange?style=flat-square)](https://github.com/dantech2000/homebrew-tap)
@@ -14,30 +14,82 @@
 
 A Go-based CLI tool to manage and monitor AWS EKS clusters and nodegroups with health checks, fast list/describe operations, and smart scaling.
 
+## Architecture Overview
+
+The refresh tool is built with clean code principles and follows Go best practices:
+
+```
+refresh/
+├── main.go                    # Application entry point with CLI setup
+├── internal/
+│   ├── aws/                   # AWS SDK abstractions
+│   │   ├── ami.go            # AMI resolution with thread-safe caching
+│   │   ├── cluster.go        # Cluster discovery and name resolution
+│   │   ├── nodegroup.go      # Nodegroup operations
+│   │   └── errors.go         # AWS error handling and formatting
+│   ├── commands/             # CLI command implementations
+│   │   ├── cluster_group.go  # Cluster commands (list, describe, compare)
+│   │   ├── nodegroup_group.go # Nodegroup commands (list, describe, scale, update-ami)
+│   │   ├── addon_group.go    # Add-on commands (list, describe, update)
+│   │   └── ...               # Individual command implementations
+│   ├── config/               # Configuration management
+│   │   └── config.go         # Thread-safe config with environment variable support
+│   ├── types/                # Core domain types
+│   │   └── types.go          # NodegroupInfo, UpdateProgress, MonitorConfig, etc.
+│   ├── services/             # Business logic layer
+│   │   ├── cluster/          # Cluster service with caching
+│   │   ├── nodegroup/        # Nodegroup service with analytics
+│   │   └── common/           # Shared utilities (retry logic)
+│   ├── health/               # Pre-flight health checks
+│   │   ├── checker.go        # Health check orchestrator
+│   │   ├── nodes.go          # Node health validation
+│   │   ├── workloads.go      # Critical workload checks
+│   │   └── ...               # Additional health modules
+│   ├── monitoring/           # Update progress tracking
+│   │   ├── monitor.go        # Concurrent monitoring with channels
+│   │   └── display.go        # Progress display formatting
+│   ├── dryrun/               # Dry-run mode
+│   │   └── dryrun.go         # Preview updates without changes
+│   └── ui/                   # Terminal UI components
+│       ├── output.go         # Status and output helpers
+│       ├── table.go          # Table rendering with pterm
+│       ├── progress.go       # Spinners and progress bars
+│       └── ...               # Additional UI utilities
+└── go.mod                    # Go module dependencies (2025/2026 versions)
+```
+
+### Key Design Patterns
+
+- **Thread-safe Configuration**: Singleton pattern with `sync.RWMutex` for concurrent access
+- **Channel-based Concurrency**: Used in monitoring for concurrent status checks
+- **Clean Error Handling**: AWS errors are classified and formatted with user-friendly messages
+- **Dependency Injection**: Services use interfaces for testability
+- **Graceful Shutdown**: Signal handling for clean termination
+
 ## Features
 
--   **🔍 Pre-flight Health Checks**: Validate cluster readiness before AMI updates using default EC2 metrics (no additional setup required)
--   **📊 Real-time Monitoring**: Live progress tracking with professional spinner displays and clean completion summaries
--   **📋 Cluster Management**: List clusters and nodegroups with status and versions
--   **🔄 Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode
--   **🧭 Nodegroup Intelligence (Phase 1)**: Fast list/describe with optional utilization and cost, and safe scaling with health checks
--   **🛡️ Security Visibility**: Display cluster deletion protection status and security configuration details
--   **👀 Dry Run Mode**: Preview changes with comprehensive details before execution
--   **⚡ Short Flags**: Convenient short flags for all commands (`-c`, `-n`, `-d`, `-f`, etc.)
--   **🎨 Enhanced UI**: Color-coded output with perfect table alignment and clear status indicators
--   **🛡️ Graceful Degradation**: Works with just AWS credentials, provides clear guidance for optional features
- -   **⏱️ Timeouts Everywhere**: Global and per-command `--timeout, -t` to avoid hangs on slow networks (default 60s)
-  -   **🌍 Multi-Region Discovery**: `cluster list` supports `-A/--all-regions` with a concurrency cap (`-C/--max-concurrency`)
- -   **✅ Accurate Node Readiness**: Uses Kubernetes API to compute actual ready node counts when kubeconfig is available
- -   **↕️ Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
+-   **Pre-flight Health Checks**: Validate cluster readiness before AMI updates using default EC2 metrics (no additional setup required)
+-   **Real-time Monitoring**: Live progress tracking with professional spinner displays and clean completion summaries
+-   **Cluster Management**: List clusters and nodegroups with status and versions
+-   **Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode
+-   **Nodegroup Intelligence**: Fast list/describe with optional utilization and cost, and safe scaling with health checks
+-   **Security Visibility**: Display cluster deletion protection status and security configuration details
+-   **Dry Run Mode**: Preview changes with comprehensive details before execution
+-   **Short Flags**: Convenient short flags for all commands (`-c`, `-n`, `-d`, `-f`, etc.)
+-   **Enhanced UI**: Color-coded output with perfect table alignment and clear status indicators
+-   **Graceful Degradation**: Works with just AWS credentials, provides clear guidance for optional features
+-   **Timeouts Everywhere**: Global and per-command `--timeout, -t` to avoid hangs on slow networks (default 60s)
+-   **Multi-Region Discovery**: `cluster list` supports `-A/--all-regions` with a concurrency cap (`-C/--max-concurrency`)
+-   **Accurate Node Readiness**: Uses Kubernetes API to compute actual ready node counts when kubeconfig is available
+-   **Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
 
 ## Requirements
 
-### ✅ Required (Core Functionality)
+### Required (Core Functionality)
 -   Go 1.24+
 -   AWS credentials (`~/.aws/credentials`, environment variables, or IAM roles)
 
-### ⚠️ Optional (Enhanced Features)
+### Optional (Enhanced Features)
 -   `kubectl` and kubeconfig (`~/.kube/config`) - for Kubernetes workload validation (Workloads/PDB currently experimental)
 -   CloudWatch metrics - for utilization (CPU supported now; memory via Container Insights in future)
 -   AWS Pricing API permissions - for on-demand cost estimates
@@ -97,7 +149,7 @@ refresh version
 
 **Note:** Starting with v0.2.2, `refresh` is distributed as a Homebrew Cask instead of a Formula.
 
-### 📦 Download from Releases
+### Download from Releases
 
 Alternatively, download pre-built binaries from the [releases page](https://github.com/dantech2000/refresh/releases/latest):
 
@@ -115,7 +167,7 @@ Alternatively, download pre-built binaries from the [releases page](https://gith
    chmod +x /usr/local/bin/refresh
    ```
 
-### 🔧 Build from Source
+### Build from Source
 
 If you have Go installed:
 
@@ -132,7 +184,7 @@ sudo mv refresh /usr/local/bin/
 go install github.com/dantech2000/refresh@latest
 ```
 
-### ✅ Verify Installation
+### Verify Installation
 
 After installation, verify it works:
 
@@ -447,7 +499,7 @@ man refresh
 - Man page is automatically discoverable via standard MANPATH
 - Creates directory structure if it doesn't exist
 
-## 🔍 Health Checks
+## Health Checks
 
 The refresh tool includes comprehensive pre-flight health checks that validate cluster readiness before AMI updates using **default AWS metrics** (no additional setup required).
 
@@ -477,7 +529,7 @@ refresh ng update-ami --cluster dev --force
 Cluster Health Assessment:
 
 [████████████████████] Node Health          PASS
-[████████████████████] Cluster Capacity     PASS  
+[████████████████████] Cluster Capacity     PASS
 [████████████████████] Critical Workloads   PASS
 [██████████████████▒▒] Pod Disruption Budgets WARN
 [█████████████████▒▒▒] Resource Balance     WARN
@@ -499,12 +551,12 @@ Warnings:
 
 ### Health Check Categories
 
-**✅ Works Out-of-the-Box (Default AWS Metrics)**:
+**Works Out-of-the-Box (Default AWS Metrics)**:
 - **Node Health**: All nodegroups must be in ACTIVE status (EKS API)
 - **Cluster Capacity**: Sufficient CPU resources using default EC2 metrics (minimum 30% headroom)
 - **Resource Balance**: CPU utilization distribution across nodes using default EC2 metrics
 
-**⚠️ Requires Additional Setup**:
+**Requires Additional Setup**:
 - **Critical Workloads**: All kube-system pods running (requires kubectl access)
 - **Pod Disruption Budgets**: Missing PDBs for user workloads (requires kubectl access)
 - **Memory Metrics**: Requires Container Insights or CloudWatch agent setup
@@ -516,7 +568,7 @@ When optional services aren't available, the tool provides helpful guidance:
 - **No Container Insights**: "Memory metrics require Container Insights setup"
 - **Limited metrics**: "Using default EC2 metrics (CPU only)"
 
-## ⚡ CLI Short Flags
+## CLI Short Flags
 
 All commands support convenient short flags for faster typing:
 
@@ -577,6 +629,48 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
 - `cc` - `cluster compare`
 - `ng` - `nodegroup`
 
+## Development
+
+### Prerequisites
+
+- Go 1.24+
+- golangci-lint (for linting)
+- Task (optional, for task automation)
+
+### Building
+
+```bash
+# Build
+go build -o refresh .
+
+# Run tests
+go test ./...
+
+# Run linter
+golangci-lint run ./...
+
+# Full development check
+task dev:full-check
+```
+
+### Project Structure
+
+The codebase follows clean architecture principles:
+
+- **internal/config**: Thread-safe configuration with singleton pattern
+- **internal/types**: Core domain types with proper Go idioms
+- **internal/aws**: AWS SDK abstractions with caching and error handling
+- **internal/services**: Business logic layer with service interfaces
+- **internal/commands**: CLI command implementations following urfave/cli best practices
+- **internal/ui**: Terminal UI components using pterm
+
+### Key Patterns Used
+
+1. **Concurrency**: Channels for monitoring, mutexes for shared state
+2. **Error Handling**: Custom error types with classification
+3. **Caching**: Thread-safe caches with TTL support
+4. **CLI**: Hierarchical commands with urfave/cli/v2
+
 ## Release Process
 
 ### Prerequisites
@@ -590,7 +684,7 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
 ### Release Steps
 
 1. **Update Version Number**
-   
+
    Update the version in `main.go`:
    ```go
    var versionInfo = VersionInfo{
@@ -604,10 +698,10 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
    ```bash
    # Full development check (format, lint, test, build)
    task dev:full-check
-   
+
    # Test GoReleaser configuration
    task release:test
-   
+
    # Optional: Dry run of release process (local only)
    task release:dry-run
    ```
@@ -616,7 +710,7 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
    ```bash
    # Check if ready for release
    task release:check
-   
+
    # Validate Homebrew formula syntax
    task tap:validate
    ```
@@ -625,14 +719,14 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
    ```bash
    # Create tag and push (triggers GitHub Actions)
    task release:tag VERSION=v0.1.3
-   
+
    # Or manually:
    git tag -a v0.1.3 -m "Release v0.1.3"
    git push origin v0.1.3
    ```
 
 5. **Monitor Release Process**
-   
+
    After pushing the tag:
    - GitHub Actions will automatically trigger
    - GoReleaser will build binaries for all platforms
@@ -647,7 +741,7 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
 task dev:quick-test          # Format, vet, build, test version
 task dev:full-check          # Full check including lint and tests
 
-# Release workflow  
+# Release workflow
 task release:check           # Verify ready for release
 task release:test            # Test GoReleaser config (no release)
 task release:dry-run         # Full dry run (local only)
@@ -690,7 +784,7 @@ The badges at the top of this README provide a quick overview of the project's h
 | Badge | What It Shows | What to Watch For |
 |-------|---------------|-------------------|
 | **Release** | Latest version number | New releases, version progression |
-| **Build Status** | GitHub Actions workflow status | ✅ Green = builds passing, ❌ Red = build issues |
+| **Build Status** | GitHub Actions workflow status | Green = builds passing, Red = build issues |
 | **Go Report Card** | Code quality grade (A+ to F) | Aim for A+ rating, watch for downgrades |
 | **Go Version** | Minimum Go version required | Compatibility with current Go releases |
 | **License** | Project license (MIT) | License compliance information |
@@ -698,9 +792,9 @@ The badges at the top of this README provide a quick overview of the project's h
 | **Homebrew** | Homebrew installation availability | Package distribution status |
 
 ### Quick Health Check
-- **Green Build Badge** ✅ = Latest code builds successfully, releases work
-- **A+ Go Report** ✅ = Code quality is excellent
-- **Current Go Version** ✅ = Using modern Go features and best practices
+- **Green Build Badge** = Latest code builds successfully, releases work
+- **A+ Go Report** = Code quality is excellent
+- **Current Go Version** = Using modern Go features and best practices
 
 ### Dependency Management
 This project includes automated dependency management:

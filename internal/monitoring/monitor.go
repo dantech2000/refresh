@@ -1,3 +1,5 @@
+// Package monitoring provides update progress tracking for EKS nodegroup operations.
+// It implements concurrent monitoring with proper channel patterns and graceful shutdown.
 package monitoring
 
 import (
@@ -6,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,7 +20,30 @@ import (
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
-// MonitorUpdates monitors the progress of multiple nodegroup updates
+// UpdateMonitor handles concurrent monitoring of multiple nodegroup updates.
+type UpdateMonitor struct {
+	eksClient *eks.Client
+	config    refreshTypes.MonitorConfig
+}
+
+// NewUpdateMonitor creates a new update monitor instance.
+func NewUpdateMonitor(eksClient *eks.Client, config refreshTypes.MonitorConfig) *UpdateMonitor {
+	return &UpdateMonitor{
+		eksClient: eksClient,
+		config:    config,
+	}
+}
+
+// statusResult holds the result of a status check for a single update.
+type statusResult struct {
+	index   int
+	status  types.UpdateStatus
+	errMsg  string
+	err     error
+}
+
+// MonitorUpdates monitors the progress of multiple nodegroup updates.
+// It uses channels for concurrent status checks and proper signal handling.
 func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	// Set up signal handling for graceful cancellation
 	sigChan := make(chan os.Signal, 1)
@@ -29,9 +55,7 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 	defer cancel()
 
 	if !config.Quiet {
-		fmt.Printf("\nMonitoring %d nodegroup update(s)...\n", len(monitor.Updates))
-		fmt.Printf("Timeout: %v | Poll interval: %v\n", config.Timeout, config.PollInterval)
-		fmt.Printf("Press Ctrl+C to stop monitoring (updates will continue)\n\n")
+		printMonitoringHeader(monitor, config)
 	}
 
 	ticker := time.NewTicker(config.PollInterval)
@@ -40,26 +64,17 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 	for {
 		select {
 		case <-sigChan:
-			if !config.Quiet {
-				color.Yellow("\nMonitoring cancelled by user. Updates are still running in AWS.")
-				fmt.Printf("Use 'refresh list --cluster %s' to check status manually.\n", monitor.Updates[0].ClusterName)
-			}
-			return nil
+			return handleUserCancellation(monitor, config)
 
 		case <-monitorCtx.Done():
-			if !config.Quiet {
-				color.Red("\nMonitoring timeout reached after %v", config.Timeout)
-				fmt.Printf("Updates may still be running. Use 'refresh list' to check status.\n")
-			}
-			return fmt.Errorf("monitoring timeout reached")
+			return handleTimeout(config)
 
 		case <-ticker.C:
-			allComplete, err := checkAndUpdateProgress(monitorCtx, eksClient, monitor, config)
+			allComplete, err := checkAllUpdatesWithChannels(monitorCtx, eksClient, monitor, config)
 			if err != nil {
 				if !config.Quiet {
 					color.Red("Error checking update progress: %v", err)
 				}
-				// Continue monitoring unless it's a critical error
 				continue
 			}
 
@@ -70,46 +85,90 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 	}
 }
 
-// checkAndUpdateProgress checks the status of all updates and updates the display
-func checkAndUpdateProgress(ctx context.Context, eksClient *eks.Client, monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) (bool, error) {
-	allComplete := true
-	now := time.Now()
+// printMonitoringHeader displays initial monitoring information.
+func printMonitoringHeader(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) {
+	fmt.Printf("\nMonitoring %d nodegroup update(s)...\n", len(monitor.Updates))
+	fmt.Printf("Timeout: %v | Poll interval: %v\n", config.Timeout, config.PollInterval)
+	fmt.Printf("Press Ctrl+C to stop monitoring (updates will continue)\n\n")
+}
 
+// handleUserCancellation handles graceful cancellation by user signal.
+func handleUserCancellation(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
+	if !config.Quiet && len(monitor.Updates) > 0 {
+		color.Yellow("\nMonitoring cancelled by user. Updates are still running in AWS.")
+		fmt.Printf("Use 'refresh list --cluster %s' to check status manually.\n", monitor.Updates[0].ClusterName)
+	}
+	return nil
+}
+
+// handleTimeout handles monitoring timeout.
+func handleTimeout(config refreshTypes.MonitorConfig) error {
+	if !config.Quiet {
+		color.Red("\nMonitoring timeout reached after %v", config.Timeout)
+		fmt.Printf("Updates may still be running. Use 'refresh list' to check status.\n")
+	}
+	return fmt.Errorf("monitoring timeout reached")
+}
+
+// checkAllUpdatesWithChannels checks all update statuses concurrently using channels.
+func checkAllUpdatesWithChannels(ctx context.Context, eksClient *eks.Client, monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) (bool, error) {
+	// Create buffered channel for results
+	resultsChan := make(chan statusResult, len(monitor.Updates))
+
+	// Use wait group to track goroutines
+	var wg sync.WaitGroup
+
+	// Launch concurrent status checks
 	for i := range monitor.Updates {
 		update := &monitor.Updates[i]
 
-		// Skip if already completed or failed
-		if update.Status == types.UpdateStatusSuccessful ||
-			update.Status == types.UpdateStatusFailed ||
-			update.Status == types.UpdateStatusCancelled {
+		// Skip completed updates
+		if isUpdateComplete(update.Status) {
 			continue
 		}
 
-		// Check update status with retry logic
-		updateStatus, err := checkUpdateWithRetry(ctx, eksClient, update, config)
-		if err != nil {
-			update.ErrorMessage = err.Error()
-			continue
-		}
+		wg.Add(1)
+		go func(idx int, u *refreshTypes.UpdateProgress) {
+			defer wg.Done()
+			result := checkSingleUpdate(ctx, eksClient, u, config)
+			result.index = idx
+			resultsChan <- result
+		}(i, update)
+	}
 
-		// Update progress
-		update.Status = updateStatus.Update.Status
-		update.LastChecked = now
+	// Close channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
 
-		// Check for errors
-		if len(updateStatus.Update.Errors) > 0 {
-			var errorMessages []string
-			for _, e := range updateStatus.Update.Errors {
-				if e.ErrorMessage != nil {
-					errorMessages = append(errorMessages, *e.ErrorMessage)
-				}
-			}
-			update.ErrorMessage = strings.Join(errorMessages, "; ")
-		}
+	// Collect results
+	now := time.Now()
+	allComplete := true
 
-		// Still in progress
-		if update.Status == types.UpdateStatusInProgress {
+	for result := range resultsChan {
+		update := &monitor.Updates[result.index]
+
+		if result.err != nil {
+			update.ErrorMessage = result.err.Error()
 			allComplete = false
+			continue
+		}
+
+		update.Status = result.status
+		update.LastChecked = now
+		update.ErrorMessage = result.errMsg
+
+		if !isUpdateComplete(update.Status) {
+			allComplete = false
+		}
+	}
+
+	// Also check updates that were skipped (already complete)
+	for _, update := range monitor.Updates {
+		if !isUpdateComplete(update.Status) {
+			allComplete = false
+			break
 		}
 	}
 
@@ -118,10 +177,43 @@ func checkAndUpdateProgress(ctx context.Context, eksClient *eks.Client, monitor 
 		DisplayProgressUpdate(monitor)
 	}
 
-	return allComplete, nil
+	return allComplete && len(monitor.Updates) > 0, nil
 }
 
-// checkUpdateWithRetry checks update status with exponential backoff retry
+// checkSingleUpdate checks the status of a single update with retry logic.
+func checkSingleUpdate(ctx context.Context, eksClient *eks.Client, update *refreshTypes.UpdateProgress, config refreshTypes.MonitorConfig) statusResult {
+	result := statusResult{}
+
+	updateStatus, err := checkUpdateWithRetry(ctx, eksClient, update, config)
+	if err != nil {
+		result.err = err
+		return result
+	}
+
+	result.status = updateStatus.Update.Status
+
+	// Extract error messages if any
+	if len(updateStatus.Update.Errors) > 0 {
+		var errorMessages []string
+		for _, e := range updateStatus.Update.Errors {
+			if e.ErrorMessage != nil {
+				errorMessages = append(errorMessages, *e.ErrorMessage)
+			}
+		}
+		result.errMsg = strings.Join(errorMessages, "; ")
+	}
+
+	return result
+}
+
+// isUpdateComplete checks if an update has reached a terminal state.
+func isUpdateComplete(status types.UpdateStatus) bool {
+	return status == types.UpdateStatusSuccessful ||
+		status == types.UpdateStatusFailed ||
+		status == types.UpdateStatusCancelled
+}
+
+// checkUpdateWithRetry checks update status with exponential backoff retry.
 func checkUpdateWithRetry(ctx context.Context, eksClient *eks.Client, update *refreshTypes.UpdateProgress, config refreshTypes.MonitorConfig) (*eks.DescribeUpdateOutput, error) {
 	var lastErr error
 	backoff := time.Second
@@ -144,16 +236,28 @@ func checkUpdateWithRetry(ctx context.Context, eksClient *eks.Client, update *re
 			break
 		}
 
-		// Exponential backoff
+		// Exponential backoff before retry
 		if attempt < config.MaxRetries-1 {
-			select {
-			case <-ctx.Done():
+			if !waitWithContext(ctx, backoff) {
 				return nil, ctx.Err()
-			case <-time.After(backoff):
 			}
 			backoff = time.Duration(float64(backoff) * config.BackoffMultiple)
 		}
 	}
 
 	return nil, lastErr
+}
+
+// waitWithContext waits for the specified duration or until context is cancelled.
+// Returns true if the wait completed, false if context was cancelled.
+func waitWithContext(ctx context.Context, duration time.Duration) bool {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
