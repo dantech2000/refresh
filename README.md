@@ -650,7 +650,7 @@ go test ./...
 golangci-lint run ./...
 
 # Full development check
-task dev:full-check
+task dev:full
 ```
 
 ### Project Structure
@@ -685,44 +685,41 @@ The codebase follows clean architecture principles:
 
 1. **Update Version Number**
 
-   Update the version in `main.go`:
+   Update the version in `internal/commands/version.go`:
    ```go
-   var versionInfo = VersionInfo{
-       Version:   "v0.1.3",  // <- Update this version
-       Commit:    "",
-       BuildDate: "",
-   }
+   var (
+       version   = "v0.3.0" // <- Update this version
+       commit    = ""
+       buildDate = ""
+   )
    ```
 
 2. **Run Pre-Release Checks**
    ```bash
    # Full development check (format, lint, test, build)
-   task dev:full-check
+   task dev:full
 
    # Test GoReleaser configuration
    task release:test
 
    # Optional: Dry run of release process (local only)
-   task release:dry-run
+   task release:dry
    ```
 
 3. **Validate Setup**
    ```bash
    # Check if ready for release
    task release:check
-
-   # Validate Homebrew formula syntax
-   task tap:validate
    ```
 
 4. **Create and Push Release Tag**
    ```bash
    # Create tag and push (triggers GitHub Actions)
-   task release:tag VERSION=v0.1.3
+   task release:tag
 
    # Or manually:
-   git tag -a v0.1.3 -m "Release v0.1.3"
-   git push origin v0.1.3
+   git tag -a v0.3.0 -m "Release v0.3.0"
+   git push origin v0.3.0
    ```
 
 5. **Monitor Release Process**
@@ -738,27 +735,25 @@ The codebase follows clean architecture principles:
 
 ```bash
 # Development workflow
-task dev:quick-test          # Format, vet, build, test version
-task dev:full-check          # Full check including lint and tests
+task dev:quick               # Format, vet, build, test version
+task dev:full                # Full check including lint and tests
 
 # Release workflow
 task release:check           # Verify ready for release
 task release:test            # Test GoReleaser config (no release)
-task release:dry-run         # Full dry run (local only)
-task release:tag VERSION=v0.1.x  # Create and push release tag
+task release:dry             # Full dry run (local only)
+task release:tag             # Create and push release tag
 
 # Testing
 task run:version             # Test version command
-task run:list                # Test list command
 task run:help                # Show help
-
-# Homebrew tap
-task tap:validate            # Validate formula syntax
-task tap:test-local          # Instructions for local testing
+task run:cluster:list        # Test cluster list command
+task run:ng:list             # Test nodegroup list command
 
 # Utilities
 task clean                   # Clean build artifacts
 task deps                    # Download and tidy dependencies
+task deps:update             # Update dependencies
 ```
 
 ### Post-Release Verification
@@ -774,8 +769,7 @@ After a successful release:
 
 - **Build Failures**: Run `task release:test` to check GoReleaser config
 - **Permission Issues**: Verify `GH_PAT` token has correct permissions
-- **Homebrew Formula Issues**: Run `task tap:validate` to check syntax
-- **Version Conflicts**: Ensure version in `main.go` matches git tag
+- **Version Conflicts**: Ensure version in `internal/commands/version.go` matches git tag
 
 ## Project Status & Health
 

@@ -18,19 +18,19 @@ import (
 
 // NodegroupClient handles nodegroup operations.
 type NodegroupClient struct {
-	eksClient     *eks.Client
-	ec2Client     *ec2.Client
-	asgClient     *autoscaling.Client
-	ssmClient     *ssm.Client
+	eksClient *eks.Client
+	ec2Client *ec2.Client
+	asgClient *autoscaling.Client
+	ssmClient *ssm.Client
 }
 
 // NewNodegroupClient creates a new nodegroup client.
 func NewNodegroupClient(awsCfg aws.Config) *NodegroupClient {
 	return &NodegroupClient{
-		eksClient:     eks.NewFromConfig(awsCfg),
-		ec2Client:     ec2.NewFromConfig(awsCfg),
-		asgClient:     autoscaling.NewFromConfig(awsCfg),
-		ssmClient:     ssm.NewFromConfig(awsCfg),
+		eksClient: eks.NewFromConfig(awsCfg),
+		ec2Client: ec2.NewFromConfig(awsCfg),
+		asgClient: autoscaling.NewFromConfig(awsCfg),
+		ssmClient: ssm.NewFromConfig(awsCfg),
 	}
 }
 

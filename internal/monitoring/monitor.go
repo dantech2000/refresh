@@ -36,10 +36,10 @@ func NewUpdateMonitor(eksClient *eks.Client, config refreshTypes.MonitorConfig) 
 
 // statusResult holds the result of a status check for a single update.
 type statusResult struct {
-	index   int
-	status  types.UpdateStatus
-	errMsg  string
-	err     error
+	index  int
+	status types.UpdateStatus
+	errMsg string
+	err    error
 }
 
 // MonitorUpdates monitors the progress of multiple nodegroup updates.

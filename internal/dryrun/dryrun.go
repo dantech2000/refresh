@@ -39,14 +39,14 @@ type NodegroupUpdate struct {
 
 // DryRunner handles dry-run operations for AMI updates.
 type DryRunner struct {
-	eksClient     *eks.Client
-	ec2Client     *ec2.Client
-	asgClient     *autoscaling.Client
-	ssmClient     *ssm.Client
-	clusterName   string
-	k8sVersion    string
-	force         bool
-	quiet         bool
+	eksClient   *eks.Client
+	ec2Client   *ec2.Client
+	asgClient   *autoscaling.Client
+	ssmClient   *ssm.Client
+	clusterName string
+	k8sVersion  string
+	force       bool
+	quiet       bool
 }
 
 // NewDryRunner creates a new dry runner instance.

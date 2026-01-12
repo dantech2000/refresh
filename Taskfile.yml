@@ -22,7 +22,7 @@ tasks:
     generates:
       - "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
 
-  build-release:
+  build:release:
     desc: Build release binary with optimizations
     cmds:
       - go build -ldflags="-s -w -X github.com/dantech2000/refresh/internal/commands.version={{.VERSION}} -X github.com/dantech2000/refresh/internal/commands.commit={{.COMMIT}} -X github.com/dantech2000/refresh/internal/commands.buildDate={{.DATE}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .
@@ -48,6 +48,7 @@ tasks:
     cmds:
       - rm -rf {{.BUILD_DIR}}
       - rm -f {{.BINARY_NAME}}
+      - rm -f coverage.out coverage.html
 
   # Code quality tasks
   fmt:
@@ -70,45 +71,12 @@ tasks:
     cmds:
       - go test -v ./...
 
-  test-coverage:
+  test:coverage:
     desc: Run tests with coverage
     cmds:
       - go test -v -coverprofile=coverage.out ./...
       - go tool cover -html=coverage.out -o coverage.html
-
-  test-suite:
-    desc: Run comprehensive test suite
-    cmds:
-      - task: fmt
-      - task: vet
-      - task: lint
-      - task: test
-      - task: build
-      - task: run-version
-      - task: run-help
-      - echo "✅ All tests passed!"
-
-  test-suite-quick:
-    desc: Run quick test suite (no lint)
-    cmds:
-      - task: fmt
-      - task: vet
-      - task: test
-      - task: build
-      - task: run-version
-      - echo "✅ Quick test suite passed!"
-
-  test-suite-coverage:
-    desc: Run test suite with coverage report
-    cmds:
-      - task: fmt
-      - task: vet
-      - task: lint
-      - task: test-coverage
-      - task: build
-      - task: run-version
-      - task: run-help
-      - echo "✅ Test suite with coverage completed!"
+      - echo "Coverage report generated at coverage.html"
 
   # Dependency management
   deps:
@@ -117,98 +85,107 @@ tasks:
       - go mod download
       - go mod tidy
 
-  deps-update:
+  deps:update:
     desc: Update dependencies
     cmds:
       - go get -u ./...
       - go mod tidy
 
   # Local testing commands
-  run-version:
+  run:version:
     desc: Test version command
     deps: [build]
     cmds:
       - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} version
 
-  run-help:
+  run:help:
     desc: Show help
     deps: [build]
     cmds:
       - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} --help
 
-  run-list:
-    desc: Test list command (requires AWS credentials and cluster)
+  run:cluster:list:
+    desc: Test cluster list command (requires AWS credentials)
     deps: [build]
     cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} list --cluster {{.DEFAULT_CLUSTER}}
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} cluster list
 
-  run-dry-run:
-    desc: Test dry run functionality (requires AWS credentials and cluster)
+  run:ng:list:
+    desc: Test nodegroup list command (requires AWS credentials and cluster)
     deps: [build]
     cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} update-ami --cluster {{.DEFAULT_CLUSTER}} --dry-run
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} ng list -c {{.DEFAULT_CLUSTER}}
 
-  # Development shortcuts
-  dev-quick-test:
-    desc: Quick development test cycle
+  run:ng:update:dry:
+    desc: Test nodegroup update-ami dry run (requires AWS credentials and cluster)
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} ng update-ami -c {{.DEFAULT_CLUSTER}} --dry-run
+
+  # Development workflow shortcuts
+  dev:quick:
+    desc: Quick development test cycle (format, vet, build, version)
     cmds:
       - task: fmt
       - task: vet
       - task: build
-      - task: run-version
+      - task: run:version
+      - echo "✅ Quick check passed!"
 
-  dev-full-check:
-    desc: Full development check (format, lint, test, build)
+  dev:full:
+    desc: Full development check (format, vet, lint, test, build)
     cmds:
       - task: fmt
       - task: vet
       - task: lint
       - task: test
       - task: build
+      - task: run:version
+      - task: run:help
+      - echo "✅ Full development check passed!"
 
   # AWS/EKS testing helpers
-  aws-check:
+  aws:check:
     desc: Check AWS credentials and configuration
     cmds:
       - aws sts get-caller-identity
       - aws eks list-clusters --query 'clusters[*]' --output table
 
-  eks-clusters:
-    desc: List EKS clusters in current region
-    cmds:
-      - aws eks list-clusters --query 'clusters[*]' --output table
-
   # Release tasks
-  release-check:
+  release:check:
     desc: Check if ready for release
     cmds:
-      - task: dev-full-check
+      - task: dev:full
       - git status --porcelain
-      - echo "Ready for release!"
+      - echo "✅ Ready for release!"
 
-  release-test:
+  release:test:
     desc: Test GoReleaser configuration without releasing
     cmds:
       - goreleaser check
       - goreleaser build --snapshot --clean
 
-  release-dry-run:
+  release:dry:
     desc: Dry run of the full release process
     cmds:
       - goreleaser release --snapshot --clean
 
-  release-tag:
-    desc: Create a new release tag
+  release:tag:
+    desc: Create and push a release tag based on version.go
     cmds:
-      - git tag -a {{.VERSION}} -m "Release {{.VERSION}}"
-      - git push origin {{.VERSION}}
-    vars:
-      VERSION:
-        sh: grep -o 'Version:[[:space:]]*"[^"]*"' internal/commands/version.go | sed 's/Version:[[:space:]]*"\(.*\)"/\1/'
+      - |
+        VERSION=$(grep -oP 'version\s*=\s*"\Kv[^"]+' internal/commands/version.go)
+        if [ -z "$VERSION" ]; then
+          echo "Could not extract version from version.go"
+          exit 1
+        fi
+        echo "Creating tag: $VERSION"
+        git tag -a "$VERSION" -m "Release $VERSION"
+        git push origin "$VERSION"
 
-  install-man-page:
-    desc: Install man page using the new built-in command (no sudo required)
+  # Man page installation
+  install:man:
+    desc: Install man page using the built-in command (no sudo required)
+    deps: [build]
     cmds:
-      - go build -o refresh .
-      - ./refresh install-man
-      - rm -f refresh  # Clean up temporary binary
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} install-man
