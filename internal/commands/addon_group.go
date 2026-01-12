@@ -8,11 +8,13 @@ import (
 func AddonCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "addon",
-		Usage: "EKS add-on operations (list, describe, update)",
+		Usage: "EKS add-on operations (list, describe, update, security-scan)",
 		Subcommands: []*cli.Command{
 			addonListCommand(),
 			addonDescribeCommand(),
 			addonUpdateCommand(),
+			addonUpdateAllCommand(),
+			addonSecurityScanCommand(),
 		},
 	}
 }
@@ -45,6 +47,30 @@ func addonUpdateCommand() *cli.Command {
 	orig := UpdateAddonCommand()
 	return &cli.Command{
 		Name:        "update",
+		Usage:       orig.Usage,
+		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
+		Flags:       orig.Flags,
+		Action:      orig.Action,
+	}
+}
+
+func addonUpdateAllCommand() *cli.Command {
+	orig := UpdateAllAddonsCommand()
+	return &cli.Command{
+		Name:        "update-all",
+		Usage:       orig.Usage,
+		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
+		Flags:       orig.Flags,
+		Action:      orig.Action,
+	}
+}
+
+func addonSecurityScanCommand() *cli.Command {
+	orig := AddonSecurityScanCommand()
+	return &cli.Command{
+		Name:        "security-scan",
 		Usage:       orig.Usage,
 		Description: orig.Description,
 		ArgsUsage:   orig.ArgsUsage,

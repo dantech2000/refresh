@@ -30,7 +30,7 @@ refresh/
 │   ├── commands/             # CLI command implementations
 │   │   ├── cluster_group.go  # Cluster commands (list, describe, compare)
 │   │   ├── nodegroup_group.go # Nodegroup commands (list, describe, scale, update-ami)
-│   │   ├── addon_group.go    # Add-on commands (list, describe, update)
+│   │   ├── addon_group.go    # Add-on commands (list, describe, update, update-all, security-scan)
 │   │   └── ...               # Individual command implementations
 │   ├── config/               # Configuration management
 │   │   └── config.go         # Thread-safe config with environment variable support
@@ -39,6 +39,7 @@ refresh/
 │   ├── services/             # Business logic layer
 │   │   ├── cluster/          # Cluster service with caching
 │   │   ├── nodegroup/        # Nodegroup service with analytics
+│   │   ├── addons/           # Add-on management and security scanning
 │   │   └── common/           # Shared utilities (retry logic)
 │   ├── health/               # Pre-flight health checks
 │   │   ├── checker.go        # Health check orchestrator
@@ -108,7 +109,8 @@ Monthly Cost = (Hourly On-Demand Price) x 730 hours x (Number of Nodes)
 **Data Source:**
 - Prices are fetched from the **AWS Pricing API** in real-time
 - Queries use your cluster's region to get region-specific pricing
-- Only **Linux On-Demand** pricing is used (Spot/Reserved pricing not included)
+- **Spot pricing** is fetched from EC2 API for accurate comparisons
+- Fallback to static price map when API is unavailable
 
 **Example:**
 ```
@@ -116,16 +118,27 @@ t3a.large in us-west-2: $0.0752/hour
 9 nodes x $0.0752 x 730 hours = $494/month
 ```
 
+**Spot Price Analysis:**
+The cost analyzer now includes spot instance pricing:
+- Fetches current spot prices from EC2 API by availability zone
+- Compares on-demand vs spot pricing for potential savings
+- Calculates estimated savings percentage (typically 60-90%)
+- Provides risk assessment for spot usage
+
 **Limitations:**
-- Spot instances are calculated at On-Demand rates (actual costs may be 60-90% lower)
+- Spot prices fluctuate and may differ from estimates
 - Does not include EBS storage, data transfer, or other EC2-related costs
 - Pricing API requires `pricing:GetProducts` IAM permission
+- Spot pricing requires `ec2:DescribeSpotPriceHistory` permission
 
-**Required IAM Permission:**
+**Required IAM Permissions:**
 ```json
 {
   "Effect": "Allow",
-  "Action": "pricing:GetProducts",
+  "Action": [
+    "pricing:GetProducts",
+    "ec2:DescribeSpotPriceHistory"
+  ],
   "Resource": "*"
 }
 ```
@@ -228,7 +241,9 @@ refresh
 ├── addon
 │   ├── list               # List cluster add-ons
 │   ├── describe           # Describe add-on details
-│   └── update             # Update add-on version
+│   ├── update             # Update add-on version
+│   ├── update-all         # Update all add-ons to latest versions
+│   └── security-scan      # Scan add-ons for security issues
 └── version                # Show version information
 ```
 
@@ -432,7 +447,7 @@ refresh ng scale -c dev -n api --desired 5 --op-timeout 5m
 
 #### Nodegroup Recommendations
 
-Get optimization recommendations for nodegroups:
+Get intelligent optimization recommendations for nodegroups based on real utilization data:
 
 ```bash
 # Get recommendations for cost and right-sizing
@@ -440,9 +455,22 @@ refresh nodegroup recommendations -c prod --cost-optimization --right-sizing
 
 # Include spot instance analysis
 refresh ng recommendations -c dev --spot-analysis --timeframe 30d
+
+# Performance optimization recommendations
+refresh ng recommendations -c prod --performance-optimization
 ```
 
-**Note:** Recommendations output is currently in Phase 1 (placeholder).
+**Recommendation Types:**
+- **Right-sizing**: Analyzes CPU utilization to suggest smaller or larger instance types
+- **Spot Integration**: Identifies on-demand nodegroups suitable for spot instances (up to 70% savings)
+- **Cost Optimization**: Suggests Graviton-based alternatives (ARM64) for cost-effective alternatives
+- **Performance**: Identifies over-utilized nodegroups that may need larger instances
+
+**Analysis Features:**
+- Automatic trend detection (increasing, decreasing, stable utilization)
+- Priority-based recommendations (high, medium, low)
+- Estimated savings calculations
+- Instance type suggestions based on current usage patterns
 
 ### EKS Add-ons Management
 
@@ -461,6 +489,62 @@ refresh addon describe -c prod -a vpc-cni -o yaml
 refresh addon update <cluster> vpc-cni latest
 refresh addon update -c prod -a vpc-cni --version latest
 ```
+
+#### Update All Add-ons
+
+Bulk update all cluster add-ons to their latest compatible versions:
+
+```bash
+# Update all add-ons (with confirmation)
+refresh addon update-all -c prod
+
+# Dry-run to preview updates
+refresh addon update-all -c staging --dry-run
+
+# Update in parallel for faster execution
+refresh addon update-all -c dev --parallel
+
+# Wait for all updates to complete
+refresh addon update-all -c prod --wait
+
+# Skip specific add-ons
+refresh addon update-all -c prod --skip vpc-cni --skip kube-proxy
+```
+
+**Update Modes:**
+- **Sequential** (default): Updates add-ons one at a time, safer for production
+- **Parallel**: Updates all add-ons simultaneously, faster but higher risk
+
+#### Add-on Security Scan
+
+Scan cluster add-ons for security issues and outdated versions:
+
+```bash
+# Full security scan
+refresh addon security-scan -c prod
+
+# Check for outdated add-ons only
+refresh addon security-scan -c dev --check-outdated
+
+# Check for vulnerabilities (CVEs)
+refresh addon security-scan -c prod --check-vulnerabilities
+
+# Check for misconfigurations (missing IRSA, etc.)
+refresh addon security-scan -c staging --check-misconfigurations
+
+# Filter by minimum severity
+refresh addon security-scan -c prod --min-severity high
+
+# Different output formats
+refresh addon security-scan -c prod -o json
+refresh addon security-scan -c prod -o yaml
+```
+
+**Security Checks:**
+- **Outdated Versions**: Identifies add-ons that are behind the latest compatible version
+- **Vulnerabilities**: Checks for known CVEs in add-on versions
+- **Misconfigurations**: Detects missing IRSA roles, insecure configurations
+- **Severity Levels**: Critical, High, Medium, Low, Info
 
 ### Partial Name Matching
 

@@ -72,6 +72,7 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 	}
 	svc.util = NewUtilizationCollector(cw, logger, cache)
 	svc.cost = NewCostAnalyzer(p, logger, cache, awsConfig.Region)
+	svc.cost.SetEC2Client(svc.ec2Client)
 	return svc
 }
 
@@ -559,31 +560,19 @@ POST_HEALTH:
 	return nil
 }
 
-// GetRecommendations returns placeholder recommendations until analyzers are implemented
+// GetRecommendations analyzes nodegroups and returns actionable recommendations
 func (s *ServiceImpl) GetRecommendations(ctx context.Context, clusterName string, options RecommendationOptions) ([]Recommendation, error) {
-	// Placeholder examples; future work will compute based on utilization/cost
-	recs := []Recommendation{}
-	if options.RightSizing {
-		recs = append(recs, Recommendation{
-			Type:            "right-size",
-			Priority:        "medium",
-			Impact:          "cost",
-			Description:     "Consider using a smaller instance type based on average CPU < 40%",
-			Implementation:  "Migrate from m5.large to m5a.large",
-			ExpectedSavings: 15.0,
-			RiskLevel:       "low",
-		})
+	s.logger.Info("generating recommendations", "cluster", clusterName, "options", options)
+
+	// Create the recommendations analyzer with all required dependencies
+	analyzer := NewRecommendationsAnalyzer(s.eksClient, s.ec2Client, s.asgClient, s.util, s.cost, s.logger, s.cache)
+
+	// If no specific analysis requested, enable all by default
+	if !options.RightSizing && !options.SpotAnalysis && !options.CostOptimization && !options.PerformanceOptimization {
+		options.RightSizing = true
+		options.SpotAnalysis = true
+		options.CostOptimization = true
 	}
-	if options.SpotAnalysis {
-		recs = append(recs, Recommendation{
-			Type:            "spot-integration",
-			Priority:        "low",
-			Impact:          "cost",
-			Description:     "Shift 30% of capacity to Spot for tolerant workloads",
-			Implementation:  "Enable mixed instances policy with Spot",
-			ExpectedSavings: 25.0,
-			RiskLevel:       "medium",
-		})
-	}
-	return recs, nil
+
+	return analyzer.AnalyzeNodegroups(ctx, clusterName, options)
 }
