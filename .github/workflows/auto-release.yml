@@ -17,7 +17,7 @@ jobs:
       should_release: ${{ steps.version-check.outputs.should_release }}
       new_version: ${{ steps.version-check.outputs.new_version }}
       version_changed: ${{ steps.version-check.outputs.version_changed }}
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,14 +27,24 @@ jobs:
       - name: Check version change
         id: version-check
         run: |
-          # Extract current version from version.go
-          CURRENT_VERSION=$(grep -o 'Version:[[:space:]]*"[^"]*"' internal/commands/version.go | sed 's/Version:[[:space:]]*"\(.*\)"/\1/')
+          # Extract current version from version.go (handles both formats)
+          CURRENT_VERSION=$(grep -oP 'version\s*=\s*"\Kv[^"]+' internal/commands/version.go || \
+                           grep -oP 'Version:\s*"\Kv[^"]+' internal/commands/version.go || \
+                           echo "")
+
+          if [ -z "$CURRENT_VERSION" ]; then
+            echo "Could not extract version from version.go"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "version_changed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           echo "Current version in code: $CURRENT_VERSION"
-          
+
           # Get latest git tag
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           echo "Latest git tag: $LATEST_TAG"
-          
+
           # Compare versions
           if [ "$CURRENT_VERSION" != "$LATEST_TAG" ]; then
             echo "Version changed from $LATEST_TAG to $CURRENT_VERSION"
@@ -52,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,6 +73,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24"
+          cache: true
 
       - name: Run tests
         run: |
@@ -75,27 +86,24 @@ jobs:
         run: |
           VERSION="${{ needs.check-version.outputs.new_version }}"
           echo "Creating tag: $VERSION"
-          
+
+          # Check if tag already exists
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists, skipping tag creation"
+            exit 0
+          fi
+
           # Create annotated tag
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "$VERSION" -m "Release $VERSION"
-          
+
           # Push tag
           git push origin "$VERSION"
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-
       - name: Summary
         run: |
-          echo "🚀 Released version ${{ needs.check-version.outputs.new_version }}"
-          echo "📦 Binaries and Homebrew formula updated"
-          echo "🔗 Release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.check-version.outputs.new_version }}"
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ needs.check-version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release URL**: https://github.com/${{ github.repository }}/releases/tag/${{ needs.check-version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
