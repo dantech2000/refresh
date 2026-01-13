@@ -878,6 +878,11 @@ The badges at the top of this README provide a quick overview of the project's h
 This project includes automated dependency management:
 - **Dependabot** - Automated dependency updates with security patches
 
+### Security Updates (January 2026)
+The following security vulnerabilities have been addressed by updating dependencies:
+- **golang.org/x/net** updated from v0.38.0 to v0.49.0 (fixes CVE-2025-22872, CVE-2025-22870, CVE-2024-45338, and HTTP/2 CONTINUATION DoS)
+- **google.golang.org/protobuf** updated to v1.36.11 (latest stable version)
+
 ## Security
 
 -   Does not log or store credentials
