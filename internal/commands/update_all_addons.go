@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
@@ -32,8 +32,10 @@ func UpdateAllAddonsCommand() *cli.Command {
 			&cli.BoolFlag{Name: "parallel", Aliases: []string{"p"}, Usage: "Update addons in parallel (faster but riskier)"},
 			&cli.BoolFlag{Name: "wait", Aliases: []string{"w"}, Usage: "Wait for each update to complete before proceeding"},
 			&cli.DurationFlag{Name: "wait-timeout", Usage: "Timeout for waiting on each addon update", Value: 5 * time.Minute},
+			&cli.BoolFlag{Name: "health-check", Aliases: []string{"H"}, Usage: "Verify each addon is ACTIVE before updating and validate version compatibility"},
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview changes without applying"},
 			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Skip specific addons (can be repeated)"},
+			&cli.BoolFlag{Name: "dependency-order", Usage: "Update addons in dependency-safe order (vpc-cni → coredns/kube-proxy → others)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml)", Value: "table"},
 		},
 		Action: func(c *cli.Context) error { return runUpdateAllAddons(c) },
@@ -44,14 +46,14 @@ func runUpdateAllAddons(c *cli.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
 	defer cancel()
 
-	cfg, err := config.LoadDefaultConfig(ctx)
+	cfg, err := awsconfig.Load(ctx, c)
 	if err != nil {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
 	if err := awsinternal.ValidateAWSCredentials(ctx, cfg); err != nil {
 		color.Red("%v", err)
-		fmt.Println()
+		ui.Outln()
 		awsinternal.PrintCredentialHelp()
 		return fmt.Errorf("AWS credential validation failed")
 	}
@@ -81,13 +83,19 @@ func runUpdateAllAddons(c *cli.Context) error {
 	}
 	defer spinner.Stop()
 
+	if c.Bool("parallel") && c.Bool("dependency-order") {
+		return fmt.Errorf("--parallel and --dependency-order cannot be used together: parallel execution defeats dependency ordering")
+	}
+
 	// Build update options
 	options := addons.UpdateAllOptions{
-		DryRun:      c.Bool("dry-run"),
-		Parallel:    c.Bool("parallel"),
-		Wait:        c.Bool("wait"),
-		WaitTimeout: c.Duration("wait-timeout"),
-		SkipAddons:  c.StringSlice("skip"),
+		DryRun:          c.Bool("dry-run"),
+		Parallel:        c.Bool("parallel"),
+		Wait:            c.Bool("wait"),
+		WaitTimeout:     c.Duration("wait-timeout"),
+		SkipAddons:      c.StringSlice("skip"),
+		DependencyOrder: c.Bool("dependency-order"),
+		HealthCheck:     c.Bool("health-check"),
 	}
 
 	// Perform updates
@@ -127,7 +135,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 	if dryRun {
 		mode = " (DRY RUN)"
 	}
-	fmt.Printf("Addon Updates for cluster: %s%s\n\n", color.CyanString(cluster), color.YellowString(mode))
+	ui.Outf("Addon Updates for cluster: %s%s\n\n", color.CyanString(cluster), color.YellowString(mode))
 
 	if len(results) == 0 {
 		color.Yellow("No addons to update")
@@ -145,6 +153,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 	successCount := 0
 	failCount := 0
 
+	warnCount := 0
 	for _, r := range results {
 		var status string
 		if strings.Contains(r.Status, "FAILED") {
@@ -152,6 +161,9 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 			failCount++
 		} else if r.Status == "DRY_RUN" {
 			status = color.YellowString(r.Status)
+		} else if r.Status == "COMPLETED_WITH_ISSUES" {
+			status = color.YellowString(r.Status)
+			warnCount++
 		} else {
 			status = color.GreenString(r.Status)
 			successCount++
@@ -166,11 +178,14 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 	}
 	table.Render()
 
-	fmt.Println()
+	ui.Outln()
 	if !dryRun {
-		fmt.Printf("Summary: %s successful, %s failed\n",
-			color.GreenString("%d", successCount),
-			color.RedString("%d", failCount))
+		summary := fmt.Sprintf("Summary: %s successful", color.GreenString("%d", successCount))
+		if warnCount > 0 {
+			summary += fmt.Sprintf(", %s with issues", color.YellowString("%d", warnCount))
+		}
+		summary += fmt.Sprintf(", %s failed", color.RedString("%d", failCount))
+		ui.Outf("%s\n", summary)
 	}
 
 	return nil

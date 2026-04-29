@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
@@ -45,14 +45,14 @@ type addonDetails struct {
 	ARN        string                 `json:"arn"`
 	CreatedAt  *time.Time             `json:"createdAt"`
 	ModifiedAt *time.Time             `json:"modifiedAt"`
-	Config     map[string]interface{} `json:"configuration"`
+	Config     map[string]any `json:"configuration"`
 }
 
 func runDescribeAddon(c *cli.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
 	defer cancel()
 
-	cfg, err := config.LoadDefaultConfig(ctx)
+	cfg, err := awsconfig.Load(ctx, c)
 	if err != nil {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
@@ -138,17 +138,17 @@ func runDescribeAddon(c *cli.Context) error {
 		ARN:        aws.ToString(d.Addon.AddonArn),
 		CreatedAt:  d.Addon.CreatedAt,
 		ModifiedAt: d.Addon.ModifiedAt,
-		Config:     map[string]interface{}{},
+		Config:     map[string]any{},
 	}
 
 	if d.Addon.ConfigurationValues != nil && *d.Addon.ConfigurationValues != "" {
 		// Try to decode JSON or YAML-like string into a generic map for json/yaml outputs
-		var cfgMap map[string]interface{}
+		var cfgMap map[string]any
 		raw := *d.Addon.ConfigurationValues
 		if err := yaml.Unmarshal([]byte(raw), &cfgMap); err == nil {
 			details.Config = cfgMap
 		} else {
-			details.Config = map[string]interface{}{"raw": raw}
+			details.Config = map[string]any{"raw": raw}
 		}
 	}
 

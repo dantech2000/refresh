@@ -293,90 +293,6 @@ func TestCountVersionsBehind(t *testing.T) {
 	}
 }
 
-func TestFilterBySeverity(t *testing.T) {
-	findings := []AddonSecurityFinding{
-		{Severity: "critical"},
-		{Severity: "high"},
-		{Severity: "medium"},
-		{Severity: "low"},
-		{Severity: "info"},
-	}
-
-	tests := []struct {
-		minSeverity   string
-		expectedCount int
-	}{
-		{"critical", 1},
-		{"high", 2},
-		{"medium", 3},
-		{"low", 4},
-		{"info", 5},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.minSeverity, func(t *testing.T) {
-			result := filterBySeverity(findings, tt.minSeverity)
-			if len(result) != tt.expectedCount {
-				t.Errorf("filterBySeverity(%s) returned %d findings, want %d", tt.minSeverity, len(result), tt.expectedCount)
-			}
-		})
-	}
-}
-
-func TestRequiresIRSA(t *testing.T) {
-	tests := []struct {
-		addonName string
-		expected  bool
-	}{
-		{"vpc-cni", true},
-		{"aws-ebs-csi-driver", true},
-		{"coredns", false},
-		{"kube-proxy", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.addonName, func(t *testing.T) {
-			result := requiresIRSA(tt.addonName)
-			if result != tt.expected {
-				t.Errorf("requiresIRSA(%s) = %v, want %v", tt.addonName, result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestSecurityScan(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	client := &mockEKSClient{
-		addons: map[string]*ekstypes.Addon{
-			"vpc-cni": {
-				AddonName:    aws.String("vpc-cni"),
-				AddonVersion: aws.String("v1.14.0"),
-				Status:       ekstypes.AddonStatusActive,
-			},
-		},
-	}
-
-	svc := NewService(client, logger)
-	ctx := context.Background()
-
-	result, err := svc.SecurityScan(ctx, "test-cluster", SecurityScanOptions{
-		CheckOutdated:          true,
-		CheckVulnerabilities:   true,
-		CheckMisconfigurations: true,
-		MinSeverity:            "low",
-	})
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	if result.ClusterName != "test-cluster" {
-		t.Errorf("ClusterName = %s, want test-cluster", result.ClusterName)
-	}
-	if result.Summary.TotalAddons != 1 {
-		t.Errorf("TotalAddons = %d, want 1", result.Summary.TotalAddons)
-	}
-}
-
 func TestAddonSummary(t *testing.T) {
 	summary := AddonSummary{
 		Name:    "vpc-cni",
@@ -404,26 +320,6 @@ func TestAddonDetails(t *testing.T) {
 	}
 }
 
-func TestSecuritySummary(t *testing.T) {
-	summary := SecuritySummary{
-		TotalAddons:   5,
-		ScannedAddons: 5,
-		CriticalCount: 1,
-		HighCount:     2,
-		MediumCount:   3,
-		LowCount:      1,
-		InfoCount:     0,
-		OutdatedCount: 2,
-	}
-
-	if summary.TotalAddons != 5 {
-		t.Errorf("TotalAddons = %d, want 5", summary.TotalAddons)
-	}
-	if summary.CriticalCount != 1 {
-		t.Errorf("CriticalCount = %d, want 1", summary.CriticalCount)
-	}
-}
-
 func TestAddonUpdateResult(t *testing.T) {
 	result := AddonUpdateResult{
 		AddonName:       "vpc-cni",
@@ -436,5 +332,30 @@ func TestAddonUpdateResult(t *testing.T) {
 
 	if result.AddonName != "vpc-cni" {
 		t.Errorf("AddonName = %s, want vpc-cni", result.AddonName)
+	}
+}
+
+func TestAddonUpdateResult_HealthIssuesField(t *testing.T) {
+	result := AddonUpdateResult{
+		AddonName:    "vpc-cni",
+		Status:       "COMPLETED_WITH_ISSUES",
+		HealthIssues: "addon vpc-cni is ACTIVE but has 1 health issue(s)",
+	}
+
+	if result.HealthIssues == "" {
+		t.Error("expected non-empty HealthIssues")
+	}
+	if result.Status != "COMPLETED_WITH_ISSUES" {
+		t.Errorf("Status = %s, want COMPLETED_WITH_ISSUES", result.Status)
+	}
+}
+
+func TestUpdateAllOptions_ParallelAndDependencyOrder(t *testing.T) {
+	opts := UpdateAllOptions{
+		Parallel:        true,
+		DependencyOrder: true,
+	}
+	if !opts.Parallel || !opts.DependencyOrder {
+		t.Error("both flags should be settable on the struct")
 	}
 }

@@ -7,7 +7,7 @@ import (
 
 // CacheItem represents a cached item with expiration
 type CacheItem struct {
-	Value     interface{}
+	Value     any
 	ExpiresAt time.Time
 }
 
@@ -32,7 +32,7 @@ func NewCache(defaultTTL time.Duration) *Cache {
 }
 
 // Get retrieves a value from the cache
-func (c *Cache) Get(key string) (interface{}, bool) {
+func (c *Cache) Get(key string) (any, bool) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
@@ -51,7 +51,7 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 }
 
 // Set stores a value in the cache with specified TTL
-func (c *Cache) Set(key string, value interface{}, ttl time.Duration) {
+func (c *Cache) Set(key string, value any, ttl time.Duration) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -62,7 +62,7 @@ func (c *Cache) Set(key string, value interface{}, ttl time.Duration) {
 }
 
 // SetDefault stores a value in the cache with default TTL
-func (c *Cache) SetDefault(key string, value interface{}) {
+func (c *Cache) SetDefault(key string, value any) {
 	c.Set(key, value, c.defaultTTL)
 }
 
@@ -100,7 +100,7 @@ func (c *Cache) cleanup() {
 }
 
 // Stats returns cache statistics
-func (c *Cache) Stats() map[string]interface{} {
+func (c *Cache) Stats() map[string]any {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
@@ -116,7 +116,7 @@ func (c *Cache) Stats() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total":   len(c.items),
 		"active":  active,
 		"expired": expired,

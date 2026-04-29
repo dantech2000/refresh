@@ -23,6 +23,7 @@ func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResul
 	if hc.k8sClient == nil {
 		result.Status = StatusWarn
 		result.Score = 70
+		result.IsBlocking = false // unavailable client is a skip, not a hard block
 		result.Message = "Kubernetes client not available, skipping workload check"
 		result.Details = append(result.Details, "Install kubectl and configure cluster access to enable this check")
 		return result

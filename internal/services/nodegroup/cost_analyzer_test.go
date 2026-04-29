@@ -23,39 +23,6 @@ func TestStaticPriceMap(t *testing.T) {
 	}
 }
 
-func TestGetFallbackPrice(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cache := NewCache()
-	analyzer := NewCostAnalyzer(nil, logger, cache, "us-east-1")
-
-	tests := []struct {
-		instanceType string
-		expectOK     bool
-	}{
-		{"m5.large", true},
-		{"m5.xlarge", true},
-		{"t3.medium", true},
-		{"unknown-type", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.instanceType, func(t *testing.T) {
-			hourly, monthly, ok := analyzer.GetFallbackPrice(tt.instanceType)
-			if ok != tt.expectOK {
-				t.Errorf("GetFallbackPrice(%s) ok = %v, want %v", tt.instanceType, ok, tt.expectOK)
-			}
-			if tt.expectOK {
-				if hourly <= 0 {
-					t.Errorf("Expected positive hourly price for %s", tt.instanceType)
-				}
-				if monthly != hourly*730.0 {
-					t.Errorf("Monthly price should be hourly * 730")
-				}
-			}
-		})
-	}
-}
-
 func TestRegionToPricingLocation(t *testing.T) {
 	tests := []struct {
 		region   string
@@ -114,105 +81,48 @@ func TestSetEC2Client(t *testing.T) {
 	// Just testing that it doesn't panic
 }
 
-func TestCostComparison(t *testing.T) {
-	comparison := CostComparison{
-		InstanceType:        "m5.large",
-		OnDemandHourly:      0.096,
-		OnDemandMonthly:     70.08,
-		SpotHourly:          0.035,
-		SpotMonthly:         25.55,
-		SavingsPercent:      63.5,
-		EstimatedRisk:       "medium",
-		RecommendedCapacity: "mixed",
-	}
-
-	if comparison.InstanceType != "m5.large" {
-		t.Errorf("InstanceType = %s, want m5.large", comparison.InstanceType)
-	}
-	if comparison.SavingsPercent != 63.5 {
-		t.Errorf("SavingsPercent = %f, want 63.5", comparison.SavingsPercent)
-	}
-}
-
-func TestSpotPriceResult(t *testing.T) {
-	now := time.Now()
-	result := SpotPriceResult{
-		InstanceType:     "m5.large",
-		AvailabilityZone: "us-east-1a",
-		SpotPrice:        0.035,
-		Timestamp:        now,
-	}
-
-	if result.InstanceType != "m5.large" {
-		t.Errorf("InstanceType = %s, want m5.large", result.InstanceType)
-	}
-	if result.AvailabilityZone != "us-east-1a" {
-		t.Errorf("AvailabilityZone = %s, want us-east-1a", result.AvailabilityZone)
-	}
-	if result.SpotPrice != 0.035 {
-		t.Errorf("SpotPrice = %f, want 0.035", result.SpotPrice)
-	}
-}
-
-func TestEstimateOnDemandUSDNoPricingClient(t *testing.T) {
+func TestEstimateOnDemandUSD_FallbackWhenNoPricingClient(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	cache := NewCache()
 	analyzer := NewCostAnalyzer(nil, logger, cache, "us-east-1")
 
-	_, _, ok := analyzer.EstimateOnDemandUSD(context.Background(), "m5.large")
+	// Known instance type should fall back to static map
+	perHour, perMonth, ok := analyzer.EstimateOnDemandUSD(context.Background(), "m5.large")
+	if !ok {
+		t.Fatal("expected ok=true for m5.large (static fallback)")
+	}
+	if perHour != 0.096 {
+		t.Errorf("perHour = %f, want 0.096", perHour)
+	}
+	if perMonth != 0.096*730.0 {
+		t.Errorf("perMonth = %f, want %f", perMonth, 0.096*730.0)
+	}
+}
+
+func TestEstimateOnDemandUSD_NoFallbackForUnknownType(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cache := NewCache()
+	analyzer := NewCostAnalyzer(nil, logger, cache, "us-east-1")
+
+	// Unknown instance type should return false when no pricing client and no static entry
+	_, _, ok := analyzer.EstimateOnDemandUSD(context.Background(), "p4d.24xlarge")
 	if ok {
-		t.Error("Expected ok=false when pricing client is nil")
+		t.Error("expected ok=false for unknown instance type with no pricing client")
 	}
 }
 
-func TestEstimateSpotUSDNoEC2Client(t *testing.T) {
+func TestEstimateOnDemandUSD_CachesStaticFallback(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	cache := NewCache()
 	analyzer := NewCostAnalyzer(nil, logger, cache, "us-east-1")
 
-	_, _, ok := analyzer.EstimateSpotUSD(context.Background(), "m5.large")
-	if ok {
-		t.Error("Expected ok=false when EC2 client is nil")
-	}
-}
+	// First call populates cache
+	analyzer.EstimateOnDemandUSD(context.Background(), "t3.medium")
 
-func TestGetSpotPricesByAZNoEC2Client(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cache := NewCache()
-	analyzer := NewCostAnalyzer(nil, logger, cache, "us-east-1")
-
-	_, err := analyzer.GetSpotPricesByAZ(context.Background(), "m5.large")
-	if err == nil {
-		t.Error("Expected error when EC2 client is nil")
-	}
-}
-
-func TestCalculateSpotSavingsNoPrices(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cache := NewCache()
-	analyzer := NewCostAnalyzer(nil, logger, cache, "us-east-1")
-
-	_, ok := analyzer.CalculateSpotSavings(context.Background(), "m5.large")
-	if ok {
-		t.Error("Expected ok=false when prices unavailable")
-	}
-}
-
-func TestCompareCostsNoPrices(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cache := NewCache()
-	analyzer := NewCostAnalyzer(nil, logger, cache, "us-east-1")
-
-	result, err := analyzer.CompareCosts(context.Background(), "m5.large", 3)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("Expected non-nil result")
-	}
-	// Without pricing clients, costs should be 0
-	if result.OnDemandHourly != 0 {
-		t.Errorf("OnDemandHourly = %f, want 0", result.OnDemandHourly)
+	// Second call should hit cache
+	key := "price:us-east-1:t3.medium"
+	if _, ok := cache.Get(key); !ok {
+		t.Error("expected cache to be populated after fallback")
 	}
 }
 

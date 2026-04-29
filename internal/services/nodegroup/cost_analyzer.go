@@ -10,7 +10,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	pricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"github.com/dantech2000/refresh/internal/services/common"
@@ -34,12 +33,9 @@ func (c *CostAnalyzer) SetEC2Client(ec2Client *ec2.Client) {
 	c.ec2Client = ec2Client
 }
 
-// EstimateOnDemandUSD returns monthly and per-hour costs for an instance type (Linux/on-demand)
+// EstimateOnDemandUSD returns monthly and per-hour costs for an instance type (Linux/on-demand).
+// It queries the Pricing API first, then falls back to the static price map.
 func (c *CostAnalyzer) EstimateOnDemandUSD(ctx context.Context, instanceType string) (perHour float64, perMonth float64, ok bool) {
-	if c.pricing == nil {
-		c.logger.Debug("pricing client not available")
-		return 0, 0, false
-	}
 	key := "price:" + c.region + ":" + instanceType
 	if v, okc := c.cache.Get(key); okc {
 		if cached, ok2 := v.(float64); ok2 {
@@ -47,26 +43,32 @@ func (c *CostAnalyzer) EstimateOnDemandUSD(ctx context.Context, instanceType str
 		}
 	}
 
-	location := regionToPricingLocation(c.region)
-	if location == "" {
-		c.logger.Debug("region not mapped to pricing location", "region", c.region)
-		return 0, 0, false
+	if c.pricing != nil {
+		location := regionToPricingLocation(c.region)
+		if location != "" {
+			usd := c.queryPricing(ctx, instanceType, location, true)
+			if usd <= 0 {
+				usd = c.queryPricing(ctx, instanceType, location, false)
+			}
+			if usd > 0 {
+				c.cache.Set(key, usd, c.cacheTTL)
+				return usd, usd * 730.0, true
+			}
+			c.logger.Debug("pricing API returned no data, trying fallback", "instanceType", instanceType, "location", location)
+		} else {
+			c.logger.Debug("region not mapped to pricing location, trying fallback", "region", c.region)
+		}
+	} else {
+		c.logger.Debug("pricing client not available, trying fallback")
 	}
 
-	// Try primary filter set first
-	usd := c.queryPricing(ctx, instanceType, location, true)
-	if usd <= 0 {
-		// Try relaxed filter set (without capacitystatus which can be problematic)
-		usd = c.queryPricing(ctx, instanceType, location, false)
+	if price, exists := staticPriceMap[instanceType]; exists {
+		c.logger.Debug("using static fallback price", "instanceType", instanceType, "perHour", price)
+		c.cache.Set(key, price, c.cacheTTL)
+		return price, price * 730.0, true
 	}
 
-	if usd <= 0 {
-		c.logger.Debug("could not determine pricing", "instanceType", instanceType, "location", location)
-		return 0, 0, false
-	}
-
-	c.cache.Set(key, usd, c.cacheTTL)
-	return usd, usd * 730.0, true
+	return 0, 0, false
 }
 
 // queryPricing queries the AWS Pricing API for instance cost
@@ -209,163 +211,6 @@ func toPricingFilters(fs []pricingFilter) []pricingtypes.Filter {
 		out = append(out, pricingtypes.Filter{Type: pricingtypes.FilterType(f.Type), Field: aws.String(f.Field), Value: aws.String(f.Value)})
 	}
 	return out
-}
-
-// SpotPriceResult contains spot pricing information
-type SpotPriceResult struct {
-	InstanceType     string    `json:"instanceType"`
-	AvailabilityZone string    `json:"availabilityZone"`
-	SpotPrice        float64   `json:"spotPrice"`
-	Timestamp        time.Time `json:"timestamp"`
-}
-
-// EstimateSpotUSD returns current spot price for an instance type
-func (c *CostAnalyzer) EstimateSpotUSD(ctx context.Context, instanceType string) (perHour float64, perMonth float64, ok bool) {
-	if c.ec2Client == nil {
-		c.logger.Debug("EC2 client not available for spot pricing")
-		return 0, 0, false
-	}
-
-	key := "spot:" + c.region + ":" + instanceType
-	if v, okc := c.cache.Get(key); okc {
-		if cached, ok2 := v.(float64); ok2 {
-			return cached, cached * 730.0, true
-		}
-	}
-
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeSpotPriceHistoryOutput, error) {
-		return c.ec2Client.DescribeSpotPriceHistory(rc, &ec2.DescribeSpotPriceHistoryInput{
-			InstanceTypes:       []ec2types.InstanceType{ec2types.InstanceType(instanceType)},
-			ProductDescriptions: []string{"Linux/UNIX"},
-			MaxResults:          aws.Int32(10),
-		})
-	})
-	if err != nil || len(out.SpotPriceHistory) == 0 {
-		c.logger.Debug("spot price unavailable", "instanceType", instanceType, "error", err)
-		return 0, 0, false
-	}
-
-	// Calculate average spot price across availability zones
-	var sum float64
-	for _, price := range out.SpotPriceHistory {
-		var p float64
-		if _, err := fmt.Sscanf(aws.ToString(price.SpotPrice), "%f", &p); err == nil {
-			sum += p
-		}
-	}
-	avgSpotPrice := sum / float64(len(out.SpotPriceHistory))
-
-	c.cache.Set(key, avgSpotPrice, 5*time.Minute) // Spot prices change frequently, shorter TTL
-	return avgSpotPrice, avgSpotPrice * 730.0, true
-}
-
-// GetSpotPricesByAZ returns spot prices broken down by availability zone
-func (c *CostAnalyzer) GetSpotPricesByAZ(ctx context.Context, instanceType string) ([]SpotPriceResult, error) {
-	if c.ec2Client == nil {
-		return nil, fmt.Errorf("EC2 client not available")
-	}
-
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeSpotPriceHistoryOutput, error) {
-		return c.ec2Client.DescribeSpotPriceHistory(rc, &ec2.DescribeSpotPriceHistoryInput{
-			InstanceTypes:       []ec2types.InstanceType{ec2types.InstanceType(instanceType)},
-			ProductDescriptions: []string{"Linux/UNIX"},
-			MaxResults:          aws.Int32(20),
-		})
-	})
-	if err != nil {
-		return nil, fmt.Errorf("fetching spot prices: %w", err)
-	}
-
-	// Deduplicate by AZ, keeping the most recent price
-	azPrices := make(map[string]SpotPriceResult)
-	for _, price := range out.SpotPriceHistory {
-		az := aws.ToString(price.AvailabilityZone)
-		var p float64
-		if _, err := fmt.Sscanf(aws.ToString(price.SpotPrice), "%f", &p); err == nil {
-			existing, exists := azPrices[az]
-			if !exists || price.Timestamp.After(existing.Timestamp) {
-				azPrices[az] = SpotPriceResult{
-					InstanceType:     instanceType,
-					AvailabilityZone: az,
-					SpotPrice:        p,
-					Timestamp:        aws.ToTime(price.Timestamp),
-				}
-			}
-		}
-	}
-
-	results := make([]SpotPriceResult, 0, len(azPrices))
-	for _, r := range azPrices {
-		results = append(results, r)
-	}
-	return results, nil
-}
-
-// CalculateSpotSavings compares on-demand vs spot pricing and returns savings percentage
-func (c *CostAnalyzer) CalculateSpotSavings(ctx context.Context, instanceType string) (savingsPercent float64, ok bool) {
-	onDemandHourly, _, odOk := c.EstimateOnDemandUSD(ctx, instanceType)
-	spotHourly, _, spotOk := c.EstimateSpotUSD(ctx, instanceType)
-
-	if !odOk || !spotOk || onDemandHourly <= 0 {
-		return 0, false
-	}
-
-	savings := (1 - spotHourly/onDemandHourly) * 100
-	if savings < 0 || savings > 95 { // Sanity check
-		return 0, false
-	}
-	return savings, true
-}
-
-// CostComparison contains a full cost comparison between capacity types
-type CostComparison struct {
-	InstanceType        string  `json:"instanceType"`
-	OnDemandHourly      float64 `json:"onDemandHourly"`
-	OnDemandMonthly     float64 `json:"onDemandMonthly"`
-	SpotHourly          float64 `json:"spotHourly"`
-	SpotMonthly         float64 `json:"spotMonthly"`
-	SavingsPercent      float64 `json:"savingsPercent"`
-	EstimatedRisk       string  `json:"estimatedRisk"` // low, medium, high based on spot frequency
-	RecommendedCapacity string  `json:"recommendedCapacity"`
-}
-
-// CompareCosts provides a full comparison between on-demand and spot pricing
-func (c *CostAnalyzer) CompareCosts(ctx context.Context, instanceType string, nodeCount int) (*CostComparison, error) {
-	odHourly, odMonthly, odOk := c.EstimateOnDemandUSD(ctx, instanceType)
-	spotHourly, spotMonthly, spotOk := c.EstimateSpotUSD(ctx, instanceType)
-
-	result := &CostComparison{
-		InstanceType: instanceType,
-	}
-
-	if odOk {
-		result.OnDemandHourly = odHourly * float64(nodeCount)
-		result.OnDemandMonthly = odMonthly * float64(nodeCount)
-	}
-
-	if spotOk {
-		result.SpotHourly = spotHourly * float64(nodeCount)
-		result.SpotMonthly = spotMonthly * float64(nodeCount)
-	}
-
-	if odOk && spotOk && odHourly > 0 {
-		result.SavingsPercent = (1 - spotHourly/odHourly) * 100
-	}
-
-	// Estimate risk based on savings percentage (higher savings often means higher interruption risk)
-	switch {
-	case result.SavingsPercent > 80:
-		result.EstimatedRisk = "high"
-		result.RecommendedCapacity = "on-demand"
-	case result.SavingsPercent > 60:
-		result.EstimatedRisk = "medium"
-		result.RecommendedCapacity = "mixed"
-	default:
-		result.EstimatedRisk = "low"
-		result.RecommendedCapacity = "spot"
-	}
-
-	return result, nil
 }
 
 // staticPriceMap provides fallback prices for common instance types when API is unavailable

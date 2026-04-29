@@ -2,7 +2,6 @@ package ui
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"strings"
 
@@ -18,42 +17,36 @@ func NewHealthSpinner(message string) *ProgressSpinner {
 
 // DisplayHealthResults displays the health check results in the specified format
 func DisplayHealthResults(summary health.HealthSummary) {
-	fmt.Println("\nCluster Health Assessment:")
-	fmt.Println()
+	Outln("\nCluster Health Assessment:")
+	Outln()
 
-	// Display progress bars for each check
 	for _, result := range summary.Results {
 		progressBar := RenderProgressBar(result.Score, result.Status)
 		statusText := GetHealthStatusText(result.Status)
-
-		fmt.Printf("%s %-20s %s\n", progressBar, result.Name, statusText)
+		Outf("%s %-20s %s\n", progressBar, result.Name, statusText)
 	}
 
-	fmt.Println()
+	Outln()
 
-	// Display overall status
 	statusColor := GetHealthDecisionColor(summary.Decision)
 	issueCount := len(summary.Warnings) + len(summary.Errors)
-
 	if issueCount > 0 {
-		fmt.Printf("Status: %s (%d issues found)\n",
-			statusColor("%s", GetDecisionText(summary.Decision)), issueCount)
+		Outf("Status: %s (%d issues found)\n", statusColor("%s", GetDecisionText(summary.Decision)), issueCount)
 	} else {
-		fmt.Printf("Status: %s\n", statusColor("%s", GetDecisionText(summary.Decision)))
+		Outf("Status: %s\n", statusColor("%s", GetDecisionText(summary.Decision)))
 	}
 
-	// Display warnings and errors
 	if len(summary.Warnings) > 0 {
-		fmt.Println("\nWarnings:")
+		Outln("\nWarnings:")
 		for _, warning := range summary.Warnings {
-			fmt.Printf("- %s\n", color.YellowString(warning))
+			Outf("- %s\n", color.YellowString(warning))
 		}
 	}
 
 	if len(summary.Errors) > 0 {
-		fmt.Println("\nErrors:")
+		Outln("\nErrors:")
 		for _, err := range summary.Errors {
-			fmt.Printf("- %s\n", color.RedString(err))
+			Outf("- %s\n", color.RedString(err))
 		}
 	}
 }
@@ -136,7 +129,7 @@ func GetDecisionText(decision health.Decision) string {
 }
 
 // GetHealthDecisionColor returns the color function for decision
-func GetHealthDecisionColor(decision health.Decision) func(format string, a ...interface{}) string {
+func GetHealthDecisionColor(decision health.Decision) func(format string, a ...any) string {
 	switch decision {
 	case health.DecisionProceed:
 		return color.GreenString
@@ -151,7 +144,7 @@ func GetHealthDecisionColor(decision health.Decision) func(format string, a ...i
 
 // PromptContinueWithWarnings prompts the user to continue despite warnings
 func PromptContinueWithWarnings(warnings []string) bool {
-	fmt.Printf("\nProceed with update? (Y/n): ")
+	Outf("\nProceed with update? (Y/n): ")
 
 	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
@@ -167,12 +160,12 @@ func PromptContinueWithWarnings(warnings []string) bool {
 
 // DisplayHealthCheckStart displays the start of health check process
 func DisplayHealthCheckStart(clusterName string) {
-	fmt.Printf("\nrefresh update-ami --cluster %s\n\n", clusterName)
+	Outf("\nrefresh update-ami --cluster %s\n\n", clusterName)
 }
 
 // DisplayHealthCheckComplete displays completion message based on decision
 func DisplayHealthCheckComplete(decision health.Decision) {
-	fmt.Println()
+	Outln()
 
 	switch decision {
 	case health.DecisionProceed:
@@ -181,7 +174,7 @@ func DisplayHealthCheckComplete(decision health.Decision) {
 		// User decision handled by prompt
 	case health.DecisionBlock:
 		color.Red("[FAIL] Critical health issues detected. Please resolve before proceeding.")
-		fmt.Println("\nRun with --force to bypass health checks (not recommended).")
-		fmt.Println("Use 'refresh nodegroup list --cluster <cluster>' to monitor current status.")
+		Outln("\nRun with --force to bypass health checks (not recommended).")
+		Outln("Use 'refresh nodegroup list --cluster <cluster>' to monitor current status.")
 	}
 }
