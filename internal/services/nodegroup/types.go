@@ -61,7 +61,8 @@ type UtilizationMetrics struct {
 	TimeRange string          `json:"timeRange"`
 }
 
-// CostBreakdown is a placeholder for future detailed cost components
+// CostBreakdown holds itemized cost components for a nodegroup.
+// Fields will be populated as Cost Explorer integration is added.
 type CostBreakdown struct{}
 
 // CostAnalysis captures high-level cost data and potential
@@ -73,7 +74,7 @@ type CostAnalysis struct {
 	OptimizationPotential float64       `json:"optimizationPotential"`
 }
 
-// InstanceDetails describes an instance in a nodegroup (placeholder for now)
+// InstanceDetails describes an EC2 instance backing a nodegroup.
 type InstanceDetails struct {
 	InstanceID   string    `json:"instanceId"`
 	InstanceType string    `json:"instanceType"`
@@ -88,27 +89,6 @@ type WorkloadInfo struct {
 	TotalPods     int    `json:"totalPods"`
 	CriticalPods  int    `json:"criticalPods"`
 	PodDisruption string `json:"podDisruption"` // summarized for now
-}
-
-// Recommendation proposes an optimization or action
-type Recommendation struct {
-	Type            string  `json:"type"`     // right-size, spot-integration, scaling
-	Priority        string  `json:"priority"` // high, medium, low
-	Impact          string  `json:"impact"`   // cost, performance, reliability
-	Description     string  `json:"description"`
-	Implementation  string  `json:"implementation"`
-	ExpectedSavings float64 `json:"expectedSavings"`
-	RiskLevel       string  `json:"riskLevel"`
-}
-
-// RecommendationOptions controls recommendation analysis
-type RecommendationOptions struct {
-	Nodegroup               string `json:"nodegroup"`
-	CostOptimization        bool   `json:"costOptimization"`
-	PerformanceOptimization bool   `json:"performanceOptimization"`
-	SpotAnalysis            bool   `json:"spotAnalysis"`
-	RightSizing             bool   `json:"rightSizing"`
-	Timeframe               string `json:"timeframe"` // 7d, 30d, 90d
 }
 
 // NodegroupSummary contains basic nodegroup info for listings
@@ -156,6 +136,4 @@ type NodegroupDetails struct {
 
 	Instances []InstanceDetails `json:"instances"`
 	Workloads WorkloadInfo      `json:"workloads"`
-
-	Recommendations []Recommendation `json:"recommendations,omitempty"`
 }

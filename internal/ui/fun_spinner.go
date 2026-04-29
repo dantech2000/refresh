@@ -1,0 +1,209 @@
+package ui
+
+import (
+	"math/rand"
+	"sync"
+	"time"
+
+	"github.com/pterm/pterm"
+)
+
+var funSpinnerInterval = 2 * time.Second
+
+// FunSpinner provides an entertaining spinner with rotating messages
+type FunSpinner struct {
+	spinner  *pterm.SpinnerPrinter
+	messages []string
+	current  int
+	stopCh   chan struct{}
+	doneCh   chan struct{}
+	stopOnce sync.Once
+	started  bool
+	mu       sync.Mutex
+}
+
+// NewFunSpinner creates a spinner that rotates through fun messages
+func NewFunSpinner(messages []string) *FunSpinner {
+	if len(messages) == 0 {
+		messages = []string{"Working on it..."}
+	}
+
+	spinner := pterm.DefaultSpinner.
+		WithStyle(&pterm.Style{pterm.FgCyan}).
+		WithSequence("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏").
+		WithDelay(100 * time.Millisecond).
+		WithRemoveWhenDone(false)
+
+	return &FunSpinner{
+		spinner:  spinner,
+		messages: messages,
+		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
+	}
+}
+
+// NewFunSpinnerForCategory creates a fun spinner with messages for a specific category
+func NewFunSpinnerForCategory(category string) *FunSpinner {
+	return NewFunSpinner(DefaultFunMessages.GetMessages(category))
+}
+
+// NewEnhancedProgressSpinner creates a spinner that cycles through fun messages for the category
+func NewEnhancedProgressSpinner(category string) *FunSpinner {
+	return NewFunSpinnerForCategory(category)
+}
+
+// Start begins the fun spinner with rotating messages
+func (fs *FunSpinner) Start() error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	if fs.started {
+		return nil
+	}
+
+	started, err := fs.spinner.Start(fs.messages[0])
+	fs.spinner = started
+	fs.started = true
+
+	go fs.rotateMessages()
+	return err
+}
+
+func (fs *FunSpinner) rotateMessages() {
+	ticker := time.NewTicker(funSpinnerInterval)
+	defer ticker.Stop()
+	defer close(fs.doneCh)
+
+	for {
+		select {
+		case <-fs.stopCh:
+			return
+		case <-ticker.C:
+			fs.current = (fs.current + 1) % len(fs.messages)
+			fs.spinner.UpdateText(fs.messages[fs.current])
+		}
+	}
+}
+
+// Success completes the spinner with a success message
+func (fs *FunSpinner) Success(message string) { fs.stop(); fs.spinner.Success(message) }
+
+// Fail completes the spinner with a failure message
+func (fs *FunSpinner) Fail(message string) { fs.stop(); fs.spinner.Fail(message) }
+
+// Stop stops the spinner
+func (fs *FunSpinner) Stop() { fs.stop(); _ = fs.spinner.Stop() }
+
+func (fs *FunSpinner) stop() {
+	fs.mu.Lock()
+	wasStarted := fs.started
+	fs.mu.Unlock()
+
+	if !wasStarted {
+		return
+	}
+
+	fs.stopOnce.Do(func() {
+		close(fs.stopCh)
+		<-fs.doneCh
+	})
+}
+
+// FunMessages provides categorized entertaining messages for different operations
+type FunMessages struct {
+	Cluster   []string
+	Nodegroup []string
+	Addon     []string
+	General   []string
+	Health    []string
+}
+
+// GetMessages returns messages for the specified category, falling back to general.
+func (fm *FunMessages) GetMessages(category string) []string {
+	switch category {
+	case "cluster":
+		return fm.Cluster
+	case "nodegroup":
+		return fm.Nodegroup
+	case "addon":
+		return fm.Addon
+	case "health":
+		return fm.Health
+	default:
+		return fm.General
+	}
+}
+
+// GetRandomMessage returns a random message from the specified category
+func (fm *FunMessages) GetRandomMessage(category string) string {
+	messages := fm.GetMessages(category)
+	if len(messages) == 0 {
+		return "Working on it..."
+	}
+	return messages[rand.Intn(len(messages))]
+}
+
+// DefaultFunMessages provides the default set of entertaining messages
+var DefaultFunMessages = &FunMessages{
+	Cluster: []string{
+		"Exploring the AWS universe...",
+		"Hunting for clusters across regions...",
+		"Surfing the cloud waves...",
+		"Mapping your EKS empire...",
+		"Launching region scanners...",
+		"Targeting your clusters...",
+		"Supercharging the search...",
+		"Analyzing cluster DNA...",
+		"Collecting cloud treasures...",
+		"Performing AWS magic tricks...",
+		"Querying the cluster overlords...",
+		"Decoding EKS hieroglyphics...",
+		"Asking AWS nicely for cluster secrets...",
+		"Convincing clusters to reveal themselves...",
+	},
+	Nodegroup: []string{
+		"Interrogating EKS nodes... they're staying silent for now",
+		"Asking AWS politely for nodegroup secrets...",
+		"Counting how many nodes are having an existential crisis...",
+		"Checking if the nodes have been doing their AMI homework...",
+		"Waiting for AWS to stop procrastinating and return our data...",
+		"Convincing stubborn nodes to reveal their status...",
+		"Performing digital archaeology on your cluster...",
+		"Teaching nodes to communicate in human language...",
+		"Decoding the ancient art of EKS hieroglyphics...",
+		"Bribing AWS APIs with virtual coffee for faster responses...",
+		"Whispering sweet nothings to unresponsive nodegroups...",
+		"Negotiating with nodes that refuse to scale...",
+		"Analyzing node behavior patterns like a digital therapist...",
+	},
+	Addon: []string{
+		"Hunting for add-ons in the AWS wilderness...",
+		"Asking add-ons to introduce themselves politely...",
+		"Checking if add-ons are playing hide and seek...",
+		"Interrogating the add-on registry...",
+		"Convincing shy add-ons to show their versions...",
+		"Performing add-on archaeology...",
+		"Deciphering add-on compatibility matrices...",
+		"Bribing add-ons with virtual upgrades...",
+	},
+	Health: []string{
+		"Checking cluster vital signs...",
+		"Performing AWS wellness checkup...",
+		"Taking cluster temperature...",
+		"Analyzing cluster stress levels...",
+		"Consulting the cloud doctor...",
+		"Running diagnostic spells...",
+		"Checking if your cluster needs vitamins...",
+		"Performing digital CPR if needed...",
+	},
+	General: []string{
+		"Working the AWS magic...",
+		"Consulting the cloud spirits...",
+		"Performing digital incantations...",
+		"Asking AWS very nicely...",
+		"Waiting for the cloud gods to respond...",
+		"Processing with maximum efficiency...",
+		"Doing the technical mumbo jumbo...",
+		"Making API calls like a pro...",
+	},
+}

@@ -22,7 +22,7 @@ func GetStatusPrefix(status types.UpdateStatus) string {
 }
 
 // GetStatusColor returns a color function for the update status
-func GetStatusColor(status types.UpdateStatus) func(format string, a ...interface{}) string {
+func GetStatusColor(status types.UpdateStatus) func(format string, a ...any) string {
 	switch status {
 	case types.UpdateStatusInProgress:
 		return color.CyanString

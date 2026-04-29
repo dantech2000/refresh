@@ -84,7 +84,7 @@ func WithRetry[T any](ctx context.Context, cfg RetryConfig, fn func(context.Cont
 		cfg = DefaultRetryConfig
 	}
 	backoff := cfg.InitialBackoff
-	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		// Respect ctx cancellation between attempts
 		select {
 		case <-ctx.Done():
@@ -117,5 +117,4 @@ func WithRetry[T any](ctx context.Context, cfg RetryConfig, fn func(context.Cont
 			backoff = time.Duration(float64(backoff) * cfg.BackoffMultiplier)
 		}
 	}
-	return zero, context.DeadlineExceeded
 }

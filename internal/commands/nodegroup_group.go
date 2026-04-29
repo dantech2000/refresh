@@ -11,13 +11,12 @@ func NodegroupCommand() *cli.Command {
 	return &cli.Command{
 		Name:    "nodegroup",
 		Aliases: []string{"ng"},
-		Usage:   "Nodegroup operations (list, describe, scale, update-ami, recommendations)",
+		Usage:   "Nodegroup operations (list, get, scale, update)",
 		Subcommands: []*cli.Command{
 			ngListCommand(),
 			ngDescribeCommand(),
 			ngScaleCommand(),
-			ngUpdateAmiCommand(),
-			ngRecommendationsCommand(),
+			ngUpdateCommand(),
 		},
 	}
 }
@@ -95,6 +94,7 @@ func ngDescribeCommand() *cli.Command {
 	orig := DescribeNodegroupCommand()
 	return &cli.Command{
 		Name:        "describe",
+		Aliases:     []string{"get"},
 		Usage:       orig.Usage,
 		Description: orig.Description,
 		Flags:       orig.Flags,
@@ -113,10 +113,11 @@ func ngScaleCommand() *cli.Command {
 	}
 }
 
-func ngUpdateAmiCommand() *cli.Command {
+func ngUpdateCommand() *cli.Command {
 	orig := UpdateAmiCommand()
 	return &cli.Command{
-		Name:        "update-ami",
+		Name:        "update",
+		Aliases:     []string{"update-ami"},
 		Usage:       orig.Usage,
 		Description: orig.Description,
 		Flags:       orig.Flags,
@@ -124,13 +125,3 @@ func ngUpdateAmiCommand() *cli.Command {
 	}
 }
 
-func ngRecommendationsCommand() *cli.Command {
-	orig := NodegroupRecommendationsCommand()
-	return &cli.Command{
-		Name:        "recommendations",
-		Usage:       orig.Usage,
-		Description: orig.Description,
-		Flags:       orig.Flags,
-		Action:      func(c *cli.Context) error { return runNodegroupRecommendations(c) },
-	}
-}

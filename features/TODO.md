@@ -1,47 +1,53 @@
-# Features TODO (Consolidated)
+# Feature Status
 
-This file aggregates actionable items from Phase 1 feature specs, pruned to exclude work already implemented in code.
+## Shipped
 
-## Enhanced Cluster Operations
+### Cluster Operations
+- List clusters with multi-region support (`-A/--all-regions`), concurrency cap, health status
+- Describe cluster with security, networking, add-ons, encryption details
+- Cluster diff (side-by-side config comparison) with interactive multi-select picker
+- Sorting options (`--sort`, `--desc`) for cluster and nodegroup lists
+- Pagination on all list operations
+- Context system: `refresh use`, `refresh current`, `refresh context` (kubectx-style)
 
- - [x] SDK client retry/backoff: wrap EKS/EC2/IAM/STS calls with context-aware retry policy (throttle, transient errors)
- - [x] Config management: centralize CLI/env defaults into a small config package (timeouts, concurrency, regions)
- - [x] UI sorting: add sort options for cluster lists (e.g., by name, status, version, region)
- - [x] CLI help/examples: expand README/help text with more examples and tips
-- [ ] Optional: interactive selection for cluster comparison
+### EKS Add-ons Management
+- List / Describe / Update with health validation and version compatibility checks
+- Bulk update (`addon update --all`) with parallel mode, skip list, dry-run, wait
+- Dependency ordering for sequenced bulk updates
+- `--parallel` + `--dependency-order` conflict guard
+- Post-update health re-check
 
-Notes (done): pagination, context timeouts, multi-region with concurrency cap, cache TTLs, deterministic cache keys, colored table alignment, partition-aware region defaults.
+### Nodegroup Management
+- List / Describe / Scale / Update (rolling AMI update with health checks + dry-run)
+- CPU utilization via CloudWatch `GetMetricData` (batched, cached)
+- Cost display via Pricing API with static price map fallback
 
-## EKS Add-ons Management (new)
+### Architecture & Infra
+- Unified AWS config loading (`internal/awsconfig`)
+- Persistent named contexts (`internal/cliconfig`, YAML-backed)
+- SDK retry/backoff on all EKS/EC2/IAM/STS calls
+- Centralized CLI/env config package
+- Extracted command formatters, split types, modular UI components
 
-- [ ] Service package: `internal/services/addons` with list/describe/update APIs
-- [x] Commands: `list-addons`, `describe-addon`, `update-addon`
-- [ ] Commands: `update-all-addons`, `addon-security-scan`
-- [ ] Health validation: pre/post checks integrated with health framework
-- [ ] Compatibility DB: versions matrix, validation helpers
-- [ ] Bulk operations: dependency resolution, optional parallel, dry-run, progress
-- [ ] UI: rich table + JSON/YAML, filtering/sorting
-- [ ] Reliability: retry/backoff, throttling control, pagination
-- [ ] Tests: unit + integration; performance benchmarks vs targets
+### UI / Table Rendering
+- Dynamic ANSI-aware column widths, colored padding, optional/conditional columns
+- Truncation with ellipsis, tree view for multi-region display
+- Fun spinner with per-category rotating messages
 
-## Advanced Nodegroup Management (new)
+## Remaining Work
 
-- [ ] Service: nodegroup intelligence (list/describe/scale/recommendations)
-- [ ] Metrics: CloudWatch utilization collection (batch), caching
-- [ ] Cost: pricing + Cost Explorer integration; analyzer module
-- [ ] Workloads: Kubernetes client integration; PDB validation; workload analysis
-- [ ] Spot: opportunity analysis and guidance
-- [ ] UI: tables + JSON; filtering/sorting; dry-run support
-- [ ] Tests: unit + integration; performance targets; docs
+### Testing
+- [ ] Increase unit test coverage toward 90%+ across services
+- [ ] Integration tests against real EKS clusters (multi-region, add-on ops, scaling)
+- [ ] Performance benchmarks for list/describe operations
+- [ ] Cost calculation accuracy validation against AWS billing
 
-### UI/Table Rendering Improvements
+### Documentation
+- [ ] Man page content review and update for new commands (context, addon, diff)
+- [ ] Migration guide from eksctl / AWS CLI workflows
 
-- [x] Abstract table rendering into a reusable helper that:
-  - Computes dynamic column widths from data and headers
-  - Pads colored strings correctly (ANSI-aware)
-  - Supports optional/conditional columns cleanly
-  - Handles truncation with ellipsis and keeps grid intact
-  - Provides common separators and alignment utilities
-- [x] Replace ad-hoc prints in: `list-nodegroups`, `describe-nodegroup` (instances block), `nodegroup-recommendations`, and cluster list/describe outputs.
-
-
+### Improvements
+- [ ] Workloads/PDB checks require kubeconfig — add `--kubeconfig` flag and diagnostics
+- [ ] Memory metrics support (requires Container Insights setup)
+- [ ] Scale dry-run: detailed impact output (node delta, cost delta, PDB specifics)
+- [ ] Filtering by status/version on `cluster list` (sorting done, filtering not yet)

@@ -18,6 +18,7 @@ var (
 	// Compile regex patterns once at package initialization
 	sectionRegex = regexp.MustCompile(`(?m)^(NAME|USAGE|COMMANDS|GLOBAL OPTIONS|OPTIONS|DESCRIPTION|VERSION|COPYRIGHT):`)
 	commandRegex = regexp.MustCompile(`(?m)^(\s+)([a-zA-Z][a-zA-Z0-9-_]*(?:,\s*[a-zA-Z][a-zA-Z0-9-_]*)*)(\s+.*)$`)
+	exitProcess  = os.Exit
 )
 
 func coloredHelpPrinter(w io.Writer, templ string, data interface{}) {
@@ -40,20 +41,14 @@ func coloredHelpPrinter(w io.Writer, templ string, data interface{}) {
 	// Color command names (looking for lines with command format)
 	helpText = commandRegex.ReplaceAllStringFunc(helpText, func(match string) string {
 		parts := commandRegex.FindStringSubmatch(match)
-		if len(parts) >= 4 {
-			return fmt.Sprintf("%s%s%s", parts[1], yellow.Sprint(parts[2]), parts[3])
-		}
-		return match
+		return fmt.Sprintf("%s%s%s", parts[1], yellow.Sprint(parts[2]), parts[3])
 	})
 
 	_, _ = fmt.Fprint(w, helpText)
 }
 
-func main() {
-	// Set custom help printer for colored output
-	cli.HelpPrinter = coloredHelpPrinter
-
-	app := &cli.App{
+func newApp() *cli.App {
+	return &cli.App{
 		Name:  "refresh",
 		Usage: "Manage and monitor AWS EKS clusters and node groups",
 		Flags: []cli.Flag{
@@ -77,14 +72,31 @@ func main() {
 			commands.ClusterCommand(),
 			commands.NodegroupCommand(),
 			commands.AddonCommand(),
+			commands.WorkloadCommand(),
+			// Context (kubectx-style)
+			commands.UseCommand(),
+			commands.CurrentCommand(),
+			commands.ContextCommand(),
 			// Misc
 			commands.VersionCommand(),
 			commands.ManPageCommand(),
 		},
 	}
+}
 
-	if err := app.Run(os.Args); err != nil {
+func run(args []string, out, errOut io.Writer) error {
+	// Set custom help printer for colored output
+	cli.HelpPrinter = coloredHelpPrinter
+
+	app := newApp()
+	app.Writer = out
+	app.ErrWriter = errOut
+	return app.Run(args)
+}
+
+func main() {
+	if err := run(os.Args, os.Stdout, os.Stderr); err != nil {
 		color.Red("Error: %v", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 }

@@ -112,7 +112,7 @@ type Difference struct {
 // ValuePair represents different values for the same field
 type ValuePair struct {
 	ClusterName string      `json:"clusterName"`
-	Value       interface{} `json:"value"`
+	Value       any `json:"value"`
 }
 
 // ComparisonSummary provides overview of cluster comparison

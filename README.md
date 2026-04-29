@@ -24,23 +24,40 @@ refresh/
 ├── internal/
 │   ├── aws/                   # AWS SDK abstractions
 │   │   ├── ami.go            # AMI resolution with thread-safe caching
-│   │   ├── cluster.go        # Cluster discovery and name resolution
+│   │   ├── cluster.go        # Cluster discovery, name resolution, pattern matching
 │   │   ├── nodegroup.go      # Nodegroup operations
 │   │   └── errors.go         # AWS error handling and formatting
+│   ├── awsconfig/            # Unified AWS config loading
+│   │   └── awsconfig.go      # Merges CLI flags, context, and SDK defaults
+│   ├── cliconfig/            # Persistent named contexts
+│   │   └── store.go          # YAML-backed context store (~/.config/refresh/context.yaml)
 │   ├── commands/             # CLI command implementations
-│   │   ├── cluster_group.go  # Cluster commands (list, describe, compare)
-│   │   ├── nodegroup_group.go # Nodegroup commands (list, describe, scale, update-ami)
-│   │   ├── addon_group.go    # Add-on commands (list, describe, update, update-all, security-scan)
-│   │   └── ...               # Individual command implementations
+│   │   ├── cluster_group.go  # Cluster commands (list, describe/get, diff)
+│   │   ├── nodegroup_group.go # Nodegroup commands (list, describe/get, scale, update)
+│   │   ├── addon_group.go    # Add-on commands (list, describe/get, update [--all])
+│   │   ├── context.go        # Context commands (use, current, context add/list/remove)
+│   │   └── ...               # Individual command implementations and formatters
 │   ├── config/               # Configuration management
 │   │   └── config.go         # Thread-safe config with environment variable support
+│   ├── mocks/                # Test doubles for AWS client interfaces
+│   │   ├── eksapi.go         # Configurable EKSAPI mock (function-field pattern)
+│   │   └── builders.go       # Fluent builder for common mock scenarios
 │   ├── types/                # Core domain types
-│   │   └── types.go          # NodegroupInfo, UpdateProgress, MonitorConfig, etc.
+│   │   ├── models.go         # NodegroupInfo, UpdateResult, BatchUpdateResult
+│   │   ├── monitoring.go     # UpdateProgress, ProgressMonitor, MonitorConfig
+│   │   └── status.go         # AMIStatus, DryRunAction (typed enums with color output)
 │   ├── services/             # Business logic layer
 │   │   ├── cluster/          # Cluster service with caching
-│   │   ├── nodegroup/        # Nodegroup service with analytics
-│   │   ├── addons/           # Add-on management and security scanning
-│   │   └── common/           # Shared utilities (retry logic)
+│   │   ├── nodegroup/        # Nodegroup service with utilization and cost analysis
+│   │   │   ├── cost_analyzer.go  # On-demand price estimation via Pricing API
+│   │   │   ├── utilization.go    # CloudWatch CPU metrics (batched, cached)
+│   │   │   └── ...
+│   │   ├── addons/           # Add-on management
+│   │   │   ├── health_check.go      # Pre-update health validation and version compatibility
+│   │   │   ├── version_analyzer.go  # Available version resolution and comparison
+│   │   │   ├── addon_dependencies.go # Dependency ordering for bulk updates
+│   │   │   └── ...
+│   │   └── common/           # Shared utilities (retry/backoff logic)
 │   ├── health/               # Pre-flight health checks
 │   │   ├── checker.go        # Health check orchestrator
 │   │   ├── nodes.go          # Node health validation
@@ -53,10 +70,14 @@ refresh/
 │   │   └── dryrun.go         # Preview updates without changes
 │   └── ui/                   # Terminal UI components
 │       ├── output.go         # Status and output helpers
-│       ├── table.go          # Table rendering with pterm
-│       ├── progress.go       # Spinners and progress bars
+│       ├── table.go          # Table rendering with dynamic column widths
+│       ├── ptable.go         # pterm-based table with ANSI-aware columns
+│       ├── spinner.go        # Progress spinners
+│       ├── fun_spinner.go    # Category-aware rotating message spinners
+│       ├── multi_progress.go # Multi-item progress tracking
+│       ├── tree.go           # Tree view for multi-region cluster display
 │       └── ...               # Additional UI utilities
-└── go.mod                    # Go module dependencies (2025/2026 versions)
+└── go.mod                    # Go module dependencies
 ```
 
 ### Key Design Patterns
@@ -83,6 +104,8 @@ refresh/
 -   **Multi-Region Discovery**: `cluster list` supports `-A/--all-regions` with a concurrency cap (`-C/--max-concurrency`)
 -   **Accurate Node Readiness**: Uses Kubernetes API to compute actual ready node counts when kubeconfig is available
 -   **Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
+-   **Interactive Cluster Selection**: `cluster diff` auto-prompts a multi-select picker when a pattern matches multiple clusters
+-   **Add-on Health Checks**: `addon update --health-check` validates active state and Kubernetes version compatibility before updating
 
 ## Requirements
 
@@ -109,7 +132,6 @@ Monthly Cost = (Hourly On-Demand Price) x 730 hours x (Number of Nodes)
 **Data Source:**
 - Prices are fetched from the **AWS Pricing API** in real-time
 - Queries use your cluster's region to get region-specific pricing
-- **Spot pricing** is fetched from EC2 API for accurate comparisons
 - Fallback to static price map when API is unavailable
 
 **Example:**
@@ -118,26 +140,16 @@ t3a.large in us-west-2: $0.0752/hour
 9 nodes x $0.0752 x 730 hours = $494/month
 ```
 
-**Spot Price Analysis:**
-The cost analyzer now includes spot instance pricing:
-- Fetches current spot prices from EC2 API by availability zone
-- Compares on-demand vs spot pricing for potential savings
-- Calculates estimated savings percentage (typically 60-90%)
-- Provides risk assessment for spot usage
-
 **Limitations:**
-- Spot prices fluctuate and may differ from estimates
 - Does not include EBS storage, data transfer, or other EC2-related costs
 - Pricing API requires `pricing:GetProducts` IAM permission
-- Spot pricing requires `ec2:DescribeSpotPriceHistory` permission
 
 **Required IAM Permissions:**
 ```json
 {
   "Effect": "Allow",
   "Action": [
-    "pricing:GetProducts",
-    "ec2:DescribeSpotPriceHistory"
+    "pricing:GetProducts"
   ],
   "Resource": "*"
 }
@@ -230,22 +242,64 @@ go install github.com/dantech2000/refresh@latest
 refresh
 ├── cluster
 │   ├── list (lc)          # List clusters across regions
-│   ├── describe (dc)      # Describe comprehensive cluster info
-│   └── compare (cc)       # Compare cluster configurations
+│   ├── describe / get     # Describe comprehensive cluster info
+│   └── diff (compare)     # Compare cluster configurations
 ├── nodegroup (ng)
 │   ├── list               # List nodegroups with AMI status
-│   ├── describe           # Describe nodegroup details
-│   ├── update-ami         # Update nodegroup AMI version
-│   ├── scale              # Scale nodegroup with health checks
-│   └── recommendations    # Get optimization recommendations
+│   ├── describe / get     # Describe nodegroup details
+│   ├── update             # Update nodegroup AMI version (alias: update-ami)
+│   └── scale              # Scale nodegroup with health checks
 ├── addon
 │   ├── list               # List cluster add-ons
-│   ├── describe           # Describe add-on details
-│   ├── update             # Update add-on version
-│   ├── update-all         # Update all add-ons to latest versions
-│   └── security-scan      # Scan add-ons for security issues
+│   ├── describe / get     # Describe add-on details
+│   └── update [--all]     # Update one or every add-on (--all replaces update-all)
+├── use [name|-]           # Switch the active context (kubectx-style)
+├── current                # Print the active context
+├── context (ctx)          # Manage saved contexts (list, add, remove)
 └── version                # Show version information
 ```
+
+### Contexts (kubectx-style)
+
+Stop passing `--cluster`, `--region`, and `--profile` on every invocation. Save
+a named context once, then switch between them with `refresh use`.
+
+```bash
+# Save contexts (flags must come before the positional name)
+refresh context add --cluster prod-eks --region us-east-1 --profile prod-admin prod
+refresh context add --cluster stg-eks  --region us-west-2                       staging
+
+# Switch
+refresh use prod          # set prod as active
+refresh use -             # swap back to the previous context
+refresh use               # interactive picker
+refresh current           # print active: prod  cluster=prod-eks  region=us-east-1
+refresh context list      # show all; the active one is marked with *
+
+# Per-shell override without changing the global default
+REFRESH_CONTEXT=staging refresh nodegroup list
+```
+
+Once a context is active, every command picks up its cluster, region, and
+profile automatically:
+
+```bash
+refresh use prod
+refresh nodegroup list           # uses prod-eks in us-east-1 with prod-admin profile
+refresh addon update --all       # same context, no flags needed
+```
+
+**Resolution order** (highest wins):
+
+1. Explicit CLI flag (`--cluster`, `--region`, `--profile`)
+2. `REFRESH_CONTEXT=<name>` env var (per-shell override)
+3. Active context from `~/.config/refresh/context.yaml`
+4. AWS SDK defaults (`AWS_REGION`, `AWS_PROFILE`, `~/.aws/config`)
+5. Kubeconfig current context (cluster name only)
+
+The context file lives at `$XDG_CONFIG_HOME/refresh/context.yaml`
+(default `~/.config/refresh/context.yaml`). Override the location with
+`REFRESH_CONFIG_HOME`.
 
 ### Cluster Management
 
@@ -321,19 +375,34 @@ Created             │ 2023-02-09 04:33:25 UTC
 Compare configurations across multiple clusters for consistency validation:
 
 ```bash
-# Basic comparison
-refresh cluster compare -c dev -c prod
+# Basic comparison (exact names)
+refresh cluster diff -c dev -c prod
 refresh cc -c dev -c prod              # Short alias
 
 # Show only differences
-refresh cluster compare -c dev -c staging --show-differences
+refresh cluster diff -c dev -c staging --show-differences
 
 # Focus on specific aspects
 refresh cc -c prod-east -c prod-west -i networking -i security
 
 # Different output formats
-refresh cluster compare -c dev -c prod -o json
+refresh cluster diff -c dev -c prod -o json
 ```
+
+**Interactive cluster selection** — when a pattern matches more than one cluster,
+the tool automatically launches a multi-select picker. You can also trigger it
+explicitly with `--interactive` to choose from all matching candidates:
+
+```bash
+# "prod" matches prod-east, prod-west, prod-central → interactive picker appears
+refresh cluster diff --cluster prod
+
+# Force the picker even when patterns are unambiguous
+refresh cluster diff -c prod -c staging --interactive
+```
+
+The picker lets you space-toggle clusters and confirm with Enter. At least 2 must
+be selected for the comparison to proceed.
 
 ### Nodegroup Management
 
@@ -394,38 +463,38 @@ Trigger rolling updates to the latest AMI for nodegroups:
 
 ```bash
 # Update all nodegroups in a cluster
-refresh nodegroup update-ami -c <cluster>
+refresh nodegroup update -c <cluster>
 
 # Update specific nodegroup
-refresh ng update-ami -c dev -n web
+refresh ng update -c dev -n web
 
 # Update with partial name matching (confirms before proceeding)
-refresh ng update-ami -c prod -n api-
+refresh ng update -c prod -n api-
 
 # Preview changes without executing (dry run)
-refresh ng update-ami -c staging -n web -d
-refresh ng update-ami -c staging --dry-run
+refresh ng update -c staging -n web -d
+refresh ng update -c staging --dry-run
 
 # Force update (even if already latest)
-refresh ng update-ami -c prod -f
+refresh ng update -c prod -f
 
 # Skip health checks
-refresh ng update-ami -c dev -s
+refresh ng update -c dev -s
 
 # Quiet mode (minimal output)
-refresh ng update-ami -c prod -q
+refresh ng update -c prod -q
 ```
 
 **Example Output:**
 
 ```
 # Single nodegroup update
-$ refresh ng update-ami -c development-blue -n groupF
+$ refresh ng update -c development-blue -n groupF
 Updating nodegroup dev-blue-groupF-20230815230923929900000007...
 Update started for nodegroup dev-blue-groupF-20230815230923929900000007
 
 # Multiple matches with confirmation
-$ refresh ng update-ami -c development-blue -n group
+$ refresh ng update -c development-blue -n group
 Multiple nodegroups match pattern 'group':
   1) dev-blue-groupD-20230814214633237700000007
   2) dev-blue-groupE-20230815204000720600000007
@@ -445,33 +514,6 @@ refresh nodegroup scale -c prod -n web --desired 10 --health-check --wait
 refresh ng scale -c dev -n api --desired 5 --op-timeout 5m
 ```
 
-#### Nodegroup Recommendations
-
-Get intelligent optimization recommendations for nodegroups based on real utilization data:
-
-```bash
-# Get recommendations for cost and right-sizing
-refresh nodegroup recommendations -c prod --cost-optimization --right-sizing
-
-# Include spot instance analysis
-refresh ng recommendations -c dev --spot-analysis --timeframe 30d
-
-# Performance optimization recommendations
-refresh ng recommendations -c prod --performance-optimization
-```
-
-**Recommendation Types:**
-- **Right-sizing**: Analyzes CPU utilization to suggest smaller or larger instance types
-- **Spot Integration**: Identifies on-demand nodegroups suitable for spot instances (up to 70% savings)
-- **Cost Optimization**: Suggests Graviton-based alternatives (ARM64) for cost-effective alternatives
-- **Performance**: Identifies over-utilized nodegroups that may need larger instances
-
-**Analysis Features:**
-- Automatic trend detection (increasing, decreasing, stable utilization)
-- Priority-based recommendations (high, medium, low)
-- Estimated savings calculations
-- Instance type suggestions based on current usage patterns
-
 ### EKS Add-ons Management
 
 Manage cluster add-ons with direct API integration:
@@ -488,63 +530,45 @@ refresh addon describe -c prod -a vpc-cni -o yaml
 # Update add-on to latest version
 refresh addon update <cluster> vpc-cni latest
 refresh addon update -c prod -a vpc-cni --version latest
+
+# Validate health and k8s version compatibility before updating
+refresh addon update -c prod -a vpc-cni --health-check
 ```
+
+**`--health-check` flag** (`-H`) runs two pre-update validations:
+1. Confirms the add-on is `ACTIVE` — refuses if it is `CREATING` or `UPDATING`
+2. Validates the target version is compatible with the cluster's Kubernetes version
+
+Add-ons in `DEGRADED` state are still allowed to update so you can remediate broken
+add-ons. If the versions API is unreachable the check is skipped gracefully.
 
 #### Update All Add-ons
 
 Bulk update all cluster add-ons to their latest compatible versions:
 
 ```bash
-# Update all add-ons (with confirmation)
-refresh addon update-all -c prod
+# Update all add-ons
+refresh addon update --all -c prod
 
 # Dry-run to preview updates
-refresh addon update-all -c staging --dry-run
+refresh addon update --all -c staging --dry-run
+
+# Validate health before each update
+refresh addon update --all -c prod --health-check
 
 # Update in parallel for faster execution
-refresh addon update-all -c dev --parallel
+refresh addon update --all -c dev --parallel
 
 # Wait for all updates to complete
-refresh addon update-all -c prod --wait
+refresh addon update --all -c prod --wait
 
 # Skip specific add-ons
-refresh addon update-all -c prod --skip vpc-cni --skip kube-proxy
+refresh addon update --all -c prod --skip vpc-cni --skip kube-proxy
 ```
 
 **Update Modes:**
 - **Sequential** (default): Updates add-ons one at a time, safer for production
 - **Parallel**: Updates all add-ons simultaneously, faster but higher risk
-
-#### Add-on Security Scan
-
-Scan cluster add-ons for security issues and outdated versions:
-
-```bash
-# Full security scan
-refresh addon security-scan -c prod
-
-# Check for outdated add-ons only
-refresh addon security-scan -c dev --check-outdated
-
-# Check for vulnerabilities (CVEs)
-refresh addon security-scan -c prod --check-vulnerabilities
-
-# Check for misconfigurations (missing IRSA, etc.)
-refresh addon security-scan -c staging --check-misconfigurations
-
-# Filter by minimum severity
-refresh addon security-scan -c prod --min-severity high
-
-# Different output formats
-refresh addon security-scan -c prod -o json
-refresh addon security-scan -c prod -o yaml
-```
-
-**Security Checks:**
-- **Outdated Versions**: Identifies add-ons that are behind the latest compatible version
-- **Vulnerabilities**: Checks for known CVEs in add-on versions
-- **Misconfigurations**: Detects missing IRSA roles, insecure configurations
-- **Severity Levels**: Critical, High, Medium, Low, Info
 
 ### Partial Name Matching
 
@@ -562,7 +586,7 @@ refresh ng list -c dev -n web        # Matches nodegroups containing "web"
 refresh ng list -c dev -n 20230815   # Matches nodegroups created on that date
 ```
 
-When multiple items match, the tool shows all matches and asks for confirmation before proceeding.
+When multiple items match, the tool shows all matches and asks for confirmation before proceeding. For `cluster diff`, a multi-select picker is shown so you can choose 2 or more clusters to compare in a single step.
 
 ### Man Page Documentation
 
@@ -591,20 +615,20 @@ The refresh tool includes comprehensive pre-flight health checks that validate c
 
 ```bash
 # Run health check only (no update)
-refresh ng update-ami -c dev -H
-refresh ng update-ami --cluster dev --health-only
+refresh ng update -c dev -H
+refresh ng update --cluster dev --health-only
 
 # Update with health checks (default behavior)
-refresh ng update-ami -c dev
-refresh ng update-ami --cluster dev
+refresh ng update -c dev
+refresh ng update --cluster dev
 
 # Skip health checks
-refresh ng update-ami -c dev -s
-refresh ng update-ami --cluster dev --skip-health-check
+refresh ng update -c dev -s
+refresh ng update --cluster dev --skip-health-check
 
 # Force update (bypasses health checks)
-refresh ng update-ami -c dev -f
-refresh ng update-ami --cluster dev --force
+refresh ng update -c dev -f
+refresh ng update --cluster dev --force
 ```
 
 ### Sample Health Check Output
@@ -661,13 +685,13 @@ All commands support convenient short flags for faster typing:
 refresh ng list -c prod -n web
 
 # Quick update with dry-run
-refresh ng update-ami -c staging -n api -d -q
+refresh ng update -c staging -n api -d -q
 
 # Force update with health check skip
-refresh ng update-ami -c prod -f -s
+refresh ng update -c prod -f -s
 
 # Health check only with quiet mode
-refresh ng update-ami -c test -H -q
+refresh ng update -c test -H -q
 
 # Cluster operations
 refresh lc -A -H                    # List all clusters with health
@@ -705,12 +729,13 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
 
 - `-d, --show-differences` - Show only differences
 - `-i, --include` - Compare specific aspects (networking, security, addons, versions)
+- `--interactive` - Force interactive multi-select picker for cluster selection
 
 ### Short Command Aliases
 
 - `lc` - `cluster list`
 - `dc` - `cluster describe`
-- `cc` - `cluster compare`
+- `cc` - `cluster diff`
 - `ng` - `nodegroup`
 
 ## Development
@@ -741,6 +766,8 @@ task dev:full
 
 The codebase follows clean architecture principles:
 
+- **internal/awsconfig**: Unified AWS config loading (CLI flags > context > SDK defaults)
+- **internal/cliconfig**: Persistent YAML-backed named contexts
 - **internal/config**: Thread-safe configuration with singleton pattern
 - **internal/types**: Core domain types with proper Go idioms
 - **internal/aws**: AWS SDK abstractions with caching and error handling

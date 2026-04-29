@@ -8,11 +8,11 @@ import (
 func ClusterCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "cluster",
-		Usage: "Cluster operations (list, describe, compare)",
+		Usage: "Cluster operations (list, get, diff)",
 		Subcommands: []*cli.Command{
 			clusterListCommand(),
 			clusterDescribeCommand(),
-			clusterCompareCommand(),
+			clusterDiffCommand(),
 		},
 	}
 }
@@ -33,6 +33,7 @@ func clusterDescribeCommand() *cli.Command {
 	orig := DescribeClusterCommand()
 	return &cli.Command{
 		Name:        "describe",
+		Aliases:     []string{"get"},
 		Usage:       orig.Usage,
 		Description: orig.Description,
 		ArgsUsage:   orig.ArgsUsage,
@@ -41,10 +42,11 @@ func clusterDescribeCommand() *cli.Command {
 	}
 }
 
-func clusterCompareCommand() *cli.Command {
+func clusterDiffCommand() *cli.Command {
 	orig := CompareClustersCommand()
 	return &cli.Command{
-		Name:        "compare",
+		Name:        "diff",
+		Aliases:     []string{"compare"},
 		Usage:       orig.Usage,
 		Description: orig.Description,
 		ArgsUsage:   orig.ArgsUsage,

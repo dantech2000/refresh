@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
@@ -28,7 +28,7 @@ func UpdateAddonCommand() *cli.Command {
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "addon", Aliases: []string{"a"}, Usage: "Add-on name (e.g., vpc-cni)"},
 			&cli.StringFlag{Name: "version", Usage: "Target version or 'latest' (can be provided as third positional)", Value: "latest"},
-			&cli.BoolFlag{Name: "health-check", Aliases: []string{"H"}, Usage: "Placeholder for future pre/post health validation"},
+			&cli.BoolFlag{Name: "health-check", Aliases: []string{"H"}, Usage: "Verify addon is ACTIVE before updating and validate version compatibility with the cluster"},
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview without applying changes"},
 		},
 		Action: func(c *cli.Context) error { return runUpdateAddon(c) },
@@ -39,7 +39,7 @@ func runUpdateAddon(c *cli.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
 	defer cancel()
 
-	cfg, err := config.LoadDefaultConfig(ctx)
+	cfg, err := awsconfig.Load(ctx, c)
 	if err != nil {
 		color.Red("Failed to load AWS config: %v", err)
 		return err

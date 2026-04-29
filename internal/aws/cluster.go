@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/dantech2000/refresh/internal/cliconfig"
 	"github.com/dantech2000/refresh/internal/ui"
 	"github.com/fatih/color"
 	"k8s.io/client-go/tools/clientcmd"
@@ -42,7 +43,7 @@ func ClusterName(ctx context.Context, awsCfg aws.Config, cliFlag string) (string
 	}
 	defer spinner.Stop()
 
-	clusters, err := availableClusters(ctx, awsCfg)
+	clusters, err := AvailableClusters(ctx, awsCfg)
 	spinner.Success("Cluster name resolved!")
 	if err != nil {
 		return "", FormatAWSError(err, "listing EKS clusters")
@@ -83,13 +84,27 @@ func ClusterName(ctx context.Context, awsCfg aws.Config, cliFlag string) (string
 	return selectedCluster, nil
 }
 
-// resolveClusterPattern determines the cluster pattern from CLI flag or kubeconfig.
+// resolveClusterPattern determines the cluster pattern from CLI flag,
+// active refresh context, or kubeconfig (in that order).
 func resolveClusterPattern(cliFlag string) (string, error) {
 	if cliFlag != "" {
 		return cliFlag, nil
 	}
-
+	if name := activeContextCluster(); name != "" {
+		return name, nil
+	}
 	return extractClusterFromKubeconfig()
+}
+
+func activeContextCluster() string {
+	f, err := cliconfig.Load()
+	if err != nil {
+		return ""
+	}
+	if _, ctx, ok := f.Active(); ok {
+		return ctx.Cluster
+	}
+	return ""
 }
 
 // extractClusterFromKubeconfig extracts the cluster name from the current kubeconfig context.
@@ -150,8 +165,8 @@ func extractNameFromServer(server string) string {
 	return ""
 }
 
-// availableClusters returns all EKS cluster names in the current region.
-func availableClusters(ctx context.Context, awsCfg aws.Config) ([]string, error) {
+// AvailableClusters returns all EKS cluster names in the current region.
+func AvailableClusters(ctx context.Context, awsCfg aws.Config) ([]string, error) {
 	eksClient := eks.NewFromConfig(awsCfg)
 
 	var clusters []string

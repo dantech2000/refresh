@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -89,7 +89,7 @@ func UpdateAmiCommand() *cli.Command {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 			defer cancel()
-			awsCfg, err := config.LoadDefaultConfig(ctx)
+			awsCfg, err := awsconfig.Load(ctx, c)
 			if err != nil {
 				color.Red("Failed to load AWS config: %v", err)
 				return err

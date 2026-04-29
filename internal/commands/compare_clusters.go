@@ -2,21 +2,19 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/fatih/color"
+	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v2"
 
-	"gopkg.in/yaml.v3"
-
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
-	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -28,46 +26,20 @@ func CompareClustersCommand() *cli.Command {
 		Aliases: []string{"cc"},
 		Usage:   "Compare EKS clusters side-by-side for consistency validation",
 		Description: `Analyze configuration differences between EKS clusters to ensure
-consistency across environments. Supports comparison of networking, 
+consistency across environments. Supports comparison of networking,
 security, add-ons, and version configurations.`,
 		Flags: []cli.Flag{
-			&cli.StringSliceFlag{
-				Name:     "cluster",
-				Aliases:  []string{"c"},
-				Usage:    "Cluster name or pattern (specify multiple times)",
-				Required: true,
-			},
-			&cli.BoolFlag{
-				Name:  "interactive",
-				Usage: "Interactively select clusters when multiple patterns match",
-				Value: false,
-			},
-			&cli.BoolFlag{
-				Name:    "show-differences",
-				Aliases: []string{"d"},
-				Usage:   "Show only differences (hide identical configurations)",
-				Value:   false,
-			},
-			&cli.StringSliceFlag{
-				Name:    "include",
-				Aliases: []string{"i"},
-				Usage:   "Compare specific aspects (networking, security, addons, versions)",
-			},
-			&cli.StringFlag{
-				Name:    "format",
-				Aliases: []string{"o"},
-				Usage:   "Output format (table, json, yaml)",
-				Value:   "table",
-			},
+			&cli.StringSliceFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "Cluster name or pattern (specify multiple times)", Required: true},
+			&cli.BoolFlag{Name: "interactive", Usage: "Interactively select clusters when multiple patterns match"},
+			&cli.BoolFlag{Name: "show-differences", Aliases: []string{"d"}, Usage: "Show only differences (hide identical configurations)"},
+			&cli.StringSliceFlag{Name: "include", Aliases: []string{"i"}, Usage: "Compare specific aspects (networking, security, addons, versions)"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml)", Value: "table"},
 		},
-		Action: func(c *cli.Context) error {
-			return runCompareClusters(c)
-		},
+		Action: func(c *cli.Context) error { return runCompareClusters(c) },
 	}
 }
 
 func runCompareClusters(c *cli.Context) error {
-	// Honor global timeout if provided at app level; fallback to 60s
 	timeout := c.Duration("timeout")
 	if timeout == 0 {
 		timeout = 60 * time.Second
@@ -80,14 +52,11 @@ func runCompareClusters(c *cli.Context) error {
 		return fmt.Errorf("need at least 2 clusters to compare, use --cluster flag multiple times")
 	}
 
-	// Load AWS config
-	awsCfg, err := config.LoadDefaultConfig(ctx)
+	awsCfg, err := awsconfig.Load(ctx, c)
 	if err != nil {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-
-	// Validate AWS credentials early to provide better error messages
 	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
 		color.Red("%v", err)
 		fmt.Println()
@@ -95,54 +64,34 @@ func runCompareClusters(c *cli.Context) error {
 		return fmt.Errorf("AWS credential validation failed")
 	}
 
-	// Create logger
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-
-	// Create cluster service with health
 	clusterService := newClusterService(awsCfg, true, logger)
 
-	// Resolve cluster names
-	var clusterNames []string
-	for _, pattern := range clusterPatterns {
-		// In interactive mode we allow ambiguous patterns and prompt via ClusterName helper
-		clusterName, err := awsinternal.ClusterName(ctx, awsCfg, pattern)
-		if err != nil {
-			return fmt.Errorf("failed to resolve cluster '%s': %w", pattern, err)
-		}
-		clusterNames = append(clusterNames, clusterName)
+	clusterNames, err := resolveCompareClusterNames(ctx, awsCfg, clusterPatterns, c.Bool("interactive"))
+	if err != nil {
+		return err
 	}
 
-	// Remove duplicates
-	clusterNames = removeDuplicates(clusterNames)
-	if len(clusterNames) < 2 {
-		return fmt.Errorf("resolved clusters contain duplicates, need at least 2 unique clusters")
-	}
-
-	// Set up options
 	options := cluster.CompareOptions{
 		ShowDifferencesOnly: c.Bool("show-differences"),
 		Include:             c.StringSlice("include"),
 		Format:              c.String("format"),
 	}
 
-	// Create spinner
 	spinner := ui.NewFunSpinnerForCategory("cluster")
 	if err := spinner.Start(); err != nil {
 		return err
 	}
 	defer spinner.Stop()
 
-	// Perform comparison
 	startTime := time.Now()
 	comparison, err := clusterService.Compare(ctx, clusterNames, options)
-
 	spinner.Success("Analysis complete!")
 	if err != nil {
 		return err
 	}
 	elapsed := time.Since(startTime)
 
-	// Output results based on format
 	switch strings.ToLower(c.String("format")) {
 	case "json":
 		return outputComparisonJSON(comparison)
@@ -153,186 +102,85 @@ func runCompareClusters(c *cli.Context) error {
 	}
 }
 
-func outputComparisonJSON(comparison *cluster.ClusterComparison) error {
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(comparison)
-}
-
-func outputComparisonYAML(comparison *cluster.ClusterComparison) error {
-	encoder := yaml.NewEncoder(os.Stdout)
-	encoder.SetIndent(2)
-	defer func() {
-		_ = encoder.Close() // Ignore close errors for output streams
-	}()
-	return encoder.Encode(comparison)
-}
-
-func outputComparisonTable(comparison *cluster.ClusterComparison, elapsed time.Duration) error {
-	// Header
-	clusterNames := make([]string, len(comparison.Clusters))
-	for i, c := range comparison.Clusters {
-		clusterNames[i] = c.Name
+// resolveCompareClusterNames resolves each pattern to one or more cluster names
+// for use in a comparison. When a pattern is ambiguous (matches >1 cluster) it
+// either launches an interactive multi-select (interactive=true or --interactive
+// flag) or returns an error directing the user to use that flag.
+func resolveCompareClusterNames(ctx context.Context, awsCfg aws.Config, patterns []string, interactive bool) ([]string, error) {
+	spinner := ui.NewFunSpinnerForCategory("general")
+	if err := spinner.Start(); err != nil {
+		return nil, err
+	}
+	all, err := awsinternal.AvailableClusters(ctx, awsCfg)
+	spinner.Stop()
+	if err != nil {
+		return nil, awsinternal.FormatAWSError(err, "listing EKS clusters")
+	}
+	if len(all) == 0 {
+		return nil, fmt.Errorf("no EKS clusters found in current region")
 	}
 
-	fmt.Printf("Cluster Comparison: %s\n", color.CyanString(strings.Join(clusterNames, " vs ")))
-	fmt.Printf("Analyzed in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+	// Expand each pattern into its matches, de-duplicate across all patterns.
+	seen := make(map[string]bool)
+	var candidates []string
+	ambiguous := false
 
-	// Summary using dynamic table
-	summary := comparison.Summary
-	summaryTable := ui.NewDynamicTable()
-	summaryTable.Add("Total Differences", fmt.Sprintf("%d", summary.TotalDifferences)).
-		Add("Critical Issues", formatDifferenceCount(summary.CriticalDifferences, "critical")).
-		Add("Warnings", formatDifferenceCount(summary.WarningDifferences, "warning")).
-		Add("Informational", formatDifferenceCount(summary.InfoDifferences, "info")).
-		AddBool("Equivalent", summary.ClustersAreEquivalent)
-
-	summaryTable.RenderSection("Comparison Summary")
-	fmt.Println()
-
-	// If no differences, we're done
-	if len(comparison.Differences) == 0 {
-		color.Green("PASS: Clusters are identical in all analyzed aspects")
-		return nil
-	}
-
-	// Basic cluster information comparison
-	fmt.Printf("Basic Information:\n")
-	columns := []ui.Column{
-		{Title: "CLUSTER", Min: 14, Max: 0, Align: ui.AlignLeft},
-		{Title: "STATUS", Min: 7, Max: 0, Align: ui.AlignLeft},
-		{Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft},
-		{Title: "HEALTH", Min: 15, Max: 0, Align: ui.AlignLeft},
-	}
-	table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
-	for _, cl := range comparison.Clusters {
-		healthStatus := color.WhiteString("UNKNOWN")
-		if cl.Health != nil {
-			switch cl.Health.Decision {
-			case health.DecisionProceed:
-				healthStatus = color.GreenString("PASS")
-			case health.DecisionWarn:
-				healthStatus = color.YellowString("WARN")
-			case health.DecisionBlock:
-				healthStatus = color.RedString("FAIL")
+	for _, pat := range patterns {
+		matches := awsinternal.MatchingClusters(all, pat)
+		switch len(matches) {
+		case 0:
+			return nil, fmt.Errorf("no clusters found matching pattern %q", pat)
+		case 1:
+			if !seen[matches[0]] {
+				seen[matches[0]] = true
+				candidates = append(candidates, matches[0])
+			}
+		default:
+			ambiguous = true
+			for _, m := range matches {
+				if !seen[m] {
+					seen[m] = true
+					candidates = append(candidates, m)
+				}
 			}
 		}
-		table.AddRow(
-			truncateString(cl.Name, 14),
-			formatStatus(cl.Status),
-			cl.Version,
-			healthStatus,
-		)
-	}
-	table.Render()
-	fmt.Println()
-
-	// Detailed differences
-	if len(comparison.Differences) > 0 {
-		fmt.Printf("Configuration Differences:\n\n")
-
-		criticalDiffs := filterDifferencesBySeverity(comparison.Differences, "critical")
-		warningDiffs := filterDifferencesBySeverity(comparison.Differences, "warning")
-		infoDiffs := filterDifferencesBySeverity(comparison.Differences, "info")
-
-		if len(criticalDiffs) > 0 {
-			fmt.Printf("%s Critical Issues:\n", color.RedString("[CRITICAL]"))
-			printDifferences(criticalDiffs)
-			fmt.Println()
-		}
-
-		if len(warningDiffs) > 0 {
-			fmt.Printf("%s Warnings:\n", color.YellowString("[WARNING]"))
-			printDifferences(warningDiffs)
-			fmt.Println()
-		}
-
-		if len(infoDiffs) > 0 {
-			fmt.Printf("%s Information:\n", color.BlueString("[INFO]"))
-			printDifferences(infoDiffs)
-			fmt.Println()
-		}
 	}
 
-	// Recommendations
-	if summary.CriticalDifferences > 0 {
-		color.Red("\n[CRITICAL] Action Required:")
-		color.Red("Critical differences detected that may affect cluster security or functionality.")
-		color.Red("Review and address these issues before proceeding with production workloads.")
-	} else if summary.WarningDifferences > 0 {
-		color.Yellow("\n[WARNING] Consider Review:")
-		color.Yellow("Configuration differences detected that may affect consistency.")
-		color.Yellow("Review these differences to ensure they are intentional.")
-	} else {
-		color.Green("\n[PASS] Analysis Complete:")
-		color.Green("Only informational differences found. Clusters are functionally equivalent.")
+	if ambiguous || interactive {
+		return interactiveSelectClusters(candidates)
 	}
 
-	return nil
+	if len(candidates) < 2 {
+		return nil, fmt.Errorf("need at least 2 unique clusters to compare (patterns resolved to %d)", len(candidates))
+	}
+	return candidates, nil
 }
 
-// migrated basic info table to ui.Table
-
-func printDifferences(differences []cluster.Difference) {
-	for _, diff := range differences {
-		// Print difference header
-		severity := ""
-		switch diff.Severity {
-		case "critical":
-			severity = color.RedString("[CRITICAL]")
-		case "warning":
-			severity = color.YellowString("[WARNING]")
-		case "info":
-			severity = color.BlueString("[INFO]")
-		}
-
-		fmt.Printf("  %s %s: %s\n", severity, color.YellowString(diff.Field), diff.Description)
-
-		// Print values for each cluster
-		for _, valuePair := range diff.Values {
-			fmt.Printf("    • %s: %v\n", color.CyanString(valuePair.ClusterName), valuePair.Value)
-		}
-		fmt.Println()
+// interactiveSelectClusters shows a pterm multi-select and returns the chosen clusters.
+// At least 2 must be selected.
+func interactiveSelectClusters(candidates []string) ([]string, error) {
+	color.Cyan("Select clusters to compare (space to toggle, enter to confirm):")
+	selected, err := pterm.DefaultInteractiveMultiselect.
+		WithOptions(candidates).
+		WithMaxHeight(15).
+		Show()
+	if err != nil {
+		return nil, fmt.Errorf("cluster selection cancelled: %w", err)
 	}
-}
-
-func formatDifferenceCount(count int, severity string) string {
-	if count == 0 {
-		return "0"
+	if len(selected) < 2 {
+		return nil, fmt.Errorf("select at least 2 clusters to compare (got %d)", len(selected))
 	}
-
-	switch severity {
-	case "critical":
-		return color.RedString("%d", count)
-	case "warning":
-		return color.YellowString("%d", count)
-	case "info":
-		return color.BlueString("%d", count)
-	default:
-		return fmt.Sprintf("%d", count)
-	}
-}
-
-func filterDifferencesBySeverity(differences []cluster.Difference, severity string) []cluster.Difference {
-	var filtered []cluster.Difference
-	for _, diff := range differences {
-		if diff.Severity == severity {
-			filtered = append(filtered, diff)
-		}
-	}
-	return filtered
+	return selected, nil
 }
 
 func removeDuplicates(slice []string) []string {
-	keys := make(map[string]bool)
-	var result []string
-
-	for _, item := range slice {
-		if !keys[item] {
-			keys[item] = true
-			result = append(result, item)
+	seen := make(map[string]bool)
+	var out []string
+	for _, s := range slice {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
 		}
 	}
-
-	return result
+	return out
 }

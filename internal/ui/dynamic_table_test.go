@@ -62,9 +62,11 @@ func TestDynamicTable_StatusColoring(t *testing.T) {
 	table.AddStatus("Health", "ACTIVE")
 	table.AddStatus("Status", "FAILED")
 	table.AddStatus("Warning", "WARN")
+	table.AddStatus("Unknown", "UNKNOWN")
+	table.AddStatus("Default", "CUSTOM")
 
-	if table.Count() != 3 {
-		t.Errorf("Expected 3 rows, got %d", table.Count())
+	if table.Count() != 5 {
+		t.Errorf("Expected 5 rows, got %d", table.Count())
 	}
 }
 
@@ -136,6 +138,7 @@ func TestCalculateVisibleWidth(t *testing.T) {
 		{"", 0},
 		{"\u001b[31mred text\u001b[0m", 8},    // ANSI colored text
 		{"mix\u001b[31mred\u001b[0mtext", 10}, // "mix" + "red" + "text" = 10 chars
+		{"\u001b[" + strings.Repeat("1", 33) + "broken", 7},
 	}
 
 	for _, test := range tests {
@@ -143,6 +146,25 @@ func TestCalculateVisibleWidth(t *testing.T) {
 		if result != test.expected {
 			t.Errorf("calculateVisibleWidth(%q) = %d, expected %d", test.input, result, test.expected)
 		}
+	}
+}
+
+func TestDynamicTable_RenderSectionAndConstructors(t *testing.T) {
+	originalStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = originalStdout })
+
+	CreateInfoTable().Add("Info", "value").RenderSection("Info")
+	CreateStatusTable().AddBool("Enabled", false).RenderSection("")
+	CreateSecurityTable().Render()
+
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	output := buf.String()
+	if !strings.Contains(output, "Info") || !strings.Contains(output, "DISABLED") {
+		t.Fatalf("RenderSection output = %q", output)
 	}
 }
 

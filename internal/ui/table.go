@@ -129,9 +129,6 @@ func (t *Table) computeColumnWidths() []int {
 			if w > widths[i] {
 				widths[i] = w
 			}
-			if t.columns[i].Min > 0 && widths[i] < t.columns[i].Min {
-				widths[i] = t.columns[i].Min
-			}
 		}
 	}
 	return widths
@@ -194,9 +191,6 @@ func truncateANSI(s string, width int) string {
 	}
 	if reserve > len(s) {
 		reserve = len(s)
-	}
-	if reserve < width { // ensure at least width capacity
-		reserve = width
 	}
 	out.Grow(reserve)
 	var visibleCount int

@@ -206,15 +206,19 @@ func buildSSMParameterPath(k8sVersion string, amiType types.AMITypes) string {
 func inferSSMPath(basePrefix, amiTypeStr string) string {
 	amiTypeStr = strings.ToUpper(amiTypeStr)
 
+	// EKS AMI type strings use "ARM_64" (e.g. AL2023_ARM_64_STANDARD, BOTTLEROCKET_ARM_64);
+	// check for "ARM" to match both "ARM64" and "ARM_64" variants.
+	isArm := strings.Contains(amiTypeStr, "ARM")
+
 	switch {
 	case strings.Contains(amiTypeStr, "AL2023"):
-		if strings.Contains(amiTypeStr, "ARM64") {
+		if isArm {
 			return basePrefix + "/amazon-linux-2023/arm64/standard/recommended/image_id"
 		}
 		return basePrefix + "/amazon-linux-2023/x86_64/standard/recommended/image_id"
 
 	case strings.Contains(amiTypeStr, "BOTTLEROCKET"):
-		if strings.Contains(amiTypeStr, "ARM64") {
+		if isArm {
 			return basePrefix + "/bottlerocket/arm64/recommended/image_id"
 		}
 		return basePrefix + "/bottlerocket/x86_64/recommended/image_id"

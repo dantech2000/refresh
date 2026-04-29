@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 
@@ -70,7 +70,7 @@ func runDescribeNodegroup(c *cli.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
 	defer cancel()
 
-	awsCfg, err := config.LoadDefaultConfig(ctx)
+	awsCfg, err := awsconfig.Load(ctx, c)
 	if err != nil {
 		color.Red("Failed to load AWS config: %v", err)
 		return err

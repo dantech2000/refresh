@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 
@@ -105,7 +105,7 @@ func runListNodegroups(c *cli.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
 	defer cancel()
 
-	awsCfg, err := config.LoadDefaultConfig(ctx)
+	awsCfg, err := awsconfig.Load(ctx, c)
 	if err != nil {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
@@ -113,7 +113,7 @@ func runListNodegroups(c *cli.Context) error {
 
 	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
 		color.Red("%v", err)
-		fmt.Println()
+		ui.Outln()
 		awsinternal.PrintCredentialHelp()
 		return fmt.Errorf("AWS credential validation failed")
 	}
@@ -124,8 +124,8 @@ func runListNodegroups(c *cli.Context) error {
 		requested = c.String("cluster")
 	}
 	if strings.TrimSpace(requested) == "" {
-		fmt.Println("No cluster specified. Available clusters:")
-		fmt.Println()
+		ui.Outln("No cluster specified. Available clusters:")
+		ui.Outln()
 		start := time.Now()
 		svcList := newClusterService(awsCfg, false, nil)
 		summaries, err := svcList.List(ctx, cluster.ListOptions{})
@@ -199,13 +199,13 @@ func outputNodegroupsTableWithWindow(clusterName, timeframe string, items []node
 		color.Yellow("No nodegroups found for cluster: %s", clusterName)
 		return nil
 	}
-	fmt.Printf("Nodegroups for cluster: %s\n", clusterName)
+	ui.Outf("Nodegroups for cluster: %s\n", clusterName)
 
 	// Show retrieval time with optional utilization window
 	if opts.ShowUtilization {
-		fmt.Printf("Retrieved in %s (utilization window %s)\n", color.GreenString("%.1fs", elapsed.Seconds()), timeframe)
+		ui.Outf("Retrieved in %s (utilization window %s)\n", color.GreenString("%.1fs", elapsed.Seconds()), timeframe)
 	} else {
-		fmt.Printf("Retrieved in %s\n", color.GreenString("%.1fs", elapsed.Seconds()))
+		ui.Outf("Retrieved in %s\n", color.GreenString("%.1fs", elapsed.Seconds()))
 	}
 
 	// Show which optional data is being requested
@@ -217,9 +217,9 @@ func outputNodegroupsTableWithWindow(clusterName, timeframe string, items []node
 		if opts.ShowCosts {
 			extras = append(extras, "cost estimates")
 		}
-		fmt.Printf("Including: %s\n", strings.Join(extras, ", "))
+		ui.Outf("Including: %s\n", strings.Join(extras, ", "))
 	}
-	fmt.Println()
+	ui.Outln()
 
 	// Define base columns
 	columns := []ui.Column{
