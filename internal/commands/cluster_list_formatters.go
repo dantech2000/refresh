@@ -35,13 +35,12 @@ func outputClustersTable(summaries []cluster.ClusterSummary, elapsed time.Durati
 		return nil
 	}
 
-	regionCount := 1
 	if multiRegion {
 		regions := make(map[string]bool)
 		for _, s := range summaries {
 			regions[s.Region] = true
 		}
-		regionCount = len(regions)
+		regionCount := len(regions)
 		ui.Outf("EKS Clusters (%d regions, %d clusters)\n", regionCount, len(summaries))
 	} else {
 		ui.Outf("EKS Clusters (%d clusters)\n", len(summaries))

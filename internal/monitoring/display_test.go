@@ -19,7 +19,7 @@ func captureStdout(fn func()) string {
 	old := os.Stdout
 	os.Stdout = w
 	fn()
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 	var buf bytes.Buffer
 	_, _ = io.Copy(&buf, r)
