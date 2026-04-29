@@ -20,7 +20,7 @@ func TestDefaultConstants(t *testing.T) {
 }
 
 func TestRegionsFromEnv_NotSet(t *testing.T) {
-	os.Unsetenv(EnvEKSRegions)
+	_ = os.Unsetenv(EnvEKSRegions)
 	if r := RegionsFromEnv(); r != nil {
 		t.Errorf("expected nil when env not set, got %v", r)
 	}
@@ -81,7 +81,7 @@ func TestGetEnvDuration_Invalid(t *testing.T) {
 }
 
 func TestGetEnvDuration_Unset(t *testing.T) {
-	os.Unsetenv("TEST_DUR_UNSET")
+	_ = os.Unsetenv("TEST_DUR_UNSET")
 	if d := getEnvDuration("TEST_DUR_UNSET"); d != 0 {
 		t.Errorf("expected 0 for unset env, got %v", d)
 	}
@@ -148,10 +148,9 @@ func TestDefaultEKSRegions_NotEmpty(t *testing.T) {
 
 func TestGetLoadsEnvironmentOnce(t *testing.T) {
 	oldConfig := globalConfig
-	oldOnce := configOnce
 	t.Cleanup(func() {
 		globalConfig = oldConfig
-		configOnce = oldOnce
+		configOnce = sync.Once{}
 	})
 
 	globalConfig = nil
