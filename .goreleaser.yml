@@ -56,6 +56,12 @@ homebrew_casks:
     homepage: "https://github.com/dantech2000/refresh"
     description: "Manage and monitor AWS EKS node groups using your local kubeconfig and AWS credentials"
     license: "MIT"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/refresh"]
+          end
 
 release:
   github:
