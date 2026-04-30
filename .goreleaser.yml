@@ -55,6 +55,7 @@ homebrew_casks:
     directory: Casks
     homepage: "https://github.com/dantech2000/refresh"
     description: "Manage and monitor AWS EKS node groups using your local kubeconfig and AWS credentials"
+    license: "MIT"
 
 release:
   github:
