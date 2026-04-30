@@ -7,6 +7,7 @@ package awsconfig
 import (
 	"context"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -60,7 +61,15 @@ func flagOrEmpty(c *cli.Context, name string) string {
 	if c == nil {
 		return ""
 	}
-	return c.String(name)
+	value := strings.TrimSpace(c.String(name))
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		values := strings.Fields(strings.Trim(value, "[]"))
+		if len(values) == 0 {
+			return ""
+		}
+		return values[0]
+	}
+	return value
 }
 
 func activeContext() (cliconfig.Context, bool) {

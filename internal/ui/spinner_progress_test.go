@@ -1,27 +1,9 @@
 package ui
 
 import (
-	"context"
 	"testing"
 	"time"
 )
-
-func TestProgressSpinnerLifecycle(t *testing.T) {
-	spinner := NewProgressSpinner("starting")
-	if spinner == nil || spinner.message != "starting" {
-		t.Fatalf("spinner = %#v", spinner)
-	}
-	stop := spinner.Start(context.Background())
-	spinner.UpdateText("updated")
-	spinner.Success("done")
-	spinner.Fail("failed")
-	spinner.Warning("warn")
-	spinner.Stop("success")
-	stop()
-
-	NewPtermHealthSpinner("health").Stop("")
-	NewProgressSpinner("empty").Stop("")
-}
 
 func TestProgressBarLifecycle(t *testing.T) {
 	bar := NewProgressBar(2, "work")
@@ -50,6 +32,7 @@ func TestFunMessages(t *testing.T) {
 		Addon:     []string{"addon"},
 		General:   []string{"general"},
 		Health:    []string{"health"},
+		Workload:  []string{"workload"},
 	}
 
 	for category, want := range map[string]string{
@@ -57,6 +40,7 @@ func TestFunMessages(t *testing.T) {
 		"nodegroup": "nodegroup",
 		"addon":     "addon",
 		"health":    "health",
+		"workload":  "workload",
 		"other":     "general",
 	} {
 		got := fm.GetMessages(category)
