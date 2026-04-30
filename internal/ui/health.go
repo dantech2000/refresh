@@ -10,11 +10,6 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 )
 
-// NewHealthSpinner creates a new spinner for health checks (pterm-based)
-func NewHealthSpinner(message string) *ProgressSpinner {
-	return NewProgressSpinner(message)
-}
-
 // DisplayHealthResults displays the health check results in the specified format
 func DisplayHealthResults(summary health.HealthSummary) {
 	Outln("\nCluster Health Assessment:")

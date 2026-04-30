@@ -3,14 +3,15 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 
@@ -24,8 +25,9 @@ import (
 
 func UpdateAmiCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "update-ami",
-		Usage: "Update the AMI for all or a specific node group (rolling by default)",
+		Name:      "update-ami",
+		Usage:     "Update the AMI for all or a specific node group (rolling by default)",
+		ArgsUsage: "[cluster] [nodegroup]",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "cluster",
@@ -102,7 +104,8 @@ func UpdateAmiCommand() *cli.Command {
 				awsClient.PrintCredentialHelp()
 				return fmt.Errorf("AWS credential validation failed")
 			}
-			clusterName, err := awsClient.ClusterName(ctx, awsCfg, c.String("cluster"))
+			requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(c)
+			clusterName, err := awsClient.ClusterName(ctx, awsCfg, requestedCluster)
 			if err != nil {
 				color.Red("%v", err)
 				return err
@@ -110,7 +113,6 @@ func UpdateAmiCommand() *cli.Command {
 			eksClient := eks.NewFromConfig(awsCfg)
 
 			// Parse command flags
-			nodegroupPattern := c.String("nodegroup")
 			force := c.Bool("force")
 			dryRun := c.Bool("dry-run")
 			noWait := c.Bool("no-wait")
@@ -118,7 +120,7 @@ func UpdateAmiCommand() *cli.Command {
 			timeout := c.Duration("timeout")
 			pollInterval := c.Duration("poll-interval")
 			skipHealthCheck := c.Bool("skip-health-check")
-			healthOnly := c.Bool("health-only")
+			healthOnly := updateBoolFlag(c, "health-only", "H")
 
 			// Run pre-flight health checks (unless skipped or in dry-run mode)
 			if !skipHealthCheck && !dryRun && !force {
@@ -137,16 +139,18 @@ func UpdateAmiCommand() *cli.Command {
 				healthChecker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
 
 				// Run health checks with spinner
-				spinner := ui.NewHealthSpinner("Validating update readiness...")
-				var cancelSpinner func()
+				spinner := ui.NewFunSpinnerForCategory("health")
 				if !quiet {
-					cancelSpinner = spinner.Start(ctx)
+					if err := spinner.Start(); err != nil {
+						return err
+					}
+					defer spinner.Stop()
 				}
 
 				summary := healthChecker.RunAllChecks(ctx, clusterName)
 
-				if !quiet && cancelSpinner != nil {
-					spinner.Stop("Health validation complete!")
+				if !quiet {
+					spinner.Success("Health validation complete!")
 				}
 
 				// Display results
@@ -289,4 +293,62 @@ func UpdateAmiCommand() *cli.Command {
 			return monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
 		},
 	}
+}
+
+func updateClusterAndNodegroupPatterns(c *cli.Context) (string, string) {
+	clusterPattern := strings.TrimSpace(c.String("cluster"))
+	nodegroupPattern := strings.TrimSpace(c.String("nodegroup"))
+	nonFlags := nonFlagArgs(c)
+
+	if clusterPattern == "" && len(nonFlags) > 0 {
+		clusterPattern = nonFlags[0]
+	}
+
+	if nodegroupPattern == "" {
+		nodegroupArgIndex := 1
+		if c.String("cluster") != "" {
+			nodegroupArgIndex = 0
+		}
+		if len(nonFlags) > nodegroupArgIndex {
+			nodegroupPattern = nonFlags[nodegroupArgIndex]
+		}
+	}
+
+	return clusterPattern, nodegroupPattern
+}
+
+func nonFlagArgs(c *cli.Context) []string {
+	if c == nil {
+		return nil
+	}
+	args := c.Args().Slice()
+	nonFlags := make([]string, 0, len(args))
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		nonFlags = append(nonFlags, arg)
+	}
+	return nonFlags
+}
+
+func updateBoolFlag(c *cli.Context, name string, aliases ...string) bool {
+	if c == nil {
+		return false
+	}
+	if c.Bool(name) {
+		return true
+	}
+	args := c.Args().Slice()
+	for _, arg := range args {
+		if arg == "--"+name {
+			return true
+		}
+		for _, alias := range aliases {
+			if arg == "-"+alias {
+				return true
+			}
+		}
+	}
+	return false
 }

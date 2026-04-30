@@ -166,6 +166,27 @@ func TestList_FilterByNameExcludesNonMatching(t *testing.T) {
 	}
 }
 
+func TestList_NodeCountUsesManagedNodegroupTotals(t *testing.T) {
+	fake := &fakeEKSClient{
+		clustersPages: [][]string{{"staging-blue"}},
+		nodegroupsPages: map[string][][]string{
+			"staging-blue": {{"group-c", "group-d", "monolith-b"}},
+		},
+	}
+	svc := newTestServiceWithFake(t, fake)
+
+	summaries, err := svc.List(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("expected 1 summary, got %d", len(summaries))
+	}
+	if summaries[0].NodeCount.Ready != 6 || summaries[0].NodeCount.Total != 6 {
+		t.Fatalf("NodeCount = %+v, want 6/6", summaries[0].NodeCount)
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Describe
 // ──────────────────────────────────────────────────────────────────────────────

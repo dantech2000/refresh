@@ -107,12 +107,7 @@ func runCompareClusters(c *cli.Context) error {
 // either launches an interactive multi-select (interactive=true or --interactive
 // flag) or returns an error directing the user to use that flag.
 func resolveCompareClusterNames(ctx context.Context, awsCfg aws.Config, patterns []string, interactive bool) ([]string, error) {
-	spinner := ui.NewFunSpinnerForCategory("general")
-	if err := spinner.Start(); err != nil {
-		return nil, err
-	}
 	all, err := awsinternal.AvailableClusters(ctx, awsCfg)
-	spinner.Stop()
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, "listing EKS clusters")
 	}

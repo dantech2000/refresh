@@ -27,6 +27,7 @@ func ListClustersCommand() *cli.Command {
 		Description: `Fast cluster discovery across regions with integrated health validation.
 Direct EKS API calls provide high performance along with comprehensive
 health monitoring and multi-region capabilities.`,
+		ArgsUsage: "[name-pattern]",
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: 60 * time.Second, EnvVars: []string{"REFRESH_TIMEOUT"}},
 			&cli.IntFlag{Name: "max-concurrency", Aliases: []string{"C"}, Usage: "Max concurrent region requests", Value: appconfig.DefaultMaxConcurrency, EnvVars: []string{"REFRESH_MAX_CONCURRENCY"}},
@@ -68,6 +69,9 @@ func runListClusters(c *cli.Context) error {
 			filters[parts[0]] = parts[1]
 		}
 	}
+	if pattern := strings.TrimSpace(c.Args().First()); pattern != "" {
+		filters["name"] = pattern
+	}
 
 	allRegions := c.Bool("all-regions") || c.Bool("tree") || c.String("format") == "tree"
 	options := cluster.ListOptions{
@@ -84,11 +88,13 @@ func runListClusters(c *cli.Context) error {
 	if allRegions || len(c.StringSlice("region")) > 0 {
 		summaries, err = runMultiRegionListWithProgress(ctx, clusterService, options)
 	} else {
-		spinner := ui.NewProgressSpinner("Querying EKS clusters...")
-		cancelSpinner := spinner.Start(ctx)
-		defer cancelSpinner()
+		spinner := ui.NewFunSpinnerForCategory("cluster")
+		if err := spinner.Start(); err != nil {
+			return err
+		}
+		defer spinner.Stop()
 		summaries, err = clusterService.List(ctx, options)
-		spinner.Stop("Cluster information gathered!")
+		spinner.Success("Cluster information gathered!")
 	}
 	if err != nil {
 		return err

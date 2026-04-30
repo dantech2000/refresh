@@ -120,8 +120,8 @@ func ngUpdateCommand() *cli.Command {
 		Aliases:     []string{"update-ami"},
 		Usage:       orig.Usage,
 		Description: orig.Description,
+		ArgsUsage:   orig.ArgsUsage,
 		Flags:       orig.Flags,
 		Action:      orig.Action,
 	}
 }
-
