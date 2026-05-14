@@ -8,12 +8,13 @@ import (
 	"github.com/dantech2000/refresh/internal/types"
 )
 
-// These variables are set at build time via -ldflags
+// These variables are set at build time via -ldflags.
+// Release builds always inject the real version from the git tag via GoReleaser.
 // Example: go build -ldflags "-X github.com/dantech2000/refresh/internal/commands.version=v1.0.0"
 var (
-	version   = "v0.5.11" // Set via: -X ...commands.version=v0.5.11
-	commit    = ""        // Set via: -X ...commands.commit=abc1234
-	buildDate = ""        // Set via: -X ...commands.buildDate=2024-01-01
+	version   = "dev" // overridden by GoReleaser: -X ...commands.version={{.Version}}
+	commit    = ""    // overridden by GoReleaser: -X ...commands.commit={{.ShortCommit}}
+	buildDate = ""    // overridden by GoReleaser: -X ...commands.buildDate={{.Date}}
 )
 
 // VersionInfo provides access to version information
