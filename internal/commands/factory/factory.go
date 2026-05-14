@@ -1,3 +1,4 @@
+// Package factory constructs AWS-backed services used by CLI command packages.
 package factory
 
 import (

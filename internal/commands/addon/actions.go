@@ -35,11 +35,8 @@ func runList(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, cfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil {
+		return err
 	}
 
 	requested := c.Args().First()
@@ -102,11 +99,8 @@ func runDescribe(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, cfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil {
+		return err
 	}
 
 	requested := c.Args().First()
@@ -220,11 +214,8 @@ func runUpdate(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, cfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil {
+		return err
 	}
 
 	requested := c.Args().First()

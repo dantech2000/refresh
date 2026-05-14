@@ -1,3 +1,4 @@
+// Package addon provides CLI commands for EKS add-on operations.
 package addon
 
 import (
