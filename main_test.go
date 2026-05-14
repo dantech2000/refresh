@@ -142,10 +142,13 @@ func TestAMIStatusString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.status.String()
-			// Check if the expected text is contained in the colored output
-			if !containsText(result, tt.expected) {
-				t.Errorf("AMIStatus.String() = %v, want to contain %v", result, tt.expected)
+			// PlainString() returns uncolored text; String() adds ANSI codes tested separately.
+			if got := tt.status.PlainString(); got != tt.expected {
+				t.Errorf("AMIStatus.PlainString() = %q, want %q", got, tt.expected)
+			}
+			// String() must also contain the same text (with possible color wrapping).
+			if !containsText(tt.status.String(), tt.expected) {
+				t.Errorf("AMIStatus.String() does not contain %q", tt.expected)
 			}
 		})
 	}
@@ -153,38 +156,23 @@ func TestAMIStatusString(t *testing.T) {
 
 func TestDryRunActionString(t *testing.T) {
 	tests := []struct {
-		name     string
-		action   types.DryRunAction
-		expected string
+		name      string
+		action    types.DryRunAction
+		plainWant string
 	}{
-		{
-			name:     "ActionUpdate shows UPDATE",
-			action:   types.ActionUpdate,
-			expected: "UPDATE",
-		},
-		{
-			name:     "ActionSkipUpdating shows SKIP",
-			action:   types.ActionSkipUpdating,
-			expected: "SKIP",
-		},
-		{
-			name:     "ActionSkipLatest shows SKIP",
-			action:   types.ActionSkipLatest,
-			expected: "SKIP",
-		},
-		{
-			name:     "ActionForceUpdate shows FORCE UPDATE",
-			action:   types.ActionForceUpdate,
-			expected: "FORCE UPDATE",
-		},
+		{"ActionUpdate", types.ActionUpdate, "UPDATE"},
+		{"ActionSkipUpdating", types.ActionSkipUpdating, "SKIP"},
+		{"ActionSkipLatest", types.ActionSkipLatest, "SKIP"},
+		{"ActionForceUpdate", types.ActionForceUpdate, "FORCE UPDATE"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.action.String()
-			// Check if the expected text is contained in the colored output
-			if !containsText(result, tt.expected) {
-				t.Errorf("DryRunAction.String() = %v, want to contain %v", result, tt.expected)
+			if got := tt.action.PlainString(); !strings.Contains(got, tt.plainWant) {
+				t.Errorf("DryRunAction.PlainString() = %q, want to contain %q", got, tt.plainWant)
+			}
+			if !containsText(tt.action.String(), tt.plainWant) {
+				t.Errorf("DryRunAction.String() does not contain %q", tt.plainWant)
 			}
 		})
 	}
@@ -201,8 +189,18 @@ COMMANDS:
 `, map[string]string{"Name": "refresh"})
 
 	got := out.String()
-	if !strings.Contains(got, "refresh") || !strings.Contains(got, "cluster, c") {
-		t.Fatalf("coloredHelpPrinter output missing content: %q", got)
+	if !strings.Contains(got, "refresh") {
+		t.Fatalf("coloredHelpPrinter: missing app name 'refresh' in output: %q", got)
+	}
+	if !strings.Contains(got, "cluster, c") {
+		t.Fatalf("coloredHelpPrinter: missing command 'cluster, c' in output: %q", got)
+	}
+	if !strings.Contains(got, "manage clusters") {
+		t.Fatalf("coloredHelpPrinter: missing command description in output: %q", got)
+	}
+	// Section header should be present.
+	if !strings.Contains(got, "NAME") || !strings.Contains(got, "COMMANDS") {
+		t.Fatalf("coloredHelpPrinter: missing section headers in output: %q", got)
 	}
 }
 
@@ -227,7 +225,10 @@ func TestNewAppAndRun(t *testing.T) {
 	if err := run([]string{"refresh", "version"}, &out, &errOut); err != nil {
 		t.Fatalf("run version: %v", err)
 	}
+	// Note: VersionCommand uses fmt.Printf which writes to the real os.Stdout, not
+	// app.Writer. We therefore only verify the command returns no error here.
 
+	out.Reset()
 	if err := run([]string{"refresh", "--timeout", "not-a-duration", "version"}, &out, &errOut); err == nil {
 		t.Fatal("expected invalid flag error")
 	}
@@ -253,21 +254,27 @@ func TestMainErrorPath(t *testing.T) {
 	main()
 }
 
-// Helper function to check if colored text contains expected string
+// containsText strips ANSI escape sequences then checks whether coloredText
+// contains expectedText as a substring.
 func containsText(coloredText, expectedText string) bool {
-	// Remove ANSI color codes for comparison
-	// This is a simple check - in real scenarios you might want a more robust ANSI stripper
-	cleanText := coloredText
-	for i := 0; i < len(cleanText); i++ {
-		if cleanText[i] == '\033' {
-			// Find the end of the ANSI sequence
-			for j := i; j < len(cleanText); j++ {
-				if cleanText[j] == 'm' {
-					cleanText = cleanText[:i] + cleanText[j+1:]
-					break
-				}
+	// Strip ANSI escape sequences (ESC [ ... m) before comparing.
+	var b strings.Builder
+	s := coloredText
+	for len(s) > 0 {
+		idx := strings.IndexByte(s, '\033')
+		if idx < 0 {
+			b.WriteString(s)
+			break
+		}
+		b.WriteString(s[:idx])
+		s = s[idx+1:]
+		// Skip past the CSI sequence which ends at 'm'.
+		if len(s) > 0 && s[0] == '[' {
+			end := strings.IndexByte(s, 'm')
+			if end >= 0 {
+				s = s[end+1:]
 			}
 		}
 	}
-	return cleanText == expectedText
+	return strings.Contains(b.String(), expectedText)
 }

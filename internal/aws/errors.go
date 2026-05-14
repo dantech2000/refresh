@@ -237,6 +237,19 @@ func ValidateAWSCredentials(ctx context.Context, awsCfg aws.Config) error {
 	return nil
 }
 
+// CheckAWSCredentials validates AWS credentials and, on failure, prints a red
+// error message followed by credential setup guidance. It returns a sentinel
+// error so callers can return immediately without further decoration.
+func CheckAWSCredentials(ctx context.Context, awsCfg aws.Config) error {
+	if err := ValidateAWSCredentials(ctx, awsCfg); err != nil {
+		color.Red("%v", err)
+		fmt.Println()
+		PrintCredentialHelp()
+		return fmt.Errorf("AWS credential validation failed")
+	}
+	return nil
+}
+
 // PrintCredentialHelp displays helpful credential setup information.
 func PrintCredentialHelp() {
 	color.Yellow("AWS Credential Setup Help:")
