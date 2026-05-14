@@ -11,6 +11,11 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/dantech2000/refresh/internal/commands"
+	addoncmd "github.com/dantech2000/refresh/internal/commands/addon"
+	clustercmd "github.com/dantech2000/refresh/internal/commands/cluster"
+	ctxcmd "github.com/dantech2000/refresh/internal/commands/ctxcmd"
+	nodegroupcmd "github.com/dantech2000/refresh/internal/commands/nodegroup"
+	workloadcmd "github.com/dantech2000/refresh/internal/commands/workload"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
@@ -69,14 +74,14 @@ func newApp() *cli.App {
 		},
 		Commands: []*cli.Command{
 			// Resource-first groups
-			commands.ClusterCommand(),
-			commands.NodegroupCommand(),
-			commands.AddonCommand(),
-			commands.WorkloadCommand(),
+			clustercmd.Command(),
+			nodegroupcmd.Command(),
+			addoncmd.Command(),
+			workloadcmd.Command(),
 			// Context (kubectx-style)
-			commands.UseCommand(),
-			commands.CurrentCommand(),
-			commands.ContextCommand(),
+			ctxcmd.UseCommand(),
+			ctxcmd.CurrentCommand(),
+			ctxcmd.ContextCommand(),
 			// Misc
 			commands.VersionCommand(),
 			commands.ManPageCommand(),

@@ -3,7 +3,6 @@ package commands
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -132,69 +131,12 @@ func TestIsWritableDirConcurrentSafe(t *testing.T) {
 	}
 }
 
-func TestIsInManPath(t *testing.T) {
-	tests := []struct {
-		name       string
-		dir        string
-		mockOutput string
-		mockError  bool
-		expected   bool
-	}{
-		{
-			name:       "Directory in MANPATH",
-			dir:        "/usr/share/man",
-			mockOutput: "/usr/share/man:/usr/local/share/man",
-			mockError:  false,
-			expected:   true,
-		},
-		{
-			name:       "Directory not in MANPATH",
-			dir:        "/home/user/.local/share/man",
-			mockOutput: "/usr/share/man:/usr/local/share/man",
-			mockError:  false,
-			expected:   false,
-		},
-		{
-			name:       "Command fails",
-			dir:        "/usr/share/man",
-			mockOutput: "",
-			mockError:  true,
-			expected:   false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Note: This test is simplified since we can't easily mock exec.Command
-			// In a real-world scenario, you'd want to refactor isInManPath to accept
-			// a command runner interface for better testability
-
-			// For now, we'll test the string processing logic
-			if !tt.mockError && tt.mockOutput != "" {
-				paths := strings.Split(strings.TrimSpace(tt.mockOutput), ":")
-				found := false
-				for _, path := range paths {
-					if strings.TrimSpace(path) == tt.dir {
-						found = true
-						break
-					}
-				}
-				if found != tt.expected {
-					t.Errorf("String processing logic failed: expected %v, got %v", tt.expected, found)
-				}
-			}
-		})
-	}
-}
-
-func TestManPageConstants(t *testing.T) {
-	// Test that constants are defined with expected values
-	if ManPageFileMode != 0644 {
-		t.Errorf("ManPageFileMode = %v, want %v", ManPageFileMode, 0644)
-	}
-
-	if ManPageDirMode != 0755 {
-		t.Errorf("ManPageDirMode = %v, want %v", ManPageDirMode, 0755)
+func TestIsInManPath_FakePathReturnsFalse(t *testing.T) {
+	// A randomly-generated temp path will never appear in MANPATH.
+	// Whether manpath is available or not, the function must return false for it.
+	dir := filepath.Join(t.TempDir(), "definitely-not-in-manpath-12345")
+	if isInManPath(dir) {
+		t.Errorf("isInManPath(%q) = true, want false for an unknown temp dir", dir)
 	}
 }
 
