@@ -1,13 +1,33 @@
-package commands
+package ctxcmd
 
 import (
+	"bytes"
 	"flag"
+	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
 	"github.com/urfave/cli/v2"
 )
+
+func captureStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	original := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = original })
+
+	callErr := fn()
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String(), callErr
+}
 
 func commandContext(args ...string) *cli.Context {
 	set := flag.NewFlagSet("test", flag.ContinueOnError)
@@ -27,7 +47,7 @@ func TestContextActions(t *testing.T) {
 	}
 
 	add := contextAddCommand()
-	_, err := captureCommandStdout(t, func() error {
+	_, err := captureStdout(t, func() error {
 		app := cli.NewApp()
 		app.Commands = []*cli.Command{add}
 		return app.Run([]string{"app", "add", "--cluster", "prod-cluster", "--region", "us-east-1", "--profile", "prod", "--use", "prod"})
@@ -51,8 +71,15 @@ func TestContextActions(t *testing.T) {
 	}
 
 	list := contextListCommand()
-	if _, err := captureCommandStdout(t, func() error { return list.Action(commandContext()) }); err != nil {
+	out, err := captureStdout(t, func() error { return list.Action(commandContext()) })
+	if err != nil {
 		t.Fatalf("context list: %v", err)
+	}
+	if !strings.Contains(out, "prod") || !strings.Contains(out, "prod-cluster") {
+		t.Errorf("context list output missing expected context: %q", out)
+	}
+	if !strings.Contains(out, "us-east-1") {
+		t.Errorf("context list output missing region 'us-east-1': %q", out)
 	}
 
 	remove := contextRemoveCommand()
@@ -76,7 +103,9 @@ func TestContextActionErrorsAndPicker(t *testing.T) {
 	if err := contextRemoveCommand().Action(commandContext()); err == nil {
 		t.Fatal("context remove should require name")
 	}
-	if _, err := captureCommandStdout(t, func() error { return contextListCommand().Action(commandContext()) }); err != nil {
+	// Empty context list prints via color.Yellow, which writes to the original stdout
+	// handle (not the captured pipe). We verify only that it returns no error.
+	if _, err := captureStdout(t, func() error { return contextListCommand().Action(commandContext()) }); err != nil {
 		t.Fatalf("context list empty: %v", err)
 	}
 

@@ -1,4 +1,4 @@
-package commands
+package factory
 
 import (
 	"log/slog"
@@ -14,17 +14,18 @@ import (
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
 )
 
-// newDefaultLogger returns a default logger if none is provided.
-func newDefaultLogger(logger *slog.Logger) *slog.Logger {
+// NewDefaultLogger returns logger unchanged if non-nil; otherwise returns a
+// stderr warn-level text logger.
+func NewDefaultLogger(logger *slog.Logger) *slog.Logger {
 	if logger != nil {
 		return logger
 	}
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 }
 
-// newClusterService centralizes cluster service initialization with optional health.
-func newClusterService(awsCfg aws.Config, withHealth bool, logger *slog.Logger) *cluster.ServiceImpl {
-	logger = newDefaultLogger(logger)
+// NewClusterService initializes a cluster service with optional health checking.
+func NewClusterService(awsCfg aws.Config, withHealth bool, logger *slog.Logger) *cluster.ServiceImpl {
+	logger = NewDefaultLogger(logger)
 	var hc *health.HealthChecker
 	if withHealth {
 		eksClient := eks.NewFromConfig(awsCfg)
@@ -35,9 +36,9 @@ func newClusterService(awsCfg aws.Config, withHealth bool, logger *slog.Logger) 
 	return cluster.NewService(awsCfg, hc, logger)
 }
 
-// newNodegroupService centralizes nodegroup service initialization with optional health.
-func newNodegroupService(awsCfg aws.Config, withHealth bool, logger *slog.Logger) *nodegroup.ServiceImpl {
-	logger = newDefaultLogger(logger)
+// NewNodegroupService initializes a nodegroup service with optional health checking.
+func NewNodegroupService(awsCfg aws.Config, withHealth bool, logger *slog.Logger) *nodegroup.ServiceImpl {
+	logger = NewDefaultLogger(logger)
 	var hc *health.HealthChecker
 	if withHealth {
 		eksClient := eks.NewFromConfig(awsCfg)

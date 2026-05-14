@@ -1,4 +1,4 @@
-package commands
+package ctxcmd
 
 import (
 	"bufio"
@@ -12,19 +12,6 @@ import (
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
 )
-
-// UseCommand: `refresh use [name|-]`
-//
-// kubectx-style: with no arg launches an interactive picker;
-// with "-" swaps to the previous context.
-func UseCommand() *cli.Command {
-	return &cli.Command{
-		Name:      "use",
-		Usage:     "Switch the active refresh context (kubectx-style)",
-		ArgsUsage: "[context-name|-]",
-		Action:    runUse,
-	}
-}
 
 func runUse(c *cli.Context) error {
 	f, err := cliconfig.Load()
@@ -56,15 +43,6 @@ func runUse(c *cli.Context) error {
 	return nil
 }
 
-// CurrentCommand: `refresh current` — prints the active context.
-func CurrentCommand() *cli.Command {
-	return &cli.Command{
-		Name:   "current",
-		Usage:  "Print the active refresh context",
-		Action: runCurrent,
-	}
-}
-
 func runCurrent(c *cli.Context) error {
 	f, err := cliconfig.Load()
 	if err != nil {
@@ -78,20 +56,6 @@ func runCurrent(c *cli.Context) error {
 	fmt.Printf("%s  cluster=%s  region=%s  profile=%s\n",
 		color.CyanString(name), ctx.Cluster, orDash(ctx.Region), orDash(ctx.Profile))
 	return nil
-}
-
-// ContextCommand groups context management subcommands.
-func ContextCommand() *cli.Command {
-	return &cli.Command{
-		Name:    "context",
-		Aliases: []string{"ctx"},
-		Usage:   "Manage saved refresh contexts (list, add, remove)",
-		Subcommands: []*cli.Command{
-			contextListCommand(),
-			contextAddCommand(),
-			contextRemoveCommand(),
-		},
-	}
 }
 
 func contextListCommand() *cli.Command {

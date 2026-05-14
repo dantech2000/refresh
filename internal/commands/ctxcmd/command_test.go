@@ -1,12 +1,39 @@
-package commands
+package ctxcmd
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/urfave/cli/v2"
+
 	"github.com/dantech2000/refresh/internal/cliconfig"
 )
+
+func findSub(cmd *cli.Command, name string) *cli.Command {
+	for _, sc := range cmd.Subcommands {
+		if sc.Name == name {
+			return sc
+		}
+		for _, a := range sc.Aliases {
+			if a == name {
+				return sc
+			}
+		}
+	}
+	return nil
+}
+
+func hasFlag(cmd *cli.Command, name string) bool {
+	for _, f := range cmd.Flags {
+		for _, n := range f.Names() {
+			if n == name {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func TestUseCommandStructure(t *testing.T) {
 	cmd := UseCommand()
@@ -63,9 +90,15 @@ func TestContextCommandStructure(t *testing.T) {
 	}
 }
 
-// End-to-end: save a context to a tempdir, then verify it round-trips
-// through cliconfig.Load and Active() — mirrors what the use/current
-// commands would observe at runtime.
+func TestOrDash(t *testing.T) {
+	if got := orDash(""); got != "-" {
+		t.Errorf("orDash(%q) = %q, want %q", "", got, "-")
+	}
+	if got := orDash("hello"); got != "hello" {
+		t.Errorf("orDash(%q) = %q, want %q", "hello", got, "hello")
+	}
+}
+
 func TestContextEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("REFRESH_CONFIG_HOME", dir)

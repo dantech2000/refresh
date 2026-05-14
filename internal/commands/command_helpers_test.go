@@ -3,15 +3,30 @@ package commands
 import (
 	"bytes"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v2"
 )
+
+func captureCommandStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	original := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = original })
+
+	callErr := fn()
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String(), callErr
+}
 
 func TestVersionCommandAction(t *testing.T) {
 	oldInfo := VersionInfo
@@ -42,29 +57,6 @@ func TestVersionCommandAction(t *testing.T) {
 	}
 }
 
-func TestServiceFactories(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if newDefaultLogger(logger) != logger {
-		t.Fatal("newDefaultLogger should return provided logger")
-	}
-	if newDefaultLogger(nil) == nil {
-		t.Fatal("newDefaultLogger nil returned nil")
-	}
-
-	cfg := aws.Config{Region: "us-east-1"}
-	if newClusterService(cfg, false, logger) == nil {
-		t.Fatal("newClusterService without health returned nil")
-	}
-	if newClusterService(cfg, true, nil) == nil {
-		t.Fatal("newClusterService with health returned nil")
-	}
-	if newNodegroupService(cfg, false, logger) == nil {
-		t.Fatal("newNodegroupService without health returned nil")
-	}
-	if newNodegroupService(cfg, true, nil) == nil {
-		t.Fatal("newNodegroupService with health returned nil")
-	}
-}
 
 func TestManPageHelpersAndInstall(t *testing.T) {
 	home := t.TempDir()
