@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -12,14 +13,15 @@ var funSpinnerInterval = 2 * time.Second
 
 // FunSpinner provides an entertaining spinner with rotating messages
 type FunSpinner struct {
-	spinner  *pterm.SpinnerPrinter
-	messages []string
-	current  int
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	stopOnce sync.Once
-	started  bool
-	mu       sync.Mutex
+	spinner   *pterm.SpinnerPrinter
+	messages  []string
+	current   int
+	startedAt time.Time
+	stopCh    chan struct{}
+	doneCh    chan struct{}
+	stopOnce  sync.Once
+	started   bool
+	mu        sync.Mutex
 }
 
 // NewFunSpinner creates a spinner that rotates through fun messages
@@ -61,38 +63,74 @@ func (fs *FunSpinner) Start() error {
 		return nil
 	}
 
-	started, err := fs.spinner.Start(fs.messages[0])
-	fs.spinner = started
 	fs.started = true
+	fs.startedAt = time.Now()
+	fs.renderFrame(fs.spinner.Sequence[0])
 
-	go fs.rotateMessages()
-	return err
+	go fs.render()
+	return nil
 }
 
-func (fs *FunSpinner) rotateMessages() {
-	ticker := time.NewTicker(funSpinnerInterval)
-	defer ticker.Stop()
+func (fs *FunSpinner) render() {
+	frameTicker := time.NewTicker(fs.spinner.Delay)
+	messageTicker := time.NewTicker(funSpinnerInterval)
+	defer frameTicker.Stop()
+	defer messageTicker.Stop()
 	defer close(fs.doneCh)
 
+	frame := 1
 	for {
 		select {
 		case <-fs.stopCh:
+			fs.clearLine()
 			return
-		case <-ticker.C:
+		case <-messageTicker.C:
 			fs.current = (fs.current + 1) % len(fs.messages)
-			fs.spinner.UpdateText(fs.messages[fs.current])
+		case <-frameTicker.C:
+			sequence := fs.spinner.Sequence[frame%len(fs.spinner.Sequence)]
+			frame++
+			fs.renderFrame(sequence)
 		}
 	}
 }
 
+func (fs *FunSpinner) renderFrame(sequence string) {
+	timer := ""
+	if fs.spinner.ShowTimer {
+		elapsed := time.Since(fs.startedAt).Round(fs.spinner.TimerRoundingFactor)
+		timer = fmt.Sprintf(" (%s)", elapsed)
+	}
+
+	pterm.Fprinto(
+		fs.spinner.Writer,
+		"\033[K",
+		fs.spinner.Style.Sprint(sequence),
+		" ",
+		fs.spinner.MessageStyle.Sprint(fs.messages[fs.current]),
+		fs.spinner.TimerStyle.Sprint(timer),
+	)
+}
+
+func (fs *FunSpinner) clearLine() {
+	pterm.Fprinto(fs.spinner.Writer, "\033[K")
+}
+
 // Success completes the spinner with a success message
-func (fs *FunSpinner) Success(message string) { fs.stop(); fs.spinner.Success(message) }
+func (fs *FunSpinner) Success(message string) {
+	fs.stop()
+	pterm.Success.WithWriter(fs.spinner.Writer).Println(message)
+}
 
 // Fail completes the spinner with a failure message
-func (fs *FunSpinner) Fail(message string) { fs.stop(); fs.spinner.Fail(message) }
+func (fs *FunSpinner) Fail(message string) {
+	fs.stop()
+	pterm.Error.WithWriter(fs.spinner.Writer).Println(message)
+}
 
 // Stop stops the spinner
-func (fs *FunSpinner) Stop() { fs.stop(); _ = fs.spinner.Stop() }
+func (fs *FunSpinner) Stop() {
+	fs.stop()
+}
 
 func (fs *FunSpinner) stop() {
 	fs.mu.Lock()
@@ -116,6 +154,7 @@ type FunMessages struct {
 	Addon     []string
 	General   []string
 	Health    []string
+	Workload  []string
 }
 
 // GetMessages returns messages for the specified category, falling back to general.
@@ -129,6 +168,8 @@ func (fm *FunMessages) GetMessages(category string) []string {
 		return fm.Addon
 	case "health":
 		return fm.Health
+	case "workload":
+		return fm.Workload
 	default:
 		return fm.General
 	}
@@ -195,6 +236,13 @@ var DefaultFunMessages = &FunMessages{
 		"Running diagnostic spells...",
 		"Checking if your cluster needs vitamins...",
 		"Performing digital CPR if needed...",
+	},
+	Workload: []string{
+		"Checking workload disruption safety...",
+		"Scanning namespaces for PDB coverage...",
+		"Matching PDB selectors to deployments...",
+		"Reviewing workload maintenance readiness...",
+		"Looking for deployments without disruption budgets...",
 	},
 	General: []string{
 		"Working the AWS magic...",

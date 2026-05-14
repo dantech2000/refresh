@@ -46,6 +46,10 @@ func runList(c *cli.Context) error {
 		}
 	}
 
+	if pattern := strings.TrimSpace(c.Args().First()); pattern != "" {
+		filters["name"] = pattern
+	}
+
 	allRegions := c.Bool("all-regions") || c.Bool("tree") || c.String("format") == "tree"
 	options := clustersvc.ListOptions{
 		Regions:        c.StringSlice("region"),
@@ -61,11 +65,13 @@ func runList(c *cli.Context) error {
 	if allRegions || len(c.StringSlice("region")) > 0 {
 		summaries, err = runMultiRegionListWithProgress(ctx, clusterService, options)
 	} else {
-		spinner := ui.NewProgressSpinner("Querying EKS clusters...")
-		cancelSpinner := spinner.Start(ctx)
-		defer cancelSpinner()
+		spinner := ui.NewFunSpinnerForCategory("cluster")
+		if err := spinner.Start(); err != nil {
+			return err
+		}
+		defer spinner.Stop()
 		summaries, err = clusterService.List(ctx, options)
-		spinner.Stop("Cluster information gathered!")
+		spinner.Success("Cluster information gathered!")
 	}
 	if err != nil {
 		return err
@@ -225,12 +231,7 @@ func runDiff(c *cli.Context) error {
 // When a pattern is ambiguous it either launches an interactive multi-select or
 // returns an error directing the user to use --interactive.
 func resolveCompareClusterNames(ctx context.Context, awsCfg aws.Config, patterns []string, interactive bool) ([]string, error) {
-	spinner := ui.NewFunSpinnerForCategory("general")
-	if err := spinner.Start(); err != nil {
-		return nil, err
-	}
 	all, err := awsinternal.AvailableClusters(ctx, awsCfg)
-	spinner.Stop()
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, "listing EKS clusters")
 	}
