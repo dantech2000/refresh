@@ -18,6 +18,7 @@ func setupContext(t *testing.T, name string, ctx cliconfig.Context) {
 	t.Setenv("REFRESH_CONTEXT", "")
 	t.Setenv("AWS_PROFILE", "")
 	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
 
 	f := &cliconfig.File{Contexts: map[string]cliconfig.Context{}}
 	if err := f.Set(name, ctx); err != nil {
@@ -105,6 +106,34 @@ func TestFlagOrEmpty(t *testing.T) {
 	ctx := cli.NewContext(cli.NewApp(), set, nil)
 	if got := flagOrEmpty(ctx, "region"); got != "us-east-2" {
 		t.Fatalf("flagOrEmpty() = %q, want us-east-2", got)
+	}
+}
+
+func TestFlagOrEmptyIgnoresEmptyStringSliceFlag(t *testing.T) {
+	set := flag.NewFlagSet("test", flag.ContinueOnError)
+	app := cli.NewApp()
+	app.Flags = []cli.Flag{
+		&cli.StringSliceFlag{Name: "region"},
+	}
+	ctx := cli.NewContext(app, set, nil)
+
+	if got := flagOrEmpty(ctx, "region"); got != "" {
+		t.Fatalf("flagOrEmpty() = %q, want empty", got)
+	}
+}
+
+func TestFlagOrEmptyReadsFirstStringSliceFlagValue(t *testing.T) {
+	set := flag.NewFlagSet("test", flag.ContinueOnError)
+	regions := cli.NewStringSlice("us-west-2", "us-east-1")
+	set.Var(regions, "region", "")
+	app := cli.NewApp()
+	app.Flags = []cli.Flag{
+		&cli.StringSliceFlag{Name: "region"},
+	}
+	ctx := cli.NewContext(app, set, nil)
+
+	if got := flagOrEmpty(ctx, "region"); got != "us-west-2" {
+		t.Fatalf("flagOrEmpty() = %q, want us-west-2", got)
 	}
 }
 

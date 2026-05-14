@@ -1,62 +1,11 @@
 package ui
 
 import (
-	"context"
 	"time"
 
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
 )
-
-// ProgressSpinner wraps pterm.DefaultSpinner with refresh CLI styling
-type ProgressSpinner struct {
-	spinner *pterm.SpinnerPrinter
-	message string
-}
-
-// NewProgressSpinner creates a new progress spinner with consistent styling
-func NewProgressSpinner(message string) *ProgressSpinner {
-	spinner := pterm.DefaultSpinner.
-		WithStyle(&pterm.Style{pterm.FgCyan}).
-		WithSequence("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏").
-		WithDelay(100 * time.Millisecond).
-		WithRemoveWhenDone(false)
-
-	return &ProgressSpinner{spinner: spinner, message: message}
-}
-
-// Start begins the spinner animation and returns a stop function.
-func (ps *ProgressSpinner) Start(_ context.Context) func() {
-	started, _ := ps.spinner.Start(ps.message)
-	ps.spinner = started
-	return func() { _ = ps.spinner.Stop() }
-}
-
-// UpdateText changes the spinner message
-func (ps *ProgressSpinner) UpdateText(message string) { ps.spinner.UpdateText(message) }
-
-// Success completes the spinner with a success message
-func (ps *ProgressSpinner) Success(message string) { ps.spinner.Success(message) }
-
-// Fail completes the spinner with a failure message
-func (ps *ProgressSpinner) Fail(message string) { ps.spinner.Fail(message) }
-
-// Warning completes the spinner with a warning message
-func (ps *ProgressSpinner) Warning(message string) { ps.spinner.Warning(message) }
-
-// Stop stops the spinner, optionally printing a success message.
-func (ps *ProgressSpinner) Stop(message string) {
-	if message != "" {
-		ps.spinner.Success(message)
-	} else {
-		_ = ps.spinner.Stop()
-	}
-}
-
-// NewPtermHealthSpinner creates a spinner for health checks.
-func NewPtermHealthSpinner(message string) *ProgressSpinner {
-	return NewProgressSpinner(message)
-}
 
 // ProgressBar wraps pterm.DefaultProgressbar with refresh CLI styling
 type ProgressBar struct {

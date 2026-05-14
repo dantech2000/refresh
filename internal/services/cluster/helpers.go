@@ -11,10 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
-	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // getVpcCidr retrieves the CIDR block for a VPC
@@ -219,25 +216,6 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 			totalDesired += ng.DesiredSize
 		}
 		summary.NodeCount = NodeCountInfo{Ready: totalReady, Total: totalDesired}
-
-		// If a Kubernetes client is available, compute actual ready nodes
-		if k8sClient, kerr := health.GetKubernetesClient(); kerr == nil && k8sClient != nil {
-			if nodeList, lerr := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{}); lerr == nil {
-				var readyCount int32
-				for _, node := range nodeList.Items {
-					for _, cond := range node.Status.Conditions {
-						if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
-							readyCount++
-							break
-						}
-					}
-				}
-				// Use actual ready node count but keep desired as total
-				summary.NodeCount.Ready = readyCount
-			} else {
-				s.logger.Debug("failed to list k8s nodes for readiness", "cluster", clusterName, "error", lerr)
-			}
-		}
 	}
 
 	// Add health information if requested

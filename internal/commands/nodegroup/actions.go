@@ -292,14 +292,14 @@ func runUpdateAMI(c *cli.Context) error {
 		return fmt.Errorf("AWS credential validation failed")
 	}
 
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, c.String("cluster"))
+	requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(c)
+	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requestedCluster)
 	if err != nil {
 		color.Red("%v", err)
 		return err
 	}
 	eksClient := eks.NewFromConfig(awsCfg)
 
-	nodegroupPattern := c.String("nodegroup")
 	force := c.Bool("force")
 	dryRun := c.Bool("dry-run")
 	noWait := c.Bool("no-wait")
@@ -307,7 +307,7 @@ func runUpdateAMI(c *cli.Context) error {
 	timeout := c.Duration("timeout")
 	pollInterval := c.Duration("poll-interval")
 	skipHealthCheck := c.Bool("skip-health-check")
-	healthOnly := c.Bool("health-only")
+	healthOnly := updateBoolFlag(c, "health-only", "H")
 
 	if !skipHealthCheck && !dryRun && !force {
 		if !quiet {
@@ -322,14 +322,16 @@ func runUpdateAMI(c *cli.Context) error {
 		}
 		healthChecker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
 
-		spinner := ui.NewHealthSpinner("Validating update readiness...")
-		var cancelSpinner func()
+		spinner := ui.NewFunSpinnerForCategory("health")
 		if !quiet {
-			cancelSpinner = spinner.Start(ctx)
+			if err := spinner.Start(); err != nil {
+				return err
+			}
+			defer spinner.Stop()
 		}
 		summary := healthChecker.RunAllChecks(ctx, clusterName)
-		if !quiet && cancelSpinner != nil {
-			spinner.Stop("Health validation complete!")
+		if !quiet {
+			spinner.Success("Health validation complete!")
 		}
 		if !quiet {
 			ui.DisplayHealthResults(summary)
@@ -446,4 +448,61 @@ func runUpdateAMI(c *cli.Context) error {
 		return nil
 	}
 	return monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
+}
+
+func updateClusterAndNodegroupPatterns(c *cli.Context) (string, string) {
+	clusterPattern := strings.TrimSpace(c.String("cluster"))
+	nodegroupPattern := strings.TrimSpace(c.String("nodegroup"))
+	nonFlags := nonFlagArgs(c)
+
+	if clusterPattern == "" && len(nonFlags) > 0 {
+		clusterPattern = nonFlags[0]
+	}
+
+	if nodegroupPattern == "" {
+		nodegroupArgIndex := 1
+		if c.String("cluster") != "" {
+			nodegroupArgIndex = 0
+		}
+		if len(nonFlags) > nodegroupArgIndex {
+			nodegroupPattern = nonFlags[nodegroupArgIndex]
+		}
+	}
+
+	return clusterPattern, nodegroupPattern
+}
+
+func nonFlagArgs(c *cli.Context) []string {
+	if c == nil {
+		return nil
+	}
+	args := c.Args().Slice()
+	nonFlags := make([]string, 0, len(args))
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		nonFlags = append(nonFlags, arg)
+	}
+	return nonFlags
+}
+
+func updateBoolFlag(c *cli.Context, name string, aliases ...string) bool {
+	if c == nil {
+		return false
+	}
+	if c.Bool(name) {
+		return true
+	}
+	for _, arg := range c.Args().Slice() {
+		if arg == "--"+name {
+			return true
+		}
+		for _, alias := range aliases {
+			if arg == "-"+alias {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -24,8 +24,9 @@ func Command() *cli.Command {
 
 func listCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "list",
-		Usage: "List EKS clusters with health status (multi-region support)",
+		Name:      "list",
+		Usage:     "List EKS clusters with health status (multi-region support)",
+		ArgsUsage: "[name-pattern]",
 		Description: `Fast cluster discovery across regions with integrated health validation.
 Direct EKS API calls provide high performance along with comprehensive
 health monitoring and multi-region capabilities.`,

@@ -92,9 +92,10 @@ func scaleCommand() *cli.Command {
 
 func updateAMICommand() *cli.Command {
 	return &cli.Command{
-		Name:    "update",
-		Aliases: []string{"update-ami"},
-		Usage:   "Update the AMI for all or a specific node group (rolling by default)",
+		Name:      "update",
+		Aliases:   []string{"update-ami"},
+		Usage:     "Update the AMI for all or a specific node group (rolling by default)",
+		ArgsUsage: "[cluster] [nodegroup]",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or partial name pattern (overrides kubeconfig)", EnvVars: []string{"EKS_CLUSTER_NAME"}},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name or partial name pattern (if not set, update all)"},

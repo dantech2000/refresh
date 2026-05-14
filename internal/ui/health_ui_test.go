@@ -204,9 +204,6 @@ func TestPromptContinueWithWarningsReadError(t *testing.T) {
 }
 
 func TestHealthDisplayHelpers(t *testing.T) {
-	if NewHealthSpinner("checking") == nil {
-		t.Fatal("NewHealthSpinner returned nil")
-	}
 	output := captureStdout(t, func() {
 		DisplayHealthCheckStart("prod")
 		DisplayHealthCheckComplete(health.DecisionWarn)
