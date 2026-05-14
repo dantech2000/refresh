@@ -1,3 +1,4 @@
+// Package workload provides CLI commands for Kubernetes workload operations.
 package workload
 
 import (

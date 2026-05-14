@@ -29,11 +29,8 @@ func runList(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+		return err
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -104,11 +101,8 @@ func runDescribe(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		ui.Outln()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+		return err
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -183,11 +177,8 @@ func runDiff(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+		return err
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))

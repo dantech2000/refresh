@@ -40,11 +40,8 @@ func runList(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		ui.Outln()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+		return err
 	}
 
 	requested := c.Args().First()
@@ -126,11 +123,8 @@ func runDescribe(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+		return err
 	}
 
 	requested := c.Args().First()
@@ -219,11 +213,8 @@ func runScale(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		ui.Outln()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+		return err
 	}
 
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, c.String("cluster"))
@@ -285,11 +276,8 @@ func runUpdateAMI(c *cli.Context) error {
 		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+		return err
 	}
 
 	requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(c)
