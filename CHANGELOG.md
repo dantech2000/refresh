@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.12](https://github.com/dantech2000/refresh/compare/v0.5.11...v0.5.12) (2026-05-14)
+
+
+### Bug Fixes
+
+* seed release-please manifest at v0.5.11 (actual latest release) ([a8cac41](https://github.com/dantech2000/refresh/commit/a8cac41beb8278d36e5cb9a2a3d873b2af672624))
+* use GH_PAT for release-please PR creation ([218215b](https://github.com/dantech2000/refresh/commit/218215b028a961b9da2d3cf459168caaa76168f7))
+
+
+### Code Refactoring
+
+* extract CheckAWSCredentials helper and add package godoc ([7ddd9d0](https://github.com/dantech2000/refresh/commit/7ddd9d0e0baad164133d576f08d9eee7c21ca53b))
+* split internal/commands into focused sub-packages ([5d1a004](https://github.com/dantech2000/refresh/commit/5d1a0047772f37e30158fccd1365db7be4b48e33))
+* split internal/commands into focused sub-packages ([fc4f785](https://github.com/dantech2000/refresh/commit/fc4f785dfc2fd29193dc62ef2a41d9a0ddf7ad0e))
+
 ## [0.5.1](https://github.com/dantech2000/refresh/compare/v0.5.0...v0.5.1) (2026-05-14)
 
 
