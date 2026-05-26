@@ -80,97 +80,27 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 	}
 }
 
-// buildListCacheKey returns a deterministic cache key for list options
+// buildListCacheKey returns a deterministic cache key for list options.
 func buildListCacheKey(options ListOptions) string {
-	// Build deterministic key with improved capacity estimation and without
-	// intermediate string slices/joins.
-	// Format: list- regions=..|filters=..|showHealth=x|allRegions=y
+	regions := append([]string(nil), options.Regions...)
+	sort.Strings(regions)
 
-	// Precompute boolean fragments (always included for stability)
-	showHealthFrag := fmt.Sprintf("showHealth=%t", options.ShowHealth)
-	allRegionsFrag := fmt.Sprintf("allRegions=%t", options.AllRegions)
-
-	// Estimate capacity
-	estimated := 5 /* list- */ + len(showHealthFrag) + 1 /* | */ + len(allRegionsFrag)
-
-	// Regions
-	if len(options.Regions) > 0 {
-		estimated += len("regions=")
-		for _, r := range options.Regions {
-			estimated += len(r)
-		}
-		estimated += len(options.Regions) - 1 // commas
-		estimated += 1                        // '|'
+	filterKeys := make([]string, 0, len(options.Filters))
+	for k := range options.Filters {
+		filterKeys = append(filterKeys, k)
+	}
+	sort.Strings(filterKeys)
+	filterParts := make([]string, len(filterKeys))
+	for i, k := range filterKeys {
+		filterParts[i] = k + "=" + options.Filters[k]
 	}
 
-	// Filters (sorted for determinism)
-	if len(options.Filters) > 0 {
-		estimated += len("filters=")
-		// sum of key=value plus separators
-		keys := make([]string, 0, len(options.Filters))
-		for k := range options.Filters {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			estimated += len(k) + 1 /* '=' */ + len(options.Filters[k])
-		}
-		estimated += len(keys) - 1 // semicolons
-		estimated += 1             // '|'
-	}
-
-	var b strings.Builder
-	if estimated < 32 {
-		b.Grow(32)
-	} else {
-		b.Grow(estimated)
-	}
-	b.WriteString("list-")
-
-	wroteSep := false
-	if len(options.Regions) > 0 {
-		b.WriteString("regions=")
-		// Use a sorted copy for stable ordering
-		regions := append([]string(nil), options.Regions...)
-		sort.Strings(regions)
-		for i, r := range regions {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			b.WriteString(r)
-		}
-		wroteSep = true
-	}
-
-	if len(options.Filters) > 0 {
-		if wroteSep {
-			b.WriteByte('|')
-		}
-		b.WriteString("filters=")
-		keys := make([]string, 0, len(options.Filters))
-		for k := range options.Filters {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for i, k := range keys {
-			if i > 0 {
-				b.WriteByte(';')
-			}
-			b.WriteString(k)
-			b.WriteByte('=')
-			b.WriteString(options.Filters[k])
-		}
-		wroteSep = true
-	}
-
-	if wroteSep {
-		b.WriteByte('|')
-	}
-	b.WriteString(showHealthFrag)
-	b.WriteByte('|')
-	b.WriteString(allRegionsFrag)
-
-	return b.String()
+	return fmt.Sprintf("list-regions=%s|filters=%s|showHealth=%t|allRegions=%t",
+		strings.Join(regions, ","),
+		strings.Join(filterParts, ";"),
+		options.ShowHealth,
+		options.AllRegions,
+	)
 }
 
 // buildDescribeCacheKey returns a deterministic cache key for describe options
