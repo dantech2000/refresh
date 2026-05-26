@@ -107,14 +107,26 @@ func runDescribe(c *cli.Context) error {
 	return outputAddonDetailsTable(clusterName, details)
 }
 
+// listAddonsAPI is the subset of the EKS client used by resolveAddonName,
+// extracted so the resolver is testable.
+type listAddonsAPI interface {
+	ListAddons(ctx context.Context, in *eks.ListAddonsInput, optFns ...func(*eks.Options)) (*eks.ListAddonsOutput, error)
+}
+
+var validAddonRe = regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9-_]*$`)
+
 // resolveAddonName matches a user-supplied addon string against the cluster's
-// installed addons, allowing case-insensitive substring matches.
-func resolveAddonName(ctx context.Context, eksClient *eks.Client, clusterName, addonName string) (string, error) {
-	validRe := regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9-_]*$`)
-	if validRe.MatchString(addonName) {
+// installed addons, allowing case-insensitive substring matches. Returns a
+// formatted error if ListAddons fails (e.g. AccessDeniedException) instead of
+// dereferencing the nil response.
+func resolveAddonName(ctx context.Context, eksClient listAddonsAPI, clusterName, addonName string) (string, error) {
+	if validAddonRe.MatchString(addonName) {
 		return addonName, nil
 	}
-	list, _ := eksClient.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String(clusterName)})
+	list, err := eksClient.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String(clusterName)})
+	if err != nil {
+		return "", awsinternal.FormatAWSError(err, fmt.Sprintf("listing add-ons for cluster %s", clusterName))
+	}
 	lower := strings.ToLower(addonName)
 	for _, n := range list.Addons {
 		if strings.EqualFold(n, addonName) || strings.Contains(strings.ToLower(n), lower) {
