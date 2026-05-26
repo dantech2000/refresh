@@ -22,16 +22,7 @@ type EKSAPI interface {
 	DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error)
 }
 
-// Service defines addon operations
-type Service interface {
-	List(ctx context.Context, clusterName string, options ListOptions) ([]AddonSummary, error)
-	Describe(ctx context.Context, clusterName, addonName string, options DescribeOptions) (*AddonDetails, error)
-	Update(ctx context.Context, clusterName, addonName string, options UpdateOptions) (*AddonUpdateResult, error)
-	UpdateAll(ctx context.Context, clusterName string, options UpdateAllOptions) ([]AddonUpdateResult, error)
-	GetAvailableVersions(ctx context.Context, addonName string, k8sVersion string) ([]AddonVersionInfo, error)
-}
-
-// ServiceImpl implements the addon Service
+// ServiceImpl is the addon service.
 type ServiceImpl struct {
 	eksClient EKSAPI
 	logger    *slog.Logger

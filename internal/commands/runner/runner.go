@@ -24,17 +24,30 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-// SetupAWS opens a context with the command's timeout, loads the AWS config,
-// and checks credentials. Returns the context, a cancel func to be deferred,
-// and the loaded aws.Config. On error, the returned cancel is nil and the
-// internal context has already been cancelled.
-func SetupAWS(c *cli.Context) (context.Context, context.CancelFunc, aws.Config, error) {
-	return SetupAWSWithTimeout(c, 0)
+// credentialCheck is the credential validation strategy used by the setup
+// helpers below.
+type credentialCheck func(ctx context.Context, cfg aws.Config) error
+
+// checkCredentialsLenient wraps awsinternal.CheckAWSCredentials.
+func checkCredentialsLenient(ctx context.Context, cfg aws.Config) error {
+	return awsinternal.CheckAWSCredentials(ctx, cfg)
 }
 
-// SetupAWSWithTimeout behaves like SetupAWS but falls back to defaultTimeout
-// when c.Duration("timeout") is zero.
-func SetupAWSWithTimeout(c *cli.Context, defaultTimeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
+// checkCredentialsStrict wraps awsinternal.ValidateAWSCredentials and prints
+// the help message on failure.
+func checkCredentialsStrict(ctx context.Context, cfg aws.Config) error {
+	if err := awsinternal.ValidateAWSCredentials(ctx, cfg); err != nil {
+		color.Red("%v", err)
+		ui.Outln()
+		awsinternal.PrintCredentialHelp()
+		return fmt.Errorf("AWS credential validation failed")
+	}
+	return nil
+}
+
+// setupAWS is the shared body of SetupAWS/SetupAWSWithTimeout/SetupAWSStrict.
+// On error the internal context is canceled and the returned cancel is nil.
+func setupAWS(c *cli.Context, defaultTimeout time.Duration, check credentialCheck) (context.Context, context.CancelFunc, aws.Config, error) {
 	timeout := c.Duration("timeout")
 	if timeout == 0 {
 		timeout = defaultTimeout
@@ -55,31 +68,30 @@ func SetupAWSWithTimeout(c *cli.Context, defaultTimeout time.Duration) (context.
 		color.Red("Failed to load AWS config: %v", err)
 		return nil, nil, aws.Config{}, err
 	}
-	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil {
+	if err := check(ctx, cfg); err != nil {
 		cancel()
 		return nil, nil, aws.Config{}, err
 	}
 	return ctx, cancel, cfg, nil
 }
 
+// SetupAWS opens a context with the command's timeout, loads the AWS config,
+// and checks credentials. On error, the returned cancel is nil and the
+// internal context has already been cancelled.
+func SetupAWS(c *cli.Context) (context.Context, context.CancelFunc, aws.Config, error) {
+	return setupAWS(c, 0, checkCredentialsLenient)
+}
+
+// SetupAWSWithTimeout is like SetupAWS but falls back to defaultTimeout
+// when c.Duration("timeout") is zero.
+func SetupAWSWithTimeout(c *cli.Context, defaultTimeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
+	return setupAWS(c, defaultTimeout, checkCredentialsLenient)
+}
+
 // SetupAWSStrict is like SetupAWS but uses ValidateAWSCredentials and prints
 // the credential help message on failure (used by destructive commands).
 func SetupAWSStrict(c *cli.Context) (context.Context, context.CancelFunc, aws.Config, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
-	cfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		cancel()
-		color.Red("Failed to load AWS config: %v", err)
-		return nil, nil, aws.Config{}, err
-	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, cfg); err != nil {
-		cancel()
-		color.Red("%v", err)
-		ui.Outln()
-		awsinternal.PrintCredentialHelp()
-		return nil, nil, aws.Config{}, fmt.Errorf("AWS credential validation failed")
-	}
-	return ctx, cancel, cfg, nil
+	return setupAWS(c, 0, checkCredentialsStrict)
 }
 
 // RequestedCluster returns the cluster name requested by the user: first
