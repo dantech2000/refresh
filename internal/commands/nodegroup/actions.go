@@ -287,12 +287,24 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 		ui.DisplayHealthResults(summary)
 	}
 
+	return applyHealthDecision(summary, flags)
+}
+
+// applyHealthDecision interprets a health summary against the run flags. It
+// returns done=true when the caller should stop (Block decision, user
+// cancelled, or --health-only).
+//
+// --health-only means "just show me the verdict": the success banner is
+// printed regardless of --quiet because the verdict IS the requested result.
+// --quiet only suppresses the verbose banner for the non-health-only flow.
+func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (done bool, err error) {
 	switch summary.Decision {
 	case health.DecisionBlock:
 		ui.DisplayHealthCheckComplete(summary.Decision)
 		return true, fmt.Errorf("pre-flight health checks failed")
 	case health.DecisionWarn:
 		if flags.healthOnly {
+			ui.DisplayHealthCheckComplete(summary.Decision)
 			return true, nil
 		}
 		if !flags.quiet && !ui.PromptContinueWithWarnings(summary.Warnings) {
@@ -300,7 +312,7 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 			return true, fmt.Errorf("update cancelled")
 		}
 	case health.DecisionProceed:
-		if !flags.quiet {
+		if flags.healthOnly || !flags.quiet {
 			ui.DisplayHealthCheckComplete(summary.Decision)
 		}
 		if flags.healthOnly {
