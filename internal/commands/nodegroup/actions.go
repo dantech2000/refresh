@@ -2,7 +2,6 @@ package nodegroup
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,13 +15,11 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/awsconfig"
-	clustercmd "github.com/dantech2000/refresh/internal/commands/cluster"
 	"github.com/dantech2000/refresh/internal/commands/factory"
-	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
@@ -32,35 +29,14 @@ import (
 )
 
 func runList(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
-	awsCfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
-		return err
-	}
-
-	requested := c.Args().First()
-	if requested == "" {
-		requested = c.String("cluster")
-	}
-	if strings.TrimSpace(requested) == "" {
-		ui.Outln("No cluster specified. Available clusters:")
-		ui.Outln()
-		start := time.Now()
-		svcList := factory.NewClusterService(awsCfg, false, nil)
-		summaries, err := svcList.List(ctx, clustersvc.ListOptions{})
-		if err != nil {
-			return err
-		}
-		return clustercmd.OutputClustersTable(summaries, time.Since(start), false, false)
-	}
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
-	if err != nil {
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, c)
+	if err != nil || listed {
 		return err
 	}
 
@@ -82,85 +58,42 @@ func runList(c *cli.Context) error {
 		Timeframe:       c.String("timeframe"),
 	}
 
-	spinner := ui.NewFunSpinnerForCategory("nodegroup")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
-
+	var items []nodegroupsvc.NodegroupSummary
 	start := time.Now()
-	items, err := svc.List(ctx, clusterName, opts)
-	spinner.Success("Nodegroup information gathered!")
-	if err != nil {
+	if err := runner.WithSpinner("nodegroup", "Nodegroup information gathered!", func() error {
+		var lerr error
+		items, lerr = svc.List(ctx, clusterName, opts)
+		return lerr
+	}); err != nil {
 		return err
 	}
 
-	if strings.ToLower(c.String("format")) == "table" || c.String("format") == "" {
+	format := strings.ToLower(c.String("format"))
+	if format == "table" || format == "" {
 		items = sortNodegroupSummaries(items, c.String("sort"), c.Bool("desc"))
 	}
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)})
-	case "yaml":
-		enc := yaml.NewEncoder(os.Stdout)
-		enc.SetIndent(2)
-		defer func() { _ = enc.Close() }()
-		return enc.Encode(map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)})
-	default:
-		return outputNodegroupsTable(clusterName, c.String("timeframe"), items, time.Since(start), opts)
+	payload := map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)}
+	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+		return err
 	}
+	return outputNodegroupsTable(clusterName, c.String("timeframe"), items, time.Since(start), opts)
 }
 
 func runDescribe(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
-	awsCfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, c)
+	if err != nil || listed {
 		return err
 	}
 
-	requested := c.Args().First()
-	if requested == "" {
-		requested = c.String("cluster")
-	}
-	if strings.TrimSpace(requested) == "" {
-		ui.Outln("No cluster specified. Available clusters:")
-		ui.Outln()
-		svc := factory.NewClusterService(awsCfg, false, nil)
-		start := time.Now()
-		summaries, err := svc.List(ctx, clustersvc.ListOptions{})
-		if err != nil {
-			return err
-		}
-		return clustercmd.OutputClustersTable(summaries, time.Since(start), false, false)
-	}
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
-	if err != nil {
-		return err
-	}
-
-	ngName := c.String("nodegroup")
-	if strings.TrimSpace(ngName) == "" {
-		var nonFlags []string
-		for _, tok := range c.Args().Slice() {
-			if strings.HasPrefix(tok, "-") {
-				continue
-			}
-			nonFlags = append(nonFlags, tok)
-		}
-		if len(nonFlags) >= 2 {
-			ngName = nonFlags[1]
-		}
-	}
-	if strings.TrimSpace(ngName) == "" {
+	ngName := runner.SecondPositional(c, "nodegroup")
+	if ngName == "" {
 		return fmt.Errorf("missing nodegroup name; pass as second argument or --nodegroup <name>")
 	}
 
@@ -176,32 +109,20 @@ func runDescribe(c *cli.Context) error {
 		Timeframe:        c.String("timeframe"),
 	}
 
-	spinner := ui.NewFunSpinnerForCategory("nodegroup")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
-
+	var details *nodegroupsvc.NodegroupDetails
 	start := time.Now()
-	details, err := svc.Describe(ctx, clusterName, ngName, opts)
-	spinner.Success("Nodegroup details gathered!")
-	if err != nil {
+	if err := runner.WithSpinner("nodegroup", "Nodegroup details gathered!", func() error {
+		var derr error
+		details, derr = svc.Describe(ctx, clusterName, ngName, opts)
+		return derr
+	}); err != nil {
 		return err
 	}
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(details)
-	case "yaml":
-		enc := yaml.NewEncoder(os.Stdout)
-		enc.SetIndent(2)
-		defer func() { _ = enc.Close() }()
-		return enc.Encode(details)
-	default:
-		return outputNodegroupDetailsTable(details, time.Since(start))
+	if handled, err := runner.EncodeStdout(c.String("format"), details); handled {
+		return err
 	}
+	return outputNodegroupDetailsTable(details, time.Since(start))
 }
 
 func runScale(c *cli.Context) error {
