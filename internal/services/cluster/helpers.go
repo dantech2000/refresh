@@ -34,24 +34,20 @@ func (s *ServiceImpl) getVpcCidr(ctx context.Context, vpcId string) (string, err
 
 // getClusterAddons retrieves add-on information for a cluster
 func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) ([]AddonInfo, error) {
-	// List add-ons with pagination
-	var addonNames []string
-	var nextToken *string
-	for {
-		listOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListAddonsOutput, error) {
-			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
+	addonNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListAddonsOutput, error) {
+			return s.eksClient.ListAddons(rrc, &eks.ListAddonsInput{
 				ClusterName: aws.String(clusterName),
-				NextToken:   nextToken,
+				NextToken:   token,
 			})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing add-ons for cluster %s", clusterName))
+			return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing add-ons for cluster %s", clusterName))
 		}
-		addonNames = append(addonNames, listOutput.Addons...)
-		if listOutput.NextToken == nil {
-			break
-		}
-		nextToken = listOutput.NextToken
+		return out.Addons, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	var addons []AddonInfo
@@ -96,24 +92,20 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 
 // getClusterNodegroups retrieves nodegroup information for a cluster
 func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName string) ([]NodegroupSummary, error) {
-	// List nodegroups with pagination
-	var nodegroupNames []string
-	var nextToken *string
-	for {
-		listOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListNodegroupsOutput, error) {
-			return s.eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
+	nodegroupNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListNodegroupsOutput, error) {
+			return s.eksClient.ListNodegroups(rrc, &eks.ListNodegroupsInput{
 				ClusterName: aws.String(clusterName),
-				NextToken:   nextToken,
+				NextToken:   token,
 			})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
+			return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
 		}
-		nodegroupNames = append(nodegroupNames, listOutput.Nodegroups...)
-		if listOutput.NextToken == nil {
-			break
-		}
-		nextToken = listOutput.NextToken
+		return out.Nodegroups, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	var nodegroups []NodegroupSummary

@@ -83,23 +83,20 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 	}
 	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
-	var nodegroupNames []string
-	var nextToken *string
-	for {
-		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListNodegroupsOutput, error) {
-			return s.eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
+	nodegroupNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListNodegroupsOutput, error) {
+			return s.eksClient.ListNodegroups(rrc, &eks.ListNodegroupsInput{
 				ClusterName: aws.String(clusterName),
-				NextToken:   nextToken,
+				NextToken:   token,
 			})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
+			return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
 		}
-		nodegroupNames = append(nodegroupNames, out.Nodegroups...)
-		if out.NextToken == nil {
-			break
-		}
-		nextToken = out.NextToken
+		return out.Nodegroups, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	summaries := make([]NodegroupSummary, 0, len(nodegroupNames))

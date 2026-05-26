@@ -49,23 +49,20 @@ func NewService(eksClient EKSAPI, logger *slog.Logger) *ServiceImpl {
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]AddonSummary, error) {
 	s.logger.Info("listing addons", "cluster", clusterName)
 
-	var addonNames []string
-	var nextToken *string
-	for {
-		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListAddonsOutput, error) {
-			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
+	addonNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListAddonsOutput, error) {
+			return s.eksClient.ListAddons(rrc, &eks.ListAddonsInput{
 				ClusterName: aws.String(clusterName),
-				NextToken:   nextToken,
+				NextToken:   token,
 			})
 		})
 		if err != nil {
-			return nil, fmt.Errorf("listing addons: %w", err)
+			return nil, nil, fmt.Errorf("listing addons: %w", err)
 		}
-		addonNames = append(addonNames, out.Addons...)
-		if out.NextToken == nil || aws.ToString(out.NextToken) == "" {
-			break
-		}
-		nextToken = out.NextToken
+		return out.Addons, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	summaries := make([]AddonSummary, 0, len(addonNames))
