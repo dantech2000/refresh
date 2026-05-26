@@ -19,6 +19,22 @@ import (
 	"github.com/dantech2000/refresh/internal/types"
 )
 
+// classifyAMI compares the nodegroup's current AMI against the latest available
+// for its type and returns the appropriate status. Returns AMIUpdating while an
+// update is in flight, regardless of AMI identities.
+func classifyAMI(status ekstypes.NodegroupStatus, currentAmiId, latestAmiId string) types.AMIStatus {
+	switch {
+	case status == ekstypes.NodegroupStatusUpdating:
+		return types.AMIUpdating
+	case currentAmiId == "" || latestAmiId == "":
+		return types.AMIUnknown
+	case currentAmiId == latestAmiId:
+		return types.AMILatest
+	default:
+		return types.AMIOutdated
+	}
+}
+
 // EKSAPI abstracts the subset of EKS client methods used for nodegroups.
 type EKSAPI interface {
 	ListNodegroups(ctx context.Context, params *eks.ListNodegroupsInput, optFns ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error)
@@ -123,17 +139,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 
 		currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
 		latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
-
-		var amiStatus types.AMIStatus
-		if ng.Status == ekstypes.NodegroupStatusUpdating {
-			amiStatus = types.AMIUpdating
-		} else if currentAmiId == "" || latestAmiId == "" {
-			amiStatus = types.AMIUnknown
-		} else if currentAmiId == latestAmiId {
-			amiStatus = types.AMILatest
-		} else {
-			amiStatus = types.AMIOutdated
-		}
+		amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
 
 		summary := NodegroupSummary{
 			Name:         aws.ToString(ng.NodegroupName),
@@ -188,17 +194,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 
 	currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
 	latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
-
-	var amiStatus types.AMIStatus
-	if ng.Status == ekstypes.NodegroupStatusUpdating {
-		amiStatus = types.AMIUpdating
-	} else if currentAmiId == "" || latestAmiId == "" {
-		amiStatus = types.AMIUnknown
-	} else if currentAmiId == latestAmiId {
-		amiStatus = types.AMILatest
-	} else {
-		amiStatus = types.AMIOutdated
-	}
+	amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
 
 	details := &NodegroupDetails{
 		Name:         aws.ToString(ng.NodegroupName),
