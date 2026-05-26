@@ -17,10 +17,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
-	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/services/addons"
-	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func runList(c *cli.Context) error {
@@ -146,15 +144,8 @@ func runUpdate(c *cli.Context) error {
 
 	version := strings.TrimSpace(c.String("version"))
 	if !c.IsSet("version") {
-		var nonFlags []string
-		for _, tok := range c.Args().Slice() {
-			if strings.HasPrefix(tok, "-") {
-				continue
-			}
-			nonFlags = append(nonFlags, tok)
-		}
-		if len(nonFlags) >= 3 {
-			version = nonFlags[2]
+		if v := runner.PositionalAt(c, "", 2); v != "" {
+			version = v
 		}
 		if version == "" {
 			version = "latest"
@@ -195,20 +186,11 @@ func runUpdate(c *cli.Context) error {
 }
 
 func runUpdateAll(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
-	defer cancel()
-
-	cfg, err := awsconfig.Load(ctx, c)
+	ctx, cancel, cfg, err := runner.SetupAWSStrict(c)
 	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.ValidateAWSCredentials(ctx, cfg); err != nil {
-		color.Red("%v", err)
-		ui.Outln()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
-	}
+	defer cancel()
 
 	requested := runner.RequestedCluster(c)
 	if strings.TrimSpace(requested) == "" {
