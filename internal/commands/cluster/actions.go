@@ -3,8 +3,6 @@ package cluster
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -14,28 +12,21 @@ import (
 	"github.com/urfave/cli/v2"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
-	"github.com/dantech2000/refresh/internal/awsconfig"
+	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
-	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func runList(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
-	awsCfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
-		return err
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	clusterService := factory.NewClusterService(awsCfg, c.Bool("show-health"), logger)
+	clusterService := factory.NewClusterService(awsCfg, c.Bool("show-health"), nil)
 
 	filters := make(map[string]string)
 	for _, f := range c.StringSlice("filter") {
@@ -43,7 +34,6 @@ func runList(c *cli.Context) error {
 			filters[parts[0]] = parts[1]
 		}
 	}
-
 	if pattern := strings.TrimSpace(c.Args().First()); pattern != "" {
 		filters["name"] = pattern
 	}
@@ -59,77 +49,46 @@ func runList(c *cli.Context) error {
 
 	startTime := time.Now()
 	var summaries []clustersvc.ClusterSummary
-
 	if allRegions || len(c.StringSlice("region")) > 0 {
 		summaries, err = runMultiRegionListWithProgress(ctx, clusterService, options)
 	} else {
-		spinner := ui.NewFunSpinnerForCategory("cluster")
-		if err := spinner.Start(); err != nil {
-			return err
-		}
-		defer spinner.Stop()
-		summaries, err = clusterService.List(ctx, options)
-		spinner.Success("Cluster information gathered!")
+		err = runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
+			var lerr error
+			summaries, lerr = clusterService.List(ctx, options)
+			return lerr
+		})
 	}
 	if err != nil {
 		return err
 	}
 	elapsed := time.Since(startTime)
 
-	summaries = sortClusterSummaries(summaries, c.String("sort"), c.Bool("desc"))
+	summaries = clusterview.SortClusterSummaries(summaries, c.String("sort"), c.Bool("desc"))
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		return outputClustersJSON(summaries)
-	case "yaml":
-		return outputClustersYAML(summaries)
-	case "tree":
-		return outputClustersTree(summaries, elapsed, allRegions, c.Bool("show-health"))
-	default:
-		if c.Bool("tree") {
-			return outputClustersTree(summaries, elapsed, allRegions, c.Bool("show-health"))
-		}
-		return OutputClustersTable(summaries, elapsed, allRegions, c.Bool("show-health"))
+	format := strings.ToLower(c.String("format"))
+	if format == "tree" || (format == "" && c.Bool("tree")) {
+		return clusterview.OutputClustersTree(summaries, elapsed, allRegions, c.Bool("show-health"))
 	}
+	payload := map[string]any{"clusters": summaries, "count": len(summaries)}
+	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+		return err
+	}
+	return clusterview.OutputClustersTable(summaries, elapsed, allRegions, c.Bool("show-health"))
 }
 
 func runDescribe(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
-	awsCfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, c)
+	if err != nil || listed {
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-
-	requested := c.Args().First()
-	if requested == "" {
-		requested = c.String("cluster")
-	}
-	if strings.TrimSpace(requested) == "" {
-		svc := factory.NewClusterService(awsCfg, false, logger)
-		start := time.Now()
-		summaries, err := svc.List(ctx, clustersvc.ListOptions{})
-		if err != nil {
-			return err
-		}
-		ui.Outln("No cluster specified. Available clusters:")
-		ui.Outln()
-		return OutputClustersTable(summaries, time.Since(start), false, false)
-	}
-
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
-	if err != nil {
-		return err
-	}
-
-	clusterService := factory.NewClusterService(awsCfg, c.Bool("show-health"), logger)
+	clusterService := factory.NewClusterService(awsCfg, c.Bool("show-health"), nil)
 	options := clustersvc.DescribeOptions{
 		ShowHealth:    c.Bool("show-health"),
 		ShowSecurity:  c.Bool("show-security") || c.Bool("detailed"),
@@ -137,35 +96,27 @@ func runDescribe(c *cli.Context) error {
 		Detailed:      c.Bool("detailed"),
 	}
 
-	spinner := ui.NewFunSpinnerForCategory("cluster")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
-
+	var details *clustersvc.ClusterDetails
 	startTime := time.Now()
-	details, err := clusterService.Describe(ctx, clusterName, options)
-	spinner.Success("Cluster information gathered!")
-	if err != nil {
+	if err := runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
+		var derr error
+		details, derr = clusterService.Describe(ctx, clusterName, options)
+		return derr
+	}); err != nil {
 		return err
 	}
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		return outputClusterDetailsJSON(details)
-	case "yaml":
-		return outputClusterDetailsYAML(details)
-	default:
-		return outputClusterDetailsTable(details, time.Since(startTime))
+	if handled, err := runner.EncodeStdout(c.String("format"), details); handled {
+		return err
 	}
+	return clusterview.OutputClusterDetailsTable(details, time.Since(startTime))
 }
 
 func runDiff(c *cli.Context) error {
-	timeout := c.Duration("timeout")
-	if timeout == 0 {
-		timeout = 60 * time.Second
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(c, 60*time.Second)
+	if err != nil {
+		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	clusterPatterns := c.StringSlice("cluster")
@@ -173,17 +124,7 @@ func runDiff(c *cli.Context) error {
 		return fmt.Errorf("need at least 2 clusters to compare, use --cluster flag multiple times")
 	}
 
-	awsCfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
-		return err
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	clusterService := factory.NewClusterService(awsCfg, true, logger)
+	clusterService := factory.NewClusterService(awsCfg, true, nil)
 
 	clusterNames, err := resolveCompareClusterNames(ctx, awsCfg, clusterPatterns, c.Bool("interactive"))
 	if err != nil {
@@ -196,27 +137,20 @@ func runDiff(c *cli.Context) error {
 		Format:              c.String("format"),
 	}
 
-	spinner := ui.NewFunSpinnerForCategory("cluster")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
-
+	var comparison *clustersvc.ClusterComparison
 	startTime := time.Now()
-	comparison, err := clusterService.Compare(ctx, clusterNames, options)
-	spinner.Success("Analysis complete!")
-	if err != nil {
+	if err := runner.WithSpinner("cluster", "Analysis complete!", func() error {
+		var cerr error
+		comparison, cerr = clusterService.Compare(ctx, clusterNames, options)
+		return cerr
+	}); err != nil {
 		return err
 	}
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		return outputComparisonJSON(comparison)
-	case "yaml":
-		return outputComparisonYAML(comparison)
-	default:
-		return outputComparisonTable(comparison, time.Since(startTime))
+	if handled, err := runner.EncodeStdout(c.String("format"), comparison); handled {
+		return err
 	}
+	return clusterview.OutputComparisonTable(comparison, time.Since(startTime))
 }
 
 // resolveCompareClusterNames resolves each pattern to one or more cluster names.
@@ -281,24 +215,20 @@ func interactiveSelectClusters(candidates []string) ([]string, error) {
 	return selected, nil
 }
 
-func runMultiRegionListWithProgress(ctx context.Context, clusterService clustersvc.Service, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, error) {
+func runMultiRegionListWithProgress(ctx context.Context, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, error) {
 	spinner := ui.NewFunSpinnerForCategory("cluster")
 	if err := spinner.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start spinner: %w", err)
 	}
 	defer spinner.Stop()
 
-	summaries, err := clusterService.ListAllRegions(ctx, options)
+	summaries, regionsQueried, err := clusterService.ListAllRegionsWithMeta(ctx, options)
 	if err != nil {
 		return nil, err
 	}
 
-	regions := options.Regions
-	if len(regions) == 0 {
-		regions = appconfig.GetRegionsForPartition("")
-	}
 	if len(summaries) > 0 {
-		spinner.Success(fmt.Sprintf("Found %d clusters across %d regions!", len(summaries), len(regions)))
+		spinner.Success(fmt.Sprintf("Found %d clusters across %d regions!", len(summaries), regionsQueried))
 	} else {
 		spinner.Success("Search complete - no clusters found")
 	}
