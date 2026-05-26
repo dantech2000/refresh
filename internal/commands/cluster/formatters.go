@@ -37,46 +37,33 @@ func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Dur
 	ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
 	headerColor := func(s string) string { return color.CyanString(s) }
+	cols := []ui.Column{{Title: "CLUSTER", Min: 14, Align: ui.AlignLeft}}
 	if multiRegion {
-		cols := []ui.Column{
-			{Title: "CLUSTER", Min: 14, Align: ui.AlignLeft},
-			{Title: "REGION", Min: 10, Align: ui.AlignLeft},
-			{Title: "STATUS", Min: 7, Align: ui.AlignLeft},
-			{Title: "VERSION", Min: 7, Align: ui.AlignLeft},
-		}
-		if showHealth {
-			cols = append(cols, ui.Column{Title: "HEALTH", Min: 8, Align: ui.AlignLeft})
-		}
-		cols = append(cols, ui.Column{Title: "READY/DESIRED", Min: 15, Align: ui.AlignRight})
-		tbl := ui.NewPTable(cols, ui.WithPTableHeaderColor(headerColor))
-		for _, s := range summaries {
-			if showHealth {
-				tbl.AddRow(s.Name, s.Region, formatStatus(s.Status), s.Version, formatClusterHealth(s.Health), formatNodeCount(s.NodeCount))
-			} else {
-				tbl.AddRow(s.Name, s.Region, formatStatus(s.Status), s.Version, formatNodeCount(s.NodeCount))
-			}
-		}
-		tbl.Render()
-	} else {
-		cols := []ui.Column{
-			{Title: "CLUSTER", Min: 14, Align: ui.AlignLeft},
-			{Title: "STATUS", Min: 7, Align: ui.AlignLeft},
-			{Title: "VERSION", Min: 7, Align: ui.AlignLeft},
-		}
-		if showHealth {
-			cols = append(cols, ui.Column{Title: "HEALTH", Min: 8, Align: ui.AlignLeft})
-		}
-		cols = append(cols, ui.Column{Title: "READY/DESIRED", Min: 15, Align: ui.AlignRight})
-		tbl := ui.NewPTable(cols, ui.WithPTableHeaderColor(headerColor))
-		for _, s := range summaries {
-			if showHealth {
-				tbl.AddRow(s.Name, formatStatus(s.Status), s.Version, formatClusterHealth(s.Health), formatNodeCount(s.NodeCount))
-			} else {
-				tbl.AddRow(s.Name, formatStatus(s.Status), s.Version, formatNodeCount(s.NodeCount))
-			}
-		}
-		tbl.Render()
+		cols = append(cols, ui.Column{Title: "REGION", Min: 10, Align: ui.AlignLeft})
 	}
+	cols = append(cols,
+		ui.Column{Title: "STATUS", Min: 7, Align: ui.AlignLeft},
+		ui.Column{Title: "VERSION", Min: 7, Align: ui.AlignLeft},
+	)
+	if showHealth {
+		cols = append(cols, ui.Column{Title: "HEALTH", Min: 8, Align: ui.AlignLeft})
+	}
+	cols = append(cols, ui.Column{Title: "READY/DESIRED", Min: 15, Align: ui.AlignRight})
+
+	tbl := ui.NewPTable(cols, ui.WithPTableHeaderColor(headerColor))
+	for _, s := range summaries {
+		row := []string{s.Name}
+		if multiRegion {
+			row = append(row, s.Region)
+		}
+		row = append(row, formatStatus(s.Status), s.Version)
+		if showHealth {
+			row = append(row, formatClusterHealth(s.Health))
+		}
+		row = append(row, formatNodeCount(s.NodeCount))
+		tbl.AddRow(row...)
+	}
+	tbl.Render()
 
 	if showHealth {
 		healthy, warning, critical, updating := 0, 0, 0, 0
