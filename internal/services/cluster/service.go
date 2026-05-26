@@ -274,6 +274,18 @@ func (s *ServiceImpl) resolveRegions(options ListOptions) []string {
 	return appconfig.GetRegionsForPartition(s.awsConfig.Region)
 }
 
+// regionOptionsFor returns options narrowed to a single AWS region. The
+// returned value is what ListAllRegionsWithMeta hands to each per-region
+// goroutine so the per-region List's cache key (which hashes options.Regions)
+// distinguishes between regions instead of colliding on the parent's full
+// region slice.
+func regionOptionsFor(options ListOptions, region string) ListOptions {
+	out := options
+	out.Regions = []string{region}
+	out.AllRegions = false
+	return out
+}
+
 // ListAllRegions lists clusters across all EKS-supported regions.
 func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) ([]ClusterSummary, error) {
 	summaries, _, err := s.ListAllRegionsWithMeta(ctx, options)
@@ -304,11 +316,7 @@ func (s *ServiceImpl) ListAllRegionsWithMeta(ctx context.Context, options ListOp
 		sem <- struct{}{}
 		go func(r string) {
 			defer func() { <-sem }()
-
-			regionOptions := options
-			regionOptions.AllRegions = false
-
-			summaries, err := s.forRegion(r).List(ctx, regionOptions)
+			summaries, err := s.forRegion(r).List(ctx, regionOptionsFor(options, r))
 			for i := range summaries {
 				summaries[i].Region = r
 			}

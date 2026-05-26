@@ -48,6 +48,36 @@ func TestBuildListCacheKey_RegionOrderStable(t *testing.T) {
 	}
 }
 
+// Regression: ListAllRegionsWithMeta must narrow each per-region goroutine's
+// options.Regions to a single region. Without this, every goroutine computes
+// the same cache key (hashed from the parent's full region slice), the second
+// to run hits a cache populated by the first, and clusters from one region
+// surface under the other after the post-fetch Region relabel.
+func TestRegionOptionsFor_NarrowsRegionsAndCacheKey(t *testing.T) {
+	parent := ListOptions{
+		Regions:    []string{"us-east-1", "us-west-2"},
+		ShowHealth: true,
+	}
+	east := regionOptionsFor(parent, "us-east-1")
+	west := regionOptionsFor(parent, "us-west-2")
+
+	if got := east.Regions; len(got) != 1 || got[0] != "us-east-1" {
+		t.Errorf("east Regions = %v, want [us-east-1]", got)
+	}
+	if got := west.Regions; len(got) != 1 || got[0] != "us-west-2" {
+		t.Errorf("west Regions = %v, want [us-west-2]", got)
+	}
+	if east.AllRegions || west.AllRegions {
+		t.Error("AllRegions must be cleared to prevent recursive fan-out")
+	}
+	if parent.Regions[0] != "us-east-1" || parent.Regions[1] != "us-west-2" {
+		t.Errorf("parent.Regions mutated: %v", parent.Regions)
+	}
+	if buildListCacheKey(east) == buildListCacheKey(west) {
+		t.Error("per-region cache keys must differ to avoid cross-region collision")
+	}
+}
+
 func TestBuildDescribeCacheKey_ContainsClusterName(t *testing.T) {
 	key := buildDescribeCacheKey("my-cluster", DescribeOptions{ShowHealth: true})
 	if key == "" {
