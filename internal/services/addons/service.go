@@ -263,60 +263,41 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 		s.logger.Info("addon update order resolved", "order", addonNames(toUpdate))
 	}
 
-	results := make([]AddonUpdateResult, 0, len(toUpdate))
+	updateOne := func(a AddonSummary) AddonUpdateResult {
+		result, err := s.Update(ctx, clusterName, a.Name, UpdateOptions{
+			Version:     "latest",
+			DryRun:      options.DryRun,
+			HealthCheck: options.HealthCheck,
+			Wait:        options.Wait,
+			WaitTimeout: options.WaitTimeout,
+		})
+		if err != nil {
+			return AddonUpdateResult{
+				AddonName:       a.Name,
+				PreviousVersion: a.Version,
+				Status:          fmt.Sprintf("FAILED: %v", err),
+			}
+		}
+		return *result
+	}
 
+	results := make([]AddonUpdateResult, len(toUpdate))
 	if options.Parallel {
-		var mu sync.Mutex
 		var wg sync.WaitGroup
 		semaphore := make(chan struct{}, 3)
-
-		for _, addon := range toUpdate {
+		for i, addon := range toUpdate {
 			wg.Add(1)
-			go func(a AddonSummary) {
+			go func(i int, a AddonSummary) {
 				defer wg.Done()
 				semaphore <- struct{}{}
 				defer func() { <-semaphore }()
-
-				result, err := s.Update(ctx, clusterName, a.Name, UpdateOptions{
-					Version:     "latest",
-					DryRun:      options.DryRun,
-					HealthCheck: options.HealthCheck,
-					Wait:        options.Wait,
-					WaitTimeout: options.WaitTimeout,
-				})
-
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					results = append(results, AddonUpdateResult{
-						AddonName:       a.Name,
-						PreviousVersion: a.Version,
-						Status:          fmt.Sprintf("FAILED: %v", err),
-					})
-				} else {
-					results = append(results, *result)
-				}
-			}(addon)
+				results[i] = updateOne(a)
+			}(i, addon)
 		}
 		wg.Wait()
 	} else {
-		for _, addon := range toUpdate {
-			result, err := s.Update(ctx, clusterName, addon.Name, UpdateOptions{
-				Version:     "latest",
-				DryRun:      options.DryRun,
-				HealthCheck: options.HealthCheck,
-				Wait:        options.Wait,
-				WaitTimeout: options.WaitTimeout,
-			})
-			if err != nil {
-				results = append(results, AddonUpdateResult{
-					AddonName:       addon.Name,
-					PreviousVersion: addon.Version,
-					Status:          fmt.Sprintf("FAILED: %v", err),
-				})
-			} else {
-				results = append(results, *result)
-			}
+		for i, addon := range toUpdate {
+			results[i] = updateOne(addon)
 		}
 	}
 
