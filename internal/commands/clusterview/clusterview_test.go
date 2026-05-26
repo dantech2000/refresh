@@ -257,6 +257,44 @@ func TestFormatHealth_DefaultDecision(t *testing.T) {
 	}
 }
 
+// ── treeStatusWithHealth ──────────────────────────────────────────────────────
+
+// Regression: when the health checker returns a HealthSummary whose Decision
+// is empty/unrecognized, the tree view must NOT mask the underlying cluster
+// status as "UNKNOWN". Show the raw status plus a "(health unknown)" hint
+// so the operator can still tell the cluster is ACTIVE/CREATING/etc.
+func TestTreeStatusWithHealth_UnknownDecisionPreservesClusterStatus(t *testing.T) {
+	h := &health.HealthSummary{Decision: ""} // health checker returned no decision
+	got := treeStatusWithHealth("ACTIVE", h)
+	if got != "ACTIVE (health unknown)" {
+		t.Errorf("got %q, want %q", got, "ACTIVE (health unknown)")
+	}
+}
+
+func TestTreeStatusWithHealth_KnownDecisionReplacesStatus(t *testing.T) {
+	cases := []struct {
+		d    health.Decision
+		want string
+	}{
+		{health.DecisionProceed, "HEALTHY"},
+		{health.DecisionWarn, "WARNING"},
+		{health.DecisionBlock, "CRITICAL"},
+	}
+	for _, c := range cases {
+		got := treeStatusWithHealth("ACTIVE", &health.HealthSummary{Decision: c.d})
+		if got != c.want {
+			t.Errorf("decision %q: got %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+func TestTreeStatusWithHealth_NilSummaryReturnsClusterStatus(t *testing.T) {
+	got := treeStatusWithHealth("CREATING", nil)
+	if got != "CREATING" {
+		t.Errorf("got %q, want CREATING (nil summary should pass through)", got)
+	}
+}
+
 // ── formatAddonHealth ─────────────────────────────────────────────────────────
 
 func TestFormatAddonHealth(t *testing.T) {

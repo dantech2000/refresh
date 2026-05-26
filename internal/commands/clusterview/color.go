@@ -92,19 +92,35 @@ func healthLabel(d health.Decision) string {
 	}
 }
 
-// healthTreeLabel returns the long HEALTHY/WARNING/CRITICAL label the tree
-// view uses instead of the short healthLabel form.
-func healthTreeLabel(d health.Decision) string {
+// knownHealthTreeLabel returns the long HEALTHY/WARNING/CRITICAL label the
+// tree view uses for a recognized decision, plus ok=true. For an
+// empty/unrecognized decision it returns ("", false) so the caller can fall
+// back to the underlying cluster status instead of masking it as "UNKNOWN".
+func knownHealthTreeLabel(d health.Decision) (string, bool) {
 	switch d {
 	case health.DecisionProceed:
-		return "HEALTHY"
+		return "HEALTHY", true
 	case health.DecisionWarn:
-		return "WARNING"
+		return "WARNING", true
 	case health.DecisionBlock:
-		return "CRITICAL"
+		return "CRITICAL", true
 	default:
-		return "UNKNOWN"
+		return "", false
 	}
+}
+
+// treeStatusWithHealth produces the status cell shown in the tree view.
+// Known decisions replace the status with the health label; unknown decisions
+// preserve the cluster status and append a "(health unknown)" hint so the
+// operator can still tell the cluster's underlying state.
+func treeStatusWithHealth(clusterStatus string, h *health.HealthSummary) string {
+	if h == nil {
+		return clusterStatus
+	}
+	if label, ok := knownHealthTreeLabel(h.Decision); ok {
+		return label
+	}
+	return clusterStatus + " (health unknown)"
 }
 
 func formatHealth(h *health.HealthSummary) string {

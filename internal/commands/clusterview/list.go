@@ -129,8 +129,8 @@ func OutputClustersTree(summaries []clustersvc.ClusterSummary, elapsed time.Dura
 		sort.Slice(clusters, func(i, j int) bool { return clusters[i].Name < clusters[j].Name })
 		for _, c := range clusters {
 			status := c.Status
-			if showHealth && c.Health != nil {
-				status = healthTreeLabel(c.Health.Decision)
+			if showHealth {
+				status = treeStatusWithHealth(c.Status, c.Health)
 			}
 			regionTree.AddClusterToRegion(c.Name, status, c.NodeCount.Ready)
 		}
