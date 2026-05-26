@@ -239,16 +239,11 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 	}
 
 	var summaries []ClusterSummary
-
-	// Process each cluster. getClusterSummary always returns a non-nil summary
-	// (it falls back to a minimal record on describe failures) so the returned
-	// error is currently always nil; we still ignore it defensively.
 	for _, clusterName := range clusterNames {
 		if s.shouldSkipCluster(clusterName, options.Filters) {
 			continue
 		}
-		summary, _ := s.getClusterSummary(ctx, clusterName, options)
-		summaries = append(summaries, *summary)
+		summaries = append(summaries, *s.getClusterSummary(ctx, clusterName, options))
 	}
 
 	// Cache the result
