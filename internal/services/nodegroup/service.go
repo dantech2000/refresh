@@ -43,14 +43,7 @@ type EKSAPI interface {
 	UpdateNodegroupConfig(ctx context.Context, params *eks.UpdateNodegroupConfigInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupConfigOutput, error)
 }
 
-// Service defines nodegroup operations.
-type Service interface {
-	List(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, error)
-	Describe(ctx context.Context, clusterName, nodegroupName string, options DescribeOptions) (*NodegroupDetails, error)
-	Scale(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32, options ScaleOptions) error
-}
-
-// ServiceImpl implements Service.
+// ServiceImpl is the nodegroup service.
 type ServiceImpl struct {
 	eksClient     EKSAPI
 	logger        *slog.Logger

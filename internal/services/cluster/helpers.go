@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -352,17 +353,11 @@ func analyzeAddonDifferences(clusters []ClusterDetails) []Difference {
 	return out
 }
 
-// shouldIncludeField checks if a field should be included in comparison
+// shouldIncludeField checks if a field should be included in comparison.
+// Empty include slice means "include all".
 func (s *ServiceImpl) shouldIncludeField(field string, include []string) bool {
 	if len(include) == 0 {
-		return true // Include all fields if none specified
+		return true
 	}
-
-	for _, included := range include {
-		if included == field {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(include, field)
 }

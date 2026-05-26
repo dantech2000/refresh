@@ -178,14 +178,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 		}
 	}
 
-	// Check deletion protection status (available in AWS SDK v1.73.1+)
-	// EKS deletion protection was introduced in August 2025
-	if cluster.DeletionProtection != nil {
-		details.Security.DeletionProtection = aws.ToBool(cluster.DeletionProtection)
-	} else {
-		// Default to false if field is not present (older clusters)
-		details.Security.DeletionProtection = false
-	}
+	details.Security.DeletionProtection = aws.ToBool(cluster.DeletionProtection)
 
 	// Add add-ons information if requested
 	if options.IncludeAddons {
