@@ -155,14 +155,12 @@ func runUpdate(c *cli.Context) error {
 
 	eksClient := eks.NewFromConfig(cfg)
 
-	version := strings.TrimSpace(c.String("version"))
-	if !c.IsSet("version") {
-		if v := runner.PositionalAt(c, "", 2); v != "" {
-			version = v
-		}
-		if version == "" {
-			version = "latest"
-		}
+	// version slot is third positional after (cluster, addon). PositionalSlot
+	// shifts the expected index down by 1 for each prior flag that was set, so
+	// `--addon=foo my-cluster v1.2.3` correctly picks up v1.2.3.
+	version := runner.PositionalSlot(c, "version", "cluster", "addon")
+	if version == "" {
+		version = "latest"
 	}
 
 	targetVersion := version

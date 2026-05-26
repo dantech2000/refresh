@@ -286,10 +286,12 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 		var wg sync.WaitGroup
 		semaphore := make(chan struct{}, 3)
 		for i, addon := range toUpdate {
+			// Acquire BEFORE spawning so the cap limits live goroutines, not
+			// just in-flight API calls. Matches cluster.ListAllRegionsWithMeta.
+			semaphore <- struct{}{}
 			wg.Add(1)
 			go func(i int, a AddonSummary) {
 				defer wg.Done()
-				semaphore <- struct{}{}
 				defer func() { <-semaphore }()
 				results[i] = updateOne(a)
 			}(i, addon)
