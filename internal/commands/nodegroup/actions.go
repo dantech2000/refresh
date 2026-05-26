@@ -17,7 +17,6 @@ import (
 	"github.com/urfave/cli/v2"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
-	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
@@ -126,41 +125,20 @@ func runDescribe(c *cli.Context) error {
 }
 
 func runScale(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
-	defer cancel()
-
-	awsCfg, err := awsconfig.Load(ctx, c)
+	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
 	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
-		return err
-	}
+	defer cancel()
 
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, c.String("cluster"))
 	if err != nil {
 		return err
 	}
 
-	ngName := c.String("nodegroup")
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	withHealth := c.Bool("health-check") || c.Bool("check-pdbs") || c.Bool("wait")
 	svc := factory.NewNodegroupService(awsCfg, withHealth, logger)
-
-	var desiredPtr, minPtr, maxPtr *int32
-	if c.IsSet("desired") {
-		v := int32(c.Int("desired"))
-		desiredPtr = &v
-	}
-	if c.IsSet("min") {
-		v := int32(c.Int("min"))
-		minPtr = &v
-	}
-	if c.IsSet("max") {
-		v := int32(c.Int("max"))
-		maxPtr = &v
-	}
 
 	opts := nodegroupsvc.ScaleOptions{
 		HealthCheck: c.Bool("health-check"),
@@ -170,18 +148,27 @@ func runScale(c *cli.Context) error {
 		DryRun:      c.Bool("dry-run"),
 	}
 
-	spinner := ui.NewFunSpinnerForCategory("nodegroup")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
+	return runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
+		return svc.Scale(
+			ctx,
+			clusterName,
+			c.String("nodegroup"),
+			int32PtrIfSet(c, "desired"),
+			int32PtrIfSet(c, "min"),
+			int32PtrIfSet(c, "max"),
+			opts,
+		)
+	})
+}
 
-	if err := svc.Scale(ctx, clusterName, ngName, desiredPtr, minPtr, maxPtr, opts); err != nil {
-		spinner.Fail("Scaling failed")
-		return err
+// int32PtrIfSet returns &v for c.Int(name) when the flag was explicitly set,
+// otherwise nil.
+func int32PtrIfSet(c *cli.Context, name string) *int32 {
+	if !c.IsSet(name) {
+		return nil
 	}
-	spinner.Success("Scaling request submitted")
-	return nil
+	v := int32(c.Int(name))
+	return &v
 }
 
 // updateAMIFlags collects the flags that govern runUpdateAMI's behavior.
@@ -204,21 +191,11 @@ func readUpdateAMIFlags(c *cli.Context) updateAMIFlags {
 }
 
 func runUpdateAMI(c *cli.Context) error {
-	globalTimeout := c.Duration("timeout")
-	if globalTimeout == 0 {
-		globalTimeout = 60 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	awsCfg, err := awsconfig.Load(ctx, c)
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(c, 60*time.Second)
 	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
-		return err
-	}
+	defer cancel()
 
 	requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(c)
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requestedCluster)
