@@ -291,96 +291,63 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 	return summaries, nil
 }
 
+// forRegion returns a ServiceImpl bound to the given AWS region. It reuses the
+// shared cache, logger, and health checker.
+func (s *ServiceImpl) forRegion(region string) *ServiceImpl {
+	regionConfig := s.awsConfig.Copy()
+	regionConfig.Region = region
+	out := NewService(regionConfig, s.healthChecker, s.logger)
+	out.cache = s.cache
+	return out
+}
+
+// resolveRegions picks the region set for a multi-region operation in
+// preference order: explicit options, REFRESH_EKS_REGIONS env, partition default.
+func (s *ServiceImpl) resolveRegions(options ListOptions) []string {
+	if len(options.Regions) > 0 {
+		return options.Regions
+	}
+	if env := appconfig.RegionsFromEnv(); len(env) > 0 {
+		return env
+	}
+	return appconfig.GetRegionsForPartition(s.awsConfig.Region)
+}
+
 // ListAllRegions lists clusters across all EKS-supported regions
 func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) ([]ClusterSummary, error) {
 	s.logger.Info("listing clusters across all regions", "options", options)
 
-	// Default regions by partition (fallback). Prefer user-specified regions or env override.
-	regionsCommercial := []string{
-		"us-east-1", "us-east-2", "us-west-1", "us-west-2",
-		"eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-north-1",
-		"ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2", "ap-south-1",
-		"ca-central-1", "sa-east-1",
-	}
-	regionsGovCloud := []string{"us-gov-west-1", "us-gov-east-1"}
-	regionsChina := []string{"cn-north-1", "cn-northwest-1"}
-
-	eksRegions := regionsCommercial
-	currentRegion := s.awsConfig.Region
-	if strings.HasPrefix(currentRegion, "us-gov-") {
-		eksRegions = regionsGovCloud
-	} else if strings.HasPrefix(currentRegion, "cn-") {
-		eksRegions = regionsChina
+	eksRegions := s.resolveRegions(options)
+	maxConc := options.MaxConcurrency
+	if maxConc <= 0 {
+		maxConc = 8
 	}
 
-	// Allow overriding region set via environment (comma-separated)
-	if envRegions := appconfig.RegionsFromEnv(); len(envRegions) > 0 {
-		eksRegions = envRegions
-	}
-
-	if len(options.Regions) > 0 {
-		eksRegions = options.Regions
-	}
-
-	// Partition-aware defaults are applied above; users can still override via flags/env.
-
-	allSummaries := make([]ClusterSummary, 0)
-
-	// Use a channel to collect results from concurrent region queries
 	type regionResult struct {
 		region    string
 		summaries []ClusterSummary
 		err       error
 	}
-
 	resultChan := make(chan regionResult, len(eksRegions))
-
-	// Limit concurrency across regions to reduce throttling
-	maxConc := options.MaxConcurrency
-	if maxConc <= 0 {
-		maxConc = 8
-	}
 	sem := make(chan struct{}, maxConc)
 
-	// Query each region concurrently
 	for _, region := range eksRegions {
+		sem <- struct{}{}
 		go func(r string) {
-			sem <- struct{}{}
 			defer func() { <-sem }()
-			// Create region-specific config
-			regionConfig := s.awsConfig.Copy()
-			regionConfig.Region = r
-
-			regionService := &ServiceImpl{
-				eksClient:     eks.NewFromConfig(regionConfig),
-				ec2Client:     ec2.NewFromConfig(regionConfig),
-				iamClient:     iam.NewFromConfig(regionConfig),
-				stsClient:     sts.NewFromConfig(regionConfig),
-				healthChecker: s.healthChecker,
-				cache:         s.cache,
-				logger:        s.logger,
-				awsConfig:     regionConfig,
-			}
 
 			regionOptions := options
-			regionOptions.AllRegions = false // Avoid infinite recursion
+			regionOptions.AllRegions = false
 
-			summaries, err := regionService.List(ctx, regionOptions)
-
-			// Add region to summaries
+			summaries, err := s.forRegion(r).List(ctx, regionOptions)
 			for i := range summaries {
 				summaries[i].Region = r
 			}
-
-			resultChan <- regionResult{
-				region:    r,
-				summaries: summaries,
-				err:       err,
-			}
+			resultChan <- regionResult{region: r, summaries: summaries, err: err}
 		}(region)
 	}
 
-	// Collect results
+	allSummaries := make([]ClusterSummary, 0)
 	for i := 0; i < len(eksRegions); i++ {
 		result := <-resultChan
 		if result.err != nil {

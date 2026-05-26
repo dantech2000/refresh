@@ -16,6 +16,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/commands/factory"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -281,66 +282,25 @@ func interactiveSelectClusters(candidates []string) ([]string, error) {
 }
 
 func runMultiRegionListWithProgress(ctx context.Context, clusterService clustersvc.Service, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, error) {
-	var regions []string
-	if options.AllRegions {
-		regions = []string{
-			"us-east-1", "us-east-2", "us-west-1", "us-west-2",
-			"eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-north-1",
-			"ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2", "ap-south-1",
-			"ca-central-1", "sa-east-1",
-		}
-	} else {
-		regions = options.Regions
-	}
-
-	if len(regions) <= 1 {
-		return clusterService.ListAllRegions(ctx, options)
-	}
-
 	spinner := ui.NewFunSpinnerForCategory("cluster")
 	if err := spinner.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start spinner: %w", err)
 	}
 	defer spinner.Stop()
 
-	type regionResult struct {
-		region    string
-		summaries []clustersvc.ClusterSummary
-		err       error
-	}
-	resultChan := make(chan regionResult, len(regions))
-	maxConc := options.MaxConcurrency
-	if maxConc <= 0 {
-		maxConc = 8
-	}
-	sem := make(chan struct{}, maxConc)
-
-	for _, region := range regions {
-		go func(r string) {
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			regionOptions := options
-			regionOptions.Regions = []string{r}
-			regionOptions.AllRegions = false
-			sums, err := clusterService.ListAllRegions(ctx, regionOptions)
-			resultChan <- regionResult{region: r, summaries: sums, err: err}
-		}(region)
+	summaries, err := clusterService.ListAllRegions(ctx, options)
+	if err != nil {
+		return nil, err
 	}
 
-	allSummaries := make([]clustersvc.ClusterSummary, 0)
-	for i := 0; i < len(regions); i++ {
-		result := <-resultChan
-		if result.err != nil {
-			slog.Warn("failed to list clusters in region", "region", result.region, "error", result.err)
-			continue
-		}
-		allSummaries = append(allSummaries, result.summaries...)
+	regions := options.Regions
+	if len(regions) == 0 {
+		regions = appconfig.GetRegionsForPartition("")
 	}
-
-	if len(allSummaries) > 0 {
-		spinner.Success(fmt.Sprintf("Found %d clusters across %d regions!", len(allSummaries), len(regions)))
+	if len(summaries) > 0 {
+		spinner.Success(fmt.Sprintf("Found %d clusters across %d regions!", len(summaries), len(regions)))
 	} else {
 		spinner.Success("Search complete - no clusters found")
 	}
-	return allSummaries, nil
+	return summaries, nil
 }
