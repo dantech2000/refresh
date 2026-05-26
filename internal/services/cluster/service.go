@@ -20,20 +20,6 @@ import (
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
-// Service defines the interface for cluster operations
-type Service interface {
-	// Single cluster operations
-	Describe(ctx context.Context, name string, options DescribeOptions) (*ClusterDetails, error)
-	GetHealth(ctx context.Context, name string) (*health.HealthSummary, error)
-
-	// Multi-cluster operations
-	List(ctx context.Context, options ListOptions) ([]ClusterSummary, error)
-	ListAllRegions(ctx context.Context, options ListOptions) ([]ClusterSummary, error)
-
-	// Comparison operations
-	Compare(ctx context.Context, clusterNames []string, options CompareOptions) (*ClusterComparison, error)
-}
-
 // EKSAPI abstracts the subset of EKS client methods used by this service for easier testing
 type EKSAPI interface {
 	ListClusters(ctx context.Context, params *eks.ListClustersInput, optFns ...func(*eks.Options)) (*eks.ListClustersOutput, error)
@@ -269,19 +255,14 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 
 	var summaries []ClusterSummary
 
-	// Process each cluster
+	// Process each cluster. getClusterSummary always returns a non-nil summary
+	// (it falls back to a minimal record on describe failures) so the returned
+	// error is currently always nil; we still ignore it defensively.
 	for _, clusterName := range clusterNames {
-		// Apply filters
 		if s.shouldSkipCluster(clusterName, options.Filters) {
 			continue
 		}
-
-		summary, err := s.getClusterSummary(ctx, clusterName, options)
-		if err != nil {
-			s.logger.Warn("failed to get cluster summary", "cluster", clusterName, "error", err)
-			continue
-		}
-
+		summary, _ := s.getClusterSummary(ctx, clusterName, options)
 		summaries = append(summaries, *summary)
 	}
 
@@ -313,8 +294,16 @@ func (s *ServiceImpl) resolveRegions(options ListOptions) []string {
 	return appconfig.GetRegionsForPartition(s.awsConfig.Region)
 }
 
-// ListAllRegions lists clusters across all EKS-supported regions
+// ListAllRegions lists clusters across all EKS-supported regions.
 func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) ([]ClusterSummary, error) {
+	summaries, _, err := s.ListAllRegionsWithMeta(ctx, options)
+	return summaries, err
+}
+
+// ListAllRegionsWithMeta is like ListAllRegions but also returns the number of
+// regions that were actually queried, so the caller can display an accurate
+// progress message.
+func (s *ServiceImpl) ListAllRegionsWithMeta(ctx context.Context, options ListOptions) ([]ClusterSummary, int, error) {
 	s.logger.Info("listing clusters across all regions", "options", options)
 
 	eksRegions := s.resolveRegions(options)
@@ -357,7 +346,7 @@ func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (
 		allSummaries = append(allSummaries, result.summaries...)
 	}
 
-	return allSummaries, nil
+	return allSummaries, len(eksRegions), nil
 }
 
 // Compare provides side-by-side cluster comparison

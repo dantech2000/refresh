@@ -18,7 +18,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/awsconfig"
-	clustercmd "github.com/dantech2000/refresh/internal/commands/cluster"
+	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -26,18 +26,58 @@ import (
 
 // SetupAWS opens a context with the command's timeout, loads the AWS config,
 // and checks credentials. Returns the context, a cancel func to be deferred,
-// and the loaded aws.Config.
+// and the loaded aws.Config. On error, the returned cancel is nil and the
+// internal context has already been cancelled.
 func SetupAWS(c *cli.Context) (context.Context, context.CancelFunc, aws.Config, error) {
+	return SetupAWSWithTimeout(c, 0)
+}
+
+// SetupAWSWithTimeout behaves like SetupAWS but falls back to defaultTimeout
+// when c.Duration("timeout") is zero.
+func SetupAWSWithTimeout(c *cli.Context, defaultTimeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
+	timeout := c.Duration("timeout")
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
+
+	cfg, err := awsconfig.Load(ctx, c)
+	if err != nil {
+		cancel()
+		color.Red("Failed to load AWS config: %v", err)
+		return nil, nil, aws.Config{}, err
+	}
+	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil {
+		cancel()
+		return nil, nil, aws.Config{}, err
+	}
+	return ctx, cancel, cfg, nil
+}
+
+// SetupAWSStrict is like SetupAWS but uses ValidateAWSCredentials and prints
+// the credential help message on failure (used by destructive commands).
+func SetupAWSStrict(c *cli.Context) (context.Context, context.CancelFunc, aws.Config, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
 	cfg, err := awsconfig.Load(ctx, c)
 	if err != nil {
 		cancel()
 		color.Red("Failed to load AWS config: %v", err)
-		return nil, func() {}, aws.Config{}, err
+		return nil, nil, aws.Config{}, err
 	}
-	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil {
+	if err := awsinternal.ValidateAWSCredentials(ctx, cfg); err != nil {
 		cancel()
-		return nil, func() {}, aws.Config{}, err
+		color.Red("%v", err)
+		ui.Outln()
+		awsinternal.PrintCredentialHelp()
+		return nil, nil, aws.Config{}, fmt.Errorf("AWS credential validation failed")
 	}
 	return ctx, cancel, cfg, nil
 }
@@ -65,7 +105,7 @@ func ResolveClusterOrList(ctx context.Context, cfg aws.Config, c *cli.Context) (
 		if lerr != nil {
 			return "", true, lerr
 		}
-		_ = clustercmd.OutputClustersTable(summaries, time.Since(start), false, false)
+		_ = clusterview.OutputClustersTable(summaries, time.Since(start), false, false)
 		return "", true, nil
 	}
 	name, err := awsinternal.ClusterName(ctx, cfg, requested)
@@ -78,8 +118,16 @@ func ResolveClusterOrList(ctx context.Context, cfg aws.Config, c *cli.Context) (
 // SecondPositional returns the value of flagName, or the second non-flag
 // positional argument if the flag is not set.
 func SecondPositional(c *cli.Context, flagName string) string {
-	if v := strings.TrimSpace(c.String(flagName)); v != "" {
-		return v
+	return PositionalAt(c, flagName, 1)
+}
+
+// PositionalAt returns the value of flagName, or the non-flag positional
+// argument at index (0-indexed) if the flag is not set.
+func PositionalAt(c *cli.Context, flagName string, index int) string {
+	if flagName != "" {
+		if v := strings.TrimSpace(c.String(flagName)); v != "" {
+			return v
+		}
 	}
 	var nonFlags []string
 	for _, tok := range c.Args().Slice() {
@@ -88,8 +136,8 @@ func SecondPositional(c *cli.Context, flagName string) string {
 		}
 		nonFlags = append(nonFlags, tok)
 	}
-	if len(nonFlags) >= 2 {
-		return nonFlags[1]
+	if index < len(nonFlags) {
+		return nonFlags[index]
 	}
 	return ""
 }

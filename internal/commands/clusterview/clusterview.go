@@ -1,24 +1,22 @@
-package cluster
+// Package clusterview renders cluster summaries, details, and comparisons.
+// It lives in its own package so that both commands/cluster and
+// commands/runner can depend on it without an import cycle.
+package clusterview
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/fatih/color"
-	"gopkg.in/yaml.v3"
 
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-// OutputClustersTable renders a table of cluster summaries. Exported so that
-// other command packages (nodegroup, addon) can display the cluster list when no
-// cluster argument is provided.
+// OutputClustersTable renders a table of cluster summaries.
 func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
 	if len(summaries) == 0 {
 		color.Yellow("No EKS clusters found")
@@ -66,55 +64,47 @@ func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Dur
 	tbl.Render()
 
 	if showHealth {
-		healthy, warning, critical, updating := 0, 0, 0, 0
-		for _, s := range summaries {
-			if s.Health != nil {
-				switch s.Health.Decision {
-				case health.DecisionProceed:
-					healthy++
-				case health.DecisionWarn:
-					warning++
-				case health.DecisionBlock:
-					critical++
-				}
-			}
-			if strings.Contains(strings.ToUpper(s.Status), "UPDAT") {
-				updating++
-			}
-		}
-		ui.Outf("\nSummary: ")
-		var parts []string
-		if healthy > 0 {
-			parts = append(parts, color.GreenString("%d", healthy)+" healthy")
-		}
-		if warning > 0 {
-			parts = append(parts, color.YellowString("%d", warning)+" warning")
-		}
-		if critical > 0 {
-			parts = append(parts, color.RedString("%d", critical)+" critical")
-		}
-		if updating > 0 {
-			parts = append(parts, color.CyanString("%d", updating)+" updating")
-		}
-		ui.Outln(strings.Join(parts, ", "))
+		renderHealthSummary(summaries)
 	}
 	return nil
 }
 
-func outputClustersJSON(summaries []clustersvc.ClusterSummary) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(map[string]any{"clusters": summaries, "count": len(summaries)})
+func renderHealthSummary(summaries []clustersvc.ClusterSummary) {
+	healthy, warning, critical, updating := 0, 0, 0, 0
+	for _, s := range summaries {
+		if s.Health != nil {
+			switch s.Health.Decision {
+			case health.DecisionProceed:
+				healthy++
+			case health.DecisionWarn:
+				warning++
+			case health.DecisionBlock:
+				critical++
+			}
+		}
+		if strings.Contains(strings.ToUpper(s.Status), "UPDAT") {
+			updating++
+		}
+	}
+	ui.Outf("\nSummary: ")
+	var parts []string
+	if healthy > 0 {
+		parts = append(parts, color.GreenString("%d", healthy)+" healthy")
+	}
+	if warning > 0 {
+		parts = append(parts, color.YellowString("%d", warning)+" warning")
+	}
+	if critical > 0 {
+		parts = append(parts, color.RedString("%d", critical)+" critical")
+	}
+	if updating > 0 {
+		parts = append(parts, color.CyanString("%d", updating)+" updating")
+	}
+	ui.Outln(strings.Join(parts, ", "))
 }
 
-func outputClustersYAML(summaries []clustersvc.ClusterSummary) error {
-	enc := yaml.NewEncoder(os.Stdout)
-	enc.SetIndent(2)
-	defer func() { _ = enc.Close() }()
-	return enc.Encode(map[string]any{"clusters": summaries, "count": len(summaries)})
-}
-
-func outputClustersTree(summaries []clustersvc.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
+// OutputClustersTree renders cluster summaries grouped by region as a tree.
+func OutputClustersTree(summaries []clustersvc.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
 	if len(summaries) == 0 {
 		color.Yellow("No EKS clusters found")
 		return nil
@@ -143,14 +133,7 @@ func outputClustersTree(summaries []clustersvc.ClusterSummary, elapsed time.Dura
 		for _, c := range clusters {
 			status := c.Status
 			if showHealth && c.Health != nil {
-				switch string(c.Health.Decision) {
-				case "PROCEED":
-					status = "HEALTHY"
-				case "WARN":
-					status = "WARNING"
-				case "BLOCK":
-					status = "CRITICAL"
-				}
+				status = healthTreeLabel(c.Health.Decision)
 			}
 			regionTree.AddClusterToRegion(c.Name, status, c.NodeCount.Ready)
 		}
@@ -172,12 +155,12 @@ func outputClustersTree(summaries []clustersvc.ClusterSummary, elapsed time.Dura
 			if s.Health == nil {
 				continue
 			}
-			switch string(s.Health.Decision) {
-			case "PROCEED":
+			switch s.Health.Decision {
+			case health.DecisionProceed:
 				healthy++
-			case "WARN":
+			case health.DecisionWarn:
 				warning++
-			case "BLOCK":
+			case health.DecisionBlock:
 				critical++
 			}
 		}
@@ -187,20 +170,8 @@ func outputClustersTree(summaries []clustersvc.ClusterSummary, elapsed time.Dura
 	return nil
 }
 
-func outputClusterDetailsJSON(details *clustersvc.ClusterDetails) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(details)
-}
-
-func outputClusterDetailsYAML(details *clustersvc.ClusterDetails) error {
-	enc := yaml.NewEncoder(os.Stdout)
-	enc.SetIndent(2)
-	defer func() { _ = enc.Close() }()
-	return enc.Encode(details)
-}
-
-func outputClusterDetailsTable(details *clustersvc.ClusterDetails, elapsed time.Duration) error {
+// OutputClusterDetailsTable renders a single cluster's expanded details.
+func OutputClusterDetailsTable(details *clustersvc.ClusterDetails, elapsed time.Duration) error {
 	ui.Outf("Cluster Information: %s\n", color.CyanString(details.Name))
 	ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
 
@@ -277,20 +248,8 @@ func outputClusterDetailsTable(details *clustersvc.ClusterDetails, elapsed time.
 	return nil
 }
 
-func outputComparisonJSON(comparison *clustersvc.ClusterComparison) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(comparison)
-}
-
-func outputComparisonYAML(comparison *clustersvc.ClusterComparison) error {
-	enc := yaml.NewEncoder(os.Stdout)
-	enc.SetIndent(2)
-	defer func() { _ = enc.Close() }()
-	return enc.Encode(comparison)
-}
-
-func outputComparisonTable(comparison *clustersvc.ClusterComparison, elapsed time.Duration) error {
+// OutputComparisonTable renders a side-by-side cluster comparison.
+func OutputComparisonTable(comparison *clustersvc.ClusterComparison, elapsed time.Duration) error {
 	names := make([]string, len(comparison.Clusters))
 	for i, c := range comparison.Clusters {
 		names[i] = c.Name
@@ -324,14 +283,7 @@ func outputComparisonTable(comparison *clustersvc.ClusterComparison, elapsed tim
 	for _, cl := range comparison.Clusters {
 		healthStatus := color.WhiteString("UNKNOWN")
 		if cl.Health != nil {
-			switch cl.Health.Decision {
-			case health.DecisionProceed:
-				healthStatus = color.GreenString("PASS")
-			case health.DecisionWarn:
-				healthStatus = color.YellowString("WARN")
-			case health.DecisionBlock:
-				healthStatus = color.RedString("FAIL")
-			}
+			healthStatus = decisionColor(cl.Health.Decision)(healthLabel(cl.Health.Decision))
 		}
 		tbl.AddRow(truncate(cl.Name, 14), formatStatus(cl.Status), cl.Version, healthStatus)
 	}
@@ -339,18 +291,12 @@ func outputComparisonTable(comparison *clustersvc.ClusterComparison, elapsed tim
 	ui.Outln()
 
 	ui.Outf("Configuration Differences:\n\n")
-	if diffs := filterDifferencesBySeverity(comparison.Differences, "critical"); len(diffs) > 0 {
-		ui.Outf("%s Critical Issues:\n", color.RedString("[CRITICAL]"))
-		printDifferences(diffs)
-		ui.Outln()
-	}
-	if diffs := filterDifferencesBySeverity(comparison.Differences, "warning"); len(diffs) > 0 {
-		ui.Outf("%s Warnings:\n", color.YellowString("[WARNING]"))
-		printDifferences(diffs)
-		ui.Outln()
-	}
-	if diffs := filterDifferencesBySeverity(comparison.Differences, "info"); len(diffs) > 0 {
-		ui.Outf("%s Information:\n", color.BlueString("[INFO]"))
+	for _, sev := range []string{"critical", "warning", "info"} {
+		diffs := filterDifferencesBySeverity(comparison.Differences, sev)
+		if len(diffs) == 0 {
+			continue
+		}
+		ui.Outf("%s %s:\n", severityColor(sev)("["+strings.ToUpper(sev)+"]"), severityHeading(sev))
 		printDifferences(diffs)
 		ui.Outln()
 	}
@@ -371,18 +317,23 @@ func outputComparisonTable(comparison *clustersvc.ClusterComparison, elapsed tim
 	return nil
 }
 
+func severityHeading(sev string) string {
+	switch sev {
+	case "critical":
+		return "Critical Issues"
+	case "warning":
+		return "Warnings"
+	case "info":
+		return "Information"
+	default:
+		return sev
+	}
+}
+
 func printDifferences(differences []clustersvc.Difference) {
 	for _, diff := range differences {
-		severity := ""
-		switch diff.Severity {
-		case "critical":
-			severity = color.RedString("[CRITICAL]")
-		case "warning":
-			severity = color.YellowString("[WARNING]")
-		case "info":
-			severity = color.BlueString("[INFO]")
-		}
-		ui.Outf("  %s %s: %s\n", severity, color.YellowString(diff.Field), diff.Description)
+		tag := severityColor(diff.Severity)("[" + strings.ToUpper(diff.Severity) + "]")
+		ui.Outf("  %s %s: %s\n", tag, color.YellowString(diff.Field), diff.Description)
 		for _, vp := range diff.Values {
 			ui.Outf("    • %s: %v\n", color.CyanString(vp.ClusterName), vp.Value)
 		}
@@ -390,20 +341,9 @@ func printDifferences(differences []clustersvc.Difference) {
 	}
 }
 
-func removeDuplicates(slice []string) []string {
-	seen := make(map[string]bool)
-	var out []string
-	for _, s := range slice {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func sortClusterSummaries(items []clustersvc.ClusterSummary, key string, desc bool) []clustersvc.ClusterSummary {
-	less := func(i, j int) bool { return false }
+// SortClusterSummaries sorts items in place by key and returns the slice.
+func SortClusterSummaries(items []clustersvc.ClusterSummary, key string, desc bool) []clustersvc.ClusterSummary {
+	var less func(i, j int) bool
 	switch strings.ToLower(key) {
 	case "status":
 		less = func(i, j int) bool { return items[i].Status < items[j].Status }
@@ -436,7 +376,6 @@ func filterDifferencesBySeverity(differences []clustersvc.Difference, severity s
 // colorString is the signature of fatih/color's *String helpers.
 type colorString = func(format string, a ...interface{}) string
 
-// severityColor maps a severity tag to its color helper.
 func severityColor(severity string) colorString {
 	switch severity {
 	case "critical":
@@ -450,7 +389,6 @@ func severityColor(severity string) colorString {
 	}
 }
 
-// decisionColor maps a health decision to its color helper.
 func decisionColor(d health.Decision) colorString {
 	switch d {
 	case health.DecisionProceed:
@@ -498,6 +436,21 @@ func healthLabel(d health.Decision) string {
 		return "WARN"
 	case health.DecisionBlock:
 		return "FAIL"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// healthTreeLabel returns the long HEALTHY/WARNING/CRITICAL label the tree
+// view uses instead of the short healthLabel form.
+func healthTreeLabel(d health.Decision) string {
+	switch d {
+	case health.DecisionProceed:
+		return "HEALTHY"
+	case health.DecisionWarn:
+		return "WARNING"
+	case health.DecisionBlock:
+		return "CRITICAL"
 	default:
 		return "UNKNOWN"
 	}

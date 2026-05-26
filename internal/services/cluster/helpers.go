@@ -155,25 +155,13 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 	return nodegroups, nil
 }
 
-// shouldSkipCluster applies filters to determine if a cluster should be skipped
+// shouldSkipCluster applies filters to determine if a cluster should be skipped.
+// Only the "name" filter is supported at the list stage; other filter keys are
+// applied later by callers that have already fetched cluster details.
 func (s *ServiceImpl) shouldSkipCluster(clusterName string, filters map[string]string) bool {
-	if len(filters) == 0 {
-		return false
+	if pattern, ok := filters["name"]; ok && !strings.Contains(clusterName, pattern) {
+		return true
 	}
-
-	for key, value := range filters {
-		switch key {
-		case "name":
-			if !strings.Contains(clusterName, value) {
-				return true
-			}
-		case "status":
-			// We'd need to get cluster details to filter by status
-			// For now, skip this filter to avoid extra API calls
-			continue
-		}
-	}
-
 	return false
 }
 
