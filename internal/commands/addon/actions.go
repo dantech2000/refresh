@@ -19,6 +19,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/services/addons"
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 func runList(c *cli.Context) error {
@@ -241,18 +242,15 @@ func runUpdateAll(c *cli.Context) error {
 }
 
 func fetchAddons(ctx context.Context, eksClient *eks.Client, clusterName string, withHealth bool) ([]addonRow, error) {
-	var addonNames []string
-	var nextToken *string
-	for {
-		out, err := eksClient.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String(clusterName), NextToken: nextToken})
+	addonNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := eksClient.ListAddons(rc, &eks.ListAddonsInput{ClusterName: aws.String(clusterName), NextToken: token})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, "listing add-ons")
+			return nil, nil, awsinternal.FormatAWSError(err, "listing add-ons")
 		}
-		addonNames = append(addonNames, out.Addons...)
-		if out.NextToken == nil || (out.NextToken != nil && aws.ToString(out.NextToken) == "") {
-			break
-		}
-		nextToken = out.NextToken
+		return out.Addons, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	rows := make([]addonRow, 0, len(addonNames))
 	for _, name := range addonNames {

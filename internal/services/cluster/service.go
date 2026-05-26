@@ -232,26 +232,18 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 		}
 	}
 
-	// Get cluster names with pagination
-	var clusterNames []string
-	var nextToken *string
-	for {
-		listOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListClustersOutput, error) {
-			return s.eksClient.ListClusters(rc, &eks.ListClustersInput{NextToken: nextToken})
+	clusterNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListClustersOutput, error) {
+			return s.eksClient.ListClusters(rrc, &eks.ListClustersInput{NextToken: token})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, "listing clusters")
+			return nil, nil, awsinternal.FormatAWSError(err, "listing clusters")
 		}
-		clusterNames = append(clusterNames, listOutput.Clusters...)
-		// Some paginated APIs may return an empty string token to indicate end
-		if listOutput.NextToken == nil || (listOutput.NextToken != nil && aws.ToString(listOutput.NextToken) == "") {
-			break
-		}
-		nextToken = listOutput.NextToken
+		return out.Clusters, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	// Debug: ensure we collected all pages during tests
-	// s.logger.Debug("collected clusters", "count", len(clusterNames))
 
 	var summaries []ClusterSummary
 
