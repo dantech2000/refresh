@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -158,22 +157,20 @@ func (s *ServiceImpl) shouldSkipCluster(clusterName string, filters map[string]s
 	return false
 }
 
-// getClusterSummary creates a summary for a single cluster
-func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string, options ListOptions) (*ClusterSummary, error) {
-	// Get basic cluster information
+// getClusterSummary creates a summary for a single cluster. On describe
+// failure it returns a minimal "UNKNOWN" summary so callers can still render a
+// complete list -- never returns an error.
+func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string, options ListOptions) *ClusterSummary {
 	output, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
 	})
 	if err != nil {
-		// Fallback: return minimal summary so list output remains complete even if a describe call fails
 		s.logger.Warn("failed to describe cluster, returning minimal summary", "cluster", clusterName, "error", err)
 		return &ClusterSummary{
-			Name:      clusterName,
-			Status:    "UNKNOWN",
-			Version:   "",
-			Region:    s.awsConfig.Region,
-			CreatedAt: time.Time{},
-		}, nil
+			Name:   clusterName,
+			Status: "UNKNOWN",
+			Region: s.awsConfig.Region,
+		}
 	}
 
 	cluster := output.Cluster
@@ -186,9 +183,7 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 		Tags:      cluster.Tags,
 	}
 
-	// Get node count information
-	nodegroups, err := s.getClusterNodegroups(ctx, clusterName)
-	if err != nil {
+	if nodegroups, err := s.getClusterNodegroups(ctx, clusterName); err != nil {
 		s.logger.Warn("failed to get nodegroups for summary", "cluster", clusterName, "error", err)
 	} else {
 		var totalReady, totalDesired int32
@@ -199,13 +194,12 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 		summary.NodeCount = NodeCountInfo{Ready: totalReady, Total: totalDesired}
 	}
 
-	// Add health information if requested
 	if options.ShowHealth && s.healthChecker != nil {
 		healthSummary := s.healthChecker.RunAllChecks(ctx, clusterName)
 		summary.Health = &healthSummary
 	}
 
-	return summary, nil
+	return summary
 }
 
 // compareEquality emits a Difference iff extract returns more than one
