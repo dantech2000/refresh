@@ -446,36 +446,73 @@ func filterDifferencesBySeverity(differences []clustersvc.Difference, severity s
 	return out
 }
 
+// colorString is the signature of fatih/color's *String helpers.
+type colorString = func(format string, a ...interface{}) string
+
+// severityColor maps a severity tag to its color helper.
+func severityColor(severity string) colorString {
+	switch severity {
+	case "critical":
+		return color.RedString
+	case "warning":
+		return color.YellowString
+	case "info":
+		return color.BlueString
+	default:
+		return fmt.Sprintf
+	}
+}
+
+// decisionColor maps a health decision to its color helper.
+func decisionColor(d health.Decision) colorString {
+	switch d {
+	case health.DecisionProceed:
+		return color.GreenString
+	case health.DecisionWarn:
+		return color.YellowString
+	case health.DecisionBlock:
+		return color.RedString
+	default:
+		return color.WhiteString
+	}
+}
+
 func formatDifferenceCount(count int, severity string) string {
 	if count == 0 {
 		return "0"
 	}
-	switch severity {
-	case "critical":
-		return color.RedString("%d", count)
-	case "warning":
-		return color.YellowString("%d", count)
-	case "info":
-		return color.BlueString("%d", count)
-	default:
-		return fmt.Sprintf("%d", count)
-	}
+	return severityColor(severity)("%d", count)
+}
+
+var statusStyles = map[string]struct {
+	label string
+	c     colorString
+}{
+	"ACTIVE":   {"Active", color.GreenString},
+	"CREATING": {"Creating", color.YellowString},
+	"UPDATING": {"Updating", color.YellowString},
+	"DELETING": {"Deleting", color.RedString},
+	"FAILED":   {"Failed", color.RedString},
 }
 
 func formatStatus(status string) string {
-	switch strings.ToUpper(status) {
-	case "ACTIVE":
-		return color.GreenString("Active")
-	case "CREATING":
-		return color.YellowString("Creating")
-	case "UPDATING":
-		return color.YellowString("Updating")
-	case "DELETING":
-		return color.RedString("Deleting")
-	case "FAILED":
-		return color.RedString("Failed")
+	if s, ok := statusStyles[strings.ToUpper(status)]; ok {
+		return s.c(s.label)
+	}
+	return status
+}
+
+// healthLabel returns the short PASS/WARN/FAIL/UNKNOWN label for a decision.
+func healthLabel(d health.Decision) string {
+	switch d {
+	case health.DecisionProceed:
+		return "PASS"
+	case health.DecisionWarn:
+		return "WARN"
+	case health.DecisionBlock:
+		return "FAIL"
 	default:
-		return status
+		return "UNKNOWN"
 	}
 }
 
@@ -483,20 +520,20 @@ func formatHealth(h *health.HealthSummary) string {
 	if h == nil {
 		return color.WhiteString("UNKNOWN")
 	}
-	passed := 0
-	for _, r := range h.Results {
-		if r.Status == health.StatusPass {
-			passed++
-		}
-	}
-	total := len(h.Results)
+	c := decisionColor(h.Decision)
 	switch h.Decision {
 	case health.DecisionProceed:
-		return color.GreenString("PASS (%d/%d checks passed)", passed, total)
+		passed := 0
+		for _, r := range h.Results {
+			if r.Status == health.StatusPass {
+				passed++
+			}
+		}
+		return c("PASS (%d/%d checks passed)", passed, len(h.Results))
 	case health.DecisionWarn:
-		return color.YellowString("WARN (%d issues)", len(h.Warnings)+len(h.Errors))
+		return c("WARN (%d issues)", len(h.Warnings)+len(h.Errors))
 	case health.DecisionBlock:
-		return color.RedString("FAIL (%d issues)", len(h.Errors))
+		return c("FAIL (%d issues)", len(h.Errors))
 	default:
 		return color.WhiteString("UNKNOWN")
 	}
@@ -519,16 +556,7 @@ func formatClusterHealth(h *health.HealthSummary) string {
 	if h == nil {
 		return color.WhiteString("UNKNOWN")
 	}
-	switch h.Decision {
-	case health.DecisionProceed:
-		return color.GreenString("PASS")
-	case health.DecisionWarn:
-		return color.YellowString("WARN")
-	case health.DecisionBlock:
-		return color.RedString("FAIL")
-	default:
-		return color.WhiteString("UNKNOWN")
-	}
+	return decisionColor(h.Decision)(healthLabel(h.Decision))
 }
 
 func formatNodeCount(n clustersvc.NodeCountInfo) string {
