@@ -2,7 +2,6 @@ package addon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -19,148 +18,62 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/awsconfig"
-	clustercmd "github.com/dantech2000/refresh/internal/commands/cluster"
-	"github.com/dantech2000/refresh/internal/commands/factory"
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/services/addons"
-	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func runList(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	ctx, cancel, cfg, err := runner.SetupAWS(c)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
-	cfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil {
-		return err
-	}
-
-	requested := c.Args().First()
-	if requested == "" {
-		requested = c.String("cluster")
-	}
-	if strings.TrimSpace(requested) == "" {
-		ui.Outln("No cluster specified. Available clusters:")
-		ui.Outln()
-		start := time.Now()
-		svc := factory.NewClusterService(cfg, false, nil)
-		summaries, err := svc.List(ctx, clustersvc.ListOptions{})
-		if err != nil {
-			return err
-		}
-		_ = clustercmd.OutputClustersTable(summaries, time.Since(start), false, false)
-		return nil
-	}
-
-	clusterName, err := awsinternal.ClusterName(ctx, cfg, requested)
-	if err != nil {
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, c)
+	if err != nil || listed {
 		return err
 	}
 	eksClient := eks.NewFromConfig(cfg)
 
-	spinner := ui.NewFunSpinnerForCategory("addon")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
-
+	var rows []addonRow
 	start := time.Now()
-	rows, err := fetchAddons(ctx, eksClient, clusterName, c.Bool("show-health"))
-	spinner.Success("Add-on information gathered!")
-	if err != nil {
+	if err := runner.WithSpinner("addon", "Add-on information gathered!", func() error {
+		var ferr error
+		rows, ferr = fetchAddons(ctx, eksClient, clusterName, c.Bool("show-health"))
+		return ferr
+	}); err != nil {
 		return err
 	}
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{"cluster": clusterName, "addons": rows, "count": len(rows)})
-	case "yaml":
-		enc := yaml.NewEncoder(os.Stdout)
-		enc.SetIndent(2)
-		defer func() { _ = enc.Close() }()
-		return enc.Encode(map[string]any{"cluster": clusterName, "addons": rows, "count": len(rows)})
-	default:
-		return outputAddonsTable(clusterName, rows, time.Since(start))
+	payload := map[string]any{"cluster": clusterName, "addons": rows, "count": len(rows)}
+	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+		return err
 	}
+	return outputAddonsTable(clusterName, rows, time.Since(start))
 }
 
 func runDescribe(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	ctx, cancel, cfg, err := runner.SetupAWS(c)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
-	cfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil {
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, c)
+	if err != nil || listed {
 		return err
 	}
 
-	requested := c.Args().First()
-	if requested == "" {
-		requested = c.String("cluster")
-	}
-	if strings.TrimSpace(requested) == "" {
-		fmt.Println("No cluster specified. Available clusters:")
-		fmt.Println()
-		svc := factory.NewClusterService(cfg, false, nil)
-		start := time.Now()
-		summaries, err := svc.List(ctx, clustersvc.ListOptions{})
-		if err != nil {
-			return err
-		}
-		_ = clustercmd.OutputClustersTable(summaries, time.Since(start), false, false)
-		return nil
-	}
-
-	clusterName, err := awsinternal.ClusterName(ctx, cfg, requested)
-	if err != nil {
-		return err
-	}
-
-	addonName := c.String("addon")
-	if strings.TrimSpace(addonName) == "" {
-		var nonFlags []string
-		for _, tok := range c.Args().Slice() {
-			if strings.HasPrefix(tok, "-") {
-				continue
-			}
-			nonFlags = append(nonFlags, tok)
-		}
-		if len(nonFlags) >= 2 {
-			addonName = nonFlags[1]
-		}
-	}
-	addonName = strings.TrimSpace(addonName)
+	addonName := runner.SecondPositional(c, "addon")
 	if addonName == "" {
 		return fmt.Errorf("missing add-on name; pass as second argument or --addon <name>")
 	}
 
 	eksClient := eks.NewFromConfig(cfg)
-
-	validRe := regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9-_]*$`)
-	if !validRe.MatchString(addonName) {
-		list, _ := eksClient.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String(clusterName)})
-		lower := strings.ToLower(addonName)
-		resolved := ""
-		for _, n := range list.Addons {
-			if strings.EqualFold(n, addonName) || strings.Contains(strings.ToLower(n), lower) {
-				resolved = n
-				break
-			}
-		}
-		if resolved != "" {
-			addonName = resolved
-		} else {
-			return fmt.Errorf("invalid add-on name '%s'. Available: %s", addonName, strings.Join(list.Addons, ", "))
-		}
+	addonName, err = resolveAddonName(ctx, eksClient, clusterName, addonName)
+	if err != nil {
+		return err
 	}
 
 	d, err := eksClient.DescribeAddon(ctx, &eks.DescribeAddonInput{ClusterName: aws.String(clusterName), AddonName: aws.String(addonName)})
@@ -168,12 +81,11 @@ func runDescribe(c *cli.Context) error {
 		return awsinternal.FormatAWSError(err, "describing add-on")
 	}
 
-	health := mapAddonHealth(d.Addon.Status)
 	details := addonDetails{
 		Name:       aws.ToString(d.Addon.AddonName),
 		Version:    aws.ToString(d.Addon.AddonVersion),
 		Status:     string(d.Addon.Status),
-		Health:     health,
+		Health:     mapAddonHealth(d.Addon.Status),
 		ARN:        aws.ToString(d.Addon.AddonArn),
 		CreatedAt:  d.Addon.CreatedAt,
 		ModifiedAt: d.Addon.ModifiedAt,
@@ -190,75 +102,49 @@ func runDescribe(c *cli.Context) error {
 		}
 	}
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(details)
-	case "yaml":
-		enc := yaml.NewEncoder(os.Stdout)
-		enc.SetIndent(2)
-		defer func() { _ = enc.Close() }()
-		return enc.Encode(details)
-	default:
-		return outputAddonDetailsTable(clusterName, details)
+	if handled, err := runner.EncodeStdout(c.String("format"), details); handled {
+		return err
 	}
+	return outputAddonDetailsTable(clusterName, details)
+}
+
+// resolveAddonName matches a user-supplied addon string against the cluster's
+// installed addons, allowing case-insensitive substring matches.
+func resolveAddonName(ctx context.Context, eksClient *eks.Client, clusterName, addonName string) (string, error) {
+	validRe := regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9-_]*$`)
+	if validRe.MatchString(addonName) {
+		return addonName, nil
+	}
+	list, _ := eksClient.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String(clusterName)})
+	lower := strings.ToLower(addonName)
+	for _, n := range list.Addons {
+		if strings.EqualFold(n, addonName) || strings.Contains(strings.ToLower(n), lower) {
+			return n, nil
+		}
+	}
+	return "", fmt.Errorf("invalid add-on name '%s'. Available: %s", addonName, strings.Join(list.Addons, ", "))
 }
 
 func runUpdate(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	ctx, cancel, cfg, err := runner.SetupAWS(c)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
-	cfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil {
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, c)
+	if err != nil || listed {
 		return err
 	}
 
-	requested := c.Args().First()
-	if requested == "" {
-		requested = c.String("cluster")
-	}
-	if strings.TrimSpace(requested) == "" {
-		color.Yellow("No cluster specified. Available clusters:")
-		svc := factory.NewClusterService(cfg, false, nil)
-		summaries, err := svc.List(ctx, clustersvc.ListOptions{})
-		if err != nil {
-			return err
-		}
-		_ = clustercmd.OutputClustersTable(summaries, 0, false, false)
-		return nil
-	}
-
-	clusterName, err := awsinternal.ClusterName(ctx, cfg, requested)
-	if err != nil {
-		return err
-	}
-
-	addonName := c.String("addon")
-	if strings.TrimSpace(addonName) == "" {
-		var nonFlags []string
-		for _, tok := range c.Args().Slice() {
-			if strings.HasPrefix(tok, "-") {
-				continue
-			}
-			nonFlags = append(nonFlags, tok)
-		}
-		if len(nonFlags) >= 2 {
-			addonName = nonFlags[1]
-		}
-	}
-	addonName = strings.TrimSpace(addonName)
+	addonName := runner.SecondPositional(c, "addon")
 	if addonName == "" {
 		return fmt.Errorf("missing add-on name; pass as second argument or --addon <name>")
 	}
 
 	eksClient := eks.NewFromConfig(cfg)
 
-	version := c.String("version")
+	version := strings.TrimSpace(c.String("version"))
 	if !c.IsSet("version") {
 		var nonFlags []string
 		for _, tok := range c.Args().Slice() {
@@ -270,7 +156,7 @@ func runUpdate(c *cli.Context) error {
 		if len(nonFlags) >= 3 {
 			version = nonFlags[2]
 		}
-		if strings.TrimSpace(version) == "" {
+		if version == "" {
 			version = "latest"
 		}
 	}
@@ -284,26 +170,12 @@ func runUpdate(c *cli.Context) error {
 		targetVersion = aws.ToString(avail.Addons[0].AddonVersions[0].AddonVersion)
 	}
 
-	validRe := regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9-_]*$`)
-	if !validRe.MatchString(addonName) {
-		list, _ := eksClient.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String(clusterName)})
-		lower := strings.ToLower(addonName)
-		resolved := ""
-		for _, n := range list.Addons {
-			if strings.EqualFold(n, addonName) || strings.Contains(strings.ToLower(n), lower) {
-				resolved = n
-				break
-			}
-		}
-		if resolved != "" {
-			addonName = resolved
-		} else {
-			return fmt.Errorf("invalid add-on name '%s'. Available: %s", addonName, strings.Join(list.Addons, ", "))
-		}
+	addonName, err = resolveAddonName(ctx, eksClient, clusterName, addonName)
+	if err != nil {
+		return err
 	}
 
-	dryRun := c.Bool("dry-run")
-	if dryRun {
+	if c.Bool("dry-run") {
 		color.Cyan("DRY RUN: Would update add-on %s to version %s on cluster %s", addonName, targetVersion, clusterName)
 		return nil
 	}
@@ -338,10 +210,7 @@ func runUpdateAll(c *cli.Context) error {
 		return fmt.Errorf("AWS credential validation failed")
 	}
 
-	requested := c.Args().First()
-	if requested == "" {
-		requested = c.String("cluster")
-	}
+	requested := runner.RequestedCluster(c)
 	if strings.TrimSpace(requested) == "" {
 		return fmt.Errorf("cluster name is required")
 	}
@@ -351,19 +220,13 @@ func runUpdateAll(c *cli.Context) error {
 		return err
 	}
 
-	eksClient := eks.NewFromConfig(cfg)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	addonSvc := addons.NewService(eksClient, logger)
-
-	spinner := ui.NewFunSpinnerForCategory("addon")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
-
 	if c.Bool("parallel") && c.Bool("dependency-order") {
 		return fmt.Errorf("--parallel and --dependency-order cannot be used together: parallel execution defeats dependency ordering")
 	}
+
+	eksClient := eks.NewFromConfig(cfg)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	addonSvc := addons.NewService(eksClient, logger)
 
 	options := addons.UpdateAllOptions{
 		DryRun:          c.Bool("dry-run"),
@@ -375,33 +238,24 @@ func runUpdateAll(c *cli.Context) error {
 		HealthCheck:     c.Bool("health-check"),
 	}
 
-	results, err := addonSvc.UpdateAll(ctx, clusterName, options)
-	spinner.Success("Addon updates processed!")
-	if err != nil {
+	var results []addons.AddonUpdateResult
+	if err := runner.WithSpinner("addon", "Addon updates processed!", func() error {
+		var rerr error
+		results, rerr = addonSvc.UpdateAll(ctx, clusterName, options)
+		return rerr
+	}); err != nil {
 		return err
 	}
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{
-			"cluster": clusterName,
-			"dryRun":  options.DryRun,
-			"results": results,
-		})
-	case "yaml":
-		enc := yaml.NewEncoder(os.Stdout)
-		enc.SetIndent(2)
-		defer func() { _ = enc.Close() }()
-		return enc.Encode(map[string]any{
-			"cluster": clusterName,
-			"dryRun":  options.DryRun,
-			"results": results,
-		})
-	default:
-		return outputUpdateAllResults(clusterName, results, options.DryRun)
+	payload := map[string]any{
+		"cluster": clusterName,
+		"dryRun":  options.DryRun,
+		"results": results,
 	}
+	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+		return err
+	}
+	return outputUpdateAllResults(clusterName, results, options.DryRun)
 }
 
 func fetchAddons(ctx context.Context, eksClient *eks.Client, clusterName string, withHealth bool) ([]addonRow, error) {
