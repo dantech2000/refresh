@@ -128,30 +128,82 @@ func ResolveClusterOrList(ctx context.Context, cfg aws.Config, c *cli.Context) (
 }
 
 // SecondPositional returns the value of flagName, or the second non-flag
-// positional argument if the flag is not set.
+// positional argument if the flag is not set. Use PositionalSlot for commands
+// where prior slots may be supplied via flags (which shifts the positional
+// indices).
 func SecondPositional(c *cli.Context, flagName string) string {
 	return PositionalAt(c, flagName, 1)
 }
 
 // PositionalAt returns the value of flagName, or the non-flag positional
-// argument at index (0-indexed) if the flag is not set.
+// argument at index (0-indexed) if the flag is not set. Does NOT account for
+// prior flags absorbing positional slots — use PositionalSlot for that.
 func PositionalAt(c *cli.Context, flagName string, index int) string {
 	if flagName != "" {
 		if v := strings.TrimSpace(c.String(flagName)); v != "" {
 			return v
 		}
 	}
-	var nonFlags []string
-	for _, tok := range c.Args().Slice() {
-		if strings.HasPrefix(tok, "-") {
-			continue
-		}
-		nonFlags = append(nonFlags, tok)
-	}
+	nonFlags := nonFlagArgs(c)
 	if index < len(nonFlags) {
 		return nonFlags[index]
 	}
 	return ""
+}
+
+// PositionalSlot returns the value of flagName, or — when flagName is unset —
+// the positional argument that fills its slot, accounting for prior slots
+// that may have been satisfied by flags.
+//
+// priorFlags lists, in order, the flag name for each prior positional slot.
+// An entry may be "" to mean "this prior slot has no flag and is always
+// positional". For each prior flag name that IS set on the context, this
+// helper subtracts 1 from the expected positional index, so flags and
+// positionals can be mixed freely.
+//
+// Example: a command with slot order (cluster, addon, version) where the
+// cluster has --cluster, the addon has --addon, and the version has --version:
+//
+//	cluster := PositionalSlot(c, "cluster")                       // slot 0
+//	addon   := PositionalSlot(c, "addon", "cluster")              // slot 1
+//	version := PositionalSlot(c, "version", "cluster", "addon")   // slot 2
+//
+// Invocation `--addon=foo my-cluster v1.2.3` yields cluster="my-cluster",
+// addon="foo" (from flag), version="v1.2.3" — the version's positional index
+// is shifted from 2 down to 1 because --addon consumed a slot.
+func PositionalSlot(c *cli.Context, flagName string, priorFlags ...string) string {
+	if flagName != "" {
+		if v := strings.TrimSpace(c.String(flagName)); v != "" {
+			return v
+		}
+	}
+	consumedByFlags := 0
+	for _, f := range priorFlags {
+		if f != "" && strings.TrimSpace(c.String(f)) != "" {
+			consumedByFlags++
+		}
+	}
+	idx := len(priorFlags) - consumedByFlags
+	nonFlags := nonFlagArgs(c)
+	if idx < len(nonFlags) {
+		return nonFlags[idx]
+	}
+	return ""
+}
+
+// nonFlagArgs returns c.Args() with tokens beginning in "-" stripped. Needed
+// because urfave/cli leaves flag-like tokens that appear after a positional
+// in c.Args() (the parser stops at the first non-flag).
+func nonFlagArgs(c *cli.Context) []string {
+	args := c.Args().Slice()
+	out := make([]string, 0, len(args))
+	for _, tok := range args {
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
 }
 
 // EncodeStdout writes payload to stdout as JSON or YAML based on format. For
