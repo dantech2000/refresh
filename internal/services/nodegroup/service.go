@@ -19,6 +19,22 @@ import (
 	"github.com/dantech2000/refresh/internal/types"
 )
 
+// classifyAMI compares the nodegroup's current AMI against the latest available
+// for its type and returns the appropriate status. Returns AMIUpdating while an
+// update is in flight, regardless of AMI identities.
+func classifyAMI(status ekstypes.NodegroupStatus, currentAmiId, latestAmiId string) types.AMIStatus {
+	switch {
+	case status == ekstypes.NodegroupStatusUpdating:
+		return types.AMIUpdating
+	case currentAmiId == "" || latestAmiId == "":
+		return types.AMIUnknown
+	case currentAmiId == latestAmiId:
+		return types.AMILatest
+	default:
+		return types.AMIOutdated
+	}
+}
+
 // EKSAPI abstracts the subset of EKS client methods used for nodegroups.
 type EKSAPI interface {
 	ListNodegroups(ctx context.Context, params *eks.ListNodegroupsInput, optFns ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error)
@@ -27,14 +43,7 @@ type EKSAPI interface {
 	UpdateNodegroupConfig(ctx context.Context, params *eks.UpdateNodegroupConfigInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupConfigOutput, error)
 }
 
-// Service defines nodegroup operations.
-type Service interface {
-	List(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, error)
-	Describe(ctx context.Context, clusterName, nodegroupName string, options DescribeOptions) (*NodegroupDetails, error)
-	Scale(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32, options ScaleOptions) error
-}
-
-// ServiceImpl implements Service.
+// ServiceImpl is the nodegroup service.
 type ServiceImpl struct {
 	eksClient     EKSAPI
 	logger        *slog.Logger
@@ -83,23 +92,20 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 	}
 	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
-	var nodegroupNames []string
-	var nextToken *string
-	for {
-		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListNodegroupsOutput, error) {
-			return s.eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
+	nodegroupNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListNodegroupsOutput, error) {
+			return s.eksClient.ListNodegroups(rrc, &eks.ListNodegroupsInput{
 				ClusterName: aws.String(clusterName),
-				NextToken:   nextToken,
+				NextToken:   token,
 			})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
+			return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
 		}
-		nodegroupNames = append(nodegroupNames, out.Nodegroups...)
-		if out.NextToken == nil {
-			break
-		}
-		nextToken = out.NextToken
+		return out.Nodegroups, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	summaries := make([]NodegroupSummary, 0, len(nodegroupNames))
@@ -126,17 +132,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 
 		currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
 		latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
-
-		var amiStatus types.AMIStatus
-		if ng.Status == ekstypes.NodegroupStatusUpdating {
-			amiStatus = types.AMIUpdating
-		} else if currentAmiId == "" || latestAmiId == "" {
-			amiStatus = types.AMIUnknown
-		} else if currentAmiId == latestAmiId {
-			amiStatus = types.AMILatest
-		} else {
-			amiStatus = types.AMIOutdated
-		}
+		amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
 
 		summary := NodegroupSummary{
 			Name:         aws.ToString(ng.NodegroupName),
@@ -191,17 +187,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 
 	currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
 	latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
-
-	var amiStatus types.AMIStatus
-	if ng.Status == ekstypes.NodegroupStatusUpdating {
-		amiStatus = types.AMIUpdating
-	} else if currentAmiId == "" || latestAmiId == "" {
-		amiStatus = types.AMIUnknown
-	} else if currentAmiId == latestAmiId {
-		amiStatus = types.AMILatest
-	} else {
-		amiStatus = types.AMIOutdated
-	}
+	amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
 
 	details := &NodegroupDetails{
 		Name:         aws.ToString(ng.NodegroupName),

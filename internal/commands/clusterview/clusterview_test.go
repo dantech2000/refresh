@@ -1,4 +1,4 @@
-package cluster
+package clusterview
 
 import (
 	"bytes"
@@ -49,11 +49,11 @@ func sampleSummaries() []clustersvc.ClusterSummary {
 	}
 }
 
-// ── sortClusterSummaries ──────────────────────────────────────────────────────
+// ── SortClusterSummaries ──────────────────────────────────────────────────────
 
 func TestSortClusterSummaries_ByName(t *testing.T) {
 	items := []clustersvc.ClusterSummary{{Name: "zebra"}, {Name: "alpha"}, {Name: "mango"}}
-	got := sortClusterSummaries(items, "name", false)
+	got := SortClusterSummaries(items, "name", false)
 	want := []string{"alpha", "mango", "zebra"}
 	for i, w := range want {
 		if got[i].Name != w {
@@ -64,7 +64,7 @@ func TestSortClusterSummaries_ByName(t *testing.T) {
 
 func TestSortClusterSummaries_ByNameDesc(t *testing.T) {
 	items := []clustersvc.ClusterSummary{{Name: "alpha"}, {Name: "zebra"}, {Name: "mango"}}
-	got := sortClusterSummaries(items, "name", true)
+	got := SortClusterSummaries(items, "name", true)
 	want := []string{"zebra", "mango", "alpha"}
 	for i, w := range want {
 		if got[i].Name != w {
@@ -75,7 +75,7 @@ func TestSortClusterSummaries_ByNameDesc(t *testing.T) {
 
 func TestSortClusterSummaries_ByVersion(t *testing.T) {
 	items := []clustersvc.ClusterSummary{{Name: "b", Version: "1.29"}, {Name: "a", Version: "1.31"}, {Name: "c", Version: "1.30"}}
-	got := sortClusterSummaries(items, "version", false)
+	got := SortClusterSummaries(items, "version", false)
 	if got[0].Version != "1.29" {
 		t.Errorf("first item should be 1.29, got %q", got[0].Version)
 	}
@@ -83,7 +83,7 @@ func TestSortClusterSummaries_ByVersion(t *testing.T) {
 
 func TestSortClusterSummaries_ByStatus(t *testing.T) {
 	items := []clustersvc.ClusterSummary{{Name: "b", Status: "UPDATING"}, {Name: "a", Status: "ACTIVE"}}
-	got := sortClusterSummaries(items, "status", false)
+	got := SortClusterSummaries(items, "status", false)
 	if got[0].Status != "ACTIVE" {
 		t.Errorf("first item should be ACTIVE, got %q", got[0].Status)
 	}
@@ -91,7 +91,7 @@ func TestSortClusterSummaries_ByStatus(t *testing.T) {
 
 func TestSortClusterSummaries_ByRegion(t *testing.T) {
 	items := []clustersvc.ClusterSummary{{Name: "b", Region: "us-west-2"}, {Name: "a", Region: "ap-southeast-1"}}
-	got := sortClusterSummaries(items, "region", false)
+	got := SortClusterSummaries(items, "region", false)
 	if got[0].Region != "ap-southeast-1" {
 		t.Errorf("region asc: first = %q, want ap-southeast-1", got[0].Region)
 	}
@@ -99,7 +99,7 @@ func TestSortClusterSummaries_ByRegion(t *testing.T) {
 
 func TestSortClusterSummaries_UnknownKeyFallsBackToName(t *testing.T) {
 	items := []clustersvc.ClusterSummary{{Name: "z"}, {Name: "a"}}
-	got := sortClusterSummaries(items, "bogus", false)
+	got := SortClusterSummaries(items, "bogus", false)
 	if got[0].Name != "a" {
 		t.Errorf("unknown key should sort by name, got %q", got[0].Name)
 	}
@@ -257,6 +257,44 @@ func TestFormatHealth_DefaultDecision(t *testing.T) {
 	}
 }
 
+// ── treeStatusWithHealth ──────────────────────────────────────────────────────
+
+// Regression: when the health checker returns a HealthSummary whose Decision
+// is empty/unrecognized, the tree view must NOT mask the underlying cluster
+// status as "UNKNOWN". Show the raw status plus a "(health unknown)" hint
+// so the operator can still tell the cluster is ACTIVE/CREATING/etc.
+func TestTreeStatusWithHealth_UnknownDecisionPreservesClusterStatus(t *testing.T) {
+	h := &health.HealthSummary{Decision: ""} // health checker returned no decision
+	got := treeStatusWithHealth("ACTIVE", h)
+	if got != "ACTIVE (health unknown)" {
+		t.Errorf("got %q, want %q", got, "ACTIVE (health unknown)")
+	}
+}
+
+func TestTreeStatusWithHealth_KnownDecisionReplacesStatus(t *testing.T) {
+	cases := []struct {
+		d    health.Decision
+		want string
+	}{
+		{health.DecisionProceed, "HEALTHY"},
+		{health.DecisionWarn, "WARNING"},
+		{health.DecisionBlock, "CRITICAL"},
+	}
+	for _, c := range cases {
+		got := treeStatusWithHealth("ACTIVE", &health.HealthSummary{Decision: c.d})
+		if got != c.want {
+			t.Errorf("decision %q: got %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+func TestTreeStatusWithHealth_NilSummaryReturnsClusterStatus(t *testing.T) {
+	got := treeStatusWithHealth("CREATING", nil)
+	if got != "CREATING" {
+		t.Errorf("got %q, want CREATING (nil summary should pass through)", got)
+	}
+}
+
 // ── formatAddonHealth ─────────────────────────────────────────────────────────
 
 func TestFormatAddonHealth(t *testing.T) {
@@ -322,66 +360,9 @@ func TestFormatDifferenceCount_Nonzero(t *testing.T) {
 	}
 }
 
-// ── removeDuplicates ─────────────────────────────────────────────────────────
+// ── table/tree outputs ────────────────────────────────────────────────────────
 
-func TestRemoveDuplicates_Empty(t *testing.T) {
-	if got := removeDuplicates(nil); len(got) != 0 {
-		t.Errorf("expected empty, got %v", got)
-	}
-}
-
-func TestRemoveDuplicates_NoDuplicates(t *testing.T) {
-	in := []string{"a", "b", "c"}
-	if got := removeDuplicates(in); len(got) != 3 {
-		t.Errorf("no-dup input: got %v, want 3 items", got)
-	}
-}
-
-func TestRemoveDuplicates_WithDuplicates(t *testing.T) {
-	in := []string{"a", "b", "a", "c", "b"}
-	if got := removeDuplicates(in); len(got) != 3 {
-		t.Errorf("expected 3 unique items, got %d: %v", len(got), got)
-	}
-}
-
-func TestRemoveDuplicates_PreservesOrder(t *testing.T) {
-	in := []string{"c", "a", "b", "a"}
-	got := removeDuplicates(in)
-	if got[0] != "c" || got[1] != "a" || got[2] != "b" {
-		t.Errorf("order not preserved: got %v", got)
-	}
-}
-
-// ── output functions ──────────────────────────────────────────────────────────
-
-func TestClusterListOutputs(t *testing.T) {
-	t.Run("json", func(t *testing.T) {
-		out, err := captureStdout(t, func() error { return outputClustersJSON(sampleSummaries()) })
-		if err != nil {
-			t.Fatalf("JSON output error: %v", err)
-		}
-		for _, want := range []string{"prod", "stage", "1.30", "1.29", "us-east-1", "count"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("JSON output missing %q: %q", want, out)
-			}
-		}
-	})
-
-	t.Run("yaml", func(t *testing.T) {
-		out, err := captureStdout(t, func() error { return outputClustersYAML(sampleSummaries()) })
-		if err != nil {
-			t.Fatalf("YAML output error: %v", err)
-		}
-		for _, want := range []string{"prod", "stage", "1.30", "1.29", "us-east-1"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("YAML output missing %q: %q", want, out)
-			}
-		}
-	})
-
-	// Note: pterm table/tree rows are rendered directly to the original os.Stdout file
-	// handle (not the captured pipe), so we can only assert on ui.Outf header/footer
-	// content, not individual cluster names/versions within pterm-rendered rows.
+func TestOutputClustersTable(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		multiRegion    bool
@@ -409,7 +390,7 @@ func TestClusterListOutputs(t *testing.T) {
 
 		t.Run("tree/"+tc.name, func(t *testing.T) {
 			if _, err := captureStdout(t, func() error {
-				return outputClustersTree(tc.items, time.Second, tc.multiRegion, tc.showHealth)
+				return OutputClustersTree(tc.items, time.Second, tc.multiRegion, tc.showHealth)
 			}); err != nil {
 				t.Fatalf("tree error: %v", err)
 			}
@@ -417,7 +398,7 @@ func TestClusterListOutputs(t *testing.T) {
 	}
 }
 
-func TestClusterDescribeOutputs(t *testing.T) {
+func TestOutputClusterDetailsTable(t *testing.T) {
 	details := &clustersvc.ClusterDetails{
 		Name:            "prod",
 		Status:          "ACTIVE",
@@ -441,48 +422,18 @@ func TestClusterDescribeOutputs(t *testing.T) {
 		Nodegroups: []clustersvc.NodegroupSummary{{Name: "ng-workers", Status: "ACTIVE", ReadyNodes: 2}},
 	}
 
-	wantFields := []string{"prod", "1.30", "eks.1", "vpc-1", "vpc-cni", "ng-workers"}
-
-	t.Run("json", func(t *testing.T) {
-		out, err := captureStdout(t, func() error { return outputClusterDetailsJSON(details) })
-		if err != nil {
-			t.Fatalf("JSON error: %v", err)
+	out, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, time.Second) })
+	if err != nil {
+		t.Fatalf("table error: %v", err)
+	}
+	for _, want := range []string{"Cluster Information", "prod", "1.30", "vpc-1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table output missing %q: %q", want, out)
 		}
-		for _, want := range wantFields {
-			if !strings.Contains(out, want) {
-				t.Errorf("JSON output missing %q: %q", want, out)
-			}
-		}
-	})
-
-	t.Run("yaml", func(t *testing.T) {
-		out, err := captureStdout(t, func() error { return outputClusterDetailsYAML(details) })
-		if err != nil {
-			t.Fatalf("YAML error: %v", err)
-		}
-		for _, want := range wantFields {
-			if !strings.Contains(out, want) {
-				t.Errorf("YAML output missing %q: %q", want, out)
-			}
-		}
-	})
-
-	t.Run("table", func(t *testing.T) {
-		// outputClusterDetailsTable uses fmt.Printf / ui.Outf for section headers and key-value
-		// pairs directly, so most content IS captured (unlike the pterm-based list tables).
-		out, err := captureStdout(t, func() error { return outputClusterDetailsTable(details, time.Second) })
-		if err != nil {
-			t.Fatalf("table error: %v", err)
-		}
-		for _, want := range []string{"Cluster Information", "prod", "1.30", "vpc-1"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("table output missing %q: %q", want, out)
-			}
-		}
-	})
+	}
 }
 
-func TestComparisonOutputs(t *testing.T) {
+func TestOutputComparisonTable(t *testing.T) {
 	comparison := &clustersvc.ClusterComparison{
 		Clusters: []clustersvc.ClusterDetails{
 			{Name: "prod", Status: "ACTIVE", Version: "1.30", Health: &health.HealthSummary{Decision: health.DecisionProceed}},
@@ -501,46 +452,17 @@ func TestComparisonOutputs(t *testing.T) {
 		},
 	}
 
-	wantFields := []string{"prod", "stage", "version", "logging", "critical"}
+	out, err := captureStdout(t, func() error { return OutputComparisonTable(comparison, time.Second) })
+	if err != nil {
+		t.Fatalf("comparison table error: %v", err)
+	}
+	if !strings.Contains(out, "Comparison") {
+		t.Errorf("comparison table missing header 'Comparison': %q", out)
+	}
 
-	t.Run("json", func(t *testing.T) {
-		out, err := captureStdout(t, func() error { return outputComparisonJSON(comparison) })
-		if err != nil {
-			t.Fatalf("JSON error: %v", err)
-		}
-		for _, want := range wantFields {
-			if !strings.Contains(out, want) {
-				t.Errorf("comparison JSON missing %q: %q", want, out)
-			}
-		}
-	})
-
-	t.Run("yaml", func(t *testing.T) {
-		out, err := captureStdout(t, func() error { return outputComparisonYAML(comparison) })
-		if err != nil {
-			t.Fatalf("YAML error: %v", err)
-		}
-		for _, want := range wantFields {
-			if !strings.Contains(out, want) {
-				t.Errorf("comparison YAML missing %q: %q", want, out)
-			}
-		}
-	})
-
-	t.Run("table", func(t *testing.T) {
-		// outputComparisonTable uses ui.Outf for headers and printDifferences for detail rows.
-		out, err := captureStdout(t, func() error { return outputComparisonTable(comparison, time.Second) })
-		if err != nil {
-			t.Fatalf("comparison table error: %v", err)
-		}
-		// The header and differences section headers come from ui.Outf calls.
-		if !strings.Contains(out, "Comparison") {
-			t.Errorf("comparison table missing header 'Comparison': %q", out)
-		}
-	})
 	comparison.Differences = nil
 	comparison.Summary = clustersvc.ComparisonSummary{ClustersAreEquivalent: true}
-	if _, err := captureStdout(t, func() error { return outputComparisonTable(comparison, time.Second) }); err != nil {
+	if _, err := captureStdout(t, func() error { return OutputComparisonTable(comparison, time.Second) }); err != nil {
 		t.Fatalf("identical comparison table error: %v", err)
 	}
 }

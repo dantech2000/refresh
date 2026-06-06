@@ -20,20 +20,6 @@ import (
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
-// Service defines the interface for cluster operations
-type Service interface {
-	// Single cluster operations
-	Describe(ctx context.Context, name string, options DescribeOptions) (*ClusterDetails, error)
-	GetHealth(ctx context.Context, name string) (*health.HealthSummary, error)
-
-	// Multi-cluster operations
-	List(ctx context.Context, options ListOptions) ([]ClusterSummary, error)
-	ListAllRegions(ctx context.Context, options ListOptions) ([]ClusterSummary, error)
-
-	// Comparison operations
-	Compare(ctx context.Context, clusterNames []string, options CompareOptions) (*ClusterComparison, error)
-}
-
 // EKSAPI abstracts the subset of EKS client methods used by this service for easier testing
 type EKSAPI interface {
 	ListClusters(ctx context.Context, params *eks.ListClustersInput, optFns ...func(*eks.Options)) (*eks.ListClustersOutput, error)
@@ -80,97 +66,27 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 	}
 }
 
-// buildListCacheKey returns a deterministic cache key for list options
+// buildListCacheKey returns a deterministic cache key for list options.
 func buildListCacheKey(options ListOptions) string {
-	// Build deterministic key with improved capacity estimation and without
-	// intermediate string slices/joins.
-	// Format: list- regions=..|filters=..|showHealth=x|allRegions=y
+	regions := append([]string(nil), options.Regions...)
+	sort.Strings(regions)
 
-	// Precompute boolean fragments (always included for stability)
-	showHealthFrag := fmt.Sprintf("showHealth=%t", options.ShowHealth)
-	allRegionsFrag := fmt.Sprintf("allRegions=%t", options.AllRegions)
-
-	// Estimate capacity
-	estimated := 5 /* list- */ + len(showHealthFrag) + 1 /* | */ + len(allRegionsFrag)
-
-	// Regions
-	if len(options.Regions) > 0 {
-		estimated += len("regions=")
-		for _, r := range options.Regions {
-			estimated += len(r)
-		}
-		estimated += len(options.Regions) - 1 // commas
-		estimated += 1                        // '|'
+	filterKeys := make([]string, 0, len(options.Filters))
+	for k := range options.Filters {
+		filterKeys = append(filterKeys, k)
+	}
+	sort.Strings(filterKeys)
+	filterParts := make([]string, len(filterKeys))
+	for i, k := range filterKeys {
+		filterParts[i] = k + "=" + options.Filters[k]
 	}
 
-	// Filters (sorted for determinism)
-	if len(options.Filters) > 0 {
-		estimated += len("filters=")
-		// sum of key=value plus separators
-		keys := make([]string, 0, len(options.Filters))
-		for k := range options.Filters {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			estimated += len(k) + 1 /* '=' */ + len(options.Filters[k])
-		}
-		estimated += len(keys) - 1 // semicolons
-		estimated += 1             // '|'
-	}
-
-	var b strings.Builder
-	if estimated < 32 {
-		b.Grow(32)
-	} else {
-		b.Grow(estimated)
-	}
-	b.WriteString("list-")
-
-	wroteSep := false
-	if len(options.Regions) > 0 {
-		b.WriteString("regions=")
-		// Use a sorted copy for stable ordering
-		regions := append([]string(nil), options.Regions...)
-		sort.Strings(regions)
-		for i, r := range regions {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			b.WriteString(r)
-		}
-		wroteSep = true
-	}
-
-	if len(options.Filters) > 0 {
-		if wroteSep {
-			b.WriteByte('|')
-		}
-		b.WriteString("filters=")
-		keys := make([]string, 0, len(options.Filters))
-		for k := range options.Filters {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for i, k := range keys {
-			if i > 0 {
-				b.WriteByte(';')
-			}
-			b.WriteString(k)
-			b.WriteByte('=')
-			b.WriteString(options.Filters[k])
-		}
-		wroteSep = true
-	}
-
-	if wroteSep {
-		b.WriteByte('|')
-	}
-	b.WriteString(showHealthFrag)
-	b.WriteByte('|')
-	b.WriteString(allRegionsFrag)
-
-	return b.String()
+	return fmt.Sprintf("list-regions=%s|filters=%s|showHealth=%t|allRegions=%t",
+		strings.Join(regions, ","),
+		strings.Join(filterParts, ";"),
+		options.ShowHealth,
+		options.AllRegions,
+	)
 }
 
 // buildDescribeCacheKey returns a deterministic cache key for describe options
@@ -262,14 +178,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 		}
 	}
 
-	// Check deletion protection status (available in AWS SDK v1.73.1+)
-	// EKS deletion protection was introduced in August 2025
-	if cluster.DeletionProtection != nil {
-		details.Security.DeletionProtection = aws.ToBool(cluster.DeletionProtection)
-	} else {
-		// Default to false if field is not present (older clusters)
-		details.Security.DeletionProtection = false
-	}
+	details.Security.DeletionProtection = aws.ToBool(cluster.DeletionProtection)
 
 	// Add add-ons information if requested
 	if options.IncludeAddons {
@@ -316,43 +225,25 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 		}
 	}
 
-	// Get cluster names with pagination
-	var clusterNames []string
-	var nextToken *string
-	for {
-		listOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListClustersOutput, error) {
-			return s.eksClient.ListClusters(rc, &eks.ListClustersInput{NextToken: nextToken})
+	clusterNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListClustersOutput, error) {
+			return s.eksClient.ListClusters(rrc, &eks.ListClustersInput{NextToken: token})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, "listing clusters")
+			return nil, nil, awsinternal.FormatAWSError(err, "listing clusters")
 		}
-		clusterNames = append(clusterNames, listOutput.Clusters...)
-		// Some paginated APIs may return an empty string token to indicate end
-		if listOutput.NextToken == nil || (listOutput.NextToken != nil && aws.ToString(listOutput.NextToken) == "") {
-			break
-		}
-		nextToken = listOutput.NextToken
+		return out.Clusters, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	// Debug: ensure we collected all pages during tests
-	// s.logger.Debug("collected clusters", "count", len(clusterNames))
-
 	var summaries []ClusterSummary
-
-	// Process each cluster
 	for _, clusterName := range clusterNames {
-		// Apply filters
 		if s.shouldSkipCluster(clusterName, options.Filters) {
 			continue
 		}
-
-		summary, err := s.getClusterSummary(ctx, clusterName, options)
-		if err != nil {
-			s.logger.Warn("failed to get cluster summary", "cluster", clusterName, "error", err)
-			continue
-		}
-
-		summaries = append(summaries, *summary)
+		summaries = append(summaries, *s.getClusterSummary(ctx, clusterName, options))
 	}
 
 	// Cache the result
@@ -361,96 +252,79 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 	return summaries, nil
 }
 
-// ListAllRegions lists clusters across all EKS-supported regions
+// forRegion returns a ServiceImpl bound to the given AWS region. It reuses the
+// shared cache, logger, and health checker.
+func (s *ServiceImpl) forRegion(region string) *ServiceImpl {
+	regionConfig := s.awsConfig.Copy()
+	regionConfig.Region = region
+	out := NewService(regionConfig, s.healthChecker, s.logger)
+	out.cache = s.cache
+	return out
+}
+
+// resolveRegions picks the region set for a multi-region operation in
+// preference order: explicit options, REFRESH_EKS_REGIONS env, partition default.
+func (s *ServiceImpl) resolveRegions(options ListOptions) []string {
+	if len(options.Regions) > 0 {
+		return options.Regions
+	}
+	if env := appconfig.RegionsFromEnv(); len(env) > 0 {
+		return env
+	}
+	return appconfig.GetRegionsForPartition(s.awsConfig.Region)
+}
+
+// regionOptionsFor returns options narrowed to a single AWS region. The
+// returned value is what ListAllRegionsWithMeta hands to each per-region
+// goroutine so the per-region List's cache key (which hashes options.Regions)
+// distinguishes between regions instead of colliding on the parent's full
+// region slice.
+func regionOptionsFor(options ListOptions, region string) ListOptions {
+	out := options
+	out.Regions = []string{region}
+	out.AllRegions = false
+	return out
+}
+
+// ListAllRegions lists clusters across all EKS-supported regions.
 func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) ([]ClusterSummary, error) {
+	summaries, _, err := s.ListAllRegionsWithMeta(ctx, options)
+	return summaries, err
+}
+
+// ListAllRegionsWithMeta is like ListAllRegions but also returns the number of
+// regions that were actually queried, so the caller can display an accurate
+// progress message.
+func (s *ServiceImpl) ListAllRegionsWithMeta(ctx context.Context, options ListOptions) ([]ClusterSummary, int, error) {
 	s.logger.Info("listing clusters across all regions", "options", options)
 
-	// Default regions by partition (fallback). Prefer user-specified regions or env override.
-	regionsCommercial := []string{
-		"us-east-1", "us-east-2", "us-west-1", "us-west-2",
-		"eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-north-1",
-		"ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2", "ap-south-1",
-		"ca-central-1", "sa-east-1",
-	}
-	regionsGovCloud := []string{"us-gov-west-1", "us-gov-east-1"}
-	regionsChina := []string{"cn-north-1", "cn-northwest-1"}
-
-	eksRegions := regionsCommercial
-	currentRegion := s.awsConfig.Region
-	if strings.HasPrefix(currentRegion, "us-gov-") {
-		eksRegions = regionsGovCloud
-	} else if strings.HasPrefix(currentRegion, "cn-") {
-		eksRegions = regionsChina
+	eksRegions := s.resolveRegions(options)
+	maxConc := options.MaxConcurrency
+	if maxConc <= 0 {
+		maxConc = 8
 	}
 
-	// Allow overriding region set via environment (comma-separated)
-	if envRegions := appconfig.RegionsFromEnv(); len(envRegions) > 0 {
-		eksRegions = envRegions
-	}
-
-	if len(options.Regions) > 0 {
-		eksRegions = options.Regions
-	}
-
-	// Partition-aware defaults are applied above; users can still override via flags/env.
-
-	allSummaries := make([]ClusterSummary, 0)
-
-	// Use a channel to collect results from concurrent region queries
 	type regionResult struct {
 		region    string
 		summaries []ClusterSummary
 		err       error
 	}
-
 	resultChan := make(chan regionResult, len(eksRegions))
-
-	// Limit concurrency across regions to reduce throttling
-	maxConc := options.MaxConcurrency
-	if maxConc <= 0 {
-		maxConc = 8
-	}
 	sem := make(chan struct{}, maxConc)
 
-	// Query each region concurrently
 	for _, region := range eksRegions {
+		sem <- struct{}{}
 		go func(r string) {
-			sem <- struct{}{}
 			defer func() { <-sem }()
-			// Create region-specific config
-			regionConfig := s.awsConfig.Copy()
-			regionConfig.Region = r
-
-			regionService := &ServiceImpl{
-				eksClient:     eks.NewFromConfig(regionConfig),
-				ec2Client:     ec2.NewFromConfig(regionConfig),
-				iamClient:     iam.NewFromConfig(regionConfig),
-				stsClient:     sts.NewFromConfig(regionConfig),
-				healthChecker: s.healthChecker,
-				cache:         s.cache,
-				logger:        s.logger,
-				awsConfig:     regionConfig,
-			}
-
-			regionOptions := options
-			regionOptions.AllRegions = false // Avoid infinite recursion
-
-			summaries, err := regionService.List(ctx, regionOptions)
-
-			// Add region to summaries
+			summaries, err := s.forRegion(r).List(ctx, regionOptionsFor(options, r))
 			for i := range summaries {
 				summaries[i].Region = r
 			}
-
-			resultChan <- regionResult{
-				region:    r,
-				summaries: summaries,
-				err:       err,
-			}
+			resultChan <- regionResult{region: r, summaries: summaries, err: err}
 		}(region)
 	}
 
-	// Collect results
+	allSummaries := make([]ClusterSummary, 0)
 	for i := 0; i < len(eksRegions); i++ {
 		result := <-resultChan
 		if result.err != nil {
@@ -460,7 +334,7 @@ func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (
 		allSummaries = append(allSummaries, result.summaries...)
 	}
 
-	return allSummaries, nil
+	return allSummaries, len(eksRegions), nil
 }
 
 // Compare provides side-by-side cluster comparison

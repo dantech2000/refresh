@@ -22,16 +22,7 @@ type EKSAPI interface {
 	DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error)
 }
 
-// Service defines addon operations
-type Service interface {
-	List(ctx context.Context, clusterName string, options ListOptions) ([]AddonSummary, error)
-	Describe(ctx context.Context, clusterName, addonName string, options DescribeOptions) (*AddonDetails, error)
-	Update(ctx context.Context, clusterName, addonName string, options UpdateOptions) (*AddonUpdateResult, error)
-	UpdateAll(ctx context.Context, clusterName string, options UpdateAllOptions) ([]AddonUpdateResult, error)
-	GetAvailableVersions(ctx context.Context, addonName string, k8sVersion string) ([]AddonVersionInfo, error)
-}
-
-// ServiceImpl implements the addon Service
+// ServiceImpl is the addon service.
 type ServiceImpl struct {
 	eksClient EKSAPI
 	logger    *slog.Logger
@@ -49,23 +40,20 @@ func NewService(eksClient EKSAPI, logger *slog.Logger) *ServiceImpl {
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]AddonSummary, error) {
 	s.logger.Info("listing addons", "cluster", clusterName)
 
-	var addonNames []string
-	var nextToken *string
-	for {
-		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListAddonsOutput, error) {
-			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
+	addonNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListAddonsOutput, error) {
+			return s.eksClient.ListAddons(rrc, &eks.ListAddonsInput{
 				ClusterName: aws.String(clusterName),
-				NextToken:   nextToken,
+				NextToken:   token,
 			})
 		})
 		if err != nil {
-			return nil, fmt.Errorf("listing addons: %w", err)
+			return nil, nil, fmt.Errorf("listing addons: %w", err)
 		}
-		addonNames = append(addonNames, out.Addons...)
-		if out.NextToken == nil || aws.ToString(out.NextToken) == "" {
-			break
-		}
-		nextToken = out.NextToken
+		return out.Addons, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	summaries := make([]AddonSummary, 0, len(addonNames))
@@ -275,60 +263,43 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 		s.logger.Info("addon update order resolved", "order", addonNames(toUpdate))
 	}
 
-	results := make([]AddonUpdateResult, 0, len(toUpdate))
+	updateOne := func(a AddonSummary) AddonUpdateResult {
+		result, err := s.Update(ctx, clusterName, a.Name, UpdateOptions{
+			Version:     "latest",
+			DryRun:      options.DryRun,
+			HealthCheck: options.HealthCheck,
+			Wait:        options.Wait,
+			WaitTimeout: options.WaitTimeout,
+		})
+		if err != nil {
+			return AddonUpdateResult{
+				AddonName:       a.Name,
+				PreviousVersion: a.Version,
+				Status:          fmt.Sprintf("FAILED: %v", err),
+			}
+		}
+		return *result
+	}
 
+	results := make([]AddonUpdateResult, len(toUpdate))
 	if options.Parallel {
-		var mu sync.Mutex
 		var wg sync.WaitGroup
 		semaphore := make(chan struct{}, 3)
-
-		for _, addon := range toUpdate {
+		for i, addon := range toUpdate {
+			// Acquire BEFORE spawning so the cap limits live goroutines, not
+			// just in-flight API calls. Matches cluster.ListAllRegionsWithMeta.
+			semaphore <- struct{}{}
 			wg.Add(1)
-			go func(a AddonSummary) {
+			go func(i int, a AddonSummary) {
 				defer wg.Done()
-				semaphore <- struct{}{}
 				defer func() { <-semaphore }()
-
-				result, err := s.Update(ctx, clusterName, a.Name, UpdateOptions{
-					Version:     "latest",
-					DryRun:      options.DryRun,
-					HealthCheck: options.HealthCheck,
-					Wait:        options.Wait,
-					WaitTimeout: options.WaitTimeout,
-				})
-
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					results = append(results, AddonUpdateResult{
-						AddonName:       a.Name,
-						PreviousVersion: a.Version,
-						Status:          fmt.Sprintf("FAILED: %v", err),
-					})
-				} else {
-					results = append(results, *result)
-				}
-			}(addon)
+				results[i] = updateOne(a)
+			}(i, addon)
 		}
 		wg.Wait()
 	} else {
-		for _, addon := range toUpdate {
-			result, err := s.Update(ctx, clusterName, addon.Name, UpdateOptions{
-				Version:     "latest",
-				DryRun:      options.DryRun,
-				HealthCheck: options.HealthCheck,
-				Wait:        options.Wait,
-				WaitTimeout: options.WaitTimeout,
-			})
-			if err != nil {
-				results = append(results, AddonUpdateResult{
-					AddonName:       addon.Name,
-					PreviousVersion: addon.Version,
-					Status:          fmt.Sprintf("FAILED: %v", err),
-				})
-			} else {
-				results = append(results, *result)
-			}
+		for i, addon := range toUpdate {
+			results[i] = updateOne(addon)
 		}
 	}
 

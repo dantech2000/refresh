@@ -54,8 +54,9 @@ func coloredHelpPrinter(w io.Writer, templ string, data interface{}) {
 
 func newApp() *cli.App {
 	return &cli.App{
-		Name:  "refresh",
-		Usage: "Manage and monitor AWS EKS clusters and node groups",
+		Name:    "refresh",
+		Usage:   "Manage and monitor AWS EKS clusters and node groups",
+		Version: commands.VersionInfo.Version,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{
 				Name:    "timeout",
@@ -92,6 +93,11 @@ func newApp() *cli.App {
 func run(args []string, out, errOut io.Writer) error {
 	// Set custom help printer for colored output
 	cli.HelpPrinter = coloredHelpPrinter
+
+	// Make `--version`/`-v` print the same details as the `version` subcommand.
+	cli.VersionPrinter = func(c *cli.Context) {
+		commands.PrintVersion(c.App.Writer)
+	}
 
 	app := newApp()
 	app.Writer = out
