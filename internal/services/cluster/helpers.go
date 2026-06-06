@@ -3,8 +3,8 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -34,24 +34,20 @@ func (s *ServiceImpl) getVpcCidr(ctx context.Context, vpcId string) (string, err
 
 // getClusterAddons retrieves add-on information for a cluster
 func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) ([]AddonInfo, error) {
-	// List add-ons with pagination
-	var addonNames []string
-	var nextToken *string
-	for {
-		listOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListAddonsOutput, error) {
-			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
+	addonNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListAddonsOutput, error) {
+			return s.eksClient.ListAddons(rrc, &eks.ListAddonsInput{
 				ClusterName: aws.String(clusterName),
-				NextToken:   nextToken,
+				NextToken:   token,
 			})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing add-ons for cluster %s", clusterName))
+			return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing add-ons for cluster %s", clusterName))
 		}
-		addonNames = append(addonNames, listOutput.Addons...)
-		if listOutput.NextToken == nil {
-			break
-		}
-		nextToken = listOutput.NextToken
+		return out.Addons, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	var addons []AddonInfo
@@ -96,24 +92,20 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 
 // getClusterNodegroups retrieves nodegroup information for a cluster
 func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName string) ([]NodegroupSummary, error) {
-	// List nodegroups with pagination
-	var nodegroupNames []string
-	var nextToken *string
-	for {
-		listOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListNodegroupsOutput, error) {
-			return s.eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
+	nodegroupNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListNodegroupsOutput, error) {
+			return s.eksClient.ListNodegroups(rrc, &eks.ListNodegroupsInput{
 				ClusterName: aws.String(clusterName),
-				NextToken:   nextToken,
+				NextToken:   token,
 			})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
+			return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
 		}
-		nodegroupNames = append(nodegroupNames, listOutput.Nodegroups...)
-		if listOutput.NextToken == nil {
-			break
-		}
-		nextToken = listOutput.NextToken
+		return out.Nodegroups, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	var nodegroups []NodegroupSummary
@@ -155,44 +147,30 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 	return nodegroups, nil
 }
 
-// shouldSkipCluster applies filters to determine if a cluster should be skipped
+// shouldSkipCluster applies filters to determine if a cluster should be skipped.
+// Only the "name" filter is supported at the list stage; other filter keys are
+// applied later by callers that have already fetched cluster details.
 func (s *ServiceImpl) shouldSkipCluster(clusterName string, filters map[string]string) bool {
-	if len(filters) == 0 {
-		return false
+	if pattern, ok := filters["name"]; ok && !strings.Contains(clusterName, pattern) {
+		return true
 	}
-
-	for key, value := range filters {
-		switch key {
-		case "name":
-			if !strings.Contains(clusterName, value) {
-				return true
-			}
-		case "status":
-			// We'd need to get cluster details to filter by status
-			// For now, skip this filter to avoid extra API calls
-			continue
-		}
-	}
-
 	return false
 }
 
-// getClusterSummary creates a summary for a single cluster
-func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string, options ListOptions) (*ClusterSummary, error) {
-	// Get basic cluster information
+// getClusterSummary creates a summary for a single cluster. On describe
+// failure it returns a minimal "UNKNOWN" summary so callers can still render a
+// complete list -- never returns an error.
+func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string, options ListOptions) *ClusterSummary {
 	output, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
 	})
 	if err != nil {
-		// Fallback: return minimal summary so list output remains complete even if a describe call fails
 		s.logger.Warn("failed to describe cluster, returning minimal summary", "cluster", clusterName, "error", err)
 		return &ClusterSummary{
-			Name:      clusterName,
-			Status:    "UNKNOWN",
-			Version:   "",
-			Region:    s.awsConfig.Region,
-			CreatedAt: time.Time{},
-		}, nil
+			Name:   clusterName,
+			Status: "UNKNOWN",
+			Region: s.awsConfig.Region,
+		}
 	}
 
 	cluster := output.Cluster
@@ -205,9 +183,7 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 		Tags:      cluster.Tags,
 	}
 
-	// Get node count information
-	nodegroups, err := s.getClusterNodegroups(ctx, clusterName)
-	if err != nil {
+	if nodegroups, err := s.getClusterNodegroups(ctx, clusterName); err != nil {
 		s.logger.Warn("failed to get nodegroups for summary", "cluster", clusterName, "error", err)
 	} else {
 		var totalReady, totalDesired int32
@@ -218,13 +194,46 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 		summary.NodeCount = NodeCountInfo{Ready: totalReady, Total: totalDesired}
 	}
 
-	// Add health information if requested
 	if options.ShowHealth && s.healthChecker != nil {
 		healthSummary := s.healthChecker.RunAllChecks(ctx, clusterName)
 		summary.Health = &healthSummary
 	}
 
-	return summary, nil
+	return summary
+}
+
+// compareEquality emits a Difference iff extract returns more than one
+// distinct value across clusters. Each ValuePair carries the cluster's value.
+func compareEquality(clusters []ClusterDetails, extract func(ClusterDetails) any, field, desc, sev string) *Difference {
+	seen := map[any]bool{}
+	values := make([]ValuePair, len(clusters))
+	for i, c := range clusters {
+		v := extract(c)
+		seen[v] = true
+		values[i] = ValuePair{ClusterName: c.Name, Value: v}
+	}
+	if len(seen) <= 1 {
+		return nil
+	}
+	return &Difference{Field: field, Description: desc, Values: values, Severity: sev}
+}
+
+// perClusterDiff emits one Difference per cluster matching predicate.
+func perClusterDiff(clusters []ClusterDetails, match func(ClusterDetails) (any, bool), field, descFmt, sev string) []Difference {
+	var out []Difference
+	for _, c := range clusters {
+		v, ok := match(c)
+		if !ok {
+			continue
+		}
+		out = append(out, Difference{
+			Field:       field,
+			Description: fmt.Sprintf(descFmt, c.Name),
+			Values:      []ValuePair{{ClusterName: c.Name, Value: v}},
+			Severity:    sev,
+		})
+	}
+	return out
 }
 
 // analyzeDifferences compares clusters and identifies differences
@@ -235,203 +244,114 @@ func (s *ServiceImpl) analyzeDifferences(clusters []ClusterDetails, options Comp
 		return differences
 	}
 
-	// Compare Kubernetes versions
 	if s.shouldIncludeField("versions", options.Include) {
-		versions := make(map[string][]string)
-		for _, cluster := range clusters {
-			version := cluster.Version
-			if _, exists := versions[version]; !exists {
-				versions[version] = []string{}
-			}
-			versions[version] = append(versions[version], cluster.Name)
-		}
-
-		if len(versions) > 1 {
-			var values []ValuePair
-			for _, cluster := range clusters {
-				values = append(values, ValuePair{
-					ClusterName: cluster.Name,
-					Value:       cluster.Version,
-				})
-			}
-
-			differences = append(differences, Difference{
-				Field:       "version",
-				Description: "Kubernetes version differs between clusters",
-				Values:      values,
-				Severity:    "warning",
-			})
+		if d := compareEquality(clusters,
+			func(c ClusterDetails) any { return c.Version },
+			"version", "Kubernetes version differs between clusters", "warning"); d != nil {
+			differences = append(differences, *d)
 		}
 	}
 
-	// Compare networking configuration
 	if s.shouldIncludeField("networking", options.Include) {
-		// Check VPC IDs
-		vpcIds := make(map[string][]string)
-		for _, cluster := range clusters {
-			vpcId := cluster.Networking.VpcId
-			if _, exists := vpcIds[vpcId]; !exists {
-				vpcIds[vpcId] = []string{}
-			}
-			vpcIds[vpcId] = append(vpcIds[vpcId], cluster.Name)
+		if d := compareEquality(clusters,
+			func(c ClusterDetails) any { return c.Networking.VpcId },
+			"networking.vpcId", "VPC configuration differs between clusters", "info"); d != nil {
+			differences = append(differences, *d)
 		}
-
-		if len(vpcIds) > 1 {
-			var values []ValuePair
-			for _, cluster := range clusters {
-				values = append(values, ValuePair{
-					ClusterName: cluster.Name,
-					Value:       cluster.Networking.VpcId,
-				})
-			}
-
-			differences = append(differences, Difference{
-				Field:       "networking.vpcId",
-				Description: "VPC configuration differs between clusters",
-				Values:      values,
-				Severity:    "info",
-			})
-		}
-
-		// Check endpoint access
-		for _, cluster := range clusters {
-			if !cluster.Networking.EndpointAccess.PrivateAccess && cluster.Networking.EndpointAccess.PublicAccess {
-				differences = append(differences, Difference{
-					Field:       "networking.endpointAccess",
-					Description: fmt.Sprintf("Cluster %s has public-only endpoint access", cluster.Name),
-					Values: []ValuePair{
-						{
-							ClusterName: cluster.Name,
-							Value: map[string]bool{
-								"private": cluster.Networking.EndpointAccess.PrivateAccess,
-								"public":  cluster.Networking.EndpointAccess.PublicAccess,
-							},
-						},
-					},
-					Severity: "warning",
-				})
-			}
-		}
+		differences = append(differences, perClusterDiff(clusters,
+			func(c ClusterDetails) (any, bool) {
+				ea := c.Networking.EndpointAccess
+				if !ea.PrivateAccess && ea.PublicAccess {
+					return map[string]bool{"private": ea.PrivateAccess, "public": ea.PublicAccess}, true
+				}
+				return nil, false
+			},
+			"networking.endpointAccess", "Cluster %s has public-only endpoint access", "warning")...)
 	}
 
-	// Compare security configuration
 	if s.shouldIncludeField("security", options.Include) {
-		// Check encryption
-		for _, cluster := range clusters {
-			if !cluster.Security.EncryptionEnabled {
-				differences = append(differences, Difference{
-					Field:       "security.encryption",
-					Description: fmt.Sprintf("Cluster %s does not have encryption enabled", cluster.Name),
-					Values: []ValuePair{
-						{
-							ClusterName: cluster.Name,
-							Value:       cluster.Security.EncryptionEnabled,
-						},
-					},
-					Severity: "critical",
-				})
-			}
-		}
-
-		// Check logging
-		for _, cluster := range clusters {
-			if len(cluster.Security.LoggingEnabled) == 0 {
-				differences = append(differences, Difference{
-					Field:       "security.logging",
-					Description: fmt.Sprintf("Cluster %s has no logging enabled", cluster.Name),
-					Values: []ValuePair{
-						{
-							ClusterName: cluster.Name,
-							Value:       cluster.Security.LoggingEnabled,
-						},
-					},
-					Severity: "warning",
-				})
-			}
-		}
+		differences = append(differences, perClusterDiff(clusters,
+			func(c ClusterDetails) (any, bool) {
+				return c.Security.EncryptionEnabled, !c.Security.EncryptionEnabled
+			},
+			"security.encryption", "Cluster %s does not have encryption enabled", "critical")...)
+		differences = append(differences, perClusterDiff(clusters,
+			func(c ClusterDetails) (any, bool) {
+				return c.Security.LoggingEnabled, len(c.Security.LoggingEnabled) == 0
+			},
+			"security.logging", "Cluster %s has no logging enabled", "warning")...)
 	}
 
-	// Compare add-ons
 	if s.shouldIncludeField("addons", options.Include) {
-		addonsByCluster := make(map[string]map[string]string)
-		allAddons := make(map[string]bool)
-
-		for _, cluster := range clusters {
-			addonsByCluster[cluster.Name] = make(map[string]string)
-			for _, addon := range cluster.Addons {
-				addonsByCluster[cluster.Name][addon.Name] = addon.Version
-				allAddons[addon.Name] = true
-			}
-		}
-
-		// Check for missing add-ons
-		for addonName := range allAddons {
-			missingClusters := []string{}
-			versionDiffs := make(map[string][]string)
-
-			for _, cluster := range clusters {
-				if version, exists := addonsByCluster[cluster.Name][addonName]; exists {
-					if _, versionExists := versionDiffs[version]; !versionExists {
-						versionDiffs[version] = []string{}
-					}
-					versionDiffs[version] = append(versionDiffs[version], cluster.Name)
-				} else {
-					missingClusters = append(missingClusters, cluster.Name)
-				}
-			}
-
-			if len(missingClusters) > 0 {
-				var values []ValuePair
-				for _, cluster := range clusters {
-					version := "missing"
-					if v, exists := addonsByCluster[cluster.Name][addonName]; exists {
-						version = v
-					}
-					values = append(values, ValuePair{
-						ClusterName: cluster.Name,
-						Value:       version,
-					})
-				}
-
-				differences = append(differences, Difference{
-					Field:       fmt.Sprintf("addons.%s", addonName),
-					Description: fmt.Sprintf("Add-on %s is missing from some clusters: %s", addonName, strings.Join(missingClusters, ", ")),
-					Values:      values,
-					Severity:    "warning",
-				})
-			} else if len(versionDiffs) > 1 {
-				var values []ValuePair
-				for _, cluster := range clusters {
-					values = append(values, ValuePair{
-						ClusterName: cluster.Name,
-						Value:       addonsByCluster[cluster.Name][addonName],
-					})
-				}
-
-				differences = append(differences, Difference{
-					Field:       fmt.Sprintf("addons.%s.version", addonName),
-					Description: fmt.Sprintf("Add-on %s has different versions across clusters", addonName),
-					Values:      values,
-					Severity:    "info",
-				})
-			}
-		}
+		differences = append(differences, analyzeAddonDifferences(clusters)...)
 	}
 
 	return differences
 }
 
-// shouldIncludeField checks if a field should be included in comparison
-func (s *ServiceImpl) shouldIncludeField(field string, include []string) bool {
-	if len(include) == 0 {
-		return true // Include all fields if none specified
+// analyzeAddonDifferences emits per-addon Differences for missing addons and
+// version drift across the given clusters.
+func analyzeAddonDifferences(clusters []ClusterDetails) []Difference {
+	addonsByCluster := make(map[string]map[string]string, len(clusters))
+	allAddons := make(map[string]bool)
+	for _, c := range clusters {
+		m := make(map[string]string, len(c.Addons))
+		for _, a := range c.Addons {
+			m[a.Name] = a.Version
+			allAddons[a.Name] = true
+		}
+		addonsByCluster[c.Name] = m
 	}
 
-	for _, included := range include {
-		if included == field {
-			return true
+	var out []Difference
+	for addonName := range allAddons {
+		var missing []string
+		versions := map[string]bool{}
+		for _, c := range clusters {
+			if v, ok := addonsByCluster[c.Name][addonName]; ok {
+				versions[v] = true
+			} else {
+				missing = append(missing, c.Name)
+			}
+		}
+
+		switch {
+		case len(missing) > 0:
+			values := make([]ValuePair, len(clusters))
+			for i, c := range clusters {
+				v := "missing"
+				if got, ok := addonsByCluster[c.Name][addonName]; ok {
+					v = got
+				}
+				values[i] = ValuePair{ClusterName: c.Name, Value: v}
+			}
+			out = append(out, Difference{
+				Field:       fmt.Sprintf("addons.%s", addonName),
+				Description: fmt.Sprintf("Add-on %s is missing from some clusters: %s", addonName, strings.Join(missing, ", ")),
+				Values:      values,
+				Severity:    "warning",
+			})
+		case len(versions) > 1:
+			values := make([]ValuePair, len(clusters))
+			for i, c := range clusters {
+				values[i] = ValuePair{ClusterName: c.Name, Value: addonsByCluster[c.Name][addonName]}
+			}
+			out = append(out, Difference{
+				Field:       fmt.Sprintf("addons.%s.version", addonName),
+				Description: fmt.Sprintf("Add-on %s has different versions across clusters", addonName),
+				Values:      values,
+				Severity:    "info",
+			})
 		}
 	}
+	return out
+}
 
-	return false
+// shouldIncludeField checks if a field should be included in comparison.
+// Empty include slice means "include all".
+func (s *ServiceImpl) shouldIncludeField(field string, include []string) bool {
+	if len(include) == 0 {
+		return true
+	}
+	return slices.Contains(include, field)
 }

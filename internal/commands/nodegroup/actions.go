@@ -2,7 +2,6 @@ package nodegroup
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,13 +15,10 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
-	"github.com/dantech2000/refresh/internal/awsconfig"
-	clustercmd "github.com/dantech2000/refresh/internal/commands/cluster"
 	"github.com/dantech2000/refresh/internal/commands/factory"
-	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
@@ -32,35 +28,14 @@ import (
 )
 
 func runList(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
-	awsCfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
-		return err
-	}
-
-	requested := c.Args().First()
-	if requested == "" {
-		requested = c.String("cluster")
-	}
-	if strings.TrimSpace(requested) == "" {
-		ui.Outln("No cluster specified. Available clusters:")
-		ui.Outln()
-		start := time.Now()
-		svcList := factory.NewClusterService(awsCfg, false, nil)
-		summaries, err := svcList.List(ctx, clustersvc.ListOptions{})
-		if err != nil {
-			return err
-		}
-		return clustercmd.OutputClustersTable(summaries, time.Since(start), false, false)
-	}
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
-	if err != nil {
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, c)
+	if err != nil || listed {
 		return err
 	}
 
@@ -82,85 +57,42 @@ func runList(c *cli.Context) error {
 		Timeframe:       c.String("timeframe"),
 	}
 
-	spinner := ui.NewFunSpinnerForCategory("nodegroup")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
-
+	var items []nodegroupsvc.NodegroupSummary
 	start := time.Now()
-	items, err := svc.List(ctx, clusterName, opts)
-	spinner.Success("Nodegroup information gathered!")
-	if err != nil {
+	if err := runner.WithSpinner("nodegroup", "Nodegroup information gathered!", func() error {
+		var lerr error
+		items, lerr = svc.List(ctx, clusterName, opts)
+		return lerr
+	}); err != nil {
 		return err
 	}
 
-	if strings.ToLower(c.String("format")) == "table" || c.String("format") == "" {
+	format := strings.ToLower(c.String("format"))
+	if format == "table" || format == "" {
 		items = sortNodegroupSummaries(items, c.String("sort"), c.Bool("desc"))
 	}
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)})
-	case "yaml":
-		enc := yaml.NewEncoder(os.Stdout)
-		enc.SetIndent(2)
-		defer func() { _ = enc.Close() }()
-		return enc.Encode(map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)})
-	default:
-		return outputNodegroupsTable(clusterName, c.String("timeframe"), items, time.Since(start), opts)
+	payload := map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)}
+	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+		return err
 	}
+	return outputNodegroupsTable(clusterName, c.String("timeframe"), items, time.Since(start), opts)
 }
 
 func runDescribe(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
-	awsCfg, err := awsconfig.Load(ctx, c)
-	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
-		return err
-	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, c)
+	if err != nil || listed {
 		return err
 	}
 
-	requested := c.Args().First()
-	if requested == "" {
-		requested = c.String("cluster")
-	}
-	if strings.TrimSpace(requested) == "" {
-		ui.Outln("No cluster specified. Available clusters:")
-		ui.Outln()
-		svc := factory.NewClusterService(awsCfg, false, nil)
-		start := time.Now()
-		summaries, err := svc.List(ctx, clustersvc.ListOptions{})
-		if err != nil {
-			return err
-		}
-		return clustercmd.OutputClustersTable(summaries, time.Since(start), false, false)
-	}
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requested)
-	if err != nil {
-		return err
-	}
-
-	ngName := c.String("nodegroup")
-	if strings.TrimSpace(ngName) == "" {
-		var nonFlags []string
-		for _, tok := range c.Args().Slice() {
-			if strings.HasPrefix(tok, "-") {
-				continue
-			}
-			nonFlags = append(nonFlags, tok)
-		}
-		if len(nonFlags) >= 2 {
-			ngName = nonFlags[1]
-		}
-	}
-	if strings.TrimSpace(ngName) == "" {
+	ngName := runner.SecondPositional(c, "nodegroup")
+	if ngName == "" {
 		return fmt.Errorf("missing nodegroup name; pass as second argument or --nodegroup <name>")
 	}
 
@@ -176,70 +108,37 @@ func runDescribe(c *cli.Context) error {
 		Timeframe:        c.String("timeframe"),
 	}
 
-	spinner := ui.NewFunSpinnerForCategory("nodegroup")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
-
+	var details *nodegroupsvc.NodegroupDetails
 	start := time.Now()
-	details, err := svc.Describe(ctx, clusterName, ngName, opts)
-	spinner.Success("Nodegroup details gathered!")
-	if err != nil {
+	if err := runner.WithSpinner("nodegroup", "Nodegroup details gathered!", func() error {
+		var derr error
+		details, derr = svc.Describe(ctx, clusterName, ngName, opts)
+		return derr
+	}); err != nil {
 		return err
 	}
 
-	switch strings.ToLower(c.String("format")) {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(details)
-	case "yaml":
-		enc := yaml.NewEncoder(os.Stdout)
-		enc.SetIndent(2)
-		defer func() { _ = enc.Close() }()
-		return enc.Encode(details)
-	default:
-		return outputNodegroupDetailsTable(details, time.Since(start))
+	if handled, err := runner.EncodeStdout(c.String("format"), details); handled {
+		return err
 	}
+	return outputNodegroupDetailsTable(details, time.Since(start))
 }
 
 func runScale(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
-	defer cancel()
-
-	awsCfg, err := awsconfig.Load(ctx, c)
+	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
 	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
-		return err
-	}
+	defer cancel()
 
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, c.String("cluster"))
 	if err != nil {
 		return err
 	}
 
-	ngName := c.String("nodegroup")
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	withHealth := c.Bool("health-check") || c.Bool("check-pdbs") || c.Bool("wait")
 	svc := factory.NewNodegroupService(awsCfg, withHealth, logger)
-
-	var desiredPtr, minPtr, maxPtr *int32
-	if c.IsSet("desired") {
-		v := int32(c.Int("desired"))
-		desiredPtr = &v
-	}
-	if c.IsSet("min") {
-		v := int32(c.Int("min"))
-		minPtr = &v
-	}
-	if c.IsSet("max") {
-		v := int32(c.Int("max"))
-		maxPtr = &v
-	}
 
 	opts := nodegroupsvc.ScaleOptions{
 		HealthCheck: c.Bool("health-check"),
@@ -249,36 +148,54 @@ func runScale(c *cli.Context) error {
 		DryRun:      c.Bool("dry-run"),
 	}
 
-	spinner := ui.NewFunSpinnerForCategory("nodegroup")
-	if err := spinner.Start(); err != nil {
-		return err
-	}
-	defer spinner.Stop()
+	return runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
+		return svc.Scale(
+			ctx,
+			clusterName,
+			c.String("nodegroup"),
+			int32PtrIfSet(c, "desired"),
+			int32PtrIfSet(c, "min"),
+			int32PtrIfSet(c, "max"),
+			opts,
+		)
+	})
+}
 
-	if err := svc.Scale(ctx, clusterName, ngName, desiredPtr, minPtr, maxPtr, opts); err != nil {
-		spinner.Fail("Scaling failed")
-		return err
+// int32PtrIfSet returns &v for c.Int(name) when the flag was explicitly set,
+// otherwise nil.
+func int32PtrIfSet(c *cli.Context, name string) *int32 {
+	if !c.IsSet(name) {
+		return nil
 	}
-	spinner.Success("Scaling request submitted")
-	return nil
+	v := int32(c.Int(name))
+	return &v
+}
+
+// updateAMIFlags collects the flags that govern runUpdateAMI's behavior.
+type updateAMIFlags struct {
+	force, dryRun, noWait, quiet, skipHealthCheck, healthOnly bool
+	timeout, pollInterval                                     time.Duration
+}
+
+func readUpdateAMIFlags(c *cli.Context) updateAMIFlags {
+	return updateAMIFlags{
+		force:           c.Bool("force"),
+		dryRun:          c.Bool("dry-run"),
+		noWait:          c.Bool("no-wait"),
+		quiet:           c.Bool("quiet"),
+		skipHealthCheck: c.Bool("skip-health-check"),
+		healthOnly:      updateBoolFlag(c, "health-only", "H"),
+		timeout:         c.Duration("timeout"),
+		pollInterval:    c.Duration("poll-interval"),
+	}
 }
 
 func runUpdateAMI(c *cli.Context) error {
-	globalTimeout := c.Duration("timeout")
-	if globalTimeout == 0 {
-		globalTimeout = 60 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	awsCfg, err := awsconfig.Load(ctx, c)
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(c, 60*time.Second)
 	if err != nil {
-		color.Red("Failed to load AWS config: %v", err)
 		return err
 	}
-	if err := awsinternal.CheckAWSCredentials(ctx, awsCfg); err != nil {
-		return err
-	}
+	defer cancel()
 
 	requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(c)
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requestedCluster)
@@ -287,105 +204,149 @@ func runUpdateAMI(c *cli.Context) error {
 		return err
 	}
 	eksClient := eks.NewFromConfig(awsCfg)
+	flags := readUpdateAMIFlags(c)
 
-	force := c.Bool("force")
-	dryRun := c.Bool("dry-run")
-	noWait := c.Bool("no-wait")
-	quiet := c.Bool("quiet")
-	timeout := c.Duration("timeout")
-	pollInterval := c.Duration("poll-interval")
-	skipHealthCheck := c.Bool("skip-health-check")
-	healthOnly := updateBoolFlag(c, "health-only", "H")
+	done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, flags)
+	if err != nil || done {
+		return err
+	}
 
-	if !skipHealthCheck && !dryRun && !force {
-		if !quiet {
-			ui.DisplayHealthCheckStart(clusterName)
-		}
-		cwClient := cloudwatch.NewFromConfig(awsCfg)
-		asgClient := autoscaling.NewFromConfig(awsCfg)
-		k8sClient, k8sErr := health.GetKubernetesClient()
-		if k8sClient == nil && !quiet {
-			color.Yellow("Warning: Kubernetes client not available (%v)", k8sErr)
-			color.Yellow("Health checks will be limited to AWS-only validations")
-		}
-		healthChecker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
+	selectedNodegroups, err := selectNodegroupsForUpdate(ctx, eksClient, clusterName, nodegroupPattern)
+	if err != nil {
+		return err
+	}
 
-		spinner := ui.NewFunSpinnerForCategory("health")
-		if !quiet {
-			if err := spinner.Start(); err != nil {
-				return err
-			}
-			defer spinner.Stop()
-		}
-		summary := healthChecker.RunAllChecks(ctx, clusterName)
-		if !quiet {
-			spinner.Success("Health validation complete!")
-		}
-		if !quiet {
-			ui.DisplayHealthResults(summary)
-		}
+	if flags.dryRun {
+		return dryrun.PerformDryRun(ctx, eksClient, clusterName, selectedNodegroups, flags.force, flags.quiet)
+	}
 
-		switch summary.Decision {
-		case health.DecisionBlock:
-			ui.DisplayHealthCheckComplete(summary.Decision)
-			return fmt.Errorf("pre-flight health checks failed")
-		case health.DecisionWarn:
-			if healthOnly {
-				return nil
-			}
-			if !quiet && !ui.PromptContinueWithWarnings(summary.Warnings) {
-				color.Yellow("Update cancelled by user")
-				return fmt.Errorf("update cancelled")
-			}
-		case health.DecisionProceed:
-			if healthOnly {
-				ui.DisplayHealthCheckComplete(summary.Decision)
-				return nil
-			}
-			if !quiet {
-				ui.DisplayHealthCheckComplete(summary.Decision)
-			}
+	updates := startNodegroupUpdates(ctx, eksClient, clusterName, selectedNodegroups, flags)
+	if len(updates) == 0 {
+		color.Yellow("No nodegroup updates were started")
+		return nil
+	}
+	if flags.noWait {
+		if !flags.quiet {
+			fmt.Printf("Started %d nodegroup update(s). Use 'refresh list --cluster %s' to check status.\n",
+				len(updates), clusterName)
 		}
-	} else if healthOnly {
-		color.Yellow("Health check skipped due to --skip-health-check, --dry-run, or --force flags")
 		return nil
 	}
 
-	ngOut, err := eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{ClusterName: aws.String(clusterName)})
-	if err != nil {
-		color.Red("Failed to list nodegroups: %v", err)
-		return err
+	monitor := &refreshTypes.ProgressMonitor{
+		Updates:   updates,
+		StartTime: time.Now(),
+		Quiet:     flags.quiet,
+		NoWait:    flags.noWait,
+		Timeout:   flags.timeout,
 	}
-
-	matches := awsinternal.MatchingNodegroups(ngOut.Nodegroups, nodegroupPattern)
-	selectedNodegroups, err := awsinternal.ConfirmNodegroupSelection(matches, nodegroupPattern)
-	if err != nil {
-		color.Red("%v", err)
-		return err
-	}
-
 	config := refreshTypes.MonitorConfig{
-		PollInterval:    pollInterval,
+		PollInterval:    flags.pollInterval,
 		MaxRetries:      3,
 		BackoffMultiple: 2.0,
-		Quiet:           quiet,
-		NoWait:          noWait,
-		Timeout:         timeout,
+		Quiet:           flags.quiet,
+		NoWait:          flags.noWait,
+		Timeout:         flags.timeout,
 	}
-	monitor := &refreshTypes.ProgressMonitor{
-		Updates:   make([]refreshTypes.UpdateProgress, 0),
-		StartTime: time.Now(),
-		Quiet:     quiet,
-		NoWait:    noWait,
-		Timeout:   timeout,
+	return monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
+}
+
+// preflightHealthCheck runs the pre-update health checks. Returns done=true if
+// the caller should stop here (block decision, user cancelled, or --health-only).
+func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, flags updateAMIFlags) (done bool, err error) {
+	if flags.skipHealthCheck || flags.dryRun || flags.force {
+		if flags.healthOnly {
+			color.Yellow("Health check skipped due to --skip-health-check, --dry-run, or --force flags")
+			return true, nil
+		}
+		return false, nil
 	}
 
-	if dryRun {
-		return dryrun.PerformDryRun(ctx, eksClient, clusterName, selectedNodegroups, force, quiet)
+	if !flags.quiet {
+		ui.DisplayHealthCheckStart(clusterName)
+	}
+	cwClient := cloudwatch.NewFromConfig(awsCfg)
+	asgClient := autoscaling.NewFromConfig(awsCfg)
+	k8sClient, k8sErr := health.GetKubernetesClient()
+	if k8sClient == nil && !flags.quiet {
+		color.Yellow("Warning: Kubernetes client not available (%v)", k8sErr)
+		color.Yellow("Health checks will be limited to AWS-only validations")
+	}
+	checker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
+
+	spinner := ui.NewFunSpinnerForCategory("health")
+	if !flags.quiet {
+		if err := spinner.Start(); err != nil {
+			return false, err
+		}
+		defer spinner.Stop()
+	}
+	summary := checker.RunAllChecks(ctx, clusterName)
+	if !flags.quiet {
+		spinner.Success("Health validation complete!")
+		ui.DisplayHealthResults(summary)
 	}
 
-	for _, ng := range selectedNodegroups {
-		ngDesc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
+	return applyHealthDecision(summary, flags)
+}
+
+// applyHealthDecision interprets a health summary against the run flags. It
+// returns done=true when the caller should stop (Block decision, user
+// cancelled, or --health-only).
+//
+// --health-only means "just show me the verdict": the success banner is
+// printed regardless of --quiet because the verdict IS the requested result.
+// --quiet only suppresses the verbose banner for the non-health-only flow.
+func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (done bool, err error) {
+	switch summary.Decision {
+	case health.DecisionBlock:
+		ui.DisplayHealthCheckComplete(summary.Decision)
+		return true, fmt.Errorf("pre-flight health checks failed")
+	case health.DecisionWarn:
+		if flags.healthOnly {
+			ui.DisplayHealthCheckComplete(summary.Decision)
+			return true, nil
+		}
+		if !flags.quiet && !ui.PromptContinueWithWarnings(summary.Warnings) {
+			color.Yellow("Update cancelled by user")
+			return true, fmt.Errorf("update cancelled")
+		}
+	case health.DecisionProceed:
+		if flags.healthOnly || !flags.quiet {
+			ui.DisplayHealthCheckComplete(summary.Decision)
+		}
+		if flags.healthOnly {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// selectNodegroupsForUpdate lists nodegroups matching pattern and confirms the
+// selection interactively when ambiguous.
+func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clusterName, pattern string) ([]string, error) {
+	out, err := eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{ClusterName: aws.String(clusterName)})
+	if err != nil {
+		color.Red("Failed to list nodegroups: %v", err)
+		return nil, err
+	}
+	matches := awsinternal.MatchingNodegroups(out.Nodegroups, pattern)
+	selected, err := awsinternal.ConfirmNodegroupSelection(matches, pattern)
+	if err != nil {
+		color.Red("%v", err)
+		return nil, err
+	}
+	return selected, nil
+}
+
+// startNodegroupUpdates issues UpdateNodegroupVersion for each selected
+// nodegroup that isn't already updating, returning successful update progress
+// entries. Per-nodegroup failures are logged and skipped, matching the
+// original best-effort behavior.
+func startNodegroupUpdates(ctx context.Context, eksClient *eks.Client, clusterName string, nodegroups []string, flags updateAMIFlags) []refreshTypes.UpdateProgress {
+	updates := make([]refreshTypes.UpdateProgress, 0, len(nodegroups))
+	for _, ng := range nodegroups {
+		desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
 			ClusterName:   aws.String(clusterName),
 			NodegroupName: aws.String(ng),
 		})
@@ -393,49 +354,38 @@ func runUpdateAMI(c *cli.Context) error {
 			color.Red("Failed to describe nodegroup %s: %v", ng, err)
 			continue
 		}
-		if ngDesc.Nodegroup.Status == ekstypes.NodegroupStatusUpdating {
+		if desc.Nodegroup.Status == ekstypes.NodegroupStatusUpdating {
 			color.Yellow("Nodegroup %s is already UPDATING. Skipping update.", ng)
 			continue
 		}
-		if !quiet {
+		if !flags.quiet {
 			color.Cyan("Starting update for nodegroup %s...", ng)
 		}
 
-		updateResp, err := eksClient.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
+		resp, err := eksClient.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
 			ClusterName:   aws.String(clusterName),
 			NodegroupName: aws.String(ng),
-			Force:         force,
+			Force:         flags.force,
 		})
 		if err != nil {
 			color.Red("Failed to update nodegroup %s: %v", ng, err)
 			continue
 		}
 
-		monitor.Updates = append(monitor.Updates, refreshTypes.UpdateProgress{
+		now := time.Now()
+		updates = append(updates, refreshTypes.UpdateProgress{
 			NodegroupName: ng,
-			UpdateID:      *updateResp.Update.Id,
+			UpdateID:      *resp.Update.Id,
 			ClusterName:   clusterName,
-			Status:        updateResp.Update.Status,
-			StartTime:     time.Now(),
-			LastChecked:   time.Now(),
+			Status:        resp.Update.Status,
+			StartTime:     now,
+			LastChecked:   now,
 		})
-		if !quiet {
-			color.Green("Update started for nodegroup %s (ID: %s)", ng, *updateResp.Update.Id)
+		if !flags.quiet {
+			color.Green("Update started for nodegroup %s (ID: %s)", ng, *resp.Update.Id)
 		}
 	}
-
-	if len(monitor.Updates) == 0 {
-		color.Yellow("No nodegroup updates were started")
-		return nil
-	}
-	if noWait {
-		if !quiet {
-			fmt.Printf("Started %d nodegroup update(s). Use 'refresh list --cluster %s' to check status.\n",
-				len(monitor.Updates), clusterName)
-		}
-		return nil
-	}
-	return monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
+	return updates
 }
 
 func updateClusterAndNodegroupPatterns(c *cli.Context) (string, string) {

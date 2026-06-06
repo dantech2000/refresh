@@ -25,362 +25,138 @@ func NewUtilizationCollector(cw *cloudwatch.Client, logger *slog.Logger, cache *
 	return &UtilizationCollector{cw: cw, logger: logger, cache: cache, cacheTTL: 2 * time.Minute}
 }
 
-
-// CollectEC2CPUForInstances aggregates EC2 CPUUtilization for instance IDs over a short window
-func (u *UtilizationCollector) CollectEC2CPUForInstances(ctx context.Context, instanceIDs []string, window string) (UtilizationData, bool) {
-	if len(instanceIDs) == 0 {
-		return UtilizationData{}, false
-	}
-	// Default to 1 hour, support 3h and 24h windows
-	end := time.Now()
-	start := end.Add(-1 * time.Hour)
-	switch window {
-	case "3h":
-		start = end.Add(-3 * time.Hour)
-	case "24h":
-		start = end.Add(-24 * time.Hour)
-	}
-
-	// Build a GetMetricData request with one query per instance (batching efficiently)
-	queries := make([]cwtypes.MetricDataQuery, 0, len(instanceIDs))
-	for i, id := range instanceIDs {
-		idstr := aws.String(id)
-		q := cwtypes.MetricDataQuery{
-			Id: aws.String(fmt.Sprintf("m%d", i)),
-			MetricStat: &cwtypes.MetricStat{
-				Metric: &cwtypes.Metric{
-					Namespace:  aws.String("AWS/EC2"),
-					MetricName: aws.String("CPUUtilization"),
-					Dimensions: []cwtypes.Dimension{{Name: aws.String("InstanceId"), Value: idstr}},
-				},
-				Period: aws.Int32(300),
-				Stat:   aws.String("Average"),
-				Unit:   cwtypes.StandardUnitPercent,
-			},
-		}
-		queries = append(queries, q)
-	}
-
-	input := &cloudwatch.GetMetricDataInput{
-		StartTime:         aws.Time(start),
-		EndTime:           aws.Time(end),
-		MetricDataQueries: queries,
-		ScanBy:            cwtypes.ScanByTimestampAscending,
-	}
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
-		return u.cw.GetMetricData(rc, input)
-	})
-	if err != nil || len(out.MetricDataResults) == 0 {
-		u.logger.Debug("ec2 cpu metrics unavailable", "error", err)
-		return UtilizationData{}, false
-	}
-
-	// Average across instances and datapoints
-	var sum float64
-	var count int
-	var peak float64
-	var last float64
-	var lastTs time.Time
-	for _, r := range out.MetricDataResults {
-		for _, v := range r.Values {
-			sum += v
-			count++
-			if v > peak {
-				peak = v
-			}
-		}
-		// Track latest datapoint per series for current
-		for i := range r.Timestamps {
-			ts := r.Timestamps[i]
-			val := r.Values[i]
-			if ts.After(lastTs) {
-				lastTs = ts
-				last = val
-			}
-		}
-	}
-	if count == 0 {
-		return UtilizationData{}, false
-	}
-
-	// Calculate trend based on time series data
-	trend := u.calculateTrend(out.MetricDataResults)
-
-	data := UtilizationData{Average: sum / float64(count), Peak: peak, Current: last, Trend: trend}
-	return data, true
+// metricSpec describes one CloudWatch metric to fetch per instance.
+type metricSpec struct {
+	namespace string
+	metric    string
+	idPrefix  string
+	extraDims []cwtypes.Dimension
+	unit      cwtypes.StandardUnit
 }
 
-// CollectMemoryForInstances collects memory utilization using CloudWatch agent metrics
-// Note: This requires CloudWatch agent to be installed and configured on nodes
-func (u *UtilizationCollector) CollectMemoryForInstances(ctx context.Context, instanceIDs []string, window string) (UtilizationData, bool) {
-	if len(instanceIDs) == 0 {
-		return UtilizationData{}, false
+var (
+	cpuSpec    = []metricSpec{{namespace: "AWS/EC2", metric: "CPUUtilization", idPrefix: "m", unit: cwtypes.StandardUnitPercent}}
+	memorySpec = []metricSpec{{namespace: "CWAgent", metric: "mem_used_percent", idPrefix: "mem", unit: cwtypes.StandardUnitPercent}}
+	networkSpec = []metricSpec{
+		{namespace: "AWS/EC2", metric: "NetworkIn", idPrefix: "netin", unit: cwtypes.StandardUnitBytes},
+		{namespace: "AWS/EC2", metric: "NetworkOut", idPrefix: "netout", unit: cwtypes.StandardUnitBytes},
 	}
+	diskSpec = []metricSpec{{
+		namespace: "CWAgent", metric: "disk_used_percent", idPrefix: "disk", unit: cwtypes.StandardUnitPercent,
+		extraDims: []cwtypes.Dimension{
+			{Name: aws.String("path"), Value: aws.String("/")},
+			{Name: aws.String("fstype"), Value: aws.String("ext4")},
+		},
+	}}
+)
 
-	// Calculate time range
-	end := time.Now()
-	start := end.Add(-1 * time.Hour)
+// windowDuration maps a window label to its lookback duration.
+func windowDuration(window string) time.Duration {
 	switch window {
 	case "3h":
-		start = end.Add(-3 * time.Hour)
+		return 3 * time.Hour
 	case "24h":
-		start = end.Add(-24 * time.Hour)
+		return 24 * time.Hour
+	default:
+		return time.Hour
 	}
-
-	// Build queries for memory metrics (CloudWatch agent namespace)
-	queries := make([]cwtypes.MetricDataQuery, 0, len(instanceIDs))
-	for i, id := range instanceIDs {
-		idstr := aws.String(id)
-		q := cwtypes.MetricDataQuery{
-			Id: aws.String(fmt.Sprintf("mem%d", i)),
-			MetricStat: &cwtypes.MetricStat{
-				Metric: &cwtypes.Metric{
-					Namespace:  aws.String("CWAgent"),
-					MetricName: aws.String("mem_used_percent"),
-					Dimensions: []cwtypes.Dimension{{Name: aws.String("InstanceId"), Value: idstr}},
-				},
-				Period: aws.Int32(300),
-				Stat:   aws.String("Average"),
-				Unit:   cwtypes.StandardUnitPercent,
-			},
-		}
-		queries = append(queries, q)
-	}
-
-	input := &cloudwatch.GetMetricDataInput{
-		StartTime:         aws.Time(start),
-		EndTime:           aws.Time(end),
-		MetricDataQueries: queries,
-		ScanBy:            cwtypes.ScanByTimestampAscending,
-	}
-
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
-		return u.cw.GetMetricData(rc, input)
-	})
-	if err != nil || len(out.MetricDataResults) == 0 {
-		u.logger.Debug("memory metrics unavailable (CloudWatch agent may not be installed)", "error", err)
-		return UtilizationData{}, false
-	}
-
-	// Aggregate memory metrics
-	var sum float64
-	var count int
-	var peak float64
-	var last float64
-	var lastTs time.Time
-
-	for _, r := range out.MetricDataResults {
-		for _, v := range r.Values {
-			sum += v
-			count++
-			if v > peak {
-				peak = v
-			}
-		}
-		for i := range r.Timestamps {
-			ts := r.Timestamps[i]
-			val := r.Values[i]
-			if ts.After(lastTs) {
-				lastTs = ts
-				last = val
-			}
-		}
-	}
-
-	if count == 0 {
-		return UtilizationData{}, false
-	}
-
-	trend := u.calculateTrend(out.MetricDataResults)
-	data := UtilizationData{Average: sum / float64(count), Peak: peak, Current: last, Trend: trend}
-	return data, true
 }
 
-// CollectNetworkForInstances collects network utilization metrics
-func (u *UtilizationCollector) CollectNetworkForInstances(ctx context.Context, instanceIDs []string, window string) (UtilizationData, bool) {
+// identity is the default no-op value transform.
+func identity(v float64) float64 { return v }
+
+// bytesToMB converts CloudWatch byte totals to megabytes.
+func bytesToMB(v float64) float64 { return v / (1024 * 1024) }
+
+// collect fetches CloudWatch metrics per spec×instance, aggregates them, and
+// returns average/peak/current/trend. transform is applied to each datapoint.
+func (u *UtilizationCollector) collect(ctx context.Context, specs []metricSpec, instanceIDs []string, window string, transform func(float64) float64, unavailableMsg string) (UtilizationData, bool) {
 	if len(instanceIDs) == 0 {
 		return UtilizationData{}, false
 	}
-
-	end := time.Now()
-	start := end.Add(-1 * time.Hour)
-	switch window {
-	case "3h":
-		start = end.Add(-3 * time.Hour)
-	case "24h":
-		start = end.Add(-24 * time.Hour)
-	}
-
-	// Collect NetworkIn and NetworkOut
-	queries := make([]cwtypes.MetricDataQuery, 0, len(instanceIDs)*2)
-	for i, id := range instanceIDs {
-		idstr := aws.String(id)
-		// Network In
-		queries = append(queries, cwtypes.MetricDataQuery{
-			Id: aws.String(fmt.Sprintf("netin%d", i)),
-			MetricStat: &cwtypes.MetricStat{
-				Metric: &cwtypes.Metric{
-					Namespace:  aws.String("AWS/EC2"),
-					MetricName: aws.String("NetworkIn"),
-					Dimensions: []cwtypes.Dimension{{Name: aws.String("InstanceId"), Value: idstr}},
-				},
-				Period: aws.Int32(300),
-				Stat:   aws.String("Average"),
-				Unit:   cwtypes.StandardUnitBytes,
-			},
-		})
-		// Network Out
-		queries = append(queries, cwtypes.MetricDataQuery{
-			Id: aws.String(fmt.Sprintf("netout%d", i)),
-			MetricStat: &cwtypes.MetricStat{
-				Metric: &cwtypes.Metric{
-					Namespace:  aws.String("AWS/EC2"),
-					MetricName: aws.String("NetworkOut"),
-					Dimensions: []cwtypes.Dimension{{Name: aws.String("InstanceId"), Value: idstr}},
-				},
-				Period: aws.Int32(300),
-				Stat:   aws.String("Average"),
-				Unit:   cwtypes.StandardUnitBytes,
-			},
-		})
-	}
-
-	input := &cloudwatch.GetMetricDataInput{
-		StartTime:         aws.Time(start),
-		EndTime:           aws.Time(end),
-		MetricDataQueries: queries,
-		ScanBy:            cwtypes.ScanByTimestampAscending,
-	}
-
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
-		return u.cw.GetMetricData(rc, input)
-	})
-	if err != nil || len(out.MetricDataResults) == 0 {
-		u.logger.Debug("network metrics unavailable", "error", err)
-		return UtilizationData{}, false
-	}
-
-	// Aggregate network metrics (combine in+out in MB/s)
-	var sum float64
-	var count int
-	var peak float64
-	var last float64
-	var lastTs time.Time
-
-	for _, r := range out.MetricDataResults {
-		for _, v := range r.Values {
-			// Convert bytes to MB (divide by 1024*1024)
-			vMB := v / (1024 * 1024)
-			sum += vMB
-			count++
-			if vMB > peak {
-				peak = vMB
-			}
-		}
-		for i := range r.Timestamps {
-			ts := r.Timestamps[i]
-			val := r.Values[i] / (1024 * 1024)
-			if ts.After(lastTs) {
-				lastTs = ts
-				last = val
-			}
-		}
-	}
-
-	if count == 0 {
-		return UtilizationData{}, false
-	}
-
-	trend := u.calculateTrend(out.MetricDataResults)
-	data := UtilizationData{Average: sum / float64(count), Peak: peak, Current: last, Trend: trend}
-	return data, true
-}
-
-// CollectDiskForInstances collects disk utilization metrics (EBS)
-func (u *UtilizationCollector) CollectDiskForInstances(ctx context.Context, instanceIDs []string, window string) (UtilizationData, bool) {
-	if len(instanceIDs) == 0 {
-		return UtilizationData{}, false
+	if transform == nil {
+		transform = identity
 	}
 
 	end := time.Now()
-	start := end.Add(-1 * time.Hour)
-	switch window {
-	case "3h":
-		start = end.Add(-3 * time.Hour)
-	case "24h":
-		start = end.Add(-24 * time.Hour)
-	}
+	start := end.Add(-windowDuration(window))
 
-	// EBS metrics use volume IDs, not instance IDs
-	// We'll use the CloudWatch agent metric for disk used percent if available
-	queries := make([]cwtypes.MetricDataQuery, 0, len(instanceIDs))
-	for i, id := range instanceIDs {
-		idstr := aws.String(id)
-		queries = append(queries, cwtypes.MetricDataQuery{
-			Id: aws.String(fmt.Sprintf("disk%d", i)),
-			MetricStat: &cwtypes.MetricStat{
-				Metric: &cwtypes.Metric{
-					Namespace:  aws.String("CWAgent"),
-					MetricName: aws.String("disk_used_percent"),
-					Dimensions: []cwtypes.Dimension{
-						{Name: aws.String("InstanceId"), Value: idstr},
-						{Name: aws.String("path"), Value: aws.String("/")},
-						{Name: aws.String("fstype"), Value: aws.String("ext4")},
+	queries := make([]cwtypes.MetricDataQuery, 0, len(instanceIDs)*len(specs))
+	for _, spec := range specs {
+		for i, id := range instanceIDs {
+			dims := []cwtypes.Dimension{{Name: aws.String("InstanceId"), Value: aws.String(id)}}
+			dims = append(dims, spec.extraDims...)
+			queries = append(queries, cwtypes.MetricDataQuery{
+				Id: aws.String(fmt.Sprintf("%s%d", spec.idPrefix, i)),
+				MetricStat: &cwtypes.MetricStat{
+					Metric: &cwtypes.Metric{
+						Namespace:  aws.String(spec.namespace),
+						MetricName: aws.String(spec.metric),
+						Dimensions: dims,
 					},
+					Period: aws.Int32(300),
+					Stat:   aws.String("Average"),
+					Unit:   spec.unit,
 				},
-				Period: aws.Int32(300),
-				Stat:   aws.String("Average"),
-				Unit:   cwtypes.StandardUnitPercent,
-			},
-		})
-	}
-
-	input := &cloudwatch.GetMetricDataInput{
-		StartTime:         aws.Time(start),
-		EndTime:           aws.Time(end),
-		MetricDataQueries: queries,
-		ScanBy:            cwtypes.ScanByTimestampAscending,
+			})
+		}
 	}
 
 	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
-		return u.cw.GetMetricData(rc, input)
+		return u.cw.GetMetricData(rc, &cloudwatch.GetMetricDataInput{
+			StartTime:         aws.Time(start),
+			EndTime:           aws.Time(end),
+			MetricDataQueries: queries,
+			ScanBy:            cwtypes.ScanByTimestampAscending,
+		})
 	})
 	if err != nil || len(out.MetricDataResults) == 0 {
-		u.logger.Debug("disk metrics unavailable (CloudWatch agent may not be installed)", "error", err)
+		u.logger.Debug(unavailableMsg, "error", err)
 		return UtilizationData{}, false
 	}
 
-	var sum float64
+	var sum, peak, last float64
 	var count int
-	var peak float64
-	var last float64
 	var lastTs time.Time
-
 	for _, r := range out.MetricDataResults {
-		for _, v := range r.Values {
-			sum += v
+		for i, v := range r.Values {
+			tv := transform(v)
+			sum += tv
 			count++
-			if v > peak {
-				peak = v
+			if tv > peak {
+				peak = tv
 			}
-		}
-		for i := range r.Timestamps {
-			ts := r.Timestamps[i]
-			val := r.Values[i]
-			if ts.After(lastTs) {
+			if ts := r.Timestamps[i]; ts.After(lastTs) {
 				lastTs = ts
-				last = val
+				last = tv
 			}
 		}
 	}
-
 	if count == 0 {
 		return UtilizationData{}, false
 	}
+	return UtilizationData{
+		Average: sum / float64(count),
+		Peak:    peak,
+		Current: last,
+		Trend:   u.calculateTrend(out.MetricDataResults),
+	}, true
+}
 
-	trend := u.calculateTrend(out.MetricDataResults)
-	data := UtilizationData{Average: sum / float64(count), Peak: peak, Current: last, Trend: trend}
-	return data, true
+func (u *UtilizationCollector) CollectEC2CPUForInstances(ctx context.Context, instanceIDs []string, window string) (UtilizationData, bool) {
+	return u.collect(ctx, cpuSpec, instanceIDs, window, nil, "ec2 cpu metrics unavailable")
+}
+
+func (u *UtilizationCollector) CollectMemoryForInstances(ctx context.Context, instanceIDs []string, window string) (UtilizationData, bool) {
+	return u.collect(ctx, memorySpec, instanceIDs, window, nil, "memory metrics unavailable (CloudWatch agent may not be installed)")
+}
+
+func (u *UtilizationCollector) CollectNetworkForInstances(ctx context.Context, instanceIDs []string, window string) (UtilizationData, bool) {
+	return u.collect(ctx, networkSpec, instanceIDs, window, bytesToMB, "network metrics unavailable")
+}
+
+func (u *UtilizationCollector) CollectDiskForInstances(ctx context.Context, instanceIDs []string, window string) (UtilizationData, bool) {
+	return u.collect(ctx, diskSpec, instanceIDs, window, nil, "disk metrics unavailable (CloudWatch agent may not be installed)")
 }
 
 // calculateTrend analyzes time series data to determine trend direction
