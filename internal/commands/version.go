@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/urfave/cli/v2"
 
@@ -31,18 +32,25 @@ func init() {
 	VersionInfo.BuildDate = buildDate
 }
 
+// PrintVersion writes the CLI version details to w. It is the single source of
+// truth shared by the `version` subcommand and the global `--version` flag so
+// both produce identical output.
+func PrintVersion(w io.Writer) {
+	_, _ = fmt.Fprintf(w, "refresh version: %s\n", VersionInfo.Version)
+	if VersionInfo.Commit != "" {
+		_, _ = fmt.Fprintf(w, "commit: %s\n", VersionInfo.Commit)
+	}
+	if VersionInfo.BuildDate != "" {
+		_, _ = fmt.Fprintf(w, "built: %s\n", VersionInfo.BuildDate)
+	}
+}
+
 func VersionCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "version",
 		Usage: "Print the version of this CLI",
 		Action: func(c *cli.Context) error {
-			fmt.Printf("refresh version: %s\n", VersionInfo.Version)
-			if VersionInfo.Commit != "" {
-				fmt.Printf("commit: %s\n", VersionInfo.Commit)
-			}
-			if VersionInfo.BuildDate != "" {
-				fmt.Printf("built: %s\n", VersionInfo.BuildDate)
-			}
+			PrintVersion(c.App.Writer)
 			return nil
 		},
 	}

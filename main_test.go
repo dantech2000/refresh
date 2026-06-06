@@ -225,8 +225,18 @@ func TestNewAppAndRun(t *testing.T) {
 	if err := run([]string{"refresh", "version"}, &out, &errOut); err != nil {
 		t.Fatalf("run version: %v", err)
 	}
-	// Note: VersionCommand uses fmt.Printf which writes to the real os.Stdout, not
-	// app.Writer. We therefore only verify the command returns no error here.
+	if !strings.Contains(out.String(), "refresh version:") {
+		t.Fatalf("version subcommand output = %q, want it to contain %q", out.String(), "refresh version:")
+	}
+
+	// The global --version flag must produce the same output as the subcommand.
+	out.Reset()
+	if err := run([]string{"refresh", "--version"}, &out, &errOut); err != nil {
+		t.Fatalf("run --version: %v", err)
+	}
+	if !strings.Contains(out.String(), "refresh version:") {
+		t.Fatalf("--version output = %q, want it to contain %q", out.String(), "refresh version:")
+	}
 
 	out.Reset()
 	if err := run([]string{"refresh", "--timeout", "not-a-duration", "version"}, &out, &errOut); err == nil {
