@@ -1,8 +1,8 @@
 module github.com/dantech2000/refresh
 
-go 1.24.0
+go 1.26.0
 
-toolchain go1.24.5
+toolchain go1.26.4
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.38.3
