@@ -42,6 +42,11 @@ func TestFunSpinnerLifecycle(t *testing.T) {
 	funSpinnerInterval = time.Millisecond
 	t.Cleanup(func() { funSpinnerInterval = oldInterval })
 
+	// Force the animated path: tests run without a TTY.
+	oldTTY := spinnerOutputIsTerminal
+	spinnerOutputIsTerminal = func() bool { return true }
+	t.Cleanup(func() { spinnerOutputIsTerminal = oldTTY })
+
 	empty := NewFunSpinner(nil)
 	if len(empty.messages) != 1 || empty.messages[0] != "Working on it..." {
 		t.Fatalf("default messages = %v", empty.messages)
@@ -63,4 +68,21 @@ func TestFunSpinnerLifecycle(t *testing.T) {
 	if NewFunSpinnerForCategory("cluster") == nil || NewEnhancedProgressSpinner("addon") == nil {
 		t.Fatal("category spinners should not be nil")
 	}
+}
+
+func TestFunSpinnerNonInteractiveStaysSilent(t *testing.T) {
+	oldTTY := spinnerOutputIsTerminal
+	spinnerOutputIsTerminal = func() bool { return false }
+	t.Cleanup(func() { spinnerOutputIsTerminal = oldTTY })
+
+	spinner := NewFunSpinner([]string{"msg"})
+	if err := spinner.Start(); err != nil {
+		t.Fatalf("Start() = %v", err)
+	}
+	if spinner.animated {
+		t.Fatal("spinner must not animate when output is not a terminal")
+	}
+	// Stop must not deadlock waiting for a render goroutine that never started.
+	spinner.Stop()
+	spinner.Success("ok")
 }

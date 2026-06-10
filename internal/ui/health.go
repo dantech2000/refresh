@@ -15,10 +15,18 @@ func DisplayHealthResults(summary health.HealthSummary) {
 	Outln("\nCluster Health Assessment:")
 	Outln()
 
+	// Size the name column to the longest check name so long names don't
+	// push their status out of alignment.
+	nameWidth := 20
+	for _, result := range summary.Results {
+		if len(result.Name) > nameWidth {
+			nameWidth = len(result.Name)
+		}
+	}
 	for _, result := range summary.Results {
 		progressBar := RenderProgressBar(result.Score, result.Status)
 		statusText := GetHealthStatusText(result.Status)
-		Outf("%s %-20s %s\n", progressBar, result.Name, statusText)
+		Outf("%s %-*s %s\n", progressBar, nameWidth, result.Name, statusText)
 	}
 
 	Outln()

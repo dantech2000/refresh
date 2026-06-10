@@ -323,15 +323,21 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 // --health-only means "just show me the verdict": the success banner is
 // printed regardless of --quiet because the verdict IS the requested result.
 // --quiet only suppresses the verbose banner for the non-health-only flow.
+//
+// With --health-only the exit code encodes the verdict so CI can gate on it
+// without parsing output: 0 = pass, 2 = warnings, 3 = blocked.
 func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (done bool, err error) {
 	switch summary.Decision {
 	case health.DecisionBlock:
 		ui.DisplayHealthCheckComplete(summary.Decision)
+		if flags.healthOnly {
+			return true, cli.Exit("pre-flight health checks failed", 3)
+		}
 		return true, fmt.Errorf("pre-flight health checks failed")
 	case health.DecisionWarn:
 		if flags.healthOnly {
 			ui.DisplayHealthCheckComplete(summary.Decision)
-			return true, nil
+			return true, cli.Exit("health checks completed with warnings", 2)
 		}
 		if !flags.quiet && !ui.PromptContinueWithWarnings(summary.Warnings) {
 			color.Yellow("Update cancelled by user")

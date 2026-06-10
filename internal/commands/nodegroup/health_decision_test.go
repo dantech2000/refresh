@@ -2,12 +2,14 @@ package nodegroup
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/fatih/color"
+	"github.com/urfave/cli/v2"
 
 	"github.com/dantech2000/refresh/internal/health"
 )
@@ -116,7 +118,8 @@ func TestApplyHealthDecision_BlockReturnsErrorAndPrintsBanner(t *testing.T) {
 	}
 }
 
-// WARN under --health-only short-circuits without prompting the user.
+// WARN under --health-only short-circuits without prompting the user and
+// exits with code 2 so CI can gate on the verdict.
 func TestApplyHealthDecision_WarnHealthOnlyDoesNotPrompt(t *testing.T) {
 	flags := updateAMIFlags{healthOnly: true, quiet: true}
 	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"something"}}
@@ -127,8 +130,9 @@ func TestApplyHealthDecision_WarnHealthOnlyDoesNotPrompt(t *testing.T) {
 		if !done {
 			t.Error("expected done=true on WARN+healthOnly")
 		}
-		if err != nil {
-			t.Errorf("expected nil error on WARN+healthOnly, got %v", err)
+		var coder cli.ExitCoder
+		if !errors.As(err, &coder) || coder.ExitCode() != 2 {
+			t.Errorf("expected exit code 2 on WARN+healthOnly, got %v", err)
 		}
 	})
 	_ = out

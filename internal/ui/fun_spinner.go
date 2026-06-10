@@ -3,13 +3,21 @@ package ui
 import (
 	"fmt"
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
+	"github.com/mattn/go-isatty"
 	"github.com/pterm/pterm"
 )
 
 var funSpinnerInterval = 2 * time.Second
+
+// spinnerOutputIsTerminal reports whether spinner output (stderr) is an
+// interactive terminal. Overridable in tests.
+var spinnerOutputIsTerminal = func() bool {
+	return isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd())
+}
 
 // FunSpinner provides an entertaining spinner with rotating messages
 type FunSpinner struct {
@@ -21,6 +29,7 @@ type FunSpinner struct {
 	doneCh    chan struct{}
 	stopOnce  sync.Once
 	started   bool
+	animated  bool
 	mu        sync.Mutex
 }
 
@@ -54,7 +63,10 @@ func NewEnhancedProgressSpinner(category string) *FunSpinner {
 	return NewFunSpinnerForCategory(category)
 }
 
-// Start begins the fun spinner with rotating messages
+// Start begins the fun spinner with rotating messages. When output is not an
+// interactive terminal (CI logs, redirected stderr), no animation is started:
+// the \r and \033[K control sequences would just spam the log. Success/Fail
+// still print their final line.
 func (fs *FunSpinner) Start() error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -65,6 +77,12 @@ func (fs *FunSpinner) Start() error {
 
 	fs.started = true
 	fs.startedAt = time.Now()
+
+	if !spinnerOutputIsTerminal() {
+		return nil
+	}
+
+	fs.animated = true
 	fs.renderFrame(fs.spinner.Sequence[0])
 
 	go fs.render()
@@ -135,6 +153,7 @@ func (fs *FunSpinner) Stop() {
 func (fs *FunSpinner) stop() {
 	fs.mu.Lock()
 	wasStarted := fs.started
+	animated := fs.animated
 	fs.mu.Unlock()
 
 	if !wasStarted {
@@ -142,8 +161,10 @@ func (fs *FunSpinner) stop() {
 	}
 
 	fs.stopOnce.Do(func() {
-		close(fs.stopCh)
-		<-fs.doneCh
+		if animated {
+			close(fs.stopCh)
+			<-fs.doneCh
+		}
 	})
 }
 

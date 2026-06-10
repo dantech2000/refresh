@@ -217,8 +217,11 @@ func TestNewAppAndRun(t *testing.T) {
 	if app.Name != "refresh" {
 		t.Fatalf("app name = %q", app.Name)
 	}
-	if len(app.Commands) == 0 || len(app.Flags) != 2 {
+	if len(app.Commands) == 0 || len(app.Flags) != 3 {
 		t.Fatalf("unexpected app shape: commands=%d flags=%d", len(app.Commands), len(app.Flags))
+	}
+	if !app.EnableBashCompletion {
+		t.Fatal("bash completion should be enabled")
 	}
 
 	var out, errOut bytes.Buffer
