@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -10,10 +11,19 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // CheckClusterCapacity validates that the cluster has sufficient capacity for rolling updates
 func (hc *HealthChecker) CheckClusterCapacity(ctx context.Context, clusterName string) HealthResult {
+	return hc.checkClusterCapacityWith(ctx, hc.newCPUSnapshot(clusterName))
+}
+
+// checkClusterCapacityWith is CheckClusterCapacity against a (possibly
+// shared) CPU snapshot, so RunAllChecks fetches metrics once for both the
+// capacity and balance checks.
+func (hc *HealthChecker) checkClusterCapacityWith(ctx context.Context, snap *cpuSnapshot) HealthResult {
 	result := HealthResult{
 		Name:       "Cluster Capacity",
 		IsBlocking: true, // Capacity is blocking
@@ -21,7 +31,7 @@ func (hc *HealthChecker) CheckClusterCapacity(ctx context.Context, clusterName s
 	}
 
 	// Use default EC2 metrics (no prerequisites required)
-	cpuMetrics, err := hc.getEC2ClusterCPUMetrics(ctx, clusterName)
+	cpuByInstance, err := snap.get(ctx)
 	if err != nil {
 		result.Status = StatusWarn
 		result.Score = 70 // Default score when metrics unavailable
@@ -34,6 +44,10 @@ func (hc *HealthChecker) CheckClusterCapacity(ctx context.Context, clusterName s
 	result.Details = append(result.Details, "Memory metrics require Container Insights setup")
 
 	// Calculate average CPU utilization
+	cpuMetrics := make([]float64, 0, len(cpuByInstance))
+	for _, v := range cpuByInstance {
+		cpuMetrics = append(cpuMetrics, v)
+	}
 	avgCPU := calculateAverage(cpuMetrics)
 
 	result.Details = append(result.Details, fmt.Sprintf("Average CPU utilization: %.1f%%", avgCPU))
@@ -61,60 +75,115 @@ func (hc *HealthChecker) CheckClusterCapacity(ctx context.Context, clusterName s
 	return result
 }
 
-// getEC2ClusterCPUMetrics gets CPU utilization from all EKS worker nodes using default EC2 metrics
-func (hc *HealthChecker) getEC2ClusterCPUMetrics(ctx context.Context, clusterName string) ([]float64, error) {
+// cpuSnapshot lazily computes per-instance average CPU once, so the capacity
+// and balance checks running in the same RunAllChecks pass share a single
+// nodegroup discovery + CloudWatch fetch instead of issuing one
+// GetMetricStatistics call per instance each.
+type cpuSnapshot struct {
+	hc          *HealthChecker
+	clusterName string
+	once        sync.Once
+	byInstance  map[string]float64
+	err         error
+}
+
+func (hc *HealthChecker) newCPUSnapshot(clusterName string) *cpuSnapshot {
+	return &cpuSnapshot{hc: hc, clusterName: clusterName}
+}
+
+func (s *cpuSnapshot) get(ctx context.Context) (map[string]float64, error) {
+	s.once.Do(func() {
+		s.byInstance, s.err = s.hc.clusterCPUByInstance(ctx, s.clusterName)
+	})
+	return s.byInstance, s.err
+}
+
+// maxMetricDataQueries is the GetMetricData per-request limit.
+const maxMetricDataQueries = 500
+
+// clusterCPUByInstance returns the average CPUUtilization over the last 10
+// minutes for every instance backing the cluster's nodegroups, fetched in
+// batched GetMetricData calls (500 queries per request) instead of one
+// GetMetricStatistics call per instance.
+func (hc *HealthChecker) clusterCPUByInstance(ctx context.Context, clusterName string) (map[string]float64, error) {
 	if hc.cwClient == nil {
 		return nil, fmt.Errorf("CloudWatch client not available")
 	}
 
-	// Get instance IDs from nodegroups
 	instanceIDs, err := hc.getClusterInstanceIDs(ctx, clusterName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster instances: %v", err)
 	}
-
 	if len(instanceIDs) == 0 {
 		return nil, fmt.Errorf("no instances found in cluster")
 	}
 
-	// Get CPU metrics from each instance using default AWS/EC2 namespace
-	var allValues []float64
 	endTime := time.Now()
 	startTime := endTime.Add(-10 * time.Minute)
 
-	for _, instanceID := range instanceIDs {
-		input := &cloudwatch.GetMetricStatisticsInput{
-			Namespace:  aws.String("AWS/EC2"),
-			MetricName: aws.String("CPUUtilization"),
-			Dimensions: []types.Dimension{
-				{
-					Name:  aws.String("InstanceId"),
-					Value: aws.String(instanceID),
+	sums := make(map[string]float64, len(instanceIDs))
+	counts := make(map[string]int, len(instanceIDs))
+
+	for offset := 0; offset < len(instanceIDs); offset += maxMetricDataQueries {
+		chunk := instanceIDs[offset:min(offset+maxMetricDataQueries, len(instanceIDs))]
+		queries := make([]types.MetricDataQuery, 0, len(chunk))
+		for i, id := range chunk {
+			queries = append(queries, types.MetricDataQuery{
+				Id: aws.String(fmt.Sprintf("cpu%d", i)),
+				MetricStat: &types.MetricStat{
+					Metric: &types.Metric{
+						Namespace:  aws.String("AWS/EC2"),
+						MetricName: aws.String("CPUUtilization"),
+						Dimensions: []types.Dimension{{Name: aws.String("InstanceId"), Value: aws.String(id)}},
+					},
+					Period: aws.Int32(300), // 5 minute periods
+					Stat:   aws.String("Average"),
 				},
-			},
-			StartTime:  aws.Time(startTime),
-			EndTime:    aws.Time(endTime),
-			Period:     aws.Int32(300), // 5 minute periods
-			Statistics: []types.Statistic{types.StatisticAverage},
+			})
 		}
 
-		output, err := hc.cwClient.GetMetricStatistics(ctx, input)
-		if err != nil {
-			continue // Skip failed instances but log the issue
-		}
-
-		for _, datapoint := range output.Datapoints {
-			if datapoint.Average != nil {
-				allValues = append(allValues, *datapoint.Average)
+		var nextToken *string
+		for {
+			out, err := hc.cwClient.GetMetricData(ctx, &cloudwatch.GetMetricDataInput{
+				StartTime:         aws.Time(startTime),
+				EndTime:           aws.Time(endTime),
+				MetricDataQueries: queries,
+				NextToken:         nextToken,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("fetching CPU metrics: %v", err)
 			}
+			for _, r := range out.MetricDataResults {
+				var idx int
+				if r.Id == nil {
+					continue
+				}
+				if _, err := fmt.Sscanf(*r.Id, "cpu%d", &idx); err != nil || idx < 0 || idx >= len(chunk) {
+					continue
+				}
+				id := chunk[idx]
+				for _, v := range r.Values {
+					sums[id] += v
+					counts[id]++
+				}
+			}
+			if out.NextToken == nil {
+				break
+			}
+			nextToken = out.NextToken
 		}
 	}
 
-	if len(allValues) == 0 {
+	byInstance := make(map[string]float64, len(counts))
+	for id, c := range counts {
+		if c > 0 {
+			byInstance[id] = sums[id] / float64(c)
+		}
+	}
+	if len(byInstance) == 0 {
 		return nil, fmt.Errorf("no CPU metrics available from EC2 instances")
 	}
-
-	return allValues, nil
+	return byInstance, nil
 }
 
 // calculateAverage calculates the average of a slice of float64 values
@@ -148,32 +217,33 @@ func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName 
 		nextToken = ngOutput.NextToken
 	}
 
-	var instanceIDs []string
-
-	// For each nodegroup, get the associated Auto Scaling Group and its instances
-	for _, ngName := range nodegroupNames {
-		descInput := &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(ngName),
-		}
-
-		descOutput, err := hc.eksClient.DescribeNodegroup(ctx, descInput)
-		if err != nil {
-			continue // Skip failed nodegroups
-		}
-
-		// Get Auto Scaling Group name from nodegroup resources
-		if descOutput.Nodegroup.Resources != nil && descOutput.Nodegroup.Resources.AutoScalingGroups != nil {
+	// For each nodegroup (concurrently), get the associated Auto Scaling
+	// Groups and their instances.
+	perNodegroup := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
+		func(fctx context.Context, ngName string) []string {
+			descOutput, err := hc.eksClient.DescribeNodegroup(fctx, &eks.DescribeNodegroupInput{
+				ClusterName:   aws.String(clusterName),
+				NodegroupName: aws.String(ngName),
+			})
+			if err != nil || descOutput.Nodegroup == nil || descOutput.Nodegroup.Resources == nil {
+				return nil // Skip failed nodegroups
+			}
+			var ids []string
 			for _, asg := range descOutput.Nodegroup.Resources.AutoScalingGroups {
 				if asg.Name != nil {
-					asgInstanceIDs, err := hc.getASGInstanceIDs(ctx, *asg.Name)
+					asgInstanceIDs, err := hc.getASGInstanceIDs(fctx, *asg.Name)
 					if err != nil {
 						continue // Skip failed ASGs
 					}
-					instanceIDs = append(instanceIDs, asgInstanceIDs...)
+					ids = append(ids, asgInstanceIDs...)
 				}
 			}
-		}
+			return ids
+		})
+
+	var instanceIDs []string
+	for _, ids := range perNodegroup {
+		instanceIDs = append(instanceIDs, ids...)
 	}
 
 	return instanceIDs, nil

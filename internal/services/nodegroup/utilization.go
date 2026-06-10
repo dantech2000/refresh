@@ -41,13 +41,25 @@ var (
 		{namespace: "AWS/EC2", metric: "NetworkIn", idPrefix: "netin", unit: cwtypes.StandardUnitBytes},
 		{namespace: "AWS/EC2", metric: "NetworkOut", idPrefix: "netout", unit: cwtypes.StandardUnitBytes},
 	}
-	diskSpec = []metricSpec{{
-		namespace: "CWAgent", metric: "disk_used_percent", idPrefix: "disk", unit: cwtypes.StandardUnitPercent,
-		extraDims: []cwtypes.Dimension{
-			{Name: aws.String("path"), Value: aws.String("/")},
-			{Name: aws.String("fstype"), Value: aws.String("ext4")},
+	// Root-volume disk usage. EKS-optimized AMIs use xfs (AL2/AL2023); older
+	// or custom nodes may use ext4 — query both rather than pinning one
+	// fstype and silently matching nothing.
+	diskSpec = []metricSpec{
+		{
+			namespace: "CWAgent", metric: "disk_used_percent", idPrefix: "diskx", unit: cwtypes.StandardUnitPercent,
+			extraDims: []cwtypes.Dimension{
+				{Name: aws.String("path"), Value: aws.String("/")},
+				{Name: aws.String("fstype"), Value: aws.String("xfs")},
+			},
 		},
-	}}
+		{
+			namespace: "CWAgent", metric: "disk_used_percent", idPrefix: "diske", unit: cwtypes.StandardUnitPercent,
+			extraDims: []cwtypes.Dimension{
+				{Name: aws.String("path"), Value: aws.String("/")},
+				{Name: aws.String("fstype"), Value: aws.String("ext4")},
+			},
+		},
+	}
 )
 
 // windowDuration maps a window label to its lookback duration.
@@ -102,15 +114,8 @@ func (u *UtilizationCollector) collect(ctx context.Context, specs []metricSpec, 
 		}
 	}
 
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
-		return u.cw.GetMetricData(rc, &cloudwatch.GetMetricDataInput{
-			StartTime:         aws.Time(start),
-			EndTime:           aws.Time(end),
-			MetricDataQueries: queries,
-			ScanBy:            cwtypes.ScanByTimestampAscending,
-		})
-	})
-	if err != nil || len(out.MetricDataResults) == 0 {
+	results, err := u.getMetricData(ctx, queries, start, end)
+	if err != nil || len(results) == 0 {
 		u.logger.Debug(unavailableMsg, "error", err)
 		return UtilizationData{}, false
 	}
@@ -118,7 +123,7 @@ func (u *UtilizationCollector) collect(ctx context.Context, specs []metricSpec, 
 	var sum, peak, last float64
 	var count int
 	var lastTs time.Time
-	for _, r := range out.MetricDataResults {
+	for _, r := range results {
 		for i, v := range r.Values {
 			tv := transform(v)
 			sum += tv
@@ -139,8 +144,44 @@ func (u *UtilizationCollector) collect(ctx context.Context, specs []metricSpec, 
 		Average: sum / float64(count),
 		Peak:    peak,
 		Current: last,
-		Trend:   u.calculateTrend(out.MetricDataResults),
+		Trend:   u.calculateTrend(results),
 	}, true
+}
+
+// maxMetricDataQueries is the GetMetricData per-request limit.
+const maxMetricDataQueries = 500
+
+// getMetricData fetches all results for the given queries, chunking requests
+// at the API's 500-query limit and following pagination. Without chunking, a
+// nodegroup with >500 instance×metric combinations would fail the entire
+// request.
+func (u *UtilizationCollector) getMetricData(ctx context.Context, queries []cwtypes.MetricDataQuery, start, end time.Time) ([]cwtypes.MetricDataResult, error) {
+	var results []cwtypes.MetricDataResult
+	for offset := 0; offset < len(queries); offset += maxMetricDataQueries {
+		chunk := queries[offset:min(offset+maxMetricDataQueries, len(queries))]
+		var nextToken *string
+		for {
+			token := nextToken
+			out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
+				return u.cw.GetMetricData(rc, &cloudwatch.GetMetricDataInput{
+					StartTime:         aws.Time(start),
+					EndTime:           aws.Time(end),
+					MetricDataQueries: chunk,
+					ScanBy:            cwtypes.ScanByTimestampAscending,
+					NextToken:         token,
+				})
+			})
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, out.MetricDataResults...)
+			if out.NextToken == nil {
+				break
+			}
+			nextToken = out.NextToken
+		}
+	}
+	return results, nil
 }
 
 func (u *UtilizationCollector) CollectEC2CPUForInstances(ctx context.Context, instanceIDs []string, window string) (UtilizationData, bool) {

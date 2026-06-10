@@ -237,12 +237,25 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 		return nil, err
 	}
 
-	var summaries []ClusterSummary
+	selected := make([]string, 0, len(clusterNames))
 	for _, clusterName := range clusterNames {
-		if s.shouldSkipCluster(clusterName, options.Filters) {
-			continue
+		if !s.shouldSkipCluster(clusterName, options.Filters) {
+			selected = append(selected, clusterName)
 		}
-		summaries = append(summaries, *s.getClusterSummary(ctx, clusterName, options))
+	}
+
+	// Each summary costs a DescribeCluster + nodegroup describes; fan out with
+	// bounded concurrency instead of paying the per-cluster latency serially.
+	results := common.ForEachParallel(ctx, selected, common.DefaultItemConcurrency,
+		func(fctx context.Context, clusterName string) *ClusterSummary {
+			return s.getClusterSummary(fctx, clusterName, options)
+		})
+
+	summaries := make([]ClusterSummary, 0, len(results))
+	for _, r := range results {
+		if r != nil {
+			summaries = append(summaries, *r)
+		}
 	}
 
 	// Cache the result
@@ -327,10 +340,14 @@ func (s *ServiceImpl) ListAllRegionsWithMeta(ctx context.Context, options ListOp
 		go func(r string) {
 			defer func() { <-sem }()
 			summaries, err := s.forRegion(r).List(ctx, regionOptionsFor(options, r))
-			for i := range summaries {
-				summaries[i].Region = r
+			// Copy before stamping the region: List may have returned the
+			// cached slice, which must not be mutated in place.
+			stamped := make([]ClusterSummary, len(summaries))
+			copy(stamped, summaries)
+			for i := range stamped {
+				stamped[i].Region = r
 			}
-			resultChan <- regionResult{region: r, summaries: summaries, err: err}
+			resultChan <- regionResult{region: r, summaries: stamped, err: err}
 		}(region)
 	}
 
@@ -369,20 +386,32 @@ func (s *ServiceImpl) Compare(ctx context.Context, clusterNames []string, option
 		return nil, fmt.Errorf("need at least 2 clusters to compare, got %d", len(clusterNames))
 	}
 
-	var clusters []ClusterDetails
-
-	// Get detailed information for each cluster
-	for _, name := range clusterNames {
-		details, err := s.Describe(ctx, name, DescribeOptions{
-			ShowHealth:    true,
-			ShowSecurity:  true,
-			IncludeAddons: true,
-			Detailed:      true,
+	// Get detailed information for each cluster concurrently; each Describe
+	// fans out into health/addon/nodegroup calls.
+	type describeResult struct {
+		details *ClusterDetails
+		err     error
+	}
+	results := common.ForEachParallel(ctx, clusterNames, common.DefaultItemConcurrency,
+		func(fctx context.Context, name string) describeResult {
+			details, err := s.Describe(fctx, name, DescribeOptions{
+				ShowHealth:    true,
+				ShowSecurity:  true,
+				IncludeAddons: true,
+				Detailed:      true,
+			})
+			if err != nil {
+				err = fmt.Errorf("failed to get details for cluster %s: %w", name, err)
+			}
+			return describeResult{details: details, err: err}
 		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get details for cluster %s: %w", name, err)
+
+	var clusters []ClusterDetails
+	for _, r := range results {
+		if r.err != nil {
+			return nil, r.err
 		}
-		clusters = append(clusters, *details)
+		clusters = append(clusters, *r.details)
 	}
 
 	// Analyze differences

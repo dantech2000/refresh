@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
@@ -64,27 +65,32 @@ func NewChecker(eksClient *eks.Client, k8sClient kubernetes.Interface, cwClient 
 	}
 }
 
-// RunAllChecks executes all health checks and returns a summary
+// RunAllChecks executes all health checks and returns a summary. The checks
+// are independent, so they run concurrently; capacity and balance share one
+// instance-discovery + CloudWatch fetch via a lazy snapshot.
 func (hc *HealthChecker) RunAllChecks(ctx context.Context, clusterName string) HealthSummary {
-	var results []HealthResult
 	var warnings []string
 	var errors []string
 
-	// Run individual health checks
-	nodeHealth := hc.CheckNodeHealth(ctx, clusterName)
-	results = append(results, nodeHealth)
+	snap := hc.newCPUSnapshot(clusterName)
+	checks := []func() HealthResult{
+		func() HealthResult { return hc.CheckNodeHealth(ctx, clusterName) },
+		func() HealthResult { return hc.checkClusterCapacityWith(ctx, snap) },
+		func() HealthResult { return hc.CheckCriticalWorkloads(ctx) },
+		func() HealthResult { return hc.CheckPodDisruptionBudgets(ctx) },
+		func() HealthResult { return hc.checkResourceBalanceWith(ctx, snap) },
+	}
 
-	capacity := hc.CheckClusterCapacity(ctx, clusterName)
-	results = append(results, capacity)
-
-	workloads := hc.CheckCriticalWorkloads(ctx)
-	results = append(results, workloads)
-
-	pdbs := hc.CheckPodDisruptionBudgets(ctx)
-	results = append(results, pdbs)
-
-	balance := hc.CheckResourceBalance(ctx, clusterName)
-	results = append(results, balance)
+	results := make([]HealthResult, len(checks))
+	var wg sync.WaitGroup
+	for i, check := range checks {
+		wg.Add(1)
+		go func(i int, check func() HealthResult) {
+			defer wg.Done()
+			results[i] = check()
+		}(i, check)
+	}
+	wg.Wait()
 
 	// Calculate overall score and decision
 	totalScore := 0

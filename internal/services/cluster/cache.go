@@ -18,32 +18,33 @@ type Cache struct {
 	defaultTTL time.Duration
 }
 
-// NewCache creates a new cache instance
+// NewCache creates a new cache instance. Expired entries are deleted lazily
+// on Get — a short-lived CLI process doesn't need a background janitor
+// goroutine (which would leak: forRegion creates one service per region).
 func NewCache(defaultTTL time.Duration) *Cache {
-	cache := &Cache{
+	return &Cache{
 		items:      make(map[string]CacheItem),
 		defaultTTL: defaultTTL,
 	}
-
-	// Start cleanup goroutine
-	go cache.cleanup()
-
-	return cache
 }
 
-// Get retrieves a value from the cache
+// Get retrieves a value from the cache, lazily deleting expired entries.
 func (c *Cache) Get(key string) (any, bool) {
 	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-
 	item, exists := c.items[key]
+	c.mutex.RUnlock()
 	if !exists {
 		return nil, false
 	}
 
-	// Check if expired
 	if time.Now().After(item.ExpiresAt) {
-		// Do not mutate under read lock; treat as miss and let cleanup remove it
+		c.mutex.Lock()
+		// Re-check under the write lock: another goroutine may have replaced
+		// the entry with a fresh value in the meantime.
+		if current, ok := c.items[key]; ok && time.Now().After(current.ExpiresAt) {
+			delete(c.items, key)
+		}
+		c.mutex.Unlock()
 		return nil, false
 	}
 
@@ -80,23 +81,6 @@ func (c *Cache) Clear() {
 	defer c.mutex.Unlock()
 
 	c.items = make(map[string]CacheItem)
-}
-
-// cleanup periodically removes expired items
-func (c *Cache) cleanup() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		c.mutex.Lock()
-		now := time.Now()
-		for key, item := range c.items {
-			if now.After(item.ExpiresAt) {
-				delete(c.items, key)
-			}
-		}
-		c.mutex.Unlock()
-	}
 }
 
 // Stats returns cache statistics

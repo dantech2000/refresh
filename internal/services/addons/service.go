@@ -58,35 +58,34 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		return nil, err
 	}
 
-	summaries := make([]AddonSummary, 0, len(addonNames))
-	for _, name := range addonNames {
-		desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
-			return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
-				ClusterName: aws.String(clusterName),
-				AddonName:   aws.String(name),
+	summaries := common.ForEachParallel(ctx, addonNames, common.DefaultItemConcurrency,
+		func(fctx context.Context, name string) AddonSummary {
+			desc, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
+				return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
+					ClusterName: aws.String(clusterName),
+					AddonName:   aws.String(name),
+				})
 			})
-		})
-		if err != nil || desc.Addon == nil {
-			summaries = append(summaries, AddonSummary{
-				Name:   name,
-				Status: "UNKNOWN",
-				Health: "Unknown",
-			})
-			continue
-		}
+			if err != nil || desc.Addon == nil {
+				return AddonSummary{
+					Name:   name,
+					Status: "UNKNOWN",
+					Health: "Unknown",
+				}
+			}
 
-		health := ""
-		if options.ShowHealth {
-			health = mapAddonHealth(desc.Addon.Status)
-		}
+			health := ""
+			if options.ShowHealth {
+				health = mapAddonHealth(desc.Addon.Status)
+			}
 
-		summaries = append(summaries, AddonSummary{
-			Name:    aws.ToString(desc.Addon.AddonName),
-			Version: aws.ToString(desc.Addon.AddonVersion),
-			Status:  string(desc.Addon.Status),
-			Health:  health,
+			return AddonSummary{
+				Name:    aws.ToString(desc.Addon.AddonName),
+				Version: aws.ToString(desc.Addon.AddonVersion),
+				Status:  string(desc.Addon.Status),
+				Health:  health,
+			}
 		})
-	}
 
 	return summaries, nil
 }
