@@ -1,11 +1,64 @@
 package runner
 
 import (
+	"context"
 	"flag"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v2"
 )
+
+// ── setupAWS context propagation ──────────────────────────────────────────────
+
+// Regression: setupAWS must derive its context from c.Context (cancelled on
+// Ctrl+C / SIGTERM by main) rather than context.Background(), so signal
+// cancellation propagates to in-flight AWS calls.
+func TestSetupAWS_DerivesFromCLIContext(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	set := flag.NewFlagSet("test", flag.ContinueOnError)
+	set.Duration("timeout", time.Minute, "")
+	c := cli.NewContext(cli.NewApp(), set, nil)
+	c.Context = parent
+
+	var got context.Context
+	_, cancel, _, err := setupAWS(c, 0, func(ctx context.Context, _ aws.Config) error {
+		got = ctx
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("setupAWS() = %v", err)
+	}
+	defer cancel()
+
+	select {
+	case <-got.Done():
+		t.Fatal("context cancelled prematurely")
+	default:
+	}
+	cancelParent()
+	select {
+	case <-got.Done():
+		// parent cancellation propagated — correct
+	case <-time.After(time.Second):
+		t.Fatal("parent cancellation did not propagate to setupAWS context")
+	}
+}
+
+// setupAWS must tolerate a nil c.Context (hand-constructed contexts in tests).
+func TestSetupAWS_NilCLIContextFallsBack(t *testing.T) {
+	set := flag.NewFlagSet("test", flag.ContinueOnError)
+	set.Duration("timeout", time.Minute, "")
+	c := cli.NewContext(cli.NewApp(), set, nil)
+	c.Context = nil
+
+	_, cancel, _, err := setupAWS(c, 0, func(context.Context, aws.Config) error { return nil })
+	if err != nil {
+		t.Fatalf("setupAWS() = %v", err)
+	}
+	cancel()
+}
 
 // newTestContext builds a *cli.Context with the given flags pre-registered and
 // args parsed. flags is name→value; "" value means the flag is registered but

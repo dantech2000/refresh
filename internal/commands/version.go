@@ -18,18 +18,14 @@ var (
 	buildDate = ""    // overridden by GoReleaser: -X ...commands.buildDate={{.Date}}
 )
 
-// VersionInfo provides access to version information
+// VersionInfo provides access to version information. ldflags -X values are
+// applied at link time, so this package-level initializer (which runs after
+// version/commit/buildDate in dependency order) already sees them — no init()
+// re-assignment is needed.
 var VersionInfo = types.VersionInfo{
 	Version:   version,
 	Commit:    commit,
 	BuildDate: buildDate,
-}
-
-func init() {
-	// Update VersionInfo with ldflags values (they're set before init runs)
-	VersionInfo.Version = version
-	VersionInfo.Commit = commit
-	VersionInfo.BuildDate = buildDate
 }
 
 // PrintVersion writes the CLI version details to w. It is the single source of
