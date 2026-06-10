@@ -259,7 +259,7 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 }
 
 func TestNewDryRunnerAndPerformDryRunErrorPaths(t *testing.T) {
-	if _, err := NewDryRunner(nil, "cluster", false, true); err == nil {
+	if _, err := NewDryRunner(context.Background(), nil, "cluster", false, true); err == nil {
 		t.Fatal("expected error for nil EKS client")
 	}
 	if err := PerformDryRun(context.Background(), nil, "cluster", []string{"ng"}, false, true); err == nil {
@@ -282,7 +282,7 @@ func TestNewDryRunnerSuccessAndErrorSeams(t *testing.T) {
 		return "1.30", nil
 	}
 
-	runner, err := NewDryRunner(eks.New(eks.Options{Region: "us-east-1"}), "cluster", true, true)
+	runner, err := NewDryRunner(context.Background(), eks.New(eks.Options{Region: "us-east-1"}), "cluster", true, true)
 	if err != nil {
 		t.Fatalf("NewDryRunner() = %v", err)
 	}
@@ -293,7 +293,7 @@ func TestNewDryRunnerSuccessAndErrorSeams(t *testing.T) {
 	dryrunLoadAWSConfig = func(context.Context) (aws.Config, error) {
 		return aws.Config{}, errors.New("load")
 	}
-	if _, err := NewDryRunner(eks.New(eks.Options{Region: "us-east-1"}), "cluster", false, false); err == nil {
+	if _, err := NewDryRunner(context.Background(), eks.New(eks.Options{Region: "us-east-1"}), "cluster", false, false); err == nil {
 		t.Fatal("expected load error")
 	}
 
@@ -303,7 +303,7 @@ func TestNewDryRunnerSuccessAndErrorSeams(t *testing.T) {
 	dryrunDescribeCluster = func(context.Context, *eks.Client, string) (string, error) {
 		return "", errors.New("describe")
 	}
-	if _, err := NewDryRunner(eks.New(eks.Options{Region: "us-east-1"}), "cluster", false, false); err == nil {
+	if _, err := NewDryRunner(context.Background(), eks.New(eks.Options{Region: "us-east-1"}), "cluster", false, false); err == nil {
 		t.Fatal("expected describe error")
 	}
 }
@@ -312,7 +312,7 @@ func TestPerformDryRunSuccessWithInjectedRunner(t *testing.T) {
 	oldNew := newDryRunner
 	t.Cleanup(func() { newDryRunner = oldNew })
 
-	newDryRunner = func(*eks.Client, string, bool, bool) (*DryRunner, error) {
+	newDryRunner = func(context.Context, *eks.Client, string, bool, bool) (*DryRunner, error) {
 		return &DryRunner{
 			clusterName: "cluster",
 			quiet:       true,

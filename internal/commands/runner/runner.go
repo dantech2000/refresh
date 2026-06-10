@@ -52,14 +52,21 @@ func setupAWS(c *cli.Context, defaultTimeout time.Duration, check credentialChec
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
+	// Derive from the CLI's context (cancelled on Ctrl+C / SIGTERM by main) so
+	// signal handling propagates to in-flight AWS calls. c.Context is nil only
+	// for hand-constructed contexts in tests.
+	base := c.Context
+	if base == nil {
+		base = context.Background()
+	}
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
 	)
 	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+		ctx, cancel = context.WithTimeout(base, timeout)
 	} else {
-		ctx, cancel = context.WithCancel(context.Background())
+		ctx, cancel = context.WithCancel(base)
 	}
 
 	cfg, err := awsconfig.Load(ctx, c)

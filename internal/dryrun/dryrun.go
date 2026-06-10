@@ -69,12 +69,12 @@ var (
 	newDryRunner = NewDryRunner
 )
 
-// NewDryRunner creates a new dry runner instance.
-func NewDryRunner(eksClient *eks.Client, clusterName string, force, quiet bool) (*DryRunner, error) {
+// NewDryRunner creates a new dry runner instance. It performs AWS lookups
+// (config load + cluster describe) using the caller's context.
+func NewDryRunner(ctx context.Context, eksClient *eks.Client, clusterName string, force, quiet bool) (*DryRunner, error) {
 	if eksClient == nil {
 		return nil, fmt.Errorf("eks client is required")
 	}
-	ctx := context.Background()
 
 	awsCfg, err := dryrunLoadAWSConfig(ctx)
 	if err != nil {
@@ -100,7 +100,7 @@ func NewDryRunner(eksClient *eks.Client, clusterName string, force, quiet bool) 
 
 // PerformDryRun shows what would be updated without making changes.
 func PerformDryRun(ctx context.Context, eksClient *eks.Client, clusterName string, selectedNodegroups []string, force bool, quiet bool) error {
-	runner, err := newDryRunner(eksClient, clusterName, force, quiet)
+	runner, err := newDryRunner(ctx, eksClient, clusterName, force, quiet)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -222,7 +223,7 @@ func TestNewAppAndRun(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	if err := run([]string{"refresh", "version"}, &out, &errOut); err != nil {
+	if err := run(context.Background(), []string{"refresh", "version"}, &out, &errOut); err != nil {
 		t.Fatalf("run version: %v", err)
 	}
 	if !strings.Contains(out.String(), "refresh version:") {
@@ -231,7 +232,7 @@ func TestNewAppAndRun(t *testing.T) {
 
 	// The global --version flag must produce the same output as the subcommand.
 	out.Reset()
-	if err := run([]string{"refresh", "--version"}, &out, &errOut); err != nil {
+	if err := run(context.Background(), []string{"refresh", "--version"}, &out, &errOut); err != nil {
 		t.Fatalf("run --version: %v", err)
 	}
 	if !strings.Contains(out.String(), "refresh version:") {
@@ -239,7 +240,7 @@ func TestNewAppAndRun(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := run([]string{"refresh", "--timeout", "not-a-duration", "version"}, &out, &errOut); err == nil {
+	if err := run(context.Background(), []string{"refresh", "--timeout", "not-a-duration", "version"}, &out, &errOut); err == nil {
 		t.Fatal("expected invalid flag error")
 	}
 }
