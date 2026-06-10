@@ -9,6 +9,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // colorString is the signature of fatih/color's *String helpers.
@@ -149,13 +150,13 @@ func formatHealth(h *health.HealthSummary) string {
 func formatAddonHealth(h string) string {
 	switch h {
 	case "Healthy":
-		return color.GreenString("PASS")
+		return ui.BadgePass()
 	case "Issues", "Failed":
-		return color.RedString("FAIL")
+		return ui.BadgeFail()
 	case "Updating":
-		return color.CyanString("[IN PROGRESS]")
+		return ui.BadgeInProgress()
 	default:
-		return color.WhiteString("UNKNOWN")
+		return ui.BadgeUnknown()
 	}
 }
 

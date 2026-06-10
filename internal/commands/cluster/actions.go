@@ -28,12 +28,7 @@ func runList(c *cli.Context) error {
 
 	clusterService := factory.NewClusterService(awsCfg, c.Bool("show-health"), nil)
 
-	filters := make(map[string]string)
-	for _, f := range c.StringSlice("filter") {
-		if parts := strings.SplitN(f, "=", 2); len(parts) == 2 {
-			filters[parts[0]] = parts[1]
-		}
-	}
+	filters := runner.ParseFilters(c.StringSlice("filter"))
 	if pattern := strings.TrimSpace(c.Args().First()); pattern != "" {
 		filters["name"] = pattern
 	}

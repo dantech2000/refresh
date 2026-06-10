@@ -19,9 +19,9 @@ func outputNodegroupsTable(clusterName, timeframe string, items []nodegroupsvc.N
 	}
 	ui.Outf("Nodegroups for cluster: %s\n", clusterName)
 	if opts.ShowUtilization {
-		ui.Outf("Retrieved in %s (utilization window %s)\n", color.GreenString("%.1fs", elapsed.Seconds()), timeframe)
+		ui.Outf("Retrieved in %s (utilization window %s)\n", ui.ElapsedString(elapsed), timeframe)
 	} else {
-		ui.Outf("Retrieved in %s\n", color.GreenString("%.1fs", elapsed.Seconds()))
+		ui.Outf("Retrieved in %s\n", ui.ElapsedString(elapsed))
 	}
 
 	if opts.ShowUtilization || opts.ShowCosts {
@@ -50,7 +50,7 @@ func outputNodegroupsTable(clusterName, timeframe string, items []nodegroupsvc.N
 		columns = append(columns, ui.Column{Title: "COST/MO", Min: 8, Max: 0, Align: ui.AlignRight})
 	}
 
-	table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
+	table := ui.NewPTable(columns, ui.CyanHeaders())
 	for _, ng := range items {
 		row := []string{
 			ng.Name,
@@ -82,9 +82,9 @@ func outputNodegroupsTable(clusterName, timeframe string, items []nodegroupsvc.N
 func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed time.Duration) error {
 	ui.Outf("Nodegroup: %s\n", color.CyanString(details.Name))
 	if details.Utilization.TimeRange != "" {
-		ui.Outf("Retrieved in %s (utilization window %s)\n\n", color.GreenString("%.1fs", elapsed.Seconds()), details.Utilization.TimeRange)
+		ui.Outf("Retrieved in %s (utilization window %s)\n\n", ui.ElapsedString(elapsed), details.Utilization.TimeRange)
 	} else {
-		ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+		ui.Outf("Retrieved in %s\n\n", ui.ElapsedString(elapsed))
 	}
 
 	table := ui.NewDynamicTable()
@@ -135,7 +135,7 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 			{Title: "LIFECYCLE", Min: 9, Max: 0, Align: ui.AlignLeft},
 			{Title: "STATE", Min: 8, Max: 0, Align: ui.AlignLeft},
 		}
-		instTable := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
+		instTable := ui.NewPTable(columns, ui.CyanHeaders())
 		for _, inst := range details.Instances {
 			instTable.AddRow(
 				truncate(inst.InstanceID, 22),

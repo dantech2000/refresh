@@ -92,18 +92,15 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 	}
 	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
-	nodegroupNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
-		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListNodegroupsOutput, error) {
-			return s.eksClient.ListNodegroups(rrc, &eks.ListNodegroupsInput{
+	nodegroupNames, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing nodegroups for cluster %s", clusterName),
+		func(rc context.Context, token *string) (*eks.ListNodegroupsOutput, error) {
+			return s.eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
 				ClusterName: aws.String(clusterName),
 				NextToken:   token,
 			})
-		})
-		if err != nil {
-			return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
-		}
-		return out.Nodegroups, out.NextToken, nil
-	})
+		},
+		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
+	)
 	if err != nil {
 		return nil, err
 	}

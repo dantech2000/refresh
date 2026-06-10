@@ -225,15 +225,12 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 		}
 	}
 
-	clusterNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
-		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListClustersOutput, error) {
-			return s.eksClient.ListClusters(rrc, &eks.ListClustersInput{NextToken: token})
-		})
-		if err != nil {
-			return nil, nil, awsinternal.FormatAWSError(err, "listing clusters")
-		}
-		return out.Clusters, out.NextToken, nil
-	})
+	clusterNames, err := awsinternal.ListAllPages(ctx, "listing clusters",
+		func(rc context.Context, token *string) (*eks.ListClustersOutput, error) {
+			return s.eksClient.ListClusters(rc, &eks.ListClustersInput{NextToken: token})
+		},
+		func(out *eks.ListClustersOutput) ([]string, *string) { return out.Clusters, out.NextToken },
+	)
 	if err != nil {
 		return nil, err
 	}

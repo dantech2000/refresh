@@ -14,7 +14,7 @@ import (
 // OutputClusterDetailsTable renders a single cluster's expanded details.
 func OutputClusterDetailsTable(details *clustersvc.ClusterDetails, elapsed time.Duration) error {
 	ui.Outf("Cluster Information: %s\n", color.CyanString(details.Name))
-	ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+	ui.PrintElapsed(elapsed)
 
 	tbl := ui.NewDynamicTable()
 	tbl.Add("Status", formatStatus(details.Status)).
@@ -76,7 +76,7 @@ func OutputClusterDetailsTable(details *clustersvc.ClusterDetails, elapsed time.
 			{Title: "STATUS", Min: 10, Align: ui.AlignLeft},
 			{Title: "HEALTH", Min: 8, Align: ui.AlignLeft},
 		}
-		addTbl := ui.NewPTable(cols, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
+		addTbl := ui.NewPTable(cols, ui.CyanHeaders())
 		for _, a := range details.Addons {
 			h := a.Health
 			if h == "" {

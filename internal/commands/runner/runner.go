@@ -94,6 +94,18 @@ func SetupAWSStrict(c *cli.Context) (context.Context, context.CancelFunc, aws.Co
 	return setupAWS(c, 0, checkCredentialsStrict)
 }
 
+// ParseFilters parses repeated key=value --filter flag values into a map.
+// Tokens without "=" are ignored.
+func ParseFilters(filters []string) map[string]string {
+	out := make(map[string]string)
+	for _, f := range filters {
+		if parts := strings.SplitN(f, "=", 2); len(parts) == 2 {
+			out[parts[0]] = parts[1]
+		}
+	}
+	return out
+}
+
 // RequestedCluster returns the cluster name requested by the user: first
 // positional arg if present, otherwise --cluster.
 func RequestedCluster(c *cli.Context) string {
