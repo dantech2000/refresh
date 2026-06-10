@@ -18,17 +18,13 @@ type Cache struct {
 	defaultTTL time.Duration
 }
 
-// NewCache creates a new cache instance
+// NewCache creates a new cache instance. Expired entries are evicted
+// opportunistically on Set; there is no background goroutine to manage.
 func NewCache(defaultTTL time.Duration) *Cache {
-	cache := &Cache{
+	return &Cache{
 		items:      make(map[string]CacheItem),
 		defaultTTL: defaultTTL,
 	}
-
-	// Start cleanup goroutine
-	go cache.cleanup()
-
-	return cache
 }
 
 // Get retrieves a value from the cache
@@ -50,14 +46,24 @@ func (c *Cache) Get(key string) (any, bool) {
 	return item.Value, true
 }
 
-// Set stores a value in the cache with specified TTL
+// Set stores a value in the cache with specified TTL. It also evicts any
+// expired entries while holding the write lock — the cache holds at most a
+// handful of keys in this short-lived CLI, so the sweep is cheap and replaces
+// the previous background cleanup goroutine (which could never be stopped).
 func (c *Cache) Set(key string, value any, ttl time.Duration) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
+	now := time.Now()
+	for k, item := range c.items {
+		if now.After(item.ExpiresAt) {
+			delete(c.items, k)
+		}
+	}
+
 	c.items[key] = CacheItem{
 		Value:     value,
-		ExpiresAt: time.Now().Add(ttl),
+		ExpiresAt: now.Add(ttl),
 	}
 }
 
@@ -80,23 +86,6 @@ func (c *Cache) Clear() {
 	defer c.mutex.Unlock()
 
 	c.items = make(map[string]CacheItem)
-}
-
-// cleanup periodically removes expired items
-func (c *Cache) cleanup() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		c.mutex.Lock()
-		now := time.Now()
-		for key, item := range c.items {
-			if now.After(item.ExpiresAt) {
-				delete(c.items, key)
-			}
-		}
-		c.mutex.Unlock()
-	}
 }
 
 // Stats returns cache statistics

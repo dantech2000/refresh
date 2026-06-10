@@ -95,7 +95,7 @@ func TestNewProgressMonitor_Fields(t *testing.T) {
 	if pm.Timeout != 10*time.Minute {
 		t.Errorf("Timeout = %v, want 10m", pm.Timeout)
 	}
-	if len(pm.Updates) != 0 {
+	if pm.Len() != 0 {
 		t.Error("Updates should be empty initially")
 	}
 }

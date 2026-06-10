@@ -68,6 +68,23 @@ func TestCache_Clear(t *testing.T) {
 	}
 }
 
+// Set must evict expired entries (this replaced the background cleanup
+// goroutine, which could never be stopped and leaked per cache instance).
+func TestCache_Set_EvictsExpiredEntries(t *testing.T) {
+	c := NewCache(time.Minute)
+	c.Set("stale", 1, time.Nanosecond)
+	time.Sleep(time.Millisecond)
+	c.Set("fresh", 2, time.Minute)
+
+	stats := c.Stats()
+	if stats["total"] != 1 {
+		t.Errorf("total = %v, want 1 (stale entry should be evicted by Set)", stats["total"])
+	}
+	if _, ok := c.Get("fresh"); !ok {
+		t.Error("fresh entry should still be retrievable")
+	}
+}
+
 func TestCache_Stats_Active(t *testing.T) {
 	c := NewCache(time.Minute)
 	c.Set("a", 1, time.Minute)

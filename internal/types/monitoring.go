@@ -39,10 +39,11 @@ func (u UpdateProgress) Duration() time.Duration {
 }
 
 // ProgressMonitor manages the monitoring of multiple concurrent nodegroup updates.
-// It is thread-safe through the use of sync.RWMutex.
+// It is thread-safe: the update list is unexported and all access goes through
+// the locked accessors below.
 type ProgressMonitor struct {
 	mu          sync.RWMutex
-	Updates     []UpdateProgress
+	updates     []UpdateProgress
 	StartTime   time.Time
 	Quiet       bool
 	NoWait      bool
@@ -53,7 +54,7 @@ type ProgressMonitor struct {
 // NewProgressMonitor creates a new progress monitor with the specified configuration.
 func NewProgressMonitor(quiet, noWait bool, timeout time.Duration) *ProgressMonitor {
 	return &ProgressMonitor{
-		Updates:   make([]UpdateProgress, 0),
+		updates:   make([]UpdateProgress, 0),
 		StartTime: time.Now(),
 		Quiet:     quiet,
 		NoWait:    noWait,
@@ -65,42 +66,73 @@ func NewProgressMonitor(quiet, noWait bool, timeout time.Duration) *ProgressMoni
 func (pm *ProgressMonitor) AddUpdate(update UpdateProgress) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	pm.Updates = append(pm.Updates, update)
+	pm.updates = append(pm.updates, update)
 }
 
 // GetUpdates returns a copy of all updates being monitored.
 func (pm *ProgressMonitor) GetUpdates() []UpdateProgress {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	updates := make([]UpdateProgress, len(pm.Updates))
-	copy(updates, pm.Updates)
+	updates := make([]UpdateProgress, len(pm.updates))
+	copy(updates, pm.updates)
 	return updates
+}
+
+// Len returns the number of updates being monitored.
+func (pm *ProgressMonitor) Len() int {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return len(pm.updates)
 }
 
 // UpdateStatus updates the status of a specific nodegroup update.
 func (pm *ProgressMonitor) UpdateStatus(nodegroupName string, status types.UpdateStatus, errorMsg string) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	for i := range pm.Updates {
-		if pm.Updates[i].NodegroupName == nodegroupName {
-			pm.Updates[i].Status = status
-			pm.Updates[i].LastChecked = time.Now()
-			pm.Updates[i].ErrorMessage = errorMsg
+	for i := range pm.updates {
+		if pm.updates[i].NodegroupName == nodegroupName {
+			pm.updates[i].Status = status
+			pm.updates[i].LastChecked = time.Now()
+			pm.updates[i].ErrorMessage = errorMsg
 			return
 		}
 	}
+}
+
+// SetResultByIndex records the result of a status check for the update at idx.
+// Out-of-range indices are ignored.
+func (pm *ProgressMonitor) SetResultByIndex(idx int, status types.UpdateStatus, errorMsg string, checkedAt time.Time) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if idx < 0 || idx >= len(pm.updates) {
+		return
+	}
+	pm.updates[idx].Status = status
+	pm.updates[idx].LastChecked = checkedAt
+	pm.updates[idx].ErrorMessage = errorMsg
+}
+
+// SetErrorByIndex records a failed status check for the update at idx without
+// touching its last known status. Out-of-range indices are ignored.
+func (pm *ProgressMonitor) SetErrorByIndex(idx int, errorMsg string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if idx < 0 || idx >= len(pm.updates) {
+		return
+	}
+	pm.updates[idx].ErrorMessage = errorMsg
 }
 
 // AllComplete returns true if all updates have finished.
 func (pm *ProgressMonitor) AllComplete() bool {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	for _, update := range pm.Updates {
+	for _, update := range pm.updates {
 		if !update.IsComplete() {
 			return false
 		}
 	}
-	return len(pm.Updates) > 0
+	return len(pm.updates) > 0
 }
 
 // SuccessCount returns the number of successful updates.
@@ -108,7 +140,7 @@ func (pm *ProgressMonitor) SuccessCount() int {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	count := 0
-	for _, update := range pm.Updates {
+	for _, update := range pm.updates {
 		if update.IsSuccessful() {
 			count++
 		}
@@ -121,7 +153,7 @@ func (pm *ProgressMonitor) FailureCount() int {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	count := 0
-	for _, update := range pm.Updates {
+	for _, update := range pm.updates {
 		if update.Status == types.UpdateStatusFailed || update.Status == types.UpdateStatusCancelled {
 			count++
 		}

@@ -27,11 +27,11 @@ func DisplayProgressUpdate(monitor *refreshTypes.ProgressMonitor) {
 	lineCount++
 
 	// Print cluster name as root (get from first update)
-	if len(monitor.Updates) > 0 {
-		fmt.Printf("%s\n", color.CyanString(monitor.Updates[0].ClusterName))
+	if updates := monitor.GetUpdates(); len(updates) > 0 {
+		fmt.Printf("%s\n", color.CyanString(updates[0].ClusterName))
 		lineCount++
 
-		additionalLines := printUpdateProgressTree(monitor.Updates)
+		additionalLines := printUpdateProgressTree(updates)
 		lineCount += additionalLines
 	}
 
@@ -90,6 +90,7 @@ func printUpdateProgressTree(updates []refreshTypes.UpdateProgress) int {
 
 // DisplayCompletionSummary shows the final summary when all updates are complete in tree format
 func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
+	updates := monitor.GetUpdates()
 	if !config.Quiet {
 		// Clear previous progress output if any was printed
 		if monitor.LastPrinted > 0 {
@@ -103,15 +104,15 @@ func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refr
 		fmt.Printf("\nAll updates completed in %v\n\n", totalDuration.Round(time.Second))
 
 		// Print cluster name as root
-		if len(monitor.Updates) > 0 {
-			fmt.Printf("%s\n", color.CyanString(monitor.Updates[0].ClusterName))
-			printCompletionSummaryTree(monitor.Updates)
+		if len(updates) > 0 {
+			fmt.Printf("%s\n", color.CyanString(updates[0].ClusterName))
+			printCompletionSummaryTree(updates)
 		}
 
 		// Print results summary
 		successful := 0
 		failed := 0
-		for _, update := range monitor.Updates {
+		for _, update := range updates {
 			switch update.Status {
 			case types.UpdateStatusSuccessful:
 				successful++
@@ -126,7 +127,7 @@ func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refr
 	}
 
 	// Return error if any updates failed
-	for _, update := range monitor.Updates {
+	for _, update := range updates {
 		if update.Status == types.UpdateStatusFailed {
 			return fmt.Errorf("one or more nodegroup updates failed")
 		}

@@ -217,7 +217,7 @@ func TestDisplayCompletionSummary_EmptyMonitorReturnsNil(t *testing.T) {
 
 func TestCheckUpdateWithRetrySuccessAndErrors(t *testing.T) {
 	cfg := refreshTypes.MonitorConfig{MaxRetries: 2, BackoffMultiple: 1}
-	update := &refreshTypes.UpdateProgress{ClusterName: "cluster", NodegroupName: "ng", UpdateID: "upd-a"}
+	update := refreshTypes.UpdateProgress{ClusterName: "cluster", NodegroupName: "ng", UpdateID: "upd-a"}
 
 	out, err := checkUpdateWithRetry(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), update, cfg)
 	if err != nil {
@@ -242,7 +242,7 @@ func TestCheckUpdateWithRetrySuccessAndErrors(t *testing.T) {
 
 func TestCheckSingleUpdateAndAllUpdates(t *testing.T) {
 	cfg := refreshTypes.MonitorConfig{Quiet: true, MaxRetries: 1, BackoffMultiple: 1}
-	update := &refreshTypes.UpdateProgress{ClusterName: "cluster", NodegroupName: "ng", UpdateID: "upd-a"}
+	update := refreshTypes.UpdateProgress{ClusterName: "cluster", NodegroupName: "ng", UpdateID: "upd-a"}
 
 	result := checkSingleUpdate(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusFailed, "boom"), update, cfg)
 	if result.status != ekstypes.UpdateStatusFailed {
@@ -262,8 +262,8 @@ func TestCheckSingleUpdateAndAllUpdates(t *testing.T) {
 	if err != nil || !allComplete {
 		t.Fatalf("checkAllUpdatesWithChannels = %v, %v", allComplete, err)
 	}
-	if monitor.Updates[0].Status != ekstypes.UpdateStatusSuccessful {
-		t.Fatalf("monitor update not updated: %+v", monitor.Updates[0])
+	if got := monitor.GetUpdates()[0]; got.Status != ekstypes.UpdateStatusSuccessful {
+		t.Fatalf("monitor update not updated: %+v", got)
 	}
 
 	empty := refreshTypes.NewProgressMonitor(true, false, 0)

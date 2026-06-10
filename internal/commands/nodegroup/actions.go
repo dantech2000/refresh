@@ -233,12 +233,9 @@ func runUpdateAMI(c *cli.Context) error {
 		return nil
 	}
 
-	monitor := &refreshTypes.ProgressMonitor{
-		Updates:   updates,
-		StartTime: time.Now(),
-		Quiet:     flags.quiet,
-		NoWait:    flags.noWait,
-		Timeout:   flags.timeout,
+	monitor := refreshTypes.NewProgressMonitor(flags.quiet, flags.noWait, flags.timeout)
+	for _, update := range updates {
+		monitor.AddUpdate(update)
 	}
 	config := refreshTypes.MonitorConfig{
 		PollInterval:    flags.pollInterval,
