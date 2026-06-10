@@ -123,11 +123,17 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 		}
 
 		ng := describeOutput.Nodegroup
-		readyNodes := int32(0)
+
+		// ScalingConfig is optional in the EKS API; never dereference it unchecked.
+		desiredSize := int32(0)
+		if ng.ScalingConfig != nil {
+			desiredSize = aws.ToInt32(ng.ScalingConfig.DesiredSize)
+		}
 
 		// Calculate ready nodes based on scaling config and status
-		if ng.ScalingConfig != nil && ng.Status == ekstypes.NodegroupStatusActive {
-			readyNodes = aws.ToInt32(ng.ScalingConfig.DesiredSize)
+		readyNodes := int32(0)
+		if ng.Status == ekstypes.NodegroupStatusActive {
+			readyNodes = desiredSize
 		}
 
 		instanceTypes := "Unknown"
@@ -139,7 +145,7 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 			Name:         aws.ToString(ng.NodegroupName),
 			Status:       string(ng.Status),
 			InstanceType: instanceTypes,
-			DesiredSize:  aws.ToInt32(ng.ScalingConfig.DesiredSize),
+			DesiredSize:  desiredSize,
 			ReadyNodes:   readyNodes,
 		})
 	}

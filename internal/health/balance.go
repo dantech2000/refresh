@@ -42,18 +42,7 @@ func (hc *HealthChecker) CheckResourceBalance(ctx context.Context, clusterName s
 	maxVariance := analysis.CPUVariance
 	maxUtilization := analysis.MaxCPU
 
-	// Score based on both balance and peak utilization
-	balanceScore := 100.0
-	if maxVariance > 30 {
-		balanceScore -= (maxVariance - 30) * 2 // Penalize high variance
-	}
-
-	utilizationScore := 100.0
-	if maxUtilization > 85 {
-		utilizationScore -= (maxUtilization - 85) * 3 // Penalize high utilization
-	}
-
-	result.Score = int(math.Min(balanceScore, utilizationScore))
+	result.Score = computeBalanceScore(maxVariance, maxUtilization)
 
 	// Determine status based on CPU-only analysis
 	if maxUtilization > 90 {
@@ -75,6 +64,23 @@ func (hc *HealthChecker) CheckResourceBalance(ctx context.Context, clusterName s
 	}
 
 	return result
+}
+
+// computeBalanceScore scores CPU balance and peak utilization on a 0-100 scale.
+// The result is the worse of the two sub-scores, clamped so that extreme
+// variance or utilization cannot push the score below zero.
+func computeBalanceScore(maxVariance, maxUtilization float64) int {
+	balanceScore := 100.0
+	if maxVariance > 30 {
+		balanceScore -= (maxVariance - 30) * 2 // Penalize high variance
+	}
+
+	utilizationScore := 100.0
+	if maxUtilization > 85 {
+		utilizationScore -= (maxUtilization - 85) * 3 // Penalize high utilization
+	}
+
+	return int(math.Max(0, math.Min(balanceScore, utilizationScore)))
 }
 
 // NodeMetrics represents resource metrics for a single node

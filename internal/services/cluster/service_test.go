@@ -48,6 +48,34 @@ func TestBuildListCacheKey_RegionOrderStable(t *testing.T) {
 	}
 }
 
+// Regression: the EKS API marks Nodegroup.scalingConfig as optional ("Required: No"),
+// so getClusterNodegroups must not panic when a nodegroup comes back without one.
+func TestGetClusterNodegroups_NilScalingConfig(t *testing.T) {
+	mock := &mocks.EKSAPI{
+		ListNodegroupsFn: func(_ context.Context, _ *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+			return &eks.ListNodegroupsOutput{Nodegroups: []string{"workers"}}, nil
+		},
+		DescribeNodegroupFn: func(_ context.Context, _ *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+			return &eks.DescribeNodegroupOutput{Nodegroup: &ekstypes.Nodegroup{
+				NodegroupName: aws.String("workers"),
+				Status:        ekstypes.NodegroupStatusActive,
+				ScalingConfig: nil,
+			}}, nil
+		},
+	}
+	svc := &ServiceImpl{eksClient: mock, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	nodegroups, err := svc.getClusterNodegroups(context.Background(), "my-cluster")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nodegroups) != 1 {
+		t.Fatalf("expected 1 nodegroup, got %d", len(nodegroups))
+	}
+	if nodegroups[0].DesiredSize != 0 {
+		t.Errorf("DesiredSize = %d, want 0 for nil ScalingConfig", nodegroups[0].DesiredSize)
+	}
+}
+
 // Regression: ListAllRegionsWithMeta must narrow each per-region goroutine's
 // options.Regions to a single region. Without this, every goroutine computes
 // the same cache key (hashed from the parent's full region slice), the second

@@ -121,9 +121,14 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 			continue
 		}
 		ng := desc.Nodegroup
+		// ScalingConfig is optional in the EKS API; never dereference it unchecked.
+		desired := int32(0)
+		if ng.ScalingConfig != nil {
+			desired = aws.ToInt32(ng.ScalingConfig.DesiredSize)
+		}
 		ready := int32(0)
-		if ng.ScalingConfig != nil && ng.Status == ekstypes.NodegroupStatusActive {
-			ready = aws.ToInt32(ng.ScalingConfig.DesiredSize)
+		if ng.Status == ekstypes.NodegroupStatusActive {
+			ready = desired
 		}
 		instanceType := "Unknown"
 		if len(ng.InstanceTypes) > 0 {
@@ -138,7 +143,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 			Name:         aws.ToString(ng.NodegroupName),
 			Status:       string(ng.Status),
 			InstanceType: instanceType,
-			DesiredSize:  aws.ToInt32(ng.ScalingConfig.DesiredSize),
+			DesiredSize:  desired,
 			ReadyNodes:   ready,
 			CurrentAMI:   currentAmiId,
 			AMIStatus:    amiStatus,
@@ -153,8 +158,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		}
 		if options.ShowCosts && s.cost != nil {
 			if _, perMonth, ok := s.cost.EstimateOnDemandUSD(ctx, instanceType); ok {
-				nodes := float64(aws.ToInt32(ng.ScalingConfig.DesiredSize))
-				summary.Cost = SummaryCost{Monthly: perMonth * nodes}
+				summary.Cost = SummaryCost{Monthly: perMonth * float64(desired)}
 			}
 		}
 		summaries = append(summaries, summary)
@@ -189,6 +193,14 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
 	amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
 
+	// ScalingConfig is optional in the EKS API; never dereference it unchecked.
+	scaling := ScalingConfig{AutoScaling: ng.ScalingConfig != nil}
+	if ng.ScalingConfig != nil {
+		scaling.DesiredSize = aws.ToInt32(ng.ScalingConfig.DesiredSize)
+		scaling.MinSize = aws.ToInt32(ng.ScalingConfig.MinSize)
+		scaling.MaxSize = aws.ToInt32(ng.ScalingConfig.MaxSize)
+	}
+
 	details := &NodegroupDetails{
 		Name:         aws.ToString(ng.NodegroupName),
 		Status:       string(ng.Status),
@@ -198,12 +210,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 		CurrentAMI:   currentAmiId,
 		LatestAMI:    latestAmiId,
 		AMIStatus:    amiStatus,
-		Scaling: ScalingConfig{
-			DesiredSize: aws.ToInt32(ng.ScalingConfig.DesiredSize),
-			MinSize:     aws.ToInt32(ng.ScalingConfig.MinSize),
-			MaxSize:     aws.ToInt32(ng.ScalingConfig.MaxSize),
-			AutoScaling: ng.ScalingConfig != nil,
-		},
+		Scaling: scaling,
 	}
 	if options.ShowUtilization && s.util != nil {
 		window := normalizeWindow(options.Timeframe)
@@ -215,7 +222,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	}
 	if options.ShowCosts && s.cost != nil {
 		if _, perMonth, ok := s.cost.EstimateOnDemandUSD(ctx, details.InstanceType); ok {
-			nodes := float64(aws.ToInt32(ng.ScalingConfig.DesiredSize))
+			nodes := float64(scaling.DesiredSize)
 			details.Cost = CostAnalysis{
 				CurrentMonthlyCost:   perMonth * nodes,
 				ProjectedMonthlyCost: perMonth * nodes,

@@ -185,6 +185,36 @@ func TestList_AMIStatusUnknownWhenIDsEmpty(t *testing.T) {
 	}
 }
 
+// Regression: the EKS API marks Nodegroup.scalingConfig as optional ("Required: No"),
+// so a nodegroup can come back without one. List must not panic on it.
+func TestList_NilScalingConfig(t *testing.T) {
+	ng := stubNodegroup("workers", ekstypes.NodegroupStatusActive)
+	ng.ScalingConfig = nil
+	mock := &mocks.EKSAPI{
+		DescribeClusterFn: clusterFn("1.29"),
+		ListNodegroupsFn: func(_ context.Context, _ *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+			return &eks.ListNodegroupsOutput{Nodegroups: []string{"workers"}}, nil
+		},
+		DescribeNodegroupFn: func(_ context.Context, _ *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+			return &eks.DescribeNodegroupOutput{Nodegroup: ng}, nil
+		},
+	}
+	svc := newTestService(mock)
+	summaries, err := svc.List(context.Background(), "my-cluster", ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("expected 1 summary, got %d", len(summaries))
+	}
+	if summaries[0].DesiredSize != 0 {
+		t.Errorf("DesiredSize = %d, want 0 for nil ScalingConfig", summaries[0].DesiredSize)
+	}
+	if summaries[0].ReadyNodes != 0 {
+		t.Errorf("ReadyNodes = %d, want 0 for nil ScalingConfig", summaries[0].ReadyNodes)
+	}
+}
+
 func TestList_EmptyCluster(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: clusterFn("1.29"),
@@ -230,6 +260,30 @@ func TestDescribe_ReturnsNodegroupDetails(t *testing.T) {
 	}
 	if details.InstanceType != "m5.large" {
 		t.Errorf("InstanceType = %q, want %q", details.InstanceType, "m5.large")
+	}
+}
+
+// Regression: Describe must not panic on a nodegroup without a ScalingConfig,
+// and AutoScaling must report false for it.
+func TestDescribe_NilScalingConfig(t *testing.T) {
+	ng := stubNodegroup("workers", ekstypes.NodegroupStatusActive)
+	ng.ScalingConfig = nil
+	mock := &mocks.EKSAPI{
+		DescribeClusterFn: clusterFn("1.29"),
+		DescribeNodegroupFn: func(_ context.Context, _ *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+			return &eks.DescribeNodegroupOutput{Nodegroup: ng}, nil
+		},
+	}
+	svc := newTestService(mock)
+	details, err := svc.Describe(context.Background(), "my-cluster", "workers", DescribeOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if details.Scaling.DesiredSize != 0 || details.Scaling.MinSize != 0 || details.Scaling.MaxSize != 0 {
+		t.Errorf("Scaling = %+v, want zero values for nil ScalingConfig", details.Scaling)
+	}
+	if details.Scaling.AutoScaling {
+		t.Error("Scaling.AutoScaling = true, want false for nil ScalingConfig")
 	}
 }
 

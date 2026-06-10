@@ -99,6 +99,39 @@ func TestAnalyzeResourceDistribution_HighVarianceDetected(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// computeBalanceScore
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestComputeBalanceScore(t *testing.T) {
+	tests := []struct {
+		name           string
+		maxVariance    float64
+		maxUtilization float64
+		want           int
+	}{
+		{"healthy cluster scores 100", 10, 50, 100},
+		{"variance at threshold scores 100", 30, 85, 100},
+		{"moderate variance penalized", 40, 50, 80},   // 100 - (40-30)*2
+		{"high utilization penalized", 10, 95, 70},    // 100 - (95-85)*3
+		{"worse sub-score wins", 40, 95, 70},          // min(80, 70)
+		{"extreme variance clamps to 0", 100, 50, 0},  // would be -40 unclamped
+		{"max utilization clamps to 0", 10, 130, 0},   // would be -35 unclamped
+		{"both extreme clamps to 0", 100, 130, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := computeBalanceScore(tt.maxVariance, tt.maxUtilization)
+			if got != tt.want {
+				t.Errorf("computeBalanceScore(%v, %v) = %d, want %d", tt.maxVariance, tt.maxUtilization, got, tt.want)
+			}
+			if got < 0 || got > 100 {
+				t.Errorf("score %d outside [0,100]", got)
+			}
+		})
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // CheckCriticalWorkloads — nil k8sClient
 // ──────────────────────────────────────────────────────────────────────────────
 
