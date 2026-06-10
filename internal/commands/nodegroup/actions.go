@@ -42,12 +42,7 @@ func runList(c *cli.Context) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	svc := factory.NewNodegroupService(awsCfg, false, logger)
 
-	filters := make(map[string]string)
-	for _, f := range c.StringSlice("filter") {
-		if parts := strings.SplitN(f, "=", 2); len(parts) == 2 {
-			filters[parts[0]] = parts[1]
-		}
-	}
+	filters := runner.ParseFilters(c.StringSlice("filter"))
 	opts := nodegroupsvc.ListOptions{
 		ShowHealth:      c.Bool("show-health"),
 		ShowCosts:       c.Bool("show-costs"),
@@ -96,7 +91,7 @@ func runDescribe(c *cli.Context) error {
 		return fmt.Errorf("missing nodegroup name; pass as second argument or --nodegroup <name>")
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := factory.NewDefaultLogger(nil)
 	svc := factory.NewNodegroupService(awsCfg, false, logger)
 
 	opts := nodegroupsvc.DescribeOptions{
@@ -136,7 +131,7 @@ func runScale(c *cli.Context) error {
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := factory.NewDefaultLogger(nil)
 	withHealth := c.Bool("health-check") || c.Bool("check-pdbs") || c.Bool("wait")
 	svc := factory.NewNodegroupService(awsCfg, withHealth, logger)
 

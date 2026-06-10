@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -40,18 +41,15 @@ func NewService(eksClient EKSAPI, logger *slog.Logger) *ServiceImpl {
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]AddonSummary, error) {
 	s.logger.Info("listing addons", "cluster", clusterName)
 
-	addonNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
-		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListAddonsOutput, error) {
-			return s.eksClient.ListAddons(rrc, &eks.ListAddonsInput{
+	addonNames, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing add-ons for cluster %s", clusterName),
+		func(rc context.Context, token *string) (*eks.ListAddonsOutput, error) {
+			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
 				ClusterName: aws.String(clusterName),
 				NextToken:   token,
 			})
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("listing addons: %w", err)
-		}
-		return out.Addons, out.NextToken, nil
-	})
+		},
+		func(out *eks.ListAddonsOutput) ([]string, *string) { return out.Addons, out.NextToken },
+	)
 	if err != nil {
 		return nil, err
 	}

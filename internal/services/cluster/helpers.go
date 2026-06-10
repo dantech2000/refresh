@@ -34,18 +34,15 @@ func (s *ServiceImpl) getVpcCidr(ctx context.Context, vpcId string) (string, err
 
 // getClusterAddons retrieves add-on information for a cluster
 func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) ([]AddonInfo, error) {
-	addonNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
-		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListAddonsOutput, error) {
-			return s.eksClient.ListAddons(rrc, &eks.ListAddonsInput{
+	addonNames, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing add-ons for cluster %s", clusterName),
+		func(rc context.Context, token *string) (*eks.ListAddonsOutput, error) {
+			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
 				ClusterName: aws.String(clusterName),
 				NextToken:   token,
 			})
-		})
-		if err != nil {
-			return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing add-ons for cluster %s", clusterName))
-		}
-		return out.Addons, out.NextToken, nil
-	})
+		},
+		func(out *eks.ListAddonsOutput) ([]string, *string) { return out.Addons, out.NextToken },
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -92,18 +89,15 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 
 // getClusterNodegroups retrieves nodegroup information for a cluster
 func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName string) ([]NodegroupSummary, error) {
-	nodegroupNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
-		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListNodegroupsOutput, error) {
-			return s.eksClient.ListNodegroups(rrc, &eks.ListNodegroupsInput{
+	nodegroupNames, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing nodegroups for cluster %s", clusterName),
+		func(rc context.Context, token *string) (*eks.ListNodegroupsOutput, error) {
+			return s.eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
 				ClusterName: aws.String(clusterName),
 				NextToken:   token,
 			})
-		})
-		if err != nil {
-			return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("listing nodegroups for cluster %s", clusterName))
-		}
-		return out.Nodegroups, out.NextToken, nil
-	})
+		},
+		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
+	)
 	if err != nil {
 		return nil, err
 	}

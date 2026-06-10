@@ -34,7 +34,7 @@ type addonDetails struct {
 
 func outputAddonsTable(cluster string, rows []addonRow, elapsed time.Duration) error {
 	ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
-	ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+	ui.PrintElapsed(elapsed)
 
 	if len(rows) == 0 {
 		color.Yellow("No add-ons found")
@@ -47,7 +47,7 @@ func outputAddonsTable(cluster string, rows []addonRow, elapsed time.Duration) e
 		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
 		{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft},
 	}
-	table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
+	table := ui.NewPTable(columns, ui.CyanHeaders())
 	for _, r := range rows {
 		table.AddRow(r.Name, r.Version, r.Status, r.Health)
 	}
@@ -97,7 +97,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 		{Title: "NEW", Min: 15, Max: 0, Align: ui.AlignLeft},
 		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
 	}
-	table := ui.NewPTable(columns, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
+	table := ui.NewPTable(columns, ui.CyanHeaders())
 
 	successCount := 0
 	failCount := 0

@@ -3,8 +3,6 @@ package addon
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -17,9 +15,10 @@ import (
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/services/addons"
-	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func runList(c *cli.Context) error {
@@ -218,7 +217,7 @@ func runUpdateAll(c *cli.Context) error {
 	}
 
 	eksClient := eks.NewFromConfig(cfg)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := factory.NewDefaultLogger(nil)
 	addonSvc := addons.NewService(eksClient, logger)
 
 	options := addons.UpdateAllOptions{
@@ -252,13 +251,12 @@ func runUpdateAll(c *cli.Context) error {
 }
 
 func fetchAddons(ctx context.Context, eksClient *eks.Client, clusterName string, withHealth bool) ([]addonRow, error) {
-	addonNames, err := common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
-		out, err := eksClient.ListAddons(rc, &eks.ListAddonsInput{ClusterName: aws.String(clusterName), NextToken: token})
-		if err != nil {
-			return nil, nil, awsinternal.FormatAWSError(err, "listing add-ons")
-		}
-		return out.Addons, out.NextToken, nil
-	})
+	addonNames, err := awsinternal.ListAllPages(ctx, "listing add-ons",
+		func(rc context.Context, token *string) (*eks.ListAddonsOutput, error) {
+			return eksClient.ListAddons(rc, &eks.ListAddonsInput{ClusterName: aws.String(clusterName), NextToken: token})
+		},
+		func(out *eks.ListAddonsOutput) ([]string, *string) { return out.Addons, out.NextToken },
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -281,14 +279,14 @@ func fetchAddons(ctx context.Context, eksClient *eks.Client, clusterName string,
 func mapAddonHealth(s ekstypes.AddonStatus) string {
 	switch s {
 	case ekstypes.AddonStatusActive:
-		return color.GreenString("PASS")
+		return ui.BadgePass()
 	case ekstypes.AddonStatusDegraded:
-		return color.RedString("FAIL")
+		return ui.BadgeFail()
 	case ekstypes.AddonStatusCreateFailed, ekstypes.AddonStatusDeleteFailed:
-		return color.RedString("FAIL")
+		return ui.BadgeFail()
 	case ekstypes.AddonStatusCreating, ekstypes.AddonStatusDeleting, ekstypes.AddonStatusUpdating:
-		return color.CyanString("[IN PROGRESS]")
+		return ui.BadgeInProgress()
 	default:
-		return color.WhiteString("UNKNOWN")
+		return ui.BadgeUnknown()
 	}
 }
