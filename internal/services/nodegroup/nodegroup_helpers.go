@@ -7,7 +7,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
@@ -29,22 +28,6 @@ func normalizeWindow(w string) string {
 	default:
 		return "24h"
 	}
-}
-
-// getNodegroupInstanceIDs resolves backing ASG instances for a managed
-// nodegroup by name. Callers that already hold the described nodegroup should
-// use instanceIDsForNodegroup to avoid the extra DescribeNodegroup call.
-func (s *ServiceImpl) getNodegroupInstanceIDs(ctx context.Context, clusterName, nodegroupName string) ([]string, bool) {
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
-		return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(nodegroupName),
-		})
-	})
-	if err != nil {
-		return nil, false
-	}
-	return s.instanceIDsForNodegroup(ctx, out.Nodegroup)
 }
 
 // instanceIDsForNodegroup resolves backing ASG instances from an

@@ -68,15 +68,15 @@ Examples:
 		Action: func(c *cli.Context) error {
 			switch c.Args().First() {
 			case "bash":
-				fmt.Fprint(c.App.Writer, bashCompletionScript)
+				_, _ = fmt.Fprint(c.App.Writer, bashCompletionScript)
 			case "zsh":
-				fmt.Fprint(c.App.Writer, zshCompletionScript)
+				_, _ = fmt.Fprint(c.App.Writer, zshCompletionScript)
 			case "fish":
 				script, err := c.App.ToFishCompletion()
 				if err != nil {
 					return fmt.Errorf("generating fish completion: %w", err)
 				}
-				fmt.Fprintln(c.App.Writer, script)
+				_, _ = fmt.Fprintln(c.App.Writer, script)
 			default:
 				return fmt.Errorf("unsupported or missing shell %q (supported: bash, zsh, fish)", c.Args().First())
 			}
