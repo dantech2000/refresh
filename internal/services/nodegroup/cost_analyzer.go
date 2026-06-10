@@ -37,20 +37,15 @@ func (c *CostAnalyzer) EstimateOnDemandUSD(ctx context.Context, instanceType str
 	}
 
 	if c.pricing != nil {
-		location := regionToPricingLocation(c.region)
-		if location != "" {
-			usd := c.queryPricing(ctx, instanceType, location, true)
-			if usd <= 0 {
-				usd = c.queryPricing(ctx, instanceType, location, false)
-			}
-			if usd > 0 {
-				c.cache.Set(key, usd, c.cacheTTL)
-				return usd, usd * 730.0, true
-			}
-			c.logger.Debug("pricing API returned no data, trying fallback", "instanceType", instanceType, "location", location)
-		} else {
-			c.logger.Debug("region not mapped to pricing location, trying fallback", "region", c.region)
+		usd := c.queryPricing(ctx, instanceType, true)
+		if usd <= 0 {
+			usd = c.queryPricing(ctx, instanceType, false)
 		}
+		if usd > 0 {
+			c.cache.Set(key, usd, c.cacheTTL)
+			return usd, usd * 730.0, true
+		}
+		c.logger.Debug("pricing API returned no data, trying fallback", "instanceType", instanceType, "region", c.region)
 	} else {
 		c.logger.Debug("pricing client not available, trying fallback")
 	}
@@ -65,11 +60,14 @@ func (c *CostAnalyzer) EstimateOnDemandUSD(ctx context.Context, instanceType str
 }
 
 // queryPricing queries the AWS Pricing API for instance cost
-func (c *CostAnalyzer) queryPricing(ctx context.Context, instanceType, location string, strict bool) float64 {
+func (c *CostAnalyzer) queryPricing(ctx context.Context, instanceType string, strict bool) float64 {
 	svc := "AmazonEC2"
 	filters := []pricingFilter{
 		{Type: "TERM_MATCH", Field: "instanceType", Value: instanceType},
-		{Type: "TERM_MATCH", Field: "location", Value: location},
+		// regionCode is matched directly by the Pricing API, removing the need
+		// for a hardcoded region -> "US East (N. Virginia)" location map that
+		// silently missed every newly launched region.
+		{Type: "TERM_MATCH", Field: "regionCode", Value: c.region},
 		{Type: "TERM_MATCH", Field: "operatingSystem", Value: "Linux"},
 		{Type: "TERM_MATCH", Field: "tenancy", Value: "Shared"},
 		{Type: "TERM_MATCH", Field: "preInstalledSw", Value: "NA"},
@@ -93,7 +91,7 @@ func (c *CostAnalyzer) queryPricing(ctx context.Context, instanceType, location 
 		return 0
 	}
 	if len(out.PriceList) == 0 {
-		c.logger.Debug("no pricing data returned", "instanceType", instanceType, "location", location, "strict", strict)
+		c.logger.Debug("no pricing data returned", "instanceType", instanceType, "region", c.region, "strict", strict)
 		return 0
 	}
 
@@ -115,48 +113,6 @@ func (c *CostAnalyzer) queryPricing(ctx context.Context, instanceType, location 
 	}
 
 	return 0
-}
-
-// regionToPricingLocation maps AWS region to Pricing API location string
-func regionToPricingLocation(region string) string {
-	m := map[string]string{
-		// US regions
-		"us-east-1": "US East (N. Virginia)",
-		"us-east-2": "US East (Ohio)",
-		"us-west-1": "US West (N. California)",
-		"us-west-2": "US West (Oregon)",
-		// EU regions
-		"eu-west-1":    "EU (Ireland)",
-		"eu-west-2":    "EU (London)",
-		"eu-west-3":    "EU (Paris)",
-		"eu-central-1": "EU (Frankfurt)",
-		"eu-central-2": "EU (Zurich)",
-		"eu-north-1":   "EU (Stockholm)",
-		"eu-south-1":   "EU (Milan)",
-		"eu-south-2":   "EU (Spain)",
-		// Asia Pacific regions
-		"ap-east-1":      "Asia Pacific (Hong Kong)",
-		"ap-southeast-1": "Asia Pacific (Singapore)",
-		"ap-southeast-2": "Asia Pacific (Sydney)",
-		"ap-southeast-3": "Asia Pacific (Jakarta)",
-		"ap-southeast-4": "Asia Pacific (Melbourne)",
-		"ap-northeast-1": "Asia Pacific (Tokyo)",
-		"ap-northeast-2": "Asia Pacific (Seoul)",
-		"ap-northeast-3": "Asia Pacific (Osaka)",
-		"ap-south-1":     "Asia Pacific (Mumbai)",
-		"ap-south-2":     "Asia Pacific (Hyderabad)",
-		// Middle East regions
-		"me-south-1":   "Middle East (Bahrain)",
-		"me-central-1": "Middle East (UAE)",
-		"il-central-1": "Israel (Tel Aviv)",
-		// Africa regions
-		"af-south-1": "Africa (Cape Town)",
-		// Americas regions
-		"ca-central-1": "Canada (Central)",
-		"ca-west-1":    "Canada West (Calgary)",
-		"sa-east-1":    "South America (Sao Paulo)",
-	}
-	return m[region]
 }
 
 // Helpers for light parsing

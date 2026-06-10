@@ -105,8 +105,9 @@ refresh/
 -   **Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
 -   **Interactive Cluster Selection**: `cluster diff` auto-prompts a multi-select picker when a pattern matches multiple clusters
 -   **Add-on Health Checks**: `addon update --health-check` validates active state and Kubernetes version compatibility before updating
--   **Shell Completion**: `refresh completion bash|zsh|fish` generates completion scripts
--   **Script-friendly Output**: `-o json|yaml` on list/describe commands, `--no-color` (and `NO_COLOR`), spinners auto-disable when output is piped, and `update-ami --health-only` exits 0/2/3 for pass/warn/block
+-   **Shell Completion**: `refresh completion bash|zsh|fish` generates completion scripts; `refresh use <TAB>` completes saved context names
+-   **Script-friendly Output**: `-o json|yaml|plain` on list/describe commands (`plain` is tab-separated and uncolored for grep/awk), `--no-color` (and `NO_COLOR`), spinners auto-disable when output is piped, `nodegroup update --health-only` exits 0/2/3 for pass/warn/block and supports `-o json|yaml`
+-   **Watch Mode**: `cluster list --watch` / `nodegroup list --watch` redraw on an interval (top-style on a TTY, append-only when piped)
 
 ## Requirements
 

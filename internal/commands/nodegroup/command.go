@@ -36,10 +36,12 @@ func listCommand() *cli.Command {
 			&cli.BoolFlag{Name: "show-costs", Aliases: []string{"C"}, Usage: "Include cost analysis"},
 			&cli.BoolFlag{Name: "show-utilization", Aliases: []string{"U"}, Usage: "Include CPU utilization metrics"},
 			&cli.StringFlag{Name: "timeframe", Aliases: []string{"T"}, Usage: "Utilization window (1h,3h,24h)", Value: "24h"},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml)", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 			&cli.StringFlag{Name: "sort", Usage: "Sort by field: name,status,instance,nodes,cpu,cost", Value: "name"},
 			&cli.BoolFlag{Name: "desc", Usage: "Sort descending"},
 			&cli.StringSliceFlag{Name: "filter", Aliases: []string{"f"}, Usage: "Filter nodegroups (key=value; keys: name, status, instanceType, amiStatus)"},
+			&cli.BoolFlag{Name: "watch", Aliases: []string{"w"}, Usage: "Re-run and redraw every --watch-interval until interrupted"},
+			&cli.DurationFlag{Name: "watch-interval", Usage: "Refresh interval for --watch", Value: 10 * time.Second},
 		},
 		Action: runList,
 	}
@@ -60,7 +62,7 @@ func describeCommand() *cli.Command {
 			&cli.BoolFlag{Name: "show-workloads", Aliases: []string{"W"}, Usage: "Include workload/pod placement info"},
 			&cli.BoolFlag{Name: "show-costs", Aliases: []string{"C"}, Usage: "Include cost analysis"},
 			&cli.StringFlag{Name: "timeframe", Aliases: []string{"T"}, Usage: "Utilization window (1h,3h,24h)", Value: "24h"},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml)", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(c *cli.Context) error { return runDescribe(c) },
 	}
@@ -103,7 +105,8 @@ func updateAMICommand() *cli.Command {
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Maximum time to wait for update completion", Value: 40 * time.Minute},
 			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "Polling interval for checking update status", Value: 15 * time.Second},
 			&cli.BoolFlag{Name: "skip-health-check", Aliases: []string{"s"}, Usage: "Skip pre-flight health validation"},
-			&cli.BoolFlag{Name: "health-only", Aliases: []string{"H"}, Usage: "Run health check only, don't update"},
+			&cli.BoolFlag{Name: "health-only", Aliases: []string{"H"}, Usage: "Run health check only, don't update (exit code: 0=pass, 2=warn, 3=block)"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "(--health-only only) Output format for health results (table, json, yaml)", Value: "table"},
 		},
 		Action: runUpdateAMI,
 	}

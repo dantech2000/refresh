@@ -30,21 +30,21 @@ const (
 
 // HealthResult represents the result of a single health check
 type HealthResult struct {
-	Name       string
-	Status     HealthStatus
-	Score      int // 0-100
-	Message    string
-	Details    []string
-	IsBlocking bool
+	Name       string       `json:"name"`
+	Status     HealthStatus `json:"status"`
+	Score      int          `json:"score"` // 0-100
+	Message    string       `json:"message"`
+	Details    []string     `json:"details,omitempty"`
+	IsBlocking bool         `json:"isBlocking"`
 }
 
 // HealthSummary represents the overall health check results
 type HealthSummary struct {
-	Results      []HealthResult
-	OverallScore int
-	Decision     Decision
-	Warnings     []string
-	Errors       []string
+	Results      []HealthResult `json:"results"`
+	OverallScore int            `json:"overallScore"`
+	Decision     Decision       `json:"decision"`
+	Warnings     []string       `json:"warnings,omitempty"`
+	Errors       []string       `json:"errors,omitempty"`
 }
 
 // HealthChecker performs various health checks on the EKS cluster

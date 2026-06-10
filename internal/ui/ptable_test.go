@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -122,5 +123,38 @@ func TestNewPTableWithHeadersEmpty(t *testing.T) {
 	pt := NewPTableWithHeaders(nil)
 	if len(pt.columns) != 0 {
 		t.Fatalf("columns = %d, want 0", len(pt.columns))
+	}
+}
+
+func TestPTableRenderPlain(t *testing.T) {
+	SetPlainOutput(true)
+	t.Cleanup(func() { SetPlainOutput(false) })
+
+	originalStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = originalStdout })
+
+	pt := NewPTable([]Column{{Title: "NAME", Max: 4}, {Title: "STATUS"}}, CyanHeaders())
+	pt.AddRow("very-long-name", "\x1b[32mACTIVE\x1b[0m")
+	pt.Render()
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	out := buf.String()
+
+	// Plain mode: tab-separated, no truncation, no box drawing, ANSI stripped.
+	if !strings.Contains(out, "NAME\tSTATUS") {
+		t.Fatalf("plain render missing tab-separated header: %q", out)
+	}
+	if !strings.Contains(out, "very-long-name\tACTIVE") {
+		t.Fatalf("plain render should not truncate or color cells: %q", out)
+	}
+	if strings.Contains(out, "\x1b[") || strings.Contains(out, "│") {
+		t.Fatalf("plain render must not contain ANSI codes or box drawing: %q", out)
 	}
 }

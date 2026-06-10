@@ -32,7 +32,7 @@ func listCommand() *cli.Command {
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, EnvVars: []string{"REFRESH_TIMEOUT"}},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "show-health", Aliases: []string{"H"}, Usage: "Include health mapping in table output"},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml)", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(c *cli.Context) error { return runList(c) },
 	}
@@ -48,7 +48,7 @@ func describeCommand() *cli.Command {
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, EnvVars: []string{"REFRESH_TIMEOUT"}},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "addon", Aliases: []string{"a"}, Usage: "Add-on name (e.g., vpc-cni)"},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml)", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(c *cli.Context) error { return runDescribe(c) },
 	}
@@ -77,7 +77,7 @@ func updateCommand() *cli.Command {
 			&cli.DurationFlag{Name: "wait-timeout", Usage: "Per-addon wait timeout (with --wait)", Value: 5 * time.Minute},
 			&cli.BoolFlag{Name: "dependency-order", Usage: "(--all only) Update addons in dependency-safe order (vpc-cni -> coredns/kube-proxy -> others)"},
 			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "(--all only) Skip specific addons (repeatable)"},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "(--all only) Output format (table, json, yaml)", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "(--all only) Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(c *cli.Context) error {
 			if c.Bool("all") {
@@ -105,7 +105,7 @@ func updateAllHiddenCommand() *cli.Command {
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview changes without applying"},
 			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Skip specific addons (can be repeated)"},
 			&cli.BoolFlag{Name: "dependency-order", Usage: "Update addons in dependency-safe order (vpc-cni → coredns/kube-proxy → others)"},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml)", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(c *cli.Context) error { return runUpdateAll(c) },
 	}

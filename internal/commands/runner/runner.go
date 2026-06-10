@@ -8,11 +8,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/fatih/color"
+	"github.com/mattn/go-isatty"
+	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v2"
 	"gopkg.in/yaml.v3"
 
@@ -295,8 +299,13 @@ func nonFlagArgs(c *cli.Context) []string {
 	return out
 }
 
-// EncodeStdout writes payload to stdout as JSON or YAML based on format. For
-// any other format value it returns handled=false so the caller can fall
+// EncodeStdout writes payload to stdout as JSON or YAML based on format.
+//
+// "plain" is special-cased: it switches the UI layer into uncolored,
+// tab-separated table rendering and returns handled=false, so the caller's
+// table renderer produces grep/awk-friendly output.
+//
+// For any other format value it returns handled=false so the caller can fall
 // through to its table renderer.
 func EncodeStdout(format string, payload any) (handled bool, err error) {
 	switch strings.ToLower(format) {
@@ -309,8 +318,54 @@ func EncodeStdout(format string, payload any) (handled bool, err error) {
 		enc.SetIndent(2)
 		defer func() { _ = enc.Close() }()
 		return true, enc.Encode(payload)
+	case "plain":
+		ui.SetPlainOutput(true)
+		color.NoColor = true
+		pterm.DisableColor()
+		return false, nil
 	default:
 		return false, nil
+	}
+}
+
+// watchIsTerminal reports whether stdout is an interactive terminal.
+// Overridable in tests.
+var watchIsTerminal = func() bool {
+	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+}
+
+// Watch reruns fn every --watch-interval until interrupted when --watch is
+// set; otherwise it runs fn once. On an interactive terminal the screen is
+// cleared between iterations (top-style); when output is piped, iterations
+// append instead. fn should perform the full fetch+render cycle so every
+// iteration shows fresh data.
+func Watch(c *cli.Context, fn func() error) error {
+	if !c.Bool("watch") {
+		return fn()
+	}
+
+	interval := c.Duration("watch-interval")
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	interactive := watchIsTerminal()
+	for {
+		if interactive {
+			fmt.Print("\033[H\033[2J") // clear screen, cursor home
+		}
+		if err := fn(); err != nil {
+			return err
+		}
+		select {
+		case <-time.After(interval):
+		case <-sigChan:
+			return nil
+		}
 	}
 }
 

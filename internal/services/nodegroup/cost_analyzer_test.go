@@ -23,28 +23,6 @@ func TestStaticPriceMap(t *testing.T) {
 	}
 }
 
-func TestRegionToPricingLocation(t *testing.T) {
-	tests := []struct {
-		region   string
-		expected string
-	}{
-		{"us-east-1", "US East (N. Virginia)"},
-		{"us-west-2", "US West (Oregon)"},
-		{"eu-west-1", "EU (Ireland)"},
-		{"ap-southeast-1", "Asia Pacific (Singapore)"},
-		{"unknown-region", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.region, func(t *testing.T) {
-			result := regionToPricingLocation(tt.region)
-			if result != tt.expected {
-				t.Errorf("regionToPricingLocation(%s) = %s, want %s", tt.region, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestNewCostAnalyzer(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cache := NewCache()

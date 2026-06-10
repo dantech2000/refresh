@@ -137,3 +137,34 @@ func TestApplyHealthDecision_WarnHealthOnlyDoesNotPrompt(t *testing.T) {
 	})
 	_ = out
 }
+
+func TestHealthExitError(t *testing.T) {
+	if err := healthExitError(health.DecisionProceed); err != nil {
+		t.Fatalf("Proceed should exit 0 (nil error), got %v", err)
+	}
+	var coder cli.ExitCoder
+	if err := healthExitError(health.DecisionWarn); !errors.As(err, &coder) || coder.ExitCode() != 2 {
+		t.Fatalf("Warn should exit 2, got %v", err)
+	}
+	if err := healthExitError(health.DecisionBlock); !errors.As(err, &coder) || coder.ExitCode() != 3 {
+		t.Fatalf("Block should exit 3, got %v", err)
+	}
+}
+
+func TestMachineHealthOutput(t *testing.T) {
+	cases := []struct {
+		flags updateAMIFlags
+		want  bool
+	}{
+		{updateAMIFlags{healthOnly: true, format: "json"}, true},
+		{updateAMIFlags{healthOnly: true, format: "yaml"}, true},
+		{updateAMIFlags{healthOnly: true, format: "table"}, false},
+		{updateAMIFlags{healthOnly: false, format: "json"}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.flags.machineHealthOutput(); got != tc.want {
+			t.Errorf("machineHealthOutput(healthOnly=%v format=%q) = %v, want %v",
+				tc.flags.healthOnly, tc.flags.format, got, tc.want)
+		}
+	}
+}

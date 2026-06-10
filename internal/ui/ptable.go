@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
@@ -49,7 +50,14 @@ func (t *PTable) AddRow(cells ...string) {
 // Render prints the table using pterm. Column Max is enforced with ANSI-aware
 // truncation, and Min/Align are honored by pre-padding cells to the computed
 // column width (pterm itself only left-aligns).
+//
+// Under `-o plain` (see ui.SetPlainOutput) the table is rendered as
+// uncolored, tab-separated rows instead.
 func (t *PTable) Render() {
+	if plainOutput {
+		t.renderPlain()
+		return
+	}
 	// Truncate cells and compute final visible column widths.
 	truncated := make([][]string, len(t.rows))
 	widths := make([]int, len(t.columns))
@@ -99,6 +107,23 @@ func (t *PTable) Render() {
 		WithData(ptermData)
 
 	_ = table.Render()
+}
+
+// renderPlain emits the table as tab-separated values with ANSI stripped:
+// one header line, one line per row, no truncation or box drawing.
+func (t *PTable) renderPlain() {
+	headers := make([]string, len(t.columns))
+	for i, col := range t.columns {
+		headers[i] = col.Title
+	}
+	Outln(strings.Join(headers, "\t"))
+	for _, row := range t.rows {
+		cells := make([]string, len(row))
+		for i, cell := range row {
+			cells[i] = StripANSI(cell)
+		}
+		Outln(strings.Join(cells, "\t"))
+	}
 }
 
 // CyanHeaders returns the standard cyan header-color option used by all

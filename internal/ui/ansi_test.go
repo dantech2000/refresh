@@ -104,3 +104,26 @@ func TestStatusColorStringNeutralUnchanged(t *testing.T) {
 		t.Fatalf("neutral status should be uncolored, got %q", got)
 	}
 }
+
+func TestStripANSI(t *testing.T) {
+	if got := StripANSI("\x1b[32mPASS\x1b[0m"); got != "PASS" {
+		t.Fatalf("StripANSI colored = %q, want PASS", got)
+	}
+	if got := StripANSI("plain"); got != "plain" {
+		t.Fatalf("StripANSI plain = %q", got)
+	}
+	if got := StripANSI(""); got != "" {
+		t.Fatalf("StripANSI empty = %q", got)
+	}
+}
+
+func TestSetPlainOutput(t *testing.T) {
+	SetPlainOutput(true)
+	if !PlainOutput() {
+		t.Fatal("PlainOutput should be true after SetPlainOutput(true)")
+	}
+	SetPlainOutput(false)
+	if PlainOutput() {
+		t.Fatal("PlainOutput should be false after SetPlainOutput(false)")
+	}
+}

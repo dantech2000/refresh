@@ -139,6 +139,51 @@ func TruncateANSI(s string, width int) string {
 	return out.String()
 }
 
+// StripANSI removes ANSI escape sequences from a string.
+func StripANSI(s string) string {
+	if !strings.ContainsRune(s, '\x1b') {
+		return s
+	}
+	var out strings.Builder
+	out.Grow(len(s))
+	inEscape := false
+	escapeLen := 0
+	const maxEscapeLen = 32
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			escapeLen = 0
+			continue
+		}
+		if inEscape {
+			escapeLen++
+			if escapeLen > maxEscapeLen {
+				inEscape = false
+				escapeLen = 0
+				continue
+			}
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+				inEscape = false
+				escapeLen = 0
+			}
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
+}
+
+// plainOutput, when enabled, makes table renderers emit uncolored,
+// tab-separated rows without box drawing — grep/awk/cut-friendly output for
+// the `-o plain` format.
+var plainOutput = false
+
+// SetPlainOutput toggles plain rendering for PTable and DynamicTable.
+func SetPlainOutput(enabled bool) { plainOutput = enabled }
+
+// PlainOutput reports whether plain rendering is enabled.
+func PlainOutput() bool { return plainOutput }
+
 // StatusCategory classifies a free-form status string for rendering.
 type StatusCategory int
 

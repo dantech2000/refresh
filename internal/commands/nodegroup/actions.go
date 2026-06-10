@@ -30,6 +30,12 @@ import (
 )
 
 func runList(c *cli.Context) error {
+	// Each --watch iteration performs the full setup+fetch+render cycle so a
+	// fresh service (and cache) is used every time.
+	return runner.Watch(c, func() error { return listNodegroupsOnce(c) })
+}
+
+func listNodegroupsOnce(c *cli.Context) error {
 	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
 	if err != nil {
 		return err
@@ -63,7 +69,7 @@ func runList(c *cli.Context) error {
 	}
 
 	format := strings.ToLower(c.String("format"))
-	if format == "table" || format == "" {
+	if format == "table" || format == "plain" || format == "" {
 		items = sortNodegroupSummaries(items, c.String("sort"), c.Bool("desc"))
 	}
 
@@ -198,6 +204,7 @@ func int32PtrIfSet(c *cli.Context, name string) *int32 {
 type updateAMIFlags struct {
 	force, dryRun, noWait, quiet, skipHealthCheck, healthOnly bool
 	timeout, pollInterval                                     time.Duration
+	format                                                    string
 }
 
 func readUpdateAMIFlags(c *cli.Context) updateAMIFlags {
@@ -213,7 +220,14 @@ func readUpdateAMIFlags(c *cli.Context) updateAMIFlags {
 		healthOnly:      c.Bool("health-only"),
 		timeout:         c.Duration("timeout"),
 		pollInterval:    c.Duration("poll-interval"),
+		format:          strings.ToLower(c.String("format")),
 	}
+}
+
+// machineHealthOutput reports whether the health verdict should be emitted as
+// JSON/YAML instead of the human table (only meaningful with --health-only).
+func (f updateAMIFlags) machineHealthOutput() bool {
+	return f.healthOnly && (f.format == "json" || f.format == "yaml")
 }
 
 func runUpdateAMI(c *cli.Context) error {
@@ -288,32 +302,57 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 		return false, nil
 	}
 
-	if !flags.quiet {
+	// Machine-readable verdicts suppress all human chrome so stdout is pure
+	// data; the exit code still encodes the decision (0/2/3).
+	humanOutput := !flags.quiet && !flags.machineHealthOutput()
+
+	if humanOutput {
 		ui.DisplayHealthCheckStart(clusterName)
 	}
 	cwClient := cloudwatch.NewFromConfig(awsCfg)
 	asgClient := autoscaling.NewFromConfig(awsCfg)
 	k8sClient, k8sErr := health.GetKubernetesClient()
-	if k8sClient == nil && !flags.quiet {
+	if k8sClient == nil && humanOutput {
 		color.Yellow("Warning: Kubernetes client not available (%v)", k8sErr)
 		color.Yellow("Health checks will be limited to AWS-only validations")
 	}
 	checker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
 
 	spinner := ui.NewFunSpinnerForCategory("health")
-	if !flags.quiet {
+	if humanOutput {
 		if err := spinner.Start(); err != nil {
 			return false, err
 		}
 		defer spinner.Stop()
 	}
 	summary := checker.RunAllChecks(ctx, clusterName)
-	if !flags.quiet {
+	if humanOutput {
 		spinner.Success("Health validation complete!")
 		ui.DisplayHealthResults(summary)
 	}
 
+	if flags.machineHealthOutput() {
+		if _, err := runner.EncodeStdout(flags.format, summary); err != nil {
+			return true, err
+		}
+		return true, healthExitError(summary.Decision)
+	}
+
 	return applyHealthDecision(summary, flags)
+}
+
+// healthExitError maps a health decision to the --health-only exit-code
+// contract: 0 = pass, 2 = warnings, 3 = blocked. Messages go to stderr via
+// urfave/cli, keeping stdout pure data for JSON/YAML output.
+func healthExitError(decision health.Decision) error {
+	switch decision {
+	case health.DecisionBlock:
+		return cli.Exit("pre-flight health checks failed", 3)
+	case health.DecisionWarn:
+		return cli.Exit("health checks completed with warnings", 2)
+	default:
+		return nil
+	}
 }
 
 // applyHealthDecision interprets a health summary against the run flags. It

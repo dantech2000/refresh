@@ -44,7 +44,7 @@ func pdbsCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:    "format",
 				Aliases: []string{"o"},
-				Usage:   "Output format (table, json, yaml)",
+				Usage:   "Output format (table, json, yaml, plain)",
 				Value:   "table",
 			},
 		},

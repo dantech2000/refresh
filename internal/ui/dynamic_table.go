@@ -59,9 +59,17 @@ func (dt *DynamicTable) AddBool(key string, enabled bool) *DynamicTable {
 	return dt.AddStatus(key, "DISABLED")
 }
 
-// Render prints the table with perfect alignment
+// Render prints the table with perfect alignment. Under `-o plain` it emits
+// uncolored "key\tvalue" lines instead.
 func (dt *DynamicTable) Render() {
 	if len(dt.rows) == 0 {
+		return
+	}
+
+	if plainOutput {
+		for _, row := range dt.rows {
+			Outf("%s\t%s\n", StripANSI(row.Key), StripANSI(row.Value))
+		}
 		return
 	}
 
