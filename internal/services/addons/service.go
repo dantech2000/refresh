@@ -13,6 +13,15 @@ import (
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
+const (
+	// maxParallelAddonUpdates caps concurrent UpdateAddon calls when
+	// UpdateOptions.Parallel is set.
+	maxParallelAddonUpdates = 3
+	// addonUpdatePollInterval is how often waitForAddonUpdate re-checks an
+	// in-flight addon update.
+	addonUpdatePollInterval = 5 * time.Second
+)
+
 // EKSAPI abstracts the EKS client methods used for addons
 type EKSAPI interface {
 	ListAddons(ctx context.Context, params *eks.ListAddonsInput, optFns ...func(*eks.Options)) (*eks.ListAddonsOutput, error)
@@ -284,7 +293,7 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 	results := make([]AddonUpdateResult, len(toUpdate))
 	if options.Parallel {
 		var wg sync.WaitGroup
-		semaphore := make(chan struct{}, 3)
+		semaphore := make(chan struct{}, maxParallelAddonUpdates)
 		for i, addon := range toUpdate {
 			// Acquire BEFORE spawning so the cap limits live goroutines, not
 			// just in-flight API calls. Matches cluster.ListAllRegionsWithMeta.

@@ -103,7 +103,7 @@ func (hc *HealthChecker) getNodeLevelEC2Metrics(ctx context.Context, clusterName
 	// Get instance IDs and names from EKS
 	instanceData, err := hc.getClusterInstanceData(ctx, clusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get instance data: %v", err)
+		return nil, fmt.Errorf("failed to get instance data: %w", err)
 	}
 
 	if len(instanceData) == 0 {

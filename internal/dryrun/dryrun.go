@@ -78,12 +78,12 @@ func NewDryRunner(eksClient *eks.Client, clusterName string, force, quiet bool) 
 
 	awsCfg, err := dryrunLoadAWSConfig(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %v", err)
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
 	k8sVersion, err := dryrunDescribeCluster(ctx, eksClient, clusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster: %v", err)
+		return nil, fmt.Errorf("failed to describe cluster: %w", err)
 	}
 
 	return &DryRunner{

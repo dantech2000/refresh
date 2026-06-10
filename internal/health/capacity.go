@@ -12,6 +12,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 )
 
+// CPU headroom thresholds for safe rolling updates: at least
+// minSafeCPUHeadroomPercent free is a pass, at least
+// minWarnCPUHeadroomPercent is a warning, anything less is a failure.
+const (
+	minSafeCPUHeadroomPercent = 30.0
+	minWarnCPUHeadroomPercent = 15.0
+)
+
 // CheckClusterCapacity validates that the cluster has sufficient capacity for rolling updates
 func (hc *HealthChecker) CheckClusterCapacity(ctx context.Context, clusterName string) HealthResult {
 	result := HealthResult{
@@ -40,13 +48,12 @@ func (hc *HealthChecker) CheckClusterCapacity(ctx context.Context, clusterName s
 	result.Details = append(result.Details, "Memory utilization: Not available (requires Container Insights)")
 
 	// Calculate score based on CPU headroom only
-	// We want at least 30% headroom for safe rolling updates
 	headroom := 100 - avgCPU
-	if headroom >= 30 {
+	if headroom >= minSafeCPUHeadroomPercent {
 		result.Status = StatusPass
 		result.Score = 100
 		result.Message = fmt.Sprintf("Sufficient CPU capacity (%.1f%% utilization)", avgCPU)
-	} else if headroom >= 15 {
+	} else if headroom >= minWarnCPUHeadroomPercent {
 		result.Status = StatusWarn
 		result.Score = 70
 		result.Message = fmt.Sprintf("Limited CPU capacity (%.1f%% utilization)", avgCPU)
@@ -70,7 +77,7 @@ func (hc *HealthChecker) getEC2ClusterCPUMetrics(ctx context.Context, clusterNam
 	// Get instance IDs from nodegroups
 	instanceIDs, err := hc.getClusterInstanceIDs(ctx, clusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster instances: %v", err)
+		return nil, fmt.Errorf("failed to get cluster instances: %w", err)
 	}
 
 	if len(instanceIDs) == 0 {
@@ -139,7 +146,7 @@ func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName 
 		listInput := &eks.ListNodegroupsInput{ClusterName: aws.String(clusterName), NextToken: nextToken}
 		ngOutput, err := hc.eksClient.ListNodegroups(ctx, listInput)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list nodegroups: %v", err)
+			return nil, fmt.Errorf("failed to list nodegroups: %w", err)
 		}
 		nodegroupNames = append(nodegroupNames, ngOutput.Nodegroups...)
 		if ngOutput.NextToken == nil {
@@ -191,7 +198,7 @@ func (hc *HealthChecker) getASGInstanceIDs(ctx context.Context, asgName string) 
 
 	output, err := hc.asgClient.DescribeAutoScalingGroups(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe ASG %s: %v", asgName, err)
+		return nil, fmt.Errorf("failed to describe ASG %s: %w", asgName, err)
 	}
 
 	if len(output.AutoScalingGroups) == 0 {

@@ -46,6 +46,10 @@ const (
 	// Default cache TTLs (override via env if needed in future)
 	defaultCacheTTLDescribe = 5 * time.Minute
 	defaultCacheTTLList     = 2 * time.Minute
+
+	// defaultRegionListConcurrency caps concurrent per-region List calls in
+	// ListAllRegionsWithMeta when no --max-concurrency is given.
+	defaultRegionListConcurrency = 8
 )
 
 // NewService creates a new cluster service instance
@@ -301,7 +305,7 @@ func (s *ServiceImpl) ListAllRegionsWithMeta(ctx context.Context, options ListOp
 	eksRegions := s.resolveRegions(options)
 	maxConc := options.MaxConcurrency
 	if maxConc <= 0 {
-		maxConc = 8
+		maxConc = defaultRegionListConcurrency
 	}
 
 	type regionResult struct {
