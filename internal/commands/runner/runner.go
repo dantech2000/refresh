@@ -106,13 +106,17 @@ func ParseFilters(filters []string) map[string]string {
 	return out
 }
 
-// RequestedCluster returns the cluster name requested by the user: first
-// positional arg if present, otherwise --cluster.
+// RequestedCluster returns the cluster name requested by the user: --cluster
+// when explicitly set (so positionals can fill later slots), otherwise the
+// first positional arg.
 func RequestedCluster(c *cli.Context) string {
+	if v := flagValueIfSet(c, "cluster"); v != "" {
+		return v
+	}
 	if first := c.Args().First(); strings.TrimSpace(first) != "" {
 		return first
 	}
-	return c.String("cluster")
+	return strings.TrimSpace(c.String("cluster"))
 }
 
 // ResolveClusterOrList resolves the requested cluster name. If no cluster was
@@ -151,16 +155,33 @@ func SecondPositional(c *cli.Context, flagName string) string {
 // argument at index (0-indexed) if the flag is not set. Does NOT account for
 // prior flags absorbing positional slots — use PositionalSlot for that.
 func PositionalAt(c *cli.Context, flagName string, index int) string {
-	if flagName != "" {
-		if v := strings.TrimSpace(c.String(flagName)); v != "" {
-			return v
-		}
+	if v := flagValueIfSet(c, flagName); v != "" {
+		return v
 	}
 	nonFlags := nonFlagArgs(c)
 	if index < len(nonFlags) {
 		return nonFlags[index]
 	}
-	return ""
+	return flagDefault(c, flagName)
+}
+
+// flagValueIfSet returns the trimmed value of flagName only when it was
+// explicitly provided (flag or env var). Flags that merely carry a default
+// value return "" so a positional argument can still fill the slot.
+func flagValueIfSet(c *cli.Context, flagName string) string {
+	if flagName == "" || !c.IsSet(flagName) {
+		return ""
+	}
+	return strings.TrimSpace(c.String(flagName))
+}
+
+// flagDefault returns the flag's default value (empty for most flags). Used
+// as the last resort after explicit flags and positionals.
+func flagDefault(c *cli.Context, flagName string) string {
+	if flagName == "" {
+		return ""
+	}
+	return strings.TrimSpace(c.String(flagName))
 }
 
 // PositionalSlot returns the value of flagName, or — when flagName is unset —
@@ -184,14 +205,12 @@ func PositionalAt(c *cli.Context, flagName string, index int) string {
 // addon="foo" (from flag), version="v1.2.3" — the version's positional index
 // is shifted from 2 down to 1 because --addon consumed a slot.
 func PositionalSlot(c *cli.Context, flagName string, priorFlags ...string) string {
-	if flagName != "" {
-		if v := strings.TrimSpace(c.String(flagName)); v != "" {
-			return v
-		}
+	if v := flagValueIfSet(c, flagName); v != "" {
+		return v
 	}
 	consumedByFlags := 0
 	for _, f := range priorFlags {
-		if f != "" && strings.TrimSpace(c.String(f)) != "" {
+		if flagValueIfSet(c, f) != "" {
 			consumedByFlags++
 		}
 	}
@@ -200,7 +219,7 @@ func PositionalSlot(c *cli.Context, flagName string, priorFlags ...string) strin
 	if idx < len(nonFlags) {
 		return nonFlags[idx]
 	}
-	return ""
+	return flagDefault(c, flagName)
 }
 
 // nonFlagArgs returns c.Args() with tokens beginning in "-" stripped. Needed

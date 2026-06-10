@@ -11,8 +11,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 
@@ -86,7 +88,7 @@ func runDescribe(c *cli.Context) error {
 		return err
 	}
 
-	ngName := runner.SecondPositional(c, "nodegroup")
+	ngName := runner.PositionalSlot(c, "nodegroup", "cluster")
 	if ngName == "" {
 		return fmt.Errorf("missing nodegroup name; pass as second argument or --nodegroup <name>")
 	}
@@ -143,17 +145,46 @@ func runScale(c *cli.Context) error {
 		DryRun:      c.Bool("dry-run"),
 	}
 
+	desired, minSize, maxSize := int32PtrIfSet(c, "desired"), int32PtrIfSet(c, "min"), int32PtrIfSet(c, "max")
+
+	if opts.DryRun {
+		return printScaleDryRun(ctx, eks.NewFromConfig(awsCfg), clusterName, c.String("nodegroup"), desired, minSize, maxSize)
+	}
+
 	return runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
-		return svc.Scale(
-			ctx,
-			clusterName,
-			c.String("nodegroup"),
-			int32PtrIfSet(c, "desired"),
-			int32PtrIfSet(c, "min"),
-			int32PtrIfSet(c, "max"),
-			opts,
-		)
+		return svc.Scale(ctx, clusterName, c.String("nodegroup"), desired, minSize, maxSize, opts)
 	})
+}
+
+// printScaleDryRun shows the current vs requested scaling configuration
+// without executing, honoring the flag's "Preview scaling impact" promise.
+func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, nodegroupName string, desired, minSize, maxSize *int32) error {
+	desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
+		ClusterName:   aws.String(clusterName),
+		NodegroupName: aws.String(nodegroupName),
+	})
+	if err != nil {
+		return awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))
+	}
+
+	color.Cyan("DRY RUN: Would scale nodegroup %s in cluster %s", nodegroupName, clusterName)
+	if sc := desc.Nodegroup.ScalingConfig; sc != nil {
+		printScaleChange := func(label string, current *int32, requested *int32) {
+			switch {
+			case requested == nil:
+				fmt.Printf("  %-8s %d (unchanged)\n", label+":", aws.ToInt32(current))
+			case aws.ToInt32(current) == *requested:
+				fmt.Printf("  %-8s %d (no change)\n", label+":", *requested)
+			default:
+				fmt.Printf("  %-8s %d -> %d\n", label+":", aws.ToInt32(current), *requested)
+			}
+		}
+		printScaleChange("Desired", sc.DesiredSize, desired)
+		printScaleChange("Min", sc.MinSize, minSize)
+		printScaleChange("Max", sc.MaxSize, maxSize)
+	}
+	fmt.Println("\nNo changes were made. Re-run without --dry-run to execute.")
+	return nil
 }
 
 // int32PtrIfSet returns &v for c.Int(name) when the flag was explicitly set,
@@ -212,10 +243,10 @@ func runUpdateAMI(c *cli.Context) error {
 	}
 
 	if flags.dryRun {
-		return dryrun.PerformDryRun(ctx, eksClient, clusterName, selectedNodegroups, flags.force, flags.quiet)
+		return dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.force, flags.quiet)
 	}
 
-	updates := startNodegroupUpdates(ctx, eksClient, clusterName, selectedNodegroups, flags)
+	updates := startNodegroupUpdates(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
 	if len(updates) == 0 {
 		color.Yellow("No nodegroup updates were started")
 		return nil
@@ -320,12 +351,17 @@ func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (do
 // selectNodegroupsForUpdate lists nodegroups matching pattern and confirms the
 // selection interactively when ambiguous.
 func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clusterName, pattern string) ([]string, error) {
-	out, err := eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{ClusterName: aws.String(clusterName)})
+	names, err := awsinternal.ListAllPages(ctx, "listing nodegroups",
+		func(rc context.Context, token *string) (*eks.ListNodegroupsOutput, error) {
+			return eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{ClusterName: aws.String(clusterName), NextToken: token})
+		},
+		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
+	)
 	if err != nil {
 		color.Red("Failed to list nodegroups: %v", err)
 		return nil, err
 	}
-	matches := awsinternal.MatchingNodegroups(out.Nodegroups, pattern)
+	matches := awsinternal.MatchingNodegroups(names, pattern)
 	selected, err := awsinternal.ConfirmNodegroupSelection(matches, pattern)
 	if err != nil {
 		color.Red("%v", err)
@@ -335,10 +371,15 @@ func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clust
 }
 
 // startNodegroupUpdates issues UpdateNodegroupVersion for each selected
-// nodegroup that isn't already updating, returning successful update progress
-// entries. Per-nodegroup failures are logged and skipped, matching the
-// original best-effort behavior.
-func startNodegroupUpdates(ctx context.Context, eksClient *eks.Client, clusterName string, nodegroups []string, flags updateAMIFlags) []refreshTypes.UpdateProgress {
+// nodegroup that isn't already updating or already on the latest AMI,
+// returning successful update progress entries. Per-nodegroup failures are
+// logged and skipped, matching the original best-effort behavior.
+//
+// The already-on-latest skip mirrors the dry-run preview (ActionSkipLatest) so
+// the real run matches what `--dry-run` promised; `--force` bypasses it.
+func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, nodegroups []string, flags updateAMIFlags) []refreshTypes.UpdateProgress {
+	skipLatest := newLatestAMISkipChecker(ctx, awsCfg, eksClient, clusterName, flags)
+
 	updates := make([]refreshTypes.UpdateProgress, 0, len(nodegroups))
 	for _, ng := range nodegroups {
 		desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
@@ -351,6 +392,10 @@ func startNodegroupUpdates(ctx context.Context, eksClient *eks.Client, clusterNa
 		}
 		if desc.Nodegroup.Status == ekstypes.NodegroupStatusUpdating {
 			color.Yellow("Nodegroup %s is already UPDATING. Skipping update.", ng)
+			continue
+		}
+		if skipLatest(desc.Nodegroup) {
+			color.Green("Nodegroup %s is already on the latest AMI. Skipping (use --force to update anyway).", ng)
 			continue
 		}
 		if !flags.quiet {
@@ -381,6 +426,41 @@ func startNodegroupUpdates(ctx context.Context, eksClient *eks.Client, clusterNa
 		}
 	}
 	return updates
+}
+
+// newLatestAMISkipChecker returns a predicate reporting whether a nodegroup is
+// already on the latest recommended AMI for its type and should be skipped.
+// With --force it always returns false. AMI resolution is best-effort: when
+// the current or latest AMI can't be determined the nodegroup is NOT skipped
+// (same as the dry-run preview's "AMI status unknown, update recommended").
+func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, flags updateAMIFlags) func(*ekstypes.Nodegroup) bool {
+	if flags.force {
+		return func(*ekstypes.Nodegroup) bool { return false }
+	}
+
+	clusterOut, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
+	if err != nil || clusterOut.Cluster == nil || clusterOut.Cluster.Version == nil {
+		return func(*ekstypes.Nodegroup) bool { return false }
+	}
+	k8sVersion := *clusterOut.Cluster.Version
+
+	ec2Client := ec2.NewFromConfig(awsCfg)
+	asgClient := autoscaling.NewFromConfig(awsCfg)
+	ssmClient := ssm.NewFromConfig(awsCfg)
+	latestByType := make(map[ekstypes.AMITypes]string)
+
+	return func(ng *ekstypes.Nodegroup) bool {
+		latest, ok := latestByType[ng.AmiType]
+		if !ok {
+			latest = awsinternal.LatestAmiIDForType(ctx, ssmClient, k8sVersion, ng.AmiType)
+			latestByType[ng.AmiType] = latest
+		}
+		if latest == "" {
+			return false
+		}
+		current := awsinternal.CurrentAmiID(ctx, ng, ec2Client, asgClient)
+		return current != "" && current == latest
+	}
 }
 
 func updateClusterAndNodegroupPatterns(c *cli.Context) (string, string) {

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -250,11 +252,22 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 }
 
 // forRegion returns a ServiceImpl bound to the given AWS region. It reuses the
-// shared cache, logger, and health checker.
+// shared cache and logger, but rebuilds the health checker: its EKS/CloudWatch/
+// ASG clients are region-bound, so reusing the parent's checker would evaluate
+// clusters against the wrong region's APIs.
 func (s *ServiceImpl) forRegion(region string) *ServiceImpl {
 	regionConfig := s.awsConfig.Copy()
 	regionConfig.Region = region
-	out := NewService(regionConfig, s.healthChecker, s.logger)
+	hc := s.healthChecker
+	if hc != nil {
+		hc = health.NewChecker(
+			eks.NewFromConfig(regionConfig),
+			nil,
+			cloudwatch.NewFromConfig(regionConfig),
+			autoscaling.NewFromConfig(regionConfig),
+		)
+	}
+	out := NewService(regionConfig, hc, s.logger)
 	out.cache = s.cache
 	return out
 }
@@ -322,16 +335,30 @@ func (s *ServiceImpl) ListAllRegionsWithMeta(ctx context.Context, options ListOp
 	}
 
 	allSummaries := make([]ClusterSummary, 0)
+	var failedRegions []string
+	var firstErr error
 	for i := 0; i < len(eksRegions); i++ {
 		result := <-resultChan
 		if result.err != nil {
 			s.logger.Warn("failed to list clusters in region", "region", result.region, "error", result.err)
+			failedRegions = append(failedRegions, result.region)
+			if firstErr == nil {
+				firstErr = result.err
+			}
 			continue
 		}
 		allSummaries = append(allSummaries, result.summaries...)
 	}
 
-	return allSummaries, len(eksRegions), nil
+	// Total failure must not masquerade as "no clusters found": expired
+	// credentials or a network outage fail every region at once.
+	if len(failedRegions) == len(eksRegions) && len(eksRegions) > 0 {
+		sort.Strings(failedRegions)
+		return nil, 0, fmt.Errorf("listing clusters failed in all %d regions (e.g. %s): %w",
+			len(eksRegions), failedRegions[0], firstErr)
+	}
+
+	return allSummaries, len(eksRegions) - len(failedRegions), nil
 }
 
 // Compare provides side-by-side cluster comparison

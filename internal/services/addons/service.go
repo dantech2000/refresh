@@ -27,6 +27,10 @@ type EKSAPI interface {
 type ServiceImpl struct {
 	eksClient EKSAPI
 	logger    *slog.Logger
+
+	// k8sVersions memoizes cluster name -> Kubernetes version so UpdateAll
+	// doesn't re-describe the cluster for every addon.
+	k8sVersions sync.Map
 }
 
 // NewService creates a new addon service
@@ -144,22 +148,22 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, addonName strin
 func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string, options UpdateOptions) (*AddonUpdateResult, error) {
 	s.logger.Info("updating addon", "cluster", clusterName, "addon", addonName, "version", options.Version)
 
+	// Resolve the cluster's Kubernetes version once; it scopes "latest"
+	// resolution to versions this cluster can actually run, and backs the
+	// compatibility validation for pinned versions.
+	k8sVersion := s.clusterK8sVersion(ctx, clusterName)
+
 	targetVersion := options.Version
 	if strings.EqualFold(targetVersion, "latest") || targetVersion == "" {
-		versions, err := s.GetAvailableVersions(ctx, addonName, "")
+		versions, err := s.GetAvailableVersions(ctx, addonName, k8sVersion)
 		if err != nil {
 			return nil, fmt.Errorf("resolving latest version: %w", err)
 		}
-		if len(versions) == 0 {
-			return nil, fmt.Errorf("no versions available for addon %s", addonName)
-		}
 		targetVersion = versions[0].Version
-	}
-
-	// Validate the target version is compatible with the cluster's Kubernetes version.
-	// For explicitly-specified versions this catches mismatches early; for "latest" it
-	// confirms the resolved version is valid for this cluster.
-	if err := s.validateVersionCompatibility(ctx, clusterName, addonName, targetVersion); err != nil {
+	} else if err := s.validateVersionCompatibility(ctx, k8sVersion, addonName, targetVersion); err != nil {
+		// Explicitly-specified versions are validated against the cluster's
+		// Kubernetes version to catch mismatches early. ("latest" is already
+		// scoped above, so re-validating it would be redundant.)
 		return nil, err
 	}
 

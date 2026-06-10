@@ -53,10 +53,22 @@ func Nodegroups(ctx context.Context, awsCfg aws.Config, clusterName string) ([]r
 		return nil, err
 	}
 
+	// The latest AMI is constant per (cluster version, AMI type); memoize the
+	// SSM lookup so it runs once per type instead of once per nodegroup.
+	latestAMICache := make(map[types.AMITypes]string)
+	latestAMI := func(amiType types.AMITypes) string {
+		if v, ok := latestAMICache[amiType]; ok {
+			return v
+		}
+		v := LatestAmiIDForType(ctx, ssmClient, k8sVersion, amiType)
+		latestAMICache[amiType] = v
+		return v
+	}
+
 	// Get details for each nodegroup
 	nodegroups := make([]refreshTypes.NodegroupInfo, 0, len(nodegroupNames))
 	for _, ngName := range nodegroupNames {
-		info, err := getNodegroupInfo(ctx, eksClient, ec2Client, autoscalingClient, ssmClient, clusterName, ngName, k8sVersion)
+		info, err := getNodegroupInfo(ctx, eksClient, ec2Client, autoscalingClient, clusterName, ngName, latestAMI)
 		if err != nil {
 			color.Red("Failed to describe nodegroup %s: %v", ngName, err)
 			continue
@@ -104,13 +116,15 @@ func listNodegroupNames(ctx context.Context, eksClient *eks.Client, clusterName 
 }
 
 // getNodegroupInfo retrieves detailed information about a single nodegroup.
+// latestAMI resolves the latest recommended AMI for the nodegroup's AMI type
+// (memoized by the caller).
 func getNodegroupInfo(
 	ctx context.Context,
 	eksClient *eks.Client,
 	ec2Client *ec2.Client,
 	autoscalingClient *autoscaling.Client,
-	ssmClient *ssm.Client,
-	clusterName, ngName, k8sVersion string,
+	clusterName, ngName string,
+	latestAMI func(types.AMITypes) string,
 ) (refreshTypes.NodegroupInfo, error) {
 	ngDesc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
 		ClusterName:   aws.String(clusterName),
@@ -121,13 +135,14 @@ func getNodegroupInfo(
 	}
 
 	ng := ngDesc.Nodegroup
+	currentAmi := CurrentAmiID(ctx, ng, ec2Client, autoscalingClient)
 	info := refreshTypes.NodegroupInfo{
 		Name:         aws.ToString(ng.NodegroupName),
 		Status:       formatNodegroupStatus(ng.Status),
 		InstanceType: getFirstInstanceType(ng.InstanceTypes),
 		Desired:      getDesiredSize(ng.ScalingConfig),
-		CurrentAmi:   CurrentAmiID(ctx, ng, ec2Client, autoscalingClient),
-		AmiStatus:    determineAMIStatus(ctx, ng, ec2Client, autoscalingClient, ssmClient, k8sVersion),
+		CurrentAmi:   currentAmi,
+		AmiStatus:    determineAMIStatus(ng, currentAmi, latestAMI(ng.AmiType)),
 	}
 
 	if info.CurrentAmi == "" {
@@ -161,27 +176,18 @@ func getDesiredSize(scalingConfig *types.NodegroupScalingConfig) int32 {
 	return 0
 }
 
-// determineAMIStatus determines the AMI status for a nodegroup.
-func determineAMIStatus(
-	ctx context.Context,
-	ng *types.Nodegroup,
-	ec2Client *ec2.Client,
-	autoscalingClient *autoscaling.Client,
-	ssmClient *ssm.Client,
-	k8sVersion string,
-) refreshTypes.AMIStatus {
+// determineAMIStatus determines the AMI status for a nodegroup given its
+// already-resolved current and latest AMI IDs.
+func determineAMIStatus(ng *types.Nodegroup, currentAmiID, latestAmiID string) refreshTypes.AMIStatus {
 	if ng.Status == types.NodegroupStatusUpdating {
 		return refreshTypes.AMIUpdating
 	}
 
-	currentAmiId := CurrentAmiID(ctx, ng, ec2Client, autoscalingClient)
-	latestAmiId := LatestAmiID(ctx, ssmClient, k8sVersion)
-
-	if currentAmiId == "" || latestAmiId == "" {
+	if currentAmiID == "" || latestAmiID == "" {
 		return refreshTypes.AMIUnknown
 	}
 
-	if currentAmiId == latestAmiId {
+	if currentAmiID == latestAmiID {
 		return refreshTypes.AMILatest
 	}
 

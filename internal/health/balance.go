@@ -53,7 +53,9 @@ func (hc *HealthChecker) CheckResourceBalance(ctx context.Context, clusterName s
 		utilizationScore -= (maxUtilization - 85) * 3 // Penalize high utilization
 	}
 
-	result.Score = int(math.Min(balanceScore, utilizationScore))
+	// Clamp to the documented 0-100 range: extreme variance/utilization would
+	// otherwise drive the score negative and skew the overall average.
+	result.Score = int(math.Max(0, math.Min(balanceScore, utilizationScore)))
 
 	// Determine status based on CPU-only analysis
 	if maxUtilization > 90 {

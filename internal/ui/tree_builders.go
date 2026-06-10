@@ -83,8 +83,11 @@ func (rtb *RegionTreeBuilder) AddRegion(name string, clusterCount int) *RegionTr
 	return rtb
 }
 
-// AddClusterToRegion adds a cluster to the current region
+// AddClusterToRegion adds a cluster to the current region. Clusters always
+// nest one level beneath their region header (AddRoot resets the level to 0,
+// so relying on the current level would render clusters as region siblings).
 func (rtb *RegionTreeBuilder) AddClusterToRegion(name, status string, nodeCount int32) *RegionTreeBuilder {
+	rtb.builder.level = 1
 	rtb.builder.AddStatus("CLUSTER", fmt.Sprintf("%s (%s, %d nodes)", name, status, nodeCount), status)
 	return rtb
 }

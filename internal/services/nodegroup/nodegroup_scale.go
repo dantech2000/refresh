@@ -38,12 +38,19 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 			ClusterName:   aws.String(clusterName),
 			NodegroupName: aws.String(nodegroupName),
 		})
-		if err == nil && desc.Nodegroup.ScalingConfig != nil && desc.Nodegroup.ScalingConfig.DesiredSize != nil {
-			if *desired < *desc.Nodegroup.ScalingConfig.DesiredSize {
-				pdb := s.healthChecker.CheckPodDisruptionBudgets(ctx)
-				if pdb.Status == health.StatusFail && pdb.IsBlocking {
-					return fmt.Errorf("PDB validation failed: %s", pdb.Message)
-				}
+		if err != nil {
+			// The user explicitly asked for PDB validation; silently skipping
+			// it on a describe failure would scale down without the check.
+			return fmt.Errorf("PDB validation: failed to describe nodegroup %s/%s: %w", clusterName, nodegroupName, err)
+		}
+		if desc.Nodegroup.ScalingConfig != nil && desc.Nodegroup.ScalingConfig.DesiredSize != nil &&
+			*desired < *desc.Nodegroup.ScalingConfig.DesiredSize {
+			pdb := s.healthChecker.CheckPodDisruptionBudgets(ctx)
+			switch pdb.Status {
+			case health.StatusFail:
+				return fmt.Errorf("PDB validation failed: %s", pdb.Message)
+			case health.StatusWarn:
+				s.logger.Warn("PDB validation warnings before scale-down", "message", pdb.Message, "details", pdb.Details)
 			}
 		}
 	}

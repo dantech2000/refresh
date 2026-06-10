@@ -63,7 +63,7 @@ func runDescribe(c *cli.Context) error {
 		return err
 	}
 
-	addonName := runner.SecondPositional(c, "addon")
+	addonName := runner.PositionalSlot(c, "addon", "cluster")
 	if addonName == "" {
 		return fmt.Errorf("missing add-on name; pass as second argument or --addon <name>")
 	}
@@ -136,7 +136,7 @@ func resolveAddonName(ctx context.Context, eksClient listAddonsAPI, clusterName,
 }
 
 func runUpdate(c *cli.Context) error {
-	ctx, cancel, cfg, err := runner.SetupAWS(c)
+	ctx, cancel, cfg, err := runner.SetupAWSStrict(c)
 	if err != nil {
 		return err
 	}
@@ -147,12 +147,16 @@ func runUpdate(c *cli.Context) error {
 		return err
 	}
 
-	addonName := runner.SecondPositional(c, "addon")
+	addonName := runner.PositionalSlot(c, "addon", "cluster")
 	if addonName == "" {
 		return fmt.Errorf("missing add-on name; pass as second argument or --addon <name>")
 	}
 
 	eksClient := eks.NewFromConfig(cfg)
+	addonName, err = resolveAddonName(ctx, eksClient, clusterName, addonName)
+	if err != nil {
+		return err
+	}
 
 	// version slot is third positional after (cluster, addon). PositionalSlot
 	// shifts the expected index down by 1 for each prior flag that was set, so
@@ -162,36 +166,34 @@ func runUpdate(c *cli.Context) error {
 		version = "latest"
 	}
 
-	targetVersion := version
-	if strings.EqualFold(version, "latest") {
-		avail, err := eksClient.DescribeAddonVersions(ctx, &eks.DescribeAddonVersionsInput{AddonName: aws.String(addonName)})
-		if err != nil || len(avail.Addons) == 0 || len(avail.Addons[0].AddonVersions) == 0 {
-			return awsinternal.FormatAWSError(err, "resolving latest add-on version")
-		}
-		targetVersion = aws.ToString(avail.Addons[0].AddonVersions[0].AddonVersion)
-	}
-
-	addonName, err = resolveAddonName(ctx, eksClient, clusterName, addonName)
+	// Route through the addons service so single-addon updates get the same
+	// version resolution, compatibility validation, optional health checks,
+	// and optional wait behavior as `update --all`.
+	addonSvc := addons.NewService(eksClient, factory.NewDefaultLogger(nil))
+	result, err := addonSvc.Update(ctx, clusterName, addonName, addons.UpdateOptions{
+		Version:     version,
+		DryRun:      c.Bool("dry-run"),
+		HealthCheck: c.Bool("health-check"),
+		Wait:        c.Bool("wait"),
+		WaitTimeout: c.Duration("wait-timeout"),
+	})
 	if err != nil {
 		return err
 	}
 
-	if c.Bool("dry-run") {
-		color.Cyan("DRY RUN: Would update add-on %s to version %s on cluster %s", addonName, targetVersion, clusterName)
-		return nil
+	switch result.Status {
+	case "DRY_RUN":
+		color.Cyan("DRY RUN: Would update add-on %s from %s to %s on cluster %s",
+			addonName, result.PreviousVersion, result.NewVersion, clusterName)
+	case "COMPLETED":
+		color.Green("Add-on %s updated to %s (was %s)", addonName, result.NewVersion, result.PreviousVersion)
+	case "COMPLETED_WITH_ISSUES":
+		color.Yellow("Add-on %s updated to %s, but the post-update health check found issues: %s",
+			addonName, result.NewVersion, result.HealthIssues)
+	default:
+		color.Green("Update started for add-on %s (ID: %s)", addonName, result.UpdateID)
+		color.White("Use AWS Console or 'refresh addon describe %s --addon %s' to check status.", clusterName, addonName)
 	}
-
-	out, err := eksClient.UpdateAddon(ctx, &eks.UpdateAddonInput{
-		ClusterName:  aws.String(clusterName),
-		AddonName:    aws.String(addonName),
-		AddonVersion: aws.String(targetVersion),
-	})
-	if err != nil {
-		return awsinternal.FormatAWSError(err, "updating add-on")
-	}
-
-	color.Green("Update started for add-on %s (ID: %s)", addonName, aws.ToString(out.Update.Id))
-	color.White("Use AWS Console or 'refresh addon describe %s --addon %s' to check status.", clusterName, addonName)
 	return nil
 }
 
@@ -245,9 +247,30 @@ func runUpdateAll(c *cli.Context) error {
 		"results": results,
 	}
 	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+		if err != nil {
+			return err
+		}
+		return updateAllFailureError(results)
+	}
+	if err := outputUpdateAllResults(clusterName, results, options.DryRun); err != nil {
 		return err
 	}
-	return outputUpdateAllResults(clusterName, results, options.DryRun)
+	return updateAllFailureError(results)
+}
+
+// updateAllFailureError returns a non-nil error when any addon update failed,
+// so `addon update --all` exits non-zero and scripts can detect failure.
+func updateAllFailureError(results []addons.AddonUpdateResult) error {
+	failed := 0
+	for _, r := range results {
+		if strings.HasPrefix(r.Status, "FAILED") || r.Status == "WAIT_FAILED" {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d addon update(s) failed", failed, len(results))
+	}
+	return nil
 }
 
 func fetchAddons(ctx context.Context, eksClient *eks.Client, clusterName string, withHealth bool) ([]addonRow, error) {
@@ -280,9 +303,8 @@ func mapAddonHealth(s ekstypes.AddonStatus) string {
 	switch s {
 	case ekstypes.AddonStatusActive:
 		return ui.BadgePass()
-	case ekstypes.AddonStatusDegraded:
-		return ui.BadgeFail()
-	case ekstypes.AddonStatusCreateFailed, ekstypes.AddonStatusDeleteFailed:
+	case ekstypes.AddonStatusDegraded, ekstypes.AddonStatusCreateFailed,
+		ekstypes.AddonStatusUpdateFailed, ekstypes.AddonStatusDeleteFailed:
 		return ui.BadgeFail()
 	case ekstypes.AddonStatusCreating, ekstypes.AddonStatusDeleting, ekstypes.AddonStatusUpdating:
 		return ui.BadgeInProgress()
