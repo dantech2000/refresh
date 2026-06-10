@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
@@ -80,9 +81,46 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 	return svc
 }
 
+// supportedFilterKeys maps normalized --filter keys to a matcher against a
+// built summary. Keys are matched case-insensitively.
+var supportedFilterKeys = map[string]func(s NodegroupSummary, want string) bool{
+	"name":         func(s NodegroupSummary, want string) bool { return strings.Contains(strings.ToLower(s.Name), strings.ToLower(want)) },
+	"status":       func(s NodegroupSummary, want string) bool { return strings.EqualFold(s.Status, want) },
+	"instancetype": func(s NodegroupSummary, want string) bool { return strings.EqualFold(s.InstanceType, want) },
+	"amistatus":    func(s NodegroupSummary, want string) bool { return strings.EqualFold(s.AMIStatus.PlainString(), want) },
+}
+
+// validateFilters rejects unknown filter keys up front so a typo'd
+// --filter doesn't silently match everything.
+func validateFilters(filters map[string]string) error {
+	for k := range filters {
+		if _, ok := supportedFilterKeys[normalizeFilterKey(k)]; !ok {
+			return fmt.Errorf("unsupported filter key %q (supported: name, status, instanceType, amiStatus)", k)
+		}
+	}
+	return nil
+}
+
+func normalizeFilterKey(k string) string {
+	return strings.ToLower(strings.ReplaceAll(k, "-", ""))
+}
+
+func matchesFilters(s NodegroupSummary, filters map[string]string) bool {
+	for k, want := range filters {
+		if match := supportedFilterKeys[normalizeFilterKey(k)]; match != nil && !match(s, want) {
+			return false
+		}
+	}
+	return true
+}
+
 // List returns basic nodegroup summaries for a cluster.
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, error) {
 	s.logger.Info("listing nodegroups", "cluster", clusterName, "options", options)
+
+	if err := validateFilters(options.Filters); err != nil {
+		return nil, err
+	}
 
 	clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
@@ -118,9 +156,13 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 			continue
 		}
 		ng := desc.Nodegroup
+		var desiredSize int32
+		if ng.ScalingConfig != nil {
+			desiredSize = aws.ToInt32(ng.ScalingConfig.DesiredSize)
+		}
 		ready := int32(0)
-		if ng.ScalingConfig != nil && ng.Status == ekstypes.NodegroupStatusActive {
-			ready = aws.ToInt32(ng.ScalingConfig.DesiredSize)
+		if ng.Status == ekstypes.NodegroupStatusActive {
+			ready = desiredSize
 		}
 		instanceType := "Unknown"
 		if len(ng.InstanceTypes) > 0 {
@@ -135,10 +177,13 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 			Name:         aws.ToString(ng.NodegroupName),
 			Status:       string(ng.Status),
 			InstanceType: instanceType,
-			DesiredSize:  aws.ToInt32(ng.ScalingConfig.DesiredSize),
+			DesiredSize:  desiredSize,
 			ReadyNodes:   ready,
 			CurrentAMI:   currentAmiId,
 			AMIStatus:    amiStatus,
+		}
+		if !matchesFilters(summary, options.Filters) {
+			continue
 		}
 		if options.ShowUtilization && s.util != nil {
 			window := normalizeWindow(options.Timeframe)
@@ -150,8 +195,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		}
 		if options.ShowCosts && s.cost != nil {
 			if _, perMonth, ok := s.cost.EstimateOnDemandUSD(ctx, instanceType); ok {
-				nodes := float64(aws.ToInt32(ng.ScalingConfig.DesiredSize))
-				summary.Cost = SummaryCost{Monthly: perMonth * nodes}
+				summary.Cost = SummaryCost{Monthly: perMonth * float64(desiredSize)}
 			}
 		}
 		summaries = append(summaries, summary)
@@ -186,6 +230,16 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
 	amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
 
+	var scaling ScalingConfig
+	if sc := ng.ScalingConfig; sc != nil {
+		scaling = ScalingConfig{
+			DesiredSize: aws.ToInt32(sc.DesiredSize),
+			MinSize:     aws.ToInt32(sc.MinSize),
+			MaxSize:     aws.ToInt32(sc.MaxSize),
+			AutoScaling: true,
+		}
+	}
+
 	details := &NodegroupDetails{
 		Name:         aws.ToString(ng.NodegroupName),
 		Status:       string(ng.Status),
@@ -195,12 +249,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 		CurrentAMI:   currentAmiId,
 		LatestAMI:    latestAmiId,
 		AMIStatus:    amiStatus,
-		Scaling: ScalingConfig{
-			DesiredSize: aws.ToInt32(ng.ScalingConfig.DesiredSize),
-			MinSize:     aws.ToInt32(ng.ScalingConfig.MinSize),
-			MaxSize:     aws.ToInt32(ng.ScalingConfig.MaxSize),
-			AutoScaling: ng.ScalingConfig != nil,
-		},
+		Scaling:      scaling,
 	}
 	if options.ShowUtilization && s.util != nil {
 		window := normalizeWindow(options.Timeframe)
@@ -212,7 +261,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	}
 	if options.ShowCosts && s.cost != nil {
 		if _, perMonth, ok := s.cost.EstimateOnDemandUSD(ctx, details.InstanceType); ok {
-			nodes := float64(aws.ToInt32(ng.ScalingConfig.DesiredSize))
+			nodes := float64(scaling.DesiredSize)
 			details.Cost = CostAnalysis{
 				CurrentMonthlyCost:   perMonth * nodes,
 				ProjectedMonthlyCost: perMonth * nodes,

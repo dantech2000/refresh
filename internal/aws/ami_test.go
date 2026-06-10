@@ -244,9 +244,18 @@ func TestInferSSMPath_BottlerocketArm64(t *testing.T) {
 	}
 }
 
-func TestInferSSMPath_UnknownFallsBackToAL2(t *testing.T) {
-	path := inferSSMPath("/base", "UNKNOWN_TYPE")
-	if !strings.Contains(path, "amazon-linux-2") {
-		t.Errorf("unknown type should fall back to AL2, got %q", path)
+func TestInferSSMPath_UnknownReturnsEmpty(t *testing.T) {
+	// Unrecognized AMI types must resolve to "" (status Unknown) rather than
+	// silently comparing against the AL2 parameter, which is wrong for other
+	// families and absent entirely for k8s >= 1.33.
+	if path := inferSSMPath("/base", "UNKNOWN_TYPE"); path != "" {
+		t.Errorf("unknown type should return empty path, got %q", path)
+	}
+}
+
+func TestInferSSMPath_AL2Arm64(t *testing.T) {
+	path := inferSSMPath("/base", "AL2_ARM_64")
+	if !strings.Contains(path, "amazon-linux-2-arm64") {
+		t.Errorf("unexpected path: %q", path)
 	}
 }

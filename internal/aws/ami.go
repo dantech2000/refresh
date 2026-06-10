@@ -223,8 +223,17 @@ func inferSSMPath(basePrefix, amiTypeStr string) string {
 		}
 		return basePrefix + "/bottlerocket/x86_64/recommended/image_id"
 
-	default:
-		// Default to AL2 x86_64
+	case strings.Contains(amiTypeStr, "AL2"):
+		if isArm {
+			return basePrefix + "/amazon-linux-2-arm64/recommended/image_id"
+		}
 		return basePrefix + "/amazon-linux-2/recommended/image_id"
+
+	default:
+		// Unrecognized AMI type (future families, custom strings): resolving
+		// against the AL2 path would silently compare the wrong AMI — and the
+		// AL2 parameter no longer exists for k8s >= 1.33. Report "unknown"
+		// instead.
+		return ""
 	}
 }

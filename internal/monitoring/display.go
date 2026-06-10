@@ -68,8 +68,17 @@ func printUpdateProgressTree(updates []refreshTypes.UpdateProgress) int {
 		statusColor := ui.GetStatusColor(update.Status)
 
 		statusText := statusColor(string(update.Status))
-		if update.ErrorMessage != "" {
-			statusText = color.RedString("FAILED: %s", update.ErrorMessage)
+		switch {
+		case update.Status == types.UpdateStatusFailed || update.Status == types.UpdateStatusCancelled:
+			if update.ErrorMessage != "" {
+				statusText = color.RedString("%s: %s", string(update.Status), update.ErrorMessage)
+			}
+		case update.ErrorMessage != "":
+			// AWS reported errors but the update is not terminal yet.
+			statusText = fmt.Sprintf("%s %s", statusText, color.YellowString("(errors: %s)", update.ErrorMessage))
+		case update.LastCheckError != "":
+			// The status poll failed; the update itself may still be running.
+			statusText = fmt.Sprintf("%s %s", statusText, color.YellowString("(status check failing, retrying: %s)", update.LastCheckError))
 		}
 
 		fmt.Printf("%s├── Status: %s\n", itemPrefix, statusText)

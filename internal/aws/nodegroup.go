@@ -92,27 +92,15 @@ func getClusterVersion(ctx context.Context, eksClient *eks.Client, clusterName s
 
 // listNodegroupNames retrieves all nodegroup names for a cluster using pagination.
 func listNodegroupNames(ctx context.Context, eksClient *eks.Client, clusterName string) ([]string, error) {
-	var nodegroupNames []string
-	var nextToken *string
-
-	for {
-		ngOut, err := eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
-			ClusterName: aws.String(clusterName),
-			NextToken:   nextToken,
-		})
-		if err != nil {
-			return nil, FormatAWSError(err, "listing nodegroups")
-		}
-
-		nodegroupNames = append(nodegroupNames, ngOut.Nodegroups...)
-
-		if ngOut.NextToken == nil {
-			break
-		}
-		nextToken = ngOut.NextToken
-	}
-
-	return nodegroupNames, nil
+	return ListAllPages(ctx, "listing nodegroups",
+		func(rc context.Context, token *string) (*eks.ListNodegroupsOutput, error) {
+			return eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
+				ClusterName: aws.String(clusterName),
+				NextToken:   token,
+			})
+		},
+		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
+	)
 }
 
 // getNodegroupInfo retrieves detailed information about a single nodegroup.
@@ -236,12 +224,13 @@ func promptForNodegroupConfirmation(matches []string, pattern string) ([]string,
 
 	color.Cyan("Update all %d matching nodegroups? (y/N): ", len(matches))
 
-	var response string
-	if _, err := fmt.Scanln(&response); err != nil {
+	response, err := readPromptLine()
+	if err != nil {
 		return nil, fmt.Errorf("operation cancelled: failed to read input")
 	}
 
-	response = strings.ToLower(strings.TrimSpace(response))
+	// Default is No: bare Enter (or anything but yes) cancels.
+	response = strings.ToLower(response)
 	if response == "y" || response == "yes" {
 		return matches, nil
 	}

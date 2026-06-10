@@ -110,11 +110,12 @@ func ParseFilters(filters []string) map[string]string {
 // when explicitly set (so positionals can fill later slots), otherwise the
 // first positional arg.
 func RequestedCluster(c *cli.Context) string {
+	nonFlags := nonFlagArgs(c) // also applies trailing flags to the context
 	if v := flagValueIfSet(c, "cluster"); v != "" {
 		return v
 	}
-	if first := c.Args().First(); strings.TrimSpace(first) != "" {
-		return first
+	if len(nonFlags) > 0 && strings.TrimSpace(nonFlags[0]) != "" {
+		return nonFlags[0]
 	}
 	return strings.TrimSpace(c.String("cluster"))
 }
@@ -155,10 +156,10 @@ func SecondPositional(c *cli.Context, flagName string) string {
 // argument at index (0-indexed) if the flag is not set. Does NOT account for
 // prior flags absorbing positional slots — use PositionalSlot for that.
 func PositionalAt(c *cli.Context, flagName string, index int) string {
+	nonFlags := nonFlagArgs(c) // also applies trailing flags to the context
 	if v := flagValueIfSet(c, flagName); v != "" {
 		return v
 	}
-	nonFlags := nonFlagArgs(c)
 	if index < len(nonFlags) {
 		return nonFlags[index]
 	}
@@ -205,6 +206,7 @@ func flagDefault(c *cli.Context, flagName string) string {
 // addon="foo" (from flag), version="v1.2.3" — the version's positional index
 // is shifted from 2 down to 1 because --addon consumed a slot.
 func PositionalSlot(c *cli.Context, flagName string, priorFlags ...string) string {
+	nonFlags := nonFlagArgs(c) // also applies trailing flags to the context
 	if v := flagValueIfSet(c, flagName); v != "" {
 		return v
 	}
@@ -215,24 +217,88 @@ func PositionalSlot(c *cli.Context, flagName string, priorFlags ...string) strin
 		}
 	}
 	idx := len(priorFlags) - consumedByFlags
-	nonFlags := nonFlagArgs(c)
 	if idx < len(nonFlags) {
 		return nonFlags[idx]
 	}
 	return flagDefault(c, flagName)
 }
 
-// nonFlagArgs returns c.Args() with tokens beginning in "-" stripped. Needed
-// because urfave/cli leaves flag-like tokens that appear after a positional
-// in c.Args() (the parser stops at the first non-flag).
+// ApplyTrailingFlags re-parses flag tokens that appear after the first
+// positional argument (urfave/cli v2 stops flag parsing there and would
+// otherwise silently ignore them) and applies recognized flags to the
+// context. Commands that read flags before any positional helper runs can
+// call this explicitly; the positional helpers invoke it implicitly.
+func ApplyTrailingFlags(c *cli.Context) {
+	_ = nonFlagArgs(c)
+}
+
+// nonFlagArgs returns the true positional arguments from c.Args(). Flag
+// tokens that appear after the first positional are applied to the context
+// via c.Set (so `refresh nodegroup update-ami my-cluster --force` works), and
+// value-taking flags consume their value token so it is never mistaken for a
+// positional (`describe my-cluster --timeframe 1h` must not read "1h" as a
+// nodegroup name).
 func nonFlagArgs(c *cli.Context) []string {
+	type flagInfo struct {
+		canonical  string
+		takesValue bool
+	}
+	flagsByName := make(map[string]flagInfo)
+	if c.Command != nil {
+		for _, f := range c.Command.Flags {
+			names := f.Names()
+			if len(names) == 0 {
+				continue
+			}
+			_, isBool := f.(*cli.BoolFlag)
+			info := flagInfo{canonical: names[0], takesValue: !isBool}
+			for _, n := range names {
+				flagsByName[n] = info
+			}
+		}
+	}
+
 	args := c.Args().Slice()
 	out := make([]string, 0, len(args))
-	for _, tok := range args {
-		if strings.HasPrefix(tok, "-") {
+	terminated := false // saw "--": everything after is positional
+	for i := 0; i < len(args); i++ {
+		tok := args[i]
+		if terminated || !strings.HasPrefix(tok, "-") || tok == "-" {
+			out = append(out, tok)
 			continue
 		}
-		out = append(out, tok)
+		if tok == "--" {
+			terminated = true
+			continue
+		}
+
+		name := strings.TrimLeft(tok, "-")
+		value := ""
+		hasInline := false
+		if eq := strings.Index(name, "="); eq >= 0 {
+			value = name[eq+1:]
+			name = name[:eq]
+			hasInline = true
+		}
+
+		info, known := flagsByName[name]
+		if !known {
+			// Unknown flag-like token: drop it without guessing whether the
+			// next token is its value.
+			continue
+		}
+		switch {
+		case !info.takesValue:
+			if !hasInline {
+				value = "true"
+			}
+			_ = c.Set(info.canonical, value)
+		case hasInline:
+			_ = c.Set(info.canonical, value)
+		case i+1 < len(args):
+			_ = c.Set(info.canonical, args[i+1])
+			i++ // consume the value token
+		}
 	}
 	return out
 }

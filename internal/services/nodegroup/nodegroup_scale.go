@@ -58,6 +58,9 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 	input := &eks.UpdateNodegroupConfigInput{
 		ClusterName:   aws.String(clusterName),
 		NodegroupName: aws.String(nodegroupName),
+		// Pin the idempotency token so WithRetry re-issues the SAME request
+		// instead of submitting a fresh update per attempt.
+		ClientRequestToken: aws.String(common.IdempotencyToken()),
 	}
 	if desired != nil || min != nil || max != nil {
 		input.ScalingConfig = &ekstypes.NodegroupScalingConfig{

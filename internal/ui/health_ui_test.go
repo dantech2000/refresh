@@ -162,7 +162,9 @@ func TestPromptContinueWithWarnings(t *testing.T) {
 		input string
 		want  bool
 	}{
-		{"\n", true},
+		// Bare Enter declines: this prompt gates an update on a cluster with
+		// health warnings, so the safe answer must be the default.
+		{"\n", false},
 		{"y\n", true},
 		{"yes\n", true},
 		{"n\n", false},

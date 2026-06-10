@@ -200,6 +200,9 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 		ClusterName:  aws.String(clusterName),
 		AddonName:    aws.String(addonName),
 		AddonVersion: aws.String(targetVersion),
+		// Pin the idempotency token so WithRetry re-issues the SAME request
+		// instead of submitting a fresh update per attempt.
+		ClientRequestToken: aws.String(common.IdempotencyToken()),
 	}
 	if options.Configuration != "" {
 		input.ConfigurationValues = aws.String(options.Configuration)

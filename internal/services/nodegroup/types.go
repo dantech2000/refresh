@@ -9,22 +9,19 @@ import (
 
 // ListOptions controls nodegroup listing behavior
 type ListOptions struct {
-	ShowHealth      bool              `json:"showHealth"`
 	ShowCosts       bool              `json:"showCosts"`
 	ShowUtilization bool              `json:"showUtilization"`
-	ShowInstances   bool              `json:"showInstances"`
 	Filters         map[string]string `json:"filters"`
 	Timeframe       string            `json:"timeframe"`
 }
 
 // DescribeOptions controls describe behavior for nodegroups
 type DescribeOptions struct {
-	ShowInstances    bool   `json:"showInstances"`
-	ShowUtilization  bool   `json:"showUtilization"`
-	ShowWorkloads    bool   `json:"showWorkloads"`
-	ShowCosts        bool   `json:"showCosts"`
-	ShowOptimization bool   `json:"showOptimization"`
-	Timeframe        string `json:"timeframe"`
+	ShowInstances   bool   `json:"showInstances"`
+	ShowUtilization bool   `json:"showUtilization"`
+	ShowWorkloads   bool   `json:"showWorkloads"`
+	ShowCosts       bool   `json:"showCosts"`
+	Timeframe       string `json:"timeframe"`
 }
 
 // ScaleOptions controls intelligent scaling behavior

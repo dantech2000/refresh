@@ -46,10 +46,8 @@ func runList(c *cli.Context) error {
 
 	filters := runner.ParseFilters(c.StringSlice("filter"))
 	opts := nodegroupsvc.ListOptions{
-		ShowHealth:      c.Bool("show-health"),
 		ShowCosts:       c.Bool("show-costs"),
 		ShowUtilization: c.Bool("show-utilization"),
-		ShowInstances:   c.Bool("show-instances"),
 		Filters:         filters,
 		Timeframe:       c.String("timeframe"),
 	}
@@ -97,12 +95,11 @@ func runDescribe(c *cli.Context) error {
 	svc := factory.NewNodegroupService(awsCfg, false, logger)
 
 	opts := nodegroupsvc.DescribeOptions{
-		ShowInstances:    c.Bool("show-instances"),
-		ShowUtilization:  c.Bool("show-utilization"),
-		ShowWorkloads:    c.Bool("show-workloads"),
-		ShowCosts:        c.Bool("show-costs"),
-		ShowOptimization: c.Bool("show-optimization"),
-		Timeframe:        c.String("timeframe"),
+		ShowInstances:   c.Bool("show-instances"),
+		ShowUtilization: c.Bool("show-utilization"),
+		ShowWorkloads:   c.Bool("show-workloads"),
+		ShowCosts:       c.Bool("show-costs"),
+		Timeframe:       c.String("timeframe"),
 	}
 
 	var details *nodegroupsvc.NodegroupDetails
@@ -204,13 +201,16 @@ type updateAMIFlags struct {
 }
 
 func readUpdateAMIFlags(c *cli.Context) updateAMIFlags {
+	// Flags placed after positional args (e.g. `update-ami my-cluster
+	// --health-only`) are not parsed by urfave/cli; apply them first.
+	runner.ApplyTrailingFlags(c)
 	return updateAMIFlags{
 		force:           c.Bool("force"),
 		dryRun:          c.Bool("dry-run"),
 		noWait:          c.Bool("no-wait"),
 		quiet:           c.Bool("quiet"),
 		skipHealthCheck: c.Bool("skip-health-check"),
-		healthOnly:      updateBoolFlag(c, "health-only", "H"),
+		healthOnly:      c.Bool("health-only"),
 		timeout:         c.Duration("timeout"),
 		pollInterval:    c.Duration("poll-interval"),
 	}
@@ -463,59 +463,11 @@ func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *
 	}
 }
 
+// updateClusterAndNodegroupPatterns resolves the (cluster, nodegroup) slots
+// from flags and positionals via the shared runner helpers, which also apply
+// any flags that appear after the positional arguments.
 func updateClusterAndNodegroupPatterns(c *cli.Context) (string, string) {
-	clusterPattern := strings.TrimSpace(c.String("cluster"))
-	nodegroupPattern := strings.TrimSpace(c.String("nodegroup"))
-	nonFlags := nonFlagArgs(c)
-
-	if clusterPattern == "" && len(nonFlags) > 0 {
-		clusterPattern = nonFlags[0]
-	}
-
-	if nodegroupPattern == "" {
-		nodegroupArgIndex := 1
-		if c.String("cluster") != "" {
-			nodegroupArgIndex = 0
-		}
-		if len(nonFlags) > nodegroupArgIndex {
-			nodegroupPattern = nonFlags[nodegroupArgIndex]
-		}
-	}
-
+	clusterPattern := runner.RequestedCluster(c)
+	nodegroupPattern := runner.PositionalSlot(c, "nodegroup", "cluster")
 	return clusterPattern, nodegroupPattern
-}
-
-func nonFlagArgs(c *cli.Context) []string {
-	if c == nil {
-		return nil
-	}
-	args := c.Args().Slice()
-	nonFlags := make([]string, 0, len(args))
-	for _, arg := range args {
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		nonFlags = append(nonFlags, arg)
-	}
-	return nonFlags
-}
-
-func updateBoolFlag(c *cli.Context, name string, aliases ...string) bool {
-	if c == nil {
-		return false
-	}
-	if c.Bool(name) {
-		return true
-	}
-	for _, arg := range c.Args().Slice() {
-		if arg == "--"+name {
-			return true
-		}
-		for _, alias := range aliases {
-			if arg == "-"+alias {
-				return true
-			}
-		}
-	}
-	return false
 }

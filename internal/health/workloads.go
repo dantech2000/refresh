@@ -55,6 +55,13 @@ func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResul
 			if pod.Status.Phase == "Succeeded" {
 				continue
 			}
+			// Skip stale Failed pods left behind by eviction or node shutdown:
+			// they linger until garbage collection and say nothing about the
+			// health of the live replacement pods.
+			if pod.Status.Phase == "Failed" &&
+				(pod.Status.Reason == "Evicted" || pod.Status.Reason == "Shutdown" || pod.Status.Reason == "NodeShutdown") {
+				continue
+			}
 
 			totalPods++
 			namespacePods++
