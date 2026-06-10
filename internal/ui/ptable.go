@@ -98,6 +98,12 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+// CyanHeaders returns the standard cyan header-color option used by all
+// command tables.
+func CyanHeaders() PTableOption {
+	return WithPTableHeaderColor(func(s string) string { return color.CyanString(s) })
+}
+
 // CreateCompatibleTable is a convenience function that creates a PTable with the same
 // interface as the original ui.NewTable function, making migration easier.
 func CreateCompatibleTable(columns []Column, headerColor func(string) string) *PTable {
@@ -116,5 +122,5 @@ func NewPTableWithHeaders(headers []string) *PTable {
 		}
 	}
 
-	return NewPTable(columns, WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
+	return NewPTable(columns, CyanHeaders())
 }

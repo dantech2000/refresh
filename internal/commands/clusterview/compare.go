@@ -18,7 +18,7 @@ func OutputComparisonTable(comparison *clustersvc.ClusterComparison, elapsed tim
 		names[i] = c.Name
 	}
 	ui.Outf("Cluster Comparison: %s\n", color.CyanString(strings.Join(names, " vs ")))
-	ui.Outf("Analyzed in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+	ui.Outf("Analyzed in %s\n\n", ui.ElapsedString(elapsed))
 
 	s := comparison.Summary
 	summaryTbl := ui.NewDynamicTable()
@@ -42,7 +42,7 @@ func OutputComparisonTable(comparison *clustersvc.ClusterComparison, elapsed tim
 		{Title: "VERSION", Min: 7, Align: ui.AlignLeft},
 		{Title: "HEALTH", Min: 15, Align: ui.AlignLeft},
 	}
-	tbl := ui.NewPTable(cols, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
+	tbl := ui.NewPTable(cols, ui.CyanHeaders())
 	for _, cl := range comparison.Clusters {
 		healthStatus := color.WhiteString("UNKNOWN")
 		if cl.Health != nil {

@@ -122,3 +122,25 @@ func TestPositionalAt_OutOfRangeReturnsEmpty(t *testing.T) {
 		t.Errorf("got %q, want empty", got)
 	}
 }
+
+// ── ParseFilters ──────────────────────────────────────────────────────────────
+
+func TestParseFilters(t *testing.T) {
+	got := ParseFilters([]string{"name=prod", "env=staging", "malformed", "k=v=extra"})
+	if len(got) != 3 {
+		t.Fatalf("ParseFilters returned %d entries, want 3: %v", len(got), got)
+	}
+	if got["name"] != "prod" || got["env"] != "staging" {
+		t.Errorf("ParseFilters = %v", got)
+	}
+	// SplitN(2) keeps everything after the first "=" as the value.
+	if got["k"] != "v=extra" {
+		t.Errorf(`got["k"] = %q, want "v=extra"`, got["k"])
+	}
+}
+
+func TestParseFilters_Empty(t *testing.T) {
+	if got := ParseFilters(nil); len(got) != 0 {
+		t.Errorf("ParseFilters(nil) = %v, want empty map", got)
+	}
+}

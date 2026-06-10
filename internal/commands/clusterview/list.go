@@ -29,10 +29,9 @@ func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Dur
 	} else {
 		ui.Outf("EKS Clusters (%d clusters)\n", len(summaries))
 	}
-	ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+	ui.PrintElapsed(elapsed)
 
-	headerColor := func(s string) string { return color.CyanString(s) }
-	cols := []ui.Column{{Title: "CLUSTER", Min: 14, Align: ui.AlignLeft}}
+		cols := []ui.Column{{Title: "CLUSTER", Min: 14, Align: ui.AlignLeft}}
 	if multiRegion {
 		cols = append(cols, ui.Column{Title: "REGION", Min: 10, Align: ui.AlignLeft})
 	}
@@ -45,7 +44,7 @@ func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Dur
 	}
 	cols = append(cols, ui.Column{Title: "READY/DESIRED", Min: 15, Align: ui.AlignRight})
 
-	tbl := ui.NewPTable(cols, ui.WithPTableHeaderColor(headerColor))
+	tbl := ui.NewPTable(cols, ui.CyanHeaders())
 	for _, s := range summaries {
 		row := []string{s.Name}
 		if multiRegion {

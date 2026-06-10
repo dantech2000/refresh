@@ -28,7 +28,7 @@ func outputPDBCoverageYAML(result workloads.PDBCoverageResult) error {
 
 func outputPDBCoverageTable(result workloads.PDBCoverageResult, elapsed time.Duration) error {
 	ui.Outf("PDB Coverage\n")
-	ui.Outf("Retrieved in %s\n\n", color.GreenString("%.1fs", elapsed.Seconds()))
+	ui.PrintElapsed(elapsed)
 
 	if result.Summary.TotalDeployments == 0 {
 		color.Yellow("No deployments found")
@@ -41,7 +41,7 @@ func outputPDBCoverageTable(result workloads.PDBCoverageResult, elapsed time.Dur
 		{Title: "STATUS", Min: 9, Align: ui.AlignLeft},
 		{Title: "PDBS", Min: 4, Align: ui.AlignLeft},
 	}
-	table := ui.NewPTable(cols, ui.WithPTableHeaderColor(func(s string) string { return color.CyanString(s) }))
+	table := ui.NewPTable(cols, ui.CyanHeaders())
 	for _, row := range result.Deployments {
 		status := color.RedString("MISSING")
 		if row.HasPDB {
