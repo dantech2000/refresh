@@ -47,41 +47,47 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 		return nil, err
 	}
 
-	var addons []AddonInfo
-
-	for _, addonName := range addonNames {
-		describeOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
-			return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
-				ClusterName: aws.String(clusterName),
-				AddonName:   aws.String(addonName),
+	results := common.ForEachParallel(ctx, addonNames, common.DefaultItemConcurrency,
+		func(fctx context.Context, addonName string) *AddonInfo {
+			describeOutput, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
+				return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
+					ClusterName: aws.String(clusterName),
+					AddonName:   aws.String(addonName),
+				})
 			})
+			if err != nil {
+				s.logger.Warn("failed to describe add-on", "cluster", clusterName, "addon", addonName, "error", err)
+				return nil
+			}
+
+			addon := describeOutput.Addon
+			health := "Unknown"
+
+			// Determine health status based on add-on status
+			switch addon.Status {
+			case ekstypes.AddonStatusActive:
+				health = "Healthy"
+			case ekstypes.AddonStatusDegraded:
+				health = "Issues"
+			case ekstypes.AddonStatusCreateFailed, ekstypes.AddonStatusDeleteFailed, ekstypes.AddonStatusUpdateFailed:
+				health = "Failed"
+			case ekstypes.AddonStatusCreating, ekstypes.AddonStatusDeleting, ekstypes.AddonStatusUpdating:
+				health = "Updating"
+			}
+
+			return &AddonInfo{
+				Name:    aws.ToString(addon.AddonName),
+				Version: aws.ToString(addon.AddonVersion),
+				Status:  string(addon.Status),
+				Health:  health,
+			}
 		})
-		if err != nil {
-			s.logger.Warn("failed to describe add-on", "cluster", clusterName, "addon", addonName, "error", err)
-			continue
+
+	var addons []AddonInfo
+	for _, r := range results {
+		if r != nil {
+			addons = append(addons, *r)
 		}
-
-		addon := describeOutput.Addon
-		health := "Unknown"
-
-		// Determine health status based on add-on status
-		switch addon.Status {
-		case ekstypes.AddonStatusActive:
-			health = "Healthy"
-		case ekstypes.AddonStatusDegraded:
-			health = "Issues"
-		case ekstypes.AddonStatusCreateFailed, ekstypes.AddonStatusDeleteFailed:
-			health = "Failed"
-		case ekstypes.AddonStatusCreating, ekstypes.AddonStatusDeleting, ekstypes.AddonStatusUpdating:
-			health = "Updating"
-		}
-
-		addons = append(addons, AddonInfo{
-			Name:    aws.ToString(addon.AddonName),
-			Version: aws.ToString(addon.AddonVersion),
-			Status:  string(addon.Status),
-			Health:  health,
-		})
 	}
 
 	return addons, nil
@@ -102,40 +108,48 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 		return nil, err
 	}
 
-	var nodegroups []NodegroupSummary
-
-	for _, nodegroupName := range nodegroupNames {
-		describeOutput, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
-			return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
-				ClusterName:   aws.String(clusterName),
-				NodegroupName: aws.String(nodegroupName),
+	results := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
+		func(fctx context.Context, nodegroupName string) *NodegroupSummary {
+			describeOutput, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+				return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+					ClusterName:   aws.String(clusterName),
+					NodegroupName: aws.String(nodegroupName),
+				})
 			})
+			if err != nil {
+				s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", nodegroupName, "error", err)
+				return nil
+			}
+
+			ng := describeOutput.Nodegroup
+			var desiredSize int32
+			if ng.ScalingConfig != nil {
+				desiredSize = aws.ToInt32(ng.ScalingConfig.DesiredSize)
+			}
+			readyNodes := int32(0)
+			if ng.Status == ekstypes.NodegroupStatusActive {
+				readyNodes = desiredSize
+			}
+
+			instanceTypes := "Unknown"
+			if len(ng.InstanceTypes) > 0 {
+				instanceTypes = string(ng.InstanceTypes[0])
+			}
+
+			return &NodegroupSummary{
+				Name:         aws.ToString(ng.NodegroupName),
+				Status:       string(ng.Status),
+				InstanceType: instanceTypes,
+				DesiredSize:  desiredSize,
+				ReadyNodes:   readyNodes,
+			}
 		})
-		if err != nil {
-			s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", nodegroupName, "error", err)
-			continue
+
+	var nodegroups []NodegroupSummary
+	for _, r := range results {
+		if r != nil {
+			nodegroups = append(nodegroups, *r)
 		}
-
-		ng := describeOutput.Nodegroup
-		readyNodes := int32(0)
-
-		// Calculate ready nodes based on scaling config and status
-		if ng.ScalingConfig != nil && ng.Status == ekstypes.NodegroupStatusActive {
-			readyNodes = aws.ToInt32(ng.ScalingConfig.DesiredSize)
-		}
-
-		instanceTypes := "Unknown"
-		if len(ng.InstanceTypes) > 0 {
-			instanceTypes = string(ng.InstanceTypes[0])
-		}
-
-		nodegroups = append(nodegroups, NodegroupSummary{
-			Name:         aws.ToString(ng.NodegroupName),
-			Status:       string(ng.Status),
-			InstanceType: instanceTypes,
-			DesiredSize:  aws.ToInt32(ng.ScalingConfig.DesiredSize),
-			ReadyNodes:   readyNodes,
-		})
 	}
 
 	return nodegroups, nil

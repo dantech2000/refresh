@@ -5,7 +5,6 @@ package aws
 import (
 	"context"
 	"strings"
-	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
@@ -13,53 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
-
-// AMIResolver handles AMI ID resolution for EKS nodegroups.
-// It supports caching to reduce API calls for repeated lookups.
-type AMIResolver struct {
-	ec2Client         *ec2.Client
-	autoscalingClient *autoscaling.Client
-	ssmClient         *ssm.Client
-	cache             *AMICache
-}
-
-// AMICache provides thread-safe caching for AMI lookups.
-type AMICache struct {
-	mu    sync.RWMutex
-	items map[string]string
-}
-
-// NewAMICache creates a new AMI cache instance.
-func NewAMICache() *AMICache {
-	return &AMICache{
-		items: make(map[string]string),
-	}
-}
-
-// Get retrieves a value from the cache in a thread-safe manner.
-func (c *AMICache) Get(key string) (string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	val, ok := c.items[key]
-	return val, ok
-}
-
-// Set stores a value in the cache in a thread-safe manner.
-func (c *AMICache) Set(key, value string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.items[key] = value
-}
-
-// NewAMIResolver creates a new AMI resolver with the provided AWS clients.
-func NewAMIResolver(ec2Client *ec2.Client, autoscalingClient *autoscaling.Client, ssmClient *ssm.Client) *AMIResolver {
-	return &AMIResolver{
-		ec2Client:         ec2Client,
-		autoscalingClient: autoscalingClient,
-		ssmClient:         ssmClient,
-		cache:             NewAMICache(),
-	}
-}
 
 // CurrentAmiID resolves the current AMI ID for a nodegroup.
 // It attempts resolution in order: launch template, then ASG instance.
@@ -130,12 +82,6 @@ func resolveFromASG(ctx context.Context, ng *types.Nodegroup, autoscalingClient 
 	}
 
 	return *descInstOut.Reservations[0].Instances[0].ImageId
-}
-
-// LatestAmiID returns the latest recommended AMI ID for a given Kubernetes version.
-// It defaults to AL2 x86_64 for backward compatibility.
-func LatestAmiID(ctx context.Context, ssmClient *ssm.Client, k8sVersion string) string {
-	return LatestAmiIDForType(ctx, ssmClient, k8sVersion, types.AMITypesAl2X8664)
 }
 
 // LatestAmiIDForType returns the latest recommended AMI ID for a specific AMI type.
@@ -223,8 +169,17 @@ func inferSSMPath(basePrefix, amiTypeStr string) string {
 		}
 		return basePrefix + "/bottlerocket/x86_64/recommended/image_id"
 
-	default:
-		// Default to AL2 x86_64
+	case strings.Contains(amiTypeStr, "AL2"):
+		if isArm {
+			return basePrefix + "/amazon-linux-2-arm64/recommended/image_id"
+		}
 		return basePrefix + "/amazon-linux-2/recommended/image_id"
+
+	default:
+		// Unrecognized AMI type (future families, custom strings): resolving
+		// against the AL2 path would silently compare the wrong AMI — and the
+		// AL2 parameter no longer exists for k8s >= 1.33. Report "unknown"
+		// instead.
+		return ""
 	}
 }

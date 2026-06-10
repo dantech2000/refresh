@@ -2,8 +2,12 @@ package common
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"time"
+
+	"github.com/aws/smithy-go"
 )
 
 // RetryConfig controls retry behavior for AWS API calls.
@@ -21,7 +25,26 @@ var DefaultRetryConfig = RetryConfig{
 	BackoffMultiplier: 2.0,
 }
 
-// shouldRetry classifies transient errors. Extend as needed.
+// retryableErrorCodes are typed AWS API error codes that indicate a transient
+// condition worth retrying (throttling and server-side hiccups).
+var retryableErrorCodes = map[string]bool{
+	"ThrottlingException":         true,
+	"Throttling":                  true,
+	"TooManyRequestsException":    true,
+	"RequestLimitExceeded":        true,
+	"RequestThrottled":            true,
+	"RequestThrottledException":   true,
+	"SlowDown":                    true,
+	"PriorRequestNotComplete":     true,
+	"ServiceUnavailableException": true,
+	"InternalServerException":     true,
+	"InternalFailure":             true,
+	"ServerException":             true,
+}
+
+// shouldRetry classifies transient errors. Typed AWS API errors are judged by
+// their error code (and server fault classification); substring matching is
+// only the fallback for transport-level errors that never reached the API.
 func shouldRetry(err error) bool {
 	if err == nil {
 		return false
@@ -30,9 +53,27 @@ func shouldRetry(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return false
 	}
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		return retryableErrorCodes[ae.ErrorCode()] || ae.ErrorFault() == smithy.FaultServer
+	}
 	// Best-effort string checks for throttling/network glitches.
 	s := err.Error()
 	return containsAnyFold(s, []string{"throttl", "rate exceeded", "timeout", "temporarily unavailable", "connection reset"})
+}
+
+// IdempotencyToken returns a random token for AWS APIs that accept a
+// ClientRequestToken. Setting it explicitly ONCE per logical operation lets
+// retry wrappers re-issue the request without risking a double-apply (the SDK
+// only auto-fills a fresh token per call, which defeats idempotency across
+// caller-level retries).
+func IdempotencyToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fall back to a time-based token; uniqueness is what matters here.
+		return time.Now().UTC().Format("20060102T150405.000000000")
+	}
+	return hex.EncodeToString(b)
 }
 
 func containsAnyFold(haystack string, needles []string) bool {

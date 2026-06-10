@@ -1,6 +1,10 @@
 package types
 
-import "github.com/fatih/color"
+import (
+	"encoding/json"
+
+	"github.com/fatih/color"
+)
 
 // AMIStatus represents the status of a nodegroup's AMI relative to the latest available.
 type AMIStatus int
@@ -16,8 +20,15 @@ const (
 	AMIUnknown
 )
 
-// String returns a human-readable, color-coded string representation of the AMI status.
+// String returns the plain, uncolored representation. Presentation (color)
+// lives in ColorString so that %v formatting, logs, and serialization never
+// emit ANSI escape codes.
 func (s AMIStatus) String() string {
+	return s.PlainString()
+}
+
+// ColorString returns a color-coded representation for terminal display.
+func (s AMIStatus) ColorString() string {
 	switch s {
 	case AMILatest:
 		return color.GreenString("Latest")
@@ -44,6 +55,37 @@ func (s AMIStatus) PlainString() string {
 	}
 }
 
+// MarshalJSON emits the plain string ("Latest", "Outdated", ...) instead of a
+// bare enum int, so `-o json` consumers get a meaningful value.
+func (s AMIStatus) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.PlainString())
+}
+
+// UnmarshalJSON accepts the plain-string form produced by MarshalJSON (and
+// the legacy integer form).
+func (s *AMIStatus) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		switch str {
+		case "Latest":
+			*s = AMILatest
+		case "Outdated":
+			*s = AMIOutdated
+		case "Updating":
+			*s = AMIUpdating
+		default:
+			*s = AMIUnknown
+		}
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err != nil {
+		return err
+	}
+	*s = AMIStatus(n)
+	return nil
+}
+
 // NeedsUpdate returns true if the nodegroup should be updated.
 func (s AMIStatus) NeedsUpdate() bool {
 	return s == AMIOutdated
@@ -63,8 +105,13 @@ const (
 	ActionForceUpdate
 )
 
-// String returns a human-readable, color-coded string representation of the action.
+// String returns the plain, uncolored representation (see AMIStatus.String).
 func (a DryRunAction) String() string {
+	return a.PlainString()
+}
+
+// ColorString returns a color-coded representation for terminal display.
+func (a DryRunAction) ColorString() string {
 	switch a {
 	case ActionUpdate:
 		return color.GreenString("UPDATE")

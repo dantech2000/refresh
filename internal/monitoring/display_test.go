@@ -149,7 +149,15 @@ func TestPrintCompletionSummaryTree_FailedWithMessage(t *testing.T) {
 // DisplayProgressUpdate
 // ──────────────────────────────────────────────────────────────────────────────
 
+func forceInteractiveDisplay(t *testing.T) {
+	t.Helper()
+	old := displayIsTerminal
+	displayIsTerminal = func() bool { return true }
+	t.Cleanup(func() { displayIsTerminal = old })
+}
+
 func TestDisplayProgressUpdate_SetsLastPrinted(t *testing.T) {
+	forceInteractiveDisplay(t)
 	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
 	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
 	monitor.StartTime = time.Now()
@@ -172,6 +180,7 @@ func TestDisplayProgressUpdate_EmptyMonitor(t *testing.T) {
 }
 
 func TestDisplayProgressUpdate_WithPreviousOutput(t *testing.T) {
+	forceInteractiveDisplay(t)
 	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
 	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
 	monitor.StartTime = time.Now()
@@ -183,6 +192,27 @@ func TestDisplayProgressUpdate_WithPreviousOutput(t *testing.T) {
 	// Should include ANSI escape for clearing previous lines
 	if !strings.Contains(out, "\033[") {
 		t.Errorf("with LastPrinted>0 should emit ANSI clear sequence, got:\n%s", fmt.Sprintf("%q", out))
+	}
+}
+
+func TestDisplayProgressUpdate_NonInteractiveAppendsOnly(t *testing.T) {
+	old := displayIsTerminal
+	displayIsTerminal = func() bool { return false }
+	t.Cleanup(func() { displayIsTerminal = old })
+
+	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
+	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
+	monitor.StartTime = time.Now()
+	monitor.LastPrinted = 5 // would trigger a clear when interactive
+
+	out := captureStdout(func() {
+		DisplayProgressUpdate(monitor)
+	})
+	if strings.Contains(out, "\033[") {
+		t.Errorf("piped output must not contain cursor-control codes, got %q", out)
+	}
+	if monitor.LastPrinted != 0 {
+		t.Errorf("LastPrinted should stay 0 when not interactive, got %d", monitor.LastPrinted)
 	}
 }
 

@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -44,10 +45,10 @@ func ClusterName(ctx context.Context, awsCfg aws.Config, cliFlag string) (string
 	defer spinner.Stop()
 
 	clusters, err := AvailableClusters(ctx, awsCfg)
-	spinner.Success("Cluster name resolved!")
 	if err != nil {
 		return "", FormatAWSError(err, "listing EKS clusters")
 	}
+	spinner.Success("Cluster name resolved!")
 
 	if len(clusters) == 0 {
 		return "", fmt.Errorf("no EKS clusters found in current region")
@@ -168,25 +169,12 @@ func extractNameFromServer(server string) string {
 // AvailableClusters returns all EKS cluster names in the current region.
 func AvailableClusters(ctx context.Context, awsCfg aws.Config) ([]string, error) {
 	eksClient := eks.NewFromConfig(awsCfg)
-
-	var clusters []string
-	var nextToken *string
-
-	for {
-		out, err := eksClient.ListClusters(ctx, &eks.ListClustersInput{NextToken: nextToken})
-		if err != nil {
-			return nil, err
-		}
-
-		clusters = append(clusters, out.Clusters...)
-
-		if out.NextToken == nil {
-			break
-		}
-		nextToken = out.NextToken
-	}
-
-	return clusters, nil
+	return ListAllPages(ctx, "listing clusters",
+		func(rc context.Context, token *string) (*eks.ListClustersOutput, error) {
+			return eksClient.ListClusters(rc, &eks.ListClustersInput{NextToken: token})
+		},
+		func(out *eks.ListClustersOutput) ([]string, *string) { return out.Clusters, out.NextToken },
+	)
 }
 
 // MatchingClusters returns cluster names that contain the given pattern.
@@ -228,8 +216,8 @@ func promptForClusterSelection(matches []string, pattern string) (string, error)
 
 	color.Cyan("Select cluster number (1-%d) or press Enter to cancel: ", len(matches))
 
-	var response string
-	if _, err := fmt.Scanln(&response); err != nil {
+	response, err := readPromptLine()
+	if err != nil {
 		return "", fmt.Errorf("operation cancelled: failed to read input")
 	}
 
@@ -245,4 +233,15 @@ func promptForClusterSelection(matches []string, pattern string) (string, error)
 	}
 
 	return "", fmt.Errorf("invalid selection: %s", response)
+}
+
+// readPromptLine reads one line from stdin. Unlike fmt.Scanln, a bare Enter
+// returns an empty string instead of an error, so prompts can honor their
+// advertised "press Enter to cancel/decline" behavior.
+func readPromptLine() (string, error) {
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
 }

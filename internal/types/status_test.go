@@ -26,10 +26,10 @@ func TestAMIStatus_String(t *testing.T) {
 
 func TestAMIStatus_PlainString(t *testing.T) {
 	cases := map[AMIStatus]string{
-		AMILatest:    "Latest",
-		AMIOutdated:  "Outdated",
-		AMIUpdating:  "Updating",
-		AMIUnknown:   "Unknown",
+		AMILatest:     "Latest",
+		AMIOutdated:   "Outdated",
+		AMIUpdating:   "Updating",
+		AMIUnknown:    "Unknown",
 		AMIStatus(99): "Unknown",
 	}
 	for s, want := range cases {

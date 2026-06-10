@@ -23,9 +23,5 @@ jobs:
       - name: Build
         run: go build ./...
 
-      # NOTE: -race is intentionally omitted for now. main has a known data race
-      # in internal/ui (TestMultiProgressAndRegionTracker, via pterm's MultiPrinter).
-      # The fix that skips that test under -race lands with the thermo-nuclear
-      # refactor branch; switch this to `go test -race ./...` once that merges.
       - name: Test
-        run: go test ./...
+        run: go test -race ./...

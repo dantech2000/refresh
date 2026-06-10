@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
 	corev1 "k8s.io/api/core/v1"
@@ -30,37 +30,33 @@ func normalizeWindow(w string) string {
 	}
 }
 
-// getNodegroupInstanceIDs resolves backing ASG instances for a managed nodegroup.
-func (s *ServiceImpl) getNodegroupInstanceIDs(ctx context.Context, clusterName, nodegroupName string) ([]string, bool) {
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
-		return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(nodegroupName),
-		})
-	})
-	if err != nil || out.Nodegroup == nil || out.Nodegroup.Resources == nil {
+// instanceIDsForNodegroup resolves backing ASG instances from an
+// already-described nodegroup. All ASGs are described in a single batched
+// call (the API accepts up to 50 names).
+func (s *ServiceImpl) instanceIDsForNodegroup(ctx context.Context, ng *ekstypes.Nodegroup) ([]string, bool) {
+	if ng == nil || ng.Resources == nil || s.asgClient == nil {
 		return nil, false
 	}
 	var asgNames []string
-	for _, asg := range out.Nodegroup.Resources.AutoScalingGroups {
+	for _, asg := range ng.Resources.AutoScalingGroups {
 		if asg.Name != nil && *asg.Name != "" {
 			asgNames = append(asgNames, *asg.Name)
 		}
 	}
-	if len(asgNames) == 0 || s.asgClient == nil {
+	if len(asgNames) == 0 {
+		return nil, false
+	}
+	asgOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*autoscaling.DescribeAutoScalingGroupsOutput, error) {
+		return s.asgClient.DescribeAutoScalingGroups(rc, &autoscaling.DescribeAutoScalingGroupsInput{
+			AutoScalingGroupNames: asgNames,
+		})
+	})
+	if err != nil {
 		return nil, false
 	}
 	var ids []string
-	for _, name := range asgNames {
-		asgOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*autoscaling.DescribeAutoScalingGroupsOutput, error) {
-			return s.asgClient.DescribeAutoScalingGroups(rc, &autoscaling.DescribeAutoScalingGroupsInput{
-				AutoScalingGroupNames: []string{name},
-			})
-		})
-		if err != nil || len(asgOut.AutoScalingGroups) == 0 {
-			continue
-		}
-		for _, inst := range asgOut.AutoScalingGroups[0].Instances {
+	for _, group := range asgOut.AutoScalingGroups {
+		for _, inst := range group.Instances {
 			if inst.InstanceId != nil && *inst.InstanceId != "" {
 				ids = append(ids, *inst.InstanceId)
 			}
@@ -113,54 +109,60 @@ func (s *ServiceImpl) getInstanceDetails(ctx context.Context, instanceIDs []stri
 }
 
 // analyzeWorkloads summarizes pods running on nodegroup nodes and PDB posture.
-func (s *ServiceImpl) analyzeWorkloads(ctx context.Context, clusterName, nodegroupName string) (WorkloadInfo, bool) {
+// instanceIDs is used only as a fallback when nodes are not labeled with the
+// managed-nodegroup label.
+func (s *ServiceImpl) analyzeWorkloads(ctx context.Context, nodegroupName string, instanceIDs []string) (WorkloadInfo, bool) {
 	k8s, err := health.GetKubernetesClient()
 	if err != nil || k8s == nil {
 		return WorkloadInfo{}, false
 	}
-	instanceIDs, ok := s.getNodegroupInstanceIDs(ctx, clusterName, nodegroupName)
-	if !ok || len(instanceIDs) == 0 {
-		return WorkloadInfo{}, false
-	}
-	idSet := make(map[string]struct{}, len(instanceIDs))
-	for _, id := range instanceIDs {
-		idSet[id] = struct{}{}
+
+	// Primary path: managed nodegroups label their nodes, so a label-selected
+	// list fetches only this nodegroup's nodes instead of the whole cluster.
+	nodeOnNg := make(map[string]bool)
+	selector := fmt.Sprintf("eks.amazonaws.com/nodegroup=%s", nodegroupName)
+	if labeled, lerr := k8s.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: selector}); lerr == nil {
+		for _, n := range labeled.Items {
+			nodeOnNg[n.Name] = true
+		}
 	}
 
-	nodes, err := k8s.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil || len(nodes.Items) == 0 {
-		return WorkloadInfo{}, false
-	}
-	nodeOnNg := make(map[string]bool)
-	for _, n := range nodes.Items {
-		if n.Spec.ProviderID == "" {
-			continue
+	// Fallback: match node providerIDs against the nodegroup's ASG instances.
+	if len(nodeOnNg) == 0 && len(instanceIDs) > 0 {
+		idSet := make(map[string]struct{}, len(instanceIDs))
+		for _, id := range instanceIDs {
+			idSet[id] = struct{}{}
 		}
-		if iid := extractInstanceIDFromProviderID(n.Spec.ProviderID); iid != "" {
-			if _, exists := idSet[iid]; exists {
-				nodeOnNg[n.Name] = true
+		nodes, err := k8s.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return WorkloadInfo{}, false
+		}
+		for _, n := range nodes.Items {
+			if n.Spec.ProviderID == "" {
+				continue
+			}
+			if iid := extractInstanceIDFromProviderID(n.Spec.ProviderID); iid != "" {
+				if _, exists := idSet[iid]; exists {
+					nodeOnNg[n.Name] = true
+				}
 			}
 		}
 	}
 	if len(nodeOnNg) == 0 {
-		selector := fmt.Sprintf("eks.amazonaws.com/nodegroup=%s", nodegroupName)
-		if labeled, lerr := k8s.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: selector}); lerr == nil {
-			for _, n := range labeled.Items {
-				nodeOnNg[n.Name] = true
-			}
-		}
-		if len(nodeOnNg) == 0 {
-			return WorkloadInfo{}, false
-		}
-	}
-
-	pods, err := k8s.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	if err != nil {
 		return WorkloadInfo{}, false
 	}
+
+	// List pods per node via field selector (indexed server-side) instead of
+	// listing every pod in the cluster and filtering client-side.
 	total, critical := 0, 0
-	for _, p := range pods.Items {
-		if nodeOnNg[p.Spec.NodeName] {
+	for nodeName := range nodeOnNg {
+		pods, err := k8s.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+			FieldSelector: "spec.nodeName=" + nodeName,
+		})
+		if err != nil {
+			continue
+		}
+		for _, p := range pods.Items {
 			if p.Status.Phase == corev1.PodSucceeded {
 				continue
 			}

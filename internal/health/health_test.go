@@ -210,11 +210,24 @@ func userNamespace(name string) *corev1.Namespace {
 }
 
 func deploy(namespace, name string) *appsv1.Deployment {
-	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}},
+			},
+		},
+	}
 }
 
-func pdb(namespace, name string) *policyv1.PodDisruptionBudget {
-	return &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}
+// pdb returns a PDB whose selector covers pods labeled app=<app>.
+func pdb(namespace, name, app string) *policyv1.PodDisruptionBudget {
+	return &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}},
+		},
+	}
 }
 
 func TestCheckPodDisruptionBudgets_NoDeployments(t *testing.T) {
@@ -230,12 +243,31 @@ func TestCheckPodDisruptionBudgets_AllDeploymentsProtected(t *testing.T) {
 	client := fakek8s.NewSimpleClientset(
 		userNamespace("my-app"),
 		deploy("my-app", "frontend"),
-		pdb("my-app", "frontend-pdb"),
+		pdb("my-app", "frontend-pdb", "frontend"),
 	)
 	hc := NewChecker(nil, client, nil, nil)
 	result := hc.CheckPodDisruptionBudgets(context.Background())
 	if result.Status != StatusPass {
 		t.Errorf("all deployments protected: status = %s, want PASS (got msg: %s)", result.Status, result.Message)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_SelectorMismatchNotCounted(t *testing.T) {
+	// Regression: a PDB in the namespace whose selector does NOT match the
+	// deployment's pods must not count as protection (the old implementation
+	// counted PDBs instead of covered deployments).
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		deploy("my-app", "frontend"),
+		pdb("my-app", "other-pdb", "something-else"),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusWarn {
+		t.Errorf("selector mismatch: status = %s, want WARN (got msg: %s)", result.Status, result.Message)
+	}
+	if result.Score != 0 {
+		t.Errorf("selector mismatch: score = %d, want 0", result.Score)
 	}
 }
 

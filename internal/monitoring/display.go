@@ -2,19 +2,32 @@ package monitoring
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/fatih/color"
+	"github.com/mattn/go-isatty"
 
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-// DisplayProgressUpdate shows current progress in a live updating format with tree structure
+// displayIsTerminal reports whether stdout is an interactive terminal.
+// Overridable in tests.
+var displayIsTerminal = func() bool {
+	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+}
+
+// DisplayProgressUpdate shows current progress in a live updating format with
+// tree structure. On an interactive terminal the previous frame is cleared
+// with cursor-control codes; when output is piped each poll appends a new
+// block instead (control codes would garble the log).
 func DisplayProgressUpdate(monitor *refreshTypes.ProgressMonitor) {
+	interactive := displayIsTerminal()
+
 	// Clear previous output if we have printed before
-	if monitor.LastPrinted > 0 {
+	if interactive && monitor.LastPrinted > 0 {
 		fmt.Printf("\033[%dA", monitor.LastPrinted)
 		fmt.Print("\033[J")
 	}
@@ -38,8 +51,13 @@ func DisplayProgressUpdate(monitor *refreshTypes.ProgressMonitor) {
 	fmt.Println() // Extra line for readability
 	lineCount++
 
-	// Store the number of lines we printed for next iteration
-	monitor.LastPrinted = lineCount
+	// Store the number of lines we printed for next iteration. When output is
+	// not a terminal nothing is ever cleared, so keep it at zero.
+	if interactive {
+		monitor.LastPrinted = lineCount
+	} else {
+		monitor.LastPrinted = 0
+	}
 }
 
 // printUpdateProgressTree displays update progress in tree format similar to list command
@@ -68,8 +86,17 @@ func printUpdateProgressTree(updates []refreshTypes.UpdateProgress) int {
 		statusColor := ui.GetStatusColor(update.Status)
 
 		statusText := statusColor(string(update.Status))
-		if update.ErrorMessage != "" {
-			statusText = color.RedString("FAILED: %s", update.ErrorMessage)
+		switch {
+		case update.Status == types.UpdateStatusFailed || update.Status == types.UpdateStatusCancelled:
+			if update.ErrorMessage != "" {
+				statusText = color.RedString("%s: %s", string(update.Status), update.ErrorMessage)
+			}
+		case update.ErrorMessage != "":
+			// AWS reported errors but the update is not terminal yet.
+			statusText = fmt.Sprintf("%s %s", statusText, color.YellowString("(errors: %s)", update.ErrorMessage))
+		case update.LastCheckError != "":
+			// The status poll failed; the update itself may still be running.
+			statusText = fmt.Sprintf("%s %s", statusText, color.YellowString("(status check failing, retrying: %s)", update.LastCheckError))
 		}
 
 		fmt.Printf("%s├── Status: %s\n", itemPrefix, statusText)
@@ -92,7 +119,7 @@ func printUpdateProgressTree(updates []refreshTypes.UpdateProgress) int {
 func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	if !config.Quiet {
 		// Clear previous progress output if any was printed
-		if monitor.LastPrinted > 0 {
+		if displayIsTerminal() && monitor.LastPrinted > 0 {
 			fmt.Printf("\033[%dA", monitor.LastPrinted)
 			fmt.Print("\033[J")
 			monitor.LastPrinted = 0

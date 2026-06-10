@@ -24,7 +24,7 @@ func runPDBs(c *cli.Context) error {
 	start := time.Now()
 	format := strings.ToLower(c.String("format"))
 	var spinner *ui.FunSpinner
-	if format == "table" || format == "" {
+	if format == "table" || format == "plain" || format == "" {
 		spinner = ui.NewFunSpinnerForCategory("workload")
 		if err := spinner.Start(); err != nil {
 			return err

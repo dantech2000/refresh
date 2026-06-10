@@ -12,27 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Types used across addon command files.
-
-type addonRow struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Status  string `json:"status"`
-	Health  string `json:"health"`
-}
-
-type addonDetails struct {
-	Name       string         `json:"name"`
-	Version    string         `json:"version"`
-	Status     string         `json:"status"`
-	Health     string         `json:"health"`
-	ARN        string         `json:"arn"`
-	CreatedAt  *time.Time     `json:"createdAt"`
-	ModifiedAt *time.Time     `json:"modifiedAt"`
-	Config     map[string]any `json:"configuration"`
-}
-
-func outputAddonsTable(cluster string, rows []addonRow, elapsed time.Duration) error {
+func outputAddonsTable(cluster string, rows []addons.AddonSummary, elapsed time.Duration) error {
 	ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
 	ui.PrintElapsed(elapsed)
 
@@ -49,21 +29,24 @@ func outputAddonsTable(cluster string, rows []addonRow, elapsed time.Duration) e
 	}
 	table := ui.NewPTable(columns, ui.CyanHeaders())
 	for _, r := range rows {
-		table.AddRow(r.Name, r.Version, r.Status, r.Health)
+		table.AddRow(r.Name, r.Version, ui.StatusColorString(r.Status), healthBadge(r.Health))
 	}
 	table.Render()
 	return nil
 }
 
-func outputAddonDetailsTable(cluster string, d addonDetails) error {
+func outputAddonDetailsTable(cluster string, d *addons.AddonDetails) error {
 	fmt.Printf("Add-on Details: %s (%s)\n", color.CyanString(d.Name), color.WhiteString(cluster))
 	fmt.Printf("Version: %s\n", d.Version)
-	fmt.Printf("Status: %s\n", d.Status)
+	fmt.Printf("Status: %s\n", ui.StatusColorString(d.Status))
 	if d.Health != "" {
-		fmt.Printf("Health: %s\n", d.Health)
+		fmt.Printf("Health: %s\n", healthBadge(d.Health))
 	}
 	if d.ARN != "" {
 		fmt.Printf("ARN: %s\n", d.ARN)
+	}
+	if d.ServiceAccountRole != "" {
+		fmt.Printf("Service Account Role: %s\n", d.ServiceAccountRole)
 	}
 	if d.CreatedAt != nil {
 		fmt.Printf("Created: %s\n", d.CreatedAt.Format(time.RFC3339))
@@ -71,9 +54,15 @@ func outputAddonDetailsTable(cluster string, d addonDetails) error {
 	if d.ModifiedAt != nil {
 		fmt.Printf("Modified: %s\n", d.ModifiedAt.Format(time.RFC3339))
 	}
-	if len(d.Config) > 0 {
+	if len(d.Issues) > 0 {
+		fmt.Println("\nIssues:")
+		for _, issue := range d.Issues {
+			fmt.Printf("  - %s: %s\n", issue.Code, issue.Message)
+		}
+	}
+	if len(d.Configuration) > 0 {
 		fmt.Println("\nConfiguration:")
-		y, _ := yaml.Marshal(d.Config)
+		y, _ := yaml.Marshal(d.Configuration)
 		fmt.Println(string(y))
 	}
 	return nil

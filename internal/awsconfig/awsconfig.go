@@ -30,6 +30,8 @@ func Load(ctx context.Context, c *cli.Context) (aws.Config, error) {
 
 	profile := flagOrEmpty(c, "profile")
 	region := flagOrEmpty(c, "region")
+	profileFromFlag := profile != ""
+	regionFromFlag := region != ""
 
 	if profile == "" || region == "" {
 		if active, ok := activeContext(); ok {
@@ -42,15 +44,15 @@ func Load(ctx context.Context, c *cli.Context) (aws.Config, error) {
 		}
 	}
 
-	// Don't shadow AWS_PROFILE/AWS_REGION when the user set them explicitly
-	// in the environment but didn't pass a flag and has no context.
-	if profile != "" && os.Getenv("AWS_PROFILE") == "" {
-		opts = append(opts, config.WithSharedConfigProfile(profile))
-	} else if profile != "" {
-		// User set both — flag wins.
+	// Flag-derived values always win. Context-derived values must NOT shadow
+	// explicit AWS_PROFILE/AWS_REGION env vars (the SDK resolves those itself):
+	// the documented precedence is flags > env vars > refresh context > SDK
+	// defaults, and silently overriding AWS_PROFILE with a saved context could
+	// point a mutating command at the wrong account.
+	if profile != "" && (profileFromFlag || os.Getenv("AWS_PROFILE") == "") {
 		opts = append(opts, config.WithSharedConfigProfile(profile))
 	}
-	if region != "" {
+	if region != "" && (regionFromFlag || (os.Getenv("AWS_REGION") == "" && os.Getenv("AWS_DEFAULT_REGION") == "")) {
 		opts = append(opts, config.WithRegion(region))
 	}
 

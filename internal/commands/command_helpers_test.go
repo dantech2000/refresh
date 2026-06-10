@@ -57,8 +57,6 @@ func TestVersionCommandAction(t *testing.T) {
 	}
 }
 
-
-
 func TestManPageHelpersAndInstall(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -5,26 +5,6 @@ import (
 	"time"
 )
 
-func TestProgressBarLifecycle(t *testing.T) {
-	bar := NewProgressBar(2, "work")
-	if err := bar.Start(); err != nil {
-		t.Fatalf("Start() = %v", err)
-	}
-	bar.Increment()
-	bar.Add(1)
-	bar.UpdateTitle("done")
-	bar.Stop()
-}
-
-func TestPerformanceTimer(t *testing.T) {
-	timer := NewPerformanceTimer("operation")
-	time.Sleep(time.Nanosecond)
-	if timer.Elapsed() <= 0 {
-		t.Fatal("expected positive elapsed time")
-	}
-	timer.PrintElapsed()
-}
-
 func TestFunMessages(t *testing.T) {
 	fm := &FunMessages{
 		Cluster:   []string{"cluster"},
@@ -62,6 +42,11 @@ func TestFunSpinnerLifecycle(t *testing.T) {
 	funSpinnerInterval = time.Millisecond
 	t.Cleanup(func() { funSpinnerInterval = oldInterval })
 
+	// Force the animated path: tests run without a TTY.
+	oldTTY := spinnerOutputIsTerminal
+	spinnerOutputIsTerminal = func() bool { return true }
+	t.Cleanup(func() { spinnerOutputIsTerminal = oldTTY })
+
 	empty := NewFunSpinner(nil)
 	if len(empty.messages) != 1 || empty.messages[0] != "Working on it..." {
 		t.Fatalf("default messages = %v", empty.messages)
@@ -85,36 +70,19 @@ func TestFunSpinnerLifecycle(t *testing.T) {
 	}
 }
 
-func TestMultiProgressAndRegionTracker(t *testing.T) {
-	// pterm's SpinnerPrinter writes to a shared bytes.Buffer from its own
-	// goroutine and from Stop without any synchronization, so the race
-	// detector flags this test even though we use the API correctly. The bug
-	// is in github.com/pterm/pterm (still present in v0.12.83); skip under
-	// -race rather than mask it with a fake mutex around their internals.
-	if raceEnabled {
-		t.Skip("skipping: upstream pterm spinner has an internal data race; see https://github.com/pterm/pterm/issues")
-	}
-	manager := NewMultiProgressManager()
-	if manager.AddSpinner("spin") == nil || manager.AddProgressBar(1, "bar") == nil {
-		t.Fatal("expected spinner and bar")
-	}
-	if err := manager.Start(); err != nil {
-		t.Fatalf("manager Start() = %v", err)
-	}
-	manager.Stop()
+func TestFunSpinnerNonInteractiveStaysSilent(t *testing.T) {
+	oldTTY := spinnerOutputIsTerminal
+	spinnerOutputIsTerminal = func() bool { return false }
+	t.Cleanup(func() { spinnerOutputIsTerminal = oldTTY })
 
-	tracker := NewRegionProgressTracker([]string{"us-east-1", "us-west-2"}, "clusters")
-	if tracker.IsComplete() {
-		t.Fatal("tracker should not start complete")
+	spinner := NewFunSpinner([]string{"msg"})
+	if err := spinner.Start(); err != nil {
+		t.Fatalf("Start() = %v", err)
 	}
-	if err := tracker.Start(); err != nil {
-		t.Fatalf("tracker Start() = %v", err)
+	if spinner.animated {
+		t.Fatal("spinner must not animate when output is not a terminal")
 	}
-	tracker.CompleteRegion("us-east-1", 1)
-	tracker.CompleteRegion("us-west-2", 0)
-	tracker.CompleteRegion("missing", 10)
-	if !tracker.IsComplete() {
-		t.Fatal("tracker should be complete")
-	}
-	tracker.Stop()
+	// Stop must not deadlock waiting for a render goroutine that never started.
+	spinner.Stop()
+	spinner.Success("ok")
 }

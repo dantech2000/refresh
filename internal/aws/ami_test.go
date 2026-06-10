@@ -3,70 +3,11 @@ package aws
 import (
 	"context"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 )
-
-// ──────────────────────────────────────────────────────────────────────────────
-// AMICache
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestNewAMICache_Empty(t *testing.T) {
-	c := NewAMICache()
-	if _, ok := c.Get("anything"); ok {
-		t.Error("new cache should be empty")
-	}
-}
-
-func TestAMICache_SetAndGet(t *testing.T) {
-	c := NewAMICache()
-	c.Set("al2023-amd64", "ami-12345678")
-	val, ok := c.Get("al2023-amd64")
-	if !ok {
-		t.Error("Get after Set should return true")
-	}
-	if val != "ami-12345678" {
-		t.Errorf("Get = %q, want %q", val, "ami-12345678")
-	}
-}
-
-func TestAMICache_MissReturnsFalse(t *testing.T) {
-	c := NewAMICache()
-	c.Set("k1", "v1")
-	_, ok := c.Get("k2")
-	if ok {
-		t.Error("Get for missing key should return false")
-	}
-}
-
-func TestAMICache_Overwrite(t *testing.T) {
-	c := NewAMICache()
-	c.Set("key", "old")
-	c.Set("key", "new")
-	val, _ := c.Get("key")
-	if val != "new" {
-		t.Errorf("overwritten value = %q, want %q", val, "new")
-	}
-}
-
-func TestAMICache_ConcurrentAccess(t *testing.T) {
-	c := NewAMICache()
-	var wg sync.WaitGroup
-	for i := range 20 {
-		wg.Add(1)
-		go func(n int) {
-			defer wg.Done()
-			key := "key"
-			c.Set(key, "value")
-			_, _ = c.Get(key)
-			_ = n
-		}(i)
-	}
-	wg.Wait()
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // buildSSMParameterPath
@@ -138,13 +79,13 @@ func TestBuildSSMParameterPath_WindowsFull2022(t *testing.T) {
 
 func TestBuildSSMParameterPath_RemainingExplicitTypes(t *testing.T) {
 	cases := map[types.AMITypes]string{
-		types.AMITypesAl2023X8664Nvidia:        "nvidia",
-		types.AMITypesAl2023X8664Neuron:        "neuron",
-		types.AMITypesAl2023Arm64Nvidia:        "arm64/nvidia",
-		types.AMITypesBottlerocketX8664Nvidia:  "x86_64/nvidia",
-		types.AMITypesBottlerocketArm64Nvidia:  "arm64/nvidia",
-		types.AMITypesWindowsCore2019X8664:     "windows-2019-core",
-		types.AMITypesWindowsCore2022X8664:     "windows-2022-core",
+		types.AMITypesAl2023X8664Nvidia:       "nvidia",
+		types.AMITypesAl2023X8664Neuron:       "neuron",
+		types.AMITypesAl2023Arm64Nvidia:       "arm64/nvidia",
+		types.AMITypesBottlerocketX8664Nvidia: "x86_64/nvidia",
+		types.AMITypesBottlerocketArm64Nvidia: "arm64/nvidia",
+		types.AMITypesWindowsCore2019X8664:    "windows-2019-core",
+		types.AMITypesWindowsCore2022X8664:    "windows-2022-core",
 	}
 	for amiType, want := range cases {
 		path := buildSSMParameterPath("1.30", amiType)
@@ -173,17 +114,6 @@ func TestCurrentAmiIDEmptyNodegroupPaths(t *testing.T) {
 func TestLatestAmiIDForCustomSkipsSSM(t *testing.T) {
 	if got := LatestAmiIDForType(context.Background(), nil, "1.30", types.AMITypesCustom); got != "" {
 		t.Fatalf("LatestAmiIDForType custom = %q, want empty", got)
-	}
-}
-
-func TestNewAMIResolverStoresClients(t *testing.T) {
-	resolver := NewAMIResolver(nil, nil, nil)
-	if resolver == nil || resolver.cache == nil {
-		t.Fatalf("resolver = %+v", resolver)
-	}
-	resolver.cache.Set("k", "ami")
-	if got, ok := resolver.cache.Get("k"); !ok || got != "ami" {
-		t.Fatalf("resolver cache = %q, %v", got, ok)
 	}
 }
 
@@ -244,9 +174,18 @@ func TestInferSSMPath_BottlerocketArm64(t *testing.T) {
 	}
 }
 
-func TestInferSSMPath_UnknownFallsBackToAL2(t *testing.T) {
-	path := inferSSMPath("/base", "UNKNOWN_TYPE")
-	if !strings.Contains(path, "amazon-linux-2") {
-		t.Errorf("unknown type should fall back to AL2, got %q", path)
+func TestInferSSMPath_UnknownReturnsEmpty(t *testing.T) {
+	// Unrecognized AMI types must resolve to "" (status Unknown) rather than
+	// silently comparing against the AL2 parameter, which is wrong for other
+	// families and absent entirely for k8s >= 1.33.
+	if path := inferSSMPath("/base", "UNKNOWN_TYPE"); path != "" {
+		t.Errorf("unknown type should return empty path, got %q", path)
+	}
+}
+
+func TestInferSSMPath_AL2Arm64(t *testing.T) {
+	path := inferSSMPath("/base", "AL2_ARM_64")
+	if !strings.Contains(path, "amazon-linux-2-arm64") {
+		t.Errorf("unexpected path: %q", path)
 	}
 }

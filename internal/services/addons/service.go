@@ -10,6 +10,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"gopkg.in/yaml.v3"
+
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
@@ -27,6 +29,10 @@ type EKSAPI interface {
 type ServiceImpl struct {
 	eksClient EKSAPI
 	logger    *slog.Logger
+
+	// k8sVersions memoizes cluster name -> Kubernetes version so UpdateAll
+	// doesn't re-describe the cluster for every addon.
+	k8sVersions sync.Map
 }
 
 // NewService creates a new addon service
@@ -54,35 +60,34 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		return nil, err
 	}
 
-	summaries := make([]AddonSummary, 0, len(addonNames))
-	for _, name := range addonNames {
-		desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
-			return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
-				ClusterName: aws.String(clusterName),
-				AddonName:   aws.String(name),
+	summaries := common.ForEachParallel(ctx, addonNames, common.DefaultItemConcurrency,
+		func(fctx context.Context, name string) AddonSummary {
+			desc, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
+				return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
+					ClusterName: aws.String(clusterName),
+					AddonName:   aws.String(name),
+				})
 			})
-		})
-		if err != nil || desc.Addon == nil {
-			summaries = append(summaries, AddonSummary{
-				Name:   name,
-				Status: "UNKNOWN",
-				Health: "Unknown",
-			})
-			continue
-		}
+			if err != nil || desc.Addon == nil {
+				return AddonSummary{
+					Name:   name,
+					Status: "UNKNOWN",
+					Health: "Unknown",
+				}
+			}
 
-		health := ""
-		if options.ShowHealth {
-			health = mapAddonHealth(desc.Addon.Status)
-		}
+			health := ""
+			if options.ShowHealth {
+				health = mapAddonHealth(desc.Addon.Status)
+			}
 
-		summaries = append(summaries, AddonSummary{
-			Name:    aws.ToString(desc.Addon.AddonName),
-			Version: aws.ToString(desc.Addon.AddonVersion),
-			Status:  string(desc.Addon.Status),
-			Health:  health,
+			return AddonSummary{
+				Name:    aws.ToString(desc.Addon.AddonName),
+				Version: aws.ToString(desc.Addon.AddonVersion),
+				Status:  string(desc.Addon.Status),
+				Health:  health,
+			}
 		})
-	}
 
 	return summaries, nil
 }
@@ -114,7 +119,13 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, addonName strin
 	}
 
 	if options.ShowConfiguration && addon.ConfigurationValues != nil && *addon.ConfigurationValues != "" {
-		details.Configuration = map[string]any{"raw": *addon.ConfigurationValues}
+		raw := *addon.ConfigurationValues
+		var cfgMap map[string]any
+		if err := yaml.Unmarshal([]byte(raw), &cfgMap); err == nil {
+			details.Configuration = cfgMap
+		} else {
+			details.Configuration = map[string]any{"raw": raw}
+		}
 	}
 
 	if addon.Health != nil && len(addon.Health.Issues) > 0 {
@@ -144,22 +155,22 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, addonName strin
 func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string, options UpdateOptions) (*AddonUpdateResult, error) {
 	s.logger.Info("updating addon", "cluster", clusterName, "addon", addonName, "version", options.Version)
 
+	// Resolve the cluster's Kubernetes version once; it scopes "latest"
+	// resolution to versions this cluster can actually run, and backs the
+	// compatibility validation for pinned versions.
+	k8sVersion := s.clusterK8sVersion(ctx, clusterName)
+
 	targetVersion := options.Version
 	if strings.EqualFold(targetVersion, "latest") || targetVersion == "" {
-		versions, err := s.GetAvailableVersions(ctx, addonName, "")
+		versions, err := s.GetAvailableVersions(ctx, addonName, k8sVersion)
 		if err != nil {
 			return nil, fmt.Errorf("resolving latest version: %w", err)
 		}
-		if len(versions) == 0 {
-			return nil, fmt.Errorf("no versions available for addon %s", addonName)
-		}
 		targetVersion = versions[0].Version
-	}
-
-	// Validate the target version is compatible with the cluster's Kubernetes version.
-	// For explicitly-specified versions this catches mismatches early; for "latest" it
-	// confirms the resolved version is valid for this cluster.
-	if err := s.validateVersionCompatibility(ctx, clusterName, addonName, targetVersion); err != nil {
+	} else if err := s.validateVersionCompatibility(ctx, k8sVersion, addonName, targetVersion); err != nil {
+		// Explicitly-specified versions are validated against the cluster's
+		// Kubernetes version to catch mismatches early. ("latest" is already
+		// scoped above, so re-validating it would be redundant.)
 		return nil, err
 	}
 
@@ -196,6 +207,9 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 		ClusterName:  aws.String(clusterName),
 		AddonName:    aws.String(addonName),
 		AddonVersion: aws.String(targetVersion),
+		// Pin the idempotency token so WithRetry re-issues the SAME request
+		// instead of submitting a fresh update per attempt.
+		ClientRequestToken: aws.String(common.IdempotencyToken()),
 	}
 	if options.Configuration != "" {
 		input.ConfigurationValues = aws.String(options.Configuration)

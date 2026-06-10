@@ -14,7 +14,9 @@ import (
 	"github.com/fatih/color"
 )
 
-// Error classification patterns for better user experience.
+// Error classification patterns for transport- and credential-chain-level
+// failures that don't carry a typed AWS API error code. Typed API errors are
+// classified by code in FormatAWSError before these are consulted.
 var (
 	credentialErrorPatterns = []string{
 		"no ec2 imds role found",
@@ -23,14 +25,14 @@ var (
 		"no credential providers",
 		"credentials not found",
 		"invalid credentials",
-		"access denied",
-		"unauthorized",
 		"sigv4",
 		"request signature",
 		"the security token included in the request is invalid",
 		"the security token included in the request is expired",
 		"get identity",
 		"get credentials",
+		"sso session",
+		"token has expired",
 	}
 
 	networkErrorPatterns = []string{
@@ -47,7 +49,25 @@ var (
 	permissionErrorPatterns = []string{
 		"accessdenied",
 		"forbidden",
-		"unauthorized",
+		"not authorized",
+	}
+
+	// API error codes that indicate a credentials problem (vs. missing IAM
+	// permissions, which is AccessDenied*).
+	credentialErrorCodes = map[string]bool{
+		"UnrecognizedClientException": true,
+		"InvalidClientTokenId":        true,
+		"ExpiredToken":                true,
+		"ExpiredTokenException":       true,
+		"InvalidSignatureException":   true,
+		"SignatureDoesNotMatch":       true,
+	}
+
+	permissionErrorCodes = map[string]bool{
+		"AccessDeniedException": true,
+		"AccessDenied":          true,
+		"UnauthorizedOperation": true,
+		"Forbidden":             true,
 	}
 )
 
@@ -103,12 +123,18 @@ func IsPermissionError(err error) bool {
 }
 
 // IsRegionError checks if the error is related to AWS region configuration.
+// Matching is deliberately narrow: many unrelated AWS errors merely mention a
+// region name ("user is not authorized ... in region us-east-1"), and those
+// must not be diagnosed as region misconfiguration.
 func IsRegionError(err error) bool {
 	if err == nil {
 		return false
 	}
 	errText := strings.ToLower(err.Error())
-	return strings.Contains(errText, "region") ||
+	return strings.Contains(errText, "invalid region") ||
+		strings.Contains(errText, "not a valid region") ||
+		strings.Contains(errText, "missing region") ||
+		strings.Contains(errText, "resolve region") ||
 		(strings.Contains(errText, "no such host") && strings.Contains(errText, ".amazonaws.com"))
 }
 
@@ -124,35 +150,48 @@ func matchesPatterns(errText string, patterns []string) bool {
 }
 
 // FormatAWSError provides user-friendly error messages for AWS errors.
+//
+// Classification order matters: context cancellation is user-initiated and
+// needs no remediation help; typed API errors carry an authoritative error
+// code and must win over substring heuristics (an IAM denial that mentions
+// "region" in its message is not a region misconfiguration); substring
+// matching is the last resort for transport/credential-chain failures that
+// never reached the API.
 func FormatAWSError(err error, operation string) error {
 	if err == nil {
 		return nil
 	}
 
-	// Check for region-related errors first
-	if IsRegionError(err) {
-		return formatRegionError(err, operation)
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("operation cancelled while %s", operation)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("timed out while %s (increase --timeout to allow more time)", operation)
 	}
 
-	// Check for credential errors
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		switch {
+		case permissionErrorCodes[ae.ErrorCode()]:
+			return formatPermissionError(err, operation)
+		case credentialErrorCodes[ae.ErrorCode()]:
+			return formatCredentialError(err)
+		default:
+			return fmt.Errorf("AWS API error while %s: %s (%s)", operation, ae.ErrorMessage(), ae.ErrorCode())
+		}
+	}
+
 	if IsCredentialError(err) {
 		return formatCredentialError(err)
 	}
-
-	// Check for network errors
+	if IsRegionError(err) {
+		return formatRegionError(err, operation)
+	}
 	if IsNetworkError(err) {
 		return formatNetworkError(err, operation)
 	}
-
-	// Check for permission errors
 	if IsPermissionError(err) {
 		return formatPermissionError(err, operation)
-	}
-
-	// For other AWS API errors, try to extract meaningful information
-	var ae smithy.APIError
-	if errors.As(err, &ae) {
-		return fmt.Errorf("AWS API error while %s: %s (%s)", operation, ae.ErrorMessage(), ae.ErrorCode())
 	}
 
 	// Default case - return the error with context

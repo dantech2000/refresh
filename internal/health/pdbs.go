@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // CheckPodDisruptionBudgets validates PDB configuration for user workloads
@@ -52,10 +53,17 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 	protectedDeployments := 0
 	var unprotectedDeployments []string
 
-	// Create a map of PDBs by namespace for quick lookup
-	pdbsByNamespace := make(map[string][]string)
+	// Group PDB selectors by namespace so each deployment can be matched
+	// against the PDBs that could actually cover its pods. Counting PDBs as
+	// "protected deployments" (the old behavior) over- or under-counted
+	// whenever the two quantities differed.
+	pdbSelectorsByNamespace := make(map[string][]labels.Selector)
 	for _, pdb := range pdbs.Items {
-		pdbsByNamespace[pdb.Namespace] = append(pdbsByNamespace[pdb.Namespace], pdb.Name)
+		sel, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
+		if err != nil {
+			continue
+		}
+		pdbSelectorsByNamespace[pdb.Namespace] = append(pdbSelectorsByNamespace[pdb.Namespace], sel)
 	}
 
 	// Check each user namespace
@@ -71,21 +79,30 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 		}
 
 		nsDeployments := len(deployments.Items)
-		nsProtected := len(pdbsByNamespace[ns.Name])
+		nsProtected := 0
+		selectors := pdbSelectorsByNamespace[ns.Name]
 
-		totalDeployments += nsDeployments
-
-		if nsProtected > 0 {
-			protectedDeployments += nsProtected
-			result.Details = append(result.Details, fmt.Sprintf("%s: %d PDBs protecting deployments", ns.Name, nsProtected))
-		} else if nsDeployments > 0 {
-			for _, deployment := range deployments.Items {
+		for _, deployment := range deployments.Items {
+			podLabels := labels.Set(deployment.Spec.Template.Labels)
+			covered := false
+			for _, sel := range selectors {
+				if sel.Matches(podLabels) {
+					covered = true
+					break
+				}
+			}
+			if covered {
+				nsProtected++
+			} else {
 				unprotectedDeployments = append(unprotectedDeployments, fmt.Sprintf("%s/%s", ns.Name, deployment.Name))
 			}
 		}
 
+		totalDeployments += nsDeployments
+		protectedDeployments += nsProtected
+
 		if nsDeployments > 0 {
-			result.Details = append(result.Details, fmt.Sprintf("%s: %d deployments, %d PDBs", ns.Name, nsDeployments, nsProtected))
+			result.Details = append(result.Details, fmt.Sprintf("%s: %d/%d deployments covered by PDBs", ns.Name, nsProtected, nsDeployments))
 		}
 	}
 

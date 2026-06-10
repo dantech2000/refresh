@@ -56,7 +56,7 @@ func outputNodegroupsTable(clusterName, timeframe string, items []nodegroupsvc.N
 			ng.Name,
 			ng.Status,
 			ng.InstanceType,
-			ng.AMIStatus.String(),
+			ng.AMIStatus.ColorString(),
 			fmt.Sprintf("%d/%d", ng.ReadyNodes, ng.DesiredSize),
 		}
 		if opts.ShowUtilization {
@@ -94,7 +94,7 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 		Add("Capacity", details.CapacityType).
 		Add("Current AMI", details.CurrentAMI).
 		Add("Latest AMI", details.LatestAMI).
-		AddColored("AMI Status", details.AMIStatus.String(), func(s string) string { return details.AMIStatus.String() }).
+		AddColored("AMI Status", details.AMIStatus.PlainString(), func(string) string { return details.AMIStatus.ColorString() }).
 		Add("Scaling", fmt.Sprintf("%d desired (%d-%d)", details.Scaling.DesiredSize, details.Scaling.MinSize, details.Scaling.MaxSize))
 
 	if details.Utilization.TimeRange != "" || (details.Utilization.CPU.Average > 0 || details.Utilization.CPU.Current > 0) {
@@ -138,7 +138,7 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 		instTable := ui.NewPTable(columns, ui.CyanHeaders())
 		for _, inst := range details.Instances {
 			instTable.AddRow(
-				truncate(inst.InstanceID, 22),
+				ui.TruncateANSI(inst.InstanceID, 22),
 				inst.InstanceType,
 				inst.LaunchTime.Format("2006-01-02"),
 				inst.Lifecycle,
@@ -168,16 +168,12 @@ func sortNodegroupSummaries(items []nodegroupsvc.NodegroupSummary, key string, d
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if desc {
-			return !less(i, j)
+			// Swap arguments rather than negating: !less(i,j) returns true
+			// for equal elements, which violates the sort contract and
+			// destroys SliceStable's stability.
+			return less(j, i)
 		}
 		return less(i, j)
 	})
 	return items
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }

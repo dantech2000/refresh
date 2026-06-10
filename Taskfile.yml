@@ -170,20 +170,6 @@ tasks:
     cmds:
       - goreleaser release --snapshot --clean
 
-  release:tag:
-    desc: Create and push a release tag based on version.go
-    cmds:
-      - |
-        VERSION=$(grep -oP 'version\s*=\s*"\Kv[^"]+' internal/commands/version.go)
-        if [ -z "$VERSION" ]; then
-          echo "Could not extract version from version.go"
-          exit 1
-        fi
-        echo "Creating tag: $VERSION"
-        git tag -a "$VERSION" -m "Release $VERSION"
-        git push origin "$VERSION"
-
-  # Man page installation
   install:man:
     desc: Install man page using the built-in command (no sudo required)
     deps: [build]

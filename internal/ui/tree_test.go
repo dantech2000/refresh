@@ -256,25 +256,6 @@ func TestTreeBuilder_RenderWithContent(t *testing.T) {
 	}
 }
 
-func TestClusterTreeBuilder(t *testing.T) {
-	builder := NewClusterTreeBuilder().
-		AddCluster("prod", "ACTIVE", "1.30", 3).
-		AddNodegroup("ng", "ACTIVE", "m5.large", 2, 3).
-		AddInstance("i-123", "running", "us-east-1a").
-		FinishNodegroup().
-		AddAddon("vpc-cni", "v1", "ACTIVE")
-
-	if len(builder.builder.leveledList) != 4 {
-		t.Fatalf("cluster tree entries = %d", len(builder.builder.leveledList))
-	}
-	if err := builder.Render(); err != nil {
-		t.Fatalf("Render() = %v", err)
-	}
-	if err := builder.RenderWithTitle("Cluster"); err != nil {
-		t.Fatalf("RenderWithTitle() = %v", err)
-	}
-}
-
 func TestRegionTreeBuilder(t *testing.T) {
 	builder := NewRegionTreeBuilder().
 		AddRegion("us-east-1", 1).
@@ -292,22 +273,26 @@ func TestRegionTreeBuilder(t *testing.T) {
 	}
 }
 
-func TestComparisonTreeBuilder(t *testing.T) {
-	builder := NewComparisonTreeBuilder().AddComparisonRoot([]string{"a", "b"})
-	for _, category := range []string{"configuration", "networking", "security", "nodegroups", "addons", "other"} {
-		builder.AddDifferenceCategory(category).
-			AddDifference("field", []string{"a", "b"}, "WARN").
-			AddSimilarity("same", "value").
-			FinishCategory()
-	}
+// Regression: clusters must nest one level beneath their region header even
+// though AddRegion (via AddRoot) resets the builder level to 0.
+func TestRegionTreeBuilderNestsClustersUnderRegions(t *testing.T) {
+	builder := NewRegionTreeBuilder().
+		AddRegion("us-east-1", 2).
+		AddClusterToRegion("prod", "ACTIVE", 3).
+		AddClusterToRegion("staging", "ACTIVE", 1).
+		FinishRegion().
+		AddRegion("us-west-2", 1).
+		AddClusterToRegion("dev", "ACTIVE", 1).
+		FinishRegion()
 
-	if len(builder.builder.leveledList) == 0 {
-		t.Fatal("comparison tree should have entries")
+	list := builder.builder.leveledList
+	wantLevels := []int{0, 1, 1, 0, 1}
+	if len(list) != len(wantLevels) {
+		t.Fatalf("tree entries = %d, want %d", len(list), len(wantLevels))
 	}
-	if err := builder.Render(); err != nil {
-		t.Fatalf("Render() = %v", err)
-	}
-	if err := builder.RenderWithTitle("Comparison"); err != nil {
-		t.Fatalf("RenderWithTitle() = %v", err)
+	for i, want := range wantLevels {
+		if list[i].Level != want {
+			t.Errorf("entry %d (%q) level = %d, want %d", i, list[i].Text, list[i].Level, want)
+		}
 	}
 }

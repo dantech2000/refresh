@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"strings"
-
 	"github.com/fatih/color"
 )
 
@@ -50,20 +48,7 @@ func (dt *DynamicTable) AddColored(key string, value string, colorFunc func(stri
 
 // AddStatus adds a row with automatic color coding for common status values
 func (dt *DynamicTable) AddStatus(key, status string) *DynamicTable {
-	var coloredStatus string
-	switch strings.ToUpper(status) {
-	case "ACTIVE", "ENABLED", "PASS", "SUCCESS", "HEALTHY":
-		coloredStatus = color.GreenString(status)
-	case "DISABLED", "FAIL", "FAILED", "ERROR", "CRITICAL":
-		coloredStatus = color.RedString(status)
-	case "WARN", "WARNING", "UPDATING", "PENDING", "IN PROGRESS":
-		coloredStatus = color.YellowString(status)
-	case "UNKNOWN", "N/A":
-		coloredStatus = color.WhiteString(status)
-	default:
-		coloredStatus = status
-	}
-	return dt.Add(key, coloredStatus)
+	return dt.Add(key, StatusColorString(status))
 }
 
 // AddBool adds a boolean value with automatic ENABLED/DISABLED coloring
@@ -74,16 +59,24 @@ func (dt *DynamicTable) AddBool(key string, enabled bool) *DynamicTable {
 	return dt.AddStatus(key, "DISABLED")
 }
 
-// Render prints the table with perfect alignment
+// Render prints the table with perfect alignment. Under `-o plain` it emits
+// uncolored "key\tvalue" lines instead.
 func (dt *DynamicTable) Render() {
 	if len(dt.rows) == 0 {
+		return
+	}
+
+	if plainOutput {
+		for _, row := range dt.rows {
+			Outf("%s\t%s\n", StripANSI(row.Key), StripANSI(row.Value))
+		}
 		return
 	}
 
 	// Calculate the maximum visible width needed for keys
 	maxKeyWidth := 0
 	for _, row := range dt.rows {
-		visibleWidth := calculateVisibleWidth(row.Key)
+		visibleWidth := VisibleWidth(row.Key)
 		if visibleWidth > maxKeyWidth {
 			maxKeyWidth = visibleWidth
 		}
@@ -92,7 +85,7 @@ func (dt *DynamicTable) Render() {
 	// Print each row with consistent alignment
 	for _, row := range dt.rows {
 		coloredKey := color.YellowString(row.Key)
-		paddedKey := padANSIString(coloredKey, maxKeyWidth)
+		paddedKey := PadANSI(coloredKey, maxKeyWidth, AlignLeft)
 		Outf("%s │ %s\n", paddedKey, row.Value)
 	}
 }
@@ -119,67 +112,4 @@ func (dt *DynamicTable) Count() int {
 // IsEmpty returns true if the table has no rows
 func (dt *DynamicTable) IsEmpty() bool {
 	return len(dt.rows) == 0
-}
-
-// calculateVisibleWidth returns the printable width of a string, excluding ANSI codes
-// This function is hardened against malformed ANSI escape sequences with bounds checking.
-func calculateVisibleWidth(s string) int {
-	visibleLen := 0
-	inEscape := false
-	escapeLen := 0
-	const maxEscapeLen = 32 // Maximum reasonable ANSI escape sequence length
-
-	for _, r := range s {
-		if r == '\u001b' { // ESC
-			inEscape = true
-			escapeLen = 0
-			continue
-		}
-		if inEscape {
-			escapeLen++
-			// Safety: bail out of malformed sequences that are too long
-			if escapeLen > maxEscapeLen {
-				inEscape = false
-				escapeLen = 0
-				continue
-			}
-			// End on letter terminator (standard CSI sequences end with a letter)
-			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
-				inEscape = false
-				escapeLen = 0
-			}
-			continue
-		}
-		visibleLen++
-	}
-	return visibleLen
-}
-
-// padANSIString pads an ANSI-colored string to the specified width
-func padANSIString(s string, width int) string {
-	visibleLen := calculateVisibleWidth(s)
-	if visibleLen >= width {
-		return s
-	}
-
-	// Add padding spaces to reach desired width
-	padding := strings.Repeat(" ", width-visibleLen)
-	return s + padding
-}
-
-// Helper functions for common patterns
-
-// CreateInfoTable creates a pre-configured table for informational displays
-func CreateInfoTable() *DynamicTable {
-	return NewDynamicTable()
-}
-
-// CreateStatusTable creates a pre-configured table for status displays
-func CreateStatusTable() *DynamicTable {
-	return NewDynamicTable()
-}
-
-// CreateSecurityTable creates a pre-configured table for security information
-func CreateSecurityTable() *DynamicTable {
-	return NewDynamicTable()
 }

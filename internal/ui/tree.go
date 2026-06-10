@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
@@ -13,16 +12,6 @@ import (
 type TreeBuilder struct {
 	leveledList pterm.LeveledList
 	level       int
-}
-
-// TreeNode represents a single node in the tree with styling capabilities
-type TreeNode struct {
-	Text     string
-	Level    int
-	Icon     string
-	Color    func(string) string
-	Status   string
-	Children []TreeNode
 }
 
 // NewTreeBuilder creates a new tree builder with pre-allocated capacity
@@ -89,14 +78,16 @@ func (tb *TreeBuilder) AddStatus(icon, text, status string) *TreeBuilder {
 	var colorFunc func(string) string
 	var statusText string
 
-	switch strings.ToUpper(status) {
-	case "ACTIVE", "RUNNING", "HEALTHY", "PASS", "SUCCESS", "ENABLED":
+	// Color and badge derive from the shared status classification so the
+	// vocabulary cannot drift from the other renderers.
+	switch ClassifyStatus(status) {
+	case StatusGood:
 		colorFunc = func(s string) string { return color.GreenString("%s", s) }
 		statusText = "PASS"
-	case "UPDATING", "PENDING", "SCALING", "WARN", "WARNING":
+	case StatusWarning:
 		colorFunc = func(s string) string { return color.YellowString("%s", s) }
 		statusText = "WARN"
-	case "FAILED", "ERROR", "CRITICAL", "FAIL", "DISABLED":
+	case StatusBad:
 		colorFunc = func(s string) string { return color.RedString("%s", s) }
 		statusText = "FAIL"
 	default:

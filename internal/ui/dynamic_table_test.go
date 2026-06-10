@@ -142,9 +142,9 @@ func TestCalculateVisibleWidth(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		result := calculateVisibleWidth(test.input)
+		result := VisibleWidth(test.input)
 		if result != test.expected {
-			t.Errorf("calculateVisibleWidth(%q) = %d, expected %d", test.input, result, test.expected)
+			t.Errorf("VisibleWidth(%q) = %d, expected %d", test.input, result, test.expected)
 		}
 	}
 }
@@ -155,9 +155,9 @@ func TestDynamicTable_RenderSectionAndConstructors(t *testing.T) {
 	os.Stdout = w
 	t.Cleanup(func() { os.Stdout = originalStdout })
 
-	CreateInfoTable().Add("Info", "value").RenderSection("Info")
-	CreateStatusTable().AddBool("Enabled", false).RenderSection("")
-	CreateSecurityTable().Render()
+	NewDynamicTable().Add("Info", "value").RenderSection("Info")
+	NewDynamicTable().AddBool("Enabled", false).RenderSection("")
+	NewDynamicTable().Render()
 
 	_ = w.Close()
 	var buf bytes.Buffer
@@ -180,10 +180,10 @@ func TestPadANSIString(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		result := padANSIString(test.input, test.width)
-		actualWidth := calculateVisibleWidth(result)
+		result := PadANSI(test.input, test.width, AlignLeft)
+		actualWidth := VisibleWidth(result)
 		if actualWidth != test.expected {
-			t.Errorf("padANSIString(%q, %d) resulted in width %d, expected %d", test.input, test.width, actualWidth, test.expected)
+			t.Errorf("PadANSI(%q, %d) resulted in width %d, expected %d", test.input, test.width, actualWidth, test.expected)
 		}
 	}
 }

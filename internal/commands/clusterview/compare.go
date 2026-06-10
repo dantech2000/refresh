@@ -48,7 +48,7 @@ func OutputComparisonTable(comparison *clustersvc.ClusterComparison, elapsed tim
 		if cl.Health != nil {
 			healthStatus = decisionColor(cl.Health.Decision)(healthLabel(cl.Health.Decision))
 		}
-		tbl.AddRow(truncate(cl.Name, 14), formatStatus(cl.Status), cl.Version, healthStatus)
+		tbl.AddRow(ui.TruncateANSI(cl.Name, 14), formatStatus(cl.Status), cl.Version, healthStatus)
 	}
 	tbl.Render()
 	ui.Outln()

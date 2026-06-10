@@ -117,7 +117,12 @@ func Save(f *File) error {
 		_ = removeFile(tmpName)
 		return err
 	}
-	return renameFile(tmpName, p)
+	if err := renameFile(tmpName, p); err != nil {
+		// Don't leave the orphaned temp file behind.
+		_ = removeFile(tmpName)
+		return err
+	}
+	return nil
 }
 
 // Names returns a sorted list of context names.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
@@ -76,13 +78,51 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 	}
 	svc.util = NewUtilizationCollector(cw, logger, cache)
 	svc.cost = NewCostAnalyzer(p, logger, cache, awsConfig.Region)
-	svc.cost.SetEC2Client(svc.ec2Client)
 	return svc
+}
+
+// supportedFilterKeys maps normalized --filter keys to a matcher against a
+// built summary. Keys are matched case-insensitively.
+var supportedFilterKeys = map[string]func(s NodegroupSummary, want string) bool{
+	"name": func(s NodegroupSummary, want string) bool {
+		return strings.Contains(strings.ToLower(s.Name), strings.ToLower(want))
+	},
+	"status":       func(s NodegroupSummary, want string) bool { return strings.EqualFold(s.Status, want) },
+	"instancetype": func(s NodegroupSummary, want string) bool { return strings.EqualFold(s.InstanceType, want) },
+	"amistatus":    func(s NodegroupSummary, want string) bool { return strings.EqualFold(s.AMIStatus.PlainString(), want) },
+}
+
+// validateFilters rejects unknown filter keys up front so a typo'd
+// --filter doesn't silently match everything.
+func validateFilters(filters map[string]string) error {
+	for k := range filters {
+		if _, ok := supportedFilterKeys[normalizeFilterKey(k)]; !ok {
+			return fmt.Errorf("unsupported filter key %q (supported: name, status, instanceType, amiStatus)", k)
+		}
+	}
+	return nil
+}
+
+func normalizeFilterKey(k string) string {
+	return strings.ToLower(strings.ReplaceAll(k, "-", ""))
+}
+
+func matchesFilters(s NodegroupSummary, filters map[string]string) bool {
+	for k, want := range filters {
+		if match := supportedFilterKeys[normalizeFilterKey(k)]; match != nil && !match(s, want) {
+			return false
+		}
+	}
+	return true
 }
 
 // List returns basic nodegroup summaries for a cluster.
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, error) {
 	s.logger.Info("listing nodegroups", "cluster", clusterName, "options", options)
+
+	if err := validateFilters(options.Filters); err != nil {
+		return nil, err
+	}
 
 	clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
@@ -105,58 +145,95 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		return nil, err
 	}
 
-	summaries := make([]NodegroupSummary, 0, len(nodegroupNames))
-	for _, name := range nodegroupNames {
-		desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
-			return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
-				ClusterName:   aws.String(clusterName),
-				NodegroupName: aws.String(name),
+	// The latest AMI is constant per (cluster version, AMI type); memoize the
+	// SSM lookup across the (concurrent) per-nodegroup work.
+	latestAMI := s.newLatestAMIResolver(k8sVersion)
+
+	results := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
+		func(fctx context.Context, name string) *NodegroupSummary {
+			desc, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+				return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+					ClusterName:   aws.String(clusterName),
+					NodegroupName: aws.String(name),
+				})
 			})
-		})
-		if err != nil {
-			s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", name, "error", err)
-			continue
-		}
-		ng := desc.Nodegroup
-		ready := int32(0)
-		if ng.ScalingConfig != nil && ng.Status == ekstypes.NodegroupStatusActive {
-			ready = aws.ToInt32(ng.ScalingConfig.DesiredSize)
-		}
-		instanceType := "Unknown"
-		if len(ng.InstanceTypes) > 0 {
-			instanceType = string(ng.InstanceTypes[0])
-		}
+			if err != nil {
+				s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", name, "error", err)
+				return nil
+			}
+			ng := desc.Nodegroup
+			var desiredSize int32
+			if ng.ScalingConfig != nil {
+				desiredSize = aws.ToInt32(ng.ScalingConfig.DesiredSize)
+			}
+			ready := int32(0)
+			if ng.Status == ekstypes.NodegroupStatusActive {
+				ready = desiredSize
+			}
+			instanceType := "Unknown"
+			if len(ng.InstanceTypes) > 0 {
+				instanceType = string(ng.InstanceTypes[0])
+			}
 
-		currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
-		latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
-		amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
+			currentAmiId := awsinternal.CurrentAmiID(fctx, ng, s.ec2Client, s.asgClient)
+			latestAmiId := latestAMI(fctx, ng.AmiType)
+			amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
 
-		summary := NodegroupSummary{
-			Name:         aws.ToString(ng.NodegroupName),
-			Status:       string(ng.Status),
-			InstanceType: instanceType,
-			DesiredSize:  aws.ToInt32(ng.ScalingConfig.DesiredSize),
-			ReadyNodes:   ready,
-			CurrentAMI:   currentAmiId,
-			AMIStatus:    amiStatus,
-		}
-		if options.ShowUtilization && s.util != nil {
-			window := normalizeWindow(options.Timeframe)
-			if ids, ok := s.getNodegroupInstanceIDs(ctx, clusterName, aws.ToString(ng.NodegroupName)); ok {
-				if cpu, ok2 := s.util.CollectEC2CPUForInstances(ctx, ids, window); ok2 {
-					summary.Metrics = SummaryMetrics{CPU: cpu.Average}
+			summary := NodegroupSummary{
+				Name:         aws.ToString(ng.NodegroupName),
+				Status:       string(ng.Status),
+				InstanceType: instanceType,
+				DesiredSize:  desiredSize,
+				ReadyNodes:   ready,
+				CurrentAMI:   currentAmiId,
+				AMIStatus:    amiStatus,
+			}
+			if !matchesFilters(summary, options.Filters) {
+				return nil
+			}
+			if options.ShowUtilization && s.util != nil {
+				window := normalizeWindow(options.Timeframe)
+				if ids, ok := s.instanceIDsForNodegroup(fctx, ng); ok {
+					if cpu, ok2 := s.util.CollectEC2CPUForInstances(fctx, ids, window); ok2 {
+						summary.Metrics = SummaryMetrics{CPU: cpu.Average}
+					}
 				}
 			}
-		}
-		if options.ShowCosts && s.cost != nil {
-			if _, perMonth, ok := s.cost.EstimateOnDemandUSD(ctx, instanceType); ok {
-				nodes := float64(aws.ToInt32(ng.ScalingConfig.DesiredSize))
-				summary.Cost = SummaryCost{Monthly: perMonth * nodes}
+			if options.ShowCosts && s.cost != nil {
+				if _, perMonth, ok := s.cost.EstimateOnDemandUSD(fctx, instanceType); ok {
+					summary.Cost = SummaryCost{Monthly: perMonth * float64(desiredSize)}
+				}
 			}
+			return &summary
+		})
+
+	summaries := make([]NodegroupSummary, 0, len(results))
+	for _, r := range results {
+		if r != nil {
+			summaries = append(summaries, *r)
 		}
-		summaries = append(summaries, summary)
 	}
 	return summaries, nil
+}
+
+// newLatestAMIResolver returns a concurrency-safe, memoized resolver for the
+// latest recommended AMI per AMI type at the given cluster version.
+func (s *ServiceImpl) newLatestAMIResolver(k8sVersion string) func(context.Context, ekstypes.AMITypes) string {
+	var mu sync.Mutex
+	byType := make(map[ekstypes.AMITypes]string)
+	return func(ctx context.Context, amiType ekstypes.AMITypes) string {
+		mu.Lock()
+		if v, ok := byType[amiType]; ok {
+			mu.Unlock()
+			return v
+		}
+		mu.Unlock()
+		v := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, amiType)
+		mu.Lock()
+		byType[amiType] = v
+		mu.Unlock()
+		return v
+	}
 }
 
 // Describe returns expanded details for a single nodegroup.
@@ -186,6 +263,16 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
 	amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
 
+	var scaling ScalingConfig
+	if sc := ng.ScalingConfig; sc != nil {
+		scaling = ScalingConfig{
+			DesiredSize: aws.ToInt32(sc.DesiredSize),
+			MinSize:     aws.ToInt32(sc.MinSize),
+			MaxSize:     aws.ToInt32(sc.MaxSize),
+			AutoScaling: true,
+		}
+	}
+
 	details := &NodegroupDetails{
 		Name:         aws.ToString(ng.NodegroupName),
 		Status:       string(ng.Status),
@@ -195,24 +282,24 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 		CurrentAMI:   currentAmiId,
 		LatestAMI:    latestAmiId,
 		AMIStatus:    amiStatus,
-		Scaling: ScalingConfig{
-			DesiredSize: aws.ToInt32(ng.ScalingConfig.DesiredSize),
-			MinSize:     aws.ToInt32(ng.ScalingConfig.MinSize),
-			MaxSize:     aws.ToInt32(ng.ScalingConfig.MaxSize),
-			AutoScaling: ng.ScalingConfig != nil,
-		},
+		Scaling:      scaling,
 	}
-	if options.ShowUtilization && s.util != nil {
+	// Resolve backing instances once from the nodegroup we already described;
+	// utilization, workloads, and instance details all reuse the result.
+	var instanceIDs []string
+	if options.ShowUtilization || options.ShowWorkloads || options.ShowInstances {
+		instanceIDs, _ = s.instanceIDsForNodegroup(ctx, ng)
+	}
+
+	if options.ShowUtilization && s.util != nil && len(instanceIDs) > 0 {
 		window := normalizeWindow(options.Timeframe)
-		if ids, ok := s.getNodegroupInstanceIDs(ctx, clusterName, aws.ToString(ng.NodegroupName)); ok {
-			if cpu, ok2 := s.util.CollectEC2CPUForInstances(ctx, ids, window); ok2 {
-				details.Utilization = UtilizationMetrics{CPU: cpu, TimeRange: window}
-			}
+		if cpu, ok := s.util.CollectEC2CPUForInstances(ctx, instanceIDs, window); ok {
+			details.Utilization = UtilizationMetrics{CPU: cpu, TimeRange: window}
 		}
 	}
 	if options.ShowCosts && s.cost != nil {
 		if _, perMonth, ok := s.cost.EstimateOnDemandUSD(ctx, details.InstanceType); ok {
-			nodes := float64(aws.ToInt32(ng.ScalingConfig.DesiredSize))
+			nodes := float64(scaling.DesiredSize)
 			details.Cost = CostAnalysis{
 				CurrentMonthlyCost:   perMonth * nodes,
 				ProjectedMonthlyCost: perMonth * nodes,
@@ -222,19 +309,16 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	}
 	if options.ShowWorkloads {
 		details.Workloads.PodDisruption = "no data"
-		if wi, ok := s.analyzeWorkloads(ctx, clusterName, aws.ToString(ng.NodegroupName)); ok {
+		if wi, ok := s.analyzeWorkloads(ctx, aws.ToString(ng.NodegroupName), instanceIDs); ok {
 			details.Workloads = wi
 		} else {
 			details.Workloads.PodDisruption = "unavailable: Kubernetes API not accessible or no matching nodes"
 		}
 	}
-	if options.ShowInstances {
-		if ids, ok := s.getNodegroupInstanceIDs(ctx, clusterName, aws.ToString(ng.NodegroupName)); ok {
-			if insts, ok2 := s.getInstanceDetails(ctx, ids); ok2 {
-				details.Instances = insts
-			}
+	if options.ShowInstances && len(instanceIDs) > 0 {
+		if insts, ok := s.getInstanceDetails(ctx, instanceIDs); ok {
+			details.Instances = insts
 		}
 	}
 	return details, nil
 }
-

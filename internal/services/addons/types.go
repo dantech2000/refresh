@@ -14,17 +14,17 @@ type AddonSummary struct {
 
 // AddonDetails contains expanded addon information
 type AddonDetails struct {
-	Name               string                 `json:"name"`
-	Version            string                 `json:"version"`
-	Status             string                 `json:"status"`
-	Health             string                 `json:"health"`
-	ARN                string                 `json:"arn"`
-	ServiceAccountRole string                 `json:"serviceAccountRole,omitempty"`
-	CreatedAt          *time.Time             `json:"createdAt,omitempty"`
-	ModifiedAt         *time.Time             `json:"modifiedAt,omitempty"`
+	Name               string         `json:"name"`
+	Version            string         `json:"version"`
+	Status             string         `json:"status"`
+	Health             string         `json:"health"`
+	ARN                string         `json:"arn"`
+	ServiceAccountRole string         `json:"serviceAccountRole,omitempty"`
+	CreatedAt          *time.Time     `json:"createdAt,omitempty"`
+	ModifiedAt         *time.Time     `json:"modifiedAt,omitempty"`
 	Configuration      map[string]any `json:"configuration,omitempty"`
-	Issues             []AddonIssue           `json:"issues,omitempty"`
-	AvailableVersions  []string               `json:"availableVersions,omitempty"`
+	Issues             []AddonIssue   `json:"issues,omitempty"`
+	AvailableVersions  []string       `json:"availableVersions,omitempty"`
 }
 
 // AddonIssue represents an issue reported by an addon

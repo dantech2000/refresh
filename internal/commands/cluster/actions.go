@@ -20,6 +20,12 @@ import (
 )
 
 func runList(c *cli.Context) error {
+	// Each --watch iteration performs the full setup+fetch+render cycle so a
+	// fresh service (and cache) is used every time.
+	return runner.Watch(c, func() error { return listClustersOnce(c) })
+}
+
+func listClustersOnce(c *cli.Context) error {
 	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
 	if err != nil {
 		return err

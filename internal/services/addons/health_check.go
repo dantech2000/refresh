@@ -70,20 +70,36 @@ func (s *ServiceImpl) postUpdateHealthCheck(ctx context.Context, clusterName, ad
 	return nil
 }
 
-// validateVersionCompatibility confirms the target addon version is compatible with
-// the cluster's Kubernetes version. Returns nil if compatibility cannot be determined
-// (e.g. API error) so a network hiccup doesn't block legitimate updates.
-func (s *ServiceImpl) validateVersionCompatibility(ctx context.Context, clusterName, addonName, targetVersion string) error {
-	clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+// clusterK8sVersion returns the cluster's Kubernetes version, memoized per
+// cluster name, or "" when it cannot be determined (callers degrade to
+// unfiltered/skip-validation behavior rather than failing the operation).
+func (s *ServiceImpl) clusterK8sVersion(ctx context.Context, clusterName string) string {
+	if v, ok := s.k8sVersions.Load(clusterName); ok {
+		return v.(string)
+	}
+	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{
 			Name: aws.String(clusterName),
 		})
 	})
-	if err != nil {
-		s.logger.Warn("compatibility check: could not describe cluster, skipping", "error", err)
+	if err != nil || desc.Cluster == nil {
+		s.logger.Warn("could not determine cluster Kubernetes version", "cluster", clusterName, "error", err)
+		return ""
+	}
+	version := aws.ToString(desc.Cluster.Version)
+	s.k8sVersions.Store(clusterName, version)
+	return version
+}
+
+// validateVersionCompatibility confirms the target addon version is compatible with
+// the given Kubernetes version. Returns nil if compatibility cannot be determined
+// (e.g. API error, unknown cluster version) so a network hiccup doesn't block
+// legitimate updates.
+func (s *ServiceImpl) validateVersionCompatibility(ctx context.Context, k8sVersion, addonName, targetVersion string) error {
+	if k8sVersion == "" {
+		s.logger.Warn("compatibility check: cluster Kubernetes version unknown, skipping", "addon", addonName)
 		return nil
 	}
-	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
 	versions, err := s.GetAvailableVersions(ctx, addonName, k8sVersion)
 	if err != nil {
