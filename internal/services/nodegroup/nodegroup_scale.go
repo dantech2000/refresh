@@ -14,6 +14,10 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 )
 
+// scalePollInterval is how often waitForScaleCompletion re-checks nodegroup
+// status while waiting for a scaling operation to finish.
+const scalePollInterval = 5 * time.Second
+
 // Scale updates the desired/min/max size for a nodegroup.
 func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32, options ScaleOptions) error {
 	s.logger.Info("scaling nodegroup", "cluster", clusterName, "nodegroup", nodegroupName,
@@ -102,7 +106,7 @@ func (s *ServiceImpl) waitForScaleCompletion(ctx context.Context, clusterName, n
 		waitCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(scalePollInterval)
 	defer ticker.Stop()
 	for {
 		select {

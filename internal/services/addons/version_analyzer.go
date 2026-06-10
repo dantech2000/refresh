@@ -104,7 +104,7 @@ func compareAddonVersions(a, b string) int {
 
 // waitForAddonUpdate polls until an addon update completes.
 func (s *ServiceImpl) waitForAddonUpdate(ctx context.Context, clusterName, addonName string) error {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(addonUpdatePollInterval)
 	defer ticker.Stop()
 
 	for {

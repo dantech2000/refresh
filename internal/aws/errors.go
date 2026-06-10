@@ -195,7 +195,7 @@ func FormatAWSError(err error, operation string) error {
 	}
 
 	// Default case - return the error with context
-	return fmt.Errorf("error while %s: %v", operation, err)
+	return fmt.Errorf("error while %s: %w", operation, err)
 }
 
 func formatRegionError(err error, operation string) error {
@@ -208,7 +208,7 @@ Please verify:
 
 Current error indicates an invalid or unsupported region.
 
-Current error: %v`, operation, err)
+Current error: %w`, operation, err)
 }
 
 func formatCredentialError(err error) error {
@@ -229,7 +229,7 @@ Please set up your AWS credentials using one of these methods:
 4. AWS SSO:
    aws sso login
 
-Current error: %s`, err)
+Current error: %w`, err)
 }
 
 func formatNetworkError(err error, operation string) error {
@@ -241,7 +241,7 @@ Please check:
 - VPC/Security group settings (if running in private network)
 - Regional service availability
 
-Current error: %v`, operation, err)
+Current error: %w`, operation, err)
 }
 
 func formatPermissionError(err error, operation string) error {
@@ -255,13 +255,17 @@ Required permissions for refresh tool:
 - eks:UpdateNodegroupVersion
 - cloudwatch:GetMetricStatistics (for health checks)
 
-Current error: %v`, operation, err)
+Current error: %w`, operation, err)
 }
+
+// credentialValidationTimeout bounds the STS GetCallerIdentity call used to
+// validate credentials, so a misconfigured environment fails fast.
+const credentialValidationTimeout = 10 * time.Second
 
 // ValidateAWSCredentials performs a basic validation of AWS credentials.
 func ValidateAWSCredentials(ctx context.Context, awsCfg aws.Config) error {
 	// Create a short timeout context for validation
-	validationCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	validationCtx, cancel := context.WithTimeout(ctx, credentialValidationTimeout)
 	defer cancel()
 
 	stsClient := sts.NewFromConfig(awsCfg)

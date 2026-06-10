@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"regexp"
+	"syscall"
 
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
@@ -105,7 +108,7 @@ func newApp() *cli.App {
 	}
 }
 
-func run(args []string, out, errOut io.Writer) error {
+func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	// Set custom help printer for colored output
 	cli.HelpPrinter = coloredHelpPrinter
 
@@ -117,11 +120,18 @@ func run(args []string, out, errOut io.Writer) error {
 	app := newApp()
 	app.Writer = out
 	app.ErrWriter = errOut
-	return app.Run(args)
+	// RunContext threads ctx into every command's c.Context, so signal
+	// cancellation from main propagates to in-flight AWS calls.
+	return app.RunContext(ctx, args)
 }
 
 func main() {
-	if err := run(os.Args, os.Stdout, os.Stderr); err != nil {
+	// Cancel the root context on Ctrl+C / SIGTERM so in-flight AWS calls are
+	// aborted instead of running to their timeout.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx, os.Args, os.Stdout, os.Stderr); err != nil {
 		// Errors belong on stderr: scripted consumers piping stdout must not
 		// find error text mixed into their data.
 		fmt.Fprintln(os.Stderr, color.RedString("Error: %v", err))

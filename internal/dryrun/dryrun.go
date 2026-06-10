@@ -77,7 +77,7 @@ func NewDryRunner(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client,
 
 	k8sVersion, err := dryrunDescribeCluster(ctx, eksClient, clusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster: %v", err)
+		return nil, fmt.Errorf("failed to describe cluster: %w", err)
 	}
 
 	return &DryRunner{

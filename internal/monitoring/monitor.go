@@ -4,6 +4,7 @@ package monitoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -73,6 +74,12 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 			return handleUserCancellation(monitor, config)
 
 		case <-monitorCtx.Done():
+			// The parent context is cancelled by main on Ctrl+C / SIGTERM, which
+			// races with sigChan above — treat plain cancellation as the user
+			// stopping, and only a deadline as a timeout.
+			if errors.Is(monitorCtx.Err(), context.Canceled) {
+				return handleUserCancellation(monitor, config)
+			}
 			return handleTimeout(config)
 
 		case <-ticker.C:

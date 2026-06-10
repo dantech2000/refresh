@@ -14,6 +14,10 @@ import (
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
+// defaultUtilizationCacheTTL is how long CloudWatch utilization metrics are
+// cached; kept short so repeated commands still reflect recent load.
+const defaultUtilizationCacheTTL = 2 * time.Minute
+
 type UtilizationCollector struct {
 	cw       *cloudwatch.Client
 	logger   *slog.Logger
@@ -22,7 +26,7 @@ type UtilizationCollector struct {
 }
 
 func NewUtilizationCollector(cw *cloudwatch.Client, logger *slog.Logger, cache *Cache) *UtilizationCollector {
-	return &UtilizationCollector{cw: cw, logger: logger, cache: cache, cacheTTL: 2 * time.Minute}
+	return &UtilizationCollector{cw: cw, logger: logger, cache: cache, cacheTTL: defaultUtilizationCacheTTL}
 }
 
 // metricSpec describes one CloudWatch metric to fetch per instance.

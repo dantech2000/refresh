@@ -14,6 +14,10 @@ import (
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
+// defaultCostCacheTTL is how long pricing lookups are cached; on-demand
+// prices change rarely, so a long TTL is safe.
+const defaultCostCacheTTL = 60 * time.Minute
+
 type CostAnalyzer struct {
 	pricing  *pricing.Client
 	logger   *slog.Logger
@@ -23,7 +27,7 @@ type CostAnalyzer struct {
 }
 
 func NewCostAnalyzer(p *pricing.Client, logger *slog.Logger, cache *Cache, region string) *CostAnalyzer {
-	return &CostAnalyzer{pricing: p, logger: logger, cache: cache, cacheTTL: 60 * time.Minute, region: region}
+	return &CostAnalyzer{pricing: p, logger: logger, cache: cache, cacheTTL: defaultCostCacheTTL, region: region}
 }
 
 // EstimateOnDemandUSD returns monthly and per-hour costs for an instance type (Linux/on-demand).
