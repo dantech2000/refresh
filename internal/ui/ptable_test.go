@@ -8,44 +8,6 @@ import (
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
-// truncateString
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestTruncateString_BelowLimit(t *testing.T) {
-	if got := truncateString("hello", 10); got != "hello" {
-		t.Errorf("got %q, want %q", got, "hello")
-	}
-}
-
-func TestTruncateString_AtLimit(t *testing.T) {
-	if got := truncateString("hello", 5); got != "hello" {
-		t.Errorf("got %q, want %q", got, "hello")
-	}
-}
-
-func TestTruncateString_AboveLimitAddsEllipsis(t *testing.T) {
-	got := truncateString("hello world", 8)
-	if got != "hello..." {
-		t.Errorf("got %q, want %q", got, "hello...")
-	}
-}
-
-func TestTruncateString_MaxLen3NoEllipsis(t *testing.T) {
-	got := truncateString("abcdef", 3)
-	// maxLen <= 3 → raw truncation without ellipsis
-	if got != "abc" {
-		t.Errorf("got %q, want %q", got, "abc")
-	}
-}
-
-func TestTruncateString_MaxLen2(t *testing.T) {
-	got := truncateString("abcdef", 2)
-	if got != "ab" {
-		t.Errorf("got %q, want %q", got, "ab")
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
 // NewPTable / AddRow
 // ──────────────────────────────────────────────────────────────────────────────
 

@@ -12,8 +12,8 @@ func addonNames(addons []AddonSummary) []string {
 // An addon that appears as a dependency value must be updated before the key.
 var addonDependencies = map[string][]string{
 	// Networking foundation — everything else depends on VPC CNI being healthy
-	"kube-proxy":  {"vpc-cni"},
-	"coredns":     {"vpc-cni"},
+	"kube-proxy": {"vpc-cni"},
+	"coredns":    {"vpc-cni"},
 
 	// Storage drivers depend on cluster networking being stable
 	"aws-ebs-csi-driver": {"vpc-cni", "coredns"},

@@ -30,9 +30,9 @@ type PDBCoverageSummary struct {
 }
 
 type PDBCoverageResult struct {
-	Deployments []PDBCoverageRow     `json:"deployments" yaml:"deployments"`
-	Summary     PDBCoverageSummary   `json:"summary" yaml:"summary"`
-	Options     PDBCoverageOptions   `json:"options" yaml:"options"`
+	Deployments []PDBCoverageRow   `json:"deployments" yaml:"deployments"`
+	Summary     PDBCoverageSummary `json:"summary" yaml:"summary"`
+	Options     PDBCoverageOptions `json:"options" yaml:"options"`
 }
 
 func AnalyzePDBCoverage(ctx context.Context, client kubernetes.Interface, opts PDBCoverageOptions) (PDBCoverageResult, error) {

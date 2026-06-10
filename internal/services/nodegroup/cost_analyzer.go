@@ -9,28 +9,21 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	pricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 type CostAnalyzer struct {
-	pricing   *pricing.Client
-	ec2Client *ec2.Client
-	logger    *slog.Logger
-	cache     *Cache
-	cacheTTL  time.Duration
-	region    string
+	pricing  *pricing.Client
+	logger   *slog.Logger
+	cache    *Cache
+	cacheTTL time.Duration
+	region   string
 }
 
 func NewCostAnalyzer(p *pricing.Client, logger *slog.Logger, cache *Cache, region string) *CostAnalyzer {
 	return &CostAnalyzer{pricing: p, logger: logger, cache: cache, cacheTTL: 60 * time.Minute, region: region}
-}
-
-// SetEC2Client sets the EC2 client for spot pricing queries
-func (c *CostAnalyzer) SetEC2Client(ec2Client *ec2.Client) {
-	c.ec2Client = ec2Client
 }
 
 // EstimateOnDemandUSD returns monthly and per-hour costs for an instance type (Linux/on-demand).
@@ -247,12 +240,4 @@ var staticPriceMap = map[string]float64{
 	"t4g.small":  0.0168,
 	"t4g.medium": 0.0336,
 	"t4g.large":  0.0672,
-}
-
-// GetFallbackPrice returns a static price when API is unavailable
-func (c *CostAnalyzer) GetFallbackPrice(instanceType string) (perHour float64, perMonth float64, ok bool) {
-	if price, exists := staticPriceMap[instanceType]; exists {
-		return price, price * 730.0, true
-	}
-	return 0, 0, false
 }

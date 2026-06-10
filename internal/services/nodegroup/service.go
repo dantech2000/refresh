@@ -78,14 +78,15 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 	}
 	svc.util = NewUtilizationCollector(cw, logger, cache)
 	svc.cost = NewCostAnalyzer(p, logger, cache, awsConfig.Region)
-	svc.cost.SetEC2Client(svc.ec2Client)
 	return svc
 }
 
 // supportedFilterKeys maps normalized --filter keys to a matcher against a
 // built summary. Keys are matched case-insensitively.
 var supportedFilterKeys = map[string]func(s NodegroupSummary, want string) bool{
-	"name":         func(s NodegroupSummary, want string) bool { return strings.Contains(strings.ToLower(s.Name), strings.ToLower(want)) },
+	"name": func(s NodegroupSummary, want string) bool {
+		return strings.Contains(strings.ToLower(s.Name), strings.ToLower(want))
+	},
 	"status":       func(s NodegroupSummary, want string) bool { return strings.EqualFold(s.Status, want) },
 	"instancetype": func(s NodegroupSummary, want string) bool { return strings.EqualFold(s.InstanceType, want) },
 	"amistatus":    func(s NodegroupSummary, want string) bool { return strings.EqualFold(s.AMIStatus.PlainString(), want) },
@@ -321,4 +322,3 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	}
 	return details, nil
 }
-

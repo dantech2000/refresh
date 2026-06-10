@@ -31,7 +31,7 @@ func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Dur
 	}
 	ui.PrintElapsed(elapsed)
 
-		cols := []ui.Column{{Title: "CLUSTER", Min: 14, Align: ui.AlignLeft}}
+	cols := []ui.Column{{Title: "CLUSTER", Min: 14, Align: ui.AlignLeft}}
 	if multiRegion {
 		cols = append(cols, ui.Column{Title: "REGION", Min: 10, Align: ui.AlignLeft})
 	}
@@ -181,7 +181,10 @@ func SortClusterSummaries(items []clustersvc.ClusterSummary, key string, desc bo
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if desc {
-			return !less(i, j)
+			// Swap arguments rather than negating: !less(i,j) returns true
+			// for equal elements, which violates the sort contract and
+			// destroys SliceStable's stability.
+			return less(j, i)
 		}
 		return less(i, j)
 	})

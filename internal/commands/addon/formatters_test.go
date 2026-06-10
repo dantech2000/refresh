@@ -8,9 +8,8 @@ import (
 	"testing"
 	"time"
 
-	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/dantech2000/refresh/internal/services/addons"
 )
-
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
@@ -29,31 +28,20 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	return buf.String(), callErr
 }
 
-func TestMapAddonHealth_Active(t *testing.T) {
-	got := mapAddonHealth(ekstypes.AddonStatusActive)
-	if !strings.Contains(got, "PASS") {
-		t.Errorf("Active: got %q, want PASS", got)
+func TestHealthBadge(t *testing.T) {
+	cases := map[string]string{
+		"PASS":        "PASS",
+		"FAIL":        "FAIL",
+		"IN_PROGRESS": "IN PROGRESS",
+		"SOMETHING":   "UNKNOWN",
 	}
-}
-
-func TestMapAddonHealth_Degraded(t *testing.T) {
-	got := mapAddonHealth(ekstypes.AddonStatusDegraded)
-	if !strings.Contains(got, "FAIL") {
-		t.Errorf("Degraded: got %q, want FAIL", got)
+	for in, want := range cases {
+		if got := healthBadge(in); !strings.Contains(got, want) {
+			t.Errorf("healthBadge(%q) = %q, want it to contain %q", in, got, want)
+		}
 	}
-}
-
-func TestMapAddonHealth_Creating(t *testing.T) {
-	got := mapAddonHealth(ekstypes.AddonStatusCreating)
-	if !strings.Contains(got, "IN PROGRESS") {
-		t.Errorf("Creating: got %q, want IN PROGRESS", got)
-	}
-}
-
-func TestMapAddonHealth_Unknown(t *testing.T) {
-	got := mapAddonHealth("SOMETHING_ELSE")
-	if !strings.Contains(got, "UNKNOWN") {
-		t.Errorf("Unknown: got %q, want UNKNOWN", got)
+	if got := healthBadge(""); got != "" {
+		t.Errorf("healthBadge(\"\") = %q, want empty", got)
 	}
 }
 
@@ -72,7 +60,7 @@ func TestOutputAddonsTable_WithRows(t *testing.T) {
 	// file handle and are not captured by captureStdout. We verify the header is correct
 	// and that no error is returned. The JSON/YAML tests validate the data itself.
 	out, err := captureStdout(t, func() error {
-		return outputAddonsTable("prod", []addonRow{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "PASS"}}, time.Second)
+		return outputAddonsTable("prod", []addons.AddonSummary{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "PASS"}}, time.Second)
 	})
 	if err != nil {
 		t.Fatalf("addons table: %v", err)

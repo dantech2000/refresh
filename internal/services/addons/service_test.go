@@ -274,7 +274,7 @@ func TestCompareAddonVersions(t *testing.T) {
 		{"v1.15.0-eksbuild.2", "v1.14.9-eksbuild.5", "gt"},
 		{"v1.14.0-eksbuild.1", "v1.14.0-eksbuild.2", "lt"},
 		{"v1.14.0-eksbuild.2", "v1.14.0-eksbuild.2", "eq"},
-		{"v1.2.0", "v1.10.0", "lt"},   // numeric, not lexical
+		{"v1.2.0", "v1.10.0", "lt"}, // numeric, not lexical
 		{"v1.18.1-eksbuild.10", "v1.18.1-eksbuild.9", "gt"},
 		{"v2.0.0", "v1.99.99-eksbuild.99", "gt"},
 	}

@@ -230,7 +230,7 @@ func (dr *DryRunner) categorizeUpdate(result *DryRunResult, update NodegroupUpda
 
 // printUpdateStatus prints the status of a single update analysis.
 func (dr *DryRunner) printUpdateStatus(update NodegroupUpdate) {
-	ui.Outf("%s: Nodegroup %s - %s\n", update.Action, update.Name, update.Reason)
+	ui.Outf("%s: Nodegroup %s - %s\n", update.Action.ColorString(), update.Name, update.Reason)
 }
 
 // DisplayResults shows the summary of the dry-run analysis.

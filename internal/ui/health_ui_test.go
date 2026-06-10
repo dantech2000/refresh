@@ -101,7 +101,7 @@ func TestRenderProgressBar_VisibleLength(t *testing.T) {
 	// Bar is [ + 20 chars + ] = 22 visible chars.
 	for _, status := range []health.HealthStatus{health.StatusPass, health.StatusWarn, health.StatusFail, "OTHER"} {
 		bar := RenderProgressBar(50, status)
-		if vl := visibleLength(bar); vl != 22 {
+		if vl := VisibleWidth(bar); vl != 22 {
 			t.Errorf("RenderProgressBar(%q) visible length = %d, want 22", status, vl)
 		}
 	}

@@ -35,8 +35,8 @@ type metricSpec struct {
 }
 
 var (
-	cpuSpec    = []metricSpec{{namespace: "AWS/EC2", metric: "CPUUtilization", idPrefix: "m", unit: cwtypes.StandardUnitPercent}}
-	memorySpec = []metricSpec{{namespace: "CWAgent", metric: "mem_used_percent", idPrefix: "mem", unit: cwtypes.StandardUnitPercent}}
+	cpuSpec     = []metricSpec{{namespace: "AWS/EC2", metric: "CPUUtilization", idPrefix: "m", unit: cwtypes.StandardUnitPercent}}
+	memorySpec  = []metricSpec{{namespace: "CWAgent", metric: "mem_used_percent", idPrefix: "mem", unit: cwtypes.StandardUnitPercent}}
 	networkSpec = []metricSpec{
 		{namespace: "AWS/EC2", metric: "NetworkIn", idPrefix: "netin", unit: cwtypes.StandardUnitBytes},
 		{namespace: "AWS/EC2", metric: "NetworkOut", idPrefix: "netout", unit: cwtypes.StandardUnitBytes},

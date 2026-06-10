@@ -68,19 +68,6 @@ func TestNewCostAnalyzer(t *testing.T) {
 	}
 }
 
-func TestSetEC2Client(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	cache := NewCache()
-	analyzer := NewCostAnalyzer(nil, logger, cache, "us-east-1")
-
-	if analyzer.ec2Client != nil {
-		t.Error("EC2 client should be nil initially")
-	}
-
-	analyzer.SetEC2Client(nil)
-	// Just testing that it doesn't panic
-}
-
 func TestEstimateOnDemandUSD_FallbackWhenNoPricingClient(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	cache := NewCache()

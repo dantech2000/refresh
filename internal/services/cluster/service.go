@@ -309,12 +309,6 @@ func regionOptionsFor(options ListOptions, region string) ListOptions {
 	return out
 }
 
-// ListAllRegions lists clusters across all EKS-supported regions.
-func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) ([]ClusterSummary, error) {
-	summaries, _, err := s.ListAllRegionsWithMeta(ctx, options)
-	return summaries, err
-}
-
 // ListAllRegionsWithMeta is like ListAllRegions but also returns the number of
 // regions that were actually queried, so the caller can display an accurate
 // progress message.

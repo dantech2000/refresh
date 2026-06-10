@@ -9,10 +9,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
-	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
@@ -32,23 +30,24 @@ func runList(c *cli.Context) error {
 	if err != nil || listed {
 		return err
 	}
-	eksClient := eks.NewFromConfig(cfg)
 
-	var rows []addonRow
+	addonSvc := addons.NewService(eks.NewFromConfig(cfg), factory.NewDefaultLogger(nil))
+
+	var summaries []addons.AddonSummary
 	start := time.Now()
 	if err := runner.WithSpinner("addon", "Add-on information gathered!", func() error {
 		var ferr error
-		rows, ferr = fetchAddons(ctx, eksClient, clusterName, c.Bool("show-health"))
+		summaries, ferr = addonSvc.List(ctx, clusterName, addons.ListOptions{ShowHealth: c.Bool("show-health")})
 		return ferr
 	}); err != nil {
 		return err
 	}
 
-	payload := map[string]any{"cluster": clusterName, "addons": rows, "count": len(rows)}
+	payload := map[string]any{"cluster": clusterName, "addons": summaries, "count": len(summaries)}
 	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
 		return err
 	}
-	return outputAddonsTable(clusterName, rows, time.Since(start))
+	return outputAddonsTable(clusterName, summaries, time.Since(start))
 }
 
 func runDescribe(c *cli.Context) error {
@@ -74,30 +73,10 @@ func runDescribe(c *cli.Context) error {
 		return err
 	}
 
-	d, err := eksClient.DescribeAddon(ctx, &eks.DescribeAddonInput{ClusterName: aws.String(clusterName), AddonName: aws.String(addonName)})
-	if err != nil || d.Addon == nil {
+	addonSvc := addons.NewService(eksClient, factory.NewDefaultLogger(nil))
+	details, err := addonSvc.Describe(ctx, clusterName, addonName, addons.DescribeOptions{ShowConfiguration: true})
+	if err != nil {
 		return awsinternal.FormatAWSError(err, "describing add-on")
-	}
-
-	details := addonDetails{
-		Name:       aws.ToString(d.Addon.AddonName),
-		Version:    aws.ToString(d.Addon.AddonVersion),
-		Status:     string(d.Addon.Status),
-		Health:     mapAddonHealth(d.Addon.Status),
-		ARN:        aws.ToString(d.Addon.AddonArn),
-		CreatedAt:  d.Addon.CreatedAt,
-		ModifiedAt: d.Addon.ModifiedAt,
-		Config:     map[string]any{},
-	}
-
-	if d.Addon.ConfigurationValues != nil && *d.Addon.ConfigurationValues != "" {
-		var cfgMap map[string]any
-		raw := *d.Addon.ConfigurationValues
-		if err := yaml.Unmarshal([]byte(raw), &cfgMap); err == nil {
-			details.Config = cfgMap
-		} else {
-			details.Config = map[string]any{"raw": raw}
-		}
 	}
 
 	if handled, err := runner.EncodeStdout(c.String("format"), details); handled {
@@ -273,40 +252,17 @@ func updateAllFailureError(results []addons.AddonUpdateResult) error {
 	return nil
 }
 
-func fetchAddons(ctx context.Context, eksClient *eks.Client, clusterName string, withHealth bool) ([]addonRow, error) {
-	addonNames, err := awsinternal.ListAllPages(ctx, "listing add-ons",
-		func(rc context.Context, token *string) (*eks.ListAddonsOutput, error) {
-			return eksClient.ListAddons(rc, &eks.ListAddonsInput{ClusterName: aws.String(clusterName), NextToken: token})
-		},
-		func(out *eks.ListAddonsOutput) ([]string, *string) { return out.Addons, out.NextToken },
-	)
-	if err != nil {
-		return nil, err
-	}
-	rows := make([]addonRow, 0, len(addonNames))
-	for _, name := range addonNames {
-		d, err := eksClient.DescribeAddon(ctx, &eks.DescribeAddonInput{ClusterName: aws.String(clusterName), AddonName: aws.String(name)})
-		if err != nil || d.Addon == nil {
-			rows = append(rows, addonRow{Name: name, Version: "", Status: "UNKNOWN", Health: "Unknown"})
-			continue
-		}
-		health := ""
-		if withHealth {
-			health = mapAddonHealth(d.Addon.Status)
-		}
-		rows = append(rows, addonRow{Name: aws.ToString(d.Addon.AddonName), Version: aws.ToString(d.Addon.AddonVersion), Status: string(d.Addon.Status), Health: health})
-	}
-	return rows, nil
-}
-
-func mapAddonHealth(s ekstypes.AddonStatus) string {
-	switch s {
-	case ekstypes.AddonStatusActive:
+// healthBadge converts the addons service's plain health vocabulary
+// (PASS/FAIL/IN_PROGRESS/UNKNOWN) into the shared colored badges.
+func healthBadge(health string) string {
+	switch health {
+	case "":
+		return ""
+	case "PASS":
 		return ui.BadgePass()
-	case ekstypes.AddonStatusDegraded, ekstypes.AddonStatusCreateFailed,
-		ekstypes.AddonStatusUpdateFailed, ekstypes.AddonStatusDeleteFailed:
+	case "FAIL":
 		return ui.BadgeFail()
-	case ekstypes.AddonStatusCreating, ekstypes.AddonStatusDeleting, ekstypes.AddonStatusUpdating:
+	case "IN_PROGRESS":
 		return ui.BadgeInProgress()
 	default:
 		return ui.BadgeUnknown()

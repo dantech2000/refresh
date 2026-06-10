@@ -311,15 +311,8 @@ func TestPrintCredentialHelp_NoPanic(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// NewAMIResolver / NewClusterResolver constructors
+// NewClusterResolver constructor
 // ──────────────────────────────────────────────────────────────────────────────
-
-func TestNewAMIResolver_NotNil(t *testing.T) {
-	r := NewAMIResolver(nil, nil, nil)
-	if r == nil {
-		t.Error("NewAMIResolver should return non-nil resolver")
-	}
-}
 
 func TestNewClusterResolver_NotNil(t *testing.T) {
 	r := NewClusterResolver(aws.Config{})

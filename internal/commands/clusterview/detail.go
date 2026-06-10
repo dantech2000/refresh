@@ -82,7 +82,7 @@ func OutputClusterDetailsTable(details *clustersvc.ClusterDetails, elapsed time.
 			if h == "" {
 				h = "Unknown"
 			}
-			addTbl.AddRow(truncate(a.Name, 24), a.Version, a.Status, formatAddonHealth(h))
+			addTbl.AddRow(ui.TruncateANSI(a.Name, 24), a.Version, a.Status, formatAddonHealth(h))
 		}
 		addTbl.Render()
 	}

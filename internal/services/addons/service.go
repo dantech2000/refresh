@@ -10,6 +10,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"gopkg.in/yaml.v3"
+
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
@@ -117,7 +119,13 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, addonName strin
 	}
 
 	if options.ShowConfiguration && addon.ConfigurationValues != nil && *addon.ConfigurationValues != "" {
-		details.Configuration = map[string]any{"raw": *addon.ConfigurationValues}
+		raw := *addon.ConfigurationValues
+		var cfgMap map[string]any
+		if err := yaml.Unmarshal([]byte(raw), &cfgMap); err == nil {
+			details.Configuration = cfgMap
+		} else {
+			details.Configuration = map[string]any{"raw": raw}
+		}
 	}
 
 	if addon.Health != nil && len(addon.Health.Issues) > 0 {

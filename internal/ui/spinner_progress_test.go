@@ -5,26 +5,6 @@ import (
 	"time"
 )
 
-func TestProgressBarLifecycle(t *testing.T) {
-	bar := NewProgressBar(2, "work")
-	if err := bar.Start(); err != nil {
-		t.Fatalf("Start() = %v", err)
-	}
-	bar.Increment()
-	bar.Add(1)
-	bar.UpdateTitle("done")
-	bar.Stop()
-}
-
-func TestPerformanceTimer(t *testing.T) {
-	timer := NewPerformanceTimer("operation")
-	time.Sleep(time.Nanosecond)
-	if timer.Elapsed() <= 0 {
-		t.Fatal("expected positive elapsed time")
-	}
-	timer.PrintElapsed()
-}
-
 func TestFunMessages(t *testing.T) {
 	fm := &FunMessages{
 		Cluster:   []string{"cluster"},
@@ -83,38 +63,4 @@ func TestFunSpinnerLifecycle(t *testing.T) {
 	if NewFunSpinnerForCategory("cluster") == nil || NewEnhancedProgressSpinner("addon") == nil {
 		t.Fatal("category spinners should not be nil")
 	}
-}
-
-func TestMultiProgressAndRegionTracker(t *testing.T) {
-	// pterm's SpinnerPrinter writes to a shared bytes.Buffer from its own
-	// goroutine and from Stop without any synchronization, so the race
-	// detector flags this test even though we use the API correctly. The bug
-	// is in github.com/pterm/pterm (still present in v0.12.83); skip under
-	// -race rather than mask it with a fake mutex around their internals.
-	if raceEnabled {
-		t.Skip("skipping: upstream pterm spinner has an internal data race; see https://github.com/pterm/pterm/issues")
-	}
-	manager := NewMultiProgressManager()
-	if manager.AddSpinner("spin") == nil || manager.AddProgressBar(1, "bar") == nil {
-		t.Fatal("expected spinner and bar")
-	}
-	if err := manager.Start(); err != nil {
-		t.Fatalf("manager Start() = %v", err)
-	}
-	manager.Stop()
-
-	tracker := NewRegionProgressTracker([]string{"us-east-1", "us-west-2"}, "clusters")
-	if tracker.IsComplete() {
-		t.Fatal("tracker should not start complete")
-	}
-	if err := tracker.Start(); err != nil {
-		t.Fatalf("tracker Start() = %v", err)
-	}
-	tracker.CompleteRegion("us-east-1", 1)
-	tracker.CompleteRegion("us-west-2", 0)
-	tracker.CompleteRegion("missing", 10)
-	if !tracker.IsComplete() {
-		t.Fatal("tracker should be complete")
-	}
-	tracker.Stop()
 }

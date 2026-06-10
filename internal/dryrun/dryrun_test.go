@@ -214,13 +214,13 @@ func TestAnalyzeClassifiesNodegroupsWithInjectedLookups(t *testing.T) {
 
 func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 	tests := []struct {
-		name       string
-		force      bool
-		status     types.NodegroupStatus
-		currentAMI string
-		latestAMI  string
+		name        string
+		force       bool
+		status      types.NodegroupStatus
+		currentAMI  string
+		latestAMI   string
 		describeErr error
-		want       refreshTypes.DryRunAction
+		want        refreshTypes.DryRunAction
 	}{
 		{name: "describe error", describeErr: errors.New("boom"), want: refreshTypes.ActionSkipUpdating},
 		{name: "updating", status: types.NodegroupStatusUpdating, want: refreshTypes.ActionSkipUpdating},

@@ -144,14 +144,6 @@ func ResolveClusterOrList(ctx context.Context, cfg aws.Config, c *cli.Context) (
 	return name, false, nil
 }
 
-// SecondPositional returns the value of flagName, or the second non-flag
-// positional argument if the flag is not set. Use PositionalSlot for commands
-// where prior slots may be supplied via flags (which shifts the positional
-// indices).
-func SecondPositional(c *cli.Context, flagName string) string {
-	return PositionalAt(c, flagName, 1)
-}
-
 // PositionalAt returns the value of flagName, or the non-flag positional
 // argument at index (0-indexed) if the flag is not set. Does NOT account for
 // prior flags absorbing positional slots — use PositionalSlot for that.
@@ -304,7 +296,7 @@ func nonFlagArgs(c *cli.Context) []string {
 }
 
 // EncodeStdout writes payload to stdout as JSON or YAML based on format. For
-// any other format value, returns ErrUnknownFormat so the caller can fall
+// any other format value it returns handled=false so the caller can fall
 // through to its table renderer.
 func EncodeStdout(format string, payload any) (handled bool, err error) {
 	switch strings.ToLower(format) {

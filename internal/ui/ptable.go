@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
 )
@@ -32,70 +35,70 @@ func NewPTable(columns []Column, opts ...PTableOption) *PTable {
 	return t
 }
 
-// AddRow appends a row. The number of cells must match the number of columns.
-// Mismatched rows are silently dropped to maintain table integrity.
+// AddRow appends a row. The number of cells must match the number of columns;
+// mismatched rows are dropped with a stderr warning (silent data loss in a
+// table is much harder to debug than a noisy skip).
 func (t *PTable) AddRow(cells ...string) {
 	if len(cells) != len(t.columns) {
-		// Silent drop for mismatched column count (maintains original behavior)
+		_, _ = fmt.Fprintf(os.Stderr, "table: dropped row with %d cells (expected %d)\n", len(cells), len(t.columns))
 		return
 	}
 	t.rows = append(t.rows, cells)
 }
 
-// Render prints the table using pterm while maintaining the current design standards.
+// Render prints the table using pterm. Column Max is enforced with ANSI-aware
+// truncation, and Min/Align are honored by pre-padding cells to the computed
+// column width (pterm itself only left-aligns).
 func (t *PTable) Render() {
-	// Build table data for pterm
+	// Truncate cells and compute final visible column widths.
+	truncated := make([][]string, len(t.rows))
+	widths := make([]int, len(t.columns))
+	for i, col := range t.columns {
+		widths[i] = VisibleWidth(col.Title)
+		if col.Min > 0 && widths[i] < col.Min {
+			widths[i] = col.Min
+		}
+	}
+	for r, row := range t.rows {
+		cells := make([]string, len(row))
+		for i, cell := range row {
+			if t.columns[i].Max > 0 {
+				cell = TruncateANSI(cell, t.columns[i].Max)
+			}
+			cells[i] = cell
+			if w := VisibleWidth(cell); w > widths[i] {
+				widths[i] = w
+			}
+		}
+		truncated[r] = cells
+	}
+
 	var ptermData pterm.TableData
 
-	// Add header row
 	headerRow := make([]string, len(t.columns))
 	for i, col := range t.columns {
 		header := col.Title
 		if t.headerColor != nil {
 			header = t.headerColor(header)
 		}
-		headerRow[i] = header
+		headerRow[i] = PadANSI(header, widths[i], AlignLeft)
 	}
 	ptermData = append(ptermData, headerRow)
 
-	// Add data rows with proper alignment and truncation
-	for _, row := range t.rows {
+	for _, row := range truncated {
 		ptermRow := make([]string, len(row))
 		for i, cell := range row {
-			// Apply truncation based on column max width
-			processedCell := cell
-			if t.columns[i].Max > 0 && len(cell) > t.columns[i].Max {
-				processedCell = truncateString(cell, t.columns[i].Max)
-			}
-
-			// Apply alignment - pterm will handle this, but we can format the content
-			ptermRow[i] = processedCell
+			ptermRow[i] = PadANSI(cell, widths[i], t.columns[i].Align)
 		}
 		ptermData = append(ptermData, ptermRow)
 	}
 
-	// Create and configure pterm table
 	table := pterm.DefaultTable.
 		WithHasHeader(true).
 		WithBoxed(true).
 		WithData(ptermData)
 
-	// Apply column-specific styling if needed
-	// For now, we'll use pterm's default styling which is similar to our box-drawing style
-
-	// Render the table
 	_ = table.Render()
-}
-
-// Helper function to maintain compatibility with existing truncation logic
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
 }
 
 // CyanHeaders returns the standard cyan header-color option used by all

@@ -35,7 +35,9 @@ func (s *ServiceImpl) GetAvailableVersions(ctx context.Context, addonName string
 		func(rc context.Context, token *string) (*eks.DescribeAddonVersionsOutput, error) {
 			return s.eksClient.DescribeAddonVersions(rc, newInput(token))
 		},
-		func(out *eks.DescribeAddonVersionsOutput) ([]ekstypes.AddonInfo, *string) { return out.Addons, out.NextToken },
+		func(out *eks.DescribeAddonVersionsOutput) ([]ekstypes.AddonInfo, *string) {
+			return out.Addons, out.NextToken
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("describing addon versions: %w", err)
