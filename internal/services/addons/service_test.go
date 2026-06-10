@@ -266,28 +266,34 @@ func TestMapAddonHealth(t *testing.T) {
 	}
 }
 
-func TestCountVersionsBehind(t *testing.T) {
-	versions := []AddonVersionInfo{
-		{Version: "v1.15.0"},
-		{Version: "v1.14.0"},
-		{Version: "v1.13.0"},
-	}
-
+func TestCompareAddonVersions(t *testing.T) {
 	tests := []struct {
-		current  string
-		expected int
+		a, b string
+		want string // "gt", "lt", "eq"
 	}{
-		{"v1.15.0", 0},
-		{"v1.14.0", 1},
-		{"v1.13.0", 2},
-		{"v1.12.0", 3}, // Not in list
+		{"v1.15.0-eksbuild.2", "v1.14.9-eksbuild.5", "gt"},
+		{"v1.14.0-eksbuild.1", "v1.14.0-eksbuild.2", "lt"},
+		{"v1.14.0-eksbuild.2", "v1.14.0-eksbuild.2", "eq"},
+		{"v1.2.0", "v1.10.0", "lt"}, // numeric, not lexical
+		{"v1.18.1-eksbuild.10", "v1.18.1-eksbuild.9", "gt"},
+		{"v2.0.0", "v1.99.99-eksbuild.99", "gt"},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.current, func(t *testing.T) {
-			result := countVersionsBehind(tt.current, versions)
-			if result != tt.expected {
-				t.Errorf("countVersionsBehind(%s) = %d, want %d", tt.current, result, tt.expected)
+		t.Run(tt.a+" vs "+tt.b, func(t *testing.T) {
+			got := compareAddonVersions(tt.a, tt.b)
+			switch tt.want {
+			case "gt":
+				if got <= 0 {
+					t.Errorf("compareAddonVersions(%s, %s) = %d, want > 0", tt.a, tt.b, got)
+				}
+			case "lt":
+				if got >= 0 {
+					t.Errorf("compareAddonVersions(%s, %s) = %d, want < 0", tt.a, tt.b, got)
+				}
+			case "eq":
+				if got != 0 {
+					t.Errorf("compareAddonVersions(%s, %s) = %d, want 0", tt.a, tt.b, got)
+				}
 			}
 		})
 	}

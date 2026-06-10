@@ -15,7 +15,12 @@ type UpdateProgress struct {
 	Status        types.UpdateStatus
 	StartTime     time.Time
 	LastChecked   time.Time
-	ErrorMessage  string
+	// ErrorMessage holds errors reported by the AWS update itself.
+	ErrorMessage string
+	// LastCheckError holds a transient status-polling failure (throttle,
+	// network blip). It is display-only: the update may well still be running
+	// in AWS, so it must not be rendered as a FAILED update.
+	LastCheckError string
 }
 
 // IsComplete returns true if the update has finished (success, failure, or cancelled).

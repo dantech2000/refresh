@@ -166,14 +166,20 @@ func TestEKSAPIUnexpectedCallPanics(t *testing.T) {
 		call func(*EKSAPI)
 		want string
 	}{
-		{"ListAddons", func(m *EKSAPI) { _, _ = m.ListAddons(context.Background(), &eks.ListAddonsInput{ClusterName: aws.String("cluster")}) }, "cluster"},
+		{"ListAddons", func(m *EKSAPI) {
+			_, _ = m.ListAddons(context.Background(), &eks.ListAddonsInput{ClusterName: aws.String("cluster")})
+		}, "cluster"},
 		{"DescribeAddon", func(m *EKSAPI) { _, _ = m.DescribeAddon(context.Background(), &eks.DescribeAddonInput{}) }, "<nil>"},
-		{"DescribeAddonVersions", func(m *EKSAPI) { _, _ = m.DescribeAddonVersions(context.Background(), &eks.DescribeAddonVersionsInput{}) }, "<nil>"},
+		{"DescribeAddonVersions", func(m *EKSAPI) {
+			_, _ = m.DescribeAddonVersions(context.Background(), &eks.DescribeAddonVersionsInput{})
+		}, "<nil>"},
 		{"UpdateAddon", func(m *EKSAPI) { _, _ = m.UpdateAddon(context.Background(), &eks.UpdateAddonInput{}) }, "<nil>"},
 		{"DescribeCluster", func(m *EKSAPI) { _, _ = m.DescribeCluster(context.Background(), &eks.DescribeClusterInput{}) }, "<nil>"},
 		{"ListNodegroups", func(m *EKSAPI) { _, _ = m.ListNodegroups(context.Background(), &eks.ListNodegroupsInput{}) }, "<nil>"},
 		{"DescribeNodegroup", func(m *EKSAPI) { _, _ = m.DescribeNodegroup(context.Background(), &eks.DescribeNodegroupInput{}) }, "<nil>"},
-		{"UpdateNodegroupConfig", func(m *EKSAPI) { _, _ = m.UpdateNodegroupConfig(context.Background(), &eks.UpdateNodegroupConfigInput{}) }, "<nil>"},
+		{"UpdateNodegroupConfig", func(m *EKSAPI) {
+			_, _ = m.UpdateNodegroupConfig(context.Background(), &eks.UpdateNodegroupConfigInput{})
+		}, "<nil>"},
 		{"ListClusters", func(m *EKSAPI) { _, _ = m.ListClusters(context.Background(), &eks.ListClustersInput{}) }, "ListClusters"},
 	}
 

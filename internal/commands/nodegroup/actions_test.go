@@ -26,7 +26,16 @@ func newUpdateParseTestContext(t *testing.T, args []string, clusterFlag, nodegro
 	if err := set.Parse(args); err != nil {
 		t.Fatal(err)
 	}
-	return cli.NewContext(cli.NewApp(), set, nil)
+	ctx := cli.NewContext(cli.NewApp(), set, nil)
+	// Attach flag definitions so the runner's trailing-flag handling knows
+	// which tokens are flags and whether they take values (the real command
+	// dispatcher populates this).
+	ctx.Command = &cli.Command{Flags: []cli.Flag{
+		&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}},
+		&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}},
+		&cli.BoolFlag{Name: "health-only", Aliases: []string{"H"}},
+	}}
+	return ctx
 }
 
 func TestUpdateClusterAndNodegroupPatterns(t *testing.T) {
@@ -78,13 +87,12 @@ func TestUpdateClusterAndNodegroupPatterns(t *testing.T) {
 	}
 }
 
-func TestUpdateBoolFlagReadsTrailingHealthOnly(t *testing.T) {
+func TestReadUpdateAMIFlagsReadsTrailingHealthOnly(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 		want bool
 	}{
-		{name: "parsed flag before args", args: []string{"--health-only", "develop"}, want: true},
 		{name: "short flag after cluster", args: []string{"develop", "-H"}, want: true},
 		{name: "long flag after cluster", args: []string{"develop", "--health-only"}, want: true},
 		{name: "not set", args: []string{"develop"}, want: false},
@@ -93,9 +101,21 @@ func TestUpdateBoolFlagReadsTrailingHealthOnly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := newUpdateParseTestContext(t, tt.args, "", "")
-			if got := updateBoolFlag(ctx, "health-only", "H"); got != tt.want {
-				t.Fatalf("updateBoolFlag() = %v, want %v", got, tt.want)
+			if got := readUpdateAMIFlags(ctx).healthOnly; got != tt.want {
+				t.Fatalf("readUpdateAMIFlags().healthOnly = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTrailingValueFlagNotMistakenForPositional(t *testing.T) {
+	// `update-ami my-cluster --nodegroup groupC` leaves the flag tokens in
+	// Args; the nodegroup slot must read groupC from the flag, and the flag's
+	// value must not be parsed as a positional.
+	ctx := newUpdateParseTestContext(t, []string{"develop", "--nodegroup", "groupC"}, "", "")
+	gotCluster, gotNodegroup := updateClusterAndNodegroupPatterns(ctx)
+	if gotCluster != "develop" || gotNodegroup != "groupC" {
+		t.Fatalf("updateClusterAndNodegroupPatterns() = %q, %q; want %q, %q",
+			gotCluster, gotNodegroup, "develop", "groupC")
 	}
 }

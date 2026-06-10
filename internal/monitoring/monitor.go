@@ -45,6 +45,12 @@ type statusResult struct {
 // MonitorUpdates monitors the progress of multiple nodegroup updates.
 // It uses channels for concurrent status checks and proper signal handling.
 func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
+	// Nothing to monitor: return immediately instead of polling an empty list
+	// until the timeout fires.
+	if len(monitor.Updates) == 0 {
+		return nil
+	}
+
 	// Set up signal handling for graceful cancellation
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -150,7 +156,10 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient *eks.Client, mon
 		update := &monitor.Updates[result.index]
 
 		if result.err != nil {
-			update.ErrorMessage = result.err.Error()
+			// Transient polling failure: the update is likely still running
+			// in AWS. Record it separately so the display doesn't render an
+			// in-flight update as FAILED.
+			update.LastCheckError = result.err.Error()
 			allComplete = false
 			continue
 		}
@@ -158,6 +167,7 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient *eks.Client, mon
 		update.Status = result.status
 		update.LastChecked = now
 		update.ErrorMessage = result.errMsg
+		update.LastCheckError = ""
 
 		if !isUpdateComplete(update.Status) {
 			allComplete = false

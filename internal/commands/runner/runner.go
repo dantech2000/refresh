@@ -8,11 +8,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/fatih/color"
+	"github.com/mattn/go-isatty"
+	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v2"
 	"gopkg.in/yaml.v3"
 
@@ -106,13 +110,18 @@ func ParseFilters(filters []string) map[string]string {
 	return out
 }
 
-// RequestedCluster returns the cluster name requested by the user: first
-// positional arg if present, otherwise --cluster.
+// RequestedCluster returns the cluster name requested by the user: --cluster
+// when explicitly set (so positionals can fill later slots), otherwise the
+// first positional arg.
 func RequestedCluster(c *cli.Context) string {
-	if first := c.Args().First(); strings.TrimSpace(first) != "" {
-		return first
+	nonFlags := nonFlagArgs(c) // also applies trailing flags to the context
+	if v := flagValueIfSet(c, "cluster"); v != "" {
+		return v
 	}
-	return c.String("cluster")
+	if len(nonFlags) > 0 && strings.TrimSpace(nonFlags[0]) != "" {
+		return nonFlags[0]
+	}
+	return strings.TrimSpace(c.String("cluster"))
 }
 
 // ResolveClusterOrList resolves the requested cluster name. If no cluster was
@@ -139,28 +148,37 @@ func ResolveClusterOrList(ctx context.Context, cfg aws.Config, c *cli.Context) (
 	return name, false, nil
 }
 
-// SecondPositional returns the value of flagName, or the second non-flag
-// positional argument if the flag is not set. Use PositionalSlot for commands
-// where prior slots may be supplied via flags (which shifts the positional
-// indices).
-func SecondPositional(c *cli.Context, flagName string) string {
-	return PositionalAt(c, flagName, 1)
-}
-
 // PositionalAt returns the value of flagName, or the non-flag positional
 // argument at index (0-indexed) if the flag is not set. Does NOT account for
 // prior flags absorbing positional slots — use PositionalSlot for that.
 func PositionalAt(c *cli.Context, flagName string, index int) string {
-	if flagName != "" {
-		if v := strings.TrimSpace(c.String(flagName)); v != "" {
-			return v
-		}
+	nonFlags := nonFlagArgs(c) // also applies trailing flags to the context
+	if v := flagValueIfSet(c, flagName); v != "" {
+		return v
 	}
-	nonFlags := nonFlagArgs(c)
 	if index < len(nonFlags) {
 		return nonFlags[index]
 	}
-	return ""
+	return flagDefault(c, flagName)
+}
+
+// flagValueIfSet returns the trimmed value of flagName only when it was
+// explicitly provided (flag or env var). Flags that merely carry a default
+// value return "" so a positional argument can still fill the slot.
+func flagValueIfSet(c *cli.Context, flagName string) string {
+	if flagName == "" || !c.IsSet(flagName) {
+		return ""
+	}
+	return strings.TrimSpace(c.String(flagName))
+}
+
+// flagDefault returns the flag's default value (empty for most flags). Used
+// as the last resort after explicit flags and positionals.
+func flagDefault(c *cli.Context, flagName string) string {
+	if flagName == "" {
+		return ""
+	}
+	return strings.TrimSpace(c.String(flagName))
 }
 
 // PositionalSlot returns the value of flagName, or — when flagName is unset —
@@ -184,42 +202,110 @@ func PositionalAt(c *cli.Context, flagName string, index int) string {
 // addon="foo" (from flag), version="v1.2.3" — the version's positional index
 // is shifted from 2 down to 1 because --addon consumed a slot.
 func PositionalSlot(c *cli.Context, flagName string, priorFlags ...string) string {
-	if flagName != "" {
-		if v := strings.TrimSpace(c.String(flagName)); v != "" {
-			return v
-		}
+	nonFlags := nonFlagArgs(c) // also applies trailing flags to the context
+	if v := flagValueIfSet(c, flagName); v != "" {
+		return v
 	}
 	consumedByFlags := 0
 	for _, f := range priorFlags {
-		if f != "" && strings.TrimSpace(c.String(f)) != "" {
+		if flagValueIfSet(c, f) != "" {
 			consumedByFlags++
 		}
 	}
 	idx := len(priorFlags) - consumedByFlags
-	nonFlags := nonFlagArgs(c)
 	if idx < len(nonFlags) {
 		return nonFlags[idx]
 	}
-	return ""
+	return flagDefault(c, flagName)
 }
 
-// nonFlagArgs returns c.Args() with tokens beginning in "-" stripped. Needed
-// because urfave/cli leaves flag-like tokens that appear after a positional
-// in c.Args() (the parser stops at the first non-flag).
+// ApplyTrailingFlags re-parses flag tokens that appear after the first
+// positional argument (urfave/cli v2 stops flag parsing there and would
+// otherwise silently ignore them) and applies recognized flags to the
+// context. Commands that read flags before any positional helper runs can
+// call this explicitly; the positional helpers invoke it implicitly.
+func ApplyTrailingFlags(c *cli.Context) {
+	_ = nonFlagArgs(c)
+}
+
+// nonFlagArgs returns the true positional arguments from c.Args(). Flag
+// tokens that appear after the first positional are applied to the context
+// via c.Set (so `refresh nodegroup update-ami my-cluster --force` works), and
+// value-taking flags consume their value token so it is never mistaken for a
+// positional (`describe my-cluster --timeframe 1h` must not read "1h" as a
+// nodegroup name).
 func nonFlagArgs(c *cli.Context) []string {
+	type flagInfo struct {
+		canonical  string
+		takesValue bool
+	}
+	flagsByName := make(map[string]flagInfo)
+	if c.Command != nil {
+		for _, f := range c.Command.Flags {
+			names := f.Names()
+			if len(names) == 0 {
+				continue
+			}
+			_, isBool := f.(*cli.BoolFlag)
+			info := flagInfo{canonical: names[0], takesValue: !isBool}
+			for _, n := range names {
+				flagsByName[n] = info
+			}
+		}
+	}
+
 	args := c.Args().Slice()
 	out := make([]string, 0, len(args))
-	for _, tok := range args {
-		if strings.HasPrefix(tok, "-") {
+	terminated := false // saw "--": everything after is positional
+	for i := 0; i < len(args); i++ {
+		tok := args[i]
+		if terminated || !strings.HasPrefix(tok, "-") || tok == "-" {
+			out = append(out, tok)
 			continue
 		}
-		out = append(out, tok)
+		if tok == "--" {
+			terminated = true
+			continue
+		}
+
+		name := strings.TrimLeft(tok, "-")
+		value := ""
+		hasInline := false
+		if eq := strings.Index(name, "="); eq >= 0 {
+			value = name[eq+1:]
+			name = name[:eq]
+			hasInline = true
+		}
+
+		info, known := flagsByName[name]
+		if !known {
+			// Unknown flag-like token: drop it without guessing whether the
+			// next token is its value.
+			continue
+		}
+		switch {
+		case !info.takesValue:
+			if !hasInline {
+				value = "true"
+			}
+			_ = c.Set(info.canonical, value)
+		case hasInline:
+			_ = c.Set(info.canonical, value)
+		case i+1 < len(args):
+			_ = c.Set(info.canonical, args[i+1])
+			i++ // consume the value token
+		}
 	}
 	return out
 }
 
-// EncodeStdout writes payload to stdout as JSON or YAML based on format. For
-// any other format value, returns ErrUnknownFormat so the caller can fall
+// EncodeStdout writes payload to stdout as JSON or YAML based on format.
+//
+// "plain" is special-cased: it switches the UI layer into uncolored,
+// tab-separated table rendering and returns handled=false, so the caller's
+// table renderer produces grep/awk-friendly output.
+//
+// For any other format value it returns handled=false so the caller can fall
 // through to its table renderer.
 func EncodeStdout(format string, payload any) (handled bool, err error) {
 	switch strings.ToLower(format) {
@@ -232,8 +318,54 @@ func EncodeStdout(format string, payload any) (handled bool, err error) {
 		enc.SetIndent(2)
 		defer func() { _ = enc.Close() }()
 		return true, enc.Encode(payload)
+	case "plain":
+		ui.SetPlainOutput(true)
+		color.NoColor = true
+		pterm.DisableColor()
+		return false, nil
 	default:
 		return false, nil
+	}
+}
+
+// watchIsTerminal reports whether stdout is an interactive terminal.
+// Overridable in tests.
+var watchIsTerminal = func() bool {
+	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+}
+
+// Watch reruns fn every --watch-interval until interrupted when --watch is
+// set; otherwise it runs fn once. On an interactive terminal the screen is
+// cleared between iterations (top-style); when output is piped, iterations
+// append instead. fn should perform the full fetch+render cycle so every
+// iteration shows fresh data.
+func Watch(c *cli.Context, fn func() error) error {
+	if !c.Bool("watch") {
+		return fn()
+	}
+
+	interval := c.Duration("watch-interval")
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	interactive := watchIsTerminal()
+	for {
+		if interactive {
+			fmt.Print("\033[H\033[2J") // clear screen, cursor home
+		}
+		if err := fn(); err != nil {
+			return err
+		}
+		select {
+		case <-time.After(interval):
+		case <-sigChan:
+			return nil
+		}
 	}
 }
 

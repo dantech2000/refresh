@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"github.com/fatih/color"
+	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v2"
 
 	"github.com/dantech2000/refresh/internal/commands"
@@ -54,9 +55,10 @@ func coloredHelpPrinter(w io.Writer, templ string, data interface{}) {
 
 func newApp() *cli.App {
 	return &cli.App{
-		Name:    "refresh",
-		Usage:   "Manage and monitor AWS EKS clusters and node groups",
-		Version: commands.VersionInfo.Version,
+		Name:                 "refresh",
+		Usage:                "Manage and monitor AWS EKS clusters and node groups",
+		Version:              commands.VersionInfo.Version,
+		EnableBashCompletion: true,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{
 				Name:    "timeout",
@@ -72,6 +74,18 @@ func newApp() *cli.App {
 				Value:   appconfig.DefaultMaxConcurrency,
 				EnvVars: []string{"REFRESH_MAX_CONCURRENCY"},
 			},
+			&cli.BoolFlag{
+				Name:    "no-color",
+				Usage:   "Disable colored output (NO_COLOR env is also honored)",
+				EnvVars: []string{"NO_COLOR"},
+			},
+		},
+		Before: func(c *cli.Context) error {
+			if c.Bool("no-color") {
+				color.NoColor = true
+				pterm.DisableColor()
+			}
+			return nil
 		},
 		Commands: []*cli.Command{
 			// Resource-first groups
@@ -86,6 +100,7 @@ func newApp() *cli.App {
 			// Misc
 			commands.VersionCommand(),
 			commands.ManPageCommand(),
+			commands.CompletionCommand(),
 		},
 	}
 }
@@ -107,7 +122,9 @@ func run(args []string, out, errOut io.Writer) error {
 
 func main() {
 	if err := run(os.Args, os.Stdout, os.Stderr); err != nil {
-		color.Red("Error: %v", err)
+		// Errors belong on stderr: scripted consumers piping stdout must not
+		// find error text mixed into their data.
+		fmt.Fprintln(os.Stderr, color.RedString("Error: %v", err))
 		exitProcess(1)
 	}
 }

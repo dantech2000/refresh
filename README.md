@@ -32,20 +32,22 @@ refresh/
 │   ├── cliconfig/            # Persistent named contexts
 │   │   └── store.go          # YAML-backed context store (~/.config/refresh/context.yaml)
 │   ├── commands/             # CLI command implementations
-│   │   ├── cluster_group.go  # Cluster commands (list, describe/get, diff)
-│   │   ├── nodegroup_group.go # Nodegroup commands (list, describe/get, scale, update)
-│   │   ├── addon_group.go    # Add-on commands (list, describe/get, update [--all])
-│   │   ├── context.go        # Context commands (use, current, context add/list/remove)
-│   │   └── ...               # Individual command implementations and formatters
-│   ├── config/               # Configuration management
-│   │   └── config.go         # Thread-safe config with environment variable support
+│   │   ├── cluster/          # Cluster commands (list, describe/get, compare)
+│   │   ├── nodegroup/        # Nodegroup commands (list, describe/get, scale, update)
+│   │   ├── addon/            # Add-on commands (list, describe/get, update [--all])
+│   │   ├── ctxcmd/           # Context commands (use, current, context add/list/remove)
+│   │   ├── workload/         # Workload commands (pdbs)
+│   │   ├── runner/           # Shared command primitives (setup, positionals, encoding)
+│   │   ├── clusterview/      # Cluster table/tree formatters
+│   │   └── factory/          # Service constructors
+│   ├── config/               # Shared constants and region helpers
 │   ├── mocks/                # Test doubles for AWS client interfaces
 │   │   ├── eksapi.go         # Configurable EKSAPI mock (function-field pattern)
 │   │   └── builders.go       # Fluent builder for common mock scenarios
 │   ├── types/                # Core domain types
 │   │   ├── models.go         # NodegroupInfo, UpdateResult, BatchUpdateResult
 │   │   ├── monitoring.go     # UpdateProgress, ProgressMonitor, MonitorConfig
-│   │   └── status.go         # AMIStatus, DryRunAction (typed enums with color output)
+│   │   └── status.go         # AMIStatus, DryRunAction (typed enums; plain String, ColorString for display)
 │   ├── services/             # Business logic layer
 │   │   ├── cluster/          # Cluster service with caching
 │   │   ├── nodegroup/        # Nodegroup service with utilization and cost analysis
@@ -69,12 +71,10 @@ refresh/
 │   ├── dryrun/               # Dry-run mode
 │   │   └── dryrun.go         # Preview updates without changes
 │   └── ui/                   # Terminal UI components
-│       ├── output.go         # Status and output helpers
-│       ├── table.go          # Table rendering with dynamic column widths
+│       ├── ansi.go           # ANSI-aware width/pad/truncate + status colors
 │       ├── ptable.go         # pterm-based table with ANSI-aware columns
-│       ├── spinner.go        # Progress spinners
-│       ├── fun_spinner.go    # Category-aware rotating message spinners
-│       ├── multi_progress.go # Multi-item progress tracking
+│       ├── dynamic_table.go  # Aligned key/value display
+│       ├── fun_spinner.go    # Category-aware rotating message spinners (TTY-gated)
 │       ├── tree.go           # Tree view for multi-region cluster display
 │       └── ...               # Additional UI utilities
 └── go.mod                    # Go module dependencies
@@ -82,11 +82,10 @@ refresh/
 
 ### Key Design Patterns
 
-- **Thread-safe Configuration**: Singleton pattern with `sync.RWMutex` for concurrent access
-- **Channel-based Concurrency**: Used in monitoring for concurrent status checks
-- **Clean Error Handling**: AWS errors are classified and formatted with user-friendly messages
+- **Channel-based Concurrency**: Used in monitoring for concurrent status checks; list operations fan out per-item AWS calls with bounded concurrency
+- **Clean Error Handling**: AWS errors are classified by typed error code and formatted with user-friendly messages
 - **Dependency Injection**: Services use interfaces for testability
-- **Graceful Shutdown**: Signal handling for clean termination
+- **Graceful Cancellation**: Update monitoring handles SIGINT/SIGTERM cleanly (updates keep running in AWS)
 
 ## Features
 
@@ -106,11 +105,14 @@ refresh/
 -   **Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
 -   **Interactive Cluster Selection**: `cluster diff` auto-prompts a multi-select picker when a pattern matches multiple clusters
 -   **Add-on Health Checks**: `addon update --health-check` validates active state and Kubernetes version compatibility before updating
+-   **Shell Completion**: `refresh completion bash|zsh|fish` generates completion scripts; `refresh use <TAB>` completes saved context names
+-   **Script-friendly Output**: `-o json|yaml|plain` on list/describe commands (`plain` is tab-separated and uncolored for grep/awk), `--no-color` (and `NO_COLOR`), spinners auto-disable when output is piped, `nodegroup update --health-only` exits 0/2/3 for pass/warn/block and supports `-o json|yaml`
+-   **Watch Mode**: `cluster list --watch` / `nodegroup list --watch` redraw on an interval (top-style on a TTY, append-only when piped)
 
 ## Requirements
 
 ### Required (Core Functionality)
--   Go 1.24+
+-   Go 1.26+
 -   AWS credentials (`~/.aws/credentials`, environment variables, or IAM roles)
 
 ### Optional (Enhanced Features)
@@ -742,7 +744,7 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.26+
 - golangci-lint (for linting)
 - Task (optional, for task automation)
 

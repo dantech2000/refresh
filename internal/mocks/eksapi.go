@@ -9,6 +9,7 @@ package mocks
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 )
@@ -29,6 +30,11 @@ type EKSAPI struct {
 	UpdateNodegroupConfigFn func(ctx context.Context, in *eks.UpdateNodegroupConfigInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupConfigOutput, error)
 	ListClustersFn          func(ctx context.Context, in *eks.ListClustersInput, optFns ...func(*eks.Options)) (*eks.ListClustersOutput, error)
 
+	// mu guards Calls: services fan out describe calls concurrently, so the
+	// counters must be safe to increment from multiple goroutines. Read them
+	// only after the operation under test has returned.
+	mu sync.Mutex
+
 	Calls struct {
 		ListAddons            int
 		DescribeAddon         int
@@ -43,7 +49,7 @@ type EKSAPI struct {
 }
 
 func (m *EKSAPI) ListAddons(ctx context.Context, in *eks.ListAddonsInput, optFns ...func(*eks.Options)) (*eks.ListAddonsOutput, error) {
-	m.Calls.ListAddons++
+	m.inc(&m.Calls.ListAddons)
 	if m.ListAddonsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListAddons (cluster=%s)", ptrStr(in.ClusterName)))
 	}
@@ -51,7 +57,7 @@ func (m *EKSAPI) ListAddons(ctx context.Context, in *eks.ListAddonsInput, optFns
 }
 
 func (m *EKSAPI) DescribeAddon(ctx context.Context, in *eks.DescribeAddonInput, optFns ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
-	m.Calls.DescribeAddon++
+	m.inc(&m.Calls.DescribeAddon)
 	if m.DescribeAddonFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeAddon (addon=%s)", ptrStr(in.AddonName)))
 	}
@@ -59,7 +65,7 @@ func (m *EKSAPI) DescribeAddon(ctx context.Context, in *eks.DescribeAddonInput, 
 }
 
 func (m *EKSAPI) DescribeAddonVersions(ctx context.Context, in *eks.DescribeAddonVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
-	m.Calls.DescribeAddonVersions++
+	m.inc(&m.Calls.DescribeAddonVersions)
 	if m.DescribeAddonVersionsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeAddonVersions (addon=%s)", ptrStr(in.AddonName)))
 	}
@@ -67,7 +73,7 @@ func (m *EKSAPI) DescribeAddonVersions(ctx context.Context, in *eks.DescribeAddo
 }
 
 func (m *EKSAPI) UpdateAddon(ctx context.Context, in *eks.UpdateAddonInput, optFns ...func(*eks.Options)) (*eks.UpdateAddonOutput, error) {
-	m.Calls.UpdateAddon++
+	m.inc(&m.Calls.UpdateAddon)
 	if m.UpdateAddonFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to UpdateAddon (addon=%s)", ptrStr(in.AddonName)))
 	}
@@ -75,7 +81,7 @@ func (m *EKSAPI) UpdateAddon(ctx context.Context, in *eks.UpdateAddonInput, optF
 }
 
 func (m *EKSAPI) DescribeCluster(ctx context.Context, in *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
-	m.Calls.DescribeCluster++
+	m.inc(&m.Calls.DescribeCluster)
 	if m.DescribeClusterFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeCluster (cluster=%s)", ptrStr(in.Name)))
 	}
@@ -83,7 +89,7 @@ func (m *EKSAPI) DescribeCluster(ctx context.Context, in *eks.DescribeClusterInp
 }
 
 func (m *EKSAPI) ListNodegroups(ctx context.Context, in *eks.ListNodegroupsInput, optFns ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
-	m.Calls.ListNodegroups++
+	m.inc(&m.Calls.ListNodegroups)
 	if m.ListNodegroupsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListNodegroups (cluster=%s)", ptrStr(in.ClusterName)))
 	}
@@ -91,7 +97,7 @@ func (m *EKSAPI) ListNodegroups(ctx context.Context, in *eks.ListNodegroupsInput
 }
 
 func (m *EKSAPI) DescribeNodegroup(ctx context.Context, in *eks.DescribeNodegroupInput, optFns ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
-	m.Calls.DescribeNodegroup++
+	m.inc(&m.Calls.DescribeNodegroup)
 	if m.DescribeNodegroupFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeNodegroup (ng=%s)", ptrStr(in.NodegroupName)))
 	}
@@ -99,7 +105,7 @@ func (m *EKSAPI) DescribeNodegroup(ctx context.Context, in *eks.DescribeNodegrou
 }
 
 func (m *EKSAPI) UpdateNodegroupConfig(ctx context.Context, in *eks.UpdateNodegroupConfigInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupConfigOutput, error) {
-	m.Calls.UpdateNodegroupConfig++
+	m.inc(&m.Calls.UpdateNodegroupConfig)
 	if m.UpdateNodegroupConfigFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to UpdateNodegroupConfig (ng=%s)", ptrStr(in.NodegroupName)))
 	}
@@ -107,11 +113,17 @@ func (m *EKSAPI) UpdateNodegroupConfig(ctx context.Context, in *eks.UpdateNodegr
 }
 
 func (m *EKSAPI) ListClusters(ctx context.Context, in *eks.ListClustersInput, optFns ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
-	m.Calls.ListClusters++
+	m.inc(&m.Calls.ListClusters)
 	if m.ListClustersFn == nil {
 		panic("mocks.EKSAPI: unexpected call to ListClusters")
 	}
 	return m.ListClustersFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) inc(counter *int) {
+	m.mu.Lock()
+	*counter++
+	m.mu.Unlock()
 }
 
 func ptrStr(s *string) string {

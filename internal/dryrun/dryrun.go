@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -48,15 +47,13 @@ type DryRunner struct {
 	k8sVersion          string
 	force               bool
 	quiet               bool
+	latestByType        map[types.AMITypes]string
 	describeNodegroupFn func(context.Context, string) (*types.Nodegroup, error)
 	currentAmiFn        func(context.Context, *types.Nodegroup) string
-	latestAmiFn         func(context.Context) string
+	latestAmiFn         func(context.Context, *types.Nodegroup) string
 }
 
 var (
-	dryrunLoadAWSConfig = func(ctx context.Context) (aws.Config, error) {
-		return awsconfig.Load(ctx, nil)
-	}
 	dryrunDescribeCluster = func(ctx context.Context, eksClient *eks.Client, clusterName string) (string, error) {
 		clusterOut, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
 			Name: aws.String(clusterName),
@@ -69,16 +66,13 @@ var (
 	newDryRunner = NewDryRunner
 )
 
-// NewDryRunner creates a new dry runner instance.
-func NewDryRunner(eksClient *eks.Client, clusterName string, force, quiet bool) (*DryRunner, error) {
+// NewDryRunner creates a new dry runner instance. All clients are built from
+// awsCfg — the same config the caller used for its EKS client — so the preview
+// queries the same account/region as the real run and honors the caller's
+// context (flags, timeouts, cancellation).
+func NewDryRunner(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, force, quiet bool) (*DryRunner, error) {
 	if eksClient == nil {
 		return nil, fmt.Errorf("eks client is required")
-	}
-	ctx := context.Background()
-
-	awsCfg, err := dryrunLoadAWSConfig(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %v", err)
 	}
 
 	k8sVersion, err := dryrunDescribeCluster(ctx, eksClient, clusterName)
@@ -87,20 +81,21 @@ func NewDryRunner(eksClient *eks.Client, clusterName string, force, quiet bool) 
 	}
 
 	return &DryRunner{
-		eksClient:   eksClient,
-		ec2Client:   ec2.NewFromConfig(awsCfg),
-		asgClient:   autoscaling.NewFromConfig(awsCfg),
-		ssmClient:   ssm.NewFromConfig(awsCfg),
-		clusterName: clusterName,
-		k8sVersion:  k8sVersion,
-		force:       force,
-		quiet:       quiet,
+		eksClient:    eksClient,
+		ec2Client:    ec2.NewFromConfig(awsCfg),
+		asgClient:    autoscaling.NewFromConfig(awsCfg),
+		ssmClient:    ssm.NewFromConfig(awsCfg),
+		clusterName:  clusterName,
+		k8sVersion:   k8sVersion,
+		force:        force,
+		quiet:        quiet,
+		latestByType: make(map[types.AMITypes]string),
 	}, nil
 }
 
 // PerformDryRun shows what would be updated without making changes.
-func PerformDryRun(ctx context.Context, eksClient *eks.Client, clusterName string, selectedNodegroups []string, force bool, quiet bool) error {
-	runner, err := newDryRunner(eksClient, clusterName, force, quiet)
+func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, force bool, quiet bool) error {
+	runner, err := newDryRunner(ctx, awsCfg, eksClient, clusterName, force, quiet)
 	if err != nil {
 		return err
 	}
@@ -149,7 +144,7 @@ func (dr *DryRunner) analyzeNodegroup(ctx context.Context, ngName string) Nodegr
 
 	// Get AMI information
 	update.CurrentAMI = dr.currentAmi(ctx, ng)
-	update.LatestAMI = dr.latestAmi(ctx)
+	update.LatestAMI = dr.latestAmi(ctx, ng)
 
 	// Determine action
 	if dr.force {
@@ -196,11 +191,21 @@ func (dr *DryRunner) currentAmi(ctx context.Context, ng *types.Nodegroup) string
 	return awsClient.CurrentAmiID(ctx, ng, dr.ec2Client, dr.asgClient)
 }
 
-func (dr *DryRunner) latestAmi(ctx context.Context) string {
+// latestAmi resolves the latest recommended AMI for the nodegroup's AMI type,
+// memoized per type (the result is constant for a given cluster version).
+func (dr *DryRunner) latestAmi(ctx context.Context, ng *types.Nodegroup) string {
 	if dr.latestAmiFn != nil {
-		return dr.latestAmiFn(ctx)
+		return dr.latestAmiFn(ctx, ng)
 	}
-	return awsClient.LatestAmiID(ctx, dr.ssmClient, dr.k8sVersion)
+	if v, ok := dr.latestByType[ng.AmiType]; ok {
+		return v
+	}
+	v := awsClient.LatestAmiIDForType(ctx, dr.ssmClient, dr.k8sVersion, ng.AmiType)
+	if dr.latestByType == nil {
+		dr.latestByType = make(map[types.AMITypes]string)
+	}
+	dr.latestByType[ng.AmiType] = v
+	return v
 }
 
 // categorizeUpdate adds an update to the appropriate category in the result.
@@ -225,7 +230,7 @@ func (dr *DryRunner) categorizeUpdate(result *DryRunResult, update NodegroupUpda
 
 // printUpdateStatus prints the status of a single update analysis.
 func (dr *DryRunner) printUpdateStatus(update NodegroupUpdate) {
-	ui.Outf("%s: Nodegroup %s - %s\n", update.Action, update.Name, update.Reason)
+	ui.Outf("%s: Nodegroup %s - %s\n", update.Action.ColorString(), update.Name, update.Reason)
 }
 
 // DisplayResults shows the summary of the dry-run analysis.

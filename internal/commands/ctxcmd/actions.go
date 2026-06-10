@@ -131,10 +131,11 @@ func contextAddCommand() *cli.Command {
 
 func contextRemoveCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "remove",
-		Aliases:   []string{"rm", "delete"},
-		Usage:     "Remove a saved context",
-		ArgsUsage: "<name>",
+		Name:         "remove",
+		Aliases:      []string{"rm", "delete"},
+		Usage:        "Remove a saved context",
+		ArgsUsage:    "<name>",
+		BashComplete: completeContextNames,
 		Action: func(c *cli.Context) error {
 			name := strings.TrimSpace(c.Args().First())
 			if name == "" {

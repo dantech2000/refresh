@@ -15,10 +15,18 @@ func DisplayHealthResults(summary health.HealthSummary) {
 	Outln("\nCluster Health Assessment:")
 	Outln()
 
+	// Size the name column to the longest check name so long names don't
+	// push their status out of alignment.
+	nameWidth := 20
+	for _, result := range summary.Results {
+		if len(result.Name) > nameWidth {
+			nameWidth = len(result.Name)
+		}
+	}
 	for _, result := range summary.Results {
 		progressBar := RenderProgressBar(result.Score, result.Status)
 		statusText := GetHealthStatusText(result.Status)
-		Outf("%s %-20s %s\n", progressBar, result.Name, statusText)
+		Outf("%s %-*s %s\n", progressBar, nameWidth, result.Name, statusText)
 	}
 
 	Outln()
@@ -137,20 +145,24 @@ func GetHealthDecisionColor(decision health.Decision) func(format string, a ...a
 	}
 }
 
-// PromptContinueWithWarnings prompts the user to continue despite warnings
+// PromptContinueWithWarnings prompts the user to continue despite warnings.
+// The default is No: this guards a rolling update on a cluster that just
+// failed health warnings, so a bare Enter (or unreadable/closed stdin, as in
+// CI) must not silently proceed.
 func PromptContinueWithWarnings(warnings []string) bool {
-	Outf("\nProceed with update? (Y/n): ")
+	if len(warnings) > 0 {
+		Outf("\n%d warning(s) reported above.", len(warnings))
+	}
+	Outf("\nProceed with update? (y/N): ")
 
 	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
-	if err != nil {
+	if err != nil && response == "" {
 		return false
 	}
 
 	response = strings.TrimSpace(strings.ToLower(response))
-
-	// Default to yes if just Enter is pressed, or if y/yes is entered
-	return response == "" || response == "y" || response == "yes"
+	return response == "y" || response == "yes"
 }
 
 // DisplayHealthCheckStart displays the start of health check process

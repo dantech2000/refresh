@@ -1,11 +1,14 @@
 package aws
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/smithy-go"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -18,9 +21,11 @@ func TestIsCredentialError_NilIsFalse(t *testing.T) {
 	}
 }
 
-func TestIsCredentialError_AccessDenied(t *testing.T) {
-	if !IsCredentialError(errors.New("access denied")) {
-		t.Error("'access denied' should be a credential error")
+func TestIsCredentialError_AccessDeniedIsNotCredential(t *testing.T) {
+	// "access denied" means valid credentials but missing IAM permissions —
+	// it must not trigger the "run aws configure" credential guidance.
+	if IsCredentialError(errors.New("access denied")) {
+		t.Error("access denied should NOT be classified as a credential error")
 	}
 }
 
@@ -173,6 +178,61 @@ func TestFormatAWSError_RegionErrorHasGuidance(t *testing.T) {
 	}
 }
 
+func TestFormatAWSError_ContextCanceled(t *testing.T) {
+	err := FormatAWSError(fmt.Errorf("operation error EKS: %w", context.Canceled), "listing clusters")
+	if err == nil {
+		t.Fatal("expected non-nil error")
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("cancellation should be reported plainly, got: %s", err.Error())
+	}
+	if strings.Contains(err.Error(), "Internet connection") {
+		t.Errorf("cancellation must not get network remediation help, got: %s", err.Error())
+	}
+}
+
+func TestFormatAWSError_DeadlineExceeded(t *testing.T) {
+	err := FormatAWSError(fmt.Errorf("operation error EKS: %w", context.DeadlineExceeded), "listing clusters")
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("deadline exceeded should report a timeout, got: %v", err)
+	}
+}
+
+func TestFormatAWSError_TypedAccessDeniedIsPermission(t *testing.T) {
+	// An IAM denial whose message mentions "region" must be classified by its
+	// error code (permission), not by the "region" substring.
+	apiErr := &smithy.GenericAPIError{
+		Code:    "AccessDeniedException",
+		Message: "User arn:aws:iam::123:user/x is not authorized to perform eks:ListClusters in region us-east-1",
+	}
+	err := FormatAWSError(apiErr, "listing clusters")
+	if err == nil {
+		t.Fatal("expected non-nil error")
+	}
+	if !strings.Contains(err.Error(), "permissions") {
+		t.Errorf("typed AccessDenied should get permission guidance, got: %s", err.Error())
+	}
+	if strings.Contains(err.Error(), "AWS_DEFAULT_REGION") {
+		t.Errorf("typed AccessDenied must not get region guidance, got: %s", err.Error())
+	}
+}
+
+func TestFormatAWSError_TypedExpiredTokenIsCredential(t *testing.T) {
+	apiErr := &smithy.GenericAPIError{Code: "ExpiredTokenException", Message: "The security token included in the request is expired"}
+	err := FormatAWSError(apiErr, "listing clusters")
+	if err == nil || !strings.Contains(err.Error(), "credentials") {
+		t.Errorf("typed ExpiredToken should get credential guidance, got: %v", err)
+	}
+}
+
+func TestFormatAWSError_TypedOtherAPIErrorIncludesCode(t *testing.T) {
+	apiErr := &smithy.GenericAPIError{Code: "ResourceNotFoundException", Message: "No cluster found"}
+	err := FormatAWSError(apiErr, "describing cluster")
+	if err == nil || !strings.Contains(err.Error(), "ResourceNotFoundException") {
+		t.Errorf("API error should include error code, got: %v", err)
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // AWSError
 // ──────────────────────────────────────────────────────────────────────────────
@@ -251,15 +311,8 @@ func TestPrintCredentialHelp_NoPanic(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// NewAMIResolver / NewClusterResolver constructors
+// NewClusterResolver constructor
 // ──────────────────────────────────────────────────────────────────────────────
-
-func TestNewAMIResolver_NotNil(t *testing.T) {
-	r := NewAMIResolver(nil, nil, nil)
-	if r == nil {
-		t.Error("NewAMIResolver should return non-nil resolver")
-	}
-}
 
 func TestNewClusterResolver_NotNil(t *testing.T) {
 	r := NewClusterResolver(aws.Config{})

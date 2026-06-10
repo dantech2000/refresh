@@ -200,7 +200,7 @@ func TestAnalyzeClassifiesNodegroupsWithInjectedLookups(t *testing.T) {
 			}, nil
 		},
 		currentAmiFn: func(_ context.Context, _ *types.Nodegroup) string { return "ami-old" },
-		latestAmiFn:  func(context.Context) string { return "ami-new" },
+		latestAmiFn:  func(context.Context, *types.Nodegroup) string { return "ami-new" },
 	}
 
 	result := dr.Analyze(context.Background(), []string{"ng-1"})
@@ -214,13 +214,13 @@ func TestAnalyzeClassifiesNodegroupsWithInjectedLookups(t *testing.T) {
 
 func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 	tests := []struct {
-		name       string
-		force      bool
-		status     types.NodegroupStatus
-		currentAMI string
-		latestAMI  string
+		name        string
+		force       bool
+		status      types.NodegroupStatus
+		currentAMI  string
+		latestAMI   string
 		describeErr error
-		want       refreshTypes.DryRunAction
+		want        refreshTypes.DryRunAction
 	}{
 		{name: "describe error", describeErr: errors.New("boom"), want: refreshTypes.ActionSkipUpdating},
 		{name: "updating", status: types.NodegroupStatusUpdating, want: refreshTypes.ActionSkipUpdating},
@@ -247,7 +247,7 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 					}, nil
 				},
 				currentAmiFn: func(_ context.Context, _ *types.Nodegroup) string { return tt.currentAMI },
-				latestAmiFn:  func(context.Context) string { return tt.latestAMI },
+				latestAmiFn:  func(context.Context, *types.Nodegroup) string { return tt.latestAMI },
 			}
 
 			got := dr.analyzeNodegroup(context.Background(), "ng")
@@ -259,30 +259,26 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 }
 
 func TestNewDryRunnerAndPerformDryRunErrorPaths(t *testing.T) {
-	if _, err := NewDryRunner(nil, "cluster", false, true); err == nil {
+	if _, err := NewDryRunner(context.Background(), aws.Config{}, nil, "cluster", false, true); err == nil {
 		t.Fatal("expected error for nil EKS client")
 	}
-	if err := PerformDryRun(context.Background(), nil, "cluster", []string{"ng"}, false, true); err == nil {
+	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, false, true); err == nil {
 		t.Fatal("expected error for nil EKS client")
 	}
 }
 
 func TestNewDryRunnerSuccessAndErrorSeams(t *testing.T) {
-	oldLoad := dryrunLoadAWSConfig
 	oldDescribe := dryrunDescribeCluster
 	t.Cleanup(func() {
-		dryrunLoadAWSConfig = oldLoad
 		dryrunDescribeCluster = oldDescribe
 	})
 
-	dryrunLoadAWSConfig = func(context.Context) (aws.Config, error) {
-		return aws.Config{Region: "us-east-1"}, nil
-	}
 	dryrunDescribeCluster = func(context.Context, *eks.Client, string) (string, error) {
 		return "1.30", nil
 	}
 
-	runner, err := NewDryRunner(eks.New(eks.Options{Region: "us-east-1"}), "cluster", true, true)
+	awsCfg := aws.Config{Region: "us-east-1"}
+	runner, err := NewDryRunner(context.Background(), awsCfg, eks.New(eks.Options{Region: "us-east-1"}), "cluster", true, true)
 	if err != nil {
 		t.Fatalf("NewDryRunner() = %v", err)
 	}
@@ -290,20 +286,10 @@ func TestNewDryRunnerSuccessAndErrorSeams(t *testing.T) {
 		t.Fatalf("runner = %+v", runner)
 	}
 
-	dryrunLoadAWSConfig = func(context.Context) (aws.Config, error) {
-		return aws.Config{}, errors.New("load")
-	}
-	if _, err := NewDryRunner(eks.New(eks.Options{Region: "us-east-1"}), "cluster", false, false); err == nil {
-		t.Fatal("expected load error")
-	}
-
-	dryrunLoadAWSConfig = func(context.Context) (aws.Config, error) {
-		return aws.Config{Region: "us-east-1"}, nil
-	}
 	dryrunDescribeCluster = func(context.Context, *eks.Client, string) (string, error) {
 		return "", errors.New("describe")
 	}
-	if _, err := NewDryRunner(eks.New(eks.Options{Region: "us-east-1"}), "cluster", false, false); err == nil {
+	if _, err := NewDryRunner(context.Background(), awsCfg, eks.New(eks.Options{Region: "us-east-1"}), "cluster", false, false); err == nil {
 		t.Fatal("expected describe error")
 	}
 }
@@ -312,7 +298,7 @@ func TestPerformDryRunSuccessWithInjectedRunner(t *testing.T) {
 	oldNew := newDryRunner
 	t.Cleanup(func() { newDryRunner = oldNew })
 
-	newDryRunner = func(*eks.Client, string, bool, bool) (*DryRunner, error) {
+	newDryRunner = func(context.Context, aws.Config, *eks.Client, string, bool, bool) (*DryRunner, error) {
 		return &DryRunner{
 			clusterName: "cluster",
 			quiet:       true,
@@ -322,7 +308,7 @@ func TestPerformDryRunSuccessWithInjectedRunner(t *testing.T) {
 		}, nil
 	}
 
-	if err := PerformDryRun(context.Background(), nil, "cluster", []string{"ng"}, false, true); err != nil {
+	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, false, true); err != nil {
 		t.Fatalf("PerformDryRun() = %v", err)
 	}
 }
@@ -349,7 +335,7 @@ func TestDefaultDryRunnerLookupFallbacks(t *testing.T) {
 				t.Fatal("expected latestAmi fallback to panic with nil client")
 			}
 		}()
-		_ = dr.latestAmi(context.Background())
+		_ = dr.latestAmi(context.Background(), &types.Nodegroup{AmiType: types.AMITypesAl2X8664})
 	}()
 }
 
@@ -418,12 +404,6 @@ func TestDefaultDescribeClusterWithFakeEKS(t *testing.T) {
 }
 
 func TestDefaultPackageHooks(t *testing.T) {
-	t.Setenv("AWS_PROFILE", "")
-	t.Setenv("AWS_REGION", "us-east-1")
-	if cfg, err := dryrunLoadAWSConfig(context.Background()); err != nil || cfg.Region != "us-east-1" {
-		t.Fatalf("dryrunLoadAWSConfig() = %+v, %v", cfg, err)
-	}
-
 	func() {
 		defer func() {
 			if recover() == nil {

@@ -9,28 +9,21 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	pricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 type CostAnalyzer struct {
-	pricing   *pricing.Client
-	ec2Client *ec2.Client
-	logger    *slog.Logger
-	cache     *Cache
-	cacheTTL  time.Duration
-	region    string
+	pricing  *pricing.Client
+	logger   *slog.Logger
+	cache    *Cache
+	cacheTTL time.Duration
+	region   string
 }
 
 func NewCostAnalyzer(p *pricing.Client, logger *slog.Logger, cache *Cache, region string) *CostAnalyzer {
 	return &CostAnalyzer{pricing: p, logger: logger, cache: cache, cacheTTL: 60 * time.Minute, region: region}
-}
-
-// SetEC2Client sets the EC2 client for spot pricing queries
-func (c *CostAnalyzer) SetEC2Client(ec2Client *ec2.Client) {
-	c.ec2Client = ec2Client
 }
 
 // EstimateOnDemandUSD returns monthly and per-hour costs for an instance type (Linux/on-demand).
@@ -44,20 +37,15 @@ func (c *CostAnalyzer) EstimateOnDemandUSD(ctx context.Context, instanceType str
 	}
 
 	if c.pricing != nil {
-		location := regionToPricingLocation(c.region)
-		if location != "" {
-			usd := c.queryPricing(ctx, instanceType, location, true)
-			if usd <= 0 {
-				usd = c.queryPricing(ctx, instanceType, location, false)
-			}
-			if usd > 0 {
-				c.cache.Set(key, usd, c.cacheTTL)
-				return usd, usd * 730.0, true
-			}
-			c.logger.Debug("pricing API returned no data, trying fallback", "instanceType", instanceType, "location", location)
-		} else {
-			c.logger.Debug("region not mapped to pricing location, trying fallback", "region", c.region)
+		usd := c.queryPricing(ctx, instanceType, true)
+		if usd <= 0 {
+			usd = c.queryPricing(ctx, instanceType, false)
 		}
+		if usd > 0 {
+			c.cache.Set(key, usd, c.cacheTTL)
+			return usd, usd * 730.0, true
+		}
+		c.logger.Debug("pricing API returned no data, trying fallback", "instanceType", instanceType, "region", c.region)
 	} else {
 		c.logger.Debug("pricing client not available, trying fallback")
 	}
@@ -72,11 +60,14 @@ func (c *CostAnalyzer) EstimateOnDemandUSD(ctx context.Context, instanceType str
 }
 
 // queryPricing queries the AWS Pricing API for instance cost
-func (c *CostAnalyzer) queryPricing(ctx context.Context, instanceType, location string, strict bool) float64 {
+func (c *CostAnalyzer) queryPricing(ctx context.Context, instanceType string, strict bool) float64 {
 	svc := "AmazonEC2"
 	filters := []pricingFilter{
 		{Type: "TERM_MATCH", Field: "instanceType", Value: instanceType},
-		{Type: "TERM_MATCH", Field: "location", Value: location},
+		// regionCode is matched directly by the Pricing API, removing the need
+		// for a hardcoded region -> "US East (N. Virginia)" location map that
+		// silently missed every newly launched region.
+		{Type: "TERM_MATCH", Field: "regionCode", Value: c.region},
 		{Type: "TERM_MATCH", Field: "operatingSystem", Value: "Linux"},
 		{Type: "TERM_MATCH", Field: "tenancy", Value: "Shared"},
 		{Type: "TERM_MATCH", Field: "preInstalledSw", Value: "NA"},
@@ -100,7 +91,7 @@ func (c *CostAnalyzer) queryPricing(ctx context.Context, instanceType, location 
 		return 0
 	}
 	if len(out.PriceList) == 0 {
-		c.logger.Debug("no pricing data returned", "instanceType", instanceType, "location", location, "strict", strict)
+		c.logger.Debug("no pricing data returned", "instanceType", instanceType, "region", c.region, "strict", strict)
 		return 0
 	}
 
@@ -122,48 +113,6 @@ func (c *CostAnalyzer) queryPricing(ctx context.Context, instanceType, location 
 	}
 
 	return 0
-}
-
-// regionToPricingLocation maps AWS region to Pricing API location string
-func regionToPricingLocation(region string) string {
-	m := map[string]string{
-		// US regions
-		"us-east-1": "US East (N. Virginia)",
-		"us-east-2": "US East (Ohio)",
-		"us-west-1": "US West (N. California)",
-		"us-west-2": "US West (Oregon)",
-		// EU regions
-		"eu-west-1":    "EU (Ireland)",
-		"eu-west-2":    "EU (London)",
-		"eu-west-3":    "EU (Paris)",
-		"eu-central-1": "EU (Frankfurt)",
-		"eu-central-2": "EU (Zurich)",
-		"eu-north-1":   "EU (Stockholm)",
-		"eu-south-1":   "EU (Milan)",
-		"eu-south-2":   "EU (Spain)",
-		// Asia Pacific regions
-		"ap-east-1":      "Asia Pacific (Hong Kong)",
-		"ap-southeast-1": "Asia Pacific (Singapore)",
-		"ap-southeast-2": "Asia Pacific (Sydney)",
-		"ap-southeast-3": "Asia Pacific (Jakarta)",
-		"ap-southeast-4": "Asia Pacific (Melbourne)",
-		"ap-northeast-1": "Asia Pacific (Tokyo)",
-		"ap-northeast-2": "Asia Pacific (Seoul)",
-		"ap-northeast-3": "Asia Pacific (Osaka)",
-		"ap-south-1":     "Asia Pacific (Mumbai)",
-		"ap-south-2":     "Asia Pacific (Hyderabad)",
-		// Middle East regions
-		"me-south-1":   "Middle East (Bahrain)",
-		"me-central-1": "Middle East (UAE)",
-		"il-central-1": "Israel (Tel Aviv)",
-		// Africa regions
-		"af-south-1": "Africa (Cape Town)",
-		// Americas regions
-		"ca-central-1": "Canada (Central)",
-		"ca-west-1":    "Canada West (Calgary)",
-		"sa-east-1":    "South America (Sao Paulo)",
-	}
-	return m[region]
 }
 
 // Helpers for light parsing
@@ -247,12 +196,4 @@ var staticPriceMap = map[string]float64{
 	"t4g.small":  0.0168,
 	"t4g.medium": 0.0336,
 	"t4g.large":  0.0672,
-}
-
-// GetFallbackPrice returns a static price when API is unavailable
-func (c *CostAnalyzer) GetFallbackPrice(instanceType string) (perHour float64, perMonth float64, ok bool) {
-	if price, exists := staticPriceMap[instanceType]; exists {
-		return price, price * 730.0, true
-	}
-	return 0, 0, false
 }

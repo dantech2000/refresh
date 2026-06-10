@@ -87,31 +87,30 @@ func TestPreUpdateHealthCheck_APIError_Propagated(t *testing.T) {
 
 func TestValidateVersionCompatibility_CompatibleVersion(t *testing.T) {
 	m := mocks.NewEKSAPI().
-		WithCluster("cluster", "1.28").
 		WithAddonVersions("vpc-cni", []string{"v1.15.0", "v1.14.0"}, "1.28").
 		Build()
 	svc := NewService(m, logger())
 
-	if err := svc.validateVersionCompatibility(context.Background(), "cluster", "vpc-cni", "v1.15.0"); err != nil {
+	if err := svc.validateVersionCompatibility(context.Background(), "1.28", "vpc-cni", "v1.15.0"); err != nil {
 		t.Fatalf("expected nil for compatible version, got: %v", err)
 	}
 }
 
 func TestValidateVersionCompatibility_IncompatibleVersion(t *testing.T) {
 	m := mocks.NewEKSAPI().
-		WithCluster("cluster", "1.28").
 		WithAddonVersions("vpc-cni", []string{"v1.15.0", "v1.14.0"}, "1.28").
 		Build()
 	svc := NewService(m, logger())
 
-	err := svc.validateVersionCompatibility(context.Background(), "cluster", "vpc-cni", "v1.99.0")
+	err := svc.validateVersionCompatibility(context.Background(), "1.28", "vpc-cni", "v1.99.0")
 	if err == nil {
 		t.Fatal("expected incompatibility error, got nil")
 	}
 }
 
 func TestValidateVersionCompatibility_ClusterDescribeError_Skips(t *testing.T) {
-	// A network error describing the cluster must not block the update.
+	// A network error describing the cluster must not block the update:
+	// clusterK8sVersion degrades to "" and validation is skipped.
 	m := &mocks.EKSAPI{
 		DescribeClusterFn: func(_ context.Context, _ *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
 			return nil, fmt.Errorf("simulated describe cluster error")
@@ -119,25 +118,40 @@ func TestValidateVersionCompatibility_ClusterDescribeError_Skips(t *testing.T) {
 	}
 	svc := NewService(m, logger())
 
-	if err := svc.validateVersionCompatibility(context.Background(), "cluster", "vpc-cni", "v1.15.0"); err != nil {
-		t.Fatalf("cluster API error should be skipped gracefully, got: %v", err)
+	if v := svc.clusterK8sVersion(context.Background(), "cluster"); v != "" {
+		t.Fatalf("clusterK8sVersion on API error = %q, want empty", v)
+	}
+	if err := svc.validateVersionCompatibility(context.Background(), "", "vpc-cni", "v1.15.0"); err != nil {
+		t.Fatalf("unknown cluster version should be skipped gracefully, got: %v", err)
+	}
+}
+
+func TestClusterK8sVersion_Memoized(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("cluster", "1.28").
+		Build()
+	svc := NewService(m, logger())
+
+	if v := svc.clusterK8sVersion(context.Background(), "cluster"); v != "1.28" {
+		t.Fatalf("clusterK8sVersion = %q, want 1.28", v)
+	}
+	if v := svc.clusterK8sVersion(context.Background(), "cluster"); v != "1.28" {
+		t.Fatalf("memoized clusterK8sVersion = %q, want 1.28", v)
+	}
+	if m.Calls.DescribeCluster != 1 {
+		t.Errorf("DescribeCluster called %d times, want 1 (memoized)", m.Calls.DescribeCluster)
 	}
 }
 
 func TestValidateVersionCompatibility_VersionsAPIError_Skips(t *testing.T) {
 	m := &mocks.EKSAPI{
-		DescribeClusterFn: func(_ context.Context, _ *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
-			return &eks.DescribeClusterOutput{
-				Cluster: &ekstypes.Cluster{Name: aws.String("cluster"), Version: aws.String("1.28")},
-			}, nil
-		},
 		DescribeAddonVersionsFn: func(_ context.Context, _ *eks.DescribeAddonVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
 			return nil, fmt.Errorf("simulated versions API error")
 		},
 	}
 	svc := NewService(m, logger())
 
-	if err := svc.validateVersionCompatibility(context.Background(), "cluster", "vpc-cni", "v1.15.0"); err != nil {
+	if err := svc.validateVersionCompatibility(context.Background(), "1.28", "vpc-cni", "v1.15.0"); err != nil {
 		t.Fatalf("versions API error should be skipped gracefully, got: %v", err)
 	}
 }

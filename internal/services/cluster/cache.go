@@ -1,124 +1,16 @@
 package cluster
 
 import (
-	"sync"
 	"time"
+
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
-// CacheItem represents a cached item with expiration
-type CacheItem struct {
-	Value     any
-	ExpiresAt time.Time
-}
+// Cache is the cluster service's TTL cache, backed by the shared
+// common.TTLCache implementation.
+type Cache = common.TTLCache
 
-// Cache provides thread-safe caching with TTL
-type Cache struct {
-	items      map[string]CacheItem
-	mutex      sync.RWMutex
-	defaultTTL time.Duration
-}
-
-// NewCache creates a new cache instance
+// NewCache creates a new cache instance with the given default TTL.
 func NewCache(defaultTTL time.Duration) *Cache {
-	cache := &Cache{
-		items:      make(map[string]CacheItem),
-		defaultTTL: defaultTTL,
-	}
-
-	// Start cleanup goroutine
-	go cache.cleanup()
-
-	return cache
-}
-
-// Get retrieves a value from the cache
-func (c *Cache) Get(key string) (any, bool) {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-
-	item, exists := c.items[key]
-	if !exists {
-		return nil, false
-	}
-
-	// Check if expired
-	if time.Now().After(item.ExpiresAt) {
-		// Do not mutate under read lock; treat as miss and let cleanup remove it
-		return nil, false
-	}
-
-	return item.Value, true
-}
-
-// Set stores a value in the cache with specified TTL
-func (c *Cache) Set(key string, value any, ttl time.Duration) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	c.items[key] = CacheItem{
-		Value:     value,
-		ExpiresAt: time.Now().Add(ttl),
-	}
-}
-
-// SetDefault stores a value in the cache with default TTL
-func (c *Cache) SetDefault(key string, value any) {
-	c.Set(key, value, c.defaultTTL)
-}
-
-// Delete removes a value from the cache
-func (c *Cache) Delete(key string) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	delete(c.items, key)
-}
-
-// Clear removes all items from the cache
-func (c *Cache) Clear() {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	c.items = make(map[string]CacheItem)
-}
-
-// cleanup periodically removes expired items
-func (c *Cache) cleanup() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		c.mutex.Lock()
-		now := time.Now()
-		for key, item := range c.items {
-			if now.After(item.ExpiresAt) {
-				delete(c.items, key)
-			}
-		}
-		c.mutex.Unlock()
-	}
-}
-
-// Stats returns cache statistics
-func (c *Cache) Stats() map[string]any {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-
-	expired := 0
-	active := 0
-	now := time.Now()
-
-	for _, item := range c.items {
-		if now.After(item.ExpiresAt) {
-			expired++
-		} else {
-			active++
-		}
-	}
-
-	return map[string]any{
-		"total":   len(c.items),
-		"active":  active,
-		"expired": expired,
-	}
+	return common.NewTTLCache(defaultTTL)
 }
