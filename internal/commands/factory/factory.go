@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/cluster"
@@ -47,5 +48,18 @@ func NewNodegroupService(awsCfg aws.Config, withHealth bool, logger *slog.Logger
 		asgClient := autoscaling.NewFromConfig(awsCfg)
 		hc = health.NewChecker(eksClient, nil, cwClient, asgClient)
 	}
+	return nodegroup.NewService(awsCfg, hc, logger)
+}
+
+// NewNodegroupServiceWithHealth initializes a nodegroup service whose health
+// checker is wired to the given Kubernetes client (which may be nil, in which
+// case kube-dependent checks degrade gracefully). Use this when a command has
+// resolved a --kubeconfig so workload/PDB checks run against the right cluster.
+func NewNodegroupServiceWithHealth(awsCfg aws.Config, k8sClient kubernetes.Interface, logger *slog.Logger) *nodegroup.ServiceImpl {
+	logger = NewDefaultLogger(logger)
+	eksClient := eks.NewFromConfig(awsCfg)
+	cwClient := cloudwatch.NewFromConfig(awsCfg)
+	asgClient := autoscaling.NewFromConfig(awsCfg)
+	hc := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
 	return nodegroup.NewService(awsCfg, hc, logger)
 }

@@ -3,13 +3,9 @@ package health
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // CheckCriticalWorkloads validates that critical system workloads are running
@@ -124,34 +120,10 @@ func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResul
 	return result
 }
 
-// GetKubernetesClient creates a Kubernetes client from kubeconfig
+// GetKubernetesClient creates a Kubernetes client using default resolution
+// ($KUBECONFIG → ~/.kube/config → in-cluster). For an explicit path and
+// diagnostics, use [BuildKubeClient].
 func GetKubernetesClient() (kubernetes.Interface, error) {
-	// Prefer kubeconfig if present
-	kubeconfigPath := os.Getenv("KUBECONFIG")
-	if kubeconfigPath == "" {
-		homeDir, err := os.UserHomeDir()
-		if err == nil {
-			kubeconfigPath = filepath.Join(homeDir, ".kube", "config")
-		}
-	}
-
-	if kubeconfigPath != "" {
-		if st, err := os.Stat(kubeconfigPath); err == nil && !st.IsDir() {
-			cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-			if err == nil {
-				if clientset, cerr := kubernetes.NewForConfig(cfg); cerr == nil {
-					return clientset, nil
-				}
-			}
-		}
-	}
-
-	// Fall back to in-cluster configuration
-	if icCfg, err := rest.InClusterConfig(); err == nil {
-		if clientset, cerr := kubernetes.NewForConfig(icCfg); cerr == nil {
-			return clientset, nil
-		}
-	}
-
-	return nil, fmt.Errorf("unable to create kubernetes client: no kubeconfig found and in-cluster config not available")
+	client, _, err := BuildKubeClient("")
+	return client, err
 }
