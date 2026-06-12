@@ -8,6 +8,8 @@ on:
 permissions:
   contents: write
   packages: write
+  # Required for cosign keyless signing via the GitHub OIDC provider. (REF-74)
+  id-token: write
 
 jobs:
   goreleaser:
@@ -22,8 +24,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version-file: go.mod
           cache: true
+
+      # SBOM generation (syft) and signing (cosign) used by .goreleaser.yml. (REF-74)
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
@@ -32,5 +41,9 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
+          # The release itself (creating the GitHub release, uploading assets to
+          # THIS repo) runs on the scoped, auto-rotating built-in token. The
+          # long-lived PAT is reserved for the cross-repo Homebrew-tap push only
+          # — see homebrew_casks.token in .goreleaser.yml. (REF-73)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}

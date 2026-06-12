@@ -176,7 +176,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 			}
 			instanceType := "Unknown"
 			if len(ng.InstanceTypes) > 0 {
-				instanceType = string(ng.InstanceTypes[0])
+				instanceType = ng.InstanceTypes[0]
 			}
 
 			currentAmiId := awsinternal.CurrentAmiID(fctx, ng, s.ec2Client, s.asgClient)

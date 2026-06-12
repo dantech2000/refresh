@@ -1,0 +1,48 @@
+# golangci-lint v2 configuration. Pins an explicit, reproducible linter set so
+# CI doesn't drift with the action's defaults. (REF-43)
+#
+# Enabled = the v2 default set (errcheck, govet, ineffassign, staticcheck,
+# unused) plus a curated, high-signal layer that the codebase already passes.
+#
+# Intentionally NOT enabled:
+#   - misspell: its US locale rewrites "Cancelled"/"CANCELLED", which are the
+#     literal AWS EKS UpdateStatus enum values this code matches against —
+#     "fixing" them would break status handling.
+#   - gocritic (unlambda/ifElseChain) and unparam (always-nil error returns kept
+#     for interface symmetry): stylistic / intentional-design noise. Worth a
+#     dedicated cleanup pass, not a CI-pinning change.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - revive      # configurable golint replacement
+    - unconvert   # redundant type conversions
+    - bodyclose   # HTTP response bodies must be closed
+  settings:
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: var-declaration
+  exclusions:
+    generated: lax
+
+formatters:
+  enable:
+    - gofmt
