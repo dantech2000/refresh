@@ -13,7 +13,24 @@
 ![Alt](https://repobeats.axiom.co/api/embed/bc73e7cb2ef4f089dc943258dc6511f76ad86a35.svg "Repobeats analytics image")
 
 
-A Go-based CLI tool to manage and monitor AWS EKS clusters and nodegroups with health checks, fast list/describe operations, and smart scaling.
+**The EKS upgrade companion.** A Go-based CLI for the Kubernetes patching and
+upgrade lifecycle on AWS EKS: **status → readiness → patch → upgrade**. Built
+around a safety story — pre-flight health gates, dry-run previews, and live
+progress monitoring — so you can keep a fleet current without surprises.
+
+The core loop:
+
+1. **`refresh status`** — fleet patch posture: what's stale, version skew, and
+   extended-support exposure across every cluster and region.
+2. **`refresh cluster upgrade-check`** — upgrade readiness: EKS Cluster Insights
+   plus a local version-skew picture (read-only, mutates nothing).
+3. **`refresh nodegroup update` / `refresh addon update`** — patch safely with
+   health gates, dry-run, and real-time monitoring.
+4. **`refresh cluster upgrade`** — orchestrate a full upgrade: control plane →
+   addons → nodegroups, with a health gate after every phase.
+
+Fast `list`/`describe` for clusters, nodegroups, and add-ons rounds out the
+day-to-day workflow.
 
 ## Architecture Overview
 
@@ -33,11 +50,10 @@ refresh/
 │   ├── cliconfig/            # Persistent named contexts
 │   │   └── store.go          # YAML-backed context store (~/.config/refresh/context.yaml)
 │   ├── commands/             # CLI command implementations
-│   │   ├── cluster/          # Cluster commands (list, describe/get, compare)
+│   │   ├── cluster/          # Cluster commands (list, describe/get, upgrade-check, upgrade)
 │   │   ├── nodegroup/        # Nodegroup commands (list, describe/get, scale, update)
 │   │   ├── addon/            # Add-on commands (list, describe/get, update [--all])
 │   │   ├── ctxcmd/           # Context commands (use, current, context add/list/remove)
-│   │   ├── workload/         # Workload commands (pdbs)
 │   │   ├── runner/           # Shared command primitives (setup, positionals, encoding)
 │   │   ├── clusterview/      # Cluster table/tree formatters
 │   │   └── factory/          # Service constructors
@@ -51,10 +67,7 @@ refresh/
 │   │   └── status.go         # AMIStatus, DryRunAction (typed enums; plain String, ColorString for display)
 │   ├── services/             # Business logic layer
 │   │   ├── cluster/          # Cluster service with caching
-│   │   ├── nodegroup/        # Nodegroup service with utilization and cost analysis
-│   │   │   ├── cost_analyzer.go  # On-demand price estimation via Pricing API
-│   │   │   ├── utilization.go    # CloudWatch CPU metrics (batched, cached)
-│   │   │   └── ...
+│   │   ├── nodegroup/        # Nodegroup service (list/describe, scale, AMI updates)
 │   │   ├── addons/           # Add-on management
 │   │   │   ├── health_check.go      # Pre-update health validation and version compatibility
 │   │   │   ├── version_analyzer.go  # Available version resolution and comparison
@@ -100,7 +113,7 @@ refresh/
 -   **AMI Changelog**: dry-run shows the current→target AMI release delta and a best-effort summary of `amazon-eks-ami` release notes (kernel, containerd, CVEs); `--changelog` for full notes; degrades gracefully offline (never blocks the update)
 -   **Unattended Updates**: `nodegroup update --yes --require-healthy -o json` runs in CI/cron — idempotent (ClientRequestToken), documented exit codes (0 ok / 2 warn / 3 blocked / 4 update-failed / 5 verify-failed), JSON run summary, and fail-fast (no hanging prompts) without a TTY
 -   **Custom-AMI aware**: custom-AMI nodegroups (`AmiType=CUSTOM`, managed via launch template) are classified `Custom` rather than stale/current and are skipped on update with clear guidance instead of being mis-rolled
--   **Nodegroup Intelligence**: Fast list/describe with optional utilization and cost, and safe scaling with health checks
+-   **Nodegroup Intelligence**: Fast list/describe and safe scaling with health checks
 -   **Security Visibility**: Display cluster deletion protection status and security configuration details
 -   **Dry Run Mode**: Preview changes with comprehensive details before execution
 -   **Short Flags**: Convenient short flags for all commands (`-c`, `-n`, `-d`, `-f`, etc.)
@@ -111,7 +124,6 @@ refresh/
 -   **Accurate Node Readiness**: Uses Kubernetes API to compute actual ready node counts when kubeconfig is available
 -   **Explicit kubeconfig**: `nodegroup update`/`scale` accept `--kubeconfig` for the workload/PDB health checks; an unreachable cluster prints an actionable diagnostic (which kubeconfig/context was tried) and the kube-dependent checks are clearly skipped rather than silently degraded
 -   **Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
--   **Interactive Cluster Selection**: `cluster diff` auto-prompts a multi-select picker when a pattern matches multiple clusters
 -   **Add-on Health Checks**: `addon update --health-check` validates active state and Kubernetes version compatibility before updating
 -   **Shell Completion**: `refresh completion bash|zsh|fish` generates completion scripts; `refresh use <TAB>` completes saved context names
 -   **Script-friendly Output**: `-o json|yaml|plain` on list/describe commands (`plain` is tab-separated and uncolored for grep/awk), `--no-color` (and `NO_COLOR`), spinners auto-disable when output is piped, `nodegroup update --health-only` exits 0/2/3 for pass/warn/block and supports `-o json|yaml`
@@ -124,46 +136,10 @@ refresh/
 -   AWS credentials (`~/.aws/credentials`, environment variables, or IAM roles)
 
 ### Optional (Enhanced Features)
--   `kubectl` and kubeconfig (`~/.kube/config`) - for Kubernetes workload validation (Workloads/PDB currently experimental)
--   CloudWatch metrics - for utilization (CPU supported now; memory via Container Insights in future)
--   AWS Pricing API permissions - for on-demand cost estimates
+-   `kubectl` and kubeconfig (`~/.kube/config`) - for the Kubernetes workload and Pod Disruption Budget (PDB) checks inside pre-flight health checks and `nodegroup scale --check-pdbs`
+-   CloudWatch metrics - capacity and resource-balance health checks use default EC2 CPU metrics (memory via Container Insights in future)
 
 > **Note**: The tool works with just AWS credentials! Health checks use default EC2 metrics and provide clear guidance for enabling optional features.
-
-### Cost Estimation
-
-The `--show-costs` flag displays estimated monthly costs for nodegroups. Here's how costs are calculated:
-
-**Calculation Method:**
-```
-Monthly Cost = (Hourly On-Demand Price) x 730 hours x (Number of Nodes)
-```
-
-**Data Source:**
-- Prices are fetched from the **AWS Pricing API** in real-time
-- Queries use your cluster's region to get region-specific pricing
-- Fallback to static price map when API is unavailable
-
-**Example:**
-```
-t3a.large in us-west-2: $0.0752/hour
-9 nodes x $0.0752 x 730 hours = $494/month
-```
-
-**Limitations:**
-- Does not include EBS storage, data transfer, or other EC2-related costs
-- Pricing API requires `pricing:GetProducts` IAM permission
-
-**Required IAM Permissions:**
-```json
-{
-  "Effect": "Allow",
-  "Action": [
-    "pricing:GetProducts"
-  ],
-  "Resource": "*"
-}
-```
 
 ## Installation
 
@@ -254,7 +230,6 @@ refresh
 ├── cluster
 │   ├── list (lc)          # List clusters across regions
 │   ├── describe / get     # Describe comprehensive cluster info
-│   ├── diff (compare)     # Compare cluster configurations
 │   ├── upgrade-check      # Upgrade readiness: Cluster Insights + version skew (read-only)
 │   └── upgrade            # Orchestrate a full cluster upgrade (control plane → addons → nodegroups)
 ├── nodegroup (ng)
@@ -450,40 +425,6 @@ Deletion Protection │ ENABLED
 Created             │ 2023-02-09 04:33:25 UTC
 ```
 
-#### Compare Clusters
-
-Compare configurations across multiple clusters for consistency validation:
-
-```bash
-# Basic comparison (exact names)
-refresh cluster diff -c dev -c prod
-refresh cc -c dev -c prod              # Short alias
-
-# Show only differences
-refresh cluster diff -c dev -c staging --show-differences
-
-# Focus on specific aspects
-refresh cc -c prod-east -c prod-west -i networking -i security
-
-# Different output formats
-refresh cluster diff -c dev -c prod -o json
-```
-
-**Interactive cluster selection** — when a pattern matches more than one cluster,
-the tool automatically launches a multi-select picker. You can also trigger it
-explicitly with `--interactive` to choose from all matching candidates:
-
-```bash
-# "prod" matches prod-east, prod-west, prod-central → interactive picker appears
-refresh cluster diff --cluster prod
-
-# Force the picker even when patterns are unambiguous
-refresh cluster diff -c prod -c staging --interactive
-```
-
-The picker lets you space-toggle clusters and confirm with Enter. At least 2 must
-be selected for the comparison to proceed.
-
 #### Upgrade Cluster (Orchestrated)
 
 Plan and execute a full cluster upgrade — control plane, then addons in
@@ -533,23 +474,18 @@ refresh ng list -c <cluster>           # Short alias
 refresh nodegroup list -c dev -n web
 refresh ng list -c dev -n api
 
-# Include utilization and costs (24h window default)
-refresh ng list --show-utilization --show-costs -c prod
-refresh ng list -U -C -c prod          # Short flags
-
 # Sorting
-refresh ng list --sort cpu --desc -c prod
-refresh ng list --sort cost -c prod
+refresh ng list --sort status --desc -c prod
 refresh ng list --sort instance -c prod
 ```
 
 **Sort Keys:**
-- `name`, `status`, `instance`, `nodes`, `cpu`, `cost`
+- `name`, `status`, `instance`, `nodes`
 
 Flags may appear before or after positional arguments — both forms work:
 ```bash
-refresh ng list --show-costs -c prod
-refresh ng list -c prod --show-costs
+refresh ng list -n web -c prod
+refresh ng list -c prod -n web
 ```
 
 #### Describe Nodegroup
@@ -561,8 +497,8 @@ Get detailed information about a specific nodegroup:
 refresh nodegroup describe -c <cluster> -n <nodegroup>
 refresh ng describe -c dev -n api      # Short alias
 
-# Include utilization, costs, and instances
-refresh ng describe -c prod -n web --show-utilization --show-costs --show-instances --timeframe 24h
+# Include instances
+refresh ng describe -c prod -n web --show-instances
 
 # Different output formats
 refresh ng describe -c dev -n api -o json
@@ -620,6 +556,9 @@ Scale nodegroups with health checks and monitoring:
 ```bash
 # Scale with health checks and wait for completion
 refresh nodegroup scale -c prod -n web --desired 10 --health-check --wait
+
+# Validate Pod Disruption Budgets before scaling down
+refresh nodegroup scale -c prod -n web --desired 3 --check-pdbs
 
 # Scale with custom timeout
 refresh ng scale -c dev -n api --desired 5 --op-timeout 5m
@@ -697,7 +636,7 @@ refresh ng list -c dev -n web        # Matches nodegroups containing "web"
 refresh ng list -c dev -n 20230815   # Matches nodegroups created on that date
 ```
 
-When multiple items match, the tool shows all matches and asks for confirmation before proceeding. For `cluster diff`, a multi-select picker is shown so you can choose 2 or more clusters to compare in a single step.
+When multiple items match, the tool shows all matches and asks for confirmation before proceeding.
 
 ### Man Page Documentation
 
@@ -807,7 +746,6 @@ refresh ng update -c test -H -q
 # Cluster operations
 refresh lc -A -H                    # List all clusters with health
 refresh dc -c prod -o json          # Describe cluster as JSON
-refresh cc -c dev -c prod -d        # Compare clusters (differences only)
 ```
 
 ### Common Flags (All Commands)
@@ -836,17 +774,10 @@ refresh cc -c dev -c prod -d        # Compare clusters (differences only)
 - `--sort` - Sort by field (name, status, version, region)
 - `--desc` - Sort in descending order
 
-### Compare Cluster Flags
-
-- `-d, --show-differences` - Show only differences
-- `-i, --include` - Compare specific aspects (networking, security, addons, versions)
-- `--interactive` - Force interactive multi-select picker for cluster selection
-
 ### Short Command Aliases
 
 - `lc` - `cluster list`
 - `dc` - `cluster describe`
-- `cc` - `cluster diff`
 - `ng` - `nodegroup`
 
 ## Development
