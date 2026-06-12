@@ -23,11 +23,15 @@ import (
 
 // classifyAMI compares the nodegroup's current AMI against the latest available
 // for its type and returns the appropriate status. Returns AMIUpdating while an
-// update is in flight, regardless of AMI identities.
-func classifyAMI(status ekstypes.NodegroupStatus, currentAmiId, latestAmiId string) types.AMIStatus {
+// update is in flight, AMICustom for custom-AMI nodegroups (whose AMI is managed
+// via the user's launch template, not by EKS, so there's no recommended AMI to
+// compare against), regardless of AMI identities.
+func classifyAMI(amiType ekstypes.AMITypes, status ekstypes.NodegroupStatus, currentAmiId, latestAmiId string) types.AMIStatus {
 	switch {
 	case status == ekstypes.NodegroupStatusUpdating:
 		return types.AMIUpdating
+	case amiType == ekstypes.AMITypesCustom:
+		return types.AMICustom
 	case currentAmiId == "" || latestAmiId == "":
 		return types.AMIUnknown
 	case currentAmiId == latestAmiId:
@@ -177,7 +181,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 
 			currentAmiId := awsinternal.CurrentAmiID(fctx, ng, s.ec2Client, s.asgClient)
 			latestAmiId := latestAMI(fctx, ng.AmiType)
-			amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
+			amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
 
 			summary := NodegroupSummary{
 				Name:         aws.ToString(ng.NodegroupName),
@@ -261,7 +265,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 
 	currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
 	latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
-	amiStatus := classifyAMI(ng.Status, currentAmiId, latestAmiId)
+	amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
 
 	var scaling ScalingConfig
 	if sc := ng.ScalingConfig; sc != nil {

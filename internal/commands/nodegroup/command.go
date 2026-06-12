@@ -96,9 +96,34 @@ func updateAMICommand() *cli.Command {
 		Aliases:   []string{"update-ami"},
 		Usage:     "Update the AMI for all or a specific node group (rolling by default)",
 		ArgsUsage: "[cluster] [nodegroup]",
+		Description: `Roll managed nodegroups to the latest recommended AMI, with pre-flight
+health gates and live monitoring.
+
+Custom-AMI nodegroups (AmiType=CUSTOM) are skipped with guidance: their AMI is
+managed via the launch template, so publish a new LT version to roll them.
+
+Fleet mode (--all-clusters) discovers clusters across regions (scope with -r)
+and rolls them serially with one batch confirmation, an aggregate summary, and a
+worst-outcome exit code:
+   refresh nodegroup update --all-clusters --dry-run        # fleet-wide plan
+   refresh nodegroup update --all-clusters -r us-east-1 --yes
+
+Unattended / CI use:
+   --yes              skip confirmation prompts (multi-match selection, warnings)
+   --require-healthy  treat warn-level health findings as a hard stop
+   -o json            print a JSON run summary (started/skipped/custom/failed)
+   Without a TTY and without --yes, a prompt-requiring run fails fast.
+
+Exit codes:
+   0  success            2  health warnings (--health-only / --require-healthy)
+   3  health blocked     4  one or more nodegroup updates failed to start
+
+Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or partial name pattern (overrides kubeconfig)", Sources: cli.EnvVars("EKS_CLUSTER_NAME")},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name or partial name pattern (if not set, update all)"},
+			&cli.BoolFlag{Name: "all-clusters", Usage: "Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r."},
+			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS)"},
 			&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force update if possible"},
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview changes without executing them"},
 			&cli.BoolFlag{Name: "no-wait", Aliases: []string{"w"}, Usage: "Don't wait for update completion (original behavior)"},
@@ -107,8 +132,12 @@ func updateAMICommand() *cli.Command {
 			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "Polling interval for checking update status", Value: 15 * time.Second},
 			&cli.BoolFlag{Name: "skip-health-check", Aliases: []string{"s"}, Usage: "Skip pre-flight health validation"},
 			&cli.BoolFlag{Name: "health-only", Aliases: []string{"H"}, Usage: "Run health check only, don't update (exit code: 0=pass, 2=warn, 3=block)"},
+			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Assume yes: skip confirmation prompts (multi-match selection, warn-level health) for unattended/CI use"},
+			&cli.BoolFlag{Name: "require-healthy", Usage: "Treat warn-level health findings as a hard stop (exit 2) instead of prompting"},
+			&cli.BoolFlag{Name: "skip-verify", Usage: "Skip post-roll verification (nodes ACTIVE, no new stuck pods)"},
+			&cli.BoolFlag{Name: "changelog", Usage: "In dry-run, print full amazon-eks-ami release notes between the current and target AMI"},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config)"},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "(--health-only only) Output format for health results (table, json, yaml)", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format: health results with --health-only; a JSON run summary with -o json", Value: "table"},
 		},
 		Action: runUpdateAMI,
 	}
