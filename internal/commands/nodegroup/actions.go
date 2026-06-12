@@ -132,7 +132,7 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, cmd.String("cluster"))
+	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, runner.RequestedCluster(cmd))
 	if err != nil {
 		return err
 	}

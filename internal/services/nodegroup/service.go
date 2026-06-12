@@ -123,6 +123,9 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
 	}
+	if clusterDesc.Cluster == nil {
+		return nil, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
+	}
 	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
 	nodegroupNames, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing nodegroups for cluster %s", clusterName),
@@ -225,6 +228,9 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	})
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
+	}
+	if clusterDesc.Cluster == nil {
+		return nil, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
 	}
 	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 

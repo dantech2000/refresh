@@ -61,6 +61,9 @@ var (
 		if err != nil {
 			return "", err
 		}
+		if clusterOut.Cluster == nil {
+			return "", fmt.Errorf("empty DescribeCluster response for %s", clusterName)
+		}
 		return aws.ToString(clusterOut.Cluster.Version), nil
 	}
 	newDryRunner = NewDryRunner
