@@ -66,6 +66,9 @@ Examples:
 }
 
 func runUpgrade(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+		return err
+	}
 	// Strict credential validation: this command mutates the control plane.
 	ctx, cancel, awsCfg, err := runner.SetupAWSStrict(ctx, cmd)
 	if err != nil {

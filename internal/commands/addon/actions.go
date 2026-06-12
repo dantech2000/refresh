@@ -20,6 +20,9 @@ import (
 )
 
 func runList(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+		return err
+	}
 	ctx, cancel, cfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
@@ -51,6 +54,9 @@ func runList(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runDescribe(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+		return err
+	}
 	ctx, cancel, cfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
@@ -177,6 +183,9 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+		return err
+	}
 	ctx, cancel, cfg, err := runner.SetupAWSStrict(ctx, cmd)
 	if err != nil {
 		return err

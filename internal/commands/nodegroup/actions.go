@@ -32,6 +32,9 @@ import (
 )
 
 func runList(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+		return err
+	}
 	// Each --watch iteration performs the full setup+fetch+render cycle so a
 	// fresh service (and cache) is used every time.
 	return runner.Watch(cmd, func() error { return listNodegroupsOnce(ctx, cmd) })
@@ -70,10 +73,9 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	format := strings.ToLower(cmd.String("format"))
-	if format == "table" || format == "plain" || format == "" {
-		items = sortNodegroupSummaries(items, cmd.String("sort"), cmd.Bool("desc"))
-	}
+	// Sort before encoding so --sort/--desc apply to every output format, not
+	// just table/plain — matching cluster list and keeping JSON/YAML scriptable. (REF-49)
+	items = sortNodegroupSummaries(items, cmd.String("sort"), cmd.Bool("desc"))
 
 	payload := map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)}
 	if handled, err := runner.EncodeStdout(cmd.String("format"), payload); handled {
@@ -83,6 +85,9 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runDescribe(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+		return err
+	}
 	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
@@ -257,6 +262,9 @@ func (f updateAMIFlags) machineHealthOutput() bool {
 }
 
 func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsTableJSON); err != nil {
+		return err
+	}
 	if cmd.Bool("all-clusters") {
 		return runFleetUpdate(ctx, cmd)
 	}
