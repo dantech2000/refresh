@@ -222,6 +222,9 @@ go install github.com/dantech2000/refresh@latest
 
 ## Usage
 
+> Coming from eksctl or `aws eks`? See the
+> [migration guide](docs/migration.md) for a command-by-command cheat-sheet.
+
 ### Command Structure
 
 ```text

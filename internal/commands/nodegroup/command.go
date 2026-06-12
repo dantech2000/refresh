@@ -16,6 +16,10 @@ func Command() *cli.Command {
 		Name:    "nodegroup",
 		Aliases: []string{"ng"},
 		Usage:   "Nodegroup operations (list, get, scale, update)",
+		Description: `Inspect and operate on a cluster's managed nodegroups: list them with AMI
+freshness, describe one in depth, scale desired/min/max size (with optional PDB
+and health gating), and update (roll) nodegroups to the latest recommended AMI
+with pre-flight health checks and live monitoring.`,
 		Commands: []*cli.Command{
 			listCommand(),
 			describeCommand(),
@@ -30,6 +34,17 @@ func listCommand() *cli.Command {
 		Name:      "list",
 		Usage:     "List nodegroups in a cluster with AMI status",
 		ArgsUsage: "[cluster]",
+		Description: `List the managed nodegroups in a cluster with their status, instance type,
+node counts, and AMI freshness (whether each is on the latest recommended AMI).
+
+Filter with repeatable --filter key=value (keys: name, status, instanceType,
+amiStatus); sort with --sort and --desc. -o plain emits uncolored TSV for
+grep/awk; -o json|yaml emit structured output. Use --watch to redraw on the
+--watch-interval (top-style on a terminal, appended when piped) until Ctrl+C.
+
+  refresh nodegroup list my-cluster --filter amiStatus=outdated
+  refresh nodegroup list my-cluster -o plain | awk '{print $1}'
+  refresh nodegroup list my-cluster --watch`,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
@@ -50,6 +65,13 @@ func describeCommand() *cli.Command {
 		Aliases:   []string{"get"},
 		Usage:     "Describe a nodegroup with AMI status and optional instances/workloads info",
 		ArgsUsage: "[cluster] [nodegroup]",
+		Description: `Show detailed information for one nodegroup: scaling config, instance
+type(s), AMI/release version and freshness, and (optionally) per-instance and
+workload placement details. The nodegroup name may be the second positional or
+--nodegroup.
+
+  refresh nodegroup describe my-cluster ng-default
+  refresh nodegroup describe my-cluster ng-default --show-instances --show-workloads`,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
@@ -67,6 +89,16 @@ func scaleCommand() *cli.Command {
 		Name:      "scale",
 		Usage:     "Scale a nodegroup's desired/min/max size with optional health checks",
 		ArgsUsage: "[cluster]",
+		Description: `Change a managed nodegroup's desired/min/max size. Any subset of
+--desired/--min/--max may be set; unspecified bounds are left unchanged.
+
+--check-pdbs validates Pod Disruption Budgets before scaling down so you don't
+strand workloads; --health-check validates cluster health before and after;
+--dry-run previews the impact without executing; --wait blocks until the
+operation settles.
+
+  refresh nodegroup scale my-cluster -n ng-default --desired 5
+  refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait`,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},

@@ -15,6 +15,10 @@ func Command() *cli.Command {
 	return &cli.Command{
 		Name:  "addon",
 		Usage: "EKS add-on operations (list, get, update)",
+		Description: `Inspect and update the managed EKS add-ons (vpc-cni, coredns, kube-proxy,
+and others) on a cluster. List shows installed versions and status, describe
+drills into one add-on, and update rolls a single add-on or every add-on
+(--all) to a compatible version with optional health gating and waiting.`,
 		Commands: []*cli.Command{
 			listCommand(),
 			describeCommand(),
@@ -29,11 +33,24 @@ func listCommand() *cli.Command {
 		Name:      "list",
 		Usage:     "List EKS add-ons in a cluster",
 		ArgsUsage: "[cluster]",
+		Description: `List the managed EKS add-ons installed on a cluster along with their
+current version, status, and (with --health) a health badge.
+
+Use --watch to keep the listing live: it redraws on the --watch-interval
+(top-style on a terminal, appended when the output is piped) so you can watch
+an add-on update progress without re-running the command. Press Ctrl+C to stop.
+
+Examples:
+  refresh addon list my-cluster
+  refresh addon list my-cluster -o plain
+  refresh addon list my-cluster --watch --watch-interval 5s`,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "show-health", Aliases: []string{"H"}, Usage: "Include health mapping in table output"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
+			&cli.BoolFlag{Name: "watch", Aliases: []string{"w"}, Usage: "Re-run and redraw every --watch-interval until interrupted"},
+			&cli.DurationFlag{Name: "watch-interval", Usage: "Refresh interval for --watch", Value: 10 * time.Second},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error { return runList(ctx, cmd) },
 	}
@@ -45,6 +62,12 @@ func describeCommand() *cli.Command {
 		Aliases:   []string{"get"},
 		Usage:     "Describe a specific EKS add-on",
 		ArgsUsage: "[cluster] [addon]",
+		Description: `Show detailed information for one add-on: its version, status, and
+configuration. The add-on name may be the second positional or --addon, and a
+case-insensitive substring is resolved against the installed add-ons.
+
+  refresh addon describe my-cluster vpc-cni
+  refresh addon describe my-cluster coredns -o json`,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
@@ -62,6 +85,28 @@ func updateCommand() *cli.Command {
 		Name:      "update",
 		Usage:     "Update an EKS add-on (use --all to update every add-on)",
 		ArgsUsage: "[cluster] [addon] [version]",
+		Description: `Update a single managed add-on to a target version, or with --all update
+every add-on in the cluster to its latest compatible version.
+
+Single add-on: pass the add-on name and an optional version (defaults to
+'latest'). The version may be the third positional or --version:
+
+  refresh addon update my-cluster vpc-cni            # vpc-cni -> latest
+  refresh addon update my-cluster coredns v1.11.1    # pin a version
+  refresh addon update my-cluster vpc-cni --dry-run  # preview only
+
+All add-ons (--all): updates every add-on, optionally in dependency-safe
+order, in parallel, and/or waiting for each to settle. --parallel and
+--dependency-order are mutually exclusive (parallel defeats ordering). The
+--parallel/--skip/--dependency-order flags apply only with --all and are
+ignored (with a warning) on a single-add-on update. The command exits non-zero
+if any add-on update fails.
+
+  refresh addon update my-cluster --all --dependency-order --wait
+  refresh addon update my-cluster --all --skip vpc-cni --parallel
+
+Use --health-check to verify the add-on is ACTIVE and version-compatible
+before updating. -o json|yaml emits a machine-readable result/summary.`,
 		Flags: []cli.Flag{
 			// Update operations can legitimately run for minutes when --wait is
 			// used, so the timeout default matches the legacy update-all command
