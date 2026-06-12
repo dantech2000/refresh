@@ -103,6 +103,7 @@ refresh/
 -   **Timeouts Everywhere**: Global and per-command `--timeout, -t` to avoid hangs on slow networks (default 60s)
 -   **Multi-Region Discovery**: `cluster list` supports `-A/--all-regions` with a concurrency cap (`-C/--max-concurrency`)
 -   **Accurate Node Readiness**: Uses Kubernetes API to compute actual ready node counts when kubeconfig is available
+-   **Explicit kubeconfig**: `nodegroup update`/`scale` accept `--kubeconfig` for the workload/PDB health checks; an unreachable cluster prints an actionable diagnostic (which kubeconfig/context was tried) and the kube-dependent checks are clearly skipped rather than silently degraded
 -   **Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
 -   **Interactive Cluster Selection**: `cluster diff` auto-prompts a multi-select picker when a pattern matches multiple clusters
 -   **Add-on Health Checks**: `addon update --health-check` validates active state and Kubernetes version compatibility before updating
