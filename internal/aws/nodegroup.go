@@ -87,7 +87,10 @@ func getClusterVersion(ctx context.Context, eksClient *eks.Client, clusterName s
 	if err != nil {
 		return "", FormatAWSError(err, "describing cluster")
 	}
-	return *clusterOut.Cluster.Version, nil
+	if clusterOut.Cluster == nil {
+		return "", fmt.Errorf("empty DescribeCluster response for %s", clusterName)
+	}
+	return aws.ToString(clusterOut.Cluster.Version), nil
 }
 
 // listNodegroupNames retrieves all nodegroup names for a cluster using pagination.

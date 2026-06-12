@@ -129,6 +129,9 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s", name))
 	}
+	if clusterOutput.Cluster == nil {
+		return nil, fmt.Errorf("empty DescribeCluster response for %s", name)
+	}
 
 	cluster := clusterOutput.Cluster
 	details := &ClusterDetails{
@@ -340,8 +343,18 @@ func (s *ServiceImpl) ListAllRegionsWithMeta(ctx context.Context, options ListOp
 	resultChan := make(chan regionResult, len(eksRegions))
 	sem := make(chan struct{}, maxConc)
 
+	// Observe cancellation at the dispatch point; track how many goroutines we
+	// actually started so the collection loop below reads exactly that many
+	// and never blocks on results that were never queued. (REF-56)
+	dispatched := 0
+dispatch:
 	for _, region := range eksRegions {
-		sem <- struct{}{}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break dispatch
+		}
+		dispatched++
 		go func(r string) {
 			defer func() { <-sem }()
 			summaries, err := s.forRegion(r).List(ctx, regionOptionsFor(options, r))
@@ -359,7 +372,7 @@ func (s *ServiceImpl) ListAllRegionsWithMeta(ctx context.Context, options ListOp
 	allSummaries := make([]ClusterSummary, 0)
 	var failedRegions []string
 	var firstErr error
-	for i := 0; i < len(eksRegions); i++ {
+	for i := 0; i < dispatched; i++ {
 		result := <-resultChan
 		if result.err != nil {
 			s.logger.Warn("failed to list clusters in region", "region", result.region, "error", result.err)

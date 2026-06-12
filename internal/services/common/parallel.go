@@ -21,8 +21,16 @@ func ForEachParallel[T, R any](ctx context.Context, items []T, maxConcurrency in
 	sem := make(chan struct{}, maxConcurrency)
 	var wg sync.WaitGroup
 	for i, item := range items {
-		// Acquire BEFORE spawning so the cap limits live goroutines.
-		sem <- struct{}{}
+		// Acquire BEFORE spawning so the cap limits live goroutines. Observe
+		// cancellation at the dispatch point so a cancelled context stops
+		// queueing new work promptly; unstarted items keep their zero value
+		// (e.g. nil pointer), matching best-effort list semantics. (REF-56)
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return results
+		}
 		wg.Add(1)
 		go func(i int, it T) {
 			defer wg.Done()

@@ -306,10 +306,16 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 	if options.Parallel {
 		var wg sync.WaitGroup
 		semaphore := make(chan struct{}, maxParallelAddonUpdates)
+	dispatch:
 		for i, addon := range toUpdate {
 			// Acquire BEFORE spawning so the cap limits live goroutines, not
-			// just in-flight API calls. Matches cluster.ListAllRegionsWithMeta.
-			semaphore <- struct{}{}
+			// just in-flight API calls. Observe cancellation at the dispatch
+			// point so Ctrl+C stops starting new addon updates promptly. (REF-56)
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				break dispatch
+			}
 			wg.Add(1)
 			go func(i int, a AddonSummary) {
 				defer wg.Done()

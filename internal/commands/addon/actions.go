@@ -3,6 +3,7 @@ package addon
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -120,7 +121,30 @@ func resolveAddonName(ctx context.Context, eksClient listAddonsAPI, clusterName,
 	return "", fmt.Errorf("invalid add-on name '%s'. Available: %s", addonName, strings.Join(list.Addons, ", "))
 }
 
+// warnAllOnlyFlags warns when flags that only apply to `addon update --all`
+// are passed on the single-addon path, where they're silently inert. (REF-55)
+func warnAllOnlyFlags(cmd *cli.Command) {
+	var set []string
+	if cmd.Bool("parallel") {
+		set = append(set, "--parallel")
+	}
+	if len(cmd.StringSlice("skip")) > 0 {
+		set = append(set, "--skip")
+	}
+	if cmd.Bool("dependency-order") {
+		set = append(set, "--dependency-order")
+	}
+	if len(set) > 0 {
+		fmt.Fprintf(os.Stderr, "warning: %s only apply with --all and are ignored for a single add-on update\n",
+			strings.Join(set, ", "))
+	}
+}
+
 func runUpdate(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+		return err
+	}
+	warnAllOnlyFlags(cmd)
 	ctx, cancel, cfg, err := runner.SetupAWSStrict(ctx, cmd)
 	if err != nil {
 		return err
@@ -164,6 +188,12 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	// Honor -o json|yaml for the single-addon result (REF-55); table/plain fall
+	// through to the human-readable summary below.
+	if handled, encErr := runner.EncodeStdout(cmd.String("format"), result); handled {
+		return encErr
 	}
 
 	switch result.Status {

@@ -194,7 +194,10 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 	output, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
 	})
-	if err != nil {
+	if err != nil || output.Cluster == nil {
+		if err == nil {
+			err = fmt.Errorf("empty DescribeCluster response")
+		}
 		s.logger.Warn("failed to describe cluster, returning minimal summary", "cluster", clusterName, "error", err)
 		return &ClusterSummary{
 			Name:   clusterName,
