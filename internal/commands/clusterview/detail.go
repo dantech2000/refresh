@@ -64,8 +64,13 @@ func OutputClusterDetailsTable(details *clustersvc.ClusterDetails, elapsed time.
 	}
 	tbl.Add("Encryption", encStatus)
 	tbl.AddBool("Deletion Protection", details.Security.DeletionProtection)
-	tbl.Add("Created", details.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
-	tbl.Add("Age", formatAge(time.Since(details.CreatedAt)))
+	if details.CreatedAt.IsZero() {
+		tbl.Add("Created", "unknown")
+		tbl.Add("Age", "unknown")
+	} else {
+		tbl.Add("Created", details.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
+		tbl.Add("Age", formatAge(time.Since(details.CreatedAt)))
+	}
 	tbl.Render()
 
 	if len(details.Addons) > 0 {

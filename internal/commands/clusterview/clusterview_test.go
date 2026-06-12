@@ -107,6 +107,29 @@ func TestSortClusterSummaries_UnknownKeyFallsBackToName(t *testing.T) {
 
 // ── formatStatus ─────────────────────────────────────────────────────────────
 
+// REF-66: formatAge must read sensibly for sub-minute and clamp negatives
+// (clock skew) instead of printing "0 minutes" / "-N minutes".
+func TestFormatAge(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{"days", 50 * time.Hour, "2 days"},
+		{"hours", 3 * time.Hour, "3 hours"},
+		{"minutes", 5 * time.Minute, "5 minutes"},
+		{"sub-minute", 30 * time.Second, "just now"},
+		{"zero", 0, "just now"},
+		{"negative clock-skew", -3 * time.Minute, "just now"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatAge(tc.d); got != tc.want {
+				t.Errorf("formatAge(%v) = %q, want %q", tc.d, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFormatStatus(t *testing.T) {
 	cases := map[string]string{
 		"ACTIVE":   "Active",
