@@ -57,10 +57,7 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 
 	filters := runner.ParseFilters(cmd.StringSlice("filter"))
 	opts := nodegroupsvc.ListOptions{
-		ShowCosts:       cmd.Bool("show-costs"),
-		ShowUtilization: cmd.Bool("show-utilization"),
-		Filters:         filters,
-		Timeframe:       cmd.String("timeframe"),
+		Filters: filters,
 	}
 
 	var items []nodegroupsvc.NodegroupSummary
@@ -81,7 +78,7 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 	if handled, err := runner.EncodeStdout(cmd.String("format"), payload); handled {
 		return err
 	}
-	return outputNodegroupsTable(clusterName, cmd.String("timeframe"), items, time.Since(start), opts)
+	return outputNodegroupsTable(clusterName, items, time.Since(start))
 }
 
 func runDescribe(ctx context.Context, cmd *cli.Command) error {
@@ -108,11 +105,8 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	svc := factory.NewNodegroupService(awsCfg, false, logger)
 
 	opts := nodegroupsvc.DescribeOptions{
-		ShowInstances:   cmd.Bool("show-instances"),
-		ShowUtilization: cmd.Bool("show-utilization"),
-		ShowWorkloads:   cmd.Bool("show-workloads"),
-		ShowCosts:       cmd.Bool("show-costs"),
-		Timeframe:       cmd.String("timeframe"),
+		ShowInstances: cmd.Bool("show-instances"),
+		ShowWorkloads: cmd.Bool("show-workloads"),
 	}
 
 	var details *nodegroupsvc.NodegroupDetails

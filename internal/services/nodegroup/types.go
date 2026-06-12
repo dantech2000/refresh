@@ -9,19 +9,13 @@ import (
 
 // ListOptions controls nodegroup listing behavior
 type ListOptions struct {
-	ShowCosts       bool              `json:"showCosts"`
-	ShowUtilization bool              `json:"showUtilization"`
-	Filters         map[string]string `json:"filters"`
-	Timeframe       string            `json:"timeframe"`
+	Filters map[string]string `json:"filters"`
 }
 
 // DescribeOptions controls describe behavior for nodegroups
 type DescribeOptions struct {
-	ShowInstances   bool   `json:"showInstances"`
-	ShowUtilization bool   `json:"showUtilization"`
-	ShowWorkloads   bool   `json:"showWorkloads"`
-	ShowCosts       bool   `json:"showCosts"`
-	Timeframe       string `json:"timeframe"`
+	ShowInstances bool `json:"showInstances"`
+	ShowWorkloads bool `json:"showWorkloads"`
 }
 
 // ScaleOptions controls intelligent scaling behavior
@@ -39,36 +33,6 @@ type ScalingConfig struct {
 	MinSize     int32 `json:"minSize"`
 	MaxSize     int32 `json:"maxSize"`
 	AutoScaling bool  `json:"autoScaling"`
-}
-
-// UtilizationData represents a simple utilization snapshot/trend
-type UtilizationData struct {
-	Current float64 `json:"current"`
-	Average float64 `json:"average"`
-	Peak    float64 `json:"peak"`
-	Trend   string  `json:"trend"` // increasing, stable, decreasing
-}
-
-// UtilizationMetrics groups major resource utilization metrics
-type UtilizationMetrics struct {
-	CPU       UtilizationData `json:"cpu"`
-	Memory    UtilizationData `json:"memory"`
-	Network   UtilizationData `json:"network"`
-	Storage   UtilizationData `json:"storage"`
-	TimeRange string          `json:"timeRange"`
-}
-
-// CostBreakdown holds itemized cost components for a nodegroup.
-// Fields will be populated as Cost Explorer integration is added.
-type CostBreakdown struct{}
-
-// CostAnalysis captures high-level cost data and potential
-type CostAnalysis struct {
-	CurrentMonthlyCost    float64       `json:"currentMonthlyCost"`
-	ProjectedMonthlyCost  float64       `json:"projectedMonthlyCost"`
-	CostPerNode           float64       `json:"costPerNode"`
-	CostBreakdown         CostBreakdown `json:"costBreakdown"`
-	OptimizationPotential float64       `json:"optimizationPotential"`
 }
 
 // InstanceDetails describes an EC2 instance backing a nodegroup.
@@ -98,22 +62,9 @@ type NodegroupSummary struct {
 	// AMI information - core functionality of refresh tool
 	CurrentAMI string          `json:"currentAmi"`
 	AMIStatus  types.AMIStatus `json:"amiStatus"`
-	// Optional enrichments for list output
-	Metrics SummaryMetrics `json:"metrics,omitempty"`
-	Cost    SummaryCost    `json:"cost,omitempty"`
 }
 
-// SummaryMetrics contains lightweight metrics for list views
-type SummaryMetrics struct {
-	CPU float64 `json:"cpu"` // percent 0-100
-}
-
-// SummaryCost contains lightweight cost info for list views
-type SummaryCost struct {
-	Monthly float64 `json:"monthly"`
-}
-
-// NodegroupDetails extends summary with health, cost, and optional instance/workload details
+// NodegroupDetails extends summary with health and optional instance/workload details
 type NodegroupDetails struct {
 	Name         string `json:"name"`
 	Status       string `json:"status"`
@@ -126,10 +77,8 @@ type NodegroupDetails struct {
 	LatestAMI  string          `json:"latestAmi"`
 	AMIStatus  types.AMIStatus `json:"amiStatus"`
 
-	Scaling     ScalingConfig        `json:"scaling"`
-	Health      *health.HealthStatus `json:"health,omitempty"`
-	Utilization UtilizationMetrics   `json:"utilization"`
-	Cost        CostAnalysis         `json:"costAnalysis"`
+	Scaling ScalingConfig        `json:"scaling"`
+	Health  *health.HealthStatus `json:"health,omitempty"`
 
 	Instances []InstanceDetails `json:"instances"`
 	Workloads WorkloadInfo      `json:"workloads"`

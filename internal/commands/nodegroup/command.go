@@ -28,16 +28,13 @@ func Command() *cli.Command {
 func listCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "list",
-		Usage:     "List nodegroups in a cluster with optional cost/utilization",
+		Usage:     "List nodegroups in a cluster with AMI status",
 		ArgsUsage: "[cluster]",
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
-			&cli.BoolFlag{Name: "show-costs", Aliases: []string{"C"}, Usage: "Include cost analysis"},
-			&cli.BoolFlag{Name: "show-utilization", Aliases: []string{"U"}, Usage: "Include CPU utilization metrics"},
-			&cli.StringFlag{Name: "timeframe", Aliases: []string{"T"}, Usage: "Utilization window (1h,3h,24h)", Value: "24h"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
-			&cli.StringFlag{Name: "sort", Usage: "Sort by field: name,status,instance,nodes,cpu,cost", Value: "name"},
+			&cli.StringFlag{Name: "sort", Usage: "Sort by field: name,status,instance,nodes", Value: "name"},
 			&cli.BoolFlag{Name: "desc", Usage: "Sort descending"},
 			&cli.StringSliceFlag{Name: "filter", Aliases: []string{"f"}, Usage: "Filter nodegroups (key=value; keys: name, status, instanceType, amiStatus)"},
 			&cli.BoolFlag{Name: "watch", Aliases: []string{"w"}, Usage: "Re-run and redraw every --watch-interval until interrupted"},
@@ -51,17 +48,14 @@ func describeCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "describe",
 		Aliases:   []string{"get"},
-		Usage:     "Describe a nodegroup with optional instances/utilization/cost info",
+		Usage:     "Describe a nodegroup with AMI status and optional instances/workloads info",
 		ArgsUsage: "[cluster] [nodegroup]",
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name (can be provided as second positional)"},
 			&cli.BoolFlag{Name: "show-instances", Aliases: []string{"I"}, Usage: "Include EC2 instance details"},
-			&cli.BoolFlag{Name: "show-utilization", Aliases: []string{"U"}, Usage: "Include CPU utilization metrics"},
 			&cli.BoolFlag{Name: "show-workloads", Aliases: []string{"W"}, Usage: "Include workload/pod placement info"},
-			&cli.BoolFlag{Name: "show-costs", Aliases: []string{"C"}, Usage: "Include cost analysis"},
-			&cli.StringFlag{Name: "timeframe", Aliases: []string{"T"}, Usage: "Utilization window (1h,3h,24h)", Value: "24h"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: runDescribe,

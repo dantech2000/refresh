@@ -24,7 +24,7 @@ func TestClusterCommandStructure(t *testing.T) {
 		return false
 	}
 
-	for _, name := range []string{"list", "describe", "get", "diff", "compare"} {
+	for _, name := range []string{"list", "describe", "get"} {
 		if !findSubcmd(name) {
 			t.Errorf("cluster: missing subcommand or alias %q", name)
 		}

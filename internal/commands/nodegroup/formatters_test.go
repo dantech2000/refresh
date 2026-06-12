@@ -46,28 +46,6 @@ func TestSortNodegroupSummaries_ByNodes(t *testing.T) {
 	}
 }
 
-func TestSortNodegroupSummaries_ByCPU(t *testing.T) {
-	items := []nodegroupsvc.NodegroupSummary{
-		{Name: "b", Metrics: nodegroupsvc.SummaryMetrics{CPU: 80}},
-		{Name: "a", Metrics: nodegroupsvc.SummaryMetrics{CPU: 20}},
-	}
-	got := sortNodegroupSummaries(items, "cpu", false)
-	if got[0].Metrics.CPU != 20 {
-		t.Errorf("cpu asc: first CPU = %f, want 20", got[0].Metrics.CPU)
-	}
-}
-
-func TestSortNodegroupSummaries_ByCost(t *testing.T) {
-	items := []nodegroupsvc.NodegroupSummary{
-		{Name: "b", Cost: nodegroupsvc.SummaryCost{Monthly: 500}},
-		{Name: "a", Cost: nodegroupsvc.SummaryCost{Monthly: 100}},
-	}
-	got := sortNodegroupSummaries(items, "cost", false)
-	if got[0].Cost.Monthly != 100 {
-		t.Errorf("cost asc: first Monthly = %f, want 100", got[0].Cost.Monthly)
-	}
-}
-
 func TestSortNodegroupSummaries_UnknownKeyByName(t *testing.T) {
 	items := []nodegroupsvc.NodegroupSummary{{Name: "z"}, {Name: "a"}}
 	got := sortNodegroupSummaries(items, "bogus", false)

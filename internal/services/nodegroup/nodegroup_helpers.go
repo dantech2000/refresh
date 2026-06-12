@@ -21,15 +21,6 @@ func firstInstanceType(types []string) string {
 	return types[0]
 }
 
-func normalizeWindow(w string) string {
-	switch w {
-	case "1h", "3h", "24h":
-		return w
-	default:
-		return "24h"
-	}
-}
-
 // instanceIDsForNodegroup resolves backing ASG instances from an
 // already-described nodegroup. All ASGs are described in a single batched
 // call (the API accepts up to 50 names).

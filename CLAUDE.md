@@ -4,8 +4,20 @@ Guidance for AI agents (and humans) working in this repo.
 
 ## What this is
 
-`refresh` — a Go CLI to manage and monitor AWS EKS clusters and nodegroups:
-health checks, fast list/describe, add-on management, and smart scaling.
+`refresh` — the **EKS upgrade companion**: a Go CLI for the cluster
+upgrade/patching lifecycle — *status → readiness → patch → upgrade*. The core
+loop is `refresh status` (what's stale across the fleet) → `cluster
+upgrade-check` (am I ready) → `nodegroup update` / `addon update` (patch safely,
+with pre-flight health gates, dry-run, and live monitoring) → `cluster upgrade`
+(orchestrate the whole thing). Supporting surface: `cluster list/describe`,
+`nodegroup list/describe/scale`, `addon *`, and kubectx-style contexts.
+
+Browse-y features that competed with eksctl/k9s/Kubecost (cost estimation,
+CloudWatch utilization tables, `cluster diff`, the standalone `workload pdbs`
+command) were intentionally removed in the Phase 2 surface trim (REF-78) — don't
+re-add them. PDB awareness still lives where it earns its keep: the pre-flight
+health checks and `nodegroup scale --check-pdbs`.
+
 Module path: `github.com/dantech2000/refresh`. Entry point: `main.go`.
 
 ## Build / test / lint
@@ -137,7 +149,9 @@ Follow the layered flow (model it on the `cluster` command):
 ## Where work is tracked
 
 All issues, bugs, and roadmap live in **Linear, team `REF`** (project "Refresh — EKS CLI"),
-sequenced into Phase 1–4 milestones. There is intentionally no in-repo TODO file.
+sequenced into phased milestones (Phase 1 quick wins & CI hardening, Phase 2
+surface trim & refocus, … through Phase 9 tests/docs). There is intentionally no
+in-repo TODO file.
 
 ## Release
 

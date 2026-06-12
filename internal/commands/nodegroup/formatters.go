@@ -12,28 +12,13 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func outputNodegroupsTable(clusterName, timeframe string, items []nodegroupsvc.NodegroupSummary, elapsed time.Duration, opts nodegroupsvc.ListOptions) error {
+func outputNodegroupsTable(clusterName string, items []nodegroupsvc.NodegroupSummary, elapsed time.Duration) error {
 	if len(items) == 0 {
 		color.Yellow("No nodegroups found for cluster: %s", clusterName)
 		return nil
 	}
 	ui.Outf("Nodegroups for cluster: %s\n", clusterName)
-	if opts.ShowUtilization {
-		ui.Outf("Retrieved in %s (utilization window %s)\n", ui.ElapsedString(elapsed), timeframe)
-	} else {
-		ui.Outf("Retrieved in %s\n", ui.ElapsedString(elapsed))
-	}
-
-	if opts.ShowUtilization || opts.ShowCosts {
-		var extras []string
-		if opts.ShowUtilization {
-			extras = append(extras, "CPU metrics")
-		}
-		if opts.ShowCosts {
-			extras = append(extras, "cost estimates")
-		}
-		ui.Outf("Including: %s\n", strings.Join(extras, ", "))
-	}
+	ui.Outf("Retrieved in %s\n", ui.ElapsedString(elapsed))
 	ui.Outln()
 
 	columns := []ui.Column{
@@ -43,37 +28,16 @@ func outputNodegroupsTable(clusterName, timeframe string, items []nodegroupsvc.N
 		{Title: "AMI STATUS", Min: 9, Max: 0, Align: ui.AlignLeft},
 		{Title: "NODES", Min: 7, Max: 0, Align: ui.AlignRight},
 	}
-	if opts.ShowUtilization {
-		columns = append(columns, ui.Column{Title: "CPU%", Min: 5, Max: 0, Align: ui.AlignRight})
-	}
-	if opts.ShowCosts {
-		columns = append(columns, ui.Column{Title: "COST/MO", Min: 8, Max: 0, Align: ui.AlignRight})
-	}
 
 	table := ui.NewPTable(columns, ui.CyanHeaders())
 	for _, ng := range items {
-		row := []string{
+		table.AddRow(
 			ng.Name,
 			ng.Status,
 			ng.InstanceType,
 			ng.AMIStatus.ColorString(),
 			fmt.Sprintf("%d/%d", ng.ReadyNodes, ng.DesiredSize),
-		}
-		if opts.ShowUtilization {
-			cpu := "-"
-			if ng.Metrics.CPU > 0 {
-				cpu = fmt.Sprintf("%.0f%%", ng.Metrics.CPU)
-			}
-			row = append(row, cpu)
-		}
-		if opts.ShowCosts {
-			cost := "-"
-			if ng.Cost.Monthly > 0 {
-				cost = fmt.Sprintf("$%.0f", ng.Cost.Monthly)
-			}
-			row = append(row, cost)
-		}
-		table.AddRow(row...)
+		)
 	}
 	table.Render()
 	return nil
@@ -81,11 +45,7 @@ func outputNodegroupsTable(clusterName, timeframe string, items []nodegroupsvc.N
 
 func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed time.Duration) error {
 	ui.Outf("Nodegroup: %s\n", color.CyanString(details.Name))
-	if details.Utilization.TimeRange != "" {
-		ui.Outf("Retrieved in %s (utilization window %s)\n\n", ui.ElapsedString(elapsed), details.Utilization.TimeRange)
-	} else {
-		ui.Outf("Retrieved in %s\n\n", ui.ElapsedString(elapsed))
-	}
+	ui.Outf("Retrieved in %s\n\n", ui.ElapsedString(elapsed))
 
 	table := ui.NewDynamicTable()
 	table.AddStatus("Status", details.Status).
@@ -96,25 +56,6 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 		Add("Latest AMI", details.LatestAMI).
 		AddColored("AMI Status", details.AMIStatus.PlainString(), func(string) string { return details.AMIStatus.ColorString() }).
 		Add("Scaling", fmt.Sprintf("%d desired (%d-%d)", details.Scaling.DesiredSize, details.Scaling.MinSize, details.Scaling.MaxSize))
-
-	if details.Utilization.TimeRange != "" || (details.Utilization.CPU.Average > 0 || details.Utilization.CPU.Current > 0) {
-		avg := details.Utilization.CPU.Average
-		cur := details.Utilization.CPU.Current
-		peak := details.Utilization.CPU.Peak
-		table.Add("CPU (avg)", fmt.Sprintf("%.1f%%", avg))
-		if cur > 0 {
-			table.Add("CPU (current)", fmt.Sprintf("%.1f%%", cur))
-		}
-		if peak > 0 {
-			table.Add("CPU (peak)", fmt.Sprintf("%.1f%%", peak))
-		}
-	}
-	if details.Cost.CostPerNode > 0 {
-		table.Add("Cost per node", fmt.Sprintf("$%.0f/mo", details.Cost.CostPerNode))
-	}
-	if details.Cost.CurrentMonthlyCost > 0 {
-		table.Add("Cost/month", fmt.Sprintf("$%.0f", details.Cost.CurrentMonthlyCost))
-	}
 	table.Render()
 
 	if details.Workloads.TotalPods > 0 || details.Workloads.PodDisruption != "" {
@@ -159,10 +100,6 @@ func sortNodegroupSummaries(items []nodegroupsvc.NodegroupSummary, key string, d
 		less = func(i, j int) bool { return items[i].InstanceType < items[j].InstanceType }
 	case "nodes":
 		less = func(i, j int) bool { return items[i].ReadyNodes < items[j].ReadyNodes }
-	case "cpu":
-		less = func(i, j int) bool { return items[i].Metrics.CPU < items[j].Metrics.CPU }
-	case "cost":
-		less = func(i, j int) bool { return items[i].Cost.Monthly < items[j].Cost.Monthly }
 	default:
 		less = func(i, j int) bool { return items[i].Name < items[j].Name }
 	}

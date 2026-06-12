@@ -9,11 +9,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/health"
@@ -56,8 +54,6 @@ type ServiceImpl struct {
 	awsConfig     aws.Config
 	healthChecker *health.HealthChecker
 	cache         *Cache
-	util          *UtilizationCollector
-	cost          *CostAnalyzer
 	asgClient     *autoscaling.Client
 	ec2Client     *ec2.Client
 	ssmClient     *ssm.Client
@@ -66,11 +62,7 @@ type ServiceImpl struct {
 // NewService creates a new nodegroup service.
 func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logger *slog.Logger) *ServiceImpl {
 	cache := NewCache()
-	cw := cloudwatch.NewFromConfig(awsConfig)
-	pCfg := awsConfig.Copy()
-	pCfg.Region = "us-east-1"
-	p := pricing.NewFromConfig(pCfg)
-	svc := &ServiceImpl{
+	return &ServiceImpl{
 		eksClient:     eks.NewFromConfig(awsConfig),
 		logger:        logger,
 		awsConfig:     awsConfig,
@@ -80,9 +72,6 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 		ec2Client:     ec2.NewFromConfig(awsConfig),
 		ssmClient:     ssm.NewFromConfig(awsConfig),
 	}
-	svc.util = NewUtilizationCollector(cw, logger, cache)
-	svc.cost = NewCostAnalyzer(p, logger, cache, awsConfig.Region)
-	return svc
 }
 
 // supportedFilterKeys maps normalized --filter keys to a matcher against a
@@ -195,19 +184,6 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 			if !matchesFilters(summary, options.Filters) {
 				return nil
 			}
-			if options.ShowUtilization && s.util != nil {
-				window := normalizeWindow(options.Timeframe)
-				if ids, ok := s.instanceIDsForNodegroup(fctx, ng); ok {
-					if cpu, ok2 := s.util.CollectEC2CPUForInstances(fctx, ids, window); ok2 {
-						summary.Metrics = SummaryMetrics{CPU: cpu.Average}
-					}
-				}
-			}
-			if options.ShowCosts && s.cost != nil {
-				if _, perMonth, ok := s.cost.EstimateOnDemandUSD(fctx, instanceType); ok {
-					summary.Cost = SummaryCost{Monthly: perMonth * float64(desiredSize)}
-				}
-			}
 			return &summary
 		})
 
@@ -289,28 +265,12 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 		Scaling:      scaling,
 	}
 	// Resolve backing instances once from the nodegroup we already described;
-	// utilization, workloads, and instance details all reuse the result.
+	// workloads and instance details reuse the result.
 	var instanceIDs []string
-	if options.ShowUtilization || options.ShowWorkloads || options.ShowInstances {
+	if options.ShowWorkloads || options.ShowInstances {
 		instanceIDs, _ = s.instanceIDsForNodegroup(ctx, ng)
 	}
 
-	if options.ShowUtilization && s.util != nil && len(instanceIDs) > 0 {
-		window := normalizeWindow(options.Timeframe)
-		if cpu, ok := s.util.CollectEC2CPUForInstances(ctx, instanceIDs, window); ok {
-			details.Utilization = UtilizationMetrics{CPU: cpu, TimeRange: window}
-		}
-	}
-	if options.ShowCosts && s.cost != nil {
-		if _, perMonth, ok := s.cost.EstimateOnDemandUSD(ctx, details.InstanceType); ok {
-			nodes := float64(scaling.DesiredSize)
-			details.Cost = CostAnalysis{
-				CurrentMonthlyCost:   perMonth * nodes,
-				ProjectedMonthlyCost: perMonth * nodes,
-				CostPerNode:          perMonth,
-			}
-		}
-	}
 	if options.ShowWorkloads {
 		details.Workloads.PodDisruption = "no data"
 		if wi, ok := s.analyzeWorkloads(ctx, aws.ToString(ng.NodegroupName), instanceIDs); ok {

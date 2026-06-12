@@ -14,11 +14,10 @@ import (
 func Command() *cli.Command {
 	return &cli.Command{
 		Name:  "cluster",
-		Usage: "Cluster operations (list, get, diff, upgrade)",
+		Usage: "Cluster operations (list, get, upgrade)",
 		Commands: []*cli.Command{
 			listCommand(),
 			describeCommand(),
-			diffCommand(),
 			upgradeCheckCommand(),
 			upgradeCommand(),
 		},
@@ -70,24 +69,5 @@ provide fast, comprehensive results without CloudFormation dependency.`,
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error { return runDescribe(ctx, cmd) },
-	}
-}
-
-func diffCommand() *cli.Command {
-	return &cli.Command{
-		Name:    "diff",
-		Aliases: []string{"compare"},
-		Usage:   "Compare EKS clusters side-by-side for consistency validation",
-		Description: `Analyze configuration differences between EKS clusters to ensure
-consistency across environments. Supports comparison of networking,
-security, add-ons, and version configurations.`,
-		Flags: []cli.Flag{
-			&cli.StringSliceFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "Cluster name or pattern (specify multiple times)", Required: true},
-			&cli.BoolFlag{Name: "interactive", Usage: "Interactively select clusters when multiple patterns match"},
-			&cli.BoolFlag{Name: "show-differences", Aliases: []string{"d"}, Usage: "Show only differences (hide identical configurations)"},
-			&cli.StringSliceFlag{Name: "include", Aliases: []string{"i"}, Usage: "Compare specific aspects (networking, security, addons, versions)"},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
-		},
-		Action: func(ctx context.Context, cmd *cli.Command) error { return runDiff(ctx, cmd) },
 	}
 }

@@ -247,23 +247,6 @@ func TestFormatClusterHealth_Decisions(t *testing.T) {
 	}
 }
 
-// ── formatDifferenceCount ─────────────────────────────────────────────────────
-
-func TestFormatDifferenceCount_Zero(t *testing.T) {
-	if got := formatDifferenceCount(0, "critical"); got != "0" {
-		t.Errorf("zero count: got %q, want %q", got, "0")
-	}
-}
-
-func TestFormatDifferenceCount_Nonzero(t *testing.T) {
-	for _, sev := range []string{"critical", "warning", "info", "other"} {
-		got := formatDifferenceCount(3, sev)
-		if !strings.Contains(got, "3") {
-			t.Errorf("formatDifferenceCount(3, %q) = %q, want to contain 3", sev, got)
-		}
-	}
-}
-
 // ── table/tree outputs ────────────────────────────────────────────────────────
 
 func TestOutputClustersTable(t *testing.T) {
@@ -334,39 +317,5 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("table output missing %q: %q", want, out)
 		}
-	}
-}
-
-func TestOutputComparisonTable(t *testing.T) {
-	comparison := &clustersvc.ClusterComparison{
-		Clusters: []clustersvc.ClusterDetails{
-			{Name: "prod", Status: "ACTIVE", Version: "1.30", Health: &health.HealthSummary{Decision: health.DecisionProceed}},
-			{Name: "stage", Status: "ACTIVE", Version: "1.29", Health: &health.HealthSummary{Decision: health.DecisionBlock}},
-		},
-		Differences: []clustersvc.Difference{
-			{Field: "version", Severity: "critical", Description: "version differs", Values: []clustersvc.ValuePair{{ClusterName: "prod", Value: "1.30"}}},
-			{Field: "logging", Severity: "warning", Description: "logging differs"},
-			{Field: "tag", Severity: "info", Description: "tag differs"},
-		},
-		Summary: clustersvc.ComparisonSummary{
-			TotalDifferences:    3,
-			CriticalDifferences: 1,
-			WarningDifferences:  1,
-			InfoDifferences:     1,
-		},
-	}
-
-	out, err := captureStdout(t, func() error { return OutputComparisonTable(comparison, time.Second) })
-	if err != nil {
-		t.Fatalf("comparison table error: %v", err)
-	}
-	if !strings.Contains(out, "Comparison") {
-		t.Errorf("comparison table missing header 'Comparison': %q", out)
-	}
-
-	comparison.Differences = nil
-	comparison.Summary = clustersvc.ComparisonSummary{ClustersAreEquivalent: true}
-	if _, err := captureStdout(t, func() error { return OutputComparisonTable(comparison, time.Second) }); err != nil {
-		t.Fatalf("identical comparison table error: %v", err)
 	}
 }

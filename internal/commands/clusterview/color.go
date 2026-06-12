@@ -15,19 +15,6 @@ import (
 // colorString is the signature of fatih/color's *String helpers.
 type colorString = func(format string, a ...interface{}) string
 
-func severityColor(severity string) colorString {
-	switch severity {
-	case "critical":
-		return color.RedString
-	case "warning":
-		return color.YellowString
-	case "info":
-		return color.BlueString
-	default:
-		return fmt.Sprintf
-	}
-}
-
 func decisionColor(d health.Decision) colorString {
 	switch d {
 	case health.DecisionProceed:
@@ -39,26 +26,6 @@ func decisionColor(d health.Decision) colorString {
 	default:
 		return color.WhiteString
 	}
-}
-
-func severityHeading(sev string) string {
-	switch sev {
-	case "critical":
-		return "Critical Issues"
-	case "warning":
-		return "Warnings"
-	case "info":
-		return "Information"
-	default:
-		return sev
-	}
-}
-
-func formatDifferenceCount(count int, severity string) string {
-	if count == 0 {
-		return "0"
-	}
-	return severityColor(severity)("%d", count)
 }
 
 var statusStyles = map[string]struct {
