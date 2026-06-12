@@ -68,7 +68,7 @@ func (dt *DynamicTable) Render() {
 
 	if plainOutput {
 		for _, row := range dt.rows {
-			Outf("%s\t%s\n", StripANSI(row.Key), StripANSI(row.Value))
+			Outf("%s\t%s\n", PlainCell(row.Key), PlainCell(row.Value))
 		}
 		return
 	}
