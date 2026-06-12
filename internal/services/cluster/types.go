@@ -94,41 +94,10 @@ type NodeCountInfo struct {
 	Total int32 `json:"total"`
 }
 
-// ClusterComparison contains results of comparing multiple clusters
-type ClusterComparison struct {
-	Clusters    []ClusterDetails  `json:"clusters"`
-	Differences []Difference      `json:"differences"`
-	Summary     ComparisonSummary `json:"summary"`
-}
-
-// Difference represents a configuration difference between clusters
-type Difference struct {
-	Field       string      `json:"field"`
-	Description string      `json:"description"`
-	Values      []ValuePair `json:"values"`
-	Severity    string      `json:"severity"` // info, warning, critical
-}
-
-// ValuePair represents different values for the same field
-type ValuePair struct {
-	ClusterName string `json:"clusterName"`
-	Value       any    `json:"value"`
-}
-
-// ComparisonSummary provides overview of cluster comparison
-type ComparisonSummary struct {
-	TotalDifferences      int  `json:"totalDifferences"`
-	CriticalDifferences   int  `json:"criticalDifferences"`
-	WarningDifferences    int  `json:"warningDifferences"`
-	InfoDifferences       int  `json:"infoDifferences"`
-	ClustersAreEquivalent bool `json:"clustersAreEquivalent"`
-}
-
 // DescribeOptions controls what information to include in describe operations
 type DescribeOptions struct {
 	ShowHealth    bool `json:"showHealth"`
 	ShowSecurity  bool `json:"showSecurity"`
-	ShowCosts     bool `json:"showCosts"`
 	IncludeAddons bool `json:"includeAddons"`
 	Detailed      bool `json:"detailed"`
 }
@@ -137,15 +106,7 @@ type DescribeOptions struct {
 type ListOptions struct {
 	Regions        []string          `json:"regions"`
 	ShowHealth     bool              `json:"showHealth"`
-	ShowCosts      bool              `json:"showCosts"`
 	Filters        map[string]string `json:"filters"`
 	AllRegions     bool              `json:"allRegions"`
 	MaxConcurrency int               `json:"maxConcurrency"`
-}
-
-// CompareOptions controls cluster comparison behavior
-type CompareOptions struct {
-	ShowDifferencesOnly bool     `json:"showDifferencesOnly"`
-	Include             []string `json:"include"` // networking, security, addons, versions
-	Format              string   `json:"format"`
 }
