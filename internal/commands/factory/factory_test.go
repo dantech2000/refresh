@@ -1,6 +1,7 @@
 package factory_test
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"testing"
@@ -49,12 +50,12 @@ func TestSetDefaultLogLevel(t *testing.T) {
 	t.Cleanup(func() { factory.SetDefaultLogLevel(slog.LevelWarn) })
 	factory.SetDefaultLogLevel(slog.LevelDebug)
 	l := factory.NewDefaultLogger(nil)
-	if !l.Enabled(nil, slog.LevelDebug) {
+	if !l.Enabled(context.Background(), slog.LevelDebug) {
 		t.Error("after SetDefaultLogLevel(debug), logger should emit at debug")
 	}
 	factory.SetDefaultLogLevel(slog.LevelError)
 	l = factory.NewDefaultLogger(nil)
-	if l.Enabled(nil, slog.LevelWarn) {
+	if l.Enabled(context.Background(), slog.LevelWarn) {
 		t.Error("after SetDefaultLogLevel(error), logger should NOT emit at warn")
 	}
 }
