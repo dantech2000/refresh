@@ -19,7 +19,7 @@ jobs:
       # let major bumps through because `.*` swallowed the major component. (REF-60)
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -39,7 +39,7 @@ jobs:
       # the build/tests but passes lint must NOT auto-merge. (REF-60)
       - name: Wait for Test check
         if: steps.check.outputs.eligible == 'true'
-        uses: fountainhead/action-wait-for-check@v1.2.0
+        uses: fountainhead/action-wait-for-check@5a908a24814494009c4bb27c242ea38c93c593be # v1.2.0
         id: wait-test
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -49,7 +49,7 @@ jobs:
 
       - name: Wait for Lint check
         if: steps.check.outputs.eligible == 'true'
-        uses: fountainhead/action-wait-for-check@v1.2.0
+        uses: fountainhead/action-wait-for-check@5a908a24814494009c4bb27c242ea38c93c593be # v1.2.0
         id: wait-lint
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
