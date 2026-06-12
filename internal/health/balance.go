@@ -35,19 +35,20 @@ func (hc *HealthChecker) checkResourceBalanceWith(ctx context.Context, snap *cpu
 	analysis := hc.analyzeResourceDistribution(nodeMetrics)
 
 	result.Details = append(result.Details, fmt.Sprintf("Analyzed %d nodes", len(nodeMetrics)))
-	result.Details = append(result.Details, fmt.Sprintf("CPU variance: %.1f%%", analysis.CPUVariance))
-	result.Details = append(result.Details, "Memory variance: Not available (requires CloudWatch agent)")
+	result.Details = append(result.Details, fmt.Sprintf("CPU spread (std dev): %.1f pts", analysis.CPUStdDev))
+	result.Details = append(result.Details, "Memory spread: Not available (requires CloudWatch agent)")
 	result.Details = append(result.Details, fmt.Sprintf("Max CPU utilization: %.1f%%", analysis.MaxCPU))
 	result.Details = append(result.Details, "Max Memory utilization: Not available (requires CloudWatch agent)")
 
-	// Determine status based on CPU balance and utilization only
-	maxVariance := analysis.CPUVariance
+	// Determine status based on CPU balance and utilization only. Thresholds
+	// below are expressed in std-dev of per-node CPU, in percentage points.
+	cpuSpread := analysis.CPUStdDev
 	maxUtilization := analysis.MaxCPU
 
-	// Score based on both balance and peak utilization
+	// Score based on both balance (CPU std dev) and peak utilization.
 	balanceScore := 100.0
-	if maxVariance > 30 {
-		balanceScore -= (maxVariance - 30) * 2 // Penalize high variance
+	if cpuSpread > 30 {
+		balanceScore -= (cpuSpread - 30) * 2 // Penalize a wide CPU spread
 	}
 
 	utilizationScore := 100.0
@@ -64,11 +65,11 @@ func (hc *HealthChecker) checkResourceBalanceWith(ctx context.Context, snap *cpu
 		result.Status = StatusWarn
 		result.Message = fmt.Sprintf("High CPU utilization detected (max: %.1f%%)", maxUtilization)
 		result.Details = append(result.Details, "Consider scaling before update")
-	} else if maxVariance > 40 {
+	} else if cpuSpread > 40 {
 		result.Status = StatusWarn
-		result.Message = fmt.Sprintf("Uneven CPU distribution (variance: %.1f%%)", maxVariance)
+		result.Message = fmt.Sprintf("Uneven CPU distribution (std dev: %.1f pts)", cpuSpread)
 		result.Details = append(result.Details, "Workload distribution may cause issues during rolling update")
-	} else if maxUtilization > 80 || maxVariance > 25 {
+	} else if maxUtilization > 80 || cpuSpread > 25 {
 		result.Status = StatusWarn
 		result.Message = "Moderate CPU utilization detected"
 		result.Details = append(result.Details, "Monitor closely during update")
@@ -88,14 +89,17 @@ type NodeMetrics struct {
 	MemoryPercent float64
 }
 
-// ResourceAnalysis contains analysis of resource distribution
+// ResourceAnalysis contains analysis of resource distribution.
+// CPUStdDev/MemoryStdDev are the population standard deviation of per-node
+// utilization, in percentage points (a spread measure, not statistical
+// variance).
 type ResourceAnalysis struct {
-	CPUVariance    float64
-	MemoryVariance float64
-	MaxCPU         float64
-	MaxMemory      float64
-	MinCPU         float64
-	MinMemory      float64
+	CPUStdDev    float64
+	MemoryStdDev float64
+	MaxCPU       float64
+	MaxMemory    float64
+	MinCPU       float64
+	MinMemory    float64
 }
 
 // nodeMetricsFromSnapshot converts the snapshot's per-instance averages into
@@ -163,19 +167,20 @@ func (hc *HealthChecker) analyzeResourceDistribution(metrics []NodeMetrics) Reso
 	cpuAvg := cpuSum / float64(len(metrics))
 	memoryAvg := memorySum / float64(len(metrics))
 
-	// Calculate variance
-	cpuVarianceSum := 0.0
-	memoryVarianceSum := 0.0
+	// Calculate the population standard deviation (sqrt of mean squared
+	// deviation) of per-node CPU/memory — a spread measure in percentage points.
+	cpuSquaredDevSum := 0.0
+	memorySquaredDevSum := 0.0
 
 	for _, metric := range metrics {
 		cpuDiff := metric.CPUPercent - cpuAvg
 		memoryDiff := metric.MemoryPercent - memoryAvg
-		cpuVarianceSum += cpuDiff * cpuDiff
-		memoryVarianceSum += memoryDiff * memoryDiff
+		cpuSquaredDevSum += cpuDiff * cpuDiff
+		memorySquaredDevSum += memoryDiff * memoryDiff
 	}
 
-	analysis.CPUVariance = math.Sqrt(cpuVarianceSum / float64(len(metrics)))
-	analysis.MemoryVariance = math.Sqrt(memoryVarianceSum / float64(len(metrics)))
+	analysis.CPUStdDev = math.Sqrt(cpuSquaredDevSum / float64(len(metrics)))
+	analysis.MemoryStdDev = math.Sqrt(memorySquaredDevSum / float64(len(metrics)))
 
 	return analysis
 }
