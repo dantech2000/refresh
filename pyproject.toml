@@ -1,0 +1,16 @@
+# Documentation-site tooling only (Material for MkDocs). This is NOT a Python
+# package and has nothing to do with the Go module — it exists so `uv` can
+# manage a reproducible, hash-locked virtual env for building the docs site.
+# See docs/ for content and mkdocs.yml for site config. (REF-106)
+[project]
+name = "refresh-docs"
+version = "0"
+description = "Documentation site for the refresh CLI — Material for MkDocs"
+requires-python = ">=3.11"
+dependencies = [
+    "mkdocs-material>=9.5,<10",
+]
+
+[tool.uv]
+# Docs tooling only — don't try to build/install this dir as a package.
+package = false
