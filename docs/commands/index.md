@@ -3,11 +3,12 @@
 `refresh` is organized into a few command groups. Pick a page for the full
 flag-by-flag detail and examples.
 
-!!! note "Generated reference coming"
-    A complete, always-in-sync command/flag reference is generated directly from
-    the CLI (tracked as REF-108). Until that lands, these hand-written pages
-    cover every command and the flags you'll actually use. You can also always
-    run `refresh <command> --help` or `man refresh`.
+!!! tip "Looking for the exhaustive flag list?"
+    These pages are the **curated guide** — the flags you'll actually use, with
+    examples. For the complete, always-in-sync list of *every* command and flag,
+    see the **[generated Reference](../reference/index.md)** (produced directly
+    from the CLI, so it can't drift). You can also run `refresh <command> --help`
+    or `man refresh`.
 
 | Group | What it does |
 |---|---|
