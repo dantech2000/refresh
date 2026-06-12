@@ -83,6 +83,21 @@ func newApp() *cli.Command {
 				Usage:   "Disable colored output (NO_COLOR env is also honored)",
 				Sources: cli.EnvVars("NO_COLOR"),
 			},
+			// Global AWS overrides. urfave/cli v3 propagates parent flags to every
+			// subcommand, so awsconfig.Load sees these on all AWS-touching commands
+			// (nodegroup/addon/cluster describe, …), honoring the documented
+			// "flags override the active context for this invocation" precedence.
+			// No -r/-p aliases: -p already means --poll-interval/--parallel and the
+			// list commands keep their own repeatable -r/--region slice, which
+			// shadows this string flag cleanly. (REF-47)
+			&cli.StringFlag{
+				Name:  "profile",
+				Usage: "AWS shared-config profile (overrides the active context for this invocation)",
+			},
+			&cli.StringFlag{
+				Name:  "region",
+				Usage: "AWS region (overrides the active context for this invocation)",
+			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			if cmd.Bool("no-color") {

@@ -218,7 +218,8 @@ func TestNewAppAndRun(t *testing.T) {
 	if app.Name != "refresh" {
 		t.Fatalf("app name = %q", app.Name)
 	}
-	if len(app.Commands) == 0 || len(app.Flags) != 3 {
+	// Global flags: --timeout, --max-concurrency, --no-color, --profile, --region.
+	if len(app.Commands) == 0 || len(app.Flags) != 5 {
 		t.Fatalf("unexpected app shape: commands=%d flags=%d", len(app.Commands), len(app.Flags))
 	}
 	if !app.EnableShellCompletion {
@@ -246,6 +247,42 @@ func TestNewAppAndRun(t *testing.T) {
 	if err := run(context.Background(), []string{"refresh", "--timeout", "not-a-duration", "version"}, &out, &errOut); err == nil {
 		t.Fatal("expected invalid flag error")
 	}
+}
+
+// REF-47: --profile/--region are global flags, so they're accepted on every
+// AWS-touching subcommand (previously "flag provided but not defined"). Use
+// --help so the action short-circuits before any AWS call.
+func TestGlobalProfileRegionFlagsPropagate(t *testing.T) {
+	app := newApp()
+	var names []string
+	for _, f := range app.Flags {
+		names = append(names, f.Names()...)
+	}
+	for _, want := range []string{"profile", "region"} {
+		if !containsString(names, want) {
+			t.Fatalf("global flag %q not registered (have %v)", want, names)
+		}
+	}
+
+	for _, argv := range [][]string{
+		{"refresh", "nodegroup", "describe", "--region", "us-west-2", "--help"},
+		{"refresh", "addon", "list", "--profile", "prod", "--help"},
+		{"refresh", "cluster", "describe", "--profile", "prod", "--region", "eu-west-1", "--help"},
+	} {
+		var out, errOut bytes.Buffer
+		if err := run(context.Background(), argv, &out, &errOut); err != nil {
+			t.Errorf("run %v = %v, want nil (global flags should be accepted)", argv[1:], err)
+		}
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMainErrorPath(t *testing.T) {

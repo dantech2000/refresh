@@ -265,6 +265,10 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 		}
 	}
 
+	// Apply status/version filters now that each summary carries those fields
+	// (the name filter was already applied at the list stage).
+	summaries = filterSummaries(summaries, options.Filters)
+
 	// Cache the result
 	s.cache.Set(cacheKey, summaries, defaultCacheTTLList)
 

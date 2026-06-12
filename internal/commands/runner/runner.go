@@ -237,10 +237,23 @@ func EncodeStdout(format string, payload any) (handled bool, err error) {
 		enc.SetIndent("", "  ")
 		return true, enc.Encode(payload)
 	case "yaml":
+		// yaml.v3 ignores `json` tags and lowercases Go field names, so a struct
+		// tagged only for JSON would serialize to YAML with keys that diverge
+		// from the documented camelCase (e.g. instancetype vs instanceType).
+		// Round-trip through JSON so the `json` tags drive both encoders and the
+		// -o yaml keys always match -o json. (REF-59)
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return true, err
+		}
+		var generic any
+		if err := json.Unmarshal(data, &generic); err != nil {
+			return true, err
+		}
 		enc := yaml.NewEncoder(os.Stdout)
 		enc.SetIndent(2)
 		defer func() { _ = enc.Close() }()
-		return true, enc.Encode(payload)
+		return true, enc.Encode(generic)
 	case "plain":
 		ui.SetPlainOutput(true)
 		color.NoColor = true
@@ -249,6 +262,37 @@ func EncodeStdout(format string, payload any) (handled bool, err error) {
 	default:
 		return false, nil
 	}
+}
+
+// Output-format presets for ValidateFormat. Commands pass the set they can
+// actually render so an unknown value fails loudly instead of silently
+// falling through to the table renderer.
+var (
+	// FormatsStandard is the common set for list/describe/encode commands.
+	FormatsStandard = []string{"table", "json", "yaml", "plain"}
+	// FormatsWithTree adds the cluster-list-only hierarchical tree renderer.
+	FormatsWithTree = []string{"table", "json", "yaml", "plain", "tree"}
+	// FormatsTableJSON is for commands that only emit a table or a JSON summary
+	// (e.g. nodegroup update's run summary).
+	FormatsTableJSON = []string{"table", "json"}
+)
+
+// ValidateFormat returns an error when format is not one of allowed. Matching
+// is case-insensitive and an empty value is treated as valid (callers default
+// it to "table"). Without this, runner.EncodeStdout returns handled=false for
+// an unrecognized format and every caller falls through to its table renderer,
+// so a typo like `-o jsom` silently prints a human table and exits 0. (REF-48)
+func ValidateFormat(format string, allowed []string) error {
+	f := strings.ToLower(strings.TrimSpace(format))
+	if f == "" {
+		return nil
+	}
+	for _, a := range allowed {
+		if f == a {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid output format %q (valid: %s)", format, strings.Join(allowed, ", "))
 }
 
 // watchIsTerminal reports whether stdout is an interactive terminal.

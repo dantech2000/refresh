@@ -156,13 +156,36 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 }
 
 // shouldSkipCluster applies filters to determine if a cluster should be skipped.
-// Only the "name" filter is supported at the list stage; other filter keys are
-// applied later by callers that have already fetched cluster details.
+// Only the "name" filter is supported at the list stage; "status"/"version" need
+// the per-cluster summary and are applied afterwards by filterSummaries.
 func (s *ServiceImpl) shouldSkipCluster(clusterName string, filters map[string]string) bool {
 	if pattern, ok := filters["name"]; ok && !strings.Contains(clusterName, pattern) {
 		return true
 	}
 	return false
+}
+
+// filterSummaries applies the "status"/"version" filters that can only be
+// evaluated once each cluster's summary (and thus its Status/Version) has been
+// fetched. Matching is case-insensitive and exact. The "name" filter is already
+// applied at the list stage by shouldSkipCluster. (REF-1)
+func filterSummaries(summaries []ClusterSummary, filters map[string]string) []ClusterSummary {
+	status, hasStatus := filters["status"]
+	version, hasVersion := filters["version"]
+	if !hasStatus && !hasVersion {
+		return summaries
+	}
+	out := make([]ClusterSummary, 0, len(summaries))
+	for _, s := range summaries {
+		if hasStatus && !strings.EqualFold(s.Status, status) {
+			continue
+		}
+		if hasVersion && !strings.EqualFold(s.Version, version) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // getClusterSummary creates a summary for a single cluster. On describe

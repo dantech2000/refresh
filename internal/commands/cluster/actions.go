@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,7 +20,34 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
+// allowedClusterFilterKeys are the --filter keys cluster list understands.
+// "name" is applied at the list stage; "status"/"version" need the per-cluster
+// summary and are applied afterwards.
+var allowedClusterFilterKeys = map[string]bool{"name": true, "status": true, "version": true}
+
+// validateClusterFilters rejects unsupported --filter keys so a typo like
+// `--filter staus=ACTIVE` errors instead of silently returning everything.
+func validateClusterFilters(filters map[string]string) error {
+	var unknown []string
+	for k := range filters {
+		if !allowedClusterFilterKeys[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return fmt.Errorf("unsupported filter key(s): %s (supported: name, status, version)", strings.Join(unknown, ", "))
+	}
+	return nil
+}
+
 func runList(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsWithTree); err != nil {
+		return err
+	}
+	if err := validateClusterFilters(runner.ParseFilters(cmd.StringSlice("filter"))); err != nil {
+		return err
+	}
 	// Each --watch iteration performs the full setup+fetch+render cycle so a
 	// fresh service (and cache) is used every time.
 	return runner.Watch(cmd, func() error { return listClustersOnce(ctx, cmd) })
@@ -78,6 +106,9 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runDescribe(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+		return err
+	}
 	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
@@ -114,6 +145,9 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runDiff(ctx context.Context, cmd *cli.Command) error {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+		return err
+	}
 	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(ctx, cmd, 60*time.Second)
 	if err != nil {
 		return err
