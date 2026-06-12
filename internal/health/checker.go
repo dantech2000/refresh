@@ -36,6 +36,10 @@ type HealthResult struct {
 	Message    string       `json:"message"`
 	Details    []string     `json:"details,omitempty"`
 	IsBlocking bool         `json:"isBlocking"`
+	// Skipped marks a check that could not be evaluated (e.g. no Kubernetes
+	// client) rather than measured. Skipped checks are excluded from the
+	// OverallScore so a missing prerequisite doesn't silently drag the score.
+	Skipped bool `json:"skipped,omitempty"`
 }
 
 // HealthSummary represents the overall health check results
@@ -69,9 +73,6 @@ func NewChecker(eksClient *eks.Client, k8sClient kubernetes.Interface, cwClient 
 // are independent, so they run concurrently; capacity and balance share one
 // instance-discovery + CloudWatch fetch via a lazy snapshot.
 func (hc *HealthChecker) RunAllChecks(ctx context.Context, clusterName string) HealthSummary {
-	var warnings []string
-	var errors []string
-
 	snap := hc.newCPUSnapshot(clusterName)
 	checks := []func() HealthResult{
 		func() HealthResult { return hc.CheckNodeHealth(ctx, clusterName) },
@@ -92,28 +93,45 @@ func (hc *HealthChecker) RunAllChecks(ctx context.Context, clusterName string) H
 	}
 	wg.Wait()
 
-	// Calculate overall score and decision
+	return aggregateResults(results)
+}
+
+// aggregateResults folds the individual check results into a HealthSummary:
+// the OverallScore is the mean of the *measured* checks (skipped checks are
+// excluded so a missing prerequisite doesn't penalize the score), and the
+// Decision is driven solely by blocking/warning flags.
+func aggregateResults(results []HealthResult) HealthSummary {
+	var warnings, errors []string
 	totalScore := 0
+	measuredCount := 0
 	hasBlocking := false
 	hasWarnings := false
 
 	for _, result := range results {
-		totalScore += result.Score
+		if !result.Skipped {
+			totalScore += result.Score
+			measuredCount++
+		}
 
-		if result.Status == StatusFail && result.IsBlocking {
+		switch {
+		case result.Status == StatusFail && result.IsBlocking:
 			hasBlocking = true
 			errors = append(errors, result.Message)
-		} else if result.Status == StatusWarn {
+		case result.Status == StatusWarn:
 			hasWarnings = true
 			warnings = append(warnings, result.Message)
-		} else if result.Status == StatusFail {
+		case result.Status == StatusFail:
 			errors = append(errors, result.Message)
+			hasWarnings = true
 		}
 	}
 
-	overallScore := totalScore / len(results)
-	decision := DecisionProceed
+	overallScore := 0
+	if measuredCount > 0 {
+		overallScore = totalScore / measuredCount
+	}
 
+	decision := DecisionProceed
 	if hasBlocking {
 		decision = DecisionBlock
 	} else if hasWarnings || len(errors) > 0 {
