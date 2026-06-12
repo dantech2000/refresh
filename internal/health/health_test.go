@@ -51,7 +51,7 @@ func TestCalculateAverage_FloatPrecision(t *testing.T) {
 func TestAnalyzeResourceDistribution_EmptyMetrics(t *testing.T) {
 	hc := &HealthChecker{}
 	analysis := hc.analyzeResourceDistribution(nil)
-	if analysis.MaxCPU != 0 || analysis.MinCPU != 0 || analysis.CPUVariance != 0 {
+	if analysis.MaxCPU != 0 || analysis.MinCPU != 0 || analysis.CPUStdDev != 0 {
 		t.Errorf("empty metrics should yield zero analysis, got %+v", analysis)
 	}
 }
@@ -63,8 +63,8 @@ func TestAnalyzeResourceDistribution_SingleNode(t *testing.T) {
 	if analysis.MaxCPU != 50.0 || analysis.MinCPU != 50.0 {
 		t.Errorf("single node: MaxCPU=%f MinCPU=%f, both want 50.0", analysis.MaxCPU, analysis.MinCPU)
 	}
-	if analysis.CPUVariance != 0 {
-		t.Errorf("single node variance should be 0, got %f", analysis.CPUVariance)
+	if analysis.CPUStdDev != 0 {
+		t.Errorf("single node std dev should be 0, got %f", analysis.CPUStdDev)
 	}
 }
 
@@ -79,10 +79,10 @@ func TestAnalyzeResourceDistribution_MultipleNodes(t *testing.T) {
 	if analysis.MinCPU != 10 || analysis.MaxCPU != 30 {
 		t.Errorf("min=%f max=%f, want 10/30", analysis.MinCPU, analysis.MaxCPU)
 	}
-	// Variance = sqrt(((10-20)^2 + (20-20)^2 + (30-20)^2) / 3) = sqrt(200/3) ≈ 8.165
-	wantVariance := math.Sqrt(200.0 / 3.0)
-	if math.Abs(analysis.CPUVariance-wantVariance) > 0.001 {
-		t.Errorf("CPUVariance=%f, want ~%f", analysis.CPUVariance, wantVariance)
+	// Std dev = sqrt(((10-20)^2 + (20-20)^2 + (30-20)^2) / 3) = sqrt(200/3) ≈ 8.165
+	wantStdDev := math.Sqrt(200.0 / 3.0)
+	if math.Abs(analysis.CPUStdDev-wantStdDev) > 0.001 {
+		t.Errorf("CPUStdDev=%f, want ~%f", analysis.CPUStdDev, wantStdDev)
 	}
 }
 
@@ -93,8 +93,8 @@ func TestAnalyzeResourceDistribution_HighVarianceDetected(t *testing.T) {
 		{CPUPercent: 95},
 	}
 	analysis := hc.analyzeResourceDistribution(metrics)
-	if analysis.CPUVariance <= 40 {
-		t.Errorf("expected high variance for 5/95 split, got %f", analysis.CPUVariance)
+	if analysis.CPUStdDev <= 40 {
+		t.Errorf("expected high std dev for 5/95 split, got %f", analysis.CPUStdDev)
 	}
 }
 
@@ -340,8 +340,8 @@ func TestAnalyzeResourceDistribution_MemoryTracked(t *testing.T) {
 	if analysis.MinMemory != 20 || analysis.MaxMemory != 80 {
 		t.Errorf("memory: MinMemory=%f MaxMemory=%f, want 20/80", analysis.MinMemory, analysis.MaxMemory)
 	}
-	if analysis.MemoryVariance <= 0 {
-		t.Errorf("expected positive memory variance for 20/80 split, got %f", analysis.MemoryVariance)
+	if analysis.MemoryStdDev <= 0 {
+		t.Errorf("expected positive memory std dev for 20/80 split, got %f", analysis.MemoryStdDev)
 	}
 }
 

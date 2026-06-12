@@ -72,41 +72,34 @@ func TestDecision_BlockingBeatsWarn(t *testing.T) {
 	}
 }
 
-// aggregateResults mirrors the logic in RunAllChecks so we can unit-test it
-// without touching AWS. Keep it in sync if RunAllChecks logic changes.
-func aggregateResults(results []HealthResult) HealthSummary {
-	var warnings, errors []string
-	totalScore := 0
-	hasBlocking := false
-	hasWarnings := false
+// aggregateResults is the real aggregation used by RunAllChecks (defined in
+// checker.go); these tests exercise it directly so they don't touch AWS.
 
-	for _, r := range results {
-		totalScore += r.Score
-		if r.Status == StatusFail && r.IsBlocking {
-			hasBlocking = true
-			errors = append(errors, r.Message)
-		} else if r.Status == StatusWarn {
-			hasWarnings = true
-			warnings = append(warnings, r.Message)
-		} else if r.Status == StatusFail {
-			errors = append(errors, r.Message)
-			hasWarnings = true
-		}
+func TestAggregate_SkippedCheckExcludedFromScore(t *testing.T) {
+	// A perfect measured cluster with one skipped check (no kube client →
+	// fixed 70) must not be dragged down: score reflects only measured checks.
+	results := []HealthResult{
+		{Status: StatusPass, Score: 100, IsBlocking: false},
+		{Status: StatusPass, Score: 100, IsBlocking: false},
+		{Status: StatusWarn, Score: 70, IsBlocking: false, Skipped: true, Message: "k8s unavailable"},
 	}
-
-	decision := DecisionProceed
-	if hasBlocking {
-		decision = DecisionBlock
-	} else if hasWarnings || len(errors) > 0 {
-		decision = DecisionWarn
+	summary := aggregateResults(results)
+	if summary.OverallScore != 100 {
+		t.Errorf("skipped check should be excluded: score = %d, want 100", summary.OverallScore)
 	}
+	// A skipped WARN still surfaces as a warning in the decision.
+	if summary.Decision != DecisionWarn {
+		t.Errorf("decision = %s, want WARN", summary.Decision)
+	}
+}
 
-	return HealthSummary{
-		Results:      results,
-		OverallScore: totalScore / len(results),
-		Decision:     decision,
-		Warnings:     warnings,
-		Errors:       errors,
+func TestAggregate_AllSkippedNoPanic(t *testing.T) {
+	results := []HealthResult{
+		{Status: StatusWarn, Score: 70, Skipped: true},
+	}
+	summary := aggregateResults(results)
+	if summary.OverallScore != 0 {
+		t.Errorf("all-skipped score = %d, want 0", summary.OverallScore)
 	}
 }
 
