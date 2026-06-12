@@ -164,7 +164,9 @@ func TestList_AMIStatusUpdating(t *testing.T) {
 	}
 }
 
-func TestList_AMIStatusUnknownWhenIDsEmpty(t *testing.T) {
+func TestList_AMIStatusCustomForCustomAMI(t *testing.T) {
+	// stubNodegroup uses AmiType=CUSTOM; EKS doesn't manage that AMI, so it must
+	// classify as Custom (not stale/current/unknown).
 	ng := stubNodegroup("workers", ekstypes.NodegroupStatusActive)
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: clusterFn("1.29"),
@@ -180,8 +182,32 @@ func TestList_AMIStatusUnknownWhenIDsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if summaries[0].AMIStatus != types.AMIUnknown {
-		t.Errorf("AMIStatus = %v, want AMIUnknown", summaries[0].AMIStatus)
+	if summaries[0].AMIStatus != types.AMICustom {
+		t.Errorf("AMIStatus = %v, want AMICustom", summaries[0].AMIStatus)
+	}
+}
+
+func TestClassifyAMI(t *testing.T) {
+	const al2 = ekstypes.AMITypesAl2X8664
+	cases := []struct {
+		name            string
+		amiType         ekstypes.AMITypes
+		status          ekstypes.NodegroupStatus
+		current, latest string
+		want            types.AMIStatus
+	}{
+		{"updating wins", al2, ekstypes.NodegroupStatusUpdating, "ami-1", "ami-2", types.AMIUpdating},
+		{"custom ami", ekstypes.AMITypesCustom, ekstypes.NodegroupStatusActive, "ami-1", "ami-2", types.AMICustom},
+		{"empty ids unknown", al2, ekstypes.NodegroupStatusActive, "", "", types.AMIUnknown},
+		{"latest", al2, ekstypes.NodegroupStatusActive, "ami-1", "ami-1", types.AMILatest},
+		{"outdated", al2, ekstypes.NodegroupStatusActive, "ami-1", "ami-2", types.AMIOutdated},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyAMI(tc.amiType, tc.status, tc.current, tc.latest); got != tc.want {
+				t.Errorf("classifyAMI = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

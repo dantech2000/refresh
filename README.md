@@ -94,6 +94,11 @@ refresh/
 -   **Fleet Status**: `refresh status -A` shows patch posture (version, EKS support window + extended-support cost, stale AMIs, addons behind) across all clusters/regions, with CI-friendly exit codes
 -   **Cluster Management**: List clusters and nodegroups with status and versions
 -   **Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode
+-   **Fleet Updates**: `nodegroup update --all-clusters [-r region ...]` discovers clusters across regions and rolls them serially (blast-radius control) with one batch confirmation, an aggregate per-cluster summary, and a worst-outcome exit code — the "patch Tuesday" command
+-   **Post-roll Verification**: after a roll, confirms nodegroups are ACTIVE and no pods are newly stuck Pending (vs a pre-roll snapshot); distinct exit code 5 on issues; `--skip-verify` to opt out
+-   **AMI Changelog**: dry-run shows the current→target AMI release delta and a best-effort summary of `amazon-eks-ami` release notes (kernel, containerd, CVEs); `--changelog` for full notes; degrades gracefully offline (never blocks the update)
+-   **Unattended Updates**: `nodegroup update --yes --require-healthy -o json` runs in CI/cron — idempotent (ClientRequestToken), documented exit codes (0 ok / 2 warn / 3 blocked / 4 update-failed / 5 verify-failed), JSON run summary, and fail-fast (no hanging prompts) without a TTY
+-   **Custom-AMI aware**: custom-AMI nodegroups (`AmiType=CUSTOM`, managed via launch template) are classified `Custom` rather than stale/current and are skipped on update with clear guidance instead of being mis-rolled
 -   **Nodegroup Intelligence**: Fast list/describe with optional utilization and cost, and safe scaling with health checks
 -   **Security Visibility**: Display cluster deletion protection status and security configuration details
 -   **Dry Run Mode**: Preview changes with comprehensive details before execution

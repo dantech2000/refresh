@@ -18,6 +18,10 @@ const (
 	AMIUpdating
 	// AMIUnknown indicates the AMI status could not be determined.
 	AMIUnknown
+	// AMICustom indicates the nodegroup runs a custom AMI (AmiType=CUSTOM) whose
+	// AMI is managed via the user's launch template, not by EKS. refresh can't
+	// pick a recommended AMI for these, so they are neither "latest" nor "stale".
+	AMICustom
 )
 
 // String returns the plain, uncolored representation. Presentation (color)
@@ -36,6 +40,8 @@ func (s AMIStatus) ColorString() string {
 		return color.RedString("Outdated")
 	case AMIUpdating:
 		return color.YellowString("Updating")
+	case AMICustom:
+		return color.CyanString("Custom")
 	default:
 		return color.WhiteString("Unknown")
 	}
@@ -50,6 +56,8 @@ func (s AMIStatus) PlainString() string {
 		return "Outdated"
 	case AMIUpdating:
 		return "Updating"
+	case AMICustom:
+		return "Custom"
 	default:
 		return "Unknown"
 	}
@@ -73,6 +81,8 @@ func (s *AMIStatus) UnmarshalJSON(data []byte) error {
 			*s = AMIOutdated
 		case "Updating":
 			*s = AMIUpdating
+		case "Custom":
+			*s = AMICustom
 		default:
 			*s = AMIUnknown
 		}
