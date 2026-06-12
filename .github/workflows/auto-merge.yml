@@ -13,49 +13,64 @@ jobs:
   auto-merge:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Check PR title for auto-merge eligibility
-        id: check-title
+    steps:
+      # Authoritative metadata from Dependabot itself — the previous title regex
+      # let major bumps through because `.*` swallowed the major component. (REF-60)
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine eligibility (patch/minor only)
+        id: check
         run: |
-          title="${{ github.event.pull_request.title }}"
-          echo "PR title: $title"
-          
-          # Auto-merge patch and minor updates
-          if [[ "$title" =~ ^deps.*bump.*from.*to.*\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
-             [[ "$title" =~ ^deps.*bump.*from.*to.*\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
-             [[ "$title" =~ ^ci.*bump.*from.*to.* ]]; then
-            echo "eligible=true" >> $GITHUB_OUTPUT
+          update_type="${{ steps.meta.outputs.update-type }}"
+          echo "update-type: $update_type"
+          if [[ "$update_type" == "version-update:semver-patch" || \
+                "$update_type" == "version-update:semver-minor" ]]; then
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
           else
-            echo "eligible=false" >> $GITHUB_OUTPUT
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Wait for checks to complete
-        if: steps.check-title.outputs.eligible == 'true'
+      # Both the build/test gate AND the lint gate must pass — a PR that breaks
+      # the build/tests but passes lint must NOT auto-merge. (REF-60)
+      - name: Wait for Test check
+        if: steps.check.outputs.eligible == 'true'
         uses: fountainhead/action-wait-for-check@v1.2.0
-        id: wait-for-checks
+        id: wait-test
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: "Run go test"
+          ref: ${{ github.event.pull_request.head.sha }}
+          timeoutSeconds: 900
+
+      - name: Wait for Lint check
+        if: steps.check.outputs.eligible == 'true'
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-lint
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           checkName: "Run golangci-lint"
           ref: ${{ github.event.pull_request.head.sha }}
-          timeoutSeconds: 600
+          timeoutSeconds: 900
 
       - name: Auto-merge Dependabot PR
         if: |
-          steps.check-title.outputs.eligible == 'true' &&
-          steps.wait-for-checks.outputs.conclusion == 'success'
+          steps.check.outputs.eligible == 'true' &&
+          steps.wait-test.outputs.conclusion == 'success' &&
+          steps.wait-lint.outputs.conclusion == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "All checks passed. Auto-merging Dependabot PR..."
+          echo "Test + Lint passed. Auto-merging Dependabot PR..."
           gh pr merge ${{ github.event.pull_request.number }} --auto --squash --delete-branch
-      
+
       - name: Comment on non-eligible PR
-        if: steps.check-title.outputs.eligible == 'false'
+        if: steps.check.outputs.eligible == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body "⚠️ This Dependabot PR requires manual review due to major version update or security-sensitive dependency." 
+          gh pr comment ${{ github.event.pull_request.number }} --body "⚠️ This Dependabot PR requires manual review (major version update or non-version change)."

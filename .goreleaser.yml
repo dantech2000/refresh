@@ -5,13 +5,15 @@ version: 2
 
 dist: dist
 
-env:
-  - GITHUB_TOKEN={{ .Env.GH_PAT }}
-
 builds:
   - id: refresh
     main: ./main.go
     binary: refresh
+    # Reproducible builds: strip local paths and pin the build timestamp to the
+    # commit so the same source produces byte-identical binaries. (REF-74)
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
       - darwin
@@ -37,6 +39,27 @@ archives:
 
 checksum:
   name_template: "checksums.txt"
+
+# Software Bill of Materials per archive (syft). (REF-74)
+sboms:
+  - id: archive
+    artifacts: archive
+
+# Keyless signing of the checksums file via cosign + the GitHub OIDC provider.
+# No long-lived keys: the signature/certificate are published as release
+# artifacts and verifiable with `cosign verify-blob`. (REF-74)
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
 
 changelog:
   sort: desc

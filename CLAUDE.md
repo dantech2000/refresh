@@ -16,11 +16,15 @@ Prefer the Taskfile targets; raw commands shown for reference.
 task build          # go build -o refresh . (CGO_ENABLED=0)
 task test           # go test ./...
 task test:coverage  # coverage profile + html
-task lint           # golangci-lint run ./...
+task lint           # golangci-lint run ./...  (config: .golangci.yml)
 task vet            # go vet ./...
+task vuln           # govulncheck ./...
 task dev:full       # fmt + vet + lint + test + build (run before pushing)
 go test ./... -race # race detector
 ```
+
+CI mirrors this: build, `go vet`, `go test -race` (+ coverage to Codecov),
+`golangci-lint`, and `govulncheck` all run on every PR.
 
 Requires Go 1.26+ (`go.mod` pins `go 1.26.0` / `toolchain go1.26.4`).
 
@@ -60,13 +64,75 @@ engine; resumable by re-deriving the plan from live cluster state, not state fil
 - **Context:** commands derive from the signal-cancellable root via `runner.SetupAWS`; don't build
   `context.Background()` in command actions.
 
+## Code patterns (copy these)
+
+Retry + idempotency on a mutating call (token computed **once**, outside the retry):
+
+```go
+token := common.IdempotencyToken() // stable across SDK transport retries
+out, err := common.WithRetry(ctx, common.DefaultRetryConfig,
+    func(rc context.Context) (*eks.UpdateNodegroupVersionOutput, error) {
+        return eksClient.UpdateNodegroupVersion(rc, &eks.UpdateNodegroupVersionInput{
+            ClusterName:        aws.String(clusterName),
+            NodegroupName:      aws.String(ng),
+            ClientRequestToken: aws.String(token),
+        })
+    })
+if err != nil {
+    return awsinternal.FormatAWSError(err, "updating nodegroup version")
+}
+```
+
+`WithRetry[T]` (`internal/services/common/retry.go`) is generic and retries
+throttling/5xx/transient errors while honoring `ctx`. `FormatAWSError(err, op)`
+(`internal/aws/errors.go`) turns SDK errors into actionable messages (e.g. a
+missing IAM permission lists the action) — wrap every surfaced AWS error.
+
+Unit test with the fluent EKS mock (no live AWS):
+
+```go
+api := mocks.NewEKSAPI().
+    WithCluster("prod", "1.32").
+    WithNodegroup("ng-a", "1.32", ekstypes.AMITypesAl2X8664).
+    Build()
+svc := nodegroup.NewService(api, /* ec2, asg, … */)
+// drive svc methods against api; assert on the returned summaries/errors
+```
+
+`internal/mocks` exposes a configurable `EKSAPI` plus the `EKSAPIBuilder`
+(`NewEKSAPI().With…().Build()`); see `internal/mocks/builders.go` for the full
+`With*` catalog (clusters, nodegroups, addons, insights, updates).
+
+## Adding a new command
+
+Follow the layered flow (model it on the `cluster` command):
+
+1. **Command def** — add a `*cli.Command` in `internal/commands/<group>/command.go`
+   with flags (`-o/--format`, `--timeout`, …). Action signature is
+   `func(ctx context.Context, cmd *cli.Command) error`.
+2. **Action** — in `actions.go`: validate `--format` with
+   `runner.ValidateFormat`, get AWS config via `runner.SetupAWS(ctx, cmd)`,
+   resolve the cluster with `runner.ResolveClusterOrList`, run the fetch inside
+   `runner.WithSpinner`.
+3. **Service** — construct it through `internal/commands/factory` (don't
+   `eks.NewFromConfig` in the action); put business logic + AWS calls in
+   `internal/services/<group>`.
+4. **Output** — `runner.EncodeStdout(cmd.String("format"), payload)`; if it
+   returns `handled==false`, fall through to a `clusterview`/`ui` table renderer.
+5. **Tests** — drive the service with `internal/mocks`; tag output structs with
+   both `json:` and `yaml:`.
+
 ## Known gotchas
 
-- `gopkg.in/yaml.v3` ignores `json` tags — output structs need explicit `yaml:` tags too, or YAML
-  keys diverge from JSON (tracked in Linear).
-- Pricing API client is pinned to `us-east-1`; per-region pricing comes from the query filter, not
-  the client region.
-- Cost estimates are on-demand only and currently use the nodegroup's first instance type.
+- `gopkg.in/yaml.v3` ignores `json` tags. `runner.EncodeStdout` round-trips YAML
+  through JSON so keys stay camelCase (REF-59), but still add explicit `yaml:`
+  tags to any struct you might marshal directly.
+- Pricing API client is pinned to `us-east-1` **intentionally** — the Pricing
+  API is only served from a few endpoints; per-region pricing comes from the
+  query filter, not the client region. Not a bug, don't "fix" it.
+- Cost estimates are on-demand only and use the nodegroup's first instance type
+  (REF-14, REF-61, REF-8). Note: cost/utilization/diff surfaces are being
+  trimmed as `refresh` refocuses on the upgrade workflow (REF-78).
 
 ## Where work is tracked
 

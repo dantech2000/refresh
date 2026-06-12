@@ -66,6 +66,11 @@ tasks:
     cmds:
       - go vet ./...
 
+  vuln:
+    desc: Scan for known vulnerabilities (govulncheck)
+    cmds:
+      - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   test:
     desc: Run tests
     cmds:

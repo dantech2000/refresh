@@ -1,0 +1,3 @@
+# Default owner for everything in the repo. Used for automatic review-request
+# assignment, which complements the Dependabot auto-merge flow.
+* @dantech2000
