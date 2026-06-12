@@ -19,6 +19,7 @@ import (
 	clustercmd "github.com/dantech2000/refresh/internal/commands/cluster"
 	ctxcmd "github.com/dantech2000/refresh/internal/commands/ctxcmd"
 	nodegroupcmd "github.com/dantech2000/refresh/internal/commands/nodegroup"
+	statuscmd "github.com/dantech2000/refresh/internal/commands/statuscmd"
 	workloadcmd "github.com/dantech2000/refresh/internal/commands/workload"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
@@ -91,6 +92,8 @@ func newApp() *cli.Command {
 			return ctx, nil
 		},
 		Commands: []*cli.Command{
+			// Fleet front door
+			statuscmd.Command(),
 			// Resource-first groups
 			clustercmd.Command(),
 			nodegroupcmd.Command(),
