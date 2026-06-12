@@ -91,6 +91,7 @@ refresh/
 
 -   **Pre-flight Health Checks**: Validate cluster readiness before AMI updates using default EC2 metrics (no additional setup required)
 -   **Real-time Monitoring**: Live progress tracking with professional spinner displays and clean completion summaries
+-   **Fleet Status**: `refresh status -A` shows patch posture (version, EKS support window + extended-support cost, stale AMIs, addons behind) across all clusters/regions, with CI-friendly exit codes
 -   **Cluster Management**: List clusters and nodegroups with status and versions
 -   **Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode
 -   **Nodegroup Intelligence**: Fast list/describe with optional utilization and cost, and safe scaling with health checks
@@ -242,6 +243,7 @@ go install github.com/dantech2000/refresh@latest
 
 ```text
 refresh
+├── status                 # Fleet patch posture across clusters/regions (front door)
 ├── cluster
 │   ├── list (lc)          # List clusters across regions
 │   ├── describe / get     # Describe comprehensive cluster info
@@ -260,6 +262,51 @@ refresh
 ├── context (ctx)          # Manage saved contexts (list, add, remove)
 └── version                # Show version information
 ```
+
+### Fleet status (`refresh status`)
+
+The Monday-morning command: one table showing, per cluster, the Kubernetes
+version, EKS support window, nodegroup AMI staleness, and addons behind latest —
+across every region.
+
+```bash
+refresh status                 # clusters in the current region
+refresh status -A              # all EKS-supported regions
+refresh status -r us-east-1 -r us-west-2   # specific regions
+refresh status prod            # only clusters whose name contains "prod"
+refresh status -A -o json      # machine-readable for scripts/CI
+refresh status -A --sort stale --desc      # most-stale clusters first
+```
+
+Example:
+
+```text
+CLUSTER     REGION     VERSION  SUPPORT                      COMPUTE         STALE AMI        ADDONS BEHIND
+prod-east   us-east-1  1.31     standard until 2025-11-26    4 nodegroups    2/4 (oldest 94d) 1 (coredns)
+prod-west   us-west-2  1.29     ⚠ EXTENDED until 2026-03-23 (~$0.50/hr)  3 nodegroups  3/3 (oldest 210d) 2 (coredns,vpc-cni)
+legacy      us-east-1  1.33     standard until 2026-07-23    🤖 Auto Mode    n/a              0
+
+3 clusters · 5 stale nodegroups · 3 addons behind · 1 extended/unsupported
+```
+
+Support dates come from `eks:DescribeClusterVersions`; if that call is
+unavailable a compiled-in calendar is used and the row is marked with `*`.
+Extended support is roughly `$0.60/hr` vs `$0.10/hr` standard (~$4,400/yr per
+lingering cluster), so the premium is surfaced inline.
+
+**Exit codes** (for CI/cron):
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | everything current and in standard support |
+| `2`  | something stale (nodegroup AMI or addon behind latest) |
+| `3`  | a cluster is on extended support or unsupported |
+
+`-o table|json|yaml|plain` is supported (`plain` is uncolored TSV); `--no-color`
+and `NO_COLOR` are honored. Required IAM: `eks:ListClusters`,
+`eks:DescribeCluster`, `eks:DescribeClusterVersions`, `eks:ListNodegroups`,
+`eks:DescribeNodegroup`, `eks:ListAddons`, `eks:DescribeAddon`,
+`eks:DescribeAddonVersions`, `ec2:DescribeImages`, `ec2:DescribeInstances`.
 
 ### Contexts (kubectx-style)
 
