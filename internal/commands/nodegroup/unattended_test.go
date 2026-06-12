@@ -53,13 +53,16 @@ func TestApplyHealthDecision_WarnNoTTYFailsFast(t *testing.T) {
 }
 
 func TestUpdateExit(t *testing.T) {
-	if got := exitCodeOf(updateExit(updateOutcomes{}, nil)); got != 0 {
+	if got := exitCodeOf(updateExit(updateOutcomes{}, nil, false)); got != 0 {
 		t.Errorf("clean run exit = %d, want 0", got)
 	}
-	if got := exitCodeOf(updateExit(updateOutcomes{Failed: []string{"ng-a"}}, nil)); got != 4 {
+	if got := exitCodeOf(updateExit(updateOutcomes{Failed: []string{"ng-a"}}, nil, false)); got != 4 {
 		t.Errorf("start-failure exit = %d, want 4", got)
 	}
-	if got := exitCodeOf(updateExit(updateOutcomes{}, cli.Exit("boom", 1))); got != 1 {
+	if got := exitCodeOf(updateExit(updateOutcomes{}, nil, true)); got != 5 {
+		t.Errorf("verification-failure exit = %d, want 5", got)
+	}
+	if got := exitCodeOf(updateExit(updateOutcomes{}, cli.Exit("boom", 1), false)); got != 1 {
 		t.Errorf("monitoring-error exit = %d, want 1 (propagated)", got)
 	}
 }
