@@ -61,9 +61,10 @@ func runCurrent(_ context.Context, _ *cli.Command) error {
 
 func contextListCommand() *cli.Command {
 	return &cli.Command{
-		Name:    "list",
-		Aliases: []string{"ls"},
-		Usage:   "List saved contexts",
+		Name:        "list",
+		Aliases:     []string{"ls"},
+		Usage:       "List saved contexts",
+		Description: `List every saved context with its cluster, region, and profile. The active context (set via 'refresh use') is marked with a '*'.`,
 		Action: func(_ context.Context, _ *cli.Command) error {
 			f, err := cliconfig.Load()
 			if err != nil {
@@ -93,6 +94,12 @@ func contextAddCommand() *cli.Command {
 		Name:      "add",
 		Usage:     "Add or update a saved context",
 		ArgsUsage: "<name>",
+		Description: `Create or overwrite a named context that binds a cluster to an optional
+region and AWS profile. Re-running with the same name updates it in place.
+Pass --use to switch to the context immediately after saving.
+
+  refresh context add prod --cluster prod-eks --region us-east-1 --profile prod
+  refresh context add prod --cluster prod-eks --use`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name", Required: true},
 			&cli.StringFlag{Name: "region", Aliases: []string{"r"}, Usage: "AWS region (optional)"},
@@ -136,6 +143,7 @@ func contextRemoveCommand() *cli.Command {
 		Aliases:       []string{"rm", "delete"},
 		Usage:         "Remove a saved context",
 		ArgsUsage:     "<name>",
+		Description:   `Delete a saved context by name. If the removed context was the active or previous one, those pointers are cleared.`,
 		ShellComplete: completeContextNames,
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			name := strings.TrimSpace(cmd.Args().First())

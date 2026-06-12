@@ -24,6 +24,12 @@ func runList(ctx context.Context, cmd *cli.Command) error {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
 		return err
 	}
+	// Each --watch iteration performs the full setup+fetch+render cycle so a
+	// fresh service (and cache) is used every time.
+	return runner.Watch(cmd, func() error { return listAddonsOnce(ctx, cmd) })
+}
+
+func listAddonsOnce(ctx context.Context, cmd *cli.Command) error {
 	ctx, cancel, cfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
