@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,8 +93,8 @@ func TestResolveSupport_FromAPI(t *testing.T) {
 
 	// Second call must hit the cache (no extra API calls).
 	_ = svc.resolveSupport(context.Background(), "1.32")
-	if api.versionCalls != 1 {
-		t.Errorf("DescribeClusterVersions called %d times, want 1 (cached)", api.versionCalls)
+	if got := api.versionCalls.Load(); got != 1 {
+		t.Errorf("DescribeClusterVersions called %d times, want 1 (cached)", got)
 	}
 }
 
@@ -101,11 +102,14 @@ func timePtr(t time.Time) *time.Time { return &t }
 
 // fakeClusterAPI implements ClusterAPI for tests.
 type fakeClusterAPI struct {
-	clusters     []string
-	describe     map[string]*ekstypes.Cluster
-	versions     map[string]ekstypes.ClusterVersionInformation
-	versionsErr  error
-	versionCalls int
+	clusters    []string
+	describe    map[string]*ekstypes.Cluster
+	versions    map[string]ekstypes.ClusterVersionInformation
+	versionsErr error
+	// versionCalls is atomic: a fleet sweep resolves support from multiple
+	// assembleCluster goroutines concurrently (concurrent cache misses for the
+	// same version each hit the API once).
+	versionCalls atomic.Int64
 }
 
 func (f *fakeClusterAPI) ListClusters(_ context.Context, _ *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
@@ -121,7 +125,7 @@ func (f *fakeClusterAPI) DescribeCluster(_ context.Context, in *eks.DescribeClus
 }
 
 func (f *fakeClusterAPI) DescribeClusterVersions(_ context.Context, in *eks.DescribeClusterVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error) {
-	f.versionCalls++
+	f.versionCalls.Add(1)
 	if f.versionsErr != nil {
 		return nil, f.versionsErr
 	}
