@@ -83,6 +83,16 @@ tasks:
       - go tool cover -html=coverage.out -o coverage.html
       - echo "Coverage report generated at coverage.html"
 
+  test:integration:
+    desc: Run opt-in integration tests (needs REFRESH_INTEGRATION=1 + AWS creds)
+    cmds:
+      - go test -tags integration -run Integration ./internal/integration/... -v
+
+  bench:
+    desc: Run service-layer benchmarks (offline, mock-driven)
+    cmds:
+      - go test -bench=. -benchmem -run=^$ ./internal/services/...
+
   # Dependency management
   deps:
     desc: Download and tidy dependencies
