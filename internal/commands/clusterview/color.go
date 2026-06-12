@@ -79,6 +79,21 @@ func formatStatus(status string) string {
 	return status
 }
 
+// formatInsightStatus colors an EKS Cluster Insight status: PASSING=green,
+// WARNING=yellow, ERROR=red, UNKNOWN=gray.
+func formatInsightStatus(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case clustersvc.InsightStatusPassing:
+		return color.GreenString("PASSING")
+	case clustersvc.InsightStatusWarning:
+		return color.YellowString("WARNING")
+	case clustersvc.InsightStatusError:
+		return color.RedString("ERROR")
+	default:
+		return color.HiBlackString("UNKNOWN")
+	}
+}
+
 // healthLabel returns the short PASS/WARN/FAIL/UNKNOWN label for a decision.
 func healthLabel(d health.Decision) string {
 	switch d {

@@ -245,7 +245,9 @@ refresh
 ├── cluster
 │   ├── list (lc)          # List clusters across regions
 │   ├── describe / get     # Describe comprehensive cluster info
-│   └── diff (compare)     # Compare cluster configurations
+│   ├── diff (compare)     # Compare cluster configurations
+│   ├── upgrade-check      # Upgrade readiness: Cluster Insights + version skew (read-only)
+│   └── upgrade            # Orchestrate a full cluster upgrade (control plane → addons → nodegroups)
 ├── nodegroup (ng)
 │   ├── list               # List nodegroups with AMI status
 │   ├── describe / get     # Describe nodegroup details
@@ -260,6 +262,28 @@ refresh
 ├── context (ctx)          # Manage saved contexts (list, add, remove)
 └── version                # Show version information
 ```
+
+### Upgrade readiness (`refresh cluster upgrade-check`)
+
+A read-only pre-flight report before a cluster upgrade — the same **EKS Cluster
+Insights** the console shows, plus a local **version-skew** picture (control
+plane vs each managed nodegroup, and installed addons vs the latest compatible
+version) with ordered, actionable findings. Nothing is mutated.
+
+```bash
+refresh cluster upgrade-check -c prod-east
+refresh cluster upgrade-check -c prod-east --show-passing      # include PASSING insights
+refresh cluster upgrade-check -c prod-east --status ERROR      # filter by status
+refresh cluster upgrade-check -c prod-east -o json             # machine-readable
+refresh cluster upgrade-check -c prod-east --id <insight-id>   # detail (recommendation + resources)
+```
+
+PASSING insights are hidden by default; `--category` defaults to
+`UPGRADE_READINESS`. Insights are computed asynchronously by EKS, so the table
+surfaces each insight's last-refresh time. Required IAM: `eks:ListInsights`,
+`eks:DescribeInsight`, plus `eks:DescribeCluster`, `eks:ListNodegroups`,
+`eks:DescribeNodegroup`, `eks:ListAddons`, `eks:DescribeAddon`,
+`eks:DescribeAddonVersions` for the skew section.
 
 ### Contexts (kubectx-style)
 

@@ -256,7 +256,9 @@ Required permissions for refresh tool:
 - eks:UpdateClusterVersion (for cluster upgrade)
 - eks:DescribeUpdate (for cluster upgrade)
 - eks:DescribeClusterVersions (for cluster upgrade)
-- eks:ListInsights (for cluster upgrade readiness)
+- eks:ListInsights (for cluster upgrade readiness / upgrade-check)
+- eks:DescribeInsight (for upgrade-check insight detail)
+- eks:DescribeAddonVersions (for addon version-skew)
 - cloudwatch:GetMetricStatistics (for health checks)
 
 Current error: %w`, operation, err)
