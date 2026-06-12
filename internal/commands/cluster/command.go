@@ -14,11 +14,12 @@ import (
 func Command() *cli.Command {
 	return &cli.Command{
 		Name:  "cluster",
-		Usage: "Cluster operations (list, get, diff)",
+		Usage: "Cluster operations (list, get, diff, upgrade)",
 		Commands: []*cli.Command{
 			listCommand(),
 			describeCommand(),
 			diffCommand(),
+			upgradeCommand(),
 		},
 	}
 }

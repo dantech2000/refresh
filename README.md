@@ -406,6 +406,40 @@ refresh cluster diff -c prod -c staging --interactive
 The picker lets you space-toggle clusters and confirm with Enter. At least 2 must
 be selected for the comparison to proceed.
 
+#### Upgrade Cluster (Orchestrated)
+
+Plan and execute a full cluster upgrade — control plane, then addons in
+dependency order (versions compatible with the *target* Kubernetes version),
+then nodegroup rolls — with a health gate after every phase:
+
+```bash
+# Print the full ordered plan without mutating anything
+# (exits non-zero if anything blocks the upgrade)
+refresh cluster upgrade -c prod-east --to 1.33 --dry-run
+
+# Execute, confirming each mutating phase
+refresh cluster upgrade -c prod-east --to 1.33
+
+# Non-interactive (CI) run, skipping a Helm-managed addon
+refresh cluster upgrade -c prod-east --to 1.33 --yes --skip aws-ebs-csi-driver
+
+# Leave specific nodegroups alone
+refresh cluster upgrade -c prod-east --to 1.33 --skip-nodegroup spot-
+```
+
+Key behaviors:
+
+- **Sequential minors** — EKS upgrades one minor at a time, so `--to 1.33` from
+  1.31 expands into two hops (1.32, then 1.33), each with its own gates.
+- **Readiness gates** — each hop checks EKS Cluster Insights (upgrade
+  readiness) and kubelet version skew before touching anything; blockers
+  render in the plan and the command exits non-zero without mutating.
+- **Resumable by re-derivation** — no state files. Rerunning the same command
+  re-inspects the cluster and skips already-satisfied steps, so resuming after
+  a failure or Ctrl+C (in-flight EKS updates continue server-side) is just
+  running the command again; rerunning after success is a no-op.
+- **Custom-AMI nodegroups** are surfaced as manual actions, never mutated.
+
 ### Nodegroup Management
 
 #### List Nodegroups

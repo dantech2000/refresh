@@ -72,6 +72,7 @@ type UpdateOptions struct {
 	HealthCheck   bool          `json:"healthCheck"`
 	Wait          bool          `json:"wait"`
 	WaitTimeout   time.Duration `json:"waitTimeout"`
+	PollInterval  time.Duration `json:"pollInterval,omitempty"` // re-check cadence while waiting (default 5s)
 	Configuration string        `json:"configuration,omitempty"`
 }
 
