@@ -93,6 +93,8 @@ refresh/
 -   **Real-time Monitoring**: Live progress tracking with professional spinner displays and clean completion summaries
 -   **Cluster Management**: List clusters and nodegroups with status and versions
 -   **Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode
+-   **Unattended Updates**: `nodegroup update --yes --require-healthy -o json` runs in CI/cron — idempotent (ClientRequestToken), documented exit codes (0 ok / 2 warn / 3 blocked / 4 update-failed), JSON run summary, and fail-fast (no hanging prompts) without a TTY
+-   **Custom-AMI aware**: custom-AMI nodegroups (`AmiType=CUSTOM`, managed via launch template) are classified `Custom` rather than stale/current and are skipped on update with clear guidance instead of being mis-rolled
 -   **Nodegroup Intelligence**: Fast list/describe with optional utilization and cost, and safe scaling with health checks
 -   **Security Visibility**: Display cluster deletion protection status and security configuration details
 -   **Dry Run Mode**: Preview changes with comprehensive details before execution
