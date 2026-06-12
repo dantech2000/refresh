@@ -19,6 +19,7 @@ func Command() *cli.Command {
 			listCommand(),
 			describeCommand(),
 			diffCommand(),
+			upgradeCheckCommand(),
 			upgradeCommand(),
 		},
 	}

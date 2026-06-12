@@ -35,6 +35,7 @@ type EKSAPI struct {
 	DescribeUpdateFn          func(ctx context.Context, in *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error)
 	DescribeClusterVersionsFn func(ctx context.Context, in *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error)
 	ListInsightsFn            func(ctx context.Context, in *eks.ListInsightsInput, optFns ...func(*eks.Options)) (*eks.ListInsightsOutput, error)
+	DescribeInsightFn         func(ctx context.Context, in *eks.DescribeInsightInput, optFns ...func(*eks.Options)) (*eks.DescribeInsightOutput, error)
 
 	// mu guards Calls: services fan out describe calls concurrently, so the
 	// counters must be safe to increment from multiple goroutines. Read them
@@ -56,6 +57,7 @@ type EKSAPI struct {
 		DescribeUpdate          int
 		DescribeClusterVersions int
 		ListInsights            int
+		DescribeInsight         int
 	}
 }
 
@@ -169,6 +171,14 @@ func (m *EKSAPI) ListInsights(ctx context.Context, in *eks.ListInsightsInput, op
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListInsights (cluster=%s)", ptrStr(in.ClusterName)))
 	}
 	return m.ListInsightsFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) DescribeInsight(ctx context.Context, in *eks.DescribeInsightInput, optFns ...func(*eks.Options)) (*eks.DescribeInsightOutput, error) {
+	m.inc(&m.Calls.DescribeInsight)
+	if m.DescribeInsightFn == nil {
+		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeInsight (id=%s)", ptrStr(in.Id)))
+	}
+	return m.DescribeInsightFn(ctx, in, optFns...)
 }
 
 func (m *EKSAPI) inc(counter *int) {

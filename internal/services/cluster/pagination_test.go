@@ -118,6 +118,18 @@ func (f *fakeEKSClient) DescribeAddon(ctx context.Context, in *eks.DescribeAddon
 	}}, nil
 }
 
+func (f *fakeEKSClient) DescribeAddonVersions(ctx context.Context, in *eks.DescribeAddonVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
+	return &eks.DescribeAddonVersionsOutput{}, nil
+}
+
+func (f *fakeEKSClient) ListInsights(ctx context.Context, in *eks.ListInsightsInput, _ ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+	return &eks.ListInsightsOutput{}, nil
+}
+
+func (f *fakeEKSClient) DescribeInsight(ctx context.Context, in *eks.DescribeInsightInput, _ ...func(*eks.Options)) (*eks.DescribeInsightOutput, error) {
+	return &eks.DescribeInsightOutput{}, nil
+}
+
 func newTestServiceWithFake(t *testing.T, fake *fakeEKSClient) *ServiceImpl {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
