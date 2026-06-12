@@ -28,6 +28,15 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Docs command reference is up to date
+        run: |
+          go run . gen-docs --out docs/reference
+          if ! git diff --quiet -- docs/reference; then
+            echo "::error::docs/reference is stale vs the CLI tree. Run 'task docs:gen' and commit."
+            git --no-pager diff -- docs/reference
+            exit 1
+          fi
+
       - name: Test
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
