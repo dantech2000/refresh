@@ -10,11 +10,16 @@ import (
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
-// Command returns the cluster command group with list, describe, and diff subcommands.
+// Command returns the cluster command group with list, describe, upgrade-check,
+// and upgrade subcommands.
 func Command() *cli.Command {
 	return &cli.Command{
 		Name:  "cluster",
 		Usage: "Cluster operations (list, get, upgrade)",
+		Description: `Discover and operate on EKS clusters: list them (optionally across all
+regions), describe one in depth, run an upgrade readiness check
+(upgrade-check), and orchestrate a full control-plane + add-on + nodegroup
+upgrade (upgrade).`,
 		Commands: []*cli.Command{
 			listCommand(),
 			describeCommand(),
@@ -31,7 +36,18 @@ func listCommand() *cli.Command {
 		ArgsUsage: "[name-pattern]",
 		Description: `Fast cluster discovery across regions with integrated health validation.
 Direct EKS API calls provide high performance along with comprehensive
-health monitoring and multi-region capabilities.`,
+health monitoring and multi-region capabilities.
+
+Scope with -A/--all-regions (every EKS-supported region) or repeated
+-r/--region. Filter with repeatable --filter key=value (keys: name, status,
+version); sort with --sort and --desc. -o plain emits uncolored TSV for
+grep/awk; -o tree (or --tree, which implies --all-regions) renders a
+region/cluster hierarchy. Use --watch to redraw on the --watch-interval
+(top-style on a terminal, appended when piped) until Ctrl+C.
+
+  refresh cluster list -A --filter status=ACTIVE
+  refresh cluster list -o tree
+  refresh cluster list --watch --watch-interval 5s`,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: 60 * time.Second, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.IntFlag{Name: "max-concurrency", Aliases: []string{"C"}, Usage: "Max concurrent region requests", Value: appconfig.DefaultMaxConcurrency, Sources: cli.EnvVars("REFRESH_MAX_CONCURRENCY")},

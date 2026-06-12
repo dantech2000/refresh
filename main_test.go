@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	docs "github.com/urfave/cli-docs/v3"
+
 	awsClient "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/types"
 )
@@ -329,4 +331,19 @@ func containsText(coloredText, expectedText string) bool {
 		}
 	}
 	return strings.Contains(b.String(), expectedText)
+}
+
+// TestManPageContainsKeySections verifies the generated man page (the same
+// docs.ToMan output `install-man` writes) includes key command sections, so an
+// accidental drop of a command from the tree is caught. (REF-9)
+func TestManPageContainsKeySections(t *testing.T) {
+	man, err := docs.ToMan(newApp())
+	if err != nil {
+		t.Fatalf("ToMan: %v", err)
+	}
+	for _, want := range []string{"upgrade-check", "context", "nodegroup", "addon"} {
+		if !strings.Contains(man, want) {
+			t.Errorf("man page missing %q section", want)
+		}
+	}
 }
