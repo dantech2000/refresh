@@ -23,6 +23,9 @@ refresh
 coverage.out
 coverage.html
 
+# Conductor workspace collaboration dir (agent scratch space)
+.context/
+
 # IDE files
 .vscode/
 .idea/

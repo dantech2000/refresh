@@ -133,7 +133,7 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 
 			instanceTypes := "Unknown"
 			if len(ng.InstanceTypes) > 0 {
-				instanceTypes = string(ng.InstanceTypes[0])
+				instanceTypes = ng.InstanceTypes[0]
 			}
 
 			return &NodegroupSummary{
