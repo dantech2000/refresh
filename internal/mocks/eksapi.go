@@ -30,21 +30,32 @@ type EKSAPI struct {
 	UpdateNodegroupConfigFn func(ctx context.Context, in *eks.UpdateNodegroupConfigInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupConfigOutput, error)
 	ListClustersFn          func(ctx context.Context, in *eks.ListClustersInput, optFns ...func(*eks.Options)) (*eks.ListClustersOutput, error)
 
+	UpdateClusterVersionFn    func(ctx context.Context, in *eks.UpdateClusterVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateClusterVersionOutput, error)
+	UpdateNodegroupVersionFn  func(ctx context.Context, in *eks.UpdateNodegroupVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error)
+	DescribeUpdateFn          func(ctx context.Context, in *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error)
+	DescribeClusterVersionsFn func(ctx context.Context, in *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error)
+	ListInsightsFn            func(ctx context.Context, in *eks.ListInsightsInput, optFns ...func(*eks.Options)) (*eks.ListInsightsOutput, error)
+
 	// mu guards Calls: services fan out describe calls concurrently, so the
 	// counters must be safe to increment from multiple goroutines. Read them
 	// only after the operation under test has returned.
 	mu sync.Mutex
 
 	Calls struct {
-		ListAddons            int
-		DescribeAddon         int
-		DescribeAddonVersions int
-		UpdateAddon           int
-		DescribeCluster       int
-		ListNodegroups        int
-		DescribeNodegroup     int
-		UpdateNodegroupConfig int
-		ListClusters          int
+		ListAddons              int
+		DescribeAddon           int
+		DescribeAddonVersions   int
+		UpdateAddon             int
+		DescribeCluster         int
+		ListNodegroups          int
+		DescribeNodegroup       int
+		UpdateNodegroupConfig   int
+		ListClusters            int
+		UpdateClusterVersion    int
+		UpdateNodegroupVersion  int
+		DescribeUpdate          int
+		DescribeClusterVersions int
+		ListInsights            int
 	}
 }
 
@@ -118,6 +129,46 @@ func (m *EKSAPI) ListClusters(ctx context.Context, in *eks.ListClustersInput, op
 		panic("mocks.EKSAPI: unexpected call to ListClusters")
 	}
 	return m.ListClustersFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) UpdateClusterVersion(ctx context.Context, in *eks.UpdateClusterVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateClusterVersionOutput, error) {
+	m.inc(&m.Calls.UpdateClusterVersion)
+	if m.UpdateClusterVersionFn == nil {
+		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to UpdateClusterVersion (cluster=%s)", ptrStr(in.Name)))
+	}
+	return m.UpdateClusterVersionFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) UpdateNodegroupVersion(ctx context.Context, in *eks.UpdateNodegroupVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error) {
+	m.inc(&m.Calls.UpdateNodegroupVersion)
+	if m.UpdateNodegroupVersionFn == nil {
+		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to UpdateNodegroupVersion (ng=%s)", ptrStr(in.NodegroupName)))
+	}
+	return m.UpdateNodegroupVersionFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) DescribeUpdate(ctx context.Context, in *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+	m.inc(&m.Calls.DescribeUpdate)
+	if m.DescribeUpdateFn == nil {
+		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeUpdate (id=%s)", ptrStr(in.UpdateId)))
+	}
+	return m.DescribeUpdateFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) DescribeClusterVersions(ctx context.Context, in *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error) {
+	m.inc(&m.Calls.DescribeClusterVersions)
+	if m.DescribeClusterVersionsFn == nil {
+		panic("mocks.EKSAPI: unexpected call to DescribeClusterVersions")
+	}
+	return m.DescribeClusterVersionsFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) ListInsights(ctx context.Context, in *eks.ListInsightsInput, optFns ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+	m.inc(&m.Calls.ListInsights)
+	if m.ListInsightsFn == nil {
+		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListInsights (cluster=%s)", ptrStr(in.ClusterName)))
+	}
+	return m.ListInsightsFn(ctx, in, optFns...)
 }
 
 func (m *EKSAPI) inc(counter *int) {

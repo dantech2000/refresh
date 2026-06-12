@@ -241,7 +241,7 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 			waitCtx, cancel = context.WithTimeout(ctx, options.WaitTimeout)
 			defer cancel()
 		}
-		if err := s.waitForAddonUpdate(waitCtx, clusterName, addonName); err != nil {
+		if err := s.waitForAddonUpdate(waitCtx, clusterName, addonName, options.PollInterval); err != nil {
 			result.Status = "WAIT_FAILED"
 			return result, err
 		}

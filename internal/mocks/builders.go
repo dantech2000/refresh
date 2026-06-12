@@ -29,6 +29,23 @@ func NewEKSAPI() *EKSAPIBuilder {
 	b.m.ListNodegroupsFn = func(_ context.Context, _ *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
 		return &eks.ListNodegroupsOutput{}, nil
 	}
+	b.m.ListInsightsFn = func(_ context.Context, _ *eks.ListInsightsInput, _ ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+		return &eks.ListInsightsOutput{}, nil
+	}
+	b.m.DescribeAddonVersionsFn = func(_ context.Context, _ *eks.DescribeAddonVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
+		return &eks.DescribeAddonVersionsOutput{}, nil
+	}
+	// Echo requested versions back as offered, so upgrade tests don't all
+	// need to enumerate the EKS version catalogue.
+	b.m.DescribeClusterVersionsFn = func(_ context.Context, in *eks.DescribeClusterVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error) {
+		out := &eks.DescribeClusterVersionsOutput{}
+		for _, v := range in.ClusterVersions {
+			out.ClusterVersions = append(out.ClusterVersions, ekstypes.ClusterVersionInformation{
+				ClusterVersion: aws.String(v),
+			})
+		}
+		return out, nil
+	}
 
 	return b
 }
@@ -115,6 +132,116 @@ func (b *EKSAPIBuilder) WithUpdateAddon(updateID string) *EKSAPIBuilder {
 			Update: &ekstypes.Update{
 				Id:     aws.String(updateID),
 				Status: ekstypes.UpdateStatusInProgress,
+			},
+		}, nil
+	}
+	return b
+}
+
+// WithNodegroup registers a nodegroup so ListNodegroups includes it and
+// DescribeNodegroup returns its details (ACTIVE, no health issues). Calling
+// WithNodegroup multiple times accumulates nodegroups in order.
+func (b *EKSAPIBuilder) WithNodegroup(name, k8sVersion string, amiType ekstypes.AMITypes) *EKSAPIBuilder {
+	prevList := b.m.ListNodegroupsFn
+	prevDescribe := b.m.DescribeNodegroupFn
+
+	b.m.ListNodegroupsFn = func(ctx context.Context, in *eks.ListNodegroupsInput, opts ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+		out, err := prevList(ctx, in, opts...)
+		if err != nil {
+			return nil, err
+		}
+		out.Nodegroups = append(out.Nodegroups, name)
+		return out, nil
+	}
+
+	b.m.DescribeNodegroupFn = func(ctx context.Context, in *eks.DescribeNodegroupInput, opts ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+		if aws.ToString(in.NodegroupName) == name {
+			return &eks.DescribeNodegroupOutput{
+				Nodegroup: &ekstypes.Nodegroup{
+					NodegroupName: aws.String(name),
+					Version:       aws.String(k8sVersion),
+					AmiType:       amiType,
+					Status:        ekstypes.NodegroupStatusActive,
+				},
+			}, nil
+		}
+		if prevDescribe != nil {
+			return prevDescribe(ctx, in, opts...)
+		}
+		return nil, &ekstypes.ResourceNotFoundException{Message: aws.String("nodegroup not found: " + aws.ToString(in.NodegroupName))}
+	}
+	return b
+}
+
+// WithInsight registers an UPGRADE_READINESS insight returned for the given
+// Kubernetes version. Calling WithInsight multiple times accumulates.
+func (b *EKSAPIBuilder) WithInsight(name string, status ekstypes.InsightStatusValue, k8sVersion string) *EKSAPIBuilder {
+	prev := b.m.ListInsightsFn
+
+	b.m.ListInsightsFn = func(ctx context.Context, in *eks.ListInsightsInput, opts ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+		out, err := prev(ctx, in, opts...)
+		if err != nil {
+			return nil, err
+		}
+		if in.Filter != nil && len(in.Filter.KubernetesVersions) > 0 {
+			match := false
+			for _, v := range in.Filter.KubernetesVersions {
+				if v == k8sVersion {
+					match = true
+				}
+			}
+			if !match {
+				return out, nil
+			}
+		}
+		out.Insights = append(out.Insights, ekstypes.InsightSummary{
+			Name:          aws.String(name),
+			Category:      ekstypes.CategoryUpgradeReadiness,
+			InsightStatus: &ekstypes.InsightStatus{Status: status},
+		})
+		return out, nil
+	}
+	return b
+}
+
+// WithUpdateClusterVersion sets UpdateClusterVersion to return a successful
+// in-progress update with the given ID.
+func (b *EKSAPIBuilder) WithUpdateClusterVersion(updateID string) *EKSAPIBuilder {
+	b.m.UpdateClusterVersionFn = func(_ context.Context, _ *eks.UpdateClusterVersionInput, _ ...func(*eks.Options)) (*eks.UpdateClusterVersionOutput, error) {
+		return &eks.UpdateClusterVersionOutput{
+			Update: &ekstypes.Update{
+				Id:     aws.String(updateID),
+				Status: ekstypes.UpdateStatusInProgress,
+				Type:   ekstypes.UpdateTypeVersionUpdate,
+			},
+		}, nil
+	}
+	return b
+}
+
+// WithUpdateNodegroupVersion sets UpdateNodegroupVersion to return a
+// successful in-progress update with the given ID.
+func (b *EKSAPIBuilder) WithUpdateNodegroupVersion(updateID string) *EKSAPIBuilder {
+	b.m.UpdateNodegroupVersionFn = func(_ context.Context, _ *eks.UpdateNodegroupVersionInput, _ ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error) {
+		return &eks.UpdateNodegroupVersionOutput{
+			Update: &ekstypes.Update{
+				Id:     aws.String(updateID),
+				Status: ekstypes.UpdateStatusInProgress,
+				Type:   ekstypes.UpdateTypeVersionUpdate,
+			},
+		}, nil
+	}
+	return b
+}
+
+// WithDescribeUpdate sets DescribeUpdate to report every update with the
+// given terminal status.
+func (b *EKSAPIBuilder) WithDescribeUpdate(status ekstypes.UpdateStatus) *EKSAPIBuilder {
+	b.m.DescribeUpdateFn = func(_ context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+		return &eks.DescribeUpdateOutput{
+			Update: &ekstypes.Update{
+				Id:     in.UpdateId,
+				Status: status,
 			},
 		}, nil
 	}
