@@ -139,12 +139,13 @@ Follow the layered flow (model it on the `cluster` command):
 - `gopkg.in/yaml.v3` ignores `json` tags. `runner.EncodeStdout` round-trips YAML
   through JSON so keys stay camelCase (REF-59), but still add explicit `yaml:`
   tags to any struct you might marshal directly.
-- Pricing API client is pinned to `us-east-1` **intentionally** — the Pricing
-  API is only served from a few endpoints; per-region pricing comes from the
-  query filter, not the client region. Not a bug, don't "fix" it.
-- Cost estimates are on-demand only and use the nodegroup's first instance type
-  (REF-14, REF-61, REF-8). Note: cost/utilization/diff surfaces are being
-  trimmed as `refresh` refocuses on the upgrade workflow (REF-78).
+- **The docs command reference is generated.** After changing any command or
+  flag, run `task docs:gen` — the hidden `gen-docs` command walks the CLI tree
+  into `docs/reference/`, and a CI step fails if the committed reference is stale.
+- **Docs live in-repo** under `docs/` (Material for MkDocs, via a `uv`-managed
+  hash-locked venv) and publish to <https://drod.dev/refresh/> on merge to `main`.
+  Cost/utilization/`cluster diff`/`workload pdbs` were removed in the Phase 2
+  trim (REF-78) — don't re-add them.
 
 ## Where work is tracked
 
