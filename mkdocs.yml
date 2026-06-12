@@ -2,7 +2,7 @@ site_name: refresh — the EKS upgrade companion
 site_description: >-
   Documentation for refresh, the EKS upgrade companion: a Go CLI for the
   cluster upgrade/patching lifecycle — status, readiness, patch, upgrade.
-site_url: https://dantech2000.github.io/refresh/
+site_url: https://drod.dev/refresh/
 repo_url: https://github.com/dantech2000/refresh
 repo_name: dantech2000/refresh
 edit_uri: edit/main/docs/
