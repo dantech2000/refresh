@@ -45,6 +45,11 @@ type ServiceImpl struct {
 }
 
 // NewService creates a new addon service
+// EKS returns the underlying EKS client abstraction so the command layer can do
+// lightweight lookups (e.g. resolving an add-on name) without building a second
+// client. EKSAPI includes ListAddons, so it satisfies the resolver's interface.
+func (s *ServiceImpl) EKS() EKSAPI { return s.eksClient }
+
 func NewService(eksClient EKSAPI, logger *slog.Logger) *ServiceImpl {
 	return &ServiceImpl{
 		eksClient: eksClient,

@@ -74,6 +74,16 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 	}
 }
 
+// PodDisruptionBudgets returns the cluster's PDB disruption snapshot via the
+// health checker, or (nil, nil) when no health checker / k8s client is wired.
+// Used by `nodegroup scale --dry-run` to preview PDB impact. (REF-4)
+func (s *ServiceImpl) PodDisruptionBudgets(ctx context.Context) ([]health.PDBInfo, error) {
+	if s.healthChecker == nil {
+		return nil, nil
+	}
+	return s.healthChecker.ListPodDisruptionBudgets(ctx)
+}
+
 // supportedFilterKeys maps normalized --filter keys to a matcher against a
 // built summary. Keys are matched case-insensitively.
 var supportedFilterKeys = map[string]func(s NodegroupSummary, want string) bool{

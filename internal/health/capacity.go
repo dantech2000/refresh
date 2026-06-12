@@ -266,9 +266,11 @@ func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName 
 		nextToken = ngOutput.NextToken
 	}
 
-	// For each nodegroup (concurrently), get the associated Auto Scaling
-	// Groups and their instances.
-	perNodegroup := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
+	// Collect every ASG name across nodegroups (concurrent describe), then
+	// resolve their instances in chunked batch calls — one DescribeASG per ~100
+	// ASGs instead of one per ASG, which on big fleets multiplied calls and
+	// invited throttling. (REF-50)
+	asgNamesPerNG := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
 		func(fctx context.Context, ngName string) []string {
 			descOutput, err := hc.eksClient.DescribeNodegroup(fctx, &eks.DescribeNodegroupInput{
 				ClusterName:   aws.String(clusterName),
@@ -277,52 +279,54 @@ func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName 
 			if err != nil || descOutput.Nodegroup == nil || descOutput.Nodegroup.Resources == nil {
 				return nil // Skip failed nodegroups
 			}
-			var ids []string
+			var names []string
 			for _, asg := range descOutput.Nodegroup.Resources.AutoScalingGroups {
 				if asg.Name != nil {
-					asgInstanceIDs, err := hc.getASGInstanceIDs(fctx, *asg.Name)
-					if err != nil {
-						continue // Skip failed ASGs
-					}
-					ids = append(ids, asgInstanceIDs...)
+					names = append(names, *asg.Name)
 				}
 			}
-			return ids
+			return names
 		})
 
-	var instanceIDs []string
-	for _, ids := range perNodegroup {
-		instanceIDs = append(instanceIDs, ids...)
+	var asgNames []string
+	for _, names := range asgNamesPerNG {
+		asgNames = append(asgNames, names...)
 	}
 
-	return instanceIDs, nil
+	return hc.instanceIDsForASGs(ctx, asgNames)
 }
 
-// getASGInstanceIDs retrieves instance IDs from an Auto Scaling Group
-func (hc *HealthChecker) getASGInstanceIDs(ctx context.Context, asgName string) ([]string, error) {
+// instanceIDsForASGs resolves EC2 instance IDs for the given ASG names using
+// chunked DescribeAutoScalingGroups calls (the API accepts up to 100 names per
+// request), instead of one describe per ASG. (REF-50)
+func (hc *HealthChecker) instanceIDsForASGs(ctx context.Context, asgNames []string) ([]string, error) {
+	if len(asgNames) == 0 {
+		return nil, nil
+	}
 	if hc.asgClient == nil {
 		return nil, fmt.Errorf("auto Scaling client not available")
 	}
 
-	input := &autoscaling.DescribeAutoScalingGroupsInput{
-		AutoScalingGroupNames: []string{asgName},
-	}
-
-	output, err := hc.asgClient.DescribeAutoScalingGroups(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to describe ASG %s: %w", asgName, err)
-	}
-
-	if len(output.AutoScalingGroups) == 0 {
-		return nil, fmt.Errorf("ASG %s not found", asgName)
-	}
-
+	const maxNamesPerCall = 100
 	var instanceIDs []string
-	for _, instance := range output.AutoScalingGroups[0].Instances {
-		if instance.InstanceId != nil {
-			instanceIDs = append(instanceIDs, *instance.InstanceId)
+	for start := 0; start < len(asgNames); start += maxNamesPerCall {
+		end := start + maxNamesPerCall
+		if end > len(asgNames) {
+			end = len(asgNames)
+		}
+		output, err := hc.asgClient.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
+			AutoScalingGroupNames: asgNames[start:end],
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to describe ASGs: %w", err)
+		}
+		for _, asg := range output.AutoScalingGroups {
+			for _, instance := range asg.Instances {
+				if instance.InstanceId != nil {
+					instanceIDs = append(instanceIDs, *instance.InstanceId)
+				}
+			}
 		}
 	}
-
 	return instanceIDs, nil
 }

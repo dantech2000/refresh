@@ -8,6 +8,56 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
+// PDBInfo is a structured snapshot of one PodDisruptionBudget's disruption
+// status, used by `nodegroup scale --dry-run` to show which PDBs would
+// constrain a scale-down. (REF-4)
+type PDBInfo struct {
+	Namespace          string `json:"namespace" yaml:"namespace"`
+	Name               string `json:"name" yaml:"name"`
+	DisruptionsAllowed int32  `json:"disruptionsAllowed" yaml:"disruptionsAllowed"`
+	CurrentHealthy     int32  `json:"currentHealthy" yaml:"currentHealthy"`
+	DesiredHealthy     int32  `json:"desiredHealthy" yaml:"desiredHealthy"`
+	ExpectedPods       int32  `json:"expectedPods" yaml:"expectedPods"`
+}
+
+// AtRisk reports whether this PDB currently allows zero voluntary disruptions,
+// meaning a node drain (as happens during a scale-down) would be blocked until
+// the workload recovers.
+func (p PDBInfo) AtRisk() bool { return p.DisruptionsAllowed <= 0 }
+
+// ListPodDisruptionBudgets returns a structured snapshot of every PDB in user
+// namespaces with its current disruption status. Returns (nil, nil) when no
+// Kubernetes client is configured so callers can degrade gracefully. (REF-4)
+func (hc *HealthChecker) ListPodDisruptionBudgets(ctx context.Context) ([]PDBInfo, error) {
+	if hc.k8sClient == nil {
+		return nil, nil
+	}
+	pdbs, err := hc.k8sClient.PolicyV1().PodDisruptionBudgets("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing PodDisruptionBudgets: %w", err)
+	}
+	systemNamespaces := map[string]bool{
+		"kube-system":     true,
+		"kube-public":     true,
+		"kube-node-lease": true,
+	}
+	out := make([]PDBInfo, 0, len(pdbs.Items))
+	for _, pdb := range pdbs.Items {
+		if systemNamespaces[pdb.Namespace] {
+			continue
+		}
+		out = append(out, PDBInfo{
+			Namespace:          pdb.Namespace,
+			Name:               pdb.Name,
+			DisruptionsAllowed: pdb.Status.DisruptionsAllowed,
+			CurrentHealthy:     pdb.Status.CurrentHealthy,
+			DesiredHealthy:     pdb.Status.DesiredHealthy,
+			ExpectedPods:       pdb.Status.ExpectedPods,
+		})
+	}
+	return out, nil
+}
+
 // CheckPodDisruptionBudgets validates PDB configuration for user workloads
 func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthResult {
 	result := HealthResult{
