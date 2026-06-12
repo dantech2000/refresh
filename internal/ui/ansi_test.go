@@ -16,6 +16,51 @@ func TestVisibleWidthAndPadANSI(t *testing.T) {
 	}
 }
 
+// REF-67: width must be measured in display cells, not runes — CJK ideographs
+// and emoji occupy 2 columns.
+func TestVisibleWidthWideRunes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    string
+		want int
+	}{
+		{"ascii", "abc", 3},
+		{"cjk", "世界", 4},
+		{"emoji", "🚀", 2},
+		{"mixed", "a世b", 4},
+		{"colored cjk", "\x1b[32m世\x1b[0m", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := VisibleWidth(tc.s); got != tc.want {
+				t.Errorf("VisibleWidth(%q) = %d, want %d", tc.s, got, tc.want)
+			}
+		})
+	}
+	if got := VisibleWidth(PadANSI("世", 6, AlignLeft)); got != 6 {
+		t.Errorf("PadANSI wide cell: visible width = %d, want 6", got)
+	}
+}
+
+// REF-65: PlainCell must strip ANSI and neutralize embedded tab/newline/CR so a
+// single logical cell stays a single TSV field.
+func TestPlainCell(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"plain", "plain"},
+		{"\x1b[32mPASS\x1b[0m", "PASS"},
+		{"a\tb", "a b"},
+		{"line1\nline2", "line1 line2"},
+		{"a\r\nb", "a  b"},
+		{"k=v\tx=y", "k=v x=y"},
+	} {
+		if got := PlainCell(tc.in); got != tc.want {
+			t.Errorf("PlainCell(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+		if strings.ContainsAny(PlainCell(tc.in), "\t\n\r") {
+			t.Errorf("PlainCell(%q) still contains a TSV-breaking char", tc.in)
+		}
+	}
+}
+
 func TestVisibleWidthMalformedEscape(t *testing.T) {
 	// A runaway escape sequence must not swallow the rest of the string.
 	malformed := "\x1b[" + strings.Repeat("9", 40) + "hello"

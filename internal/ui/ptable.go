@@ -120,7 +120,7 @@ func (t *PTable) renderPlain() {
 	for _, row := range t.rows {
 		cells := make([]string, len(row))
 		for i, cell := range row {
-			cells[i] = StripANSI(cell)
+			cells[i] = PlainCell(cell)
 		}
 		Outln(strings.Join(cells, "\t"))
 	}

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/mattn/go-runewidth"
 )
 
 // This file is the single home for ANSI-aware string measurement, padding,
@@ -28,8 +29,12 @@ type Column struct {
 	Align Alignment
 }
 
-// VisibleWidth returns the printable width of a string, excluding ANSI escape
-// codes. Hardened against malformed sequences with a bounded escape length.
+// VisibleWidth returns the printable terminal width of a string, excluding ANSI
+// escape codes. Width is measured in display cells, not runes, so CJK
+// ideographs and emoji (2 columns) and zero-width/combining marks are counted
+// correctly — otherwise PadANSI/TruncateANSI and the table column math drift on
+// non-ASCII cells. Hardened against malformed sequences with a bounded escape
+// length.
 func VisibleWidth(s string) int {
 	count := 0
 	inEscape := false
@@ -57,7 +62,7 @@ func VisibleWidth(s string) int {
 			}
 			continue
 		}
-		count++
+		count += runewidth.RuneWidth(r)
 	}
 	return count
 }
@@ -124,12 +129,12 @@ func TruncateANSI(s string, width int) string {
 			}
 			continue
 		}
-		if visibleCount < target {
-			out.WriteRune(r)
-			visibleCount++
-		} else {
+		w := runewidth.RuneWidth(r)
+		if visibleCount+w > target {
 			break
 		}
+		out.WriteRune(r)
+		visibleCount += w
 	}
 	if sawEscape {
 		// The cut may have dropped the original trailing reset.
@@ -171,6 +176,19 @@ func StripANSI(s string) string {
 		out.WriteRune(r)
 	}
 	return out.String()
+}
+
+// PlainCell prepares a value for tab-separated `-o plain` output: it strips
+// ANSI codes and replaces any embedded tab/newline/carriage-return with a
+// single space. Without this, a cell containing a literal tab or newline (AWS
+// tags, multi-line status/error strings) would split one logical row across
+// columns or physical lines, breaking `awk -F'\t'` / `cut`. (REF-65)
+func PlainCell(s string) string {
+	s = StripANSI(s)
+	if strings.ContainsAny(s, "\t\n\r") {
+		s = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(s)
+	}
+	return s
 }
 
 // plainOutput, when enabled, makes table renderers emit uncolored,
