@@ -99,8 +99,14 @@ tasks:
     cmds:
       - uv run --frozen mkdocs serve
 
+  docs:gen:
+    desc: Regenerate the Markdown command reference from the CLI tree
+    cmds:
+      - go run . gen-docs --out docs/reference
+
   docs:build:
     desc: Build the documentation site (strict — fails on broken links/nav)
+    deps: [docs:gen]
     cmds:
       - uv run --frozen mkdocs build --strict
 

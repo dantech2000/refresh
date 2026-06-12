@@ -141,6 +141,8 @@ func newApp() *cli.Command {
 			commands.VersionCommand(),
 			commands.ManPageCommand(),
 			commands.CompletionCommand(),
+			// Hidden: generates the Markdown command reference for the docs site.
+			commands.GenDocsCommand(),
 		},
 	}
 }

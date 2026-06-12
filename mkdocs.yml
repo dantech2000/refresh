@@ -101,6 +101,18 @@ nav:
       - addon: commands/addon.md
       - Contexts (use/current/context): commands/contexts.md
       - Utility (version/man/completion): commands/utility.md
+  - Reference:
+      - Overview: reference/index.md
+      - refresh status: reference/status.md
+      - cluster: reference/cluster.md
+      - nodegroup: reference/nodegroup.md
+      - addon: reference/addon.md
+      - use: reference/use.md
+      - current: reference/current.md
+      - context: reference/context.md
+      - version: reference/version.md
+      - install-man: reference/install-man.md
+      - completion: reference/completion.md
   - Usage & examples:
       - Cookbook: usage/cookbook.md
       - Migrating from eksctl / aws CLI: migration.md
