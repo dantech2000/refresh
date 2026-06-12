@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
@@ -19,14 +19,14 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func runList(c *cli.Context) error {
-	ctx, cancel, cfg, err := runner.SetupAWS(c)
+func runList(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, cfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, c)
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, cmd)
 	if err != nil || listed {
 		return err
 	}
@@ -37,32 +37,32 @@ func runList(c *cli.Context) error {
 	start := time.Now()
 	if err := runner.WithSpinner("addon", "Add-on information gathered!", func() error {
 		var ferr error
-		summaries, ferr = addonSvc.List(ctx, clusterName, addons.ListOptions{ShowHealth: c.Bool("show-health")})
+		summaries, ferr = addonSvc.List(ctx, clusterName, addons.ListOptions{ShowHealth: cmd.Bool("show-health")})
 		return ferr
 	}); err != nil {
 		return err
 	}
 
 	payload := map[string]any{"cluster": clusterName, "addons": summaries, "count": len(summaries)}
-	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+	if handled, err := runner.EncodeStdout(cmd.String("format"), payload); handled {
 		return err
 	}
 	return outputAddonsTable(clusterName, summaries, time.Since(start))
 }
 
-func runDescribe(c *cli.Context) error {
-	ctx, cancel, cfg, err := runner.SetupAWS(c)
+func runDescribe(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, cfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, c)
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, cmd)
 	if err != nil || listed {
 		return err
 	}
 
-	addonName := runner.PositionalSlot(c, "addon", "cluster")
+	addonName := runner.PositionalSlot(cmd, "addon", "cluster")
 	if addonName == "" {
 		return fmt.Errorf("missing add-on name; pass as second argument or --addon <name>")
 	}
@@ -79,7 +79,7 @@ func runDescribe(c *cli.Context) error {
 		return awsinternal.FormatAWSError(err, "describing add-on")
 	}
 
-	if handled, err := runner.EncodeStdout(c.String("format"), details); handled {
+	if handled, err := runner.EncodeStdout(cmd.String("format"), details); handled {
 		return err
 	}
 	return outputAddonDetailsTable(clusterName, details)
@@ -114,19 +114,19 @@ func resolveAddonName(ctx context.Context, eksClient listAddonsAPI, clusterName,
 	return "", fmt.Errorf("invalid add-on name '%s'. Available: %s", addonName, strings.Join(list.Addons, ", "))
 }
 
-func runUpdate(c *cli.Context) error {
-	ctx, cancel, cfg, err := runner.SetupAWSStrict(c)
+func runUpdate(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, cfg, err := runner.SetupAWSStrict(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, c)
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, cmd)
 	if err != nil || listed {
 		return err
 	}
 
-	addonName := runner.PositionalSlot(c, "addon", "cluster")
+	addonName := runner.PositionalSlot(cmd, "addon", "cluster")
 	if addonName == "" {
 		return fmt.Errorf("missing add-on name; pass as second argument or --addon <name>")
 	}
@@ -140,7 +140,7 @@ func runUpdate(c *cli.Context) error {
 	// version slot is third positional after (cluster, addon). PositionalSlot
 	// shifts the expected index down by 1 for each prior flag that was set, so
 	// `--addon=foo my-cluster v1.2.3` correctly picks up v1.2.3.
-	version := runner.PositionalSlot(c, "version", "cluster", "addon")
+	version := runner.PositionalSlot(cmd, "version", "cluster", "addon")
 	if version == "" {
 		version = "latest"
 	}
@@ -151,10 +151,10 @@ func runUpdate(c *cli.Context) error {
 	addonSvc := addons.NewService(eksClient, factory.NewDefaultLogger(nil))
 	result, err := addonSvc.Update(ctx, clusterName, addonName, addons.UpdateOptions{
 		Version:     version,
-		DryRun:      c.Bool("dry-run"),
-		HealthCheck: c.Bool("health-check"),
-		Wait:        c.Bool("wait"),
-		WaitTimeout: c.Duration("wait-timeout"),
+		DryRun:      cmd.Bool("dry-run"),
+		HealthCheck: cmd.Bool("health-check"),
+		Wait:        cmd.Bool("wait"),
+		WaitTimeout: cmd.Duration("wait-timeout"),
 	})
 	if err != nil {
 		return err
@@ -176,14 +176,14 @@ func runUpdate(c *cli.Context) error {
 	return nil
 }
 
-func runUpdateAll(c *cli.Context) error {
-	ctx, cancel, cfg, err := runner.SetupAWSStrict(c)
+func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, cfg, err := runner.SetupAWSStrict(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	requested := runner.RequestedCluster(c)
+	requested := runner.RequestedCluster(cmd)
 	if strings.TrimSpace(requested) == "" {
 		return fmt.Errorf("cluster name is required")
 	}
@@ -193,7 +193,7 @@ func runUpdateAll(c *cli.Context) error {
 		return err
 	}
 
-	if c.Bool("parallel") && c.Bool("dependency-order") {
+	if cmd.Bool("parallel") && cmd.Bool("dependency-order") {
 		return fmt.Errorf("--parallel and --dependency-order cannot be used together: parallel execution defeats dependency ordering")
 	}
 
@@ -202,13 +202,13 @@ func runUpdateAll(c *cli.Context) error {
 	addonSvc := addons.NewService(eksClient, logger)
 
 	options := addons.UpdateAllOptions{
-		DryRun:          c.Bool("dry-run"),
-		Parallel:        c.Bool("parallel"),
-		Wait:            c.Bool("wait"),
-		WaitTimeout:     c.Duration("wait-timeout"),
-		SkipAddons:      c.StringSlice("skip"),
-		DependencyOrder: c.Bool("dependency-order"),
-		HealthCheck:     c.Bool("health-check"),
+		DryRun:          cmd.Bool("dry-run"),
+		Parallel:        cmd.Bool("parallel"),
+		Wait:            cmd.Bool("wait"),
+		WaitTimeout:     cmd.Duration("wait-timeout"),
+		SkipAddons:      cmd.StringSlice("skip"),
+		DependencyOrder: cmd.Bool("dependency-order"),
+		HealthCheck:     cmd.Bool("health-check"),
 	}
 
 	var results []addons.AddonUpdateResult
@@ -225,7 +225,7 @@ func runUpdateAll(c *cli.Context) error {
 		"dryRun":  options.DryRun,
 		"results": results,
 	}
-	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+	if handled, err := runner.EncodeStdout(cmd.String("format"), payload); handled {
 		if err != nil {
 			return err
 		}

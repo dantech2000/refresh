@@ -1,10 +1,11 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"io"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/types"
 )
@@ -45,8 +46,8 @@ func VersionCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "version",
 		Usage: "Print the version of this CLI",
-		Action: func(c *cli.Context) error {
-			PrintVersion(c.App.Writer)
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			PrintVersion(cmd.Root().Writer)
 			return nil
 		},
 	}

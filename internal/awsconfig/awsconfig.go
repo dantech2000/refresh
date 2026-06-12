@@ -11,25 +11,25 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
 )
 
 // Load returns an aws.Config with profile/region resolved from (in order):
 //
-//  1. CLI flags --profile / --region (if c is non-nil and they are set)
+//  1. CLI flags --profile / --region (if cmd is non-nil and they are set)
 //  2. Standard AWS env vars (AWS_PROFILE, AWS_REGION) — handled by SDK
 //  3. The active refresh context (from cliconfig)
 //  4. AWS SDK defaults (~/.aws/config, IMDS, etc.)
 //
 // CLI-supplied values always win so the user can override the active context
 // for a single invocation.
-func Load(ctx context.Context, c *cli.Context) (aws.Config, error) {
+func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 	var opts []func(*config.LoadOptions) error
 
-	profile := flagOrEmpty(c, "profile")
-	region := flagOrEmpty(c, "region")
+	profile := flagOrEmpty(cmd, "profile")
+	region := flagOrEmpty(cmd, "region")
 	profileFromFlag := profile != ""
 	regionFromFlag := region != ""
 
@@ -59,19 +59,19 @@ func Load(ctx context.Context, c *cli.Context) (aws.Config, error) {
 	return config.LoadDefaultConfig(ctx, opts...)
 }
 
-func flagOrEmpty(c *cli.Context, name string) string {
-	if c == nil {
+func flagOrEmpty(cmd *cli.Command, name string) string {
+	if cmd == nil {
 		return ""
 	}
-	value := strings.TrimSpace(c.String(name))
-	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
-		values := strings.Fields(strings.Trim(value, "[]"))
-		if len(values) == 0 {
-			return ""
-		}
-		return values[0]
+	if value := strings.TrimSpace(cmd.String(name)); value != "" {
+		return value
 	}
-	return value
+	// String() returns "" for slice-typed flags (e.g. cluster list's
+	// repeatable --region); fall back to the first slice element.
+	if values := cmd.StringSlice(name); len(values) > 0 {
+		return strings.TrimSpace(values[0])
+	}
+	return ""
 }
 
 func activeContext() (cliconfig.Context, bool) {

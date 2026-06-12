@@ -3,17 +3,18 @@
 package ctxcmd
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
 )
 
 // completeContextNames prints saved context names for shell completion.
 // Reading the local context file is fast and never touches AWS.
-func completeContextNames(c *cli.Context) {
-	if c.NArg() > 0 {
+func completeContextNames(_ context.Context, cmd *cli.Command) {
+	if cmd.NArg() > 0 {
 		return // context name already provided
 	}
 	f, err := cliconfig.Load()
@@ -21,18 +22,18 @@ func completeContextNames(c *cli.Context) {
 		return
 	}
 	for _, name := range f.Names() {
-		_, _ = fmt.Fprintln(c.App.Writer, name)
+		_, _ = fmt.Fprintln(cmd.Root().Writer, name)
 	}
 }
 
 // UseCommand returns the `refresh use` command (kubectx-style context switch).
 func UseCommand() *cli.Command {
 	return &cli.Command{
-		Name:         "use",
-		Usage:        "Switch the active refresh context (kubectx-style)",
-		ArgsUsage:    "[context-name|-]",
-		Action:       runUse,
-		BashComplete: completeContextNames,
+		Name:          "use",
+		Usage:         "Switch the active refresh context (kubectx-style)",
+		ArgsUsage:     "[context-name|-]",
+		Action:        runUse,
+		ShellComplete: completeContextNames,
 	}
 }
 
@@ -51,7 +52,7 @@ func ContextCommand() *cli.Command {
 		Name:    "context",
 		Aliases: []string{"ctx"},
 		Usage:   "Manage saved refresh contexts (list, add, remove)",
-		Subcommands: []*cli.Command{
+		Commands: []*cli.Command{
 			contextListCommand(),
 			contextAddCommand(),
 			contextRemoveCommand(),

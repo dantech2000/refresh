@@ -43,8 +43,9 @@ Supporting packages: `internal/aws` (SDK abstractions, error formatting), `inter
 
 ## Conventions (follow these when editing)
 
-- **CLI framework:** urfave/cli **v2** today (a v2→v3 migration is planned — see Linear REF-11).
-  Note the v2 quirk: flags must precede positional args.
+- **CLI framework:** urfave/cli **v3** (migrated from v2 in REF-11). Handlers are
+  `func(ctx context.Context, cmd *cli.Command) error`; flags may appear before or after
+  positional args.
 - **Output:** every list/describe command supports `-o table|json|yaml|plain[|tree]` via
   `runner.EncodeStdout`. `plain` is uncolored TSV for grep/awk. Honor `--no-color`/`NO_COLOR`;
   spinners auto-disable when piped.

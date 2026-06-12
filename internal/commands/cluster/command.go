@@ -2,9 +2,10 @@
 package cluster
 
 import (
+	"context"
 	"time"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
@@ -14,7 +15,7 @@ func Command() *cli.Command {
 	return &cli.Command{
 		Name:  "cluster",
 		Usage: "Cluster operations (list, get, diff)",
-		Subcommands: []*cli.Command{
+		Commands: []*cli.Command{
 			listCommand(),
 			describeCommand(),
 			diffCommand(),
@@ -31,8 +32,8 @@ func listCommand() *cli.Command {
 Direct EKS API calls provide high performance along with comprehensive
 health monitoring and multi-region capabilities.`,
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: 60 * time.Second, EnvVars: []string{"REFRESH_TIMEOUT"}},
-			&cli.IntFlag{Name: "max-concurrency", Aliases: []string{"C"}, Usage: "Max concurrent region requests", Value: appconfig.DefaultMaxConcurrency, EnvVars: []string{"REFRESH_MAX_CONCURRENCY"}},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: 60 * time.Second, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
+			&cli.IntFlag{Name: "max-concurrency", Aliases: []string{"C"}, Usage: "Max concurrent region requests", Value: appconfig.DefaultMaxConcurrency, Sources: cli.EnvVars("REFRESH_MAX_CONCURRENCY")},
 			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Query all EKS-supported regions"},
 			&cli.StringFlag{Name: "sort", Usage: "Sort by field: name,status,version,region", Value: "name"},
 			&cli.BoolFlag{Name: "desc", Usage: "Sort descending"},
@@ -44,7 +45,7 @@ health monitoring and multi-region capabilities.`,
 			&cli.BoolFlag{Name: "watch", Aliases: []string{"w"}, Usage: "Re-run and redraw every --watch-interval until interrupted"},
 			&cli.DurationFlag{Name: "watch-interval", Usage: "Refresh interval for --watch", Value: 10 * time.Second},
 		},
-		Action: func(c *cli.Context) error { return runList(c) },
+		Action: func(ctx context.Context, cmd *cli.Command) error { return runList(ctx, cmd) },
 	}
 }
 
@@ -58,7 +59,7 @@ func describeCommand() *cli.Command {
 security configuration, add-ons, and health status. Direct EKS API calls
 provide fast, comprehensive results without CloudFormation dependency.`,
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, EnvVars: []string{"REFRESH_TIMEOUT"}},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "detailed", Aliases: []string{"d"}, Usage: "Show comprehensive information including networking and security"},
 			&cli.BoolFlag{Name: "show-health", Aliases: []string{"H"}, Usage: "Include health status from existing health framework", Value: true},
@@ -66,7 +67,7 @@ provide fast, comprehensive results without CloudFormation dependency.`,
 			&cli.BoolFlag{Name: "include-addons", Aliases: []string{"a"}, Usage: "Include EKS add-on information", Value: true},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(c *cli.Context) error { return runDescribe(c) },
+		Action: func(ctx context.Context, cmd *cli.Command) error { return runDescribe(ctx, cmd) },
 	}
 }
 
@@ -85,6 +86,6 @@ security, add-ons, and version configurations.`,
 			&cli.StringSliceFlag{Name: "include", Aliases: []string{"i"}, Usage: "Compare specific aspects (networking, security, addons, versions)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(c *cli.Context) error { return runDiff(c) },
+		Action: func(ctx context.Context, cmd *cli.Command) error { return runDiff(ctx, cmd) },
 	}
 }

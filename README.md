@@ -267,7 +267,7 @@ Stop passing `--cluster`, `--region`, and `--profile` on every invocation. Save
 a named context once, then switch between them with `refresh use`.
 
 ```bash
-# Save contexts (flags must come before the positional name)
+# Save contexts
 refresh context add --cluster prod-eks --region us-east-1 --profile prod-admin prod
 refresh context add --cluster stg-eks  --region us-west-2                       staging
 
@@ -434,12 +434,9 @@ refresh ng list --sort instance -c prod
 **Sort Keys:**
 - `name`, `status`, `instance`, `nodes`, `cpu`, `cost`
 
-**Important:** Flags must come before positional arguments (urfave/cli v2 requirement):
+Flags may appear before or after positional arguments — both forms work:
 ```bash
-# CORRECT
 refresh ng list --show-costs -c prod
-
-# INCORRECT (flags after positional arg will be ignored)
 refresh ng list -c prod --show-costs
 ```
 
@@ -782,7 +779,7 @@ The codebase follows clean architecture principles:
 1. **Concurrency**: Channels for monitoring, mutexes for shared state
 2. **Error Handling**: Custom error types with classification
 3. **Caching**: Thread-safe caches with TTL support
-4. **CLI**: Hierarchical commands with urfave/cli/v2
+4. **CLI**: Hierarchical commands with urfave/cli/v3
 
 ## Release Process
 

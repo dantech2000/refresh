@@ -221,8 +221,8 @@ func TestNewAppAndRun(t *testing.T) {
 	if len(app.Commands) == 0 || len(app.Flags) != 3 {
 		t.Fatalf("unexpected app shape: commands=%d flags=%d", len(app.Commands), len(app.Flags))
 	}
-	if !app.EnableBashCompletion {
-		t.Fatal("bash completion should be enabled")
+	if !app.EnableShellCompletion {
+		t.Fatal("shell completion should be enabled")
 	}
 
 	var out, errOut bytes.Buffer

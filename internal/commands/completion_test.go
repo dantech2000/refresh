@@ -2,22 +2,23 @@ package commands
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
 func runCompletion(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
-	app := &cli.App{
-		Name:                 "refresh",
-		EnableBashCompletion: true,
-		Commands:             []*cli.Command{CompletionCommand()},
+	app := &cli.Command{
+		Name:                  "refresh",
+		EnableShellCompletion: true,
+		Commands:              []*cli.Command{CompletionCommand()},
 	}
 	app.Writer = &out
-	err := app.Run(append([]string{"refresh", "completion"}, args...))
+	err := app.Run(context.Background(), append([]string{"refresh", "completion"}, args...))
 	return out.String(), err
 }
 
