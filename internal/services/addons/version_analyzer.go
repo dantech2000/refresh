@@ -72,6 +72,13 @@ func (s *ServiceImpl) GetAvailableVersions(ctx context.Context, addonName string
 	return versions, nil
 }
 
+// CompareVersions compares EKS addon version strings such as
+// "v1.18.1-eksbuild.3", returning >0 when a is newer than b. Exported for the
+// upgrade orchestrator's already-satisfied checks.
+func CompareVersions(a, b string) int {
+	return compareAddonVersions(a, b)
+}
+
 // compareAddonVersions compares EKS addon version strings such as
 // "v1.18.1-eksbuild.3", returning >0 when a is newer than b. Numeric segments
 // are compared numerically; non-numeric segments lexically.
@@ -102,9 +109,13 @@ func compareAddonVersions(a, b string) int {
 	return len(as) - len(bs)
 }
 
-// waitForAddonUpdate polls until an addon update completes.
-func (s *ServiceImpl) waitForAddonUpdate(ctx context.Context, clusterName, addonName string) error {
-	ticker := time.NewTicker(addonUpdatePollInterval)
+// waitForAddonUpdate polls until an addon update completes. pollInterval
+// falls back to addonUpdatePollInterval when zero.
+func (s *ServiceImpl) waitForAddonUpdate(ctx context.Context, clusterName, addonName string, pollInterval time.Duration) error {
+	if pollInterval <= 0 {
+		pollInterval = addonUpdatePollInterval
+	}
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {

@@ -28,6 +28,13 @@ var addonDependencies = map[string][]string{
 	"aws-guardduty-agent": {"vpc-cni"},
 }
 
+// SortByDependency returns the addons reordered so that dependencies update
+// before their dependents (vpc-cni before coredns/kube-proxy, etc.). Exported
+// for the upgrade orchestrator, which sequences per-addon updates itself.
+func SortByDependency(addons []AddonSummary) []AddonSummary {
+	return sortByDependency(addons)
+}
+
 // sortByDependency returns addons in a safe update order using Kahn's algorithm.
 // Addons absent from the dependency map are treated as having no deps and are
 // appended after the ordered set.

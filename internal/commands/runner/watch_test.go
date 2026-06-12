@@ -1,35 +1,44 @@
 package runner
 
 import (
+	"context"
 	"errors"
-	"flag"
 	"testing"
 	"time"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
-func newWatchTestContext(t *testing.T, watch bool, interval time.Duration) *cli.Context {
+func newWatchTestCommand(t *testing.T, watch bool, interval time.Duration) *cli.Command {
 	t.Helper()
-	set := flag.NewFlagSet("test", flag.ContinueOnError)
-	set.Bool("watch", false, "")
-	set.Duration("watch-interval", 10*time.Second, "")
+	var captured *cli.Command
+	cmd := &cli.Command{
+		Name: "test",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "watch"},
+			&cli.DurationFlag{Name: "watch-interval", Value: 10 * time.Second},
+		},
+		Action: func(_ context.Context, c *cli.Command) error {
+			captured = c
+			return nil
+		},
+	}
+	argv := []string{"test"}
 	if watch {
-		if err := set.Set("watch", "true"); err != nil {
-			t.Fatal(err)
-		}
+		argv = append(argv, "--watch")
 	}
 	if interval > 0 {
-		if err := set.Set("watch-interval", interval.String()); err != nil {
-			t.Fatal(err)
-		}
+		argv = append(argv, "--watch-interval="+interval.String())
 	}
-	return cli.NewContext(cli.NewApp(), set, nil)
+	if err := cmd.Run(context.Background(), argv); err != nil {
+		t.Fatal(err)
+	}
+	return captured
 }
 
 func TestWatchRunsOnceWithoutFlag(t *testing.T) {
 	runs := 0
-	err := Watch(newWatchTestContext(t, false, 0), func() error {
+	err := Watch(newWatchTestCommand(t, false, 0), func() error {
 		runs++
 		return nil
 	})
@@ -41,7 +50,7 @@ func TestWatchRunsOnceWithoutFlag(t *testing.T) {
 func TestWatchPropagatesError(t *testing.T) {
 	sentinel := errors.New("boom")
 	runs := 0
-	err := Watch(newWatchTestContext(t, true, time.Millisecond), func() error {
+	err := Watch(newWatchTestCommand(t, true, time.Millisecond), func() error {
 		runs++
 		if runs == 3 {
 			return sentinel
@@ -64,7 +73,7 @@ func TestWatchNonInteractiveDoesNotClearScreen(t *testing.T) {
 	t.Cleanup(func() { watchIsTerminal = old })
 
 	runs := 0
-	_ = Watch(newWatchTestContext(t, true, time.Millisecond), func() error {
+	_ = Watch(newWatchTestCommand(t, true, time.Millisecond), func() error {
 		runs++
 		return errors.New("stop")
 	})

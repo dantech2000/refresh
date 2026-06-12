@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
 )
 
 func findSub(cmd *cli.Command, name string) *cli.Command {
-	for _, sc := range cmd.Subcommands {
+	for _, sc := range cmd.Commands {
 		if sc.Name == name {
 			return sc
 		}

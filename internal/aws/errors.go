@@ -253,6 +253,10 @@ Required permissions for refresh tool:
 - eks:ListNodegroups
 - eks:DescribeNodegroup
 - eks:UpdateNodegroupVersion
+- eks:UpdateClusterVersion (for cluster upgrade)
+- eks:DescribeUpdate (for cluster upgrade)
+- eks:DescribeClusterVersions (for cluster upgrade)
+- eks:ListInsights (for cluster upgrade readiness)
 - cloudwatch:GetMetricStatistics (for health checks)
 
 Current error: %w`, operation, err)

@@ -5,15 +5,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/workloads"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func runPDBs(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Duration("timeout"))
+func runPDBs(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel := context.WithTimeout(ctx, cmd.Duration("timeout"))
 	defer cancel()
 
 	client, err := health.GetKubernetesClient()
@@ -22,7 +22,7 @@ func runPDBs(c *cli.Context) error {
 	}
 
 	start := time.Now()
-	format := strings.ToLower(c.String("format"))
+	format := strings.ToLower(cmd.String("format"))
 	var spinner *ui.FunSpinner
 	if format == "table" || format == "plain" || format == "" {
 		spinner = ui.NewFunSpinnerForCategory("workload")
@@ -33,8 +33,8 @@ func runPDBs(c *cli.Context) error {
 	}
 
 	result, err := workloads.AnalyzePDBCoverage(ctx, client, workloads.PDBCoverageOptions{
-		Namespace:     strings.TrimSpace(c.String("namespace")),
-		IncludeSystem: c.Bool("include-system"),
+		Namespace:     strings.TrimSpace(cmd.String("namespace")),
+		IncludeSystem: cmd.Bool("include-system"),
 	})
 	if err != nil {
 		if spinner != nil {

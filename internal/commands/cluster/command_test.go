@@ -11,7 +11,7 @@ func TestClusterCommandStructure(t *testing.T) {
 	}
 
 	findSubcmd := func(name string) bool {
-		for _, sc := range cmd.Subcommands {
+		for _, sc := range cmd.Commands {
 			if sc.Name == name {
 				return true
 			}

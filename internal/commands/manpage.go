@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -10,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/urfave/cli/v2"
+	docs "github.com/urfave/cli-docs/v3"
+	"github.com/urfave/cli/v3"
 )
 
 const (
@@ -34,10 +36,9 @@ No sudo privileges required - works seamlessly across macOS, Linux, and Unix sys
 	}
 }
 
-func installManPage(c *cli.Context) error {
-	// Generate the man page content
-	app := c.App
-	manContent, err := app.ToMan()
+func installManPage(_ context.Context, cmd *cli.Command) error {
+	// Generate the man page content (ToMan moved to urfave/cli-docs in v3)
+	manContent, err := docs.ToMan(cmd.Root())
 	if err != nil {
 		return fmt.Errorf("failed to generate man page: %w", err)
 	}

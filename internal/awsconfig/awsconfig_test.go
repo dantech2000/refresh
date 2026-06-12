@@ -2,14 +2,32 @@ package awsconfig
 
 import (
 	"context"
-	"flag"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
+
+// newParsedCommand runs a throwaway command with the given flags and argv and
+// returns the parsed *cli.Command for accessor tests.
+func newParsedCommand(t *testing.T, flags []cli.Flag, argv ...string) *cli.Command {
+	t.Helper()
+	var captured *cli.Command
+	cmd := &cli.Command{
+		Name:  "test",
+		Flags: flags,
+		Action: func(_ context.Context, c *cli.Command) error {
+			captured = c
+			return nil
+		},
+	}
+	if err := cmd.Run(context.Background(), append([]string{"test"}, argv...)); err != nil {
+		t.Fatal(err)
+	}
+	return captured
+}
 
 func setupContext(t *testing.T, name string, ctx cliconfig.Context) {
 	t.Helper()
@@ -101,38 +119,28 @@ func TestFlagOrEmpty(t *testing.T) {
 		t.Fatalf("flagOrEmpty(nil) = %q, want empty", got)
 	}
 
-	set := flag.NewFlagSet("test", flag.ContinueOnError)
-	set.String("region", "us-east-2", "")
-	ctx := cli.NewContext(cli.NewApp(), set, nil)
-	if got := flagOrEmpty(ctx, "region"); got != "us-east-2" {
+	cmd := newParsedCommand(t,
+		[]cli.Flag{&cli.StringFlag{Name: "region", Value: "us-east-2"}})
+	if got := flagOrEmpty(cmd, "region"); got != "us-east-2" {
 		t.Fatalf("flagOrEmpty() = %q, want us-east-2", got)
 	}
 }
 
 func TestFlagOrEmptyIgnoresEmptyStringSliceFlag(t *testing.T) {
-	set := flag.NewFlagSet("test", flag.ContinueOnError)
-	app := cli.NewApp()
-	app.Flags = []cli.Flag{
-		&cli.StringSliceFlag{Name: "region"},
-	}
-	ctx := cli.NewContext(app, set, nil)
+	cmd := newParsedCommand(t,
+		[]cli.Flag{&cli.StringSliceFlag{Name: "region"}})
 
-	if got := flagOrEmpty(ctx, "region"); got != "" {
+	if got := flagOrEmpty(cmd, "region"); got != "" {
 		t.Fatalf("flagOrEmpty() = %q, want empty", got)
 	}
 }
 
 func TestFlagOrEmptyReadsFirstStringSliceFlagValue(t *testing.T) {
-	set := flag.NewFlagSet("test", flag.ContinueOnError)
-	regions := cli.NewStringSlice("us-west-2", "us-east-1")
-	set.Var(regions, "region", "")
-	app := cli.NewApp()
-	app.Flags = []cli.Flag{
-		&cli.StringSliceFlag{Name: "region"},
-	}
-	ctx := cli.NewContext(app, set, nil)
+	cmd := newParsedCommand(t,
+		[]cli.Flag{&cli.StringSliceFlag{Name: "region"}},
+		"--region", "us-west-2", "--region", "us-east-1")
 
-	if got := flagOrEmpty(ctx, "region"); got != "us-west-2" {
+	if got := flagOrEmpty(cmd, "region"); got != "us-west-2" {
 		t.Fatalf("flagOrEmpty() = %q, want us-west-2", got)
 	}
 }
@@ -156,12 +164,11 @@ func TestLoadCLIFlagsOverrideContext(t *testing.T) {
 	setupContext(t, "prod", cliconfig.Context{Cluster: "x", Region: "eu-west-1"})
 	setupAWSConfigFile(t)
 
-	set := flag.NewFlagSet("test", flag.ContinueOnError)
-	set.String("region", "us-west-1", "")
-	set.String("profile", "flag-profile", "")
-	ctx := cli.NewContext(cli.NewApp(), set, nil)
+	cmd := newParsedCommand(t,
+		[]cli.Flag{&cli.StringFlag{Name: "region"}, &cli.StringFlag{Name: "profile"}},
+		"--region", "us-west-1", "--profile", "flag-profile")
 
-	cfg, err := Load(context.Background(), ctx)
+	cfg, err := Load(context.Background(), cmd)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -175,12 +182,11 @@ func TestLoadProfileFlagWinsOverAWSProfileEnv(t *testing.T) {
 	setupAWSConfigFile(t)
 	t.Setenv("AWS_PROFILE", "env-profile")
 
-	set := flag.NewFlagSet("test", flag.ContinueOnError)
-	set.String("region", "", "")
-	set.String("profile", "flag-profile", "")
-	ctx := cli.NewContext(cli.NewApp(), set, nil)
+	cmd := newParsedCommand(t,
+		[]cli.Flag{&cli.StringFlag{Name: "region"}, &cli.StringFlag{Name: "profile"}},
+		"--profile", "flag-profile")
 
-	cfg, err := Load(context.Background(), ctx)
+	cfg, err := Load(context.Background(), cmd)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
