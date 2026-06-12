@@ -48,7 +48,21 @@ jobs:
       - name: Harden runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
         with:
-          egress-policy: audit
+          egress-policy: block
+          disable-sudo: true
+          # The build job only needs: git checkout, the uv binary (GitHub
+          # release), and Python wheels (PyPI). GitHub Actions' own endpoints
+          # (incl. artifact upload) are allowed by harden-runner automatically.
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            pypi.org:443
+            files.pythonhosted.org:443
+            astral.sh:443
 
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
