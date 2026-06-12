@@ -218,8 +218,9 @@ func TestNewAppAndRun(t *testing.T) {
 	if app.Name != "refresh" {
 		t.Fatalf("app name = %q", app.Name)
 	}
-	// Global flags: --timeout, --max-concurrency, --no-color, --profile, --region.
-	if len(app.Commands) == 0 || len(app.Flags) != 5 {
+	// Global flags: --timeout, --max-concurrency, --no-color, --profile,
+	// --region, --log-level, --verbose.
+	if len(app.Commands) == 0 || len(app.Flags) != 7 {
 		t.Fatalf("unexpected app shape: commands=%d flags=%d", len(app.Commands), len(app.Flags))
 	}
 	if !app.EnableShellCompletion {

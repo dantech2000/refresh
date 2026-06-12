@@ -35,7 +35,7 @@ func runList(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	addonSvc := addons.NewService(eks.NewFromConfig(cfg), factory.NewDefaultLogger(nil))
+	addonSvc := factory.NewAddonService(cfg, nil)
 
 	var summaries []addons.AddonSummary
 	start := time.Now()
@@ -74,13 +74,12 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("missing add-on name; pass as second argument or --addon <name>")
 	}
 
-	eksClient := eks.NewFromConfig(cfg)
-	addonName, err = resolveAddonName(ctx, eksClient, clusterName, addonName)
+	addonSvc := factory.NewAddonService(cfg, nil)
+	addonName, err = resolveAddonName(ctx, addonSvc.EKS(), clusterName, addonName)
 	if err != nil {
 		return err
 	}
 
-	addonSvc := addons.NewService(eksClient, factory.NewDefaultLogger(nil))
 	details, err := addonSvc.Describe(ctx, clusterName, addonName, addons.DescribeOptions{ShowConfiguration: true})
 	if err != nil {
 		return awsinternal.FormatAWSError(err, "describing add-on")
@@ -161,8 +160,11 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("missing add-on name; pass as second argument or --addon <name>")
 	}
 
-	eksClient := eks.NewFromConfig(cfg)
-	addonName, err = resolveAddonName(ctx, eksClient, clusterName, addonName)
+	// Route through the addons service so single-addon updates get the same
+	// version resolution, compatibility validation, optional health checks,
+	// and optional wait behavior as `update --all`.
+	addonSvc := factory.NewAddonService(cfg, nil)
+	addonName, err = resolveAddonName(ctx, addonSvc.EKS(), clusterName, addonName)
 	if err != nil {
 		return err
 	}
@@ -175,10 +177,6 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 		version = "latest"
 	}
 
-	// Route through the addons service so single-addon updates get the same
-	// version resolution, compatibility validation, optional health checks,
-	// and optional wait behavior as `update --all`.
-	addonSvc := addons.NewService(eksClient, factory.NewDefaultLogger(nil))
 	result, err := addonSvc.Update(ctx, clusterName, addonName, addons.UpdateOptions{
 		Version:     version,
 		DryRun:      cmd.Bool("dry-run"),
@@ -236,9 +234,7 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("--parallel and --dependency-order cannot be used together: parallel execution defeats dependency ordering")
 	}
 
-	eksClient := eks.NewFromConfig(cfg)
-	logger := factory.NewDefaultLogger(nil)
-	addonSvc := addons.NewService(eksClient, logger)
+	addonSvc := factory.NewAddonService(cfg, nil)
 
 	options := addons.UpdateAllOptions{
 		DryRun:          cmd.Bool("dry-run"),
