@@ -255,8 +255,10 @@ Required permissions for refresh tool:
 - eks:UpdateNodegroupVersion
 - eks:UpdateClusterVersion (for cluster upgrade)
 - eks:DescribeUpdate (for cluster upgrade)
-- eks:DescribeClusterVersions (for cluster upgrade)
+- eks:DescribeClusterVersions (for cluster upgrade and status support calendar)
 - eks:ListInsights (for cluster upgrade readiness)
+- eks:ListAddons / eks:DescribeAddon / eks:DescribeAddonVersions (for addon status)
+- ec2:DescribeImages / ec2:DescribeInstances (for AMI staleness and compute detection)
 - cloudwatch:GetMetricStatistics (for health checks)
 
 Current error: %w`, operation, err)
