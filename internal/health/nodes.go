@@ -43,6 +43,7 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	totalNodes := 0
 	readyNodes := 0
 	var problemNodes []string
+	var inProgress []string
 
 	// Prefer real node readiness from the Kubernetes API when available;
 	// DesiredSize is only a proxy (an ACTIVE nodegroup can still have
@@ -67,16 +68,18 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 			totalNodes += int(*nodegroup.ScalingConfig.DesiredSize)
 		}
 
-		// Check nodegroup status
+		// Classify by nodegroup status. CREATING/UPDATING are benign,
+		// in-progress states (scaling, rolling) — they are tracked separately
+		// and must not be reported as readiness failures.
 		switch nodegroup.Status {
 		case types.NodegroupStatusActive:
 			if nodegroup.ScalingConfig != nil && nodegroup.ScalingConfig.DesiredSize != nil {
 				readyNodes += int(*nodegroup.ScalingConfig.DesiredSize)
 			}
+		case types.NodegroupStatusCreating, types.NodegroupStatusUpdating:
+			inProgress = append(inProgress, fmt.Sprintf("%s (%s)", ngName, string(nodegroup.Status)))
 		case types.NodegroupStatusDegraded:
 			problemNodes = append(problemNodes, fmt.Sprintf("%s (DEGRADED)", ngName))
-		case types.NodegroupStatusCreating, types.NodegroupStatusUpdating:
-			problemNodes = append(problemNodes, fmt.Sprintf("%s (%s)", ngName, string(nodegroup.Status)))
 		default:
 			problemNodes = append(problemNodes, fmt.Sprintf("%s (%s)", ngName, string(nodegroup.Status)))
 		}
@@ -93,6 +96,10 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 		}
 	}
 
+	if len(inProgress) > 0 {
+		result.Details = append(result.Details, fmt.Sprintf("Nodegroups scaling/updating (not a failure): %v", inProgress))
+	}
+
 	// Calculate score and status
 	if totalNodes == 0 {
 		result.Status = StatusFail
@@ -102,21 +109,48 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	}
 
 	scorePercentage := (readyNodes * 100) / totalNodes
+
+	// Without real Kubernetes counts the score is an estimate derived from
+	// nodegroup desired capacity: an ACTIVE nodegroup can still hold
+	// NotReady/cordoned nodes, so a "100%" here is not a confident measurement.
+	// Cap it below 100 and label it estimated.
+	estimated := !haveRealCounts
+	if estimated {
+		result.Details = append(result.Details, "Node readiness estimated from nodegroup desired capacity (no Kubernetes API access)")
+		if scorePercentage > maxEstimatedNodeHealthScore {
+			scorePercentage = maxEstimatedNodeHealthScore
+		}
+	}
 	result.Score = scorePercentage
 
-	if len(problemNodes) == 0 {
-		result.Status = StatusPass
-		result.Message = fmt.Sprintf("%d/%d nodes ready", readyNodes, totalNodes)
-	} else if readyNodes > 0 {
+	estimatedSuffix := ""
+	if estimated {
+		estimatedSuffix = " (estimated)"
+	}
+
+	switch {
+	case len(problemNodes) == 0 && readyNodes == 0 && len(inProgress) > 0:
+		// Everything is mid-scale and nothing is wrong — warn, don't fail.
 		result.Status = StatusWarn
-		result.Message = fmt.Sprintf("%d/%d nodes ready, issues: %v", readyNodes, totalNodes, problemNodes)
-	} else {
+		result.Message = fmt.Sprintf("Nodegroups still scaling: %v", inProgress)
+	case len(problemNodes) == 0:
+		result.Status = StatusPass
+		result.Message = fmt.Sprintf("%d/%d nodes ready%s", readyNodes, totalNodes, estimatedSuffix)
+	case readyNodes > 0:
+		result.Status = StatusWarn
+		result.Message = fmt.Sprintf("%d/%d nodes ready%s, issues: %v", readyNodes, totalNodes, estimatedSuffix, problemNodes)
+	default:
 		result.Status = StatusFail
 		result.Message = fmt.Sprintf("No ready nodes, issues: %v", problemNodes)
 	}
 
 	return result
 }
+
+// maxEstimatedNodeHealthScore caps the Node Health score when it is derived
+// from the nodegroup DesiredSize proxy rather than real Kubernetes node counts,
+// so an estimate never reads as a confident perfect 100.
+const maxEstimatedNodeHealthScore = 90
 
 // kubernetesNodeCounts returns real node readiness from the Kubernetes API:
 // total node count, ready count, and names of NotReady nodes. ok is false when

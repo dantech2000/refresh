@@ -19,6 +19,7 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 	if hc.k8sClient == nil {
 		result.Status = StatusWarn
 		result.Score = 70
+		result.Skipped = true // excluded from OverallScore — not measured
 		result.Message = "Kubernetes client not available, skipping PDB check"
 		result.Details = append(result.Details, "Install kubectl and configure cluster access to enable this check")
 		return result
