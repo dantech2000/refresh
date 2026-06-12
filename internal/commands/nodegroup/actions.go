@@ -246,6 +246,10 @@ func (f updateAMIFlags) machineHealthOutput() bool {
 }
 
 func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
+	if cmd.Bool("all-clusters") {
+		return runFleetUpdate(ctx, cmd)
+	}
+
 	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(ctx, cmd, 60*time.Second)
 	if err != nil {
 		return err
@@ -278,8 +282,38 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	jsonOut := flags.format == "json" && !flags.healthOnly
 	quiet := flags.quiet || jsonOut
 
-	// Snapshot Pending pods before the roll so post-roll verification can tell
-	// pre-existing stuck pods from ones this roll left behind (best-effort kube).
+	outcomes, verifyFailed, monErr := executeUpdates(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
+
+	if jsonOut {
+		if _, err := runner.EncodeStdout("json", outcomes); err != nil {
+			return err
+		}
+		return updateExit(outcomes, monErr, verifyFailed)
+	}
+	switch {
+	case len(outcomes.Started) == 0:
+		if !quiet {
+			color.Yellow("No nodegroup updates were started")
+		}
+	case flags.noWait:
+		if !quiet {
+			fmt.Printf("Started %d nodegroup update(s). Use 'refresh list --cluster %s' to check status.\n",
+				len(outcomes.Started), clusterName)
+		}
+	default:
+		if !quiet && outcomes.Verification != nil {
+			printVerification(*outcomes.Verification)
+		}
+	}
+	return updateExit(outcomes, monErr, verifyFailed)
+}
+
+// executeUpdates runs the mutating part of an update for one cluster: snapshot
+// (for verification), start updates, monitor to completion, then verify. It
+// returns the per-nodegroup outcomes, whether verification failed, and any
+// monitoring error. Output/exit-code decisions are left to the caller so this
+// is reusable by both the single-cluster and fleet paths.
+func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selected []string, flags updateAMIFlags) (updateOutcomes, bool, error) {
 	verify := !flags.skipVerify && !flags.noWait
 	var verifyClient kubernetes.Interface
 	var preroll pendingPodSet
@@ -288,30 +322,12 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		preroll = snapshotPendingPods(ctx, verifyClient)
 	}
 
-	updates, outcomes := startNodegroupUpdates(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
-
-	if len(updates) == 0 {
-		if jsonOut {
-			if _, err := runner.EncodeStdout("json", outcomes); err != nil {
-				return err
-			}
-		} else if !quiet {
-			color.Yellow("No nodegroup updates were started")
-		}
-		return updateExit(outcomes, nil, false)
-	}
-	if flags.noWait {
-		if jsonOut {
-			if _, err := runner.EncodeStdout("json", outcomes); err != nil {
-				return err
-			}
-		} else if !quiet {
-			fmt.Printf("Started %d nodegroup update(s). Use 'refresh list --cluster %s' to check status.\n",
-				len(updates), clusterName)
-		}
-		return updateExit(outcomes, nil, false)
+	updates, outcomes := startNodegroupUpdates(ctx, awsCfg, eksClient, clusterName, selected, flags)
+	if len(updates) == 0 || flags.noWait {
+		return outcomes, false, nil
 	}
 
+	quiet := flags.quiet || (flags.format == "json" && !flags.healthOnly)
 	monitor := &refreshTypes.ProgressMonitor{
 		Updates:   updates,
 		StartTime: time.Now(),
@@ -334,17 +350,8 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll)
 		outcomes.Verification = &result
 		verifyFailed = !result.OK()
-		if !jsonOut && !flags.quiet {
-			printVerification(result)
-		}
 	}
-
-	if jsonOut {
-		if _, err := runner.EncodeStdout("json", outcomes); err != nil {
-			return err
-		}
-	}
-	return updateExit(outcomes, monErr, verifyFailed)
+	return outcomes, verifyFailed, monErr
 }
 
 // printVerification renders the post-roll verification block.
