@@ -2,11 +2,16 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v3"
+	"gopkg.in/yaml.v3"
 )
 
 // ── setupAWS context propagation ──────────────────────────────────────────────
@@ -230,5 +235,98 @@ func TestParseFilters(t *testing.T) {
 func TestParseFilters_Empty(t *testing.T) {
 	if got := ParseFilters(nil); len(got) != 0 {
 		t.Errorf("ParseFilters(nil) = %v, want empty map", got)
+	}
+}
+
+// ── ValidateFormat (REF-48) ─────────────────────────────────────────────────
+
+func TestValidateFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		format  string
+		allowed []string
+		wantErr bool
+	}{
+		{"empty is valid (caller defaults to table)", "", FormatsStandard, false},
+		{"table valid", "table", FormatsStandard, false},
+		{"json valid", "json", FormatsStandard, false},
+		{"case-insensitive", "JSON", FormatsStandard, false},
+		{"surrounding space tolerated", "  yaml ", FormatsStandard, false},
+		{"tree only valid with tree set", "tree", FormatsWithTree, false},
+		{"tree rejected in standard set", "tree", FormatsStandard, true},
+		{"typo rejected", "jsom", FormatsStandard, true},
+		{"xml rejected", "xml", FormatsStandard, true},
+		{"yaml rejected for table/json-only", "yaml", FormatsTableJSON, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateFormat(tc.format, tc.allowed)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateFormat(%q) error = %v, wantErr %v", tc.format, err, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "valid:") {
+				t.Errorf("error %q should list valid formats", err)
+			}
+		})
+	}
+}
+
+// ── EncodeStdout YAML key parity (REF-59) ───────────────────────────────────
+
+// captureStdout redirects os.Stdout for the duration of fn and returns what was
+// written.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	fn()
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+// EncodeStdout's YAML output must use the same camelCase keys as its JSON output
+// (driven by the `json` tags), not yaml.v3's lowercased Go field names.
+func TestEncodeStdout_YAMLKeysMatchJSON(t *testing.T) {
+	type item struct {
+		InstanceType string `json:"instanceType"`
+		DesiredSize  int    `json:"desiredSize"`
+		ReadyNodes   int    `json:"readyNodes"`
+	}
+	payload := map[string]any{"nodegroups": []item{{"m5.large", 3, 2}}, "count": 1}
+
+	yamlOut := captureStdout(t, func() {
+		if handled, err := EncodeStdout("yaml", payload); !handled || err != nil {
+			t.Fatalf("EncodeStdout(yaml) handled=%v err=%v", handled, err)
+		}
+	})
+
+	for _, key := range []string{"instanceType:", "desiredSize:", "readyNodes:"} {
+		if !strings.Contains(yamlOut, key) {
+			t.Errorf("YAML output missing camelCase key %q\n%s", key, yamlOut)
+		}
+	}
+	if strings.Contains(yamlOut, "instancetype:") {
+		t.Errorf("YAML output still has lowercased key 'instancetype'\n%s", yamlOut)
+	}
+
+	// And the YAML must round-trip to the same structure as the JSON encoding.
+	var fromYAML, fromJSON any
+	if err := yaml.Unmarshal([]byte(yamlOut), &fromYAML); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	jsonBytes, _ := json.Marshal(payload)
+	if err := json.Unmarshal(jsonBytes, &fromJSON); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	gotJSON, _ := json.Marshal(fromYAML)
+	wantJSON, _ := json.Marshal(fromJSON)
+	if string(gotJSON) != string(wantJSON) {
+		t.Errorf("YAML structure diverges from JSON:\n got=%s\nwant=%s", gotJSON, wantJSON)
 	}
 }
