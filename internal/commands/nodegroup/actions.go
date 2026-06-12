@@ -140,7 +140,15 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 
 	logger := factory.NewDefaultLogger(nil)
 	withHealth := cmd.Bool("health-check") || cmd.Bool("check-pdbs") || cmd.Bool("wait")
-	svc := factory.NewNodegroupService(awsCfg, withHealth, logger)
+	var svc *nodegroupsvc.ServiceImpl
+	if withHealth {
+		// Wire a Kubernetes client so workload/PDB checks run against the right
+		// cluster (--kubeconfig), with an actionable diagnostic when unreachable.
+		k8sClient := resolveHealthKubeClient(ctx, cmd.String("kubeconfig"), true)
+		svc = factory.NewNodegroupServiceWithHealth(awsCfg, k8sClient, logger)
+	} else {
+		svc = factory.NewNodegroupService(awsCfg, false, logger)
+	}
 
 	opts := nodegroupsvc.ScaleOptions{
 		HealthCheck: cmd.Bool("health-check"),
@@ -208,6 +216,7 @@ type updateAMIFlags struct {
 	yes, requireHealthy, skipVerify, changelog                bool
 	timeout, pollInterval                                     time.Duration
 	format                                                    string
+	kubeconfig                                                string
 }
 
 func readUpdateAMIFlags(cmd *cli.Command) updateAMIFlags {
@@ -227,6 +236,7 @@ func readUpdateAMIFlags(cmd *cli.Command) updateAMIFlags {
 		timeout:         cmd.Duration("timeout"),
 		pollInterval:    cmd.Duration("poll-interval"),
 		format:          strings.ToLower(cmd.String("format")),
+		kubeconfig:      cmd.String("kubeconfig"),
 	}
 }
 
@@ -395,6 +405,30 @@ func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
 	return nil
 }
 
+// resolveHealthKubeClient builds the Kubernetes client for the pre-flight
+// health checks from an optional --kubeconfig path and verifies connectivity.
+// On any failure it emits an actionable diagnostic (naming the kubeconfig /
+// context it tried) and returns nil, so the kube-dependent checks degrade to
+// "skipped" rather than failing silently.
+func resolveHealthKubeClient(ctx context.Context, kubeconfig string, humanOutput bool) kubernetes.Interface {
+	client, diag, err := health.BuildKubeClient(kubeconfig)
+	if err != nil {
+		if humanOutput {
+			color.Yellow("Kubernetes checks unavailable: %v (%s)", err, diag)
+			color.Yellow("Workload/PDB checks will be skipped; node readiness falls back to an estimate.")
+		}
+		return nil
+	}
+	if probeErr := health.ProbeConnection(ctx, client); probeErr != nil {
+		if humanOutput {
+			color.Yellow("Kubernetes API unreachable via %s: %v", diag, probeErr)
+			color.Yellow("Workload/PDB checks will be skipped; node readiness falls back to an estimate.")
+		}
+		return nil
+	}
+	return client
+}
+
 // preflightHealthCheck runs the pre-update health checks. Returns done=true if
 // the caller should stop here (block decision, user cancelled, or --health-only).
 func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, flags updateAMIFlags) (done bool, err error) {
@@ -415,11 +449,7 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	}
 	cwClient := cloudwatch.NewFromConfig(awsCfg)
 	asgClient := autoscaling.NewFromConfig(awsCfg)
-	k8sClient, k8sErr := health.GetKubernetesClient()
-	if k8sClient == nil && humanOutput {
-		color.Yellow("Warning: Kubernetes client not available (%v)", k8sErr)
-		color.Yellow("Health checks will be limited to AWS-only validations")
-	}
+	k8sClient := resolveHealthKubeClient(ctx, flags.kubeconfig, humanOutput)
 	checker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
 
 	spinner := ui.NewFunSpinnerForCategory("health")

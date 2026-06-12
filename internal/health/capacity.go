@@ -23,6 +23,16 @@ const (
 	minWarnCPUHeadroomPercent = 15.0
 )
 
+// Per-node peak-CPU thresholds. The cluster mean can hide a single saturated
+// node (one busy large instance averaged with idle small ones), so the peak
+// node degrades — never upgrades — the mean-based verdict: a node at or above
+// peakFailCPUPercent fails the check, and one at or above peakWarnCPUPercent
+// downgrades a pass to a warning.
+const (
+	peakWarnCPUPercent = 85.0
+	peakFailCPUPercent = 95.0
+)
+
 // CheckClusterCapacity validates that the cluster has sufficient capacity for rolling updates
 func (hc *HealthChecker) CheckClusterCapacity(ctx context.Context, clusterName string) HealthResult {
 	return hc.checkClusterCapacityWith(ctx, hc.newCPUSnapshot(clusterName))
@@ -51,32 +61,50 @@ func (hc *HealthChecker) checkClusterCapacityWith(ctx context.Context, snap *cpu
 	result.Details = append(result.Details, "Using default EC2 metrics (CPU only)")
 	result.Details = append(result.Details, "Memory metrics require Container Insights setup")
 
-	// Calculate average CPU utilization
+	// Calculate average and peak CPU utilization
 	cpuMetrics := make([]float64, 0, len(cpuByInstance))
 	for _, v := range cpuByInstance {
 		cpuMetrics = append(cpuMetrics, v)
 	}
 	avgCPU := calculateAverage(cpuMetrics)
+	maxCPU := maxFloat(cpuMetrics)
 
-	result.Details = append(result.Details, fmt.Sprintf("Average CPU utilization: %.1f%%", avgCPU))
+	result.Details = append(result.Details, fmt.Sprintf("Average CPU utilization: %.1f%% (peak node %.1f%%)", avgCPU, maxCPU))
 	result.Details = append(result.Details, "Memory utilization: Not available (requires Container Insights)")
 
-	// Calculate score based on CPU headroom only
+	// Mean-based verdict from cluster-wide CPU headroom.
 	headroom := 100 - avgCPU
-	if headroom >= minSafeCPUHeadroomPercent {
+	switch {
+	case headroom >= minSafeCPUHeadroomPercent:
 		result.Status = StatusPass
 		result.Score = 100
-		result.Message = fmt.Sprintf("Sufficient CPU capacity (%.1f%% utilization)", avgCPU)
-	} else if headroom >= minWarnCPUHeadroomPercent {
+		result.Message = fmt.Sprintf("Sufficient CPU capacity (avg %.1f%%, peak %.1f%%)", avgCPU, maxCPU)
+	case headroom >= minWarnCPUHeadroomPercent:
 		result.Status = StatusWarn
 		result.Score = 70
-		result.Message = fmt.Sprintf("Limited CPU capacity (%.1f%% utilization)", avgCPU)
+		result.Message = fmt.Sprintf("Limited CPU capacity (avg %.1f%%, peak %.1f%%)", avgCPU, maxCPU)
 		result.Details = append(result.Details, "Consider scaling up nodes before update")
-	} else {
+	default:
 		result.Status = StatusFail
 		result.Score = 30
-		result.Message = fmt.Sprintf("Insufficient CPU capacity (%.1f%% utilization)", avgCPU)
+		result.Message = fmt.Sprintf("Insufficient CPU capacity (avg %.1f%%, peak %.1f%%)", avgCPU, maxCPU)
 		result.Details = append(result.Details, "Insufficient CPU headroom for safe rolling update")
+	}
+
+	// Peak-node guard: a single near-saturated node is a real bottleneck for a
+	// rolling update even when the cluster mean looks healthy. Only ever
+	// degrade the mean-based verdict, never improve it.
+	switch {
+	case maxCPU >= peakFailCPUPercent && result.Status != StatusFail:
+		result.Status = StatusFail
+		result.Score = 30
+		result.Message = fmt.Sprintf("A node is near CPU saturation (peak %.1f%%, avg %.1f%%)", maxCPU, avgCPU)
+		result.Details = append(result.Details, fmt.Sprintf("At least one node at/above %.0f%% CPU — rolling it could overload its peers", peakFailCPUPercent))
+	case maxCPU >= peakWarnCPUPercent && result.Status == StatusPass:
+		result.Status = StatusWarn
+		result.Score = 70
+		result.Message = fmt.Sprintf("Uneven CPU capacity (peak %.1f%%, avg %.1f%%)", maxCPU, avgCPU)
+		result.Details = append(result.Details, fmt.Sprintf("At least one node at/above %.0f%% CPU despite a low cluster average", peakWarnCPUPercent))
 	}
 
 	return result
@@ -204,6 +232,20 @@ func calculateAverage(values []float64) float64 {
 		sum += value
 	}
 	return sum / float64(len(values))
+}
+
+// maxFloat returns the largest value in the slice, or 0 for an empty slice.
+func maxFloat(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	m := values[0]
+	for _, v := range values[1:] {
+		if v > m {
+			m = v
+		}
+	}
+	return m
 }
 
 // getClusterInstanceIDs retrieves all EC2 instance IDs for the cluster
