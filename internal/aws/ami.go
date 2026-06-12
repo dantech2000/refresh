@@ -103,6 +103,24 @@ func LatestAmiIDForType(ctx context.Context, ssmClient *ssm.Client, k8sVersion s
 	return *ssmOut.Parameter.Value
 }
 
+// LatestReleaseVersionForType returns the latest recommended AMI *release
+// version* (e.g. "1.31.0-20260601") for an AMI type — the human-meaningful
+// counterpart of LatestAmiIDForType, used for changelog/version-delta display.
+// Returns "" for custom AMIs or when the SSM parameter is unavailable.
+func LatestReleaseVersionForType(ctx context.Context, ssmClient *ssm.Client, k8sVersion string, amiType types.AMITypes) string {
+	imgPath := buildSSMParameterPath(k8sVersion, amiType)
+	if imgPath == "" {
+		return ""
+	}
+	relPath := strings.TrimSuffix(imgPath, "image_id") + "release_version"
+
+	out, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(relPath)})
+	if err != nil || out.Parameter == nil || out.Parameter.Value == nil {
+		return ""
+	}
+	return *out.Parameter.Value
+}
+
 // buildSSMParameterPath constructs the SSM parameter path for the given AMI type.
 // Reference: https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html
 func buildSSMParameterPath(k8sVersion string, amiType types.AMITypes) string {

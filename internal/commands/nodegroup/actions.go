@@ -205,7 +205,7 @@ func int32PtrIfSet(cmd *cli.Command, name string) *int32 {
 // updateAMIFlags collects the flags that govern runUpdateAMI's behavior.
 type updateAMIFlags struct {
 	force, dryRun, noWait, quiet, skipHealthCheck, healthOnly bool
-	yes, requireHealthy, skipVerify                           bool
+	yes, requireHealthy, skipVerify, changelog                bool
 	timeout, pollInterval                                     time.Duration
 	format                                                    string
 }
@@ -223,6 +223,7 @@ func readUpdateAMIFlags(cmd *cli.Command) updateAMIFlags {
 		yes:             cmd.Bool("yes"),
 		requireHealthy:  cmd.Bool("require-healthy"),
 		skipVerify:      cmd.Bool("skip-verify"),
+		changelog:       cmd.Bool("changelog"),
 		timeout:         cmd.Duration("timeout"),
 		pollInterval:    cmd.Duration("poll-interval"),
 		format:          strings.ToLower(cmd.String("format")),
@@ -276,7 +277,13 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if flags.dryRun {
-		return dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.force, flags.quiet)
+		if derr := dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.force, flags.quiet); derr != nil {
+			return derr
+		}
+		if !flags.quiet {
+			printChangelogsForNodegroups(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.changelog)
+		}
+		return nil
 	}
 
 	jsonOut := flags.format == "json" && !flags.healthOnly

@@ -194,6 +194,9 @@ func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern 
 		if err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.force, flags.quiet); err != nil {
 			color.Red("  %v", err)
 		}
+		if !flags.quiet {
+			printChangelogsForNodegroups(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.changelog)
+		}
 	}
 	return nil
 }
