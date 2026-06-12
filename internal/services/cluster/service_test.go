@@ -230,6 +230,23 @@ func TestDescribe_DescribeClusterError(t *testing.T) {
 	}
 }
 
+// REF-57: a DescribeCluster response with a nil Cluster must yield a clear
+// error, not a panic on the struct-pointer deref.
+func TestDescribe_EmptyClusterResponseErrors(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mock := &mocks.EKSAPI{
+		DescribeClusterFn: func(_ context.Context, _ *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
+			return &eks.DescribeClusterOutput{}, nil // nil Cluster
+		},
+	}
+	svc := &ServiceImpl{eksClient: mock, cache: NewCache(time.Minute), logger: logger}
+
+	_, err := svc.Describe(context.Background(), "my-cluster", DescribeOptions{})
+	if err == nil {
+		t.Fatal("expected an error for an empty DescribeCluster response, got nil")
+	}
+}
+
 func TestDescribe_CachesResultOnSecondCall(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	callCount := 0

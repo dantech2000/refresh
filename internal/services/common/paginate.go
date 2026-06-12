@@ -12,12 +12,21 @@ func Paginate[Item any](
 	var all []Item
 	var token *string
 	for {
+		// Stop between pages if the caller cancelled. (REF-56)
+		if err := ctx.Err(); err != nil {
+			return all, err
+		}
 		items, next, err := fetch(ctx, token)
 		if err != nil {
 			return nil, err
 		}
 		all = append(all, items...)
 		if next == nil || *next == "" {
+			return all, nil
+		}
+		// Guard against a server echoing a non-advancing token, which would
+		// otherwise loop forever. (REF-56)
+		if token != nil && *next == *token {
 			return all, nil
 		}
 		token = next

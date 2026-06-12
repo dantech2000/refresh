@@ -64,8 +64,9 @@ func describeCommand() *cli.Command {
 
 func scaleCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "scale",
-		Usage: "Scale a nodegroup's desired/min/max size with optional health checks",
+		Name:      "scale",
+		Usage:     "Scale a nodegroup's desired/min/max size with optional health checks",
+		ArgsUsage: "[cluster]",
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
@@ -120,12 +121,12 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS)"},
 			&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force update if possible"},
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview changes without executing them"},
-			&cli.BoolFlag{Name: "no-wait", Aliases: []string{"w"}, Usage: "Don't wait for update completion (original behavior)"},
+			&cli.BoolFlag{Name: "no-wait", Usage: "Don't wait for update completion (original behavior)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Minimal output mode"},
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Maximum time to wait for update completion", Value: 40 * time.Minute},
 			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "Polling interval for checking update status", Value: 15 * time.Second},
 			&cli.BoolFlag{Name: "skip-health-check", Aliases: []string{"s"}, Usage: "Skip pre-flight health validation"},
-			&cli.BoolFlag{Name: "health-only", Aliases: []string{"H"}, Usage: "Run health check only, don't update (exit code: 0=pass, 2=warn, 3=block)"},
+			&cli.BoolFlag{Name: "health-only", Usage: "Run health check only, don't update (exit code: 0=pass, 2=warn, 3=block)"},
 			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Assume yes: skip confirmation prompts (multi-match selection, warn-level health) for unattended/CI use"},
 			&cli.BoolFlag{Name: "require-healthy", Usage: "Treat warn-level health findings as a hard stop (exit 2) instead of prompting"},
 			&cli.BoolFlag{Name: "skip-verify", Usage: "Skip post-roll verification (nodes ACTIVE, no new stuck pods)"},

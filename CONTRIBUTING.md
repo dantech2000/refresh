@@ -36,6 +36,13 @@ These mirror `CLAUDE.md` (the agent/contributor guide):
 - **Output:** every list/describe command supports `-o table|json|yaml|plain`
   (and `tree` for `cluster list`) via `runner.EncodeStdout`. Honor
   `--no-color` / `NO_COLOR`.
+- **Short-flag convention:** a short flag must not mean contradictory things on
+  commands a user might mix up. Reserved: `-o`=`--format`, `-c`=`--cluster`,
+  `-n`=`--nodegroup`, `-t`=`--timeout`, `-r`=`--region`, `-w`=`--watch`,
+  `-H`=`--show-health`. In particular `-w` is **watch-only** (it is *not*
+  `--wait`/`--no-wait`) and `-H` is **show-health-only** (not `--health-only`
+  /`--health-check`) — the mutating update commands spell those out in long
+  form. When in doubt, leave a flag long-form rather than reuse a short letter.
 - **AWS calls:** wrap in `common.WithRetry`; format errors with
   `awsinternal.FormatAWSError`; set
   `ClientRequestToken: aws.String(common.IdempotencyToken())` on mutating
