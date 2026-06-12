@@ -2,14 +2,14 @@ package ctxcmd
 
 import (
 	"bytes"
-	"flag"
+	"context"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
@@ -29,28 +29,33 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	return buf.String(), callErr
 }
 
-func commandContext(args ...string) *cli.Context {
-	set := flag.NewFlagSet("test", flag.ContinueOnError)
-	_ = set.Parse(args)
-	return cli.NewContext(cli.NewApp(), set, nil)
+// runAction runs an action function through a real command so the
+// arguments are parsed (v3 removed cli.NewContext / direct flag.FlagSet setup).
+func runAction(action cli.ActionFunc, args ...string) error {
+	cmd := &cli.Command{Name: "test", Action: action}
+	return cmd.Run(context.Background(), append([]string{"test"}, args...))
+}
+
+// runCommand runs cmd as a root command with the given argv tokens.
+func runCommand(cmd *cli.Command, args ...string) error {
+	return cmd.Run(context.Background(), append([]string{cmd.Name}, args...))
 }
 
 func TestContextActions(t *testing.T) {
 	t.Setenv("REFRESH_CONFIG_HOME", t.TempDir())
 	t.Setenv("REFRESH_CONTEXT", "")
 
-	if err := runCurrent(commandContext()); err != nil {
+	if err := runAction(runCurrent); err != nil {
 		t.Fatalf("runCurrent empty: %v", err)
 	}
-	if err := runUse(commandContext("prod")); err == nil {
+	if err := runAction(runUse, "prod"); err == nil {
 		t.Fatal("runUse should fail with no saved contexts")
 	}
 
 	add := contextAddCommand()
 	_, err := captureStdout(t, func() error {
-		app := cli.NewApp()
-		app.Commands = []*cli.Command{add}
-		return app.Run([]string{"app", "add", "--cluster", "prod-cluster", "--region", "us-east-1", "--profile", "prod", "--use", "prod"})
+		root := &cli.Command{Name: "app", Commands: []*cli.Command{add}}
+		return root.Run(context.Background(), []string{"app", "add", "--cluster", "prod-cluster", "--region", "us-east-1", "--profile", "prod", "--use", "prod"})
 	})
 	if err != nil {
 		t.Fatalf("context add: %v", err)
@@ -63,15 +68,14 @@ func TestContextActions(t *testing.T) {
 		t.Fatalf("saved context = %+v", f)
 	}
 
-	if err := runCurrent(commandContext()); err != nil {
+	if err := runAction(runCurrent); err != nil {
 		t.Fatalf("runCurrent active: %v", err)
 	}
-	if err := runUse(commandContext("prod")); err != nil {
+	if err := runAction(runUse, "prod"); err != nil {
 		t.Fatalf("runUse prod: %v", err)
 	}
 
-	list := contextListCommand()
-	out, err := captureStdout(t, func() error { return list.Action(commandContext()) })
+	out, err := captureStdout(t, func() error { return runCommand(contextListCommand()) })
 	if err != nil {
 		t.Fatalf("context list: %v", err)
 	}
@@ -83,9 +87,8 @@ func TestContextActions(t *testing.T) {
 	}
 
 	remove := contextRemoveCommand()
-	app := cli.NewApp()
-	app.Commands = []*cli.Command{remove}
-	if err := app.Run([]string{"app", "remove", "prod"}); err != nil {
+	root := &cli.Command{Name: "app", Commands: []*cli.Command{remove}}
+	if err := root.Run(context.Background(), []string{"app", "remove", "prod"}); err != nil {
 		t.Fatalf("context remove: %v", err)
 	}
 	if _, err := cliconfig.Load(); err != nil {
@@ -97,15 +100,16 @@ func TestContextActionErrorsAndPicker(t *testing.T) {
 	t.Setenv("REFRESH_CONFIG_HOME", t.TempDir())
 	t.Setenv("REFRESH_CONTEXT", "")
 
-	if err := contextAddCommand().Action(commandContext()); err == nil {
+	// --cluster is required, so satisfy flag parsing and hit the name check.
+	if err := runCommand(contextAddCommand(), "--cluster", "x"); err == nil {
 		t.Fatal("context add should require name")
 	}
-	if err := contextRemoveCommand().Action(commandContext()); err == nil {
+	if err := runCommand(contextRemoveCommand()); err == nil {
 		t.Fatal("context remove should require name")
 	}
 	// Empty context list prints via color.Yellow, which writes to the original stdout
 	// handle (not the captured pipe). We verify only that it returns no error.
-	if _, err := captureStdout(t, func() error { return contextListCommand().Action(commandContext()) }); err != nil {
+	if _, err := captureStdout(t, func() error { return runCommand(contextListCommand()) }); err != nil {
 		t.Fatalf("context list empty: %v", err)
 	}
 

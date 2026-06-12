@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/fatih/color"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/health"
 )

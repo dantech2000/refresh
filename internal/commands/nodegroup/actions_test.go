@@ -1,41 +1,45 @@
 package nodegroup
 
 import (
-	"flag"
+	"context"
 	"testing"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
-func newUpdateParseTestContext(t *testing.T, args []string, clusterFlag, nodegroupFlag string) *cli.Context {
+// parseUpdateTestCommand runs a throwaway command through the real v3 parser
+// (flags after positionals are parsed natively) and returns the parsed
+// *cli.Command captured from the action.
+func parseUpdateTestCommand(t *testing.T, args []string, clusterFlag, nodegroupFlag string) *cli.Command {
 	t.Helper()
-	set := flag.NewFlagSet("test", flag.ContinueOnError)
-	set.String("cluster", "", "")
-	set.String("nodegroup", "", "")
-	set.Bool("health-only", false, "")
+	var captured *cli.Command
+	cmd := &cli.Command{
+		Name: "test",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}},
+			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}},
+			&cli.BoolFlag{Name: "health-only", Aliases: []string{"H"}},
+		},
+		Action: func(_ context.Context, c *cli.Command) error {
+			captured = c
+			return nil
+		},
+	}
+	argv := []string{"test"}
 	if clusterFlag != "" {
-		if err := set.Set("cluster", clusterFlag); err != nil {
-			t.Fatal(err)
-		}
+		argv = append(argv, "--cluster", clusterFlag)
 	}
 	if nodegroupFlag != "" {
-		if err := set.Set("nodegroup", nodegroupFlag); err != nil {
-			t.Fatal(err)
-		}
+		argv = append(argv, "--nodegroup", nodegroupFlag)
 	}
-	if err := set.Parse(args); err != nil {
+	argv = append(argv, args...)
+	if err := cmd.Run(context.Background(), argv); err != nil {
 		t.Fatal(err)
 	}
-	ctx := cli.NewContext(cli.NewApp(), set, nil)
-	// Attach flag definitions so the runner's trailing-flag handling knows
-	// which tokens are flags and whether they take values (the real command
-	// dispatcher populates this).
-	ctx.Command = &cli.Command{Flags: []cli.Flag{
-		&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}},
-		&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}},
-		&cli.BoolFlag{Name: "health-only", Aliases: []string{"H"}},
-	}}
-	return ctx
+	if captured == nil {
+		t.Fatal("command action was not invoked")
+	}
+	return captured
 }
 
 func TestUpdateClusterAndNodegroupPatterns(t *testing.T) {
@@ -77,8 +81,8 @@ func TestUpdateClusterAndNodegroupPatterns(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := newUpdateParseTestContext(t, tt.args, tt.clusterFlag, tt.nodegroupFlag)
-			gotCluster, gotNodegroup := updateClusterAndNodegroupPatterns(ctx)
+			cmd := parseUpdateTestCommand(t, tt.args, tt.clusterFlag, tt.nodegroupFlag)
+			gotCluster, gotNodegroup := updateClusterAndNodegroupPatterns(cmd)
 			if gotCluster != tt.wantCluster || gotNodegroup != tt.wantNodegroup {
 				t.Fatalf("updateClusterAndNodegroupPatterns() = %q, %q; want %q, %q",
 					gotCluster, gotNodegroup, tt.wantCluster, tt.wantNodegroup)
@@ -100,8 +104,8 @@ func TestReadUpdateAMIFlagsReadsTrailingHealthOnly(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := newUpdateParseTestContext(t, tt.args, "", "")
-			if got := readUpdateAMIFlags(ctx).healthOnly; got != tt.want {
+			cmd := parseUpdateTestCommand(t, tt.args, "", "")
+			if got := readUpdateAMIFlags(cmd).healthOnly; got != tt.want {
 				t.Fatalf("readUpdateAMIFlags().healthOnly = %v, want %v", got, tt.want)
 			}
 		})
@@ -109,11 +113,11 @@ func TestReadUpdateAMIFlagsReadsTrailingHealthOnly(t *testing.T) {
 }
 
 func TestTrailingValueFlagNotMistakenForPositional(t *testing.T) {
-	// `update-ami my-cluster --nodegroup groupC` leaves the flag tokens in
-	// Args; the nodegroup slot must read groupC from the flag, and the flag's
-	// value must not be parsed as a positional.
-	ctx := newUpdateParseTestContext(t, []string{"develop", "--nodegroup", "groupC"}, "", "")
-	gotCluster, gotNodegroup := updateClusterAndNodegroupPatterns(ctx)
+	// `update-ami my-cluster --nodegroup groupC` parses the trailing flag; the
+	// nodegroup slot must read groupC from the flag, and the flag's value must
+	// not be parsed as a positional.
+	cmd := parseUpdateTestCommand(t, []string{"develop", "--nodegroup", "groupC"}, "", "")
+	gotCluster, gotNodegroup := updateClusterAndNodegroupPatterns(cmd)
 	if gotCluster != "develop" || gotNodegroup != "groupC" {
 		t.Fatalf("updateClusterAndNodegroupPatterns() = %q, %q; want %q, %q",
 			gotCluster, gotNodegroup, "develop", "groupC")

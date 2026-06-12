@@ -2,7 +2,7 @@
 package workload
 
 import (
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
@@ -13,7 +13,7 @@ func Command() *cli.Command {
 		Name:    "workload",
 		Aliases: []string{"workloads"},
 		Usage:   "Workload operations (PDB coverage)",
-		Subcommands: []*cli.Command{
+		Commands: []*cli.Command{
 			pdbsCommand(),
 		},
 	}
@@ -30,7 +30,7 @@ func pdbsCommand() *cli.Command {
 				Aliases: []string{"t"},
 				Usage:   "Operation timeout (e.g. 30s, 1m)",
 				Value:   appconfig.DefaultTimeout,
-				EnvVars: []string{"REFRESH_TIMEOUT"},
+				Sources: cli.EnvVars("REFRESH_TIMEOUT"),
 			},
 			&cli.StringFlag{
 				Name:    "namespace",

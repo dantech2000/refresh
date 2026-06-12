@@ -12,7 +12,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands"
 	addoncmd "github.com/dantech2000/refresh/internal/commands/addon"
@@ -56,39 +56,39 @@ func coloredHelpPrinter(w io.Writer, templ string, data interface{}) {
 	_, _ = fmt.Fprint(w, helpText)
 }
 
-func newApp() *cli.App {
-	return &cli.App{
-		Name:                 "refresh",
-		Usage:                "Manage and monitor AWS EKS clusters and node groups",
-		Version:              commands.VersionInfo.Version,
-		EnableBashCompletion: true,
+func newApp() *cli.Command {
+	return &cli.Command{
+		Name:                  "refresh",
+		Usage:                 "Manage and monitor AWS EKS clusters and node groups",
+		Version:               commands.VersionInfo.Version,
+		EnableShellCompletion: true,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{
 				Name:    "timeout",
 				Aliases: []string{"t"},
 				Usage:   "Operation timeout for API calls (e.g. 60s, 2m)",
 				Value:   appconfig.DefaultTimeout,
-				EnvVars: []string{"REFRESH_TIMEOUT"},
+				Sources: cli.EnvVars("REFRESH_TIMEOUT"),
 			},
 			&cli.IntFlag{
 				Name:    "max-concurrency",
 				Aliases: []string{"C"},
 				Usage:   "Global max concurrency for multi-region operations",
 				Value:   appconfig.DefaultMaxConcurrency,
-				EnvVars: []string{"REFRESH_MAX_CONCURRENCY"},
+				Sources: cli.EnvVars("REFRESH_MAX_CONCURRENCY"),
 			},
 			&cli.BoolFlag{
 				Name:    "no-color",
 				Usage:   "Disable colored output (NO_COLOR env is also honored)",
-				EnvVars: []string{"NO_COLOR"},
+				Sources: cli.EnvVars("NO_COLOR"),
 			},
 		},
-		Before: func(c *cli.Context) error {
-			if c.Bool("no-color") {
+		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			if cmd.Bool("no-color") {
 				color.NoColor = true
 				pterm.DisableColor()
 			}
-			return nil
+			return ctx, nil
 		},
 		Commands: []*cli.Command{
 			// Resource-first groups
@@ -113,16 +113,16 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	cli.HelpPrinter = coloredHelpPrinter
 
 	// Make `--version`/`-v` print the same details as the `version` subcommand.
-	cli.VersionPrinter = func(c *cli.Context) {
-		commands.PrintVersion(c.App.Writer)
+	cli.VersionPrinter = func(cmd *cli.Command) {
+		commands.PrintVersion(cmd.Root().Writer)
 	}
 
 	app := newApp()
 	app.Writer = out
 	app.ErrWriter = errOut
-	// RunContext threads ctx into every command's c.Context, so signal
-	// cancellation from main propagates to in-flight AWS calls.
-	return app.RunContext(ctx, args)
+	// Run threads ctx into every command action, so signal cancellation from
+	// main propagates to in-flight AWS calls.
+	return app.Run(ctx, args)
 }
 
 func main() {

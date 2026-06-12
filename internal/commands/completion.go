@@ -1,9 +1,10 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
 const bashCompletionScript = `#!/bin/bash
@@ -15,9 +16,9 @@ _refresh_bash_autocomplete() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     if [[ "$cur" == "-"* ]]; then
-      opts=$("${COMP_WORDS[@]:0:$COMP_CWORD}" "${cur}" --generate-bash-completion 2>/dev/null)
+      opts=$("${COMP_WORDS[@]:0:$COMP_CWORD}" "${cur}" --generate-shell-completion 2>/dev/null)
     else
-      opts=$("${COMP_WORDS[@]:0:$COMP_CWORD}" --generate-bash-completion 2>/dev/null)
+      opts=$("${COMP_WORDS[@]:0:$COMP_CWORD}" --generate-shell-completion 2>/dev/null)
     fi
     COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
     return 0
@@ -34,9 +35,9 @@ _refresh() {
   local cur
   cur=${words[-1]}
   if [[ "$cur" == "-"* ]]; then
-    opts=("${(@f)$(${(@)words[1,-2]} ${cur} --generate-bash-completion 2>/dev/null)}")
+    opts=("${(@f)$(${(@)words[1,-2]} ${cur} --generate-shell-completion 2>/dev/null)}")
   else
-    opts=("${(@f)$(${(@)words[1,-2]} --generate-bash-completion 2>/dev/null)}")
+    opts=("${(@f)$(${(@)words[1,-2]} --generate-shell-completion 2>/dev/null)}")
   fi
   if [[ -n "${opts[1]}" ]]; then
     _describe 'values' opts
@@ -65,20 +66,21 @@ Examples:
 
    # fish
    refresh completion fish > ~/.config/fish/completions/refresh.fish`,
-		Action: func(c *cli.Context) error {
-			switch c.Args().First() {
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			root := cmd.Root()
+			switch cmd.Args().First() {
 			case "bash":
-				_, _ = fmt.Fprint(c.App.Writer, bashCompletionScript)
+				_, _ = fmt.Fprint(root.Writer, bashCompletionScript)
 			case "zsh":
-				_, _ = fmt.Fprint(c.App.Writer, zshCompletionScript)
+				_, _ = fmt.Fprint(root.Writer, zshCompletionScript)
 			case "fish":
-				script, err := c.App.ToFishCompletion()
+				script, err := root.ToFishCompletion()
 				if err != nil {
 					return fmt.Errorf("generating fish completion: %w", err)
 				}
-				_, _ = fmt.Fprintln(c.App.Writer, script)
+				_, _ = fmt.Fprintln(root.Writer, script)
 			default:
-				return fmt.Errorf("unsupported or missing shell %q (supported: bash, zsh, fish)", c.Args().First())
+				return fmt.Errorf("unsupported or missing shell %q (supported: bash, zsh, fish)", cmd.Args().First())
 			}
 			return nil
 		},

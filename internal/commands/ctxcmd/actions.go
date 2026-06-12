@@ -2,18 +2,19 @@ package ctxcmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/fatih/color"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
 )
 
-func runUse(c *cli.Context) error {
+func runUse(_ context.Context, cmd *cli.Command) error {
 	f, err := cliconfig.Load()
 	if err != nil {
 		return err
@@ -22,7 +23,7 @@ func runUse(c *cli.Context) error {
 		return fmt.Errorf("no contexts saved. Add one with: refresh context add <name> --cluster <cluster> [--region <r>] [--profile <p>]")
 	}
 
-	name := strings.TrimSpace(c.Args().First())
+	name := strings.TrimSpace(cmd.Args().First())
 	if name == "" {
 		picked, err := pickContext(f)
 		if err != nil {
@@ -43,7 +44,7 @@ func runUse(c *cli.Context) error {
 	return nil
 }
 
-func runCurrent(c *cli.Context) error {
+func runCurrent(_ context.Context, _ *cli.Command) error {
 	f, err := cliconfig.Load()
 	if err != nil {
 		return err
@@ -63,7 +64,7 @@ func contextListCommand() *cli.Command {
 		Name:    "list",
 		Aliases: []string{"ls"},
 		Usage:   "List saved contexts",
-		Action: func(c *cli.Context) error {
+		Action: func(_ context.Context, _ *cli.Command) error {
 			f, err := cliconfig.Load()
 			if err != nil {
 				return err
@@ -98,8 +99,8 @@ func contextAddCommand() *cli.Command {
 			&cli.StringFlag{Name: "profile", Aliases: []string{"p"}, Usage: "AWS shared-config profile (optional)"},
 			&cli.BoolFlag{Name: "use", Usage: "Switch to this context after adding"},
 		},
-		Action: func(c *cli.Context) error {
-			name := strings.TrimSpace(c.Args().First())
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			name := strings.TrimSpace(cmd.Args().First())
 			if name == "" {
 				return fmt.Errorf("context name is required")
 			}
@@ -108,14 +109,14 @@ func contextAddCommand() *cli.Command {
 				return err
 			}
 			ctx := cliconfig.Context{
-				Cluster: c.String("cluster"),
-				Region:  c.String("region"),
-				Profile: c.String("profile"),
+				Cluster: cmd.String("cluster"),
+				Region:  cmd.String("region"),
+				Profile: cmd.String("profile"),
 			}
 			if err := f.Set(name, ctx); err != nil {
 				return err
 			}
-			if c.Bool("use") {
+			if cmd.Bool("use") {
 				if err := f.Use(name); err != nil {
 					return err
 				}
@@ -131,13 +132,13 @@ func contextAddCommand() *cli.Command {
 
 func contextRemoveCommand() *cli.Command {
 	return &cli.Command{
-		Name:         "remove",
-		Aliases:      []string{"rm", "delete"},
-		Usage:        "Remove a saved context",
-		ArgsUsage:    "<name>",
-		BashComplete: completeContextNames,
-		Action: func(c *cli.Context) error {
-			name := strings.TrimSpace(c.Args().First())
+		Name:          "remove",
+		Aliases:       []string{"rm", "delete"},
+		Usage:         "Remove a saved context",
+		ArgsUsage:     "<name>",
+		ShellComplete: completeContextNames,
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			name := strings.TrimSpace(cmd.Args().First())
 			if name == "" {
 				return fmt.Errorf("context name is required")
 			}

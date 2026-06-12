@@ -16,7 +16,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/fatih/color"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
@@ -29,20 +29,20 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func runList(c *cli.Context) error {
+func runList(ctx context.Context, cmd *cli.Command) error {
 	// Each --watch iteration performs the full setup+fetch+render cycle so a
 	// fresh service (and cache) is used every time.
-	return runner.Watch(c, func() error { return listNodegroupsOnce(c) })
+	return runner.Watch(cmd, func() error { return listNodegroupsOnce(ctx, cmd) })
 }
 
-func listNodegroupsOnce(c *cli.Context) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, c)
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, cmd)
 	if err != nil || listed {
 		return err
 	}
@@ -50,12 +50,12 @@ func listNodegroupsOnce(c *cli.Context) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	svc := factory.NewNodegroupService(awsCfg, false, logger)
 
-	filters := runner.ParseFilters(c.StringSlice("filter"))
+	filters := runner.ParseFilters(cmd.StringSlice("filter"))
 	opts := nodegroupsvc.ListOptions{
-		ShowCosts:       c.Bool("show-costs"),
-		ShowUtilization: c.Bool("show-utilization"),
+		ShowCosts:       cmd.Bool("show-costs"),
+		ShowUtilization: cmd.Bool("show-utilization"),
 		Filters:         filters,
-		Timeframe:       c.String("timeframe"),
+		Timeframe:       cmd.String("timeframe"),
 	}
 
 	var items []nodegroupsvc.NodegroupSummary
@@ -68,31 +68,31 @@ func listNodegroupsOnce(c *cli.Context) error {
 		return err
 	}
 
-	format := strings.ToLower(c.String("format"))
+	format := strings.ToLower(cmd.String("format"))
 	if format == "table" || format == "plain" || format == "" {
-		items = sortNodegroupSummaries(items, c.String("sort"), c.Bool("desc"))
+		items = sortNodegroupSummaries(items, cmd.String("sort"), cmd.Bool("desc"))
 	}
 
 	payload := map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)}
-	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+	if handled, err := runner.EncodeStdout(cmd.String("format"), payload); handled {
 		return err
 	}
-	return outputNodegroupsTable(clusterName, c.String("timeframe"), items, time.Since(start), opts)
+	return outputNodegroupsTable(clusterName, cmd.String("timeframe"), items, time.Since(start), opts)
 }
 
-func runDescribe(c *cli.Context) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+func runDescribe(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, c)
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, cmd)
 	if err != nil || listed {
 		return err
 	}
 
-	ngName := runner.PositionalSlot(c, "nodegroup", "cluster")
+	ngName := runner.PositionalSlot(cmd, "nodegroup", "cluster")
 	if ngName == "" {
 		return fmt.Errorf("missing nodegroup name; pass as second argument or --nodegroup <name>")
 	}
@@ -101,11 +101,11 @@ func runDescribe(c *cli.Context) error {
 	svc := factory.NewNodegroupService(awsCfg, false, logger)
 
 	opts := nodegroupsvc.DescribeOptions{
-		ShowInstances:   c.Bool("show-instances"),
-		ShowUtilization: c.Bool("show-utilization"),
-		ShowWorkloads:   c.Bool("show-workloads"),
-		ShowCosts:       c.Bool("show-costs"),
-		Timeframe:       c.String("timeframe"),
+		ShowInstances:   cmd.Bool("show-instances"),
+		ShowUtilization: cmd.Bool("show-utilization"),
+		ShowWorkloads:   cmd.Bool("show-workloads"),
+		ShowCosts:       cmd.Bool("show-costs"),
+		Timeframe:       cmd.String("timeframe"),
 	}
 
 	var details *nodegroupsvc.NodegroupDetails
@@ -118,44 +118,44 @@ func runDescribe(c *cli.Context) error {
 		return err
 	}
 
-	if handled, err := runner.EncodeStdout(c.String("format"), details); handled {
+	if handled, err := runner.EncodeStdout(cmd.String("format"), details); handled {
 		return err
 	}
 	return outputNodegroupDetailsTable(details, time.Since(start))
 }
 
-func runScale(c *cli.Context) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+func runScale(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, c.String("cluster"))
+	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, cmd.String("cluster"))
 	if err != nil {
 		return err
 	}
 
 	logger := factory.NewDefaultLogger(nil)
-	withHealth := c.Bool("health-check") || c.Bool("check-pdbs") || c.Bool("wait")
+	withHealth := cmd.Bool("health-check") || cmd.Bool("check-pdbs") || cmd.Bool("wait")
 	svc := factory.NewNodegroupService(awsCfg, withHealth, logger)
 
 	opts := nodegroupsvc.ScaleOptions{
-		HealthCheck: c.Bool("health-check"),
-		CheckPDBs:   c.Bool("check-pdbs"),
-		Wait:        c.Bool("wait"),
-		Timeout:     c.Duration("op-timeout"),
-		DryRun:      c.Bool("dry-run"),
+		HealthCheck: cmd.Bool("health-check"),
+		CheckPDBs:   cmd.Bool("check-pdbs"),
+		Wait:        cmd.Bool("wait"),
+		Timeout:     cmd.Duration("op-timeout"),
+		DryRun:      cmd.Bool("dry-run"),
 	}
 
-	desired, minSize, maxSize := int32PtrIfSet(c, "desired"), int32PtrIfSet(c, "min"), int32PtrIfSet(c, "max")
+	desired, minSize, maxSize := int32PtrIfSet(cmd, "desired"), int32PtrIfSet(cmd, "min"), int32PtrIfSet(cmd, "max")
 
 	if opts.DryRun {
-		return printScaleDryRun(ctx, eks.NewFromConfig(awsCfg), clusterName, c.String("nodegroup"), desired, minSize, maxSize)
+		return printScaleDryRun(ctx, eks.NewFromConfig(awsCfg), clusterName, cmd.String("nodegroup"), desired, minSize, maxSize)
 	}
 
 	return runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
-		return svc.Scale(ctx, clusterName, c.String("nodegroup"), desired, minSize, maxSize, opts)
+		return svc.Scale(ctx, clusterName, cmd.String("nodegroup"), desired, minSize, maxSize, opts)
 	})
 }
 
@@ -190,13 +190,13 @@ func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, n
 	return nil
 }
 
-// int32PtrIfSet returns &v for c.Int(name) when the flag was explicitly set,
+// int32PtrIfSet returns &v for cmd.Int(name) when the flag was explicitly set,
 // otherwise nil.
-func int32PtrIfSet(c *cli.Context, name string) *int32 {
-	if !c.IsSet(name) {
+func int32PtrIfSet(cmd *cli.Command, name string) *int32 {
+	if !cmd.IsSet(name) {
 		return nil
 	}
-	v := int32(c.Int(name))
+	v := int32(cmd.Int(name))
 	return &v
 }
 
@@ -207,20 +207,19 @@ type updateAMIFlags struct {
 	format                                                    string
 }
 
-func readUpdateAMIFlags(c *cli.Context) updateAMIFlags {
+func readUpdateAMIFlags(cmd *cli.Command) updateAMIFlags {
 	// Flags placed after positional args (e.g. `update-ami my-cluster
-	// --health-only`) are not parsed by urfave/cli; apply them first.
-	runner.ApplyTrailingFlags(c)
+	// --health-only`) are parsed natively by urfave/cli v3.
 	return updateAMIFlags{
-		force:           c.Bool("force"),
-		dryRun:          c.Bool("dry-run"),
-		noWait:          c.Bool("no-wait"),
-		quiet:           c.Bool("quiet"),
-		skipHealthCheck: c.Bool("skip-health-check"),
-		healthOnly:      c.Bool("health-only"),
-		timeout:         c.Duration("timeout"),
-		pollInterval:    c.Duration("poll-interval"),
-		format:          strings.ToLower(c.String("format")),
+		force:           cmd.Bool("force"),
+		dryRun:          cmd.Bool("dry-run"),
+		noWait:          cmd.Bool("no-wait"),
+		quiet:           cmd.Bool("quiet"),
+		skipHealthCheck: cmd.Bool("skip-health-check"),
+		healthOnly:      cmd.Bool("health-only"),
+		timeout:         cmd.Duration("timeout"),
+		pollInterval:    cmd.Duration("poll-interval"),
+		format:          strings.ToLower(cmd.String("format")),
 	}
 }
 
@@ -230,21 +229,21 @@ func (f updateAMIFlags) machineHealthOutput() bool {
 	return f.healthOnly && (f.format == "json" || f.format == "yaml")
 }
 
-func runUpdateAMI(c *cli.Context) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(c, 60*time.Second)
+func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(ctx, cmd, 60*time.Second)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(c)
+	requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(cmd)
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requestedCluster)
 	if err != nil {
 		color.Red("%v", err)
 		return err
 	}
 	eksClient := eks.NewFromConfig(awsCfg)
-	flags := readUpdateAMIFlags(c)
+	flags := readUpdateAMIFlags(cmd)
 
 	done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, flags)
 	if err != nil || done {
@@ -509,10 +508,9 @@ func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *
 }
 
 // updateClusterAndNodegroupPatterns resolves the (cluster, nodegroup) slots
-// from flags and positionals via the shared runner helpers, which also apply
-// any flags that appear after the positional arguments.
-func updateClusterAndNodegroupPatterns(c *cli.Context) (string, string) {
-	clusterPattern := runner.RequestedCluster(c)
-	nodegroupPattern := runner.PositionalSlot(c, "nodegroup", "cluster")
+// from flags and positionals via the shared runner helpers.
+func updateClusterAndNodegroupPatterns(cmd *cli.Command) (string, string) {
+	clusterPattern := runner.RequestedCluster(cmd)
+	nodegroupPattern := runner.PositionalSlot(cmd, "nodegroup", "cluster")
 	return clusterPattern, nodegroupPattern
 }

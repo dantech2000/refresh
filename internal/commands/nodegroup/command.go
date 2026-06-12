@@ -4,7 +4,7 @@ package nodegroup
 import (
 	"time"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
@@ -16,7 +16,7 @@ func Command() *cli.Command {
 		Name:    "nodegroup",
 		Aliases: []string{"ng"},
 		Usage:   "Nodegroup operations (list, get, scale, update)",
-		Subcommands: []*cli.Command{
+		Commands: []*cli.Command{
 			listCommand(),
 			describeCommand(),
 			scaleCommand(),
@@ -31,7 +31,7 @@ func listCommand() *cli.Command {
 		Usage:     "List nodegroups in a cluster with optional cost/utilization",
 		ArgsUsage: "[cluster]",
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, EnvVars: []string{"REFRESH_TIMEOUT"}},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "show-costs", Aliases: []string{"C"}, Usage: "Include cost analysis"},
 			&cli.BoolFlag{Name: "show-utilization", Aliases: []string{"U"}, Usage: "Include CPU utilization metrics"},
@@ -54,7 +54,7 @@ func describeCommand() *cli.Command {
 		Usage:     "Describe a nodegroup with optional instances/utilization/cost info",
 		ArgsUsage: "[cluster] [nodegroup]",
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, EnvVars: []string{"REFRESH_TIMEOUT"}},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name (can be provided as second positional)"},
 			&cli.BoolFlag{Name: "show-instances", Aliases: []string{"I"}, Usage: "Include EC2 instance details"},
@@ -64,7 +64,7 @@ func describeCommand() *cli.Command {
 			&cli.StringFlag{Name: "timeframe", Aliases: []string{"T"}, Usage: "Utilization window (1h,3h,24h)", Value: "24h"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(c *cli.Context) error { return runDescribe(c) },
+		Action: runDescribe,
 	}
 }
 
@@ -73,7 +73,7 @@ func scaleCommand() *cli.Command {
 		Name:  "scale",
 		Usage: "Scale a nodegroup's desired/min/max size with optional health checks",
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, EnvVars: []string{"REFRESH_TIMEOUT"}},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name", Required: true},
 			&cli.IntFlag{Name: "desired", Usage: "Desired node count"},
@@ -85,7 +85,7 @@ func scaleCommand() *cli.Command {
 			&cli.DurationFlag{Name: "op-timeout", Usage: "Scaling operation timeout", Value: 5 * time.Minute},
 			&cli.BoolFlag{Name: "dry-run", Usage: "Preview scaling impact without executing"},
 		},
-		Action: func(c *cli.Context) error { return runScale(c) },
+		Action: runScale,
 	}
 }
 
@@ -96,7 +96,7 @@ func updateAMICommand() *cli.Command {
 		Usage:     "Update the AMI for all or a specific node group (rolling by default)",
 		ArgsUsage: "[cluster] [nodegroup]",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or partial name pattern (overrides kubeconfig)", EnvVars: []string{"EKS_CLUSTER_NAME"}},
+			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or partial name pattern (overrides kubeconfig)", Sources: cli.EnvVars("EKS_CLUSTER_NAME")},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name or partial name pattern (if not set, update all)"},
 			&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force update if possible"},
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview changes without executing them"},

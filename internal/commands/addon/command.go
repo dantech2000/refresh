@@ -2,9 +2,10 @@
 package addon
 
 import (
+	"context"
 	"time"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
@@ -14,7 +15,7 @@ func Command() *cli.Command {
 	return &cli.Command{
 		Name:  "addon",
 		Usage: "EKS add-on operations (list, get, update)",
-		Subcommands: []*cli.Command{
+		Commands: []*cli.Command{
 			listCommand(),
 			describeCommand(),
 			updateCommand(),
@@ -29,12 +30,12 @@ func listCommand() *cli.Command {
 		Usage:     "List EKS add-ons in a cluster",
 		ArgsUsage: "[cluster]",
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, EnvVars: []string{"REFRESH_TIMEOUT"}},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "show-health", Aliases: []string{"H"}, Usage: "Include health mapping in table output"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(c *cli.Context) error { return runList(c) },
+		Action: func(ctx context.Context, cmd *cli.Command) error { return runList(ctx, cmd) },
 	}
 }
 
@@ -45,12 +46,12 @@ func describeCommand() *cli.Command {
 		Usage:     "Describe a specific EKS add-on",
 		ArgsUsage: "[cluster] [addon]",
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, EnvVars: []string{"REFRESH_TIMEOUT"}},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "addon", Aliases: []string{"a"}, Usage: "Add-on name (e.g., vpc-cni)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(c *cli.Context) error { return runDescribe(c) },
+		Action: func(ctx context.Context, cmd *cli.Command) error { return runDescribe(ctx, cmd) },
 	}
 }
 
@@ -65,7 +66,7 @@ func updateCommand() *cli.Command {
 			// Update operations can legitimately run for minutes when --wait is
 			// used, so the timeout default matches the legacy update-all command
 			// rather than the 60s read-path default.
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: 10 * time.Minute, EnvVars: []string{"REFRESH_TIMEOUT"}},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: 10 * time.Minute, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "addon", Aliases: []string{"a"}, Usage: "Add-on name (e.g., vpc-cni)"},
 			&cli.StringFlag{Name: "version", Usage: "Target version or 'latest' (can be provided as third positional)", Value: "latest"},
@@ -79,11 +80,11 @@ func updateCommand() *cli.Command {
 			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "(--all only) Skip specific addons (repeatable)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "(--all only) Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(c *cli.Context) error {
-			if c.Bool("all") {
-				return runUpdateAll(c)
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			if cmd.Bool("all") {
+				return runUpdateAll(ctx, cmd)
 			}
-			return runUpdate(c)
+			return runUpdate(ctx, cmd)
 		},
 	}
 }
@@ -96,7 +97,7 @@ func updateAllHiddenCommand() *cli.Command {
 		Usage:     "Update all EKS add-ons to their latest versions",
 		ArgsUsage: "[cluster]",
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: 10 * time.Minute, EnvVars: []string{"REFRESH_TIMEOUT"}},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: 10 * time.Minute, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "parallel", Aliases: []string{"p"}, Usage: "Update addons in parallel (faster but riskier)"},
 			&cli.BoolFlag{Name: "wait", Aliases: []string{"w"}, Usage: "Wait for each update to complete before proceeding"},
@@ -107,6 +108,6 @@ func updateAllHiddenCommand() *cli.Command {
 			&cli.BoolFlag{Name: "dependency-order", Usage: "Update addons in dependency-safe order (vpc-cni → coredns/kube-proxy → others)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(c *cli.Context) error { return runUpdateAll(c) },
+		Action: func(ctx context.Context, cmd *cli.Command) error { return runUpdateAll(ctx, cmd) },
 	}
 }

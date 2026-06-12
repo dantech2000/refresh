@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
@@ -19,38 +19,38 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func runList(c *cli.Context) error {
+func runList(ctx context.Context, cmd *cli.Command) error {
 	// Each --watch iteration performs the full setup+fetch+render cycle so a
 	// fresh service (and cache) is used every time.
-	return runner.Watch(c, func() error { return listClustersOnce(c) })
+	return runner.Watch(cmd, func() error { return listClustersOnce(ctx, cmd) })
 }
 
-func listClustersOnce(c *cli.Context) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	clusterService := factory.NewClusterService(awsCfg, c.Bool("show-health"), nil)
+	clusterService := factory.NewClusterService(awsCfg, cmd.Bool("show-health"), nil)
 
-	filters := runner.ParseFilters(c.StringSlice("filter"))
-	if pattern := strings.TrimSpace(c.Args().First()); pattern != "" {
+	filters := runner.ParseFilters(cmd.StringSlice("filter"))
+	if pattern := strings.TrimSpace(cmd.Args().First()); pattern != "" {
 		filters["name"] = pattern
 	}
 
-	allRegions := c.Bool("all-regions") || c.Bool("tree") || c.String("format") == "tree"
+	allRegions := cmd.Bool("all-regions") || cmd.Bool("tree") || cmd.String("format") == "tree"
 	options := clustersvc.ListOptions{
-		Regions:        c.StringSlice("region"),
-		ShowHealth:     c.Bool("show-health"),
+		Regions:        cmd.StringSlice("region"),
+		ShowHealth:     cmd.Bool("show-health"),
 		Filters:        filters,
 		AllRegions:     allRegions,
-		MaxConcurrency: c.Int("max-concurrency"),
+		MaxConcurrency: cmd.Int("max-concurrency"),
 	}
 
 	startTime := time.Now()
 	var summaries []clustersvc.ClusterSummary
-	if allRegions || len(c.StringSlice("region")) > 0 {
+	if allRegions || len(cmd.StringSlice("region")) > 0 {
 		summaries, err = runMultiRegionListWithProgress(ctx, clusterService, options)
 	} else {
 		err = runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
@@ -64,37 +64,37 @@ func listClustersOnce(c *cli.Context) error {
 	}
 	elapsed := time.Since(startTime)
 
-	summaries = clusterview.SortClusterSummaries(summaries, c.String("sort"), c.Bool("desc"))
+	summaries = clusterview.SortClusterSummaries(summaries, cmd.String("sort"), cmd.Bool("desc"))
 
-	format := strings.ToLower(c.String("format"))
-	if format == "tree" || (format == "" && c.Bool("tree")) {
-		return clusterview.OutputClustersTree(summaries, elapsed, allRegions, c.Bool("show-health"))
+	format := strings.ToLower(cmd.String("format"))
+	if format == "tree" || (format == "" && cmd.Bool("tree")) {
+		return clusterview.OutputClustersTree(summaries, elapsed, allRegions, cmd.Bool("show-health"))
 	}
 	payload := map[string]any{"clusters": summaries, "count": len(summaries)}
-	if handled, err := runner.EncodeStdout(c.String("format"), payload); handled {
+	if handled, err := runner.EncodeStdout(cmd.String("format"), payload); handled {
 		return err
 	}
-	return clusterview.OutputClustersTable(summaries, elapsed, allRegions, c.Bool("show-health"))
+	return clusterview.OutputClustersTable(summaries, elapsed, allRegions, cmd.Bool("show-health"))
 }
 
-func runDescribe(c *cli.Context) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWS(c)
+func runDescribe(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, c)
+	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, cmd)
 	if err != nil || listed {
 		return err
 	}
 
-	clusterService := factory.NewClusterService(awsCfg, c.Bool("show-health"), nil)
+	clusterService := factory.NewClusterService(awsCfg, cmd.Bool("show-health"), nil)
 	options := clustersvc.DescribeOptions{
-		ShowHealth:    c.Bool("show-health"),
-		ShowSecurity:  c.Bool("show-security") || c.Bool("detailed"),
-		IncludeAddons: c.Bool("include-addons"),
-		Detailed:      c.Bool("detailed"),
+		ShowHealth:    cmd.Bool("show-health"),
+		ShowSecurity:  cmd.Bool("show-security") || cmd.Bool("detailed"),
+		IncludeAddons: cmd.Bool("include-addons"),
+		Detailed:      cmd.Bool("detailed"),
 	}
 
 	var details *clustersvc.ClusterDetails
@@ -107,35 +107,35 @@ func runDescribe(c *cli.Context) error {
 		return err
 	}
 
-	if handled, err := runner.EncodeStdout(c.String("format"), details); handled {
+	if handled, err := runner.EncodeStdout(cmd.String("format"), details); handled {
 		return err
 	}
 	return clusterview.OutputClusterDetailsTable(details, time.Since(startTime))
 }
 
-func runDiff(c *cli.Context) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(c, 60*time.Second)
+func runDiff(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(ctx, cmd, 60*time.Second)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 
-	clusterPatterns := c.StringSlice("cluster")
+	clusterPatterns := cmd.StringSlice("cluster")
 	if len(clusterPatterns) < 2 {
 		return fmt.Errorf("need at least 2 clusters to compare, use --cluster flag multiple times")
 	}
 
 	clusterService := factory.NewClusterService(awsCfg, true, nil)
 
-	clusterNames, err := resolveCompareClusterNames(ctx, awsCfg, clusterPatterns, c.Bool("interactive"))
+	clusterNames, err := resolveCompareClusterNames(ctx, awsCfg, clusterPatterns, cmd.Bool("interactive"))
 	if err != nil {
 		return err
 	}
 
 	options := clustersvc.CompareOptions{
-		ShowDifferencesOnly: c.Bool("show-differences"),
-		Include:             c.StringSlice("include"),
-		Format:              c.String("format"),
+		ShowDifferencesOnly: cmd.Bool("show-differences"),
+		Include:             cmd.StringSlice("include"),
+		Format:              cmd.String("format"),
 	}
 
 	var comparison *clustersvc.ClusterComparison
@@ -148,7 +148,7 @@ func runDiff(c *cli.Context) error {
 		return err
 	}
 
-	if handled, err := runner.EncodeStdout(c.String("format"), comparison); handled {
+	if handled, err := runner.EncodeStdout(cmd.String("format"), comparison); handled {
 		return err
 	}
 	return clusterview.OutputComparisonTable(comparison, time.Since(startTime))

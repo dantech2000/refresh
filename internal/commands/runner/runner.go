@@ -17,7 +17,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/mattn/go-isatty"
 	"github.com/pterm/pterm"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -51,29 +51,25 @@ func checkCredentialsStrict(ctx context.Context, cfg aws.Config) error {
 
 // setupAWS is the shared body of SetupAWS/SetupAWSWithTimeout/SetupAWSStrict.
 // On error the internal context is canceled and the returned cancel is nil.
-func setupAWS(c *cli.Context, defaultTimeout time.Duration, check credentialCheck) (context.Context, context.CancelFunc, aws.Config, error) {
-	timeout := c.Duration("timeout")
+func setupAWS(ctx context.Context, cmd *cli.Command, defaultTimeout time.Duration, check credentialCheck) (context.Context, context.CancelFunc, aws.Config, error) {
+	timeout := cmd.Duration("timeout")
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
-	// Derive from the CLI's context (cancelled on Ctrl+C / SIGTERM by main) so
-	// signal handling propagates to in-flight AWS calls. c.Context is nil only
-	// for hand-constructed contexts in tests.
-	base := c.Context
-	if base == nil {
-		base = context.Background()
+	// Derive from the action's context (cancelled on Ctrl+C / SIGTERM by main)
+	// so signal handling propagates to in-flight AWS calls. ctx is nil only
+	// for hand-constructed invocations in tests.
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	var (
-		ctx    context.Context
-		cancel context.CancelFunc
-	)
+	var cancel context.CancelFunc
 	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(base, timeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 	} else {
-		ctx, cancel = context.WithCancel(base)
+		ctx, cancel = context.WithCancel(ctx)
 	}
 
-	cfg, err := awsconfig.Load(ctx, c)
+	cfg, err := awsconfig.Load(ctx, cmd)
 	if err != nil {
 		cancel()
 		color.Red("Failed to load AWS config: %v", err)
@@ -89,20 +85,20 @@ func setupAWS(c *cli.Context, defaultTimeout time.Duration, check credentialChec
 // SetupAWS opens a context with the command's timeout, loads the AWS config,
 // and checks credentials. On error, the returned cancel is nil and the
 // internal context has already been cancelled.
-func SetupAWS(c *cli.Context) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(c, 0, checkCredentialsLenient)
+func SetupAWS(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
+	return setupAWS(ctx, cmd, 0, checkCredentialsLenient)
 }
 
 // SetupAWSWithTimeout is like SetupAWS but falls back to defaultTimeout
-// when c.Duration("timeout") is zero.
-func SetupAWSWithTimeout(c *cli.Context, defaultTimeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(c, defaultTimeout, checkCredentialsLenient)
+// when cmd.Duration("timeout") is zero.
+func SetupAWSWithTimeout(ctx context.Context, cmd *cli.Command, defaultTimeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
+	return setupAWS(ctx, cmd, defaultTimeout, checkCredentialsLenient)
 }
 
 // SetupAWSStrict is like SetupAWS but uses ValidateAWSCredentials and prints
 // the credential help message on failure (used by destructive commands).
-func SetupAWSStrict(c *cli.Context) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(c, 0, checkCredentialsStrict)
+func SetupAWSStrict(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
+	return setupAWS(ctx, cmd, 0, checkCredentialsStrict)
 }
 
 // ParseFilters parses repeated key=value --filter flag values into a map.
@@ -120,22 +116,22 @@ func ParseFilters(filters []string) map[string]string {
 // RequestedCluster returns the cluster name requested by the user: --cluster
 // when explicitly set (so positionals can fill later slots), otherwise the
 // first positional arg.
-func RequestedCluster(c *cli.Context) string {
-	nonFlags := nonFlagArgs(c) // also applies trailing flags to the context
-	if v := flagValueIfSet(c, "cluster"); v != "" {
+func RequestedCluster(cmd *cli.Command) string {
+	if v := flagValueIfSet(cmd, "cluster"); v != "" {
 		return v
 	}
-	if len(nonFlags) > 0 && strings.TrimSpace(nonFlags[0]) != "" {
-		return nonFlags[0]
+	args := cmd.Args().Slice()
+	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
+		return args[0]
 	}
-	return strings.TrimSpace(c.String("cluster"))
+	return strings.TrimSpace(cmd.String("cluster"))
 }
 
 // ResolveClusterOrList resolves the requested cluster name. If no cluster was
 // requested, it prints "No cluster specified. Available clusters:" plus the
 // cluster table and returns listed=true so the caller can short-circuit.
-func ResolveClusterOrList(ctx context.Context, cfg aws.Config, c *cli.Context) (clusterName string, listed bool, err error) {
-	requested := RequestedCluster(c)
+func ResolveClusterOrList(ctx context.Context, cfg aws.Config, cmd *cli.Command) (clusterName string, listed bool, err error) {
+	requested := RequestedCluster(cmd)
 	if strings.TrimSpace(requested) == "" {
 		ui.Outln("No cluster specified. Available clusters:")
 		ui.Outln()
@@ -155,37 +151,37 @@ func ResolveClusterOrList(ctx context.Context, cfg aws.Config, c *cli.Context) (
 	return name, false, nil
 }
 
-// PositionalAt returns the value of flagName, or the non-flag positional
-// argument at index (0-indexed) if the flag is not set. Does NOT account for
-// prior flags absorbing positional slots — use PositionalSlot for that.
-func PositionalAt(c *cli.Context, flagName string, index int) string {
-	nonFlags := nonFlagArgs(c) // also applies trailing flags to the context
-	if v := flagValueIfSet(c, flagName); v != "" {
+// PositionalAt returns the value of flagName, or the positional argument at
+// index (0-indexed) if the flag is not set. Does NOT account for prior flags
+// absorbing positional slots — use PositionalSlot for that.
+func PositionalAt(cmd *cli.Command, flagName string, index int) string {
+	if v := flagValueIfSet(cmd, flagName); v != "" {
 		return v
 	}
-	if index < len(nonFlags) {
-		return nonFlags[index]
+	args := cmd.Args().Slice()
+	if index < len(args) {
+		return args[index]
 	}
-	return flagDefault(c, flagName)
+	return flagDefault(cmd, flagName)
 }
 
 // flagValueIfSet returns the trimmed value of flagName only when it was
 // explicitly provided (flag or env var). Flags that merely carry a default
 // value return "" so a positional argument can still fill the slot.
-func flagValueIfSet(c *cli.Context, flagName string) string {
-	if flagName == "" || !c.IsSet(flagName) {
+func flagValueIfSet(cmd *cli.Command, flagName string) string {
+	if flagName == "" || !cmd.IsSet(flagName) {
 		return ""
 	}
-	return strings.TrimSpace(c.String(flagName))
+	return strings.TrimSpace(cmd.String(flagName))
 }
 
 // flagDefault returns the flag's default value (empty for most flags). Used
 // as the last resort after explicit flags and positionals.
-func flagDefault(c *cli.Context, flagName string) string {
+func flagDefault(cmd *cli.Command, flagName string) string {
 	if flagName == "" {
 		return ""
 	}
-	return strings.TrimSpace(c.String(flagName))
+	return strings.TrimSpace(cmd.String(flagName))
 }
 
 // PositionalSlot returns the value of flagName, or — when flagName is unset —
@@ -208,102 +204,22 @@ func flagDefault(c *cli.Context, flagName string) string {
 // Invocation `--addon=foo my-cluster v1.2.3` yields cluster="my-cluster",
 // addon="foo" (from flag), version="v1.2.3" — the version's positional index
 // is shifted from 2 down to 1 because --addon consumed a slot.
-func PositionalSlot(c *cli.Context, flagName string, priorFlags ...string) string {
-	nonFlags := nonFlagArgs(c) // also applies trailing flags to the context
-	if v := flagValueIfSet(c, flagName); v != "" {
+func PositionalSlot(cmd *cli.Command, flagName string, priorFlags ...string) string {
+	if v := flagValueIfSet(cmd, flagName); v != "" {
 		return v
 	}
 	consumedByFlags := 0
 	for _, f := range priorFlags {
-		if flagValueIfSet(c, f) != "" {
+		if flagValueIfSet(cmd, f) != "" {
 			consumedByFlags++
 		}
 	}
+	args := cmd.Args().Slice()
 	idx := len(priorFlags) - consumedByFlags
-	if idx < len(nonFlags) {
-		return nonFlags[idx]
+	if idx < len(args) {
+		return args[idx]
 	}
-	return flagDefault(c, flagName)
-}
-
-// ApplyTrailingFlags re-parses flag tokens that appear after the first
-// positional argument (urfave/cli v2 stops flag parsing there and would
-// otherwise silently ignore them) and applies recognized flags to the
-// context. Commands that read flags before any positional helper runs can
-// call this explicitly; the positional helpers invoke it implicitly.
-func ApplyTrailingFlags(c *cli.Context) {
-	_ = nonFlagArgs(c)
-}
-
-// nonFlagArgs returns the true positional arguments from c.Args(). Flag
-// tokens that appear after the first positional are applied to the context
-// via c.Set (so `refresh nodegroup update-ami my-cluster --force` works), and
-// value-taking flags consume their value token so it is never mistaken for a
-// positional (`describe my-cluster --timeframe 1h` must not read "1h" as a
-// nodegroup name).
-func nonFlagArgs(c *cli.Context) []string {
-	type flagInfo struct {
-		canonical  string
-		takesValue bool
-	}
-	flagsByName := make(map[string]flagInfo)
-	if c.Command != nil {
-		for _, f := range c.Command.Flags {
-			names := f.Names()
-			if len(names) == 0 {
-				continue
-			}
-			_, isBool := f.(*cli.BoolFlag)
-			info := flagInfo{canonical: names[0], takesValue: !isBool}
-			for _, n := range names {
-				flagsByName[n] = info
-			}
-		}
-	}
-
-	args := c.Args().Slice()
-	out := make([]string, 0, len(args))
-	terminated := false // saw "--": everything after is positional
-	for i := 0; i < len(args); i++ {
-		tok := args[i]
-		if terminated || !strings.HasPrefix(tok, "-") || tok == "-" {
-			out = append(out, tok)
-			continue
-		}
-		if tok == "--" {
-			terminated = true
-			continue
-		}
-
-		name := strings.TrimLeft(tok, "-")
-		value := ""
-		hasInline := false
-		if eq := strings.Index(name, "="); eq >= 0 {
-			value = name[eq+1:]
-			name = name[:eq]
-			hasInline = true
-		}
-
-		info, known := flagsByName[name]
-		if !known {
-			// Unknown flag-like token: drop it without guessing whether the
-			// next token is its value.
-			continue
-		}
-		switch {
-		case !info.takesValue:
-			if !hasInline {
-				value = "true"
-			}
-			_ = c.Set(info.canonical, value)
-		case hasInline:
-			_ = c.Set(info.canonical, value)
-		case i+1 < len(args):
-			_ = c.Set(info.canonical, args[i+1])
-			i++ // consume the value token
-		}
-	}
-	return out
+	return flagDefault(cmd, flagName)
 }
 
 // EncodeStdout writes payload to stdout as JSON or YAML based on format.
@@ -346,12 +262,12 @@ var watchIsTerminal = func() bool {
 // cleared between iterations (top-style); when output is piped, iterations
 // append instead. fn should perform the full fetch+render cycle so every
 // iteration shows fresh data.
-func Watch(c *cli.Context, fn func() error) error {
-	if !c.Bool("watch") {
+func Watch(cmd *cli.Command, fn func() error) error {
+	if !cmd.Bool("watch") {
 		return fn()
 	}
 
-	interval := c.Duration("watch-interval")
+	interval := cmd.Duration("watch-interval")
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}

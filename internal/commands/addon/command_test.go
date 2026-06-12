@@ -3,11 +3,11 @@ package addon
 import (
 	"testing"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
 func findSub(cmd *cli.Command, name string) *cli.Command {
-	for _, sc := range cmd.Subcommands {
+	for _, sc := range cmd.Commands {
 		if sc.Name == name {
 			return sc
 		}

@@ -2,13 +2,14 @@ package commands
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
 func captureCommandStdout(t *testing.T, fn func() error) (string, error) {
@@ -35,9 +36,12 @@ func TestVersionCommandAction(t *testing.T) {
 	VersionInfo.BuildDate = "today"
 	t.Cleanup(func() { VersionInfo = oldInfo })
 
-	out, err := captureCommandStdout(t, func() error {
-		return VersionCommand().Action(cli.NewContext(cli.NewApp(), nil, nil))
-	})
+	runVersion := func() error {
+		root := &cli.Command{Name: "refresh", Commands: []*cli.Command{VersionCommand()}}
+		return root.Run(context.Background(), []string{"refresh", "version"})
+	}
+
+	out, err := captureCommandStdout(t, runVersion)
 	if err != nil {
 		t.Fatalf("version action: %v", err)
 	}
@@ -49,9 +53,7 @@ func TestVersionCommandAction(t *testing.T) {
 
 	VersionInfo.Commit = ""
 	VersionInfo.BuildDate = ""
-	out, err = captureCommandStdout(t, func() error {
-		return VersionCommand().Action(cli.NewContext(cli.NewApp(), nil, nil))
-	})
+	out, err = captureCommandStdout(t, runVersion)
 	if err != nil || strings.Contains(out, "commit:") || strings.Contains(out, "built:") {
 		t.Fatalf("minimal version output = %q, %v", out, err)
 	}
@@ -74,14 +76,10 @@ func TestManPageHelpersAndInstall(t *testing.T) {
 	}
 	updateManDB()
 
-	app := cli.NewApp()
-	app.Name = "refresh"
-	app.Usage = "test app"
-	cmd := ManPageCommand()
-	ctx := cli.NewContext(app, nil, nil)
+	app := &cli.Command{Name: "refresh", Usage: "test app"}
 
 	out, err := captureCommandStdout(t, func() error {
-		return cmd.Action(ctx)
+		return installManPage(context.Background(), app)
 	})
 	if err != nil {
 		t.Fatalf("install manpage: %v", err)
@@ -106,11 +104,9 @@ func TestManPageInstallWriteError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app := cli.NewApp()
-	app.Name = "refresh"
-	ctx := cli.NewContext(app, nil, nil)
+	app := &cli.Command{Name: "refresh"}
 
-	err := installManPage(ctx)
+	err := installManPage(context.Background(), app)
 	if err == nil {
 		t.Fatal("expected install error when man dir cannot be created")
 	}
