@@ -26,6 +26,12 @@ coverage.html
 # Conductor workspace collaboration dir (agent scratch space)
 .context/
 
+# Docs site (Material for MkDocs): built output and the uv-managed venv.
+# pyproject.toml + uv.lock ARE committed (hash-locked deps); .venv/ is not.
+site/
+.venv/
+.python-version
+
 # IDE files
 .vscode/
 .idea/

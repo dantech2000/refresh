@@ -1,0 +1,107 @@
+site_name: refresh — the EKS upgrade companion
+site_description: >-
+  Documentation for refresh, the EKS upgrade companion: a Go CLI for the
+  cluster upgrade/patching lifecycle — status, readiness, patch, upgrade.
+site_url: https://drod.dev/refresh/
+repo_url: https://github.com/dantech2000/refresh
+repo_name: dantech2000/refresh
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; Daniel Rodriguez
+
+# Source markdown lives in docs/; the built site goes to site/ (gitignored).
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle: { icon: material/brightness-auto, name: Switch to light mode }
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/brightness-7, name: Switch to dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/brightness-4, name: Switch to system preference }
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+
+plugins:
+  - search
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/dantech2000/refresh
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - Concepts:
+      - The upgrade lifecycle: concepts/lifecycle.md
+      - Configuration & AWS auth: concepts/configuration.md
+      - Contexts: concepts/contexts.md
+      - Output formats: concepts/output.md
+      - Exit codes: concepts/exit-codes.md
+  - Commands:
+      - Overview: commands/index.md
+      - refresh status: commands/status.md
+      - cluster: commands/cluster.md
+      - nodegroup: commands/nodegroup.md
+      - addon: commands/addon.md
+      - Contexts (use/current/context): commands/contexts.md
+      - Utility (version/man/completion): commands/utility.md
+  - Usage & examples:
+      - Cookbook: usage/cookbook.md
+      - Migrating from eksctl / aws CLI: migration.md
+  - Changelog: changelog.md

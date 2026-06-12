@@ -93,6 +93,17 @@ tasks:
     cmds:
       - go test -bench=. -benchmem -run=^$ ./internal/services/...
 
+  # Documentation site (Material for MkDocs via a uv-managed, hash-locked venv)
+  docs:serve:
+    desc: Serve the documentation site locally with live reload
+    cmds:
+      - uv run --frozen mkdocs serve
+
+  docs:build:
+    desc: Build the documentation site (strict — fails on broken links/nav)
+    cmds:
+      - uv run --frozen mkdocs build --strict
+
   # Dependency management
   deps:
     desc: Download and tidy dependencies
