@@ -1,6 +1,7 @@
 package factory_test
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"testing"
@@ -20,6 +21,48 @@ func TestNewDefaultLogger_NonNilPassthrough(t *testing.T) {
 func TestNewDefaultLogger_NilReturnsLogger(t *testing.T) {
 	if factory.NewDefaultLogger(nil) == nil {
 		t.Fatal("NewDefaultLogger(nil) must not return nil")
+	}
+}
+
+// REF-37: --log-level strings map to slog levels; unknown falls back to warn.
+func TestParseLogLevel(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want slog.Level
+	}{
+		{"debug", slog.LevelDebug},
+		{"info", slog.LevelInfo},
+		{"warn", slog.LevelWarn},
+		{"warning", slog.LevelWarn},
+		{"error", slog.LevelError},
+		{"", slog.LevelWarn},
+		{"DEBUG", slog.LevelDebug},
+		{"bogus", slog.LevelWarn},
+	} {
+		if got := factory.ParseLogLevel(tc.in); got != tc.want {
+			t.Errorf("ParseLogLevel(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// REF-37: SetDefaultLogLevel changes the level NewDefaultLogger emits at.
+func TestSetDefaultLogLevel(t *testing.T) {
+	t.Cleanup(func() { factory.SetDefaultLogLevel(slog.LevelWarn) })
+	factory.SetDefaultLogLevel(slog.LevelDebug)
+	l := factory.NewDefaultLogger(nil)
+	if !l.Enabled(context.Background(), slog.LevelDebug) {
+		t.Error("after SetDefaultLogLevel(debug), logger should emit at debug")
+	}
+	factory.SetDefaultLogLevel(slog.LevelError)
+	l = factory.NewDefaultLogger(nil)
+	if l.Enabled(context.Background(), slog.LevelWarn) {
+		t.Error("after SetDefaultLogLevel(error), logger should NOT emit at warn")
+	}
+}
+
+func TestNewAddonService(t *testing.T) {
+	if factory.NewAddonService(aws.Config{Region: "us-east-1"}, nil) == nil {
+		t.Fatal("NewAddonService returned nil")
 	}
 }
 

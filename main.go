@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 	addoncmd "github.com/dantech2000/refresh/internal/commands/addon"
 	clustercmd "github.com/dantech2000/refresh/internal/commands/cluster"
 	ctxcmd "github.com/dantech2000/refresh/internal/commands/ctxcmd"
+	"github.com/dantech2000/refresh/internal/commands/factory"
 	nodegroupcmd "github.com/dantech2000/refresh/internal/commands/nodegroup"
 	statuscmd "github.com/dantech2000/refresh/internal/commands/statuscmd"
 	appconfig "github.com/dantech2000/refresh/internal/config"
@@ -97,8 +99,27 @@ func newApp() *cli.Command {
 				Name:  "region",
 				Usage: "AWS region (overrides the active context for this invocation)",
 			},
+			// Logging verbosity. Default warn (quiet); --verbose is a shortcut for
+			// --log-level debug. No -v alias (that's --version). (REF-37)
+			&cli.StringFlag{
+				Name:    "log-level",
+				Usage:   "Log verbosity: debug, info, warn, error",
+				Value:   "warn",
+				Sources: cli.EnvVars("REFRESH_LOG_LEVEL"),
+			},
+			&cli.BoolFlag{
+				Name:  "verbose",
+				Usage: "Shortcut for --log-level debug",
+			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			// Single logger-configuration point: every service logger flows from
+			// factory.NewDefaultLogger, which reads this level. (REF-37)
+			level := factory.ParseLogLevel(cmd.String("log-level"))
+			if cmd.Bool("verbose") {
+				level = slog.LevelDebug
+			}
+			factory.SetDefaultLogLevel(level)
 			if cmd.Bool("no-color") {
 				color.NoColor = true
 				pterm.DisableColor()
