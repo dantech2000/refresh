@@ -1,0 +1,86 @@
+name: Docs
+
+# Build the Material for MkDocs site and deploy it to GitHub Pages.
+#
+# Supply-chain posture (REF-107):
+#   - The BUILD job runs third-party code (Python deps from the hash-locked
+#     uv.lock) with `contents: read` only — NO id-token, NO pages, NO secrets.
+#     A poisoned dependency therefore cannot mint an OIDC token or read secrets.
+#   - A separate DEPLOY job holds `pages: write` + `id-token: write` and runs
+#     ONLY first-party actions (actions/deploy-pages).
+#   - Every action is pinned to a full commit SHA (tags are mutable).
+#   - harden-runner audits egress on the build job (flip to `block` with an
+#     allowlist once the audit confirms the endpoints: github + pypi).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+
+# Least privilege by default; jobs opt into more only where required.
+permissions:
+  contents: read
+
+# Never cancel an in-flight Pages deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # no id-token / pages / secrets — untrusted deps run here
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv (pinned, cached)
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "0.9.18"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Build (strict) from the hash-locked lockfile
+        run: uv run --frozen mkdocs build --strict
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to Pages
+    # Only deploy from main; PRs build-and-validate only.
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write # mint the Pages deployment
+      id-token: write # OIDC for deploy-pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy (first-party action only)
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
