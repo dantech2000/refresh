@@ -176,6 +176,102 @@ func TestUpgradeAddons_FailureHaltsPhase(t *testing.T) {
 	}
 }
 
+// Resume support (REF-114): a re-run that finds an addon still UPDATING from a
+// previous run attaches to that in-flight update (waits for ACTIVE) instead of
+// hard-failing the pre-update health gate. Here the in-flight update settles at
+// the target version, so no new UpdateAddon is submitted.
+func TestUpgradeAddons_ResumeAttachesToInFlightUpdate(t *testing.T) {
+	const chosen = "v1.32.2-eksbuild.1"
+	var mu sync.Mutex
+	describeCalls := 0
+
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithAddon("vpc-cni", "v1.31.5-eksbuild.1", ekstypes.AddonStatusActive).
+		Build()
+	versionsByK8s(m, "vpc-cni", map[string][]string{"1.32": {chosen}})
+	m.DescribeAddonFn = func(_ context.Context, in *eks.DescribeAddonInput, _ ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
+		mu.Lock()
+		describeCalls++
+		n := describeCalls
+		mu.Unlock()
+		// First two observations: still mid-update from the previous run.
+		// Then it settles ACTIVE at the target version.
+		status, version := ekstypes.AddonStatusActive, chosen
+		if n <= 2 {
+			status, version = ekstypes.AddonStatusUpdating, "v1.31.5-eksbuild.1"
+		}
+		return &eks.DescribeAddonOutput{Addon: &ekstypes.Addon{
+			AddonName:    in.AddonName,
+			AddonVersion: aws.String(version),
+			Status:       status,
+		}}, nil
+	}
+	svc := newTestService(m)
+
+	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
+		t.Fatalf("UpgradeAddons: %v", err)
+	}
+	if m.Calls.UpdateAddon != 0 {
+		t.Fatalf("UpdateAddon calls = %d, want 0 (attached to in-flight update already at target)", m.Calls.UpdateAddon)
+	}
+	mu.Lock()
+	got := describeCalls
+	mu.Unlock()
+	if got < 3 {
+		t.Fatalf("DescribeAddon calls = %d, want >=3 (status read, poll until ACTIVE, re-read)", got)
+	}
+}
+
+// Resume support (REF-114): if the attached-to in-flight update settles below
+// the chosen target, the phase converges by issuing the update — and the
+// pre-update health gate passes because the addon is ACTIVE again by then.
+func TestUpgradeAddons_ResumeThenConverges(t *testing.T) {
+	var mu sync.Mutex
+	describeCalls := 0
+	updated := false
+
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithAddon("vpc-cni", "v1.31.5-eksbuild.1", ekstypes.AddonStatusActive).
+		Build()
+	versionsByK8s(m, "vpc-cni", map[string][]string{"1.32": {"v1.32.2-eksbuild.1"}})
+	m.DescribeAddonFn = func(_ context.Context, in *eks.DescribeAddonInput, _ ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
+		mu.Lock()
+		describeCalls++
+		n := describeCalls
+		mu.Unlock()
+		status := ekstypes.AddonStatusUpdating
+		if n >= 3 { // settles ACTIVE but still below target → must converge
+			status = ekstypes.AddonStatusActive
+		}
+		return &eks.DescribeAddonOutput{Addon: &ekstypes.Addon{
+			AddonName:    in.AddonName,
+			AddonVersion: aws.String("v1.31.5-eksbuild.1"),
+			Status:       status,
+		}}, nil
+	}
+	m.UpdateAddonFn = func(_ context.Context, _ *eks.UpdateAddonInput, _ ...func(*eks.Options)) (*eks.UpdateAddonOutput, error) {
+		mu.Lock()
+		updated = true
+		mu.Unlock()
+		return &eks.UpdateAddonOutput{Update: &ekstypes.Update{
+			Id:     aws.String("u-converge"),
+			Status: ekstypes.UpdateStatusInProgress,
+		}}, nil
+	}
+	svc := newTestService(m)
+
+	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
+		t.Fatalf("UpgradeAddons: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !updated {
+		t.Fatal("expected UpdateAddon to be called to converge to target after attaching to the in-flight update")
+	}
+}
+
 // An addon with no target-compatible version fails the phase up front.
 func TestUpgradeAddons_NoCompatibleVersionFails(t *testing.T) {
 	m := mocks.NewEKSAPI().

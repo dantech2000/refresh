@@ -109,6 +109,19 @@ func compareAddonVersions(a, b string) int {
 	return len(as) - len(bs)
 }
 
+// WaitUntilActive blocks until the addon reaches ACTIVE — attaching to an
+// in-flight update started by a previous run — or the update fails, bounded by
+// timeout. It is the exported entry point the upgrade orchestrator uses to
+// resume an addon that is still CREATING/UPDATING.
+func (s *ServiceImpl) WaitUntilActive(ctx context.Context, clusterName, addonName string, timeout, pollInterval time.Duration) error {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	return s.waitForAddonUpdate(ctx, clusterName, addonName, pollInterval)
+}
+
 // waitForAddonUpdate polls until an addon update completes. pollInterval
 // falls back to addonUpdatePollInterval when zero.
 func (s *ServiceImpl) waitForAddonUpdate(ctx context.Context, clusterName, addonName string, pollInterval time.Duration) error {
