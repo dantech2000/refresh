@@ -2,21 +2,37 @@ package nodegroup
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/fatih/color"
 
+	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
+// outputNodegroupsTable renders the nodegroup list. The human path uses the
+// render design system (tokenized STATUS/AMI cells); `-o plain` keeps the
+// uncolored tab-separated table.
 func outputNodegroupsTable(clusterName string, items []nodegroupsvc.NodegroupSummary, elapsed time.Duration) error {
 	if len(items) == 0 {
 		color.Yellow("No nodegroups found for cluster: %s", clusterName)
 		return nil
 	}
+	if !ui.PlainOutput() {
+		th := render.Default(os.Stdout)
+		for _, line := range nodegroupListLines(th, clusterName, items) {
+			fmt.Println(line)
+		}
+		return nil
+	}
+	return outputNodegroupsPlain(clusterName, items, elapsed)
+}
+
+func outputNodegroupsPlain(clusterName string, items []nodegroupsvc.NodegroupSummary, elapsed time.Duration) error {
 	ui.Outf("Nodegroups for cluster: %s\n", clusterName)
 	ui.Outf("Retrieved in %s\n", ui.ElapsedString(elapsed))
 	ui.Outln()
