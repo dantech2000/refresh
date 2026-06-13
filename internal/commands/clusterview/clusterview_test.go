@@ -10,6 +10,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
@@ -332,13 +333,26 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 		Nodegroups: []clustersvc.NodegroupSummary{{Name: "ng-workers", Status: "ACTIVE", ReadyNodes: 2}},
 	}
 
+	// Human path (render design system): sectioned detail, no "Cluster
+	// Information" banner.
 	out, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, time.Second) })
 	if err != nil {
 		t.Fatalf("table error: %v", err)
 	}
-	for _, want := range []string{"Cluster Information", "prod", "1.30", "vpc-1"} {
+	for _, want := range []string{"▸ OVERVIEW", "prod", "1.30", "vpc-1", "vpc-cni"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("table output missing %q: %q", want, out)
+			t.Errorf("detail output missing %q: %q", want, out)
 		}
+	}
+
+	// Plain path (-o plain) keeps the uncolored key/value banner for grep/awk.
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	plain, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, time.Second) })
+	if err != nil {
+		t.Fatalf("plain error: %v", err)
+	}
+	if !strings.Contains(plain, "Cluster Information") {
+		t.Errorf("plain output missing banner: %q", plain)
 	}
 }
