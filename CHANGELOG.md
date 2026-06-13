@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.7.0](https://github.com/dantech2000/refresh/compare/v0.6.0...v0.7.0) (2026-06-13)
+
+
+### Features
+
+* **cluster:** upgrade-check — EKS Cluster Insights + version-skew readiness (REF-12) ([#31](https://github.com/dantech2000/refresh/issues/31)) ([16d6fdf](https://github.com/dantech2000/refresh/commit/16d6fdfd3e282a21623ec06cd2d8293b89fd6721))
+* **docs:** generate the command/flag reference from the CLI tree (REF-108) ([#43](https://github.com/dantech2000/refresh/issues/43)) ([dac59b4](https://github.com/dantech2000/refresh/commit/dac59b459552b3a3f17f36de9ab7c590a8b5d8a8))
+* **health:** --kubeconfig flag + connection diagnostics for pre-flight checks (REF-3) ([#32](https://github.com/dantech2000/refresh/issues/32)) ([0b8f1ac](https://github.com/dantech2000/refresh/commit/0b8f1ac8047509fc46035a868bf29da52d01b6bd))
+* **nodegroup:** AMI refresh flagship — fleet mode, verification, changelog, unattended, custom-AMI safety (REF-80) ([#33](https://github.com/dantech2000/refresh/issues/33)) ([601274c](https://github.com/dantech2000/refresh/commit/601274ca98470b44cb9d9afbfb3f800272e8d1d3))
+* output redesign + live cluster-roll observability (REF-119) ([#50](https://github.com/dantech2000/refresh/issues/50)) ([3dbc24e](https://github.com/dantech2000/refresh/commit/3dbc24e866153a150a2c6ebe7e657d439aae1bff))
+* signal cancellation + mechanical hygiene (salvage of [#19](https://github.com/dantech2000/refresh/issues/19)/[#21](https://github.com/dantech2000/refresh/issues/21)) ([#25](https://github.com/dantech2000/refresh/issues/25)) ([5b27147](https://github.com/dantech2000/refresh/commit/5b2714720d8424c2d037524014be9910ab67c728))
+* **status:** refresh status — fleet patch posture across clusters/regions (REF-79) ([#30](https://github.com/dantech2000/refresh/issues/30)) ([1e9cc61](https://github.com/dantech2000/refresh/commit/1e9cc612bb2d0782bdf8de95ac5cff300b128107))
+
+
+### Bug Fixes
+
+* **cli:** consistency & robustness hardening — flags, positional, ctx-cancel, nil-derefs (REF-52) ([#38](https://github.com/dantech2000/refresh/issues/38)) ([af93607](https://github.com/dantech2000/refresh/commit/af9360768496f4b290d2bec00e7ad085b32efdae))
+* **cli:** output & flag correctness — filters, format validation, global region/profile, yaml keys ([#34](https://github.com/dantech2000/refresh/issues/34)) ([2a06a7f](https://github.com/dantech2000/refresh/commit/2a06a7f1b01b1b58b1a6fbcf468c9734e640c8b8))
+* harden defensive nil-checks and input validation (REF-115, REF-116, REF-117) ([#47](https://github.com/dantech2000/refresh/issues/47)) ([771e487](https://github.com/dantech2000/refresh/commit/771e4877b51c1ac476a8b4ff9215f582db529d53))
+* **health:** scoring accuracy — skip exclusion, peak CPU, proxy honesty, std-dev relabel (REF-63) ([#29](https://github.com/dantech2000/refresh/issues/29)) ([5445a23](https://github.com/dantech2000/refresh/commit/5445a23d6e0f167112b73881d1ce9b1b6f8f64aa))
+* **ui:** output/formatting data-integrity — TSV escaping, zero-time, display-cell widths (REF-62) ([#37](https://github.com/dantech2000/refresh/issues/37)) ([1c06dd9](https://github.com/dantech2000/refresh/commit/1c06dd97f813f1e23cf20a8d96295b108c639a2c))
+* **upgrade:** attach to in-flight addon updates on resume (REF-114) ([#48](https://github.com/dantech2000/refresh/issues/48)) ([780b097](https://github.com/dantech2000/refresh/commit/780b097560238e3c41e21c5d01c113698fa7fbc2))
+
+
+### Code Refactoring
+
+* consolidate duplicated table, timing, filter, pagination, and badge code ([#22](https://github.com/dantech2000/refresh/issues/22)) ([8788a28](https://github.com/dantech2000/refresh/commit/8788a28d43417dc7454acc7a317af4173576a1f4))
+* logging, addon factory, batched ASG, scale-dry-run PDBs, split actions.go (REF-37, 39, 50, 4, 38) ([#39](https://github.com/dantech2000/refresh/issues/39)) ([03e857f](https://github.com/dantech2000/refresh/commit/03e857f5c0aa2215c202c9cc2df37f0a21d9a8ed))
+* migrate CLI from urfave/cli v2 to v3 (REF-11) ([#27](https://github.com/dantech2000/refresh/issues/27)) ([19ea6e4](https://github.com/dantech2000/refresh/commit/19ea6e456a8e724a04a92c0c1209ac3d1dc8d5b6))
+* **trim:** refocus as the EKS upgrade companion — remove diff, cost, utilization, workload pdbs (REF-78) ([#36](https://github.com/dantech2000/refresh/issues/36)) ([9c6ce30](https://github.com/dantech2000/refresh/commit/9c6ce30a408e7ffcd09a541f53ae6ff75c5b9bc7))
+
 ## [0.6.0](https://github.com/dantech2000/refresh/compare/v0.5.12...v0.6.0) (2026-06-06)
 
 
