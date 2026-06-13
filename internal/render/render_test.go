@@ -23,6 +23,25 @@ func TestPaintLevels(t *testing.T) {
 	}
 }
 
+// Locks the production theming to the exact truecolor (and 256-color) SGR codes
+// the design proof used — so the real CLI emits the same Catppuccin palette,
+// not an approximation.
+func TestThemingMatchesProofPalette(t *testing.T) {
+	tc := New(ColorTrue, true)
+	// Healthy ● is Catppuccin green {166,227,161}; the label stays uncolored.
+	if got, want := tc.Token(Healthy, "current"), "\x1b[38;2;166;227;161m●\x1b[0m current"; got != want {
+		t.Errorf("truecolor Healthy token = %q, want %q", got, want)
+	}
+	// Fail ✗ is red {243,139,168}.
+	if got, want := tc.Glyph(Fail), "\x1b[38;2;243;139;168m✗\x1b[0m"; got != want {
+		t.Errorf("truecolor Fail glyph = %q, want %q", got, want)
+	}
+	// 256-color terminals get an indexed code from the same palette.
+	if got := New(Color256, true).Glyph(Progress); !strings.HasPrefix(got, "\x1b[38;5;") {
+		t.Errorf("256-color Progress glyph = %q, want 38;5; prefix", got)
+	}
+}
+
 func TestRGBTo256(t *testing.T) {
 	if got := rgbTo256(Color{0, 0, 0}); got != 16 {
 		t.Errorf("black = %d, want 16", got)

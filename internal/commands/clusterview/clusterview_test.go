@@ -283,9 +283,9 @@ func TestOutputClustersTable(t *testing.T) {
 	}{
 		// "No EKS clusters found" is printed via color.Yellow (original stdout handle, not captured).
 		{"empty", false, false, nil, ""},
-		{"single-no-health", false, false, sampleSummaries()[:1], "1 cluster"},
-		{"single-health", false, true, sampleSummaries(), "2 cluster"},
-		{"multi-region-health", true, true, sampleSummaries(), "2 cluster"},
+		{"single-no-health", false, false, sampleSummaries()[:1], "CLUSTERS  1"},
+		{"single-health", false, true, sampleSummaries(), "CLUSTERS  2"},
+		{"multi-region-health", true, true, sampleSummaries(), "CLUSTERS  2"},
 	} {
 		t.Run("table/"+tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
