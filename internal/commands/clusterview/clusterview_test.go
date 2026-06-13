@@ -10,6 +10,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
@@ -282,9 +283,9 @@ func TestOutputClustersTable(t *testing.T) {
 	}{
 		// "No EKS clusters found" is printed via color.Yellow (original stdout handle, not captured).
 		{"empty", false, false, nil, ""},
-		{"single-no-health", false, false, sampleSummaries()[:1], "1 cluster"},
-		{"single-health", false, true, sampleSummaries(), "2 cluster"},
-		{"multi-region-health", true, true, sampleSummaries(), "2 cluster"},
+		{"single-no-health", false, false, sampleSummaries()[:1], "CLUSTERS  1"},
+		{"single-health", false, true, sampleSummaries(), "CLUSTERS  2"},
+		{"multi-region-health", true, true, sampleSummaries(), "CLUSTERS  2"},
 	} {
 		t.Run("table/"+tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
@@ -332,13 +333,26 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 		Nodegroups: []clustersvc.NodegroupSummary{{Name: "ng-workers", Status: "ACTIVE", ReadyNodes: 2}},
 	}
 
+	// Human path (render design system): sectioned detail, no "Cluster
+	// Information" banner.
 	out, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, time.Second) })
 	if err != nil {
 		t.Fatalf("table error: %v", err)
 	}
-	for _, want := range []string{"Cluster Information", "prod", "1.30", "vpc-1"} {
+	for _, want := range []string{"▸ OVERVIEW", "prod", "1.30", "vpc-1", "vpc-cni"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("table output missing %q: %q", want, out)
+			t.Errorf("detail output missing %q: %q", want, out)
 		}
+	}
+
+	// Plain path (-o plain) keeps the uncolored key/value banner for grep/awk.
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	plain, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, time.Second) })
+	if err != nil {
+		t.Fatalf("plain error: %v", err)
+	}
+	if !strings.Contains(plain, "Cluster Information") {
+		t.Errorf("plain output missing banner: %q", plain)
 	}
 }

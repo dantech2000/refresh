@@ -11,6 +11,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/types"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // captureStdout is defined in health_decision_test.go (redirects both
@@ -36,16 +37,28 @@ func TestOutputNodegroupsTable_WithRows(t *testing.T) {
 		{Name: "workers", Status: "ACTIVE", InstanceType: "m5.large", AMIStatus: types.AMILatest, ReadyNodes: 3, DesiredSize: 3},
 		{Name: "spot", Status: "UPDATING", InstanceType: "t3.medium", AMIStatus: types.AMIOutdated, ReadyNodes: 1, DesiredSize: 2},
 	}
-	// pterm renders the table body to its own (TTY-detecting) writer, which a
-	// captured pipe suppresses; assert on the reliably-captured intro line and
-	// that the call itself succeeds for a non-empty set.
+	// Human path (render design system): captured in full via fmt.Println.
 	out := captureStdout(t, func() {
 		if err := outputNodegroupsTable("my-cluster", items, 2*time.Second); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
-	if !strings.Contains(out, "Nodegroups for cluster: my-cluster") {
-		t.Errorf("table output missing cluster header; got:\n%s", out)
+	for _, want := range []string{"NODEGROUPS", "my-cluster"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table output missing %q; got:\n%s", want, out)
+		}
+	}
+
+	// Plain path keeps the original cluster banner.
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	plain := captureStdout(t, func() {
+		if err := outputNodegroupsTable("my-cluster", items, 2*time.Second); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	if !strings.Contains(plain, "Nodegroups for cluster: my-cluster") {
+		t.Errorf("plain output missing cluster banner; got:\n%s", plain)
 	}
 }
 

@@ -2,17 +2,34 @@ package clusterview
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/fatih/color"
 
+	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-// OutputClusterDetailsTable renders a single cluster's expanded details.
+// OutputClusterDetailsTable renders a single cluster's expanded details. The
+// human path uses the render design system (sections, status tokens, a health
+// card); `-o plain` keeps the uncolored key/value + tab-separated tables.
 func OutputClusterDetailsTable(details *clustersvc.ClusterDetails, elapsed time.Duration) error {
+	if ui.PlainOutput() {
+		return outputClusterDetailsPlain(details, elapsed)
+	}
+	th := render.Default(os.Stdout)
+	for _, line := range clusterDetailLines(th, details, elapsed) {
+		fmt.Println(line)
+	}
+	return nil
+}
+
+// outputClusterDetailsPlain renders the uncolored key/value + tab-separated
+// add-ons table for `-o plain`.
+func outputClusterDetailsPlain(details *clustersvc.ClusterDetails, elapsed time.Duration) error {
 	ui.Outf("Cluster Information: %s\n", color.CyanString(details.Name))
 	ui.PrintElapsed(elapsed)
 

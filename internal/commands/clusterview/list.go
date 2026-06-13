@@ -2,6 +2,7 @@ package clusterview
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -9,17 +10,32 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-// OutputClustersTable renders a table of cluster summaries.
+// OutputClustersTable renders a table of cluster summaries. The human path uses
+// the render design system (tokenized status/health cells, a health summary
+// chip line); `-o plain` keeps the uncolored tab-separated table.
 func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
 	if len(summaries) == 0 {
 		color.Yellow("No EKS clusters found")
 		return nil
 	}
+	if !ui.PlainOutput() {
+		th := render.Default(os.Stdout)
+		for _, line := range clusterListLines(th, summaries, multiRegion, showHealth) {
+			fmt.Println(line)
+		}
+		return nil
+	}
+	return outputClustersPlain(summaries, elapsed, multiRegion, showHealth)
+}
 
+// outputClustersPlain renders the uncolored tab-separated cluster table for
+// `-o plain`.
+func outputClustersPlain(summaries []clustersvc.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
 	if multiRegion {
 		regions := make(map[string]bool)
 		for _, s := range summaries {

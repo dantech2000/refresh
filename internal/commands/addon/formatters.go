@@ -2,24 +2,41 @@ package addon
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/fatih/color"
 
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/ui"
 	"gopkg.in/yaml.v3"
 )
 
+// outputAddonsTable renders the add-on list. The human path uses the render
+// design system (tokenized STATUS/HEALTH cells); `-o plain` keeps the uncolored
+// tab-separated table.
 func outputAddonsTable(cluster string, rows []addons.AddonSummary, elapsed time.Duration) error {
-	ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
-	ui.PrintElapsed(elapsed)
-
 	if len(rows) == 0 {
+		ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
+		ui.PrintElapsed(elapsed)
 		color.Yellow("No add-ons found")
 		return nil
 	}
+	if !ui.PlainOutput() {
+		th := render.Default(os.Stdout)
+		for _, line := range addonListLines(th, cluster, rows) {
+			fmt.Println(line)
+		}
+		return nil
+	}
+	return outputAddonsPlain(cluster, rows, elapsed)
+}
+
+func outputAddonsPlain(cluster string, rows []addons.AddonSummary, elapsed time.Duration) error {
+	ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
+	ui.PrintElapsed(elapsed)
 
 	columns := []ui.Column{
 		{Title: "NAME", Min: 4, Max: 24, Align: ui.AlignLeft},
