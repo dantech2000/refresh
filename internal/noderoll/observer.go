@@ -71,12 +71,34 @@ type KubeObserver struct {
 	client    kubernetes.Interface
 	nodegroup string
 	targetAMI string
+	// baseline, when set, holds the node names present at roll start; any node
+	// NOT in it is treated as "on target" (new). This makes old-vs-new robust
+	// for live rolls where the target AMI ID isn't known up front. nil → fall
+	// back to the nodegroup-image AMI label.
+	baseline map[string]bool
 }
 
 // NewKubeObserver returns an Observer for nodegroup, treating targetAMI as the
 // "new" AMI the roll is moving toward.
 func NewKubeObserver(client kubernetes.Interface, nodegroup, targetAMI string) *KubeObserver {
 	return &KubeObserver{client: client, nodegroup: nodegroup, targetAMI: targetAMI}
+}
+
+// CaptureBaseline records the nodegroup's current node set as "old" so that
+// nodes appearing afterward count as the new (on-target) nodes — for live rolls
+// where the target AMI ID isn't known in advance.
+func (o *KubeObserver) CaptureBaseline(ctx context.Context) error {
+	list, err := o.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: LabelNodegroup + "=" + o.nodegroup,
+	})
+	if err != nil {
+		return err
+	}
+	o.baseline = make(map[string]bool, len(list.Items))
+	for i := range list.Items {
+		o.baseline[list.Items[i].Name] = true
+	}
+	return nil
 }
 
 // Snapshot lists the nodegroup's nodes and classifies each. Nodes from other
@@ -91,7 +113,7 @@ func (o *KubeObserver) Snapshot(ctx context.Context) (Snapshot, error) {
 
 	var snap Snapshot
 	for i := range list.Items {
-		v := classify(&list.Items[i], o.targetAMI)
+		v := classify(&list.Items[i], o.targetAMI, o.baseline)
 		snap.Nodes = append(snap.Nodes, v)
 		snap.Total++
 		switch v.Phase {
@@ -111,8 +133,10 @@ func (o *KubeObserver) Snapshot(ctx context.Context) (Snapshot, error) {
 }
 
 // classify derives a node's phase: cordoned/tainted-for-removal => Draining;
-// not Ready => Joining; otherwise Ready.
-func classify(n *corev1.Node, targetAMI string) NodeView {
+// not Ready => Joining; otherwise Ready. onTarget comes from the baseline set
+// when present (node appeared after roll start), else the nodegroup-image AMI
+// label.
+func classify(n *corev1.Node, targetAMI string, baseline map[string]bool) NodeView {
 	ready := nodeReady(n)
 	phase := PhaseReady
 	switch {
@@ -121,9 +145,13 @@ func classify(n *corev1.Node, targetAMI string) NodeView {
 	case !ready:
 		phase = PhaseJoining
 	}
+	onTarget := n.Labels[LabelImage] == targetAMI
+	if baseline != nil {
+		onTarget = !baseline[n.Name]
+	}
 	return NodeView{
 		Name:     n.Name,
-		OnTarget: n.Labels[LabelImage] == targetAMI,
+		OnTarget: onTarget,
 		Ready:    ready,
 		Phase:    phase,
 	}
