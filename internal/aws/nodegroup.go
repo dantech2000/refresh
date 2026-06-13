@@ -126,6 +126,9 @@ func getNodegroupInfo(
 	}
 
 	ng := ngDesc.Nodegroup
+	if ng == nil {
+		return refreshTypes.NodegroupInfo{}, fmt.Errorf("empty DescribeNodegroup response for %s", ngName)
+	}
 	currentAmi := CurrentAmiID(ctx, ng, ec2Client, autoscalingClient)
 	info := refreshTypes.NodegroupInfo{
 		Name:         aws.ToString(ng.NodegroupName),

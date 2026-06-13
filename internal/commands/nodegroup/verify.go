@@ -65,6 +65,10 @@ func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient
 			v.Issues = append(v.Issues, fmt.Sprintf("%s: could not describe after roll: %v", ng, err))
 			continue
 		}
+		if desc.Nodegroup == nil {
+			v.Issues = append(v.Issues, fmt.Sprintf("%s: empty describe response after roll", ng))
+			continue
+		}
 		if desc.Nodegroup.Status == ekstypes.NodegroupStatusActive {
 			v.Checks = append(v.Checks, fmt.Sprintf("nodegroup %s is ACTIVE", ng))
 		} else {

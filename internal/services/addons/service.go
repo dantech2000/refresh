@@ -195,6 +195,9 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	if err != nil {
 		return nil, fmt.Errorf("getting current addon version: %w", err)
 	}
+	if currentDesc.Addon == nil {
+		return nil, fmt.Errorf("getting current addon version: empty DescribeAddon response for %s", addonName)
+	}
 	previousVersion := aws.ToString(currentDesc.Addon.AddonVersion)
 
 	// Pre-update health check: refuse to update while the addon is mid-operation.
@@ -234,6 +237,9 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("updating addon: %w", err)
+	}
+	if out.Update == nil {
+		return nil, fmt.Errorf("updating addon: empty Update in UpdateAddon response for %s", addonName)
 	}
 
 	result.UpdateID = aws.ToString(out.Update.Id)
