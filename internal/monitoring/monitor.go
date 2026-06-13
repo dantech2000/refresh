@@ -235,6 +235,12 @@ func checkUpdateWithRetry(ctx context.Context, eksClient *eks.Client, update *re
 	var lastErr error
 	backoff := time.Second
 
+	// Guard against a misconfigured MaxRetries: a value <= 0 would skip the loop
+	// entirely and return (nil, nil), nil-panicking the caller. Always try once.
+	if config.MaxRetries <= 0 {
+		config.MaxRetries = 1
+	}
+
 	for attempt := 0; attempt < config.MaxRetries; attempt++ {
 		updateStatus, err := eksClient.DescribeUpdate(ctx, &eks.DescribeUpdateInput{
 			Name:          aws.String(update.ClusterName),
