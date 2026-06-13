@@ -3,20 +3,36 @@ package statusview
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/fatih/color"
 
+	"github.com/dantech2000/refresh/internal/render"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
 const dateLayout = "2006-01-02"
 
-// OutputFleetTable renders the fleet status as a table (or plain TSV when plain
-// output is active) followed by a one-line summary footer.
+// OutputFleetTable renders the fleet status. The human path uses the render
+// design system (status tokens, summary chips, a next-step hint); `-o plain`
+// keeps the uncolored tab-separated table for grep/awk.
 func OutputFleetTable(statuses []statussvc.ClusterStatus, elapsed time.Duration) error {
+	if ui.PlainOutput() {
+		return outputFleetPlain(statuses, elapsed)
+	}
+	th := render.Default(os.Stdout)
+	for _, line := range fleetLines(th, statuses, elapsed) {
+		fmt.Println(line)
+	}
+	return nil
+}
+
+// outputFleetPlain renders the uncolored, tab-separated fleet table for
+// `-o plain` (grep/awk-friendly), via the PTable plain path.
+func outputFleetPlain(statuses []statussvc.ClusterStatus, elapsed time.Duration) error {
 	columns := []ui.Column{
 		{Title: "CLUSTER", Min: 8},
 		{Title: "REGION", Min: 9},
