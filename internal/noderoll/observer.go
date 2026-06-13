@@ -43,6 +43,10 @@ type NodeView struct {
 	OnTarget bool   `json:"onTarget"` // launched with the target (new) AMI
 	Ready    bool   `json:"ready"`
 	Phase    Phase  `json:"phase"`
+	// Pods/PodsTotal track eviction progress while a node is Draining (0 when
+	// not draining or when pod accounting isn't available).
+	Pods      int `json:"pods,omitempty"`
+	PodsTotal int `json:"podsTotal,omitempty"`
 }
 
 // Snapshot is the nodegroup's state at one instant, plus roll aggregates.

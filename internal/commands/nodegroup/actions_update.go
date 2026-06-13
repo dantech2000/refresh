@@ -78,6 +78,9 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsTableJSON); err != nil {
 		return err
 	}
+	if cmd.Bool("simulate") {
+		return runSimulatedRoll(ctx, cmd.String("nodegroup"))
+	}
 	if cmd.Bool("all-clusters") {
 		return runFleetUpdate(ctx, cmd)
 	}

@@ -165,6 +165,10 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.BoolFlag{Name: "changelog", Usage: "In dry-run, print full amazon-eks-ami release notes between the current and target AMI"},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format: health results with --health-only; a JSON run summary with -o json", Value: "table"},
+			// --simulate drives the live node-roll panel from a scripted observer
+			// (no AWS, no cluster) — for demos, asciinema, and manual QA of the
+			// live view. Hidden: it's a dev/demo aid, not a real operation.
+			&cli.BoolFlag{Name: "simulate", Hidden: true, Usage: "Demo the live node-roll panel with simulated data (no AWS)"},
 		},
 		Action: runUpdateAMI,
 	}
