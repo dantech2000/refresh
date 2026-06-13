@@ -105,6 +105,7 @@ refresh/
 
 -   **Pre-flight Health Checks**: Validate cluster readiness before AMI updates using default EC2 metrics (no additional setup required)
 -   **Real-time Monitoring**: Live progress tracking with professional spinner displays and clean completion summaries
+-   **Live Node-Roll View**: `nodegroup update` can show a real-time, per-node view of a roll — nodes draining (with pod-eviction progress), terminating, and coming online — driven from live Kubernetes state. Line-oriented (redraws in place on a TTY, appends when piped), not a TUI. Preview it with no AWS via `nodegroup update --simulate`
 -   **Fleet Status**: `refresh status -A` shows patch posture (version, EKS support window + extended-support cost, stale AMIs, addons behind) across all clusters/regions, with CI-friendly exit codes
 -   **Cluster Management**: List clusters and nodegroups with status and versions
 -   **Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode
@@ -117,7 +118,7 @@ refresh/
 -   **Security Visibility**: Display cluster deletion protection status and security configuration details
 -   **Dry Run Mode**: Preview changes with comprehensive details before execution
 -   **Short Flags**: Convenient short flags for all commands (`-c`, `-n`, `-d`, `-f`, etc.)
--   **Enhanced UI**: Color-coded output with perfect table alignment and clear status indicators
+-   **Enhanced UI**: A consistent design system across every surface — status tokens pair a glyph with a label so **color is additive** (fully legible with `--no-color`, when piped, or on a non‑UTF‑8 terminal), 24‑bit truecolor that degrades to 256‑color/none by terminal capability, and ANSI‑aware table alignment. `-o json/yaml/plain` are unaffected by terminal or color settings
 -   **Graceful Degradation**: Works with just AWS credentials, provides clear guidance for optional features
 -   **Timeouts Everywhere**: Global and per-command `--timeout, -t` to avoid hangs on slow networks (default 60s)
 -   **Multi-Region Discovery**: `cluster list` supports `-A/--all-regions` with a concurrency cap (`-C/--max-concurrency`)
