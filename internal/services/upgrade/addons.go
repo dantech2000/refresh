@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+
 	"github.com/dantech2000/refresh/internal/services/addons"
 )
 
@@ -44,12 +46,32 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 		}
 		chosen := versions[0].Version
 
-		if addons.CompareVersions(a.Version, chosen) >= 0 {
-			progress("addon %s already at %s (latest compatible with %s), skipping", a.Name, a.Version, targetVersion)
+		// Resume support: a re-run after Ctrl+C may find an addon still
+		// CREATING/UPDATING from the previous run. The control-plane and
+		// nodegroup phases attach to such in-flight updates; the addon phase
+		// must too, or svc.Update's pre-update health gate hard-fails on the
+		// UPDATING status. Wait for it to settle, then re-read the installed
+		// version and let the normal skip/converge logic below decide.
+		current, status, err := svc.AddonStatus(ctx, clusterName, a.Name)
+		if err != nil {
+			return fmt.Errorf("addon %s: reading status: %w", a.Name, err)
+		}
+		if status == ekstypes.AddonStatusCreating || status == ekstypes.AddonStatusUpdating {
+			progress("addon %s is %s (in-flight update from a previous run); attaching and waiting for it to settle", a.Name, status)
+			if err := svc.WaitUntilActive(ctx, clusterName, a.Name, addonWaitTimeout, s.PollInterval); err != nil {
+				return fmt.Errorf("addon %s: waiting for in-flight update to finish: %w", a.Name, err)
+			}
+			if current, _, err = svc.AddonStatus(ctx, clusterName, a.Name); err != nil {
+				return fmt.Errorf("addon %s: reading status after attach: %w", a.Name, err)
+			}
+		}
+
+		if addons.CompareVersions(current, chosen) >= 0 {
+			progress("addon %s already at %s (latest compatible with %s), skipping", a.Name, current, targetVersion)
 			continue
 		}
 
-		progress("addon %s: %s → %s", a.Name, a.Version, chosen)
+		progress("addon %s: %s → %s", a.Name, current, chosen)
 		result, err := svc.Update(ctx, clusterName, a.Name, addons.UpdateOptions{
 			Version:      chosen,
 			HealthCheck:  true,

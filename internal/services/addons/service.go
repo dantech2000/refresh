@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -163,6 +164,26 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, addonName strin
 	}
 
 	return details, nil
+}
+
+// AddonStatus returns the addon's currently installed version and raw EKS
+// lifecycle status (no health mapping), for callers that need to make
+// control-flow decisions — e.g. the upgrade orchestrator attaching to an
+// in-flight update on resume rather than re-submitting it.
+func (s *ServiceImpl) AddonStatus(ctx context.Context, clusterName, addonName string) (version string, status ekstypes.AddonStatus, err error) {
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
+		return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
+			ClusterName: aws.String(clusterName),
+			AddonName:   aws.String(addonName),
+		})
+	})
+	if err != nil {
+		return "", "", awsinternal.FormatAWSError(err, fmt.Sprintf("describing addon %s", addonName))
+	}
+	if out.Addon == nil {
+		return "", "", fmt.Errorf("describing addon %s: empty response", addonName)
+	}
+	return aws.ToString(out.Addon.AddonVersion), out.Addon.Status, nil
 }
 
 // Update updates an addon to a specified version
