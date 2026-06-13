@@ -76,6 +76,9 @@ type KubeObserver struct {
 	// for live rolls where the target AMI ID isn't known up front. nil → fall
 	// back to the nodegroup-image AMI label.
 	baseline map[string]bool
+	// drainStart remembers the evictable-pod count when a node first appears
+	// Draining, so the panel can show evicted/total as pods leave.
+	drainStart map[string]int
 }
 
 // NewKubeObserver returns an Observer for nodegroup, treating targetAMI as the
@@ -127,9 +130,64 @@ func (o *KubeObserver) Snapshot(ctx context.Context) (Snapshot, error) {
 			}
 		}
 	}
+	// Best-effort pod-eviction progress for draining nodes.
+	if snap.Draining > 0 {
+		o.fillPodEviction(ctx, &snap)
+	}
+
 	// Stable order so renders/golden tests are deterministic.
 	sort.Slice(snap.Nodes, func(i, j int) bool { return snap.Nodes[i].Name < snap.Nodes[j].Name })
 	return snap, nil
+}
+
+// fillPodEviction counts the evictable pods on each draining node and records
+// the count at drain start, so the panel can show evicted/total. Best-effort:
+// a list failure leaves the pod fields zero (the panel just omits the bar).
+func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
+	pods, err := o.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return
+	}
+	counts := make(map[string]int)
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if isEvictablePod(p) {
+			counts[p.Spec.NodeName]++
+		}
+	}
+	if o.drainStart == nil {
+		o.drainStart = make(map[string]int)
+	}
+	for i := range snap.Nodes {
+		n := &snap.Nodes[i]
+		if n.Phase != PhaseDraining {
+			continue
+		}
+		cur := counts[n.Name]
+		if _, seen := o.drainStart[n.Name]; !seen {
+			o.drainStart[n.Name] = cur
+		}
+		n.Pods = cur
+		n.PodsTotal = o.drainStart[n.Name]
+	}
+}
+
+// isEvictablePod reports whether a pod counts toward drain progress: DaemonSet
+// pods and static/mirror pods aren't drained, and terminal pods are already
+// gone.
+func isEvictablePod(p *corev1.Pod) bool {
+	if p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
+		return false
+	}
+	if _, mirror := p.Annotations["kubernetes.io/config.mirror"]; mirror {
+		return false
+	}
+	for _, ref := range p.OwnerReferences {
+		if ref.Kind == "DaemonSet" {
+			return false
+		}
+	}
+	return true
 }
 
 // classify derives a node's phase: cordoned/tainted-for-removal => Draining;

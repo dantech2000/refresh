@@ -132,6 +132,9 @@ func nodeStateCell(th *render.Theme, n noderoll.NodeView) string {
 		s := th.Paint(th.Pal.Yellow, "draining")
 		if n.PodsTotal > 0 {
 			evicted := n.PodsTotal - n.Pods
+			if evicted < 0 {
+				evicted = 0
+			}
 			s += th.Paint(th.Pal.Dim, " · evicting ") + th.Bar(evicted, n.PodsTotal, 5, th.Pal.Yellow) +
 				th.Paint(th.Pal.Dim, fmt.Sprintf(" %d/%d pods", evicted, n.PodsTotal))
 		}

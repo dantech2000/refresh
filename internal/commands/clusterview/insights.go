@@ -2,21 +2,30 @@ package clusterview
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/fatih/color"
 
+	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
 const insightTimeLayout = "2006-01-02 15:04"
 
-// OutputUpgradeCheck renders the upgrade-check report: AWS Cluster Insights
-// followed by the local control-plane/nodegroup/addon version-skew section.
+// OutputUpgradeCheck renders the upgrade-check report. The human path uses the
+// render design system (a readiness verdict + tokenized insights + skew); `-o
+// plain` keeps the uncolored tables.
 func OutputUpgradeCheck(report *clustersvc.UpgradeReport) error {
+	if !ui.PlainOutput() {
+		th := render.Default(os.Stdout)
+		for _, line := range upgradeCheckLines(th, report) {
+			fmt.Println(line)
+		}
+		return nil
+	}
 	ui.Outf("Upgrade readiness for %s\n", report.Cluster)
-
 	outputInsights(report.Insights)
 	fmt.Println()
 	outputSkew(report.Skew)
