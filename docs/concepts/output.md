@@ -57,20 +57,28 @@ Color auto-disables when stdout is piped. Force it off with `--no-color` or the
 
 ## Live node-roll view
 
-When you patch a nodegroup's AMI, `refresh nodegroup update` can show a **live,
-per-node view** of the roll — nodes draining (with pod-eviction progress),
-terminating, and coming online — instead of a single spinner. It is
+When you patch a nodegroup's AMI, `refresh nodegroup update --live` shows a
+**real-time, per-node view** of the roll — nodes draining (with pod-eviction
+progress), terminating, and coming online — instead of a single spinner. It is
 line-oriented (it redraws in place on a terminal and appends snapshots when
 piped); it is **not** a full-screen TUI.
 
-To preview the live view with no AWS and no cluster (handy for demos or just to
-see the shape of it):
+```bash
+refresh nodegroup update -c prod -n web --live
+```
+
+`--live` requires cluster (kubeconfig) access and a single nodegroup; it falls
+back to standard monitoring otherwise, and the EKS update status stays
+authoritative for the result regardless. Old-vs-new is determined from a
+roll-start baseline, so it works for any roll.
+
+To preview the view with **no AWS and no cluster** (demos, or just to see the
+shape of it), a hidden flag drives the panel from a scripted roll of 3 old → 3
+new nodes:
 
 ```bash
 refresh nodegroup update --simulate
 ```
-
-This drives the panel from a scripted roll of 3 old → 3 new nodes.
 
 ## Watch mode
 

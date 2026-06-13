@@ -31,7 +31,7 @@ import (
 // updateAMIFlags collects the flags that govern runUpdateAMI's behavior.
 type updateAMIFlags struct {
 	force, dryRun, noWait, quiet, skipHealthCheck, healthOnly bool
-	yes, requireHealthy, skipVerify, changelog                bool
+	yes, requireHealthy, skipVerify, changelog, live          bool
 	timeout, pollInterval                                     time.Duration
 	format                                                    string
 	kubeconfig                                                string
@@ -51,6 +51,7 @@ func readUpdateAMIFlags(cmd *cli.Command) updateAMIFlags {
 		requireHealthy:  cmd.Bool("require-healthy"),
 		skipVerify:      cmd.Bool("skip-verify"),
 		changelog:       cmd.Bool("changelog"),
+		live:            cmd.Bool("live"),
 		timeout:         cmd.Duration("timeout"),
 		pollInterval:    cmd.Duration("poll-interval"),
 		format:          strings.ToLower(cmd.String("format")),
@@ -184,6 +185,17 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		NoWait:          flags.noWait,
 		Timeout:         flags.timeout,
 	}
+	// Live per-node roll view (opt-in, single nodegroup, interactive). Purely
+	// visual: it shows nodes draining/joining/terminating during the wait, then
+	// EKS DescribeUpdate (below) stays authoritative for the result. Any failure
+	// to observe degrades silently to the standard monitor output.
+	if flags.live && len(updates) == 1 && !quiet {
+		if kube := resolveHealthKubeClient(ctx, flags.kubeconfig, true); kube != nil {
+			runLiveRollForUpdate(ctx, kube, updates[0].NodegroupName, flags.timeout, flags.pollInterval)
+			monitor.Quiet, config.Quiet = true, true
+		}
+	}
+
 	monErr := monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
 
 	verifyFailed := false

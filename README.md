@@ -105,7 +105,7 @@ refresh/
 
 -   **Pre-flight Health Checks**: Validate cluster readiness before AMI updates using default EC2 metrics (no additional setup required)
 -   **Real-time Monitoring**: Live progress tracking with professional spinner displays and clean completion summaries
--   **Live Node-Roll View**: `nodegroup update` can show a real-time, per-node view of a roll — nodes draining (with pod-eviction progress), terminating, and coming online — driven from live Kubernetes state. Line-oriented (redraws in place on a TTY, appends when piped), not a TUI. Preview it with no AWS via `nodegroup update --simulate`
+-   **Live Node-Roll View**: `nodegroup update --live` shows a real-time, per-node view of a roll — nodes draining (with pod-eviction progress), terminating, and coming online — driven from live Kubernetes state (requires cluster access + a single nodegroup; degrades to standard monitoring otherwise, EKS stays authoritative). Line-oriented (redraws in place on a TTY, appends when piped), not a TUI. Preview it with no AWS via `nodegroup update --simulate`
 -   **Fleet Status**: `refresh status -A` shows patch posture (version, EKS support window + extended-support cost, stale AMIs, addons behind) across all clusters/regions, with CI-friendly exit codes
 -   **Cluster Management**: List clusters and nodegroups with status and versions
 -   **Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode

@@ -7,10 +7,17 @@ import (
 	"os"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/dantech2000/refresh/internal/noderoll"
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
 )
+
+// liveRollPoll is how often the live roll panel re-reads cluster state. Kept
+// snappy (vs the EKS --poll-interval) so the view feels live, while staying
+// cheap: a node + pod list every few seconds.
+const liveRollPoll = 3 * time.Second
 
 // rollMeta is the static context for a live roll panel.
 type rollMeta struct {
@@ -187,4 +194,41 @@ func runSimulatedRoll(ctx context.Context, nodegroup string) error {
 	fmt.Println()
 	fmt.Println(th.Token(render.Healthy, fmt.Sprintf("%s rolled — 3/3 on %s", nodegroup, m.NewAMI)))
 	return nil
+}
+
+// runLiveRollForUpdate renders the live per-node roll panel for a real update by
+// observing live Kubernetes state until every roll-start node is replaced
+// (rollComplete) or the timeout fires. Purely visual and best-effort: it never
+// returns an error to the caller, so it cannot affect the update or its exit
+// code — EKS DescribeUpdate remains authoritative. Old-vs-new is determined by a
+// roll-start baseline (no need to know the target AMI ID up front).
+func runLiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup string, timeout, pollInterval time.Duration) {
+	if kube == nil {
+		return
+	}
+	obs := noderoll.NewKubeObserver(kube, nodegroup, "")
+	if err := obs.CaptureBaseline(ctx); err != nil {
+		return // can't read the cluster — degrade to the standard monitor
+	}
+	snap0, err := obs.Snapshot(ctx)
+	if err != nil || snap0.Total == 0 {
+		return
+	}
+	desired := snap0.Total
+
+	poll := pollInterval
+	if poll <= 0 || poll > liveRollPoll {
+		poll = liveRollPoll
+	}
+	rollCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		rollCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	th := render.Default(os.Stdout)
+	m := rollMeta{Nodegroup: nodegroup, OldAMI: "current AMI", NewAMI: "recommended AMI", Desired: desired}
+	fmt.Println()
+	_ = runRoll(rollCtx, th, os.Stdout, obs, m, poll, rollComplete(desired))
 }
