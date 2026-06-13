@@ -49,7 +49,7 @@ command (CLI wiring)  internal/commands/{cluster,nodegroup,addon,ctxcmd,workload
   → runner            internal/commands/runner   (SetupAWS, WithSpinner, EncodeStdout, positional/flag helpers)
   → factory           internal/commands/factory  (service constructors)
   → service           internal/services/*        (business logic + AWS calls)
-  → view              internal/commands/clusterview, internal/ui (tables/formatting)
+  → view              internal/commands/clusterview, internal/render, internal/ui (tables/formatting)
 ```
 
 Supporting packages: `internal/aws` (SDK abstractions, error formatting), `internal/awsconfig`
@@ -58,6 +58,28 @@ Supporting packages: `internal/aws` (SDK abstractions, error formatting), `inter
 `internal/types`, `internal/mocks`, `internal/services/upgrade` (cluster upgrade
 orchestrator: plan generation + control-plane/addon/nodegroup phases + sequencing
 engine; resumable by re-deriving the plan from live cluster state, not state files).
+
+**Output / rendering** (`internal/render`): the human-facing design system —
+palette (Catppuccin, truecolor with 256/none downgrade + capability detection),
+status tokens (`glyph + label + color`, with an ASCII fallback so color is
+always *additive*), primitives (section/table/KV/callout/bar) that reuse the
+ANSI-width math in `internal/ui`, and `LiveRegion` for in-place redraw (degrades
+to appended snapshots when piped). **Rule: render in the view layer, never from
+services.** Machine formats (`-o json/yaml/plain`) do NOT go through `render` —
+they stay in `runner.EncodeStdout`, byte-for-byte unchanged; each restyled view
+branches `if ui.PlainOutput()` to keep the `-o plain` TSV path.
+
+**Live node-roll** (`internal/noderoll`): observes a managed-nodegroup roll in
+real time (nodes draining/joining/terminating) from live Kubernetes Node state —
+the per-node truth EKS's coarse `DescribeUpdate` can't give. `KubeObserver`
+scopes by the `eks.amazonaws.com/nodegroup` label and classifies by Ready /
+cordon-or-drain-taint, with old-vs-new from either the `nodegroup-image` AMI
+label or a roll-start `CaptureBaseline`. `Tracker` diffs snapshots into a
+lifecycle event feed. Testable with **zero AWS / zero cluster** via
+`client-go/kubernetes/fake` (see `observer_test.go`) and a `ScriptedObserver`
+(`DemoTimeline`). `refresh nodegroup update --simulate` (hidden flag) drives the
+whole live panel from the scripted observer — demos, asciinema, and manual QA
+with no AWS.
 
 ## Conventions (follow these when editing)
 

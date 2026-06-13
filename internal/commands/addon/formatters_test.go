@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/services/addons"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
@@ -56,19 +57,27 @@ func TestOutputAddonsTable_Empty(t *testing.T) {
 }
 
 func TestOutputAddonsTable_WithRows(t *testing.T) {
-	// pterm table rows (vpc-cni, version, status) are rendered to the original stdout
-	// file handle and are not captured by captureStdout. We verify the header is correct
-	// and that no error is returned. The JSON/YAML tests validate the data itself.
-	out, err := captureStdout(t, func() error {
-		return outputAddonsTable("prod", []addons.AddonSummary{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "PASS"}}, time.Second)
-	})
+	rows := []addons.AddonSummary{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "PASS"}}
+
+	// Human path (render design system): ADD-ONS header + tokenized rows.
+	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, time.Second) })
 	if err != nil {
 		t.Fatalf("addons table: %v", err)
 	}
-	if !strings.Contains(out, "prod") {
-		t.Errorf("addons table: missing cluster name 'prod' in header: %q", out)
+	for _, want := range []string{"ADD-ONS", "prod", "vpc-cni", "ACTIVE"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("addons table missing %q: %q", want, out)
+		}
 	}
-	if !strings.Contains(out, "Retrieved") {
-		t.Errorf("addons table: missing 'Retrieved' timing line: %q", out)
+
+	// Plain path (-o plain) keeps the cluster banner + "Retrieved" timing line.
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	plain, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, time.Second) })
+	if err != nil {
+		t.Fatalf("addons plain: %v", err)
+	}
+	if !strings.Contains(plain, "Retrieved") {
+		t.Errorf("addons plain: missing 'Retrieved' timing line: %q", plain)
 	}
 }
