@@ -127,7 +127,7 @@ func (s *ServiceImpl) waitForAddonUpdate(ctx context.Context, clusterName, addon
 				ClusterName: aws.String(clusterName),
 				AddonName:   aws.String(addonName),
 			})
-			if err != nil {
+			if err != nil || desc.Addon == nil {
 				continue
 			}
 			switch desc.Addon.Status {

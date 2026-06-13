@@ -296,7 +296,7 @@ func (s *Service) hasKarpenterInstances(ctx context.Context) bool {
 
 func dedupe(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
-	out := in[:0]
+	out := make([]string, 0, len(in))
 	for _, v := range in {
 		if _, ok := seen[v]; ok {
 			continue

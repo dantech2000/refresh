@@ -406,6 +406,11 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 			outcomes.Failed = append(outcomes.Failed, ng)
 			continue
 		}
+		if desc.Nodegroup == nil {
+			color.Red("Failed to describe nodegroup %s: empty response", ng)
+			outcomes.Failed = append(outcomes.Failed, ng)
+			continue
+		}
 		// Custom-AMI nodegroups: EKS doesn't manage the AMI (it lives in the
 		// user's launch template), so UpdateNodegroupVersion can't pick a
 		// recommended AMI. Skip with clear guidance instead of mis-rolling.
@@ -439,6 +444,11 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 		})
 		if err != nil {
 			color.Red("Failed to update nodegroup %s: %v", ng, err)
+			outcomes.Failed = append(outcomes.Failed, ng)
+			continue
+		}
+		if resp.Update == nil || resp.Update.Id == nil {
+			color.Red("Update for nodegroup %s returned no update ID", ng)
 			outcomes.Failed = append(outcomes.Failed, ng)
 			continue
 		}

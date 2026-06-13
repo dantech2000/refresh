@@ -3,6 +3,7 @@ package nodegroup
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -49,7 +50,18 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 		DryRun:      cmd.Bool("dry-run"),
 	}
 
-	desired, minSize, maxSize := int32PtrIfSet(cmd, "desired"), int32PtrIfSet(cmd, "min"), int32PtrIfSet(cmd, "max")
+	desired, err := int32PtrIfSet(cmd, "desired")
+	if err != nil {
+		return err
+	}
+	minSize, err := int32PtrIfSet(cmd, "min")
+	if err != nil {
+		return err
+	}
+	maxSize, err := int32PtrIfSet(cmd, "max")
+	if err != nil {
+		return err
+	}
 
 	if opts.DryRun {
 		// With --check-pdbs, surface the actual PDBs that would constrain a
@@ -140,11 +152,17 @@ func printScaleDownPDBImpact(pdbs []health.PDBInfo) {
 }
 
 // int32PtrIfSet returns &v for cmd.Int(name) when the flag was explicitly set,
-// otherwise nil.
-func int32PtrIfSet(cmd *cli.Command, name string) *int32 {
+// otherwise nil. It rejects values outside [0, math.MaxInt32] so a too-large
+// count can't silently wrap to a negative/garbage size in the mutating
+// UpdateNodegroupConfig call.
+func int32PtrIfSet(cmd *cli.Command, name string) (*int32, error) {
 	if !cmd.IsSet(name) {
-		return nil
+		return nil, nil
 	}
-	v := int32(cmd.Int(name))
-	return &v
+	v := cmd.Int(name)
+	if v < 0 || v > math.MaxInt32 {
+		return nil, fmt.Errorf("--%s must be between 0 and %d, got %d", name, math.MaxInt32, v)
+	}
+	out := int32(v)
+	return &out, nil
 }

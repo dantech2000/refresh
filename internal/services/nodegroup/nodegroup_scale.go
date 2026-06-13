@@ -47,6 +47,9 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 			// it on a describe failure would scale down without the check.
 			return fmt.Errorf("PDB validation: failed to describe nodegroup %s/%s: %w", clusterName, nodegroupName, err)
 		}
+		if desc.Nodegroup == nil {
+			return fmt.Errorf("PDB validation: empty describe response for nodegroup %s/%s", clusterName, nodegroupName)
+		}
 		if desc.Nodegroup.ScalingConfig != nil && desc.Nodegroup.ScalingConfig.DesiredSize != nil &&
 			*desired < *desc.Nodegroup.ScalingConfig.DesiredSize {
 			pdb := s.healthChecker.CheckPodDisruptionBudgets(ctx)
@@ -122,6 +125,9 @@ func (s *ServiceImpl) waitForScaleCompletion(ctx context.Context, clusterName, n
 				continue
 			}
 			ng := out.Nodegroup
+			if ng == nil {
+				continue
+			}
 			if ng.Status == ekstypes.NodegroupStatusActive {
 				if desired == nil || (ng.ScalingConfig != nil && ng.ScalingConfig.DesiredSize != nil && *ng.ScalingConfig.DesiredSize == *desired) {
 					return nil

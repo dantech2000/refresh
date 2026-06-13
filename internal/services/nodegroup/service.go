@@ -168,6 +168,10 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 				return nil
 			}
 			ng := desc.Nodegroup
+			if ng == nil {
+				s.logger.Warn("empty DescribeNodegroup response", "cluster", clusterName, "nodegroup", name)
+				return nil
+			}
 			var desiredSize int32
 			if ng.ScalingConfig != nil {
 				desiredSize = aws.ToInt32(ng.ScalingConfig.DesiredSize)
@@ -252,6 +256,9 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	})
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))
+	}
+	if out.Nodegroup == nil {
+		return nil, fmt.Errorf("describing nodegroup %s/%s: empty response", clusterName, nodegroupName)
 	}
 	ng := out.Nodegroup
 

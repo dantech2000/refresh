@@ -217,16 +217,20 @@ func TestPrintChangelog_FullShowsAll(t *testing.T) {
 
 func TestInt32PtrIfSet(t *testing.T) {
 	var got *int32
+	var gotErr error
 	cmd := &cli.Command{
 		Name:  "test",
 		Flags: []cli.Flag{&cli.IntFlag{Name: "desired"}},
 		Action: func(_ context.Context, c *cli.Command) error {
-			got = int32PtrIfSet(c, "desired")
+			got, gotErr = int32PtrIfSet(c, "desired")
 			return nil
 		},
 	}
 	if err := cmd.Run(context.Background(), []string{"test", "--desired", "7"}); err != nil {
 		t.Fatal(err)
+	}
+	if gotErr != nil {
+		t.Fatalf("set flag: unexpected error %v", gotErr)
 	}
 	if got == nil || *got != 7 {
 		t.Errorf("set flag: got %v, want 7", got)
@@ -237,14 +241,38 @@ func TestInt32PtrIfSet(t *testing.T) {
 		Name:  "test",
 		Flags: []cli.Flag{&cli.IntFlag{Name: "desired"}},
 		Action: func(_ context.Context, c *cli.Command) error {
-			got = int32PtrIfSet(c, "desired")
+			got, gotErr = int32PtrIfSet(c, "desired")
 			return nil
 		},
 	}
 	if err := cmd2.Run(context.Background(), []string{"test"}); err != nil {
 		t.Fatal(err)
 	}
+	if gotErr != nil {
+		t.Fatalf("unset flag: unexpected error %v", gotErr)
+	}
 	if got != nil {
 		t.Errorf("unset flag: got %v, want nil", got)
+	}
+
+	// Out-of-range value must error instead of silently wrapping to int32.
+	got = nil
+	gotErr = nil
+	cmd3 := &cli.Command{
+		Name:  "test",
+		Flags: []cli.Flag{&cli.IntFlag{Name: "desired"}},
+		Action: func(_ context.Context, c *cli.Command) error {
+			got, gotErr = int32PtrIfSet(c, "desired")
+			return nil
+		},
+	}
+	if err := cmd3.Run(context.Background(), []string{"test", "--desired", "3000000000"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotErr == nil {
+		t.Errorf("out-of-range flag: expected an error, got nil (value %v)", got)
+	}
+	if got != nil {
+		t.Errorf("out-of-range flag: got %v, want nil", got)
 	}
 }

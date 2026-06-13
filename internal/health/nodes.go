@@ -62,6 +62,10 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 		}
 
 		nodegroup := ngDesc.Nodegroup
+		if nodegroup == nil {
+			result.Details = append(result.Details, fmt.Sprintf("Empty describe response for nodegroup %s", ngName))
+			continue
+		}
 
 		// Count total desired nodes
 		if nodegroup.ScalingConfig != nil && nodegroup.ScalingConfig.DesiredSize != nil {
