@@ -113,7 +113,43 @@ func OutputInsightDetail(detail *clustersvc.InsightDetail) error {
 			fmt.Printf("    - %s\n", r)
 		}
 	}
+	for _, line := range deprecationLines(detail.Deprecations) {
+		fmt.Println(line)
+	}
 	return nil
+}
+
+// deprecationLines renders the deprecated-API breakdown: for each deprecated
+// resource, the replacement and the clients still calling it (most-active
+// first), so you know exactly which workload to fix before the upgrade.
+func deprecationLines(deps []clustersvc.DeprecationDetail) []string {
+	if len(deps) == 0 {
+		return nil
+	}
+	out := []string{"", "  Deprecated APIs still in use:"}
+	for _, d := range deps {
+		head := "    - " + valueOrDash(d.Usage)
+		if d.ReplacedWith != "" {
+			head += " → " + d.ReplacedWith
+		}
+		if d.StopServingVersion != "" {
+			head += fmt.Sprintf(" (removed in %s)", d.StopServingVersion)
+		}
+		out = append(out, head)
+		if len(d.ClientStats) == 0 {
+			continue
+		}
+		for _, c := range d.ClientStats {
+			last := "-"
+			if c.LastRequestTime != nil {
+				last = c.LastRequestTime.Format(insightTimeLayout)
+			}
+			out = append(out, fmt.Sprintf("        %s — %d req/30d, last seen %s",
+				valueOrDash(c.UserAgent), c.NumberOfRequestsLast30Days, last))
+		}
+	}
+	out = append(out, "    note: EKS reads audit logs on a 30-day window — a check stays ERROR until the last call ages out.")
+	return out
 }
 
 func valueOrDash(s string) string {
