@@ -44,10 +44,12 @@ func outputClusterDetailsPlain(details *clustersvc.ClusterDetails, elapsed time.
 	}
 
 	if len(details.Nodegroups) > 0 {
+		// "nodes total" is desired capacity (always known); per-nodegroup
+		// readiness is shown elsewhere only when measured. (REF-130)
 		var totalNodes int32
 		activeNGs := 0
 		for _, ng := range details.Nodegroups {
-			totalNodes += ng.ReadyNodes
+			totalNodes += ng.DesiredSize
 			if ng.Status == "ACTIVE" {
 				activeNGs++
 			}

@@ -52,7 +52,7 @@ func outputNodegroupsPlain(clusterName string, items []nodegroupsvc.NodegroupSum
 			ng.Status,
 			ng.InstanceType,
 			ng.AMIStatus.ColorString(),
-			fmt.Sprintf("%d/%d", ng.ReadyNodes, ng.DesiredSize),
+			nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize),
 		)
 	}
 	table.Render()

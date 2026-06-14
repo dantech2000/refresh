@@ -86,6 +86,20 @@ func NewAddonService(awsCfg aws.Config, logger *slog.Logger) *addons.ServiceImpl
 	return addons.NewService(eks.NewFromConfig(awsCfg), NewDefaultLogger(logger))
 }
 
+// NewClusterServiceWithHealth initializes a cluster service whose health checker
+// is wired to the given Kubernetes client (which may be nil, in which case
+// kube-dependent signals degrade gracefully). Use this when a command has
+// resolved a --kubeconfig so measured node readiness runs against the right
+// cluster. (REF-130)
+func NewClusterServiceWithHealth(awsCfg aws.Config, k8sClient kubernetes.Interface, logger *slog.Logger) *cluster.ServiceImpl {
+	logger = NewDefaultLogger(logger)
+	eksClient := eks.NewFromConfig(awsCfg)
+	cwClient := cloudwatch.NewFromConfig(awsCfg)
+	asgClient := autoscaling.NewFromConfig(awsCfg)
+	hc := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
+	return cluster.NewService(awsCfg, hc, logger)
+}
+
 // NewNodegroupServiceWithHealth initializes a nodegroup service whose health
 // checker is wired to the given Kubernetes client (which may be nil, in which
 // case kube-dependent checks degrade gracefully). Use this when a command has

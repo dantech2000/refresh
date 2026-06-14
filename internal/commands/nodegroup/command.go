@@ -52,6 +52,8 @@ grep/awk; -o json|yaml emit structured output. Use --watch to redraw on the
 			&cli.StringFlag{Name: "sort", Usage: "Sort by field: name,status,instance,nodes", Value: "name"},
 			&cli.BoolFlag{Name: "desc", Usage: "Sort descending"},
 			&cli.StringSliceFlag{Name: "filter", Aliases: []string{"f"}, Usage: "Filter nodegroups (key=value; keys: name, status, instanceType, amiStatus)"},
+			&cli.BoolFlag{Name: "check-readiness", Aliases: []string{"R"}, Usage: "Measure real Kubernetes node readiness (Ready/desired) via the cluster API; without it NODES shows desired count only"},
+			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for --check-readiness (defaults to $KUBECONFIG, then ~/.kube/config)"},
 			&cli.BoolFlag{Name: "watch", Aliases: []string{"w"}, Usage: "Re-run and redraw every --watch-interval until interrupted"},
 			&cli.DurationFlag{Name: "watch-interval", Usage: "Refresh interval for --watch", Value: 10 * time.Second},
 		},

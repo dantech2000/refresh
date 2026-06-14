@@ -31,11 +31,22 @@ func nodegroupListLines(th *render.Theme, cluster string, items []nodegroupsvc.N
 			th.Token(render.StatusFromString(ng.Status), ng.Status),
 			th.Paint(pal.Text, ng.InstanceType),
 			amiToken(th, ng.AMIStatus),
-			th.Paint(pal.Text, fmt.Sprintf("%d/%d", ng.ReadyNodes, ng.DesiredSize)),
+			th.Paint(pal.Text, nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize)),
 		)
 	}
 	out = append(out, tbl.Render()...)
 	return out
+}
+
+// nodeCountText renders the NODES cell honestly: a measured "ready/desired"
+// fraction only when readiness was actually measured (--check-readiness against
+// a reachable cluster), otherwise just the desired count — never a fabricated
+// ready figure. (REF-130)
+func nodeCountText(readyKnown bool, ready, desired int32) string {
+	if readyKnown {
+		return fmt.Sprintf("%d/%d", ready, desired)
+	}
+	return fmt.Sprintf("%d", desired)
 }
 
 // amiToken renders a nodegroup's AMI freshness as a status token.

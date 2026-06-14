@@ -2,6 +2,7 @@ package nodegroup
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -33,7 +34,18 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	logger := factory.NewDefaultLogger(nil)
-	svc := factory.NewNodegroupService(awsCfg, false, logger)
+	// --check-readiness measures real Kubernetes Ready node counts (per
+	// nodegroup) instead of leaving the NODES column at desired-only. When the
+	// cluster API is unreachable, resolveHealthKubeClient returns nil with a
+	// diagnostic and readiness stays honestly unknown. (REF-130)
+	var svc *nodegroupsvc.ServiceImpl
+	if cmd.Bool("check-readiness") {
+		humanOutput := strings.EqualFold(cmd.String("format"), "table")
+		k8sClient := resolveHealthKubeClient(ctx, cmd.String("kubeconfig"), humanOutput)
+		svc = factory.NewNodegroupServiceWithHealth(awsCfg, k8sClient, logger)
+	} else {
+		svc = factory.NewNodegroupService(awsCfg, false, logger)
+	}
 
 	filters := runner.ParseFilters(cmd.StringSlice("filter"))
 	opts := nodegroupsvc.ListOptions{

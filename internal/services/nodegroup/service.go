@@ -84,6 +84,16 @@ func (s *ServiceImpl) PodDisruptionBudgets(ctx context.Context) ([]health.PDBInf
 	return s.healthChecker.ListPodDisruptionBudgets(ctx)
 }
 
+// nodegroupReadyCounts returns measured Kubernetes Ready=True counts per
+// nodegroup, or (nil, false) when no cluster-connected health checker is wired
+// (the common case for a plain `nodegroup list`). (REF-130)
+func (s *ServiceImpl) nodegroupReadyCounts(ctx context.Context) (map[string]int32, bool) {
+	if s.healthChecker == nil {
+		return nil, false
+	}
+	return s.healthChecker.NodegroupReadyCounts(ctx)
+}
+
 // supportedFilterKeys maps normalized --filter keys to a matcher against a
 // built summary. Keys are matched case-insensitively.
 var supportedFilterKeys = map[string]func(s NodegroupSummary, want string) bool{
@@ -155,6 +165,12 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 	// SSM lookup across the (concurrent) per-nodegroup work.
 	latestAMI := s.newLatestAMIResolver(k8sVersion)
 
+	// Measured Kubernetes Ready counts per nodegroup, fetched once (one node
+	// LIST) when a cluster-connected health checker is wired (--check-readiness).
+	// haveReady is false otherwise, so readiness renders as honestly unknown
+	// instead of the old "ready = desired when ACTIVE" tautology. (REF-130)
+	readyByNG, haveReady := s.nodegroupReadyCounts(ctx)
+
 	results := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
 		func(fctx context.Context, name string) *NodegroupSummary {
 			desc, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
@@ -176,9 +192,11 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 			if ng.ScalingConfig != nil {
 				desiredSize = aws.ToInt32(ng.ScalingConfig.DesiredSize)
 			}
-			ready := int32(0)
-			if ng.Status == ekstypes.NodegroupStatusActive {
-				ready = desiredSize
+			readyNodes := int32(0)
+			readyKnown := false
+			if haveReady {
+				readyNodes = readyByNG[name]
+				readyKnown = true
 			}
 			instanceType := "Unknown"
 			if len(ng.InstanceTypes) > 0 {
@@ -194,7 +212,8 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 				Status:       string(ng.Status),
 				InstanceType: instanceType,
 				DesiredSize:  desiredSize,
-				ReadyNodes:   ready,
+				ReadyNodes:   readyNodes,
+				ReadyKnown:   readyKnown,
 				CurrentAMI:   currentAmiId,
 				AMIStatus:    amiStatus,
 			}

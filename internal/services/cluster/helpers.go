@@ -107,6 +107,12 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 		return nil, err
 	}
 
+	// Measured Kubernetes Ready counts per nodegroup, fetched once when a
+	// cluster-connected health checker is wired (--check-readiness). Otherwise
+	// readiness is honestly unknown rather than the old "ready = desired when
+	// ACTIVE" tautology. (REF-130)
+	readyByNG, haveReady := s.nodegroupReadyCounts(ctx)
+
 	results := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
 		func(fctx context.Context, nodegroupName string) *NodegroupSummary {
 			describeOutput, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
@@ -126,8 +132,10 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 				desiredSize = aws.ToInt32(ng.ScalingConfig.DesiredSize)
 			}
 			readyNodes := int32(0)
-			if ng.Status == ekstypes.NodegroupStatusActive {
-				readyNodes = desiredSize
+			readyKnown := false
+			if haveReady {
+				readyNodes = readyByNG[nodegroupName]
+				readyKnown = true
 			}
 
 			instanceTypes := "Unknown"
@@ -141,6 +149,7 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 				InstanceType: instanceTypes,
 				DesiredSize:  desiredSize,
 				ReadyNodes:   readyNodes,
+				ReadyKnown:   readyKnown,
 			}
 		})
 
@@ -152,6 +161,16 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 	}
 
 	return nodegroups, nil
+}
+
+// nodegroupReadyCounts returns measured Kubernetes Ready=True counts per
+// nodegroup, or (nil, false) when no cluster-connected health checker is wired.
+// (REF-130)
+func (s *ServiceImpl) nodegroupReadyCounts(ctx context.Context) (map[string]int32, bool) {
+	if s.healthChecker == nil {
+		return nil, false
+	}
+	return s.healthChecker.NodegroupReadyCounts(ctx)
 }
 
 // shouldSkipCluster applies filters to determine if a cluster should be skipped.
@@ -219,12 +238,18 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 	if nodegroups, err := s.getClusterNodegroups(ctx, clusterName); err != nil {
 		s.logger.Warn("failed to get nodegroups for summary", "cluster", clusterName, "error", err)
 	} else {
+		// Ready is meaningful only when every nodegroup's readiness was measured;
+		// if any is unknown, the aggregate Ready is not a real count. (REF-130)
 		var totalReady, totalDesired int32
+		readyKnown := len(nodegroups) > 0
 		for _, ng := range nodegroups {
 			totalReady += ng.ReadyNodes
 			totalDesired += ng.DesiredSize
+			if !ng.ReadyKnown {
+				readyKnown = false
+			}
 		}
-		summary.NodeCount = NodeCountInfo{Ready: totalReady, Total: totalDesired}
+		summary.NodeCount = NodeCountInfo{Ready: totalReady, Total: totalDesired, ReadyKnown: readyKnown}
 	}
 
 	if options.ShowHealth && s.healthChecker != nil {
