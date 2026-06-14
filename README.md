@@ -1,17 +1,10 @@
 # Refresh
 
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/releases/latest)
-[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/dantech2000/refresh/release.yml?style=flat-square&label=build)](https://github.com/dantech2000/refresh/actions/workflows/release.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/dantech2000/refresh/test.yml?branch=main&style=flat-square&label=CI)](https://github.com/dantech2000/refresh/actions/workflows/test.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/dantech2000/refresh?style=flat-square)](https://goreportcard.com/report/github.com/dantech2000/refresh)
 [![codecov](https://codecov.io/gh/dantech2000/refresh/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/dantech2000/refresh)
-[![GitHub go.mod Go version](https://img.shields.io/github/go-mod-go-version/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/blob/main/go.mod)
+[![Latest release](https://img.shields.io/github/v/release/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/releases/latest)
 [![License](https://img.shields.io/github/license/dantech2000/refresh?style=flat-square&color=green)](https://github.com/dantech2000/refresh/blob/main/LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/dantech2000/refresh?style=flat-square&color=yellow)](https://github.com/dantech2000/refresh/stargazers)
-[![Homebrew](https://img.shields.io/badge/homebrew-available-orange?style=flat-square)](https://github.com/dantech2000/homebrew-tap)
-
-
-![Alt](https://repobeats.axiom.co/api/embed/bc73e7cb2ef4f089dc943258dc6511f76ad86a35.svg "Repobeats analytics image")
-
 
 **The EKS upgrade companion.** A Go-based CLI for the Kubernetes patching and
 upgrade lifecycle on AWS EKS: **status → readiness → patch → upgrade**. Built
@@ -31,75 +24,6 @@ The core loop:
 
 Fast `list`/`describe` for clusters, nodegroups, and add-ons rounds out the
 day-to-day workflow.
-
-## Architecture Overview
-
-The refresh tool is built with clean code principles and follows Go best practices:
-
-```
-refresh/
-├── main.go                    # Application entry point with CLI setup
-├── internal/
-│   ├── aws/                   # AWS SDK abstractions
-│   │   ├── ami.go            # AMI resolution with thread-safe caching
-│   │   ├── cluster.go        # Cluster discovery, name resolution, pattern matching
-│   │   ├── nodegroup.go      # Nodegroup operations
-│   │   └── errors.go         # AWS error handling and formatting
-│   ├── awsconfig/            # Unified AWS config loading
-│   │   └── awsconfig.go      # Merges CLI flags, context, and SDK defaults
-│   ├── cliconfig/            # Persistent named contexts
-│   │   └── store.go          # YAML-backed context store (~/.config/refresh/context.yaml)
-│   ├── commands/             # CLI command implementations
-│   │   ├── cluster/          # Cluster commands (list, describe/get, upgrade-check, upgrade)
-│   │   ├── nodegroup/        # Nodegroup commands (list, describe/get, scale, update)
-│   │   ├── addon/            # Add-on commands (list, describe/get, update [--all])
-│   │   ├── ctxcmd/           # Context commands (use, current, context add/list/remove)
-│   │   ├── runner/           # Shared command primitives (setup, positionals, encoding)
-│   │   ├── clusterview/      # Cluster table/tree formatters
-│   │   └── factory/          # Service constructors
-│   ├── config/               # Shared constants and region helpers
-│   ├── mocks/                # Test doubles for AWS client interfaces
-│   │   ├── eksapi.go         # Configurable EKSAPI mock (function-field pattern)
-│   │   └── builders.go       # Fluent builder for common mock scenarios
-│   ├── types/                # Core domain types
-│   │   ├── models.go         # NodegroupInfo, UpdateResult, BatchUpdateResult
-│   │   ├── monitoring.go     # UpdateProgress, ProgressMonitor, MonitorConfig
-│   │   └── status.go         # AMIStatus, DryRunAction (typed enums; plain String, ColorString for display)
-│   ├── services/             # Business logic layer
-│   │   ├── cluster/          # Cluster service with caching
-│   │   ├── nodegroup/        # Nodegroup service (list/describe, scale, AMI updates)
-│   │   ├── addons/           # Add-on management
-│   │   │   ├── health_check.go      # Pre-update health validation and version compatibility
-│   │   │   ├── version_analyzer.go  # Available version resolution and comparison
-│   │   │   ├── addon_dependencies.go # Dependency ordering for bulk updates
-│   │   │   └── ...
-│   │   └── common/           # Shared utilities (retry/backoff logic)
-│   ├── health/               # Pre-flight health checks
-│   │   ├── checker.go        # Health check orchestrator
-│   │   ├── nodes.go          # Node health validation
-│   │   ├── workloads.go      # Critical workload checks
-│   │   └── ...               # Additional health modules
-│   ├── monitoring/           # Update progress tracking
-│   │   ├── monitor.go        # Concurrent monitoring with channels
-│   │   └── display.go        # Progress display formatting
-│   ├── dryrun/               # Dry-run mode
-│   │   └── dryrun.go         # Preview updates without changes
-│   └── ui/                   # Terminal UI components
-│       ├── ansi.go           # ANSI-aware width/pad/truncate + status colors
-│       ├── ptable.go         # pterm-based table with ANSI-aware columns
-│       ├── dynamic_table.go  # Aligned key/value display
-│       ├── fun_spinner.go    # Category-aware rotating message spinners (TTY-gated)
-│       ├── tree.go           # Tree view for multi-region cluster display
-│       └── ...               # Additional UI utilities
-└── go.mod                    # Go module dependencies
-```
-
-### Key Design Patterns
-
-- **Channel-based Concurrency**: Used in monitoring for concurrent status checks; list operations fan out per-item AWS calls with bounded concurrency
-- **Clean Error Handling**: AWS errors are classified by typed error code and formatted with user-friendly messages
-- **Dependency Injection**: Services use interfaces for testability
-- **Graceful Cancellation**: Update monitoring handles SIGINT/SIGTERM cleanly (updates keep running in AWS)
 
 ## Features
 
@@ -928,34 +852,6 @@ After a successful release:
 - **Permission Issues**: Verify `GH_PAT` token has correct permissions
 - **Version Conflicts**: Ensure version in `internal/commands/version.go` matches git tag
 
-## Project Status & Health
-
-The badges at the top of this README provide a quick overview of the project's health:
-
-| Badge | What It Shows | What to Watch For |
-|-------|---------------|-------------------|
-| **Release** | Latest version number | New releases, version progression |
-| **Build Status** | GitHub Actions workflow status | Green = builds passing, Red = build issues |
-| **Go Report Card** | Code quality grade (A+ to F) | Aim for A+ rating, watch for downgrades |
-| **Go Version** | Minimum Go version required | Compatibility with current Go releases |
-| **License** | Project license (MIT) | License compliance information |
-| **Stars** | GitHub stars count | Community interest and growth |
-| **Homebrew** | Homebrew installation availability | Package distribution status |
-
-### Quick Health Check
-- **Green Build Badge** = Latest code builds successfully, releases work
-- **A+ Go Report** = Code quality is excellent
-- **Current Go Version** = Using modern Go features and best practices
-
-### Dependency Management
-This project includes automated dependency management:
-- **Dependabot** - Automated dependency updates with security patches
-
-### Security Updates (January 2026)
-The following security vulnerabilities have been addressed by updating dependencies:
-- **golang.org/x/net** updated from v0.38.0 to v0.49.0 (fixes CVE-2025-22872, CVE-2025-22870, CVE-2024-45338, and HTTP/2 CONTINUATION DoS)
-- **google.golang.org/protobuf** updated to v1.36.11 (latest stable version)
-
 ## Security
 
 -   Does not log or store credentials
@@ -963,6 +859,6 @@ The following security vulnerabilities have been addressed by updating dependenc
 -   **Deletion Protection Visibility**: Displays EKS cluster deletion protection status in `cluster describe` command
 -   **Security Configuration**: Shows encryption status, logging configuration, and IAM role information
 
----
+## License
 
-**Refresh** is a production-ready CLI tool for managing AWS EKS node groups with comprehensive monitoring, dry-run capabilities, and intelligent partial name matching.
+Released under the [MIT License](LICENSE).
