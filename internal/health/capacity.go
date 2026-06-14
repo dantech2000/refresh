@@ -54,7 +54,7 @@ func (hc *HealthChecker) checkClusterCapacityWith(ctx context.Context, snap *cpu
 		result.Status = StatusWarn
 		result.Score = 70 // Default score when metrics unavailable
 		result.Message = fmt.Sprintf("Unable to fetch CPU metrics: %v", err)
-		result.Details = append(result.Details, "EC2 CPU metrics unavailable - check EKS node group status")
+		result.Details = append(result.Details, "EC2 CPU metrics unavailable - check EKS nodegroup status")
 		return result
 	}
 

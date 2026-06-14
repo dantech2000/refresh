@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strings"
 	"syscall"
 
 	"github.com/fatih/color"
@@ -36,32 +37,40 @@ func coloredHelpPrinter(w io.Writer, templ string, data interface{}) {
 	// First, render the template using the default printer to a buffer
 	var buf bytes.Buffer
 	cli.HelpPrinterCustom(&buf, templ, data, nil)
+	_, _ = fmt.Fprint(w, colorizeHelp(buf.String()))
+}
 
-	// Get the rendered help text
-	helpText := buf.String()
-
-	// Define colors
+// colorizeHelp applies section-header and command-name coloring to already
+// rendered help text. Command-name coloring is scoped to the COMMANDS section
+// only: applied globally, commandRegex matches the leading word of any indented
+// line — including wrapped DESCRIPTION prose — and colors it as if it were a
+// command. Section headers are colored wherever they appear. (REF-132)
+func colorizeHelp(text string) string {
 	cyan := color.New(color.FgCyan, color.Bold)
 	yellow := color.New(color.FgYellow)
 
-	// Apply colors to section headers
-	helpText = sectionRegex.ReplaceAllStringFunc(helpText, func(match string) string {
-		return cyan.Sprint(match)
-	})
-
-	// Color command names (looking for lines with command format)
-	helpText = commandRegex.ReplaceAllStringFunc(helpText, func(match string) string {
-		parts := commandRegex.FindStringSubmatch(match)
-		return fmt.Sprintf("%s%s%s", parts[1], yellow.Sprint(parts[2]), parts[3])
-	})
-
-	_, _ = fmt.Fprint(w, helpText)
+	lines := strings.Split(text, "\n")
+	inCommands := false
+	for i, line := range lines {
+		if m := sectionRegex.FindStringSubmatch(line); m != nil {
+			inCommands = m[1] == "COMMANDS"
+			lines[i] = cyan.Sprint(line)
+			continue
+		}
+		if inCommands {
+			lines[i] = commandRegex.ReplaceAllStringFunc(line, func(match string) string {
+				parts := commandRegex.FindStringSubmatch(match)
+				return fmt.Sprintf("%s%s%s", parts[1], yellow.Sprint(parts[2]), parts[3])
+			})
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func newApp() *cli.Command {
 	return &cli.Command{
 		Name:                  "refresh",
-		Usage:                 "Manage and monitor AWS EKS clusters and node groups",
+		Usage:                 "Manage and monitor AWS EKS clusters and nodegroups",
 		Version:               commands.VersionInfo.Version,
 		EnableShellCompletion: true,
 		Flags: []cli.Flag{
