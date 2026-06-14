@@ -12,6 +12,8 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
+    # Above the two 900s (15m) check-waits below so they can resolve first.
+    timeout-minutes: 20
     if: github.actor == 'dependabot[bot]'
 
     steps:
