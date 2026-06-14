@@ -6,10 +6,10 @@
 [![Latest release](https://img.shields.io/github/v/release/dantech2000/refresh?style=flat-square&color=blue)](https://github.com/dantech2000/refresh/releases/latest)
 [![License](https://img.shields.io/github/license/dantech2000/refresh?style=flat-square&color=green)](https://github.com/dantech2000/refresh/blob/main/LICENSE)
 
-**The EKS upgrade companion.** A Go-based CLI for the Kubernetes patching and
-upgrade lifecycle on AWS EKS: **status → readiness → patch → upgrade**. Built
-around a safety story — pre-flight health gates, dry-run previews, and live
-progress monitoring — so you can keep a fleet current without surprises.
+**The EKS upgrade companion.** A Go CLI for the Kubernetes patching and upgrade
+lifecycle on AWS EKS: **status → readiness → patch → upgrade**. Built around a
+safety story — pre-flight health gates, dry-run previews, and live progress
+monitoring — so you can keep a fleet current without surprises.
 
 The core loop:
 
@@ -27,175 +27,154 @@ day-to-day workflow.
 
 ## Features
 
--   **Pre-flight Health Checks**: Validate cluster readiness before AMI updates using default EC2 metrics (no additional setup required)
--   **Real-time Monitoring**: Live progress tracking with professional spinner displays and clean completion summaries
--   **Live Node-Roll View**: `nodegroup update --live` shows a real-time, per-node view of a roll — nodes draining (with pod-eviction progress), terminating, and coming online — driven from live Kubernetes state (requires cluster access + a single nodegroup; degrades to standard monitoring otherwise, EKS stays authoritative). Line-oriented (redraws in place on a TTY, appends when piped), not a TUI. Preview it with no AWS via `nodegroup update --simulate`
--   **Fleet Status**: `refresh status -A` shows patch posture (version, EKS support window + extended-support cost, stale AMIs, addons behind) across all clusters/regions, with CI-friendly exit codes
--   **Cluster Management**: List clusters and nodegroups with status and versions
--   **Smart Updates**: Update AMI for all or specific nodegroups with rolling updates and optional force mode
--   **Fleet Updates**: `nodegroup update --all-clusters [-r region ...]` discovers clusters across regions and rolls them serially (blast-radius control) with one batch confirmation, an aggregate per-cluster summary, and a worst-outcome exit code — the "patch Tuesday" command
--   **Post-roll Verification**: after a roll, confirms nodegroups are ACTIVE and no pods are newly stuck Pending (vs a pre-roll snapshot); distinct exit code 5 on issues; `--skip-verify` to opt out
--   **AMI Changelog**: dry-run shows the current→target AMI release delta and a best-effort summary of `amazon-eks-ami` release notes (kernel, containerd, CVEs); `--changelog` for full notes; degrades gracefully offline (never blocks the update)
--   **Unattended Updates**: `nodegroup update --yes --require-healthy -o json` runs in CI/cron — idempotent (ClientRequestToken), documented exit codes (0 ok / 2 warn / 3 blocked / 4 update-failed / 5 verify-failed), JSON run summary, and fail-fast (no hanging prompts) without a TTY
--   **Custom-AMI aware**: custom-AMI nodegroups (`AmiType=CUSTOM`, managed via launch template) are classified `Custom` rather than stale/current and are skipped on update with clear guidance instead of being mis-rolled
--   **Nodegroup Intelligence**: Fast list/describe and safe scaling with health checks
--   **Security Visibility**: Display cluster deletion protection status and security configuration details
--   **Dry Run Mode**: Preview changes with comprehensive details before execution
--   **Short Flags**: Convenient short flags for all commands (`-c`, `-n`, `-d`, `-f`, etc.)
--   **Enhanced UI**: A consistent design system across every surface — status tokens pair a glyph with a label so **color is additive** (fully legible with `--no-color`, when piped, or on a non‑UTF‑8 terminal), 24‑bit truecolor that degrades to 256‑color/none by terminal capability, and ANSI‑aware table alignment. `-o json/yaml/plain` are unaffected by terminal or color settings
--   **Graceful Degradation**: Works with just AWS credentials, provides clear guidance for optional features
--   **Timeouts Everywhere**: Global and per-command `--timeout, -t` to avoid hangs on slow networks (default 60s)
--   **Multi-Region Discovery**: `cluster list` supports `-A/--all-regions` with a concurrency cap (`-C/--max-concurrency`)
--   **Accurate Node Readiness**: Uses Kubernetes API to compute actual ready node counts when kubeconfig is available
--   **Explicit kubeconfig**: `nodegroup update`/`scale` accept `--kubeconfig` for the workload/PDB health checks; an unreachable cluster prints an actionable diagnostic (which kubeconfig/context was tried) and the kube-dependent checks are clearly skipped rather than silently degraded
--   **Sorting Options**: Sort cluster and nodegroup lists with `--sort` and `--desc`
--   **Add-on Health Checks**: `addon update --health-check` validates active state and Kubernetes version compatibility before updating
--   **Shell Completion**: `refresh completion bash|zsh|fish` generates completion scripts; `refresh use <TAB>` completes saved context names
--   **Script-friendly Output**: `-o json|yaml|plain` on list/describe commands (`plain` is tab-separated and uncolored for grep/awk), `--no-color` (and `NO_COLOR`), spinners auto-disable when output is piped, `nodegroup update --health-only` exits 0/2/3 for pass/warn/block and supports `-o json|yaml`
--   **Watch Mode**: `cluster list --watch` / `nodegroup list --watch` redraw on an interval (top-style on a TTY, append-only when piped)
+- **Pre-flight health checks** validate cluster readiness before a roll using
+  default EC2 metrics — no Container Insights or extra setup required.
+- **Live node-roll view** (`nodegroup update --live`) shows nodes draining,
+  terminating, and coming online in real time from live Kubernetes state.
+  Degrades to standard monitoring when a cluster isn't reachable; EKS stays
+  authoritative.
+- **Fleet status** (`refresh status -A`) reports version, EKS support window
+  (with extended-support cost), stale AMIs, and addons-behind across all
+  clusters/regions, with CI-friendly exit codes.
+- **Fleet updates** (`nodegroup update --all-clusters`) discover clusters across
+  regions and roll them serially with one batch confirmation, an aggregate
+  summary, and a worst-outcome exit code — the "patch Tuesday" command.
+- **Real node readiness** — with `--check-readiness`, node counts come from the
+  Kubernetes API (`Ready`/desired); without it, list/describe show the desired
+  count rather than a fabricated ready figure.
+- **Post-roll verification** confirms nodegroups settle `ACTIVE` with no newly
+  stuck pods (distinct exit code on failure; `--skip-verify` to opt out).
+- **AMI changelog** — dry-run summarizes the current→target `amazon-eks-ami`
+  release delta; `--changelog` prints the full notes. Degrades gracefully
+  offline and never blocks the update.
+- **Unattended-friendly** — idempotent mutating calls, documented exit codes, a
+  JSON run summary, and fail-fast (no hanging prompts) without a TTY.
+- **Custom-AMI aware** — `AmiType=CUSTOM` nodegroups are classified `Custom` and
+  skipped on update with guidance instead of being mis-rolled.
+- **Contexts** (kubectx-style) bind a cluster to a region/profile so you stop
+  repeating `--cluster/--region/--profile`.
+- **Consistent design system** — status tokens pair a glyph with a label so
+  color is *additive* (legible with `--no-color`, piped, or on non-UTF-8
+  terminals); truecolor degrades to 256/none by terminal capability.
+- **Script-friendly output** — `-o json|yaml|plain` on list/describe commands
+  (`plain` is uncolored TSV for grep/awk); `--no-color`/`NO_COLOR` honored;
+  spinners auto-disable when piped.
 
 ## Requirements
 
-### Required (Core Functionality)
--   Go 1.26+
--   AWS credentials (`~/.aws/credentials`, environment variables, or IAM roles)
+**Required**
 
-### Optional (Enhanced Features)
--   `kubectl` and kubeconfig (`~/.kube/config`) - for the Kubernetes workload and Pod Disruption Budget (PDB) checks inside pre-flight health checks and `nodegroup scale --check-pdbs`
--   CloudWatch metrics - capacity and resource-balance health checks use default EC2 CPU metrics (memory via Container Insights in future)
+- Go 1.26+ (only to build from source)
+- AWS credentials (`~/.aws/credentials`, environment variables, or IAM roles)
 
-> **Note**: The tool works with just AWS credentials! Health checks use default EC2 metrics and provide clear guidance for enabling optional features.
+**Optional (enhanced features)**
+
+- `kubectl` / a kubeconfig — for Kubernetes-backed checks: workload and Pod
+  Disruption Budget validation in pre-flight health checks, `nodegroup scale
+  --check-pdbs`, and real node readiness (`--check-readiness`).
+- CloudWatch metrics — capacity and resource-balance health checks use default
+  EC2 CPU metrics out of the box (memory requires Container Insights).
+
+The tool works with just AWS credentials; optional features degrade gracefully
+with actionable guidance.
 
 ## Installation
 
-### Homebrew (Recommended)
-
-The easiest way to install `refresh` is via Homebrew:
+### Homebrew (recommended)
 
 ```bash
-# Add the tap
-brew tap dantech2000/tap
-
-# Install refresh (as a cask)
-brew install --cask refresh
-
-# Verify installation
+brew install --cask dantech2000/tap/refresh
 refresh version
 ```
 
-**Note:** Starting with v0.2.2, `refresh` is distributed as a Homebrew Cask instead of a Formula.
+`refresh` is distributed as a Homebrew **Cask** (since v0.2.2).
 
-### Download from Releases
+### Pre-built binaries
 
-Alternatively, download pre-built binaries from the [releases page](https://github.com/dantech2000/refresh/releases/latest):
-
-1. Go to the [latest release](https://github.com/dantech2000/refresh/releases/latest)
-2. Download the appropriate binary for your platform:
-   - `refresh_vX.Y.Z_darwin_amd64.tar.gz` (macOS Intel)
-   - `refresh_vX.Y.Z_darwin_arm64.tar.gz` (macOS Apple Silicon)
-   - `refresh_vX.Y.Z_linux_amd64.tar.gz` (Linux x64)
-   - `refresh_vX.Y.Z_windows_amd64.tar.gz` (Windows x64)
-3. Extract and move to your PATH:
-   ```bash
-   # Example for macOS Apple Silicon
-   tar -xzf refresh_vX.Y.Z_darwin_arm64.tar.gz
-   sudo mv refresh /usr/local/bin/
-   chmod +x /usr/local/bin/refresh
-   ```
-
-### Build from Source
-
-If you have Go installed:
+Download from the [latest release](https://github.com/dantech2000/refresh/releases/latest)
+for macOS (Intel/Apple Silicon), Linux, or Windows, then extract onto your `PATH`:
 
 ```bash
-# Clone the repository
-git clone https://github.com/dantech2000/refresh.git
-cd refresh
+tar -xzf refresh_*_darwin_arm64.tar.gz
+sudo mv refresh /usr/local/bin/ && chmod +x /usr/local/bin/refresh
+```
 
-# Build and install
-go build -o refresh .
-sudo mv refresh /usr/local/bin/
+### From source
 
-# Or install directly
+```bash
 go install github.com/dantech2000/refresh@latest
 ```
-
-### Verify Installation
-
-After installation, verify it works:
-
-```bash
-refresh version
-refresh --help
-```
-
-You should see output showing the version and available commands.
 
 ### Updating
 
-To update to the latest version:
-
 ```bash
-# If installed via Homebrew Cask
-brew update && brew upgrade --cask refresh
-
-# If installed via go install
-go install github.com/dantech2000/refresh@latest
-
-# If manually installed, download the latest release and replace the binary
+brew upgrade --cask refresh          # Homebrew
+go install github.com/dantech2000/refresh@latest   # go install
 ```
 
 ## Usage
 
 > Coming from eksctl or `aws eks`? See the
 > [migration guide](docs/migration.md) for a command-by-command cheat-sheet.
+> Full per-command flag reference lives in [`docs/reference/`](docs/reference/)
+> and via `refresh <command> --help`.
 
-### Command Structure
+### Command structure
 
 ```text
 refresh
-├── status                 # Fleet patch posture across clusters/regions (front door)
+├── status                  # Fleet patch posture across clusters/regions (front door)
 ├── cluster
-│   ├── list (lc)          # List clusters across regions
-│   ├── describe / get     # Describe comprehensive cluster info
-│   ├── upgrade-check      # Upgrade readiness: Cluster Insights + version skew (read-only)
-│   └── upgrade            # Orchestrate a full cluster upgrade (control plane → addons → nodegroups)
+│   ├── list                # List clusters across regions
+│   ├── describe (get)      # Comprehensive cluster info
+│   ├── upgrade-check       # Upgrade readiness: Cluster Insights + version skew (read-only)
+│   └── upgrade             # Orchestrate a full upgrade (control plane → addons → nodegroups)
 ├── nodegroup (ng)
-│   ├── list               # List nodegroups with AMI status
-│   ├── describe / get     # Describe nodegroup details
-│   ├── update             # Update nodegroup AMI version (alias: update-ami)
-│   └── scale              # Scale nodegroup with health checks
+│   ├── list                # List nodegroups with AMI status
+│   ├── describe (get)      # Nodegroup details
+│   ├── scale               # Scale desired/min/max with optional health checks
+│   └── update (update-ami) # Roll nodegroups to the latest recommended AMI
 ├── addon
-│   ├── list               # List cluster add-ons
-│   ├── describe / get     # Describe add-on details
-│   └── update [--all]     # Update one or every add-on (--all replaces update-all)
-├── use [name|-]           # Switch the active context (kubectx-style)
-├── current                # Print the active context
-├── context (ctx)          # Manage saved contexts (list, add, remove)
-└── version                # Show version information
+│   ├── list                # List cluster add-ons
+│   ├── describe (get)      # Add-on details
+│   └── update [--all]      # Update one add-on, or every add-on with --all
+├── use [name|-]            # Switch the active context (kubectx-style)
+├── current                 # Print the active context
+├── context (ctx)           # Manage saved contexts (list, add, remove)
+├── version                 # Version info
+├── completion              # Shell completion (bash, zsh, fish)
+└── install-man             # Install the man page
 ```
 
-### Upgrade readiness (`refresh cluster upgrade-check`)
+Flags may appear before or after positional arguments. Most commands take the
+cluster as a positional or via `--cluster/-c`; once a context is active, you can
+omit it entirely.
 
-A read-only pre-flight report before a cluster upgrade — the same **EKS Cluster
-Insights** the console shows, plus a local **version-skew** picture (control
-plane vs each managed nodegroup, and installed addons vs the latest compatible
-version) with ordered, actionable findings. Nothing is mutated.
+### Contexts (kubectx-style)
+
+Stop passing `--cluster`, `--region`, and `--profile` on every invocation. Save
+a named context once, then switch with `refresh use`.
 
 ```bash
-refresh cluster upgrade-check -c prod-east
-refresh cluster upgrade-check -c prod-east --show-passing      # include PASSING insights
-refresh cluster upgrade-check -c prod-east --status ERROR      # filter by status
-refresh cluster upgrade-check -c prod-east -o json             # machine-readable
-refresh cluster upgrade-check -c prod-east --id <insight-id>   # detail (recommendation + resources)
+# Save contexts (binds cluster + optional region/profile)
+refresh context add prod  --cluster prod-eks  --region us-east-1 --profile prod
+refresh context add stage --cluster stage-eks --region us-west-2 --profile stage
+
+# Switch
+refresh use prod          # set prod active; later commands target it
+refresh use -             # toggle back to the previous context
+refresh use               # no name: interactive picker
+refresh current           # print the active context
+refresh context list      # list all; the active one is marked with *
+
+# Per-shell override without changing the saved default
+REFRESH_CONTEXT=stage refresh nodegroup list
 ```
 
-PASSING insights are hidden by default; `--category` defaults to
-`UPGRADE_READINESS`. Insights are computed asynchronously by EKS, so the table
-surfaces each insight's last-refresh time. Required IAM: `eks:ListInsights`,
-`eks:DescribeInsight`, plus `eks:DescribeCluster`, `eks:ListNodegroups`,
-`eks:DescribeNodegroup`, `eks:ListAddons`, `eks:DescribeAddon`,
-`eks:DescribeAddonVersions` for the skew section.
+**Resolution order** (highest wins): explicit CLI flag → `REFRESH_CONTEXT` env →
+active saved context → AWS SDK defaults (`AWS_REGION`/`AWS_PROFILE`) → kubeconfig
+current context (cluster name only). Contexts are stored at
+`$XDG_CONFIG_HOME/refresh/context.yaml` (default `~/.config/refresh/context.yaml`).
 
 ### Fleet status (`refresh status`)
 
@@ -204,660 +183,295 @@ version, EKS support window, nodegroup AMI staleness, and addons behind latest �
 across every region.
 
 ```bash
-refresh status                 # clusters in the current region
-refresh status -A              # all EKS-supported regions
-refresh status -r us-east-1 -r us-west-2   # specific regions
-refresh status prod            # only clusters whose name contains "prod"
-refresh status -A -o json      # machine-readable for scripts/CI
-refresh status -A --sort stale --desc      # most-stale clusters first
+refresh status                              # clusters in the current region
+refresh status -A                           # all EKS-supported regions
+refresh status -r us-east-1 -r us-west-2    # specific regions
+refresh status prod                         # only clusters matching "prod"
+refresh status -A -o json                   # machine-readable for CI
+refresh status -A --sort stale --desc       # most-stale clusters first
 ```
-
-Example:
 
 ```text
-CLUSTER     REGION     VERSION  SUPPORT                      COMPUTE         STALE AMI        ADDONS BEHIND
-prod-east   us-east-1  1.31     standard until 2025-11-26    4 nodegroups    2/4 (oldest 94d) 1 (coredns)
-prod-west   us-west-2  1.29     ⚠ EXTENDED until 2026-03-23 (~$0.50/hr)  3 nodegroups  3/3 (oldest 210d) 2 (coredns,vpc-cni)
-legacy      us-east-1  1.33     standard until 2026-07-23    🤖 Auto Mode    n/a              0
+FLEET  2 clusters · 1 region(s)
 
-3 clusters · 5 stale nodegroups · 3 addons behind · 1 extended/unsupported
+● 0 current   ▲ 2 need attention
+
+   CLUSTER           REGION     VERSION  SUPPORT          COMPUTE       STALE AMI  ADDONS
+▲  development-blue  us-east-1  1.34     standard (170d)  6 nodegroups  0          ▲ 6 (aws-ebs-csi-driver…)
+▲  staging-blue      us-east-1  1.34     standard (170d)  3 nodegroups  0          ▲ 6 (aws-ebs-csi-driver…)
+
+2 clusters · 0 stale nodegroups · 12 addons behind · 0 extended/unsupported
 ```
 
-Support dates come from `eks:DescribeClusterVersions`; if that call is
-unavailable a compiled-in calendar is used and the row is marked with `*`.
-Extended support is roughly `$0.60/hr` vs `$0.10/hr` standard (~$4,400/yr per
-lingering cluster), so the premium is surfaced inline.
+**Exit codes** (for CI/cron): `0` everything current and in standard support ·
+`2` something stale (nodegroup AMI or addon behind latest) · `3` a cluster is on
+extended or unsupported.
 
-**Exit codes** (for CI/cron):
-
-| Code | Meaning |
-| ---- | ------- |
-| `0`  | everything current and in standard support |
-| `2`  | something stale (nodegroup AMI or addon behind latest) |
-| `3`  | a cluster is on extended support or unsupported |
-
-`-o table|json|yaml|plain` is supported (`plain` is uncolored TSV); `--no-color`
-and `NO_COLOR` are honored. Required IAM: `eks:ListClusters`,
-`eks:DescribeCluster`, `eks:DescribeClusterVersions`, `eks:ListNodegroups`,
-`eks:DescribeNodegroup`, `eks:ListAddons`, `eks:DescribeAddon`,
-`eks:DescribeAddonVersions`, `ec2:DescribeImages`, `ec2:DescribeInstances`.
-
-### Contexts (kubectx-style)
-
-Stop passing `--cluster`, `--region`, and `--profile` on every invocation. Save
-a named context once, then switch between them with `refresh use`.
+### Cluster management
 
 ```bash
-# Save contexts
-refresh context add --cluster prod-eks --region us-east-1 --profile prod-admin prod
-refresh context add --cluster stg-eks  --region us-west-2                       staging
-
-# Switch
-refresh use prod          # set prod as active
-refresh use -             # swap back to the previous context
-refresh use               # interactive picker
-refresh current           # print active: prod  cluster=prod-eks  region=us-east-1
-refresh context list      # show all; the active one is marked with *
-
-# Per-shell override without changing the global default
-REFRESH_CONTEXT=staging refresh nodegroup list
-```
-
-Once a context is active, every command picks up its cluster, region, and
-profile automatically:
-
-```bash
-refresh use prod
-refresh nodegroup list           # uses prod-eks in us-east-1 with prod-admin profile
-refresh addon update --all       # same context, no flags needed
-```
-
-**Resolution order** (highest wins):
-
-1. Explicit CLI flag (`--cluster`, `--region`, `--profile`)
-2. `REFRESH_CONTEXT=<name>` env var (per-shell override)
-3. Active context from `~/.config/refresh/context.yaml`
-4. AWS SDK defaults (`AWS_REGION`, `AWS_PROFILE`, `~/.aws/config`)
-5. Kubeconfig current context (cluster name only)
-
-The context file lives at `$XDG_CONFIG_HOME/refresh/context.yaml`
-(default `~/.config/refresh/context.yaml`). Override the location with
-`REFRESH_CONFIG_HOME`.
-
-### Cluster Management
-
-#### List Clusters (Multi-Region)
-
-Quickly discover EKS clusters across one or many regions with health status:
-
-```bash
-# List clusters in default region
-refresh cluster list
-refresh lc                              # Short alias
-
-# List clusters in specific regions
+# List clusters
+refresh cluster list                      # current region
+refresh cluster list -A -H                # all regions, with health
 refresh cluster list -r us-east-1 -r eu-west-1
-
-# List across all supported regions with health checks
-refresh cluster list -A -H -t 30s
-refresh lc -A -H                        # Short alias
-
-# Control concurrency to avoid throttling
-refresh cluster list -A -C 4
-
-# Machine-readable output
-refresh cluster list -o json
-refresh cluster list -o yaml
-
-# Sorting
+refresh cluster list -A -C 4              # cap concurrent region queries
+refresh cluster list dev                  # filter by name pattern (positional)
+refresh cluster list --filter status=ACTIVE
+refresh cluster list -o tree              # region/cluster hierarchy
 refresh cluster list --sort version
-refresh cluster list --sort region --desc
+refresh cluster list --watch --watch-interval 5s
+
+# Describe a cluster
+refresh cluster describe staging-blue              # positional cluster
+refresh cluster describe -c prod --detailed
+refresh cluster describe -c prod --check-readiness # real Ready/desired node counts
+refresh cluster describe -c prod -o json
 ```
 
-**Environment Variables:**
-- `REFRESH_TIMEOUT` - Override default timeout (e.g., `30s`)
-- `REFRESH_MAX_CONCURRENCY` - Control concurrent region queries
-- `REFRESH_EKS_REGIONS` - Override regions for `-A` flag (e.g., `us-east-1,eu-west-1`)
+```text
+staging-blue   ● ACTIVE   us-east-1
 
-#### Describe Cluster
+▸ OVERVIEW
+  version     1.34 · eks.16
+  status      ● ACTIVE
+  endpoint    https://ABC123.gr7.us-east-1.eks.amazonaws.com
+  vpc         vpc-0970eee5 (10.0.0.0/16)
+  encryption  ● enabled (KMS)
+  created     2023-02-09
 
-View comprehensive cluster information including security, networking, and add-ons:
+▸ NODEGROUPS  3 active · 6 nodes
+  NAME        INSTANCE     NODES  STATUS
+  groupC      m5.2xlarge   2      ● ACTIVE
+  groupD      m5.2xlarge   3      ● ACTIVE
+  monolithB   m5.2xlarge   1      ● ACTIVE
+
+▸ ADD-ONS  6 installed
+  …
+```
+
+> By default the `NODES` column shows the **desired** count. Add
+> `--check-readiness` (with a reachable kubeconfig) to show measured
+> `Ready/desired`; when the cluster API is unreachable it stays at the desired
+> count rather than reporting a fabricated ready figure.
+
+### Upgrade readiness (`refresh cluster upgrade-check`)
+
+A read-only pre-flight before an upgrade — the same **EKS Cluster Insights** the
+console shows, plus a local **version-skew** picture (control plane vs each
+managed nodegroup, and installed addons vs the latest compatible version) with
+ordered, actionable findings. Nothing is mutated.
 
 ```bash
-# Basic cluster information
-refresh cluster describe staging-blue
-refresh dc staging-blue                 # Short alias
-
-# Detailed view with all sections
-refresh cluster describe development-blue --detailed
-
-# Include specific information
-refresh dc -c prod --show-security --include-addons -H
-
-# Different output formats
-refresh dc -c staging -o json
-refresh dc -c prod -o yaml
+refresh cluster upgrade-check -c prod-east
+refresh cluster upgrade-check -c prod-east --show-passing   # include PASSING insights
+refresh cluster upgrade-check -c prod-east --status ERROR   # filter by status
+refresh cluster upgrade-check -c prod-east -o json          # machine-readable
+refresh cluster upgrade-check -c prod-east --id <insight-id> # detail view
 ```
 
-**Example Output:**
+```text
+UPGRADE READINESS  development-blue   ▲ REVIEW
 
-```
-Cluster: staging-blue
-Status              │ Active
-Version             │ 1.32
-Platform            │ eks.16
-Health              │ WARN (2 issues)
-VPC                 │ vpc-0970eee532cb9987e
-Encryption          │ ENABLED (at rest via KMS)
-Deletion Protection │ ENABLED
-Created             │ 2023-02-09 04:33:25 UTC
+▸ INSIGHTS  0
+  ● no upgrade insights to address
+
+▸ VERSION SKEW  control plane 1.34
+  ▲ addon aws-ebs-csi-driver is behind latest compatible (v1.59.0-eksbuild.1 → v1.61.1-eksbuild.1)
+  ▲ addon coredns is behind latest compatible (v1.13.2-eksbuild.7 → v1.13.2-eksbuild.10)
+  ▲ addon kube-proxy is behind latest compatible (v1.34.6-eksbuild.5 → v1.34.6-eksbuild.11)
 ```
 
-#### Upgrade Cluster (Orchestrated)
+PASSING insights are hidden by default; `--category` defaults to
+`UPGRADE_READINESS`. Insights are computed asynchronously by EKS, so the table
+surfaces each insight's last refresh time.
 
-Plan and execute a full cluster upgrade — control plane, then addons in
-dependency order (versions compatible with the *target* Kubernetes version),
-then nodegroup rolls — with a health gate after every phase:
+### Cluster upgrade (orchestrated)
+
+Plan and execute a full upgrade — control plane, then addons in dependency
+order, then nodegroup rolls — with a health gate after every phase.
 
 ```bash
-# Print the full ordered plan without mutating anything
-# (exits non-zero if anything blocks the upgrade)
+# Print the full ordered plan without mutating anything (non-zero exit if blocked)
 refresh cluster upgrade -c prod-east --to 1.33 --dry-run
 
 # Execute, confirming each mutating phase
 refresh cluster upgrade -c prod-east --to 1.33
 
-# Non-interactive (CI) run, skipping a Helm-managed addon
+# Non-interactive (CI), skipping a Helm-managed addon
 refresh cluster upgrade -c prod-east --to 1.33 --yes --skip aws-ebs-csi-driver
 
 # Leave specific nodegroups alone
 refresh cluster upgrade -c prod-east --to 1.33 --skip-nodegroup spot-
 ```
 
-Key behaviors:
-
 - **Sequential minors** — EKS upgrades one minor at a time, so `--to 1.33` from
-  1.31 expands into two hops (1.32, then 1.33), each with its own gates.
-- **Readiness gates** — each hop checks EKS Cluster Insights (upgrade
-  readiness) and kubelet version skew before touching anything; blockers
-  render in the plan and the command exits non-zero without mutating.
-- **Resumable by re-derivation** — no state files. Rerunning the same command
-  re-inspects the cluster and skips already-satisfied steps, so resuming after
-  a failure or Ctrl+C (in-flight EKS updates continue server-side) is just
-  running the command again; rerunning after success is a no-op.
+  1.31 expands into two hops, each with its own gates.
+- **Readiness gates** — each hop checks Cluster Insights and kubelet skew before
+  touching anything; blockers render in the plan and the command exits non-zero
+  without mutating.
+- **Resumable by re-derivation** — no state files. Rerun the same command to
+  resume after a failure or Ctrl+C (in-flight EKS updates continue server-side);
+  rerunning after success is a no-op.
 - **Custom-AMI nodegroups** are surfaced as manual actions, never mutated.
 
-### Nodegroup Management
-
-#### List Nodegroups
-
-List all managed nodegroups in a cluster with AMI status:
+### Nodegroup management
 
 ```bash
-# List all nodegroups
-refresh nodegroup list -c <cluster>
-refresh ng list -c <cluster>           # Short alias
+# List (cluster as positional or -c)
+refresh nodegroup list my-cluster
+refresh ng list -c my-cluster
+refresh ng list my-cluster --filter amiStatus=outdated   # filter by key=value
+refresh ng list my-cluster --filter name=web
+refresh ng list my-cluster --check-readiness             # real Ready/desired
+refresh ng list my-cluster --sort status --desc
+refresh ng list my-cluster -o plain | awk '{print $1}'
 
-# Filter by partial name matching
-refresh nodegroup list -c dev -n web
-refresh ng list -c dev -n api
+# Describe (nodegroup as second positional or -n)
+refresh nodegroup describe my-cluster ng-default
+refresh ng describe -c prod -n web --show-instances --show-workloads
 
-# Sorting
-refresh ng list --sort status --desc -c prod
-refresh ng list --sort instance -c prod
+# Scale
+refresh ng scale -c prod -n web --desired 10 --health-check --wait
+refresh ng scale -c prod -n web --desired 3 --check-pdbs   # validate PDBs first
+refresh ng scale -c dev  -n api --desired 5 --op-timeout 5m
 ```
 
-**Sort Keys:**
-- `name`, `status`, `instance`, `nodes`
+```text
+NODEGROUPS  my-cluster · 3
 
-Flags may appear before or after positional arguments — both forms work:
-```bash
-refresh ng list -n web -c prod
-refresh ng list -c prod -n web
+NAME                                     STATUS    INSTANCE    AMI       NODES
+my-cluster-groupC-2025…                  ● ACTIVE  m5.2xlarge  ● Latest      2
+my-cluster-groupD-2025…                  ● ACTIVE  m5.2xlarge  ● Latest      3
+my-cluster-monolithB-2025…               ● ACTIVE  m5.2xlarge  ● Latest      1
 ```
 
-#### Describe Nodegroup
+#### Update AMIs
 
-Get detailed information about a specific nodegroup:
-
-```bash
-# Basic nodegroup description
-refresh nodegroup describe -c <cluster> -n <nodegroup>
-refresh ng describe -c dev -n api      # Short alias
-
-# Include instances
-refresh ng describe -c prod -n web --show-instances
-
-# Different output formats
-refresh ng describe -c dev -n api -o json
-```
-
-#### Update AMI
-
-Trigger rolling updates to the latest AMI for nodegroups:
+Roll nodegroups to the latest recommended AMI, with pre-flight health gates and
+live monitoring (waiting for completion is the default; use `--no-wait` to
+return immediately).
 
 ```bash
-# Update all nodegroups in a cluster
-refresh nodegroup update -c <cluster>
+refresh nodegroup update -c my-cluster              # all nodegroups in the cluster
+refresh ng update -c dev -n web                     # one nodegroup
+refresh ng update -c prod -n api-                   # partial match (confirms first)
+refresh ng update -c staging --dry-run              # preview only (-d)
+refresh ng update -c staging -n web --dry-run --changelog  # + full AMI release notes
+refresh ng update -c prod -f                        # force even if already latest
+refresh ng update -c dev --skip-health-check        # skip pre-flight checks (-s)
+refresh ng update -c dev --health-only              # run health checks only
+refresh ng update -c dev --live                     # live per-node roll view
 
-# Update specific nodegroup
-refresh ng update -c dev -n web
+# Fleet mode: roll matching nodegroups across all discovered clusters (serial)
+refresh ng update --all-clusters --dry-run
+refresh ng update --all-clusters -r us-east-1 --yes
 
-# Update with partial name matching (confirms before proceeding)
-refresh ng update -c prod -n api-
-
-# Preview changes without executing (dry run)
-refresh ng update -c staging -n web -d
-refresh ng update -c staging --dry-run
-
-# Force update (even if already latest)
-refresh ng update -c prod -f
-
-# Skip health checks
-refresh ng update -c dev -s
-
-# Quiet mode (minimal output)
-refresh ng update -c prod -q
+# Unattended / CI
+refresh ng update -c prod --yes --require-healthy -o json
 ```
 
-**Example Output:**
+**Exit codes:** `0` success · `2` health warnings (`--health-only` /
+`--require-healthy`) · `3` health blocked · `4` an update failed to start ·
+`5` post-roll verification found issues.
 
-```
-# Single nodegroup update
-$ refresh ng update -c development-blue -n groupF
-Updating nodegroup dev-blue-groupF-20230815230923929900000007...
-Update started for nodegroup dev-blue-groupF-20230815230923929900000007
-
-# Multiple matches with confirmation
-$ refresh ng update -c development-blue -n group
-Multiple nodegroups match pattern 'group':
-  1) dev-blue-groupD-20230814214633237700000007
-  2) dev-blue-groupE-20230815204000720600000007
-  3) dev-blue-groupF-20230815230923929900000007
-Update all 3 matching nodegroups? (y/N): y
-```
-
-#### Scale Nodegroup
-
-Scale nodegroups with health checks and monitoring:
+### EKS add-ons
 
 ```bash
-# Scale with health checks and wait for completion
-refresh nodegroup scale -c prod -n web --desired 10 --health-check --wait
+# List / describe
+refresh addon list my-cluster
+refresh addon list -c prod -H                      # include health
+refresh addon describe my-cluster vpc-cni
+refresh addon describe -c prod -a coredns -o yaml
 
-# Validate Pod Disruption Budgets before scaling down
-refresh nodegroup scale -c prod -n web --desired 3 --check-pdbs
+# Update a single add-on (version is optional; defaults to latest)
+refresh addon update my-cluster vpc-cni            # → latest
+refresh addon update my-cluster coredns v1.11.1    # pin a version
+refresh addon update my-cluster vpc-cni --health-check   # validate ACTIVE + compatibility
+refresh addon update my-cluster vpc-cni --dry-run
 
-# Scale with custom timeout
-refresh ng scale -c dev -n api --desired 5 --op-timeout 5m
+# Update every add-on (--all)
+refresh addon update my-cluster --all --dependency-order --wait
+refresh addon update my-cluster --all --parallel
+refresh addon update my-cluster --all --skip vpc-cni --skip kube-proxy --dry-run
 ```
 
-### EKS Add-ons Management
+`--dependency-order` updates in a safe order (vpc-cni → coredns/kube-proxy →
+others); `--parallel` is faster but unordered (the two are mutually exclusive).
+`--health-check` confirms the add-on is `ACTIVE` and version-compatible before
+updating. The `--parallel/--skip/--dependency-order` flags apply only with
+`--all`.
 
-Manage cluster add-ons with direct API integration:
+### Output formats & flags
 
-```bash
-# List all add-ons for a cluster
-refresh addon list <cluster>
-refresh addon list -c <cluster> -H     # Include health status
+Every `list`/`describe` command supports `-o table|json|yaml|plain`
+(`-o tree` additionally on `cluster list`). Common flags: `-c/--cluster`,
+`-o/--format`, `-t/--timeout`, `-h/--help`. `REFRESH_TIMEOUT`,
+`REFRESH_MAX_CONCURRENCY`, and `REFRESH_EKS_REGIONS` override the corresponding
+defaults. Run `refresh <command> --help` (or browse
+[`docs/reference/`](docs/reference/)) for the full, always-current flag list.
 
-# Describe specific add-on
-refresh addon describe <cluster> vpc-cni
-refresh addon describe -c prod -a vpc-cni -o yaml
+## Health checks
 
-# Update add-on to latest version
-refresh addon update <cluster> vpc-cni latest
-refresh addon update -c prod -a vpc-cni --version latest
+Pre-flight health checks validate cluster readiness before a roll using **default
+AWS metrics** (no extra setup). They run automatically before `nodegroup update`;
+`--health-only` runs them without updating, `--skip-health-check` bypasses them.
 
-# Validate health and k8s version compatibility before updating
-refresh addon update -c prod -a vpc-cni --health-check
-```
+**Out of the box (default AWS metrics)**
 
-**`--health-check` flag** (`-H`) runs two pre-update validations:
-1. Confirms the add-on is `ACTIVE` — refuses if it is `CREATING` or `UPDATING`
-2. Validates the target version is compatible with the cluster's Kubernetes version
+- **Node health** — nodegroups `ACTIVE`; real Ready counts when a kubeconfig is
+  available.
+- **Cluster capacity** — sufficient CPU headroom from default EC2 metrics.
+- **Resource balance** — CPU distribution across nodes.
 
-Add-ons in `DEGRADED` state are still allowed to update so you can remediate broken
-add-ons. If the versions API is unreachable the check is skipped gracefully.
+**Requires cluster/kubeconfig access**
 
-#### Update All Add-ons
+- **Critical workloads** — kube-system pods running.
+- **Pod Disruption Budgets** — missing PDBs for user workloads (also surfaced by
+  `nodegroup scale --check-pdbs`).
 
-Bulk update all cluster add-ons to their latest compatible versions:
-
-```bash
-# Update all add-ons
-refresh addon update --all -c prod
-
-# Dry-run to preview updates
-refresh addon update --all -c staging --dry-run
-
-# Validate health before each update
-refresh addon update --all -c prod --health-check
-
-# Update in parallel for faster execution
-refresh addon update --all -c dev --parallel
-
-# Wait for all updates to complete
-refresh addon update --all -c prod --wait
-
-# Skip specific add-ons
-refresh addon update --all -c prod --skip vpc-cni --skip kube-proxy
-```
-
-**Update Modes:**
-- **Sequential** (default): Updates add-ons one at a time, safer for production
-- **Parallel**: Updates all add-ons simultaneously, faster but higher risk
-
-### Partial Name Matching
-
-Both `--cluster` and `--nodegroup` flags support partial name matching:
-
-**Cluster Matching:**
-```bash
-refresh cluster list -c dev          # Matches development-blue, dev-staging, etc.
-refresh cluster list -c blue         # Matches development-blue, staging-blue, etc.
-```
-
-**Nodegroup Matching:**
-```bash
-refresh ng list -c dev -n web        # Matches nodegroups containing "web"
-refresh ng list -c dev -n 20230815   # Matches nodegroups created on that date
-```
-
-When multiple items match, the tool shows all matches and asks for confirmation before proceeding.
-
-### Man Page Documentation
-
-The refresh CLI includes built-in man page generation and installation for comprehensive offline documentation:
-
-```bash
-# Install man page to user directory (no sudo required)
-refresh install-man
-refresh install-manpage              # Alternative alias
-
-# View installed man page
-man refresh
-```
-
-**Installation Behavior:**
-- Automatically installs to user-writable directories (`$HOME/.local/share/man/man1`)
-- Works on macOS, Linux, and other Unix-like systems without sudo
-- Man page is automatically discoverable via standard MANPATH
-- Creates directory structure if it doesn't exist
-
-## Health Checks
-
-The refresh tool includes comprehensive pre-flight health checks that validate cluster readiness before AMI updates using **default AWS metrics** (no additional setup required).
-
-### Health Check Commands
-
-```bash
-# Run health check only (no update)
-refresh ng update -c dev -H
-refresh ng update --cluster dev --health-only
-
-# Update with health checks (default behavior)
-refresh ng update -c dev
-refresh ng update --cluster dev
-
-# Skip health checks
-refresh ng update -c dev -s
-refresh ng update --cluster dev --skip-health-check
-
-# Force update (bypasses health checks)
-refresh ng update -c dev -f
-refresh ng update --cluster dev --force
-```
-
-### Sample Health Check Output
-
-```
-Cluster Health Assessment:
-
-[████████████████████] Node Health          PASS
-[████████████████████] Cluster Capacity     PASS
-[████████████████████] Critical Workloads   PASS
-[██████████████████▒▒] Pod Disruption Budgets WARN
-[█████████████████▒▒▒] Resource Balance     WARN
-
-Status: READY WITH WARNINGS (2 issues found)
-
-Using default EC2 metrics (CPU only)
-Memory metrics require Container Insights setup
-
-Details:
-- Average CPU utilization: 45.2%
-- CPU distribution and utilization within acceptable ranges
-- 9 deployments missing PDBs
-
-Warnings:
-- 9 deployments missing PDBs
-- Moderate CPU utilization detected
-```
-
-### Health Check Categories
-
-**Works Out-of-the-Box (Default AWS Metrics)**:
-- **Node Health**: All nodegroups must be in ACTIVE status (EKS API)
-- **Cluster Capacity**: Sufficient CPU resources using default EC2 metrics (minimum 30% headroom)
-- **Resource Balance**: CPU utilization distribution across nodes using default EC2 metrics
-
-**Requires Additional Setup**:
-- **Critical Workloads**: All kube-system pods running (requires kubectl access)
-- **Pod Disruption Budgets**: Missing PDBs for user workloads (requires kubectl access)
-- **Memory Metrics**: Requires Container Insights or CloudWatch agent setup
-
-### Graceful Degradation
-
-When optional services aren't available, the tool provides helpful guidance:
-- **No kubectl access**: "Install kubectl and configure cluster access to enable this check"
-- **No Container Insights**: "Memory metrics require Container Insights setup"
-- **Limited metrics**: "Using default EC2 metrics (CPU only)"
-
-## CLI Short Flags
-
-All commands support convenient short flags for faster typing:
-
-```bash
-# List with short flags
-refresh ng list -c prod -n web
-
-# Quick update with dry-run
-refresh ng update -c staging -n api -d -q
-
-# Force update with health check skip
-refresh ng update -c prod -f -s
-
-# Health check only with quiet mode
-refresh ng update -c test -H -q
-
-# Cluster operations
-refresh lc -A -H                    # List all clusters with health
-refresh dc -c prod -o json          # Describe cluster as JSON
-```
-
-### Common Flags (All Commands)
-
-- `-c, --cluster` - EKS cluster name or pattern
-- `-n, --nodegroup` - Nodegroup name or pattern
-- `-o, --format` - Output format (table, json, yaml)
-- `-t, --timeout` - Timeout duration (e.g., 30s, 5m)
-
-### Update AMI Flags
-
-- `-f, --force` - Force update (even if already latest)
-- `-d, --dry-run` - Preview changes without executing
-- `-w, --no-wait` - Don't wait for update completion
-- `-q, --quiet` - Minimal output mode
-- `-s, --skip-health-check` - Skip pre-flight validation
-- `-H, --health-only` - Run health checks only
-- `-p, --poll-interval` - Status checking interval
-
-### Cluster Command Flags
-
-- `-A, --all-regions` - Query all EKS-supported regions
-- `-r, --region` - Specific region(s) to query (repeatable)
-- `-H, --show-health` - Include health status
-- `-C, --max-concurrency` - Max concurrent region queries
-- `--sort` - Sort by field (name, status, version, region)
-- `--desc` - Sort in descending order
-
-### Short Command Aliases
-
-- `lc` - `cluster list`
-- `dc` - `cluster describe`
-- `ng` - `nodegroup`
+When optional services aren't available the affected check is clearly marked
+skipped, with guidance, rather than silently degraded. Pass `--kubeconfig` to
+point the Kubernetes-backed checks at a specific cluster; an unreachable cluster
+prints which kubeconfig/context was tried.
 
 ## Development
 
-### Prerequisites
-
-- Go 1.26+
-- golangci-lint (for linting)
-- Task (optional, for task automation)
-
-### Building
-
 ```bash
-# Build
-go build -o refresh .
-
-# Run tests
-go test ./...
-
-# Run linter
-golangci-lint run ./...
-
-# Full development check
-task dev:full
+task build          # build the binary (CGO_ENABLED=0)
+task test           # go test ./...
+task lint           # golangci-lint run ./...
+task dev:full       # fmt + vet + lint + test + build (run before pushing)
+task docs:gen       # regenerate docs/reference from the CLI tree
 ```
 
-### Project Structure
+The codebase is layered with dependency injection for testability: `command →
+runner → factory → service → view`. See [`CLAUDE.md`](CLAUDE.md) for the
+architecture tour and conventions.
 
-The codebase follows clean architecture principles:
+## Release process
 
-- **internal/awsconfig**: Unified AWS config loading (CLI flags > context > SDK defaults)
-- **internal/cliconfig**: Persistent YAML-backed named contexts
-- **internal/config**: Thread-safe configuration with singleton pattern
-- **internal/types**: Core domain types with proper Go idioms
-- **internal/aws**: AWS SDK abstractions with caching and error handling
-- **internal/services**: Business logic layer with service interfaces
-- **internal/commands**: CLI command implementations following urfave/cli best practices
-- **internal/ui**: Terminal UI components using pterm
+Releases are automated with [release-please](https://github.com/googleapis/release-please)
+and [GoReleaser](https://goreleaser.com):
 
-### Key Patterns Used
+1. Land changes with [Conventional Commit](https://www.conventionalcommits.org)
+   messages (`feat:`, `fix:`, `docs:`, …).
+2. release-please maintains a **release PR** that bumps the version and updates
+   the changelog from those commits.
+3. Merging the release PR tags the release, which triggers GoReleaser to build
+   and sign cross-platform binaries (SBOM + cosign), publish the GitHub release,
+   and update the Homebrew cask in `dantech2000/homebrew-tap`.
 
-1. **Concurrency**: Channels for monitoring, mutexes for shared state
-2. **Error Handling**: Custom error types with classification
-3. **Caching**: Thread-safe caches with TTL support
-4. **CLI**: Hierarchical commands with urfave/cli/v3
-
-## Release Process
-
-### Prerequisites
-
-- Ensure you have push access to both repositories:
-  - `dantech2000/refresh` (main repository)
-  - `dantech2000/homebrew-tap` (Homebrew tap)
-- GitHub Personal Access Token (`GH_PAT`) is configured in repository secrets
-- GoReleaser is installed locally for testing
-
-### Release Steps
-
-1. **Update Version Number**
-
-   Update the version in `internal/commands/version.go`:
-   ```go
-   var (
-       version   = "v0.3.0" // <- Update this version
-       commit    = ""
-       buildDate = ""
-   )
-   ```
-
-2. **Run Pre-Release Checks**
-   ```bash
-   # Full development check (format, lint, test, build)
-   task dev:full
-
-   # Test GoReleaser configuration
-   task release:test
-
-   # Optional: Dry run of release process (local only)
-   task release:dry
-   ```
-
-3. **Validate Setup**
-   ```bash
-   # Check if ready for release
-   task release:check
-   ```
-
-4. **Create and Push Release Tag**
-   ```bash
-   # Create tag and push (triggers GitHub Actions)
-   task release:tag
-
-   # Or manually:
-   git tag -a v0.3.0 -m "Release v0.3.0"
-   git push origin v0.3.0
-   ```
-
-5. **Monitor Release Process**
-
-   After pushing the tag:
-   - GitHub Actions will automatically trigger
-   - GoReleaser will build binaries for all platforms
-   - GitHub release will be created with artifacts
-   - Homebrew Cask will be updated in `homebrew-tap` repository
-   - Users can install with: `brew install --cask dantech2000/tap/refresh`
-
-### Useful Task Commands
-
-```bash
-# Development workflow
-task dev:quick               # Format, vet, build, test version
-task dev:full                # Full check including lint and tests
-
-# Release workflow
-task release:check           # Verify ready for release
-task release:test            # Test GoReleaser config (no release)
-task release:dry             # Full dry run (local only)
-task release:tag             # Create and push release tag
-
-# Testing
-task run:version             # Test version command
-task run:help                # Show help
-task run:cluster:list        # Test cluster list command
-task run:ng:list             # Test nodegroup list command
-
-# Utilities
-task clean                   # Clean build artifacts
-task deps                    # Download and tidy dependencies
-task deps:update             # Update dependencies
-```
-
-### Post-Release Verification
-
-After a successful release:
-
-1. **Check GitHub Release**: Verify release appears with all artifacts
-2. **Test Homebrew Installation**: Follow the [Installation instructions](#installation) to test the Homebrew tap
-3. **Verify Version**: Run `refresh version` to confirm the new version is available
-4. **Update Documentation**: If needed, update examples in README
-
-### Troubleshooting
-
-- **Build Failures**: Run `task release:test` to check GoReleaser config
-- **Permission Issues**: Verify `GH_PAT` token has correct permissions
-- **Version Conflicts**: Ensure version in `internal/commands/version.go` matches git tag
+The version is injected at build time via ldflags — there is no version constant
+to bump by hand. Validate the release config locally with `task release:test` or
+`task release:dry`.
 
 ## Security
 
--   Does not log or store credentials
--   Sanitizes input parameters
--   **Deletion Protection Visibility**: Displays EKS cluster deletion protection status in `cluster describe` command
--   **Security Configuration**: Shows encryption status, logging configuration, and IAM role information
+- Never logs or stores credentials; sanitizes input parameters.
+- Surfaces EKS cluster deletion-protection status, encryption, logging, and IAM
+  role configuration in `cluster describe`.
+- Mutating calls are idempotent (`ClientRequestToken`); AWS errors are formatted
+  with the missing IAM action when permission is denied.
 
 ## License
 
