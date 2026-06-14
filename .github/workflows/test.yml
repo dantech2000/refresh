@@ -30,15 +30,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build
-        run: go build ./...
-
-      # `go vet` is intentionally NOT a separate step — golangci-lint's `govet`
-      # linter (lint.yml) covers it.
+      # We intentionally do NOT run a separate non-race `go build ./...`. Go's
+      # build cache keys on -race, so a non-race build shares zero cached
+      # compilation with the race test below — it just compiles the (large)
+      # AWS-SDK/k8s tree a second time. Compilation is fully covered by the
+      # race steps: `go run -race . gen-docs` builds the main binary, and
+      # `go test -race ./...` compiles every package (even test-less ones).
+      # `go vet` is covered by golangci-lint's govet linter (lint.yml). (REF-135)
 
       - name: Docs command reference is up to date
+        # `-race` so this shares one race compile of the dependency tree with the
+        # Test step's cache, instead of adding a separate non-race compile pass.
         run: |
-          go run . gen-docs --out docs/reference
+          go run -race . gen-docs --out docs/reference
           if ! git diff --quiet -- docs/reference; then
             echo "::error::docs/reference is stale vs the CLI tree. Run 'task docs:gen' and commit."
             git --no-pager diff -- docs/reference
