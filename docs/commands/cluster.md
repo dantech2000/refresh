@@ -88,6 +88,8 @@ refresh cluster describe [cluster] [flags]
 | `--show-health, -H` | Include health status (default `true`) |
 | `--show-security, -s` | Include security configuration analysis |
 | `--include-addons, -a` | Include EKS add-on information (default `true`) |
+| `--check-readiness, -R` | Measure real Kubernetes node readiness (`Ready/desired`) via the cluster API; without it the `NODES` column shows the desired count only |
+| `--kubeconfig` | Path to the kubeconfig for `--check-readiness` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
 | `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
 
