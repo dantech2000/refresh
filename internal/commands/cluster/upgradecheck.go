@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
@@ -10,6 +11,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/services/status"
 )
 
 func upgradeCheckCommand() *cli.Command {
@@ -87,6 +89,13 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 		return rerr
 	}); werr != nil {
 		return werr
+	}
+
+	// Support posture for the control-plane version, via the same resolver
+	// behind `refresh status` (REF-145).
+	if report != nil && report.Skew.ControlPlaneVersion != "" {
+		posture := status.NewSupportResolver(eks.NewFromConfig(awsCfg)).Resolve(ctx, report.Skew.ControlPlaneVersion)
+		report.Support = &posture
 	}
 
 	if handled, encErr := runner.EncodeStdout(cmd.String("format"), report); handled {

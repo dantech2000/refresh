@@ -31,6 +31,9 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails, elapsed 
 		{"version", version},
 		{"status", statusToken(th, d.Status)},
 	}
+	if d.Support != nil {
+		kv = append(kv, [2]string{"support", supportToken(th, d.Support)})
+	}
 	if d.Endpoint != "" {
 		kv = append(kv, [2]string{"endpoint", th.Paint(pal.Sky, truncateEndpoint(d.Endpoint))})
 	}

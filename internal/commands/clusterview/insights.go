@@ -26,6 +26,9 @@ func OutputUpgradeCheck(report *clustersvc.UpgradeReport) error {
 		return nil
 	}
 	ui.Outf("Upgrade readiness for %s\n", report.Cluster)
+	if report.Support != nil {
+		ui.Outf("Support: %s\n", supportPlain(report.Support))
+	}
 	outputInsights(report.Insights)
 	fmt.Println()
 	outputSkew(report.Skew)

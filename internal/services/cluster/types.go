@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/services/status"
 )
 
 // ClusterDetails contains comprehensive cluster information
@@ -16,6 +17,10 @@ type ClusterDetails struct {
 	Endpoint        string    `json:"endpoint"`
 	CreatedAt       time.Time `json:"createdAt"`
 	Region          string    `json:"region"`
+
+	// Support is the EKS version support posture (tier + days remaining),
+	// resolved via the shared status resolver. Populated by the command layer.
+	Support *status.SupportPosture `json:"support,omitempty"`
 
 	// Health information (integration with existing health framework)
 	Health *health.HealthSummary `json:"health,omitempty"`

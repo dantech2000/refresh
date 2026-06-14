@@ -15,6 +15,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/services/status"
 )
 
 // Insight status values (the flattened InsightStatus.Status enum).
@@ -113,9 +114,10 @@ type SkewReport struct {
 // UpgradeReport combines AWS Cluster Insights with the local version-skew view —
 // the full `cluster upgrade-check` result.
 type UpgradeReport struct {
-	Cluster  string           `json:"cluster" yaml:"cluster"`
-	Insights []InsightSummary `json:"insights" yaml:"insights"`
-	Skew     SkewReport       `json:"skew" yaml:"skew"`
+	Cluster  string                 `json:"cluster" yaml:"cluster"`
+	Support  *status.SupportPosture `json:"support,omitempty" yaml:"support,omitempty"`
+	Insights []InsightSummary       `json:"insights" yaml:"insights"`
+	Skew     SkewReport             `json:"skew" yaml:"skew"`
 }
 
 // ListInsights returns the cluster's EKS Cluster Insights filtered per opts.

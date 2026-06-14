@@ -39,6 +39,10 @@ func outputClusterDetailsPlain(details *clustersvc.ClusterDetails, elapsed time.
 		Add("Platform", details.PlatformVersion).
 		Add("Endpoint", truncateEndpoint(details.Endpoint))
 
+	if details.Support != nil {
+		tbl.Add("Support", supportPlain(details.Support))
+	}
+
 	if details.Health != nil {
 		tbl.Add("Health", formatHealth(details.Health))
 	}
