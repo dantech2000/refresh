@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -72,7 +73,11 @@ type ListOptions struct {
 // the concrete cluster/nodegroup/addons/ec2 clients.
 func NewService(awsCfg aws.Config, logger *slog.Logger) *Service {
 	if logger == nil {
-		logger = slog.Default()
+		// Defense-in-depth: callers should pass factory.NewDefaultLogger(nil)
+		// (quiet by default, honoring --log-level/--verbose). If a caller still
+		// passes nil, discard service logs rather than falling back to
+		// slog.Default(), which is Info-level and would leak into the TUI. (REF-129)
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	eksClient := eks.NewFromConfig(awsCfg)
 	return &Service{
