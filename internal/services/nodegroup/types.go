@@ -58,7 +58,12 @@ type NodegroupSummary struct {
 	Status       string `json:"status"`
 	InstanceType string `json:"instanceType"`
 	DesiredSize  int32  `json:"desiredSize"`
-	ReadyNodes   int32  `json:"readyNodes"`
+	// ReadyNodes is a measured count of Kubernetes Ready=True nodes, valid only
+	// when ReadyKnown is true. When ReadyKnown is false the readiness was not
+	// measured (no --check-readiness, or the cluster API was unreachable) and
+	// ReadyNodes must not be read as a real count. (REF-130)
+	ReadyNodes int32 `json:"readyNodes"`
+	ReadyKnown bool  `json:"readyKnown"`
 	// AMI information - core functionality of refresh tool
 	CurrentAMI string          `json:"currentAmi"`
 	AMIStatus  types.AMIStatus `json:"amiStatus"`

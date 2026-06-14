@@ -85,13 +85,19 @@ type NodegroupSummary struct {
 	Status       string `json:"status"`
 	InstanceType string `json:"instanceType"`
 	DesiredSize  int32  `json:"desiredSize"`
-	ReadyNodes   int32  `json:"readyNodes"`
+	// ReadyNodes is valid only when ReadyKnown is true (a measured Kubernetes
+	// Ready=True count). Otherwise readiness was not measured. (REF-130)
+	ReadyNodes int32 `json:"readyNodes"`
+	ReadyKnown bool  `json:"readyKnown"`
 }
 
-// NodeCountInfo aggregates node information across nodegroups
+// NodeCountInfo aggregates node information across nodegroups. Ready is a
+// measured count only when ReadyKnown is true; otherwise only Total (desired
+// capacity) is meaningful. (REF-130)
 type NodeCountInfo struct {
-	Ready int32 `json:"ready"`
-	Total int32 `json:"total"`
+	Ready      int32 `json:"ready"`
+	Total      int32 `json:"total"`
+	ReadyKnown bool  `json:"readyKnown"`
 }
 
 // DescribeOptions controls what information to include in describe operations
