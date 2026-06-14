@@ -150,6 +150,12 @@ func formatClusterHealth(h *health.HealthSummary) string {
 }
 
 func formatNodeCount(n clustersvc.NodeCountInfo) string {
+	// Readiness not measured (the common case for a multi-cluster `cluster list`,
+	// which can't reach every cluster's Kubernetes API): show desired capacity
+	// only rather than a fabricated ready count. (REF-130)
+	if !n.ReadyKnown {
+		return fmt.Sprintf("%d desired", n.Total)
+	}
 	switch {
 	case n.Total == 0:
 		return "0/0 ready"
@@ -160,6 +166,21 @@ func formatNodeCount(n clustersvc.NodeCountInfo) string {
 	default:
 		return color.YellowString("%d/%d ready", n.Ready, n.Total)
 	}
+}
+
+// nodeCountText renders a NODES cell honestly: a measured "ready/desired"
+// fraction only when readiness was actually measured, otherwise just the
+// desired count — never a fabricated ready figure. (REF-130)
+func nodeCountText(readyKnown bool, ready, desired int32) string {
+	if readyKnown {
+		return fmt.Sprintf("%d/%d", ready, desired)
+	}
+	return fmt.Sprintf("%d", desired)
+}
+
+// nodeCountInfoText applies nodeCountText to an aggregated NodeCountInfo.
+func nodeCountInfoText(n clustersvc.NodeCountInfo) string {
+	return nodeCountText(n.ReadyKnown, n.Ready, n.Total)
 }
 
 func truncateEndpoint(endpoint string) string {

@@ -63,9 +63,11 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails, elapsed 
 	}
 
 	if len(d.Nodegroups) > 0 {
+		// The header "N nodes" is desired capacity (always known); per-row NODES
+		// shows measured ready/desired only when readiness was measured. (REF-130)
 		active, nodes := 0, int32(0)
 		for _, ng := range d.Nodegroups {
-			nodes += ng.ReadyNodes
+			nodes += ng.DesiredSize
 			if ng.Status == "ACTIVE" {
 				active++
 			}
@@ -81,7 +83,7 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails, elapsed 
 			tbl.Row(
 				th.Paint(pal.White, ng.Name),
 				th.Paint(pal.Text, ng.InstanceType),
-				th.Paint(pal.Text, fmt.Sprintf("%d/%d", ng.ReadyNodes, ng.DesiredSize)),
+				th.Paint(pal.Text, nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize)),
 				th.Token(render.StatusFromString(ng.Status), ng.Status),
 			)
 		}

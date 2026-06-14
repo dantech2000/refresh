@@ -35,7 +35,10 @@ func clusterListLines(th *render.Theme, summaries []clustersvc.ClusterSummary, m
 	if showHealth {
 		cols = append(cols, ui.Column{Title: "HEALTH", Min: 8})
 	}
-	cols = append(cols, ui.Column{Title: "READY/DESIRED", Min: 15, Align: ui.AlignRight})
+	// NODES is desired capacity here: a fleet-wide `cluster list` can't reach
+	// every cluster's Kubernetes API, so it reports the desired count rather
+	// than a fabricated ready/desired fraction. (REF-130)
+	cols = append(cols, ui.Column{Title: "NODES", Min: 7, Align: ui.AlignRight})
 
 	tbl := th.NewTable(cols...)
 	for _, s := range summaries {
@@ -47,7 +50,7 @@ func clusterListLines(th *render.Theme, summaries []clustersvc.ClusterSummary, m
 		if showHealth {
 			row = append(row, decisionToken(th, s.Health))
 		}
-		row = append(row, th.Paint(pal.Text, fmt.Sprintf("%d/%d", s.NodeCount.Ready, s.NodeCount.Total)))
+		row = append(row, th.Paint(pal.Text, nodeCountInfoText(s.NodeCount)))
 		tbl.Row(row...)
 	}
 	out = append(out, tbl.Render()...)

@@ -21,8 +21,8 @@ func sampleDetails() *clustersvc.ClusterDetails {
 		Networking:      clustersvc.NetworkingInfo{VpcId: "vpc-0a1b", VpcCidr: "10.0.0.0/16"},
 		Security:        clustersvc.SecurityInfo{EncryptionEnabled: true, LoggingEnabled: []string{"api", "audit"}},
 		Nodegroups: []clustersvc.NodegroupSummary{
-			{Name: "general", Status: "ACTIVE", InstanceType: "m6i.large", DesiredSize: 6, ReadyNodes: 6},
-			{Name: "spot", Status: "DEGRADED", InstanceType: "m6i.xlarge", DesiredSize: 2, ReadyNodes: 1},
+			{Name: "general", Status: "ACTIVE", InstanceType: "m6i.large", DesiredSize: 6, ReadyNodes: 6, ReadyKnown: true},
+			{Name: "spot", Status: "DEGRADED", InstanceType: "m6i.xlarge", DesiredSize: 2, ReadyNodes: 1, ReadyKnown: true},
 		},
 		Addons: []clustersvc.AddonInfo{
 			{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "Healthy"},
@@ -47,9 +47,9 @@ func TestClusterDetailLines_Pretty(t *testing.T) {
 		"▸ OVERVIEW",                       // section header
 		"1.32 · eks.8",                     // version KV with platform
 		"encryption  ● enabled (KMS)",      // security token
-		"▸ NODEGROUPS  1 active · 7 nodes", // section + meta (spot is DEGRADED)
+		"▸ NODEGROUPS  1 active · 8 nodes", // section + meta: nodes = desired capacity (6+2); spot is DEGRADED
 		"✗ DEGRADED",                       // spot's status cell
-		"6/6",                              // nodes cell
+		"6/6",                              // measured nodes cell (ReadyKnown)
 		"▸ ADD-ONS  1 installed",
 		"vpc-cni",
 		"▸ HEALTH  82/100 · ▲ WARN",      // health card verdict
@@ -58,6 +58,25 @@ func TestClusterDetailLines_Pretty(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("detail output missing %q in:\n%s", want, joined)
 		}
+	}
+}
+
+// REF-130: without measured readiness the per-nodegroup NODES cell shows the
+// desired count only, and the section header still reports desired capacity.
+func TestClusterDetailLines_ReadinessUnknown(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	d := sampleDetails()
+	for i := range d.Nodegroups {
+		d.Nodegroups[i].ReadyKnown = false
+		d.Nodegroups[i].ReadyNodes = 0
+	}
+	joined := strings.Join(clusterDetailLines(th, d, 0), "\n")
+
+	if !strings.Contains(joined, "1 active · 8 nodes") {
+		t.Errorf("header should report desired capacity (8):\n%s", joined)
+	}
+	if strings.Contains(joined, "6/6") || strings.Contains(joined, "0/6") || strings.Contains(joined, "1/2") {
+		t.Errorf("unmeasured readiness must not render a fraction:\n%s", joined)
 	}
 }
 

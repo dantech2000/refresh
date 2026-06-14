@@ -169,18 +169,61 @@ func (hc *HealthChecker) kubernetesNodeCounts(ctx context.Context) (total, ready
 		return 0, 0, nil, false
 	}
 	for _, node := range nodes.Items {
-		isReady := false
-		for _, cond := range node.Status.Conditions {
-			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
-				isReady = true
-				break
-			}
-		}
-		if isReady {
+		if nodeReady(&node) {
 			ready++
 		} else {
 			notReady = append(notReady, node.Name)
 		}
 	}
 	return len(nodes.Items), ready, notReady, true
+}
+
+// nodeLabelNodegroup is the EKS-managed label that scopes a node to its managed
+// nodegroup. (Kept local to avoid coupling health to the noderoll package, which
+// owns the same constant for the live-roll observer.)
+const nodeLabelNodegroup = "eks.amazonaws.com/nodegroup"
+
+// nodeReady reports whether a node's Kubernetes Ready condition is True. A
+// Ready condition of False or Unknown (kubelet not reporting) both count as not
+// ready — the research-backed honest reading: a running EC2 instance is not
+// necessarily a Ready node.
+func nodeReady(node *corev1.Node) bool {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// NodegroupReadyCounts lists the cluster's nodes once and returns the number of
+// Ready=True nodes per managed nodegroup, keyed by nodegroup name (the
+// eks.amazonaws.com/nodegroup label). ok is false when no Kubernetes client is
+// wired or the list fails, so callers fall back to an honest "unknown" rather
+// than the DesiredSize proxy. A nodegroup with nodes present but none Ready
+// appears with a count of 0; a nodegroup absent from the map (no nodes observed)
+// is treated by callers as 0 ready.
+func (hc *HealthChecker) NodegroupReadyCounts(ctx context.Context) (map[string]int32, bool) {
+	if hc.k8sClient == nil {
+		return nil, false
+	}
+	nodes, err := hc.k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, false
+	}
+	counts := make(map[string]int32)
+	for _, node := range nodes.Items {
+		ng := node.Labels[nodeLabelNodegroup]
+		if ng == "" {
+			continue
+		}
+		// Ensure nodegroups whose nodes are all NotReady still register (count 0).
+		if _, seen := counts[ng]; !seen {
+			counts[ng] = 0
+		}
+		if nodeReady(&node) {
+			counts[ng]++
+		}
+	}
+	return counts, true
 }

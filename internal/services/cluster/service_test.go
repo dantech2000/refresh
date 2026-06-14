@@ -187,8 +187,18 @@ func TestList_NodeCountUsesManagedNodegroupTotals(t *testing.T) {
 	if len(summaries) != 1 {
 		t.Fatalf("expected 1 summary, got %d", len(summaries))
 	}
-	if summaries[0].NodeCount.Ready != 6 || summaries[0].NodeCount.Total != 6 {
-		t.Fatalf("NodeCount = %+v, want 6/6", summaries[0].NodeCount)
+	// Total is the sum of managed-nodegroup desired sizes (6). Without a
+	// Kubernetes client wired, readiness is honestly unknown — Ready must NOT be
+	// synthesized from desired (the old "ready = desired when ACTIVE" bug). (REF-130)
+	nc := summaries[0].NodeCount
+	if nc.Total != 6 {
+		t.Fatalf("NodeCount.Total = %d, want 6", nc.Total)
+	}
+	if nc.ReadyKnown {
+		t.Fatalf("NodeCount.ReadyKnown = true, want false (no Kubernetes client wired)")
+	}
+	if nc.Ready != 0 {
+		t.Fatalf("NodeCount.Ready = %d, want 0 (unmeasured, not synthesized)", nc.Ready)
 	}
 }
 

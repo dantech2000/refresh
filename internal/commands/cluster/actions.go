@@ -116,7 +116,18 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	clusterService := factory.NewClusterService(awsCfg, cmd.Bool("show-health"), nil)
+	// --check-readiness measures real Kubernetes Ready node counts (per
+	// nodegroup) via the cluster API instead of leaving NODES at desired-only.
+	// When unreachable, the kube client is nil and readiness stays honestly
+	// unknown. It also gives the health checks a real k8s client. (REF-130)
+	var clusterService *clustersvc.ServiceImpl
+	if cmd.Bool("check-readiness") {
+		humanOutput := strings.EqualFold(cmd.String("format"), "table")
+		k8sClient := resolveReadinessKubeClient(ctx, cmd.String("kubeconfig"), humanOutput)
+		clusterService = factory.NewClusterServiceWithHealth(awsCfg, k8sClient, nil)
+	} else {
+		clusterService = factory.NewClusterService(awsCfg, cmd.Bool("show-health"), nil)
+	}
 	options := clustersvc.DescribeOptions{
 		ShowHealth:    cmd.Bool("show-health"),
 		ShowSecurity:  cmd.Bool("show-security") || cmd.Bool("detailed"),

@@ -20,6 +20,11 @@ or `--cluster/-c`, falling back to the
 List the managed nodegroups in a cluster with their status, instance type, node
 counts, and AMI freshness (whether each is on the latest recommended AMI).
 
+The `NODES` column shows the desired node count by default. Add
+`--check-readiness` to measure real Kubernetes node readiness (`Ready/desired`)
+via the cluster API; when the cluster is unreachable it degrades to the desired
+count rather than reporting a fabricated ready figure.
+
 ```bash
 refresh nodegroup list [cluster] [flags]
 ```
@@ -30,6 +35,8 @@ refresh nodegroup list [cluster] [flags]
 |---|---|
 | `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
 | `--filter, -f` | Filter, `key=value` (keys: `name`, `status`, `instanceType`, `amiStatus`); repeatable |
+| `--check-readiness, -R` | Measure real Kubernetes node readiness (`Ready/desired`) via the cluster API |
+| `--kubeconfig` | Path to the kubeconfig for `--check-readiness` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--sort` | Sort by field: `name` (default), `status`, `instance`, `nodes` |
 | `--desc` | Sort descending |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
