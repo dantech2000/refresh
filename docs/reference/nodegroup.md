@@ -126,7 +126,7 @@ operation settles.
 
 ### refresh nodegroup update
 
-> Update the AMI for all or a specific node group (rolling by default)
+> Update the AMI for all or a specific nodegroup (rolling by default)
 
 **Aliases:** `update-ami`
 

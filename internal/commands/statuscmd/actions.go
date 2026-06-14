@@ -13,6 +13,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/commands/statusview"
 	appconfig "github.com/dantech2000/refresh/internal/config"
@@ -96,6 +97,10 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 	if maxConc <= 0 {
 		maxConc = appconfig.DefaultMaxConcurrency
 	}
+	// Build the shared logger once through the factory so service logs honor the
+	// global --log-level/--verbose (quiet by default) instead of leaking at
+	// Info level into the TUI. (REF-129)
+	logger := factory.NewDefaultLogger(nil)
 	var (
 		mu   sync.Mutex
 		all  []statussvc.ClusterStatus
@@ -112,7 +117,7 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 
 			cfg := baseCfg.Copy()
 			cfg.Region = r
-			svc := statussvc.NewService(cfg, nil)
+			svc := statussvc.NewService(cfg, logger)
 			statuses, err := svc.ListClusterStatuses(ctx, opts)
 
 			mu.Lock()

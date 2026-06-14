@@ -16,6 +16,16 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
 		return err
 	}
+
+	// Validate the nodegroup name before any AWS work: PositionalSlot reads only
+	// flags/positionals, so a missing name should fail fast — not after loading
+	// AWS config, resolving the cluster, and printing a misleading "Cluster name
+	// resolved!" success message. (REF-131)
+	ngName := runner.PositionalSlot(cmd, "nodegroup", "cluster")
+	if ngName == "" {
+		return fmt.Errorf("missing nodegroup name; pass as second argument or --nodegroup <name>")
+	}
+
 	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
@@ -25,11 +35,6 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, cmd)
 	if err != nil || listed {
 		return err
-	}
-
-	ngName := runner.PositionalSlot(cmd, "nodegroup", "cluster")
-	if ngName == "" {
-		return fmt.Errorf("missing nodegroup name; pass as second argument or --nodegroup <name>")
 	}
 
 	logger := factory.NewDefaultLogger(nil)

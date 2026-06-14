@@ -21,10 +21,8 @@ Exit codes (for CI/cron):
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `2m0s` | Operation timeout (e.g. 60s, 2m) |
 | `--all-regions, -A` | — | — | Query all EKS-supported regions |
 | `--region, -r string` | — | — | Specific region(s) to query (repeatable) |
-| `--max-concurrency, -C int` | `REFRESH_MAX_CONCURRENCY` | `8` | Max concurrent region/cluster requests |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
 | `--sort string` | — | `cluster` | Sort by field: cluster,region,version,support,stale |
 | `--desc` | — | — | Sort descending |

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fatih/color"
 	docs "github.com/urfave/cli-docs/v3"
 
 	awsClient "github.com/dantech2000/refresh/internal/aws"
@@ -204,6 +205,44 @@ COMMANDS:
 	// Section header should be present.
 	if !strings.Contains(got, "NAME") || !strings.Contains(got, "COMMANDS") {
 		t.Fatalf("coloredHelpPrinter: missing section headers in output: %q", got)
+	}
+}
+
+// REF-132: command-name coloring must be confined to the COMMANDS section.
+// Words that happen to match command names inside DESCRIPTION prose (or any
+// other indented block) must NOT be colorized.
+func TestColorizeHelpScopesCommandColoringToCommandsSection(t *testing.T) {
+	// Force color on regardless of TTY so the ANSI assertions are meaningful.
+	prev := color.NoColor
+	color.NoColor = false
+	t.Cleanup(func() { color.NoColor = prev })
+
+	help := strings.Join([]string{
+		"NAME:",
+		"   refresh nodegroup - manage nodegroups",
+		"",
+		"DESCRIPTION:",
+		"   Inspect and operate: list them, describe one, scale and update.",
+		"",
+		"COMMANDS:",
+		"   list      List nodegroups",
+		"   describe  Describe a nodegroup",
+		"",
+	}, "\n")
+
+	for _, line := range strings.Split(colorizeHelp(help), "\n") {
+		switch {
+		case strings.Contains(line, "Inspect and operate"):
+			// Prose words (list/describe/scale/update) must stay uncolored.
+			if strings.Contains(line, "\x1b[") {
+				t.Errorf("DESCRIPTION prose was colorized: %q", line)
+			}
+		case strings.Contains(line, "List nodegroups"):
+			// Real command rows must be colorized (yellow command name).
+			if !strings.Contains(line, "\x1b[33m") {
+				t.Errorf("COMMANDS row was not colorized: %q", line)
+			}
+		}
 	}
 }
 

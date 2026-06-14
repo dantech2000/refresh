@@ -121,7 +121,7 @@ func updateAMICommand() *cli.Command {
 	return &cli.Command{
 		Name:      "update",
 		Aliases:   []string{"update-ami"},
-		Usage:     "Update the AMI for all or a specific node group (rolling by default)",
+		Usage:     "Update the AMI for all or a specific nodegroup (rolling by default)",
 		ArgsUsage: "[cluster] [nodegroup]",
 		Description: `Roll managed nodegroups to the latest recommended AMI, with pre-flight
 health gates and live monitoring.
