@@ -110,5 +110,19 @@ func outputClusterDetailsPlain(details *clustersvc.ClusterDetails, elapsed time.
 		}
 		addTbl.Render()
 	}
+
+	if len(details.HealthIssues) > 0 {
+		ui.Outln("\nHealth Issues:")
+		for _, iss := range details.HealthIssues {
+			line := iss.Code
+			if iss.Message != "" {
+				line += ": " + iss.Message
+			}
+			if len(iss.ResourceIds) > 0 {
+				line += " [" + strings.Join(iss.ResourceIds, ", ") + "]"
+			}
+			fmt.Printf("  - %s\n", line)
+		}
+	}
 	return nil
 }

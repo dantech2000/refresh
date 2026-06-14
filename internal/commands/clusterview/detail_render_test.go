@@ -35,6 +35,32 @@ func sampleDetails() *clustersvc.ClusterDetails {
 	}
 }
 
+func TestClusterDetailLines_HealthIssues(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	d := sampleDetails()
+	d.HealthIssues = []clustersvc.HealthIssue{{
+		Code:        "InternalFailure",
+		Message:     "control plane could not assume the cluster IAM role",
+		ResourceIds: []string{"arn:aws:iam::123456789012:role/eksClusterRole"},
+	}}
+	joined := strings.Join(clusterDetailLines(th, d, 0), "\n")
+	for _, want := range []string{
+		"▸ HEALTH ISSUES  1",
+		"InternalFailure: control plane could not assume the cluster IAM role",
+		"arn:aws:iam::123456789012:role/eksClusterRole",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("describe view missing %q in:\n%s", want, joined)
+		}
+	}
+
+	// No issues → no HEALTH ISSUES section.
+	clean := strings.Join(clusterDetailLines(th, sampleDetails(), 0), "\n")
+	if strings.Contains(clean, "HEALTH ISSUES") {
+		t.Errorf("clean cluster should not render a HEALTH ISSUES section:\n%s", clean)
+	}
+}
+
 func TestClusterDetailLines_Pretty(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 	joined := strings.Join(clusterDetailLines(th, sampleDetails(), 0), "\n")
