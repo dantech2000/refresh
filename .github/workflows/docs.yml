@@ -42,6 +42,7 @@ jobs:
   build:
     name: Build site
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read # no id-token / pages / secrets — untrusted deps run here
     steps:
@@ -87,6 +88,7 @@ jobs:
     # Only deploy from main; PRs build-and-validate only.
     if: github.event_name == 'push'
     needs: build
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       pages: write # mint the Pages deployment
