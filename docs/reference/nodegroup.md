@@ -53,6 +53,8 @@ grep/awk; -o json|yaml emit structured output. Use --watch to redraw on the
 | `--sort string` | — | `name` | Sort by field: name,status,instance,nodes |
 | `--desc` | — | — | Sort descending |
 | `--filter, -f string` | — | — | Filter nodegroups (key=value; keys: name, status, instanceType, amiStatus) |
+| `--check-readiness, -R` | — | — | Measure real Kubernetes node readiness (Ready/desired) via the cluster API; without it NODES shows desired count only |
+| `--kubeconfig string` | — | — | Path to the kubeconfig for --check-readiness (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--watch, -w` | — | — | Re-run and redraw every --watch-interval until interrupted |
 | `--watch-interval duration` | — | `10s` | Refresh interval for --watch |
 | `--help, -h` | — | — | show help |
