@@ -9,11 +9,17 @@ permissions:
   contents: write
   pull-requests: write
 
+# Serialize release-please so rapid merges to main don't race on the release PR.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
           token: ${{ secrets.GH_PAT }}
           config-file: release-please-config.json
