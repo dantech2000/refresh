@@ -28,10 +28,15 @@ local version-skew picture: control-plane version vs each managed nodegroup, and
 installed addons vs the latest compatible version — with ordered, actionable
 findings. Nothing is mutated; this is the pre-flight read before 'cluster upgrade'.
 
+Insights are defined and computed by EKS (the same set the console shows), and
+that catalog evolves — so list the live set for your cluster with --show-passing,
+then drill into any with --id, which accepts the short ID shown in the table, the
+full ID, or a case-insensitive name substring (e.g. --id "deprecated").
+
 Examples:
    refresh cluster upgrade-check -c prod-east
    refresh cluster upgrade-check -c prod-east --show-passing -o json
-   refresh cluster upgrade-check -c prod-east --id <insight-id>   # detail view`,
+   refresh cluster upgrade-check -c prod-east --id "deprecated"   # detail view (by name)`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
