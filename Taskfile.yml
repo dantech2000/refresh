@@ -71,6 +71,22 @@ tasks:
     cmds:
       - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  deadcode:
+    desc: Fail if any function is unreachable even when counting tests as entry points
+    cmds:
+      # `-test` treats every test as a root, so legitimate test-only seams
+      # (e.g. render.New, the mock builders) are NOT flagged — only code that
+      # nothing at all reaches. deadcode exits 0 even on findings, so we fail
+      # the task ourselves whenever it prints anything.
+      - |
+        out="$(go run golang.org/x/tools/cmd/deadcode@latest -test ./...)"
+        if [ -n "$out" ]; then
+          echo "dead code found (unreachable even from tests):"
+          echo "$out"
+          exit 1
+        fi
+        echo "No dead code."
+
   test:
     desc: Run tests
     cmds:

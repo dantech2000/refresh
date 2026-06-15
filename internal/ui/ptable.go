@@ -131,24 +131,3 @@ func (t *PTable) renderPlain() {
 func CyanHeaders() PTableOption {
 	return WithPTableHeaderColor(func(s string) string { return color.CyanString(s) })
 }
-
-// CreateCompatibleTable is a convenience function that creates a PTable with the same
-// interface as the original ui.NewTable function, making migration easier.
-func CreateCompatibleTable(columns []Column, headerColor func(string) string) *PTable {
-	return NewPTable(columns, WithPTableHeaderColor(headerColor))
-}
-
-// Alternative simple constructor for common case
-func NewPTableWithHeaders(headers []string) *PTable {
-	columns := make([]Column, len(headers))
-	for i, header := range headers {
-		columns[i] = Column{
-			Title: header,
-			Min:   0,
-			Max:   0,
-			Align: AlignLeft,
-		}
-	}
-
-	return NewPTable(columns, CyanHeaders())
-}

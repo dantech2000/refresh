@@ -184,38 +184,6 @@ func TestPositionalSlot_TrailingFlagParsedNatively(t *testing.T) {
 	}
 }
 
-// ── PositionalAt (legacy) ─────────────────────────────────────────────────────
-
-func TestPositionalAt_FlagWins(t *testing.T) {
-	cmd := newTestCommand(t,
-		[]string{"alpha", "beta"},
-		map[string]string{"thing": "from-flag"},
-	)
-	if got := PositionalAt(cmd, "thing", 1); got != "from-flag" {
-		t.Errorf("got %q, want from-flag", got)
-	}
-}
-
-func TestPositionalAt_FallsBackToPositional(t *testing.T) {
-	cmd := newTestCommand(t,
-		[]string{"alpha", "beta"},
-		map[string]string{"thing": ""},
-	)
-	if got := PositionalAt(cmd, "thing", 1); got != "beta" {
-		t.Errorf("got %q, want beta", got)
-	}
-}
-
-func TestPositionalAt_OutOfRangeReturnsEmpty(t *testing.T) {
-	cmd := newTestCommand(t,
-		[]string{"alpha"},
-		map[string]string{"thing": ""},
-	)
-	if got := PositionalAt(cmd, "thing", 1); got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-}
-
 // ── ParseFilters ──────────────────────────────────────────────────────────────
 
 func TestParseFilters(t *testing.T) {

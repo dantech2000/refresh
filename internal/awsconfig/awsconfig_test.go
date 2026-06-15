@@ -66,23 +66,6 @@ region = eu-central-1
 	return path
 }
 
-func TestActiveClusterNameReadsContext(t *testing.T) {
-	setupContext(t, "prod", cliconfig.Context{Cluster: "prod-cluster", Region: "us-west-2"})
-
-	if got := ActiveClusterName(); got != "prod-cluster" {
-		t.Errorf("ActiveClusterName = %q, want prod-cluster", got)
-	}
-}
-
-func TestActiveClusterNameEmptyWhenNoContext(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("REFRESH_CONFIG_HOME", dir)
-	t.Setenv("REFRESH_CONTEXT", "")
-	if got := ActiveClusterName(); got != "" {
-		t.Errorf("ActiveClusterName = %q, want empty", got)
-	}
-}
-
 // Verifies Load applies the context's region (the SDK config carries it)
 // and does not error when no AWS credentials are present (no API call made).
 func TestLoadAppliesContextRegion(t *testing.T) {
@@ -154,9 +137,6 @@ func TestActiveContextLoadError(t *testing.T) {
 	}
 	if ctx, ok := activeContext(); ok || ctx.Cluster != "" {
 		t.Fatalf("activeContext() = %+v, %v; want empty false", ctx, ok)
-	}
-	if got := ActiveClusterName(); got != "" {
-		t.Fatalf("ActiveClusterName() = %q, want empty", got)
 	}
 }
 

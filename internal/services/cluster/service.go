@@ -408,14 +408,4 @@ dispatch:
 	return allSummaries, len(eksRegions) - len(failedRegions), nil
 }
 
-// GetHealth gets health status for a specific cluster
-func (s *ServiceImpl) GetHealth(ctx context.Context, name string) (*health.HealthSummary, error) {
-	if s.healthChecker == nil {
-		return nil, fmt.Errorf("health checker not available")
-	}
-
-	healthSummary := s.healthChecker.RunAllChecks(ctx, name)
-	return &healthSummary, nil
-}
-
 // Helper methods are implemented in helpers.go

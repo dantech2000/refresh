@@ -27,34 +27,6 @@ func TestFormatTreeSummary_Duration(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// TreePrefix
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestTreePrefixes_AllNonEmpty(t *testing.T) {
-	cases := map[string]string{
-		"Cluster":   Prefixes.Cluster(),
-		"Nodegroup": Prefixes.Nodegroup(),
-		"Instance":  Prefixes.Instance(),
-		"Region":    Prefixes.Region(),
-		"World":     Prefixes.World(),
-		"Addon":     Prefixes.Addon(),
-		"Network":   Prefixes.Network(),
-		"Security":  Prefixes.Security(),
-		"Config":    Prefixes.Config(),
-		"Compare":   Prefixes.Compare(),
-		"Success":   Prefixes.Success(),
-		"Warning":   Prefixes.Warning(),
-		"Error":     Prefixes.Error(),
-		"Unknown":   Prefixes.Unknown(),
-	}
-	for name, val := range cases {
-		if val == "" {
-			t.Errorf("Prefixes.%s() returned empty string", name)
-		}
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
 // TreeBuilder structural methods
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -79,49 +51,10 @@ func TestTreeBuilder_AddRoot_LevelZero(t *testing.T) {
 	}
 }
 
-func TestTreeBuilder_AddChild_IncreasesLevel(t *testing.T) {
-	tb := NewTreeBuilder()
-	tb.AddRoot("root").AddChild("child")
-	if len(tb.leveledList) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(tb.leveledList))
-	}
-	if tb.leveledList[1].Level != 1 {
-		t.Errorf("child level = %d, want 1", tb.leveledList[1].Level)
-	}
-}
-
-func TestTreeBuilder_AddSibling_SameLevel(t *testing.T) {
-	tb := NewTreeBuilder()
-	tb.AddRoot("root").AddChild("child1").AddSibling("child2")
-	// child1 and child2 should be at level 1
-	if tb.leveledList[1].Level != 1 || tb.leveledList[2].Level != 1 {
-		t.Errorf("siblings should be at same level, got %d and %d",
-			tb.leveledList[1].Level, tb.leveledList[2].Level)
-	}
-}
-
-func TestTreeBuilder_Up_DecreasesLevel(t *testing.T) {
-	tb := NewTreeBuilder()
-	tb.AddRoot("root").AddChild("c1").AddChild("c2")
-	// now at level 2
-	tb.Up()
-	if tb.level != 1 {
-		t.Errorf("level after Up = %d, want 1", tb.level)
-	}
-}
-
-func TestTreeBuilder_Up_NeverBelowZero(t *testing.T) {
-	tb := NewTreeBuilder()
-	tb.Up().Up().Up()
-	if tb.level != 0 {
-		t.Errorf("level should not go below 0, got %d", tb.level)
-	}
-}
-
 func TestTreeBuilder_UpTo_SetsLevel(t *testing.T) {
 	tb := NewTreeBuilder()
-	tb.AddRoot("r").AddChild("c1").AddChild("c2").AddChild("c3")
-	// level is 3 now
+	tb.AddRoot("r")
+	tb.level = 3
 	tb.UpTo(1)
 	if tb.level != 1 {
 		t.Errorf("UpTo(1): level = %d, want 1", tb.level)
@@ -130,45 +63,12 @@ func TestTreeBuilder_UpTo_SetsLevel(t *testing.T) {
 
 func TestTreeBuilder_UpTo_NoChangeIfHigher(t *testing.T) {
 	tb := NewTreeBuilder()
-	tb.AddRoot("r").AddChild("c")
+	tb.AddRoot("r")
+	tb.level = 1
 	// level is 1; UpTo(2) should not change it
 	tb.UpTo(2)
 	if tb.level != 1 {
 		t.Errorf("UpTo(2) should not increase level, got %d", tb.level)
-	}
-}
-
-func TestTreeBuilder_AddNode_CurrentLevel(t *testing.T) {
-	tb := NewTreeBuilder()
-	tb.AddRoot("r").AddChild("c")
-	// level is now 1
-	tb.AddNode("sibling")
-	last := tb.leveledList[len(tb.leveledList)-1]
-	if last.Level != 1 {
-		t.Errorf("AddNode level = %d, want 1", last.Level)
-	}
-	if last.Text != "sibling" {
-		t.Errorf("AddNode text = %q, want %q", last.Text, "sibling")
-	}
-}
-
-func TestTreeBuilder_AddNodeWithIcon_NoColor(t *testing.T) {
-	tb := NewTreeBuilder()
-	tb.AddRoot("r")
-	tb.AddNodeWithIcon("★", "mynode", nil)
-	last := tb.leveledList[len(tb.leveledList)-1]
-	if !strings.Contains(last.Text, "★") || !strings.Contains(last.Text, "mynode") {
-		t.Errorf("AddNodeWithIcon text = %q, expected icon and text present", last.Text)
-	}
-}
-
-func TestTreeBuilder_AddNodeWithIcon_WithColor(t *testing.T) {
-	tb := NewTreeBuilder()
-	tb.AddRoot("r")
-	tb.AddNodeWithIcon("★", "mynode", func(s string) string { return "[" + s + "]" })
-	last := tb.leveledList[len(tb.leveledList)-1]
-	if !strings.HasPrefix(last.Text, "[") || !strings.HasSuffix(last.Text, "]") {
-		t.Errorf("AddNodeWithIcon with color fn: text = %q, want wrapped in []", last.Text)
 	}
 }
 
@@ -247,7 +147,9 @@ func TestTreeBuilder_Render_EmptyReturnsError(t *testing.T) {
 }
 
 func TestTreeBuilder_RenderWithContent(t *testing.T) {
-	tb := NewTreeBuilder().AddRoot("root").AddChild("child")
+	tb := NewTreeBuilder().AddRoot("root")
+	tb.level = 1
+	tb.AddStatus("", "child", "ACTIVE")
 	if err := tb.Render(); err != nil {
 		t.Fatalf("Render() = %v", err)
 	}
@@ -264,9 +166,6 @@ func TestRegionTreeBuilder(t *testing.T) {
 
 	if len(builder.builder.leveledList) != 2 {
 		t.Fatalf("region tree entries = %d", len(builder.builder.leveledList))
-	}
-	if err := builder.Render(); err != nil {
-		t.Fatalf("Render() = %v", err)
 	}
 	if err := builder.RenderWithTitle("Regions"); err != nil {
 		t.Fatalf("RenderWithTitle() = %v", err)

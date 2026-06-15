@@ -21,20 +21,6 @@ import (
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
-// UpdateMonitor handles concurrent monitoring of multiple nodegroup updates.
-type UpdateMonitor struct {
-	eksClient *eks.Client
-	config    refreshTypes.MonitorConfig
-}
-
-// NewUpdateMonitor creates a new update monitor instance.
-func NewUpdateMonitor(eksClient *eks.Client, config refreshTypes.MonitorConfig) *UpdateMonitor {
-	return &UpdateMonitor{
-		eksClient: eksClient,
-		config:    config,
-	}
-}
-
 // statusResult holds the result of a status check for a single update.
 type statusResult struct {
 	index  int

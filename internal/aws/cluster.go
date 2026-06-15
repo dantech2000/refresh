@@ -16,16 +16,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// ClusterResolver handles cluster name resolution and matching.
-type ClusterResolver struct {
-	awsCfg aws.Config
-}
-
-// NewClusterResolver creates a new cluster resolver.
-func NewClusterResolver(awsCfg aws.Config) *ClusterResolver {
-	return &ClusterResolver{awsCfg: awsCfg}
-}
-
 // awsNamePattern is the regex for valid AWS EKS cluster names.
 var awsNamePattern = regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9-_]*$`)
 

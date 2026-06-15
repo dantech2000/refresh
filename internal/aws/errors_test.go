@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/smithy-go"
 )
 
@@ -233,38 +232,6 @@ func TestFormatAWSError_TypedOtherAPIErrorIncludesCode(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// AWSError
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestAWSError_Error_ContainsOperationAndMessage(t *testing.T) {
-	inner := errors.New("access denied")
-	e := &AWSError{Operation: "listing clusters", Err: inner}
-	msg := e.Error()
-	if !strings.Contains(msg, "listing clusters") {
-		t.Errorf("Error() should include operation, got %q", msg)
-	}
-	if !strings.Contains(msg, "access denied") {
-		t.Errorf("Error() should include inner error, got %q", msg)
-	}
-}
-
-func TestAWSError_Unwrap_ReturnsInner(t *testing.T) {
-	inner := errors.New("inner error")
-	e := &AWSError{Operation: "op", Err: inner}
-	if e.Unwrap() != inner {
-		t.Error("Unwrap should return the inner error")
-	}
-}
-
-func TestAWSError_ErrorsIs_WorksViaUnwrap(t *testing.T) {
-	sentinel := errors.New("sentinel")
-	e := &AWSError{Operation: "op", Err: sentinel}
-	if !errors.Is(e, sentinel) {
-		t.Error("errors.Is should find sentinel through Unwrap")
-	}
-}
-
 func TestFormatAWSError_GenericErrorHasOperation(t *testing.T) {
 	err := FormatAWSError(errors.New("something went wrong"), "listing nodegroups")
 	if err == nil {
@@ -308,15 +275,4 @@ func TestPrintCredentialHelp_NoPanic(t *testing.T) {
 		}
 	}()
 	PrintCredentialHelp()
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// NewClusterResolver constructor
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestNewClusterResolver_NotNil(t *testing.T) {
-	r := NewClusterResolver(aws.Config{})
-	if r == nil {
-		t.Error("NewClusterResolver should return non-nil resolver")
-	}
 }

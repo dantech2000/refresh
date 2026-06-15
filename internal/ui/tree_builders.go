@@ -35,9 +35,6 @@ func (rtb *RegionTreeBuilder) FinishRegion() *RegionTreeBuilder {
 	return rtb
 }
 
-// Render outputs the region tree
-func (rtb *RegionTreeBuilder) Render() error { return rtb.builder.Render() }
-
 // RenderWithTitle outputs the region tree with a title
 func (rtb *RegionTreeBuilder) RenderWithTitle(title string) error {
 	return rtb.builder.RenderWithTitle(title)
