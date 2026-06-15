@@ -38,7 +38,7 @@ Examples:
 			&cli.StringFlag{Name: "category", Usage: "Insight category (UPGRADE_READINESS, MISCONFIGURATION)", Value: "UPGRADE_READINESS"},
 			&cli.StringSliceFlag{Name: "status", Usage: "Filter by insight status (PASSING, WARNING, ERROR, UNKNOWN)"},
 			&cli.BoolFlag{Name: "show-passing", Usage: "Include PASSING insights (hidden by default)"},
-			&cli.StringFlag{Name: "id", Usage: "Show the detail view (recommendation + resources) for a single insight ID"},
+			&cli.StringFlag{Name: "id", Usage: "Show the detail view for one insight — accepts its ID, a short ID prefix (as shown in the table), or a name substring"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error { return runUpgradeCheck(ctx, cmd) },
@@ -62,13 +62,18 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 
 	service := factory.NewClusterService(awsCfg, false, nil)
 
-	// Detail view for a single insight.
-	if id := cmd.String("id"); id != "" {
+	// Detail view for a single insight. The --id value may be a full insight ID,
+	// a short ID prefix (as shown in the insights table), or a case-insensitive
+	// name substring — so the user never has to copy a raw UUID.
+	if q := cmd.String("id"); q != "" {
 		var detail *clustersvc.InsightDetail
 		if werr := runner.WithSpinner("cluster", "Insight detail loaded!", func() error {
-			var derr error
-			detail, derr = service.DescribeInsight(ctx, clusterName, id)
-			return derr
+			id, rerr := service.ResolveInsightID(ctx, clusterName, q)
+			if rerr != nil {
+				return rerr
+			}
+			detail, rerr = service.DescribeInsight(ctx, clusterName, id)
+			return rerr
 		}); werr != nil {
 			return werr
 		}

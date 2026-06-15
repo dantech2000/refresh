@@ -2,6 +2,7 @@ package clusterview
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/dantech2000/refresh/internal/health"
@@ -92,6 +93,7 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 		out = append(out, "  "+th.Token(render.Healthy, "no upgrade insights to address"))
 	} else {
 		tbl := th.NewTable(
+			ui.Column{Title: "ID", Min: 8},
 			ui.Column{Title: "NAME", Min: 20, Max: 48},
 			ui.Column{Title: "CATEGORY", Min: 14},
 			ui.Column{Title: "STATUS", Min: 10},
@@ -113,6 +115,7 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 				refresh = in.LastRefreshTime.Format(insightTimeLayout)
 			}
 			tbl.Row(
+				th.Paint(pal.Dim, shortID(in.ID)),
 				th.Paint(pal.White, in.Name),
 				th.Paint(pal.Text, in.Category),
 				insightToken(th, in.Status),
@@ -124,6 +127,9 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 			out = append(out, "  "+l)
 		}
 		out = append(out, "  "+insightCountChips(th, errc, warnc, passc))
+		// Tell the user how to drill in — the detail view accepts the short ID
+		// above or a name substring, so they never need to copy a raw UUID.
+		out = append(out, "  "+th.Paint(pal.Dim, "drill into one: cluster upgrade-check -c "+report.Cluster+" --id <id|name>"))
 	}
 
 	if cp := report.ControlPlane; cp != nil {
@@ -147,6 +153,131 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 		}
 	}
 	return out
+}
+
+// shortID trims an insight UUID to a copy-pasteable prefix for the table; the
+// detail view accepts this prefix (or a name) so the full UUID never has to be
+// typed.
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	if id == "" {
+		return "-"
+	}
+	return id
+}
+
+// wrapText collapses whitespace in a (possibly Markdown) blob and word-wraps it
+// to width, so long descriptions/recommendations read as a clean paragraph
+// instead of one runaway line. Deterministic — golden-testable.
+func wrapText(s string, width int) []string {
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return nil
+	}
+	lines := make([]string, 0)
+	cur := words[0]
+	for _, w := range words[1:] {
+		if len(cur)+1+len(w) > width {
+			lines = append(lines, cur)
+			cur = w
+			continue
+		}
+		cur += " " + w
+	}
+	return append(lines, cur)
+}
+
+// insightDetailLines builds the human DescribeInsight detail view in the design
+// system (pure, golden-testable): header + status, overview, description,
+// recommendation, affected resources, doc links (additionalInfo), and — for
+// deprecated-API insights — the per-API caller breakdown.
+func insightDetailLines(th *render.Theme, d *clustersvc.InsightDetail) []string {
+	pal := th.Pal
+	const wrap = 88
+
+	header := th.Bold(pal.White, valueOrDash(d.Name)) + "   " + insightToken(th, d.Status)
+	out := []string{header}
+	if d.StatusReason != "" {
+		out = append(out, "  "+th.Paint(pal.Dim, d.StatusReason))
+	}
+
+	kv := [][2]string{{"category", th.Paint(pal.Text, valueOrDash(d.Category))}}
+	if d.KubernetesVersion != "" {
+		kv = append(kv, [2]string{"targets", th.Paint(pal.White, d.KubernetesVersion)})
+	}
+	if d.ID != "" {
+		kv = append(kv, [2]string{"id", th.Paint(pal.Dim, d.ID)})
+	}
+	if d.LastRefreshTime != nil {
+		kv = append(kv, [2]string{"refreshed", th.Paint(pal.Dim, d.LastRefreshTime.Format(insightTimeLayout))})
+	}
+	out = append(out, "", th.Section("OVERVIEW"))
+	for _, l := range th.KV(kv) {
+		out = append(out, "  "+l)
+	}
+
+	if d.Description != "" {
+		out = append(out, "", th.Section("DESCRIPTION"))
+		for _, l := range wrapText(d.Description, wrap) {
+			out = append(out, "  "+th.Paint(pal.Text, l))
+		}
+	}
+	if d.Recommendation != "" {
+		out = append(out, "", th.Section("RECOMMENDATION"))
+		for _, l := range wrapText(d.Recommendation, wrap) {
+			out = append(out, "  "+th.Paint(pal.White, l))
+		}
+	}
+	if len(d.Resources) > 0 {
+		out = append(out, "", th.Section("AFFECTED RESOURCES")+th.Paint(pal.Dim, fmt.Sprintf("  %d", len(d.Resources))))
+		for _, r := range d.Resources {
+			out = append(out, "  "+th.Paint(pal.Text, "- "+r))
+		}
+	}
+	if len(d.AdditionalInfo) > 0 {
+		out = append(out, "", th.Section("MORE INFORMATION"))
+		keys := make([]string, 0, len(d.AdditionalInfo))
+		for k := range d.AdditionalInfo {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys) // deterministic order (map iteration is random)
+		for _, k := range keys {
+			out = append(out, "  "+th.Paint(pal.White, k), "    "+th.Paint(pal.Sky, d.AdditionalInfo[k]))
+		}
+	}
+	return append(out, insightDeprecationLines(th, d.Deprecations)...)
+}
+
+// insightDeprecationLines renders the deprecated-API breakdown in the design
+// system: each deprecated API → its replacement (and removal version), then the
+// clients still calling it (most-active first), plus the 30-day audit caveat.
+func insightDeprecationLines(th *render.Theme, deps []clustersvc.DeprecationDetail) []string {
+	if len(deps) == 0 {
+		return nil
+	}
+	pal := th.Pal
+	out := []string{"", th.Section("DEPRECATED APIs") + th.Paint(pal.Dim, fmt.Sprintf("  %d", len(deps)))}
+	for _, d := range deps {
+		head := valueOrDash(d.Usage)
+		if d.ReplacedWith != "" {
+			head += " → " + d.ReplacedWith
+		}
+		if d.StopServingVersion != "" {
+			head += fmt.Sprintf(" (removed in %s)", d.StopServingVersion)
+		}
+		out = append(out, "  "+th.Token(render.Fail, head))
+		for _, c := range d.ClientStats {
+			last := "-"
+			if c.LastRequestTime != nil {
+				last = c.LastRequestTime.Format(insightTimeLayout)
+			}
+			out = append(out, "      "+th.Paint(pal.White, valueOrDash(c.UserAgent))+
+				th.Paint(pal.Dim, fmt.Sprintf("  ·  %d req/30d  ·  last seen %s", c.NumberOfRequestsLast30Days, last)))
+		}
+	}
+	return append(out, "  "+th.Paint(pal.Dim, "note: EKS reads audit logs on a 30-day window — a check stays ERROR until the last call ages out."))
 }
 
 func insightCountChips(th *render.Theme, errc, warnc, passc int) string {

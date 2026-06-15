@@ -3,6 +3,7 @@ package clusterview
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/fatih/color"
@@ -61,6 +62,7 @@ func outputInsights(insights []clustersvc.InsightSummary) {
 	}
 
 	tbl := ui.NewPTable([]ui.Column{
+		{Title: "ID", Min: 8, Align: ui.AlignLeft},
 		{Title: "NAME", Min: 24, Max: 48, Align: ui.AlignLeft},
 		{Title: "CATEGORY", Min: 16, Align: ui.AlignLeft},
 		{Title: "STATUS", Min: 8, Align: ui.AlignLeft},
@@ -84,7 +86,7 @@ func outputInsights(insights []clustersvc.InsightSummary) {
 		if in.LastRefreshTime != nil {
 			refresh = in.LastRefreshTime.Format(insightTimeLayout)
 		}
-		tbl.AddRow(in.Name, in.Category, formatInsightStatus(in.Status), valueOrDash(in.KubernetesVersion), refresh)
+		tbl.AddRow(shortID(in.ID), in.Name, in.Category, formatInsightStatus(in.Status), valueOrDash(in.KubernetesVersion), refresh)
 	}
 	tbl.Render()
 
@@ -110,9 +112,18 @@ func outputSkew(skew clustersvc.SkewReport) {
 	}
 }
 
-// OutputInsightDetail renders a single insight's recommendation and affected
-// resources (the DescribeInsight detail view).
+// OutputInsightDetail renders a single insight (the DescribeInsight detail
+// view). The human path uses the render design system (header + sections);
+// `-o plain` keeps an uncolored label/value layout for grep.
 func OutputInsightDetail(detail *clustersvc.InsightDetail) error {
+	if !ui.PlainOutput() {
+		th := render.Default(os.Stdout)
+		for _, line := range insightDetailLines(th, detail) {
+			fmt.Println(line)
+		}
+		return nil
+	}
+
 	ui.Outf("Insight: %s\n", detail.Name)
 	fmt.Printf("  Status:    %s\n", formatInsightStatus(detail.Status))
 	if detail.StatusReason != "" {
@@ -121,6 +132,9 @@ func OutputInsightDetail(detail *clustersvc.InsightDetail) error {
 	fmt.Printf("  Category:  %s\n", detail.Category)
 	if detail.KubernetesVersion != "" {
 		fmt.Printf("  K8s:       %s\n", detail.KubernetesVersion)
+	}
+	if detail.ID != "" {
+		fmt.Printf("  ID:        %s\n", detail.ID)
 	}
 	if detail.Description != "" {
 		fmt.Printf("\n  Description:\n    %s\n", oneLine(detail.Description))
@@ -132,6 +146,17 @@ func OutputInsightDetail(detail *clustersvc.InsightDetail) error {
 		fmt.Printf("\n  Affected resources:\n")
 		for _, r := range detail.Resources {
 			fmt.Printf("    - %s\n", r)
+		}
+	}
+	if len(detail.AdditionalInfo) > 0 {
+		fmt.Printf("\n  More information:\n")
+		keys := make([]string, 0, len(detail.AdditionalInfo))
+		for k := range detail.AdditionalInfo {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Printf("    %s: %s\n", k, detail.AdditionalInfo[k])
 		}
 	}
 	for _, line := range deprecationLines(detail.Deprecations) {
