@@ -1,4 +1,4 @@
-package nodegroup
+package rollview
 
 import (
 	"strings"
@@ -75,18 +75,17 @@ func TestRollPanelLines_MidRoll(t *testing.T) {
 	if strings.Contains(joined, "\x1b") {
 		t.Fatalf("ColorNone panel contains ANSI escapes:\n%s", joined)
 	}
-	// Assert the salient, stable bits.
 	for _, want := range []string{
 		"rolling spot-burst",
 		"ami-old → ami-new",
 		"1/3 replaced",
 		"1 new ready",
-		"old", "new", // AMI words
+		"old", "new",
 		"draining · evicting",
 		"3/4 pods",
 		"joining (NotReady)",
 		"events",
-		"ip-3", "ip-1", // event feed nodes
+		"ip-3", "ip-1",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("panel missing %q in:\n%s", want, joined)

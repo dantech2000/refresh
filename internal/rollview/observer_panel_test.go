@@ -1,4 +1,4 @@
-package nodegroup
+package rollview
 
 import (
 	"context"

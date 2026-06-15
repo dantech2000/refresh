@@ -25,6 +25,7 @@ import (
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
+	"github.com/dantech2000/refresh/internal/rollview"
 	"github.com/dantech2000/refresh/internal/services/common"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -82,7 +83,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	if cmd.Bool("simulate") {
-		return runSimulatedRoll(ctx, cmd.String("nodegroup"))
+		return rollview.SimulatedRoll(ctx, cmd.String("nodegroup"))
 	}
 	if cmd.Bool("all-clusters") {
 		return runFleetUpdate(ctx, cmd)
@@ -196,13 +197,15 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		NoWait:          flags.noWait,
 		Timeout:         flags.timeout,
 	}
-	// Live per-node roll view (opt-in, single nodegroup, interactive). Purely
-	// visual: it shows nodes draining/joining/terminating during the wait, then
-	// EKS DescribeUpdate (below) stays authoritative for the result. Any failure
-	// to observe degrades silently to the standard monitor output.
-	if flags.live && len(updates) == 1 && !quiet {
-		if kube := resolveHealthKubeClient(ctx, flags.kubeconfig, true); kube != nil {
-			runLiveRollForUpdate(ctx, kube, updates[0].NodegroupName, flags.timeout, flags.pollInterval)
+	// Live per-node roll view — now the DEFAULT for an interactive single-nodegroup
+	// roll (nodes draining/joining/terminating, pod eviction, warnings). Purely
+	// visual: EKS DescribeUpdate (below) stays authoritative for the result, and a
+	// missing/unreachable cluster API degrades silently to the standard monitor.
+	// The kube client is resolved quietly by default; --live makes the fallback
+	// reason explicit when the cluster can't be reached. (REF-126)
+	if len(updates) == 1 && !quiet {
+		if kube := resolveHealthKubeClient(ctx, flags.kubeconfig, flags.live); kube != nil {
+			rollview.LiveRollForUpdate(ctx, kube, updates[0].NodegroupName, flags.timeout, flags.pollInterval)
 			monitor.Quiet, config.Quiet = true, true
 		}
 	}

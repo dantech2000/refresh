@@ -218,6 +218,37 @@ func TestUpgradeNodegroups_ForcePassthrough(t *testing.T) {
 	}
 }
 
+// REF-126: the injected RollObserver fires once per rolled nodegroup, in order,
+// and not for skipped/already-current/custom-AMI ones.
+func TestUpgradeNodegroups_InvokesObserverPerRoll(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard). // rolled
+		WithNodegroup("byo-ami", "1.31", ekstypes.AMITypesCustom).                // manual, not rolled
+		WithNodegroup("workers-b", "1.32", ekstypes.AMITypesAl2023X8664Standard). // already current
+		WithNodegroup("workers-c", "1.31", ekstypes.AMITypesAl2023X8664Standard). // rolled
+		WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
+		Build()
+	_ = captureNodegroupRolls(m)
+
+	var mu sync.Mutex
+	var observed []string
+	observer := func(_ context.Context, ng string) {
+		mu.Lock()
+		observed = append(observed, ng)
+		mu.Unlock()
+	}
+
+	svc := newTestService(m)
+	if err := svc.UpgradeNodegroups(context.Background(), "prod-east", "1.32",
+		NodegroupRollOptions{Observer: observer}, nil); err != nil {
+		t.Fatalf("UpgradeNodegroups: %v", err)
+	}
+	if len(observed) != 2 || observed[0] != "workers-a" || observed[1] != "workers-c" {
+		t.Fatalf("observer calls = %v, want [workers-a workers-c] (only rolled nodegroups, in order)", observed)
+	}
+}
+
 func sprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
 
 func sprintfErr(format string, args ...any) error { return fmt.Errorf(format, args...) }

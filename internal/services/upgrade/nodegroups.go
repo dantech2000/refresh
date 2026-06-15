@@ -17,6 +17,14 @@ import (
 // health issues).
 type NodegroupGate func(ctx context.Context, nodegroupName string) error
 
+// RollObserver renders a live view of a single nodegroup roll. It is supplied
+// by the command (view) layer and invoked by the nodegroup phase AFTER a roll
+// starts and BEFORE the authoritative DescribeUpdate wait — so rendering never
+// happens in the service itself. It must be best-effort and bounded (it must
+// not block the roll or affect its result); a nil observer means text progress
+// only.
+type RollObserver func(ctx context.Context, nodegroupName string)
+
 // NodegroupRollOptions tunes the nodegroup phase.
 type NodegroupRollOptions struct {
 	// SkipPatterns are substring patterns for nodegroups to leave alone.
@@ -26,6 +34,8 @@ type NodegroupRollOptions struct {
 	Force bool
 	// Gate overrides the built-in pre-flight health gate.
 	Gate NodegroupGate
+	// Observer, when set, renders a live per-node roll view during each roll.
+	Observer RollObserver
 }
 
 // UpgradeNodegroups rolls every managed nodegroup to targetVersion, serially
@@ -66,7 +76,7 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 			return fmt.Errorf("pre-flight gate failed for nodegroup %s (remaining nodegroups not attempted): %w", ng.Name, err)
 		}
 
-		if err := s.rollNodegroup(ctx, clusterName, ng.Name, targetVersion, opts.Force, progress); err != nil {
+		if err := s.rollNodegroup(ctx, clusterName, ng.Name, targetVersion, opts.Force, opts.Observer, progress); err != nil {
 			return err
 		}
 	}
@@ -74,7 +84,7 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 }
 
 // rollNodegroup starts and watches a single nodegroup version roll.
-func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName, targetVersion string, force bool, progress ProgressFunc) error {
+func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName, targetVersion string, force bool, observer RollObserver, progress ProgressFunc) error {
 	input := &eks.UpdateNodegroupVersionInput{
 		ClusterName:   aws.String(clusterName),
 		NodegroupName: aws.String(nodegroupName),
@@ -96,6 +106,12 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 		updateID = aws.ToString(out.Update.Id)
 	}
 	progress("nodegroup %s roll to %s started (update %s)", nodegroupName, targetVersion, updateID)
+
+	// Live per-node panel (view layer, best-effort) while the roll proceeds; the
+	// DescribeUpdate wait below stays authoritative for the result.
+	if observer != nil {
+		observer(ctx, nodegroupName)
+	}
 
 	if updateID != "" {
 		if err := s.waitForUpdate(ctx, &eks.DescribeUpdateInput{
