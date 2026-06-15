@@ -58,6 +58,7 @@ type HealthChecker struct {
 	cwClient    *cloudwatch.Client
 	asgClient   *autoscaling.Client
 	nodeMetrics NodeMetricsLister // optional; enables the live utilization check
+	sqClient    serviceQuotaAPI   // optional; enables the vCPU quota headroom check
 }
 
 // NewChecker creates a new health checker instance
@@ -80,6 +81,7 @@ func (hc *HealthChecker) RunAllChecks(ctx context.Context, clusterName string) H
 		func() HealthResult { return hc.checkClusterCapacityWith(ctx, snap) },
 		func() HealthResult { return hc.CheckNodeUtilization(ctx, clusterName) },
 		func() HealthResult { return hc.CheckControlPlaneMetrics(ctx, clusterName) },
+		func() HealthResult { return hc.CheckServiceQuotas(ctx, clusterName) },
 		func() HealthResult { return hc.CheckCriticalWorkloads(ctx) },
 		func() HealthResult { return hc.CheckPodDisruptionBudgets(ctx) },
 		func() HealthResult { return hc.checkResourceBalanceWith(ctx, snap) },
