@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
@@ -109,6 +110,15 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	selectedNodegroups, err := selectNodegroupsForUpdate(ctx, eksClient, clusterName, nodegroupPattern, flags.yes)
 	if err != nil {
 		return err
+	}
+
+	// Pre-flight: a roll launches replacement nodes, so warn if an instance type
+	// isn't offered in one of a nodegroup's AZs. Best-effort, non-blocking. (REF-143)
+	if !flags.quiet {
+		ngSvc := factory.NewNodegroupService(awsCfg, false, nil)
+		for _, ng := range selectedNodegroups {
+			warnInstanceTypeAvailability(ctx, ngSvc, clusterName, ng)
+		}
 	}
 
 	if flags.dryRun {
