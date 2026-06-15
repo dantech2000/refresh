@@ -162,6 +162,9 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 	cluster := desc.Cluster
 	cs.Version = aws.ToString(cluster.Version)
 	cs.Support = s.resolveSupport(ctx, cs.Version)
+	if cluster.Health != nil {
+		cs.HealthIssues = len(cluster.Health.Issues)
+	}
 
 	ngs, ngErr := s.nodegroups.List(ctx, name, nodegroup.ListOptions{})
 	if ngErr != nil {

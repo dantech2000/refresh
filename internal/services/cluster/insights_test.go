@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -69,6 +70,76 @@ func TestListInsights_MappingFilterPagination(t *testing.T) {
 	}
 	if len(all) != 2 {
 		t.Fatalf("ShowPassing returned %d, want 2 (pagination + passing)", len(all))
+	}
+}
+
+func TestDescribeInsight_Deprecations(t *testing.T) {
+	lastNewRelic := time.Date(2026, 6, 14, 9, 30, 0, 0, time.UTC)
+	lastKubectl := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	var gotCluster, gotID string
+	mock := &mocks.EKSAPI{
+		DescribeInsightFn: func(_ context.Context, in *eks.DescribeInsightInput, _ ...func(*eks.Options)) (*eks.DescribeInsightOutput, error) {
+			gotCluster = aws.ToString(in.ClusterName)
+			gotID = aws.ToString(in.Id)
+			return &eks.DescribeInsightOutput{Insight: &ekstypes.Insight{
+				Id:                aws.String("dep-1"),
+				Name:              aws.String("Deprecated APIs removed in 1.32"),
+				Category:          ekstypes.CategoryUpgradeReadiness,
+				KubernetesVersion: aws.String("1.32"),
+				InsightStatus:     &ekstypes.InsightStatus{Status: ekstypes.InsightStatusValueError, Reason: aws.String("1 deprecated API in use")},
+				Recommendation:    aws.String("Migrate clients off policy/v1beta1 PodDisruptionBudget."),
+				CategorySpecificSummary: &ekstypes.InsightCategorySpecificSummary{
+					DeprecationDetails: []ekstypes.DeprecationDetail{{
+						Usage:              aws.String("policy/v1beta1 PodDisruptionBudget"),
+						ReplacedWith:       aws.String("policy/v1 PodDisruptionBudget"),
+						StopServingVersion: aws.String("1.25"),
+						// Intentionally out of order — service must sort most-active first.
+						ClientStats: []ekstypes.ClientStat{
+							{UserAgent: aws.String("kubectl/v1.29.0"), LastRequestTime: aws.Time(lastKubectl), NumberOfRequestsLast30Days: 12},
+							{UserAgent: aws.String("newrelic-kube-state-metric/v2"), LastRequestTime: aws.Time(lastNewRelic), NumberOfRequestsLast30Days: 412},
+						},
+					}},
+				},
+			}}, nil
+		},
+	}
+
+	svc := &ServiceImpl{eksClient: mock}
+	detail, err := svc.DescribeInsight(context.Background(), "prod", "dep-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Request passthrough.
+	if gotCluster != "prod" || gotID != "dep-1" {
+		t.Errorf("DescribeInsight called with cluster=%q id=%q, want prod/dep-1", gotCluster, gotID)
+	}
+
+	// Summary fields still map.
+	if detail.Status != InsightStatusError || detail.Recommendation == "" {
+		t.Errorf("summary mapping lost: status=%q recommendation=%q", detail.Status, detail.Recommendation)
+	}
+
+	if len(detail.Deprecations) != 1 {
+		t.Fatalf("got %d deprecations, want 1", len(detail.Deprecations))
+	}
+	d := detail.Deprecations[0]
+	if d.Usage != "policy/v1beta1 PodDisruptionBudget" || d.ReplacedWith != "policy/v1 PodDisruptionBudget" || d.StopServingVersion != "1.25" {
+		t.Errorf("deprecation fields = %+v", d)
+	}
+	if len(d.ClientStats) != 2 {
+		t.Fatalf("got %d client stats, want 2", len(d.ClientStats))
+	}
+	// Most-active caller first (412 > 12).
+	if d.ClientStats[0].UserAgent != "newrelic-kube-state-metric/v2" || d.ClientStats[0].NumberOfRequestsLast30Days != 412 {
+		t.Errorf("client stats not sorted most-active-first: %+v", d.ClientStats)
+	}
+	if d.ClientStats[0].LastRequestTime == nil || !d.ClientStats[0].LastRequestTime.Equal(lastNewRelic) {
+		t.Errorf("LastRequestTime not preserved: %v", d.ClientStats[0].LastRequestTime)
+	}
+	if d.ClientStats[1].UserAgent != "kubectl/v1.29.0" || d.ClientStats[1].NumberOfRequestsLast30Days != 12 {
+		t.Errorf("second client stat = %+v", d.ClientStats[1])
 	}
 }
 

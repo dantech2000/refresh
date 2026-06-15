@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/services/status"
 )
 
 // ClusterDetails contains comprehensive cluster information
@@ -17,8 +18,18 @@ type ClusterDetails struct {
 	CreatedAt       time.Time `json:"createdAt"`
 	Region          string    `json:"region"`
 
+	// Support is the EKS version support posture (tier + days remaining),
+	// resolved via the shared status resolver. Populated by the command layer.
+	Support *status.SupportPosture `json:"support,omitempty"`
+
 	// Health information (integration with existing health framework)
 	Health *health.HealthSummary `json:"health,omitempty"`
+
+	// HealthIssues are AWS-reported control-plane health issues (DescribeCluster's
+	// Health.Issues) — degraded resources, IAM/permission failures, etc. Distinct
+	// from the computed Health summary above. Always populated when present, even
+	// without ShowHealth.
+	HealthIssues []HealthIssue `json:"healthIssues,omitempty"`
 
 	// Networking details
 	Networking NetworkingInfo `json:"networking"`
@@ -44,6 +55,14 @@ type ClusterSummary struct {
 	NodeCount NodeCountInfo         `json:"nodeCount"`
 	CreatedAt time.Time             `json:"createdAt"`
 	Tags      map[string]string     `json:"tags,omitempty"`
+}
+
+// HealthIssue is one AWS-reported health issue on a cluster/nodegroup/addon —
+// the common shape behind EKS's ClusterIssue / NodegroupIssue / AddonIssue.
+type HealthIssue struct {
+	Code        string   `json:"code"`
+	Message     string   `json:"message"`
+	ResourceIds []string `json:"resourceIds,omitempty"`
 }
 
 // NetworkingInfo contains VPC and networking details

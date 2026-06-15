@@ -36,6 +36,20 @@ func sampleFleet() []statussvc.ClusterStatus {
 	}
 }
 
+func TestFleetLines_HealthIssueHint(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	fleet := []statussvc.ClusterStatus{{
+		Name: "prod-east", Region: "us-east-1", Version: "1.32",
+		Support:      statussvc.SupportPosture{Tier: statussvc.SupportStandard, DaysRemaining: iptr(200)},
+		Compute:      statussvc.ComputeManaged,
+		HealthIssues: 2,
+	}}
+	joined := strings.Join(fleetLines(th, fleet, 0), "\n")
+	// A health-issue cluster is flagged "need attention" and the hint names the cause.
+	mustContain(t, joined, "▲  prod-east")
+	mustContain(t, joined, "has 2 control-plane health issue(s)")
+}
+
 func TestFleetLines_Pretty(t *testing.T) {
 	th := render.New(render.ColorNone, true) // deterministic: glyphs, no ANSI
 	lines := fleetLines(th, sampleFleet(), 0)

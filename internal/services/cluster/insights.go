@@ -15,6 +15,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/services/status"
 )
 
 // Insight status values (the flattened InsightStatus.Status enum).
@@ -47,9 +48,33 @@ type InsightSummary struct {
 // InsightDetail is the DescribeInsight detail view (recommendation + resources).
 type InsightDetail struct {
 	InsightSummary
-	Recommendation string            `json:"recommendation,omitempty" yaml:"recommendation,omitempty"`
-	Resources      []string          `json:"resources,omitempty" yaml:"resources,omitempty"`
-	AdditionalInfo map[string]string `json:"additionalInfo,omitempty" yaml:"additionalInfo,omitempty"`
+	Recommendation string              `json:"recommendation,omitempty" yaml:"recommendation,omitempty"`
+	Resources      []string            `json:"resources,omitempty" yaml:"resources,omitempty"`
+	AdditionalInfo map[string]string   `json:"additionalInfo,omitempty" yaml:"additionalInfo,omitempty"`
+	Deprecations   []DeprecationDetail `json:"deprecations,omitempty" yaml:"deprecations,omitempty"`
+}
+
+// DeprecationDetail describes one deprecated Kubernetes API surfaced by an
+// UPGRADE_READINESS insight, plus the clients still calling it. EKS derives this
+// from the control-plane audit log on a 30-day rolling window.
+type DeprecationDetail struct {
+	// Usage is the deprecated resource/API path (e.g. policy/v1beta1 PodDisruptionBudget).
+	Usage string `json:"usage,omitempty" yaml:"usage,omitempty"`
+	// ReplacedWith is the API to migrate to, if applicable.
+	ReplacedWith string `json:"replacedWith,omitempty" yaml:"replacedWith,omitempty"`
+	// StopServingVersion is the Kubernetes version that removes the deprecated API.
+	StopServingVersion string `json:"stopServingVersion,omitempty" yaml:"stopServingVersion,omitempty"`
+	// StartServingReplacementVersion is the version where the replacement became available.
+	StartServingReplacementVersion string `json:"startServingReplacementVersion,omitempty" yaml:"startServingReplacementVersion,omitempty"`
+	// ClientStats are the callers (most-active first) still hitting the deprecated API.
+	ClientStats []ClientStat `json:"clientStats,omitempty" yaml:"clientStats,omitempty"`
+}
+
+// ClientStat identifies one Kubernetes client still calling a deprecated API.
+type ClientStat struct {
+	UserAgent                  string     `json:"userAgent,omitempty" yaml:"userAgent,omitempty"`
+	LastRequestTime            *time.Time `json:"lastRequestTime,omitempty" yaml:"lastRequestTime,omitempty"`
+	NumberOfRequestsLast30Days int32      `json:"numberOfRequestsLast30Days" yaml:"numberOfRequestsLast30Days"`
 }
 
 // UpgradeCheckOptions filters an upgrade-check query.
@@ -89,9 +114,10 @@ type SkewReport struct {
 // UpgradeReport combines AWS Cluster Insights with the local version-skew view —
 // the full `cluster upgrade-check` result.
 type UpgradeReport struct {
-	Cluster  string           `json:"cluster" yaml:"cluster"`
-	Insights []InsightSummary `json:"insights" yaml:"insights"`
-	Skew     SkewReport       `json:"skew" yaml:"skew"`
+	Cluster  string                 `json:"cluster" yaml:"cluster"`
+	Support  *status.SupportPosture `json:"support,omitempty" yaml:"support,omitempty"`
+	Insights []InsightSummary       `json:"insights" yaml:"insights"`
+	Skew     SkewReport             `json:"skew" yaml:"skew"`
 }
 
 // ListInsights returns the cluster's EKS Cluster Insights filtered per opts.
@@ -184,6 +210,28 @@ func (s *ServiceImpl) DescribeInsight(ctx context.Context, clusterName, id strin
 			detail.Resources = append(detail.Resources, aws.ToString(r.Arn))
 		case r.KubernetesResourceUri != nil:
 			detail.Resources = append(detail.Resources, aws.ToString(r.KubernetesResourceUri))
+		}
+	}
+	if css := ins.CategorySpecificSummary; css != nil {
+		for _, d := range css.DeprecationDetails {
+			dd := DeprecationDetail{
+				Usage:                          aws.ToString(d.Usage),
+				ReplacedWith:                   aws.ToString(d.ReplacedWith),
+				StopServingVersion:             aws.ToString(d.StopServingVersion),
+				StartServingReplacementVersion: aws.ToString(d.StartServingReplacementVersion),
+			}
+			for _, c := range d.ClientStats {
+				dd.ClientStats = append(dd.ClientStats, ClientStat{
+					UserAgent:                  aws.ToString(c.UserAgent),
+					LastRequestTime:            c.LastRequestTime,
+					NumberOfRequestsLast30Days: c.NumberOfRequestsLast30Days,
+				})
+			}
+			// Most-active callers first — that's who to chase down.
+			sort.SliceStable(dd.ClientStats, func(i, j int) bool {
+				return dd.ClientStats[i].NumberOfRequestsLast30Days > dd.ClientStats[j].NumberOfRequestsLast30Days
+			})
+			detail.Deprecations = append(detail.Deprecations, dd)
 		}
 	}
 	return detail, nil

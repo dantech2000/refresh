@@ -31,6 +31,9 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails, elapsed 
 		{"version", version},
 		{"status", statusToken(th, d.Status)},
 	}
+	if d.Support != nil {
+		kv = append(kv, [2]string{"support", supportToken(th, d.Support)})
+	}
 	if d.Endpoint != "" {
 		kv = append(kv, [2]string{"endpoint", th.Paint(pal.Sky, truncateEndpoint(d.Endpoint))})
 	}
@@ -115,9 +118,32 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails, elapsed 
 		}
 	}
 
+	if len(d.HealthIssues) > 0 {
+		out = append(out, "")
+		out = append(out, healthIssueLines(th, d.HealthIssues)...)
+	}
+
 	if d.Health != nil {
 		out = append(out, "")
 		out = append(out, healthCardLines(th, d.Health)...)
+	}
+	return out
+}
+
+// healthIssueLines renders the HEALTH ISSUES section: AWS-reported control-plane
+// problems (DescribeCluster Health.Issues) as failing tokens with affected
+// resource IDs. Shared shape with nodegroup/addon issues.
+func healthIssueLines(th *render.Theme, issues []clustersvc.HealthIssue) []string {
+	out := []string{th.Section("HEALTH ISSUES") + th.Paint(th.Pal.Dim, fmt.Sprintf("  %d", len(issues)))}
+	for _, iss := range issues {
+		label := iss.Code
+		if iss.Message != "" {
+			label += ": " + iss.Message
+		}
+		out = append(out, "  "+th.Token(render.Fail, label))
+		if len(iss.ResourceIds) > 0 {
+			out = append(out, "    "+th.Paint(th.Pal.Dim, strings.Join(iss.ResourceIds, ", ")))
+		}
 	}
 	return out
 }

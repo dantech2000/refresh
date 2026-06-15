@@ -145,6 +145,18 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 		Tags:            cluster.Tags,
 	}
 
+	// AWS-reported control-plane health issues (always surfaced — no extra API
+	// call, no ShowHealth gate; these are real problems the user must see).
+	if cluster.Health != nil {
+		for _, issue := range cluster.Health.Issues {
+			details.HealthIssues = append(details.HealthIssues, HealthIssue{
+				Code:        string(issue.Code),
+				Message:     aws.ToString(issue.Message),
+				ResourceIds: issue.ResourceIds,
+			})
+		}
+	}
+
 	// Add networking information
 	if cluster.ResourcesVpcConfig != nil {
 		endpointAccess := EndpointAccessInfo{

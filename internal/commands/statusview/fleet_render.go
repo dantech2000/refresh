@@ -218,6 +218,8 @@ func hintLine(th *render.Theme, statuses []statussvc.ClusterStatus) string {
 	switch {
 	case st == render.Fail:
 		reason = "is on unsupported EKS"
+	case worst.HealthIssues > 0:
+		reason = fmt.Sprintf("has %d control-plane health issue(s)", worst.HealthIssues)
 	case worst.NeedsAttention():
 		reason = "has stale AMIs/addons"
 	}

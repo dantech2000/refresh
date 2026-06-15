@@ -73,6 +73,9 @@ type ClusterStatus struct {
 	NodegroupCount int                 `json:"nodegroupCount" yaml:"nodegroupCount"`
 	StaleAMI       StaleAMISummary     `json:"staleAmi" yaml:"staleAmi"`
 	AddonsBehind   AddonsBehindSummary `json:"addonsBehind" yaml:"addonsBehind"`
+	// HealthIssues is the count of AWS-reported control-plane health issues
+	// (DescribeCluster Health.Issues) — degraded resources, IAM failures, etc.
+	HealthIssues int `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
 	// Errors holds non-fatal, per-cluster failures so a partial row still
 	// renders instead of dropping the cluster entirely.
 	Errors []string `json:"errors,omitempty" yaml:"errors,omitempty"`
@@ -81,7 +84,7 @@ type ClusterStatus struct {
 // NeedsAttention reports whether the cluster has any stale AMIs or addons
 // behind latest (drives the exit-code "something stale" signal).
 func (c ClusterStatus) NeedsAttention() bool {
-	return c.StaleAMI.Behind > 0 || c.AddonsBehind.Behind > 0
+	return c.StaleAMI.Behind > 0 || c.AddonsBehind.Behind > 0 || c.HealthIssues > 0
 }
 
 // SupportRisk reports whether the cluster is on extended or unsupported EKS

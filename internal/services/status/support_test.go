@@ -98,6 +98,44 @@ func TestResolveSupport_FromAPI(t *testing.T) {
 	}
 }
 
+// TestSupportResolver_Reuse verifies the exported resolver (used by
+// cluster upgrade-check / describe) resolves the same posture as the fleet
+// Service, from the API and from the fallback calendar. (REF-145)
+func TestSupportResolver_Reuse(t *testing.T) {
+	api := &fakeClusterAPI{
+		versions: map[string]ekstypes.ClusterVersionInformation{
+			"1.32": {
+				ClusterVersion:           aws.String("1.32"),
+				EndOfStandardSupportDate: timePtr(date(2027, 3, 23)),
+				EndOfExtendedSupportDate: timePtr(date(2028, 3, 23)),
+			},
+		},
+	}
+	r := NewSupportResolver(api)
+	r.now = func() time.Time { return date(2026, 6, 11) }
+
+	p := r.Resolve(context.Background(), "1.32")
+	if p.Tier != SupportStandard || p.Fallback {
+		t.Errorf("API posture = %s (fallback=%v), want standard/non-fallback", p.Tier, p.Fallback)
+	}
+	if p.DaysRemaining == nil || *p.DaysRemaining <= 0 {
+		t.Errorf("expected positive days remaining, got %v", p.DaysRemaining)
+	}
+
+	// Empty version → unknown, no API call.
+	if got := r.Resolve(context.Background(), ""); got.Tier != SupportUnknown {
+		t.Errorf("empty version tier = %s, want unknown", got.Tier)
+	}
+
+	// API failure → compiled-in fallback calendar.
+	rf := NewSupportResolver(&fakeClusterAPI{versionsErr: errors.New("access denied")})
+	rf.now = func() time.Time { return date(2026, 6, 11) }
+	pf := rf.Resolve(context.Background(), "1.31")
+	if !pf.Fallback || pf.Tier != SupportExtended {
+		t.Errorf("fallback posture = %s (fallback=%v), want extended/fallback", pf.Tier, pf.Fallback)
+	}
+}
+
 func timePtr(t time.Time) *time.Time { return &t }
 
 // fakeClusterAPI implements ClusterAPI for tests.

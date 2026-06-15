@@ -39,6 +39,10 @@ func outputClusterDetailsPlain(details *clustersvc.ClusterDetails, elapsed time.
 		Add("Platform", details.PlatformVersion).
 		Add("Endpoint", truncateEndpoint(details.Endpoint))
 
+	if details.Support != nil {
+		tbl.Add("Support", supportPlain(details.Support))
+	}
+
 	if details.Health != nil {
 		tbl.Add("Health", formatHealth(details.Health))
 	}
@@ -109,6 +113,20 @@ func outputClusterDetailsPlain(details *clustersvc.ClusterDetails, elapsed time.
 			addTbl.AddRow(ui.TruncateANSI(a.Name, 24), a.Version, a.Status, formatAddonHealth(h))
 		}
 		addTbl.Render()
+	}
+
+	if len(details.HealthIssues) > 0 {
+		ui.Outln("\nHealth Issues:")
+		for _, iss := range details.HealthIssues {
+			line := iss.Code
+			if iss.Message != "" {
+				line += ": " + iss.Message
+			}
+			if len(iss.ResourceIds) > 0 {
+				line += " [" + strings.Join(iss.ResourceIds, ", ") + "]"
+			}
+			fmt.Printf("  - %s\n", line)
+		}
 	}
 	return nil
 }
