@@ -1,4 +1,10 @@
-package nodegroup
+// Package rollview renders the live per-node roll panel — nodes
+// draining/joining/terminating, pod eviction, node pressure, and a Warning-event
+// feed — driven from live Kubernetes state via internal/noderoll. It is shared
+// by `nodegroup update` and the cluster-upgrade orchestrator's nodegroup phase
+// so both surface the same view; rendering lives here (the view layer), never in
+// a service.
+package rollview
 
 import (
 	"context"
@@ -207,9 +213,9 @@ func rollComplete(desired int) func(noderoll.Snapshot) bool {
 	}
 }
 
-// runSimulatedRoll renders the live node-roll panel against a scripted observer
+// SimulatedRoll renders the live node-roll panel against a scripted observer
 // (no AWS / no cluster). Backs `nodegroup update --simulate` for demos and QA.
-func runSimulatedRoll(ctx context.Context, nodegroup string) error {
+func SimulatedRoll(ctx context.Context, nodegroup string) error {
 	if nodegroup == "" {
 		nodegroup = "spot-burst"
 	}
@@ -226,13 +232,13 @@ func runSimulatedRoll(ctx context.Context, nodegroup string) error {
 	return nil
 }
 
-// runLiveRollForUpdate renders the live per-node roll panel for a real update by
+// LiveRollForUpdate renders the live per-node roll panel for a real update by
 // observing live Kubernetes state until every roll-start node is replaced
 // (rollComplete) or the timeout fires. Purely visual and best-effort: it never
 // returns an error to the caller, so it cannot affect the update or its exit
 // code — EKS DescribeUpdate remains authoritative. Old-vs-new is determined by a
 // roll-start baseline (no need to know the target AMI ID up front).
-func runLiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup string, timeout, pollInterval time.Duration) {
+func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup string, timeout, pollInterval time.Duration) {
 	if kube == nil {
 		return
 	}

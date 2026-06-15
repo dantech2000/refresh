@@ -167,11 +167,12 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.BoolFlag{Name: "changelog", Usage: "In dry-run, print full amazon-eks-ami release notes between the current and target AMI"},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format: health results with --health-only; a JSON run summary with -o json", Value: "table"},
-			// --live shows the real-time per-node roll panel during the wait,
-			// driven from live Kubernetes state. Requires cluster (kubeconfig)
-			// access and a single nodegroup; falls back to standard monitoring
-			// otherwise. EKS DescribeUpdate stays authoritative for the result.
-			&cli.BoolFlag{Name: "live", Usage: "Show a live per-node roll view (nodes draining/joining/terminating) during the update — requires cluster access, single nodegroup, interactive"},
+			// The real-time per-node roll panel (driven from live Kubernetes
+			// state) is the DEFAULT for an interactive single-nodegroup roll,
+			// falling back to standard monitoring when the cluster API isn't
+			// reachable. --live forces it and reports the fallback reason. EKS
+			// DescribeUpdate stays authoritative for the result. (REF-126)
+			&cli.BoolFlag{Name: "live", Usage: "Force the live per-node roll view and report why if the cluster API can't be reached (the panel is already the default for an interactive single-nodegroup roll)"},
 			// --simulate drives the live node-roll panel from a scripted observer
 			// (no AWS, no cluster) — for demos, asciinema, and manual QA of the
 			// live view. Hidden: it's a dev/demo aid, not a real operation.

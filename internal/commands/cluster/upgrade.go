@@ -14,6 +14,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/rollview"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -135,13 +136,28 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
+	// Live per-node roll panel during each nodegroup phase, when interactive and
+	// the cluster API is reachable (resolved quietly — best-effort). Falls back to
+	// text progress otherwise. Rendering stays in this view layer; the
+	// orchestrator only invokes the injected observer. (REF-126)
+	var ngObserver upgrade.RollObserver
+	if !cmd.Bool("quiet") {
+		if kube := resolveReadinessKubeClient(ctx, "", false); kube != nil {
+			timeout, poll := cmd.Duration("timeout"), cmd.Duration("poll-interval")
+			ngObserver = func(octx context.Context, ng string) {
+				rollview.LiveRollForUpdate(octx, kube, ng, timeout, poll)
+			}
+		}
+	}
+
 	report, err := svc.Execute(ctx, plan, upgrade.ExecuteOptions{
-		Yes:            cmd.Bool("yes"),
-		Confirm:        promptPhase,
-		Progress:       progress,
-		SkipAddons:     cmd.StringSlice("skip"),
-		SkipNodegroups: cmd.StringSlice("skip-nodegroup"),
-		Force:          cmd.Bool("force"),
+		Yes:               cmd.Bool("yes"),
+		Confirm:           promptPhase,
+		Progress:          progress,
+		SkipAddons:        cmd.StringSlice("skip"),
+		SkipNodegroups:    cmd.StringSlice("skip-nodegroup"),
+		Force:             cmd.Bool("force"),
+		NodegroupObserver: ngObserver,
 	})
 
 	renderReport(report)

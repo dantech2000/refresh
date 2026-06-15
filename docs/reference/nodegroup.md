@@ -182,6 +182,6 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | `--changelog` | — | — | In dry-run, print full amazon-eks-ami release notes between the current and target AMI |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--format, -o string` | — | `table` | Output format: health results with --health-only; a JSON run summary with -o json |
-| `--live` | — | — | Show a live per-node roll view (nodes draining/joining/terminating) during the update — requires cluster access, single nodegroup, interactive |
+| `--live` | — | — | Force the live per-node roll view and report why if the cluster API can't be reached (the panel is already the default for an interactive single-nodegroup roll) |
 | `--help, -h` | — | — | show help |
 

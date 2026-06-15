@@ -30,6 +30,9 @@ type ExecuteOptions struct {
 	Force          bool
 	// NodegroupGate overrides the built-in pre-roll health gate.
 	NodegroupGate NodegroupGate
+	// NodegroupObserver, when set, renders a live per-node roll view during each
+	// nodegroup roll. Supplied by the command (view) layer; nil → text progress.
+	NodegroupObserver RollObserver
 }
 
 // Report describes how far an execution got: what ran, where it stopped, and
@@ -141,6 +144,7 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 					SkipPatterns: opts.SkipNodegroups,
 					Force:        opts.Force,
 					Gate:         opts.NodegroupGate,
+					Observer:     opts.NodegroupObserver,
 				}, opts.Progress)
 			},
 		})
