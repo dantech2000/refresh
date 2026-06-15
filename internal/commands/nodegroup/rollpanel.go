@@ -113,7 +113,31 @@ func rollPanelLines(th *render.Theme, snap noderoll.Snapshot, events []noderoll.
 		st, text := eventToken(e.Kind)
 		out = append(out, "    "+th.Glyph(st)+" "+th.Paint(pal.White, e.Node)+th.Paint(pal.Dim, "  "+text))
 	}
+
+	// Warning events explain *why* a node is stuck (failed drain/eviction,
+	// sandbox failures) — surfaced beneath the lifecycle feed.
+	if len(snap.Warnings) > 0 {
+		out = append(out, "", th.Paint(pal.Dim, "warnings"))
+		for _, w := range snap.Warnings {
+			line := "    " + th.Token(render.Warn, w.Reason) + " " + th.Paint(pal.White, w.Node)
+			if msg := oneLineWarn(w.Message); msg != "" {
+				line += th.Paint(pal.Dim, "  "+msg)
+			}
+			out = append(out, line)
+		}
+	}
 	return out
+}
+
+// oneLineWarn collapses an event message to a single line and clamps its length
+// so a verbose message can't blow out the panel width.
+func oneLineWarn(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	const max = 80
+	if len(s) > max {
+		return s[:max-1] + "…"
+	}
+	return s
 }
 
 func spin(th *render.Theme, frame int) string {

@@ -4,11 +4,64 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+func TestScopeWarnings(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	recent := metav1.NewTime(now.Add(-2 * time.Minute))
+	stale := metav1.NewTime(now.Add(-30 * time.Minute))
+	nodeSet := map[string]bool{"ip-1": true, "ip-2": true}
+
+	events := []corev1.Event{
+		// Node-involved warning on a nodegroup node — kept.
+		{Type: "Warning", Reason: "NodeNotReady", Message: "kubelet stopped posting status",
+			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-1"}, LastTimestamp: recent},
+		// Kubelet-emitted (Source.Host) pod warning on a nodegroup node — kept.
+		{Type: "Warning", Reason: "FailedCreatePodSandbox", Message: "network plugin not ready",
+			InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "web-x", Namespace: "default"},
+			Source:         corev1.EventSource{Host: "ip-2"}, LastTimestamp: recent},
+		// Warning on a node NOT in the nodegroup — dropped.
+		{Type: "Warning", Reason: "DiskPressure", InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "other"}, LastTimestamp: recent},
+		// Normal event — dropped.
+		{Type: "Normal", Reason: "Starting", InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-1"}, LastTimestamp: recent},
+		// Stale warning — dropped.
+		{Type: "Warning", Reason: "OldNews", InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-1"}, LastTimestamp: stale},
+	}
+
+	got := scopeWarnings(events, nodeSet, now, 10*time.Minute)
+	if len(got) != 2 {
+		t.Fatalf("got %d scoped warnings, want 2: %+v", len(got), got)
+	}
+	// Sorted by node: ip-1 (NodeNotReady) then ip-2 (FailedCreatePodSandbox).
+	if got[0].Node != "ip-1" || got[0].Reason != "NodeNotReady" {
+		t.Errorf("first = %+v, want ip-1/NodeNotReady", got[0])
+	}
+	if got[1].Node != "ip-2" || got[1].Reason != "FailedCreatePodSandbox" || got[1].Object != "Pod/web-x" {
+		t.Errorf("second = %+v, want ip-2/FailedCreatePodSandbox/Pod/web-x", got[1])
+	}
+}
+
+func TestScopeWarnings_DedupKeepsLatest(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	nodeSet := map[string]bool{"ip-1": true}
+	older := metav1.NewTime(now.Add(-5 * time.Minute))
+	newer := metav1.NewTime(now.Add(-1 * time.Minute))
+	obj := corev1.ObjectReference{Kind: "Node", Name: "ip-1"}
+
+	got := scopeWarnings([]corev1.Event{
+		{Type: "Warning", Reason: "FailedDraining", Message: "older", InvolvedObject: obj, LastTimestamp: older},
+		{Type: "Warning", Reason: "FailedDraining", Message: "newer", InvolvedObject: obj, LastTimestamp: newer},
+	}, nodeSet, now, 10*time.Minute)
+
+	if len(got) != 1 || got[0].Message != "newer" {
+		t.Errorf("dedup should keep the latest message, got %+v", got)
+	}
+}
 
 // TestClassify_PressureAdvisory verifies node-pressure conditions are reported
 // in a stable order, that False conditions are ignored, and that pressure is
@@ -59,6 +112,42 @@ func mkNode(name, ami string, ready, cordoned bool) *corev1.Node {
 		Status: corev1.NodeStatus{
 			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: cond}},
 		},
+	}
+}
+
+// TestKubeObserver_ScopesWarningEvents drives the observer against a fake
+// cluster with Warning events and asserts only the ones concerning the
+// nodegroup's nodes surface on the snapshot.
+func TestKubeObserver_ScopesWarningEvents(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+	client := fake.NewClientset(
+		mkNode("ip-1", oldAMI, true, false),
+		&corev1.Event{
+			ObjectMeta:     metav1.ObjectMeta{Name: "e1", Namespace: "default"},
+			Type:           "Warning",
+			Reason:         "FailedDraining",
+			Message:        "Cannot evict pod as it would violate the pod's disruption budget",
+			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-1"},
+			LastTimestamp:  now,
+		},
+		&corev1.Event{
+			ObjectMeta:     metav1.ObjectMeta{Name: "e2", Namespace: "default"},
+			Type:           "Warning",
+			Reason:         "DiskPressure",
+			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-elsewhere"},
+			LastTimestamp:  now,
+		},
+	)
+	obs := NewKubeObserver(client, ng, newAMI)
+	s, err := obs.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(s.Warnings) != 1 {
+		t.Fatalf("got %d warnings, want 1 (only the nodegroup node): %+v", len(s.Warnings), s.Warnings)
+	}
+	if s.Warnings[0].Node != "ip-1" || s.Warnings[0].Reason != "FailedDraining" {
+		t.Errorf("warning = %+v, want ip-1/FailedDraining", s.Warnings[0])
 	}
 }
 
