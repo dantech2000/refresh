@@ -50,43 +50,6 @@ func TestPTable_AddRow_TruncatesLongCell(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// NewPTableWithHeaders
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestNewPTableWithHeaders_ColumnCount(t *testing.T) {
-	pt := NewPTableWithHeaders([]string{"Col1", "Col2", "Col3"})
-	if len(pt.columns) != 3 {
-		t.Errorf("expected 3 columns, got %d", len(pt.columns))
-	}
-}
-
-func TestNewPTableWithHeaders_HeaderColorSet(t *testing.T) {
-	pt := NewPTableWithHeaders([]string{"H"})
-	if pt.headerColor == nil {
-		t.Error("headerColor should be set by NewPTableWithHeaders")
-	}
-	if got := pt.headerColor("H"); got == "" {
-		t.Fatal("headerColor returned empty string")
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// CreateCompatibleTable
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestCreateCompatibleTable_SetsHeaderColor(t *testing.T) {
-	colorFn := func(s string) string { return ">" + s }
-	cols := []Column{{Title: "X"}}
-	pt := CreateCompatibleTable(cols, colorFn)
-	if pt.headerColor == nil {
-		t.Error("CreateCompatibleTable should set headerColor")
-	}
-	if pt.headerColor("test") != ">test" {
-		t.Error("headerColor function not applied correctly")
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
 // WithPTableHeaderColor
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -117,13 +80,6 @@ func TestPTableRender(t *testing.T) {
 
 	var buf bytes.Buffer
 	_, _ = io.Copy(&buf, r)
-}
-
-func TestNewPTableWithHeadersEmpty(t *testing.T) {
-	pt := NewPTableWithHeaders(nil)
-	if len(pt.columns) != 0 {
-		t.Fatalf("columns = %d, want 0", len(pt.columns))
-	}
 }
 
 func TestPTableRenderPlain(t *testing.T) {

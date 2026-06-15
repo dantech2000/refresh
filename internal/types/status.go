@@ -115,11 +115,6 @@ const (
 	ActionForceUpdate
 )
 
-// String returns the plain, uncolored representation (see AMIStatus.String).
-func (a DryRunAction) String() string {
-	return a.PlainString()
-}
-
 // ColorString returns a color-coded representation for terminal display.
 func (a DryRunAction) ColorString() string {
 	switch a {
@@ -133,37 +128,5 @@ func (a DryRunAction) ColorString() string {
 		return color.CyanString("FORCE UPDATE")
 	default:
 		return color.WhiteString("UNKNOWN")
-	}
-}
-
-// PlainString returns a plain string representation without color codes.
-func (a DryRunAction) PlainString() string {
-	switch a {
-	case ActionUpdate:
-		return "UPDATE"
-	case ActionSkipUpdating:
-		return "SKIP (already updating)"
-	case ActionSkipLatest:
-		return "SKIP (already latest)"
-	case ActionForceUpdate:
-		return "FORCE UPDATE"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-// Reason returns a human-readable reason for the action.
-func (a DryRunAction) Reason() string {
-	switch a {
-	case ActionUpdate:
-		return "AMI is outdated"
-	case ActionSkipUpdating:
-		return "Update already in progress"
-	case ActionSkipLatest:
-		return "Already using latest AMI"
-	case ActionForceUpdate:
-		return "Force flag specified"
-	default:
-		return "Unknown reason"
 	}
 }

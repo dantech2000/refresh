@@ -204,36 +204,6 @@ func (b *EKSAPIBuilder) WithInsight(name string, status ekstypes.InsightStatusVa
 	return b
 }
 
-// WithUpdateClusterVersion sets UpdateClusterVersion to return a successful
-// in-progress update with the given ID.
-func (b *EKSAPIBuilder) WithUpdateClusterVersion(updateID string) *EKSAPIBuilder {
-	b.m.UpdateClusterVersionFn = func(_ context.Context, _ *eks.UpdateClusterVersionInput, _ ...func(*eks.Options)) (*eks.UpdateClusterVersionOutput, error) {
-		return &eks.UpdateClusterVersionOutput{
-			Update: &ekstypes.Update{
-				Id:     aws.String(updateID),
-				Status: ekstypes.UpdateStatusInProgress,
-				Type:   ekstypes.UpdateTypeVersionUpdate,
-			},
-		}, nil
-	}
-	return b
-}
-
-// WithUpdateNodegroupVersion sets UpdateNodegroupVersion to return a
-// successful in-progress update with the given ID.
-func (b *EKSAPIBuilder) WithUpdateNodegroupVersion(updateID string) *EKSAPIBuilder {
-	b.m.UpdateNodegroupVersionFn = func(_ context.Context, _ *eks.UpdateNodegroupVersionInput, _ ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error) {
-		return &eks.UpdateNodegroupVersionOutput{
-			Update: &ekstypes.Update{
-				Id:     aws.String(updateID),
-				Status: ekstypes.UpdateStatusInProgress,
-				Type:   ekstypes.UpdateTypeVersionUpdate,
-			},
-		}, nil
-	}
-	return b
-}
-
 // WithDescribeUpdate sets DescribeUpdate to report every update with the
 // given terminal status.
 func (b *EKSAPIBuilder) WithDescribeUpdate(status ekstypes.UpdateStatus) *EKSAPIBuilder {

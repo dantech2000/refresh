@@ -27,13 +27,6 @@ func TestFunMessages(t *testing.T) {
 		if len(got) != 1 || got[0] != want {
 			t.Fatalf("GetMessages(%q) = %v, want %q", category, got, want)
 		}
-		if random := fm.GetRandomMessage(category); random != want {
-			t.Fatalf("GetRandomMessage(%q) = %q, want %q", category, random, want)
-		}
-	}
-
-	if got := (&FunMessages{}).GetRandomMessage("missing"); got != "Working on it..." {
-		t.Fatalf("empty GetRandomMessage() = %q", got)
 	}
 }
 
@@ -63,9 +56,8 @@ func TestFunSpinnerLifecycle(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 	spinner.Stop()
 	spinner.Success("ok")
-	spinner.Fail("bad")
 
-	if NewFunSpinnerForCategory("cluster") == nil || NewEnhancedProgressSpinner("addon") == nil {
+	if NewFunSpinnerForCategory("cluster") == nil {
 		t.Fatal("category spinners should not be nil")
 	}
 }

@@ -71,33 +71,6 @@ var (
 	}
 )
 
-// AWSError wraps an error with AWS-specific context.
-type AWSError struct {
-	Operation string
-	Err       error
-	Category  ErrorCategory
-}
-
-// ErrorCategory classifies the type of AWS error.
-type ErrorCategory int
-
-const (
-	ErrorCategoryUnknown ErrorCategory = iota
-	ErrorCategoryCredential
-	ErrorCategoryNetwork
-	ErrorCategoryPermission
-	ErrorCategoryRegion
-	ErrorCategoryAPI
-)
-
-func (e *AWSError) Error() string {
-	return fmt.Sprintf("error while %s: %v", e.Operation, e.Err)
-}
-
-func (e *AWSError) Unwrap() error {
-	return e.Err
-}
-
 // IsCredentialError checks if the error is related to AWS credentials.
 func IsCredentialError(err error) bool {
 	if err == nil {

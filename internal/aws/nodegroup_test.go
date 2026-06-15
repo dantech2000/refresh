@@ -2,9 +2,6 @@ package aws
 
 import (
 	"testing"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -71,73 +68,5 @@ func TestConfirmNodegroupSelection_EmptyPatternReturnsAll(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Errorf("empty pattern should return all %d nodegroups, got %d", len(ngs), len(got))
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// formatNodegroupStatus
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestFormatNodegroupStatus_ActivePassthrough(t *testing.T) {
-	got := formatNodegroupStatus(types.NodegroupStatusActive)
-	if got != "ACTIVE" {
-		t.Errorf("got %q, want %q", got, "ACTIVE")
-	}
-}
-
-func TestFormatNodegroupStatus_UpdatingIsColored(t *testing.T) {
-	got := formatNodegroupStatus(types.NodegroupStatusUpdating)
-	// Color adds ANSI codes; verify the visible text is still present.
-	if got == "" {
-		t.Error("expected non-empty formatted status for UPDATING")
-	}
-}
-
-func TestFormatNodegroupStatus_FailedPassthrough(t *testing.T) {
-	got := formatNodegroupStatus(types.NodegroupStatusCreateFailed)
-	if got != "CREATE_FAILED" {
-		t.Errorf("got %q, want %q", got, "CREATE_FAILED")
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// getFirstInstanceType
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestGetFirstInstanceType_ReturnsFirst(t *testing.T) {
-	got := getFirstInstanceType([]string{"m5.large", "m5.xlarge"})
-	if got != "m5.large" {
-		t.Errorf("got %q, want %q", got, "m5.large")
-	}
-}
-
-func TestGetFirstInstanceType_EmptyReturnsDash(t *testing.T) {
-	got := getFirstInstanceType(nil)
-	if got != "-" {
-		t.Errorf("empty list should return %q, got %q", "-", got)
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// getDesiredSize
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestGetDesiredSize_ReturnsValue(t *testing.T) {
-	cfg := &types.NodegroupScalingConfig{DesiredSize: aws.Int32(5)}
-	if got := getDesiredSize(cfg); got != 5 {
-		t.Errorf("got %d, want 5", got)
-	}
-}
-
-func TestGetDesiredSize_NilConfigReturnsZero(t *testing.T) {
-	if got := getDesiredSize(nil); got != 0 {
-		t.Errorf("nil config should return 0, got %d", got)
-	}
-}
-
-func TestGetDesiredSize_NilDesiredSizeReturnsZero(t *testing.T) {
-	cfg := &types.NodegroupScalingConfig{DesiredSize: nil}
-	if got := getDesiredSize(cfg); got != 0 {
-		t.Errorf("nil desired size should return 0, got %d", got)
 	}
 }

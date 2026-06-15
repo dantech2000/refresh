@@ -151,20 +151,6 @@ func ResolveClusterOrList(ctx context.Context, cfg aws.Config, cmd *cli.Command)
 	return name, false, nil
 }
 
-// PositionalAt returns the value of flagName, or the positional argument at
-// index (0-indexed) if the flag is not set. Does NOT account for prior flags
-// absorbing positional slots — use PositionalSlot for that.
-func PositionalAt(cmd *cli.Command, flagName string, index int) string {
-	if v := flagValueIfSet(cmd, flagName); v != "" {
-		return v
-	}
-	args := cmd.Args().Slice()
-	if index < len(args) {
-		return args[index]
-	}
-	return flagDefault(cmd, flagName)
-}
-
 // flagValueIfSet returns the trimmed value of flagName only when it was
 // explicitly provided (flag or env var). Flags that merely carry a default
 // value return "" so a positional argument can still fill the slot.

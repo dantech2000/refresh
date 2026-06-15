@@ -28,48 +28,11 @@ func (tb *TreeBuilder) AddRoot(text string) *TreeBuilder {
 	return tb
 }
 
-// AddNode adds a node at the current level
-func (tb *TreeBuilder) AddNode(text string) *TreeBuilder {
-	tb.leveledList = append(tb.leveledList, pterm.LeveledListItem{Level: tb.level, Text: text})
-	return tb
-}
-
-// AddChild adds a child node and increases the level
-func (tb *TreeBuilder) AddChild(text string) *TreeBuilder {
-	tb.level++
-	tb.leveledList = append(tb.leveledList, pterm.LeveledListItem{Level: tb.level, Text: text})
-	return tb
-}
-
-// AddSibling adds a sibling at the current level
-func (tb *TreeBuilder) AddSibling(text string) *TreeBuilder {
-	tb.leveledList = append(tb.leveledList, pterm.LeveledListItem{Level: tb.level, Text: text})
-	return tb
-}
-
-// Up moves up one level in the hierarchy
-func (tb *TreeBuilder) Up() *TreeBuilder {
-	if tb.level > 0 {
-		tb.level--
-	}
-	return tb
-}
-
 // UpTo moves up to a specific level
 func (tb *TreeBuilder) UpTo(level int) *TreeBuilder {
 	if level >= 0 && level < tb.level {
 		tb.level = level
 	}
-	return tb
-}
-
-// AddNodeWithIcon adds a node with an icon and optional coloring
-func (tb *TreeBuilder) AddNodeWithIcon(icon, text string, colorFunc func(string) string) *TreeBuilder {
-	displayText := icon + " " + text
-	if colorFunc != nil {
-		displayText = colorFunc(displayText)
-	}
-	tb.leveledList = append(tb.leveledList, pterm.LeveledListItem{Level: tb.level, Text: displayText})
 	return tb
 }
 
@@ -133,23 +96,3 @@ func (tb *TreeBuilder) RenderWithTitle(title string) error {
 func FormatTreeSummary(itemCount int, itemType string, duration float64) string {
 	return fmt.Sprintf("Found %d %s in %s", itemCount, itemType, color.GreenString("%.1fs", duration))
 }
-
-// TreePrefix returns appropriate text prefixes for different resource types
-type TreePrefix struct{}
-
-var Prefixes = TreePrefix{}
-
-func (TreePrefix) Cluster() string   { return "CLUSTER" }
-func (TreePrefix) Nodegroup() string { return "NODEGROUP" }
-func (TreePrefix) Instance() string  { return "INSTANCE" }
-func (TreePrefix) Region() string    { return "REGION" }
-func (TreePrefix) World() string     { return "GLOBAL" }
-func (TreePrefix) Addon() string     { return "ADDON" }
-func (TreePrefix) Network() string   { return "NETWORK" }
-func (TreePrefix) Security() string  { return "SECURITY" }
-func (TreePrefix) Config() string    { return "CONFIG" }
-func (TreePrefix) Compare() string   { return "COMPARISON" }
-func (TreePrefix) Success() string   { return "PASS" }
-func (TreePrefix) Warning() string   { return "WARN" }
-func (TreePrefix) Error() string     { return "FAIL" }
-func (TreePrefix) Unknown() string   { return "UNKNOWN" }

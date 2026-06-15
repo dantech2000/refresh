@@ -131,11 +131,3 @@ func (t *Theme) Bar(done, total, width int, c Color) string {
 	edgeL, edgeR := t.glyph("▕", "["), t.glyph("▏", "]")
 	return edgeL + t.Paint(c, strings.Repeat(fillCh, f)) + t.Paint(t.Pal.Rule, strings.Repeat(emptyCh, width-f)) + edgeR
 }
-
-// Branch returns the tree connector for a list item ("├─" / "└─" for the last).
-func (t *Theme) Branch(last bool) string {
-	if last {
-		return t.Paint(t.Pal.Dim, t.glyph("└─", "`-"))
-	}
-	return t.Paint(t.Pal.Dim, t.glyph("├─", "|-"))
-}

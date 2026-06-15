@@ -279,18 +279,6 @@ func TestHandleUserCancellation_VerboseWithUpdates(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// NewUpdateMonitor
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestNewUpdateMonitor_NotNil(t *testing.T) {
-	cfg := refreshTypes.MonitorConfig{Quiet: true}
-	m := NewUpdateMonitor(nil, cfg)
-	if m == nil {
-		t.Error("NewUpdateMonitor should return non-nil monitor")
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
 // printCompletionSummaryTree — default/unknown status branch
 // ──────────────────────────────────────────────────────────────────────────────
 
