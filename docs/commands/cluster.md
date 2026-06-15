@@ -117,6 +117,40 @@ shows) plus a local **version-skew** picture: control-plane version vs. each
 managed nodegroup, and installed add-ons vs. the latest compatible version —
 with ordered, actionable findings.
 
+### Upgrade-readiness checks
+
+EKS computes these insights server-side and **owns the catalog — it adds and
+changes checks over time** — so treat this list as representative, not
+exhaustive. The authoritative, always-current set for *your* cluster comes from
+`--show-passing` (each row prints a short ID you can pass to `--id`):
+
+```bash
+refresh cluster upgrade-check -c prod-east --show-passing
+```
+
+Common `UPGRADE_READINESS` checks:
+
+- **Deprecated APIs** — workloads calling Kubernetes APIs removed in the target
+  version. Conditional (only appears when EKS detects such usage) and named for
+  the version, e.g. *"Deprecated APIs removed in 1.33"*. The detail view (`--id`)
+  names the calling clients (user agent, last-seen, 30-day request count).
+- **Kubelet version skew** / **kube-proxy version skew** — node components too
+  far behind the control plane to upgrade safely.
+- **EKS add-on version compatibility** — installed add-ons vs. the target version.
+- **Amazon Linux 2 compatibility** — nodes on AL2 (end-of-life; no AMIs for newer versions).
+- **Cluster health issues** — control-plane health problems that would block an upgrade.
+
+A second category, `MISCONFIGURATION` (`--category MISCONFIGURATION`), covers
+EKS Hybrid Nodes.
+
+Drill into any insight with `--id` — it accepts the **short ID** from the table,
+the full insight ID, or a **case-insensitive name substring**:
+
+```bash
+refresh cluster upgrade-check -c prod-east --id "deprecated"   # by name
+refresh cluster upgrade-check -c prod-east --id bc8b2f86       # by short ID
+```
+
 ### Flags
 
 | Flag | Description |
@@ -125,7 +159,7 @@ with ordered, actionable findings.
 | `--category` | Insight category: `UPGRADE_READINESS` (default), `MISCONFIGURATION` |
 | `--status` | Filter by insight status: `PASSING`, `WARNING`, `ERROR`, `UNKNOWN` (repeatable) |
 | `--show-passing` | Include `PASSING` insights (hidden by default) |
-| `--id` | Show the detail view (recommendation + resources) for a single insight ID |
+| `--id` | Show the detail view for one insight — accepts its short ID (from the table), full ID, or a case-insensitive name substring |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
 | `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
 
@@ -138,8 +172,8 @@ refresh cluster upgrade-check -c prod-east
 # Include passing checks, as JSON for a gate
 refresh cluster upgrade-check -c prod-east --show-passing -o json
 
-# Drill into one insight
-refresh cluster upgrade-check -c prod-east --id <insight-id>
+# Drill into one insight (by name, short ID, or full ID)
+refresh cluster upgrade-check -c prod-east --id "deprecated"
 ```
 
 ---
