@@ -7,6 +7,7 @@ import (
 
 	"github.com/fatih/color"
 
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -31,8 +32,25 @@ func OutputUpgradeCheck(report *clustersvc.UpgradeReport) error {
 	}
 	outputInsights(report.Insights)
 	fmt.Println()
+	outputControlPlane(report.ControlPlane)
 	outputSkew(report.Skew)
 	return nil
+}
+
+// outputControlPlane renders the control-plane gate for `-o plain`.
+func outputControlPlane(cp *health.HealthResult) {
+	if cp == nil {
+		return
+	}
+	if cp.Skipped {
+		ui.Outf("Control plane: %s\n", cp.Message)
+	} else {
+		ui.Outf("Control plane (%s): %s\n", cp.Status, cp.Message)
+		for _, d := range cp.Details {
+			fmt.Printf("  %s\n", d)
+		}
+	}
+	fmt.Println()
 }
 
 func outputInsights(insights []clustersvc.InsightSummary) {

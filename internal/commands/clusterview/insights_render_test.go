@@ -5,9 +5,51 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 )
+
+func TestUpgradeCheckLines_ControlPlaneGate(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+
+	// A blocking control-plane failure (etcd near read-only) drives NOT READY
+	// even with no insight errors, and renders the CONTROL PLANE section.
+	rpt := &clustersvc.UpgradeReport{
+		Cluster: "prod",
+		ControlPlane: &health.HealthResult{
+			Name:       "Control Plane",
+			Status:     health.StatusFail,
+			IsBlocking: true,
+			Message:    "etcd database near the 8 GiB read-only limit (96.2%) — compact before upgrading",
+			Details:    []string{"etcd database 96.2% of the 8 GiB limit (7.70 GiB in use)"},
+		},
+		Skew: clustersvc.SkewReport{ControlPlaneVersion: "1.32"},
+	}
+	joined := strings.Join(upgradeCheckLines(th, rpt), "\n")
+	for _, want := range []string{
+		"✗ NOT READY",
+		"▸ CONTROL PLANE",
+		"near the 8 GiB read-only limit",
+		"7.70 GiB in use",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("control-plane gate missing %q in:\n%s", want, joined)
+		}
+	}
+
+	// A skipped gate (pre-1.28) shows the unavailable note and does not fail the
+	// verdict on its own.
+	skipped := &clustersvc.UpgradeReport{
+		Cluster:      "prod",
+		ControlPlane: &health.HealthResult{Name: "Control Plane", Status: health.StatusPass, Skipped: true, Message: "control-plane metrics unavailable (requires EKS 1.28+ on a supported platform version)"},
+		Skew:         clustersvc.SkewReport{ControlPlaneVersion: "1.27"},
+	}
+	got := strings.Join(upgradeCheckLines(th, skipped), "\n")
+	if !strings.Contains(got, "● READY") || !strings.Contains(got, "metrics unavailable") {
+		t.Errorf("skipped gate should be READY + unavailable note:\n%s", got)
+	}
+}
 
 func TestDeprecationLines(t *testing.T) {
 	// Empty input renders nothing.

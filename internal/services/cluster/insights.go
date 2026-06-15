@@ -13,6 +13,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/common"
 	"github.com/dantech2000/refresh/internal/services/status"
@@ -114,10 +115,11 @@ type SkewReport struct {
 // UpgradeReport combines AWS Cluster Insights with the local version-skew view —
 // the full `cluster upgrade-check` result.
 type UpgradeReport struct {
-	Cluster  string                 `json:"cluster" yaml:"cluster"`
-	Support  *status.SupportPosture `json:"support,omitempty" yaml:"support,omitempty"`
-	Insights []InsightSummary       `json:"insights" yaml:"insights"`
-	Skew     SkewReport             `json:"skew" yaml:"skew"`
+	Cluster      string                 `json:"cluster" yaml:"cluster"`
+	Support      *status.SupportPosture `json:"support,omitempty" yaml:"support,omitempty"`
+	ControlPlane *health.HealthResult   `json:"controlPlane,omitempty" yaml:"controlPlane,omitempty"`
+	Insights     []InsightSummary       `json:"insights" yaml:"insights"`
+	Skew         SkewReport             `json:"skew" yaml:"skew"`
 }
 
 // ListInsights returns the cluster's EKS Cluster Insights filtered per opts.
