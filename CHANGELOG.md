@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0](https://github.com/dantech2000/refresh/compare/v0.7.0...v0.8.0) (2026-06-15)
+
+
+### Features
+
+* **cluster:** itemize per-check health results in cluster describe (REF-146) ([#65](https://github.com/dantech2000/refresh/issues/65)) ([2c1443c](https://github.com/dantech2000/refresh/commit/2c1443cd1722e329c7c5904c81d091fc0739b347))
+* **health:** control-plane readiness gate from AWS/EKS CloudWatch metrics (REF-140) ([#59](https://github.com/dantech2000/refresh/issues/59)) ([96ae965](https://github.com/dantech2000/refresh/commit/96ae965b23abc7f2459f4e64fc1bf4eff4381acf))
+* **health:** EC2 vCPU service-quota headroom pre-flight (REF-144) ([#63](https://github.com/dantech2000/refresh/issues/63)) ([cf44489](https://github.com/dantech2000/refresh/commit/cf44489e5e3902f8e68c843f3684e89cfd331df9))
+* **health:** live node CPU+memory drain headroom via metrics-server (REF-142) ([#60](https://github.com/dantech2000/refresh/issues/60)) ([bdd6af4](https://github.com/dantech2000/refresh/commit/bdd6af4f48a45cf34d43e1deb4073e1992beed8e))
+* **nodegroup:** pre-flight instance-type availability per AZ on scale/update (REF-143) ([#62](https://github.com/dantech2000/refresh/issues/62)) ([164b293](https://github.com/dantech2000/refresh/commit/164b293eb54682e3dbbbe3fd0ef0ba05a830384c))
+* **noderoll:** surface live Kubernetes Warning events during a roll (REF-138) ([#61](https://github.com/dantech2000/refresh/issues/61)) ([7f6428d](https://github.com/dantech2000/refresh/commit/7f6428df478ae33f466e98372d2421caf06b6995))
+
+
+### Bug Fixes
+
+* CLI/help/status UX bugs (REF-129, REF-131, REF-132, REF-133, REF-134) ([#51](https://github.com/dantech2000/refresh/issues/51)) ([e0d9010](https://github.com/dantech2000/refresh/commit/e0d90104e8f5509bafd8f64e61319859efb0398b))
+* **nodegroup,cluster:** measure real node readiness instead of synthesizing it (REF-130) ([#52](https://github.com/dantech2000/refresh/issues/52)) ([17fc71f](https://github.com/dantech2000/refresh/commit/17fc71f68373b42a7448149f9658de4a67ea9423))
+
 ## [0.7.0](https://github.com/dantech2000/refresh/compare/v0.6.0...v0.7.0) (2026-06-13)
 
 
