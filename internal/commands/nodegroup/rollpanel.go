@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -130,13 +131,14 @@ func amiWord(th *render.Theme, onTarget bool) string {
 }
 
 func nodeStateCell(th *render.Theme, n noderoll.NodeView) string {
+	var s string
 	switch n.Phase {
 	case noderoll.PhaseReady:
-		return th.Paint(th.Pal.Green, "Ready")
+		s = th.Paint(th.Pal.Green, "Ready")
 	case noderoll.PhaseJoining:
-		return th.Paint(th.Pal.Dim, "joining (NotReady)")
+		s = th.Paint(th.Pal.Dim, "joining (NotReady)")
 	case noderoll.PhaseDraining:
-		s := th.Paint(th.Pal.Yellow, "draining")
+		s = th.Paint(th.Pal.Yellow, "draining")
 		if n.PodsTotal > 0 {
 			evicted := n.PodsTotal - n.Pods
 			if evicted < 0 {
@@ -145,10 +147,14 @@ func nodeStateCell(th *render.Theme, n noderoll.NodeView) string {
 			s += th.Paint(th.Pal.Dim, " · evicting ") + th.Bar(evicted, n.PodsTotal, 5, th.Pal.Yellow) +
 				th.Paint(th.Pal.Dim, fmt.Sprintf(" %d/%d pods", evicted, n.PodsTotal))
 		}
-		return s
 	default:
-		return th.Paint(th.Pal.Dim, "unknown")
+		s = th.Paint(th.Pal.Dim, "unknown")
 	}
+	// Advisory: a node can be Ready yet under pressure (undersized replacement).
+	if len(n.Pressure) > 0 {
+		s += th.Paint(th.Pal.Dim, " · ") + th.Token(render.Warn, strings.Join(n.Pressure, "+"))
+	}
+	return s
 }
 
 // runRoll drives the live panel from obs until done(snapshot) is true or ctx is

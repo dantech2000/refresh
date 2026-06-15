@@ -149,6 +149,47 @@ func TestAssembleCluster_DescribeErrorIsNonFatal(t *testing.T) {
 	}
 }
 
+// TestAssembleCluster_HealthIssues verifies AWS-reported control-plane health
+// issues are counted onto the row and flip NeedsAttention, even when AMIs and
+// addons are current.
+func TestAssembleCluster_HealthIssues(t *testing.T) {
+	api := &fakeClusterAPI{
+		clusters: []string{"prod"},
+		describe: map[string]*ekstypes.Cluster{
+			"prod": {
+				Name:    aws.String("prod"),
+				Version: aws.String("1.32"),
+				Health: &ekstypes.ClusterHealth{Issues: []ekstypes.ClusterIssue{
+					{Code: ekstypes.ClusterIssueCodeInternalFailure, Message: aws.String("IAM role failure")},
+					{Code: ekstypes.ClusterIssueCodeResourceLimitExceeded, Message: aws.String("ENI limit")},
+				}},
+			},
+		},
+		versions: map[string]ekstypes.ClusterVersionInformation{
+			"1.32": {ClusterVersion: aws.String("1.32"), EndOfStandardSupportDate: timePtr(date(2027, 3, 23))},
+		},
+	}
+	svc := newTestService(api, &fakeNodegroups{}, &fakeAddons{})
+	statuses, err := svc.ListClusterStatuses(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("got %d statuses, want 1", len(statuses))
+	}
+	c := statuses[0]
+	if c.HealthIssues != 2 {
+		t.Errorf("health issues = %d, want 2", c.HealthIssues)
+	}
+	// No stale AMIs/addons, but health issues alone must flag attention.
+	if c.StaleAMI.Behind != 0 || c.AddonsBehind.Behind != 0 {
+		t.Fatalf("test precondition: expected no stale AMIs/addons, got %+v / %+v", c.StaleAMI, c.AddonsBehind)
+	}
+	if !c.NeedsAttention() {
+		t.Error("a cluster with control-plane health issues should need attention")
+	}
+}
+
 func TestListClusterStatuses_NameFilter(t *testing.T) {
 	api := &fakeClusterAPI{
 		clusters: []string{"prod-east", "staging", "prod-west"},

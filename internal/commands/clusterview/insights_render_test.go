@@ -3,10 +3,39 @@ package clusterview
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 )
+
+func TestDeprecationLines(t *testing.T) {
+	// Empty input renders nothing.
+	if got := deprecationLines(nil); got != nil {
+		t.Errorf("nil deprecations should render nothing, got %v", got)
+	}
+
+	last := time.Date(2026, 6, 14, 9, 30, 0, 0, time.UTC)
+	deps := []clustersvc.DeprecationDetail{{
+		Usage:              "policy/v1beta1 PodDisruptionBudget",
+		ReplacedWith:       "policy/v1 PodDisruptionBudget",
+		StopServingVersion: "1.25",
+		ClientStats: []clustersvc.ClientStat{
+			{UserAgent: "newrelic-kube-state-metric/v2", LastRequestTime: &last, NumberOfRequestsLast30Days: 412},
+		},
+	}}
+	joined := strings.Join(deprecationLines(deps), "\n")
+	for _, want := range []string{
+		"Deprecated APIs still in use:",
+		"policy/v1beta1 PodDisruptionBudget → policy/v1 PodDisruptionBudget (removed in 1.25)",
+		"newrelic-kube-state-metric/v2 — 412 req/30d, last seen 2026-06-14 09:30",
+		"30-day window",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("deprecation render missing %q in:\n%s", want, joined)
+		}
+	}
+}
 
 func TestUpgradeCheckLines_Verdicts(t *testing.T) {
 	th := render.New(render.ColorNone, true)

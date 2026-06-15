@@ -34,9 +34,36 @@ func date(y int, m time.Month, d int) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
+// supportVersionsAPI is the slice of EKS needed to resolve support windows —
+// just DescribeClusterVersions. Both the fleet Service and the standalone
+// SupportResolver depend on this, so the resolution logic has one home.
+type supportVersionsAPI interface {
+	DescribeClusterVersions(ctx context.Context, in *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error)
+}
+
+// resolveSupportPosture is the shared support-resolution core: prefer
+// DescribeClusterVersions, fall back to the compiled-in calendar, then classify
+// relative to now. Pure given (api, version, now) — used by both the fleet
+// Service and the exported SupportResolver.
+func resolveSupportPosture(ctx context.Context, api supportVersionsAPI, version string, now time.Time) SupportPosture {
+	if version == "" {
+		return SupportPosture{Tier: SupportUnknown}
+	}
+	std, ext, ok := supportDatesFromAPI(ctx, api, version)
+	fallback := false
+	if !ok {
+		cal, found := fallbackCalendar[version]
+		if !found {
+			return SupportPosture{Tier: SupportUnknown}
+		}
+		std, ext = cal.standardEnd, cal.extendedEnd
+		fallback = true
+	}
+	return classifySupport(std, ext, now, fallback)
+}
+
 // resolveSupport returns the support posture for a Kubernetes version, caching
-// per version so `status -A` resolves each version at most once. It prefers
-// DescribeClusterVersions and falls back to the compiled-in calendar.
+// per version so `status -A` resolves each version at most once.
 func (s *Service) resolveSupport(ctx context.Context, version string) SupportPosture {
 	if version == "" {
 		return SupportPosture{Tier: SupportUnknown}
@@ -52,7 +79,7 @@ func (s *Service) resolveSupport(ctx context.Context, version string) SupportPos
 	}
 	s.supportMu.Unlock()
 
-	posture := s.lookupSupport(ctx, version)
+	posture := resolveSupportPosture(ctx, s.clusterAPI, version, s.clock())
 
 	s.supportMu.Lock()
 	s.supportCache[version] = posture
@@ -60,28 +87,39 @@ func (s *Service) resolveSupport(ctx context.Context, version string) SupportPos
 	return posture
 }
 
-func (s *Service) lookupSupport(ctx context.Context, version string) SupportPosture {
-	std, ext, ok := s.supportDatesFromAPI(ctx, version)
-	fallback := false
-	if !ok {
-		cal, found := fallbackCalendar[version]
-		if !found {
-			return SupportPosture{Tier: SupportUnknown}
-		}
-		std, ext = cal.standardEnd, cal.extendedEnd
-		fallback = true
+// SupportResolver resolves EKS version support posture — the same logic behind
+// `refresh status` — for reuse by `cluster upgrade-check` and `cluster
+// describe`. Stateless apart from the EKS client; safe to construct per command.
+type SupportResolver struct {
+	api supportVersionsAPI
+	now func() time.Time
+}
+
+// NewSupportResolver builds a resolver over an EKS client (anything exposing
+// DescribeClusterVersions).
+func NewSupportResolver(api supportVersionsAPI) *SupportResolver {
+	return &SupportResolver{api: api, now: time.Now}
+}
+
+// Resolve returns the support posture for a Kubernetes version (e.g. "1.32"),
+// falling back to the compiled-in calendar when DescribeClusterVersions is
+// unavailable.
+func (r *SupportResolver) Resolve(ctx context.Context, version string) SupportPosture {
+	now := time.Now()
+	if r.now != nil {
+		now = r.now()
 	}
-	return classifySupport(std, ext, s.clock(), fallback)
+	return resolveSupportPosture(ctx, r.api, version, now)
 }
 
 // supportDatesFromAPI fetches the standard/extended end dates for a version via
 // DescribeClusterVersions. ok is false when the API errors or the dates are
 // absent, so the caller falls back to the compiled-in calendar.
-func (s *Service) supportDatesFromAPI(ctx context.Context, version string) (std, ext time.Time, ok bool) {
-	if s.clusterAPI == nil {
+func supportDatesFromAPI(ctx context.Context, api supportVersionsAPI, version string) (std, ext time.Time, ok bool) {
+	if api == nil {
 		return time.Time{}, time.Time{}, false
 	}
-	out, err := s.clusterAPI.DescribeClusterVersions(ctx, &eks.DescribeClusterVersionsInput{
+	out, err := api.DescribeClusterVersions(ctx, &eks.DescribeClusterVersionsInput{
 		ClusterVersions: []string{version},
 	})
 	if err != nil || out == nil {

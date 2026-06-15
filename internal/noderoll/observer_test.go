@@ -2,12 +2,39 @@ package noderoll
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+// TestClassify_PressureAdvisory verifies node-pressure conditions are reported
+// in a stable order, that False conditions are ignored, and that pressure is
+// advisory — it never changes a Ready node's phase.
+func TestClassify_PressureAdvisory(t *testing.T) {
+	n := mkNode("ip-hot", newAMI, true, false)
+	// Out-of-order + a False condition that must be ignored.
+	n.Status.Conditions = append(n.Status.Conditions,
+		corev1.NodeCondition{Type: corev1.NodeDiskPressure, Status: corev1.ConditionTrue},
+		corev1.NodeCondition{Type: corev1.NodePIDPressure, Status: corev1.ConditionFalse},
+		corev1.NodeCondition{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionTrue},
+	)
+	v := classify(n, newAMI, nil)
+	if v.Phase != PhaseReady || !v.Ready {
+		t.Fatalf("pressure must not change phase: got phase=%s ready=%v", v.Phase, v.Ready)
+	}
+	// Canonical order (Memory, Disk, PID, Network); the False PIDPressure is dropped.
+	want := []string{"MemoryPressure", "DiskPressure"}
+	if !reflect.DeepEqual(v.Pressure, want) {
+		t.Errorf("pressure = %v, want %v", v.Pressure, want)
+	}
+	// Unstressed node reports no pressure.
+	if got := classify(mkNode("ip-cool", newAMI, true, false), newAMI, nil).Pressure; got != nil {
+		t.Errorf("healthy node should report no pressure, got %v", got)
+	}
+}
 
 const (
 	oldAMI = "ami-0a1b"

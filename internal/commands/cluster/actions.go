@@ -7,12 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -143,6 +145,13 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		return derr
 	}); err != nil {
 		return err
+	}
+
+	// Support posture for the cluster's version, via the same resolver behind
+	// `refresh status` (REF-145).
+	if details != nil && details.Version != "" {
+		posture := status.NewSupportResolver(eks.NewFromConfig(awsCfg)).Resolve(ctx, details.Version)
+		details.Support = &posture
 	}
 
 	if handled, err := runner.EncodeStdout(cmd.String("format"), details); handled {

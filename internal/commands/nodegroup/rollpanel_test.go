@@ -8,6 +8,28 @@ import (
 	"github.com/dantech2000/refresh/internal/render"
 )
 
+// TestRollPanelLines_PressureAdvisory verifies a Ready node under pressure still
+// reads "Ready" but carries the pressure advisory in its state cell.
+func TestRollPanelLines_PressureAdvisory(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	snap := noderoll.Snapshot{
+		Total: 1, ReadyTarget: 1,
+		Nodes: []noderoll.NodeView{
+			{Name: "ip-hot", OnTarget: true, Ready: true, Phase: noderoll.PhaseReady, Pressure: []string{"MemoryPressure", "DiskPressure"}},
+		},
+	}
+	m := rollMeta{Nodegroup: "spot-burst", OldAMI: "ami-old", NewAMI: "ami-new", Desired: 1}
+	joined := strings.Join(rollPanelLines(th, snap, nil, m), "\n")
+	if strings.Contains(joined, "\x1b") {
+		t.Fatalf("ColorNone panel contains ANSI escapes:\n%s", joined)
+	}
+	for _, want := range []string{"Ready", "MemoryPressure+DiskPressure"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("panel missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
 func TestRollPanelLines_MidRoll(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 	snap := noderoll.Snapshot{

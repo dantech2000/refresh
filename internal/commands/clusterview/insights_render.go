@@ -53,9 +53,14 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 	st, verdict := upgradeVerdict(report)
 	out := []string{
 		th.Bold(pal.White, "UPGRADE READINESS") + th.Paint(pal.Dim, "  "+report.Cluster) + "   " + th.Tokenf(st, verdict),
-		"",
-		th.Section("INSIGHTS") + th.Paint(pal.Dim, fmt.Sprintf("  %d", len(report.Insights))),
 	}
+	if report.Support != nil {
+		out = append(out, th.Paint(pal.Dim, "support  ")+supportToken(th, report.Support))
+	}
+	out = append(out,
+		"",
+		th.Section("INSIGHTS")+th.Paint(pal.Dim, fmt.Sprintf("  %d", len(report.Insights))),
+	)
 
 	if len(report.Insights) == 0 {
 		out = append(out, "  "+th.Token(render.Healthy, "no upgrade insights to address"))

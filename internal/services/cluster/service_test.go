@@ -257,6 +257,49 @@ func TestDescribe_EmptyClusterResponseErrors(t *testing.T) {
 	}
 }
 
+// TestDescribe_MapsHealthIssues verifies AWS-reported control-plane Health.Issues
+// are surfaced on ClusterDetails — with no ShowHealth gate and no extra API call.
+func TestDescribe_MapsHealthIssues(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mock := &mocks.EKSAPI{
+		DescribeClusterFn: func(_ context.Context, in *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
+			return &eks.DescribeClusterOutput{Cluster: &ekstypes.Cluster{
+				Name:    in.Name,
+				Version: aws.String("1.32"),
+				Status:  ekstypes.ClusterStatusActive,
+				Health: &ekstypes.ClusterHealth{Issues: []ekstypes.ClusterIssue{{
+					Code:        ekstypes.ClusterIssueCodeInternalFailure,
+					Message:     aws.String("control plane could not assume the cluster IAM role"),
+					ResourceIds: []string{"arn:aws:iam::123456789012:role/eksClusterRole"},
+				}}},
+			}}, nil
+		},
+		ListNodegroupsFn: func(_ context.Context, _ *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+			return &eks.ListNodegroupsOutput{}, nil
+		},
+	}
+	svc := &ServiceImpl{eksClient: mock, cache: NewCache(time.Minute), logger: logger}
+
+	// No ShowHealth — issues must still surface.
+	details, err := svc.Describe(context.Background(), "prod", DescribeOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(details.HealthIssues) != 1 {
+		t.Fatalf("got %d health issues, want 1", len(details.HealthIssues))
+	}
+	got := details.HealthIssues[0]
+	if got.Code != string(ekstypes.ClusterIssueCodeInternalFailure) {
+		t.Errorf("issue code = %q, want %q", got.Code, ekstypes.ClusterIssueCodeInternalFailure)
+	}
+	if got.Message != "control plane could not assume the cluster IAM role" {
+		t.Errorf("issue message = %q", got.Message)
+	}
+	if len(got.ResourceIds) != 1 || got.ResourceIds[0] != "arn:aws:iam::123456789012:role/eksClusterRole" {
+		t.Errorf("resource ids = %v", got.ResourceIds)
+	}
+}
+
 func TestDescribe_CachesResultOnSecondCall(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	callCount := 0

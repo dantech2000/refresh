@@ -47,6 +47,10 @@ type NodeView struct {
 	// not draining or when pod accounting isn't available).
 	Pods      int `json:"pods,omitempty"`
 	PodsTotal int `json:"podsTotal,omitempty"`
+	// Pressure lists active node-pressure conditions (MemoryPressure, etc.) — an
+	// advisory layered over Phase. A node can be Ready yet under pressure when the
+	// replacement instance is undersized; the roll looks healthy while it isn't.
+	Pressure []string `json:"pressure,omitempty"`
 }
 
 // Snapshot is the nodegroup's state at one instant, plus roll aggregates.
@@ -212,7 +216,36 @@ func classify(n *corev1.Node, targetAMI string, baseline map[string]bool) NodeVi
 		OnTarget: onTarget,
 		Ready:    ready,
 		Phase:    phase,
+		Pressure: pressureConditions(n),
 	}
+}
+
+// pressureNodeConditions are the conditions signalling a node is unhealthy under
+// load. Advisory during a roll: a node can be Ready yet under one of these when
+// the replacement AMI/instance is undersized.
+var pressureNodeConditions = []corev1.NodeConditionType{
+	corev1.NodeMemoryPressure,
+	corev1.NodeDiskPressure,
+	corev1.NodePIDPressure,
+	corev1.NodeNetworkUnavailable,
+}
+
+// pressureConditions returns the names of active (Status=True) pressure
+// conditions on a node, in a stable order. Empty when the node is unstressed.
+func pressureConditions(n *corev1.Node) []string {
+	active := make(map[corev1.NodeConditionType]bool, len(n.Status.Conditions))
+	for _, c := range n.Status.Conditions {
+		if c.Status == corev1.ConditionTrue {
+			active[c.Type] = true
+		}
+	}
+	var out []string
+	for _, t := range pressureNodeConditions {
+		if active[t] {
+			out = append(out, string(t))
+		}
+	}
+	return out
 }
 
 func nodeReady(n *corev1.Node) bool {
