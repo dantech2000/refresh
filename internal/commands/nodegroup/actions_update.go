@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
@@ -280,6 +281,9 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 			checker.SetNodeMetrics(m)
 		}
 	}
+	// EC2 vCPU quota headroom — a roll surges new nodes against the account
+	// quota; the check skips cleanly if it can't read the limit/usage. (REF-144)
+	checker.SetServiceQuotas(servicequotas.NewFromConfig(awsCfg))
 
 	spinner := ui.NewFunSpinnerForCategory("health")
 	if humanOutput {
