@@ -13,6 +13,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -126,7 +127,15 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Bool("check-readiness") {
 		humanOutput := strings.EqualFold(cmd.String("format"), "table")
 		k8sClient := resolveReadinessKubeClient(ctx, cmd.String("kubeconfig"), humanOutput)
-		clusterService = factory.NewClusterServiceWithHealth(awsCfg, k8sClient, nil)
+		// With cluster access, also wire metrics-server (best-effort) so the
+		// health card's live-utilization check measures instead of skipping. (REF-146)
+		var metricsClient health.NodeMetricsLister
+		if k8sClient != nil {
+			if m, err := health.BuildMetricsClient(cmd.String("kubeconfig")); err == nil {
+				metricsClient = m
+			}
+		}
+		clusterService = factory.NewClusterServiceWithHealth(awsCfg, k8sClient, metricsClient, nil)
 	} else {
 		clusterService = factory.NewClusterService(awsCfg, cmd.Bool("show-health"), nil)
 	}

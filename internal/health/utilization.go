@@ -37,7 +37,7 @@ func (hc *HealthChecker) CheckNodeUtilization(ctx context.Context, _ string) Hea
 			Name:    "Node Utilization",
 			Status:  StatusPass,
 			Skipped: true,
-			Message: "live utilization unavailable (metrics-server not configured)",
+			Message: "live utilization unavailable (no metrics client wired for this command)",
 		}
 	}
 

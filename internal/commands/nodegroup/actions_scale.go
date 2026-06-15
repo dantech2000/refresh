@@ -63,6 +63,11 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
+	// Pre-flight: warn if the nodegroup's instance type isn't offered in one of
+	// its AZs — a scale-up would fail to place nodes there. Runs for both the
+	// dry-run preview and a real scale, so the preview surfaces it too. (REF-143)
+	warnInstanceTypeAvailability(ctx, svc, clusterName, cmd.String("nodegroup"))
+
 	if opts.DryRun {
 		// With --check-pdbs, surface the actual PDBs that would constrain a
 		// scale-down (name/namespace/disruptions-allowed), not just a generic
@@ -77,10 +82,6 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 		}
 		return printScaleDryRun(ctx, eks.NewFromConfig(awsCfg), clusterName, cmd.String("nodegroup"), desired, minSize, maxSize, pdbs)
 	}
-
-	// Pre-flight: warn if the nodegroup's instance type isn't offered in one of
-	// its AZs — a scale-up would fail to place nodes there. (REF-143)
-	warnInstanceTypeAvailability(ctx, svc, clusterName, cmd.String("nodegroup"))
 
 	return runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
 		return svc.Scale(ctx, clusterName, cmd.String("nodegroup"), desired, minSize, maxSize, opts)
