@@ -164,7 +164,49 @@ func healthCardLines(th *render.Theme, h *health.HealthSummary) []string {
 		th.Paint(th.Pal.Dim, fmt.Sprintf("  %d/100 · ", h.OverallScore)) +
 		th.Tokenf(st, string(h.Decision))
 	bar := th.Bar(h.OverallScore, 100, 24, col)
-	return []string{head, "  " + bar + "  " + th.Paint(th.Pal.Dim, healthSummaryMsg(h))}
+	out := []string{head, "  " + bar + "  " + th.Paint(th.Pal.Dim, healthSummaryMsg(h))}
+	return append(out, healthCheckRows(th, h.Results)...)
+}
+
+// healthCheckRows itemizes each individual health check beneath the card —
+// glyph + name + message — so the control-plane / utilization / quota / node /
+// PDB gates are all visible, not collapsed into one summary line. Skipped
+// checks (missing prerequisite) render dimmed so a gap reads as "not measured",
+// not "passed".
+func healthCheckRows(th *render.Theme, results []health.HealthResult) []string {
+	if len(results) == 0 {
+		return nil
+	}
+	nameWidth := 0
+	for _, r := range results {
+		if len(r.Name) > nameWidth {
+			nameWidth = len(r.Name)
+		}
+	}
+	out := make([]string, 0, len(results))
+	for _, r := range results {
+		name := r.Name + strings.Repeat(" ", nameWidth-len(r.Name))
+		if r.Skipped {
+			out = append(out, "    "+th.Glyph(render.Neutral)+" "+th.Paint(th.Pal.Dim, name+"  "+r.Message))
+			continue
+		}
+		out = append(out, "    "+th.Glyph(healthCheckStatus(r.Status))+" "+
+			th.Paint(th.Pal.White, name)+th.Paint(th.Pal.Dim, "  "+r.Message))
+	}
+	return out
+}
+
+func healthCheckStatus(s health.HealthStatus) render.Status {
+	switch s {
+	case health.StatusPass:
+		return render.Healthy
+	case health.StatusWarn:
+		return render.Warn
+	case health.StatusFail:
+		return render.Fail
+	default:
+		return render.Unknown
+	}
 }
 
 func decisionStatusColor(th *render.Theme, d health.Decision) (render.Status, render.Color) {

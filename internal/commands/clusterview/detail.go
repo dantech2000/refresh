@@ -115,6 +115,17 @@ func outputClusterDetailsPlain(details *clustersvc.ClusterDetails, elapsed time.
 		addTbl.Render()
 	}
 
+	if details.Health != nil && len(details.Health.Results) > 0 {
+		ui.Outln("\nHealth Checks:")
+		for _, r := range details.Health.Results {
+			status := string(r.Status)
+			if r.Skipped {
+				status = "SKIPPED"
+			}
+			fmt.Printf("  %-22s %-8s %s\n", r.Name, status, r.Message)
+		}
+	}
+
 	if len(details.HealthIssues) > 0 {
 		ui.Outln("\nHealth Issues:")
 		for _, iss := range details.HealthIssues {
