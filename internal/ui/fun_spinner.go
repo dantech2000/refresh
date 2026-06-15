@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"math/rand"
 	"os"
 	"sync"
 	"time"
@@ -58,15 +57,10 @@ func NewFunSpinnerForCategory(category string) *FunSpinner {
 	return NewFunSpinner(DefaultFunMessages.GetMessages(category))
 }
 
-// NewEnhancedProgressSpinner creates a spinner that cycles through fun messages for the category
-func NewEnhancedProgressSpinner(category string) *FunSpinner {
-	return NewFunSpinnerForCategory(category)
-}
-
 // Start begins the fun spinner with rotating messages. When output is not an
 // interactive terminal (CI logs, redirected stderr), no animation is started:
-// the \r and \033[K control sequences would just spam the log. Success/Fail
-// still print their final line.
+// the \r and \033[K control sequences would just spam the log. Success
+// still prints its final line.
 func (fs *FunSpinner) Start() error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -139,12 +133,6 @@ func (fs *FunSpinner) Success(message string) {
 	pterm.Success.WithWriter(fs.spinner.Writer).Println(message)
 }
 
-// Fail completes the spinner with a failure message
-func (fs *FunSpinner) Fail(message string) {
-	fs.stop()
-	pterm.Error.WithWriter(fs.spinner.Writer).Println(message)
-}
-
 // Stop stops the spinner
 func (fs *FunSpinner) Stop() {
 	fs.stop()
@@ -194,15 +182,6 @@ func (fm *FunMessages) GetMessages(category string) []string {
 	default:
 		return fm.General
 	}
-}
-
-// GetRandomMessage returns a random message from the specified category
-func (fm *FunMessages) GetRandomMessage(category string) string {
-	messages := fm.GetMessages(category)
-	if len(messages) == 0 {
-		return "Working on it..."
-	}
-	return messages[rand.Intn(len(messages))]
 }
 
 // DefaultFunMessages provides the default set of entertaining messages

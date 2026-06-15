@@ -28,13 +28,3 @@ func ElapsedString(elapsed time.Duration) string {
 func PrintElapsed(elapsed time.Duration) {
 	Outf("Retrieved in %s\n\n", ElapsedString(elapsed))
 }
-
-// Errln writes a line to stderr, ignoring write errors intentionally.
-func Errln(a ...any) {
-	_, _ = fmt.Fprintln(os.Stderr, a...)
-}
-
-// Errf writes formatted output to stderr, ignoring write errors intentionally.
-func Errf(format string, a ...any) {
-	_, _ = fmt.Fprintf(os.Stderr, format, a...)
-}

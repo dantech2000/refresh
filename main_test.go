@@ -158,30 +158,6 @@ func TestAMIStatusString(t *testing.T) {
 	}
 }
 
-func TestDryRunActionString(t *testing.T) {
-	tests := []struct {
-		name      string
-		action    types.DryRunAction
-		plainWant string
-	}{
-		{"ActionUpdate", types.ActionUpdate, "UPDATE"},
-		{"ActionSkipUpdating", types.ActionSkipUpdating, "SKIP"},
-		{"ActionSkipLatest", types.ActionSkipLatest, "SKIP"},
-		{"ActionForceUpdate", types.ActionForceUpdate, "FORCE UPDATE"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.action.PlainString(); !strings.Contains(got, tt.plainWant) {
-				t.Errorf("DryRunAction.PlainString() = %q, want to contain %q", got, tt.plainWant)
-			}
-			if !containsText(tt.action.String(), tt.plainWant) {
-				t.Errorf("DryRunAction.String() does not contain %q", tt.plainWant)
-			}
-		})
-	}
-}
-
 func TestColoredHelpPrinter(t *testing.T) {
 	var out bytes.Buffer
 

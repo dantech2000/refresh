@@ -82,12 +82,3 @@ func activeContext() (cliconfig.Context, bool) {
 	_, ctx, ok := f.Active()
 	return ctx, ok
 }
-
-// ActiveClusterName returns the cluster name from the active context, if any.
-// Used by ClusterName resolution as a fallback before prompting.
-func ActiveClusterName() string {
-	if ctx, ok := activeContext(); ok {
-		return ctx.Cluster
-	}
-	return ""
-}

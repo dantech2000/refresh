@@ -32,14 +32,6 @@ func (dt *DynamicTable) Add(key, value string) *DynamicTable {
 	return dt
 }
 
-// AddIf conditionally adds a row only if the condition is true
-func (dt *DynamicTable) AddIf(condition bool, key, value string) *DynamicTable {
-	if condition {
-		dt.Add(key, value)
-	}
-	return dt
-}
-
 // AddColored adds a row with colored value for status indication
 func (dt *DynamicTable) AddColored(key string, value string, colorFunc func(string) string) *DynamicTable {
 	coloredValue := colorFunc(value)
@@ -96,12 +88,6 @@ func (dt *DynamicTable) RenderSection(sectionTitle string) {
 		Outf("\n%s:\n", color.CyanString(sectionTitle))
 	}
 	dt.Render()
-}
-
-// Clear removes all rows from the table
-func (dt *DynamicTable) Clear() *DynamicTable {
-	dt.rows = dt.rows[:0]
-	return dt
 }
 
 // Count returns the number of rows in the table

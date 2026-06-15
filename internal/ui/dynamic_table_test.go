@@ -42,17 +42,6 @@ func TestDynamicTable_ChainedOperations(t *testing.T) {
 	}
 }
 
-func TestDynamicTable_ConditionalAdd(t *testing.T) {
-	table := NewDynamicTable()
-
-	table.AddIf(true, "Included", "yes")
-	table.AddIf(false, "Excluded", "no")
-
-	if table.Count() != 1 {
-		t.Errorf("Expected 1 row, got %d", table.Count())
-	}
-}
-
 func TestDynamicTable_StatusColoring(t *testing.T) {
 	// Disable color output for testing
 	color.NoColor = true
@@ -185,26 +174,6 @@ func TestPadANSIString(t *testing.T) {
 		if actualWidth != test.expected {
 			t.Errorf("PadANSI(%q, %d) resulted in width %d, expected %d", test.input, test.width, actualWidth, test.expected)
 		}
-	}
-}
-
-func TestDynamicTable_Clear(t *testing.T) {
-	table := NewDynamicTable()
-	table.Add("Key1", "Value1")
-	table.Add("Key2", "Value2")
-
-	if table.Count() != 2 {
-		t.Errorf("Expected 2 rows before clear, got %d", table.Count())
-	}
-
-	table.Clear()
-
-	if table.Count() != 0 {
-		t.Errorf("Expected 0 rows after clear, got %d", table.Count())
-	}
-
-	if !table.IsEmpty() {
-		t.Error("Table should be empty after clear")
 	}
 }
 
