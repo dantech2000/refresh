@@ -263,6 +263,13 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	asgClient := autoscaling.NewFromConfig(awsCfg)
 	k8sClient := resolveHealthKubeClient(ctx, flags.kubeconfig, humanOutput)
 	checker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
+	// Attach metrics-server (best-effort) for live CPU+memory drain headroom; the
+	// utilization check skips cleanly if it isn't installed. (REF-142)
+	if k8sClient != nil {
+		if m, mErr := health.BuildMetricsClient(flags.kubeconfig); mErr == nil {
+			checker.SetNodeMetrics(m)
+		}
+	}
 
 	spinner := ui.NewFunSpinnerForCategory("health")
 	if humanOutput {

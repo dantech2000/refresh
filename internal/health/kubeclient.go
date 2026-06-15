@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
 // kubeProbeTimeout bounds the connectivity probe so an unreachable cluster
@@ -42,11 +43,12 @@ func (d KubeDiag) String() string {
 	}
 }
 
-// BuildKubeClient builds a Kubernetes client, preferring an explicit kubeconfig
-// path, then $KUBECONFIG, then ~/.kube/config, then in-cluster config. It
-// returns a KubeDiag describing what was tried (for diagnostics) alongside the
-// client. An explicit --kubeconfig path that doesn't exist is a hard error.
-func BuildKubeClient(kubeconfigPath string) (kubernetes.Interface, KubeDiag, error) {
+// resolveRESTConfig resolves a *rest.Config and a diagnostic, preferring an
+// explicit kubeconfig path, then $KUBECONFIG, then ~/.kube/config, then
+// in-cluster config. An explicit --kubeconfig path that doesn't exist is a hard
+// error. Shared by BuildKubeClient and BuildMetricsClient so both clients
+// resolve identically.
+func resolveRESTConfig(kubeconfigPath string) (*rest.Config, KubeDiag, error) {
 	source := ""
 	path := strings.TrimSpace(kubeconfigPath)
 	switch {
@@ -72,11 +74,7 @@ func BuildKubeClient(kubeconfigPath string) (kubernetes.Interface, KubeDiag, err
 			if cerr != nil {
 				return nil, diag, fmt.Errorf("loading kubeconfig %s: %w", path, cerr)
 			}
-			client, nerr := kubernetes.NewForConfig(cfg)
-			if nerr != nil {
-				return nil, diag, fmt.Errorf("building kubernetes client from %s: %w", path, nerr)
-			}
-			return client, diag, nil
+			return cfg, diag, nil
 		case source == "--kubeconfig":
 			// An explicitly requested file that isn't there is a user error,
 			// not a reason to silently fall back.
@@ -86,11 +84,41 @@ func BuildKubeClient(kubeconfigPath string) (kubernetes.Interface, KubeDiag, err
 	}
 
 	if icCfg, err := rest.InClusterConfig(); err == nil {
-		if client, cerr := kubernetes.NewForConfig(icCfg); cerr == nil {
-			return client, KubeDiag{Source: "in-cluster"}, nil
-		}
+		return icCfg, KubeDiag{Source: "in-cluster"}, nil
 	}
 	return nil, KubeDiag{Source: "none"}, fmt.Errorf("no kubeconfig found and in-cluster config not available")
+}
+
+// BuildKubeClient builds a Kubernetes client, preferring an explicit kubeconfig
+// path, then $KUBECONFIG, then ~/.kube/config, then in-cluster config. It
+// returns a KubeDiag describing what was tried (for diagnostics) alongside the
+// client. An explicit --kubeconfig path that doesn't exist is a hard error.
+func BuildKubeClient(kubeconfigPath string) (kubernetes.Interface, KubeDiag, error) {
+	cfg, diag, err := resolveRESTConfig(kubeconfigPath)
+	if err != nil {
+		return nil, diag, err
+	}
+	client, nerr := kubernetes.NewForConfig(cfg)
+	if nerr != nil {
+		return nil, diag, fmt.Errorf("building kubernetes client: %w", nerr)
+	}
+	return client, diag, nil
+}
+
+// BuildMetricsClient builds a metrics-server (metrics.k8s.io) node-metrics
+// lister from the same kubeconfig resolution as BuildKubeClient. A config error
+// is returned; metrics-server simply not being installed is NOT an error here —
+// that surfaces at List time, so the utilization check can skip gracefully.
+func BuildMetricsClient(kubeconfigPath string) (NodeMetricsLister, error) {
+	cfg, _, err := resolveRESTConfig(kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
+	cs, err := metricsclient.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("building metrics client: %w", err)
+	}
+	return cs.MetricsV1beta1().NodeMetricses(), nil
 }
 
 // ProbeConnection verifies the Kubernetes API is actually reachable (and basic

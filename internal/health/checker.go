@@ -53,10 +53,11 @@ type HealthSummary struct {
 
 // HealthChecker performs various health checks on the EKS cluster
 type HealthChecker struct {
-	eksClient *eks.Client
-	k8sClient kubernetes.Interface
-	cwClient  *cloudwatch.Client
-	asgClient *autoscaling.Client
+	eksClient   *eks.Client
+	k8sClient   kubernetes.Interface
+	cwClient    *cloudwatch.Client
+	asgClient   *autoscaling.Client
+	nodeMetrics NodeMetricsLister // optional; enables the live utilization check
 }
 
 // NewChecker creates a new health checker instance
@@ -77,6 +78,7 @@ func (hc *HealthChecker) RunAllChecks(ctx context.Context, clusterName string) H
 	checks := []func() HealthResult{
 		func() HealthResult { return hc.CheckNodeHealth(ctx, clusterName) },
 		func() HealthResult { return hc.checkClusterCapacityWith(ctx, snap) },
+		func() HealthResult { return hc.CheckNodeUtilization(ctx, clusterName) },
 		func() HealthResult { return hc.CheckControlPlaneMetrics(ctx, clusterName) },
 		func() HealthResult { return hc.CheckCriticalWorkloads(ctx) },
 		func() HealthResult { return hc.CheckPodDisruptionBudgets(ctx) },
