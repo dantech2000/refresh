@@ -5,7 +5,11 @@ site_description: >-
 site_url: https://drod.dev/refresh/
 repo_url: https://github.com/dantech2000/refresh
 repo_name: dantech2000/refresh
-edit_uri: edit/main/docs/
+# Read-only docs site: no per-page "Edit this page" link. The reference pages
+# are generated (gen-docs) and the rest is maintained in-repo via PRs, so an
+# edit link would point readers at a non-editable workflow. (edit_uri empty +
+# content.action.edit removed from theme.features below disables the button.)
+edit_uri: ""
 copyright: Copyright &copy; Daniel Rodriguez
 
 # Source markdown lives in docs/; the built site goes to site/ (gitignored).
@@ -43,7 +47,6 @@ theme:
     - content.code.copy
     - content.code.annotate
     - content.tabs.link
-    - content.action.edit
 
 plugins:
   - search
