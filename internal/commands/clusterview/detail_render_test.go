@@ -61,6 +61,34 @@ func TestClusterDetailLines_HealthIssues(t *testing.T) {
 	}
 }
 
+func TestClusterDetailLines_HealthChecksItemized(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	d := sampleDetails()
+	d.Health = &health.HealthSummary{
+		OverallScore: 75,
+		Decision:     health.DecisionWarn,
+		Results: []health.HealthResult{
+			{Name: "Node Health", Status: health.StatusPass, Score: 100, Message: "all nodes Ready"},
+			{Name: "Control Plane", Status: health.StatusWarn, Score: 70, Message: "etcd 82% of the 8 GiB limit"},
+			{Name: "Service Quotas", Status: health.StatusPass, Skipped: true, Message: "headroom unavailable (clients not configured)"},
+		},
+	}
+	joined := strings.Join(clusterDetailLines(th, d, 0), "\n")
+	if strings.Contains(joined, "\x1b") {
+		t.Fatalf("ColorNone health card contains ANSI escapes:\n%s", joined)
+	}
+	for _, want := range []string{
+		"▸ HEALTH",
+		"Node Health", "all nodes Ready",
+		"Control Plane", "etcd 82% of the 8 GiB limit",
+		"Service Quotas", "headroom unavailable", // skipped check is still listed
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("itemized health card missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
 func TestClusterDetailLines_Pretty(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 	joined := strings.Join(clusterDetailLines(th, sampleDetails(), 0), "\n")
