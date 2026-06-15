@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -22,13 +23,38 @@ func upgradeVerdict(report *clustersvc.UpgradeReport) (render.Status, string) {
 			warnc++
 		}
 	}
+	// The control-plane gate participates in the verdict: a blocking failure
+	// (e.g. etcd near the read-only limit) is NOT READY; a warning is REVIEW.
+	cpFail, cpWarn := false, false
+	if cp := report.ControlPlane; cp != nil && !cp.Skipped {
+		switch cp.Status {
+		case health.StatusFail:
+			cpFail = true
+		case health.StatusWarn:
+			cpWarn = true
+		}
+	}
 	switch {
-	case errc > 0:
+	case errc > 0 || cpFail:
 		return render.Fail, "NOT READY"
-	case warnc > 0 || len(report.Skew.Findings) > 0:
+	case warnc > 0 || cpWarn || len(report.Skew.Findings) > 0:
 		return render.Warn, "REVIEW"
 	default:
 		return render.Healthy, "READY"
+	}
+}
+
+// healthStatusToken maps a health check status to a render status token.
+func healthStatusToken(s health.HealthStatus) render.Status {
+	switch s {
+	case health.StatusPass:
+		return render.Healthy
+	case health.StatusWarn:
+		return render.Warn
+	case health.StatusFail:
+		return render.Fail
+	default:
+		return render.Unknown
 	}
 }
 
@@ -98,6 +124,18 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 			out = append(out, "  "+l)
 		}
 		out = append(out, "  "+insightCountChips(th, errc, warnc, passc))
+	}
+
+	if cp := report.ControlPlane; cp != nil {
+		out = append(out, "", th.Section("CONTROL PLANE"))
+		if cp.Skipped {
+			out = append(out, "  "+th.Paint(pal.Dim, cp.Message))
+		} else {
+			out = append(out, "  "+th.Tokenf(healthStatusToken(cp.Status), cp.Message))
+			for _, d := range cp.Details {
+				out = append(out, "    "+th.Paint(pal.Dim, d))
+			}
+		}
 	}
 
 	out = append(out, "", th.Section("VERSION SKEW")+th.Paint(pal.Dim, "  control plane "+valueOrDash(report.Skew.ControlPlaneVersion)))

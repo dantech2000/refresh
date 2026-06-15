@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/urfave/cli/v3"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/status"
 )
@@ -96,6 +98,14 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 	if report != nil && report.Skew.ControlPlaneVersion != "" {
 		posture := status.NewSupportResolver(eks.NewFromConfig(awsCfg)).Resolve(ctx, report.Skew.ControlPlaneVersion)
 		report.Support = &posture
+	}
+
+	// Control-plane health gate from the free AWS/EKS CloudWatch metrics — etcd
+	// usage vs the 8 GiB read-only limit + API-server error rate (REF-140).
+	if report != nil {
+		checker := health.NewChecker(eks.NewFromConfig(awsCfg), nil, cloudwatch.NewFromConfig(awsCfg), nil)
+		cp := checker.CheckControlPlaneMetrics(ctx, clusterName)
+		report.ControlPlane = &cp
 	}
 
 	if handled, encErr := runner.EncodeStdout(cmd.String("format"), report); handled {
