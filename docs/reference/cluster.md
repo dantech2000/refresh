@@ -120,7 +120,7 @@ Examples:
 | `--category string` | — | `UPGRADE_READINESS` | Insight category (UPGRADE_READINESS, MISCONFIGURATION) |
 | `--status string` | — | — | Filter by insight status (PASSING, WARNING, ERROR, UNKNOWN) |
 | `--show-passing` | — | — | Include PASSING insights (hidden by default) |
-| `--id string` | — | — | Show the detail view (recommendation + resources) for a single insight ID |
+| `--id string` | — | — | Show the detail view for one insight — accepts its ID, a short ID prefix (as shown in the table), or a name substring |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
 | `--help, -h` | — | — | show help |
 

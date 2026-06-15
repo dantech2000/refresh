@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -171,6 +172,46 @@ func (s *ServiceImpl) ListInsights(ctx context.Context, clusterName string, opts
 		result = append(result, is)
 	}
 	return result, nil
+}
+
+// ResolveInsightID turns a user-supplied reference — a full insight ID, a short
+// ID prefix (as shown in the upgrade-check table), or a case-insensitive name
+// substring — into a canonical insight ID. It lists all insights (including
+// PASSING) so anything visible in the table can be drilled into. An exact ID
+// wins outright; a single prefix/name match resolves; an ambiguous query errors
+// with the candidates so the user can narrow it down.
+func (s *ServiceImpl) ResolveInsightID(ctx context.Context, clusterName, query string) (string, error) {
+	all, err := s.ListInsights(ctx, clusterName, UpgradeCheckOptions{ShowPassing: true})
+	if err != nil {
+		return "", err
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	var matches []InsightSummary
+	for _, in := range all {
+		if strings.EqualFold(in.ID, query) {
+			return in.ID, nil
+		}
+		if (len(q) >= 4 && strings.HasPrefix(strings.ToLower(in.ID), q)) || strings.Contains(strings.ToLower(in.Name), q) {
+			matches = append(matches, in)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0].ID, nil
+	case 0:
+		return "", fmt.Errorf("no insight matches %q; run with --show-passing to list them", query)
+	default:
+		var b strings.Builder
+		fmt.Fprintf(&b, "%q matches %d insights — narrow it down:", query, len(matches))
+		for _, m := range matches {
+			sid := m.ID
+			if len(sid) > 8 {
+				sid = sid[:8]
+			}
+			fmt.Fprintf(&b, "\n  %-9s %s", sid, m.Name)
+		}
+		return "", errors.New(b.String())
+	}
 }
 
 // DescribeInsight returns the detail view (recommendation, affected resources)
