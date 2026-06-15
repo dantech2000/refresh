@@ -13,6 +13,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -60,6 +61,18 @@ type Snapshot struct {
 	ReadyTarget int        `json:"readyTarget"` // Ready nodes already on the target AMI
 	Draining    int        `json:"draining"`
 	Joining     int        `json:"joining"`
+	// Warnings are recent Kubernetes Warning events scoped to this nodegroup's
+	// nodes — the "why is a node stuck" signal (failed drain/eviction, sandbox
+	// failures) that the coarse lifecycle phases can't show.
+	Warnings []WarnEvent `json:"warnings,omitempty"`
+}
+
+// WarnEvent is a Kubernetes Warning event scoped to a nodegroup node.
+type WarnEvent struct {
+	Node    string `json:"node"`    // the nodegroup node it concerns
+	Object  string `json:"object"`  // involved object, "Kind/name"
+	Reason  string `json:"reason"`  // e.g. FailedDraining, FailedCreatePodSandbox
+	Message string `json:"message"` // human detail (truncated for display)
 }
 
 // Observer yields successive snapshots of a roll. Implementations: a
@@ -139,9 +152,34 @@ func (o *KubeObserver) Snapshot(ctx context.Context) (Snapshot, error) {
 		o.fillPodEviction(ctx, &snap)
 	}
 
+	// Best-effort Warning events scoped to this nodegroup's nodes.
+	nodeSet := make(map[string]bool, len(list.Items))
+	for i := range list.Items {
+		nodeSet[list.Items[i].Name] = true
+	}
+	o.fillWarnings(ctx, &snap, nodeSet)
+
 	// Stable order so renders/golden tests are deterministic.
 	sort.Slice(snap.Nodes, func(i, j int) bool { return snap.Nodes[i].Name < snap.Nodes[j].Name })
 	return snap, nil
+}
+
+// warningWindow bounds how recent a Warning event must be to surface, so the
+// panel shows what's happening during the roll, not stale history.
+const warningWindow = 10 * time.Minute
+
+// fillWarnings lists Warning events and keeps those scoped to the nodegroup's
+// nodes. Best-effort: a list failure leaves Warnings empty (the panel omits the
+// section) rather than failing the snapshot.
+func (o *KubeObserver) fillWarnings(ctx context.Context, snap *Snapshot, nodeSet map[string]bool) {
+	evList, err := o.client.CoreV1().Events(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: "type=Warning",
+		Limit:         200,
+	})
+	if err != nil {
+		return
+	}
+	snap.Warnings = scopeWarnings(evList.Items, nodeSet, time.Now(), warningWindow)
 }
 
 // fillPodEviction counts the evictable pods on each draining node and records
@@ -174,6 +212,77 @@ func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
 		n.Pods = cur
 		n.PodsTotal = o.drainStart[n.Name]
 	}
+}
+
+// scopeWarnings filters cluster Warning events down to those concerning the
+// nodegroup's nodes (involvedObject is one of the nodes, or the event was
+// emitted by a kubelet on one of them) and recent enough to matter, deduped by
+// node+object+reason keeping the latest. Pure for testability.
+func scopeWarnings(events []corev1.Event, nodeSet map[string]bool, now time.Time, window time.Duration) []WarnEvent {
+	type key struct{ node, object, reason string }
+	latest := make(map[key]corev1.Event)
+	order := make([]key, 0)
+
+	for i := range events {
+		e := events[i]
+		if e.Type != "" && e.Type != corev1.EventTypeWarning {
+			continue
+		}
+		node := warningNode(&e, nodeSet)
+		if node == "" {
+			continue // not scoped to this nodegroup
+		}
+		if ts := warningTime(&e); !ts.IsZero() && now.Sub(ts) > window {
+			continue // stale
+		}
+		k := key{node: node, object: e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name, reason: e.Reason}
+		if prev, seen := latest[k]; !seen {
+			order = append(order, k)
+			latest[k] = e
+		} else if warningTime(&e).After(warningTime(&prev)) {
+			latest[k] = e
+		}
+	}
+
+	out := make([]WarnEvent, 0, len(order))
+	for _, k := range order {
+		e := latest[k]
+		out = append(out, WarnEvent{
+			Node:    k.node,
+			Object:  k.object,
+			Reason:  e.Reason,
+			Message: e.Message,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Node != out[j].Node {
+			return out[i].Node < out[j].Node
+		}
+		return out[i].Reason < out[j].Reason
+	})
+	return out
+}
+
+// warningNode returns the nodegroup node an event concerns, or "" if it isn't
+// scoped to one: either the involved object is a Node in the set, or the event
+// was emitted by a kubelet (Source.Host) on a node in the set.
+func warningNode(e *corev1.Event, nodeSet map[string]bool) string {
+	if e.InvolvedObject.Kind == "Node" && nodeSet[e.InvolvedObject.Name] {
+		return e.InvolvedObject.Name
+	}
+	if nodeSet[e.Source.Host] {
+		return e.Source.Host
+	}
+	return ""
+}
+
+// warningTime is the event's most recent occurrence (LastTimestamp, falling
+// back to EventTime).
+func warningTime(e *corev1.Event) time.Time {
+	if !e.LastTimestamp.IsZero() {
+		return e.LastTimestamp.Time
+	}
+	return e.EventTime.Time
 }
 
 // isEvictablePod reports whether a pod counts toward drain progress: DaemonSet
