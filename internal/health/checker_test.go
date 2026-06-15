@@ -75,9 +75,10 @@ func TestDecision_BlockingBeatsWarn(t *testing.T) {
 // aggregateResults is the real aggregation used by RunAllChecks (defined in
 // checker.go); these tests exercise it directly so they don't touch AWS.
 
-func TestAggregate_SkippedCheckExcludedFromScore(t *testing.T) {
-	// A perfect measured cluster with one skipped check (no kube client →
-	// fixed 70) must not be dragged down: score reflects only measured checks.
+func TestAggregate_SkippedCheckExcludedFromScoreAndVerdict(t *testing.T) {
+	// A perfect measured cluster with one skipped check (missing prerequisite,
+	// e.g. no kube client) must not be dragged down OR flipped to WARN: a
+	// skipped check contributes to neither the score nor the verdict. (REF-146)
 	results := []HealthResult{
 		{Status: StatusPass, Score: 100, IsBlocking: false},
 		{Status: StatusPass, Score: 100, IsBlocking: false},
@@ -85,11 +86,28 @@ func TestAggregate_SkippedCheckExcludedFromScore(t *testing.T) {
 	}
 	summary := aggregateResults(results)
 	if summary.OverallScore != 100 {
-		t.Errorf("skipped check should be excluded: score = %d, want 100", summary.OverallScore)
+		t.Errorf("skipped check should be excluded from score: got %d, want 100", summary.OverallScore)
 	}
-	// A skipped WARN still surfaces as a warning in the decision.
+	if summary.Decision != DecisionProceed {
+		t.Errorf("a skipped check must not force WARN: decision = %s, want PROCEED", summary.Decision)
+	}
+	if len(summary.Warnings) != 0 {
+		t.Errorf("skipped check should not surface a warning: %v", summary.Warnings)
+	}
+}
+
+func TestAggregate_RealWarningStillWarns(t *testing.T) {
+	// A genuine (non-skipped) WARN must still drive the verdict — only skipped
+	// checks are excluded.
+	summary := aggregateResults([]HealthResult{
+		{Status: StatusPass, Score: 100},
+		{Status: StatusWarn, Score: 70, Message: "limited capacity"},
+	})
 	if summary.Decision != DecisionWarn {
-		t.Errorf("decision = %s, want WARN", summary.Decision)
+		t.Errorf("decision = %s, want WARN for a real warning", summary.Decision)
+	}
+	if len(summary.Warnings) != 1 {
+		t.Errorf("warnings = %v, want 1", summary.Warnings)
 	}
 }
 

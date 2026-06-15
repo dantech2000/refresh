@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/internal/health"
@@ -54,15 +55,31 @@ func NewDefaultLogger(logger *slog.Logger) *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: defaultLogLevel}))
 }
 
+// newHealthChecker builds a health checker with the AWS-backed clients always
+// wired — including Service Quotas, which needs no cluster access — plus the
+// optional Kubernetes and metrics-server clients. Centralizing construction
+// here keeps every entry point (describe, scale, upgrade) consistent so a check
+// isn't silently skipped just because one command forgot to wire its client.
+func newHealthChecker(awsCfg aws.Config, k8sClient kubernetes.Interface, metricsClient health.NodeMetricsLister) *health.HealthChecker {
+	hc := health.NewChecker(
+		eks.NewFromConfig(awsCfg),
+		k8sClient,
+		cloudwatch.NewFromConfig(awsCfg),
+		autoscaling.NewFromConfig(awsCfg),
+	)
+	hc.SetServiceQuotas(servicequotas.NewFromConfig(awsCfg))
+	if metricsClient != nil {
+		hc.SetNodeMetrics(metricsClient)
+	}
+	return hc
+}
+
 // NewClusterService initializes a cluster service with optional health checking.
 func NewClusterService(awsCfg aws.Config, withHealth bool, logger *slog.Logger) *cluster.ServiceImpl {
 	logger = NewDefaultLogger(logger)
 	var hc *health.HealthChecker
 	if withHealth {
-		eksClient := eks.NewFromConfig(awsCfg)
-		cwClient := cloudwatch.NewFromConfig(awsCfg)
-		asgClient := autoscaling.NewFromConfig(awsCfg)
-		hc = health.NewChecker(eksClient, nil, cwClient, asgClient)
+		hc = newHealthChecker(awsCfg, nil, nil)
 	}
 	return cluster.NewService(awsCfg, hc, logger)
 }
@@ -72,10 +89,7 @@ func NewNodegroupService(awsCfg aws.Config, withHealth bool, logger *slog.Logger
 	logger = NewDefaultLogger(logger)
 	var hc *health.HealthChecker
 	if withHealth {
-		eksClient := eks.NewFromConfig(awsCfg)
-		cwClient := cloudwatch.NewFromConfig(awsCfg)
-		asgClient := autoscaling.NewFromConfig(awsCfg)
-		hc = health.NewChecker(eksClient, nil, cwClient, asgClient)
+		hc = newHealthChecker(awsCfg, nil, nil)
 	}
 	return nodegroup.NewService(awsCfg, hc, logger)
 }
@@ -91,13 +105,9 @@ func NewAddonService(awsCfg aws.Config, logger *slog.Logger) *addons.ServiceImpl
 // kube-dependent signals degrade gracefully). Use this when a command has
 // resolved a --kubeconfig so measured node readiness runs against the right
 // cluster. (REF-130)
-func NewClusterServiceWithHealth(awsCfg aws.Config, k8sClient kubernetes.Interface, logger *slog.Logger) *cluster.ServiceImpl {
+func NewClusterServiceWithHealth(awsCfg aws.Config, k8sClient kubernetes.Interface, metricsClient health.NodeMetricsLister, logger *slog.Logger) *cluster.ServiceImpl {
 	logger = NewDefaultLogger(logger)
-	eksClient := eks.NewFromConfig(awsCfg)
-	cwClient := cloudwatch.NewFromConfig(awsCfg)
-	asgClient := autoscaling.NewFromConfig(awsCfg)
-	hc := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
-	return cluster.NewService(awsCfg, hc, logger)
+	return cluster.NewService(awsCfg, newHealthChecker(awsCfg, k8sClient, metricsClient), logger)
 }
 
 // NewNodegroupServiceWithHealth initializes a nodegroup service whose health
@@ -106,9 +116,5 @@ func NewClusterServiceWithHealth(awsCfg aws.Config, k8sClient kubernetes.Interfa
 // resolved a --kubeconfig so workload/PDB checks run against the right cluster.
 func NewNodegroupServiceWithHealth(awsCfg aws.Config, k8sClient kubernetes.Interface, logger *slog.Logger) *nodegroup.ServiceImpl {
 	logger = NewDefaultLogger(logger)
-	eksClient := eks.NewFromConfig(awsCfg)
-	cwClient := cloudwatch.NewFromConfig(awsCfg)
-	asgClient := autoscaling.NewFromConfig(awsCfg)
-	hc := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
-	return nodegroup.NewService(awsCfg, hc, logger)
+	return nodegroup.NewService(awsCfg, newHealthChecker(awsCfg, k8sClient, nil), logger)
 }
