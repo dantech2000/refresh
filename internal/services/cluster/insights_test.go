@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,6 +141,48 @@ func TestDescribeInsight_Deprecations(t *testing.T) {
 	}
 	if d.ClientStats[1].UserAgent != "kubectl/v1.29.0" || d.ClientStats[1].NumberOfRequestsLast30Days != 12 {
 		t.Errorf("second client stat = %+v", d.ClientStats[1])
+	}
+}
+
+func TestResolveInsightID(t *testing.T) {
+	mock := &mocks.EKSAPI{
+		ListInsightsFn: func(_ context.Context, _ *eks.ListInsightsInput, _ ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+			return &eks.ListInsightsOutput{Insights: []ekstypes.InsightSummary{
+				{Id: aws.String("bc8b2f86-aaaa"), Name: aws.String("Amazon Linux 2 compatibility"), Category: ekstypes.CategoryUpgradeReadiness, InsightStatus: &ekstypes.InsightStatus{Status: ekstypes.InsightStatusValuePassing}},
+				{Id: aws.String("d52457c8-bbbb"), Name: aws.String("Kubelet version skew"), Category: ekstypes.CategoryUpgradeReadiness, InsightStatus: &ekstypes.InsightStatus{Status: ekstypes.InsightStatusValuePassing}},
+				{Id: aws.String("0e6b6f8f-cccc"), Name: aws.String("kube-proxy version skew"), Category: ekstypes.CategoryUpgradeReadiness, InsightStatus: &ekstypes.InsightStatus{Status: ekstypes.InsightStatusValuePassing}},
+				{Id: aws.String("dep12345-dddd"), Name: aws.String("Deprecated APIs removed in 1.33"), Category: ekstypes.CategoryUpgradeReadiness, InsightStatus: &ekstypes.InsightStatus{Status: ekstypes.InsightStatusValueError}},
+			}}, nil
+		},
+	}
+	svc := &ServiceImpl{eksClient: mock}
+	ctx := context.Background()
+
+	cases := []struct{ query, want string }{
+		{"bc8b2f86-aaaa", "bc8b2f86-aaaa"}, // exact ID
+		{"d52457c8", "d52457c8-bbbb"},      // ID prefix
+		{"kubelet", "d52457c8-bbbb"},       // name substring (case-insensitive)
+		{"deprecated", "dep12345-dddd"},    // name substring
+		{"AMAZON LINUX", "bc8b2f86-aaaa"},  // case-insensitive name
+	}
+	for _, c := range cases {
+		got, err := svc.ResolveInsightID(ctx, "prod", c.query)
+		if err != nil {
+			t.Errorf("ResolveInsightID(%q): unexpected error: %v", c.query, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("ResolveInsightID(%q) = %q, want %q", c.query, got, c.want)
+		}
+	}
+
+	// Ambiguous: "skew" matches both version-skew insights → error naming candidates.
+	if _, err := svc.ResolveInsightID(ctx, "prod", "skew"); err == nil || !strings.Contains(err.Error(), "matches 2 insights") {
+		t.Errorf("ambiguous query should error with candidates, got %v", err)
+	}
+	// No match.
+	if _, err := svc.ResolveInsightID(ctx, "prod", "nonexistent-xyz"); err == nil || !strings.Contains(err.Error(), "no insight matches") {
+		t.Errorf("no-match query should error, got %v", err)
 	}
 }
 

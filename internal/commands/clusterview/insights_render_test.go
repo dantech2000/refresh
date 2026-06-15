@@ -10,6 +10,85 @@ import (
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 )
 
+func TestWrapText(t *testing.T) {
+	if got := wrapText("a b c d e", 3); strings.Join(got, "|") != "a b|c d|e" {
+		t.Errorf("wrapText width=3 = %v, want [a b|c d|e]", got)
+	}
+	// Collapses arbitrary whitespace/newlines into a single wrapped paragraph.
+	if got := wrapText("  alpha\n\n  beta   gamma ", 80); strings.Join(got, "|") != "alpha beta gamma" {
+		t.Errorf("wrapText collapse = %v", got)
+	}
+	if got := wrapText("   ", 80); got != nil {
+		t.Errorf("blank input should yield nil, got %v", got)
+	}
+}
+
+func TestInsightDetailLines(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+
+	// AL2-style PASSING insight: rich recommendation + additionalInfo, no
+	// resources, no deprecations (mirrors the real DescribeInsight output).
+	d := &clustersvc.InsightDetail{
+		InsightSummary: clustersvc.InsightSummary{
+			ID: "bc8b2f86-6650-4ee3-a7b9-70dab041a350", Name: "Amazon Linux 2 compatibility",
+			Category: "UPGRADE_READINESS", Status: clustersvc.InsightStatusPassing,
+			StatusReason: "No Amazon Linux 2 nodes detected.", KubernetesVersion: "1.35",
+		},
+		Recommendation: "Migrate all EKS nodes using Amazon Linux 2 AMIs to Bottlerocket or Amazon Linux 2023 AMIs before the deadline.",
+		AdditionalInfo: map[string]string{
+			"Migrating to Amazon Linux 2023": "https://docs.aws.amazon.com/eks/latest/userguide/al2023.html",
+			"Create nodes with Bottlerocket": "https://docs.aws.amazon.com/eks/latest/userguide/eks-optimized-ami-bottlerocket.html",
+		},
+	}
+	joined := strings.Join(insightDetailLines(th, d), "\n")
+	if strings.Contains(joined, "\x1b") {
+		t.Fatalf("ColorNone detail contains ANSI:\n%s", joined)
+	}
+	for _, want := range []string{
+		"Amazon Linux 2 compatibility   ● PASSING",
+		"No Amazon Linux 2 nodes detected.",
+		"▸ OVERVIEW", "category", "targets", "1.35",
+		"▸ RECOMMENDATION", "Migrate all EKS nodes",
+		"▸ MORE INFORMATION",
+		"Migrating to Amazon Linux 2023",
+		"https://docs.aws.amazon.com/eks/latest/userguide/al2023.html",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("detail view missing %q in:\n%s", want, joined)
+		}
+	}
+	// additionalInfo is sorted (deterministic): "Create…" sorts before "Migrating…".
+	if strings.Index(joined, "Create nodes with Bottlerocket") > strings.Index(joined, "Migrating to Amazon Linux 2023") {
+		t.Error("additionalInfo links should be sorted alphabetically")
+	}
+	if strings.Contains(joined, "DEPRECATED APIs") {
+		t.Errorf("no deprecations → no DEPRECATED APIs section:\n%s", joined)
+	}
+}
+
+func TestInsightDetailLines_Deprecations(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	last := time.Date(2026, 6, 14, 9, 30, 0, 0, time.UTC)
+	d := &clustersvc.InsightDetail{
+		InsightSummary: clustersvc.InsightSummary{Name: "Deprecated APIs removed in 1.33", Status: clustersvc.InsightStatusError},
+		Deprecations: []clustersvc.DeprecationDetail{{
+			Usage: "policy/v1beta1 PodDisruptionBudget", ReplacedWith: "policy/v1 PodDisruptionBudget", StopServingVersion: "1.25",
+			ClientStats: []clustersvc.ClientStat{{UserAgent: "newrelic-kube-state-metric/v2", LastRequestTime: &last, NumberOfRequestsLast30Days: 412}},
+		}},
+	}
+	joined := strings.Join(insightDetailLines(th, d), "\n")
+	for _, want := range []string{
+		"▸ DEPRECATED APIs",
+		"policy/v1beta1 PodDisruptionBudget → policy/v1 PodDisruptionBudget (removed in 1.25)",
+		"newrelic-kube-state-metric/v2", "412 req/30d", "last seen 2026-06-14 09:30",
+		"30-day window",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("deprecation detail missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
 func TestUpgradeCheckLines_ControlPlaneGate(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 
