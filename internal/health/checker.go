@@ -113,10 +113,15 @@ func aggregateResults(results []HealthResult) HealthSummary {
 	hasWarnings := false
 
 	for _, result := range results {
-		if !result.Skipped {
-			totalScore += result.Score
-			measuredCount++
+		// A skipped check could not be evaluated (missing prerequisite, e.g. no
+		// Kubernetes/metrics client). It contributes neither to the score nor to
+		// the verdict — otherwise a missing prerequisite would wrongly force a
+		// WARN decision on an otherwise-healthy cluster. (REF-146)
+		if result.Skipped {
+			continue
 		}
+		totalScore += result.Score
+		measuredCount++
 
 		switch {
 		case result.Status == StatusFail && result.IsBlocking:
