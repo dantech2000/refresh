@@ -38,7 +38,7 @@ go test ./... -race # race detector
 CI mirrors this: build, `go vet`, `go test -race` (+ coverage to Codecov),
 `golangci-lint`, and `govulncheck` all run on every PR.
 
-Requires Go 1.26+ (`go.mod` pins `go 1.26.0` / `toolchain go1.26.4`).
+Requires Go 1.26+ (`go.mod` pins `go 1.26.0` / `toolchain go1.26.5`).
 
 ## Architecture
 
