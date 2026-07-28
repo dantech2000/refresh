@@ -17,11 +17,17 @@ jobs:
     if: github.actor == 'dependabot[bot]'
 
     steps:
+      # fetch-metadata v2.4+ verifies the Dependabot commit signature by shelling
+      # out to git, so the repo must be checked out first or it exits 1 with
+      # "fatal: not a git repository".
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       # Authoritative metadata from Dependabot itself — the previous title regex
       # let major bumps through because `.*` swallowed the major component. (REF-60)
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
