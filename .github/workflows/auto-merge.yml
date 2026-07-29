@@ -80,8 +80,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          echo "Test + Lint passed. Auto-merging Dependabot PR..."
-          gh pr merge ${{ github.event.pull_request.number }} --auto --squash --delete-branch
+          echo "Test + Lint passed. Merging Dependabot PR..."
+          # A direct merge, NOT `--auto`. GitHub's auto-merge is disabled on this
+          # repo (allow_auto_merge=false), so `--auto` failed with "Auto merge is
+          # not allowed for this repository (enablePullRequestAutoMerge)" whenever
+          # the PR was not already mergeable — which is why dep PRs piled up.
+          # Enabling the repo setting would be the other fix, but it is worse: with
+          # no branch protection there are no REQUIRED checks, so repo-wide
+          # auto-merge would merge any PR the moment it is mergeable, checks or not.
+          # We do not need it — the two wait-for-check gates above already prove
+          # Test and Lint passed before we get here, so merging now is equivalent
+          # and fails loudly on conflict instead of queueing silently.
+          gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch
 
       - name: Comment on non-eligible PR
         if: steps.check.outputs.eligible == 'false'
