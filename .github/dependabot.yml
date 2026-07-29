@@ -12,9 +12,14 @@ updates:
       - "dantech2000"
     assignees:
       - "dantech2000"
+    # `fix` on purpose: Go modules are compiled into the shipped binary, so a
+    # bump IS user-facing. `include: scope` appends a literal "(deps)", giving
+    # `fix(deps): bump ...` — the only prefix here that release-please treats as
+    # releasable, so dependency merges cut a patch release. (Dropped the old
+    # `deps` prefix: it produced `deps(deps):`, which release-please ignores,
+    # and `prefix-development`, which gomod does not support at all.)
     commit-message:
-      prefix: "deps"
-      prefix-development: "deps(dev)"
+      prefix: "fix"
       include: "scope"
     labels:
       - "dependencies"
@@ -44,6 +49,9 @@ updates:
       - "dantech2000"
     assignees:
       - "dantech2000"
+    # Deliberately NOT `fix`: action bumps only touch CI, never the released
+    # binary, so they must not cut a release. `ci` is absent from
+    # release-please-config.json's changelog-sections, so these are inert.
     commit-message:
       prefix: "ci"
       include: "scope"
@@ -53,7 +61,12 @@ updates:
 
   # Docs site Python deps (Material for MkDocs) — keep the hash-locked tree
   # reviewed rather than silently floating. (REF-107)
-  - package-ecosystem: "pip"
+  #
+  # Must be `uv`, not `pip`: they are separate ecosystems, and `pip` does not
+  # cover a uv.lock tree. With only a `pip` block here, the uv job ran with NO
+  # commit-message config and Dependabot inferred `chore(deps):` from git
+  # history instead — which is exactly what PR #72 was titled.
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -64,8 +77,12 @@ updates:
       - "dantech2000"
     assignees:
       - "dantech2000"
+    # `docs`, not `fix`: MkDocs deps build the docs site, not the CLI binary,
+    # so they must not cut a release. Also not `deps(docs)` — a prefix that
+    # already contains a scope collides with `include: scope` and yields the
+    # unparseable `deps(docs)(deps):`.
     commit-message:
-      prefix: "deps(docs)"
+      prefix: "docs"
       include: "scope"
     labels:
       - "dependencies"
