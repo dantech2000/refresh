@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/dantech2000/refresh/compare/v0.9.0...v0.9.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **ci:** repair invalid dependabot.yml allow block ([#77](https://github.com/dantech2000/refresh/issues/77)) ([1e4c851](https://github.com/dantech2000/refresh/commit/1e4c851385ed9b329bddc7efa82a120d4d483223))
+* rebuild release binaries against patched x/text and Go 1.26.5 ([4185a11](https://github.com/dantech2000/refresh/commit/4185a1170db8c640a43194d161b7cfffcb4d520b))
+
 ## [0.9.0](https://github.com/dantech2000/refresh/compare/v0.8.0...v0.9.0) (2026-06-15)
 
 
