@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.2](https://github.com/dantech2000/refresh/compare/v0.9.1...v0.9.2) (2026-07-29)
+
+
+### Bug Fixes
+
+* **ci:** merge Dependabot PRs as a user so CI and releases trigger ([#99](https://github.com/dantech2000/refresh/issues/99)) ([ab21bd1](https://github.com/dantech2000/refresh/commit/ab21bd1351b781651efd024fbf18a4b19ed303d1))
+* **ci:** merge Dependabot PRs directly instead of via --auto ([#104](https://github.com/dantech2000/refresh/issues/104)) ([20e704f](https://github.com/dantech2000/refresh/commit/20e704fb2672af66605482c9678e0d273b589e0f))
+* **deps:** bump atomicgo.dev/keyboard from 0.2.9 to 0.2.10 ([#82](https://github.com/dantech2000/refresh/issues/82)) ([65b2c91](https://github.com/dantech2000/refresh/commit/65b2c91322a156775a185718b7ca92050d8d49b6))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/feature/ec2/imds ([#94](https://github.com/dantech2000/refresh/issues/94)) ([da5d330](https://github.com/dantech2000/refresh/commit/da5d330a62f96c47680450b9a0f906d55ac0cd3a))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#95](https://github.com/dantech2000/refresh/issues/95)) ([b6e8b05](https://github.com/dantech2000/refresh/commit/b6e8b05f65de51e9891f64f328d86331f6a42dd8))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding ([#100](https://github.com/dantech2000/refresh/issues/100)) ([37f1d0f](https://github.com/dantech2000/refresh/commit/37f1d0fbd8883827dc0411643ac4c3a3d5111483))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#90](https://github.com/dantech2000/refresh/issues/90)) ([698e701](https://github.com/dantech2000/refresh/commit/698e701f75ca9b231131ceb1d0a6f04020151459))
+* **deps:** bump github.com/gookit/color from 1.6.0 to 1.6.1 ([#91](https://github.com/dantech2000/refresh/issues/91)) ([7e40ff9](https://github.com/dantech2000/refresh/commit/7e40ff9c6d2527ddcf60be220458c36034e100c7))
+* **deps:** bump github.com/mattn/go-colorable from 0.1.14 to 0.1.15 ([#86](https://github.com/dantech2000/refresh/issues/86)) ([42064a3](https://github.com/dantech2000/refresh/commit/42064a33f9c761103f5cf75c564e155006d4abd4))
+* **deps:** bump github.com/mattn/go-isatty from 0.0.22 to 0.0.24 ([#81](https://github.com/dantech2000/refresh/issues/81)) ([fb059dc](https://github.com/dantech2000/refresh/commit/fb059dc32e83a719f533f2dc8b6c5fadd36a79de))
+* **deps:** bump github.com/urfave/cli/v3 from 3.9.1 to 3.10.1 ([#80](https://github.com/dantech2000/refresh/issues/80)) ([7f989e8](https://github.com/dantech2000/refresh/commit/7f989e8e83f9d3158b82ec8ef7ea699bb6db2b71))
+* **deps:** bump golang.org/x/sys from 0.46.0 to 0.47.0 ([#88](https://github.com/dantech2000/refresh/issues/88)) ([b368ce3](https://github.com/dantech2000/refresh/commit/b368ce3433bfce95f5f8a9814de4cd6db0db87c6))
+* **deps:** bump k8s.io/metrics from 0.36.2 to 0.36.3 ([#89](https://github.com/dantech2000/refresh/issues/89)) ([baa5d17](https://github.com/dantech2000/refresh/commit/baa5d179fd1e10d68cf274ee0ef6dc1b5891e13d))
+
 ## [0.9.1](https://github.com/dantech2000/refresh/compare/v0.9.0...v0.9.1) (2026-07-29)
 
 
