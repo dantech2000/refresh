@@ -65,13 +65,20 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           timeoutSeconds: 900
 
+      # GH_PAT, not GITHUB_TOKEN, and ONLY on this step. GitHub does not trigger
+      # workflows from pushes made with GITHUB_TOKEN (its recursion guard), so
+      # merging with it lands dep bumps on main with NO Test/Lint run and NO
+      # Release Please run — meaning `fix(deps)` commits never cut a release.
+      # Merging as a real user restores both. release-please.yml uses GH_PAT for
+      # the same reason. Every other step here stays on the scoped, auto-rotating
+      # GITHUB_TOKEN — they only read metadata and checks.
       - name: Auto-merge Dependabot PR
         if: |
           steps.check.outputs.eligible == 'true' &&
           steps.wait-test.outputs.conclusion == 'success' &&
           steps.wait-lint.outputs.conclusion == 'success'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           echo "Test + Lint passed. Auto-merging Dependabot PR..."
           gh pr merge ${{ github.event.pull_request.number }} --auto --squash --delete-branch
