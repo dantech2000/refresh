@@ -17,7 +17,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/aws/smithy-go v1.27.2
 	github.com/fatih/color v1.19.0
-	github.com/mattn/go-isatty v0.0.22
+	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/pterm/pterm v0.12.83
 	github.com/urfave/cli-docs/v3 v3.1.0
