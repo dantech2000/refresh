@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.3](https://github.com/dantech2000/refresh/compare/v0.9.2...v0.9.3) (2026-07-29)
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/aws/aws-sdk-go-v2/credentials ([#103](https://github.com/dantech2000/refresh/issues/103)) ([2ab65ca](https://github.com/dantech2000/refresh/commit/2ab65ca04514c89513c97e0a9c63d9aa6fa758d6))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#96](https://github.com/dantech2000/refresh/issues/96)) ([bf5dcc9](https://github.com/dantech2000/refresh/commit/bf5dcc929217c3ccbef1ed453c0c265439785baa))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/iam ([#102](https://github.com/dantech2000/refresh/issues/102)) ([c5c287e](https://github.com/dantech2000/refresh/commit/c5c287e41ff22cdd7ff19664f7b12fa6ea0501bb))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#98](https://github.com/dantech2000/refresh/issues/98)) ([1997913](https://github.com/dantech2000/refresh/commit/199791391ce436ad989122794ab96ec89e83effb))
+* **deps:** bump github.com/go-openapi/swag from 0.23.0 to 0.28.0 ([#83](https://github.com/dantech2000/refresh/issues/83)) ([174d24d](https://github.com/dantech2000/refresh/commit/174d24d4cbc5d801e4e2df27ddc2562320f65f9c))
+
 ## [0.9.2](https://github.com/dantech2000/refresh/compare/v0.9.1...v0.9.2) (2026-07-29)
 
 
