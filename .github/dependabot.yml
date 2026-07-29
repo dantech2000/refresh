@@ -24,14 +24,14 @@ updates:
     labels:
       - "dependencies"
       - "go"
-    # Auto-merge patch and minor updates for Go modules
+    # `allow` accepts only dependency-name / dependency-type — it cannot filter
+    # by update type, and the `update-type` keys that used to live here made the
+    # WHOLE file unparseable, so none of it applied. Patch/minor gating is
+    # enforced where it actually belongs: auto-merge.yml reads update-type from
+    # dependabot/fetch-metadata and only merges patch and minor.
     allow:
       - dependency-type: "direct"
-        update-type: "version-update:semver-patch"
-      - dependency-type: "direct"  
-        update-type: "version-update:semver-minor"
       - dependency-type: "indirect"
-        update-type: "version-update:semver-patch"
     ignore:
       # Ignore major version updates for critical dependencies
       - dependency-name: "github.com/aws/aws-sdk-go-v2/*"
