@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.0
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.307.0
 	github.com/aws/aws-sdk-go-v2/service/eks v1.86.0
-	github.com/aws/aws-sdk-go-v2/service/iam v1.56.1
+	github.com/aws/aws-sdk-go-v2/service/iam v1.57.0
 	github.com/aws/aws-sdk-go-v2/service/servicequotas v1.37.1
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.2
