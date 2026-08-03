@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eks v1.86.0
 	github.com/aws/aws-sdk-go-v2/service/iam v1.56.1
 	github.com/aws/aws-sdk-go-v2/service/servicequotas v1.37.1
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.1
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.2
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.2
 	github.com/aws/smithy-go v1.27.5
 	github.com/fatih/color v1.19.0
