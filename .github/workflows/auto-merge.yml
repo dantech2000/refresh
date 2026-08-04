@@ -79,6 +79,7 @@ jobs:
           steps.wait-lint.outputs.conclusion == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           echo "Test + Lint passed. Merging Dependabot PR..."
           # A direct merge, NOT `--auto`. GitHub's auto-merge is disabled on this
@@ -91,7 +92,41 @@ jobs:
           # We do not need it — the two wait-for-check gates above already prove
           # Test and Lint passed before we get here, so merging now is equivalent
           # and fails loudly on conflict instead of queueing silently.
-          gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch
+          #
+          # Retried, because `mergePullRequest` rejects with "Base branch was
+          # modified" when another PR lands on main between GitHub computing
+          # mergeability and this call — a real race whenever several Dependabot
+          # PRs are in flight at once (it stranded #115). The failure is transient:
+          # GitHub recomputes the merge on the next attempt. A retry matters more
+          # here than elsewhere because nothing re-drives a stranded PR — this
+          # workflow only fires on opened/synchronize/reopened, so a PR that loses
+          # the race sits open until someone merges it by hand.
+          for attempt in 1 2 3 4 5; do
+            if gh pr merge "$PR" --squash --delete-branch; then
+              echo "Merged on attempt ${attempt}."
+              exit 0
+            fi
+
+            # Someone (or a concurrent run) got there first — not an error.
+            if [ "$(gh pr view "$PR" --json state -q .state)" = "MERGED" ]; then
+              echo "PR #${PR} is already merged."
+              exit 0
+            fi
+
+            # A genuine conflict will not resolve by retrying. Dependabot rebases
+            # itself and re-fires this workflow, so bail out and let it.
+            mergeable="$(gh pr view "$PR" --json mergeable -q .mergeable)"
+            if [ "$mergeable" = "CONFLICTING" ]; then
+              echo "::error::PR #${PR} has merge conflicts; leaving it for Dependabot to rebase."
+              exit 1
+            fi
+
+            echo "Merge attempt ${attempt} failed (mergeable=${mergeable}); retrying in $((attempt * 10))s..."
+            sleep $((attempt * 10))
+          done
+
+          echo "::error::Could not merge PR #${PR} after 5 attempts."
+          exit 1
 
       - name: Comment on non-eligible PR
         if: steps.check.outputs.eligible == 'false'
