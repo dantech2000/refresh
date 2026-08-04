@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.9.4](https://github.com/dantech2000/refresh/compare/v0.9.3...v0.9.4) (2026-08-04)
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/aws/aws-sdk-go-v2/config ([#110](https://github.com/dantech2000/refresh/issues/110)) ([99c0d1b](https://github.com/dantech2000/refresh/commit/99c0d1bf4b8e1776ad33079644d845cafd9e0c87))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#109](https://github.com/dantech2000/refresh/issues/109)) ([6e09815](https://github.com/dantech2000/refresh/commit/6e09815e583f3d5791901be57693e36b330dc6f5))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#136](https://github.com/dantech2000/refresh/issues/136)) ([2528d8b](https://github.com/dantech2000/refresh/commit/2528d8b56655b3885108788194cfc2c8f3a86cfc))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#128](https://github.com/dantech2000/refresh/issues/128)) ([1e2b7bb](https://github.com/dantech2000/refresh/commit/1e2b7bb7cd088841f4213f56552ed8709c34c842))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#127](https://github.com/dantech2000/refresh/issues/127)) ([e0a10b6](https://github.com/dantech2000/refresh/commit/e0a10b665885cd9fec981c9b5e0128bac198052d))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/iam ([#130](https://github.com/dantech2000/refresh/issues/130)) ([db73a5d](https://github.com/dantech2000/refresh/commit/db73a5d202356dc31fa183d27d9f04f2fb2a961d))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#138](https://github.com/dantech2000/refresh/issues/138)) ([b5d2d50](https://github.com/dantech2000/refresh/commit/b5d2d504ef2cf53fbe1ecb07bd2c0ecf9b07db6d))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#135](https://github.com/dantech2000/refresh/issues/135)) ([d7efe75](https://github.com/dantech2000/refresh/commit/d7efe75886a0a2954d021684d1d91ba668e1554f))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssooidc ([#113](https://github.com/dantech2000/refresh/issues/113)) ([c6d6c19](https://github.com/dantech2000/refresh/commit/c6d6c19b0e05bfdd4039b436a92484b92db022fb))
+* **deps:** bump github.com/cpuguy83/go-md2man/v2 from 2.0.5 to 2.0.7 ([#115](https://github.com/dantech2000/refresh/issues/115)) ([d6eda9d](https://github.com/dantech2000/refresh/commit/d6eda9d0d4a02c93545e8cfe2749324ca10904ca))
+* **deps:** bump github.com/fxamacker/cbor/v2 from 2.9.0 to 2.9.2 ([#107](https://github.com/dantech2000/refresh/issues/107)) ([e1040f3](https://github.com/dantech2000/refresh/commit/e1040f38aa00bf233953218e725212db02727191))
+* **deps:** bump github.com/go-logr/logr from 1.4.3 to 1.4.4 ([#108](https://github.com/dantech2000/refresh/issues/108)) ([d41f02e](https://github.com/dantech2000/refresh/commit/d41f02e923a798cccb4f9b47c5da79c3c5b97862))
+* **deps:** bump github.com/go-openapi/jsonreference from 0.20.2 to 1.0.0 ([#118](https://github.com/dantech2000/refresh/issues/118)) ([89146fb](https://github.com/dantech2000/refresh/commit/89146fb5885ff35b53d1f150614f62ef55c21aa2))
+* **deps:** bump github.com/google/gnostic-models from 0.7.0 to 0.7.1 ([#129](https://github.com/dantech2000/refresh/issues/129)) ([6dca213](https://github.com/dantech2000/refresh/commit/6dca21314078f288714210b42bee7fe1a3be34f8))
+* **deps:** bump github.com/mattn/go-runewidth from 0.0.24 to 0.0.27 ([#132](https://github.com/dantech2000/refresh/issues/132)) ([c5678b9](https://github.com/dantech2000/refresh/commit/c5678b9678edd9d340111f362df8bf5580f90d84))
+* **deps:** bump github.com/spf13/pflag from 1.0.9 to 1.0.10 ([#121](https://github.com/dantech2000/refresh/issues/121)) ([90d3e4f](https://github.com/dantech2000/refresh/commit/90d3e4f4d6cc11e56022dafb06dbd7b028b1ebb9))
+* **deps:** bump go.yaml.in/yaml/v2 from 2.4.3 to 2.4.4 ([#134](https://github.com/dantech2000/refresh/issues/134)) ([55466fc](https://github.com/dantech2000/refresh/commit/55466fc2c49f4c5490bbe5c062a00f1c1f2fb23f))
+* **deps:** bump go.yaml.in/yaml/v3 from 3.0.4 to 3.0.5 ([#131](https://github.com/dantech2000/refresh/issues/131)) ([a6706da](https://github.com/dantech2000/refresh/commit/a6706da92673a5bb8223d93c8684068318237983))
+* **deps:** bump golang.org/x/net from 0.56.0 to 0.57.0 ([#116](https://github.com/dantech2000/refresh/issues/116)) ([b7a4eaa](https://github.com/dantech2000/refresh/commit/b7a4eaaebcb1f880b825b7e1393359d1d3b3783a))
+* **deps:** bump golang.org/x/oauth2 from 0.34.0 to 0.36.0 ([#137](https://github.com/dantech2000/refresh/issues/137)) ([3895d73](https://github.com/dantech2000/refresh/commit/3895d737cc9096703aea7b49d93bf7d28589c9cb))
+* **deps:** bump golang.org/x/term from 0.44.0 to 0.45.0 ([#117](https://github.com/dantech2000/refresh/issues/117)) ([0ff15ae](https://github.com/dantech2000/refresh/commit/0ff15aebbe9f4b0153d1d55afe04f3670ec79dd7))
+* **deps:** bump golang.org/x/time from 0.14.0 to 0.15.0 ([#111](https://github.com/dantech2000/refresh/issues/111)) ([62ea4cc](https://github.com/dantech2000/refresh/commit/62ea4cc9576e0678fe424f5bf0bab3cfbef796fe))
+* **deps:** bump sigs.k8s.io/structured-merge-diff/v6 from 6.3.3 to 6.4.2 ([#126](https://github.com/dantech2000/refresh/issues/126)) ([e965a8a](https://github.com/dantech2000/refresh/commit/e965a8aff6561b265804936875917ba7fc1b05a7))
+
 ## [0.9.3](https://github.com/dantech2000/refresh/compare/v0.9.2...v0.9.3) (2026-07-29)
 
 
