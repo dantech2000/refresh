@@ -192,6 +192,16 @@ refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one re
     Without a TTY **and** without `--yes`, a run that would otherwise prompt
     fails fast. For cron, pair `--yes` with `--require-healthy` and `-o json`.
 
+!!! note "Kubernetes access for the live roll view"
+    During a roll, `refresh` renders a live per-node panel (draining / joining /
+    Ready, pod-eviction progress, Warning events) read from the Kubernetes API
+    via `--kubeconfig`. It needs the `list` verb on nodes, pods, and events;
+    granting `watch` as well upgrades it to streaming, so node transitions
+    appear as they happen instead of on the next poll. Access is optional and
+    degrades gracefully: without `watch` the panel polls, and without any
+    Kubernetes access the roll still runs — you just get the coarse EKS update
+    status instead of per-node detail.
+
 ### Exit-code contract
 
 `nodegroup update` returns a meaningful exit code so unattended runs can branch:

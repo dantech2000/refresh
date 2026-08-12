@@ -223,6 +223,11 @@ with the hop target) → nodegroup rolls.
     A dry-run (or any run) whose plan contains a **blocker** prints the plan and
     exits non-zero without mutating — handy as a readiness gate in CI.
 
+!!! note "Kubernetes access for the live roll view"
+    The nodegroup phase renders the same live per-node roll panel as
+    [`nodegroup update`](nodegroup.md#update); see that page for the Kubernetes
+    RBAC it uses (`list` on nodes/pods/events, plus `watch` for streaming).
+
 ### Examples
 
 ```bash

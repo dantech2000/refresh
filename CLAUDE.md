@@ -74,7 +74,12 @@ real time (nodes draining/joining/terminating) from live Kubernetes Node state â
 the per-node truth EKS's coarse `DescribeUpdate` can't give. `KubeObserver`
 scopes by the `eks.amazonaws.com/nodegroup` label and classifies by Ready /
 cordon-or-drain-taint, with old-vs-new from either the `nodegroup-image` AMI
-label or a roll-start `CaptureBaseline`. `Tracker` diffs snapshots into a
+label or a roll-start `CaptureBaseline`. It is watch-backed when possible
+(`StartInformers`: one informer stream per resource, snapshots read the local
+cache) and falls back to per-poll List calls when informers can't start â€” the
+watch is an upgrade, never a requirement. Note this applies only to the
+repeatedly-polled live view; one-shot reads (pre-flight health checks,
+`--check-pdbs`, post-roll verify) correctly stay as single List calls. `Tracker` diffs snapshots into a
 lifecycle event feed. Testable with **zero AWS / zero cluster** via
 `client-go/kubernetes/fake` (see `observer_test.go`) and a `ScriptedObserver`
 (`DemoTimeline`). `refresh nodegroup update --simulate` (hidden flag) drives the

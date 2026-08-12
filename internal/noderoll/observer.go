@@ -17,6 +17,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -96,6 +97,9 @@ type KubeObserver struct {
 	// drainStart remembers the evictable-pod count when a node first appears
 	// Draining, so the panel can show evicted/total as pods leave.
 	drainStart map[string]int
+	// inf, when set (StartInformers), serves reads from informer caches fed by
+	// watch streams instead of issuing List calls per snapshot.
+	inf *informerSet
 }
 
 // NewKubeObserver returns an Observer for nodegroup, treating targetAMI as the
@@ -108,32 +112,49 @@ func NewKubeObserver(client kubernetes.Interface, nodegroup, targetAMI string) *
 // nodes appearing afterward count as the new (on-target) nodes — for live rolls
 // where the target AMI ID isn't known in advance.
 func (o *KubeObserver) CaptureBaseline(ctx context.Context) error {
+	nodes, err := o.listNodes(ctx)
+	if err != nil {
+		return err
+	}
+	o.baseline = make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		o.baseline[n.Name] = true
+	}
+	return nil
+}
+
+// listNodes returns the nodegroup's nodes: from the informer cache when
+// watching, else via a label-scoped List call.
+func (o *KubeObserver) listNodes(ctx context.Context) ([]*corev1.Node, error) {
+	if o.inf != nil {
+		// The node informer's cache is already scoped to the nodegroup by its
+		// factory's label-selector tweak.
+		return o.inf.nodes.List(labels.Everything())
+	}
 	list, err := o.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 		LabelSelector: LabelNodegroup + "=" + o.nodegroup,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	o.baseline = make(map[string]bool, len(list.Items))
+	nodes := make([]*corev1.Node, len(list.Items))
 	for i := range list.Items {
-		o.baseline[list.Items[i].Name] = true
+		nodes[i] = &list.Items[i]
 	}
-	return nil
+	return nodes, nil
 }
 
 // Snapshot lists the nodegroup's nodes and classifies each. Nodes from other
 // nodegroups are excluded by the label selector.
 func (o *KubeObserver) Snapshot(ctx context.Context) (Snapshot, error) {
-	list, err := o.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{
-		LabelSelector: LabelNodegroup + "=" + o.nodegroup,
-	})
+	nodes, err := o.listNodes(ctx)
 	if err != nil {
 		return Snapshot{}, err
 	}
 
 	var snap Snapshot
-	for i := range list.Items {
-		v := classify(&list.Items[i], o.targetAMI, o.baseline)
+	for _, n := range nodes {
+		v := classify(n, o.targetAMI, o.baseline)
 		snap.Nodes = append(snap.Nodes, v)
 		snap.Total++
 		switch v.Phase {
@@ -153,9 +174,9 @@ func (o *KubeObserver) Snapshot(ctx context.Context) (Snapshot, error) {
 	}
 
 	// Best-effort Warning events scoped to this nodegroup's nodes.
-	nodeSet := make(map[string]bool, len(list.Items))
-	for i := range list.Items {
-		nodeSet[list.Items[i].Name] = true
+	nodeSet := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		nodeSet[n.Name] = true
 	}
 	o.fillWarnings(ctx, &snap, nodeSet)
 
@@ -172,27 +193,48 @@ const warningWindow = 10 * time.Minute
 // nodes. Best-effort: a list failure leaves Warnings empty (the panel omits the
 // section) rather than failing the snapshot.
 func (o *KubeObserver) fillWarnings(ctx context.Context, snap *Snapshot, nodeSet map[string]bool) {
+	events, err := o.listWarningEvents(ctx)
+	if err != nil {
+		return
+	}
+	snap.Warnings = scopeWarnings(events, nodeSet, time.Now(), warningWindow)
+}
+
+// listWarningEvents returns cluster Warning events: from the informer cache
+// when watching (its factory tweak pre-filters to type=Warning), else via a
+// bounded List call.
+func (o *KubeObserver) listWarningEvents(ctx context.Context) ([]corev1.Event, error) {
+	if o.inf != nil {
+		ptrs, err := o.inf.events.List(labels.Everything())
+		if err != nil {
+			return nil, err
+		}
+		events := make([]corev1.Event, len(ptrs))
+		for i := range ptrs {
+			events[i] = *ptrs[i]
+		}
+		return events, nil
+	}
 	evList, err := o.client.CoreV1().Events(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
 		FieldSelector: "type=Warning",
 		Limit:         200,
 	})
 	if err != nil {
-		return
+		return nil, err
 	}
-	snap.Warnings = scopeWarnings(evList.Items, nodeSet, time.Now(), warningWindow)
+	return evList.Items, nil
 }
 
 // fillPodEviction counts the evictable pods on each draining node and records
 // the count at drain start, so the panel can show evicted/total. Best-effort:
 // a list failure leaves the pod fields zero (the panel just omits the bar).
 func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
-	pods, err := o.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	pods, err := o.listPods(ctx)
 	if err != nil {
 		return
 	}
 	counts := make(map[string]int)
-	for i := range pods.Items {
-		p := &pods.Items[i]
+	for _, p := range pods {
 		if isEvictablePod(p) {
 			counts[p.Spec.NodeName]++
 		}
@@ -212,6 +254,24 @@ func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
 		n.Pods = cur
 		n.PodsTotal = o.drainStart[n.Name]
 	}
+}
+
+// listPods returns all pods in the cluster (drain accounting needs pods on
+// every draining node, whatever their namespace): from the informer cache when
+// watching, else via a List call.
+func (o *KubeObserver) listPods(ctx context.Context) ([]*corev1.Pod, error) {
+	if o.inf != nil {
+		return o.inf.pods.List(labels.Everything())
+	}
+	list, err := o.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	pods := make([]*corev1.Pod, len(list.Items))
+	for i := range list.Items {
+		pods[i] = &list.Items[i]
+	}
+	return pods, nil
 }
 
 // scopeWarnings filters cluster Warning events down to those concerning the
