@@ -21,10 +21,16 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-// liveRollPoll is how often the live roll panel re-reads cluster state. Kept
-// snappy (vs the EKS --poll-interval) so the view feels live, while staying
-// cheap: a node + pod list every few seconds.
+// liveRollPoll is how often the live roll panel re-reads cluster state when
+// the observer polls with List calls. Kept snappy (vs the EKS --poll-interval)
+// so the view feels live, while staying cheap: a node + pod list every few
+// seconds.
 const liveRollPoll = 3 * time.Second
+
+// liveRollWatchRepaint is the repaint cadence when the observer is
+// watch-backed (informers): snapshots read a local cache, so repainting faster
+// costs no API calls.
+const liveRollWatchRepaint = 1 * time.Second
 
 // rollMeta is the static context for a live roll panel.
 type rollMeta struct {
@@ -243,6 +249,11 @@ func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup
 		return
 	}
 	obs := noderoll.NewKubeObserver(kube, nodegroup, "")
+	// Prefer watch streams (informers) over per-poll List calls: node/pod/event
+	// changes surface as they happen, and API load drops to one stream per
+	// resource. On failure (e.g. RBAC without watch) the observer just polls.
+	watching := obs.StartInformers(ctx) == nil
+	defer obs.StopInformers()
 	if err := obs.CaptureBaseline(ctx); err != nil {
 		return // can't read the cluster — degrade to the standard monitor
 	}
@@ -252,9 +263,13 @@ func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup
 	}
 	desired := snap0.Total
 
+	defaultPoll := liveRollPoll
+	if watching {
+		defaultPoll = liveRollWatchRepaint
+	}
 	poll := pollInterval
 	if poll <= 0 || poll > liveRollPoll {
-		poll = liveRollPoll
+		poll = defaultPoll
 	}
 	rollCtx := ctx
 	if timeout > 0 {
