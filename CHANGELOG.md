@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.10.0](https://github.com/dantech2000/refresh/compare/v0.9.4...v0.10.0) (2026-08-12)
+
+
+### Features
+
+* **noderoll:** watch-backed live roll view via informers ([#163](https://github.com/dantech2000/refresh/issues/163)) ([a87cb49](https://github.com/dantech2000/refresh/commit/a87cb491d02810c6f01b4313a2558ac8d541be79))
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/aws/aws-sdk-go-v2 from 1.43.2 to 1.43.4 ([#154](https://github.com/dantech2000/refresh/issues/154)) ([f41ad21](https://github.com/dantech2000/refresh/commit/f41ad210798d8977a533c38378fbcbaa0e257bed))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/config ([#145](https://github.com/dantech2000/refresh/issues/145)) ([e88f872](https://github.com/dantech2000/refresh/commit/e88f872bb443888ed904db71e2770245bb828dfa))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/feature/ec2/imds ([#150](https://github.com/dantech2000/refresh/issues/150)) ([e5894d7](https://github.com/dantech2000/refresh/commit/e5894d7af184c09f4b646535384918b1b9f654e8))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/internal/v4a ([#156](https://github.com/dantech2000/refresh/issues/156)) ([955d23b](https://github.com/dantech2000/refresh/commit/955d23b8a9e1d48ce24e790b69d751bf8cee97cb))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#158](https://github.com/dantech2000/refresh/issues/158)) ([1d2fdcf](https://github.com/dantech2000/refresh/commit/1d2fdcff14140b8394d1990e038f714be63dddee))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#148](https://github.com/dantech2000/refresh/issues/148)) ([c1b531c](https://github.com/dantech2000/refresh/commit/c1b531ca20fbc34ddb0eafdf69477cafa9db4e21))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#144](https://github.com/dantech2000/refresh/issues/144)) ([cb75e83](https://github.com/dantech2000/refresh/commit/cb75e83d1133618b58f46aa3816f05a33e226e17))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/iam ([#151](https://github.com/dantech2000/refresh/issues/151)) ([c265aa6](https://github.com/dantech2000/refresh/commit/c265aa6b9ba8a9791dfa08d3991e5a280753eb48))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding ([#155](https://github.com/dantech2000/refresh/issues/155)) ([7f7af70](https://github.com/dantech2000/refresh/commit/7f7af7011b31d909ea871df07ecba0b13defb91f))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/internal/presigned-url ([#160](https://github.com/dantech2000/refresh/issues/160)) ([7c84510](https://github.com/dantech2000/refresh/commit/7c84510ac5cc1ac66d807f88f4ebdb9ceb57989b))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#162](https://github.com/dantech2000/refresh/issues/162)) ([5aa2673](https://github.com/dantech2000/refresh/commit/5aa2673fa3018067a45cc1fec299402c4b641b47))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/signin ([#147](https://github.com/dantech2000/refresh/issues/147)) ([6148007](https://github.com/dantech2000/refresh/commit/614800734f5d6c2d8dd4e62b2d3cdf824e243ac0))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#161](https://github.com/dantech2000/refresh/issues/161)) ([5081971](https://github.com/dantech2000/refresh/commit/5081971dc24a348e3b53a8f7467300b4f7d6b167))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sso ([#142](https://github.com/dantech2000/refresh/issues/142)) ([cccfb0a](https://github.com/dantech2000/refresh/commit/cccfb0aedb7616faae984c9b8c64a89e9fe5c494))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssooidc ([#159](https://github.com/dantech2000/refresh/issues/159)) ([74d57b0](https://github.com/dantech2000/refresh/commit/74d57b034029b9e8b96b2631af3abac40fdd430c))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sts ([#157](https://github.com/dantech2000/refresh/issues/157)) ([bb1c06c](https://github.com/dantech2000/refresh/commit/bb1c06c17a69df6e26280f60ae823f4a3b00e64b))
+* **deps:** bump github.com/aws/smithy-go from 1.27.5 to 1.27.6 ([#153](https://github.com/dantech2000/refresh/issues/153)) ([a42269e](https://github.com/dantech2000/refresh/commit/a42269e15acddfdc9b1a286f3bfd91b5db76f31a))
+
 ## [0.9.4](https://github.com/dantech2000/refresh/compare/v0.9.3...v0.9.4) (2026-08-04)
 
 
