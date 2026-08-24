@@ -55,7 +55,7 @@ require (
 	github.com/go-openapi/swag v0.28.0 // indirect
 	github.com/go-openapi/swag/cmdutils v0.29.0 // indirect
 	github.com/go-openapi/swag/conv v0.29.0 // indirect
-	github.com/go-openapi/swag/fileutils v0.28.0 // indirect
+	github.com/go-openapi/swag/fileutils v0.29.0 // indirect
 	github.com/go-openapi/swag/jsonutils v0.29.0 // indirect
 	github.com/go-openapi/swag/loading v0.29.0 // indirect
 	github.com/go-openapi/swag/mangling v0.29.0 // indirect
