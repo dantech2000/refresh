@@ -30,7 +30,7 @@ jobs:
 
       # SBOM generation (syft) and signing (cosign) used by .goreleaser.yml. (REF-74)
       - name: Install syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
 
       # Installer stays on latest; the cosign *binary* is held at v2 on purpose.
       # v4 defaults to Cosign v3, where `sign-blob` requires --bundle and emits a
