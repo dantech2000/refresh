@@ -18,7 +18,7 @@ require (
 	github.com/aws/smithy-go v1.27.8
 	github.com/fatih/color v1.19.0
 	github.com/mattn/go-isatty v0.0.24
-	github.com/mattn/go-runewidth v0.0.27
+	github.com/mattn/go-runewidth v0.0.28
 	github.com/pterm/pterm v0.12.83
 	github.com/urfave/cli-docs/v3 v3.1.0
 	github.com/urfave/cli/v3 v3.10.1
