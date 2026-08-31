@@ -91,8 +91,8 @@ github.com/go-openapi/swag/mangling v0.29.0 h1:RVKyucZ2rvA/M/sqxuNZGW8Mf0+1qypVX
 github.com/go-openapi/swag/mangling v0.29.0/go.mod h1:SAop9pB7PUjQ/CGCNf/JmCKTRK+GDO+RqE9UHqC/N6s=
 github.com/go-openapi/swag/netutils v0.29.0 h1:2Y9tiqzdzRf++Tf5SGVK4Rk1iop2mo1+W3fNdcflMCo=
 github.com/go-openapi/swag/netutils v0.29.0/go.mod h1:DUde7x4Bx00k5jYl2AdRpNAO0m7atUvD2x6X+bWkbno=
-github.com/go-openapi/swag/pools v0.29.0 h1:uMQcoJeHJ8fWkdfEXJZMMpqk6hpfW8qTL5Q/IoRFFII=
-github.com/go-openapi/swag/pools v0.29.0/go.mod h1:leDcaghjkRAhCuCRv9NfJU5f0mjoU3cT/XZObhMk3pc=
+github.com/go-openapi/swag/pools v0.29.1 h1:NRogYxdEW9SjRM4mkAOji9iefO4MRXq3p/ZJcoQbUKg=
+github.com/go-openapi/swag/pools v0.29.1/go.mod h1:leDcaghjkRAhCuCRv9NfJU5f0mjoU3cT/XZObhMk3pc=
 github.com/go-openapi/swag/stringutils v0.28.0 h1:ixsc9iYgDPubHL/8nSkbnryEHpD2VRlBMLKpQyPXcDU=
 github.com/go-openapi/swag/stringutils v0.28.0/go.mod h1:lzRN95CxXmA03XcDWHLOb6nOMcxCqR5rGY0lOgsfRoM=
 github.com/go-openapi/swag/typeutils v0.29.0 h1:HrWCYZeXVVNDo/7QQPRaYk33XeIDxksbxpalID3bWR8=
