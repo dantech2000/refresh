@@ -21,7 +21,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.27
 	github.com/pterm/pterm v0.12.83
 	github.com/urfave/cli-docs/v3 v3.1.0
-	github.com/urfave/cli/v3 v3.10.1
+	github.com/urfave/cli/v3 v3.11.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.36.4
 	k8s.io/apimachinery v0.36.4
