@@ -211,7 +211,7 @@ func TestHealthDisplayHelpers(t *testing.T) {
 		DisplayHealthCheckComplete(health.DecisionWarn)
 		DisplayHealthCheckComplete(health.DecisionBlock)
 	})
-	if !strings.Contains(output, "prod") || !strings.Contains(output, "--force") {
+	if !strings.Contains(output, "prod") || !strings.Contains(output, "--skip-health-check") {
 		t.Fatalf("health helper output = %q", output)
 	}
 	DisplayHealthCheckComplete(health.DecisionProceed)
