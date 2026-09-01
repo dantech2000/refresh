@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.3](https://github.com/dantech2000/refresh/compare/v0.10.2...v0.10.3) (2026-09-01)
+
+
+### Bug Fixes
+
+* **security:** harden pagination, HTTP reads, and concurrency bounds ([#254](https://github.com/dantech2000/refresh/issues/254)) ([9dec64e](https://github.com/dantech2000/refresh/commit/9dec64ec50bc3a05d55f8e00d879279921fc1344))
+* **update:** decouple --force from health-gate skip; refuse 'latest' addon when k8s unknown ([#256](https://github.com/dantech2000/refresh/issues/256)) ([f0f1b55](https://github.com/dantech2000/refresh/commit/f0f1b5593210864a65e39fa2685f082b6fb240fc))
+
 ## [0.10.2](https://github.com/dantech2000/refresh/compare/v0.10.1...v0.10.2) (2026-08-31)
 
 
