@@ -42,6 +42,14 @@ site/
 .DS_Store
 Thumbs.db
 
+# Secrets / credentials (defense-in-depth — none are currently tracked)
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*credentials*
+
 # Documentation artifacts
 docs/CLI_HELP.md
 
