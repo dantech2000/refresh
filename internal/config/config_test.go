@@ -18,6 +18,26 @@ func TestDefaultConstants(t *testing.T) {
 	}
 }
 
+func TestClampMaxConcurrency(t *testing.T) {
+	tests := []struct {
+		in   int
+		want int
+	}{
+		{0, DefaultMaxConcurrency},
+		{-5, DefaultMaxConcurrency},
+		{1, 1},
+		{8, 8},
+		{MaxConcurrencyCap, MaxConcurrencyCap},
+		{MaxConcurrencyCap + 1, MaxConcurrencyCap},
+		{1000000, MaxConcurrencyCap},
+	}
+	for _, tt := range tests {
+		if got := ClampMaxConcurrency(tt.in); got != tt.want {
+			t.Errorf("ClampMaxConcurrency(%d) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestRegionsFromEnv_NotSet(t *testing.T) {
 	_ = os.Unsetenv(EnvEKSRegions)
 	if r := RegionsFromEnv(); r != nil {

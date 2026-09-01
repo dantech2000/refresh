@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -135,8 +136,12 @@ func fetchEKSAMIReleases(ctx context.Context, httpClient *http.Client) ([]ghRele
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("amazon-eks-ami releases API returned %s", resp.Status)
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MiB cap
+	if err != nil {
+		return nil, err
+	}
 	var releases []ghRelease
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+	if err := json.Unmarshal(body, &releases); err != nil {
 		return nil, err
 	}
 	return releases, nil

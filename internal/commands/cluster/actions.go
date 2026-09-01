@@ -13,6 +13,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/status"
@@ -49,7 +50,7 @@ func runList(ctx context.Context, cmd *cli.Command) error {
 	}
 	// Each --watch iteration performs the full setup+fetch+render cycle so a
 	// fresh service (and cache) is used every time.
-	return runner.Watch(cmd, func() error { return listClustersOnce(ctx, cmd) })
+	return runner.Watch(ctx, cmd, func() error { return listClustersOnce(ctx, cmd) })
 }
 
 func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
@@ -72,7 +73,7 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 		ShowHealth:     cmd.Bool("show-health"),
 		Filters:        filters,
 		AllRegions:     allRegions,
-		MaxConcurrency: cmd.Int("max-concurrency"),
+		MaxConcurrency: appconfig.ClampMaxConcurrency(cmd.Int("max-concurrency")),
 	}
 
 	startTime := time.Now()

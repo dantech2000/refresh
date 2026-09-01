@@ -292,7 +292,7 @@ var watchIsTerminal = func() bool {
 // cleared between iterations (top-style); when output is piped, iterations
 // append instead. fn should perform the full fetch+render cycle so every
 // iteration shows fresh data.
-func Watch(cmd *cli.Command, fn func() error) error {
+func Watch(ctx context.Context, cmd *cli.Command, fn func() error) error {
 	if !cmd.Bool("watch") {
 		return fn()
 	}
@@ -302,9 +302,13 @@ func Watch(cmd *cli.Command, fn func() error) error {
 		interval = 10 * time.Second
 	}
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigChan)
+	// Also stop on parent context cancellation (a deadline expiry or signal),
+	// not only on a bare SIGINT/SIGTERM, so the loop never runs past ctx.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	interactive := watchIsTerminal()
 	for {
@@ -315,9 +319,9 @@ func Watch(cmd *cli.Command, fn func() error) error {
 			return err
 		}
 		select {
-		case <-time.After(interval):
-		case <-sigChan:
+		case <-ctx.Done():
 			return nil
+		case <-time.After(interval):
 		}
 	}
 }

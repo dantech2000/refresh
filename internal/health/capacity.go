@@ -251,19 +251,18 @@ func maxFloat(values []float64) float64 {
 // getClusterInstanceIDs retrieves all EC2 instance IDs for the cluster
 func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName string) ([]string, error) {
 	// List all nodegroups in the cluster (with pagination)
-	var nodegroupNames []string
-	var nextToken *string
-	for {
-		listInput := &eks.ListNodegroupsInput{ClusterName: aws.String(clusterName), NextToken: nextToken}
-		ngOutput, err := hc.eksClient.ListNodegroups(ctx, listInput)
+	nodegroupNames, err := common.Paginate(ctx, func(ctx context.Context, token *string) ([]string, *string, error) {
+		ngOutput, err := hc.eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
+			ClusterName: aws.String(clusterName),
+			NextToken:   token,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to list nodegroups: %w", err)
+			return nil, nil, fmt.Errorf("failed to list nodegroups: %w", err)
 		}
-		nodegroupNames = append(nodegroupNames, ngOutput.Nodegroups...)
-		if ngOutput.NextToken == nil {
-			break
-		}
-		nextToken = ngOutput.NextToken
+		return ngOutput.Nodegroups, ngOutput.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	// Collect every ASG name across nodegroups (concurrent describe), then

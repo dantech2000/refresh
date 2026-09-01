@@ -18,7 +18,7 @@ func runList(ctx context.Context, cmd *cli.Command) error {
 	}
 	// Each --watch iteration performs the full setup+fetch+render cycle so a
 	// fresh service (and cache) is used every time.
-	return runner.Watch(cmd, func() error { return listNodegroupsOnce(ctx, cmd) })
+	return runner.Watch(ctx, cmd, func() error { return listNodegroupsOnce(ctx, cmd) })
 }
 
 func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
