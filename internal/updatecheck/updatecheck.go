@@ -180,7 +180,7 @@ func (c *Checker) writeCache(cc cache) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(c.cachePath, b, 0o644)
+	_ = os.WriteFile(c.cachePath, b, 0o600)
 }
 
 // UpgradeHint returns a one-line "newer version available" message when latest

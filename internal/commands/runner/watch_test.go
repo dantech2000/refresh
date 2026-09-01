@@ -38,7 +38,7 @@ func newWatchTestCommand(t *testing.T, watch bool, interval time.Duration) *cli.
 
 func TestWatchRunsOnceWithoutFlag(t *testing.T) {
 	runs := 0
-	err := Watch(newWatchTestCommand(t, false, 0), func() error {
+	err := Watch(context.Background(), newWatchTestCommand(t, false, 0), func() error {
 		runs++
 		return nil
 	})
@@ -50,7 +50,7 @@ func TestWatchRunsOnceWithoutFlag(t *testing.T) {
 func TestWatchPropagatesError(t *testing.T) {
 	sentinel := errors.New("boom")
 	runs := 0
-	err := Watch(newWatchTestCommand(t, true, time.Millisecond), func() error {
+	err := Watch(context.Background(), newWatchTestCommand(t, true, time.Millisecond), func() error {
 		runs++
 		if runs == 3 {
 			return sentinel
@@ -73,7 +73,7 @@ func TestWatchNonInteractiveDoesNotClearScreen(t *testing.T) {
 	t.Cleanup(func() { watchIsTerminal = old })
 
 	runs := 0
-	_ = Watch(newWatchTestCommand(t, true, time.Millisecond), func() error {
+	_ = Watch(context.Background(), newWatchTestCommand(t, true, time.Millisecond), func() error {
 		runs++
 		return errors.New("stop")
 	})

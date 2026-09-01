@@ -31,7 +31,7 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 	defer cancel()
 
 	regions := resolveRegions(cmd, awsCfg)
-	maxConc := cmd.Int("max-concurrency")
+	maxConc := appconfig.ClampMaxConcurrency(cmd.Int("max-concurrency"))
 	opts := statussvc.ListOptions{
 		NamePattern:    strings.TrimSpace(cmd.Args().First()),
 		MaxConcurrency: maxConc,

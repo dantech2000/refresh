@@ -135,7 +135,8 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient *eks.Client, mon
 		}(i, update)
 	}
 
-	// Close channel when all goroutines complete
+	// Close channel when all goroutines complete. Await the closer before
+	// returning so callers never race on an open channel. (REF-80)
 	go func() {
 		wg.Wait()
 		close(resultsChan)
