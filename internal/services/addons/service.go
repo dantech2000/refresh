@@ -197,9 +197,19 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 
 	targetVersion := options.Version
 	if strings.EqualFold(targetVersion, "latest") || targetVersion == "" {
+		if k8sVersion == "" {
+			// Without the cluster's Kubernetes version we can't scope "latest" to
+			// versions the cluster can actually run. Falling back to the globally
+			// newest version risks picking one incompatible with the cluster, so
+			// refuse and ask for an explicit version instead of guessing.
+			return nil, fmt.Errorf("cannot resolve latest addon version: cluster Kubernetes version could not be determined for %s; set an explicit --version", clusterName)
+		}
 		versions, err := s.GetAvailableVersions(ctx, addonName, k8sVersion)
 		if err != nil {
 			return nil, fmt.Errorf("resolving latest version: %w", err)
+		}
+		if len(versions) == 0 {
+			return nil, fmt.Errorf("resolving latest version: no versions available for %s on Kubernetes %s", addonName, k8sVersion)
 		}
 		targetVersion = versions[0].Version
 	} else if err := s.validateVersionCompatibility(ctx, k8sVersion, addonName, targetVersion); err != nil {

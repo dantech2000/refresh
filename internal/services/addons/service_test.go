@@ -2,6 +2,7 @@ package addons
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -14,7 +15,8 @@ import (
 
 // Mock EKS client for testing
 type mockEKSClient struct {
-	addons map[string]*ekstypes.Addon
+	addons             map[string]*ekstypes.Addon
+	describeClusterErr error
 }
 
 func (m *mockEKSClient) ListAddons(ctx context.Context, params *eks.ListAddonsInput, optFns ...func(*eks.Options)) (*eks.ListAddonsOutput, error) {
@@ -67,6 +69,9 @@ func (m *mockEKSClient) UpdateAddon(ctx context.Context, params *eks.UpdateAddon
 }
 
 func (m *mockEKSClient) DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
+	if m.describeClusterErr != nil {
+		return nil, m.describeClusterErr
+	}
 	return &eks.DescribeClusterOutput{
 		Cluster: &ekstypes.Cluster{
 			Name:    params.Name,
@@ -220,6 +225,30 @@ func TestUpdateLatest(t *testing.T) {
 	}
 	if result.NewVersion != "v1.15.0" {
 		t.Errorf("NewVersion = %s, want v1.15.0", result.NewVersion)
+	}
+}
+
+func TestUpdateLatest_RefusesWhenClusterVersionUnknown(t *testing.T) {
+	// When the cluster's Kubernetes version can't be determined, "latest" cannot
+	// be scoped to a compatible version. Refuse rather than silently pick the
+	// globally-newest (possibly incompatible) version.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	client := &mockEKSClient{
+		addons: map[string]*ekstypes.Addon{
+			"vpc-cni": {
+				AddonName:    aws.String("vpc-cni"),
+				AddonVersion: aws.String("v1.14.0"),
+				Status:       ekstypes.AddonStatusActive,
+			},
+		},
+		describeClusterErr: fmt.Errorf("simulated describe cluster error"),
+	}
+
+	svc := NewService(client, logger)
+	ctx := context.Background()
+
+	if _, err := svc.Update(ctx, "test-cluster", "vpc-cni", UpdateOptions{Version: "latest"}); err == nil {
+		t.Fatal("expected error when cluster version unknown and version is 'latest', got nil")
 	}
 }
 

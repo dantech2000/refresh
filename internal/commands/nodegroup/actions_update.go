@@ -258,9 +258,12 @@ func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
 // preflightHealthCheck runs the pre-update health checks. Returns done=true if
 // the caller should stop here (block decision, user cancelled, or --health-only).
 func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, flags updateAMIFlags) (done bool, err error) {
-	if flags.skipHealthCheck || flags.dryRun || flags.force {
+	// Only --skip-health-check and --dry-run disable the health gate. --force is
+	// deliberately NOT here: it only sets UpdateNodegroupVersion.Force (forcing
+	// PDB-drain eviction) and must not silently bypass the pre-flight checks.
+	if flags.skipHealthCheck || flags.dryRun {
 		if flags.healthOnly {
-			color.Yellow("Health check skipped due to --skip-health-check, --dry-run, or --force flags")
+			color.Yellow("Health check skipped due to --skip-health-check or --dry-run flags")
 			return true, nil
 		}
 		return false, nil
@@ -356,6 +359,12 @@ func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (do
 		}
 		// --yes proceeds past warnings without prompting.
 		if flags.yes {
+			// Surface the auto-accepted WARN so an operator (e.g. a fleet update
+			// that auto-accepts) sees it instead of proceeding silently.
+			// Suppressed for JSON output so stdout stays pure data.
+			if !flags.quiet && flags.format != "json" {
+				color.Yellow("Health check reported warnings; proceeding")
+			}
 			return false, nil
 		}
 		// Without a TTY (CI/cron) and without --yes, fail fast rather than block

@@ -181,7 +181,7 @@ func DisplayHealthCheckComplete(decision health.Decision) {
 		// User decision handled by prompt
 	case health.DecisionBlock:
 		color.Red("[FAIL] Critical health issues detected. Please resolve before proceeding.")
-		Outln("\nRun with --force to bypass health checks (not recommended).")
+		Outln("\nRun with --skip-health-check to bypass pre-flight health validation (not recommended).")
 		Outln("Use 'refresh nodegroup list --cluster <cluster>' to monitor current status.")
 	}
 }
