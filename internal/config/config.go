@@ -18,6 +18,10 @@ const (
 	// DefaultMaxConcurrency is the default maximum number of concurrent operations.
 	DefaultMaxConcurrency = 8
 
+	// MaxConcurrencyCap is the hard upper bound for --max-concurrency.
+	// Values above this are clamped to prevent self-throttling on large fleets.
+	MaxConcurrencyCap = 64
+
 	// DefaultPollInterval is the default interval for polling update status.
 	DefaultPollInterval = 15 * time.Second
 
@@ -30,6 +34,18 @@ const (
 	// DefaultListCacheTTL is the TTL for list operation cache.
 	DefaultListCacheTTL = 2 * time.Minute
 )
+
+// ClampMaxConcurrency returns v clamped to [1, MaxConcurrencyCap].
+// Non-positive values fall back to DefaultMaxConcurrency.
+func ClampMaxConcurrency(v int) int {
+	if v <= 0 {
+		return DefaultMaxConcurrency
+	}
+	if v > MaxConcurrencyCap {
+		return MaxConcurrencyCap
+	}
+	return v
+}
 
 // Environment variable names as constants for type safety and refactoring.
 const (

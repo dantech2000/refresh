@@ -127,20 +127,17 @@ func (s *Service) ListClusterStatuses(ctx context.Context, opts ListOptions) ([]
 }
 
 func (s *Service) listClusterNames(ctx context.Context) ([]string, error) {
-	var names []string
-	var token *string
-	for {
+	names, err := common.Paginate(ctx, func(ctx context.Context, token *string) ([]string, *string, error) {
 		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListClustersOutput, error) {
 			return s.clusterAPI.ListClusters(rc, &eks.ListClustersInput{NextToken: token})
 		})
 		if err != nil {
-			return nil, fmt.Errorf("listing clusters in %s: %w", s.region, err)
+			return nil, nil, fmt.Errorf("listing clusters in %s: %w", s.region, err)
 		}
-		names = append(names, out.Clusters...)
-		if out.NextToken == nil {
-			break
-		}
-		token = out.NextToken
+		return out.Clusters, out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return names, nil
 }

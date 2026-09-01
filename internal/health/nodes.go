@@ -9,6 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // CheckNodeHealth validates that all nodes in the cluster are ready
@@ -20,24 +22,21 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	}
 
 	// Get all nodegroups in the cluster (with pagination)
-	var nodegroupNames []string
-	var nextToken *string
-	for {
+	nodegroupNames, err := common.Paginate(ctx, func(ctx context.Context, token *string) ([]string, *string, error) {
 		ngOut, err := hc.eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
 			ClusterName: aws.String(clusterName),
-			NextToken:   nextToken,
+			NextToken:   token,
 		})
 		if err != nil {
-			result.Status = StatusFail
-			result.Score = 0
-			result.Message = fmt.Sprintf("Failed to list nodegroups: %v", err)
-			return result
+			return nil, nil, err
 		}
-		nodegroupNames = append(nodegroupNames, ngOut.Nodegroups...)
-		if ngOut.NextToken == nil {
-			break
-		}
-		nextToken = ngOut.NextToken
+		return ngOut.Nodegroups, ngOut.NextToken, nil
+	})
+	if err != nil {
+		result.Status = StatusFail
+		result.Score = 0
+		result.Message = fmt.Sprintf("Failed to list nodegroups: %v", err)
+		return result
 	}
 
 	totalNodes := 0

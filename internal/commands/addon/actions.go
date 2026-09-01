@@ -26,7 +26,7 @@ func runList(ctx context.Context, cmd *cli.Command) error {
 	}
 	// Each --watch iteration performs the full setup+fetch+render cycle so a
 	// fresh service (and cache) is used every time.
-	return runner.Watch(cmd, func() error { return listAddonsOnce(ctx, cmd) })
+	return runner.Watch(ctx, cmd, func() error { return listAddonsOnce(ctx, cmd) })
 }
 
 func listAddonsOnce(ctx context.Context, cmd *cli.Command) error {
