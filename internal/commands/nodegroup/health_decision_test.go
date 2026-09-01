@@ -168,3 +168,54 @@ func TestMachineHealthOutput(t *testing.T) {
 		}
 	}
 }
+
+// WARN auto-accepted via --yes (the fleet path, or an unattended run) must
+// surface a visible warning so the operator knows health checks reported
+// problems instead of proceeding silently.
+func TestApplyHealthDecision_WarnAutoAcceptedPrintsWarning(t *testing.T) {
+	flags := updateAMIFlags{yes: true, quiet: false, format: "table"}
+	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"capacity"}}
+
+	out := captureStdout(t, func() {
+		done, err := applyHealthDecision(summary, flags)
+		if done {
+			t.Error("expected done=false so update can proceed")
+		}
+		if err != nil {
+			t.Errorf("expected nil error on auto-accepted WARN, got %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "proceeding") {
+		t.Errorf("expected auto-accepted WARN warning, got %q", out)
+	}
+}
+
+// The auto-accepted WARN warning must be suppressed under --quiet so machine
+// consume paths (CI) stay clean.
+func TestApplyHealthDecision_WarnAutoAcceptedQuietSuppressesWarning(t *testing.T) {
+	flags := updateAMIFlags{yes: true, quiet: true, format: "table"}
+	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"capacity"}}
+
+	out := captureStdout(t, func() {
+		_, _ = applyHealthDecision(summary, flags)
+	})
+
+	if strings.Contains(out, "proceeding") {
+		t.Errorf("quiet mode should suppress auto-accepted WARN warning, got %q", out)
+	}
+}
+
+// The auto-accepted WARN warning must never corrupt JSON stdout.
+func TestApplyHealthDecision_WarnAutoAcceptedJsonSuppressesWarning(t *testing.T) {
+	flags := updateAMIFlags{yes: true, quiet: false, format: "json"}
+	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"capacity"}}
+
+	out := captureStdout(t, func() {
+		_, _ = applyHealthDecision(summary, flags)
+	})
+
+	if strings.Contains(out, "proceeding") {
+		t.Errorf("json output should suppress auto-accepted WARN warning, got %q", out)
+	}
+}
