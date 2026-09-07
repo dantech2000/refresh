@@ -36,8 +36,8 @@ github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.19 h1:bAdDl/
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.19/go.mod h1:KaUzbLxv4CeSxh6ZCl9B4m7CuFenS8kUEaDs+f/DQr4=
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.1 h1:RmmWQPREQdk9U+PfqeHW3MqZaBaNK7TpV9W3RY+b+7g=
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.1/go.mod h1:0A3W4F+68ZnNk5XcNL/e9HFMwnP8RlEicFfy6eOEDyw=
-github.com/aws/aws-sdk-go-v2/service/servicequotas v1.39.1 h1:ZjQQhTDGEG7rTC4Sxjmab+Lyht+CJFmgJ9DMhpWrbuM=
-github.com/aws/aws-sdk-go-v2/service/servicequotas v1.39.1/go.mod h1:oYB/X1MysTy6APNzIEjgyMMHMORgtWrpByeN/uhHRDQ=
+github.com/aws/aws-sdk-go-v2/service/servicequotas v1.41.0 h1:44JqeJqo+G33xYupcRROD5yjZZwpqzvzfNepwqYw0TU=
+github.com/aws/aws-sdk-go-v2/service/servicequotas v1.41.0/go.mod h1:oYB/X1MysTy6APNzIEjgyMMHMORgtWrpByeN/uhHRDQ=
 github.com/aws/aws-sdk-go-v2/service/signin v1.7.1 h1:mdMtSVKdQ3+mzBh+l0ogrFYZVQUCg6pJZOirA2ARsYE=
 github.com/aws/aws-sdk-go-v2/service/signin v1.7.1/go.mod h1:9IqUlsJDbUPcg6cgx3WEzXdjrbWzLDQrak0aaSqlTcI=
 github.com/aws/aws-sdk-go-v2/service/ssm v1.75.1 h1:u1DO++wfJop+QfEA0D2Ks2XmV0LiKyxpzwPhBUZmWe4=
