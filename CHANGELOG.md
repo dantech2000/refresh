@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.3](https://github.com/dantech2000/refresh/compare/v0.10.2...v0.10.3) (2026-09-07)
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/aws/aws-sdk-go-v2/config ([#266](https://github.com/dantech2000/refresh/issues/266)) ([f820507](https://github.com/dantech2000/refresh/commit/f820507793c395cb4a4b872c2ad75e7d22e9c118))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#268](https://github.com/dantech2000/refresh/issues/268)) ([75d821d](https://github.com/dantech2000/refresh/commit/75d821d2d44739b9eaf5a1181f43be279dd15038))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#260](https://github.com/dantech2000/refresh/issues/260)) ([1f9df59](https://github.com/dantech2000/refresh/commit/1f9df598ead8b38dd227136383bd42dfa87006cb))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#265](https://github.com/dantech2000/refresh/issues/265)) ([127e279](https://github.com/dantech2000/refresh/commit/127e279cc7f3e133f8461ae579990c65af5c20ed))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#261](https://github.com/dantech2000/refresh/issues/261)) ([59e524b](https://github.com/dantech2000/refresh/commit/59e524b7718b389125cc6cd665965ca12be38a26))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/iam ([#267](https://github.com/dantech2000/refresh/issues/267)) ([2cb39b8](https://github.com/dantech2000/refresh/commit/2cb39b87e243794adbdd4ce2b1a89f5db18d9328))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#262](https://github.com/dantech2000/refresh/issues/262)) ([f3544c9](https://github.com/dantech2000/refresh/commit/f3544c9377c6bd381a3b73e0db099edbc8963546))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#273](https://github.com/dantech2000/refresh/issues/273)) ([4c9b378](https://github.com/dantech2000/refresh/commit/4c9b3785000a022250f63a196f1eca97d488dd53))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssooidc ([#264](https://github.com/dantech2000/refresh/issues/264)) ([d1d9497](https://github.com/dantech2000/refresh/commit/d1d94972e774bf5ba4e2bed5ca74f7b294df055c))
+* **deps:** bump github.com/go-openapi/jsonpointer from 1.0.0 to 1.0.1 ([#271](https://github.com/dantech2000/refresh/issues/271)) ([83f7abe](https://github.com/dantech2000/refresh/commit/83f7abe732e210a5fc46b4ef9cfd43e59686fdb6))
+* **deps:** bump github.com/mattn/go-runewidth from 0.0.28 to 0.0.29 ([#274](https://github.com/dantech2000/refresh/issues/274)) ([fb7ba2d](https://github.com/dantech2000/refresh/commit/fb7ba2df0291917585dc15a54f50ed6af52052db))
+* **release:** emit postflight_steps in the Homebrew cask ([#257](https://github.com/dantech2000/refresh/issues/257)) ([2d45786](https://github.com/dantech2000/refresh/commit/2d457868720b38cbd3d116d7dfeb43117c90c946))
+* **security:** harden pagination, HTTP reads, and concurrency bounds ([#254](https://github.com/dantech2000/refresh/issues/254)) ([9dec64e](https://github.com/dantech2000/refresh/commit/9dec64ec50bc3a05d55f8e00d879279921fc1344))
+* **update:** decouple --force from health-gate skip; refuse 'latest' addon when k8s unknown ([#256](https://github.com/dantech2000/refresh/issues/256)) ([f0f1b55](https://github.com/dantech2000/refresh/commit/f0f1b5593210864a65e39fa2685f082b6fb240fc))
+
 ## [0.10.2](https://github.com/dantech2000/refresh/compare/v0.10.1...v0.10.2) (2026-08-31)
 
 
