@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.10.3](https://github.com/dantech2000/refresh/compare/v0.10.2...v0.10.3) (2026-09-14)
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/aws/aws-sdk-go-v2/config ([#266](https://github.com/dantech2000/refresh/issues/266)) ([f820507](https://github.com/dantech2000/refresh/commit/f820507793c395cb4a4b872c2ad75e7d22e9c118))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/credentials ([#282](https://github.com/dantech2000/refresh/issues/282)) ([0e1c45e](https://github.com/dantech2000/refresh/commit/0e1c45eb0b3776e3a37fa920cf75652301389831))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/internal/v4a ([#284](https://github.com/dantech2000/refresh/issues/284)) ([eb225f9](https://github.com/dantech2000/refresh/commit/eb225f9ac84466da962ffda7860b0a58a5a0fb71))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#268](https://github.com/dantech2000/refresh/issues/268)) ([75d821d](https://github.com/dantech2000/refresh/commit/75d821d2d44739b9eaf5a1181f43be279dd15038))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#302](https://github.com/dantech2000/refresh/issues/302)) ([ac7f5cd](https://github.com/dantech2000/refresh/commit/ac7f5cd6ce5b44187254a9e5be6bcdf74435cef5))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#260](https://github.com/dantech2000/refresh/issues/260)) ([1f9df59](https://github.com/dantech2000/refresh/commit/1f9df598ead8b38dd227136383bd42dfa87006cb))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#301](https://github.com/dantech2000/refresh/issues/301)) ([e0b9033](https://github.com/dantech2000/refresh/commit/e0b90337485470ceec0fba5ac09e1d5c30f44eec))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#265](https://github.com/dantech2000/refresh/issues/265)) ([127e279](https://github.com/dantech2000/refresh/commit/127e279cc7f3e133f8461ae579990c65af5c20ed))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#290](https://github.com/dantech2000/refresh/issues/290)) ([76fe979](https://github.com/dantech2000/refresh/commit/76fe97990f96ee8c144cf70860deaf0965fff25e))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#261](https://github.com/dantech2000/refresh/issues/261)) ([59e524b](https://github.com/dantech2000/refresh/commit/59e524b7718b389125cc6cd665965ca12be38a26))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#294](https://github.com/dantech2000/refresh/issues/294)) ([d73b7b4](https://github.com/dantech2000/refresh/commit/d73b7b413793a36eb471346506a0bee8449982d8))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/iam ([#267](https://github.com/dantech2000/refresh/issues/267)) ([2cb39b8](https://github.com/dantech2000/refresh/commit/2cb39b87e243794adbdd4ce2b1a89f5db18d9328))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/iam ([#276](https://github.com/dantech2000/refresh/issues/276)) ([323167e](https://github.com/dantech2000/refresh/commit/323167e859b8e877bcf739acf32de523ade71bfa))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/internal/presigned-url ([#293](https://github.com/dantech2000/refresh/issues/293)) ([922573b](https://github.com/dantech2000/refresh/commit/922573b8b183968c3f6144c1b3738e8229650d55))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#262](https://github.com/dantech2000/refresh/issues/262)) ([f3544c9](https://github.com/dantech2000/refresh/commit/f3544c9377c6bd381a3b73e0db099edbc8963546))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#287](https://github.com/dantech2000/refresh/issues/287)) ([e6b8aab](https://github.com/dantech2000/refresh/commit/e6b8aab12fd55c5fc2d114eb533e9978a329dccb))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#273](https://github.com/dantech2000/refresh/issues/273)) ([4c9b378](https://github.com/dantech2000/refresh/commit/4c9b3785000a022250f63a196f1eca97d488dd53))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#292](https://github.com/dantech2000/refresh/issues/292)) ([ca0729d](https://github.com/dantech2000/refresh/commit/ca0729d1f1d61f01b3f5033ee5fcb298e5b05581))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sso ([#289](https://github.com/dantech2000/refresh/issues/289)) ([4fb1161](https://github.com/dantech2000/refresh/commit/4fb11617e9cf3c7cc4ac6391d80db3f4267be98d))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssooidc ([#264](https://github.com/dantech2000/refresh/issues/264)) ([d1d9497](https://github.com/dantech2000/refresh/commit/d1d94972e774bf5ba4e2bed5ca74f7b294df055c))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssooidc ([#298](https://github.com/dantech2000/refresh/issues/298)) ([e1c150d](https://github.com/dantech2000/refresh/commit/e1c150d06dc83ae52f79973654eaca269a7a7636))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sts ([#300](https://github.com/dantech2000/refresh/issues/300)) ([09d2925](https://github.com/dantech2000/refresh/commit/09d29256879b0d7a8124871f7f740fcdb2b6490b))
+* **deps:** bump github.com/go-openapi/jsonpointer from 1.0.0 to 1.0.1 ([#271](https://github.com/dantech2000/refresh/issues/271)) ([83f7abe](https://github.com/dantech2000/refresh/commit/83f7abe732e210a5fc46b4ef9cfd43e59686fdb6))
+* **deps:** bump github.com/go-openapi/swag/fileutils ([#295](https://github.com/dantech2000/refresh/issues/295)) ([1a402e5](https://github.com/dantech2000/refresh/commit/1a402e510399676438a79620d4f0387239d5aafe))
+* **deps:** bump github.com/go-openapi/swag/netutils ([#277](https://github.com/dantech2000/refresh/issues/277)) ([d3b1a42](https://github.com/dantech2000/refresh/commit/d3b1a423e4041b11e49a3dbb56079c80ecc4cbf0))
+* **deps:** bump github.com/go-openapi/swag/pools from 0.29.1 to 0.29.2 ([#278](https://github.com/dantech2000/refresh/issues/278)) ([91f3b7e](https://github.com/dantech2000/refresh/commit/91f3b7e31dae5851530f17cd8f7114b98740af25))
+* **deps:** bump github.com/go-openapi/swag/stringutils ([#296](https://github.com/dantech2000/refresh/issues/296)) ([6d13e4f](https://github.com/dantech2000/refresh/commit/6d13e4fef4c8f33583997518e8c108c9a982addb))
+* **deps:** bump github.com/go-openapi/swag/yamlutils ([#283](https://github.com/dantech2000/refresh/issues/283)) ([1ddedfd](https://github.com/dantech2000/refresh/commit/1ddedfda53a68621b867242bad81b2ec06323752))
+* **deps:** bump github.com/mattn/go-runewidth from 0.0.28 to 0.0.29 ([#274](https://github.com/dantech2000/refresh/issues/274)) ([fb7ba2d](https://github.com/dantech2000/refresh/commit/fb7ba2df0291917585dc15a54f50ed6af52052db))
+* **deps:** bump golang.org/x/net from 0.58.0 to 0.59.0 ([#279](https://github.com/dantech2000/refresh/issues/279)) ([8c430fe](https://github.com/dantech2000/refresh/commit/8c430fefe3a825e51b3505f03e28cbbc282639d5))
+* **deps:** bump golang.org/x/oauth2 from 0.36.0 to 0.37.0 ([#285](https://github.com/dantech2000/refresh/issues/285)) ([1aa19a2](https://github.com/dantech2000/refresh/commit/1aa19a264b2940af4ebdbd5a841d67e074ec2c69))
+* **deps:** bump golang.org/x/time from 0.15.0 to 0.16.0 ([#280](https://github.com/dantech2000/refresh/issues/280)) ([090feb2](https://github.com/dantech2000/refresh/commit/090feb27b83ab40835b1e5c23da99b8ac37366e9))
+* **release:** emit postflight_steps in the Homebrew cask ([#257](https://github.com/dantech2000/refresh/issues/257)) ([2d45786](https://github.com/dantech2000/refresh/commit/2d457868720b38cbd3d116d7dfeb43117c90c946))
+* **security:** harden pagination, HTTP reads, and concurrency bounds ([#254](https://github.com/dantech2000/refresh/issues/254)) ([9dec64e](https://github.com/dantech2000/refresh/commit/9dec64ec50bc3a05d55f8e00d879279921fc1344))
+* **update:** decouple --force from health-gate skip; refuse 'latest' addon when k8s unknown ([#256](https://github.com/dantech2000/refresh/issues/256)) ([f0f1b55](https://github.com/dantech2000/refresh/commit/f0f1b5593210864a65e39fa2685f082b6fb240fc))
+
 ## [0.10.2](https://github.com/dantech2000/refresh/compare/v0.10.1...v0.10.2) (2026-08-31)
 
 
