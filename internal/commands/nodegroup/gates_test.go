@@ -228,3 +228,39 @@ func TestUpdate_DryRunSkipsCustomAMI(t *testing.T) {
 		}
 	}
 }
+
+// Fleet mode keeps the single-cluster exit codes for the health gate: a
+// warning stop is 2 (healthWarned), a block is 3 (healthBlocked).
+func TestFleetUpdate_HealthVerdictExitCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      string
+		args        []string
+		wantCode    int
+		wantBlocked bool
+		wantWarned  bool
+	}{
+		{"health-only warn", "", []string{"--health-only"}, 2, false, true},
+		{"require-healthy warn", "", []string{"--require-healthy", "--yes"}, 2, false, true},
+		{"health-only block", "DEGRADED", []string{"--health-only"}, 3, true, false},
+		{"block", "DEGRADED", []string{"--yes"}, 3, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31", Status: tc.status}))
+			args := append([]string{"update", "--all-clusters", "-r", "us-east-1", "-o", "json"}, tc.args...)
+			stdout, stderr, err := runNodegroup(t, args...)
+			if code := exitCodeOf(err); code != tc.wantCode {
+				t.Fatalf("exit code = %d (err %v), want %d\nstderr:\n%s", code, err, tc.wantCode, stderr)
+			}
+			doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+			entry := doc["clusters"].([]any)[0].(map[string]any)
+			warned, _ := entry["healthWarned"].(bool)
+			if entry["healthBlocked"] != tc.wantBlocked || warned != tc.wantWarned {
+				t.Errorf("healthBlocked=%v healthWarned=%v, want %v/%v", entry["healthBlocked"], entry["healthWarned"], tc.wantBlocked, tc.wantWarned)
+			}
+			if calledPath(srv, "/update-version") {
+				t.Error("a cluster stopped by the health gate must not start an update")
+			}
+		})
+	}
+}
