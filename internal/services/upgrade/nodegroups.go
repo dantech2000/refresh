@@ -3,6 +3,7 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,6 +33,11 @@ type RollObserver func(ctx context.Context, nodegroupName string)
 type NodegroupRollOptions struct {
 	// SkipPatterns are substring patterns for nodegroups to leave alone.
 	SkipPatterns []string
+	// Only, when non-empty, limits the phase to these nodegroup names (the
+	// plan's pending steps). Other nodegroups are left alone even if they lag
+	// the target, e.g. in a catch-up hop that pre-rolls only the nodegroups
+	// the next control-plane step would push beyond the kubelet skew.
+	Only []string
 	// Force terminates pods that can't be drained due to PDBs (passed
 	// through to UpdateNodegroupVersion).
 	Force bool
@@ -63,6 +69,9 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 	}
 
 	for _, ng := range nodegroups {
+		if len(opts.Only) > 0 && !slices.Contains(opts.Only, ng.Name) {
+			continue
+		}
 		switch {
 		case versionAtLeast(ng.Version, targetVersion):
 			progress("nodegroup %s already at %s, skipping", ng.Name, ng.Version)
@@ -81,7 +90,7 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 		// failing the ACTIVE gate, then re-read the version.
 		if ng.Status == ekstypes.NodegroupStatusUpdating {
 			progress("nodegroup %s is UPDATING (in-flight roll from a previous run); attaching and waiting for it to settle", ng.Name)
-			version, err := s.waitForNodegroupSettled(ctx, clusterName, ng.Name)
+			version, err := s.waitForNodegroupSettled(ctx, clusterName, ng.Name, progress)
 			if err != nil {
 				return fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", ng.Name, err)
 			}
@@ -230,8 +239,10 @@ func (s *Service) defaultNodegroupGate(clusterName string) NodegroupGate {
 // waitForNodegroupSettled polls the nodegroup until it leaves the UPDATING /
 // CREATING states, honoring ctx, and returns its Kubernetes version at that
 // point. Whether the settled state is fit for a roll (ACTIVE, no health
-// issues) is left to the pre-flight gate.
-func (s *Service) waitForNodegroupSettled(ctx context.Context, clusterName, nodegroupName string) (string, error) {
+// issues) is left to the pre-flight gate. Like waitForUpdate, it reports
+// transient describe failures via progress and keeps polling; only ctx and
+// permanent API errors end the wait early.
+func (s *Service) waitForNodegroupSettled(ctx context.Context, clusterName, nodegroupName string, progress ProgressFunc) (string, error) {
 	interval := s.PollInterval
 	if interval <= 0 {
 		interval = defaultPollInterval
@@ -246,18 +257,18 @@ func (s *Service) waitForNodegroupSettled(ctx context.Context, clusterName, node
 				NodegroupName: aws.String(nodegroupName),
 			})
 		})
-		if err != nil {
+		switch {
+		case err != nil:
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
-			return "", awsinternal.FormatAWSError(err, fmt.Sprintf("checking nodegroup %s", nodegroupName))
-		}
-		if out.Nodegroup == nil {
+			if isPermanentAPIError(err) {
+				return "", awsinternal.FormatAWSError(err, fmt.Sprintf("checking nodegroup %s", nodegroupName))
+			}
+			progress("warning: checking nodegroup %s: %v", nodegroupName, err)
+		case out.Nodegroup == nil:
 			return "", fmt.Errorf("nodegroup %s not found", nodegroupName)
-		}
-		switch out.Nodegroup.Status {
-		case ekstypes.NodegroupStatusUpdating, ekstypes.NodegroupStatusCreating:
-		default:
+		case out.Nodegroup.Status != ekstypes.NodegroupStatusUpdating && out.Nodegroup.Status != ekstypes.NodegroupStatusCreating:
 			return aws.ToString(out.Nodegroup.Version), nil
 		}
 

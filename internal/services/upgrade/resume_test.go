@@ -50,8 +50,9 @@ func recordMutations(m *mocks.EKSAPI) *[]string {
 }
 
 // Resume after a 1.31→1.33 run was interrupted once the control plane reached
-// 1.32: the rerun must finish 1.32's addons and nodegroups before moving the
-// control plane to 1.33.
+// 1.32: the rerun must bring the addons (incompatible with 1.32) up before
+// moving the control plane to 1.33. The nodegroup at 1.31 stays within the
+// kubelet skew of 1.33, so it is not rolled early: it rolls once, to 1.33.
 func TestResume_MidHopCatchUpBeforeNextControlPlane(t *testing.T) {
 	w := newWorld()
 	w.clusterVersion = "1.32" // hop 1's control plane finished; addons/nodegroups did not
@@ -74,8 +75,10 @@ func TestResume_MidHopCatchUpBeforeNextControlPlane(t *testing.T) {
 	if s := findStep(t, catchUp.Steps, StepAddon, "vpc-cni"); s.Status != StatusPending || s.Version != latestFor("1.32") {
 		t.Fatalf("catch-up addon step = %+v, want pending → %s", s, latestFor("1.32"))
 	}
-	if s := findStep(t, catchUp.Steps, StepNodegroup, "workers-a"); s.Status != StatusPending || s.Version != "1.32" {
-		t.Fatalf("catch-up nodegroup step = %+v, want pending → 1.32", s)
+	for _, st := range catchUp.Steps {
+		if st.Type == StepNodegroup {
+			t.Fatalf("catch-up hop has nodegroup step %+v; an addon catch-up must not roll nodegroups", st)
+		}
 	}
 	if plan.Hops[1].From != "1.32" || plan.Hops[1].To != "1.33" {
 		t.Fatalf("second hop = %s→%s, want 1.32→1.33", plan.Hops[1].From, plan.Hops[1].To)
@@ -85,7 +88,7 @@ func TestResume_MidHopCatchUpBeforeNextControlPlane(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	want := []string{
-		"addon→" + latestFor("1.32"), "ng→1.32", // catch-up for the live control plane
+		"addon→" + latestFor("1.32"), // catch-up for the live control plane
 		"cp→1.33", "addon→" + latestFor("1.33"), "ng→1.33",
 	}
 	if strings.Join(*events, ",") != strings.Join(want, ",") {
@@ -357,9 +360,10 @@ func TestWaitForUpdate_NetworkErrorsKeepPolling(t *testing.T) {
 	}
 }
 
-// Catch-up must not plan a roll across a gap already beyond the kubelet
-// skew, and the next hop's readiness must still block on that nodegroup.
-func TestBuildPlan_CatchUpKeepsSkewBlocker(t *testing.T) {
+// A nodegroup already beyond the kubelet skew of the live control plane is
+// not pre-rolled across that gap: no catch-up hop, and the next hop's
+// readiness step blocks on it. Its sibling within skew does not change that.
+func TestBuildPlan_NoPreRollAcrossExistingSkewGap(t *testing.T) {
 	w := newWorld()
 	w.clusterVersion = "1.31"
 	w.ngVersions = map[string]string{"ng-a": "1.30", "ng-b": "1.27"}
@@ -369,21 +373,15 @@ func TestBuildPlan_CatchUpKeepsSkewBlocker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
-	if len(plan.Hops) != 2 || plan.Hops[0].To != "1.31" {
-		t.Fatalf("hops = %+v, want a 1.31 catch-up hop (ng-a lags) then 1.31→1.32", plan.Hops)
+	if len(plan.Hops) != 1 || plan.Hops[0].From != "1.31" || plan.Hops[0].To != "1.32" {
+		t.Fatalf("hops = %+v, want only 1.31→1.32 (no catch-up hop)", plan.Hops)
 	}
-	if s := findStep(t, plan.Hops[0].Steps, StepNodegroup, "ng-a"); s.Status != StatusPending {
-		t.Fatalf("ng-a catch-up step = %+v, want pending", s)
-	}
-	if s := findStep(t, plan.Hops[0].Steps, StepNodegroup, "ng-b"); s.Status != StatusBlocked {
-		t.Fatalf("ng-b catch-up step = %+v, want blocked (no direct 1.27→1.31 roll)", s)
-	}
-	readiness := plan.Hops[1].Steps[0]
+	readiness := plan.Hops[0].Steps[0]
 	if readiness.Type != StepReadiness || readiness.Status != StatusBlocked || !strings.Contains(readiness.Reason, "ng-b") {
 		t.Fatalf("1.32 readiness = %+v, want blocked on ng-b's kubelet skew", readiness)
 	}
 	if strings.Contains(readiness.Reason, "ng-a") {
-		t.Fatalf("1.32 readiness = %+v: ng-a is caught up to 1.31 and within skew", readiness)
+		t.Fatalf("1.32 readiness = %+v: ng-a at 1.30 is within skew of 1.32", readiness)
 	}
 }
 
