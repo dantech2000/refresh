@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 // CheckCriticalWorkloads validates that critical system workloads are running
@@ -118,12 +117,4 @@ func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResul
 	}
 
 	return result
-}
-
-// GetKubernetesClient creates a Kubernetes client using default resolution
-// ($KUBECONFIG → ~/.kube/config → in-cluster). For an explicit path and
-// diagnostics, use [BuildKubeClient].
-func GetKubernetesClient() (kubernetes.Interface, error) {
-	client, _, err := BuildKubeClient("")
-	return client, err
 }

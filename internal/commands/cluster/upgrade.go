@@ -140,7 +140,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	// orchestrator only invokes the injected observer. (REF-126)
 	var ngObserver upgrade.RollObserver
 	if !cmd.Bool("quiet") {
-		if kube := resolveReadinessKubeClient(ctx, "", false); kube != nil {
+		if kube, _ := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, "", "", false); kube != nil {
 			timeout, poll := cmd.Duration("timeout"), cmd.Duration("poll-interval")
 			ngObserver = func(octx context.Context, ng string) {
 				rollview.LiveRollForUpdate(octx, kube, ng, timeout, poll)

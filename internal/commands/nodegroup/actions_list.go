@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/factory"
@@ -41,7 +42,7 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 	var svc *nodegroupsvc.ServiceImpl
 	if cmd.Bool("check-readiness") {
 		humanOutput := strings.EqualFold(cmd.String("format"), "table")
-		k8sClient := resolveHealthKubeClient(ctx, cmd.String("kubeconfig"), humanOutput)
+		k8sClient, _ := resolveHealthKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), humanOutput)
 		svc = factory.NewNodegroupServiceWithHealth(awsCfg, k8sClient, logger)
 	} else {
 		svc = factory.NewNodegroupService(awsCfg, false, logger)

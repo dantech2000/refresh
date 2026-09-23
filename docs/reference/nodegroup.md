@@ -55,6 +55,7 @@ grep/awk; -o json|yaml emit structured output. Use --watch to redraw on the
 | `--filter, -f string` | — | — | Filter nodegroups (key=value; keys: name, status, instanceType, amiStatus) |
 | `--check-readiness, -R` | — | — | Measure real Kubernetes node readiness (Ready/desired) via the cluster API; without it NODES shows desired count only |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for --check-readiness (defaults to $KUBECONFIG, then ~/.kube/config) |
+| `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--watch, -w` | — | — | Re-run and redraw every --watch-interval until interrupted |
 | `--watch-interval duration` | — | `10s` | Refresh interval for --watch |
 | `--help, -h` | — | — | show help |
@@ -123,6 +124,7 @@ operation settles.
 | `--wait` | — | — | Wait for scaling operation to complete |
 | `--op-timeout duration` | — | `5m0s` | Scaling operation timeout for --wait (added on top of --timeout; 0 = no limit) |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config) |
+| `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--dry-run` | — | — | Preview scaling impact without executing |
 | `--help, -h` | — | — | show help |
 
@@ -181,6 +183,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | `--skip-verify` | — | — | Skip post-roll verification (nodes ACTIVE, no new stuck pods) |
 | `--changelog` | — | — | In dry-run, print full amazon-eks-ami release notes between the current and target AMI |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config) |
+| `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--format, -o string` | — | `table` | Output format: health results with --health-only; a JSON run summary with -o json |
 | `--live` | — | — | Force the live per-node roll view and report why if the cluster API can't be reached (the panel is already the default for an interactive single-nodegroup roll) |
 | `--help, -h` | — | — | show help |
