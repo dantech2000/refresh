@@ -60,12 +60,7 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
-	}
+	ctx, cancel := apiContext(ctx, timeout)
 
 	// Config loading and the credential check (STS, SSO, IMDS) always run
 	// under --timeout, even when the returned context has a longer or no
@@ -84,6 +79,23 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 		return nil, nil, aws.Config{}, err
 	}
 	return ctx, cancel, cfg, nil
+}
+
+// apiContext derives the context for a command's AWS calls from the
+// signal-cancellable action context. timeout <= 0 means no deadline.
+//
+// Prompts under the returned context (cluster or nodegroup pattern
+// confirmation, phase confirmation) wait on the action context, not on the
+// API deadline, and the deadline stops while they wait. So an unanswered
+// prompt does not fail with a timeout, and the time the user takes to answer
+// is not taken from the AWS call budget. Ctrl+C still cancels a prompt.
+func apiContext(signalCtx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		ctx, cancel := context.WithCancel(signalCtx)
+		return ui.WithPromptScope(ctx, signalCtx, nil), cancel
+	}
+	dl, cancel := withPausableTimeout(signalCtx, timeout)
+	return ui.WithPromptScope(dl, signalCtx, dl.pause), cancel
 }
 
 // checkContext bounds the setup phase by apiTimeout (--timeout) when that is

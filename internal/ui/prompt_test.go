@@ -80,6 +80,102 @@ func TestConfirmSharedStdin(t *testing.T) {
 	}
 }
 
+// A prompt under WithPromptScope waits on the scope's context, so an API
+// deadline that has already passed does not cancel it.
+func TestPromptReaderScopeIgnoresAPIDeadline(t *testing.T) {
+	r, w := io.Pipe()
+	t.Cleanup(func() { _ = w.Close() })
+	p := NewPromptReader(r)
+
+	apiCtx, cancel := context.WithTimeout(t.Context(), time.Nanosecond)
+	defer cancel()
+	<-apiCtx.Done()
+	paused, resumed := 0, 0
+	ctx := WithPromptScope(apiCtx, t.Context(), func() func() {
+		paused++
+		return func() { resumed++ }
+	})
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_, _ = w.Write([]byte("y\n"))
+	}()
+	got, err := p.ReadLine(ctx)
+	if err != nil || got != "y" {
+		t.Fatalf("ReadLine() = %q, %v; want %q, nil", got, err, "y")
+	}
+	if paused != 1 || resumed != 1 {
+		t.Errorf("pause hook: paused %d, resumed %d; want 1, 1", paused, resumed)
+	}
+}
+
+// Cancelling the scope's (signal) context still cancels the prompt.
+func TestPromptReaderScopeSignalCancels(t *testing.T) {
+	r, w := io.Pipe()
+	t.Cleanup(func() { _ = w.Close() })
+	p := NewPromptReader(r)
+
+	signalCtx, stop := context.WithCancel(t.Context())
+	ctx := WithPromptScope(context.WithoutCancel(signalCtx), signalCtx, nil)
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.ReadLine(ctx)
+		done <- err
+	}()
+	stop()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrPromptCancelled) {
+			t.Fatalf("ReadLine() err = %v, want ErrPromptCancelled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ReadLine did not return after the signal context was cancelled")
+	}
+}
+
+// Nested scopes keep the outermost wait context and run every pause hook.
+func TestWithPromptScopeNested(t *testing.T) {
+	outerWait := t.Context()
+	var calls []string
+	hook := func(name string) func() func() {
+		return func() func() {
+			calls = append(calls, "pause "+name)
+			return func() { calls = append(calls, "resume "+name) }
+		}
+	}
+	ctx := WithPromptScope(t.Context(), outerWait, hook("outer"))
+	innerWait, cancel := context.WithCancel(t.Context())
+	cancel()
+	ctx = WithPromptScope(ctx, innerWait, hook("inner"))
+
+	wait, resume := promptContext(ctx)
+	if wait != outerWait {
+		t.Error("nested scope must keep the outer wait context")
+	}
+	resume()
+	want := "pause outer,pause inner,resume inner,resume outer"
+	if got := strings.Join(calls, ","); got != want {
+		t.Errorf("hooks = %s, want %s", got, want)
+	}
+}
+
+// Without a scope, a deadline is reported as a timeout, not as a user cancel.
+func TestPromptReaderDeadlineIsTimeout(t *testing.T) {
+	r, w := io.Pipe()
+	t.Cleanup(func() { _ = w.Close() })
+	p := NewPromptReader(r)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	_, err := p.ReadLine(ctx)
+	if !errors.Is(err, ErrPromptTimeout) {
+		t.Fatalf("ReadLine() err = %v, want ErrPromptTimeout", err)
+	}
+	if a, b := PromptError(err).Error(), PromptError(ErrPromptCancelled).Error(); a == b {
+		t.Errorf("timeout and cancel map to the same error text %q", a)
+	}
+}
+
 func withStdin(t *testing.T, input string) {
 	t.Helper()
 	original := os.Stdin

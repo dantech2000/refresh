@@ -2,7 +2,6 @@ package aws
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -45,11 +44,8 @@ func promptForNodegroupConfirmation(ctx context.Context, matches []string, patte
 	color.Cyan("Update all %d matching nodegroups? (y/N): ", len(matches))
 
 	response, err := ui.ReadLine(ctx)
-	if errors.Is(err, ui.ErrPromptCancelled) {
-		return nil, fmt.Errorf("operation cancelled")
-	}
 	if err != nil {
-		return nil, fmt.Errorf("operation cancelled: failed to read input")
+		return nil, ui.PromptError(err)
 	}
 
 	// Default is No: bare Enter (or anything but yes) cancels.
