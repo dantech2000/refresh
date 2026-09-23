@@ -106,26 +106,6 @@ func pdbStatusSynced(pdb policyv1.PodDisruptionBudget) bool {
 	return c == nil || c.Reason != policyv1.SyncFailedReason
 }
 
-// ListPodDisruptionBudgets returns a structured snapshot of every PDB in the
-// cluster with its current disruption status. System namespaces are included:
-// a stuck kube-system PDB (e.g. coredns) blocks a drain just like a user one.
-// Returns (nil, nil) when no Kubernetes client is configured so callers can
-// degrade gracefully. (REF-4)
-func (hc *HealthChecker) ListPodDisruptionBudgets(ctx context.Context) ([]PDBInfo, error) {
-	if hc.k8sClient == nil {
-		return nil, nil
-	}
-	pdbs, err := hc.k8sClient.PolicyV1().PodDisruptionBudgets("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("listing PodDisruptionBudgets: %w", err)
-	}
-	out := make([]PDBInfo, 0, len(pdbs.Items))
-	for _, pdb := range pdbs.Items {
-		out = append(out, pdbInfoFrom(pdb))
-	}
-	return out, nil
-}
-
 // CheckPodDisruptionBudgets validates PDB configuration for user workloads:
 // it flags PDBs that would block a node drain right now, and measures how many
 // deployments are covered by a PDB at all.

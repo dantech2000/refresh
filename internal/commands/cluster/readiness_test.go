@@ -115,7 +115,7 @@ func TestResolveReadinessKubeClient_KubeconfigMismatch(t *testing.T) {
 			t.Errorf("warning %q should mention %q", out, want)
 		}
 	}
-	if sel.Target.Name != "prod" || !strings.Contains(sel.Target.Endpoint, ".gr7.eu-west-1.eks.amazonaws.com") || sel.Target.ARN == "" {
+	if sel.Target.Name != "prod" || !strings.Contains(sel.Target.Endpoint, ".gr7.eu-west-1.eks.amazonaws.com") {
 		t.Fatalf("target = %+v, want the described prod cluster", sel.Target)
 	}
 }

@@ -143,7 +143,7 @@ func TestCheckResourceBalance_NilCloudWatchWarns(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// ListPodDisruptionBudgets
+// pdbInfoFrom
 // ──────────────────────────────────────────────────────────────────────────────
 
 func pdbWithStatus(namespace, name string, allowed, healthy, desired, expected int32) *policyv1.PodDisruptionBudget {
@@ -158,28 +158,8 @@ func pdbWithStatus(namespace, name string, allowed, healthy, desired, expected i
 	}
 }
 
-func TestListPodDisruptionBudgets_NilClient(t *testing.T) {
-	hc := NewChecker(nil, nil, nil, nil)
-	pdbs, err := hc.ListPodDisruptionBudgets(context.Background())
-	if err != nil {
-		t.Fatalf("nil client should degrade gracefully, got err: %v", err)
-	}
-	if pdbs != nil {
-		t.Errorf("nil client should return nil slice, got %v", pdbs)
-	}
-}
-
-func TestListPodDisruptionBudgets_CopiesStatus(t *testing.T) {
-	client := fakek8s.NewSimpleClientset(pdbWithStatus("my-app", "frontend", 2, 5, 4, 5))
-	hc := NewChecker(nil, client, nil, nil)
-	pdbs, err := hc.ListPodDisruptionBudgets(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(pdbs) != 1 {
-		t.Fatalf("expected 1 PDB, got %d: %+v", len(pdbs), pdbs)
-	}
-	got := pdbs[0]
+func TestPDBInfoFrom_CopiesStatus(t *testing.T) {
+	got := pdbInfoFrom(*pdbWithStatus("my-app", "frontend", 2, 5, 4, 5))
 	if got.Namespace != "my-app" || got.Name != "frontend" {
 		t.Errorf("got %s/%s, want my-app/frontend", got.Namespace, got.Name)
 	}
@@ -188,36 +168,19 @@ func TestListPodDisruptionBudgets_CopiesStatus(t *testing.T) {
 	}
 }
 
-func TestListPodDisruptionBudgets_IncludesSystemNamespaces(t *testing.T) {
-	// Regression: the scale dry-run said "nothing constrains this scale-down"
-	// while pre-flight reported kube-system/coredns as a drain blocker.
+func TestCheckPodDisruptionBudgets_IncludesSystemNamespaces(t *testing.T) {
+	// A stuck kube-system PDB (e.g. coredns) blocks a drain just like a user one.
 	client := fakek8s.NewSimpleClientset(
 		pdbWithStatus("my-app", "frontend", 2, 5, 4, 5),
 		pdbWithStatus("kube-system", "coredns", 0, 2, 2, 2),
 	)
 	hc := NewChecker(nil, client, nil, nil)
-	pdbs, err := hc.ListPodDisruptionBudgets(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	var coredns *PDBInfo
-	for i := range pdbs {
-		if pdbs[i].Namespace == "kube-system" && pdbs[i].Name == "coredns" {
-			coredns = &pdbs[i]
-		}
-	}
-	if len(pdbs) != 2 || coredns == nil {
-		t.Fatalf("expected my-app/frontend and kube-system/coredns, got %+v", pdbs)
-	}
-	if !coredns.AtRisk() {
-		t.Errorf("kube-system/coredns should be at risk: %+v", *coredns)
-	}
 	if r := hc.CheckPodDisruptionBudgets(context.Background()); !hasDetail(r.Details, "kube-system/coredns") {
-		t.Errorf("pre-flight and the list should agree on coredns, got %v", r.Details)
+		t.Errorf("pre-flight should report kube-system/coredns, got %v", r.Details)
 	}
 }
 
-func TestListPodDisruptionBudgets_MarksUnsyncedStatus(t *testing.T) {
+func TestPDBInfoFrom_MarksUnsyncedStatus(t *testing.T) {
 	stale := pdbWithStatus("my-app", "stale", 0, 0, 0, 0)
 	stale.Generation, stale.Status.ObservedGeneration = 3, 2
 	failed := pdbWithStatus("my-app", "failed", 0, 0, 0, 0)
@@ -228,14 +191,9 @@ func TestListPodDisruptionBudgets_MarksUnsyncedStatus(t *testing.T) {
 	ok.Status.Conditions = []metav1.Condition{{
 		Type: policyv1.DisruptionAllowedCondition, Status: metav1.ConditionFalse, Reason: policyv1.InsufficientPodsReason,
 	}}
-	client := fakek8s.NewSimpleClientset(stale, failed, ok)
-	hc := NewChecker(nil, client, nil, nil)
-	pdbs, err := hc.ListPodDisruptionBudgets(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	want := map[string]bool{"stale": true, "failed": true, "ok": false}
-	for _, p := range pdbs {
+	for _, pdb := range []*policyv1.PodDisruptionBudget{stale, failed, ok} {
+		p := pdbInfoFrom(*pdb)
 		if p.StatusNotSynced != want[p.Name] {
 			t.Errorf("%s: StatusNotSynced = %v, want %v", p.Name, p.StatusNotSynced, want[p.Name])
 		}

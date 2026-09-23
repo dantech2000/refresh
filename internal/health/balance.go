@@ -84,29 +84,22 @@ func (hc *HealthChecker) checkResourceBalanceWith(ctx context.Context, snap *cpu
 	return result
 }
 
-// NodeMetrics represents resource metrics for a single node
+// NodeMetrics is the CPU utilization of a single node.
 type NodeMetrics struct {
-	NodeName      string
-	CPUPercent    float64
-	MemoryPercent float64
+	CPUPercent float64
 }
 
-// ResourceAnalysis contains analysis of resource distribution.
-// CPUStdDev/MemoryStdDev are the population standard deviation of per-node
-// utilization, in percentage points (a spread measure, not statistical
-// variance).
+// ResourceAnalysis describes how CPU load is spread across nodes. CPUStdDev
+// is the population standard deviation of per-node CPU utilization, in
+// percentage points (a spread measure, not statistical variance).
 type ResourceAnalysis struct {
-	CPUStdDev    float64
-	MemoryStdDev float64
-	MaxCPU       float64
-	MaxMemory    float64
-	MinCPU       float64
-	MinMemory    float64
+	CPUStdDev float64
+	MaxCPU    float64
 }
 
 // nodeMetricsFromSnapshot converts the snapshot's per-instance averages into
 // NodeMetrics entries (one batched CloudWatch fetch instead of one call per
-// instance). Node names are the EC2 instance IDs.
+// instance).
 func (hc *HealthChecker) nodeMetricsFromSnapshot(ctx context.Context, snap *cpuSnapshot) ([]NodeMetrics, error) {
 	cpuByInstance, err := snap.get(ctx)
 	if err != nil {
@@ -114,12 +107,8 @@ func (hc *HealthChecker) nodeMetricsFromSnapshot(ctx context.Context, snap *cpuS
 	}
 
 	nodeMetrics := make([]NodeMetrics, 0, len(cpuByInstance))
-	for instanceID, cpuPercent := range cpuByInstance {
-		nodeMetrics = append(nodeMetrics, NodeMetrics{
-			NodeName:      instanceID,
-			CPUPercent:    cpuPercent,
-			MemoryPercent: 0, // Memory not available without CloudWatch agent
-		})
+	for _, cpuPercent := range cpuByInstance {
+		nodeMetrics = append(nodeMetrics, NodeMetrics{CPUPercent: cpuPercent})
 	}
 
 	if len(nodeMetrics) == 0 {
@@ -129,60 +118,30 @@ func (hc *HealthChecker) nodeMetricsFromSnapshot(ctx context.Context, snap *cpuS
 	return nodeMetrics, nil
 }
 
-// analyzeResourceDistribution analyzes the distribution of resources across nodes
+// analyzeResourceDistribution computes the peak and spread of per-node CPU.
 func (hc *HealthChecker) analyzeResourceDistribution(metrics []NodeMetrics) ResourceAnalysis {
 	if len(metrics) == 0 {
 		return ResourceAnalysis{}
 	}
 
-	// Calculate min, max, and variance
-	analysis := ResourceAnalysis{
-		MaxCPU:    metrics[0].CPUPercent,
-		MinCPU:    metrics[0].CPUPercent,
-		MaxMemory: metrics[0].MemoryPercent,
-		MinMemory: metrics[0].MemoryPercent,
-	}
-
+	analysis := ResourceAnalysis{MaxCPU: metrics[0].CPUPercent}
 	cpuSum := 0.0
-	memorySum := 0.0
-
-	// Find min/max and calculate sum
 	for _, metric := range metrics {
 		if metric.CPUPercent > analysis.MaxCPU {
 			analysis.MaxCPU = metric.CPUPercent
 		}
-		if metric.CPUPercent < analysis.MinCPU {
-			analysis.MinCPU = metric.CPUPercent
-		}
-		if metric.MemoryPercent > analysis.MaxMemory {
-			analysis.MaxMemory = metric.MemoryPercent
-		}
-		if metric.MemoryPercent < analysis.MinMemory {
-			analysis.MinMemory = metric.MemoryPercent
-		}
-
 		cpuSum += metric.CPUPercent
-		memorySum += metric.MemoryPercent
 	}
-
-	// Calculate averages
 	cpuAvg := cpuSum / float64(len(metrics))
-	memoryAvg := memorySum / float64(len(metrics))
 
-	// Calculate the population standard deviation (sqrt of mean squared
-	// deviation) of per-node CPU/memory — a spread measure in percentage points.
+	// Population standard deviation (sqrt of mean squared deviation) of
+	// per-node CPU: a spread measure in percentage points.
 	cpuSquaredDevSum := 0.0
-	memorySquaredDevSum := 0.0
-
 	for _, metric := range metrics {
 		cpuDiff := metric.CPUPercent - cpuAvg
-		memoryDiff := metric.MemoryPercent - memoryAvg
 		cpuSquaredDevSum += cpuDiff * cpuDiff
-		memorySquaredDevSum += memoryDiff * memoryDiff
 	}
-
 	analysis.CPUStdDev = math.Sqrt(cpuSquaredDevSum / float64(len(metrics)))
-	analysis.MemoryStdDev = math.Sqrt(memorySquaredDevSum / float64(len(metrics)))
 
 	return analysis
 }

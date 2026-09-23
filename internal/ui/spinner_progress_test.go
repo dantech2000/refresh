@@ -15,7 +15,6 @@ func TestFunMessages(t *testing.T) {
 		Addon:     []string{"addon"},
 		General:   []string{"general"},
 		Health:    []string{"health"},
-		Workload:  []string{"workload"},
 	}
 
 	for category, want := range map[string]string{
@@ -23,7 +22,6 @@ func TestFunMessages(t *testing.T) {
 		"nodegroup": "nodegroup",
 		"addon":     "addon",
 		"health":    "health",
-		"workload":  "workload",
 		"other":     "general",
 	} {
 		got := fm.GetMessages(category)

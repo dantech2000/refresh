@@ -57,7 +57,6 @@ type Service struct {
 	nodegroups NodegroupLister
 	addons     AddonAnalyzer
 	ec2        EC2API // optional; nil disables AMI-age and Karpenter probes
-	logger     *slog.Logger
 
 	// now is injectable for tests; nil means time.Now.
 	now func() time.Time
@@ -89,7 +88,6 @@ func NewService(awsCfg aws.Config, logger *slog.Logger) *Service {
 		nodegroups: nodegroup.NewService(awsCfg, nil, logger),
 		addons:     addons.NewService(eksClient, logger),
 		ec2:        ec2.NewFromConfig(awsCfg),
-		logger:     logger,
 	}
 }
 

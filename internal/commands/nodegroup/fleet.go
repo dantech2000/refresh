@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"time"
 
@@ -105,34 +104,13 @@ func validateFleetFlags(cmd *cli.Command) error {
 	if args := cmd.Args().Slice(); len(args) > 0 {
 		return fmt.Errorf("--all-clusters does not take positional arguments (got %q); select nodegroups with -n/--nodegroup", strings.Join(args, " "))
 	}
-	if flagSetOnCommandLine(cmd, "cluster") {
+	if cmd.IsSet("cluster") {
 		return fmt.Errorf("--all-clusters cannot be combined with --cluster; drop one of them (scope the fleet with -r)")
 	}
 	if cmd.String("kube-context") != "" {
 		return fmt.Errorf("--all-clusters cannot be combined with --kube-context: fleet mode matches each cluster to a kubeconfig context by endpoint, and one explicit context would be used for every cluster")
 	}
 	return nil
-}
-
-// flagSetOnCommandLine reports whether the string flag name was set on the
-// command line rather than only through its env var source. urfave/cli applies
-// an env source only when the flag was not given, so a value that differs from
-// the env value came from the command line. A command-line value equal to the
-// env value is indistinguishable and treated as coming from the env.
-func flagSetOnCommandLine(cmd *cli.Command, name string) bool {
-	if !cmd.IsSet(name) {
-		return false
-	}
-	for _, f := range cmd.Flags {
-		sf, ok := f.(*cli.StringFlag)
-		if !ok || !slices.Contains(sf.Names(), name) {
-			continue
-		}
-		if v, _, found := sf.Sources.LookupWithSource(); found && v == cmd.String(name) {
-			return false
-		}
-	}
-	return true
 }
 
 // runFleetUpdate is "patch Tuesday": discover clusters across regions and roll

@@ -177,7 +177,6 @@ type FunMessages struct {
 	Addon     []string
 	General   []string
 	Health    []string
-	Workload  []string
 }
 
 // GetMessages returns messages for the specified category, falling back to general.
@@ -191,8 +190,6 @@ func (fm *FunMessages) GetMessages(category string) []string {
 		return fm.Addon
 	case "health":
 		return fm.Health
-	case "workload":
-		return fm.Workload
 	default:
 		return fm.General
 	}
@@ -250,13 +247,6 @@ var DefaultFunMessages = &FunMessages{
 		"Running diagnostic spells...",
 		"Checking if your cluster needs vitamins...",
 		"Performing digital CPR if needed...",
-	},
-	Workload: []string{
-		"Checking workload disruption safety...",
-		"Scanning namespaces for PDB coverage...",
-		"Matching PDB selectors to deployments...",
-		"Reviewing workload maintenance readiness...",
-		"Looking for deployments without disruption budgets...",
 	},
 	General: []string{
 		"Working the AWS magic...",

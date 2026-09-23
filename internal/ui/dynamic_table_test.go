@@ -14,18 +14,18 @@ import (
 func TestDynamicTable_BasicFunctionality(t *testing.T) {
 	table := NewDynamicTable()
 
-	if table.IsEmpty() != true {
+	if len(table.rows) != 0 {
 		t.Error("New table should be empty")
 	}
 
 	table.Add("Status", "Active")
 	table.Add("Version", "1.32")
 
-	if table.Count() != 2 {
-		t.Errorf("Expected 2 rows, got %d", table.Count())
+	if len(table.rows) != 2 {
+		t.Errorf("Expected 2 rows, got %d", len(table.rows))
 	}
 
-	if table.IsEmpty() != false {
+	if len(table.rows) == 0 {
 		t.Error("Table with rows should not be empty")
 	}
 }
@@ -35,10 +35,10 @@ func TestDynamicTable_ChainedOperations(t *testing.T) {
 		Add("Status", "Active").
 		Add("Version", "1.32").
 		AddStatus("Health", "ENABLED").
-		AddBool("Protection", true)
+		AddStatus("Protection", "ENABLED")
 
-	if table.Count() != 4 {
-		t.Errorf("Expected 4 rows, got %d", table.Count())
+	if len(table.rows) != 4 {
+		t.Errorf("Expected 4 rows, got %d", len(table.rows))
 	}
 }
 
@@ -54,8 +54,8 @@ func TestDynamicTable_StatusColoring(t *testing.T) {
 	table.AddStatus("Unknown", "UNKNOWN")
 	table.AddStatus("Default", "CUSTOM")
 
-	if table.Count() != 5 {
-		t.Errorf("Expected 5 rows, got %d", table.Count())
+	if len(table.rows) != 5 {
+		t.Errorf("Expected 5 rows, got %d", len(table.rows))
 	}
 }
 
@@ -113,8 +113,8 @@ func TestDynamicTable_ANSIColorAlignment(t *testing.T) {
 	table.Add("Another Normal", "more regular text")
 
 	// This test mainly ensures no panics occur and proper structure is maintained
-	if table.Count() != 3 {
-		t.Errorf("Expected 3 rows, got %d", table.Count())
+	if len(table.rows) != 3 {
+		t.Errorf("Expected 3 rows, got %d", len(table.rows))
 	}
 }
 
@@ -145,7 +145,7 @@ func TestDynamicTable_RenderSectionAndConstructors(t *testing.T) {
 	t.Cleanup(func() { os.Stdout = originalStdout })
 
 	NewDynamicTable().Add("Info", "value").RenderSection("Info")
-	NewDynamicTable().AddBool("Enabled", false).RenderSection("")
+	NewDynamicTable().AddStatus("Enabled", "DISABLED").RenderSection("")
 	NewDynamicTable().Render()
 
 	_ = w.Close()

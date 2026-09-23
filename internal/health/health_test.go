@@ -59,17 +59,17 @@ func TestCalculateAverage_FloatPrecision(t *testing.T) {
 func TestAnalyzeResourceDistribution_EmptyMetrics(t *testing.T) {
 	hc := &HealthChecker{}
 	analysis := hc.analyzeResourceDistribution(nil)
-	if analysis.MaxCPU != 0 || analysis.MinCPU != 0 || analysis.CPUStdDev != 0 {
+	if analysis.MaxCPU != 0 || analysis.CPUStdDev != 0 {
 		t.Errorf("empty metrics should yield zero analysis, got %+v", analysis)
 	}
 }
 
 func TestAnalyzeResourceDistribution_SingleNode(t *testing.T) {
 	hc := &HealthChecker{}
-	metrics := []NodeMetrics{{NodeName: "node-1", CPUPercent: 50.0}}
+	metrics := []NodeMetrics{{CPUPercent: 50.0}}
 	analysis := hc.analyzeResourceDistribution(metrics)
-	if analysis.MaxCPU != 50.0 || analysis.MinCPU != 50.0 {
-		t.Errorf("single node: MaxCPU=%f MinCPU=%f, both want 50.0", analysis.MaxCPU, analysis.MinCPU)
+	if analysis.MaxCPU != 50.0 {
+		t.Errorf("single node: MaxCPU=%f, want 50.0", analysis.MaxCPU)
 	}
 	if analysis.CPUStdDev != 0 {
 		t.Errorf("single node std dev should be 0, got %f", analysis.CPUStdDev)
@@ -84,8 +84,8 @@ func TestAnalyzeResourceDistribution_MultipleNodes(t *testing.T) {
 		{CPUPercent: 30},
 	}
 	analysis := hc.analyzeResourceDistribution(metrics)
-	if analysis.MinCPU != 10 || analysis.MaxCPU != 30 {
-		t.Errorf("min=%f max=%f, want 10/30", analysis.MinCPU, analysis.MaxCPU)
+	if analysis.MaxCPU != 30 {
+		t.Errorf("max=%f, want 30", analysis.MaxCPU)
 	}
 	// Std dev = sqrt(((10-20)^2 + (20-20)^2 + (30-20)^2) / 3) = sqrt(200/3) ≈ 8.165
 	wantStdDev := math.Sqrt(200.0 / 3.0)
@@ -830,25 +830,6 @@ func TestCheckPodDisruptionBudgets_ManyUnprotected(t *testing.T) {
 	result := hc.CheckPodDisruptionBudgets(context.Background())
 	if result.Status != StatusWarn {
 		t.Errorf("many unprotected: status = %s, want WARN", result.Status)
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// analyzeResourceDistribution — memory tracking
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestAnalyzeResourceDistribution_MemoryTracked(t *testing.T) {
-	hc := &HealthChecker{}
-	metrics := []NodeMetrics{
-		{CPUPercent: 10, MemoryPercent: 20},
-		{CPUPercent: 30, MemoryPercent: 80},
-	}
-	analysis := hc.analyzeResourceDistribution(metrics)
-	if analysis.MinMemory != 20 || analysis.MaxMemory != 80 {
-		t.Errorf("memory: MinMemory=%f MaxMemory=%f, want 20/80", analysis.MinMemory, analysis.MaxMemory)
-	}
-	if analysis.MemoryStdDev <= 0 {
-		t.Errorf("expected positive memory std dev for 20/80 split, got %f", analysis.MemoryStdDev)
 	}
 }
 

@@ -268,8 +268,6 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	monitor := &refreshTypes.ProgressMonitor{
 		Updates:   updates,
 		StartTime: time.Now(),
-		Quiet:     quiet,
-		Timeout:   flags.timeout,
 	}
 	config := refreshTypes.MonitorConfig{
 		PollInterval: flags.pollInterval,
@@ -309,13 +307,13 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		monErr = monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
 	} else {
 		heldBack, monErr = monitorAlongsidePanel(ctx, livePanel, flags.timeout, func(mctx context.Context, q bool) error {
-			monitor.Quiet, config.Quiet = q, q
+			config.Quiet = q
 			return monitoring.MonitorUpdates(mctx, eksClient, monitor, config)
 		})
 	}
 	if heldBack {
 		// The panel has stopped: print what the quiet monitor held back.
-		monitor.Quiet, config.Quiet = false, false
+		config.Quiet = false
 		if monitoring.AllComplete(monitor) {
 			monErr = monitoring.DisplayCompletionSummary(monitor, config)
 		} else {
