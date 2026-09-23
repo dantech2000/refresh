@@ -9,7 +9,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/services/common"
-	"github.com/fatih/color"
 )
 
 // FormatAWSError provides user-friendly error messages for AWS errors. It
@@ -41,35 +40,15 @@ func ValidateAWSCredentials(ctx context.Context, awsCfg aws.Config) error {
 	return nil
 }
 
-// CheckAWSCredentials validates AWS credentials and, on failure, prints a red
-// error message followed by credential setup guidance. It returns a sentinel
-// error so callers can return immediately without further decoration.
+// CheckAWSCredentials validates AWS credentials and returns one error for the
+// caller to report. It prints nothing, so stdout stays clean for -o json/yaml
+// and main prints the error once, on stderr. The message comes from
+// FormatAWSError: it carries the credential setup help only when the typed
+// classifiers see a credential problem, not on a cancel, a timeout, or a
+// network failure (those get their own guidance).
 func CheckAWSCredentials(ctx context.Context, awsCfg aws.Config) error {
 	if err := ValidateAWSCredentials(ctx, awsCfg); err != nil {
-		color.Red("%v", err)
-		fmt.Println()
-		PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
+		return fmt.Errorf("AWS credential validation failed: %w", err)
 	}
 	return nil
-}
-
-// PrintCredentialHelp displays helpful credential setup information.
-func PrintCredentialHelp() {
-	color.Yellow("AWS Credential Setup Help:")
-	fmt.Println()
-	fmt.Println("1. AWS CLI (recommended):")
-	fmt.Println("   aws configure")
-	fmt.Println()
-	fmt.Println("2. Environment variables:")
-	fmt.Println("   export AWS_ACCESS_KEY_ID=\"your-access-key\"")
-	fmt.Println("   export AWS_SECRET_ACCESS_KEY=\"your-secret-key\"")
-	fmt.Println("   export AWS_DEFAULT_REGION=\"us-west-2\"")
-	fmt.Println()
-	fmt.Println("3. AWS SSO:")
-	fmt.Println("   aws sso login --profile your-profile")
-	fmt.Println()
-	fmt.Println("4. For EC2/EKS/Lambda: Use IAM roles")
-	fmt.Println()
-	color.Cyan("For more information: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html")
 }

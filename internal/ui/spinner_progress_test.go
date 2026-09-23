@@ -1,6 +1,10 @@
 package ui
 
 import (
+	"bytes"
+	"io"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -59,6 +63,37 @@ func TestFunSpinnerLifecycle(t *testing.T) {
 
 	if NewFunSpinnerForCategory("cluster") == nil {
 		t.Fatal("category spinners should not be nil")
+	}
+}
+
+// Spinner frames and the Success line must go to the spinner stream
+// (stderr), never to stdout: pterm's default writer is stdout, and a stray
+// "SUCCESS" line there would break -o json/yaml output.
+func TestFunSpinnerWritesToSpinnerStream(t *testing.T) {
+	oldTTY, oldOut := spinnerOutputIsTerminal, spinnerOut
+	t.Cleanup(func() { spinnerOutputIsTerminal, spinnerOut = oldTTY, oldOut })
+	spinnerOutputIsTerminal = func() bool { return true }
+	var buf bytes.Buffer
+	spinnerOut = func() io.Writer { return &buf }
+
+	stdout := captureStdout(t, func() {
+		spinner := NewFunSpinner([]string{"working"})
+		if err := spinner.Start(); err != nil {
+			t.Fatalf("Start() = %v", err)
+		}
+		spinner.Success("done-marker")
+	})
+	if stdout != "" {
+		t.Errorf("spinner wrote to stdout: %q", stdout)
+	}
+	if !strings.Contains(buf.String(), "done-marker") {
+		t.Errorf("spinner stream missing the success line; got %q", buf.String())
+	}
+}
+
+func TestNewFunSpinnerDefaultsToStderr(t *testing.T) {
+	if got := NewFunSpinner(nil).spinner.Writer; got != os.Stderr {
+		t.Errorf("spinner writer = %v, want os.Stderr", got)
 	}
 }
 

@@ -147,8 +147,11 @@ regions these credentials can't use (SCP-denied or not enabled) with a note.
 Unattended / CI use:
    --yes              skip confirmation prompts (multi-match selection, warnings)
    --require-healthy  treat warn-level health findings as a hard stop
-   -o json            print a JSON run summary (started/skipped/custom/failed)
-   Without a TTY and without --yes, a prompt-requiring run fails fast.
+   -o json|yaml       print one document on stdout: the run summary
+                      (started/skipped/custom/failed), the dry-run plan, or
+                      the --health-only verdict; notices go to stderr
+   Without a TTY, or with -o json|yaml, a run that needs a prompt fails fast
+   unless --yes is given.
 
 Exit codes:
    0  success            1  error, interrupt, or monitoring timeout
@@ -176,7 +179,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.BoolFlag{Name: "changelog", Usage: "In dry-run, print full amazon-eks-ami release notes between the current and target AMI"},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config)"},
 			runner.KubeContextFlag(),
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format: health results with --health-only; a JSON run summary with -o json", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml). json/yaml print one document: the run summary, the --dry-run plan, or the --health-only verdict", Value: "table"},
 			// The real-time per-node roll panel (driven from live Kubernetes
 			// state) is the DEFAULT for a single-nodegroup roll when stdout is
 			// a color terminal, falling back to standard monitoring when the
