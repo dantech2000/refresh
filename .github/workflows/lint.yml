@@ -1,8 +1,9 @@
 name: Lint
 
+# PR-only. Lint already passed on the PR, so a merge to main does not re-run
+# it: the merge only drives release-please. A post-merge run once reported
+# false positives from a stale analysis cache, so it added noise, not safety.
 on:
-  push:
-    branches: ["main", "master"]
   pull_request:
     branches: ["main", "master"]
 
@@ -31,5 +32,12 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12.2
+          # Keep in lockstep with GOLANGCI_LINT_VERSION in Taskfile.yml.
+          version: v2.13.2
+          # Build the linter with the go.mod toolchain (set up above) instead
+          # of downloading the release binary. The gofmt formatter uses the
+          # go/printer of the Go that built the binary, and v2.13+ release
+          # binaries are built with Go 1.27. goinstall keeps CI's gofmt equal
+          # to `task fmt` under the go.mod toolchain.
+          install-mode: goinstall
           args: --timeout=5m

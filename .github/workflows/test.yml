@@ -1,5 +1,8 @@
 name: Test
 
+# PRs run every job. A push to main runs only the `test` job, because Codecov
+# needs coverage from main as the base for PR patch/project comparisons. The
+# other jobs already passed on the PR, so they skip on push.
 on:
   push:
     branches: ["main", "master"]
@@ -39,13 +42,22 @@ jobs:
       # `go test -race ./...` compiles every package (even test-less ones).
       # `go vet` is covered by golangci-lint's govet linter (lint.yml). (REF-135)
 
+      - name: go.mod and go.sum are tidy
+        run: |
+          if ! go mod tidy -diff; then
+            echo "::error::go.mod/go.sum are not tidy. Run 'go mod tidy' and commit."
+            exit 1
+          fi
+
       - name: Docs command reference is up to date
         # `-race` so this shares one race compile of the dependency tree with the
         # Test step's cache, instead of adding a separate non-race compile pass.
         run: |
           go run -race . gen-docs --out docs/reference
-          if ! git diff --quiet -- docs/reference; then
+          # `git status`, not `git diff`, so a new, untracked page also fails.
+          if [ -n "$(git status --porcelain -- docs/reference)" ]; then
             echo "::error::docs/reference is stale vs the CLI tree. Run 'task docs:gen' and commit."
+            git status --short -- docs/reference
             git --no-pager diff -- docs/reference
             exit 1
           fi
@@ -62,8 +74,30 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  race-stress:
+    name: Race stress (shuffled, x5)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Repeated, shuffled runs surface order-dependent tests and data races
+      # that one pass in declaration order can hide. The seed is printed in the
+      # log; reproduce a failure with `go test -race -shuffle=<seed> ./<pkg>`.
+      - name: Test (race, shuffled, x5)
+        run: go test -race -count=5 -shuffle=on -timeout=20m ./...
+
   govulncheck:
     name: Run govulncheck
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -83,6 +117,7 @@ jobs:
 
   deadcode:
     name: Run deadcode
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
