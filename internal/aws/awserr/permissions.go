@@ -30,7 +30,7 @@ var RequiredPermissions = []Permission{
 	{[]string{"eks:UpdateNodegroupConfig"}, "`nodegroup scale`"},
 	{[]string{"eks:UpdateClusterVersion"}, "`cluster upgrade`"},
 	{[]string{"eks:UpdateAddon"}, "`addon update`, `cluster upgrade`"},
-	{[]string{"eks:DescribeUpdate"}, "`nodegroup update`, `addon update --wait`, `cluster upgrade`"},
+	{[]string{"eks:DescribeUpdate"}, "`nodegroup update`, `nodegroup scale --wait`, `addon update --wait`, `cluster upgrade`"},
 	{[]string{"ssm:GetParameter"}, "Latest recommended AMI: `status`, `nodegroup list`/`describe`/`update`"},
 	{[]string{"ec2:DescribeImages"}, "`status` (AMI age)"},
 	{[]string{"ec2:DescribeInstances"}, "`status` (Karpenter detection), `nodegroup describe --show-instances`, current AMI lookup"},
