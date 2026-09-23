@@ -37,7 +37,7 @@ import (
 // updateAMIFlags collects the flags that govern runUpdateAMI's behavior.
 type updateAMIFlags struct {
 	force, dryRun, noWait, quiet, skipHealthCheck, healthOnly bool
-	yes, requireHealthy, skipVerify, changelog, live          bool
+	yes, requireHealthy, skipVerify, changelog, live, reroll  bool
 	timeout, pollInterval                                     time.Duration
 	format                                                    string
 	kubeconfig, kubeContext                                   string
@@ -54,6 +54,7 @@ func readUpdateAMIFlags(cmd *cli.Command) (updateAMIFlags, error) {
 	// --health-only`) are parsed natively by urfave/cli v3.
 	return updateAMIFlags{
 		force:           cmd.Bool("force"),
+		reroll:          cmd.Bool("reroll"),
 		dryRun:          cmd.Bool("dry-run"),
 		noWait:          cmd.Bool("no-wait"),
 		quiet:           cmd.Bool("quiet"),
@@ -74,7 +75,8 @@ func readUpdateAMIFlags(cmd *cli.Command) (updateAMIFlags, error) {
 
 // isInteractive reports whether stdin is a terminal, so unattended runs (CI,
 // cron) fail fast instead of blocking on a prompt that can never be answered.
-func isInteractive() bool {
+// It is a var so tests can simulate a terminal.
+var isInteractive = func() bool {
 	fi, err := os.Stdin.Stat()
 	if err != nil {
 		return false
@@ -96,17 +98,27 @@ func (f updateAMIFlags) machineHealthOutput() bool {
 }
 
 // canPrompt reports whether the run may ask a question on the terminal. It
-// can't without a TTY, and it doesn't with -o json/yaml.
+// can't without a TTY, and it doesn't with -o json/yaml or --quiet: a
+// confirmation then needs --yes.
 func (f updateAMIFlags) canPrompt() bool {
-	return !f.machine() && isInteractive()
+	return !f.machine() && !f.quiet && isInteractive()
 }
 
 // noPromptReason explains, in an error message, why no prompt was shown.
 func (f updateAMIFlags) noPromptReason() string {
-	if f.machine() {
+	switch {
+	case f.machine():
 		return "-o " + f.format + " does not prompt"
+	case f.quiet:
+		return "--quiet does not prompt"
+	default:
+		return "no interactive terminal for confirmation"
 	}
-	return "no interactive terminal for confirmation"
+}
+
+// dryRunOptions maps the run flags to the dry-run preview options.
+func (f updateAMIFlags) dryRunOptions() dryrun.Options {
+	return dryrun.Options{Force: f.force, Reroll: f.reroll, Quiet: f.quiet}
 }
 
 // noticeOut is where per-nodegroup notices (skips, failures, warnings) go:
@@ -189,14 +201,14 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 
 	if flags.dryRun {
 		if flags.machine() {
-			plan, perr := dryRunDocument(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.force)
+			plan, perr := dryRunDocument(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
 			if perr != nil {
 				return perr
 			}
 			_, perr = runner.EncodeStdout(flags.format, plan)
 			return perr
 		}
-		if derr := dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.force, flags.quiet); derr != nil {
+		if derr := dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.dryRunOptions()); derr != nil {
 			return derr
 		}
 		if !flags.quiet {
@@ -531,7 +543,9 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 		if flags.healthOnly {
 			return true, healthExitError(summary)
 		}
-		return true, fmt.Errorf("pre-flight health checks failed: %s", healthProblems(summary))
+		// Exit 3 on a blocked gate, as documented, for the human and
+		// -o json/yaml paths alike.
+		return true, healthExitError(summary)
 	case health.DecisionWarn:
 		if flags.healthOnly {
 			if human {
@@ -557,12 +571,13 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 			}
 			return false, nil
 		}
-		// Without a TTY (CI/cron), or with -o json/yaml, and without --yes,
-		// fail fast rather than block on a prompt that can't be answered.
+		// Without a TTY (CI/cron), with -o json/yaml, or with --quiet, and
+		// without --yes, stop rather than prompt. --quiet hides the health
+		// report, so it must never accept the warnings on the user's behalf.
 		if !flags.canPrompt() {
 			return true, fmt.Errorf("health checks reported warnings (%s); re-run with --yes to proceed or --require-healthy to fail (%s)", healthProblems(summary), flags.noPromptReason())
 		}
-		if !flags.quiet && !ui.PromptContinueWithWarnings(ctx, summary.Warnings) {
+		if !ui.PromptContinueWithWarnings(ctx, summary.Warnings) {
 			color.Yellow("Update cancelled by user")
 			return true, fmt.Errorf("update cancelled")
 		}
@@ -600,26 +615,40 @@ func healthTargetNodegroups(ctx context.Context, eksClient *eks.Client, clusterN
 }
 
 // selectNodegroupsForUpdate lists nodegroups matching pattern and confirms the
-// selection interactively when ambiguous. It returns errors without printing
-// them: main (or the fleet summary) reports each error once, on stderr.
+// selection when the pattern is not an exact nodegroup name. It returns errors
+// without printing them: main (or the fleet summary) reports each error once,
+// on stderr.
 func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clusterName, pattern string, flags updateAMIFlags) ([]string, error) {
 	names, err := listNodegroupNames(ctx, eksClient, clusterName)
 	if err != nil {
 		return nil, err
 	}
 	matches := awsinternal.MatchingNodegroups(names, pattern)
-	// An ambiguous pattern (multiple matches) normally prompts. In unattended
-	// mode --yes selects them all; without a TTY or with -o json/yaml, and
-	// without --yes, fail fast instead of hanging on a prompt.
-	if len(matches) > 1 && pattern != "" {
+	// A pattern that is not an exact name (one substring match, or several
+	// matches) normally prompts. --yes accepts the matches; without a TTY or
+	// with -o json/yaml, and without --yes, fail instead of hanging on a
+	// prompt or rolling a nodegroup nobody named.
+	if awsinternal.NodegroupPatternNeedsConfirmation(matches, pattern) {
 		if flags.yes {
+			if len(matches) == 1 {
+				_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "No nodegroup named %q in %s; using the only partial match %q (--yes)\n", pattern, clusterName, matches[0])
+			}
 			return matches, nil
 		}
 		if !flags.canPrompt() {
-			return nil, fmt.Errorf("pattern %q matched %d nodegroups; re-run with --yes to update all, or a more specific name (%s)", pattern, len(matches), flags.noPromptReason())
+			return nil, nodegroupPatternError(clusterName, pattern, matches, flags.noPromptReason())
 		}
 	}
 	return awsinternal.ConfirmNodegroupSelection(ctx, matches, pattern)
+}
+
+// nodegroupPatternError explains why a non-exact pattern was not accepted
+// without a prompt, naming the candidates and the pattern.
+func nodegroupPatternError(clusterName, pattern string, matches []string, reason string) error {
+	if len(matches) == 1 {
+		return fmt.Errorf("no nodegroup named %q in %s (partial match: %s); re-run with --yes to update it, or pass the exact name (%s)", pattern, clusterName, matches[0], reason)
+	}
+	return fmt.Errorf("pattern %q matched %d nodegroups (%s); re-run with --yes to update all, or a more specific name (%s)", pattern, len(matches), strings.Join(matches, ", "), reason)
 }
 
 // updateOutcomes records the per-nodegroup disposition of an update run, used
@@ -644,7 +673,8 @@ type updateDocument struct {
 // dry-run document.
 type dryRunNodegroup struct {
 	Name string `json:"name" yaml:"name"`
-	// Action is update, force-update, skip-updating, or skip-latest.
+	// Action is update, force-update, skip-updating, skip-latest, or
+	// skip-custom (listed under customUnmanaged in the real run's summary).
 	Action     string `json:"action" yaml:"action"`
 	CurrentAMI string `json:"currentAmi,omitempty" yaml:"currentAmi,omitempty"`
 	LatestAMI  string `json:"latestAmi,omitempty" yaml:"latestAmi,omitempty"`
@@ -656,17 +686,18 @@ type dryRunPlan struct {
 	Cluster    string            `json:"cluster" yaml:"cluster"`
 	DryRun     bool              `json:"dryRun" yaml:"dryRun"`
 	Force      bool              `json:"force" yaml:"force"`
+	Reroll     bool              `json:"reroll,omitempty" yaml:"reroll,omitempty"`
 	Nodegroups []dryRunNodegroup `json:"nodegroups" yaml:"nodegroups"`
 }
 
 // dryRunDocument previews the selected nodegroups without printing, for
 // -o json/yaml.
-func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selected []string, force bool) (dryRunPlan, error) {
-	updates, err := dryrun.Preview(ctx, awsCfg, eksClient, clusterName, selected, force)
+func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selected []string, flags updateAMIFlags) (dryRunPlan, error) {
+	updates, err := dryrun.Preview(ctx, awsCfg, eksClient, clusterName, selected, flags.dryRunOptions())
 	if err != nil {
 		return dryRunPlan{}, err
 	}
-	plan := dryRunPlan{Cluster: clusterName, DryRun: true, Force: force, Nodegroups: make([]dryRunNodegroup, 0, len(updates))}
+	plan := dryRunPlan{Cluster: clusterName, DryRun: true, Force: flags.force, Reroll: flags.reroll, Nodegroups: make([]dryRunNodegroup, 0, len(updates))}
 	for _, u := range updates {
 		plan.Nodegroups = append(plan.Nodegroups, dryRunNodegroup{
 			Name:       u.Name,
@@ -686,7 +717,8 @@ func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 // best-effort behavior.
 //
 // The already-on-latest skip mirrors the dry-run preview (ActionSkipLatest) so
-// the real run matches what `--dry-run` promised; `--force` bypasses it.
+// the real run matches what `--dry-run` promised; `--reroll` (and `--force`)
+// bypass it.
 func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, nodegroups []string, flags updateAMIFlags) ([]refreshTypes.UpdateProgress, updateOutcomes) {
 	skipLatest := newLatestAMISkipChecker(ctx, awsCfg, eksClient, clusterName, flags)
 	// Progress lines are human-only. Skip and failure notices always print:
@@ -708,7 +740,7 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 		// recommended AMI. Skip with clear guidance instead of mis-rolling.
 		if nodegroup.AmiType == ekstypes.AMITypesCustom {
 			flags.notice(color.FgYellow, "Nodegroup %s uses a custom AMI (AmiType=CUSTOM); refresh can't select a recommended AMI.", ng)
-			flags.notice(color.FgYellow, "  Publish a new launch template version with your AMI and roll it (e.g. update the LT, then `nodegroup update --force`).")
+			flags.notice(color.FgYellow, "  Publish a new launch template version with the new AMI, then point the nodegroup at it (e.g. `aws eks update-nodegroup-version --launch-template name=<lt>,version=<n>`).")
 			outcomes.Custom = append(outcomes.Custom, ng)
 			continue
 		}
@@ -718,7 +750,7 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 			continue
 		}
 		if skipLatest(nodegroup) {
-			flags.notice(color.FgGreen, "Nodegroup %s is already on the latest AMI. Skipping (use --force to update anyway).", ng)
+			flags.notice(color.FgGreen, "Nodegroup %s is already on the latest AMI. Skipping (use --reroll to roll it anyway).", ng)
 			outcomes.Skipped = append(outcomes.Skipped, ng)
 			continue
 		}
@@ -761,11 +793,12 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 
 // newLatestAMISkipChecker returns a predicate reporting whether a nodegroup is
 // already on the latest recommended AMI for its type and should be skipped.
-// With --force it always returns false. AMI resolution is best-effort: when
+// With --reroll or --force it always returns false. AMI resolution is
+// best-effort: when
 // the current or latest AMI can't be determined the nodegroup is NOT skipped
 // (same as the dry-run preview's "AMI status unknown, update recommended").
 func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, flags updateAMIFlags) func(*ekstypes.Nodegroup) bool {
-	if flags.force {
+	if flags.force || flags.reroll {
 		return func(*ekstypes.Nodegroup) bool { return false }
 	}
 

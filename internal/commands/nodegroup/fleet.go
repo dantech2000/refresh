@@ -39,7 +39,10 @@ type clusterUpdateResult struct {
 	Region        string         `json:"region" yaml:"region"`
 	Outcomes      updateOutcomes `json:"outcomes" yaml:"outcomes"`
 	HealthBlocked bool           `json:"healthBlocked" yaml:"healthBlocked"`
-	VerifyFailed  bool           `json:"verifyFailed" yaml:"verifyFailed"`
+	// HealthWarned means the health gate stopped this cluster on warnings
+	// (--health-only or --require-healthy): exit 2, as for a single cluster.
+	HealthWarned bool `json:"healthWarned,omitempty" yaml:"healthWarned,omitempty"`
+	VerifyFailed bool `json:"verifyFailed" yaml:"verifyFailed"`
 	// Interrupted means the user stopped the run (Ctrl+C / SIGTERM) while this
 	// cluster was in progress; any started EKS update keeps running in AWS.
 	Interrupted bool `json:"interrupted,omitempty" yaml:"interrupted,omitempty"`
@@ -303,9 +306,15 @@ func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegrou
 			res.Interrupted = true
 			return res
 		}
-		// Block (or, in unattended mode, a warn-level hard stop).
-		res.HealthBlocked = true
+		// A warn-level stop (exit 2: --health-only or --require-healthy)
+		// is not a block (exit 3), so the fleet exit code matches what the
+		// same cluster gives on its own.
 		res.Error = err.Error()
+		if healthExitCode(err) == 2 {
+			res.HealthWarned = true
+		} else {
+			res.HealthBlocked = true
+		}
 		return res
 	}
 	if done {
@@ -327,6 +336,16 @@ func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegrou
 	res.VerifyFailed = verifyFailed
 	recordMonitorError(&res, monErr)
 	return res
+}
+
+// healthExitCode returns the exit code a health-gate error carries, or 0 when
+// it carries none.
+func healthExitCode(err error) int {
+	var ec cli.ExitCoder
+	if errors.As(err, &ec) {
+		return ec.ExitCode()
+	}
+	return 0
 }
 
 // recordMonitorError stores a monitoring error as typed state. An interrupt
@@ -461,7 +480,7 @@ func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern
 		color.Red("  %v", err)
 		return
 	}
-	if err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.force, flags.quiet); err != nil {
+	if err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.dryRunOptions()); err != nil {
 		color.Red("  %v", err)
 	}
 	if !flags.quiet {
@@ -488,7 +507,7 @@ func fleetDryRunDocument(ctx context.Context, targets []clusterTarget, nodegroup
 			if err != nil {
 				return dryRunPlan{}, err
 			}
-			return dryRunDocument(cctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.force)
+			return dryRunDocument(cctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags)
 		}()
 		if err != nil {
 			res.Error = err.Error()
@@ -520,6 +539,8 @@ func summarizeClusterResult(r clusterUpdateResult) string {
 	switch {
 	case r.HealthBlocked:
 		return color.RedString("health-blocked (%s)", r.Error)
+	case r.HealthWarned:
+		return color.YellowString("health warnings (%s)", r.Error)
 	case r.Error != "":
 		return color.RedString("failed: %s", r.Error)
 	case len(r.Outcomes.Failed) > 0:
@@ -543,8 +564,9 @@ func summarizeClusterResult(r clusterUpdateResult) string {
 
 // fleetExit returns the worst (highest) exit code across the run:
 // 5 verification, 4 update-failed or a region that discovery could not list,
-// 3 health-blocked, 1 interrupted or monitor timeout (as in the single-cluster
-// updateExit), else 0.
+// 3 health-blocked, 2 health warnings that stopped a cluster (--health-only or
+// --require-healthy), 1 interrupted or monitor timeout (as in the
+// single-cluster updateExit), else 0.
 func fleetExit(results []clusterUpdateResult, regionErrs []regionDiscoveryError) error {
 	worst := 0
 	bump := func(code int) {
@@ -559,6 +581,8 @@ func fleetExit(results []clusterUpdateResult, regionErrs []regionDiscoveryError)
 		switch {
 		case r.HealthBlocked:
 			bump(3)
+		case r.HealthWarned:
+			bump(2)
 		case r.Error != "" || len(r.Outcomes.Failed) > 0:
 			bump(4)
 		case r.Interrupted || r.TimedOut:

@@ -17,6 +17,21 @@ import (
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
+func TestActionNameSkipCustom(t *testing.T) {
+	if got := ActionName(refreshTypes.ActionSkipCustom); got != "skip-custom" {
+		t.Errorf("ActionName(ActionSkipCustom) = %q, want skip-custom", got)
+	}
+}
+
+func TestCategorizeUpdateSkipCustom(t *testing.T) {
+	dr := &DryRunner{quiet: true}
+	result := &DryRunResult{}
+	dr.categorizeUpdate(result, NodegroupUpdate{Name: "custom", Action: refreshTypes.ActionSkipCustom})
+	if len(result.CustomAMI) != 1 || len(result.UpdatesNeeded)+len(result.UpdatesSkipped)+len(result.AlreadyLatest) != 0 {
+		t.Errorf("result = %+v, want only CustomAMI", result)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -217,17 +232,28 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 	tests := []struct {
 		name        string
 		force       bool
+		reroll      bool
 		status      types.NodegroupStatus
 		currentAMI  string
 		latestAMI   string
 		describeErr error
+		amiType     types.AMITypes
 		want        refreshTypes.DryRunAction
 	}{
+		// The real run skips custom AMIs before any other check, even with
+		// --force (customUnmanaged in its summary).
+		{name: "custom", status: types.NodegroupStatusActive, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
+		{name: "custom with force", force: true, status: types.NodegroupStatusActive, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
+		{name: "custom updating", status: types.NodegroupStatusUpdating, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
+		{name: "updating with force", force: true, status: types.NodegroupStatusUpdating, want: refreshTypes.ActionSkipUpdating},
 		{name: "describe error", describeErr: errors.New("boom"), want: refreshTypes.ActionSkipUpdating},
 		{name: "updating", status: types.NodegroupStatusUpdating, want: refreshTypes.ActionSkipUpdating},
 		{name: "force", force: true, status: types.NodegroupStatusActive, want: refreshTypes.ActionForceUpdate},
 		{name: "unknown", status: types.NodegroupStatusActive, currentAMI: "", latestAMI: "ami-new", want: refreshTypes.ActionUpdate},
 		{name: "latest", status: types.NodegroupStatusActive, currentAMI: "ami-new", latestAMI: "ami-new", want: refreshTypes.ActionSkipLatest},
+		{name: "latest with reroll", reroll: true, status: types.NodegroupStatusActive, currentAMI: "ami-new", latestAMI: "ami-new", want: refreshTypes.ActionUpdate},
+		{name: "outdated with reroll", reroll: true, status: types.NodegroupStatusActive, currentAMI: "ami-old", latestAMI: "ami-new", want: refreshTypes.ActionUpdate},
+		{name: "custom with reroll", reroll: true, status: types.NodegroupStatusActive, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
 		{name: "outdated", status: types.NodegroupStatusActive, currentAMI: "ami-old", latestAMI: "ami-new", want: refreshTypes.ActionUpdate},
 	}
 
@@ -237,6 +263,7 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 				clusterName: "test-cluster",
 				k8sVersion:  "1.30",
 				force:       tt.force,
+				reroll:      tt.reroll,
 				quiet:       true,
 				describeNodegroupFn: func(_ context.Context, name string) (*types.Nodegroup, error) {
 					if tt.describeErr != nil {
@@ -245,6 +272,7 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 					return &types.Nodegroup{
 						NodegroupName: aws.String(name),
 						Status:        tt.status,
+						AmiType:       tt.amiType,
 					}, nil
 				},
 				currentAmiFn: func(_ context.Context, _ *types.Nodegroup) string { return tt.currentAMI },
@@ -263,7 +291,7 @@ func TestNewDryRunnerAndPerformDryRunErrorPaths(t *testing.T) {
 	if _, err := NewDryRunner(context.Background(), aws.Config{}, nil, "cluster", false, true); err == nil {
 		t.Fatal("expected error for nil EKS client")
 	}
-	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, false, true); err == nil {
+	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, Options{Quiet: true}); err == nil {
 		t.Fatal("expected error for nil EKS client")
 	}
 }
@@ -309,7 +337,7 @@ func TestPerformDryRunSuccessWithInjectedRunner(t *testing.T) {
 		}, nil
 	}
 
-	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, false, true); err != nil {
+	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, Options{Quiet: true}); err != nil {
 		t.Fatalf("PerformDryRun() = %v", err)
 	}
 }
