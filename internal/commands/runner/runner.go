@@ -176,10 +176,10 @@ func ResolveClusterOrList(ctx context.Context, cfg aws.Config, cmd *cli.Command)
 	svc := factory.NewClusterService(cfg, false, nil)
 	summaries, lerr := svc.List(ctx, clustersvc.ListOptions{})
 	if lerr == nil {
-		_, _ = fmt.Fprintln(os.Stderr, "No cluster specified. Available clusters:")
-		_, _ = fmt.Fprintln(os.Stderr)
-		clusterview.WriteClustersHint(os.Stderr, summaries)
-		_, _ = fmt.Fprintln(os.Stderr)
+		_, _ = fmt.Fprintln(ui.Stderr, "No cluster specified. Available clusters:")
+		_, _ = fmt.Fprintln(ui.Stderr)
+		clusterview.WriteClustersHint(ui.Stderr, summaries)
+		_, _ = fmt.Fprintln(ui.Stderr)
 	}
 	return "", true, err
 }

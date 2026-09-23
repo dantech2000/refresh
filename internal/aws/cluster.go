@@ -76,7 +76,7 @@ func ClusterNameWithOptions(ctx context.Context, awsCfg aws.Config, cliFlag stri
 		return "", err
 	}
 	if fromContext != "" && !opts.ReadOnly {
-		_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "Using cluster %s (from context %s)\n", pattern, fromContext)
+		_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "Using cluster %s (from context %s)\n", pattern, fromContext)
 	}
 	return resolveClusterName(ctx, eks.NewFromConfig(awsCfg), pattern, opts)
 }
@@ -111,9 +111,9 @@ func resolveClusterName(ctx context.Context, api ListClustersAPI, pattern string
 	if err != nil {
 		// Show available clusters for reference
 		if len(matches) == 0 {
-			_, _ = color.New(color.FgYellow).Fprintln(os.Stderr, "Available clusters:")
+			_, _ = ui.StderrColor(color.FgYellow).Fprintln(ui.Stderr, "Available clusters:")
 			for _, cluster := range clusters {
-				_, _ = fmt.Fprintf(os.Stderr, "  - %s\n", cluster)
+				_, _ = fmt.Fprintf(ui.Stderr, "  - %s\n", cluster)
 			}
 		}
 		return "", err
@@ -122,7 +122,7 @@ func resolveClusterName(ctx context.Context, api ListClustersAPI, pattern string
 	// Inform user if a different cluster was selected. Stderr keeps
 	// -o json/yaml stdout clean.
 	if selectedCluster != pattern {
-		_, _ = color.New(color.FgGreen).Fprintf(os.Stderr, "Using cluster: %s\n", selectedCluster)
+		_, _ = ui.StderrColor(color.FgGreen).Fprintf(ui.Stderr, "Using cluster: %s\n", selectedCluster)
 	}
 
 	return selectedCluster, nil
@@ -295,7 +295,7 @@ func confirmClusterSelection(ctx context.Context, matches []string, pattern stri
 			return promptForSingleClusterMatch(ctx, match, pattern)
 		}
 		if opts.ReadOnly {
-			_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "No cluster named %q; using the only partial match %q\n", pattern, match)
+			_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "No cluster named %q; using the only partial match %q\n", pattern, match)
 			return match, nil
 		}
 		return "", fmt.Errorf("no cluster named %q (partial match: %s); pass the exact name with --cluster (no interactive terminal for confirmation)", pattern, match)
@@ -309,7 +309,7 @@ func confirmClusterSelection(ctx context.Context, matches []string, pattern stri
 
 // promptForSingleClusterMatch asks the user to confirm a non-exact match.
 func promptForSingleClusterMatch(ctx context.Context, match, pattern string) (string, error) {
-	_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "No cluster named %q. Use %q? [y/N]: ", pattern, match)
+	_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "No cluster named %q. Use %q? [y/N]: ", pattern, match)
 	response, err := promptLine(ctx)
 	if err != nil {
 		return "", ui.PromptError(err)
@@ -324,12 +324,12 @@ func promptForSingleClusterMatch(ctx context.Context, match, pattern string) (st
 
 // promptForClusterSelection displays matching clusters and prompts for selection.
 func promptForClusterSelection(ctx context.Context, matches []string, pattern string) (string, error) {
-	_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "Multiple clusters match pattern '%s':\n", pattern)
+	_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "Multiple clusters match pattern '%s':\n", pattern)
 	for i, cluster := range matches {
-		_, _ = fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, cluster)
+		_, _ = fmt.Fprintf(ui.Stderr, "  %d) %s\n", i+1, cluster)
 	}
 
-	_, _ = color.New(color.FgCyan).Fprintf(os.Stderr, "Select cluster number (1-%d) or press Enter to cancel: ", len(matches))
+	_, _ = ui.StderrColor(color.FgCyan).Fprintf(ui.Stderr, "Select cluster number (1-%d) or press Enter to cancel: ", len(matches))
 
 	response, err := promptLine(ctx)
 	if err != nil {

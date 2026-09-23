@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -15,6 +14,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func runList(ctx context.Context, cmd *cli.Command) error {
@@ -77,7 +77,7 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 }
 
 // warnOut receives list/describe warnings; a variable so tests can capture it.
-var warnOut io.Writer = os.Stderr
+var warnOut io.Writer = ui.Stderr
 
 // writeNodegroupList prints what was gathered in the requested format. When
 // some nodegroups could not be described, JSON/YAML carry them under

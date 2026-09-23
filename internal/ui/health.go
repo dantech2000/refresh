@@ -18,7 +18,7 @@ func DisplayHealthResults(summary health.HealthSummary) {
 }
 
 // WriteHealthResults writes the health check results to w. Commands with
-// -o json/yaml pass os.Stderr so the report never mixes with the document.
+// -o json/yaml pass ui.Stderr so the report never mixes with the document.
 func WriteHealthResults(w io.Writer, summary health.HealthSummary) {
 	Outln := func(a ...any) { _, _ = fmt.Fprintln(w, a...) }
 	Outf := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }

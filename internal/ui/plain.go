@@ -40,7 +40,7 @@ func NewPlainKV() *PlainTable { return NewPlainTable(PlainKVHeaders...) }
 // dropped with a stderr warning, so a bug can't shift columns.
 func (t *PlainTable) Row(cells ...string) *PlainTable {
 	if len(cells) != len(t.headers) {
-		_, _ = fmt.Fprintf(os.Stderr, "plain table: dropped row with %d cells (expected %d)\n", len(cells), len(t.headers))
+		_, _ = fmt.Fprintf(Stderr, "plain table: dropped row with %d cells (expected %d)\n", len(cells), len(t.headers))
 		return t
 	}
 	t.rows = append(t.rows, append([]string(nil), cells...))

@@ -132,8 +132,8 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	// stderr.
 	out := io.Writer(os.Stdout)
 	if ui.PlainOutput() {
-		writeUpgradePlanPlain(os.Stdout, os.Stderr, plan)
-		out = os.Stderr
+		writeUpgradePlanPlain(os.Stdout, ui.Stderr, plan)
+		out = ui.Stderr
 	} else {
 		renderPlan(plan)
 	}
@@ -225,7 +225,7 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 		opts := executeOptions(cmd)
 		opts.Progress = func(format string, args ...any) {
 			if !cmd.Bool("quiet") {
-				_, _ = fmt.Fprintf(os.Stderr, "  "+format+"\n", args...)
+				_, _ = fmt.Fprintf(ui.Stderr, "  "+format+"\n", args...)
 			}
 		}
 		var r *upgrade.Report

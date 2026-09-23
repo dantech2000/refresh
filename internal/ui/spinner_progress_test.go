@@ -3,7 +3,6 @@ package ui
 import (
 	"bytes"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -92,15 +91,17 @@ func TestFunSpinnerWritesToSpinnerStream(t *testing.T) {
 }
 
 func TestNewFunSpinnerDefaultsToStderr(t *testing.T) {
-	if got := NewFunSpinner(nil).spinner.Writer; got != os.Stderr {
-		t.Errorf("spinner writer = %v, want os.Stderr", got)
+	if got := NewFunSpinner(nil).spinner.Writer; got != Stderr {
+		t.Errorf("spinner writer = %v, want ui.Stderr", got)
 	}
 }
 
 func TestFunSpinnerNonInteractiveStaysSilent(t *testing.T) {
-	oldTTY := spinnerOutputIsTerminal
+	oldTTY, oldOut := spinnerOutputIsTerminal, spinnerOut
 	spinnerOutputIsTerminal = func() bool { return false }
-	t.Cleanup(func() { spinnerOutputIsTerminal = oldTTY })
+	var buf bytes.Buffer
+	spinnerOut = func() io.Writer { return &buf }
+	t.Cleanup(func() { spinnerOutputIsTerminal, spinnerOut = oldTTY, oldOut })
 
 	spinner := NewFunSpinner([]string{"msg"})
 	if err := spinner.Start(); err != nil {
@@ -112,4 +113,7 @@ func TestFunSpinnerNonInteractiveStaysSilent(t *testing.T) {
 	// Stop must not deadlock waiting for a render goroutine that never started.
 	spinner.Stop()
 	spinner.Success("ok")
+	if buf.Len() != 0 {
+		t.Errorf("spinner wrote to a non-terminal stderr: %q", buf.String())
+	}
 }

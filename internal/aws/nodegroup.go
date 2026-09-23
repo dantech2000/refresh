@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/fatih/color"
@@ -39,16 +38,16 @@ func ConfirmNodegroupSelection(ctx context.Context, matches []string, pattern st
 // nodegroupPromptOut receives the nodegroup-choice prompt. Prompts go to
 // stderr, like the cluster prompts, so stdout carries only command output.
 // A var so tests can capture it.
-var nodegroupPromptOut io.Writer = os.Stderr
+var nodegroupPromptOut io.Writer = ui.Stderr
 
 // promptForNodegroupConfirmation displays matching nodegroups and prompts for confirmation.
 func promptForNodegroupConfirmation(ctx context.Context, matches []string, pattern string) ([]string, error) {
-	_, _ = color.New(color.FgYellow).Fprintf(nodegroupPromptOut, "Multiple nodegroups match pattern '%s':\n", pattern)
+	_, _ = ui.ColorFor(nodegroupPromptOut, color.FgYellow).Fprintf(nodegroupPromptOut, "Multiple nodegroups match pattern '%s':\n", pattern)
 	for i, ng := range matches {
 		_, _ = fmt.Fprintf(nodegroupPromptOut, "  %d) %s\n", i+1, ng)
 	}
 
-	_, _ = color.New(color.FgCyan).Fprintf(nodegroupPromptOut, "Update all %d matching nodegroups? (y/N): ", len(matches))
+	_, _ = ui.ColorFor(nodegroupPromptOut, color.FgCyan).Fprintf(nodegroupPromptOut, "Update all %d matching nodegroups? (y/N): ", len(matches))
 
 	response, err := promptLine(ctx)
 	if err != nil {

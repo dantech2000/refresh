@@ -114,14 +114,14 @@ func (f updateAMIFlags) noPromptReason() string {
 // document.
 func (f updateAMIFlags) noticeOut() io.Writer {
 	if f.machine() {
-		return os.Stderr
+		return ui.Stderr
 	}
 	return os.Stdout
 }
 
 // notice writes one colored line to noticeOut.
 func (f updateAMIFlags) notice(attr color.Attribute, format string, args ...any) {
-	_, _ = color.New(attr).Fprintf(f.noticeOut(), format+"\n", args...)
+	_, _ = ui.ColorFor(f.noticeOut(), attr).Fprintf(f.noticeOut(), format+"\n", args...)
 }
 
 func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
@@ -455,7 +455,7 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	}
 	// With --health-only the verdict is the document itself.
 	if flags.machine() && !flags.healthOnly && !flags.quiet {
-		ui.WriteHealthResults(os.Stderr, result)
+		ui.WriteHealthResults(ui.Stderr, result)
 	}
 
 	if flags.machineHealthOutput() {
@@ -806,7 +806,7 @@ const clusterEnvVar = "EKS_CLUSTER_NAME"
 
 // clusterEnvNoteOut receives the note printed when the cluster comes from
 // clusterEnvVar. It is a var so tests can capture it.
-var clusterEnvNoteOut io.Writer = os.Stderr
+var clusterEnvNoteOut io.Writer = ui.Stderr
 
 // updateClusterAndNodegroupPatterns resolves the (cluster, nodegroup) slots
 // from flags, positionals and EKS_CLUSTER_NAME:
@@ -829,7 +829,7 @@ func updateClusterAndNodegroupPatterns(cmd *cli.Command) (string, string) {
 		return runner.RequestedCluster(cmd), runner.PositionalSlot(cmd, "nodegroup", "cluster")
 	}
 
-	_, _ = color.New(color.FgYellow).Fprintf(clusterEnvNoteOut, "Using cluster %s from %s\n", env, clusterEnvVar)
+	_, _ = ui.ColorFor(clusterEnvNoteOut, color.FgYellow).Fprintf(clusterEnvNoteOut, "Using cluster %s from %s\n", env, clusterEnvVar)
 	nodegroupPattern := strings.TrimSpace(cmd.String("nodegroup"))
 	if !cmd.IsSet("nodegroup") && len(args) == 1 {
 		nodegroupPattern = args[0]
