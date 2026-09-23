@@ -142,15 +142,17 @@ func updateResultColumns() []ui.Column {
 		{Title: "PREVIOUS", Min: 15, Max: 0, Align: ui.AlignLeft},
 		{Title: "NEW", Min: 15, Max: 0, Align: ui.AlignLeft},
 		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
+		{Title: "UPDATE ID", Min: 9, Max: 0, Align: ui.AlignLeft},
 	}
 }
 
 // addonUpdatePlain builds the `addon update [--all] -o plain` table: one row
-// per add-on update result.
+// per add-on update result. UPDATE ID is "-" when no EKS update started (dry
+// run, already current).
 func addonUpdatePlain(results []addons.AddonUpdateResult) *ui.PlainTable {
 	t := ui.NewPlainTable(columnTitles(updateResultColumns())...)
 	for _, r := range results {
-		t.Row(r.AddonName, r.PreviousVersion, r.NewVersion, r.Status)
+		t.Row(r.AddonName, r.PreviousVersion, r.NewVersion, r.Status, r.UpdateID)
 	}
 	return t
 }
@@ -210,7 +212,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 			newVersion = color.GreenString(r.NewVersion)
 		}
 
-		table.AddRow(r.AddonName, r.PreviousVersion, newVersion, status)
+		table.AddRow(r.AddonName, r.PreviousVersion, newVersion, status, orDashID(r.UpdateID))
 	}
 	table.Render()
 
@@ -225,4 +227,12 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 	}
 
 	return nil
+}
+
+// orDashID renders an empty update ID (dry run, already current) as "-".
+func orDashID(id string) string {
+	if id == "" {
+		return "-"
+	}
+	return id
 }

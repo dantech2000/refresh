@@ -135,7 +135,7 @@ func TestOutputAddonDetailsTable_Plain(t *testing.T) {
 
 func TestOutputUpdateAllResults_Plain(t *testing.T) {
 	results := []addons.AddonUpdateResult{
-		{AddonName: "vpc-cni", PreviousVersion: "v1.18.0", NewVersion: "v1.18.3", Status: "COMPLETED"},
+		{AddonName: "vpc-cni", PreviousVersion: "v1.18.0", NewVersion: "v1.18.3", Status: "COMPLETED", UpdateID: "upd-123"},
 		{AddonName: "coredns", PreviousVersion: "v1.11.1", NewVersion: "v1.11.3", Status: "COMPLETED_WITH_ISSUES", HealthIssues: "pods not ready"},
 	}
 	ui.SetPlainOutput(true)
@@ -144,14 +144,15 @@ func TestOutputUpdateAllResults_Plain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows := plaintest.Check(t, out, "ADDON", "PREVIOUS", "NEW", "STATUS")
-	if len(rows) != 2 || strings.Join(rows[1], "|") != "coredns|v1.11.1|v1.11.3|COMPLETED_WITH_ISSUES" {
+	rows := plaintest.Check(t, out, "ADDON", "PREVIOUS", "NEW", "STATUS", "UPDATE ID")
+	if len(rows) != 2 || strings.Join(rows[0], "|") != "vpc-cni|v1.18.0|v1.18.3|COMPLETED|upd-123" ||
+		strings.Join(rows[1], "|") != "coredns|v1.11.1|v1.11.3|COMPLETED_WITH_ISSUES|-" {
 		t.Errorf("plain rows = %q", rows)
 	}
 
 	// The human table is built from the same column set (pterm writes it to
 	// its own writer, so compare the definitions).
-	if got := strings.Join(columnTitles(updateResultColumns()), "|"); got != "ADDON|PREVIOUS|NEW|STATUS" {
+	if got := strings.Join(columnTitles(updateResultColumns()), "|"); got != "ADDON|PREVIOUS|NEW|STATUS|UPDATE ID" {
 		t.Errorf("human update table columns = %q", got)
 	}
 }
