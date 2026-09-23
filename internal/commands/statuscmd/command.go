@@ -18,7 +18,9 @@ staleness, and addons behind latest.
 
 Exit codes (for CI/cron):
   0  everything current and in standard support
-  2  something stale (nodegroup AMI or addon behind latest)
+  2  something needs attention: a stale nodegroup AMI, an addon behind
+     latest, a nodegroup behind the control-plane version, or an
+     AWS-reported control-plane health issue (HEALTH column)
   3  a cluster is on extended support or unsupported
   4  incomplete data: a cluster row has errors (a failed AWS call or a
      sweep that timed out) or a region could not be listed
@@ -38,8 +40,9 @@ at once in each region. It sweeps min(4, --max-concurrency) regions at once.`,
 			// does not re-declare them, so help lists each once. (REF-134)
 			//
 			// --region is intentionally local: a repeatable slice for "scan these
-			// regions", which deliberately shadows the global single-string AWS
-			// region override. (REF-47)
+			// regions". It shadows the global single-string --region, so the
+			// action reads it through runner.Regions, which falls back to the
+			// global value (`refresh --region X status`). (REF-47)
 			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Query all EKS-supported regions"},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Specific region(s) to query (repeatable)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},

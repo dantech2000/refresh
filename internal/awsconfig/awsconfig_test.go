@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
@@ -109,6 +111,58 @@ func TestFlagOrEmpty(t *testing.T) {
 	}
 }
 
+// A global --region given before a subcommand that declares its own
+// (unset) repeatable --region must still reach the AWS config:
+// `refresh --region eu-west-1 status` used to fall back to the default region.
+func TestFlagOrEmptyFallsBackToShadowedGlobalFlag(t *testing.T) {
+	var captured *cli.Command
+	newRoot := func() *cli.Command {
+		return &cli.Command{
+			Name:  "refresh",
+			Flags: []cli.Flag{&cli.StringFlag{Name: "region"}},
+			Commands: []*cli.Command{{
+				Name:  "status",
+				Flags: []cli.Flag{&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}}},
+				Action: func(_ context.Context, c *cli.Command) error {
+					captured = c
+					return nil
+				},
+			}},
+		}
+	}
+	for _, tc := range []struct {
+		argv []string
+		want string
+		vals []string
+	}{
+		{[]string{"refresh", "--region", "eu-west-1", "status"}, "eu-west-1", []string{"eu-west-1"}},
+		{[]string{"refresh", "status", "-r", "us-west-2", "-r", "ap-south-1"}, "us-west-2", []string{"us-west-2", "ap-south-1"}},
+		{[]string{"refresh", "--region", "eu-west-1", "status", "-r", "us-west-2"}, "us-west-2", []string{"us-west-2"}},
+		{[]string{"refresh", "status"}, "", nil},
+	} {
+		if err := newRoot().Run(context.Background(), tc.argv); err != nil {
+			t.Fatal(err)
+		}
+		if got := flagOrEmpty(captured, "region"); got != tc.want {
+			t.Errorf("%v: flagOrEmpty = %q, want %q", tc.argv, got, tc.want)
+		}
+		if got := SetFlagValues(captured, "region"); !slices.Equal(got, tc.vals) {
+			t.Errorf("%v: SetFlagValues = %v, want %v", tc.argv, got, tc.vals)
+		}
+	}
+}
+
+// A REFRESH_CONTEXT that names no saved context fails Load before any AWS
+// call instead of silently using the saved current context.
+func TestLoadUnknownRefreshContextFails(t *testing.T) {
+	setupContext(t, "prod", cliconfig.Context{Cluster: "p", Region: "eu-west-1"})
+	t.Setenv("REFRESH_CONTEXT", "prdo")
+	_, err := Load(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), `unknown context "prdo" from REFRESH_CONTEXT`) {
+		t.Fatalf("Load() error = %v, want an unknown-context error", err)
+	}
+}
+
 func TestFlagOrEmptyIgnoresEmptyStringSliceFlag(t *testing.T) {
 	cmd := newParsedCommand(t,
 		[]cli.Flag{&cli.StringSliceFlag{Name: "region"}})
@@ -135,7 +189,7 @@ func TestActiveContextLoadError(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "context.yaml"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if ctx, ok := activeContext(); ok || ctx.Cluster != "" {
+	if ctx, ok, err := activeContext(); err != nil || ok || ctx.Cluster != "" {
 		t.Fatalf("activeContext() = %+v, %v; want empty false", ctx, ok)
 	}
 }

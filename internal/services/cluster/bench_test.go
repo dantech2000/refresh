@@ -104,7 +104,7 @@ func BenchmarkClusterDescribe(b *testing.B) {
 // BenchmarkClusterListAllRegions exercises the bounded-concurrency multi-region
 // fan-out's offline-drivable seam.
 //
-// ListAllRegionsWithMeta itself cannot run offline: forRegion → NewService
+// ListAllRegions itself cannot run offline: forRegion → NewService
 // builds real eks/ec2/iam/sts clients via *.NewFromConfig and the per-region
 // List would hit the live EKS API. So this benchmark measures the pure
 // per-region option/cache-key derivation (regionOptionsFor + buildListCacheKey)

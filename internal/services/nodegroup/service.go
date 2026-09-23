@@ -218,12 +218,12 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 				})
 			})
 			if err != nil {
-				s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", name, "error", err)
+				s.logger.Debug("failed to describe nodegroup", "cluster", clusterName, "nodegroup", name, "error", err)
 				return ngResult{done: true, failure: fmt.Sprintf("%s: %v", name, err)}
 			}
 			ng := desc.Nodegroup
 			if ng == nil {
-				s.logger.Warn("empty DescribeNodegroup response", "cluster", clusterName, "nodegroup", name)
+				s.logger.Debug("empty DescribeNodegroup response", "cluster", clusterName, "nodegroup", name)
 				return ngResult{done: true, failure: name + ": empty DescribeNodegroup response"}
 			}
 			var desiredSize int32
@@ -245,7 +245,7 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 			latestAmiID, lookupErr := latestAMI.ForNodegroup(fctx, ng, k8sVersion)
 			amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiID, latestAmiID)
 			if lookupErr != nil {
-				s.logger.Warn("failed to resolve latest AMI", "cluster", clusterName, "nodegroup", name, "error", lookupErr)
+				s.logger.Debug("failed to resolve latest AMI", "cluster", clusterName, "nodegroup", name, "error", lookupErr)
 				if !latestAMILookupMatters(ng) {
 					lookupErr = nil
 				}

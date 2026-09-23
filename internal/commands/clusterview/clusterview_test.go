@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pterm/pterm"
+
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -252,5 +254,28 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 	rows := plaintest.Check(t, plain, "FIELD", "VALUE")
 	if got, _ := plaintest.Field(rows, "endpoint"); got != details.Endpoint {
 		t.Errorf("plain endpoint = %q, want the full %d-char endpoint", got, len(details.Endpoint))
+	}
+}
+
+// The tree's "N nodes" follows the table's NODES cell: the measured Ready
+// count only when readiness was measured, else the desired total. It used to
+// print Ready (0 when unmeasured) for every cluster.
+func TestOutputClustersTree_NodeCount(t *testing.T) {
+	var buf bytes.Buffer
+	pterm.SetDefaultOutput(&buf)
+	t.Cleanup(func() { pterm.SetDefaultOutput(os.Stdout) })
+
+	items := []clustersvc.ClusterSummary{
+		{Name: "unmeasured", Status: "ACTIVE", Region: "us-east-1", NodeCount: clustersvc.NodeCountInfo{Ready: 0, Total: 4}},
+		{Name: "measured", Status: "ACTIVE", Region: "us-east-1", NodeCount: clustersvc.NodeCountInfo{Ready: 2, Total: 4, ReadyKnown: true}},
+	}
+	if _, err := captureStdout(t, func() error { return OutputClustersTree(items, time.Second, false, false) }); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"unmeasured (ACTIVE, 4 nodes)", "measured (ACTIVE, 2 nodes)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("tree lacks %q:\n%s", want, out)
+		}
 	}
 }

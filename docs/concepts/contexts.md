@@ -32,5 +32,20 @@ refresh nodegroup list          # uses the active context
 refresh nodegroup list -c other # one-off override, active context untouched
 ```
 
+## Per-shell override: `REFRESH_CONTEXT`
+
+Set `REFRESH_CONTEXT` to the name of a saved context to use that context in
+one shell. The saved current context does not change:
+
+```bash
+export REFRESH_CONTEXT=staging
+refresh nodegroup list          # uses staging, whatever `refresh use` saved
+```
+
+The name must match a saved context. If it does not (for example, a typo such
+as `stagee`), every command fails before any AWS call. The error lists the
+known names. `refresh context list` shows a warning instead, so you can find
+the right name. Unset the variable to go back to the saved current context.
+
 See the [contexts command reference](../commands/contexts.md) for every
 subcommand and flag.

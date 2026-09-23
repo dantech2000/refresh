@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -31,8 +32,37 @@ func (s *ServiceImpl) getVpcCidr(ctx context.Context, vpcID string) (string, err
 	return aws.ToString(output.Vpcs[0].CidrBlock), nil
 }
 
-// getClusterAddons retrieves add-on information for a cluster
-func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) ([]AddonInfo, error) {
+// itemResult is one item of a per-item fan-out: the value, or why it is
+// missing. A zero itemResult means the item never ran (the context ended).
+type itemResult[T any] struct {
+	value   *T
+	failure string
+	ran     bool
+}
+
+// collectItems splits fan-out results into the values and one warning per
+// missing item, in input order.
+func collectItems[T any](ctx context.Context, kind string, names []string, results []itemResult[T]) (values []T, warnings []string) {
+	for i, r := range results {
+		switch {
+		case !r.ran:
+			reason := "sweep stopped early"
+			if cause := context.Cause(ctx); cause != nil {
+				reason = cause.Error()
+			}
+			warnings = append(warnings, fmt.Sprintf("%s %s: not evaluated: %s", kind, names[i], reason))
+		case r.failure != "":
+			warnings = append(warnings, fmt.Sprintf("%s %s: %s", kind, names[i], r.failure))
+		case r.value != nil:
+			values = append(values, *r.value)
+		}
+	}
+	return values, warnings
+}
+
+// getClusterAddons retrieves add-on information for a cluster. warnings
+// names each add-on that could not be described.
+func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) (addons []AddonInfo, warnings []string, err error) {
 	addonNames, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing add-ons for cluster %s", clusterName),
 		func(rc context.Context, token *string) (*eks.ListAddonsOutput, error) {
 			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
@@ -43,11 +73,11 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 		func(out *eks.ListAddonsOutput) ([]string, *string) { return out.Addons, out.NextToken },
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	results := common.ForEachParallel(ctx, addonNames, common.DefaultItemConcurrency,
-		func(fctx context.Context, addonName string) *AddonInfo {
+		func(fctx context.Context, addonName string) itemResult[AddonInfo] {
 			describeOutput, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
 				return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
 					ClusterName: aws.String(clusterName),
@@ -55,12 +85,12 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 				})
 			})
 			if err != nil {
-				s.logger.Warn("failed to describe add-on", "cluster", clusterName, "addon", addonName, "error", err)
-				return nil
+				s.logger.Debug("failed to describe add-on", "cluster", clusterName, "addon", addonName, "error", err)
+				return itemResult[AddonInfo]{ran: true, failure: awserr.Summary(err)}
 			}
 			if describeOutput == nil || describeOutput.Addon == nil {
-				s.logger.Warn("empty add-on describe response", "cluster", clusterName, "addon", addonName)
-				return nil
+				s.logger.Debug("empty add-on describe response", "cluster", clusterName, "addon", addonName)
+				return itemResult[AddonInfo]{ran: true, failure: "empty DescribeAddon response"}
 			}
 
 			addon := describeOutput.Addon
@@ -78,26 +108,21 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 				health = "Updating"
 			}
 
-			return &AddonInfo{
+			return itemResult[AddonInfo]{ran: true, value: &AddonInfo{
 				Name:    aws.ToString(addon.AddonName),
 				Version: aws.ToString(addon.AddonVersion),
 				Status:  string(addon.Status),
 				Health:  health,
-			}
+			}}
 		})
 
-	var addons []AddonInfo
-	for _, r := range results {
-		if r != nil {
-			addons = append(addons, *r)
-		}
-	}
-
-	return addons, nil
+	addons, warnings = collectItems(ctx, "add-on", addonNames, results)
+	return addons, warnings, nil
 }
 
-// getClusterNodegroups retrieves nodegroup information for a cluster
-func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName string) ([]NodegroupSummary, error) {
+// getClusterNodegroups retrieves nodegroup information for a cluster.
+// warnings names each nodegroup that could not be described.
+func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName string) (nodegroups []NodegroupSummary, warnings []string, err error) {
 	nodegroupNames, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing nodegroups for cluster %s", clusterName),
 		func(rc context.Context, token *string) (*eks.ListNodegroupsOutput, error) {
 			return s.eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
@@ -108,7 +133,7 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Measured Kubernetes Ready counts per nodegroup, fetched once when a
@@ -118,7 +143,7 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 	readyByNG, haveReady := s.nodegroupReadyCounts(ctx)
 
 	results := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
-		func(fctx context.Context, nodegroupName string) *NodegroupSummary {
+		func(fctx context.Context, nodegroupName string) itemResult[NodegroupSummary] {
 			describeOutput, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
 				return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
 					ClusterName:   aws.String(clusterName),
@@ -126,12 +151,12 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 				})
 			})
 			if err != nil {
-				s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", nodegroupName, "error", err)
-				return nil
+				s.logger.Debug("failed to describe nodegroup", "cluster", clusterName, "nodegroup", nodegroupName, "error", err)
+				return itemResult[NodegroupSummary]{ran: true, failure: awserr.Summary(err)}
 			}
 			if describeOutput == nil || describeOutput.Nodegroup == nil {
-				s.logger.Warn("empty nodegroup describe response", "cluster", clusterName, "nodegroup", nodegroupName)
-				return nil
+				s.logger.Debug("empty nodegroup describe response", "cluster", clusterName, "nodegroup", nodegroupName)
+				return itemResult[NodegroupSummary]{ran: true, failure: "empty DescribeNodegroup response"}
 			}
 
 			ng := describeOutput.Nodegroup
@@ -151,24 +176,18 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 				instanceTypes = ng.InstanceTypes[0]
 			}
 
-			return &NodegroupSummary{
+			return itemResult[NodegroupSummary]{ran: true, value: &NodegroupSummary{
 				Name:         aws.ToString(ng.NodegroupName),
 				Status:       string(ng.Status),
 				InstanceType: instanceTypes,
 				DesiredSize:  desiredSize,
 				ReadyNodes:   readyNodes,
 				ReadyKnown:   readyKnown,
-			}
+			}}
 		})
 
-	var nodegroups []NodegroupSummary
-	for _, r := range results {
-		if r != nil {
-			nodegroups = append(nodegroups, *r)
-		}
-	}
-
-	return nodegroups, nil
+	nodegroups, warnings = collectItems(ctx, "nodegroup", nodegroupNames, results)
+	return nodegroups, warnings, nil
 }
 
 // nodegroupReadyCounts returns measured Kubernetes Ready=True counts per
@@ -225,11 +244,12 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 		if err == nil {
 			err = fmt.Errorf("empty DescribeCluster response")
 		}
-		s.logger.Warn("failed to describe cluster, returning minimal summary", "cluster", clusterName, "error", err)
+		s.logger.Debug("failed to describe cluster, returning minimal summary", "cluster", clusterName, "error", err)
 		return &ClusterSummary{
-			Name:   clusterName,
-			Status: "UNKNOWN",
-			Region: s.awsConfig.Region,
+			Name:     clusterName,
+			Status:   "UNKNOWN",
+			Region:   s.awsConfig.Region,
+			Warnings: []string{"could not describe cluster: " + awserr.Summary(err)},
 		}
 	}
 
@@ -243,9 +263,11 @@ func (s *ServiceImpl) getClusterSummary(ctx context.Context, clusterName string,
 		Tags:      cluster.Tags,
 	}
 
-	if nodegroups, err := s.getClusterNodegroups(ctx, clusterName); err != nil {
-		s.logger.Warn("failed to get nodegroups for summary", "cluster", clusterName, "error", err)
+	if nodegroups, warnings, err := s.getClusterNodegroups(ctx, clusterName); err != nil {
+		s.logger.Debug("failed to get nodegroups for summary", "cluster", clusterName, "error", err)
+		summary.Warnings = append(summary.Warnings, "could not list nodegroups (node counts unknown): "+awserr.Summary(err))
 	} else {
+		summary.Warnings = append(summary.Warnings, warnings...)
 		// Ready is meaningful only when every nodegroup's readiness was measured;
 		// if any is unknown, the aggregate Ready is not a real count. (REF-130)
 		var totalReady, totalDesired int32

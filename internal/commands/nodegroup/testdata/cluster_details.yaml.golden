@@ -68,3 +68,5 @@ supportType: s-supporttype
 tags:
   s-string: s-string
 version: s-version
+warnings:
+  - s-string

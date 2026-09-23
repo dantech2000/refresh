@@ -9,9 +9,9 @@ refresh version [options]
 ```
 
 Print the running version (and, for release builds, the commit and build
-date). On an interactive terminal it also performs an opt-in, throttled,
-fail-silent check against GitHub Releases and prints a one-line hint to stderr
-when a newer version is available.
+date). On an interactive terminal it also checks GitHub Releases for a newer
+version and prints a one-line hint to stderr when one is available. The check
+is on by default, throttled, and fail-silent.
 
 The check runs at most once per day (cached under the user config dir), never
 adds measurable latency, and is skipped when stdout is piped/redirected. Disable

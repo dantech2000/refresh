@@ -17,7 +17,8 @@ Per-invocation flags still override it. For the conceptual overview see
 !!! note "Where contexts are stored"
     Contexts are saved as YAML under `$XDG_CONFIG_HOME/refresh/context.yaml`
     (default `~/.config/refresh/context.yaml`). The `REFRESH_CONTEXT` env var
-    overrides the saved "current" pointer for a single shell.
+    overrides the saved "current" pointer for a single shell. It must name a
+    saved context; otherwise every command fails and lists the known names.
 
 ---
 
@@ -47,7 +48,8 @@ refresh use -
 ## refresh current
 
 Print the name and cluster/region/profile of the currently active context. Honors
-the `REFRESH_CONTEXT` override, and prints a hint when no context is active.
+the `REFRESH_CONTEXT` override (an unknown name is an error), and prints a hint
+to stderr when no context is active.
 
 ```bash
 refresh current

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -248,26 +249,48 @@ func TestActiveResolutionOrder(t *testing.T) {
 	}
 	// Default: file's Current.
 	t.Setenv("REFRESH_CONTEXT", "")
-	if name, _, ok := f.Active(); !ok || name != "prod" {
-		t.Errorf("active = %s/%v, want prod", name, ok)
+	if name, _, ok, err := f.Active(); err != nil || !ok || name != "prod" {
+		t.Errorf("active = %s/%v/%v, want prod", name, ok, err)
 	}
 	// Env var overrides Current.
 	t.Setenv("REFRESH_CONTEXT", "staging")
-	if name, _, ok := f.Active(); !ok || name != "staging" {
-		t.Errorf("active with env = %s/%v, want staging", name, ok)
+	if name, _, ok, err := f.Active(); err != nil || !ok || name != "staging" {
+		t.Errorf("active with env = %s/%v/%v, want staging", name, ok, err)
 	}
-	// Env points at unknown context → fall through to Current.
-	t.Setenv("REFRESH_CONTEXT", "ghost")
-	if name, _, ok := f.Active(); !ok || name != "prod" {
-		t.Errorf("active with bad env = %s/%v, want fallback to prod", name, ok)
+}
+
+// A mistyped REFRESH_CONTEXT is an error, never a silent fall back to the
+// saved current context (which would target prod after `stagee`).
+func TestActiveUnknownEnvContextIsError(t *testing.T) {
+	f := &File{
+		Current: "prod",
+		Contexts: map[string]Context{
+			"prod":    {Cluster: "p"},
+			"staging": {Cluster: "s"},
+		},
+	}
+	t.Setenv("REFRESH_CONTEXT", "stagee")
+	name, ctx, ok, err := f.Active()
+	if err == nil || ok || name != "" || ctx.Cluster != "" {
+		t.Fatalf("Active() = %q, %+v, %v, %v; want an error and no context", name, ctx, ok, err)
+	}
+	for _, want := range []string{`"stagee"`, "REFRESH_CONTEXT", "prod, staging"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %s", err, want)
+		}
+	}
+
+	empty := &File{Contexts: map[string]Context{}}
+	if _, _, _, err := empty.Active(); err == nil || !strings.Contains(err.Error(), "none saved") {
+		t.Errorf("empty store: err = %v, want an unknown-context error naming none saved", err)
 	}
 }
 
 func TestActiveEmptyWhenNoContextMatches(t *testing.T) {
 	f := &File{Current: "missing", Contexts: map[string]Context{}}
-	t.Setenv("REFRESH_CONTEXT", "ghost")
-	if name, ctx, ok := f.Active(); ok || name != "" || ctx.Cluster != "" {
-		t.Fatalf("Active() = %q, %+v, %v; want empty", name, ctx, ok)
+	t.Setenv("REFRESH_CONTEXT", "")
+	if name, ctx, ok, err := f.Active(); err != nil || ok || name != "" || ctx.Cluster != "" {
+		t.Fatalf("Active() = %q, %+v, %v, %v; want empty", name, ctx, ok, err)
 	}
 }
 

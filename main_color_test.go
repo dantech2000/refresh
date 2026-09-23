@@ -3,10 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
+	"github.com/urfave/cli/v3"
+
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func restoreColor(t *testing.T) {
@@ -83,5 +88,39 @@ func TestNoColorFlagAppliesToHelp(t *testing.T) {
 	}
 	if bytes.Contains(out.Bytes(), []byte("\x1b[")) {
 		t.Fatalf("help output contains ANSI escapes with --no-color: %q", out.String())
+	}
+}
+
+// urfave/cli prints ExitCoder messages to its package-level ErrWriter. run
+// points it at the stderr writer it is given (ui.Stderr in main), so a
+// colored cli.Exit message reaches a redirected stderr without escapes.
+func TestExitCoderMessageToRedirectedStderrHasNoANSI(t *testing.T) {
+	restoreColor(t)
+	t.Setenv("NO_COLOR", "")
+	origErrWriter, origExiter, origStderr := cli.ErrWriter, cli.OsExiter, os.Stderr
+	t.Cleanup(func() { cli.ErrWriter, cli.OsExiter, os.Stderr = origErrWriter, origExiter, origStderr })
+
+	path := filepath.Join(t.TempDir(), "stderr")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	os.Stderr = f // a file: not a terminal
+
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"refresh", "version", "--no-update-check"}, &out, ui.Stderr); err != nil {
+		t.Fatalf("run version: %v", err)
+	}
+	cli.OsExiter = func(int) {}
+	color.NoColor = false // a message colored by the stdout decision
+	cli.HandleExitCoder(cli.Exit(color.RedString("Upgrade blocked"), 1))
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(got, []byte("Upgrade blocked")) || bytes.Contains(got, []byte("\x1b")) {
+		t.Errorf("redirected stderr = %q, want the message without escape codes", got)
 	}
 }

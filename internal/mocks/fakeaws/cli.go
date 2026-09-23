@@ -13,8 +13,11 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
+
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // App wraps command groups in a root command that carries refresh's global
@@ -55,9 +58,16 @@ func Run(tb testing.TB, app *cli.Command, args ...string) (stdout, stderr string
 
 	origOut, origErr := os.Stdout, os.Stderr
 	origColorOut, origColorErr, origNoColor := color.Output, color.Error, color.NoColor
+	origCLIErr := cli.ErrWriter
 	os.Stdout, os.Stderr = outW, errW
+	// -o plain and --no-color flip process-wide switches that nothing turns
+	// back off; reset them so one in-process run cannot leak into the next.
+	ui.ResetOutputState()
 	color.Output, color.Error, color.NoColor = outW, errW, true
 	app.Writer, app.ErrWriter = outW, errW
+	cli.ErrWriter = ui.Stderr
+	// pterm captured os.Stdout at init; point it at the pipe for this run.
+	pterm.SetDefaultOutput(outW)
 
 	var outBuf, errBuf bytes.Buffer
 	var wg sync.WaitGroup
@@ -68,7 +78,10 @@ func Run(tb testing.TB, app *cli.Command, args ...string) (stdout, stderr string
 	func() {
 		defer func() {
 			os.Stdout, os.Stderr = origOut, origErr
+			ui.ResetOutputState()
 			color.Output, color.Error, color.NoColor = origColorOut, origColorErr, origNoColor
+			cli.ErrWriter = origCLIErr
+			pterm.SetDefaultOutput(origOut)
 			_ = outW.Close()
 			_ = errW.Close()
 		}()

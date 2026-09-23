@@ -18,7 +18,7 @@ badly behind).
 | Code | Meaning |
 |---|---|
 | `0` | Every cluster is current and in standard support |
-| `2` | Something is stale (nodegroup AMI or addon behind latest) |
+| `2` | Something needs attention: a stale nodegroup AMI, an addon behind latest, a nodegroup behind the control-plane version, or an AWS-reported control-plane health issue (the `HEALTH` column) |
 | `3` | A cluster is on extended support or unsupported |
 | `4` | **Incomplete data**: a cluster row has errors (a failed AWS call, or a sweep that timed out before it reached the cluster), or a region could not be listed |
 
