@@ -40,7 +40,9 @@ func TestUpgradeNodegroups_RollsInOrderWithGates(t *testing.T) {
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
 		WithNodegroup("workers-b", "1.31", ekstypes.AMITypesAl2023X8664Standard).
 		WithNodegroup("workers-c", "1.31", ekstypes.AMITypesAl2023X8664Standard).
-		WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-a", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-b", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-c", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
 		Build()
 	rolls := captureNodegroupRolls(m)
 
@@ -88,7 +90,8 @@ func TestUpgradeNodegroups_CustomAMIIsManualNotAPI(t *testing.T) {
 		WithCluster("prod-east", "1.32").
 		WithNodegroup("byo-ami", "1.31", ekstypes.AMITypesCustom).
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
-		WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-byo-ami", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-a", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
 		Build()
 	rolls := captureNodegroupRolls(m)
 
@@ -124,7 +127,9 @@ func TestUpgradeNodegroups_GateFailureHaltsRemaining(t *testing.T) {
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
 		WithNodegroup("workers-b", "1.31", ekstypes.AMITypesAl2023X8664Standard).
 		WithNodegroup("workers-c", "1.31", ekstypes.AMITypesAl2023X8664Standard).
-		WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-a", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-b", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-c", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
 		Build()
 	rolls := captureNodegroupRolls(m)
 
@@ -153,7 +158,6 @@ func TestUpgradeNodegroups_GateFailureHaltsRemaining(t *testing.T) {
 func TestUpgradeNodegroups_DefaultGateChecksHealth(t *testing.T) {
 	m := mocks.NewEKSAPI().
 		WithCluster("prod-east", "1.32").
-		WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
 		Build()
 	// One degraded nodegroup, hand-wired (the builder always returns ACTIVE).
 	m.ListNodegroupsFn = func(_ context.Context, _ *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
@@ -187,7 +191,9 @@ func TestUpgradeNodegroups_SkipAndAlreadyCurrent(t *testing.T) {
 		WithNodegroup("workers-a", "1.32", ekstypes.AMITypesAl2023X8664Standard). // current
 		WithNodegroup("spot-pool", "1.31", ekstypes.AMITypesAl2023X8664Standard). // skipped
 		WithNodegroup("workers-b", "1.31", ekstypes.AMITypesAl2023X8664Standard). // rolled
-		WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-a", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-spot-pool", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-b", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
 		Build()
 	rolls := captureNodegroupRolls(m)
 
@@ -206,7 +212,7 @@ func TestUpgradeNodegroups_ForcePassthrough(t *testing.T) {
 	m := mocks.NewEKSAPI().
 		WithCluster("prod-east", "1.32").
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
-		WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-a", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
 		Build()
 	rolls := captureNodegroupRolls(m)
 
@@ -229,7 +235,10 @@ func TestUpgradeNodegroups_InvokesObserverPerRoll(t *testing.T) {
 		WithNodegroup("byo-ami", "1.31", ekstypes.AMITypesCustom).                // manual, not rolled
 		WithNodegroup("workers-b", "1.32", ekstypes.AMITypesAl2023X8664Standard). // already current
 		WithNodegroup("workers-c", "1.31", ekstypes.AMITypesAl2023X8664Standard). // rolled
-		WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-a", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-byo-ami", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-b", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-workers-c", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
 		Build()
 	_ = captureNodegroupRolls(m)
 

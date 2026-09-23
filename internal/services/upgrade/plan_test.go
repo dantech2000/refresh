@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/mocks"
@@ -135,11 +134,10 @@ func TestBuildPlan_FullySatisfiedClusterIsNoOp(t *testing.T) {
 	}
 }
 
+// The mock offers only its configured catalogue, so an unknown target is
+// rejected the way EKS rejects it.
 func TestBuildPlan_VersionNotOfferedRejected(t *testing.T) {
 	m := twoHopMock()
-	m.DescribeClusterVersionsFn = func(_ context.Context, _ *eks.DescribeClusterVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error) {
-		return &eks.DescribeClusterVersionsOutput{}, nil
-	}
 	svc := newTestService(m)
 
 	_, err := svc.BuildPlan(context.Background(), "prod-east", "1.99", PlanOptions{})
@@ -155,7 +153,7 @@ func TestBuildPlan_BlockingInsight(t *testing.T) {
 		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
 		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
-		WithInsight("Deprecated APIs removed in 1.32", ekstypes.InsightStatusValueError, "1.32").
+		WithInsight("prod-east", "Deprecated APIs removed in 1.32", ekstypes.InsightStatusValueError, "1.32").
 		Build()
 	svc := newTestService(m)
 
@@ -178,7 +176,7 @@ func TestBuildPlan_WarningInsightDoesNotBlock(t *testing.T) {
 		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
 		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
-		WithInsight("Deprecated APIs in 2 manifests", ekstypes.InsightStatusValueWarning, "1.32").
+		WithInsight("prod-east", "Deprecated APIs in 2 manifests", ekstypes.InsightStatusValueWarning, "1.32").
 		Build()
 	svc := newTestService(m)
 

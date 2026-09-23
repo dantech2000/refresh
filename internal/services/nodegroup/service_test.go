@@ -96,7 +96,7 @@ func TestList_ReturnsNodegroupSummary(t *testing.T) {
 func TestList_DescribeClusterError(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: func(_ context.Context, _ *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
-			return nil, errors.New("access denied")
+			return nil, mocks.AccessDenied()
 		},
 	}
 	svc := newTestService(mock)
@@ -110,13 +110,42 @@ func TestList_ListNodegroupsError(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: clusterFn("1.29"),
 		ListNodegroupsFn: func(_ context.Context, _ *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
-			return nil, errors.New("throttled")
+			return nil, mocks.AccessDenied()
 		},
 	}
 	svc := newTestService(mock)
 	_, err := svc.List(context.Background(), "my-cluster", ListOptions{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+	// A permission error is permanent: it must not be retried.
+	if mock.Calls.ListNodegroups != 1 {
+		t.Fatalf("ListNodegroups calls = %d, want 1 (AccessDenied is not retried)", mock.Calls.ListNodegroups)
+	}
+}
+
+// A throttled ListNodegroups is retried, and the retry's result is used.
+func TestList_ListNodegroupsThrottledIsRetried(t *testing.T) {
+	calls := 0
+	mock := &mocks.EKSAPI{
+		DescribeClusterFn: clusterFn("1.29"),
+		ListNodegroupsFn: func(_ context.Context, _ *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+			calls++
+			if calls == 1 {
+				return nil, mocks.Throttling()
+			}
+			return &eks.ListNodegroupsOutput{Nodegroups: []string{"good"}}, nil
+		},
+		DescribeNodegroupFn: func(context.Context, *eks.DescribeNodegroupInput, ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+			return &eks.DescribeNodegroupOutput{Nodegroup: stubNodegroup("good", ekstypes.NodegroupStatusActive)}, nil
+		},
+	}
+	summaries, err := newTestService(mock).List(context.Background(), "my-cluster", ListOptions{})
+	if err != nil {
+		t.Fatalf("List after a throttle: %v", err)
+	}
+	if len(summaries) != 1 || calls != 2 {
+		t.Fatalf("summaries = %d, ListNodegroups calls = %d; want 1 and 2", len(summaries), calls)
 	}
 }
 
@@ -128,7 +157,7 @@ func TestList_DescribeNodegroupErrorSkipsNodegroup(t *testing.T) {
 		},
 		DescribeNodegroupFn: func(_ context.Context, in *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
 			if aws.ToString(in.NodegroupName) == "bad" {
-				return nil, errors.New("not found")
+				return nil, mocks.NotFound()
 			}
 			return &eks.DescribeNodegroupOutput{Nodegroup: stubNodegroup("good", ekstypes.NodegroupStatusActive)}, nil
 		},
@@ -262,7 +291,7 @@ func TestDescribe_ReturnsNodegroupDetails(t *testing.T) {
 func TestDescribe_DescribeClusterError(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: func(_ context.Context, _ *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
-			return nil, errors.New("cluster not found")
+			return nil, mocks.NotFound()
 		},
 	}
 	svc := newTestService(mock)
@@ -276,7 +305,7 @@ func TestDescribe_DescribeNodegroupError(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: clusterFn("1.29"),
 		DescribeNodegroupFn: func(_ context.Context, _ *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
-			return nil, errors.New("nodegroup not found")
+			return nil, mocks.NotFound()
 		},
 	}
 	svc := newTestService(mock)

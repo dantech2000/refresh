@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -139,7 +138,7 @@ func TestList_ListClustersError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mock := &mocks.EKSAPI{
 		ListClustersFn: func(_ context.Context, _ *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
-			return nil, errors.New("access denied")
+			return nil, mocks.AccessDenied()
 		},
 	}
 	svc := &ServiceImpl{eksClient: mock, cache: NewCache(time.Minute), logger: logger}
@@ -229,7 +228,7 @@ func TestDescribe_DescribeClusterError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: func(_ context.Context, _ *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
-			return nil, errors.New("not found")
+			return nil, mocks.NotFound()
 		},
 	}
 	svc := &ServiceImpl{eksClient: mock, cache: NewCache(time.Minute), logger: logger}

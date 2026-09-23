@@ -13,6 +13,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/mocks"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 )
 
@@ -135,7 +136,7 @@ func stubRegionService(t *testing.T, fn func(cfg aws.Config) regionLister) {
 func TestGatherFleet_FailedRegionIsIncomplete(t *testing.T) {
 	stubRegionService(t, func(cfg aws.Config) regionLister {
 		if cfg.Region == "eu-west-1" {
-			return fakeRegion{err: errors.New("AccessDeniedException: not authorized to perform eks:ListClusters")}
+			return fakeRegion{err: mocks.AccessDenied()}
 		}
 		return fakeRegion{statuses: []statussvc.ClusterStatus{{
 			Name: "prod", Region: cfg.Region,
