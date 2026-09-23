@@ -241,12 +241,12 @@ type amiLookupFailingNodegroups struct{}
 func (amiLookupFailingNodegroups) ListWithFailures(context.Context, string, nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
 	const reason = "reading SSM parameter /aws/service/eks/optimized-ami/1.32/...: AccessDeniedException"
 	return []nodegroup.NodegroupSummary{
-		{Name: "ng-a", AMIStatus: types.AMIUnknown, AMILookupError: reason},
-		{Name: "ng-b", AMIStatus: types.AMIUnknown, AMILookupError: reason},
-	}, []string{
-		"ng-a: latest AMI lookup failed: " + reason,
-		"ng-b: latest AMI lookup failed: " + reason,
-	}, nil
+			{Name: "ng-a", AMIStatus: types.AMIUnknown, AMILookupError: reason},
+			{Name: "ng-b", AMIStatus: types.AMIUnknown, AMILookupError: reason},
+		}, []string{
+			"ng-a: latest AMI lookup failed: " + reason,
+			"ng-b: latest AMI lookup failed: " + reason,
+		}, nil
 }
 
 // A failed latest-AMI lookup must make the row incomplete (exit 4) instead of
