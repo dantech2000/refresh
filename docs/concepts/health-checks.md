@@ -101,7 +101,9 @@ group picks the nodes and terminates them. With `--check-pdbs`,
 `nodegroup scale` refuses a scale-down (exit `3`, before any change) when the
 removed nodes could hold more of a PDB's pods than the PDB allows. The gate
 assumes the worst case: the removed nodes are the ones that hold the most of
-the PDB's pods. The error shows the numbers for each PDB.
+the PDB's pods. The error shows the numbers for each PDB. Only `--desired`
+changes the node count: `nodegroup scale` refuses a `--max` below, or a
+`--min` above, the current desired size unless you also pass `--desired`.
 
 The gate fails closed. If it cannot read PDBs or pods (no Kubernetes access,
 a failed list), it refuses the scale-down. `--force` scales down anyway and

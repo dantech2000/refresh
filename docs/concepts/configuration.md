@@ -267,7 +267,7 @@ the data incomplete.
 | `eks:UpdateNodegroupConfig` | `nodegroup scale` |
 | `eks:UpdateClusterVersion` | `cluster upgrade` |
 | `eks:UpdateAddon` | `addon update`, `cluster upgrade` |
-| `eks:DescribeUpdate` | `nodegroup update`, `addon update --wait`, `cluster upgrade` |
+| `eks:DescribeUpdate` | `nodegroup update`, `nodegroup scale --wait`, `addon update --wait`, `cluster upgrade` |
 | `ssm:GetParameter` | Latest recommended AMI: `status`, `nodegroup list`/`describe`/`update` |
 | `ec2:DescribeImages` | `status` (AMI age) |
 | `ec2:DescribeInstances` | `status` (Karpenter detection), `nodegroup describe --show-instances`, current AMI lookup |
