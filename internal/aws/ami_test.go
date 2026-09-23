@@ -2,11 +2,16 @@ package aws
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/smithy-go"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -112,8 +117,65 @@ func TestCurrentAmiIDEmptyNodegroupPaths(t *testing.T) {
 }
 
 func TestLatestAmiIDForCustomSkipsSSM(t *testing.T) {
-	if got := LatestAmiIDForType(context.Background(), nil, "1.30", types.AMITypesCustom); got != "" {
-		t.Fatalf("LatestAmiIDForType custom = %q, want empty", got)
+	if got, err := LatestAmiIDForType(context.Background(), nil, "1.30", types.AMITypesCustom); got != "" || err != nil {
+		t.Fatalf("LatestAmiIDForType custom = %q, %v; want \"\", nil", got, err)
+	}
+}
+
+// ssmStubDoer answers every SSM request with a fixed status and JSON body, so
+// LatestAmiIDForType runs against a real *ssm.Client and real SDK error
+// deserialization.
+type ssmStubDoer struct {
+	status int
+	body   string
+}
+
+func (d ssmStubDoer) Do(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: d.status,
+		Header:     http.Header{"Content-Type": []string{"application/x-amz-json-1.1"}},
+		Body:       io.NopCloser(strings.NewReader(d.body)),
+	}, nil
+}
+
+func stubSSMClient(status int, body string) *ssm.Client {
+	return ssm.New(ssm.Options{
+		Region:           "us-east-1",
+		Credentials:      aws.AnonymousCredentials{},
+		HTTPClient:       ssmStubDoer{status: status, body: body},
+		RetryMaxAttempts: 1,
+	})
+}
+
+func TestLatestAmiIDForType_ReturnsValue(t *testing.T) {
+	c := stubSSMClient(200, `{"Parameter":{"Name":"p","Value":"ami-0123"}}`)
+	got, err := LatestAmiIDForType(context.Background(), c, "1.31", types.AMITypesAl2023X8664Standard)
+	if err != nil || got != "ami-0123" {
+		t.Fatalf("LatestAmiIDForType = %q, %v; want ami-0123, nil", got, err)
+	}
+}
+
+// A denied SSM call must surface as an error (not ""), and FormatAWSError
+// must name the missing ssm:GetParameter permission.
+func TestLatestAmiIDForType_AccessDeniedIsError(t *testing.T) {
+	c := stubSSMClient(400, `{"__type":"AccessDeniedException","message":"User is not authorized to perform: ssm:GetParameter"}`)
+	got, err := LatestAmiIDForType(context.Background(), c, "1.31", types.AMITypesAl2023X8664Standard)
+	if err == nil || got != "" {
+		t.Fatalf("LatestAmiIDForType = %q, %v; want \"\", error", got, err)
+	}
+	var ae smithy.APIError
+	if !errors.As(err, &ae) || ae.ErrorCode() != "AccessDeniedException" {
+		t.Fatalf("error %v does not unwrap to the AccessDeniedException API error", err)
+	}
+	if msg := FormatAWSError(err, "looking up the latest AMI").Error(); !strings.Contains(msg, "ssm:GetParameter") {
+		t.Errorf("formatted error does not name ssm:GetParameter:\n%s", msg)
+	}
+}
+
+func TestLatestAmiIDForType_EmptyValueIsError(t *testing.T) {
+	c := stubSSMClient(200, `{"Parameter":{"Name":"p"}}`)
+	if got, err := LatestAmiIDForType(context.Background(), c, "1.31", types.AMITypesAl2023X8664Standard); err == nil || got != "" {
+		t.Fatalf("LatestAmiIDForType = %q, %v; want \"\", error", got, err)
 	}
 }
 

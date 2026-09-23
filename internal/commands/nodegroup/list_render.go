@@ -32,7 +32,7 @@ func nodegroupListLines(th *render.Theme, cluster string, items []nodegroupsvc.N
 			th.Token(render.StatusFromString(ng.Status), ng.Status),
 			th.Paint(pal.Text, ng.InstanceType),
 			versionCell(th, ng),
-			amiToken(th, ng.AMIStatus),
+			amiCell(th, ng),
 			th.Paint(pal.Text, nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize)),
 		)
 	}
@@ -60,7 +60,19 @@ func versionCell(th *render.Theme, ng nodegroupsvc.NodegroupSummary) string {
 	return th.Paint(th.Pal.Text, orDash(ng.K8sVersion))
 }
 
-// amiToken renders a nodegroup's AMI freshness as a status token.
+// amiLookupFailedText replaces the AMI status when the latest recommended AMI
+// could not be looked up, so the cell never reads as a plain "Unknown".
+const amiLookupFailedText = "unknown (lookup failed)"
+
+// amiCell renders a nodegroup's AMI freshness as a status token.
+func amiCell(th *render.Theme, ng nodegroupsvc.NodegroupSummary) string {
+	if ng.AMILookupError != "" {
+		return th.Token(render.Warn, amiLookupFailedText)
+	}
+	return amiToken(th, ng.AMIStatus)
+}
+
+// amiToken renders an AMI status as a status token.
 func amiToken(th *render.Theme, s types.AMIStatus) string {
 	switch s {
 	case types.AMILatest:

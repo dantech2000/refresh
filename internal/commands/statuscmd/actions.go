@@ -226,7 +226,7 @@ func lessFunc(key string) func(a, b statussvc.ClusterStatus) bool {
 		}
 	case "stale":
 		return func(a, b statussvc.ClusterStatus) bool {
-			sa, sb := a.StaleAMI.Behind+a.AddonsBehind.Behind, b.StaleAMI.Behind+b.AddonsBehind.Behind
+			sa, sb := staleScore(a), staleScore(b)
 			if sa != sb {
 				return sa < sb
 			}
@@ -235,6 +235,12 @@ func lessFunc(key string) func(a, b statussvc.ClusterStatus) bool {
 	default: // cluster
 		return byName
 	}
+}
+
+// staleScore is the "stale" sort key: stale AMIs, nodegroups behind the
+// control plane, and addons behind latest.
+func staleScore(c statussvc.ClusterStatus) int {
+	return c.StaleAMI.Behind + c.NodegroupsBehindControlPlane + c.AddonsBehind.Behind
 }
 
 // supportSeverity orders tiers from healthiest to most urgent so descending

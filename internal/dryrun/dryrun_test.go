@@ -448,8 +448,8 @@ func TestAnalyzeUsesNodegroupVersionForLatestAMI(t *testing.T) {
 			}, nil
 		},
 		currentAmiFn: func(_ context.Context, ng *types.Nodegroup) string { return current[aws.ToString(ng.NodegroupName)] },
-		latestAMICache: awsClient.NewLatestAMICache(func(_ context.Context, v string, _ types.AMITypes) string {
-			return map[string]string{"1.31": "ami-131-latest", "1.32": "ami-132-latest"}[v]
+		latestAMICache: awsClient.NewLatestAMICache(func(_ context.Context, v string, _ types.AMITypes) (string, error) {
+			return map[string]string{"1.31": "ami-131-latest", "1.32": "ami-132-latest"}[v], nil
 		}),
 	}
 

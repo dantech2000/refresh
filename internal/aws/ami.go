@@ -4,6 +4,8 @@ package aws
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -88,20 +90,28 @@ func resolveFromASG(ctx context.Context, ng *types.Nodegroup, autoscalingClient 
 // LatestAmiIDForType returns the latest recommended AMI ID for a specific AMI type.
 // It queries AWS SSM Parameter Store for the EKS-optimized AMI.
 // Supports AL2, AL2023, Bottlerocket, and Windows AMI types.
-func LatestAmiIDForType(ctx context.Context, ssmClient *ssm.Client, k8sVersion string, amiType types.AMITypes) string {
+//
+// It returns ("", nil) when there is no recommended AMI to look up (custom or
+// unrecognized AMI types), and a non-nil error when the SSM lookup itself
+// fails (missing ssm:GetParameter permission, throttling, a missing
+// parameter). Callers must not read a failed lookup as "no newer AMI".
+func LatestAmiIDForType(ctx context.Context, ssmClient *ssm.Client, k8sVersion string, amiType types.AMITypes) (string, error) {
 	ssmParam := buildSSMParameterPath(k8sVersion, amiType)
 	if ssmParam == "" {
-		return ""
+		return "", nil
 	}
 
 	ssmOut, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
 		Name: aws.String(ssmParam),
 	})
-	if err != nil || ssmOut.Parameter == nil || ssmOut.Parameter.Value == nil {
-		return ""
+	if err != nil {
+		return "", fmt.Errorf("reading SSM parameter %s: %w", ssmParam, err)
+	}
+	if ssmOut == nil || ssmOut.Parameter == nil || aws.ToString(ssmOut.Parameter.Value) == "" {
+		return "", fmt.Errorf("reading SSM parameter %s: empty value", ssmParam)
 	}
 
-	return *ssmOut.Parameter.Value
+	return *ssmOut.Parameter.Value, nil
 }
 
 // LatestReleaseVersionForType returns the latest recommended AMI *release
@@ -138,13 +148,19 @@ func NodegroupK8sVersion(ng *types.Nodegroup, clusterVersion string) string {
 }
 
 // AMILookupFunc resolves an AMI attribute (image ID or release version) for a
-// Kubernetes version and AMI type. It returns "" when unknown.
-type AMILookupFunc func(ctx context.Context, k8sVersion string, amiType types.AMITypes) string
+// Kubernetes version and AMI type. It returns ("", nil) when there is nothing
+// to look up and a non-nil error when the lookup failed.
+type AMILookupFunc func(ctx context.Context, k8sVersion string, amiType types.AMITypes) (string, error)
 
-// LatestAMICache memoizes an AMILookupFunc per (k8sVersion, amiType). It is
-// safe for concurrent use, and concurrent callers for the same key share a
-// single lookup, so a parallel fan-out over nodegroups costs one SSM call per
-// distinct key.
+// LatestAMICache memoizes successful AMILookupFunc results per (k8sVersion,
+// amiType). It is safe for concurrent use, and concurrent callers for the same
+// key share one in-flight lookup, so a parallel fan-out over nodegroups costs
+// one SSM call per distinct key.
+//
+// Failures are never memoized: callers that waited on a failed lookup get its
+// error, and the next Get starts a fresh lookup. If a lookup failed only
+// because its caller's ctx ended, waiters whose own ctx is still live retry
+// it, so one caller's cancellation can't fail the others.
 type LatestAMICache struct {
 	lookup  AMILookupFunc
 	mu      sync.Mutex
@@ -156,9 +172,12 @@ type amiCacheKey struct {
 	amiType types.AMITypes
 }
 
+// amiCacheEntry is one lookup, in flight until done is closed. value and err
+// are written before done is closed and read only after it.
 type amiCacheEntry struct {
-	once  sync.Once
+	done  chan struct{}
 	value string
+	err   error
 }
 
 // NewLatestAMICache returns a cache backed by lookup.
@@ -168,28 +187,66 @@ func NewLatestAMICache(lookup AMILookupFunc) *LatestAMICache {
 
 // NewLatestAMIIDCache returns a cache of LatestAmiIDForType lookups.
 func NewLatestAMIIDCache(ssmClient *ssm.Client) *LatestAMICache {
-	return NewLatestAMICache(func(ctx context.Context, v string, t types.AMITypes) string {
+	return NewLatestAMICache(func(ctx context.Context, v string, t types.AMITypes) (string, error) {
 		return LatestAmiIDForType(ctx, ssmClient, v, t)
 	})
 }
 
-// Get returns the memoized lookup result for (k8sVersion, amiType).
-func (c *LatestAMICache) Get(ctx context.Context, k8sVersion string, amiType types.AMITypes) string {
+// Get returns the lookup result for (k8sVersion, amiType). A successful
+// result is shared by every later call; a failure is returned to the callers
+// that waited on it and then forgotten.
+func (c *LatestAMICache) Get(ctx context.Context, k8sVersion string, amiType types.AMITypes) (string, error) {
 	key := amiCacheKey{version: k8sVersion, amiType: amiType}
-	c.mu.Lock()
-	e, ok := c.entries[key]
-	if !ok {
-		e = &amiCacheEntry{}
-		c.entries[key] = e
+	for {
+		c.mu.Lock()
+		e, ok := c.entries[key]
+		if !ok {
+			e = &amiCacheEntry{done: make(chan struct{})}
+			c.entries[key] = e
+			c.mu.Unlock()
+			return c.run(ctx, key, e)
+		}
+		c.mu.Unlock()
+
+		select {
+		case <-e.done:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		if e.err == nil {
+			return e.value, nil
+		}
+		// The lookup failed because its owner's ctx ended, but ours is still
+		// live: look it up again instead of inheriting that cancellation.
+		if isContextErr(e.err) && ctx.Err() == nil {
+			continue
+		}
+		return "", e.err
 	}
-	c.mu.Unlock()
-	e.once.Do(func() { e.value = c.lookup(ctx, k8sVersion, amiType) })
-	return e.value
+}
+
+// run performs the lookup for an entry the caller just registered. A failed
+// entry is removed before done is closed, so the next Get starts afresh.
+func (c *LatestAMICache) run(ctx context.Context, key amiCacheKey, e *amiCacheEntry) (string, error) {
+	defer close(e.done)
+	e.value, e.err = c.lookup(ctx, key.version, key.amiType)
+	if e.err != nil {
+		c.mu.Lock()
+		if c.entries[key] == e {
+			delete(c.entries, key)
+		}
+		c.mu.Unlock()
+	}
+	return e.value, e.err
+}
+
+func isContextErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // ForNodegroup returns the lookup result for the nodegroup's own Kubernetes
 // version (see NodegroupK8sVersion) and AMI type.
-func (c *LatestAMICache) ForNodegroup(ctx context.Context, ng *types.Nodegroup, clusterVersion string) string {
+func (c *LatestAMICache) ForNodegroup(ctx context.Context, ng *types.Nodegroup, clusterVersion string) (string, error) {
 	return c.Get(ctx, NodegroupK8sVersion(ng, clusterVersion), ng.AmiType)
 }
 

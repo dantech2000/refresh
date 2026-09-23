@@ -233,6 +233,7 @@ Required permissions for refresh tool:
 - eks:DescribeInsight (for upgrade-check insight detail)
 - eks:ListAddons / eks:DescribeAddon / eks:DescribeAddonVersions (for addon status / version-skew)
 - ec2:DescribeImages / ec2:DescribeInstances (for AMI staleness and compute detection)
+- ssm:GetParameter (for the latest recommended EKS AMI lookup)
 - cloudwatch:GetMetricStatistics (for health checks)
 
 Current error: %w`, operation, err)

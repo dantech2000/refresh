@@ -8,6 +8,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+
+	"github.com/dantech2000/refresh/internal/services/addons"
 )
 
 // stubListAddons is a minimal listAddonsAPI for resolveAddonName tests.
@@ -67,6 +69,20 @@ func TestResolveAddonName_NoMatchReturnsError(t *testing.T) {
 	_, err := resolveAddonName(context.Background(), stub, "my-cluster", "totally bogus")
 	if err == nil {
 		t.Fatal("expected error for unknown addon name, got nil")
+	}
+}
+
+// Add-ons a parallel --all run never started (deadline or Ctrl+C) count as
+// failures, so the command exits non-zero.
+func TestUpdateAllFailureError_CountsNotAttempted(t *testing.T) {
+	results := []addons.AddonUpdateResult{
+		{AddonName: "vpc-cni", Status: "FAILED: context deadline exceeded"},
+		{AddonName: "coredns", Status: "FAILED: not attempted: context deadline exceeded"},
+		{AddonName: "kube-proxy", Status: "FAILED: not attempted: context deadline exceeded"},
+	}
+	err := updateAllFailureError(results)
+	if err == nil || !strings.Contains(err.Error(), "3 of 3") {
+		t.Fatalf("err = %v, want 3 of 3 failed", err)
 	}
 }
 

@@ -315,6 +315,20 @@ func updateAllBudget(options UpdateAllOptions, n int) time.Duration {
 	return options.Timeout + time.Duration(steps)*options.WaitTimeout
 }
 
+// notAttempted is the result for an add-on UpdateAll never started because
+// ctx ended first.
+func notAttempted(ctx context.Context, a AddonSummary) AddonUpdateResult {
+	reason := "update run stopped early"
+	if err := ctx.Err(); err != nil {
+		reason = err.Error()
+	}
+	return AddonUpdateResult{
+		AddonName:       a.Name,
+		PreviousVersion: a.Version,
+		Status:          "FAILED: not attempted: " + reason,
+	}
+}
+
 // UpdateAll updates all addons to their latest versions
 func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options UpdateAllOptions) ([]AddonUpdateResult, error) {
 	s.logger.Info("updating all addons", "cluster", clusterName)
@@ -376,6 +390,7 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 	if options.Parallel {
 		var wg sync.WaitGroup
 		semaphore := make(chan struct{}, maxParallelAddonUpdates)
+		dispatched := 0
 	dispatch:
 		for i, addon := range toUpdate {
 			// Acquire BEFORE spawning so the cap limits live goroutines, not
@@ -386,6 +401,7 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 			case <-ctx.Done():
 				break dispatch
 			}
+			dispatched++
 			wg.Add(1)
 			go func(i int, a AddonSummary) {
 				defer wg.Done()
@@ -394,6 +410,12 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 			}(i, addon)
 		}
 		wg.Wait()
+		// The deadline or Ctrl+C stopped dispatch early. Give every add-on
+		// that was never started a named FAILED row, so no blank row renders
+		// and the failure count (and exit code) includes it.
+		for i := dispatched; i < len(toUpdate); i++ {
+			results[i] = notAttempted(ctx, toUpdate[i])
+		}
 	} else {
 		for i, addon := range toUpdate {
 			results[i] = updateOne(addon)

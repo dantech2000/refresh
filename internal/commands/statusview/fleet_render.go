@@ -182,14 +182,27 @@ func stalePretty(th *render.Theme, c statussvc.ClusterStatus) string {
 	if c.Compute != statussvc.ComputeManaged {
 		return th.Paint(th.Pal.Dim, "n/a")
 	}
-	if c.StaleAMI.Behind == 0 {
+	if c.StaleAMI.Behind == 0 && c.NodegroupsBehindControlPlane == 0 {
 		return th.Paint(th.Pal.Green, "0")
 	}
-	txt := fmt.Sprintf("%d/%d", c.StaleAMI.Behind, c.StaleAMI.Total)
-	if c.StaleAMI.OldestDays != nil {
-		txt += fmt.Sprintf(" (%dd)", *c.StaleAMI.OldestDays)
+	txt := "0"
+	if c.StaleAMI.Behind > 0 {
+		txt = fmt.Sprintf("%d/%d", c.StaleAMI.Behind, c.StaleAMI.Total)
+		if c.StaleAMI.OldestDays != nil {
+			txt += fmt.Sprintf(" (%dd)", *c.StaleAMI.OldestDays)
+		}
 	}
-	return th.Token(render.Warn, txt)
+	return th.Token(render.Warn, txt+behindCPSuffix(c))
+}
+
+// behindCPSuffix names nodegroups on an older Kubernetes minor than the
+// control plane. AMI freshness is judged per nodegroup minor, so without it a
+// half-finished upgrade shows "0" stale and no reason for the warning.
+func behindCPSuffix(c statussvc.ClusterStatus) string {
+	if c.NodegroupsBehindControlPlane == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" · %d behind CP", c.NodegroupsBehindControlPlane)
 }
 
 func addonsPretty(th *render.Theme, a statussvc.AddonsBehindSummary) string {

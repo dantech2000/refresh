@@ -1,11 +1,14 @@
 package statusview
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/render"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func iptr(i int) *int { return &i }
@@ -178,7 +181,64 @@ func TestFleetLines_NodegroupsBehindControlPlane(t *testing.T) {
 	mustContain(t, joined, "▲  prod-east")
 	mustContain(t, joined, "1 nodegroups behind control plane")
 	mustContain(t, joined, "has 1 nodegroup(s) behind the control plane")
+	// The STALE AMI cell gives the row's reason, not a bare "0".
+	mustContain(t, joined, "▲ 0 · 1 behind CP")
 
 	footer := summaryFooter(fleet, 0)
 	mustContain(t, footer, "1 nodegroups behind control plane")
+
+	// -o plain carries the same text in the same column.
+	if got := staleAMICell(fleet[0]); !strings.Contains(got, "0 · 1 behind CP") {
+		t.Errorf("plain STALE AMI cell = %q, want it to name the nodegroup behind CP", got)
+	}
+	fleet[0].StaleAMI = statussvc.StaleAMISummary{Total: 2, Behind: 1, OldestDays: iptr(30)}
+	if got := staleAMICell(fleet[0]); !strings.Contains(got, "1/2 (oldest 30d) · 1 behind CP") {
+		t.Errorf("plain STALE AMI cell = %q", got)
+	}
+	if got := stalePretty(th, fleet[0]); !strings.Contains(got, "1/2 (30d) · 1 behind CP") {
+		t.Errorf("pretty STALE AMI cell = %q", got)
+	}
+}
+
+// The -o plain table keeps its 8 tab-separated columns when a nodegroup lags
+// the control plane, so awk/cut scripts don't break.
+func TestOutputFleetPlain_BehindCPKeepsColumnCount(t *testing.T) {
+	fleet := []statussvc.ClusterStatus{{
+		Name: "prod-east", Region: "us-east-1", Version: "1.32",
+		Support:                      statussvc.SupportPosture{Tier: statussvc.SupportStandard},
+		Compute:                      statussvc.ComputeManaged,
+		NodegroupCount:               2,
+		NodegroupsBehindControlPlane: 2,
+	}}
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	perr := outputFleetPlain(fleet, 0)
+	os.Stdout = orig
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	if perr != nil {
+		t.Fatalf("outputFleetPlain: %v", perr)
+	}
+	var row string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "prod-east") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatalf("no prod-east row in:\n%s", out)
+	}
+	cells := strings.Split(row, "\t")
+	if len(cells) != 8 {
+		t.Fatalf("row has %d cells, want 8: %q", len(cells), row)
+	}
+	if !strings.Contains(cells[5], "0 · 2 behind CP") {
+		t.Errorf("STALE AMI cell = %q, want \"0 · 2 behind CP\"", cells[5])
+	}
 }
