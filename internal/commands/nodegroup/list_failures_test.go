@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/smithy-go"
 
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/types"
@@ -34,7 +35,7 @@ func TestNodegroupListLines_AMILookupFailed(t *testing.T) {
 }
 
 // Nodegroups that could not be described are named on stderr and make the
-// command fail; a failed AMI lookup alone warns once and does not.
+// command exit 4; a failed AMI lookup alone warns once and does not.
 func TestReportListProblems(t *testing.T) {
 	t.Run("describe failures", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -43,6 +44,9 @@ func TestReportListProblems(t *testing.T) {
 		})
 		if err == nil || !strings.Contains(err.Error(), "2 nodegroup(s)") {
 			t.Fatalf("err = %v, want a non-nil error counting 2 nodegroups", err)
+		}
+		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+			t.Errorf("exit code = %d, want 4 (incomplete data)", code)
 		}
 		for _, want := range []string{"ng-a", "ng-b"} {
 			if !strings.Contains(buf.String(), want) {

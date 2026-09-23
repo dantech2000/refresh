@@ -12,6 +12,8 @@ Print the name and cluster/region/profile of the currently active context
 (set with 'refresh use'). Honors the REFRESH_CONTEXT env override; an unknown
 name there is an error. Prints a hint to stderr when no context is active.
 
+Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
+
 ## Flags
 
 | Flag | Env | Default | Description |

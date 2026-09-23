@@ -20,6 +20,8 @@ Examples:
    # fish
    refresh completion fish > ~/.config/fish/completions/refresh.fish
 
+Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
+
 ## Flags
 
 | Flag | Env | Default | Description |

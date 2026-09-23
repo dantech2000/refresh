@@ -96,7 +96,7 @@ func scaleCommand() *cli.Command {
 		Description: `Change a managed nodegroup's desired/min/max size. Any subset of
 --desired/--min/--max may be set; unspecified bounds are left unchanged.
 
---check-pdbs refuses a scale-down (exit 1, before any change) when it could
+--check-pdbs refuses a scale-down (exit 3, before any change) when it could
 remove more of a Pod Disruption Budget's pods than the PDB allows. EKS does not
 honor PDBs when a scaling change removes nodes, and the Auto Scaling group
 picks which nodes go, so the gate assumes the removed nodes are the ones that
@@ -146,8 +146,9 @@ worst-outcome exit code:
    refresh nodegroup update --all-clusters -r us-east-1 --yes
 Fleet mode takes no positional args and rejects --cluster and --kube-context
 (each cluster's kubeconfig context is matched by endpoint). A region that
-can't be listed is reported and makes the run exit 4. The default sweep skips
-regions these credentials can't use (SCP-denied or not enabled) with a note.
+can't be listed is reported and makes the run exit 4; if no region can be
+listed, the run exits 1. The default sweep skips regions these credentials
+can't use (SCP-denied or not enabled) with a note.
 
 Unattended / CI use:
    --yes              skip confirmation prompts (a nodegroup pattern that is

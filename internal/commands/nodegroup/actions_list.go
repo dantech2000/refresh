@@ -73,7 +73,7 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 	if err := writeNodegroupList(cmd.String("format"), clusterName, items, res.Failures); err != nil {
 		return err
 	}
-	return reportListProblems(warnOut, clusterName, res)
+	return runner.UnlessInterrupted(ctx, reportListProblems(warnOut, clusterName, res))
 }
 
 // warnOut receives list/describe warnings; a variable so tests can capture it.
@@ -95,8 +95,9 @@ func writeNodegroupList(format, clusterName string, items []nodegroupsvc.Nodegro
 
 // reportListProblems warns on w about incomplete list data. A failed
 // latest-AMI lookup gets one warning (the rows already say "unknown (lookup
-// failed)"). Nodegroups that could not be described are named one per line,
-// and the returned error makes the command exit non-zero.
+// failed)") and does not change the exit code. Nodegroups that could not be
+// described are named one per line, and the returned error makes the command
+// exit 4 (incomplete data).
 func reportListProblems(w io.Writer, clusterName string, res nodegroupsvc.ListResult) error {
 	if res.AMILookupErr != nil {
 		warnAMILookup(w, len(res.AMILookupFailures), res.AMILookupErr)
@@ -107,7 +108,7 @@ func reportListProblems(w io.Writer, clusterName string, res nodegroupsvc.ListRe
 	for _, f := range res.Failures {
 		_, _ = fmt.Fprintln(w, color.YellowString("warning: nodegroup %s", f))
 	}
-	return fmt.Errorf("listing nodegroups for cluster %s: %d nodegroup(s) could not be described; the list is incomplete", clusterName, len(res.Failures))
+	return cli.Exit(fmt.Sprintf("listing nodegroups for cluster %s: %d nodegroup(s) could not be described; the list is incomplete", clusterName, len(res.Failures)), runner.ExitIncomplete)
 }
 
 // warnAMILookup prints a single warning for failed latest-AMI lookups,

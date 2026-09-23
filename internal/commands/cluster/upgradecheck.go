@@ -2,6 +2,9 @@ package cluster
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -33,10 +36,29 @@ that catalog evolves — so list the live set for your cluster with --show-passi
 then drill into any with --id, which accepts the short ID shown in the table, the
 full ID, or a case-insensitive name substring (e.g. --id "deprecated").
 
+It works as a CI gate. The exit code follows the readiness verdict: the
+insights in the report (--category and --status narrow them), the
+nodegroup/addon skew, and the control-plane health check:
+   0  ready: no finding
+   2  needs attention: WARNING insights, a nodegroup behind the control
+      plane but inside the kubelet skew limit, an addon behind latest, or a
+      control-plane health warning
+   3  blocked: an ERROR or UNKNOWN insight (as 'cluster upgrade' blocks on
+      both), a nodegroup at the kubelet skew limit, or a failed
+      control-plane health check
+   4  incomplete: nothing blocks, but a nodegroup or addon could not be
+      read (listed under "incomplete")
+   1  error (AWS error, not found, interrupt)
+Precedence: 3, then 4, then 2.
+With --id, the exit code reflects that one insight's status. With -o json or
+-o yaml, the document is printed first, then the exit code applies.
+--exit-zero exits 0 on a completed check (report mode), also when incomplete.
+
 Examples:
    refresh cluster upgrade-check -c prod-east
    refresh cluster upgrade-check -c prod-east --show-passing -o json
-   refresh cluster upgrade-check -c prod-east --id "deprecated"   # detail view (by name)`,
+   refresh cluster upgrade-check -c prod-east --id "deprecated"   # detail view (by name)
+   refresh cluster upgrade-check -c prod-east -o json --exit-zero  # report only`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "category", Usage: "Insight category (UPGRADE_READINESS, MISCONFIGURATION)", Value: "UPGRADE_READINESS"},
@@ -44,6 +66,7 @@ Examples:
 			&cli.BoolFlag{Name: "show-passing", Usage: "Include PASSING insights (hidden by default)"},
 			&cli.StringFlag{Name: "id", Usage: "Show the detail view for one insight — accepts its ID, a short ID prefix (as shown in the table), or a name substring"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
+			&cli.BoolFlag{Name: "exit-zero", Usage: "Exit 0 even when the check finds warnings (2), blockers (3), or unreadable items (4): report mode"},
 		},
 		Action: runUpgradeCheck,
 	}
@@ -82,9 +105,15 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 			return werr
 		}
 		if handled, encErr := runner.EncodeStdout(cmd.String("format"), detail); handled {
-			return encErr
+			if encErr != nil {
+				return encErr
+			}
+			return gateExit(cmd, insightDetailExit(detail))
 		}
-		return clusterview.OutputInsightDetail(detail)
+		if err := clusterview.OutputInsightDetail(detail); err != nil {
+			return err
+		}
+		return gateExit(cmd, insightDetailExit(detail))
 	}
 
 	opts := clustersvc.UpgradeCheckOptions{
@@ -119,7 +148,65 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if handled, encErr := runner.EncodeStdout(cmd.String("format"), report); handled {
-		return encErr
+		if encErr != nil {
+			return encErr
+		}
+		return finishCheck(ctx, cmd, upgradeCheckExit(report))
 	}
-	return clusterview.OutputUpgradeCheck(report)
+	if err := clusterview.OutputUpgradeCheck(report); err != nil {
+		return err
+	}
+	return finishCheck(ctx, cmd, upgradeCheckExit(report))
+}
+
+// finishCheck returns the report's exit: exit 1 after an interrupt (the
+// report may be cut short, and --exit-zero does not hide that), else the
+// gate verdict.
+func finishCheck(ctx context.Context, cmd *cli.Command, verdict error) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return errors.New("upgrade check interrupted; the report may be incomplete")
+	}
+	return gateExit(cmd, verdict)
+}
+
+// gateExit drops a gate verdict (exit 2, 3, or 4) when --exit-zero is set.
+func gateExit(cmd *cli.Command, verdict error) error {
+	if cmd.Bool("exit-zero") {
+		return nil
+	}
+	return verdict
+}
+
+// upgradeCheckExit maps the report's readiness to the CI-gate exit code:
+// 3 when something blocks the upgrade, 4 when some skew data could not be
+// read, 2 for warnings only, else nil. See clustersvc.UpgradeReport.Readiness
+// for what counts as which.
+func upgradeCheckExit(report *clustersvc.UpgradeReport) error {
+	level, reasons := report.Readiness()
+	switch level {
+	case clustersvc.ReadinessBlocked:
+		return cli.Exit(fmt.Sprintf("upgrade blocked: %s (pass --exit-zero to report only)", strings.Join(reasons, ", ")), runner.ExitBlocked)
+	case clustersvc.ReadinessIncomplete:
+		return cli.Exit(fmt.Sprintf("upgrade check incomplete: %s (pass --exit-zero to report only)", strings.Join(reasons, ", ")), runner.ExitIncomplete)
+	case clustersvc.ReadinessReview:
+		return cli.Exit(fmt.Sprintf("upgrade needs attention: %s (pass --exit-zero to report only)", strings.Join(reasons, ", ")), runner.ExitNeedsAttention)
+	default:
+		return nil
+	}
+}
+
+// insightDetailExit maps one insight (the --id view) to the gate exit code:
+// 3 for ERROR or UNKNOWN, 2 for WARNING, else nil.
+func insightDetailExit(detail *clustersvc.InsightDetail) error {
+	if detail == nil {
+		return nil
+	}
+	switch detail.Status {
+	case clustersvc.InsightStatusPassing:
+		return nil
+	case clustersvc.InsightStatusWarning:
+		return cli.Exit(fmt.Sprintf("insight %q is WARNING (pass --exit-zero to report only)", detail.Name), runner.ExitNeedsAttention)
+	default:
+		return cli.Exit(fmt.Sprintf("insight %q is %s, which blocks the upgrade (pass --exit-zero to report only)", detail.Name, detail.Status), runner.ExitBlocked)
+	}
 }

@@ -30,11 +30,14 @@ in-process, then render as a table, structured output, or a region/cluster
 tree. See [Regions](../concepts/configuration.md#regions) for how `-r`, the
 global `--region`, and `REFRESH_EKS_REGIONS` combine.
 
-With several regions, a region that fails prints one warning on stderr and
-the command still exits `0`. If no region answers (for example, the timeout
-ends first), the command fails instead of printing an empty list. The
-default `-A` sweep skips regions these credentials can't use, the same way
-`status -A` does. A cluster that could not be read is a stderr warning too.
+With several regions, a region that fails prints one warning on stderr. The
+command prints the clusters it gathered, then exits `4` (incomplete data). If
+no region answers (for example, the timeout ends first), the command fails
+with exit `1` instead of printing an empty list. The default `-A` sweep skips
+regions these credentials can't use, the same way `status -A` does, and a
+skipped region does not count as a failure. A cluster that could not be read
+is a stderr warning and also makes the command exit `4`. With `--watch`, the
+watch keeps running after a partial result.
 
 ### Flags
 
@@ -109,6 +112,9 @@ The support window uses the cluster's upgrade policy. `-o json`/`-o yaml`
 include it as `supportType` (`STANDARD` clusters are auto-upgraded at the end
 of standard support). `cluster upgrade-check` reports it the same way.
 
+If some add-ons or nodegroups can't be read, `describe` names them on stderr,
+prints the rest, and exits `4` (incomplete data).
+
 ### Examples
 
 ```bash
@@ -177,7 +183,29 @@ refresh cluster upgrade-check -c prod-east --id bc8b2f86       # by short ID
 | `--show-passing` | Include `PASSING` insights (hidden by default) |
 | `--id` | Show the detail view for one insight — accepts its short ID (from the table), full ID, or a case-insensitive name substring |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
+| `--exit-zero` | Exit `0` even when the check finds warnings, blockers, or unreadable items (report mode) |
 | `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
+
+### Exit codes (CI gate)
+
+The exit code follows the readiness verdict:
+
+| Code | Verdict | Meaning |
+|---|---|---|
+| `0` | `READY` | No finding |
+| `2` | `REVIEW` | A `WARNING` insight, a nodegroup behind the control plane, an addon behind latest, or a control-plane health warning |
+| `3` | `NOT READY` | An `ERROR` or `UNKNOWN` insight, a nodegroup at the kubelet skew limit, or a failed control-plane health check |
+| `4` | `INCOMPLETE` | Nothing blocks, but a nodegroup or add-on could not be read (listed under `incomplete` in `-o json`) |
+| `1` | | An error (AWS error, cluster not found, interrupt) |
+
+Precedence is `3`, then `4`, then `2`: the item that could not be read could
+be a blocker.
+
+`UNKNOWN` blocks because `cluster upgrade` refuses a hop on it too. With
+`-o json`/`-o yaml`, the document is printed first, then the exit code
+applies. With `--id`, the exit code reflects that one insight. `--exit-zero`
+keeps the report and always exits `0` on a completed check. See
+[Exit codes](../concepts/exit-codes.md#cluster-upgrade-check).
 
 `upgrade-check` reads the insights EKS already has. It does not start an
 insights refresh, so right after a control-plane change the list can be
@@ -192,8 +220,11 @@ support, control plane, and version skew go to stderr.
 # Readiness summary for prod-east
 refresh cluster upgrade-check -c prod-east
 
-# Include passing checks, as JSON for a gate
+# Include passing checks, as JSON for a gate (exit 2 or 3 fails the job)
 refresh cluster upgrade-check -c prod-east --show-passing -o json
+
+# Report only: same JSON, always exit 0
+refresh cluster upgrade-check -c prod-east -o json --exit-zero
 
 # Drill into one insight (by name, short ID, or full ID)
 refresh cluster upgrade-check -c prod-east --id "deprecated"
@@ -320,7 +351,7 @@ CI, and `NO_COLOR` runs print text progress.
 
 !!! tip "Exit code in dry-run"
     A dry-run (or any run) whose plan contains a **blocker** prints the plan and
-    exits non-zero without mutating — handy as a readiness gate in CI.
+    exits `3` without mutating, so it works as a readiness gate in CI.
 
 !!! note "Kubernetes access for the live roll view"
     The nodegroup phase renders the same live per-node roll panel as
@@ -330,7 +361,7 @@ CI, and `NO_COLOR` runs print text progress.
 ### Examples
 
 ```bash
-# Print the plan only (exits non-zero if anything blocks the upgrade)
+# Print the plan only (exits 3 if anything blocks the upgrade)
 refresh cluster upgrade -c prod-east --to 1.33 --dry-run
 
 # Execute, confirming each mutating phase
