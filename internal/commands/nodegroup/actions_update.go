@@ -37,7 +37,7 @@ type updateAMIFlags struct {
 	yes, requireHealthy, skipVerify, changelog, live          bool
 	timeout, pollInterval                                     time.Duration
 	format                                                    string
-	kubeconfig                                                string
+	kubeconfig, kubeContext                                   string
 }
 
 func readUpdateAMIFlags(cmd *cli.Command) updateAMIFlags {
@@ -59,6 +59,7 @@ func readUpdateAMIFlags(cmd *cli.Command) updateAMIFlags {
 		pollInterval:    cmd.Duration("poll-interval"),
 		format:          strings.ToLower(cmd.String("format")),
 		kubeconfig:      cmd.String("kubeconfig"),
+		kubeContext:     cmd.String("kube-context"),
 	}
 }
 
@@ -172,7 +173,7 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	var verifyClient kubernetes.Interface
 	var preroll pendingPodSet
 	if verify {
-		verifyClient, _ = resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, false)
+		verifyClient, _ = resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, false)
 		preroll = snapshotPendingPods(ctx, verifyClient)
 	}
 
@@ -206,7 +207,7 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	if len(updates) == 1 && !quiet {
 		kube := verifyClient
 		if kube == nil {
-			kube, _ = resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.live)
+			kube, _ = resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, flags.live)
 		}
 		if kube != nil {
 			rollview.LiveRollForUpdate(ctx, kube, updates[0].NodegroupName, flags.timeout, flags.pollInterval)
@@ -282,12 +283,12 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	}
 	cwClient := cloudwatch.NewFromConfig(awsCfg)
 	asgClient := autoscaling.NewFromConfig(awsCfg)
-	k8sClient, kubeTarget := resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, humanOutput)
+	k8sClient, kubeSel := resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, humanOutput)
 	checker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
 	// Attach metrics-server (best-effort) for live CPU+memory drain headroom; the
 	// utilization check skips cleanly if it isn't installed. (REF-142)
 	if k8sClient != nil {
-		if m, mErr := health.BuildMetricsClientForCluster(flags.kubeconfig, kubeTarget); mErr == nil {
+		if m, mErr := health.BuildMetricsClient(kubeSel); mErr == nil {
 			checker.SetNodeMetrics(m)
 		}
 	}

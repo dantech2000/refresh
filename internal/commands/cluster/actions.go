@@ -127,12 +127,12 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	var clusterService *clustersvc.ServiceImpl
 	if cmd.Bool("check-readiness") {
 		humanOutput := strings.EqualFold(cmd.String("format"), "table")
-		k8sClient, kubeTarget := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), humanOutput)
+		k8sClient, kubeSel := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), humanOutput)
 		// With cluster access, also wire metrics-server (best-effort) so the
 		// health card's live-utilization check measures instead of skipping. (REF-146)
 		var metricsClient health.NodeMetricsLister
 		if k8sClient != nil {
-			if m, err := health.BuildMetricsClientForCluster(cmd.String("kubeconfig"), kubeTarget); err == nil {
+			if m, err := health.BuildMetricsClient(kubeSel); err == nil {
 				metricsClient = m
 			}
 		}

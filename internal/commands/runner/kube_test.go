@@ -118,7 +118,7 @@ func TestResolveClusterKubeClient_MismatchSkipsWithWarning(t *testing.T) {
 
 func TestResolveClusterKubeClient_SelectsMatchingContext(t *testing.T) {
 	out, probes := stubKubeSeams(t)
-	client, target := ResolveClusterKubeClient(context.Background(), KubeRequest{
+	client, sel := ResolveClusterKubeClient(context.Background(), KubeRequest{
 		API:        eksWithEndpoint(testProdEndpoint),
 		Cluster:    "switch-prod",
 		Region:     "us-east-1",
@@ -131,11 +131,29 @@ func TestResolveClusterKubeClient_SelectsMatchingContext(t *testing.T) {
 	if *probes != 1 {
 		t.Errorf("probes = %d, want 1", *probes)
 	}
-	if target.Endpoint != testProdEndpoint {
-		t.Errorf("target endpoint = %q, want %q", target.Endpoint, testProdEndpoint)
+	if sel.Target.Endpoint != testProdEndpoint || sel.Diag.Context != "prod" {
+		t.Errorf("selection = %+v, want prod context for %q", sel, testProdEndpoint)
 	}
 	if !strings.Contains(out.String(), `context "prod"`) {
 		t.Errorf("expected a context-switch notice, got %q", out.String())
+	}
+}
+
+func TestResolveClusterKubeClient_ExplicitContextIsTrustedWithNote(t *testing.T) {
+	out, _ := stubKubeSeams(t)
+	client, _ := ResolveClusterKubeClient(context.Background(), KubeRequest{
+		API:         eksWithEndpoint(testOtherEndpoint), // e.g. reached through a tunnel
+		Cluster:     "tunnel-prod",
+		Region:      "us-east-1",
+		Kubeconfig:  writeTestKubeconfig(t),
+		KubeContext: "staging",
+	})
+	if client == nil {
+		t.Fatal("expected the explicitly named context to be used")
+	}
+	msg := out.String()
+	if strings.Count(msg, "\n") != 1 || !strings.Contains(msg, `"staging"`) || !strings.Contains(msg, "not verified") {
+		t.Errorf("want a one-line not-verified note, got %q", msg)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
@@ -54,6 +55,7 @@ grep/awk; -o json|yaml emit structured output. Use --watch to redraw on the
 			&cli.StringSliceFlag{Name: "filter", Aliases: []string{"f"}, Usage: "Filter nodegroups (key=value; keys: name, status, instanceType, amiStatus)"},
 			&cli.BoolFlag{Name: "check-readiness", Aliases: []string{"R"}, Usage: "Measure real Kubernetes node readiness (Ready/desired) via the cluster API; without it NODES shows desired count only"},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for --check-readiness (defaults to $KUBECONFIG, then ~/.kube/config)"},
+			runner.KubeContextFlag(),
 			&cli.BoolFlag{Name: "watch", Aliases: []string{"w"}, Usage: "Re-run and redraw every --watch-interval until interrupted"},
 			&cli.DurationFlag{Name: "watch-interval", Usage: "Refresh interval for --watch", Value: 10 * time.Second},
 		},
@@ -113,6 +115,7 @@ operation settles.
 			&cli.BoolFlag{Name: "wait", Usage: "Wait for scaling operation to complete"},
 			&cli.DurationFlag{Name: "op-timeout", Usage: "Scaling operation timeout", Value: 5 * time.Minute},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config)"},
+			runner.KubeContextFlag(),
 			&cli.BoolFlag{Name: "dry-run", Usage: "Preview scaling impact without executing"},
 		},
 		Action: runScale,
@@ -166,6 +169,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.BoolFlag{Name: "skip-verify", Usage: "Skip post-roll verification (nodes ACTIVE, no new stuck pods)"},
 			&cli.BoolFlag{Name: "changelog", Usage: "In dry-run, print full amazon-eks-ami release notes between the current and target AMI"},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config)"},
+			runner.KubeContextFlag(),
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format: health results with --health-only; a JSON run summary with -o json", Value: "table"},
 			// The real-time per-node roll panel (driven from live Kubernetes
 			// state) is the DEFAULT for an interactive single-nodegroup roll,

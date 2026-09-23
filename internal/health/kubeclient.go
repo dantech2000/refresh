@@ -32,13 +32,11 @@ type KubeDiag struct {
 	// SwitchedFrom is the kubeconfig current-context when a different context
 	// was selected because it points at the target cluster.
 	SwitchedFrom string
-	// Unverified is set when in-cluster config was used for a target cluster
-	// whose endpoint could not be matched against it.
+	// Unverified is set when the user named the context explicitly
+	// (--kube-context) and its server does not match the target endpoint,
+	// e.g. a proxied or tunnelled API server. The context is trusted as asked.
 	Unverified bool
 }
-
-// inClusterConfig is a seam for tests.
-var inClusterConfig = rest.InClusterConfig
 
 // String renders the resolution attempt for diagnostics.
 func (d KubeDiag) String() string {
@@ -56,68 +54,61 @@ func (d KubeDiag) String() string {
 	}
 }
 
-// resolveRESTConfig resolves a *rest.Config and a diagnostic, preferring an
-// explicit kubeconfig path, then $KUBECONFIG, then ~/.kube/config, then
-// in-cluster config. An explicit --kubeconfig path that doesn't exist is a hard
-// error. Shared by the kube and metrics client builders so both clients
-// resolve identically.
-//
-// When target is non-nil, the config must point at that EKS cluster: the
-// current context is used if its server matches the cluster endpoint,
-// otherwise another context whose server matches is selected, otherwise a
-// *ClusterMismatchError is returned and no config is produced.
-func resolveRESTConfig(kubeconfigPath string, target *TargetCluster) (*rest.Config, KubeDiag, error) {
-	source := ""
-	path := strings.TrimSpace(kubeconfigPath)
+// inClusterConfig is a seam for tests.
+var inClusterConfig = rest.InClusterConfig
+
+// locateKubeconfig picks the kubeconfig file: an explicit path, then
+// $KUBECONFIG, then ~/.kube/config. path is "" when no file exists and the
+// caller should fall back to in-cluster config. An explicit path that doesn't
+// exist is a hard error.
+func locateKubeconfig(kubeconfigPath string) (path, source string, err error) {
+	path = strings.TrimSpace(kubeconfigPath)
 	switch {
 	case path != "":
 		source = "--kubeconfig"
 	case os.Getenv("KUBECONFIG") != "":
 		path, source = os.Getenv("KUBECONFIG"), "KUBECONFIG"
 	default:
-		if home, err := os.UserHomeDir(); err == nil {
+		if home, herr := os.UserHomeDir(); herr == nil {
 			path, source = filepath.Join(home, ".kube", "config"), "default"
 		}
 	}
-
-	if path != "" {
-		st, statErr := os.Stat(path)
-		switch {
-		case statErr == nil && !st.IsDir():
-			diag := KubeDiag{Source: source, Path: path}
-			if target != nil {
-				cfg, err := restConfigForTarget(path, &diag, *target)
-				if err != nil {
-					return nil, diag, err
-				}
-				return cfg, diag, nil
-			}
-			if raw, lerr := clientcmd.LoadFromFile(path); lerr == nil {
-				diag.Context = raw.CurrentContext
-			}
-			cfg, cerr := clientcmd.BuildConfigFromFlags("", path)
-			if cerr != nil {
-				return nil, diag, fmt.Errorf("loading kubeconfig %s: %w", path, cerr)
-			}
-			return cfg, diag, nil
-		case source == "--kubeconfig":
-			// An explicitly requested file that isn't there is a user error,
-			// not a reason to silently fall back.
-			return nil, KubeDiag{Source: source, Path: path}, fmt.Errorf("kubeconfig %q not found", path)
-		}
-		// A missing default/$KUBECONFIG file falls through to in-cluster.
+	if path == "" {
+		return "", source, nil
 	}
+	if st, statErr := os.Stat(path); statErr == nil && !st.IsDir() {
+		return path, source, nil
+	}
+	if source == "--kubeconfig" {
+		// An explicitly requested file that isn't there is a user error, not a
+		// reason to silently fall back.
+		return path, source, fmt.Errorf("kubeconfig %q not found", path)
+	}
+	// A missing default/$KUBECONFIG file falls through to in-cluster.
+	return "", source, nil
+}
 
-	if icCfg, err := inClusterConfig(); err == nil {
-		diag := KubeDiag{Source: "in-cluster", Server: icCfg.Host}
-		// In-cluster config points at the kubernetes service IP, so it can't be
-		// matched to the EKS endpoint. It is still used (refresh running inside
-		// the cluster it manages is a real setup), but flagged so the caller
-		// can warn that the target could not be verified.
-		if target != nil && !SameClusterEndpoint(icCfg.Host, target.Endpoint) {
-			diag.Unverified = true
+// resolveRESTConfig resolves a *rest.Config and a diagnostic from the current
+// kubeconfig context (or in-cluster config), without checking which cluster
+// it points at.
+func resolveRESTConfig(kubeconfigPath string) (*rest.Config, KubeDiag, error) {
+	path, source, err := locateKubeconfig(kubeconfigPath)
+	if err != nil {
+		return nil, KubeDiag{Source: source, Path: path}, err
+	}
+	if path != "" {
+		diag := KubeDiag{Source: source, Path: path}
+		if raw, lerr := clientcmd.LoadFromFile(path); lerr == nil {
+			diag.Context = raw.CurrentContext
 		}
-		return icCfg, diag, nil
+		cfg, cerr := clientcmd.BuildConfigFromFlags("", path)
+		if cerr != nil {
+			return nil, diag, fmt.Errorf("loading kubeconfig %s: %w", path, cerr)
+		}
+		return cfg, diag, nil
+	}
+	if icCfg, icErr := inClusterConfig(); icErr == nil {
+		return icCfg, KubeDiag{Source: "in-cluster", Server: icCfg.Host}, nil
 	}
 	return nil, KubeDiag{Source: "none"}, fmt.Errorf("no kubeconfig found and in-cluster config not available")
 }
@@ -128,23 +119,9 @@ func resolveRESTConfig(kubeconfigPath string, target *TargetCluster) (*rest.Conf
 // client. An explicit --kubeconfig path that doesn't exist is a hard error.
 //
 // BuildKubeClient does not check which cluster the client points at. Code that
-// acts on a specific EKS cluster must use [BuildKubeClientForCluster].
+// acts on a specific EKS cluster must use [ConnectKubeClientForCluster].
 func BuildKubeClient(kubeconfigPath string) (kubernetes.Interface, KubeDiag, error) {
-	return buildKubeClient(kubeconfigPath, nil)
-}
-
-// BuildKubeClientForCluster builds a Kubernetes client that is verified to
-// point at target (see [SameClusterEndpoint]). If the kubeconfig current
-// context points elsewhere, a context whose server matches the target endpoint
-// is selected instead; if none exists, a *ClusterMismatchError is returned and
-// no client is built. In-cluster config (no kubeconfig file) can't be matched,
-// so it is used with diag.Unverified set.
-func BuildKubeClientForCluster(kubeconfigPath string, target TargetCluster) (kubernetes.Interface, KubeDiag, error) {
-	return buildKubeClient(kubeconfigPath, &target)
-}
-
-func buildKubeClient(kubeconfigPath string, target *TargetCluster) (kubernetes.Interface, KubeDiag, error) {
-	cfg, diag, err := resolveRESTConfig(kubeconfigPath, target)
+	cfg, diag, err := resolveRESTConfig(kubeconfigPath)
 	if err != nil {
 		return nil, diag, err
 	}
@@ -155,17 +132,16 @@ func buildKubeClient(kubeconfigPath string, target *TargetCluster) (kubernetes.I
 	return client, diag, nil
 }
 
-// BuildMetricsClientForCluster builds a metrics-server (metrics.k8s.io)
-// node-metrics lister with the same kubeconfig resolution, target check and
-// context selection as [BuildKubeClientForCluster]. A config error is
-// returned; metrics-server simply not being installed is NOT an error here —
-// that surfaces at List time, so the utilization check can skip gracefully.
-func BuildMetricsClientForCluster(kubeconfigPath string, target TargetCluster) (NodeMetricsLister, error) {
-	cfg, _, err := resolveRESTConfig(kubeconfigPath, &target)
-	if err != nil {
-		return nil, err
+// BuildMetricsClient builds a metrics-server (metrics.k8s.io) node-metrics
+// lister for a selection already made by [ConnectKubeClientForCluster], so
+// both clients talk to the same cluster. A config error is returned;
+// metrics-server simply not being installed is NOT an error here — that
+// surfaces at List time, so the utilization check can skip gracefully.
+func BuildMetricsClient(sel KubeSelection) (NodeMetricsLister, error) {
+	if sel.config == nil {
+		return nil, fmt.Errorf("no verified Kubernetes config")
 	}
-	cs, err := metricsclient.NewForConfig(cfg)
+	cs, err := metricsclient.NewForConfig(sel.config)
 	if err != nil {
 		return nil, fmt.Errorf("building metrics client: %w", err)
 	}

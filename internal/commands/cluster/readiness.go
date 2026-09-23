@@ -17,13 +17,14 @@ import (
 // nil, so node readiness degrades to honestly "unknown" (desired count only)
 // rather than being measured on the wrong cluster or failing the command.
 // (REF-130)
-func resolveReadinessKubeClient(ctx context.Context, api health.ClusterDescriber, region, clusterName, kubeconfig string, humanOutput bool) (kubernetes.Interface, health.TargetCluster) {
+func resolveReadinessKubeClient(ctx context.Context, api health.ClusterDescriber, region, clusterName, kubeconfig, kubeContext string, humanOutput bool) (kubernetes.Interface, health.KubeSelection) {
 	return runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
-		API:        api,
-		Cluster:    clusterName,
-		Region:     region,
-		Kubeconfig: kubeconfig,
-		Verbose:    humanOutput,
-		SkipNote:   "Node readiness will show desired capacity only (ready count unknown).",
+		API:         api,
+		Cluster:     clusterName,
+		Region:      region,
+		Kubeconfig:  kubeconfig,
+		KubeContext: kubeContext,
+		Verbose:     humanOutput,
+		SkipNote:    "Node readiness will show desired capacity only (ready count unknown).",
 	})
 }

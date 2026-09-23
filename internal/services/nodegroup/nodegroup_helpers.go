@@ -105,7 +105,7 @@ func (s *ServiceImpl) getInstanceDetails(ctx context.Context, instanceIDs []stri
 // kubeconfig context does, the analysis is skipped (ok=false) rather than
 // reading another cluster's nodes.
 func (s *ServiceImpl) analyzeWorkloads(ctx context.Context, target health.TargetCluster, nodegroupName string, instanceIDs []string) (WorkloadInfo, bool) {
-	k8s, _, err := health.BuildKubeClientForCluster("", target)
+	k8s, _, err := health.ConnectKubeClientForCluster(ctx, "", "", target, nil)
 	if err != nil || k8s == nil {
 		return WorkloadInfo{}, false
 	}

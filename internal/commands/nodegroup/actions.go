@@ -19,14 +19,15 @@ import (
 // nil, so the kube-dependent checks degrade to "skipped" rather than running
 // against the wrong cluster or failing silently. The returned target lets the
 // caller build a metrics client against the same cluster.
-func resolveHealthKubeClient(ctx context.Context, api health.ClusterDescriber, region, clusterName, kubeconfig string, humanOutput bool) (kubernetes.Interface, health.TargetCluster) {
+func resolveHealthKubeClient(ctx context.Context, api health.ClusterDescriber, region, clusterName, kubeconfig, kubeContext string, humanOutput bool) (kubernetes.Interface, health.KubeSelection) {
 	return runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
-		API:        api,
-		Cluster:    clusterName,
-		Region:     region,
-		Kubeconfig: kubeconfig,
-		Verbose:    humanOutput,
-		SkipNote:   "Workload/PDB checks will be skipped; node readiness falls back to an estimate.",
+		API:         api,
+		Cluster:     clusterName,
+		Region:      region,
+		Kubeconfig:  kubeconfig,
+		KubeContext: kubeContext,
+		Verbose:     humanOutput,
+		SkipNote:    "Workload/PDB checks will be skipped; node readiness falls back to an estimate.",
 	})
 }
 

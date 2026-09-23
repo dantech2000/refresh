@@ -2,20 +2,29 @@ package health
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/dantech2000/refresh/internal/services/common"
 )
+
+// InClusterNameEnv names the env var a pod sets to declare which EKS cluster it
+// runs in. In-cluster config points at the kubernetes service IP, which can't
+// be matched to an EKS endpoint, so it is only trusted when this equals the
+// target cluster name.
+const InClusterNameEnv = "REFRESH_IN_CLUSTER_NAME"
 
 // TargetCluster identifies the EKS cluster a Kubernetes client must point at.
 // Endpoint is the cluster's API server URL from DescribeCluster; it is what a
@@ -62,12 +71,13 @@ func DescribeTarget(ctx context.Context, api ClusterDescriber, name, region stri
 	return t, nil
 }
 
-// ClusterMismatchError reports that no usable kubeconfig context points at the
+// ClusterMismatchError reports that no usable Kubernetes config points at the
 // target cluster. Callers must not use a Kubernetes client in this case.
 type ClusterMismatchError struct {
-	Target  TargetCluster
-	Context string // kubeconfig context that was considered
-	Server  string // that context's API server
+	Target    TargetCluster
+	Context   string // kubeconfig context that was considered
+	Server    string // that context's (or the in-cluster) API server
+	InCluster bool
 }
 
 func (e *ClusterMismatchError) Error() string {
@@ -75,12 +85,13 @@ func (e *ClusterMismatchError) Error() string {
 	if e.Target.Endpoint != "" {
 		target = fmt.Sprintf("%s (%s)", e.Target.Name, e.Target.Endpoint)
 	}
-	var src string
-	switch {
-	case e.Context != "":
+	if e.InCluster {
+		return fmt.Sprintf("in-cluster config (server %s) cannot be verified as EKS cluster %s; set %s=%s if this pod runs in that cluster",
+			e.Server, target, InClusterNameEnv, e.Target.Name)
+	}
+	src := "the resolved Kubernetes config"
+	if e.Context != "" {
 		src = fmt.Sprintf("kubeconfig context %q (server %s)", e.Context, e.Server)
-	default:
-		src = "the resolved Kubernetes config"
 	}
 	if e.Target.Endpoint == "" {
 		return fmt.Sprintf("cannot verify that %s points at EKS cluster %s: the cluster has no API endpoint", src, target)
@@ -126,24 +137,24 @@ func SameClusterEndpoint(server, endpoint string) bool {
 	return a != "" && a == b
 }
 
-// selectContextForEndpoint picks the kubeconfig context whose cluster server
-// matches endpoint: the current context when it matches, otherwise the first
-// matching context by name. ok is false when none match; the current context
-// and its server are always returned for diagnostics.
-func selectContextForEndpoint(raw clientcmdapi.Config, endpoint string) (ctxName, currentServer string, ok bool) {
-	serverOf := func(name string) string {
-		c := raw.Contexts[name]
-		if c == nil {
-			return ""
-		}
-		if cl := raw.Clusters[c.Cluster]; cl != nil {
-			return cl.Server
-		}
+// contextServer returns the API server of a kubeconfig context.
+func contextServer(raw clientcmdapi.Config, name string) string {
+	c := raw.Contexts[name]
+	if c == nil {
 		return ""
 	}
-	currentServer = serverOf(raw.CurrentContext)
-	if raw.CurrentContext != "" && SameClusterEndpoint(currentServer, endpoint) {
-		return raw.CurrentContext, currentServer, true
+	if cl := raw.Clusters[c.Cluster]; cl != nil {
+		return cl.Server
+	}
+	return ""
+}
+
+// matchingContexts lists every kubeconfig context whose server matches
+// endpoint: the current context first when it matches, then the rest by name.
+func matchingContexts(raw clientcmdapi.Config, endpoint string) []string {
+	var out []string
+	if raw.CurrentContext != "" && SameClusterEndpoint(contextServer(raw, raw.CurrentContext), endpoint) {
+		out = append(out, raw.CurrentContext)
 	}
 	names := make([]string, 0, len(raw.Contexts))
 	for name := range raw.Contexts {
@@ -151,40 +162,158 @@ func selectContextForEndpoint(raw clientcmdapi.Config, endpoint string) (ctxName
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if SameClusterEndpoint(serverOf(name), endpoint) {
-			return name, currentServer, true
+		if name != raw.CurrentContext && SameClusterEndpoint(contextServer(raw, name), endpoint) {
+			out = append(out, name)
 		}
 	}
-	return "", currentServer, false
+	return out
 }
 
-// restConfigForTarget builds a rest.Config from the kubeconfig at path using
-// the context that points at target. It returns a *ClusterMismatchError when no
-// context does.
-func restConfigForTarget(path string, diag *KubeDiag, target TargetCluster) (*rest.Config, error) {
+// kubeCandidate is one config to try for the target cluster.
+type kubeCandidate struct {
+	cfg  *rest.Config
+	diag KubeDiag
+}
+
+// targetCandidates lists the configs that may be used for target, in the
+// order to try them. kubeContext, when set, is the only candidate and is
+// trusted even if its server doesn't match (proxied/tunnelled API servers).
+// It returns a *ClusterMismatchError when nothing can be verified.
+func targetCandidates(kubeconfigPath, kubeContext string, target TargetCluster) ([]kubeCandidate, KubeDiag, error) {
+	path, source, err := locateKubeconfig(kubeconfigPath)
+	if err != nil {
+		return nil, KubeDiag{Source: source, Path: path}, err
+	}
+	kubeContext = strings.TrimSpace(kubeContext)
+
+	if path == "" {
+		if kubeContext != "" {
+			return nil, KubeDiag{Source: "none"}, fmt.Errorf("--kube-context %q given but no kubeconfig found", kubeContext)
+		}
+		icCfg, icErr := inClusterConfig()
+		if icErr != nil {
+			return nil, KubeDiag{Source: "none"}, fmt.Errorf("no kubeconfig found and in-cluster config not available")
+		}
+		diag := KubeDiag{Source: "in-cluster", Server: icCfg.Host}
+		if SameClusterEndpoint(icCfg.Host, target.Endpoint) ||
+			(target.Name != "" && strings.TrimSpace(os.Getenv(InClusterNameEnv)) == target.Name) {
+			return []kubeCandidate{{cfg: icCfg, diag: diag}}, diag, nil
+		}
+		return nil, diag, &ClusterMismatchError{Target: target, Server: icCfg.Host, InCluster: true}
+	}
+
 	rules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: path}
 	raw, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{}).RawConfig()
+	base := KubeDiag{Source: source, Path: path}
 	if err != nil {
-		return nil, fmt.Errorf("loading kubeconfig %s: %w", path, err)
+		return nil, base, fmt.Errorf("loading kubeconfig %s: %w", path, err)
 	}
-	diag.Context = raw.CurrentContext
+	base.Context = raw.CurrentContext
+	base.Server = contextServer(raw, raw.CurrentContext)
+
+	build := func(name string) (*rest.Config, error) {
+		cfg, berr := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules,
+			&clientcmd.ConfigOverrides{CurrentContext: name}).ClientConfig()
+		if berr != nil {
+			return nil, fmt.Errorf("loading kubeconfig %s (context %q): %w", path, name, berr)
+		}
+		return cfg, nil
+	}
+
+	if kubeContext != "" {
+		if raw.Contexts[kubeContext] == nil {
+			return nil, base, fmt.Errorf("kubeconfig context %q not found in %s", kubeContext, path)
+		}
+		diag := base
+		diag.Context = kubeContext
+		diag.Server = contextServer(raw, kubeContext)
+		diag.Unverified = !SameClusterEndpoint(diag.Server, target.Endpoint)
+		cfg, berr := build(kubeContext)
+		if berr != nil {
+			return nil, diag, berr
+		}
+		return []kubeCandidate{{cfg: cfg, diag: diag}}, diag, nil
+	}
+
 	if target.Endpoint == "" {
-		return nil, &ClusterMismatchError{Target: target, Context: raw.CurrentContext}
+		return nil, base, &ClusterMismatchError{Target: target, Context: raw.CurrentContext}
 	}
-	name, currentServer, ok := selectContextForEndpoint(raw, target.Endpoint)
-	diag.Server = currentServer
-	if !ok {
-		return nil, &ClusterMismatchError{Target: target, Context: raw.CurrentContext, Server: currentServer}
+	names := matchingContexts(raw, target.Endpoint)
+	if len(names) == 0 {
+		return nil, base, &ClusterMismatchError{Target: target, Context: raw.CurrentContext, Server: base.Server}
 	}
-	if name != raw.CurrentContext {
-		diag.SwitchedFrom = raw.CurrentContext
+	var cands []kubeCandidate
+	var lastErr error
+	for _, name := range names {
+		cfg, berr := build(name)
+		if berr != nil {
+			lastErr = berr
+			continue
+		}
+		diag := base
+		diag.Context = name
+		diag.Server = contextServer(raw, name)
+		if name != raw.CurrentContext {
+			diag.SwitchedFrom = raw.CurrentContext
+		}
+		cands = append(cands, kubeCandidate{cfg: cfg, diag: diag})
 	}
-	diag.Context = name
-	diag.Server = target.Endpoint
-	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules,
-		&clientcmd.ConfigOverrides{CurrentContext: name}).ClientConfig()
+	if len(cands) == 0 {
+		return nil, base, lastErr
+	}
+	return cands, cands[0].diag, nil
+}
+
+// KubeSelection is the verified config chosen by [ConnectKubeClientForCluster].
+// Pass it to [BuildMetricsClient] so sibling clients use the same cluster.
+type KubeSelection struct {
+	Target TargetCluster
+	Diag   KubeDiag
+	config *rest.Config
+}
+
+// ProbeFunc checks that a client can reach its API server.
+type ProbeFunc func(context.Context, kubernetes.Interface) error
+
+// ConnectKubeClientForCluster returns a Kubernetes client that points at
+// target. With kubeContext set, that context is used as the user asked (the
+// selection's Diag.Unverified reports a server mismatch). Otherwise the
+// kubeconfig contexts whose server matches the target endpoint are tried in
+// order (current context first) until one passes probe; a nil probe accepts
+// the first. In-cluster config is used only when its host matches the
+// endpoint or $REFRESH_IN_CLUSTER_NAME names the target cluster. When nothing
+// can be verified a *ClusterMismatchError is returned and no client is built.
+func ConnectKubeClientForCluster(ctx context.Context, kubeconfigPath, kubeContext string, target TargetCluster, probe ProbeFunc) (kubernetes.Interface, KubeSelection, error) {
+	cands, diag, err := targetCandidates(kubeconfigPath, kubeContext, target)
 	if err != nil {
-		return nil, fmt.Errorf("loading kubeconfig %s (context %q): %w", path, name, err)
+		return nil, KubeSelection{Target: target, Diag: diag}, err
 	}
-	return cfg, nil
+	var lastErr error
+	for _, c := range cands {
+		client, nerr := kubernetes.NewForConfig(c.cfg)
+		if nerr != nil {
+			lastErr, diag = fmt.Errorf("building kubernetes client: %w", nerr), c.diag
+			continue
+		}
+		if probe != nil {
+			if perr := probe(ctx, client); perr != nil {
+				lastErr, diag = &ProbeError{Err: perr}, c.diag
+				continue
+			}
+		}
+		return client, KubeSelection{Target: target, Diag: c.diag, config: c.cfg}, nil
+	}
+	return nil, KubeSelection{Target: target, Diag: diag}, lastErr
+}
+
+// ProbeError reports that a verified config's API server was unreachable.
+type ProbeError struct{ Err error }
+
+func (e *ProbeError) Error() string { return e.Err.Error() }
+func (e *ProbeError) Unwrap() error { return e.Err }
+
+// IsProbeError reports whether err came from the connectivity probe.
+func IsProbeError(err error) bool {
+	var pe *ProbeError
+	return errors.As(err, &pe)
 }
