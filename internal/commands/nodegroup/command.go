@@ -152,7 +152,7 @@ Exit codes:
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or partial name pattern (overrides the active context; kubeconfig is not used)", Sources: cli.EnvVars("EKS_CLUSTER_NAME")},
+			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or partial name pattern (overrides the active context; kubeconfig is not used). Without this flag or a positional cluster, EKS_CLUSTER_NAME is used"},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name or partial name pattern (if not set, update all)"},
 			&cli.BoolFlag{Name: "all-clusters", Usage: "Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r."},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS)"},

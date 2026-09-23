@@ -31,11 +31,22 @@ them.
 Every command that targets one cluster resolves it in this order (first match
 wins):
 
-1. The `--cluster, -c` flag.
+1. The `--cluster, -c` flag on the command line.
 2. The first positional argument.
-3. The cluster of the active `refresh` context (`refresh use <name>`).
-4. The cluster of the current kubeconfig context. Only read-only commands use
+3. The `EKS_CLUSTER_NAME` environment variable.
+4. The cluster of the active `refresh` context (`refresh use <name>`).
+5. The cluster of the current kubeconfig context. Only read-only commands use
    this step.
+
+`EKS_CLUSTER_NAME` never overrides a cluster that you type. The first
+positional argument is always the cluster, also when `EKS_CLUSTER_NAME` is
+set. To use the variable with a nodegroup or add-on, name that with its flag:
+
+```bash
+export EKS_CLUSTER_NAME=staging
+refresh nodegroup update --nodegroup ng-a       # staging / ng-a
+refresh nodegroup update prod --nodegroup ng-a  # prod / ng-a
+```
 
 Mutating commands (`cluster upgrade`, `addon update`, `nodegroup update`,
 `nodegroup scale`) never use the kubeconfig. A kubeconfig that points at
@@ -84,9 +95,9 @@ These are accepted on every command:
 | `REFRESH_MAX_CONCURRENCY` | Default for `--max-concurrency` |
 | `REFRESH_LOG_LEVEL` | Default for `--log-level` |
 | `REFRESH_EKS_REGIONS` | Region set for fleet discovery (`nodegroup update --all-clusters`) |
-| `EKS_CLUSTER_NAME` | Default cluster for `nodegroup update` |
+| `EKS_CLUSTER_NAME` | Default cluster for single-cluster commands, after `--cluster` and the positional argument (see [Cluster resolution](#cluster-resolution)) |
 | `NO_COLOR` | Disable colored output |
-| `REFRESH_NO_UPDATE_CHECK` | Disable the `refresh version` self-update check |
+| `REFRESH_NO_UPDATE_CHECK` | Disable the `refresh version` self-update check. Any value except `0`, `false`, or `no` disables it |
 | `KUBECONFIG` | kubeconfig path for workload/PDB health checks |
 | `REFRESH_IN_CLUSTER_NAME` | EKS cluster a pod runs in; lets in-cluster config be used for that cluster |
 
