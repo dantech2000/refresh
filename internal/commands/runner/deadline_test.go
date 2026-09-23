@@ -199,3 +199,23 @@ func TestAPIContextSignalCancelsPrompt(t *testing.T) {
 		cancel()
 	}
 }
+
+// Err sees the parent's cancellation at once, not after the AfterFunc
+// goroutine runs: a check right after Ctrl+C must report an interrupt, and
+// Done is closed by then (REF-165).
+func TestPausableDeadlineErrSeesParentCancelAtOnce(t *testing.T) {
+	for range 1000 {
+		parent, cancelParent := context.WithCancel(t.Context())
+		c, cancel := withPausableTimeout(parent, time.Hour)
+		cancelParent()
+		if err := c.Err(); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Err() right after the parent's cancel = %v, want context.Canceled", err)
+		}
+		select {
+		case <-c.Done():
+		default:
+			t.Fatal("Done is open although Err reported the cancellation")
+		}
+		cancel()
+	}
+}

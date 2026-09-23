@@ -3,6 +3,7 @@ package statuscmd
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,20 +14,37 @@ import (
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 )
 
-// ctxRegion answers for us-east-1 and runs block for any other region.
+// ctxRegion answers for us-east-1, then closes answered. Any other region
+// waits for that handshake and then runs block, so the sweep always has one
+// answered region before the interrupt or the deadline, whatever order the
+// regions are dispatched in.
 type ctxRegion struct {
-	region string
-	block  func(ctx context.Context) error
+	region   string
+	answered chan struct{}
+	once     *sync.Once
+	block    func(ctx context.Context) error
 }
 
 func (f ctxRegion) ListClusterStatuses(ctx context.Context, _ statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
 	if f.region == "us-east-1" {
+		defer f.once.Do(func() { close(f.answered) })
 		return []statussvc.ClusterStatus{{
 			Name: "prod", Region: "us-east-1", Version: "1.33",
 			Support: statussvc.SupportPosture{Tier: statussvc.SupportStandard},
 		}}, nil
 	}
+	<-f.answered
 	return nil, f.block(ctx)
+}
+
+// stubTwoRegions stubs the region service with ctxRegion sharing one
+// handshake.
+func stubTwoRegions(t *testing.T, block func(ctx context.Context) error) {
+	t.Helper()
+	answered, once := make(chan struct{}), &sync.Once{}
+	stubRegionService(t, func(cfg aws.Config) regionLister {
+		return ctxRegion{region: cfg.Region, answered: answered, once: once, block: block}
+	})
 }
 
 func runStatusCtx(ctx context.Context, t *testing.T, args ...string) error {
@@ -45,18 +63,19 @@ func runStatusCtx(ctx context.Context, t *testing.T, args ...string) error {
 }
 
 // Ctrl+C after one region answered: the run was interrupted, so it exits
-// 1, not 4 (REF-165).
+// 1, not 4 (REF-165). The swept region sees the interrupt through its own
+// context, as a real AWS call would.
 func TestRunStatus_InterruptExitsOne(t *testing.T) {
 	fakeAWSEnv(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	stubRegionService(t, func(cfg aws.Config) regionLister {
-		return ctxRegion{region: cfg.Region, block: func(context.Context) error {
-			cancel() // the user presses Ctrl+C while this region is swept
-			return context.Canceled
-		}}
+	stubTwoRegions(t, func(rctx context.Context) error {
+		cancel() // the user presses Ctrl+C while this region is swept
+		<-rctx.Done()
+		return rctx.Err()
 	})
-	err := runStatusCtx(ctx, t, "--max-concurrency", "1", "-r", "us-east-1", "-r", "eu-west-1", "-o", "json")
+	// Two regions at once, so neither waits for a slot the other holds.
+	err := runStatusCtx(ctx, t, "--max-concurrency", "2", "-r", "us-east-1", "-r", "eu-west-1", "-o", "json")
 	if got := runner.ExitCodeOf(err); got != runner.ExitError || !strings.Contains(err.Error(), "interrupted") {
 		t.Fatalf("exit = %d (%v), want 1 for the interrupt", got, err)
 	}
@@ -66,13 +85,11 @@ func TestRunStatus_InterruptExitsOne(t *testing.T) {
 // partial data: exit 4.
 func TestRunStatus_DeadlineExitsIncomplete(t *testing.T) {
 	fakeAWSEnv(t)
-	stubRegionService(t, func(cfg aws.Config) regionLister {
-		return ctxRegion{region: cfg.Region, block: func(ctx context.Context) error {
-			<-ctx.Done()
-			return ctx.Err()
-		}}
+	stubTwoRegions(t, func(rctx context.Context) error {
+		<-rctx.Done()
+		return rctx.Err()
 	})
-	err := runStatusCtx(t.Context(), t, "--timeout", "200ms", "--max-concurrency", "1", "-r", "us-east-1", "-r", "eu-west-1", "-o", "json")
+	err := runStatusCtx(t.Context(), t, "--timeout", "200ms", "--max-concurrency", "2", "-r", "us-east-1", "-r", "eu-west-1", "-o", "json")
 	if got := runner.ExitCodeOf(err); got != runner.ExitIncomplete {
 		t.Fatalf("exit = %d (%v), want 4", got, err)
 	}
