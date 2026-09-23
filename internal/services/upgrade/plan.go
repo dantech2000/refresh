@@ -83,7 +83,14 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	// on the previous era's versions, so finish the current version first.
 	if len(hops) > 0 && hops[0] != currentVersion && s.needsCatchUp(ctx, addonsSvc, addonList, nodegroups, currentVersion, opts) {
 		plan.Hops = append(plan.Hops, s.catchUpHop(ctx, addonsSvc, addonList, nodegroups, cluster, currentVersion, opts))
-		advanceSimulation(simNodegroups, nodegroups, currentVersion, opts.SkipNodegroups)
+		// Only nodegroups the catch-up can actually roll advance; ones
+		// already beyond the kubelet skew stay put so the next hop's
+		// readiness step still blocks on them.
+		for _, ng := range nodegroups {
+			if !beyondKubeletSkew(ng.Version, currentVersion) {
+				advanceSimulation(simNodegroups, []nodegroupState{ng}, currentVersion, opts.SkipNodegroups)
+			}
+		}
 	}
 
 	for _, hopTo := range hops {
@@ -141,7 +148,7 @@ func (s *Service) needsCatchUp(ctx context.Context, svc *addons.ServiceImpl, add
 		}
 	}
 	for _, a := range addonList {
-		if matchesAny(a.Name, opts.SkipAddons) {
+		if isSkippedAddon(a.Name, opts.SkipAddons) {
 			continue
 		}
 		versions, err := svc.GetAvailableVersions(ctx, a.Name, cpVersion)
@@ -166,14 +173,34 @@ func (s *Service) needsCatchUp(ctx context.Context, svc *addons.ServiceImpl, add
 // interrupted hop: addons to the latest version compatible with the live
 // control plane and nodegroups rolled to it. The control-plane step is
 // already satisfied, and no readiness step is needed because the control
-// plane does not move; rolling nodegroups up to the control-plane version
-// always stays within the kubelet skew.
+// plane does not move. A nodegroup already beyond the kubelet skew of the
+// control plane is not rolled across that gap here: its step is blocked,
+// like the skew blocker in a regular hop's readiness step.
 func (s *Service) catchUpHop(ctx context.Context, svc *addons.ServiceImpl, addonList []addons.AddonSummary, nodegroups []nodegroupState, cluster *ekstypes.Cluster, cpVersion string, opts PlanOptions) Hop {
 	hop := Hop{From: cpVersion, To: cpVersion}
 	hop.Steps = append(hop.Steps, controlPlaneStep(cpVersion, aws.ToString(cluster.Version), cpVersion, cluster.Status))
 	hop.Steps = append(hop.Steps, s.addonSteps(ctx, svc, addonList, cpVersion, opts.SkipAddons)...)
-	hop.Steps = append(hop.Steps, nodegroupSteps(nodegroups, cpVersion, opts.SkipNodegroups)...)
+	ngSteps := nodegroupSteps(nodegroups, cpVersion, opts.SkipNodegroups)
+	for i, ng := range nodegroups {
+		if ngSteps[i].Status == StatusPending && beyondKubeletSkew(ng.Version, cpVersion) {
+			ngSteps[i].Status = StatusBlocked
+			ngSteps[i].Reason = fmt.Sprintf("nodegroup %s at %s already exceeds the kubelet skew limit (%d minors) against the control plane at %s",
+				ng.Name, ng.Version, kubeletSkew, cpVersion)
+		}
+	}
+	hop.Steps = append(hop.Steps, ngSteps...)
 	return hop
+}
+
+// beyondKubeletSkew reports whether a nodegroup at ngVersion lags cpVersion
+// by more than the supported kubelet skew.
+func beyondKubeletSkew(ngVersion, cpVersion string) bool {
+	ngMinor, err1 := minorVersion(ngVersion)
+	cpMinor, err2 := minorVersion(cpVersion)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return cpMinor-ngMinor > kubeletSkew
 }
 
 // prevVersion returns the From version for the next hop: the previous hop's

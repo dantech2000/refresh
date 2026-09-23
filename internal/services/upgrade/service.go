@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/smithy-go"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/services/addons"
@@ -161,15 +163,16 @@ func (s *Service) waitForUpdate(ctx context.Context, in *eks.DescribeUpdateInput
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				// Transient describe failures (throttling, 5xx, network)
-				// shouldn't kill a long-running upgrade watch; report and
-				// keep polling. Permanent ones (e.g. AccessDenied) never
-				// heal, so fail fast instead of warning for hours.
-				if common.IsRetryable(err) {
-					progress("warning: checking %s: %v", what, err)
-					continue
+				// Transient describe failures (throttling, 5xx, network
+				// drops such as a VPN blip or laptop sleep) shouldn't kill a
+				// long-running upgrade watch; report and keep polling.
+				// Permanent API errors (e.g. AccessDenied) never heal, so
+				// fail fast instead of warning for hours.
+				if isPermanentAPIError(err) {
+					return awsinternal.FormatAWSError(err, fmt.Sprintf("checking %s", what))
 				}
-				return awsinternal.FormatAWSError(err, fmt.Sprintf("checking %s", what))
+				progress("warning: checking %s: %v", what, err)
+				continue
 			}
 			if out.Update == nil {
 				continue
@@ -182,6 +185,30 @@ func (s *Service) waitForUpdate(ctx context.Context, in *eks.DescribeUpdateInput
 			}
 		}
 	}
+}
+
+// isPermanentAPIError reports whether err is an AWS API error that retrying
+// will not fix (AccessDenied, ResourceNotFound, validation, ...). Anything
+// that never produced an API response (DNS failures, refused/reset
+// connections, EOF, timeouts) and retryable API errors (throttling, 5xx)
+// are not permanent: the watch keeps polling through them.
+func isPermanentAPIError(err error) bool {
+	var ae smithy.APIError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return !common.IsRetryable(err)
+}
+
+// isSkippedAddon reports whether addon name is in the skip list, using
+// exact, case-insensitive matching (addon names are exact identifiers).
+func isSkippedAddon(name string, skip []string) bool {
+	for _, s := range skip {
+		if s != "" && strings.EqualFold(strings.TrimSpace(s), name) {
+			return true
+		}
+	}
+	return false
 }
 
 // updateErrors flattens an update's error details for display.

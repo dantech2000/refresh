@@ -3,8 +3,12 @@ package upgrade
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"net/url"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -314,5 +318,97 @@ func TestBuildPlan_EmptyAddonCatalogueIsIncompatibility(t *testing.T) {
 	}
 	if _, err := addons.NewService(m, testLogger()).GetAvailableVersions(context.Background(), "legacy-addon", "1.32"); !errors.Is(err, addons.ErrNoVersionsFound) {
 		t.Fatalf("GetAvailableVersions err = %v, want ErrNoVersionsFound", err)
+	}
+}
+
+// Network-class DescribeUpdate failures (DNS, refused connection, EOF) are
+// transient from the watch's point of view: a VPN drop or laptop sleep must
+// not fail a long-running phase.
+func TestWaitForUpdate_NetworkErrorsKeepPolling(t *testing.T) {
+	transient := []error{
+		&net.DNSError{Err: "no such host", Name: "eks.us-east-1.amazonaws.com", IsNotFound: true},
+		io.ErrUnexpectedEOF,
+		&url.Error{Op: "Post", URL: "https://eks.us-east-1.amazonaws.com", Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}},
+	}
+	m := mocks.NewEKSAPI().Build()
+	var mu sync.Mutex
+	calls := 0
+	m.DescribeUpdateFn = func(_ context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if calls <= len(transient) {
+			return nil, transient[calls-1]
+		}
+		return &eks.DescribeUpdateOutput{Update: &ekstypes.Update{Id: in.UpdateId, Status: ekstypes.UpdateStatusSuccessful}}, nil
+	}
+	svc := newTestService(m)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	warnings := 0
+	err := svc.waitForUpdate(ctx, &eks.DescribeUpdateInput{UpdateId: aws.String("u-1")}, "nodegroup roll",
+		func(string, ...any) { warnings++ })
+	if err != nil {
+		t.Fatalf("waitForUpdate: %v (network errors must keep the watch alive)", err)
+	}
+	if warnings != len(transient) {
+		t.Fatalf("warnings = %d, want %d", warnings, len(transient))
+	}
+}
+
+// Catch-up must not plan a roll across a gap already beyond the kubelet
+// skew, and the next hop's readiness must still block on that nodegroup.
+func TestBuildPlan_CatchUpKeepsSkewBlocker(t *testing.T) {
+	w := newWorld()
+	w.clusterVersion = "1.31"
+	w.ngVersions = map[string]string{"ng-a": "1.30", "ng-b": "1.27"}
+	svc := newTestService(newWorldMock(w))
+
+	plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if len(plan.Hops) != 2 || plan.Hops[0].To != "1.31" {
+		t.Fatalf("hops = %+v, want a 1.31 catch-up hop (ng-a lags) then 1.31→1.32", plan.Hops)
+	}
+	if s := findStep(t, plan.Hops[0].Steps, StepNodegroup, "ng-a"); s.Status != StatusPending {
+		t.Fatalf("ng-a catch-up step = %+v, want pending", s)
+	}
+	if s := findStep(t, plan.Hops[0].Steps, StepNodegroup, "ng-b"); s.Status != StatusBlocked {
+		t.Fatalf("ng-b catch-up step = %+v, want blocked (no direct 1.27→1.31 roll)", s)
+	}
+	readiness := plan.Hops[1].Steps[0]
+	if readiness.Type != StepReadiness || readiness.Status != StatusBlocked || !strings.Contains(readiness.Reason, "ng-b") {
+		t.Fatalf("1.32 readiness = %+v, want blocked on ng-b's kubelet skew", readiness)
+	}
+	if strings.Contains(readiness.Reason, "ng-a") {
+		t.Fatalf("1.32 readiness = %+v: ng-a is caught up to 1.31 and within skew", readiness)
+	}
+}
+
+// Addon --skip uses exact, case-insensitive names when deciding on a
+// catch-up hop; a substring does not skip.
+func TestBuildPlan_CatchUpAddonSkipIsExact(t *testing.T) {
+	cases := []struct {
+		skip        []string
+		wantCatchUp bool
+	}{
+		{skip: []string{"VPC-CNI"}, wantCatchUp: false},
+		{skip: []string{"vpc"}, wantCatchUp: true},
+	}
+	for _, tc := range cases {
+		w := newWorld()
+		w.clusterVersion = "1.32"
+		w.ngVersions = map[string]string{}
+		svc := newTestService(newWorldMock(w))
+
+		plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.33", PlanOptions{SkipAddons: tc.skip})
+		if err != nil {
+			t.Fatalf("BuildPlan: %v", err)
+		}
+		if gotCatchUp := len(plan.Hops) == 2; gotCatchUp != tc.wantCatchUp {
+			t.Fatalf("skip %v: catch-up = %v, want %v (hops %+v)", tc.skip, gotCatchUp, tc.wantCatchUp, plan.Hops)
+		}
 	}
 }
