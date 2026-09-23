@@ -69,7 +69,7 @@ func TestWithCluster_RealisticEndpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 		match := endpoint.FindStringSubmatch(aws.ToString(out.Cluster.Endpoint))
-		if match == nil || match[1] != region {
+		if len(match) < 2 || match[1] != region {
 			t.Fatalf("%s endpoint = %q, want EKS shape in %s", name, aws.ToString(out.Cluster.Endpoint), region)
 		}
 		if !strings.Contains(aws.ToString(out.Cluster.Arn), ":"+region+":") {
@@ -235,6 +235,40 @@ func TestErrorHelpersAreTypedAPIErrors(t *testing.T) {
 	}
 }
 
+// page is one List* response reduced to its item names and next token.
+type page struct {
+	items []string
+	next  *string
+}
+
+// drainPages follows call's NextToken chain to the end, failing t if any page
+// holds more than two items or the listing fits in one page.
+func drainPages(t *testing.T, name string, call func(token *string) (page, error)) []string {
+	t.Helper()
+	var all []string
+	var token *string
+	pages := 0
+	for {
+		p, err := call(token)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(p.items) > 2 {
+			t.Fatalf("%s page %d has %d items, want <= 2", name, pages, len(p.items))
+		}
+		pages++
+		all = append(all, p.items...)
+		if p.next == nil {
+			break
+		}
+		token = p.next
+	}
+	if pages < 2 {
+		t.Fatalf("%s: %d page(s), want paging", name, pages)
+	}
+	return all
+}
+
 func TestPageSize_SplitsEveryListCall(t *testing.T) {
 	ctx := context.Background()
 	m := NewEKSAPI().
@@ -253,58 +287,28 @@ func TestPageSize_SplitsEveryListCall(t *testing.T) {
 		WithInsight("c1", "i3", ekstypes.InsightStatusValuePassing, "1.33").
 		Build()
 
-	type page struct {
-		items []string
-		next  *string
-	}
-	drain := func(name string, call func(token *string) (page, error)) []string {
-		t.Helper()
-		var all []string
-		var token *string
-		pages := 0
-		for {
-			p, err := call(token)
-			if err != nil {
-				t.Fatalf("%s: %v", name, err)
-			}
-			if len(p.items) > 2 {
-				t.Fatalf("%s page %d has %d items, want <= 2", name, pages, len(p.items))
-			}
-			pages++
-			all = append(all, p.items...)
-			if p.next == nil {
-				break
-			}
-			token = p.next
-		}
-		if pages < 2 {
-			t.Fatalf("%s: %d page(s), want paging", name, pages)
-		}
-		return all
-	}
-
-	clusters := drain("ListClusters", func(tok *string) (page, error) {
+	clusters := drainPages(t, "ListClusters", func(tok *string) (page, error) {
 		out, err := m.ListClusters(ctx, &eks.ListClustersInput{NextToken: tok})
 		if err != nil {
 			return page{}, err
 		}
 		return page{out.Clusters, out.NextToken}, nil
 	})
-	nodegroups := drain("ListNodegroups", func(tok *string) (page, error) {
+	nodegroups := drainPages(t, "ListNodegroups", func(tok *string) (page, error) {
 		out, err := m.ListNodegroups(ctx, &eks.ListNodegroupsInput{ClusterName: aws.String("c1"), NextToken: tok})
 		if err != nil {
 			return page{}, err
 		}
 		return page{out.Nodegroups, out.NextToken}, nil
 	})
-	addons := drain("ListAddons", func(tok *string) (page, error) {
+	addons := drainPages(t, "ListAddons", func(tok *string) (page, error) {
 		out, err := m.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String("c1"), NextToken: tok})
 		if err != nil {
 			return page{}, err
 		}
 		return page{out.Addons, out.NextToken}, nil
 	})
-	insights := drain("ListInsights", func(tok *string) (page, error) {
+	insights := drainPages(t, "ListInsights", func(tok *string) (page, error) {
 		out, err := m.ListInsights(ctx, &eks.ListInsightsInput{ClusterName: aws.String("c1"), NextToken: tok})
 		if err != nil {
 			return page{}, err
@@ -315,7 +319,7 @@ func TestPageSize_SplitsEveryListCall(t *testing.T) {
 		}
 		return page{names, out.NextToken}, nil
 	})
-	versions := drain("DescribeAddonVersions", func(tok *string) (page, error) {
+	versions := drainPages(t, "DescribeAddonVersions", func(tok *string) (page, error) {
 		out, err := m.DescribeAddonVersions(ctx, &eks.DescribeAddonVersionsInput{AddonName: aws.String("vpc-cni"), NextToken: tok})
 		if err != nil {
 			return page{}, err

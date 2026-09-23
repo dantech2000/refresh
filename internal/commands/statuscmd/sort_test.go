@@ -34,7 +34,7 @@ func TestSortStatuses_Keys(t *testing.T) {
 		{"cluster", false, []string{"a/eu-west-1", "a/us-west-2", "b/us-west-2", "c/eu-west-1", "d/eu-west-1"}},
 		{" Region ", false, []string{"a/eu-west-1", "c/eu-west-1", "d/eu-west-1", "a/us-west-2", "b/us-west-2"}},
 		{"version", false, []string{"c/eu-west-1", "b/us-west-2", "d/eu-west-1", "a/eu-west-1", "a/us-west-2"}},
-		// standard < unknown = unrecognised < extended < unsupported
+		// Support order: standard, then unknown and unrecognised (tied), then extended, then unsupported.
 		{"support", false, []string{"a/us-west-2", "a/eu-west-1", "d/eu-west-1", "b/us-west-2", "c/eu-west-1"}},
 		{"support", true, []string{"c/eu-west-1", "b/us-west-2", "d/eu-west-1", "a/eu-west-1", "a/us-west-2"}},
 		{"bogus", false, []string{"a/eu-west-1", "a/us-west-2", "b/us-west-2", "c/eu-west-1", "d/eu-west-1"}},

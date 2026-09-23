@@ -2,7 +2,6 @@
 package cluster
 
 import (
-	"context"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -63,7 +62,7 @@ region/cluster hierarchy. Use --watch to redraw on the --watch-interval
 			&cli.BoolFlag{Name: "watch", Aliases: []string{"w"}, Usage: "Re-run and redraw every --watch-interval until interrupted"},
 			&cli.DurationFlag{Name: "watch-interval", Usage: "Refresh interval for --watch", Value: 10 * time.Second},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error { return runList(ctx, cmd) },
+		Action: runList,
 	}
 }
 
@@ -88,6 +87,6 @@ provide fast, comprehensive results without CloudFormation dependency.`,
 			runner.KubeContextFlag(),
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error { return runDescribe(ctx, cmd) },
+		Action: runDescribe,
 	}
 }

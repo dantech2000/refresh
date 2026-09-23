@@ -17,6 +17,7 @@ package fakeaws
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -71,20 +72,20 @@ type Server struct {
 // environment for the test so the AWS SDK, the refresh context store, and
 // kubeconfig resolution all stay inside the test: no real credentials, no
 // refresh context, and no reachable Kubernetes cluster.
-func New(t testing.TB, clusters ...*Cluster) *Server {
-	t.Helper()
+func New(tb testing.TB, clusters ...*Cluster) *Server {
+	tb.Helper()
 	s := &Server{clusters: map[string]*Cluster{}, updates: map[string]func(){}}
 	for _, c := range clusters {
 		s.clusters[c.Name] = c
 	}
 	ts := httptest.NewServer(http.HandlerFunc(s.serve))
-	t.Cleanup(ts.Close)
+	tb.Cleanup(ts.Close)
 	s.URL = ts.URL
 
-	dir := t.TempDir()
+	dir := tb.TempDir()
 	empty := filepath.Join(dir, "empty")
 	if err := os.WriteFile(empty, nil, 0o600); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	for k, v := range map[string]string{
 		"AWS_ENDPOINT_URL":            ts.URL,
@@ -105,7 +106,7 @@ func New(t testing.TB, clusters ...*Cluster) *Server {
 		"EKS_CLUSTER_NAME":            "",
 		"NO_COLOR":                    "1",
 	} {
-		t.Setenv(k, v)
+		tb.Setenv(k, v)
 	}
 	return s
 }
@@ -184,7 +185,7 @@ func unsupported(w http.ResponseWriter, r *http.Request, service string) {
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
 		w.Header().Set("Content-Type", "text/xml")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = fmt.Fprintf(w, `<Response><Errors><Error><Code>UnsupportedOperation</Code><Message>%s</Message></Error></Errors><RequestID>fake</RequestID></Response>`, msg)
+		_, _ = fmt.Fprintf(w, `<Response><Errors><Error><Code>UnsupportedOperation</Code><Message>%s</Message></Error></Errors><RequestID>fake</RequestID></Response>`, html.EscapeString(msg))
 		return
 	}
 	writeError(w, http.StatusBadRequest, "UnsupportedOperation", msg)
@@ -205,7 +206,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, body []byte) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	get, post := r.Method == http.MethodGet, r.Method == http.MethodPost
+	get := r.Method == http.MethodGet
 
 	switch {
 	case get && len(parts) == 1 && parts[0] == "clusters":
@@ -236,47 +237,88 @@ func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No cluster found for name: "+parts[1]+".")
 		return
 	}
-	rest := parts[2:]
+	s.serveEKSCluster(w, r, c, parts[2:], body)
+}
 
+// serveEKSCluster routes the /clusters/{name}/... calls; rest is the path
+// after the cluster name.
+func (s *Server) serveEKSCluster(w http.ResponseWriter, r *http.Request, c *Cluster, rest []string, body []byte) {
+	get, post := r.Method == http.MethodGet, r.Method == http.MethodPost
+	if len(rest) == 0 {
+		if get {
+			writeJSON(w, map[string]any{"cluster": clusterJSON(c)})
+			return
+		}
+		unsupported(w, r, "eks")
+		return
+	}
+
+	switch rest[0] {
+	case "updates":
+		s.serveClusterUpdates(w, r, c, rest[1:], body)
+	case "insights":
+		if post && len(rest) == 1 {
+			writeJSON(w, map[string]any{"insights": []any{}})
+			return
+		}
+		unsupported(w, r, "eks")
+	case "node-groups":
+		s.serveNodegroups(w, r, c, rest[1:], body)
+	case "addons":
+		serveAddons(w, r, c, rest[1:])
+	default:
+		unsupported(w, r, "eks")
+	}
+}
+
+// serveClusterUpdates handles UpdateClusterVersion (POST updates) and
+// DescribeUpdate (GET updates/{id}).
+func (s *Server) serveClusterUpdates(w http.ResponseWriter, r *http.Request, c *Cluster, rest []string, body []byte) {
 	switch {
-	case get && len(rest) == 0:
-		writeJSON(w, map[string]any{"cluster": clusterJSON(c)})
-	case post && len(rest) == 1 && rest[0] == "updates":
+	case r.Method == http.MethodPost && len(rest) == 0:
 		var in struct {
 			Version string `json:"version"`
 		}
 		_ = json.Unmarshal(body, &in)
 		writeJSON(w, map[string]any{"update": s.startUpdate("VersionUpdate", func() { c.Version = in.Version })})
-	case get && len(rest) == 2 && rest[0] == "updates":
-		apply, ok := s.updates[rest[1]]
+	case r.Method == http.MethodGet && len(rest) == 1:
+		apply, ok := s.updates[rest[0]]
 		if !ok {
-			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No update found for ID: "+rest[1])
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No update found for ID: "+rest[0])
 			return
 		}
 		if apply != nil {
 			apply()
-			s.updates[rest[1]] = nil
+			s.updates[rest[0]] = nil
 		}
-		writeJSON(w, map[string]any{"update": map[string]any{"id": rest[1], "status": "Successful", "type": "VersionUpdate"}})
-	case post && len(rest) == 1 && rest[0] == "insights":
-		writeJSON(w, map[string]any{"insights": []any{}})
-	case get && len(rest) == 1 && rest[0] == "node-groups":
+		writeJSON(w, map[string]any{"update": map[string]any{"id": rest[0], "status": "Successful", "type": "VersionUpdate"}})
+	default:
+		unsupported(w, r, "eks")
+	}
+}
+
+// serveNodegroups handles ListNodegroups, DescribeNodegroup, and
+// UpdateNodegroupVersion.
+func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Cluster, rest []string, body []byte) {
+	get, post := r.Method == http.MethodGet, r.Method == http.MethodPost
+	switch {
+	case get && len(rest) == 0:
 		names := []string{}
 		for _, ng := range c.Nodegroups {
 			names = append(names, ng.Name)
 		}
 		writeJSON(w, map[string]any{"nodegroups": names})
-	case get && len(rest) == 2 && rest[0] == "node-groups":
-		ng := findNodegroup(c, rest[1])
+	case get && len(rest) == 1:
+		ng := findNodegroup(c, rest[0])
 		if ng == nil {
-			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No node group found for name: "+rest[1]+".")
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No node group found for name: "+rest[0]+".")
 			return
 		}
 		writeJSON(w, map[string]any{"nodegroup": nodegroupJSON(c, ng)})
-	case post && len(rest) == 3 && rest[0] == "node-groups" && rest[2] == "update-version":
-		ng := findNodegroup(c, rest[1])
+	case post && len(rest) == 2 && rest[1] == "update-version":
+		ng := findNodegroup(c, rest[0])
 		if ng == nil {
-			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No node group found for name: "+rest[1]+".")
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No node group found for name: "+rest[0]+".")
 			return
 		}
 		if ng.FailUpdate {
@@ -292,22 +334,34 @@ func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, body []byte) {
 			target = ng.Version
 		}
 		writeJSON(w, map[string]any{"update": s.startUpdate("VersionUpdate", func() { ng.Version = target })})
-	case get && len(rest) == 1 && rest[0] == "addons":
+	default:
+		unsupported(w, r, "eks")
+	}
+}
+
+// serveAddons handles ListAddons and DescribeAddon.
+func serveAddons(w http.ResponseWriter, r *http.Request, c *Cluster, rest []string) {
+	if r.Method != http.MethodGet {
+		unsupported(w, r, "eks")
+		return
+	}
+	switch len(rest) {
+	case 0:
 		names := []string{}
 		for _, a := range c.Addons {
 			names = append(names, a.Name)
 		}
 		writeJSON(w, map[string]any{"addons": names})
-	case get && len(rest) == 2 && rest[0] == "addons":
+	case 1:
 		for _, a := range c.Addons {
-			if a.Name == rest[1] {
+			if a.Name == rest[0] {
 				writeJSON(w, map[string]any{"addon": map[string]any{
 					"addonName": a.Name, "addonVersion": a.Version, "clusterName": c.Name, "status": "ACTIVE",
 				}})
 				return
 			}
 		}
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No addon: "+rest[1])
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No addon: "+rest[0])
 	default:
 		unsupported(w, r, "eks")
 	}

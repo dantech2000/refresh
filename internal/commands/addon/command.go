@@ -52,7 +52,7 @@ Examples:
 			&cli.BoolFlag{Name: "watch", Aliases: []string{"w"}, Usage: "Re-run and redraw every --watch-interval until interrupted"},
 			&cli.DurationFlag{Name: "watch-interval", Usage: "Refresh interval for --watch", Value: 10 * time.Second},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error { return runList(ctx, cmd) },
+		Action: runList,
 	}
 }
 
@@ -74,7 +74,7 @@ unique case-insensitive substring is resolved against the installed add-ons.
 			&cli.StringFlag{Name: "addon", Aliases: []string{"a"}, Usage: "Add-on name (e.g., vpc-cni)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error { return runDescribe(ctx, cmd) },
+		Action: runDescribe,
 	}
 }
 
@@ -157,6 +157,6 @@ func updateAllHiddenCommand() *cli.Command {
 			&cli.BoolFlag{Name: "dependency-order", Usage: "Update addons in dependency-safe order (vpc-cni → coredns/kube-proxy → others)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error { return runUpdateAll(ctx, cmd) },
+		Action: runUpdateAll,
 	}
 }
