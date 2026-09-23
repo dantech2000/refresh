@@ -26,7 +26,7 @@ func TestApplyHealthDecision_RequireHealthyBlocksWarn(t *testing.T) {
 	var done bool
 	var err error
 	captureStdout(t, func() {
-		done, err = applyHealthDecision(warnSummary(), updateAMIFlags{requireHealthy: true})
+		done, err = applyHealthDecision(t.Context(), warnSummary(), updateAMIFlags{requireHealthy: true})
 	})
 	if !done {
 		t.Fatal("expected done=true")
@@ -37,7 +37,7 @@ func TestApplyHealthDecision_RequireHealthyBlocksWarn(t *testing.T) {
 }
 
 func TestApplyHealthDecision_YesProceedsPastWarn(t *testing.T) {
-	done, err := applyHealthDecision(warnSummary(), updateAMIFlags{yes: true})
+	done, err := applyHealthDecision(t.Context(), warnSummary(), updateAMIFlags{yes: true})
 	if done || err != nil {
 		t.Errorf("--yes should proceed past warnings: done=%v err=%v", done, err)
 	}
@@ -46,7 +46,7 @@ func TestApplyHealthDecision_YesProceedsPastWarn(t *testing.T) {
 func TestApplyHealthDecision_WarnNoTTYFailsFast(t *testing.T) {
 	// In `go test` stdin is not a terminal, so without --yes/--require-healthy a
 	// warn-level result must fail fast rather than block on a prompt.
-	done, err := applyHealthDecision(warnSummary(), updateAMIFlags{})
+	done, err := applyHealthDecision(t.Context(), warnSummary(), updateAMIFlags{})
 	if !done || err == nil {
 		t.Fatalf("expected fail-fast: done=%v err=%v", done, err)
 	}
