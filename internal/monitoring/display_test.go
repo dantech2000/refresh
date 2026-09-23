@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -99,10 +100,12 @@ func TestPrintUpdateProgressTree_ErrorMessageShown(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestPrintCompletionSummaryTree_Empty(t *testing.T) {
-	// Should not panic on empty input
-	captureStdout(func() {
+	out := captureStdout(func() {
 		printCompletionSummaryTree(nil)
 	})
+	if out != "" {
+		t.Errorf("empty updates must print nothing, got %q", out)
+	}
 }
 
 func TestPrintCompletionSummaryTree_Successful(t *testing.T) {
@@ -172,12 +175,20 @@ func TestDisplayProgressUpdate_SetsLastPrinted(t *testing.T) {
 }
 
 func TestDisplayProgressUpdate_EmptyMonitor(t *testing.T) {
+	forceInteractiveDisplay(t)
 	monitor := &refreshTypes.ProgressMonitor{}
 	monitor.StartTime = time.Now()
-	// Should not panic on empty updates
-	captureStdout(func() {
+	out := stripANSI(captureStdout(func() {
 		DisplayProgressUpdate(monitor)
-	})
+	}))
+	// Only the elapsed line and the trailing blank line: no cluster root and
+	// no tree.
+	if !regexp.MustCompile(`^Elapsed: \S+\n\n$`).MatchString(out) {
+		t.Errorf("empty monitor output = %q, want just the elapsed line", out)
+	}
+	if monitor.LastPrinted != 2 {
+		t.Errorf("LastPrinted = %d, want 2 (elapsed + blank)", monitor.LastPrinted)
+	}
 }
 
 func TestDisplayProgressUpdate_WithPreviousOutput(t *testing.T) {
@@ -238,11 +249,25 @@ func TestDisplayCompletionSummary_VerboseEmptyUpdates(t *testing.T) {
 	monitor := &refreshTypes.ProgressMonitor{}
 	monitor.StartTime = time.Now()
 	cfg := refreshTypes.MonitorConfig{Quiet: false}
-	// Should not panic
-	captureStdout(func() {
-		_ = DisplayCompletionSummary(monitor, cfg)
-	})
+	var err error
+	out := stripANSI(captureStdout(func() {
+		err = DisplayCompletionSummary(monitor, cfg)
+	}))
+	if err != nil {
+		t.Errorf("no updates: err = %v, want nil", err)
+	}
+	if !strings.Contains(out, "All updates completed") || !strings.Contains(out, "Results: 0 successful, 0 failed") {
+		t.Errorf("summary = %q, want completion line and zero results", out)
+	}
+	if strings.Contains(out, "── ") || strings.Contains(out, "not monitored") {
+		t.Errorf("no updates must print no tree and no unmonitored count, got %q", out)
+	}
 }
+
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+// stripANSI removes color and cursor codes so assertions read the text.
+func stripANSI(s string) string { return ansiEscape.ReplaceAllString(s, "") }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // printMonitoringHeader
