@@ -26,6 +26,7 @@ import (
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/rollview"
 	"github.com/dantech2000/refresh/internal/services/common"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
@@ -137,7 +138,6 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	jsonOut := flags.format == "json" && !flags.healthOnly
-	quiet := flags.quiet || jsonOut
 
 	outcomes, verifyFailed, monErr := executeUpdates(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
 
@@ -149,16 +149,16 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	}
 	switch {
 	case len(outcomes.Started) == 0:
-		if !quiet {
+		if !flags.quiet {
 			color.Yellow("No nodegroup updates were started")
 		}
 	case flags.noWait:
-		if !quiet {
+		if !flags.quiet {
 			fmt.Printf("Started %d nodegroup update(s). Use 'refresh nodegroup list %s' to check status.\n",
 				len(outcomes.Started), clusterName)
 		}
 	default:
-		if !quiet && outcomes.Verification != nil {
+		if !flags.quiet && outcomes.Verification != nil {
 			printVerification(*outcomes.Verification)
 		}
 	}
@@ -190,7 +190,6 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		Updates:   updates,
 		StartTime: time.Now(),
 		Quiet:     quiet,
-		NoWait:    flags.noWait,
 		Timeout:   flags.timeout,
 	}
 	config := refreshTypes.MonitorConfig{
@@ -198,11 +197,13 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		MaxRetries:      3,
 		BackoffMultiple: 2.0,
 		Quiet:           quiet,
-		NoWait:          flags.noWait,
 		Timeout:         flags.timeout,
 	}
-	// Live per-node roll view — now the DEFAULT for an interactive single-nodegroup
-	// roll (nodes draining/joining/terminating, pod eviction, warnings). Purely
+	// Live per-node roll view: the DEFAULT for an interactive single-nodegroup
+	// roll (nodes draining/joining/terminating, pod eviction, warnings), where
+	// interactive means stdout is a terminal with color on (see
+	// showLivePanel). Piped/CI and NO_COLOR runs keep the monitor's progress
+	// lines unless --live asks for the panel. Purely
 	// visual: it runs alongside the EKS DescribeUpdate monitor, which stays
 	// authoritative for the result and stops the panel once the update is
 	// terminal (a failed roll never converges, so the panel can't be the gate).
@@ -212,7 +213,7 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	// client is resolved quietly by default; --live makes the fallback reason
 	// explicit when the cluster can't be reached. (REF-126)
 	var livePanel func(context.Context)
-	if len(updates) == 1 && !quiet {
+	if showLivePanel(len(updates), quiet, flags.live, render.DetectLevel(os.Stdout) != render.ColorNone) {
 		kube := verifyClient
 		if kube == nil {
 			kube, _ = resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, flags.live)
@@ -252,6 +253,20 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		verifyFailed = !result.OK()
 	}
 	return outcomes, verifyFailed, monErr
+}
+
+// showLivePanel decides whether to draw the live roll panel. It only covers a
+// single-nodegroup roll and never runs in quiet/JSON mode. By default it needs
+// an interactive stdout: a terminal with color enabled (the render theme's
+// level is ColorNone when stdout is not a terminal, NO_COLOR is set, or
+// --no-color is given). Otherwise the panel would append a full frame to logs
+// on every tick and hide the monitor's progress lines. --live overrides the
+// terminal check; off a terminal the panel then appends throttled snapshots.
+func showLivePanel(updates int, quiet, live, interactive bool) bool {
+	if updates != 1 || quiet {
+		return false
+	}
+	return live || interactive
 }
 
 // shouldVerifyPostRoll reports whether post-roll verification can run. It is

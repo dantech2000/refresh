@@ -32,6 +32,29 @@ const liveRollPoll = 3 * time.Second
 // costs no API calls.
 const liveRollWatchRepaint = 1 * time.Second
 
+// liveRollAppendRepaint is the minimum cadence when the panel appends
+// snapshots instead of repainting in place (piped stdout, CI logs, NO_COLOR
+// with --live). A 40-minute roll then writes at most ~160 frames, and only
+// the ones that changed.
+const liveRollAppendRepaint = 15 * time.Second
+
+// rollRepaintInterval picks the panel cadence. In place, it is the caller's
+// poll interval capped at liveRollPoll (defaulting to a faster repaint when
+// watch-backed). Appending, it is never shorter than liveRollAppendRepaint.
+func rollRepaintInterval(pollInterval time.Duration, watching, inPlace bool) time.Duration {
+	poll := pollInterval
+	if poll <= 0 || poll > liveRollPoll {
+		poll = liveRollPoll
+		if watching {
+			poll = liveRollWatchRepaint
+		}
+	}
+	if !inPlace && poll < liveRollAppendRepaint {
+		poll = liveRollAppendRepaint
+	}
+	return poll
+}
+
 // rollMeta is the static context for a live roll panel.
 type rollMeta struct {
 	Nodegroup      string
@@ -211,7 +234,12 @@ func runRoll(ctx context.Context, th *render.Theme, w io.Writer, obs noderoll.Ob
 			return []string{th.Token(render.Fail, "observer error: "+err.Error())}, true
 		}
 		tr.Observe(snap)
-		frame++
+		// Animate the spinner only when repainting in place. Appended
+		// snapshots keep a fixed glyph, so an unchanged roll yields an
+		// identical frame that the live region skips.
+		if lr.InPlace() {
+			frame++
+		}
 		m.Frame = frame
 		last = rollPanelLines(th, snap, tr.Recent(6), m)
 		return last, done(snap)
@@ -283,14 +311,8 @@ func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup
 	}
 	desired := snap0.Total
 
-	defaultPoll := liveRollPoll
-	if watching {
-		defaultPoll = liveRollWatchRepaint
-	}
-	poll := pollInterval
-	if poll <= 0 || poll > liveRollPoll {
-		poll = defaultPoll
-	}
+	th := render.Default(os.Stdout)
+	poll := rollRepaintInterval(pollInterval, watching, th.NewLiveRegion(os.Stdout).InPlace())
 	rollCtx := ctx
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -298,7 +320,6 @@ func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup
 		defer cancel()
 	}
 
-	th := render.Default(os.Stdout)
 	m := rollMeta{Nodegroup: nodegroup, OldAMI: "current AMI", NewAMI: "recommended AMI", Desired: desired}
 	fmt.Println()
 	_ = runRoll(rollCtx, th, os.Stdout, obs, m, poll, rollComplete(desired))

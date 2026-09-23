@@ -21,6 +21,7 @@ type LiveRegion struct {
 	tty      bool // repaint in place vs. append
 	prev     int  // lines painted last frame (TTY only)
 	appended bool // whether we've appended at least one snapshot (non-TTY)
+	last     string
 }
 
 // NewLiveRegion returns a LiveRegion for w. It repaints in place only when w is
@@ -29,8 +30,14 @@ func (t *Theme) NewLiveRegion(w io.Writer) *LiveRegion {
 	return &LiveRegion{w: w, tty: isTerminal(w) && t.Level != ColorNone}
 }
 
+// InPlace reports whether frames repaint in place (true) or are appended as
+// snapshots (false). Callers throttle the cadence when appending.
+func (lr *LiveRegion) InPlace() bool { return lr.tty }
+
 // Draw paints one frame. On a TTY it overwrites the previous frame in place; off
-// a TTY it appends the frame (callers throttle the cadence so logs stay sane).
+// a TTY it appends the frame, skipping a frame identical to the last one so a
+// quiet stretch doesn't repeat the same snapshot in logs (callers also
+// throttle the cadence).
 func (lr *LiveRegion) Draw(frame []string) {
 	body := strings.Join(frame, "\n")
 	if lr.tty {
@@ -41,11 +48,15 @@ func (lr *LiveRegion) Draw(frame []string) {
 		lr.prev = len(frame)
 		return
 	}
+	if lr.appended && body == lr.last {
+		return
+	}
 	if lr.appended {
 		_, _ = fmt.Fprintln(lr.w)
 	}
 	_, _ = fmt.Fprint(lr.w, body+"\n")
 	lr.appended = true
+	lr.last = body
 }
 
 // Run draws frames every interval until frame reports done==true or ctx is
