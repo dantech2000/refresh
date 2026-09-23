@@ -4,9 +4,20 @@ vars:
   BINARY_NAME: refresh
   BUILD_DIR: ./dist
   DEFAULT_CLUSTER: development-blue
+  # Tool pins. Keep these in lockstep with .github/workflows/{lint,test}.yml.
+  GOLANGCI_LINT_VERSION: v2.13.2
+  GOVULNCHECK_VERSION: v1.3.0
+  DEADCODE_VERSION: v0.46.0
 
 env:
   CGO_ENABLED: 0
+  # Run every go command under the go.mod `toolchain` line, which is the
+  # version CI's setup-go resolves via go-version-file. A newer local Go
+  # formats and vets differently, so a change can pass locally and still fail
+  # CI's gofmt check. A GOTOOLCHAIN already set in the caller's environment
+  # wins. With no toolchain line in go.mod, the local Go is used.
+  GOTOOLCHAIN:
+    sh: echo "${GOTOOLCHAIN:-$(awk '/^toolchain /{print $2; exit}' go.mod | grep . || echo local)}"
 
 tasks:
   default:
@@ -52,14 +63,16 @@ tasks:
 
   # Code quality tasks
   fmt:
-    desc: Format Go code
+    desc: Format Go code (gofmt from the go.mod toolchain)
     cmds:
       - go fmt ./...
 
   lint:
-    desc: Run golangci-lint
+    desc: Run golangci-lint at the CI-pinned version, built with the go.mod toolchain
     cmds:
-      - golangci-lint run
+      # `go run`, not a globally installed binary: a Homebrew golangci-lint is
+      # built with the newest Go, and its gofmt formatter follows that Go.
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run ./...
 
   vet:
     desc: Run go vet
@@ -69,7 +82,7 @@ tasks:
   vuln:
     desc: Scan for known vulnerabilities (govulncheck)
     cmds:
-      - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - go run golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}} ./...
 
   deadcode:
     desc: Fail if any function is unreachable even when counting tests as entry points
@@ -79,7 +92,7 @@ tasks:
       # nothing at all reaches. deadcode exits 0 even on findings, so we fail
       # the task ourselves whenever it prints anything.
       - |
-        out="$(go run golang.org/x/tools/cmd/deadcode@latest -test ./...)"
+        out="$(go run golang.org/x/tools/cmd/deadcode@{{.DEADCODE_VERSION}} -test ./...)"
         if [ -n "$out" ]; then
           echo "dead code found (unreachable even from tests):"
           echo "$out"
@@ -91,6 +104,13 @@ tasks:
     desc: Run tests
     cmds:
       - go test -v ./...
+
+  test:race:
+    desc: Run tests with the race detector in shuffled order (CI runs -count=5; override with COUNT=n)
+    env:
+      CGO_ENABLED: 1 # -race needs cgo
+    cmds:
+      - go test -race -shuffle=on -count={{.COUNT | default 2}} ./...
 
   test:coverage:
     desc: Run tests with coverage
@@ -120,6 +140,19 @@ tasks:
     cmds:
       - go run . gen-docs --out docs/reference
 
+  docs:check:
+    desc: Fail if the committed command reference is stale (mirrors CI)
+    deps: [docs:gen]
+    cmds:
+      # `git status --porcelain` also catches new, untracked reference pages.
+      - |
+        if [ -n "$(git status --porcelain -- docs/reference)" ]; then
+          echo "docs/reference is stale vs the CLI tree. Commit the regenerated files:"
+          git status --short -- docs/reference
+          exit 1
+        fi
+        echo "docs/reference is up to date."
+
   docs:build:
     desc: Build the documentation site (strict — fails on broken links/nav)
     deps: [docs:gen]
@@ -132,6 +165,11 @@ tasks:
     cmds:
       - go mod download
       - go mod tidy
+
+  tidy:check:
+    desc: Fail if go.mod/go.sum are not tidy (mirrors CI)
+    cmds:
+      - go mod tidy -diff
 
   deps:update:
     desc: Update dependencies
@@ -181,12 +219,15 @@ tasks:
       - echo "✅ Quick check passed!"
 
   dev:full:
-    desc: Full development check (format, vet, lint, test, build)
+    desc: Full pre-push check that mirrors CI (fmt, vet, lint, tidy, deadcode, docs, race tests, build)
     cmds:
       - task: fmt
       - task: vet
       - task: lint
-      - task: test
+      - task: tidy:check
+      - task: deadcode
+      - task: docs:check
+      - task: test:race
       - task: build
       - task: run:version
       - task: run:help

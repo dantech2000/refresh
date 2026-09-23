@@ -28,17 +28,31 @@ Prefer the Taskfile targets; raw commands shown for reference.
 task build          # go build -o refresh . (CGO_ENABLED=0)
 task test           # go test ./...
 task test:coverage  # coverage profile + html
-task lint           # golangci-lint run ./...  (config: .golangci.yml)
+task test:race      # go test -race -shuffle=on -count=2 ./...  (COUNT=n to change)
+task lint           # golangci-lint (CI-pinned version via go run; config: .golangci.yml)
 task vet            # go vet ./...
-task vuln           # govulncheck ./...
-task dev:full       # fmt + vet + lint + test + build (run before pushing)
-go test ./... -race # race detector
+task vuln           # govulncheck ./...  (pinned)
+task deadcode       # fail on code unreachable even from tests (pinned)
+task tidy:check     # go mod tidy -diff
+task docs:check     # regenerate docs/reference, fail if it changed
+task dev:full       # fmt, vet, lint, tidy:check, deadcode, docs:check, test:race, build (run before pushing)
 ```
 
-CI mirrors this: build, `go vet`, `go test -race` (+ coverage to Codecov),
-`golangci-lint`, and `govulncheck` all run on every PR.
+CI mirrors `dev:full` on every PR: tidy check, docs reference check,
+`go test -race` (+ coverage to Codecov), a shuffled `-race -count=5` stress
+job, `golangci-lint` (includes govet and gofmt), `govulncheck`, and
+`deadcode`. A push to main runs only the coverage job (Codecov's base). A
+nightly workflow runs `-race -count=20` and `govulncheck` on main.
 
-Requires Go 1.26+ (`go.mod` pins `go 1.26.0` / `toolchain go1.26.5`).
+**Toolchain pinning.** The Taskfile sets `GOTOOLCHAIN` to the `toolchain`
+line in `go.mod`, which is the Go that CI uses. A newer local Go formats
+differently, so without the pin a change can pass `task fmt` and fail CI's
+gofmt. `task lint` builds golangci-lint with that toolchain for the same
+reason, and CI uses `install-mode: goinstall`. To opt out for one run, set
+`GOTOOLCHAIN=local task ...`. Tool versions (golangci-lint, govulncheck,
+deadcode) are pinned in the Taskfile `vars` and must match the workflows.
+
+Requires Go 1.26+ (`go.mod` pins the `go` and `toolchain` versions).
 
 ## Architecture
 
