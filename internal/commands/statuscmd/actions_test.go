@@ -181,6 +181,19 @@ func TestSortStatuses_ByStaleDescending(t *testing.T) {
 	}
 }
 
+// Nodegroups behind the control plane count toward the "stale" sort key.
+func TestSortStatuses_ByStaleCountsBehindControlPlane(t *testing.T) {
+	statuses := []statussvc.ClusterStatus{
+		{Name: "a"},
+		{Name: "b", NodegroupsBehindControlPlane: 3},
+		{Name: "c", StaleAMI: statussvc.StaleAMISummary{Behind: 1}},
+	}
+	sortStatuses(statuses, "stale", true)
+	if statuses[0].Name != "b" || statuses[1].Name != "c" || statuses[2].Name != "a" {
+		t.Errorf("stale desc order = %s,%s,%s, want b,c,a", statuses[0].Name, statuses[1].Name, statuses[2].Name)
+	}
+}
+
 func TestSortStatuses_ByClusterName(t *testing.T) {
 	statuses := []statussvc.ClusterStatus{{Name: "c"}, {Name: "a"}, {Name: "b"}}
 	sortStatuses(statuses, "cluster", false)

@@ -120,14 +120,17 @@ func staleAMICell(c statussvc.ClusterStatus) string {
 	if c.Compute != statussvc.ComputeManaged {
 		return "n/a"
 	}
-	if c.StaleAMI.Behind == 0 {
+	if c.StaleAMI.Behind == 0 && c.NodegroupsBehindControlPlane == 0 {
 		return "0"
 	}
-	txt := fmt.Sprintf("%d/%d", c.StaleAMI.Behind, c.StaleAMI.Total)
-	if c.StaleAMI.OldestDays != nil {
-		txt += fmt.Sprintf(" (oldest %dd)", *c.StaleAMI.OldestDays)
+	txt := "0"
+	if c.StaleAMI.Behind > 0 {
+		txt = fmt.Sprintf("%d/%d", c.StaleAMI.Behind, c.StaleAMI.Total)
+		if c.StaleAMI.OldestDays != nil {
+			txt += fmt.Sprintf(" (oldest %dd)", *c.StaleAMI.OldestDays)
+		}
 	}
-	return color.YellowString(txt)
+	return color.YellowString(txt + behindCPSuffix(c))
 }
 
 func addonsCell(a statussvc.AddonsBehindSummary) string {
