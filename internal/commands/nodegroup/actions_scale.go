@@ -18,11 +18,12 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/services/common"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func runScale(ctx context.Context, cmd *cli.Command) error {
+func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	// A scale that can't be confirmed fails before any AWS call.
 	if err := runner.RequireYesUnattended(cmd); err != nil {
 		return err
@@ -36,6 +37,10 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	defer cancel()
+	if cmd.Bool("wait") {
+		// The wait adds --wait-timeout to the run deadline: a timeout names it.
+		defer runner.WaitDeadlineHint(&err)
+	}
 
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, runner.RequestedCluster(cmd))
 	if err != nil {
@@ -205,9 +210,13 @@ func scaleSetupTimeout(apiTimeout, opTimeout time.Duration, wait, healthCheck bo
 // nodegroup's current scaling config: "Scale prod/ng-a desired 3 → 1?". Only
 // the requested bounds are listed.
 func scaleQuestion(ctx context.Context, eksClient *eks.Client, clusterName, nodegroupName string, desired, minSize, maxSize *int32) (string, error) {
-	desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-		ClusterName:   aws.String(clusterName),
-		NodegroupName: aws.String(nodegroupName),
+	// Retried: a throttle here would otherwise abort the scale before the
+	// prompt.
+	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+		return eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(clusterName),
+			NodegroupName: aws.String(nodegroupName),
+		})
 	})
 	if err != nil {
 		return "", awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))

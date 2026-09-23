@@ -136,7 +136,7 @@ func (f updateAMIFlags) notice(attr color.Attribute, format string, args ...any)
 	_, _ = ui.ColorFor(f.noticeOut(), attr).Fprintf(f.noticeOut(), format+"\n", args...)
 }
 
-func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
+func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsDocument); err != nil {
 		return err
 	}
@@ -160,6 +160,8 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	defer cancel()
+	// The run deadline is --wait-timeout: a timeout names it.
+	defer runner.WaitDeadlineHint(&err)
 
 	requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(cmd)
 	// -o json/yaml never prompts for a partial cluster name.

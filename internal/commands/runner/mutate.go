@@ -10,6 +10,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/flagcanon"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -115,4 +116,26 @@ func commandName(cmd *cli.Command) string {
 		p = p[1:]
 	}
 	return strings.Join(p, " ")
+}
+
+// WaitDeadlineHint rewrites the "increase --timeout" hint in *errp to name
+// --wait-timeout. Defer it right after setup in a command whose run deadline
+// is --wait-timeout (nodegroup update, cluster upgrade, and the --wait runs
+// of addon update and nodegroup scale), so a timeout names the flag that
+// sets it. Setup errors happen before the defer and keep --timeout, which
+// bounds the credential check. An exit code is kept.
+func WaitDeadlineHint(errp *error) {
+	err := *errp
+	if err == nil {
+		return
+	}
+	re := awserr.RetargetDeadlineHint(err, "--wait-timeout")
+	if re.Error() == err.Error() {
+		return
+	}
+	if ec, ok := err.(cli.ExitCoder); ok { //nolint:errorlint // urfave/cli checks the unwrapped ExitCoder
+		*errp = cli.Exit(re.Error(), ec.ExitCode())
+		return
+	}
+	*errp = re
 }

@@ -232,7 +232,7 @@ func warnAllOnlyFlags(cmd *cli.Command) {
 	}
 }
 
-func runUpdate(ctx context.Context, cmd *cli.Command) error {
+func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
 		return err
 	}
@@ -252,6 +252,10 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	defer cancel()
+	if cmd.Bool("wait") {
+		// With --wait, a timeout is most likely the --wait-timeout: name it.
+		defer runner.WaitDeadlineHint(&err)
+	}
 
 	// Mutating: no cluster list on empty input, and no kubeconfig fallback.
 	clusterName, err := runner.ResolveCluster(ctx, cfg, cmd)
@@ -430,7 +434,7 @@ func updateExitError(result *addons.AddonUpdateResult, err error) error {
 	return nil
 }
 
-func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
+func runUpdateAll(ctx context.Context, cmd *cli.Command) (err error) {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
 		return err
 	}

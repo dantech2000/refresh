@@ -102,7 +102,7 @@ type upgradeResult struct {
 	Report *upgrade.Report `json:"report" yaml:"report"`
 }
 
-func runUpgrade(ctx context.Context, cmd *cli.Command) error {
+func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	format := cmd.String("format")
 	if err := runner.ValidateFormat(format, runner.FormatsStandard); err != nil {
 		return err
@@ -129,6 +129,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	defer cancel()
+	defer runner.WaitDeadlineHint(&err)
 
 	// Mutating: no cluster list on empty input, and no kubeconfig fallback.
 	// -o json/yaml runs are unattended, so a partial name fails with the

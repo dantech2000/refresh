@@ -116,7 +116,7 @@ func validateFleetFlags(cmd *cli.Command) error {
 // runFleetUpdate is "patch Tuesday": discover clusters across regions and roll
 // matching nodegroups serially (blast-radius control), with one batch
 // confirmation, an aggregate summary, and a worst-outcome exit code.
-func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
+func runFleetUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	if err := validateFleetFlags(cmd); err != nil {
 		return err
 	}
@@ -132,6 +132,8 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	defer cancel()
+	// Each cluster's deadline is --wait-timeout: a timeout names it.
+	defer runner.WaitDeadlineHint(&err)
 
 	nodegroupPattern := cmd.String("nodegroup")
 	// -o json/yaml: stdout gets one document for the whole fleet run (with
