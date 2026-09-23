@@ -5,7 +5,11 @@ Everything here is read-only or dry-run until you opt in.
 
 !!! note "Prerequisites"
     Working AWS credentials (`aws sts get-caller-identity` succeeds) and — for
-    the workload/PDB health checks — a kubeconfig pointing at the cluster.
+    the workload/PDB health checks — a kubeconfig context for the cluster
+    (`aws eks update-kubeconfig --name prod`). It does not need to be the
+    current context: `refresh` picks the context whose server matches the
+    cluster endpoint. The AWS permissions are listed in
+    [Required IAM permissions](../concepts/configuration.md#required-iam-permissions).
 
 ## 1. See what's stale
 
@@ -14,9 +18,9 @@ refresh status -A
 ```
 
 `status` fans out across regions and reports, per cluster: Kubernetes version,
-EKS support window (and extended-support cost exposure), stale AMIs, and add-ons
-that are behind. It exits non-zero when something needs attention, so it doubles
-as a CI gate.
+EKS support window (and extended-support cost exposure), stale AMIs, add-ons
+that are behind, and control-plane health issues. It exits non-zero when
+something needs attention, so it doubles as a CI gate.
 
 ## 2. Check upgrade readiness
 
@@ -35,8 +39,8 @@ bump. It's read-only.
 refresh nodegroup update -c prod --dry-run --changelog
 ```
 
-Dry-run shows the planned action per nodegroup (update / skip-if-latest /
-custom-AMI-skip) without touching anything.
+Dry-run shows the planned action per nodegroup (`update`, `skip-latest`,
+`skip-updating`, `skip-custom`) without touching anything.
 
 ## 4. Patch with health gates
 
@@ -44,15 +48,16 @@ custom-AMI-skip) without touching anything.
 refresh nodegroup update -c prod
 ```
 
-Before rolling, `refresh` runs pre-flight health checks (capacity, node
-readiness, PDBs, critical workloads). It rolls the managed nodegroups to the
-latest recommended AMI, streams live progress, and then verifies nodes came back
-Ready with no newly-stuck pods.
+Before rolling, `refresh` runs [pre-flight health checks](../concepts/health-checks.md)
+(capacity, node readiness, PDBs that would block the drain, critical
+workloads). It rolls the managed nodegroups to the latest recommended AMI,
+streams live progress, and then verifies nodes came back Ready with no
+newly-stuck pods.
 
 ## 5. Patch the add-ons
 
 ```bash
-refresh addon update --all --dependency-order --wait
+refresh addon update -c prod --all --dependency-order --wait
 ```
 
 Updates every add-on to its latest compatible version, in a dependency-safe

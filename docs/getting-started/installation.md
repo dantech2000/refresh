@@ -43,8 +43,9 @@ cosign verify-blob \
 # 2) verify your downloaded archive against the (now-trusted) checksums
 sha256sum --check --ignore-missing checksums.txt
 
-# 3) extract and install
-tar -xzf refresh_*_$(uname -s)_$(uname -m).tar.gz
+# 3) extract and install (archives are named refresh_<version>_<os>_<arch>,
+#    e.g. refresh_1.2.3_linux_amd64.tar.gz or refresh_1.2.3_darwin_arm64.tar.gz)
+tar -xzf refresh_*_linux_amd64.tar.gz
 sudo mv refresh /usr/local/bin/
 ```
 
@@ -88,9 +89,13 @@ man refresh
 - **AWS credentials** via the standard chain (env vars, shared config/profiles,
   SSO, or an instance/role profile). See
   [Configuration & AWS auth](../concepts/configuration.md).
-- **A kubeconfig** *(optional)* — only needed for the workload/PDB pre-flight
-  health checks (`nodegroup update`, `nodegroup scale --check-pdbs`). Without
-  it, kube-dependent checks degrade gracefully to "skipped".
+- **IAM permissions** — see
+  [Required IAM permissions](../concepts/configuration.md#required-iam-permissions).
+- **A kubeconfig** *(optional)* — needed for the Kubernetes-backed pre-flight
+  health checks (`nodegroup update`, `cluster upgrade`), `nodegroup scale
+  --check-pdbs`, `--check-readiness`, and the live roll panel. Without it,
+  kube-dependent health checks degrade gracefully to "skipped", but
+  `--check-pdbs` refuses a scale-down.
 
 ## Verify the install
 

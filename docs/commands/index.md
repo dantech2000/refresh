@@ -24,12 +24,18 @@ flag-by-flag detail and examples.
 Accepted on every command — see [Configuration & AWS auth](../concepts/configuration.md):
 
 `--profile`, `--region`, `--timeout/-t`, `--max-concurrency/-C`,
-`--log-level`, `--verbose`, `--no-color`.
+`--log-level`, `--verbose`, `--no-color`. They work before or after the
+subcommand (`refresh -t 5s cluster list` equals `refresh cluster list -t 5s`).
 
 ## Conventions
 
 - **Cluster argument** — most commands take the cluster as a positional
   (`refresh nodegroup list my-cluster`) or via `--cluster/-c`, falling back to
-  the [active context](../concepts/contexts.md).
+  the [active context](../concepts/contexts.md). Read-only commands also fall
+  back to the kubeconfig's current cluster. See
+  [Cluster resolution](../concepts/configuration.md#cluster-resolution).
 - **Output** — `-o table|json|yaml|plain` (and `tree` for `cluster list`); see
-  [Output formats](../concepts/output.md).
+  [Output formats](../concepts/output.md). With `-o json`/`-o yaml`, stdout
+  holds exactly one document.
+- **Exit codes** — `status`, `nodegroup update`, and `addon update` have
+  documented codes for CI; see [Exit codes](../concepts/exit-codes.md).

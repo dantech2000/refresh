@@ -11,7 +11,9 @@ refresh nodegroup <list|describe|scale|update> [args] [flags]
 
 The group has the alias `ng`. The cluster is a positional on most subcommands,
 or `--cluster/-c`, falling back to the
-[active context](../concepts/contexts.md).
+[active context](../concepts/contexts.md). `list` and `describe` also fall back
+to the kubeconfig's current cluster; `scale` and `update` never do. See
+[Cluster resolution](../concepts/configuration.md#cluster-resolution).
 
 ---
 
@@ -25,6 +27,16 @@ The `NODES` column shows the desired node count by default. Add
 via the cluster API; when the cluster is unreachable it degrades to the desired
 count rather than reporting a fabricated ready figure.
 
+AMI freshness is judged against each nodegroup's own Kubernetes version, not
+the control plane's. A nodegroup on an older minor than the control plane
+shows a warning in the `VERSION` column (`(behind)` in `-o plain`).
+
+If the latest-AMI lookup fails (for example, a missing `ssm:GetParameter`),
+the AMI column shows `unknown (lookup failed)` and one warning goes to stderr.
+If some nodegroups can't be described, the command prints the rest, names
+the failed ones on stderr, adds `failures` with `-o json`/`-o yaml`, and exits
+`1`.
+
 ```bash
 refresh nodegroup list [cluster] [flags]
 ```
@@ -37,12 +49,13 @@ refresh nodegroup list [cluster] [flags]
 | `--filter, -f` | Filter, `key=value` (keys: `name`, `status`, `instanceType`, `amiStatus`); repeatable |
 | `--check-readiness, -R` | Measure real Kubernetes node readiness (`Ready/desired`) via the cluster API |
 | `--kubeconfig` | Path to the kubeconfig for `--check-readiness` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
+| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
 | `--sort` | Sort by field: `name` (default), `status`, `instance`, `nodes` |
 | `--desc` | Sort descending |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--watch, -w` | Re-run and redraw every `--watch-interval` until interrupted |
+| `--watch, -w` | Re-run and redraw every `--watch-interval` until interrupted (not with `-o json`/`-o yaml`) |
 | `--watch-interval` | Refresh interval for `--watch` (default `10s`) |
-| `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
 
 ### Examples
 
@@ -81,7 +94,10 @@ or `--nodegroup/-n`.
 | `--show-instances, -I` | Include EC2 instance details |
 | `--show-workloads, -W` | Include workload/pod placement info |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
+
+`--show-workloads` reads the cluster through the kubeconfig context whose
+server matches the cluster endpoint.
 
 ### Examples
 
@@ -116,8 +132,9 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 | `--wait` | Wait for the scaling operation to complete |
 | `--op-timeout` | Scaling operation timeout for `--wait` (default `5m`; added on top of `--timeout`; `0` = no limit) |
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
+| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint |
 | `--dry-run` | Preview the scaling impact without executing |
-| `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`). With `--wait`, `--op-timeout` is added on top |
 
 !!! warning "A scale-down does not honor PDBs"
     When a scaling change lowers the desired size, EKS terminates the removed
@@ -125,8 +142,12 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     `refresh` refuses the scale-down (exit 1, before any change) if it could
     remove more of a PDB's pods than the PDB allows, and lists those PDBs. The
     Auto Scaling group picks which nodes go, so the gate assumes the removed
-    nodes are the ones that hold the most of the PDB's pods. Pass `--force` to scale down anyway. Combine `--dry-run --check-pdbs`
-    to see the verdict and the blocking PDBs before you touch anything.
+    nodes are the ones that hold the most of the PDB's pods. The gate fails
+    closed: if it can't read the PDBs or pods (for example, no Kubernetes
+    access), it refuses the scale-down too. Pass `--force` to scale down
+    anyway. Combine `--dry-run --check-pdbs` to see the verdict and the
+    blocking PDBs before you touch anything. See
+    [Scale-down PDB gate](../concepts/health-checks.md#scale-down-pdb-gate).
 
 ### Examples
 
@@ -158,6 +179,18 @@ refresh nodegroup update [cluster] [nodegroup] [flags]
 `update` has the alias `update-ami`. Omitting the nodegroup updates all
 nodegroups in the cluster.
 
+Each nodegroup rolls to the latest AMI for its own Kubernetes version. The
+roll keeps the nodegroup on its minor version; use
+[`cluster upgrade`](cluster.md#upgrade) to move it to a newer one. The latest
+AMI comes from the SSM path of the nodegroup's AMI family (Amazon Linux,
+Bottlerocket, or Windows). The nodegroup pattern rules, including the
+confirmation for a name that is not exact, are in
+[Nodegroup patterns](../concepts/configuration.md#nodegroup-patterns).
+
+Before the roll, `refresh` runs the
+[pre-flight health checks](../concepts/health-checks.md), scoped to the
+nodegroups that match. `--quiet` does not skip them.
+
 !!! note "Custom-AMI nodegroups are skipped"
     Nodegroups whose AMI is managed via a launch template (`AmiType=CUSTOM`)
     are detected and **skipped** with guidance: their AMI rolls when you publish
@@ -184,7 +217,13 @@ refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one re
 Fleet mode selects nodegroups only with `-n`. It rejects positional
 arguments, `--cluster`, and `--kube-context`, because it matches each cluster
 to a kubeconfig context by endpoint. An exported `EKS_CLUSTER_NAME` is
-ignored.
+ignored. `--timeout` applies to each cluster separately. `--health-only`
+asks for no batch confirmation, because it changes nothing.
+
+Discovery uses the same region rules as `status -A`: `-r`, then
+`REFRESH_EKS_REGIONS`, then every EKS region in the partition. A global
+`--region` before the subcommand only picks the partition. See
+[Regions](../concepts/configuration.md#regions).
 
 In the default region sweep (no `-r`, no `REFRESH_EKS_REGIONS`), regions your
 credentials can't use are skipped with one stderr note. Examples are regions
@@ -203,7 +242,7 @@ also exits `4` right away if no region can be listed.
 | `--all-clusters` | Fleet mode: roll matching nodegroups across all discovered clusters (serial); scope with `-r` |
 | `--region, -r` | Region(s) for `--all-clusters` discovery (default: partition EKS regions / `REFRESH_EKS_REGIONS`) |
 | `--dry-run, -d` | Preview changes without executing |
-| `--changelog` | In dry-run, print full `amazon-eks-ami` release notes between the current and target AMI |
+| `--changelog` | In dry-run, print full `amazon-eks-ami` release notes between the current and target AMI (Amazon Linux nodegroups; Bottlerocket and Windows nodegroups get a link to their own release notes) |
 | `--force, -f` | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use `--reroll` |
 | `--reroll` | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--no-wait` | Don't wait for update completion (start-and-return) |
@@ -215,7 +254,8 @@ also exits `4` right away if no region can be listed.
 | `--skip-verify` | Skip post-roll verification (nodes ACTIVE, no new stuck pods) |
 | `--live` | Force the live per-node roll panel, also when stdout is not a color terminal (a snapshot at most every 15s, only on change) |
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
-| `--poll-interval, -p` | Polling interval for update status (default `15s`) |
+| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (not with `--all-clusters`) |
+| `--poll-interval, -p` | Polling interval for update status (default `15s`; must be greater than `0`) |
 | `--timeout, -t` | Max time to wait for update completion (default `40m`; applies per cluster with `--all-clusters`; `0` = no limit) |
 | `--format, -o` | `table` (default), `json`, or `yaml`: one document on stdout (the run summary, the `--dry-run` preview, or the `--health-only` verdict), with notices on stderr |
 
@@ -246,6 +286,7 @@ also exits `4` right away if no region can be listed.
 | Code | Meaning |
 |---|---|
 | `0` | Success — updates started/completed as expected |
+| `1` | An error, an interrupt, a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` |
 | `2` | Health **warnings** (with `--health-only` or `--require-healthy`) |
 | `3` | Health **blocked** — a pre-flight check failed; nothing was rolled |
 | `4` | One or more nodegroup updates **failed to start** |

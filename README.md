@@ -30,13 +30,16 @@ day-to-day workflow.
 
 - **Pre-flight health checks** validate cluster readiness before a roll using
   default EC2 metrics — no Container Insights or extra setup required.
-- **Live node-roll view** (`nodegroup update --live`) shows nodes draining,
-  terminating, and coming online in real time from live Kubernetes state.
-  Degrades to standard monitoring when a cluster isn't reachable; EKS stays
+- **Live node-roll view** shows nodes draining, terminating, and coming online
+  in real time from live Kubernetes state. It is on by default for a
+  single-nodegroup roll on a color terminal (`--live` forces it). Degrades to
+  standard monitoring when a cluster isn't reachable; EKS stays
   authoritative.
 - **Fleet status** (`refresh status -A`) reports version, EKS support window
-  (with extended-support cost), stale AMIs, and addons-behind across all
-  clusters/regions, with CI-friendly exit codes.
+  (with extended-support cost), stale AMIs, nodegroups behind the control
+  plane, addons-behind, and control-plane health across all clusters/regions,
+  with CI-friendly exit codes. Data it could not read is flagged as
+  incomplete, never shown as current.
 - **Fleet updates** (`nodegroup update --all-clusters`) discover clusters across
   regions and roll them serially with one batch confirmation, an aggregate
   summary, and a worst-outcome exit code — the "patch Tuesday" command.
@@ -46,10 +49,15 @@ day-to-day workflow.
 - **Post-roll verification** confirms nodegroups settle `ACTIVE` with no newly
   stuck pods (distinct exit code on failure; `--skip-verify` to opt out).
 - **AMI changelog** — dry-run summarizes the current→target `amazon-eks-ami`
-  release delta; `--changelog` prints the full notes. Degrades gracefully
-  offline and never blocks the update.
+  release delta for Amazon Linux nodegroups; `--changelog` prints the full
+  notes. Bottlerocket and Windows nodegroups get a link to their own release
+  notes. Degrades gracefully offline and never blocks the update.
+- **Safe cluster upgrades** — `cluster upgrade` refreshes EKS Cluster Insights
+  before each hop, checks for PDB drain blockers before each nodegroup roll,
+  and prints the exact command to resume after a failure.
 - **Unattended-friendly** — idempotent mutating calls, documented exit codes, a
-  JSON run summary, and fail-fast (no hanging prompts) without a TTY.
+  JSON run summary, and fail-fast (no hanging prompts) without a TTY or with
+  `-o json`.
 - **Custom-AMI aware** — `AmiType=CUSTOM` nodegroups are classified `Custom` and
   skipped on update with guidance instead of being mis-rolled.
 - **Contexts** (kubectx-style) bind a cluster to a region/profile so you stop
@@ -57,9 +65,10 @@ day-to-day workflow.
 - **Consistent design system** — status tokens pair a glyph with a label so
   color is *additive* (legible with `--no-color`, piped, or on non-UTF-8
   terminals); truecolor degrades to 256/none by terminal capability.
-- **Script-friendly output** — `-o json|yaml|plain` on list/describe commands
-  (`plain` is uncolored TSV for grep/awk); `--no-color`/`NO_COLOR` honored;
-  spinners auto-disable when piped.
+- **Script-friendly output** — `-o json|yaml` prints exactly one document on
+  stdout, with progress and notices on stderr; `-o plain` is pure TSV (a
+  header row, then one row per item). `--no-color`/`NO_COLOR` are honored,
+  and each stream gets color only when it is a terminal.
 
 ## Requirements
 
@@ -67,12 +76,15 @@ day-to-day workflow.
 
 - Go 1.26+ (only to build from source)
 - AWS credentials (`~/.aws/credentials`, environment variables, or IAM roles)
+  with the [required IAM permissions](https://drod.dev/refresh/concepts/configuration/#required-iam-permissions)
 
 **Optional (enhanced features)**
 
-- `kubectl` / a kubeconfig — for Kubernetes-backed checks: workload and Pod
-  Disruption Budget validation in pre-flight health checks, `nodegroup scale
-  --check-pdbs`, and real node readiness (`--check-readiness`).
+- A kubeconfig — for Kubernetes-backed checks: workload and Pod Disruption
+  Budget validation in pre-flight health checks, `nodegroup scale
+  --check-pdbs`, real node readiness (`--check-readiness`), and the live roll
+  view. `refresh` uses the context whose server matches the cluster endpoint,
+  or the one you name with `--kube-context`.
 - CloudWatch metrics — capacity and resource-balance health checks use default
   EC2 CPU metrics out of the box (memory requires Container Insights).
 
@@ -146,39 +158,57 @@ refresh use prod          # later commands target prod; `refresh use -` toggles 
 
 Every `list`/`describe` command supports `-o table|json|yaml|plain` (`plain` is
 uncolored TSV for grep/awk); `--no-color`/`NO_COLOR` are honored and spinners
-auto-disable when piped. The full, always-current reference lives at
-[drod.dev/refresh](https://drod.dev/refresh/) and under
+stay off when stderr is not a terminal. The full, always-current reference
+lives at [drod.dev/refresh](https://drod.dev/refresh/) and under
 [`docs/reference/`](docs/reference/).
+
+## Exit codes
+
+| Command | Codes |
+|---|---|
+| All | `0` success, `1` error or interrupt (Ctrl+C) |
+| `status` | `2` needs attention, `3` extended/unsupported, `4` incomplete data |
+| `nodegroup update` | `2` health warnings, `3` health blocked, `4` failed to start, `5` post-roll verification issues |
+| `addon update` | `2` updated, but the post-update health check found issues |
+
+See [Exit codes](https://drod.dev/refresh/concepts/exit-codes/) for the
+details and CI examples.
 
 
 ## Health checks
 
 Pre-flight health checks validate cluster readiness before a roll using **default
-AWS metrics** (no extra setup). They run automatically before `nodegroup update`;
-`--health-only` runs them without updating, `--skip-health-check` bypasses them.
+AWS metrics** (no extra setup). They run automatically before `nodegroup update`
+and before each nodegroup roll in `cluster upgrade`; `--health-only` runs them
+without updating, `--skip-health-check` bypasses them.
 
 **Out of the box (default AWS metrics)**
 
 - **Node health** — nodegroups `ACTIVE`; real Ready counts when a kubeconfig is
-  available.
+  available (fewer than 50% Ready blocks the roll).
 - **Cluster capacity** — sufficient CPU headroom from default EC2 metrics.
+- **Control plane** — etcd size from EKS control-plane metrics.
+- **Service quotas** — EC2 vCPU quota headroom.
 - **Resource balance** — CPU distribution across nodes.
 
 **Requires cluster/kubeconfig access**
 
 - **Critical workloads** — kube-system pods running.
-- **Pod Disruption Budgets** — missing PDBs for user workloads (also surfaced by
-  `nodegroup scale --check-pdbs`).
+- **Pod Disruption Budgets** — PDBs and pods that would block draining the
+  nodegroups that roll. `nodegroup scale --check-pdbs` refuses scale-downs
+  that a PDB does not allow.
+- **Node utilization** — CPU and memory headroom from the metrics API.
 
 When optional services aren't available the affected check is clearly marked
-skipped, with guidance, rather than silently degraded. Pass `--kubeconfig` to
-point the Kubernetes-backed checks at a specific cluster; an unreachable cluster
-prints which kubeconfig/context was tried.
+skipped, with guidance, rather than silently degraded. Pass `--kubeconfig` or
+`--kube-context` to point the Kubernetes-backed checks at a specific cluster;
+an unreachable cluster prints which kubeconfig/context was tried. See
+[Pre-flight health checks](https://drod.dev/refresh/concepts/health-checks/).
 
 ## Development
 
 ```bash
-task build          # build the binary (CGO_ENABLED=0)
+task build          # build ./dist/refresh (CGO_ENABLED=0)
 task test           # go test ./...
 task lint           # golangci-lint run ./...
 task dev:full       # fmt + vet + lint + test + build (run before pushing)
