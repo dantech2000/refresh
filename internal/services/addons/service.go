@@ -120,6 +120,9 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, addonName strin
 	if err != nil {
 		return nil, fmt.Errorf("describing addon: %w", err)
 	}
+	if desc == nil || desc.Addon == nil {
+		return nil, fmt.Errorf("describing addon %s: empty DescribeAddon response", addonName)
+	}
 
 	addon := desc.Addon
 	details := &AddonDetails{

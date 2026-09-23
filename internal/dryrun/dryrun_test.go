@@ -460,3 +460,18 @@ func TestAnalyzeUsesNodegroupVersionForLatestAMI(t *testing.T) {
 		t.Errorf("ng-old: Action = %v, LatestAMI = %q; want Update vs ami-131-latest", got.Action, got.LatestAMI)
 	}
 }
+
+// An empty describe response (nil nodegroup, nil error) is reported as a
+// failed describe instead of dereferencing nil.
+func TestAnalyzeNodegroup_EmptyDescribe(t *testing.T) {
+	dr := &DryRunner{
+		clusterName: "cluster",
+		describeNodegroupFn: func(context.Context, string) (*types.Nodegroup, error) {
+			return nil, nil
+		},
+	}
+	got := dr.analyzeNodegroup(context.Background(), "ng")
+	if got.Action != refreshTypes.ActionSkipUpdating || !strings.Contains(got.Reason, "empty") {
+		t.Errorf("analyzeNodegroup = %+v, want a skipped empty-describe result", got)
+	}
+}

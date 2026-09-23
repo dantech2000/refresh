@@ -131,6 +131,9 @@ func (dr *DryRunner) analyzeNodegroup(ctx context.Context, ngName string) Nodegr
 	}
 
 	ng, err := dr.describeNodegroup(ctx, ngName)
+	if err == nil && ng == nil {
+		err = fmt.Errorf("empty DescribeNodegroup response")
+	}
 	if err != nil {
 		update.Action = refreshTypes.ActionSkipUpdating
 		update.Reason = fmt.Sprintf("failed to describe: %v", err)
@@ -182,6 +185,9 @@ func (dr *DryRunner) describeNodegroup(ctx context.Context, ngName string) (*typ
 	})
 	if err != nil {
 		return nil, err
+	}
+	if ngDesc == nil {
+		return nil, nil
 	}
 	return ngDesc.Nodegroup, nil
 }

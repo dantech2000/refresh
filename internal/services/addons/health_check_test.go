@@ -255,3 +255,23 @@ func TestUpdate_DryRun_DoesNotCallUpdateAddon(t *testing.T) {
 		t.Errorf("UpdateAddon called %d times during dry-run, want 0", m.Calls.UpdateAddon)
 	}
 }
+
+// An empty DescribeAddon response is an error, not a nil dereference.
+func TestDescribeAddonEmptyResponse_NoPanic(t *testing.T) {
+	m := mocks.NewEKSAPI().Build()
+	m.DescribeAddonFn = func(_ context.Context, _ *eks.DescribeAddonInput, _ ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
+		return &eks.DescribeAddonOutput{}, nil
+	}
+	svc := NewService(m, logger())
+	ctx := context.Background()
+
+	if _, err := svc.Describe(ctx, "cluster", "vpc-cni", DescribeOptions{}); err == nil {
+		t.Error("Describe: want an error for an empty response")
+	}
+	if err := svc.preUpdateHealthCheck(ctx, "cluster", "vpc-cni"); err == nil {
+		t.Error("preUpdateHealthCheck: want an error for an empty response")
+	}
+	if err := svc.postUpdateHealthCheck(ctx, "cluster", "vpc-cni"); err == nil {
+		t.Error("postUpdateHealthCheck: want an error for an empty response")
+	}
+}
