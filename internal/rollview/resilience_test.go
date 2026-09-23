@@ -104,6 +104,26 @@ func TestRunRoll_GivesUpAfterConsecutiveErrors(t *testing.T) {
 	}
 }
 
+// A capped Warning-event read is noted once, in the events section.
+func TestRollPanelLines_WarningsCappedNote(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	m := rollMeta{Nodegroup: "ng", Desired: 1}
+	snap := noderoll.Snapshot{Total: 1, Nodes: []noderoll.NodeView{{Name: "ip-1", Phase: noderoll.PhaseReady}}}
+
+	if joined := strings.Join(rollPanelLines(th, snap, nil, m), "\n"); strings.Contains(joined, "showing first") {
+		t.Errorf("uncapped read must not show a cap note:\n%s", joined)
+	}
+	snap.WarningsCapped = 2000
+	lines := rollPanelLines(th, snap, nil, m)
+	joined := strings.Join(lines, "\n")
+	if n := strings.Count(joined, "showing first 2000 warning events"); n != 1 {
+		t.Fatalf("cap note appears %d times, want 1:\n%s", n, joined)
+	}
+	if strings.Index(joined, "showing first") < strings.Index(joined, "events") {
+		t.Errorf("cap note is not in the events section:\n%s", joined)
+	}
+}
+
 func TestOneLineWarn(t *testing.T) {
 	// Collapses whitespace.
 	if got := oneLineWarn("  evict\n\tfailed   now "); got != "evict failed now" {

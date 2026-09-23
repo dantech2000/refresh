@@ -171,6 +171,9 @@ func rollPanelLines(th *render.Theme, snap noderoll.Snapshot, events []noderoll.
 		st, text := eventToken(e.Kind)
 		out = append(out, "    "+th.Glyph(st)+" "+th.Paint(pal.White, e.Node)+th.Paint(pal.Dim, "  "+text))
 	}
+	if snap.WarningsCapped > 0 {
+		out = append(out, "    "+th.Paint(pal.Dim, fmt.Sprintf("(showing first %d warning events)", snap.WarningsCapped)))
+	}
 
 	// Warning events explain *why* a node is stuck (failed drain/eviction,
 	// sandbox failures) — surfaced beneath the lifecycle feed.

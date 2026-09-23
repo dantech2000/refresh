@@ -150,18 +150,18 @@ func TestKubeObserver_PodCountsThrottledWhenWatching(t *testing.T) {
 	}
 }
 
-// The polling Warning-event read must narrow server-side to type=Warning and
-// follow Continue tokens across every page, so no warning is dropped by a cap.
-func TestKubeObserver_WarningEventsPaginated(t *testing.T) {
+// pagedEvents serves Warning events over the fake clientset in pages of one
+// event each (a Continue token per page) and records every List call. pages
+// < 0 serves pages without end.
+func pagedEvents(t *testing.T, c *fake.Clientset, pages int) *[]metav1.ListOptions {
+	t.Helper()
 	now := metav1.NewTime(time.Now())
-	const pages = 3
-	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
-	var seen []metav1.ListOptions
-	client.PrependReactor("list", "events", func(a k8stesting.Action) (bool, k8sruntime.Object, error) {
+	seen := &[]metav1.ListOptions{}
+	c.PrependReactor("list", "events", func(a k8stesting.Action) (bool, k8sruntime.Object, error) {
 		// The fake's ListAction exposes the selectors but not Limit/Continue,
 		// so read the page cursor from the raw ListOptions.
 		opts := listOptionsOf(t, a)
-		seen = append(seen, opts)
+		*seen = append(*seen, opts)
 		page := 0
 		if opts.Continue != "" {
 			page, _ = strconv.Atoi(opts.Continue)
@@ -173,16 +173,25 @@ func TestKubeObserver_WarningEventsPaginated(t *testing.T) {
 			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-1"},
 			LastTimestamp:  now,
 		}}}
-		if page+1 < pages {
+		if pages < 0 || page+1 < pages {
 			list.Continue = strconv.Itoa(page + 1)
 		}
 		return true, list, nil
 	})
+	return seen
+}
 
+// The polling Warning-event read must narrow server-side to type=Warning and
+// follow Continue tokens across pages, so no warning under the cap is dropped.
+func TestKubeObserver_WarningEventsPaginated(t *testing.T) {
+	const pages = warningEventMaxPages - 1
+	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
+	calls := pagedEvents(t, client, pages)
 	s, err := NewKubeObserver(client, ng, newAMI).Snapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	seen := *calls
 	if len(seen) != pages {
 		t.Fatalf("event List calls = %d, want %d (one per page)", len(seen), pages)
 	}
@@ -196,6 +205,85 @@ func TestKubeObserver_WarningEventsPaginated(t *testing.T) {
 	}
 	if len(s.Warnings) != pages {
 		t.Fatalf("warnings = %+v, want one from each of %d pages", s.Warnings, pages)
+	}
+	if s.WarningsCapped != 0 {
+		t.Errorf("WarningsCapped = %d, want 0 (read finished under the cap)", s.WarningsCapped)
+	}
+}
+
+// A refresh reads at most warningEventMaxPages pages, keeps what it read, and
+// reports the cap on the snapshot.
+func TestKubeObserver_WarningEventsPageCap(t *testing.T) {
+	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
+	calls := pagedEvents(t, client, -1) // never-ending pages
+	s, err := NewKubeObserver(client, ng, newAMI).Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(*calls); n != warningEventMaxPages {
+		t.Fatalf("event List calls = %d, want the cap %d", n, warningEventMaxPages)
+	}
+	if len(s.Warnings) != warningEventMaxPages {
+		t.Errorf("warnings = %d, want the %d events read before the cap", len(s.Warnings), warningEventMaxPages)
+	}
+	if s.WarningsCapped != warningEventMaxPages {
+		t.Errorf("WarningsCapped = %d, want %d", s.WarningsCapped, warningEventMaxPages)
+	}
+}
+
+// Warning events are re-read at most every warningEventRefresh; snapshots in
+// between reuse the last read.
+func TestKubeObserver_WarningEventsRefreshInterval(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
+	calls := pagedEvents(t, client, 1)
+	obs := NewKubeObserver(client, ng, newAMI)
+
+	for range 4 {
+		s, err := obs.Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(s.Warnings) != 1 {
+			t.Fatalf("warnings = %+v, want the cached event on every snapshot", s.Warnings)
+		}
+	}
+	if n := len(*calls); n != 1 {
+		t.Fatalf("event List calls over 4 snapshots = %d, want 1", n)
+	}
+
+	obs.warnAt = obs.warnAt.Add(-warningEventRefresh) // interval elapsed
+	if _, err := obs.Snapshot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(*calls); n != 2 {
+		t.Fatalf("event List calls after the interval = %d, want 2", n)
+	}
+}
+
+// A change in the draining-node set re-reads Warning events at once, inside
+// the refresh interval: a newly cordoned node is when drain warnings matter.
+func TestKubeObserver_WarningEventsRefreshOnDrainingChange(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false), mkNode("ip-2", oldAMI, true, false))
+	calls := pagedEvents(t, client, 1)
+	obs := NewKubeObserver(client, ng, newAMI)
+
+	if _, err := obs.Snapshot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cordon(ctx, t, client, "ip-2")
+	if _, err := obs.Snapshot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(*calls); n != 2 {
+		t.Fatalf("event List calls = %d, want 2 (re-read on draining change)", n)
+	}
+	if _, err := obs.Snapshot(ctx); err != nil { // same set → cached
+		t.Fatal(err)
+	}
+	if n := len(*calls); n != 2 {
+		t.Fatalf("event List calls = %d, want still 2 (draining set unchanged)", n)
 	}
 }
 
