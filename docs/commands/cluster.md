@@ -222,7 +222,7 @@ or one that is custom-AMI or skipped, blocks the plan instead.
 | `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | Suppress progress output |
 | `--poll-interval, -p` | How often to poll in-flight updates (default `15s`) |
-| `--format, -o` | Plan output format: `table` (default), `json`, `yaml`, `plain` |
+| `--format, -o` | `table` (default), `json`, `yaml`, `plain`. With `json`/`yaml`, stdout gets one document: the plan for `--dry-run` or a blocked plan, else `{plan, report}` after the run. Progress goes to stderr, and a run without `--dry-run` needs `--yes` |
 | `--timeout, -t` | Overall upgrade timeout (default `4h`; not read from `REFRESH_TIMEOUT`) |
 
 !!! tip "Exit code in dry-run"
@@ -245,6 +245,9 @@ refresh cluster upgrade -c prod-east --to 1.33
 
 # Non-interactive (CI) run, skipping a Helm-managed add-on
 refresh cluster upgrade -c prod-east --to 1.33 --yes --skip aws-load-balancer-controller
+
+# Machine-readable run: {plan, report} on stdout, progress on stderr
+refresh cluster upgrade -c prod-east --to 1.33 --yes -o json | jq '.report'
 ```
 
 See the [upgrade lifecycle](../concepts/lifecycle.md) for how this fits the

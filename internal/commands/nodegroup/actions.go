@@ -3,6 +3,8 @@ package nodegroup
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/fatih/color"
 	"k8s.io/client-go/kubernetes"
@@ -36,13 +38,20 @@ func resolveHealthKubeClient(ctx context.Context, api health.ClusterDescriber, r
 // the type isn't offered — nodes would fail to launch there. Best-effort: any
 // error is swallowed so it never blocks a scale or roll. (REF-143)
 func warnInstanceTypeAvailability(ctx context.Context, svc *nodegroupsvc.ServiceImpl, clusterName, nodegroupName string) {
+	warnInstanceTypeAvailabilityTo(ctx, os.Stdout, svc, clusterName, nodegroupName)
+}
+
+// warnInstanceTypeAvailabilityTo is warnInstanceTypeAvailability writing to
+// w, so a -o json/yaml run can send the warning to stderr.
+func warnInstanceTypeAvailabilityTo(ctx context.Context, w io.Writer, svc *nodegroupsvc.ServiceImpl, clusterName, nodegroupName string) {
 	unavailable, err := svc.CheckInstanceTypeAvailability(ctx, clusterName, nodegroupName)
 	if err != nil || len(unavailable) == 0 {
 		return
 	}
-	color.Yellow("Pre-flight: instance type(s) not offered in some of the nodegroup's AZs — new nodes may fail to launch there:")
+	yellow := color.New(color.FgYellow)
+	_, _ = yellow.Fprintln(w, "Pre-flight: instance type(s) not offered in some of the nodegroup's AZs — new nodes may fail to launch there:")
 	for _, u := range unavailable {
-		fmt.Printf("  - %s not offered in %s\n", u.InstanceType, u.AvailabilityZone)
+		_, _ = fmt.Fprintf(w, "  - %s not offered in %s\n", u.InstanceType, u.AvailabilityZone)
 	}
-	color.Yellow("  Note: this checks availability, not live capacity (only a launch reveals InsufficientInstanceCapacity).")
+	_, _ = yellow.Fprintln(w, "  Note: this checks availability, not live capacity (only a launch reveals InsufficientInstanceCapacity).")
 }

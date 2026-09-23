@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,51 @@ func TestWatchPropagatesError(t *testing.T) {
 	}
 	if runs != 3 {
 		t.Fatalf("Watch should rerun until error: runs=%d, want 3", runs)
+	}
+}
+
+// --watch with -o json/yaml would print one document per interval (plus
+// clear-screen codes on a terminal), breaking the one-document stdout
+// contract. It must fail before fn runs; other formats still watch.
+func TestWatchRejectsMachineFormats(t *testing.T) {
+	for _, tc := range []struct {
+		format  string
+		wantErr bool
+	}{
+		{"json", true},
+		{"YAML", true},
+		{"table", false},
+		{"plain", false},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			var captured *cli.Command
+			root := &cli.Command{
+				Name: "test",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "watch"},
+					&cli.DurationFlag{Name: "watch-interval", Value: time.Millisecond},
+					&cli.StringFlag{Name: "format", Aliases: []string{"o"}},
+				},
+				Action: func(_ context.Context, c *cli.Command) error { captured = c; return nil },
+			}
+			if err := root.Run(context.Background(), []string{"test", "--watch", "-o", tc.format}); err != nil {
+				t.Fatal(err)
+			}
+			runs := 0
+			err := Watch(context.Background(), captured, func() error {
+				runs++
+				return errors.New("stop")
+			})
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "--watch cannot be combined") || runs != 0 {
+					t.Fatalf("Watch -o %s: err=%v runs=%d, want rejection before any run", tc.format, err, runs)
+				}
+				return
+			}
+			if runs != 1 {
+				t.Fatalf("Watch -o %s: runs=%d, want 1", tc.format, runs)
+			}
+		})
 	}
 }
 

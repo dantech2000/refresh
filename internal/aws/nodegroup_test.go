@@ -1,7 +1,13 @@
 package aws
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"strings"
 	"testing"
+
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -68,5 +74,37 @@ func TestConfirmNodegroupSelection_EmptyPatternReturnsAll(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Errorf("empty pattern should return all %d nodegroups, got %d", len(ngs), len(got))
+	}
+}
+
+// The nodegroup-choice prompt must write to its prompt stream (stderr), never
+// to stdout, so -o json/yaml output stays one document.
+func TestConfirmNodegroupSelection_PromptsOnPromptStream(t *testing.T) {
+	var prompt bytes.Buffer
+	origOut, origPrompt := nodegroupPromptOut, promptLine
+	t.Cleanup(func() { nodegroupPromptOut, promptLine = origOut, origPrompt })
+	nodegroupPromptOut = &prompt
+	promptLine = func(context.Context) (string, error) { return "y", nil }
+
+	got, err := ConfirmNodegroupSelection(t.Context(), []string{"web-a", "web-b"}, "web")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("ConfirmNodegroupSelection = %v, %v; want both matches", got, err)
+	}
+	for _, want := range []string{"Multiple nodegroups match pattern 'web'", "1) web-a", "Update all 2 matching nodegroups?"} {
+		if !strings.Contains(prompt.String(), want) {
+			t.Errorf("prompt stream missing %q; got %q", want, prompt.String())
+		}
+	}
+}
+
+func TestConfirmNodegroupSelection_ReadErrorCancels(t *testing.T) {
+	origOut, origPrompt := nodegroupPromptOut, promptLine
+	t.Cleanup(func() { nodegroupPromptOut, promptLine = origOut, origPrompt })
+	nodegroupPromptOut = io.Discard
+	promptLine = func(context.Context) (string, error) { return "", ui.ErrPromptCancelled }
+
+	_, err := ConfirmNodegroupSelection(t.Context(), []string{"web-a", "web-b"}, "web")
+	if err == nil || err.Error() != "operation cancelled" {
+		t.Fatalf("err = %v, want \"operation cancelled\"", err)
 	}
 }

@@ -36,11 +36,8 @@ func upgradePlanPlain(plan *upgrade.Plan) *ui.PlainTable {
 }
 
 // writeUpgradePlanPlain writes the plan as TSV to out and the plan's summary
-// line and warnings to info (stderr), keeping out pure TSV.
-//
-// Not yet wired into runUpgrade: upgrade.go is being reworked for stdout/stderr
-// separation in a parallel change. To wire it, call this in place of
-// renderPlan(plan) when ui.PlainOutput() is true.
+// line and warnings to info (stderr), keeping out pure TSV. runUpgrade calls
+// it in place of renderPlan when ui.PlainOutput() is true.
 func writeUpgradePlanPlain(out, info io.Writer, plan *upgrade.Plan) {
 	path := plan.CurrentVersion
 	for _, hop := range plan.Hops {

@@ -2,6 +2,9 @@ package ui
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/fatih/color"
@@ -9,8 +12,17 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 )
 
-// DisplayHealthResults displays the health check results in the specified format
+// DisplayHealthResults displays the health check results on stdout.
 func DisplayHealthResults(summary health.HealthSummary) {
+	WriteHealthResults(os.Stdout, summary)
+}
+
+// WriteHealthResults writes the health check results to w. Commands with
+// -o json/yaml pass os.Stderr so the report never mixes with the document.
+func WriteHealthResults(w io.Writer, summary health.HealthSummary) {
+	Outln := func(a ...any) { _, _ = fmt.Fprintln(w, a...) }
+	Outf := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
+
 	Outln("\nCluster Health Assessment:")
 	Outln()
 

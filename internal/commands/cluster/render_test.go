@@ -137,7 +137,7 @@ func TestRenderPlan_ShowsPathHopsAndWarnings(t *testing.T) {
 // ── renderReport ───────────────────────────────────────────────────────────
 
 func TestRenderReport_Nil(t *testing.T) {
-	out := captureStdout(t, func() { renderReport(nil) })
+	out := captureStdout(t, func() { renderReport(os.Stdout, nil) })
 	if strings.TrimSpace(out) != "" {
 		t.Errorf("nil report should print nothing, got: %q", out)
 	}
@@ -149,7 +149,7 @@ func TestRenderReport_CompletedFailedRemaining(t *testing.T) {
 		FailedAt:  "addon coredns update",
 		Remaining: []string{"nodegroup workers"},
 	}
-	out := captureStdout(t, func() { renderReport(report) })
+	out := captureStdout(t, func() { renderReport(os.Stdout, report) })
 	for _, want := range []string{"completed:", "control plane → 1.31", "failed at:", "addon coredns update", "remaining:", "nodegroup workers"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderReport output missing %q; got:\n%s", want, out)
