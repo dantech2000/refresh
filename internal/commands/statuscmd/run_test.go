@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/mocks"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 )
@@ -124,10 +125,33 @@ func TestRunStatus_TotalFailureReturnsRegionError(t *testing.T) {
 		return fakeRegion{err: mocks.AccessDenied()}
 	})
 
-	_, err := runStatusCLI(t, "-r", "us-east-1", "-o", "json")
+	_, err := runStatusCLI(t, "-r", "us-east-1", "-r", "eu-west-1", "-o", "json")
 	var re *regionError
 	if !errors.As(err, &re) || re.Region != "us-east-1" {
 		t.Fatalf("err = %v (%T), want the us-east-1 region error", err, err)
+	}
+	// Nothing was gathered: exit 1, not 4 (REF-165).
+	if got := runner.ExitCodeOf(err); got != 1 {
+		t.Errorf("exit = %d, want 1", got)
+	}
+}
+
+// A region that answered with no clusters next to a failed one is partial
+// data, not a total failure: exit 4, as in `cluster list` (REF-165).
+func TestRunStatus_EmptyRegionPlusFailedRegionExitsIncomplete(t *testing.T) {
+	fakeAWSEnv(t)
+	stubRegionService(t, func(cfg aws.Config) regionLister {
+		if cfg.Region == "eu-west-1" {
+			return fakeRegion{err: mocks.AccessDenied()}
+		}
+		return fakeRegion{}
+	})
+	out, err := runStatusCLI(t, "-r", "us-east-1", "-r", "eu-west-1", "-o", "json")
+	if got := exitCode(err); got != 4 {
+		t.Fatalf("exit = %d (%v), want 4", got, err)
+	}
+	if !strings.Contains(out, `"clusters": []`) {
+		t.Errorf("stdout should be the (empty) document:\n%s", out)
 	}
 }
 

@@ -13,6 +13,8 @@ regions), describe one in depth, run an upgrade readiness check
 (upgrade-check), and orchestrate a full control-plane + add-on + nodegroup
 upgrade (upgrade).
 
+Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
+
 ## Flags
 
 | Flag | Env | Default | Description |
@@ -43,6 +45,8 @@ region/cluster hierarchy. Use --watch to redraw on the --watch-interval
   refresh cluster list -A --filter status=ACTIVE
   refresh cluster list -o tree
   refresh cluster list --watch --watch-interval 5s
+
+Exit codes: 0 ok; 1 error, or no region answered; 4 incomplete: a region failed, or a cluster could not be fully read. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -77,6 +81,8 @@ provide fast, comprehensive results without CloudFormation dependency.
 Health status and add-ons are shown by default; --no-health and --no-addons
 skip them. --detailed adds networking and security, --show-security adds the
 security analysis alone.
+
+Exit codes: 0 ok; 1 error; 4 incomplete: some add-ons or nodegroups could not be read. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -113,10 +119,31 @@ that catalog evolves — so list the live set for your cluster with --show-passi
 then drill into any with --id, which accepts the short ID shown in the table, the
 full ID, or a case-insensitive name substring (e.g. --id "deprecated").
 
+It works as a CI gate. The exit code follows the readiness verdict: the
+insights in the report (--category and --status narrow them), the
+nodegroup/addon skew, and the control-plane health check:
+   0  ready: no finding
+   2  needs attention: WARNING insights, a nodegroup behind the control
+      plane but inside the kubelet skew limit, an addon behind latest, or a
+      control-plane health warning
+   3  blocked: an ERROR or UNKNOWN insight (as 'cluster upgrade' blocks on
+      both), a nodegroup at the kubelet skew limit, or a failed
+      control-plane health check
+   4  incomplete: nothing blocks, but a nodegroup or addon could not be
+      read (listed under "incomplete")
+   1  error (AWS error, not found, interrupt)
+Precedence: 3, then 4, then 2.
+With --id, the exit code reflects that one insight's status. With -o json or
+-o yaml, the document is printed first, then the exit code applies.
+--exit-zero exits 0 on a completed check (report mode), also when incomplete.
+
 Examples:
    refresh cluster upgrade-check -c prod-east
    refresh cluster upgrade-check -c prod-east --show-passing -o json
    refresh cluster upgrade-check -c prod-east --id "deprecated"   # detail view (by name)
+   refresh cluster upgrade-check -c prod-east -o json --exit-zero  # report only
+
+Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -128,6 +155,7 @@ Examples:
 | `--show-passing` | — | — | Include PASSING insights (hidden by default) |
 | `--id string` | — | — | Show the detail view for one insight — accepts its ID, a short ID prefix (as shown in the table), or a name substring |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
+| `--exit-zero` | — | — | Exit 0 even when the check finds warnings (2), blockers (3), or unreadable items (4): report mode |
 | `--help, -h` | — | — | show help |
 
 ### refresh cluster upgrade
@@ -164,7 +192,7 @@ same command after a failure (or Ctrl+C) resumes where it left off, and
 rerunning after success is a no-op.
 
 Examples:
-   # Print the plan only (exits non-zero if anything blocks the upgrade)
+   # Print the plan only (exits 3 if anything blocks the upgrade)
    refresh cluster upgrade -c prod-east --to 1.33 --dry-run
 
    # Execute, confirming each mutating phase
@@ -176,6 +204,8 @@ Examples:
    # Machine-readable run: one JSON document {plan, report} on stdout,
    # progress on stderr (-o json/yaml never prompts, so it needs --yes)
    refresh cluster upgrade -c prod-east --to 1.33 --yes -o json
+
+Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run). See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 

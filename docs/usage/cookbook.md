@@ -54,6 +54,20 @@ refresh cluster upgrade-check -c prod-east --show-passing -o json
 refresh cluster upgrade-check -c prod-east --id <insight-id>
 ```
 
+In CI, the exit code is the gate: `0` ready, `2` warnings, `3` blocked.
+
+```bash
+refresh cluster upgrade-check -c prod-east -o json > readiness.json
+case $? in
+  0) echo "ready" ;;
+  2) echo "warnings: review readiness.json" ;;
+  3) echo "blocked"; exit 1 ;;
+  *) echo "check failed"; exit 1 ;;
+esac
+```
+
+Add `--exit-zero` to keep the report and always exit `0`.
+
 See [`cluster upgrade-check`](../commands/cluster.md#upgrade-check).
 
 ---
@@ -146,7 +160,7 @@ See [`addon update`](../commands/addon.md#update).
 
 EKS does not honor PodDisruptionBudgets when a scaling change removes nodes: it
 terminates them and their pods go down. `--check-pdbs` refuses the scale-down
-(exit `1`) if it could remove more of a PDB's pods than the PDB allows. The
+(exit `3`) if it could remove more of a PDB's pods than the PDB allows. The
 gate assumes the worst case: the removed nodes are the ones that hold the most
 of the PDB's pods. If it can't read the PDBs, it refuses too.
 
@@ -191,7 +205,7 @@ phase. EKS upgrades one minor at a time, so a multi-minor jump expands into
 sequential hops. Always dry-run first.
 
 ```bash
-# Print the ordered plan (exits non-zero if anything blocks)
+# Print the ordered plan (exits 3 if anything blocks)
 refresh cluster upgrade -c prod-east --to 1.33 --dry-run
 
 # Execute, confirming each mutating phase

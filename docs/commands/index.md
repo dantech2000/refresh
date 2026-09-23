@@ -42,5 +42,7 @@ nodegroup, `-a` addon, `-o` format, `-r` region, `-t` timeout, `-d` dry-run,
 - **Output** — `-o table|json|yaml|plain` (and `tree` for `cluster list`); see
   [Output formats](../concepts/output.md). With `-o json`/`-o yaml`, stdout
   holds exactly one document.
-- **Exit codes** — `status`, `nodegroup update`, and `addon update` have
-  documented codes for CI; see [Exit codes](../concepts/exit-codes.md).
+- **Exit codes** — every command follows one contract: `0` ok, `1` error or
+  interrupt, `2` needs attention, `3` blocked, `4` incomplete data, `5`
+  post-action verification failed. Each command's `--help` lists its codes;
+  see [Exit codes](../concepts/exit-codes.md).

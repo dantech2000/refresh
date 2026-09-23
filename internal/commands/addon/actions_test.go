@@ -96,16 +96,39 @@ func TestResolveAddonName_AmbiguousListsCandidates(t *testing.T) {
 	}
 }
 
-// Add-ons a parallel --all run never started (deadline or Ctrl+C) count as
-// failures, so the command exits non-zero.
+// Add-ons a parallel --all run never started (a deadline) count as failures,
+// so the command exits 4. After Ctrl+C the run exits 1 (interrupted).
 func TestUpdateAllFailureError_CountsNotAttempted(t *testing.T) {
 	results := []addons.AddonUpdateResult{
 		{AddonName: "vpc-cni", Status: "FAILED: context deadline exceeded"},
 		{AddonName: "coredns", Status: "FAILED: not attempted: context deadline exceeded"},
 		{AddonName: "kube-proxy", Status: "FAILED: not attempted: context deadline exceeded"},
 	}
-	err := updateAllFailureError(results)
+	err := updateAllFailureError(t.Context(), results)
 	if err == nil || !strings.Contains(err.Error(), "3 of 3") {
 		t.Fatalf("err = %v, want 3 of 3 failed", err)
+	}
+	if code := exitCodeOf(err); code != 4 {
+		t.Errorf("exit code = %d, want 4", code)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if code := exitCodeOf(updateAllFailureError(ctx, results)); code != 1 {
+		t.Errorf("interrupted: exit code = %d, want 1", code)
+	}
+}
+
+// A failure outranks post-update health issues: exit 4, not 5.
+func TestUpdateAllFailureError_FailureOutranksIssues(t *testing.T) {
+	results := []addons.AddonUpdateResult{
+		{AddonName: "vpc-cni", Status: addons.StatusCompletedWithIssues},
+		{AddonName: "coredns", Status: addons.StatusWaitFailed},
+	}
+	if code := exitCodeOf(updateAllFailureError(t.Context(), results)); code != 4 {
+		t.Errorf("exit code = %d, want 4", code)
+	}
+	if code := exitCodeOf(updateAllFailureError(t.Context(), results[:1])); code != 5 {
+		t.Errorf("issues only: exit code = %d, want 5", code)
 	}
 }

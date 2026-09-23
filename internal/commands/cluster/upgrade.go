@@ -57,7 +57,7 @@ same command after a failure (or Ctrl+C) resumes where it left off, and
 rerunning after success is a no-op.
 
 Examples:
-   # Print the plan only (exits non-zero if anything blocks the upgrade)
+   # Print the plan only (exits 3 if anything blocks the upgrade)
    refresh cluster upgrade -c prod-east --to 1.33 --dry-run
 
    # Execute, confirming each mutating phase
@@ -174,9 +174,9 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		renderPlan(plan)
 	}
 
-	// A plan with blockers prints and exits non-zero without mutating.
+	// A plan with blockers prints and exits 3 (blocked) without mutating.
 	if plan.Blocked() {
-		return cli.Exit(color.RedString("Upgrade blocked — resolve the blockers above and re-run."), 1)
+		return cli.Exit(color.RedString("Upgrade blocked — resolve the blockers above and re-run."), runner.ExitBlocked)
 	}
 	if cmd.Bool("dry-run") {
 		return nil
@@ -351,7 +351,7 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 			return err
 		}
 		if plan.Blocked() {
-			return cli.Exit("upgrade blocked: resolve the blockers in the plan and re-run", 1)
+			return cli.Exit("upgrade blocked: resolve the blockers in the plan and re-run", runner.ExitBlocked)
 		}
 		return nil
 	}

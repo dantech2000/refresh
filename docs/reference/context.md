@@ -22,6 +22,8 @@ Contexts are stored as YAML under $XDG_CONFIG_HOME/refresh/context.yaml
   refresh context add prod --cluster prod-eks --use   # add and switch in one step
   refresh context remove prod      # delete a saved context
 
+Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
+
 ## Flags
 
 | Flag | Env | Default | Description |
@@ -41,6 +43,8 @@ refresh context list [options]
 ```
 
 List every saved context with its cluster, region, and profile. The active context (set via 'refresh use') is marked with a '*'.
+
+Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -63,6 +67,8 @@ Pass --use to switch to the context immediately after saving.
   refresh context add prod --cluster prod-eks --region us-east-1 --profile prod
   refresh context add prod --cluster prod-eks --use
 
+Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
+
 #### Flags
 
 | Flag | Env | Default | Description |
@@ -84,6 +90,8 @@ refresh context remove [options] <name>
 ```
 
 Delete a saved context by name. If the removed context was the active or previous one, those pointers are cleared.
+
+Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 

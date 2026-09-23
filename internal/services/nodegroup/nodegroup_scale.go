@@ -21,6 +21,14 @@ import (
 // update and the nodegroup.
 const scalePollInterval = 5 * time.Second
 
+// ErrScaleHealthBlocked marks a scale the pre-scaling health check blocked
+// before any change.
+var ErrScaleHealthBlocked = errors.New("pre-scaling health check blocked operation")
+
+// ErrScaleVerifyFailed marks a scale that was applied but whose
+// post-scaling health check found blocking issues.
+var ErrScaleVerifyFailed = errors.New("post-scaling health check found blocking issues")
+
 // Scale updates the desired/min/max size for a nodegroup.
 func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32, options ScaleOptions) error {
 	s.logger.Info("scaling nodegroup", "cluster", clusterName, "nodegroup", nodegroupName,
@@ -33,7 +41,7 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 	if options.HealthCheck && s.healthChecker != nil {
 		summary := s.healthChecker.RunAllChecks(ctx, clusterName)
 		if summary.Decision == health.DecisionBlock {
-			return fmt.Errorf("pre-scaling health check blocked operation: %v", summary.Errors)
+			return fmt.Errorf("%w: %v", ErrScaleHealthBlocked, summary.Errors)
 		}
 		if summary.Decision == health.DecisionWarn {
 			s.logger.Warn("pre-scaling health warnings", "warnings", summary.Warnings)
@@ -93,7 +101,7 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 	if options.HealthCheck && s.healthChecker != nil {
 		summary := s.healthChecker.RunAllChecks(ctx, clusterName)
 		if summary.Decision == health.DecisionBlock {
-			return fmt.Errorf("post-scaling health check blocked operation: %v", summary.Errors)
+			return fmt.Errorf("%w: %v", ErrScaleVerifyFailed, summary.Errors)
 		}
 		if summary.Decision == health.DecisionWarn {
 			s.logger.Warn("post-scaling health warnings", "warnings", summary.Warnings)

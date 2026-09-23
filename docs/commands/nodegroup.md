@@ -35,7 +35,7 @@ If the latest-AMI lookup fails (for example, a missing `ssm:GetParameter`),
 the AMI column shows `unknown (lookup failed)` and one warning goes to stderr.
 If some nodegroups can't be described, the command prints the rest, names
 the failed ones on stderr, adds `failures` with `-o json`/`-o yaml`, and exits
-`1`.
+`4` (incomplete data).
 
 ```bash
 refresh nodegroup list [cluster] [flags]
@@ -153,7 +153,7 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 !!! warning "A scale-down does not honor PDBs"
     When a scaling change lowers the desired size, EKS terminates the removed
     nodes without waiting for Pod Disruption Budgets. With `--check-pdbs`,
-    `refresh` refuses the scale-down (exit 1, before any change) if it could
+    `refresh` refuses the scale-down (exit 3, before any change) if it could
     remove more of a PDB's pods than the PDB allows, and lists those PDBs. The
     Auto Scaling group picks which nodes go, so the gate assumes the removed
     nodes are the ones that hold the most of the PDB's pods. The gate fails
@@ -252,8 +252,9 @@ credentials can't use are skipped with one stderr note. Examples are regions
 an SCP denies and opt-in regions that are not enabled. Skipped regions don't
 change the exit code. Any other listing failure (throttling, a server error, a
 timeout), or any failure in a region you named, is reported on stderr and in
-the summary (`discoveryErrors` in `-o json`), and the run exits `4`. The run
-also exits `4` right away if no region can be listed.
+the summary (`discoveryErrors` in `-o json`), and the run exits `4`. If no
+region can be listed, or discovery does not finish within `--timeout`, the
+run fails at once with exit `1`: nothing was gathered.
 
 ### Flags
 

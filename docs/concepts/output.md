@@ -42,7 +42,8 @@ meant for a person goes to stderr or is not printed:
   name in scripts.
 - An empty list prints `[]`, never `null`.
 
-The exit code is the same as in the human view. When a command fails before
+The exit code is the same as in the human view, and it applies after the
+document is printed (see [Exit codes](exit-codes.md)). When a command fails before
 it has a result (bad credentials, a missing `--yes`), stdout is empty and the
 error is on stderr. A `nodegroup update` that the health gate stops is the
 exception: stdout gets the run summary with nothing started and the `health`
@@ -58,7 +59,7 @@ The documents for the mutating commands:
 | `nodegroup update --health-only` | The health verdict. The exit code is `0`, `2`, or `3` |
 | `nodegroup update --all-clusters` | `clusters` (one result per cluster, with its `health` verdict when a check ran, or one preview with `--dry-run`), plus `discoveryErrors` and `skippedRegions`. With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
 | `cluster upgrade --dry-run` | The plan |
-| `cluster upgrade --yes` | `{plan, report}`: the plan the run started from and what it did (`completed`, `failedAt`, `remaining`). A blocked plan prints the plan alone and exits `1` |
+| `cluster upgrade --yes` | `{plan, report}`: the plan the run started from and what it did (`completed`, `failedAt`, `remaining`). A blocked plan prints the plan alone and exits `3` |
 
 `cluster upgrade -o json|yaml` without `--dry-run` needs `--yes`, because it
 can't confirm each phase. It fails before any AWS call without it.

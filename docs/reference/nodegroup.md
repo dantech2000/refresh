@@ -15,6 +15,8 @@ freshness, describe one in depth, scale desired/min/max size (with optional PDB
 and health gating), and update (roll) nodegroups to the latest recommended AMI
 with pre-flight health checks and live monitoring.
 
+Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
+
 ## Flags
 
 | Flag | Env | Default | Description |
@@ -42,6 +44,8 @@ grep/awk; -o json|yaml emit structured output. Use --watch to redraw on the
   refresh nodegroup list my-cluster --filter amiStatus=outdated
   refresh nodegroup list my-cluster -o plain | awk -F'\t' 'NR>1 {print $1}'
   refresh nodegroup list my-cluster --watch
+
+Exit codes: 0 ok; 1 error; 4 incomplete: a nodegroup could not be described. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -77,6 +81,8 @@ workload placement details. The nodegroup name may be the second positional or
   refresh nodegroup describe my-cluster ng-default
   refresh nodegroup describe my-cluster ng-default --show-instances --show-workloads
 
+Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
+
 #### Flags
 
 | Flag | Env | Default | Description |
@@ -101,7 +107,7 @@ refresh nodegroup scale [options] [cluster]
 Change a managed nodegroup's desired/min/max size. Any subset of
 --desired/--min/--max may be set; unspecified bounds are left unchanged.
 
---check-pdbs refuses a scale-down (exit 1, before any change) when it could
+--check-pdbs refuses a scale-down (exit 3, before any change) when it could
 remove more of a Pod Disruption Budget's pods than the PDB allows. EKS does not
 honor PDBs when a scaling change removes nodes, and the Auto Scaling group
 picks which nodes go, so the gate assumes the removed nodes are the ones that
@@ -117,6 +123,8 @@ without a terminal, --yes is required. --dry-run never prompts.
   refresh nodegroup scale my-cluster -n ng-default --desired 5
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
   refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force --yes
+
+Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs or the pre-scaling health check, nothing changed; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -162,8 +170,9 @@ worst-outcome exit code:
    refresh nodegroup update --all-clusters -r us-east-1 --yes
 Fleet mode takes no positional args and rejects --cluster and --kube-context
 (each cluster's kubeconfig context is matched by endpoint). A region that
-can't be listed is reported and makes the run exit 4. The default sweep skips
-regions these credentials can't use (SCP-denied or not enabled) with a note.
+can't be listed is reported and makes the run exit 4; if no region can be
+listed, the run exits 1. The default sweep skips regions these credentials
+can't use (SCP-denied or not enabled) with a note.
 
 Unattended / CI use:
    --yes              skip confirmation prompts (a nodegroup pattern that is
@@ -182,6 +191,8 @@ Exit codes:
    5  post-roll verification found issues
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
+
+Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 

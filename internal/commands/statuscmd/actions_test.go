@@ -13,6 +13,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/mocks"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 )
@@ -262,12 +263,16 @@ func TestGatherFleet_ExplicitRegionsKeepFailures(t *testing.T) {
 	}
 }
 
-// Every region skipped is not a clean empty fleet: exit 4.
+// Every region skipped is not a clean empty fleet. Nothing was gathered, so
+// it is an error (exit 1), as in `cluster list` (REF-165).
 func TestReportSweep_AllRegionsSkippedFails(t *testing.T) {
 	var buf bytes.Buffer
 	err := reportSweep(&buf, 2, fleetSweep{skipped: []string{"sa-east-1", "ap-south-1"}})
-	if got := exitCode(err); got != 4 {
-		t.Errorf("exit = %d, want 4", got)
+	if err == nil || !strings.Contains(err.Error(), "none is accessible") {
+		t.Fatalf("err = %v, want a none-accessible error", err)
+	}
+	if got := runner.ExitCodeOf(err); got != 1 {
+		t.Errorf("exit = %d, want 1", got)
 	}
 }
 

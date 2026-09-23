@@ -411,7 +411,9 @@ func Watch(ctx context.Context, cmd *cli.Command, fn func() error) error {
 		if interactive {
 			fmt.Print("\033[H\033[2J") // clear screen, cursor home
 		}
-		if err := fn(); err != nil {
+		// A partial result (exit 4) was printed and warned about on stderr;
+		// the next poll may be complete, so keep watching.
+		if err := fn(); err != nil && !IsIncomplete(err) {
 			return err
 		}
 		select {

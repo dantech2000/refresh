@@ -108,6 +108,37 @@ func TestScale_BoundsCheckInDryRunAndBeforePrompt(t *testing.T) {
 	}
 }
 
+// Ordering with --check-pdbs: the prompt comes first, then the gate. A "no"
+// stops with nothing checked or changed; a "yes" (or --yes) reaches the gate,
+// which fails closed without Kubernetes access. (A refused scale-down exits
+// 3; see scale_exit_test.go.)
+func TestScale_PromptThenPDBGate(t *testing.T) {
+	t.Setenv("KUBECONFIG", t.TempDir()+"/none")
+	for _, tc := range []struct {
+		name    string
+		answer  string
+		args    []string
+		wantErr string
+	}{
+		{"declined", "n", nil, "cancelled"},
+		{"accepted", "y", nil, "PDB validation for prod/ng-a"},
+		{"--yes", "", []string{"--yes"}, "PDB validation for prod/ng-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withScalePrompt(t, true, tc.answer)
+			srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5}))
+			args := append([]string{"scale", "prod", "-n", "ng-a", "--desired", "1", "--check-pdbs"}, tc.args...)
+			_, stderr, err := runNodegroup(t, args...)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want %q\nstderr:\n%s", err, tc.wantErr, stderr)
+			}
+			if calledPath(srv, "/update-config") {
+				t.Error("UpdateNodegroupConfig called")
+			}
+		})
+	}
+}
+
 func TestFormatScaleQuestion(t *testing.T) {
 	sc := ekstypes.NodegroupScalingConfig{DesiredSize: aws.Int32(3), MinSize: aws.Int32(1), MaxSize: aws.Int32(5)}
 	for _, tc := range []struct {

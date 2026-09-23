@@ -105,7 +105,7 @@ func TestUpdate_WaitFailedEncodesResult(t *testing.T) {
 }
 
 // A successful wait confirms the version and exits 0; post-update health
-// issues exit 2.
+// issues exit 5 (post-action verification failed).
 func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 	t.Run("completed", func(t *testing.T) {
 		srv := fakeaws.New(t, addonCluster(&fakeaws.Addon{Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}}))
@@ -126,8 +126,8 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 			Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}, HealthIssue: "1 of 2 replicas ready",
 		}))
 		stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--wait", "-o", "json", "--yes")
-		if code := exitCodeOf(err); code != 2 {
-			t.Fatalf("exit code = %d (err %v), want 2\nstderr:\n%s", code, err, stderr)
+		if code := exitCodeOf(err); code != 5 {
+			t.Fatalf("exit code = %d (err %v), want 5\nstderr:\n%s", code, err, stderr)
 		}
 		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 		if doc["status"] != "COMPLETED_WITH_ISSUES" {
@@ -139,8 +139,8 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 			Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}, HealthIssue: "1 of 2 replicas ready",
 		}))
 		_, stderr, err := runAddon(t, "update", "prod", "--all", "--wait", "-o", "json", "--yes")
-		if code := exitCodeOf(err); code != 2 {
-			t.Fatalf("exit code = %d (err %v), want 2\nstderr:\n%s", code, err, stderr)
+		if code := exitCodeOf(err); code != 5 {
+			t.Fatalf("exit code = %d (err %v), want 5\nstderr:\n%s", code, err, stderr)
 		}
 	})
 	t.Run("all with a failed wait keeps the update ID", func(t *testing.T) {
@@ -149,8 +149,8 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 			&fakeaws.Addon{Name: "coredns", Version: "v1.11.4", Available: []string{"v1.11.3"}},
 		))
 		stdout, _, err := runAddon(t, "update", "prod", "--all", "--wait", "-o", "json", "--yes")
-		if code := exitCodeOf(err); code != 1 {
-			t.Fatalf("exit code = %d (err %v), want 1", code, err)
+		if code := exitCodeOf(err); code != 4 {
+			t.Fatalf("exit code = %d (err %v), want 4 (a failed add-on in --all)", code, err)
 		}
 		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 		statuses := map[string]map[string]any{}
@@ -260,7 +260,7 @@ func TestUpdate_PartialAddonName(t *testing.T) {
 }
 
 // addon list: add-ons that could not be described are named on stderr and
-// under "failures", and the command exits non-zero after printing the rest.
+// under "failures", and the command exits 4 after printing the rest.
 func TestList_DescribeFailures(t *testing.T) {
 	world := func() *fakeaws.Cluster {
 		return addonCluster(
@@ -274,6 +274,9 @@ func TestList_DescribeFailures(t *testing.T) {
 		stdout, stderr, err := runAddon(t, "list", "prod", "-o", "json")
 		if err == nil || !strings.Contains(err.Error(), "2 add-on(s) could not be described") {
 			t.Fatalf("err = %v, want the incomplete-list error", err)
+		}
+		if code := exitCodeOf(err); code != 4 {
+			t.Errorf("exit code = %d, want 4 (incomplete data)", code)
 		}
 		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 		if doc["count"] != float64(1) {

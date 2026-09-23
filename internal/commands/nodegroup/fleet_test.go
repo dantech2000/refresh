@@ -15,6 +15,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/monitoring"
 )
 
@@ -251,8 +252,8 @@ func TestFleetDiscovery_AllDefaultRegionsDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = checkDiscovery(len(regions), d)
-	if exitCodeOf(err) != 4 || !strings.Contains(err.Error(), "-r or REFRESH_EKS_REGIONS") {
-		t.Fatalf("checkDiscovery = %v, want exit 4 with the scope hint", err)
+	if err == nil || runner.ExitCodeOf(err) != 1 || !strings.Contains(err.Error(), "-r or REFRESH_EKS_REGIONS") {
+		t.Fatalf("checkDiscovery = %v, want exit 1 (nothing gathered) with the scope hint", err)
 	}
 }
 
@@ -272,10 +273,11 @@ func TestDiscoverFleetTargets_CancelledContextIsAnError(t *testing.T) {
 }
 
 func TestDiscoveryStopError(t *testing.T) {
-	// The --timeout bound on discovery is a failure (exit 4).
+	// The --wait-timeout bound on discovery gathered nothing: exit 1, and the
+	// message names the timeout.
 	err := discoveryStopError(context.Background(), fmt.Errorf("fleet discovery stopped: %w", context.DeadlineExceeded), 0)
-	if exitCodeOf(err) != 4 {
-		t.Errorf("deadline: exit = %d, want 4 (err %v)", exitCodeOf(err), err)
+	if err == nil || runner.ExitCodeOf(err) != 1 || !strings.Contains(err.Error(), "--wait-timeout") {
+		t.Errorf("deadline: exit = %d, want 1 naming --wait-timeout (err %v)", runner.ExitCodeOf(err), err)
 	}
 	// A user interrupt passes through unchanged.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -299,16 +301,16 @@ func TestCheckDiscovery(t *testing.T) {
 	}{
 		{"clean", 2, fleetDiscovery{targets: three}, 0},
 		{"clean but empty", 2, fleetDiscovery{}, 0},
-		{"all regions failed", 1, fleetDiscovery{failed: denied}, 4},
+		{"all regions failed", 1, fleetDiscovery{failed: denied}, 1},
 		{"some failed, none found elsewhere", 2, fleetDiscovery{failed: denied}, 4},
 		{"some failed, clusters found elsewhere", 2, fleetDiscovery{targets: three, failed: denied}, 0},
-		{"skipped plus failed covers every region", 2, fleetDiscovery{failed: denied, skipped: []string{"sa-east-1"}}, 4},
+		{"skipped plus failed covers every region", 2, fleetDiscovery{failed: denied, skipped: []string{"sa-east-1"}}, 1},
 		{"skipped only, reachable region empty", 2, fleetDiscovery{skipped: []string{"sa-east-1"}}, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			buf.Reset()
-			if got := exitCodeOf(checkDiscovery(tc.regions, tc.d)); got != tc.want {
+			if got := runner.ExitCodeOf(checkDiscovery(tc.regions, tc.d)); got != tc.want {
 				t.Errorf("exit = %d, want %d", got, tc.want)
 			}
 			if len(tc.d.failed) > 0 && !strings.Contains(buf.String(), "skipping region eu-west-1: denied") {

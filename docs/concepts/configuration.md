@@ -208,8 +208,11 @@ What a failed region does depends on the command:
 
 - `status` marks the data incomplete and exits `4`.
 - `nodegroup update --all-clusters` reports the region and exits `4`.
-- `cluster list` prints one warning per failed region on stderr and exits
-  `0`. If no region answers, it fails.
+- `cluster list` prints one warning per failed region on stderr, prints the
+  clusters it gathered, and exits `4`.
+
+In all three, if no region answers, nothing was gathered and the command
+fails with exit `1`. See [Exit codes](exit-codes.md#region-sweeps).
 
 ## Timeouts
 

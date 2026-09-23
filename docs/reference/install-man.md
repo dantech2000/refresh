@@ -16,6 +16,8 @@ This command generates the man page from the CLI definition and installs it
 to a user-accessible directory ($HOME/.local/share/man/man1 by default).
 No sudo privileges required - works seamlessly across macOS, Linux, and Unix systems.
 
+Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
+
 ## Flags
 
 | Flag | Env | Default | Description |
