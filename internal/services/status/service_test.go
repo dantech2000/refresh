@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,8 +19,8 @@ type fakeNodegroups struct {
 	byCluster map[string][]nodegroup.NodegroupSummary
 }
 
-func (f *fakeNodegroups) List(_ context.Context, cluster string, _ nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, error) {
-	return f.byCluster[cluster], nil
+func (f *fakeNodegroups) ListWithFailures(_ context.Context, cluster string, _ nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
+	return f.byCluster[cluster], nil, nil
 }
 
 // fakeAddons implements AddonAnalyzer.
@@ -32,8 +33,14 @@ func (f *fakeAddons) List(_ context.Context, cluster string, _ addons.ListOption
 	return f.installed[cluster], nil
 }
 
+// GetAvailableVersions mirrors the real service: no versions is an
+// ErrNoVersionsFound error, never an empty slice with a nil error.
 func (f *fakeAddons) GetAvailableVersions(_ context.Context, addonName, _ string) ([]addons.AddonVersionInfo, error) {
-	return f.available[addonName], nil
+	v := f.available[addonName]
+	if len(v) == 0 {
+		return nil, fmt.Errorf("%w for addon %s", addons.ErrNoVersionsFound, addonName)
+	}
+	return v, nil
 }
 
 func newTestService(api *fakeClusterAPI, ng *fakeNodegroups, ad *fakeAddons) *Service {

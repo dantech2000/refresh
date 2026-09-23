@@ -129,22 +129,40 @@ func matchesFilters(s NodegroupSummary, filters map[string]string) bool {
 	return true
 }
 
-// List returns basic nodegroup summaries for a cluster.
+// List returns basic nodegroup summaries for a cluster. Nodegroups that can't
+// be described are logged and left out; use ListWithFailures to learn which.
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, error) {
+	summaries, _, err := s.ListWithFailures(ctx, clusterName, options)
+	return summaries, err
+}
+
+// ngResult is one nodegroup's outcome in ListWithFailures. done stays false
+// for items ForEachParallel never dispatched (ctx ended first).
+type ngResult struct {
+	done    bool
+	summary *NodegroupSummary // nil when filtered out or failed
+	failure string            // non-empty when the nodegroup couldn't be described
+}
+
+// ListWithFailures is List plus a "name: reason" entry for every listed
+// nodegroup left out of the summaries because it could not be described (API
+// error, empty response, or never reached because ctx ended). Nodegroups
+// excluded by options.Filters are not failures.
+func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, []string, error) {
 	s.logger.Info("listing nodegroups", "cluster", clusterName, "options", options)
 
 	if err := validateFilters(options.Filters); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
 	})
 	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
+		return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
 	}
 	if clusterDesc.Cluster == nil {
-		return nil, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
+		return nil, nil, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
 	}
 	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
@@ -158,7 +176,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// The latest AMI is constant per (cluster version, AMI type); memoize the
@@ -172,7 +190,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 	readyByNG, haveReady := s.nodegroupReadyCounts(ctx)
 
 	results := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
-		func(fctx context.Context, name string) *NodegroupSummary {
+		func(fctx context.Context, name string) ngResult {
 			desc, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
 				return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
 					ClusterName:   aws.String(clusterName),
@@ -181,12 +199,12 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 			})
 			if err != nil {
 				s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", name, "error", err)
-				return nil
+				return ngResult{done: true, failure: fmt.Sprintf("%s: %v", name, err)}
 			}
 			ng := desc.Nodegroup
 			if ng == nil {
 				s.logger.Warn("empty DescribeNodegroup response", "cluster", clusterName, "nodegroup", name)
-				return nil
+				return ngResult{done: true, failure: name + ": empty DescribeNodegroup response"}
 			}
 			var desiredSize int32
 			if ng.ScalingConfig != nil {
@@ -218,18 +236,28 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 				AMIStatus:    amiStatus,
 			}
 			if !matchesFilters(summary, options.Filters) {
-				return nil
+				return ngResult{done: true}
 			}
-			return &summary
+			return ngResult{done: true, summary: &summary}
 		})
 
 	summaries := make([]NodegroupSummary, 0, len(results))
-	for _, r := range results {
-		if r != nil {
-			summaries = append(summaries, *r)
+	var failures []string
+	for i, r := range results {
+		switch {
+		case !r.done:
+			reason := "sweep stopped early"
+			if cerr := ctx.Err(); cerr != nil {
+				reason = cerr.Error()
+			}
+			failures = append(failures, nodegroupNames[i]+": not evaluated: "+reason)
+		case r.failure != "":
+			failures = append(failures, r.failure)
+		case r.summary != nil:
+			summaries = append(summaries, *r.summary)
 		}
 	}
-	return summaries, nil
+	return summaries, failures, nil
 }
 
 // newLatestAMIResolver returns a concurrency-safe, memoized resolver for the
