@@ -151,6 +151,11 @@ func TestBuildSSMParameterPath_AllAMITypes(t *testing.T) {
 		if got := buildReleaseVersionParameterPath("1.33", amiType); got != want.release {
 			t.Errorf("release path for %s = %q, want %q", amiType, got, want.release)
 		}
+		// Only the Amazon Linux families use amazon-eks-ami release notes.
+		url, eksAMI := AMIReleaseNotes(amiType)
+		if eksAMI != strings.HasPrefix(want.image, al) || (url == "") != (amiType == types.AMITypesCustom) {
+			t.Errorf("AMIReleaseNotes(%s) = %q, %v", amiType, url, eksAMI)
+		}
 	}
 }
 

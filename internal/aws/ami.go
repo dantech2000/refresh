@@ -351,6 +351,36 @@ func buildReleaseVersionParameterPath(k8sVersion string, amiType types.AMITypes)
 	}
 }
 
+// Release-notes pages per AMI family.
+const (
+	amazonEKSAMIReleasesURL = "https://github.com/awslabs/amazon-eks-ami/releases"
+	bottlerocketReleasesURL = "https://github.com/bottlerocket-os/bottlerocket/releases"
+	windowsAMIReleasesURL   = "https://docs.aws.amazon.com/eks/latest/userguide/eks-ami-versions-windows.html"
+)
+
+// AMIReleaseNotes returns where an AMI type's release notes live. eksAMI is
+// true only for the Amazon Linux families, whose releases are published by
+// awslabs/amazon-eks-ami with a date-stamped release version (e.g.
+// "1.31.0-20260601"). Bottlerocket and Windows version differently, so their
+// versions must not be read as amazon-eks-ami dates. url is "" for custom and
+// unrecognized AMI types.
+func AMIReleaseNotes(amiType types.AMITypes) (url string, eksAMI bool) {
+	spec, ok := lookupAMISSMSpec(amiType)
+	if !ok {
+		return "", false
+	}
+	switch spec.family {
+	case familyAmazonLinux:
+		return amazonEKSAMIReleasesURL, true
+	case familyBottlerocket:
+		return bottlerocketReleasesURL, false
+	case familyWindows:
+		return windowsAMIReleasesURL, false
+	default:
+		return "", false
+	}
+}
+
 // lookupAMISSMSpec resolves an AMI type to its SSM spec, inferring one for
 // AMI types newer than this SDK's enum. Custom AMIs have no recommended AMI.
 func lookupAMISSMSpec(amiType types.AMITypes) (amiSSMSpec, bool) {
