@@ -61,7 +61,7 @@ func TestClusterDetailLines_Support(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 	d := sampleDetails()
 	d.Support = &status.SupportPosture{Tier: status.SupportExtended, DaysRemaining: intp(45), ExtraCostUSDPerHour: 0.50}
-	joined := strings.Join(clusterDetailLines(th, d, 0), "\n")
+	joined := strings.Join(clusterDetailLines(th, d), "\n")
 	if !strings.Contains(joined, "support") || !strings.Contains(joined, "extended (45d)") {
 		t.Errorf("describe missing support KV in:\n%s", joined)
 	}

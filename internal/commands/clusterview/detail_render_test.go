@@ -18,7 +18,7 @@ func sampleDetails() *clustersvc.ClusterDetails {
 		PlatformVersion: "eks.8",
 		Endpoint:        "https://ABC123.gr7.us-west-2.eks.amazonaws.com",
 		Region:          "us-west-2",
-		Networking:      clustersvc.NetworkingInfo{VpcId: "vpc-0a1b", VpcCidr: "10.0.0.0/16"},
+		Networking:      clustersvc.NetworkingInfo{VpcID: "vpc-0a1b", VpcCidr: "10.0.0.0/16"},
 		Security:        clustersvc.SecurityInfo{EncryptionEnabled: true, LoggingEnabled: []string{"api", "audit"}},
 		Nodegroups: []clustersvc.NodegroupSummary{
 			{Name: "general", Status: "ACTIVE", InstanceType: "m6i.large", DesiredSize: 6, ReadyNodes: 6, ReadyKnown: true},
@@ -41,9 +41,9 @@ func TestClusterDetailLines_HealthIssues(t *testing.T) {
 	d.HealthIssues = []clustersvc.HealthIssue{{
 		Code:        "InternalFailure",
 		Message:     "control plane could not assume the cluster IAM role",
-		ResourceIds: []string{"arn:aws:iam::123456789012:role/eksClusterRole"},
+		ResourceIDs: []string{"arn:aws:iam::123456789012:role/eksClusterRole"},
 	}}
-	joined := strings.Join(clusterDetailLines(th, d, 0), "\n")
+	joined := strings.Join(clusterDetailLines(th, d), "\n")
 	for _, want := range []string{
 		"▸ HEALTH ISSUES  1",
 		"InternalFailure: control plane could not assume the cluster IAM role",
@@ -55,7 +55,7 @@ func TestClusterDetailLines_HealthIssues(t *testing.T) {
 	}
 
 	// No issues → no HEALTH ISSUES section.
-	clean := strings.Join(clusterDetailLines(th, sampleDetails(), 0), "\n")
+	clean := strings.Join(clusterDetailLines(th, sampleDetails()), "\n")
 	if strings.Contains(clean, "HEALTH ISSUES") {
 		t.Errorf("clean cluster should not render a HEALTH ISSUES section:\n%s", clean)
 	}
@@ -73,7 +73,7 @@ func TestClusterDetailLines_HealthChecksItemized(t *testing.T) {
 			{Name: "Service Quotas", Status: health.StatusPass, Skipped: true, Message: "headroom unavailable (clients not configured)"},
 		},
 	}
-	joined := strings.Join(clusterDetailLines(th, d, 0), "\n")
+	joined := strings.Join(clusterDetailLines(th, d), "\n")
 	if strings.Contains(joined, "\x1b") {
 		t.Fatalf("ColorNone health card contains ANSI escapes:\n%s", joined)
 	}
@@ -91,7 +91,7 @@ func TestClusterDetailLines_HealthChecksItemized(t *testing.T) {
 
 func TestClusterDetailLines_Pretty(t *testing.T) {
 	th := render.New(render.ColorNone, true)
-	joined := strings.Join(clusterDetailLines(th, sampleDetails(), 0), "\n")
+	joined := strings.Join(clusterDetailLines(th, sampleDetails()), "\n")
 
 	if strings.Contains(joined, "\x1b") {
 		t.Fatalf("ColorNone detail output contains ANSI escapes:\n%s", joined)
@@ -124,7 +124,7 @@ func TestClusterDetailLines_ReadinessUnknown(t *testing.T) {
 		d.Nodegroups[i].ReadyKnown = false
 		d.Nodegroups[i].ReadyNodes = 0
 	}
-	joined := strings.Join(clusterDetailLines(th, d, 0), "\n")
+	joined := strings.Join(clusterDetailLines(th, d), "\n")
 
 	if !strings.Contains(joined, "1 active · 8 nodes") {
 		t.Errorf("header should report desired capacity (8):\n%s", joined)
@@ -138,7 +138,7 @@ func TestClusterDetailLines_ASCIIAndMinimal(t *testing.T) {
 	th := render.New(render.ColorNone, false)
 	// Minimal cluster: no addons, no nodegroups, no health, zero CreatedAt.
 	d := &clustersvc.ClusterDetails{Name: "bare", Status: "ACTIVE", Version: "1.30"}
-	joined := strings.Join(clusterDetailLines(th, d, 0), "\n")
+	joined := strings.Join(clusterDetailLines(th, d), "\n")
 	if strings.Contains(joined, "NODEGROUPS") || strings.Contains(joined, "ADD-ONS") || strings.Contains(joined, "HEALTH") {
 		t.Errorf("minimal cluster should omit empty sections:\n%s", joined)
 	}
@@ -154,7 +154,7 @@ func TestClusterDetailLines_CreatedAge(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 	d := sampleDetails()
 	d.CreatedAt = time.Now().Add(-48 * time.Hour)
-	joined := strings.Join(clusterDetailLines(th, d, 0), "\n")
+	joined := strings.Join(clusterDetailLines(th, d), "\n")
 	if !strings.Contains(joined, "created") {
 		t.Errorf("created row missing:\n%s", joined)
 	}

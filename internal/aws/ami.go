@@ -66,13 +66,13 @@ func resolveFromASG(ctx context.Context, ng *types.Nodegroup, autoscalingClient 
 		return ""
 	}
 
-	instanceId := describeAsgOut.AutoScalingGroups[0].Instances[0].InstanceId
-	if instanceId == nil {
+	instanceID := describeAsgOut.AutoScalingGroups[0].Instances[0].InstanceId
+	if instanceID == nil {
 		return ""
 	}
 
 	descInstOut, err := ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-		InstanceIds: []string{*instanceId},
+		InstanceIds: []string{*instanceID},
 	})
 	if err != nil {
 		return ""

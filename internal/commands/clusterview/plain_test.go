@@ -97,13 +97,13 @@ func TestClusterDetailPlain(t *testing.T) {
 		CreatedAt: time.Now().Add(-72 * time.Hour),
 		Support:   &status.SupportPosture{Tier: status.SupportStandard, DaysRemaining: &days},
 		Networking: clustersvc.NetworkingInfo{
-			VpcId: "vpc-1", SubnetIds: []string{"subnet-1", "subnet-2"}, SecurityGroupIds: []string{"sg-1"},
+			VpcID: "vpc-1", SubnetIDs: []string{"subnet-1", "subnet-2"}, SecurityGroupIDs: []string{"sg-1"},
 		},
 		Security:   clustersvc.SecurityInfo{DeletionProtection: true},
 		Nodegroups: []clustersvc.NodegroupSummary{{Name: "ng-a", Status: "ACTIVE", InstanceType: "m5.large", DesiredSize: 3}},
 		Addons:     []clustersvc.AddonInfo{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "Healthy"}},
 		HealthIssues: []clustersvc.HealthIssue{
-			{Code: "AccessDenied", Message: "role\tmissing\npermission", ResourceIds: []string{"arn:1"}},
+			{Code: "AccessDenied", Message: "role\tmissing\npermission", ResourceIDs: []string{"arn:1"}},
 		},
 		Health: &health.HealthSummary{
 			Decision: health.DecisionWarn, OverallScore: 80, Warnings: []string{"quota low"},

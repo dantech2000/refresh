@@ -24,15 +24,15 @@ import (
 // update is in flight, AMICustom for custom-AMI nodegroups (whose AMI is managed
 // via the user's launch template, not by EKS, so there's no recommended AMI to
 // compare against), regardless of AMI identities.
-func classifyAMI(amiType ekstypes.AMITypes, status ekstypes.NodegroupStatus, currentAmiId, latestAmiId string) types.AMIStatus {
+func classifyAMI(amiType ekstypes.AMITypes, status ekstypes.NodegroupStatus, currentAmiID, latestAmiID string) types.AMIStatus {
 	switch {
 	case status == ekstypes.NodegroupStatusUpdating:
 		return types.AMIUpdating
 	case amiType == ekstypes.AMITypesCustom:
 		return types.AMICustom
-	case currentAmiId == "" || latestAmiId == "":
+	case currentAmiID == "" || latestAmiID == "":
 		return types.AMIUnknown
-	case currentAmiId == latestAmiId:
+	case currentAmiID == latestAmiID:
 		return types.AMILatest
 	default:
 		return types.AMIOutdated
@@ -239,9 +239,9 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 				instanceType = ng.InstanceTypes[0]
 			}
 
-			currentAmiId := s.currentAMI(fctx, ng)
-			latestAmiId, lookupErr := latestAMI.ForNodegroup(fctx, ng, k8sVersion)
-			amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
+			currentAmiID := s.currentAMI(fctx, ng)
+			latestAmiID, lookupErr := latestAMI.ForNodegroup(fctx, ng, k8sVersion)
+			amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiID, latestAmiID)
 			if lookupErr != nil {
 				s.logger.Warn("failed to resolve latest AMI", "cluster", clusterName, "nodegroup", name, "error", lookupErr)
 				if !latestAMILookupMatters(ng) {
@@ -256,7 +256,7 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 				DesiredSize:  desiredSize,
 				ReadyNodes:   readyNodes,
 				ReadyKnown:   readyKnown,
-				CurrentAMI:   currentAmiId,
+				CurrentAMI:   currentAmiID,
 				AMIStatus:    amiStatus,
 				K8sVersion:   aws.ToString(ng.Version),
 			}
@@ -365,9 +365,9 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	}
 	ng := out.Nodegroup
 
-	currentAmiId := s.currentAMI(ctx, ng)
-	latestAmiId, lookupErr := s.newLatestAMICache().ForNodegroup(ctx, ng, k8sVersion)
-	amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
+	currentAmiID := s.currentAMI(ctx, ng)
+	latestAmiID, lookupErr := s.newLatestAMICache().ForNodegroup(ctx, ng, k8sVersion)
+	amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiID, latestAmiID)
 	if lookupErr != nil && !latestAMILookupMatters(ng) {
 		lookupErr = nil
 	}
@@ -388,8 +388,8 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 		InstanceType: firstInstanceType(ng.InstanceTypes),
 		AmiType:      string(ng.AmiType),
 		CapacityType: string(ng.CapacityType),
-		CurrentAMI:   currentAmiId,
-		LatestAMI:    latestAmiId,
+		CurrentAMI:   currentAmiID,
+		LatestAMI:    latestAmiID,
 		AMIStatus:    amiStatus,
 		Scaling:      scaling,
 		amiLookupErr: lookupErr,

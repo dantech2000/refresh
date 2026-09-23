@@ -62,15 +62,15 @@ type ClusterSummary struct {
 type HealthIssue struct {
 	Code        string   `json:"code" yaml:"code"`
 	Message     string   `json:"message" yaml:"message"`
-	ResourceIds []string `json:"resourceIds,omitempty" yaml:"resourceIds,omitempty"`
+	ResourceIDs []string `json:"resourceIds,omitempty" yaml:"resourceIds,omitempty"`
 }
 
 // NetworkingInfo contains VPC and networking details
 type NetworkingInfo struct {
-	VpcId            string             `json:"vpcId" yaml:"vpcId"`
+	VpcID            string             `json:"vpcId" yaml:"vpcId"`
 	VpcCidr          string             `json:"vpcCidr,omitempty" yaml:"vpcCidr,omitempty"`
-	SubnetIds        []string           `json:"subnetIds" yaml:"subnetIds"`
-	SecurityGroupIds []string           `json:"securityGroupIds" yaml:"securityGroupIds"`
+	SubnetIDs        []string           `json:"subnetIds" yaml:"subnetIds"`
+	SecurityGroupIDs []string           `json:"securityGroupIds" yaml:"securityGroupIds"`
 	EndpointAccess   EndpointAccessInfo `json:"endpointAccess" yaml:"endpointAccess"`
 }
 
