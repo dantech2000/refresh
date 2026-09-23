@@ -1,0 +1,15 @@
+# Coverage ratchet. The Codecov statuses gate PRs. The upload step in
+# .github/workflows/test.yml keeps fail_ci_if_error: false: the repo has no
+# CODECOV_TOKEN secret today (uploads are tokenless), so a Codecov outage or
+# rate limit must not fail the build itself.
+coverage:
+  status:
+    project:
+      default:
+        # Compare against the base commit on main and allow a 1% dip.
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        # Lines added or changed in the PR.
+        target: 70%
