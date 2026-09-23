@@ -4,9 +4,11 @@ import (
 	"context"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -80,6 +82,23 @@ func NewChecker(eksClient *eks.Client, k8sClient kubernetes.Interface, cwClient 
 	}
 	if asgClient != nil {
 		hc.asgClient = asgClient
+	}
+	return hc
+}
+
+// NewCheckerForConfig builds the fully wired checker every command uses: EKS,
+// CloudWatch, Auto Scaling and Service Quotas clients from awsCfg, plus the
+// optional Kubernetes client and node-metrics lister (either may be nil).
+func NewCheckerForConfig(awsCfg aws.Config, k8sClient kubernetes.Interface, metrics NodeMetricsLister) *HealthChecker {
+	hc := NewChecker(
+		eks.NewFromConfig(awsCfg),
+		k8sClient,
+		cloudwatch.NewFromConfig(awsCfg),
+		autoscaling.NewFromConfig(awsCfg),
+	)
+	hc.SetServiceQuotas(servicequotas.NewFromConfig(awsCfg))
+	if metrics != nil {
+		hc.SetNodeMetrics(metrics)
 	}
 	return hc
 }
