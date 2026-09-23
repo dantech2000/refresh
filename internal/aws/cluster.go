@@ -211,11 +211,7 @@ func extractNameFromServer(server string) string {
 	return ""
 }
 
-// AvailableClusters returns all EKS cluster names in the current region.
-func AvailableClusters(ctx context.Context, awsCfg aws.Config) ([]string, error) {
-	return listClusterNames(ctx, eks.NewFromConfig(awsCfg))
-}
-
+// listClusterNames returns all EKS cluster names visible through api.
 func listClusterNames(ctx context.Context, api ListClustersAPI) ([]string, error) {
 	return ListAllPages(ctx, "listing clusters",
 		func(rc context.Context, token *string) (*eks.ListClustersOutput, error) {
