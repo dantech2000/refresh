@@ -23,7 +23,7 @@ import (
 func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
 	if ui.PlainOutput() {
 		if len(summaries) == 0 {
-			_, _ = fmt.Fprintln(os.Stderr, "No EKS clusters found")
+			_, _ = fmt.Fprintln(ui.Stderr, "No EKS clusters found")
 		}
 		clusterListPlain(summaries, multiRegion, showHealth).Render()
 		return nil

@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
@@ -40,7 +39,7 @@ func NewPTable(columns []Column, opts ...PTableOption) *PTable {
 // table is much harder to debug than a noisy skip).
 func (t *PTable) AddRow(cells ...string) {
 	if len(cells) != len(t.columns) {
-		_, _ = fmt.Fprintf(os.Stderr, "table: dropped row with %d cells (expected %d)\n", len(cells), len(t.columns))
+		_, _ = fmt.Fprintf(Stderr, "table: dropped row with %d cells (expected %d)\n", len(cells), len(t.columns))
 		return
 	}
 	t.rows = append(t.rows, cells)

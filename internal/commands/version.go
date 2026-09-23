@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/types"
+	"github.com/dantech2000/refresh/internal/ui"
 	"github.com/dantech2000/refresh/internal/updatecheck"
 )
 
@@ -74,7 +75,7 @@ value other than 0, false, or no.`,
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			PrintVersion(cmd.Root().Writer)
-			maybePrintUpdateHint(ctx, cmd, os.Stderr)
+			maybePrintUpdateHint(ctx, cmd, ui.Stderr)
 			return nil
 		},
 	}

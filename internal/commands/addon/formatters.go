@@ -23,7 +23,7 @@ import (
 func outputAddonsTable(cluster string, rows []addons.AddonSummary, elapsed time.Duration) error {
 	if ui.PlainOutput() {
 		if len(rows) == 0 {
-			_, _ = fmt.Fprintf(os.Stderr, "No add-ons found for cluster: %s\n", cluster)
+			_, _ = fmt.Fprintf(ui.Stderr, "No add-ons found for cluster: %s\n", cluster)
 		}
 		addonListPlain(rows).Render()
 		return nil
@@ -170,9 +170,9 @@ func writeUpdateIssues(w io.Writer, results []addons.AddonUpdateResult) {
 func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, dryRun bool) error {
 	if ui.PlainOutput() {
 		if len(results) == 0 {
-			_, _ = fmt.Fprintf(os.Stderr, "No addons to update for cluster: %s\n", cluster)
+			_, _ = fmt.Fprintf(ui.Stderr, "No addons to update for cluster: %s\n", cluster)
 		}
-		writeUpdateIssues(os.Stderr, results)
+		writeUpdateIssues(ui.Stderr, results)
 		addonUpdatePlain(results).Render()
 		return nil
 	}

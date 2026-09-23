@@ -3,7 +3,6 @@ package addon
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -151,7 +150,7 @@ func warnAllOnlyFlags(cmd *cli.Command) {
 		set = append(set, "--dependency-order")
 	}
 	if len(set) > 0 {
-		fmt.Fprintf(os.Stderr, "warning: %s only apply with --all and are ignored for a single add-on update\n",
+		_, _ = fmt.Fprintf(ui.Stderr, "warning: %s only apply with --all and are ignored for a single add-on update\n",
 			strings.Join(set, ", "))
 	}
 }
@@ -220,7 +219,7 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	}
 	if ui.PlainOutput() {
 		results := []addons.AddonUpdateResult{*result}
-		writeUpdateIssues(os.Stderr, results)
+		writeUpdateIssues(ui.Stderr, results)
 		addonUpdatePlain(results).Render()
 		return nil
 	}

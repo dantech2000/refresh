@@ -17,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // ColorLevel is the terminal's color capability.
@@ -75,13 +77,16 @@ func Default(w io.Writer) *Theme {
 	return &Theme{Level: DetectLevel(w), Unicode: detectUnicode(), Pal: Mocha}
 }
 
-// DetectLevel reports the color capability for w. Honors NO_COLOR, fatih/color's
-// global (set by --no-color), TTY-ness, COLORTERM and TERM.
+// DetectLevel reports the color capability for w. Each stream decides on its
+// own: w must itself be a terminal. NO_COLOR, --no-color and TERM=dumb turn
+// color off everywhere. fatih/color's global (which tracks stdout and -o
+// plain) applies to every writer except stderr, so stderr can be colored when
+// stdout is piped, and stdout can be colored when stderr is redirected.
 func DetectLevel(w io.Writer) ColorLevel {
-	if color.NoColor || os.Getenv("NO_COLOR") != "" {
+	if !ui.StreamColor(w) {
 		return ColorNone
 	}
-	if !isTerminal(w) {
+	if color.NoColor && !ui.IsStderr(w) {
 		return ColorNone
 	}
 	switch os.Getenv("COLORTERM") {
@@ -108,14 +113,7 @@ func detectUnicode() bool {
 	return true // assume a modern UTF-8 terminal
 }
 
-func isTerminal(w io.Writer) bool {
-	f, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	return err == nil && (fi.Mode()&os.ModeCharDevice) != 0
-}
+func isTerminal(w io.Writer) bool { return ui.IsTerminal(w) }
 
 // Paint wraps s in the foreground color for the active level (no-op at
 // ColorNone). Bold is the same with the bold attribute.

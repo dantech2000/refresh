@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mattn/go-isatty"
 	"github.com/pterm/pterm"
 )
 
@@ -16,13 +15,13 @@ var funSpinnerInterval = 2 * time.Second
 // spinnerOutputIsTerminal reports whether spinner output (stderr) is an
 // interactive terminal. Overridable in tests.
 var spinnerOutputIsTerminal = func() bool {
-	return isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd())
+	return IsTerminal(os.Stderr)
 }
 
 // spinnerOut returns where spinners write: the stream that
-// spinnerOutputIsTerminal checks. It reads os.Stderr on each call so a test
-// that swaps os.Stderr captures it; tests can also replace the func.
-var spinnerOut = func() io.Writer { return os.Stderr }
+// spinnerOutputIsTerminal checks. Stderr reads os.Stderr on each write, so a
+// test that swaps os.Stderr captures it; tests can also replace the func.
+var spinnerOut = func() io.Writer { return Stderr }
 
 // FunSpinner provides an entertaining spinner with rotating messages
 type FunSpinner struct {
@@ -69,7 +68,7 @@ func NewFunSpinnerForCategory(category string) *FunSpinner {
 // Start begins the fun spinner with rotating messages. When output is not an
 // interactive terminal (CI logs, redirected stderr), no animation is started:
 // the \r and \033[K control sequences would just spam the log. Success
-// still prints its final line.
+// prints nothing either.
 func (fs *FunSpinner) Start() error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -136,9 +135,13 @@ func (fs *FunSpinner) clearLine() {
 	pterm.Fprinto(fs.spinner.Writer, "\033[K")
 }
 
-// Success completes the spinner with a success message
+// Success completes the spinner with a success message. When stderr is not
+// an interactive terminal the spinner is off entirely, so no line is written.
 func (fs *FunSpinner) Success(message string) {
 	fs.stop()
+	if !spinnerOutputIsTerminal() {
+		return
+	}
 	pterm.Success.WithWriter(fs.spinner.Writer).Println(message)
 }
 

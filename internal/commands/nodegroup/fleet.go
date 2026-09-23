@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -85,7 +84,7 @@ type regionDiscoveryError struct {
 type listClustersFunc func(ctx context.Context, cfg aws.Config) ([]string, error)
 
 // fleetStderr receives per-region discovery warnings. A seam for tests.
-var fleetStderr io.Writer = os.Stderr
+var fleetStderr io.Writer = ui.Stderr
 
 // validateFleetFlags rejects flag combinations that fleet mode can't honour.
 // It runs before any AWS call.
