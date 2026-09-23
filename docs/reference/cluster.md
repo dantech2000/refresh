@@ -145,6 +145,18 @@ into sequential hops. Each hop runs: readiness (cluster insights + kubelet
 version skew) → control plane → addons (dependency order, versions compatible
 with the hop target) → nodegroup rolls, with a health gate after every phase.
 
+Before each control-plane step, refresh asks EKS to re-evaluate Cluster
+Insights (up to 5m) and blocks on ERROR or UNKNOWN insights, or when EKS has
+not evaluated the hop version yet. EKS itself no longer enforces insights on a
+version update, so this is the only deprecated-API check; --skip-insights-check
+turns it off.
+
+Before each nodegroup roll, pre-flight health checks run, including
+PodDisruptionBudgets that would block the drain (they need Kubernetes access
+via kubeconfig; without it the PDB check is skipped with a warning). A drain
+blocker stops the roll unless --force; health warnings need --yes or a
+confirmation. --skip-health-check turns these checks off.
+
 The plan is re-derived from live cluster state on every run, so rerunning the
 same command after a failure (or Ctrl+C) resumes where it left off, and
 rerunning after success is a no-op.
@@ -172,6 +184,8 @@ Examples:
 | `--dry-run, -d` | — | — | Print the full ordered plan without mutating anything |
 | `--yes, -y` | — | — | Skip per-phase confirmation prompts |
 | `--force` | — | — | Force nodegroup rolls when pods can't be drained due to PDBs |
+| `--skip-insights-check` | — | — | Upgrade without the EKS Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself |
+| `--skip-health-check` | — | — | Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
 | `--skip, -s string` | — | — | Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps) |
 | `--skip-nodegroup string` | — | — | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | — | — | Suppress progress output |

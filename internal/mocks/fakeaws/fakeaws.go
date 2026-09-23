@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -258,10 +259,21 @@ func (s *Server) serveEKSCluster(w http.ResponseWriter, r *http.Request, c *Clus
 		s.serveClusterUpdates(w, r, c, rest[1:], body)
 	case "insights":
 		if post && len(rest) == 1 {
-			writeJSON(w, map[string]any{"insights": []any{}})
+			writeJSON(w, map[string]any{"insights": insightsJSON(c, body)})
 			return
 		}
 		unsupported(w, r, "eks")
+	case "insights-refresh":
+		// StartInsightsRefresh (POST) and DescribeInsightsRefresh (GET): a
+		// refresh completes at once.
+		switch {
+		case post && len(rest) == 1:
+			writeJSON(w, map[string]any{"status": "IN_PROGRESS", "message": "Insights refresh started"})
+		case get && len(rest) == 1:
+			writeJSON(w, map[string]any{"status": "COMPLETED"})
+		default:
+			unsupported(w, r, "eks")
+		}
 	case "node-groups":
 		s.serveNodegroups(w, r, c, rest[1:], body)
 	case "addons":
@@ -383,6 +395,33 @@ func findNodegroup(c *Cluster, name string) *Nodegroup {
 		}
 	}
 	return nil
+}
+
+// insightsJSON answers ListInsights the way EKS does for a healthy cluster:
+// one PASSING upgrade-readiness insight for the next minor after the control
+// plane, filtered by the request's kubernetesVersions.
+func insightsJSON(c *Cluster, body []byte) []any {
+	var in struct {
+		Filter struct {
+			KubernetesVersions []string `json:"kubernetesVersions"`
+		} `json:"filter"`
+	}
+	_ = json.Unmarshal(body, &in)
+	var major, minor int
+	if _, err := fmt.Sscanf(c.Version, "%d.%d", &major, &minor); err != nil {
+		return []any{}
+	}
+	next := fmt.Sprintf("%d.%d", major, minor+1)
+	if len(in.Filter.KubernetesVersions) > 0 && !slices.Contains(in.Filter.KubernetesVersions, next) {
+		return []any{}
+	}
+	return []any{map[string]any{
+		"id":                "insight-" + c.Name + "-skew",
+		"name":              "Kubelet version skew",
+		"category":          "UPGRADE_READINESS",
+		"kubernetesVersion": next,
+		"insightStatus":     map[string]any{"status": "PASSING"},
+	}}
 }
 
 func clusterJSON(c *Cluster) map[string]any {

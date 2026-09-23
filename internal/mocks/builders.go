@@ -34,6 +34,11 @@ type EKSAPIBuilder struct {
 	// ID. updatesMu guards the per-ID cursor: services poll concurrently.
 	updatesMu sync.Mutex
 	updates   map[string]*updateScript
+
+	// refreshStatuses is the scripted DescribeInsightsRefresh sequence;
+	// refreshNext is its cursor, guarded by updatesMu.
+	refreshStatuses []ekstypes.InsightsRefreshStatus
+	refreshNext     int
 }
 
 // DefaultRegion is the region WithCluster builds endpoints and ARNs in when
@@ -94,6 +99,16 @@ func NewEKSAPI() *EKSAPIBuilder {
 			return nil, err
 		}
 		return &eks.DescribeAddonVersionsOutput{}, nil
+	}
+	b.WithInsightsRefresh(ekstypes.InsightsRefreshStatusCompleted)
+	b.m.StartInsightsRefreshFn = func(_ context.Context, in *eks.StartInsightsRefreshInput, _ ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error) {
+		if err := b.checkCluster(in.ClusterName); err != nil {
+			return nil, err
+		}
+		b.updatesMu.Lock()
+		b.refreshNext = 0
+		b.updatesMu.Unlock()
+		return &eks.StartInsightsRefreshOutput{Status: ekstypes.InsightsRefreshStatusInProgress}, nil
 	}
 	b.WithSupportedVersions(DefaultSupportedVersions...)
 	b.m.DescribeClusterVersionsFn = func(_ context.Context, in *eks.DescribeClusterVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error) {
@@ -437,6 +452,36 @@ func (b *EKSAPIBuilder) WithUpdateStatuses(updateID string, statuses ...ekstypes
 		return &eks.DescribeUpdateOutput{
 			Update: &ekstypes.Update{Id: aws.String(id), Status: status},
 		}, nil
+	}
+	return b
+}
+
+// WithInsightsRefresh scripts DescribeInsightsRefresh: each call returns the
+// next status in order, and the last one repeats once the script runs out.
+// StartInsightsRefresh rewinds the script and reports IN_PROGRESS. By default
+// every refresh reports COMPLETED at once.
+func (b *EKSAPIBuilder) WithInsightsRefresh(statuses ...ekstypes.InsightsRefreshStatus) *EKSAPIBuilder {
+	if len(statuses) == 0 {
+		panic("mocks.WithInsightsRefresh: at least one status is required")
+	}
+	b.updatesMu.Lock()
+	b.refreshStatuses = statuses
+	b.refreshNext = 0
+	b.updatesMu.Unlock()
+
+	b.m.DescribeInsightsRefreshFn = func(_ context.Context, in *eks.DescribeInsightsRefreshInput, _ ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error) {
+		if err := b.checkCluster(in.ClusterName); err != nil {
+			return nil, err
+		}
+		b.updatesMu.Lock()
+		defer b.updatesMu.Unlock()
+		status := b.refreshStatuses[min(b.refreshNext, len(b.refreshStatuses)-1)]
+		b.refreshNext++
+		out := &eks.DescribeInsightsRefreshOutput{Status: status}
+		if status == ekstypes.InsightsRefreshStatusFailed {
+			out.Message = aws.String("insights refresh failed")
+		}
+		return out, nil
 	}
 	return b
 }

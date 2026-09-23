@@ -36,6 +36,8 @@ type EKSAPI struct {
 	DescribeClusterVersionsFn func(ctx context.Context, in *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error)
 	ListInsightsFn            func(ctx context.Context, in *eks.ListInsightsInput, optFns ...func(*eks.Options)) (*eks.ListInsightsOutput, error)
 	DescribeInsightFn         func(ctx context.Context, in *eks.DescribeInsightInput, optFns ...func(*eks.Options)) (*eks.DescribeInsightOutput, error)
+	StartInsightsRefreshFn    func(ctx context.Context, in *eks.StartInsightsRefreshInput, optFns ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error)
+	DescribeInsightsRefreshFn func(ctx context.Context, in *eks.DescribeInsightsRefreshInput, optFns ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error)
 
 	// PageSize, when > 0, makes every list call (ListClusters, ListAddons,
 	// ListNodegroups, ListInsights, DescribeAddonVersions) return at most
@@ -65,6 +67,8 @@ type EKSAPI struct {
 		DescribeClusterVersions int
 		ListInsights            int
 		DescribeInsight         int
+		StartInsightsRefresh    int
+		DescribeInsightsRefresh int
 	}
 }
 
@@ -231,6 +235,22 @@ func (m *EKSAPI) DescribeInsight(ctx context.Context, in *eks.DescribeInsightInp
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeInsight (id=%s)", ptrStr(in.Id)))
 	}
 	return m.DescribeInsightFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) StartInsightsRefresh(ctx context.Context, in *eks.StartInsightsRefreshInput, optFns ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error) {
+	m.inc(&m.Calls.StartInsightsRefresh)
+	if m.StartInsightsRefreshFn == nil {
+		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to StartInsightsRefresh (cluster=%s)", ptrStr(in.ClusterName)))
+	}
+	return m.StartInsightsRefreshFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) DescribeInsightsRefresh(ctx context.Context, in *eks.DescribeInsightsRefreshInput, optFns ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error) {
+	m.inc(&m.Calls.DescribeInsightsRefresh)
+	if m.DescribeInsightsRefreshFn == nil {
+		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeInsightsRefresh (cluster=%s)", ptrStr(in.ClusterName)))
+	}
+	return m.DescribeInsightsRefreshFn(ctx, in, optFns...)
 }
 
 func (m *EKSAPI) inc(counter *int) {

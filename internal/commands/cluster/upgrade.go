@@ -37,6 +37,18 @@ into sequential hops. Each hop runs: readiness (cluster insights + kubelet
 version skew) → control plane → addons (dependency order, versions compatible
 with the hop target) → nodegroup rolls, with a health gate after every phase.
 
+Before each control-plane step, refresh asks EKS to re-evaluate Cluster
+Insights (up to 5m) and blocks on ERROR or UNKNOWN insights, or when EKS has
+not evaluated the hop version yet. EKS itself no longer enforces insights on a
+version update, so this is the only deprecated-API check; --skip-insights-check
+turns it off.
+
+Before each nodegroup roll, pre-flight health checks run, including
+PodDisruptionBudgets that would block the drain (they need Kubernetes access
+via kubeconfig; without it the PDB check is skipped with a warning). A drain
+blocker stops the roll unless --force; health warnings need --yes or a
+confirmation. --skip-health-check turns these checks off.
+
 The plan is re-derived from live cluster state on every run, so rerunning the
 same command after a failure (or Ctrl+C) resumes where it left off, and
 rerunning after success is a no-op.
@@ -60,6 +72,8 @@ Examples:
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Print the full ordered plan without mutating anything"},
 			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Skip per-phase confirmation prompts"},
 			&cli.BoolFlag{Name: "force", Usage: "Force nodegroup rolls when pods can't be drained due to PDBs"},
+			&cli.BoolFlag{Name: "skip-insights-check", Usage: "Upgrade without the EKS Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself"},
+			&cli.BoolFlag{Name: "skip-health-check", Usage: "Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended)"},
 			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to skip (repeatable)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
@@ -106,9 +120,11 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	planOpts := upgrade.PlanOptions{
-		SkipAddons:     cmd.StringSlice("skip"),
-		SkipNodegroups: cmd.StringSlice("skip-nodegroup"),
+		SkipAddons:        cmd.StringSlice("skip"),
+		SkipNodegroups:    cmd.StringSlice("skip-nodegroup"),
+		SkipInsightsCheck: cmd.Bool("skip-insights-check"),
 	}
+	healthGate := newNodegroupHealthGate(cmd, awsCfg, clusterName)
 
 	var plan *upgrade.Plan
 	err = runner.WithSpinner("cluster", "Upgrade plan computed!", func() error {
@@ -121,7 +137,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if runner.IsMachineFormat(format) {
-		return runUpgradeMachine(ctx, cmd, svc, plan, clusterName, format)
+		return runUpgradeMachine(ctx, cmd, svc, plan, clusterName, format, healthGate)
 	}
 	// Switches the UI into plain mode for -o plain.
 	if _, eerr := runner.EncodeStdout(format, plan); eerr != nil {
@@ -171,9 +187,10 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	opts := executeOptions(cmd)
+	opts := executeOptions(cmd, healthGate)
 	opts.Confirm = func(label string) bool { return promptPhase(ctx, out, label) }
 	opts.Progress = progress
+	healthGate.confirm, healthGate.progress = opts.Confirm, progress
 	opts.NodegroupObserver = ngObserver
 	report, err := svc.Execute(ctx, plan, opts)
 
@@ -187,14 +204,17 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-// executeOptions maps the command's flags to the engine options. The caller
-// adds the confirm, progress, and observer hooks.
-func executeOptions(cmd *cli.Command) upgrade.ExecuteOptions {
+// executeOptions maps the command's flags to the engine options, with gate
+// as the pre-roll health gate. The caller adds the confirm, progress, and
+// observer hooks.
+func executeOptions(cmd *cli.Command, gate *nodegroupHealthGate) upgrade.ExecuteOptions {
 	return upgrade.ExecuteOptions{
-		Yes:            cmd.Bool("yes"),
-		SkipAddons:     cmd.StringSlice("skip"),
-		SkipNodegroups: cmd.StringSlice("skip-nodegroup"),
-		Force:          cmd.Bool("force"),
+		Yes:               cmd.Bool("yes"),
+		SkipAddons:        cmd.StringSlice("skip"),
+		SkipNodegroups:    cmd.StringSlice("skip-nodegroup"),
+		Force:             cmd.Bool("force"),
+		SkipInsightsCheck: cmd.Bool("skip-insights-check"),
+		NodegroupGate:     gate.check,
 	}
 }
 
@@ -208,7 +228,7 @@ func resumeCommand(clusterName string, plan *upgrade.Plan) string {
 // {plan, report} once execution ends, successful or not. Progress goes to
 // stderr (or nowhere with --quiet); nothing prompts (runUpgrade requires
 // --yes) and there is no live roll panel. Exit codes match the human path.
-func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Service, plan *upgrade.Plan, clusterName, format string) error {
+func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Service, plan *upgrade.Plan, clusterName, format string, healthGate *nodegroupHealthGate) error {
 	if plan.Blocked() || cmd.Bool("dry-run") {
 		if _, err := runner.EncodeStdout(format, plan); err != nil {
 			return err
@@ -222,12 +242,13 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 	report := &upgrade.Report{}
 	var err error
 	if plan.PendingSteps() > 0 {
-		opts := executeOptions(cmd)
+		opts := executeOptions(cmd, healthGate)
 		opts.Progress = func(format string, args ...any) {
 			if !cmd.Bool("quiet") {
 				_, _ = fmt.Fprintf(ui.Stderr, "  "+format+"\n", args...)
 			}
 		}
+		healthGate.progress = opts.Progress
 		var r *upgrade.Report
 		r, err = svc.Execute(ctx, plan, opts)
 		if r != nil {
