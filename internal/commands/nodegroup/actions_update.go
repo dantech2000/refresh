@@ -172,7 +172,7 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	var verifyClient kubernetes.Interface
 	var preroll pendingPodSet
 	if verify {
-		verifyClient, _ = health.GetKubernetesClient()
+		verifyClient, _ = resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, false)
 		preroll = snapshotPendingPods(ctx, verifyClient)
 	}
 
@@ -204,7 +204,11 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	// The kube client is resolved quietly by default; --live makes the fallback
 	// reason explicit when the cluster can't be reached. (REF-126)
 	if len(updates) == 1 && !quiet {
-		if kube := resolveHealthKubeClient(ctx, flags.kubeconfig, flags.live); kube != nil {
+		kube := verifyClient
+		if kube == nil {
+			kube, _ = resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.live)
+		}
+		if kube != nil {
 			rollview.LiveRollForUpdate(ctx, kube, updates[0].NodegroupName, flags.timeout, flags.pollInterval)
 			monitor.Quiet, config.Quiet = true, true
 		}
@@ -278,12 +282,12 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	}
 	cwClient := cloudwatch.NewFromConfig(awsCfg)
 	asgClient := autoscaling.NewFromConfig(awsCfg)
-	k8sClient := resolveHealthKubeClient(ctx, flags.kubeconfig, humanOutput)
+	k8sClient, kubeTarget := resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, humanOutput)
 	checker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
 	// Attach metrics-server (best-effort) for live CPU+memory drain headroom; the
 	// utilization check skips cleanly if it isn't installed. (REF-142)
 	if k8sClient != nil {
-		if m, mErr := health.BuildMetricsClient(flags.kubeconfig); mErr == nil {
+		if m, mErr := health.BuildMetricsClientForCluster(flags.kubeconfig, kubeTarget); mErr == nil {
 			checker.SetNodeMetrics(m)
 		}
 	}

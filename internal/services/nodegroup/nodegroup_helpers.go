@@ -101,9 +101,11 @@ func (s *ServiceImpl) getInstanceDetails(ctx context.Context, instanceIDs []stri
 
 // analyzeWorkloads summarizes pods running on nodegroup nodes and PDB posture.
 // instanceIDs is used only as a fallback when nodes are not labeled with the
-// managed-nodegroup label.
-func (s *ServiceImpl) analyzeWorkloads(ctx context.Context, nodegroupName string, instanceIDs []string) (WorkloadInfo, bool) {
-	k8s, err := health.GetKubernetesClient()
+// managed-nodegroup label. The Kubernetes client must point at target; when no
+// kubeconfig context does, the analysis is skipped (ok=false) rather than
+// reading another cluster's nodes.
+func (s *ServiceImpl) analyzeWorkloads(ctx context.Context, target health.TargetCluster, nodegroupName string, instanceIDs []string) (WorkloadInfo, bool) {
+	k8s, _, err := health.BuildKubeClientForCluster("", target)
 	if err != nil || k8s == nil {
 		return WorkloadInfo{}, false
 	}

@@ -7,32 +7,27 @@ import (
 	"github.com/fatih/color"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/health"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 )
 
 // resolveHealthKubeClient builds the Kubernetes client for the pre-flight
-// health checks from an optional --kubeconfig path and verifies connectivity.
-// On any failure it emits an actionable diagnostic (naming the kubeconfig /
-// context it tried) and returns nil, so the kube-dependent checks degrade to
-// "skipped" rather than failing silently.
-func resolveHealthKubeClient(ctx context.Context, kubeconfig string, humanOutput bool) kubernetes.Interface {
-	client, diag, err := health.BuildKubeClient(kubeconfig)
-	if err != nil {
-		if humanOutput {
-			color.Yellow("Kubernetes checks unavailable: %v (%s)", err, diag)
-			color.Yellow("Workload/PDB checks will be skipped; node readiness falls back to an estimate.")
-		}
-		return nil
-	}
-	if probeErr := health.ProbeConnection(ctx, client); probeErr != nil {
-		if humanOutput {
-			color.Yellow("Kubernetes API unreachable via %s: %v", diag, probeErr)
-			color.Yellow("Workload/PDB checks will be skipped; node readiness falls back to an estimate.")
-		}
-		return nil
-	}
-	return client
+// health checks from an optional --kubeconfig path, verifies that it points at
+// clusterName (not just whatever kubeconfig context is current), and probes
+// connectivity. On any failure it emits an actionable diagnostic and returns
+// nil, so the kube-dependent checks degrade to "skipped" rather than running
+// against the wrong cluster or failing silently. The returned target lets the
+// caller build a metrics client against the same cluster.
+func resolveHealthKubeClient(ctx context.Context, api health.ClusterDescriber, region, clusterName, kubeconfig string, humanOutput bool) (kubernetes.Interface, health.TargetCluster) {
+	return runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
+		API:        api,
+		Cluster:    clusterName,
+		Region:     region,
+		Kubeconfig: kubeconfig,
+		Verbose:    humanOutput,
+		SkipNote:   "Workload/PDB checks will be skipped; node readiness falls back to an estimate.",
+	})
 }
 
 // warnInstanceTypeAvailability runs the EC2 instance-type-availability pre-flight

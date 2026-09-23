@@ -25,6 +25,13 @@ type KubeDiag struct {
 	Source  string // "--kubeconfig", "KUBECONFIG", "default", "in-cluster", "none"
 	Path    string
 	Context string
+	// Server is the API server of the context that was used (or, on a
+	// cluster mismatch, of the current context). Set only for target-checked
+	// resolution.
+	Server string
+	// SwitchedFrom is the kubeconfig current-context when a different context
+	// was selected because it points at the target cluster.
+	SwitchedFrom string
 }
 
 // String renders the resolution attempt for diagnostics.
@@ -46,9 +53,14 @@ func (d KubeDiag) String() string {
 // resolveRESTConfig resolves a *rest.Config and a diagnostic, preferring an
 // explicit kubeconfig path, then $KUBECONFIG, then ~/.kube/config, then
 // in-cluster config. An explicit --kubeconfig path that doesn't exist is a hard
-// error. Shared by BuildKubeClient and BuildMetricsClient so both clients
+// error. Shared by the kube and metrics client builders so both clients
 // resolve identically.
-func resolveRESTConfig(kubeconfigPath string) (*rest.Config, KubeDiag, error) {
+//
+// When target is non-nil, the config must point at that EKS cluster: the
+// current context is used if its server matches the cluster endpoint,
+// otherwise another context whose server matches is selected, otherwise a
+// *ClusterMismatchError is returned and no config is produced.
+func resolveRESTConfig(kubeconfigPath string, target *TargetCluster) (*rest.Config, KubeDiag, error) {
 	source := ""
 	path := strings.TrimSpace(kubeconfigPath)
 	switch {
@@ -67,6 +79,13 @@ func resolveRESTConfig(kubeconfigPath string) (*rest.Config, KubeDiag, error) {
 		switch {
 		case statErr == nil && !st.IsDir():
 			diag := KubeDiag{Source: source, Path: path}
+			if target != nil {
+				cfg, err := restConfigForTarget(path, &diag, *target)
+				if err != nil {
+					return nil, diag, err
+				}
+				return cfg, diag, nil
+			}
 			if raw, lerr := clientcmd.LoadFromFile(path); lerr == nil {
 				diag.Context = raw.CurrentContext
 			}
@@ -84,7 +103,13 @@ func resolveRESTConfig(kubeconfigPath string) (*rest.Config, KubeDiag, error) {
 	}
 
 	if icCfg, err := rest.InClusterConfig(); err == nil {
-		return icCfg, KubeDiag{Source: "in-cluster"}, nil
+		diag := KubeDiag{Source: "in-cluster", Server: icCfg.Host}
+		// In-cluster config points at the kubernetes service IP, so it can only
+		// be verified when that host happens to equal the EKS endpoint.
+		if target != nil && !SameClusterEndpoint(icCfg.Host, target.Endpoint) {
+			return nil, diag, &ClusterMismatchError{Target: *target, Server: icCfg.Host}
+		}
+		return icCfg, diag, nil
 	}
 	return nil, KubeDiag{Source: "none"}, fmt.Errorf("no kubeconfig found and in-cluster config not available")
 }
@@ -93,8 +118,24 @@ func resolveRESTConfig(kubeconfigPath string) (*rest.Config, KubeDiag, error) {
 // path, then $KUBECONFIG, then ~/.kube/config, then in-cluster config. It
 // returns a KubeDiag describing what was tried (for diagnostics) alongside the
 // client. An explicit --kubeconfig path that doesn't exist is a hard error.
+//
+// BuildKubeClient does not check which cluster the client points at. Code that
+// acts on a specific EKS cluster must use [BuildKubeClientForCluster].
 func BuildKubeClient(kubeconfigPath string) (kubernetes.Interface, KubeDiag, error) {
-	cfg, diag, err := resolveRESTConfig(kubeconfigPath)
+	return buildKubeClient(kubeconfigPath, nil)
+}
+
+// BuildKubeClientForCluster builds a Kubernetes client that is verified to
+// point at target (see [SameClusterEndpoint]). If the kubeconfig current
+// context points elsewhere, a context whose server matches the target endpoint
+// is selected instead; if none exists, a *ClusterMismatchError is returned and
+// no client is built.
+func BuildKubeClientForCluster(kubeconfigPath string, target TargetCluster) (kubernetes.Interface, KubeDiag, error) {
+	return buildKubeClient(kubeconfigPath, &target)
+}
+
+func buildKubeClient(kubeconfigPath string, target *TargetCluster) (kubernetes.Interface, KubeDiag, error) {
+	cfg, diag, err := resolveRESTConfig(kubeconfigPath, target)
 	if err != nil {
 		return nil, diag, err
 	}
@@ -110,7 +151,17 @@ func BuildKubeClient(kubeconfigPath string) (kubernetes.Interface, KubeDiag, err
 // is returned; metrics-server simply not being installed is NOT an error here —
 // that surfaces at List time, so the utilization check can skip gracefully.
 func BuildMetricsClient(kubeconfigPath string) (NodeMetricsLister, error) {
-	cfg, _, err := resolveRESTConfig(kubeconfigPath)
+	return buildMetricsClient(kubeconfigPath, nil)
+}
+
+// BuildMetricsClientForCluster is [BuildMetricsClient] with the same target
+// check and context selection as [BuildKubeClientForCluster].
+func BuildMetricsClientForCluster(kubeconfigPath string, target TargetCluster) (NodeMetricsLister, error) {
+	return buildMetricsClient(kubeconfigPath, &target)
+}
+
+func buildMetricsClient(kubeconfigPath string, target *TargetCluster) (NodeMetricsLister, error) {
+	cfg, _, err := resolveRESTConfig(kubeconfigPath, target)
 	if err != nil {
 		return nil, err
 	}
