@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
 	"github.com/dantech2000/refresh/internal/ui"
@@ -59,14 +60,29 @@ func rows(frame []string, width int) int {
 	}
 	n := 0
 	for _, line := range frame {
-		w := ui.VisibleWidth(line)
-		if w <= width {
+		if ui.VisibleWidth(line) <= width {
 			n++ // includes empty lines; exactly-full lines don't wrap early
 			continue
 		}
-		n += (w + width - 1) / width
+		n += wrappedRows(ui.StripANSI(line), width)
 	}
 	return n
+}
+
+// wrappedRows lays plain text out at width the way a terminal does: a
+// double-width rune that would straddle the last column wraps whole to the
+// next row, leaving that column blank.
+func wrappedRows(s string, width int) int {
+	rowCount, col := 1, 0
+	for _, r := range s {
+		w := runewidth.RuneWidth(r)
+		if col > 0 && col+w > width {
+			rowCount++
+			col = 0
+		}
+		col += w
+	}
+	return rowCount
 }
 
 // InPlace reports whether frames repaint in place (true) or are appended as

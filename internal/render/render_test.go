@@ -209,8 +209,12 @@ func TestLiveRows(t *testing.T) {
 		{0, 3},  // unknown width → one row per line
 		{-1, 3}, // unknown width → one row per line
 		{80, 3},
-		{4, 5}, // 6 cells → 2, "" → 1, 6 cells → 2
-		{1, 13},
+		{4, 5},  // 6 cells → 2, "" → 1, 6 cells → 2
+		{1, 10}, // 6 + 1 + 3 (one wide rune per row)
+		{5, 5},  // 2 + 1 + 2
+		// Width 3: a wide rune can't use the last column, so 日本語 takes 3
+		// rows. ceil(6/3) = 2 would under-count.
+		{3, 6}, // 2 + 1 + 3
 	}
 	for _, c := range cases {
 		if got := rows(frame, c.width); got != c.want {
