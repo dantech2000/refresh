@@ -195,7 +195,7 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 	}
 	cluster := desc.Cluster
 	cs.Version = aws.ToString(cluster.Version)
-	cs.Support = s.resolveSupport(ctx, cs.Version)
+	cs.Support = applyUpgradePolicy(s.resolveSupport(ctx, cs.Version), cluster.UpgradePolicy)
 	if cluster.Health != nil {
 		cs.HealthIssues = len(cluster.Health.Issues)
 	}

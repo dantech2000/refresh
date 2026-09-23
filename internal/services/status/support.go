@@ -2,10 +2,13 @@ package status
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/services/common"
 )
@@ -16,20 +19,59 @@ import (
 // worth upgrading.
 const extendedSupportPremiumUSDPerHour = 0.50
 
-// fallbackCalendar maps a Kubernetes minor version to its published EKS support
-// window, used when DescribeClusterVersions is unavailable (missing permission,
-// older API). Dates are AWS's published end-of-support calendar; rows derived
-// from this table are flagged Fallback.
-var fallbackCalendar = map[string]struct {
+// calendarEntry is one Kubernetes minor's published EKS support window.
+type calendarEntry struct {
+	version     string
 	standardEnd time.Time
 	extendedEnd time.Time
-}{
-	"1.28": {date(2024, 11, 26), date(2025, 11, 26)},
-	"1.29": {date(2025, 3, 23), date(2026, 3, 23)},
-	"1.30": {date(2025, 7, 23), date(2026, 7, 23)},
-	"1.31": {date(2025, 11, 26), date(2026, 11, 26)},
-	"1.32": {date(2026, 3, 23), date(2027, 3, 23)},
-	"1.33": {date(2026, 7, 23), date(2027, 7, 23)},
+}
+
+// fallbackCalendar is the published EKS support window per Kubernetes minor,
+// oldest first, used when DescribeClusterVersions is unavailable (missing
+// permission, older API). Rows derived from this table are flagged Fallback.
+// Source: the release calendar at
+// https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html
+// (1.28-1.30 have since left that page; their dates are from its earlier
+// revisions). Keep it contiguous: a test checks no minor is skipped.
+var fallbackCalendar = []calendarEntry{
+	{"1.28", date(2024, 11, 26), date(2025, 11, 26)},
+	{"1.29", date(2025, 3, 23), date(2026, 3, 23)},
+	{"1.30", date(2025, 7, 23), date(2026, 7, 23)},
+	{"1.31", date(2025, 11, 26), date(2026, 11, 26)},
+	{"1.32", date(2026, 3, 23), date(2027, 3, 23)},
+	{"1.33", date(2026, 7, 29), date(2027, 7, 29)},
+	{"1.34", date(2026, 12, 2), date(2027, 12, 2)},
+	{"1.35", date(2027, 3, 27), date(2028, 3, 27)},
+	{"1.36", date(2027, 8, 2), date(2028, 8, 2)},
+}
+
+// fallbackPosture resolves a version against fallbackCalendar. A version in
+// the table gets its dates; one older than the oldest row is past the end of
+// extended support, so it is Unsupported; anything else (newer than the
+// table, or unparseable) is Unknown.
+func fallbackPosture(version string, now time.Time) SupportPosture {
+	for _, e := range fallbackCalendar {
+		if e.version == version {
+			return classifySupport(e.standardEnd, e.extendedEnd, now, true)
+		}
+	}
+	maj, minor, ok := parseMinor(version)
+	oldMaj, oldMinor, _ := parseMinor(fallbackCalendar[0].version)
+	if ok && (maj < oldMaj || (maj == oldMaj && minor < oldMinor)) {
+		return SupportPosture{Tier: SupportUnsupported, Fallback: true}
+	}
+	return SupportPosture{Tier: SupportUnknown}
+}
+
+// parseMinor splits a "major.minor" Kubernetes version.
+func parseMinor(version string) (maj, minor int, ok bool) {
+	a, b, found := strings.Cut(version, ".")
+	if !found {
+		return 0, 0, false
+	}
+	maj, err1 := strconv.Atoi(a)
+	minor, err2 := strconv.Atoi(b)
+	return maj, minor, err1 == nil && err2 == nil
 }
 
 func date(y int, m time.Month, d int) time.Time {
@@ -52,16 +94,24 @@ func resolveSupportPosture(ctx context.Context, api supportVersionsAPI, version 
 		return SupportPosture{Tier: SupportUnknown}
 	}
 	std, ext, ok := supportDatesFromAPI(ctx, api, version)
-	fallback := false
 	if !ok {
-		cal, found := fallbackCalendar[version]
-		if !found {
-			return SupportPosture{Tier: SupportUnknown}
-		}
-		std, ext = cal.standardEnd, cal.extendedEnd
-		fallback = true
+		return fallbackPosture(version, now)
 	}
-	return classifySupport(std, ext, now, fallback)
+	return classifySupport(std, ext, now, false)
+}
+
+// applyUpgradePolicy adjusts a version's support posture for one cluster's
+// upgrade policy. With SupportType STANDARD the cluster never enters extended
+// support: EKS auto-upgrades it at the end of standard support and never
+// bills the extended-support premium.
+// https://docs.aws.amazon.com/eks/latest/userguide/disable-extended-support.html
+func applyUpgradePolicy(p SupportPosture, policy *ekstypes.UpgradePolicyResponse) SupportPosture {
+	if policy == nil || policy.SupportType != ekstypes.SupportTypeStandard {
+		return p
+	}
+	p.AutoUpgradeAtStandardEnd = true
+	p.ExtraCostUSDPerHour = 0
+	return p
 }
 
 // resolveSupport returns the support posture for a Kubernetes version, caching

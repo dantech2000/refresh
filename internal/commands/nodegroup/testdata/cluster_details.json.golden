@@ -12,6 +12,7 @@
     "extendedUntil": "2026-01-02T03:04:05Z",
     "daysRemaining": 5,
     "extraCostUsdPerHour": 1.5,
+    "autoUpgradeAtStandardEnd": true,
     "fallback": true
   },
   "health": {

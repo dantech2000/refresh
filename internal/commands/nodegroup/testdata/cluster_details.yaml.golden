@@ -57,6 +57,7 @@ security:
   serviceRoleArn: s-servicerolearn
 status: s-status
 support:
+  autoUpgradeAtStandardEnd: true
   daysRemaining: 5
   extendedUntil: "2026-01-02T03:04:05Z"
   extraCostUsdPerHour: 1.5
