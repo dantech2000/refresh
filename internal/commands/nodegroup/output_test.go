@@ -108,8 +108,17 @@ func TestPrintScaleDownPDBImpact_AllHealthy(t *testing.T) {
 		{Namespace: "app", Name: "api", DisruptionsAllowed: 1},
 	}
 	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
-	if !strings.Contains(out, "none should block") {
+	if !strings.Contains(out, "none currently block a drain") {
 		t.Errorf("all-healthy PDBs should report nothing blocks, got: %q", out)
+	}
+}
+
+func TestPrintScaleDownPDBImpact_EmptyPDBNotAtRisk(t *testing.T) {
+	// A PDB matching no pods reports 0 disruptions allowed but blocks nothing.
+	pdbs := []health.PDBInfo{{Namespace: "app", Name: "orphan", DisruptionsAllowed: 0, ExpectedPods: 0}}
+	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
+	if !strings.Contains(out, "none currently block a drain") {
+		t.Errorf("empty PDB should not be flagged, got: %q", out)
 	}
 }
 

@@ -146,7 +146,7 @@ func printScaleDownPDBImpact(pdbs []health.PDBInfo) {
 		}
 	}
 	if len(atRisk) == 0 {
-		color.Green("\nPod Disruption Budgets: all %d allow at least one disruption — none should block this scale-down.", len(pdbs))
+		color.Green("\nPod Disruption Budgets: %d found; none currently block a drain.", len(pdbs))
 		return
 	}
 	color.Yellow("\nPod Disruption Budgets at risk (%d): these allow 0 disruptions now and may block node drain:", len(atRisk))

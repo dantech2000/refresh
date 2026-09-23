@@ -111,7 +111,7 @@ func updateOneClusterInFleet(ctx context.Context, tgt clusterTarget, nodegroupPa
 	res := clusterUpdateResult{Cluster: tgt.cluster, Region: tgt.region}
 	eksClient := eks.NewFromConfig(tgt.awsCfg)
 
-	done, err := preflightHealthCheck(ctx, tgt.awsCfg, eksClient, tgt.cluster, flags)
+	done, err := preflightHealthCheck(ctx, tgt.awsCfg, eksClient, tgt.cluster, nodegroupPattern, flags)
 	if err != nil {
 		// Block (or, in unattended mode, a warn-level hard stop).
 		res.HealthBlocked = true

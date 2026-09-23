@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	fakek8s "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -350,8 +352,8 @@ func TestCheckPodDisruptionBudgets_ZeroDisruptionsAllowedWarns(t *testing.T) {
 	if result.IsBlocking {
 		t.Error("drain blocker should be WARN-level, not blocking by default")
 	}
-	if !strings.Contains(result.Message, "stall on eviction") {
-		t.Errorf("message should explain the roll will stall, got %q", result.Message)
+	if !strings.Contains(result.Message, "may block a drain") {
+		t.Errorf("unscoped message should say the PDB may block a drain, got %q", result.Message)
 	}
 	if !hasDetail(result.Details, "my-app/frontend-pdb") {
 		t.Errorf("details should name the blocking PDB, got %v", result.Details)
@@ -417,6 +419,85 @@ func TestCheckPodDisruptionBudgets_HealthyPDBPasses(t *testing.T) {
 	result := hc.CheckPodDisruptionBudgets(context.Background())
 	if result.Status != StatusPass || result.Score != 100 {
 		t.Errorf("healthy PDB: status = %s score = %d, want PASS/100", result.Status, result.Score)
+	}
+}
+
+func ngNode(name, nodegroup string) *corev1.Node {
+	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:   name,
+		Labels: map[string]string{nodeLabelNodegroup: nodegroup},
+	}}
+}
+
+func appPod(namespace, name, app, node string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, Labels: map[string]string{"app": app}},
+		Spec:       corev1.PodSpec{NodeName: node},
+	}
+}
+
+func TestCheckPodDisruptionBudgets_ScopedToTargetNodegroup(t *testing.T) {
+	// web's pods run on ng-a (the roll target); batch's pods run only on ng-b
+	// and Fargate. Only web-pdb is a blocker for rolling ng-a.
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		ngNode("node-a1", "ng-a"),
+		ngNode("node-b1", "ng-b"),
+		appPod("my-app", "web-1", "web", "node-a1"),
+		appPod("my-app", "batch-1", "batch", "node-b1"),
+		appPod("my-app", "batch-2", "batch", "fargate-ip-10-0-0-1"),
+		pdbAllowing("my-app", "web-pdb", "web", 0, 1),
+		pdbAllowing("my-app", "batch-pdb", "batch", 0, 2),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusWarn {
+		t.Fatalf("scoped blocker: status = %s, want WARN (msg: %s)", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "1 PDB(s)") || !strings.Contains(result.Message, "stall on eviction") {
+		t.Errorf("scoped message should count 1 PDB and say the roll will stall, got %q", result.Message)
+	}
+	if !hasDetail(result.Details, "my-app/web-pdb") {
+		t.Errorf("details should name web-pdb, got %v", result.Details)
+	}
+	if hasDetail(result.Details, "batch-pdb") {
+		t.Errorf("batch-pdb has no pods on ng-a and must not be reported, got %v", result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_ScopedNoBlockerOnTarget(t *testing.T) {
+	// The only zero-disruption PDB covers pods on ng-b; rolling ng-a is clear.
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		deploy("my-app", "batch"),
+		ngNode("node-a1", "ng-a"),
+		ngNode("node-b1", "ng-b"),
+		appPod("my-app", "batch-1", "batch", "node-b1"),
+		pdbAllowing("my-app", "batch-pdb", "batch", 0, 1),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusPass {
+		t.Errorf("no blocker on target: status = %s, want PASS (msg: %s, details: %v)", result.Status, result.Message, result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_NamespaceListFailureKeepsBlockers(t *testing.T) {
+	client := fakek8s.NewSimpleClientset(
+		pdbAllowing("my-app", "web-pdb", "web", 0, 1),
+	)
+	client.PrependReactor("list", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("forbidden")
+	})
+	hc := NewChecker(nil, client, nil, nil)
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusWarn || result.Score > 50 {
+		t.Errorf("namespace list failure: status = %s score = %d, want WARN <= 50", result.Status, result.Score)
+	}
+	if !hasDetail(result.Details, "my-app/web-pdb") {
+		t.Errorf("blocker details should survive a namespace list failure, got %v", result.Details)
 	}
 }
 

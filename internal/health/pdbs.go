@@ -3,7 +3,9 @@ package health
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -35,6 +37,12 @@ var systemNamespaces = map[string]bool{
 	"kube-public":     true,
 	"kube-node-lease": true,
 }
+
+// SetTargetNodegroups scopes the PDB drain-blocker check to the managed
+// nodegroups about to roll: a zero-disruption PDB is only reported if one of
+// its pods runs on a node of these nodegroups. Without it the check is
+// cluster-wide and reports every such PDB as one that may block a drain.
+func (hc *HealthChecker) SetTargetNodegroups(names []string) { hc.targetNodegroups = names }
 
 func pdbInfoFrom(pdb policyv1.PodDisruptionBudget) PDBInfo {
 	return PDBInfo{
@@ -96,23 +104,14 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 		return result
 	}
 
-	// A PDB that currently allows zero disruptions blocks every eviction of
-	// the pods it covers, so a node roll stalls on drain and EKS eventually
-	// fails the update with PodEvictionFailure. System namespaces are included
-	// on purpose: a stuck kube-system PDB blocks a drain just the same.
-	var drainBlockers []string
-	for _, pdb := range pdbs.Items {
-		if info := pdbInfoFrom(pdb); info.AtRisk() {
-			drainBlockers = append(drainBlockers, fmt.Sprintf("%s/%s (%d/%d pods healthy, 0 disruptions allowed)",
-				info.Namespace, info.Name, info.CurrentHealthy, info.ExpectedPods))
-		}
-	}
+	drainBlockers, scoped := hc.findDrainBlockers(ctx, pdbs.Items)
 
 	namespaces, err := hc.k8sClient.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		result.Status = StatusWarn
 		result.Score = 60
 		result.Message = fmt.Sprintf("Failed to list namespaces: %v", err)
+		applyDrainBlockers(&result, drainBlockers, scoped)
 		return result
 	}
 
@@ -201,18 +200,96 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 		}
 	}
 
-	// A drain blocker outranks coverage: full coverage is no comfort if a PDB
-	// will stop the roll. It stays WARN (non-blocking) so existing pipelines
-	// are not hard-stopped; --require-healthy escalates WARN to a hard stop.
-	if len(drainBlockers) > 0 {
-		result.Status = StatusWarn
-		result.Score = min(result.Score, 50)
-		result.Message = fmt.Sprintf("%d PDB(s) allow 0 disruptions; node roll will stall on eviction", len(drainBlockers))
-		for _, b := range drainBlockers {
-			result.Details = append(result.Details, "Drain blocker: "+b)
+	applyDrainBlockers(&result, drainBlockers, scoped)
+	return result
+}
+
+// findDrainBlockers returns the PDBs that allow zero disruptions while
+// covering pods. Such a PDB blocks every eviction of its pods, so a node roll
+// stalls on drain and EKS eventually fails the update with PodEvictionFailure.
+// System namespaces are included on purpose: a stuck kube-system PDB blocks a
+// drain just the same.
+//
+// When target nodegroups are set (SetTargetNodegroups), a PDB only counts if at
+// least one pod it covers runs on a node of those nodegroups, and scoped is
+// true. Otherwise (no targets, or the node list failed) every at-risk PDB is
+// reported and scoped is false.
+func (hc *HealthChecker) findDrainBlockers(ctx context.Context, pdbs []policyv1.PodDisruptionBudget) (blockers []string, scoped bool) {
+	var targetNodes map[string]bool
+	if len(hc.targetNodegroups) > 0 {
+		nodes, err := hc.k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("%s in (%s)", nodeLabelNodegroup, strings.Join(hc.targetNodegroups, ",")),
+		})
+		if err == nil {
+			scoped = true
+			targetNodes = make(map[string]bool, len(nodes.Items))
+			for _, n := range nodes.Items {
+				targetNodes[n.Name] = true
+			}
 		}
-		result.Details = append(result.Details, "Scale up the workload or relax minAvailable/maxUnavailable before rolling nodes")
 	}
 
-	return result
+	podsByNamespace := make(map[string][]corev1.Pod)
+	for _, pdb := range pdbs {
+		info := pdbInfoFrom(pdb)
+		if !info.AtRisk() {
+			continue
+		}
+		if scoped && !hc.pdbCoversTargetNode(ctx, pdb, targetNodes, podsByNamespace) {
+			continue
+		}
+		blockers = append(blockers, fmt.Sprintf("%s/%s (%d/%d pods healthy, 0 disruptions allowed)",
+			info.Namespace, info.Name, info.CurrentHealthy, info.ExpectedPods))
+	}
+	return blockers, scoped
+}
+
+// pdbCoversTargetNode reports whether any pod selected by pdb runs on one of
+// targetNodes. Pods are listed once per namespace and cached in podsByNamespace.
+// If the pods can't be listed it returns true, so a blocker is never hidden by
+// a transient API error.
+func (hc *HealthChecker) pdbCoversTargetNode(ctx context.Context, pdb policyv1.PodDisruptionBudget, targetNodes map[string]bool, podsByNamespace map[string][]corev1.Pod) bool {
+	if len(targetNodes) == 0 {
+		return false
+	}
+	sel, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
+	if err != nil {
+		return true
+	}
+	pods, ok := podsByNamespace[pdb.Namespace]
+	if !ok {
+		list, err := hc.k8sClient.CoreV1().Pods(pdb.Namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return true
+		}
+		pods = list.Items
+		podsByNamespace[pdb.Namespace] = pods
+	}
+	for _, p := range pods {
+		if targetNodes[p.Spec.NodeName] && sel.Matches(labels.Set(p.Labels)) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyDrainBlockers folds drain blockers into result. A blocker outranks
+// coverage: full coverage is no comfort if a PDB will stop the roll. It stays
+// WARN (non-blocking) so existing pipelines are not hard-stopped;
+// --require-healthy escalates WARN to a hard stop.
+func applyDrainBlockers(result *HealthResult, blockers []string, scoped bool) {
+	if len(blockers) == 0 {
+		return
+	}
+	result.Status = StatusWarn
+	result.Score = min(result.Score, 50)
+	if scoped {
+		result.Message = fmt.Sprintf("%d PDB(s) allow 0 disruptions on the target nodegroup(s); node roll will stall on eviction", len(blockers))
+	} else {
+		result.Message = fmt.Sprintf("%d PDB(s) allow 0 disruptions and may block a drain", len(blockers))
+	}
+	for _, b := range blockers {
+		result.Details = append(result.Details, "Drain blocker: "+b)
+	}
+	result.Details = append(result.Details, "Scale up the workload or relax minAvailable/maxUnavailable before rolling nodes")
 }

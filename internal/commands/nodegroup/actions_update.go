@@ -104,7 +104,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	eksClient := eks.NewFromConfig(awsCfg)
 	flags := readUpdateAMIFlags(cmd)
 
-	done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, flags)
+	done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, nodegroupPattern, flags)
 	if err != nil || done {
 		return err
 	}
@@ -257,7 +257,7 @@ func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
 
 // preflightHealthCheck runs the pre-update health checks. Returns done=true if
 // the caller should stop here (block decision, user cancelled, or --health-only).
-func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, flags updateAMIFlags) (done bool, err error) {
+func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName, nodegroupPattern string, flags updateAMIFlags) (done bool, err error) {
 	// Only --skip-health-check and --dry-run disable the health gate. --force is
 	// deliberately NOT here: it only sets UpdateNodegroupVersion.Force (forcing
 	// PDB-drain eviction) and must not silently bypass the pre-flight checks.
@@ -290,6 +290,12 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	// EC2 vCPU quota headroom — a roll surges new nodes against the account
 	// quota; the check skips cleanly if it can't read the limit/usage. (REF-144)
 	checker.SetServiceQuotas(servicequotas.NewFromConfig(awsCfg))
+	// Scope the PDB drain-blocker check to the nodegroups this run may roll, so
+	// a PDB whose pods live only on other nodegroups or Fargate doesn't warn.
+	// Best-effort: if the list fails the check stays cluster-wide.
+	if k8sClient != nil {
+		checker.SetTargetNodegroups(healthTargetNodegroups(ctx, eksClient, clusterName, nodegroupPattern))
+	}
 
 	spinner := ui.NewFunSpinnerForCategory("health")
 	if humanOutput {
@@ -387,15 +393,32 @@ func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (do
 	return false, nil
 }
 
-// selectNodegroupsForUpdate lists nodegroups matching pattern and confirms the
-// selection interactively when ambiguous.
-func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clusterName, pattern string, yes bool) ([]string, error) {
-	names, err := awsinternal.ListAllPages(ctx, "listing nodegroups",
+// listNodegroupNames returns every managed nodegroup name in the cluster.
+func listNodegroupNames(ctx context.Context, eksClient *eks.Client, clusterName string) ([]string, error) {
+	return awsinternal.ListAllPages(ctx, "listing nodegroups",
 		func(rc context.Context, token *string) (*eks.ListNodegroupsOutput, error) {
 			return eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{ClusterName: aws.String(clusterName), NextToken: token})
 		},
 		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
 	)
+}
+
+// healthTargetNodegroups returns the nodegroups matching pattern, before any
+// interactive narrowing, for scoping the pre-flight PDB check. It is a superset
+// of the final selection, so no real blocker is hidden. Returns nil on error,
+// which leaves the check cluster-wide.
+func healthTargetNodegroups(ctx context.Context, eksClient *eks.Client, clusterName, pattern string) []string {
+	names, err := listNodegroupNames(ctx, eksClient, clusterName)
+	if err != nil {
+		return nil
+	}
+	return awsinternal.MatchingNodegroups(names, pattern)
+}
+
+// selectNodegroupsForUpdate lists nodegroups matching pattern and confirms the
+// selection interactively when ambiguous.
+func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clusterName, pattern string, yes bool) ([]string, error) {
+	names, err := listNodegroupNames(ctx, eksClient, clusterName)
 	if err != nil {
 		color.Red("Failed to list nodegroups: %v", err)
 		return nil, err
