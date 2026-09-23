@@ -155,6 +155,23 @@ func TestLiveAppendNonTTY(t *testing.T) {
 	}
 }
 
+// Off a TTY, a frame identical to the last appended one is skipped, so a
+// quiet stretch of a long roll doesn't flood logs with repeats.
+func TestLiveAppendSkipsUnchangedFrames(t *testing.T) {
+	var buf bytes.Buffer
+	lr := New(ColorNone, true).NewLiveRegion(&buf)
+	if lr.InPlace() {
+		t.Fatal("a bytes.Buffer must not repaint in place")
+	}
+	lr.Draw([]string{"a"})
+	lr.Draw([]string{"a"})
+	lr.Draw([]string{"b"})
+	lr.Draw([]string{"a"})
+	if want := "a\n\nb\n\na\n"; buf.String() != want {
+		t.Fatalf("append = %q, want %q", buf.String(), want)
+	}
+}
+
 func TestLiveRedrawTTY(t *testing.T) {
 	var buf bytes.Buffer
 	lr := &LiveRegion{w: &buf, tty: true} // force the in-place path
