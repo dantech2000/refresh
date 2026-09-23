@@ -131,28 +131,37 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	}
 	result.Score = scorePercentage
 
+	result.Status, result.Message = nodeHealthVerdict(readyNodes, totalNodes, haveRealCounts, problemNodes, inProgress)
+	return result
+}
+
+// nodeHealthVerdict returns the Node Health status and message. measured is
+// true when the counts come from the Kubernetes API. An estimate from
+// nodegroup desired capacity is too coarse for the minReadyNodePercent rule,
+// so it only fails when no node is ready.
+func nodeHealthVerdict(readyNodes, totalNodes int, measured bool, problemNodes, inProgress []string) (HealthStatus, string) {
 	estimatedSuffix := ""
-	if estimated {
+	if !measured {
 		estimatedSuffix = " (estimated)"
 	}
 
 	switch {
 	case len(problemNodes) == 0 && readyNodes == 0 && len(inProgress) > 0:
 		// Everything is mid-scale and nothing is wrong — warn, don't fail.
-		result.Status = StatusWarn
-		result.Message = fmt.Sprintf("Nodegroups still scaling: %v", inProgress)
+		return StatusWarn, fmt.Sprintf("Nodegroups still scaling: %v", inProgress)
 	case len(problemNodes) == 0:
-		result.Status = StatusPass
-		result.Message = fmt.Sprintf("%d/%d nodes ready%s", readyNodes, totalNodes, estimatedSuffix)
-	case readyNodes > 0:
-		result.Status = StatusWarn
-		result.Message = fmt.Sprintf("%d/%d nodes ready%s, issues: %v", readyNodes, totalNodes, estimatedSuffix, problemNodes)
+		return StatusPass, fmt.Sprintf("%d/%d nodes ready%s", readyNodes, totalNodes, estimatedSuffix)
+	case readyNodes == 0:
+		return StatusFail, fmt.Sprintf("No ready nodes, issues: %v", problemNodes)
+	case !measured:
+		return StatusWarn, fmt.Sprintf("%d/%d nodes ready%s, issues: %v", readyNodes, totalNodes, estimatedSuffix, problemNodes)
+	case readyNodes*100 < totalNodes*minReadyNodePercent:
+		return StatusFail, fmt.Sprintf("%d/%d nodes ready, below the %d%% ready minimum; issues: %v",
+			readyNodes, totalNodes, minReadyNodePercent, problemNodes)
 	default:
-		result.Status = StatusFail
-		result.Message = fmt.Sprintf("No ready nodes, issues: %v", problemNodes)
+		return StatusWarn, fmt.Sprintf("%d/%d nodes ready (fails below %d%% ready), issues: %v",
+			readyNodes, totalNodes, minReadyNodePercent, problemNodes)
 	}
-
-	return result
 }
 
 // listNodegroupNames lists every managed nodegroup in the cluster, with the
@@ -186,6 +195,12 @@ func (hc *HealthChecker) describeNodegroup(ctx context.Context, clusterName, ngN
 	}
 	return out.Nodegroup, nil
 }
+
+// minReadyNodePercent is the share of nodes that must be Ready, per the
+// Kubernetes API, for Node Health to pass or warn. Below it the check fails
+// and blocks: too little capacity is left to take the pods of the nodes a roll
+// drains. The estimate from nodegroup desired capacity never applies it.
+const minReadyNodePercent = 50
 
 // maxEstimatedNodeHealthScore caps the Node Health score when it is derived
 // from the nodegroup DesiredSize proxy rather than real Kubernetes node counts,

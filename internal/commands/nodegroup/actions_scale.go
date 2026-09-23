@@ -116,7 +116,7 @@ func warnForcedScaleDown(w io.Writer, clusterName, nodegroupName string, check *
 	if check == nil || !check.Refused() {
 		return
 	}
-	_, _ = warn.Fprintf(w, "Warning: --force: scaling %s/%s down from %d to %d despite %d PodDisruptionBudget(s) that allow 0 disruptions:\n",
+	_, _ = warn.Fprintf(w, "Warning: --force: scaling %s/%s down from %d to %d despite %d PodDisruptionBudget(s) it could violate:\n",
 		clusterName, nodegroupName, check.CurrentDesired, check.RequestedDesired, len(check.Blockers))
 	for _, p := range check.Blockers {
 		_, _ = fmt.Fprintf(w, "  - %s\n", p.DrainBlockerSummary())
@@ -153,7 +153,7 @@ func printScaleDryRunPDBGate(w io.Writer, clusterName, nodegroupName string, che
 		if !check.Scoped {
 			scope = "in the cluster (could not scope to this nodegroup's nodes)"
 		}
-		_, _ = c.Fprintf(w, "\nPDB gate: %s. %d PodDisruptionBudget(s) %s allow 0 disruptions:\n", verdict, len(check.Blockers), scope)
+		_, _ = c.Fprintf(w, "\nPDB gate: %s. %d PodDisruptionBudget(s) %s could lose more pods than they allow:\n", verdict, len(check.Blockers), scope)
 		for _, p := range check.Blockers {
 			_, _ = fmt.Fprintf(w, "  - %s\n", p.DrainBlockerSummary())
 		}

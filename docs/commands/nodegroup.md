@@ -111,7 +111,7 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 | `--min` | Minimum node count |
 | `--max` | Maximum node count |
 | `--health-check` | Validate cluster health before and after scaling |
-| `--check-pdbs` | Refuse a scale-down when a Pod Disruption Budget that allows 0 disruptions covers pods on the nodegroup's nodes |
+| `--check-pdbs` | Refuse a scale-down that could remove more of a Pod Disruption Budget's pods than it allows |
 | `--force` | With `--check-pdbs`, scale down anyway and print the blocking PDBs as a warning |
 | `--wait` | Wait for the scaling operation to complete |
 | `--op-timeout` | Scaling operation timeout for `--wait` (default `5m`; added on top of `--timeout`; `0` = no limit) |
@@ -122,9 +122,10 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 !!! warning "A scale-down does not honor PDBs"
     When a scaling change lowers the desired size, EKS terminates the removed
     nodes without waiting for Pod Disruption Budgets. With `--check-pdbs`,
-    `refresh` refuses the scale-down (exit 1, before any change) if a PDB that
-    allows 0 disruptions covers pods on the nodegroup's nodes, and lists those
-    PDBs. Pass `--force` to scale down anyway. Combine `--dry-run --check-pdbs`
+    `refresh` refuses the scale-down (exit 1, before any change) if it could
+    remove more of a PDB's pods than the PDB allows, and lists those PDBs. The
+    Auto Scaling group picks which nodes go, so the gate assumes the removed
+    nodes are the ones that hold the most of the PDB's pods. Pass `--force` to scale down anyway. Combine `--dry-run --check-pdbs`
     to see the verdict and the blocking PDBs before you touch anything.
 
 ### Examples
