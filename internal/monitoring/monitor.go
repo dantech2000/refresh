@@ -1,23 +1,25 @@
 // Package monitoring provides update progress tracking for EKS nodegroup operations.
-// It implements concurrent monitoring with proper channel patterns and graceful shutdown.
+// It polls update status concurrently and stops on completion, timeout, or
+// context cancellation.
 package monitoring
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/smithy-go"
 	"github.com/fatih/color"
 
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/services/common"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
@@ -25,6 +27,17 @@ import (
 // monitoring (Ctrl+C / SIGTERM). The EKS updates keep running in AWS; callers
 // must not treat the roll as finished (e.g. skip post-roll verification).
 var ErrCancelled = errors.New("interrupted; the EKS update continues in the background")
+
+// ErrUnmonitored is wrapped by the error MonitorUpdates returns when status
+// polling failed permanently for one or more updates (e.g. AccessDenied or
+// ResourceNotFound on DescribeUpdate). Their EKS outcome is unknown, so
+// callers must not treat the roll as verified.
+var ErrUnmonitored = errors.New("could not monitor nodegroup update(s)")
+
+// UpdateDescriber is the EKS call the monitor polls. *eks.Client satisfies it.
+type UpdateDescriber interface {
+	DescribeUpdate(ctx context.Context, params *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error)
+}
 
 // statusResult holds the result of a status check for a single update.
 type statusResult struct {
@@ -34,57 +47,50 @@ type statusResult struct {
 	err    error
 }
 
-// MonitorUpdates monitors the progress of multiple nodegroup updates.
-// It uses channels for concurrent status checks and proper signal handling.
-func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
+// MonitorUpdates monitors the progress of multiple nodegroup updates, polling
+// their status concurrently every config.PollInterval.
+//
+// Cancellation comes only from ctx: main cancels the root context on Ctrl+C /
+// SIGTERM (and a second signal is fatal), so the monitor installs no signal
+// handler of its own. A cancelled ctx returns ErrCancelled; the monitor
+// timeout returns ErrMonitorTimeout.
+func MonitorUpdates(ctx context.Context, eksClient UpdateDescriber, monitor *refreshTypes.ProgressMonitor, cfg refreshTypes.MonitorConfig) error {
 	// Nothing to monitor: return immediately instead of polling an empty list
 	// until the timeout fires.
 	if len(monitor.Updates) == 0 {
 		return nil
 	}
-
-	// Set up signal handling for graceful cancellation
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigChan)
+	// time.NewTicker panics on a non-positive interval. The CLI rejects one,
+	// but the roll has already started here, so fall back to the default.
+	if cfg.PollInterval <= 0 {
+		cfg.PollInterval = appconfig.DefaultPollInterval
+	}
 
 	// A timeout <= 0 means "no monitor timeout": wait until the updates finish
 	// or the user cancels (matching the live roll view's handling of 0).
-	monitorCtx, cancel := monitorContext(ctx, config.Timeout)
+	monitorCtx, cancel := monitorContext(ctx, cfg.Timeout)
 	defer cancel()
 
-	if !config.Quiet {
-		printMonitoringHeader(monitor, config)
+	if !cfg.Quiet {
+		printMonitoringHeader(monitor, cfg)
 	}
 
-	ticker := time.NewTicker(config.PollInterval)
+	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-sigChan:
-			return handleUserCancellation(monitor, config)
-
 		case <-monitorCtx.Done():
-			// The parent context is cancelled by main on Ctrl+C / SIGTERM, which
-			// races with sigChan above — treat plain cancellation as the user
-			// stopping, and only a deadline as a timeout.
+			// Plain cancellation is the user stopping (main cancels the root
+			// context on Ctrl+C / SIGTERM); only a deadline is a timeout.
 			if errors.Is(monitorCtx.Err(), context.Canceled) {
-				return handleUserCancellation(monitor, config)
+				return handleUserCancellation(monitor, cfg)
 			}
-			return handleTimeout(monitor, config)
+			return handleTimeout(monitor, cfg)
 
 		case <-ticker.C:
-			allComplete, err := checkAllUpdatesWithChannels(monitorCtx, eksClient, monitor, config)
-			if err != nil {
-				if !config.Quiet {
-					color.Red("Error checking update progress: %v", err)
-				}
-				continue
-			}
-
-			if allComplete {
-				return DisplayCompletionSummary(monitor, config)
+			if checkAllUpdatesWithChannels(monitorCtx, eksClient, monitor, cfg) {
+				return DisplayCompletionSummary(monitor, cfg)
 			}
 		}
 	}
@@ -157,8 +163,12 @@ func DisplayStopped(monitor *refreshTypes.ProgressMonitor, config refreshTypes.M
 	}
 }
 
-// checkAllUpdatesWithChannels checks all update statuses concurrently using channels.
-func checkAllUpdatesWithChannels(ctx context.Context, eksClient *eks.Client, monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) (bool, error) {
+// checkAllUpdatesWithChannels checks all update statuses concurrently and
+// reports whether every update is settled. A transient check failure is
+// recorded on the update and polled through. A permanent one (a typed AWS
+// error that retrying can't fix, such as AccessDenied) settles only that
+// update, with MonitorErr set, so the other updates keep being monitored.
+func checkAllUpdatesWithChannels(ctx context.Context, eksClient UpdateDescriber, monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) bool {
 	// Create buffered channel for results
 	resultsChan := make(chan statusResult, len(monitor.Updates))
 
@@ -169,15 +179,15 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient *eks.Client, mon
 	for i := range monitor.Updates {
 		update := &monitor.Updates[i]
 
-		// Skip completed updates
-		if isUpdateComplete(update.Status) {
+		// Skip settled updates (terminal, or no longer pollable)
+		if isSettled(*update) {
 			continue
 		}
 
 		wg.Add(1)
 		go func(idx int, u *refreshTypes.UpdateProgress) {
 			defer wg.Done()
-			result := checkSingleUpdate(ctx, eksClient, u, config)
+			result := checkSingleUpdate(ctx, eksClient, u)
 			result.index = idx
 			resultsChan <- result
 		}(i, update)
@@ -192,17 +202,23 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient *eks.Client, mon
 
 	// Collect results
 	now := time.Now()
-	allComplete := true
 
 	for result := range resultsChan {
 		update := &monitor.Updates[result.index]
 
 		if result.err != nil {
+			if ctx.Err() == nil && isPermanentCheckError(result.err) {
+				// Polling this update again would fail the same way. Stop
+				// polling it; its EKS outcome is unknown, not Failed.
+				update.MonitorErr = awsinternal.FormatAWSError(result.err,
+					fmt.Sprintf("checking the status of nodegroup %s update %s", update.NodegroupName, update.UpdateID))
+				update.LastCheckError = ""
+				continue
+			}
 			// Transient polling failure: the update is likely still running
 			// in AWS. Record it separately so the display doesn't render an
 			// in-flight update as FAILED.
 			update.LastCheckError = result.err.Error()
-			allComplete = false
 			continue
 		}
 
@@ -210,18 +226,6 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient *eks.Client, mon
 		update.LastChecked = now
 		update.ErrorMessage = result.errMsg
 		update.LastCheckError = ""
-
-		if !isUpdateComplete(update.Status) {
-			allComplete = false
-		}
-	}
-
-	// Also check updates that were skipped (already complete)
-	for _, update := range monitor.Updates {
-		if !isUpdateComplete(update.Status) {
-			allComplete = false
-			break
-		}
 	}
 
 	// Display current status
@@ -229,16 +233,53 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient *eks.Client, mon
 		DisplayProgressUpdate(monitor)
 	}
 
-	return allComplete && len(monitor.Updates) > 0, nil
+	return AllComplete(monitor)
 }
 
-// checkSingleUpdate checks the status of a single update with retry logic.
-func checkSingleUpdate(ctx context.Context, eksClient *eks.Client, update *refreshTypes.UpdateProgress, config refreshTypes.MonitorConfig) statusResult {
+// isSettled reports whether the monitor is done with an update: it reached a
+// terminal EKS status, or its status can no longer be polled (MonitorErr).
+func isSettled(u refreshTypes.UpdateProgress) bool {
+	return isUpdateComplete(u.Status) || u.MonitorErr != nil
+}
+
+// firstLine returns the first line of s, for one-line display of a
+// multi-line formatted error.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
+// isPermanentCheckError reports whether a failed status check will fail the
+// same way on the next poll: a typed AWS API error that is not retryable
+// (AccessDenied, ResourceNotFound, validation). Transport errors (DNS,
+// connection refused) and throttling stay transient, so the monitor polls
+// through them.
+func isPermanentCheckError(err error) bool {
+	var ae smithy.APIError
+	return errors.As(err, &ae) && !common.IsRetryable(err)
+}
+
+// checkSingleUpdate checks the status of a single update, retrying transient
+// errors.
+func checkSingleUpdate(ctx context.Context, eksClient UpdateDescriber, update *refreshTypes.UpdateProgress) statusResult {
 	result := statusResult{}
 
-	updateStatus, err := checkUpdateWithRetry(ctx, eksClient, update, config)
+	updateStatus, err := common.WithRetry(ctx, common.DefaultRetryConfig,
+		func(rc context.Context) (*eks.DescribeUpdateOutput, error) {
+			return eksClient.DescribeUpdate(rc, &eks.DescribeUpdateInput{
+				Name:          aws.String(update.ClusterName),
+				NodegroupName: aws.String(update.NodegroupName),
+				UpdateId:      aws.String(update.UpdateID),
+			})
+		})
 	if err != nil {
 		result.err = err
+		return result
+	}
+	if updateStatus.Update == nil {
+		result.err = errors.New("DescribeUpdate returned no update")
 		return result
 	}
 
@@ -258,14 +299,15 @@ func checkSingleUpdate(ctx context.Context, eksClient *eks.Client, update *refre
 	return result
 }
 
-// AllComplete reports whether every monitored update has reached a terminal
-// state (successful, failed, or cancelled).
+// AllComplete reports whether every monitored update is settled: it reached a
+// terminal state (successful, failed, or cancelled), or its status could not
+// be monitored (see ErrUnmonitored).
 func AllComplete(monitor *refreshTypes.ProgressMonitor) bool {
 	if len(monitor.Updates) == 0 {
 		return false
 	}
 	for _, u := range monitor.Updates {
-		if !isUpdateComplete(u.Status) {
+		if !isSettled(u) {
 			return false
 		}
 	}
@@ -277,59 +319,4 @@ func isUpdateComplete(status types.UpdateStatus) bool {
 	return status == types.UpdateStatusSuccessful ||
 		status == types.UpdateStatusFailed ||
 		status == types.UpdateStatusCancelled
-}
-
-// checkUpdateWithRetry checks update status with exponential backoff retry.
-func checkUpdateWithRetry(ctx context.Context, eksClient *eks.Client, update *refreshTypes.UpdateProgress, config refreshTypes.MonitorConfig) (*eks.DescribeUpdateOutput, error) {
-	var lastErr error
-	backoff := time.Second
-
-	// Guard against a misconfigured MaxRetries: a value <= 0 would skip the loop
-	// entirely and return (nil, nil), nil-panicking the caller. Always try once.
-	if config.MaxRetries <= 0 {
-		config.MaxRetries = 1
-	}
-
-	for attempt := 0; attempt < config.MaxRetries; attempt++ {
-		updateStatus, err := eksClient.DescribeUpdate(ctx, &eks.DescribeUpdateInput{
-			Name:          aws.String(update.ClusterName),
-			NodegroupName: aws.String(update.NodegroupName),
-			UpdateId:      aws.String(update.UpdateID),
-		})
-
-		if err == nil {
-			return updateStatus, nil
-		}
-
-		lastErr = err
-
-		// Don't retry on context cancellation or timeout
-		if ctx.Err() != nil {
-			break
-		}
-
-		// Exponential backoff before retry
-		if attempt < config.MaxRetries-1 {
-			if !waitWithContext(ctx, backoff) {
-				return nil, ctx.Err()
-			}
-			backoff = time.Duration(float64(backoff) * config.BackoffMultiple)
-		}
-	}
-
-	return nil, lastErr
-}
-
-// waitWithContext waits for the specified duration or until context is cancelled.
-// Returns true if the wait completed, false if context was cancelled.
-func waitWithContext(ctx context.Context, duration time.Duration) bool {
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
 }
