@@ -77,7 +77,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	// Mutating: never fall back to listing clusters (exit 0) on no input.
+	// Mutating: no cluster list on empty input, and no kubeconfig fallback.
 	clusterName, err := runner.ResolveCluster(ctx, awsCfg, cmd)
 	if err != nil {
 		return err

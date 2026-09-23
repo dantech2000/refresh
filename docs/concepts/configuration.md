@@ -34,12 +34,18 @@ wins):
 1. The `--cluster, -c` flag.
 2. The first positional argument.
 3. The cluster of the active `refresh` context (`refresh use <name>`).
-4. The cluster of the current kubeconfig context.
+4. The cluster of the current kubeconfig context. Only read-only commands use
+   this step.
 
-If none of these gives a cluster, the command fails with a non-zero exit.
+Mutating commands (`cluster upgrade`, `addon update`, `nodegroup update`,
+`nodegroup scale`) never use the kubeconfig. A kubeconfig that points at
+another cluster cannot select the target of a change. If a mutating command
+takes the cluster from the active context, it prints
+`Using cluster <cluster> (from context <name>)` to stderr.
+
+If none of the steps gives a cluster, the command fails with a non-zero exit.
 Read-only commands (`describe`, `list`, `upgrade-check`) also print the
-available clusters to stderr. Mutating commands (`cluster upgrade`,
-`addon update`, `nodegroup update`, `nodegroup scale`) print only the error.
+available clusters to stderr. Mutating commands print only the error.
 
 The name can be a partial pattern:
 

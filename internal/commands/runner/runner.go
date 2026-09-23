@@ -129,16 +129,19 @@ func RequestedCluster(cmd *cli.Command) string {
 }
 
 // ResolveCluster resolves the cluster for a mutating command. Resolution
-// order: --cluster flag, first positional, active `refresh use` context,
-// current kubeconfig context. It never lists clusters: when nothing resolves
-// it returns an error wrapping awsinternal.ErrNoClusterSpecified, and a
-// non-exact name needs interactive confirmation.
+// order: --cluster flag, first positional, active `refresh use` context. The
+// kubeconfig current context is never used, so a stray kubeconfig cannot pick
+// the target of a mutation. A cluster from the context is announced on
+// stderr. It never lists clusters: when nothing resolves it returns an error
+// wrapping awsinternal.ErrNoClusterSpecified, and a non-exact name needs
+// interactive confirmation.
 func ResolveCluster(ctx context.Context, cfg aws.Config, cmd *cli.Command) (string, error) {
 	return awsinternal.ClusterName(ctx, cfg, RequestedCluster(cmd))
 }
 
 // ResolveClusterOrList resolves the cluster for a read-only command, using
-// the same order as ResolveCluster. When nothing resolves, it prints the
+// the ResolveCluster order plus a final fallback to the kubeconfig current
+// context. When nothing resolves, it prints the
 // available clusters to stderr as a hint (skipped for -o json/yaml) and
 // returns listed=true with a non-nil error, so the command exits non-zero
 // and stdout stays empty.

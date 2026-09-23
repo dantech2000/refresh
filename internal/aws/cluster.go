@@ -28,11 +28,27 @@ var ErrNoClusterSpecified = errors.New("no cluster specified; pass --cluster or 
 
 // ClusterNameOptions tunes how a cluster pattern is resolved to a name.
 type ClusterNameOptions struct {
-	// ReadOnly marks the caller as a read-only command. Without a TTY, a
-	// single non-exact substring match is then accepted (with a note on
-	// stderr) instead of failing, since nothing is mutated.
+	// ReadOnly marks the caller as a read-only command. Read-only commands
+	// fall back to the kubeconfig current cluster, and without a TTY a single
+	// non-exact substring match is accepted (with a note on stderr). Mutating
+	// commands get neither: a kubeconfig that happens to point at prod must
+	// never pick the target of an upgrade.
 	ReadOnly bool
 }
+
+// resolveSpinner is the progress indicator shown while clusters are listed.
+type resolveSpinner interface {
+	Start() error
+	Success(message string)
+	Stop()
+}
+
+// newResolveSpinner and promptLine are vars so tests can check that the
+// spinner is stopped before any prompt is shown (its redraw erases the line).
+var (
+	newResolveSpinner = func() resolveSpinner { return ui.NewFunSpinnerForCategory("general") }
+	promptLine        = readPromptLine
+)
 
 // ListClustersAPI is the EKS subset needed to resolve cluster names.
 type ListClustersAPI interface {
@@ -46,8 +62,9 @@ var stdinIsTerminal = func() bool {
 }
 
 // ClusterName resolves the EKS cluster name for a mutating command. The
-// pattern comes from cliFlag, then the active refresh context, then the
-// current kubeconfig context. An exact name always wins; a single non-exact
+// pattern comes from cliFlag, then the active refresh context; the kubeconfig
+// current context is never used. A cluster taken from the context is
+// announced on stderr. An exact name always wins; a single non-exact
 // substring match needs interactive confirmation and fails without a TTY.
 func ClusterName(ctx context.Context, awsCfg aws.Config, cliFlag string) (string, error) {
 	return ClusterNameWithOptions(ctx, awsCfg, cliFlag, ClusterNameOptions{})
@@ -55,9 +72,12 @@ func ClusterName(ctx context.Context, awsCfg aws.Config, cliFlag string) (string
 
 // ClusterNameWithOptions is ClusterName with caller-specific options.
 func ClusterNameWithOptions(ctx context.Context, awsCfg aws.Config, cliFlag string, opts ClusterNameOptions) (string, error) {
-	pattern, err := resolveClusterPattern(cliFlag)
+	pattern, fromContext, err := resolveClusterPattern(cliFlag, opts.ReadOnly)
 	if err != nil {
 		return "", err
+	}
+	if fromContext != "" && !opts.ReadOnly {
+		_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "Using cluster %s (from context %s)\n", pattern, fromContext)
 	}
 	return resolveClusterName(ctx, eks.NewFromConfig(awsCfg), pattern, opts)
 }
@@ -66,16 +86,18 @@ func ClusterNameWithOptions(ctx context.Context, awsCfg aws.Config, cliFlag stri
 // one that pattern refers to.
 func resolveClusterName(ctx context.Context, api ListClustersAPI, pattern string, opts ClusterNameOptions) (string, error) {
 	// Get available clusters with spinner
-	spinner := ui.NewFunSpinnerForCategory("general")
+	spinner := newResolveSpinner()
 	if err := spinner.Start(); err != nil {
 		return "", err
 	}
-	defer spinner.Stop()
 
 	clusters, err := listClusterNames(ctx, api)
 	if err != nil {
+		spinner.Stop()
 		return "", FormatAWSError(err, "listing EKS clusters")
 	}
+	// Success stops the spinner. It must happen before confirmClusterSelection:
+	// a running spinner redraws its line and would erase any prompt.
 	spinner.Success("Cluster name resolved!")
 
 	if len(clusters) == 0 {
@@ -107,32 +129,38 @@ func resolveClusterName(ctx context.Context, api ListClustersAPI, pattern string
 	return selectedCluster, nil
 }
 
-// resolveClusterPattern determines the cluster pattern from CLI flag,
-// active refresh context, or kubeconfig (in that order). When none yields a
-// name, the error wraps ErrNoClusterSpecified.
-func resolveClusterPattern(cliFlag string) (string, error) {
+// resolveClusterPattern determines the cluster pattern from CLI flag, then
+// the active refresh context, then (only when allowKubeconfig) the kubeconfig
+// current context. fromContext names the refresh context when the pattern
+// came from it. When nothing yields a name, the error wraps
+// ErrNoClusterSpecified.
+func resolveClusterPattern(cliFlag string, allowKubeconfig bool) (pattern, fromContext string, err error) {
 	if cliFlag = strings.TrimSpace(cliFlag); cliFlag != "" {
-		return cliFlag, nil
+		return cliFlag, "", nil
 	}
-	if name := activeContextCluster(); name != "" {
-		return name, nil
+	if ctxName, name := activeContextCluster(); name != "" {
+		return name, ctxName, nil
+	}
+	if !allowKubeconfig {
+		return "", "", fmt.Errorf("%w (mutating commands do not use the kubeconfig current context)", ErrNoClusterSpecified)
 	}
 	name, err := extractClusterFromKubeconfig()
 	if err != nil {
-		return "", fmt.Errorf("%w (kubeconfig: %v)", ErrNoClusterSpecified, err)
+		return "", "", fmt.Errorf("%w (kubeconfig: %v)", ErrNoClusterSpecified, err)
 	}
-	return name, nil
+	return name, "", nil
 }
 
-func activeContextCluster() string {
+// activeContextCluster returns the active refresh context's name and cluster.
+func activeContextCluster() (ctxName, cluster string) {
 	f, err := cliconfig.Load()
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	if _, ctx, ok := f.Active(); ok {
-		return strings.TrimSpace(ctx.Cluster)
+	if name, ctx, ok := f.Active(); ok {
+		return name, strings.TrimSpace(ctx.Cluster)
 	}
-	return ""
+	return "", ""
 }
 
 // extractClusterFromKubeconfig extracts the cluster name from the current kubeconfig context.
@@ -283,7 +311,7 @@ func confirmClusterSelection(matches []string, pattern string, opts ClusterNameO
 // promptForSingleClusterMatch asks the user to confirm a non-exact match.
 func promptForSingleClusterMatch(match, pattern string) (string, error) {
 	_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "No cluster named %q. Use %q? [y/N]: ", pattern, match)
-	response, err := readPromptLine()
+	response, err := promptLine()
 	if err != nil {
 		return "", fmt.Errorf("operation cancelled: failed to read input")
 	}
@@ -304,7 +332,7 @@ func promptForClusterSelection(matches []string, pattern string) (string, error)
 
 	_, _ = color.New(color.FgCyan).Fprintf(os.Stderr, "Select cluster number (1-%d) or press Enter to cancel: ", len(matches))
 
-	response, err := readPromptLine()
+	response, err := promptLine()
 	if err != nil {
 		return "", fmt.Errorf("operation cancelled: failed to read input")
 	}

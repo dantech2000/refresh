@@ -116,12 +116,16 @@ func TestResolveClusterName_NoMatchErrors(t *testing.T) {
 func TestResolveClusterPattern_FlagWins(t *testing.T) {
 	dir := isolateConfig(t)
 	writeFile(t, filepath.Join(dir, "context.yaml"), "current: p\ncontexts:\n  p:\n    cluster: from-context\n")
-	got, err := resolveClusterPattern("from-flag")
-	if err != nil || got != "from-flag" {
-		t.Errorf("got %q, %v; want from-flag", got, err)
+	for _, readOnly := range []bool{true, false} {
+		got, fromCtx, err := resolveClusterPattern("from-flag", readOnly)
+		if err != nil || got != "from-flag" || fromCtx != "" {
+			t.Errorf("readOnly=%v: got %q (ctx %q), %v; want from-flag", readOnly, got, fromCtx, err)
+		}
 	}
 }
 
+// The active refresh context is an explicit user choice, so both read-only
+// and mutating commands use it, and report which context it came from.
 func TestResolveClusterPattern_ActiveContextBeforeKubeconfig(t *testing.T) {
 	dir := isolateConfig(t)
 	writeFile(t, filepath.Join(dir, "context.yaml"), "current: p\ncontexts:\n  p:\n    cluster: from-context\n")
@@ -129,29 +133,97 @@ func TestResolveClusterPattern_ActiveContextBeforeKubeconfig(t *testing.T) {
 	writeFile(t, kc, kubeconfigFor("from-kubeconfig"))
 	t.Setenv("KUBECONFIG", kc)
 
-	got, err := resolveClusterPattern("")
-	if err != nil || got != "from-context" {
-		t.Errorf("got %q, %v; want from-context", got, err)
+	for _, readOnly := range []bool{true, false} {
+		got, fromCtx, err := resolveClusterPattern("", readOnly)
+		if err != nil || got != "from-context" || fromCtx != "p" {
+			t.Errorf("readOnly=%v: got %q (ctx %q), %v; want from-context from p", readOnly, got, fromCtx, err)
+		}
 	}
 }
 
-func TestResolveClusterPattern_KubeconfigFallback(t *testing.T) {
+func TestResolveClusterPattern_ReadOnlyKubeconfigFallback(t *testing.T) {
 	dir := isolateConfig(t)
 	kc := filepath.Join(dir, "kubeconfig")
 	writeFile(t, kc, kubeconfigFor("arn:aws:eks:us-east-1:123456789012:cluster/from-kubeconfig"))
 	t.Setenv("KUBECONFIG", kc)
 
-	got, err := resolveClusterPattern("")
+	got, _, err := resolveClusterPattern("", true)
 	if err != nil || got != "from-kubeconfig" {
 		t.Errorf("got %q, %v; want from-kubeconfig", got, err)
 	}
 }
 
+// Safety: a mutating command must never take its target from the kubeconfig
+// current context. `cluster upgrade -c "$CLUSTER" --yes` with an empty
+// $CLUSTER on a runner whose kubeconfig points at prod must fail.
+func TestResolveClusterPattern_MutatingIgnoresKubeconfig(t *testing.T) {
+	dir := isolateConfig(t)
+	kc := filepath.Join(dir, "kubeconfig")
+	writeFile(t, kc, kubeconfigFor("prod"))
+	t.Setenv("KUBECONFIG", kc)
+
+	got, _, err := resolveClusterPattern("", false)
+	if !errors.Is(err, ErrNoClusterSpecified) {
+		t.Fatalf("got %q, %v; want ErrNoClusterSpecified", got, err)
+	}
+}
+
 func TestResolveClusterPattern_NothingResolvesWrapsSentinel(t *testing.T) {
 	isolateConfig(t)
-	_, err := resolveClusterPattern("")
-	if !errors.Is(err, ErrNoClusterSpecified) {
-		t.Errorf("want ErrNoClusterSpecified, got %v", err)
+	for _, readOnly := range []bool{true, false} {
+		_, _, err := resolveClusterPattern("", readOnly)
+		if !errors.Is(err, ErrNoClusterSpecified) {
+			t.Errorf("readOnly=%v: want ErrNoClusterSpecified, got %v", readOnly, err)
+		}
+	}
+}
+
+// fakeSpinner records whether it is still running.
+type fakeSpinner struct{ running bool }
+
+func (s *fakeSpinner) Start() error   { s.running = true; return nil }
+func (s *fakeSpinner) Success(string) { s.running = false }
+func (s *fakeSpinner) Stop()          { s.running = false }
+
+// Both prompt paths (single partial match, multiple matches) must run after
+// the spinner stops; a running spinner redraws its line and erases the prompt.
+func TestResolveClusterName_SpinnerStoppedBeforePrompt(t *testing.T) {
+	cases := []struct {
+		name     string
+		clusters []string
+		answer   string
+		want     string
+	}{
+		{name: "single partial match", clusters: []string{"prod-legacy"}, answer: "y", want: "prod-legacy"},
+		{name: "multiple matches", clusters: []string{"prod-east", "prod-west"}, answer: "2", want: "prod-west"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withTTY(t, true)
+			spin := &fakeSpinner{}
+			origSpinner, origPrompt := newResolveSpinner, promptLine
+			t.Cleanup(func() { newResolveSpinner, promptLine = origSpinner, origPrompt })
+			newResolveSpinner = func() resolveSpinner { return spin }
+			prompted := false
+			promptLine = func() (string, error) {
+				prompted = true
+				if spin.running {
+					t.Error("prompt shown while the spinner is still running")
+				}
+				return tc.answer, nil
+			}
+
+			got, err := resolveClusterName(context.Background(), clustersAPI(tc.clusters...), "prod", ClusterNameOptions{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !prompted {
+				t.Fatal("expected a prompt")
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
