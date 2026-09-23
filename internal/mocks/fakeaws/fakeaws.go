@@ -71,6 +71,17 @@ type Cluster struct {
 	Version    string
 	Nodegroups []*Nodegroup
 	Addons     []*Addon
+	// Insights are the cluster's UPGRADE_READINESS insights. Nil answers
+	// one PASSING insight for the next minor, as EKS does for a healthy
+	// cluster.
+	Insights []*Insight
+}
+
+// Insight is an EKS Cluster Insight in the fake world.
+type Insight struct {
+	ID     string
+	Name   string
+	Status string // PASSING, WARNING, ERROR, or UNKNOWN
 }
 
 // Server is the fake AWS endpoint.
@@ -318,6 +329,16 @@ func (s *Server) serveEKSCluster(w http.ResponseWriter, r *http.Request, c *Clus
 			writeJSON(w, map[string]any{"insights": insightsJSON(c, body)})
 			return
 		}
+		if get && len(rest) == 2 {
+			for _, in := range c.Insights {
+				if in.ID == rest[1] {
+					writeJSON(w, map[string]any{"insight": insightJSON(c, in)})
+					return
+				}
+			}
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No insight found for id: "+rest[1]+".")
+			return
+		}
 		unsupported(w, r, "eks")
 	case "insights-refresh":
 		// StartInsightsRefresh (POST) and DescribeInsightsRefresh (GET): a
@@ -542,16 +563,28 @@ func findNodegroup(c *Cluster, name string) *Nodegroup {
 	return nil
 }
 
-// insightsJSON answers ListInsights the way EKS does for a healthy cluster:
-// one PASSING upgrade-readiness insight for the next minor after the control
-// plane, filtered by the request's kubernetesVersions.
+// insightsJSON answers ListInsights. With c.Insights set it returns them,
+// filtered by the request's statuses. Otherwise it answers the way EKS does
+// for a healthy cluster: one PASSING upgrade-readiness insight for the next
+// minor after the control plane, filtered by the request's
+// kubernetesVersions.
 func insightsJSON(c *Cluster, body []byte) []any {
 	var in struct {
 		Filter struct {
 			KubernetesVersions []string `json:"kubernetesVersions"`
+			Statuses           []string `json:"statuses"`
 		} `json:"filter"`
 	}
 	_ = json.Unmarshal(body, &in)
+	if c.Insights != nil {
+		out := []any{}
+		for _, ins := range c.Insights {
+			if len(in.Filter.Statuses) == 0 || slices.Contains(in.Filter.Statuses, ins.Status) {
+				out = append(out, insightJSON(c, ins))
+			}
+		}
+		return out
+	}
 	var major, minor int
 	if _, err := fmt.Sscanf(c.Version, "%d.%d", &major, &minor); err != nil {
 		return []any{}
@@ -567,6 +600,19 @@ func insightsJSON(c *Cluster, body []byte) []any {
 		"kubernetesVersion": next,
 		"insightStatus":     map[string]any{"status": "PASSING"},
 	}}
+}
+
+// insightJSON is one configured insight, for the next minor.
+func insightJSON(c *Cluster, in *Insight) map[string]any {
+	var major, minor int
+	_, _ = fmt.Sscanf(c.Version, "%d.%d", &major, &minor)
+	return map[string]any{
+		"id":                in.ID,
+		"name":              in.Name,
+		"category":          "UPGRADE_READINESS",
+		"kubernetesVersion": fmt.Sprintf("%d.%d", major, minor+1),
+		"insightStatus":     map[string]any{"status": in.Status},
+	}
 }
 
 func clusterJSON(c *Cluster) map[string]any {

@@ -13,6 +13,8 @@ and others) on a cluster. List shows installed versions and status, describe
 drills into one add-on, and update rolls a single add-on or every add-on
 (--all) to a compatible version with optional health gating and waiting.
 
+Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
+
 ## Flags
 
 | Flag | Env | Default | Description |
@@ -41,6 +43,8 @@ Examples:
   refresh addon list my-cluster -o plain
   refresh addon list my-cluster --watch --watch-interval 5s
 
+Exit codes: 0 ok; 1 error; 4 incomplete: an add-on could not be described. See https://drod.dev/refresh/concepts/exit-codes/
+
 #### Flags
 
 | Flag | Env | Default | Description |
@@ -68,6 +72,8 @@ unique case-insensitive substring is resolved against the installed add-ons.
 
   refresh addon describe my-cluster vpc-cni
   refresh addon describe my-cluster coredns -o json
+
+Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -115,12 +121,12 @@ one proceeds with a warning. A name that only partially matches an installed
 add-on is confirmed on a terminal; without one, pass the exact name or --yes.
 
 With --wait, the command follows the EKS update until it succeeds, fails, or
-is cancelled, then checks that the add-on reports the target version. Exit
-codes: 0 success, 1 failure, 2 updated but the post-update health check found
-issues (COMPLETED_WITH_ISSUES).
+is cancelled, then checks that the add-on reports the target version.
 
 Use --health-check to verify the add-on is ACTIVE and version-compatible
 before updating. -o json|yaml emits a machine-readable result/summary.
+
+Exit codes: 0 ok; 1 error, interrupt, or a failed single-add-on update; 4 with --all, an add-on update failed or was not attempted; 5 updated, but the post-update health check found issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 

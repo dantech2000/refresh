@@ -2,6 +2,7 @@ package addon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -72,7 +73,7 @@ func writeAddonList(format, clusterName string, res addons.ListResult, elapsed t
 }
 
 // reportListFailures names each add-on that could not be described on w, one
-// per line, and returns an error so the command exits non-zero.
+// per line, and returns exit 4 (incomplete data).
 func reportListFailures(w io.Writer, clusterName string, failures []string) error {
 	if len(failures) == 0 {
 		return nil
@@ -81,7 +82,7 @@ func reportListFailures(w io.Writer, clusterName string, failures []string) erro
 	for _, f := range failures {
 		_, _ = yellow.Fprintf(w, "warning: add-on %s\n", f)
 	}
-	return fmt.Errorf("listing add-ons for cluster %s: %d add-on(s) could not be described; the list is incomplete", clusterName, len(failures))
+	return cli.Exit(fmt.Sprintf("listing add-ons for cluster %s: %d add-on(s) could not be described; the list is incomplete", clusterName, len(failures)), runner.ExitIncomplete)
 }
 
 func runDescribe(ctx context.Context, cmd *cli.Command) error {
@@ -347,18 +348,15 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	return updateExitError(result, updateErr)
 }
 
-// exitNeedsAttention is the exit code for an update that landed but whose
-// post-update health check found issues (COMPLETED_WITH_ISSUES).
-const exitNeedsAttention = 2
-
 // updateExitError maps a single add-on update to the command's error: the
-// update's own error (exit 1), exit 2 for COMPLETED_WITH_ISSUES, or nil.
+// update's own error (exit 1), exit 5 for COMPLETED_WITH_ISSUES (the update
+// landed but the post-update health check found issues), or nil.
 func updateExitError(result *addons.AddonUpdateResult, err error) error {
 	if err != nil {
 		return err
 	}
 	if result.Status == addons.StatusCompletedWithIssues {
-		return cli.Exit(fmt.Sprintf("add-on %s was updated, but the post-update health check found issues", result.AddonName), exitNeedsAttention)
+		return cli.Exit(fmt.Sprintf("add-on %s was updated, but the post-update health check found issues", result.AddonName), runner.ExitVerifyFailed)
 	}
 	return nil
 }
@@ -430,19 +428,20 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return err
 		}
-		return updateAllFailureError(results)
+		return updateAllFailureError(ctx, results)
 	}
 	if err := outputUpdateAllResults(clusterName, results, options.DryRun); err != nil {
 		return err
 	}
-	return updateAllFailureError(results)
+	return updateAllFailureError(ctx, results)
 }
 
-// updateAllFailureError returns a non-nil error when any addon update failed,
-// so `addon update --all` exits non-zero and scripts can detect failure: exit
-// 1 when an update failed, or exit 2 when every update landed but at least
-// one post-update health check found issues.
-func updateAllFailureError(results []addons.AddonUpdateResult) error {
+// updateAllFailureError maps an `addon update --all` run to the exit-code
+// contract: exit 1 when the run was interrupted (Ctrl+C / SIGTERM), exit 4
+// when any add-on update failed or was not attempted, exit 5 when every
+// update landed but at least one post-update health check found issues,
+// else nil. A failure outranks health issues.
+func updateAllFailureError(ctx context.Context, results []addons.AddonUpdateResult) error {
 	failed, issues := 0, 0
 	for _, r := range results {
 		switch {
@@ -453,10 +452,14 @@ func updateAllFailureError(results []addons.AddonUpdateResult) error {
 		}
 	}
 	if failed > 0 {
-		return fmt.Errorf("%d of %d addon update(s) failed", failed, len(results))
+		msg := fmt.Sprintf("%d of %d addon update(s) failed or were not attempted", failed, len(results))
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return fmt.Errorf("interrupted: %s", msg)
+		}
+		return cli.Exit(msg, runner.ExitIncomplete)
 	}
 	if issues > 0 {
-		return cli.Exit(fmt.Sprintf("%d of %d add-on(s) were updated, but their post-update health check found issues", issues, len(results)), exitNeedsAttention)
+		return cli.Exit(fmt.Sprintf("%d of %d add-on(s) were updated, but their post-update health check found issues", issues, len(results)), runner.ExitVerifyFailed)
 	}
 	return nil
 }

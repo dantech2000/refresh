@@ -31,6 +31,8 @@ do not count as failed. If no region is accessible, status exits 4.
 Concurrency: --max-concurrency (-C) sets how many clusters status evaluates
 at once in each region. It sweeps min(4, --max-concurrency) regions at once.
 
+Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
+
 ## Flags
 
 | Flag | Env | Default | Description |

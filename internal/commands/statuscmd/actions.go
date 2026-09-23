@@ -225,11 +225,11 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 	return sweep
 }
 
-// Exit codes for `refresh status` (documented in the command help).
+// Exit codes for `refresh status`, from the shared contract (runner).
 const (
-	exitStale       = 2
-	exitSupportRisk = 3
-	exitIncomplete  = 4
+	exitStale       = runner.ExitNeedsAttention
+	exitSupportRisk = runner.ExitBlocked
+	exitIncomplete  = runner.ExitIncomplete
 )
 
 // exitForStatuses maps the fleet posture to the documented exit-code contract:

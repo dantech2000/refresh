@@ -87,8 +87,9 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 
 	startTime := time.Now()
 	var summaries []clustersvc.ClusterSummary
+	failedRegions := 0
 	if allRegions || len(regions) > 0 {
-		summaries, err = runMultiRegionListWithProgress(ctx, clusterService, options)
+		summaries, failedRegions, err = runMultiRegionListWithProgress(ctx, clusterService, options)
 	} else {
 		err = runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
 			var lerr error
@@ -105,16 +106,41 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 	warnClusterRows(ui.Stderr, summaries)
 
 	if tree {
-		return clusterview.OutputClustersTree(summaries, elapsed, allRegions, cmd.Bool("show-health"))
+		if err := clusterview.OutputClustersTree(summaries, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
+			return err
+		}
+		return listIncompleteExit(summaries, failedRegions)
 	}
 	if summaries == nil {
 		summaries = []clustersvc.ClusterSummary{} // -o json|yaml: [], not null
 	}
 	payload := map[string]any{"clusters": summaries, "count": len(summaries)}
 	if handled, err := runner.EncodeStdout(format, payload); handled {
+		if err != nil {
+			return err
+		}
+		return listIncompleteExit(summaries, failedRegions)
+	}
+	if err := clusterview.OutputClustersTable(summaries, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
 		return err
 	}
-	return clusterview.OutputClustersTable(summaries, elapsed, allRegions, cmd.Bool("show-health"))
+	return listIncompleteExit(summaries, failedRegions)
+}
+
+// listIncompleteExit returns exit 4 (incomplete data) after a list printed a
+// partial result: some regions failed, or some cluster rows could not be
+// fully read. Regions skipped by the default sweep are not failures.
+func listIncompleteExit(summaries []clustersvc.ClusterSummary, failedRegions int) error {
+	rows := 0
+	for _, s := range summaries {
+		if len(s.Warnings) > 0 {
+			rows++
+		}
+	}
+	if failedRegions == 0 && rows == 0 {
+		return nil
+	}
+	return cli.Exit(fmt.Sprintf("incomplete data: %d region(s) failed, %d cluster(s) could not be fully read", failedRegions, rows), runner.ExitIncomplete)
 }
 
 // wantsTree reports whether cluster list renders the region tree: -o tree,
@@ -137,7 +163,7 @@ func warnClusterRows(w io.Writer, summaries []clustersvc.ClusterSummary) {
 
 // reportRegionSweep writes the multi-region sweep's partial problems to w:
 // one line naming the skipped regions and one single-line warning per failed
-// region. Partial success keeps exit 0 (REF-165 tracks a distinct exit code).
+// region. The caller exits 4 after printing a partial result.
 func reportRegionSweep(w io.Writer, res clustersvc.RegionListResult) {
 	yellow := ui.StderrColor(color.FgYellow)
 	if len(res.Skipped) > 0 {
@@ -220,15 +246,33 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if handled, err := runner.EncodeStdout(cmd.String("format"), details); handled {
+		if err != nil {
+			return err
+		}
+		return describeIncompleteExit(details)
+	}
+	if err := clusterview.OutputClusterDetailsTable(details); err != nil {
 		return err
 	}
-	return clusterview.OutputClusterDetailsTable(details)
+	return describeIncompleteExit(details)
 }
 
-func runMultiRegionListWithProgress(ctx context.Context, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, error) {
+// describeIncompleteExit returns exit 4 (incomplete data) when some of the
+// cluster's add-ons or nodegroups could not be read. The warnings are
+// already on stderr.
+func describeIncompleteExit(details *clustersvc.ClusterDetails) error {
+	if details == nil || len(details.Warnings) == 0 {
+		return nil
+	}
+	return cli.Exit(fmt.Sprintf("incomplete data: %d part(s) of cluster %s could not be read", len(details.Warnings), details.Name), runner.ExitIncomplete)
+}
+
+// runMultiRegionListWithProgress returns the gathered clusters and the number
+// of regions that failed. It fails only when no region answered.
+func runMultiRegionListWithProgress(ctx context.Context, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, int, error) {
 	spinner := ui.NewFunSpinnerForCategory("cluster")
 	if err := spinner.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start spinner: %w", err)
+		return nil, 0, fmt.Errorf("failed to start spinner: %w", err)
 	}
 	defer spinner.Stop()
 
@@ -236,7 +280,7 @@ func runMultiRegionListWithProgress(ctx context.Context, clusterService *cluster
 	if err != nil {
 		spinner.Stop()
 		reportRegionSweep(ui.Stderr, clustersvc.RegionListResult{Skipped: res.Skipped})
-		return nil, err
+		return nil, 0, err
 	}
 
 	if len(res.Summaries) > 0 {
@@ -245,5 +289,5 @@ func runMultiRegionListWithProgress(ctx context.Context, clusterService *cluster
 		spinner.Success("Search complete - no clusters found")
 	}
 	reportRegionSweep(ui.Stderr, res)
-	return res.Summaries, nil
+	return res.Summaries, len(res.Failed), nil
 }

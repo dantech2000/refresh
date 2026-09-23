@@ -11,34 +11,14 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-// upgradeVerdict collapses the insight/skew severity into one readiness token:
-// any error → not ready (fail); any warning or version skew → review (warn);
-// otherwise ready (healthy).
+// upgradeVerdict maps the report's readiness (clustersvc.UpgradeReport.
+// Readiness, which the command's exit code also follows) to one token:
+// blocked is NOT READY, warnings only is REVIEW, otherwise READY.
 func upgradeVerdict(report *clustersvc.UpgradeReport) (render.Status, string) {
-	errc, warnc := 0, 0
-	for _, in := range report.Insights {
-		switch strings.ToUpper(in.Status) {
-		case clustersvc.InsightStatusError:
-			errc++
-		case clustersvc.InsightStatusWarning:
-			warnc++
-		}
-	}
-	// The control-plane gate participates in the verdict: a blocking failure
-	// (e.g. etcd near the read-only limit) is NOT READY; a warning is REVIEW.
-	cpFail, cpWarn := false, false
-	if cp := report.ControlPlane; cp != nil && !cp.Skipped {
-		switch cp.Status {
-		case health.StatusFail:
-			cpFail = true
-		case health.StatusWarn:
-			cpWarn = true
-		}
-	}
-	switch {
-	case errc > 0 || cpFail:
+	switch level, _ := report.Readiness(); level {
+	case clustersvc.ReadinessBlocked:
 		return render.Fail, "NOT READY"
-	case warnc > 0 || cpWarn || len(report.Skew.Findings) > 0:
+	case clustersvc.ReadinessReview:
 		return render.Warn, "REVIEW"
 	default:
 		return render.Healthy, "READY"

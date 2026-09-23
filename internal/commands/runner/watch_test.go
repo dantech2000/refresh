@@ -66,6 +66,23 @@ func TestWatchPropagatesError(t *testing.T) {
 	}
 }
 
+// A partial result (exit 4) does not end --watch: the next poll may be
+// complete. Any other error does.
+func TestWatchKeepsPollingAfterIncomplete(t *testing.T) {
+	sentinel := errors.New("boom")
+	runs := 0
+	err := Watch(context.Background(), newWatchTestCommand(t, true, time.Millisecond), func() error {
+		runs++
+		if runs < 3 {
+			return cli.Exit("incomplete", ExitIncomplete)
+		}
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) || runs != 3 {
+		t.Fatalf("runs=%d err=%v, want 3 runs ending with the sentinel", runs, err)
+	}
+}
+
 // --watch with -o json/yaml would print one document per interval (plus
 // clear-screen codes on a terminal), breaking the one-document stdout
 // contract. It must fail before fn runs; other formats still watch.

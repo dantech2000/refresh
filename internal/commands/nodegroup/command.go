@@ -96,7 +96,7 @@ func scaleCommand() *cli.Command {
 		Description: `Change a managed nodegroup's desired/min/max size. Any subset of
 --desired/--min/--max may be set; unspecified bounds are left unchanged.
 
---check-pdbs refuses a scale-down (exit 1, before any change) when it could
+--check-pdbs refuses a scale-down (exit 3, before any change) when it could
 remove more of a Pod Disruption Budget's pods than the PDB allows. EKS does not
 honor PDBs when a scaling change removes nodes, and the Auto Scaling group
 picks which nodes go, so the gate assumes the removed nodes are the ones that
