@@ -6,6 +6,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // Extended support roughly doubles the control-plane price: ~$0.60/hr vs the
@@ -119,8 +121,10 @@ func supportDatesFromAPI(ctx context.Context, api supportVersionsAPI, version st
 	if api == nil {
 		return time.Time{}, time.Time{}, false
 	}
-	out, err := api.DescribeClusterVersions(ctx, &eks.DescribeClusterVersionsInput{
-		ClusterVersions: []string{version},
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterVersionsOutput, error) {
+		return api.DescribeClusterVersions(rc, &eks.DescribeClusterVersionsInput{
+			ClusterVersions: []string{version},
+		})
 	})
 	if err != nil || out == nil {
 		return time.Time{}, time.Time{}, false
