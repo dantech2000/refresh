@@ -74,9 +74,9 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 	format := strings.ToLower(strings.TrimSpace(cmd.String("format")))
 	tree := wantsTree(format, cmd.Bool("tree"), cmd.IsSet("format"))
 	allRegions := cmd.Bool("all-regions") || tree
-	// runner.Regions honors a global `refresh --region X cluster list` too;
-	// the local repeatable -r would otherwise shadow it.
-	regions := runner.Regions(cmd)
+	// runner.Regions honors a global `refresh --region X cluster list` too
+	// (not with -A/--tree, where it only picks the home region/partition).
+	regions := runner.Regions(cmd, allRegions)
 	options := clustersvc.ListOptions{
 		Regions:        regions,
 		ShowHealth:     cmd.Bool("show-health"),
@@ -106,6 +106,9 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 
 	if tree {
 		return clusterview.OutputClustersTree(summaries, elapsed, allRegions, cmd.Bool("show-health"))
+	}
+	if summaries == nil {
+		summaries = []clustersvc.ClusterSummary{} // -o json|yaml: [], not null
 	}
 	payload := map[string]any{"clusters": summaries, "count": len(summaries)}
 	if handled, err := runner.EncodeStdout(format, payload); handled {

@@ -142,3 +142,26 @@ func TestWantsTree(t *testing.T) {
 		}
 	}
 }
+
+// The global --region scans one region without -A, and with -A only sets the
+// home region: the sweep still covers REFRESH_EKS_REGIONS.
+func TestListGlobalRegionWithAndWithoutSweep(t *testing.T) {
+	fakeaws.New(t, listWorld())
+	t.Setenv("REFRESH_EKS_REGIONS", "us-west-2,ap-south-1")
+	for _, tc := range []struct {
+		args []string
+		want float64
+	}{
+		{[]string{"refresh", "--region", "eu-west-1", "cluster", "list", "-o", "json"}, 1},
+		{[]string{"refresh", "--region", "eu-west-1", "cluster", "list", "-A", "-o", "json"}, 2},
+	} {
+		stdout, stderr, err := fakeaws.Run(t, fakeaws.App(Command()), tc.args...)
+		if err != nil {
+			t.Fatalf("%v: %v\nstderr:\n%s", tc.args, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		if doc["count"] != tc.want {
+			t.Errorf("%v: count = %v, want %v (one row per scanned region)", tc.args, doc["count"], tc.want)
+		}
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -113,17 +114,33 @@ func SetupAWSWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Du
 	return setupAWS(ctx, cmd, timeout, checkCredentials)
 }
 
-// Regions returns the regions a multi-region command should scan: its own
-// repeatable -r/--region when given, otherwise the global --region placed
-// before the subcommand (`refresh --region X status`). urfave/cli resolves
-// "region" to the subcommand's local slice flag even when only the global
-// one was set, so reading cmd.StringSlice("region") alone would drop the
-// global value. It returns nil when neither is set.
+// Regions returns the explicit scan list of a multi-region command: its own
+// repeatable -r/--region values. Without them, and only when the command is
+// not sweeping (allRegions false: no -A, no --tree), the global --region
+// placed before the subcommand counts as the scan list, so
+// `refresh --region X status` equals `refresh status --region X`. urfave/cli
+// resolves "region" to the local slice flag even when only the global one was
+// set, so reading cmd.StringSlice("region") alone would drop it.
+//
+// With a sweep, the global --region only sets the home region and so the
+// partition (`refresh --region cn-north-1 cluster list -A` sweeps the China
+// partition), and REFRESH_EKS_REGIONS still applies downstream. It returns
+// nil when there is no explicit list.
 //
 // Every subcommand that declares its own --region slice must read it through
 // this helper (status, cluster list; nodegroup update --all-clusters should
 // adopt it too).
-func Regions(cmd *cli.Command) []string {
+func Regions(cmd *cli.Command, allRegions bool) []string {
+	var local []string
+	for _, f := range cmd.Flags {
+		if slices.Contains(f.Names(), "region") && f.IsSet() {
+			local = awsconfig.SetFlagValues(cmd, "region")
+			break
+		}
+	}
+	if len(local) > 0 || allRegions {
+		return local
+	}
 	return awsconfig.SetFlagValues(cmd, "region")
 }
 
@@ -272,11 +289,6 @@ func PositionalSlot(cmd *cli.Command, flagName string, priorFlags ...string) str
 // For any other format value it returns handled=false so the caller can fall
 // through to its table renderer.
 func EncodeStdout(format string, payload any) (handled bool, err error) {
-	switch strings.ToLower(format) {
-	case "json", "yaml":
-		// An empty list is `[]`, never `null`, in every machine payload.
-		payload = emptySlices(payload)
-	}
 	switch strings.ToLower(format) {
 	case "json":
 		enc := json.NewEncoder(os.Stdout)

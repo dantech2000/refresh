@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 var shadowAllowlist = map[string]string{
 	// A repeatable "scan these regions" slice, not the single-region AWS
 	// override. The action must read it through runner.Regions, which falls
-	// back to the global --region.
+	// back to the global --region only when the command is not sweeping (-A).
 	"refresh status --region":       "repeatable scan regions; read via runner.Regions",
 	"refresh cluster list --region": "repeatable scan regions; read via runner.Regions",
 	// nodegroup update --all-clusters reads -r in fleet.go, which should adopt
@@ -103,7 +104,7 @@ func runCaptured(t *testing.T, path []string, args ...string) resolved {
 	}
 	var got resolved
 	cmd.Action = func(_ context.Context, c *cli.Command) error {
-		got = resolved{regions: runner.Regions(c), timeout: c.Duration("timeout"), conc: c.Int("max-concurrency")}
+		got = resolved{regions: runner.Regions(c, c.Bool("all-regions")), timeout: c.Duration("timeout"), conc: c.Int("max-concurrency")}
 		return nil
 	}
 	if err := app.Run(context.Background(), append([]string{"refresh"}, args...)); err != nil {
@@ -200,5 +201,38 @@ func TestGlobalFlagDefaultsUnchanged(t *testing.T) {
 	got = runCaptured(t, []string{"status"}, "--region", "us-east-1", "status", "-r", "eu-west-1", "-r", "ap-south-1")
 	if !slices.Equal(got.regions, []string{"eu-west-1", "ap-south-1"}) {
 		t.Errorf("status regions = %v, want the local -r values", got.regions)
+	}
+}
+
+// The global --region becomes the scan list only without -A. With -A it just
+// sets the home region (and so the partition), so `refresh --region
+// cn-north-1 cluster list -A` still sweeps the whole China partition. A local
+// -r is always the scan list.
+func TestRegionsGlobalVersusLocalWithAndWithoutSweep(t *testing.T) {
+	for _, cmdPath := range [][]string{{"status"}, {"cluster", "list"}} {
+		for _, tc := range []struct {
+			name string
+			args []string
+			want []string
+		}{
+			{"global", []string{"--region", "eu-west-1"}, []string{"eu-west-1"}},
+			{"global -A", []string{"--region", "cn-north-1", "-A"}, nil},
+			{"local", []string{"-r", "eu-west-1"}, []string{"eu-west-1"}},
+			{"local -A", []string{"-r", "eu-west-1", "-A"}, []string{"eu-west-1"}},
+		} {
+			t.Run(strings.Join(cmdPath, " ")+"/"+tc.name, func(t *testing.T) {
+				// Global flags go before the subcommand, local ones after.
+				var argv []string
+				if tc.args[0] == "--region" {
+					argv = append(append(append([]string{}, tc.args[:2]...), cmdPath...), tc.args[2:]...)
+				} else {
+					argv = append(append([]string{}, cmdPath...), tc.args...)
+				}
+				got := runCaptured(t, cmdPath, argv...)
+				if !slices.Equal(got.regions, tc.want) {
+					t.Errorf("%v: regions = %v, want %v", argv, got.regions, tc.want)
+				}
+			})
+		}
 	}
 }

@@ -60,6 +60,10 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 	}
 	elapsed := time.Since(start)
 	statuses, regionErrs := sweep.statuses, sweep.errs
+	if statuses == nil {
+		// A complete sweep with no clusters: -o json|yaml print [], not null.
+		statuses = []statussvc.ClusterStatus{}
+	}
 
 	if err := reportSweep(ui.Stderr, len(regions), sweep); err != nil {
 		return err
@@ -85,9 +89,9 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 // REFRESH_EKS_REGIONS, not the config region. Only that sweep skips regions
 // closed to these credentials (the fleet discovery rule from #331).
 func resolveRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string, defaultSweep bool) {
-	// runner.Regions also honors the global `refresh --region X status`,
-	// which the local repeatable -r would otherwise shadow.
-	if r := runner.Regions(cmd); len(r) > 0 {
+	// runner.Regions also honors the global `refresh --region X status`
+	// (not with -A, where it only picks the home region/partition).
+	if r := runner.Regions(cmd, cmd.Bool("all-regions")); len(r) > 0 {
 		return r, false
 	}
 	if cmd.Bool("all-regions") {

@@ -210,7 +210,8 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 			s.logger.Debug("failed to get cluster add-ons", "cluster", name, "error", err)
 			details.Warnings = append(details.Warnings, "could not list add-ons: "+awserr.Summary(err))
 		} else {
-			details.Addons = addons
+			// Collected: [] when there are none, unlike nil (not collected).
+			details.Addons = append([]AddonInfo{}, addons...)
 			details.Warnings = append(details.Warnings, warnings...)
 		}
 	}
@@ -222,7 +223,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 			s.logger.Debug("failed to get cluster nodegroups", "cluster", name, "error", err)
 			details.Warnings = append(details.Warnings, "could not list nodegroups: "+awserr.Summary(err))
 		} else {
-			details.Nodegroups = nodegroups
+			details.Nodegroups = append([]NodegroupSummary{}, nodegroups...)
 			details.Warnings = append(details.Warnings, warnings...)
 		}
 	}

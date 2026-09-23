@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -197,5 +199,27 @@ func TestRunStatus_GlobalRegionBeforeSubcommand(t *testing.T) {
 		if len(swept) != 1 || swept[0] != "eu-west-1" {
 			t.Errorf("%v swept %v, want [eu-west-1]", argv, swept)
 		}
+	}
+}
+
+// With -A, the global --region is only the home region: the sweep still uses
+// REFRESH_EKS_REGIONS (or the partition), not just that one region.
+func TestRunStatus_GlobalRegionWithAllRegionsStillSweeps(t *testing.T) {
+	fakeAWSEnv(t)
+	t.Setenv("REFRESH_EKS_REGIONS", "us-west-2,ap-south-1")
+	var mu sync.Mutex
+	var swept []string
+	stubRegionService(t, func(cfg aws.Config) regionLister {
+		mu.Lock()
+		swept = append(swept, cfg.Region)
+		mu.Unlock()
+		return fakeRegion{}
+	})
+	if _, err := runRefreshCLI(t, "--region", "us-east-1", "status", "-A", "-o", "json"); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(swept)
+	if strings.Join(swept, ",") != "ap-south-1,us-west-2" {
+		t.Errorf("swept %v, want the REFRESH_EKS_REGIONS set", swept)
 	}
 }

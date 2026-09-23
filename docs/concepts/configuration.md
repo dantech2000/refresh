@@ -112,7 +112,10 @@ A global flag works the same before or after the subcommand:
 `refresh -t 5s cluster list` and `refresh cluster list -t 5s` are equal. The
 same is true for `refresh --region eu-west-1 status` and
 `refresh status --region eu-west-1`. On `status` and `cluster list`, `-r` is
-repeatable, and a local `-r` wins over the global `--region`.
+repeatable, and a local `-r` wins over the global `--region`. With `-A`, the
+global `--region` only sets the home region and its partition:
+`refresh --region cn-north-1 cluster list -A` sweeps the whole China
+partition.
 | `--log-level` | `warn` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `--verbose` | off | Shortcut for `--log-level debug` |
 | `--no-color` | off | Disable colored output (`NO_COLOR` is also honored) |

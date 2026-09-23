@@ -94,5 +94,8 @@
   ],
   "tags": {
     "s-string": "s-string"
-  }
+  },
+  "warnings": [
+    "s-string"
+  ]
 }

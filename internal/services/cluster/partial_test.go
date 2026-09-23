@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -59,6 +60,54 @@ func TestDescribe_PartialFailuresBecomeWarnings(t *testing.T) {
 		if strings.Contains(w, "\n") {
 			t.Errorf("warning is not one line: %q", w)
 		}
+	}
+
+	// The machine document keeps a failed collection as null (never [],
+	// which would claim "no nodegroups") and carries the failure in warnings.
+	b, err := json.Marshal(details)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	for _, want := range []string{`"nodegroups":null`, `"warnings":[`, `could not list nodegroups: AccessDeniedException`} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("JSON lacks %s:\n%s", want, doc)
+		}
+	}
+}
+
+// Without --detailed, nodegroups were not collected: null, not []. Add-ons
+// that were collected and are none are [].
+func TestDescribe_NotCollectedIsNullCollectedEmptyIsEmptyList(t *testing.T) {
+	mock := &mocks.EKSAPI{
+		DescribeClusterFn: func(_ context.Context, in *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
+			return &eks.DescribeClusterOutput{Cluster: &ekstypes.Cluster{Name: in.Name, Version: aws.String("1.32")}}, nil
+		},
+		ListAddonsFn: func(context.Context, *eks.ListAddonsInput, ...func(*eks.Options)) (*eks.ListAddonsOutput, error) {
+			return &eks.ListAddonsOutput{}, nil
+		},
+		ListNodegroupsFn: func(context.Context, *eks.ListNodegroupsInput, ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+			t.Error("nodegroups listed without --detailed")
+			return &eks.ListNodegroupsOutput{}, nil
+		},
+	}
+	svc := &ServiceImpl{eksClient: mock, cache: NewCache(time.Minute), logger: quietLogger()}
+	details, err := svc.Describe(context.Background(), "prod", DescribeOptions{IncludeAddons: true})
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	b, err := json.Marshal(details)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	for _, want := range []string{`"nodegroups":null`, `"addons":[]`} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("JSON lacks %s:\n%s", want, doc)
+		}
+	}
+	if strings.Contains(doc, `"warnings"`) {
+		t.Errorf("no failures, but JSON has warnings:\n%s", doc)
 	}
 }
 
