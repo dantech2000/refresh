@@ -42,16 +42,27 @@ type VersionUpdateOptions struct {
 // StartVersionUpdate starts an UpdateNodegroupVersion roll to the latest AMI
 // for the nodegroup's current Kubernetes version and returns the EKS update.
 //
+// The request pins Version to the nodegroup's current Kubernetes minor. The
+// UpdateNodegroupVersion reference contradicts itself on an omitted Version
+// (the operation text says it keeps the current minor, the parameter text
+// says it moves to the cluster's minor), so an AMI patch sends it explicitly
+// and can never turn into a minor-version upgrade.
+//
 // One idempotency token is computed per call, outside the retry, so a retried
 // request is the SAME request and can't start a second roll. The token does
 // not span separate calls: a later run (or a fleet revisit) gets a new token.
 func (s *ServiceImpl) StartVersionUpdate(ctx context.Context, clusterName, nodegroupName string, opts VersionUpdateOptions) (*ekstypes.Update, error) {
+	ng, err := s.DescribeNodegroup(ctx, clusterName, nodegroupName)
+	if err != nil {
+		return nil, err
+	}
 	token := common.IdempotencyToken() // stable across retries of this call
 	out, err := common.WithRetry(ctx, common.DefaultRetryConfig,
 		func(rc context.Context) (*eks.UpdateNodegroupVersionOutput, error) {
 			return s.eksClient.UpdateNodegroupVersion(rc, &eks.UpdateNodegroupVersionInput{
 				ClusterName:        aws.String(clusterName),
 				NodegroupName:      aws.String(nodegroupName),
+				Version:            ng.Version,
 				Force:              opts.Force,
 				ClientRequestToken: aws.String(token),
 			})
