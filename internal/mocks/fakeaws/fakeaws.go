@@ -43,6 +43,9 @@ type Nodegroup struct {
 	// UpdateForce records the force field of the last UpdateNodegroupVersion
 	// request (for assertions).
 	UpdateForce bool
+	// Desired, Min, and Max are the scaling config. All zero answers as
+	// desired 2, min 1, max 3. UpdateNodegroupConfig changes them.
+	Desired, Min, Max int32
 	// DescribeNodegroupError, when set, makes DescribeNodegroup for this
 	// nodegroup fail with that API error code (HTTP 403 for AccessDenied*,
 	// else 400).
@@ -447,6 +450,37 @@ func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Clus
 			target = ng.Version
 		}
 		writeJSON(w, map[string]any{"update": s.startUpdate("VersionUpdate", func() { ng.Version = target })})
+	case post && len(rest) == 2 && rest[1] == "update-config":
+		ng := findNodegroup(c, rest[0])
+		if ng == nil {
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No node group found for name: "+rest[0]+".")
+			return
+		}
+		var in struct {
+			ScalingConfig *struct {
+				DesiredSize *int32 `json:"desiredSize"`
+				MinSize     *int32 `json:"minSize"`
+				MaxSize     *int32 `json:"maxSize"`
+			} `json:"scalingConfig"`
+		}
+		_ = json.Unmarshal(body, &in)
+		writeJSON(w, map[string]any{"update": s.startUpdate("ConfigUpdate", func() {
+			sc := in.ScalingConfig
+			if sc == nil {
+				return
+			}
+			desired, minSize, maxSize := scaling(ng)
+			if sc.DesiredSize != nil {
+				desired = *sc.DesiredSize
+			}
+			if sc.MinSize != nil {
+				minSize = *sc.MinSize
+			}
+			if sc.MaxSize != nil {
+				maxSize = *sc.MaxSize
+			}
+			ng.Desired, ng.Min, ng.Max = desired, minSize, maxSize
+		})})
 	default:
 		unsupported(w, r, "eks")
 	}
@@ -566,6 +600,19 @@ func (s *Server) startUpdate(kind string, apply func()) map[string]any {
 	return map[string]any{"id": id, "status": "InProgress", "type": kind}
 }
 
+// scaling returns ng's scaling config with the defaults applied.
+func scaling(ng *Nodegroup) (desired, minSize, maxSize int32) {
+	if ng.Desired == 0 && ng.Min == 0 && ng.Max == 0 {
+		return 2, 1, 3
+	}
+	return ng.Desired, ng.Min, ng.Max
+}
+
+func scalingJSON(ng *Nodegroup) map[string]any {
+	desired, minSize, maxSize := scaling(ng)
+	return map[string]any{"minSize": minSize, "maxSize": maxSize, "desiredSize": desired}
+}
+
 func findNodegroup(c *Cluster, name string) *Nodegroup {
 	for _, ng := range c.Nodegroups {
 		if ng.Name == name {
@@ -655,7 +702,7 @@ func nodegroupJSON(c *Cluster, ng *Nodegroup) map[string]any {
 		"amiType":        amiType,
 		"capacityType":   "ON_DEMAND",
 		"instanceTypes":  []string{"m5.large"},
-		"scalingConfig":  map[string]any{"minSize": 1, "maxSize": 3, "desiredSize": 2},
+		"scalingConfig":  scalingJSON(ng),
 		"health":         map[string]any{"issues": []any{}},
 	}
 }

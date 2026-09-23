@@ -93,7 +93,7 @@ refresh context add <name> --cluster <cluster> [flags]
 |---|---|
 | `--cluster, -c` | **Required.** EKS cluster name |
 | `--region, -r` | AWS region (optional) |
-| `--profile, -p` | AWS shared-config profile (optional) |
+| `--profile` | AWS shared-config profile (optional). `-p` was removed in 0.11 |
 | `--use` | Switch to this context immediately after saving |
 
 ```bash

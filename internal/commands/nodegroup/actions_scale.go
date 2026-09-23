@@ -7,29 +7,41 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/services/common"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func runScale(ctx context.Context, cmd *cli.Command) error {
-	// --timeout alone would cap --wait (default op-timeout 5m) at the API
+func runScale(ctx context.Context, cmd *cli.Command) (err error) {
+	// A scale that can't be confirmed fails before any AWS call.
+	if err := runner.RequireYesUnattended(cmd); err != nil {
+		return err
+	}
+	// --timeout alone would cap --wait (default --wait-timeout 5m) at the API
 	// timeout (default 60s); widen the deadline to cover the wait too.
-	setupTimeout := scaleSetupTimeout(cmd.Duration("timeout"), cmd.Duration("op-timeout"), cmd.Bool("wait"), cmd.Bool("health-check"))
+	waitTimeout := runner.WaitTimeout(cmd, "op-timeout")
+	setupTimeout := scaleSetupTimeout(runner.APITimeout(cmd), waitTimeout, cmd.Bool("wait"), cmd.Bool("health-check"))
 	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, setupTimeout)
 	if err != nil {
 		return err
 	}
 	defer cancel()
+	if cmd.Bool("wait") {
+		// The wait adds --wait-timeout to the run deadline: a timeout names it.
+		defer runner.WaitDeadlineHint(&err)
+	}
 
 	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, runner.RequestedCluster(cmd))
 	if err != nil {
@@ -52,7 +64,7 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 		HealthCheck: cmd.Bool("health-check"),
 		CheckPDBs:   cmd.Bool("check-pdbs"),
 		Wait:        cmd.Bool("wait"),
-		Timeout:     cmd.Duration("op-timeout"),
+		Timeout:     waitTimeout,
 		DryRun:      cmd.Bool("dry-run"),
 		Force:       cmd.Bool("force"),
 	}
@@ -77,6 +89,12 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 
 	nodegroupName := cmd.String("nodegroup")
 
+	// A --min/--max that excludes the current desired size fails the same way
+	// in a preview, and before the PDB gate and the confirmation prompt.
+	if err := svc.CheckScaleBounds(ctx, clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
+		return err
+	}
+
 	// --check-pdbs gate. Without --force the service refuses a blocked
 	// scale-down itself; with --force (or --dry-run) run the check here so the
 	// overridden blockers are shown before anything changes.
@@ -99,6 +117,16 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 
 	if opts.CheckPDBs && opts.Force {
 		warnForcedScaleDown(ui.Stderr, clusterName, nodegroupName, pdbCheck, pdbCheckErr)
+	}
+
+	if !cmd.Bool("yes") {
+		question, qerr := scaleQuestion(ctx, eks.NewFromConfig(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize)
+		if qerr != nil {
+			return qerr
+		}
+		if err := runner.ConfirmMutation(ctx, question); err != nil {
+			return err
+		}
 	}
 
 	return scaleExit(runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
@@ -184,8 +212,8 @@ func printScaleDryRunPDBGate(w io.Writer, clusterName, nodegroupName string, che
 
 // scaleSetupTimeout returns the overall deadline for a scale run. --timeout
 // covers the API calls and pre-checks; with --wait the run also gets the full
-// --op-timeout, plus another --timeout for the post-scale health check. A
-// value <= 0 means no deadline (--timeout 0, or --wait with --op-timeout 0).
+// --wait-timeout, plus another --timeout for the post-scale health check. A
+// value <= 0 means no deadline (--timeout 0, or --wait with --wait-timeout 0).
 func scaleSetupTimeout(apiTimeout, opTimeout time.Duration, wait, healthCheck bool) time.Duration {
 	if apiTimeout <= 0 {
 		return 0
@@ -201,6 +229,46 @@ func scaleSetupTimeout(apiTimeout, opTimeout time.Duration, wait, healthCheck bo
 		total += apiTimeout
 	}
 	return total
+}
+
+// scaleQuestion builds the confirmation prompt for a scale, from the
+// nodegroup's current scaling config: "Scale prod/ng-a desired 3 → 1?". Only
+// the requested bounds are listed.
+func scaleQuestion(ctx context.Context, eksClient *eks.Client, clusterName, nodegroupName string, desired, minSize, maxSize *int32) (string, error) {
+	// Retried: a throttle here would otherwise abort the scale before the
+	// prompt.
+	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+		return eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(clusterName),
+			NodegroupName: aws.String(nodegroupName),
+		})
+	})
+	if err != nil {
+		return "", awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))
+	}
+	var sc ekstypes.NodegroupScalingConfig
+	if desc != nil && desc.Nodegroup != nil && desc.Nodegroup.ScalingConfig != nil {
+		sc = *desc.Nodegroup.ScalingConfig
+	}
+	return formatScaleQuestion(clusterName, nodegroupName, sc, desired, minSize, maxSize), nil
+}
+
+// formatScaleQuestion is scaleQuestion's text, split out for tests.
+func formatScaleQuestion(clusterName, nodegroupName string, sc ekstypes.NodegroupScalingConfig, desired, minSize, maxSize *int32) string {
+	var parts []string
+	for _, b := range []struct {
+		label     string
+		current   *int32
+		requested *int32
+	}{{"desired", sc.DesiredSize, desired}, {"min", sc.MinSize, minSize}, {"max", sc.MaxSize, maxSize}} {
+		if b.requested != nil {
+			parts = append(parts, fmt.Sprintf("%s %d → %d", b.label, aws.ToInt32(b.current), *b.requested))
+		}
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("Scale %s/%s (no size change requested)?", clusterName, nodegroupName)
+	}
+	return fmt.Sprintf("Scale %s/%s %s?", clusterName, nodegroupName, strings.Join(parts, ", "))
 }
 
 // printScaleDryRun shows the current vs requested scaling configuration

@@ -273,11 +273,11 @@ func TestDiscoverFleetTargets_CancelledContextIsAnError(t *testing.T) {
 }
 
 func TestDiscoveryStopError(t *testing.T) {
-	// The --timeout bound on discovery gathered nothing: exit 1, and the
+	// The --wait-timeout bound on discovery gathered nothing: exit 1, and the
 	// message names the timeout.
 	err := discoveryStopError(context.Background(), fmt.Errorf("fleet discovery stopped: %w", context.DeadlineExceeded), 0)
-	if err == nil || runner.ExitCodeOf(err) != 1 || !strings.Contains(err.Error(), "--timeout") {
-		t.Errorf("deadline: exit = %d, want 1 naming --timeout (err %v)", runner.ExitCodeOf(err), err)
+	if err == nil || runner.ExitCodeOf(err) != 1 || !strings.Contains(err.Error(), "--wait-timeout") {
+		t.Errorf("deadline: exit = %d, want 1 naming --wait-timeout (err %v)", runner.ExitCodeOf(err), err)
 	}
 	// A user interrupt passes through unchanged.
 	ctx, cancel := context.WithCancel(context.Background())

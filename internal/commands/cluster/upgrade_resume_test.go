@@ -40,8 +40,8 @@ func TestResumeCommand(t *testing.T) {
 			want: "refresh cluster upgrade -c prod --to 1.33",
 		},
 		{
-			name: "skip addons, repeated and short alias",
-			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "--skip", "vpc-cni", "-s", "coredns"},
+			name: "skip addons, repeated",
+			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "--skip", "vpc-cni", "--skip", "coredns"},
 			want: "refresh cluster upgrade -c prod --to 1.33 --skip vpc-cni --skip coredns",
 		},
 		{
@@ -86,7 +86,27 @@ func TestResumeCommand(t *testing.T) {
 		},
 		{
 			name: "flags left at their defaults are omitted",
-			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "--dry-run", "--quiet", "--timeout", "1h", "--poll-interval", "5s"},
+			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "--dry-run", "--quiet", "--poll-interval", "5s"},
+			want: "refresh cluster upgrade -c prod --to 1.33",
+		},
+		{
+			name: "wait timeout is kept",
+			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "--wait-timeout", "90m"},
+			want: "refresh cluster upgrade -c prod --to 1.33 --wait-timeout 1h30m",
+		},
+		{
+			name: "deprecated local --timeout resumes as --wait-timeout",
+			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "--timeout", "2h"},
+			want: "refresh cluster upgrade -c prod --to 1.33 --wait-timeout 2h",
+		},
+		{
+			name: "deprecated -t resumes as --wait-timeout",
+			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "-t", "45m"},
+			want: "refresh cluster upgrade -c prod --to 1.33 --wait-timeout 45m",
+		},
+		{
+			name: "global --timeout before the subcommand is not a wait timeout",
+			args: []string{"--timeout", "5s", "cluster", "upgrade", "prod", "--to", "1.33"},
 			want: "refresh cluster upgrade -c prod --to 1.33",
 		},
 	} {

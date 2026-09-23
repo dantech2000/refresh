@@ -111,7 +111,7 @@ These are accepted on every command:
 | Flag | Default | Description |
 |---|---|---|
 | `--profile` | — | AWS shared-config profile (overrides the active context) |
-| `--region` | — | AWS region (overrides the active context) |
+| `--region, -r` | — | AWS region (overrides the active context) |
 | `--timeout, -t` | `60s` | Timeout for API calls on list, describe, and check commands (e.g. `60s`, `2m`). See [Timeouts](#timeouts) |
 | `--max-concurrency, -C` | `8` | Max concurrency for multi-region operations. For `status`, the clusters evaluated at once in each region; `status` sweeps `min(4, -C)` regions at once |
 | `--log-level` | `warn` | Log verbosity: `debug`, `info`, `warn`, `error` |
@@ -121,10 +121,57 @@ These are accepted on every command:
 A global flag works the same before or after the subcommand:
 `refresh -t 5s cluster list` and `refresh cluster list -t 5s` are equal.
 
-`cluster upgrade`, `nodegroup update`, and `addon update` have their own
-`--timeout` with a different meaning (see [Timeouts](#timeouts)). On these
-commands, put the global API timeout before the subcommand:
-`refresh -t 2m cluster upgrade ...`.
+`addon update` has its own `--timeout` for its update API calls, with a
+longer default (see [Timeouts](#timeouts)). In 0.11, `cluster upgrade` and
+`nodegroup update` still accept a local `--timeout/-t` as a deprecated alias
+of `--wait-timeout`. On these three commands, put the global API timeout
+before the subcommand: `refresh -t 2m cluster upgrade ...`.
+
+## Flag shorthands
+
+Each one-letter shorthand has one meaning on every command:
+
+| Shorthand | Long flag |
+|---|---|
+| `-c` | `--cluster` |
+| `-n` | `--nodegroup` |
+| `-a` | `--addon` |
+| `-o` | `--format` |
+| `-r` | `--region` |
+| `-t` | `--timeout` |
+| `-d` | `--dry-run` |
+| `-y` | `--yes` |
+| `-q` | `--quiet` |
+| `-w` | `--watch` |
+| `-f` | `--filter` |
+
+A few uppercase shorthands exist outside this set, each with one meaning:
+`-A` (`--all-regions`), `-C` (`--max-concurrency`), `-H` (`--show-health`),
+`-R` (`--check-readiness`), `-T` (`--tree`), `-I` (`--show-instances`), and
+`-W` (`--show-workloads`). A test fails the build if a shorthand gets a
+second meaning.
+
+A shorthand removed in 0.11 fails with its replacement, for example
+`-d was removed from 'cluster describe' in 0.11.0; use --detailed`. See
+[Migrating to 0.11](../migration.md#migrating-to-011).
+
+## Commands that change a cluster
+
+`addon update`, `nodegroup scale`, `nodegroup update`, and `cluster upgrade`
+share these flags:
+
+| Flag | Meaning |
+|---|---|
+| `--dry-run, -d` | Show what would change. Never prompts and never changes anything |
+| `--yes, -y` | Skip the confirmation prompts |
+| `--wait-timeout` | How long to wait for the change to finish (where the command waits) |
+| `--kubeconfig`, `--kube-context` | The Kubernetes access for health, PDB, and live-roll checks (`nodegroup scale`, `nodegroup update`, `cluster upgrade`) |
+
+`addon update` and `nodegroup scale` ask before they change anything.
+`cluster upgrade` asks before each phase. `nodegroup update` asks when a
+nodegroup pattern is not an exact name or health checks warn. A prompt
+continues only on `y` or `yes`. With `-o json`/`-o yaml`, or without a
+terminal, a run that would ask fails with an error that names `--yes`.
 
 !!! note
     Logs go to **stderr**; data goes to **stdout**. Spinners write nothing
@@ -178,10 +225,14 @@ does not set them:
 
 | Command | Flag | Default | Scope |
 |---|---|---|---|
-| `nodegroup update` | `--timeout, -t` | `40m` | The whole run. With `--all-clusters`, each cluster (health gate, roll, verify) gets its own `--timeout`. `0` means no limit |
-| `cluster upgrade` | `--timeout, -t` | `4h` | The whole upgrade |
+| `nodegroup update` | `--wait-timeout` | `40m` | The whole run. With `--all-clusters`, each cluster (health gate, roll, verify) gets its own `--wait-timeout`. `0` means no limit |
+| `cluster upgrade` | `--wait-timeout` | `4h` | The whole upgrade. `0` means no limit |
 | `addon update` | `--timeout, -t` | `10m` | The update API calls. With `--wait`, each add-on (or each batch of 3 with `--parallel`) also gets `--wait-timeout` (default `5m`) |
-| `nodegroup scale --wait` | `--op-timeout` | `5m` | Added to the global `--timeout`, plus one more `--timeout` with `--health-check`. `0` means no limit |
+| `nodegroup scale --wait` | `--wait-timeout` | `5m` | Added to the global `--timeout`, plus one more `--timeout` with `--health-check`. `0` means no limit |
+
+Before 0.11, the wait flag was `--timeout/-t` on `nodegroup update` and
+`cluster upgrade`, and `--op-timeout` on `nodegroup scale`. These names still
+work in 0.11 and print a deprecation warning. They go away in 0.12.
 
 `--poll-interval` on `nodegroup update` and `cluster upgrade` must be greater
 than `0`. A zero or negative value fails before any AWS call.
@@ -191,7 +242,7 @@ than `0`. A zero or negative value fails before any AWS call.
 | Variable | Equivalent / effect |
 |---|---|
 | `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION` | Standard AWS SDK resolution |
-| `REFRESH_TIMEOUT` | Default for the global `--timeout` (list, describe, and check commands). Not applied to the `--timeout` of `cluster upgrade`, `addon update`, or `nodegroup update`, which bounds a long-running wait |
+| `REFRESH_TIMEOUT` | Default for the global `--timeout` (list, describe, and check commands). Not applied to `--wait-timeout` or to the `--timeout` of `addon update`, which bound long-running work |
 | `REFRESH_MAX_CONCURRENCY` | Default for `--max-concurrency` |
 | `REFRESH_LOG_LEVEL` | Default for `--log-level` |
 | `REFRESH_EKS_REGIONS` | Comma-separated region set for multi-region sweeps: `status -A`, `cluster list -A`, and `nodegroup update --all-clusters`. `-r/--region` wins over it. When it is set, a region these credentials cannot use counts as failed instead of being skipped (see [Regions](#regions)) |

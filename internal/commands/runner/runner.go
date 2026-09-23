@@ -55,7 +55,7 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 	// Config loading and the credential check (STS, SSO, IMDS) always run
 	// under --timeout, even when the returned context has a longer or no
 	// deadline, so a stalled credential source can't hang the command.
-	checkCtx, cancelCheck := checkContext(ctx, cmd.Duration("timeout"), timeout)
+	checkCtx, cancelCheck := checkContext(ctx, APITimeout(cmd), timeout)
 	defer cancelCheck()
 
 	cfg, err := awsconfig.Load(checkCtx, cmd)
@@ -101,7 +101,7 @@ func checkContext(ctx context.Context, apiTimeout, timeout time.Duration) (conte
 // and checks credentials. On error, the returned cancel is nil and the
 // internal context has already been cancelled.
 func SetupAWS(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, cmd.Duration("timeout"), checkCredentials)
+	return setupAWS(ctx, cmd, APITimeout(cmd), checkCredentials)
 }
 
 // SetupAWSWithDeadline is like SetupAWS but uses the given timeout for the

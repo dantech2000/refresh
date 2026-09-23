@@ -17,6 +17,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dantech2000/refresh/internal/flagcanon"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -25,20 +26,23 @@ import (
 // `refresh nodegroup update ...` in process. Exit errors are returned by Run,
 // not turned into os.Exit.
 func App(cmds ...*cli.Command) *cli.Command {
-	return &cli.Command{
+	app := &cli.Command{
 		Name: "refresh",
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Value: 30 * time.Second},
 			&cli.IntFlag{Name: "max-concurrency", Aliases: []string{"C"}, Value: 4},
 			&cli.BoolFlag{Name: "no-color"},
 			&cli.StringFlag{Name: "profile"},
-			&cli.StringFlag{Name: "region"},
+			&cli.StringFlag{Name: "region", Aliases: []string{"r"}},
 			&cli.StringFlag{Name: "log-level", Value: "warn"},
 			&cli.BoolFlag{Name: "verbose"},
 		},
 		Commands:       cmds,
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 	}
+	// The same removed-shorthand errors as main.newApp.
+	flagcanon.Install(app)
+	return app
 }
 
 // Run runs app with args (args[0] is the program name) and returns what it

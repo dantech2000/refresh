@@ -198,6 +198,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	// nodegroup) via the cluster API instead of leaving NODES at desired-only.
 	// When unreachable, the kube client is nil and readiness stays honestly
 	// unknown. It also gives the health checks a real k8s client. (REF-130)
+	showHealth, includeAddons := describeSections(cmd)
 	var clusterService *clustersvc.ServiceImpl
 	if cmd.Bool("check-readiness") {
 		humanOutput := strings.EqualFold(cmd.String("format"), "table")
@@ -212,12 +213,12 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		}
 		clusterService = factory.NewClusterServiceWithHealth(awsCfg, k8sClient, metricsClient, nil)
 	} else {
-		clusterService = factory.NewClusterService(awsCfg, cmd.Bool("show-health"), nil)
+		clusterService = factory.NewClusterService(awsCfg, showHealth, nil)
 	}
 	options := clustersvc.DescribeOptions{
-		ShowHealth:    cmd.Bool("show-health"),
+		ShowHealth:    showHealth,
 		ShowSecurity:  cmd.Bool("show-security") || cmd.Bool("detailed"),
-		IncludeAddons: cmd.Bool("include-addons"),
+		IncludeAddons: includeAddons,
 		Detailed:      cmd.Bool("detailed"),
 	}
 
@@ -291,4 +292,14 @@ func runMultiRegionListWithProgress(ctx context.Context, clusterService *cluster
 	}
 	reportRegionSweep(ui.Stderr, res)
 	return res.Summaries, len(res.Failed), nil
+}
+
+// describeSections returns whether cluster describe shows the health and
+// add-on sections. Both are on unless --no-health / --no-addons is given. The
+// deprecated --show-health=false / --include-addons=false (hidden since
+// 0.11.0) still turn them off; the flags themselves print the warning.
+func describeSections(cmd *cli.Command) (showHealth, includeAddons bool) {
+	showHealth = !cmd.Bool("no-health") && cmd.Bool("show-health")
+	includeAddons = !cmd.Bool("no-addons") && cmd.Bool("include-addons")
+	return showHealth, includeAddons
 }

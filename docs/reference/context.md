@@ -75,7 +75,7 @@ Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
 |---|---|---|---|
 | `--cluster, -c string` | — | — | EKS cluster name |
 | `--region, -r string` | — | — | AWS region (optional) |
-| `--profile, -p string` | — | — | AWS shared-config profile (optional) |
+| `--profile string` | — | — | AWS shared-config profile (optional) |
 | `--use` | — | — | Switch to this context after adding |
 | `--help, -h` | — | — | show help |
 
