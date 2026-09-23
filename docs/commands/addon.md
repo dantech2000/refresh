@@ -103,8 +103,13 @@ that combination before it makes any AWS call.
 
 ### Version guard
 
-- If the add-on is already at the target version, the result is `UP_TO_DATE`
+- If the add-on is `ACTIVE` at the target version, the result is `UP_TO_DATE`
   and no update is sent. `UP_TO_DATE` doesn't count as a failure.
+- If the add-on is at the target version but `DEGRADED` or `*_FAILED`, the
+  update is sent again to repair it.
+- If the add-on is already `UPDATING` or `CREATING` at the target version, no
+  new update is sent. The result is `IN_PROGRESS`, which is not a failure.
+  With `--wait`, the command waits for that operation to finish.
 - `latest` never downgrades. If the installed version is newer than every
   compatible version in the catalog, the result is `UP_TO_DATE`.
 - If you pin a version older than the installed one, the update goes ahead

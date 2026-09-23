@@ -110,8 +110,9 @@ if any add-on update fails.
 
 --all cannot be combined with an add-on name or version.
 
-An add-on already at the target version is reported as UP_TO_DATE and left
-alone; 'latest' never downgrades. A pinned version older than the installed
+An ACTIVE add-on already at the target version is reported as UP_TO_DATE and
+left alone; one that is DEGRADED or failed at the target is re-applied, and
+one already UPDATING at the target is IN_PROGRESS. 'latest' never downgrades. A pinned version older than the installed
 one proceeds with a warning. A name that only partially matches an installed
 add-on is confirmed on a terminal; without one, pass the exact name or --yes.
 

@@ -61,6 +61,9 @@ const (
 	// StatusUpToDate: the add-on is already at (or, for "latest", above) the
 	// target version; no UpdateAddon call was made.
 	StatusUpToDate = "UP_TO_DATE"
+	// StatusInProgress: the add-on is already CREATING/UPDATING at the
+	// target version; no new update was submitted (without Wait).
+	StatusInProgress = "IN_PROGRESS"
 	// StatusCompleted: the EKS update succeeded and the add-on reports the
 	// target version.
 	StatusCompleted = "COMPLETED"

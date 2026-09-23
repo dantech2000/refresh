@@ -31,7 +31,7 @@ an `errors` field in `-o json`/`-o yaml`.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success: updates started, completed, or were already `UP_TO_DATE` |
+| `0` | Success: updates started, completed, were already `UP_TO_DATE`, or were already `IN_PROGRESS` |
 | `1` | An update failed: the API call failed, or with `--wait` the EKS update was `Failed`/`Cancelled`, the add-on ended at another version, or the wait timed out (`WAIT_FAILED`) |
 | `2` | **Needs attention**: every update landed, but a post-update health check found issues (`COMPLETED_WITH_ISSUES`) |
 

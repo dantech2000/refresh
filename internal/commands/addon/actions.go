@@ -331,6 +331,8 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 			addonName, result.PreviousVersion, result.NewVersion, clusterName)
 	case addons.StatusUpToDate:
 		color.Green("Add-on %s is already at %s; nothing to update", addonName, result.PreviousVersion)
+	case addons.StatusInProgress:
+		color.Yellow("Add-on %s is already being updated to %s; no new update was submitted. Use --wait to wait for it.", addonName, result.NewVersion)
 	case addons.StatusCompleted:
 		color.Green("Add-on %s updated to %s (was %s)", addonName, result.NewVersion, result.PreviousVersion)
 	case addons.StatusCompletedWithIssues:
