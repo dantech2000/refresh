@@ -318,35 +318,11 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	// Already-current and downgrade guard. A configuration change is a real
 	// update even at the same version, so the guard applies only without one.
 	if options.Configuration == "" && previousVersion != "" {
-		cmp := CompareVersions(previousVersion, targetVersion)
-		// "latest" never downgrades: an installed version newer than the
-		// newest catalog entry counts as at target.
-		atTarget := cmp == 0 || (cmp > 0 && resolvedLatest)
-		switch status := currentDesc.Addon.Status; {
-		case atTarget && status == ekstypes.AddonStatusActive:
-			s.logger.Info("addon already up to date", "addon", addonName, "installed", previousVersion, "target", targetVersion)
-			result.NewVersion = previousVersion
-			result.Status = StatusUpToDate
+		if done := s.versionGuard(currentDesc.Addon.Status, resolvedLatest, result); done {
 			return result, nil
-		case atTarget && (status == ekstypes.AddonStatusUpdating || status == ekstypes.AddonStatusCreating):
-			// An operation is already in flight at the target: attach to it
-			// (with Wait) instead of submitting another update.
-			result.NewVersion = previousVersion
+		}
+		if result.Status == StatusInProgress {
 			return s.attachInFlight(ctx, clusterName, addonName, result, options)
-		case atTarget && cmp > 0:
-			// Not ACTIVE, but re-applying "latest" would downgrade: leave it.
-			result.NewVersion = previousVersion
-			result.Status = StatusUpToDate
-			result.Warning = fmt.Sprintf("%s is %s at %s, newer than the latest catalog version %s; not re-applied",
-				addonName, status, previousVersion, targetVersion)
-			return result, nil
-		case atTarget:
-			// DEGRADED / *_FAILED at the target: re-apply it, the documented
-			// repair path (see preUpdateHealthCheck).
-			s.logger.Info("re-applying addon at its current version", "addon", addonName, "version", previousVersion, "status", status)
-		case cmp > 0:
-			result.Warning = fmt.Sprintf("downgrading %s from %s to %s", addonName, previousVersion, targetVersion)
-			s.logger.Warn("addon downgrade requested", "addon", addonName, "installed", previousVersion, "target", targetVersion)
 		}
 	}
 
@@ -411,13 +387,50 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	return result, nil
 }
 
+// versionGuard compares the installed version (result.PreviousVersion) with
+// the target (result.NewVersion) given the add-on's status. It returns true
+// when result is final (UP_TO_DATE). It sets Status to IN_PROGRESS when an
+// operation is already in flight at the target (the caller attaches to it),
+// and sets Warning for a pinned downgrade. Otherwise the update proceeds; a
+// DEGRADED or failed add-on at the target is re-applied, the repair path
+// preUpdateHealthCheck allows.
+func (s *ServiceImpl) versionGuard(status ekstypes.AddonStatus, resolvedLatest bool, result *AddonUpdateResult) bool {
+	installed, target, addonName := result.PreviousVersion, result.NewVersion, result.AddonName
+	cmp := CompareVersions(installed, target)
+	// "latest" never downgrades: an installed version newer than the newest
+	// catalog entry counts as at target.
+	atTarget := cmp == 0 || (cmp > 0 && resolvedLatest)
+	switch {
+	case atTarget && status == ekstypes.AddonStatusActive:
+		s.logger.Info("addon already up to date", "addon", addonName, "installed", installed, "target", target)
+		result.NewVersion = installed
+		result.Status = StatusUpToDate
+		return true
+	case atTarget && (status == ekstypes.AddonStatusUpdating || status == ekstypes.AddonStatusCreating):
+		result.NewVersion = installed
+		result.Status = StatusInProgress
+	case atTarget && cmp > 0:
+		// Not ACTIVE, but re-applying "latest" would downgrade: leave it.
+		result.NewVersion = installed
+		result.Status = StatusUpToDate
+		result.Warning = fmt.Sprintf("%s is %s at %s, newer than the latest catalog version %s; not re-applied",
+			addonName, status, installed, target)
+		return true
+	case atTarget:
+		s.logger.Info("re-applying addon at its current version", "addon", addonName, "version", installed, "status", status)
+	case cmp > 0:
+		result.Warning = fmt.Sprintf("downgrading %s from %s to %s", addonName, installed, target)
+		s.logger.Warn("addon downgrade requested", "addon", addonName, "installed", installed, "target", target)
+	}
+	return false
+}
+
 // attachInFlight handles an add-on that is already CREATING/UPDATING at the
 // target version. Without Wait (or on a dry run) it reports IN_PROGRESS.
 // With Wait it waits for the add-on to settle ACTIVE, confirms the version,
 // and runs the post-update health check, like a normal waited update.
 func (s *ServiceImpl) attachInFlight(ctx context.Context, clusterName, addonName string, result *AddonUpdateResult, options UpdateOptions) (*AddonUpdateResult, error) {
 	s.logger.Info("addon update already in progress at target", "addon", addonName, "version", result.NewVersion)
-	result.Status = StatusInProgress
 	if !options.Wait || options.DryRun {
 		return result, nil
 	}
