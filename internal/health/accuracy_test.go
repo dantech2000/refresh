@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -402,5 +403,109 @@ func TestCheckNodeHealth_EstimatedStaysWarn(t *testing.T) {
 	r := (&HealthChecker{eksClient: api}).CheckNodeHealth(context.Background(), "prod")
 	if r.Status != StatusWarn || !strings.Contains(r.Message, "(estimated)") {
 		t.Errorf("status = %s, message = %q; want an estimated WARN", r.Status, r.Message)
+	}
+}
+
+// agedNode returns a node created age ago whose Ready condition has the given
+// status and reason.
+func agedNode(name string, age time.Duration, status corev1.ConditionStatus, reason string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name, CreationTimestamp: metav1.NewTime(time.Now().Add(-age))},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: status, Reason: reason}},
+		},
+	}
+}
+
+func TestCheckNodeHealth_ScaleUpJoiningNodesOnlyWarn(t *testing.T) {
+	// 2 -> 6 scale-up: the nodegroup is ACTIVE but the 4 new kubelets have
+	// not reported Ready yet. 2/6 Ready must not fail the post-scale check.
+	k8s := fakek8s.NewSimpleClientset(
+		agedNode("old-1", 48*time.Hour, corev1.ConditionTrue, "KubeletReady"),
+		agedNode("old-2", 48*time.Hour, corev1.ConditionTrue, "KubeletReady"),
+		agedNode("new-1", 90*time.Second, corev1.ConditionFalse, "KubeletNotReady"),
+		agedNode("new-2", 90*time.Second, corev1.ConditionFalse, "KubeletNotReady"),
+		agedNode("new-3", 2*time.Minute, corev1.ConditionUnknown, "NodeStatusNeverUpdated"),
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "new-4", CreationTimestamp: metav1.NewTime(time.Now().Add(-30 * time.Second))}},
+	)
+	r := nodeHealthChecker(k8s).CheckNodeHealth(context.Background(), "prod")
+	if r.Status != StatusWarn || !strings.Contains(r.Message, "2/6 nodes ready") || !strings.Contains(r.Message, "4 joining not counted") {
+		t.Errorf("status = %s, message = %q; want WARN with 4 joining nodes", r.Status, r.Message)
+	}
+}
+
+func TestCheckNodeHealth_BrokenNodesStillFailWithJoiningNodes(t *testing.T) {
+	// Old nodes that went NotReady, and a new node whose kubelet stopped
+	// posting, are broken, not joining: 1 of 4 settled nodes is Ready.
+	k8s := fakek8s.NewSimpleClientset(
+		agedNode("old-1", 48*time.Hour, corev1.ConditionTrue, "KubeletReady"),
+		agedNode("old-2", 48*time.Hour, corev1.ConditionFalse, "KubeletNotReady"),
+		agedNode("old-3", 48*time.Hour, corev1.ConditionUnknown, "NodeStatusUnknown"),
+		agedNode("new-1", 3*time.Minute, corev1.ConditionUnknown, "NodeStatusUnknown"),
+		agedNode("new-2", 90*time.Second, corev1.ConditionFalse, "KubeletNotReady"),
+		agedNode("new-3", 90*time.Second, corev1.ConditionFalse, "KubeletNotReady"),
+	)
+	r := nodeHealthChecker(k8s).CheckNodeHealth(context.Background(), "prod")
+	if r.Status != StatusFail || !strings.Contains(r.Message, "below the 50% ready minimum, 2 joining not counted") {
+		t.Errorf("status = %s, message = %q; want FAIL", r.Status, r.Message)
+	}
+}
+
+func TestCheckNodeHealth_OnlyJoiningNodesWarn(t *testing.T) {
+	k8s := fakek8s.NewSimpleClientset(
+		agedNode("new-1", time.Minute, corev1.ConditionFalse, "KubeletNotReady"),
+	)
+	r := nodeHealthChecker(k8s).CheckNodeHealth(context.Background(), "prod")
+	if r.Status != StatusWarn || !strings.Contains(r.Message, "No ready nodes yet, 1 joining") {
+		t.Errorf("status = %s, message = %q; want WARN", r.Status, r.Message)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Nil and empty PDB selectors
+// ──────────────────────────────────────────────────────────────────────────────
+
+// The eviction API (getPodDisruptionBudgets) and the policy/v1 lister match
+// pods with metav1.LabelSelectorAsSelector: a nil selector matches nothing
+// and an empty selector ({}) matches every pod in the namespace.
+func TestFindMultiPDBPods_NilAndEmptySelectors(t *testing.T) {
+	webPDB := selectorPDB("my-app", "web-pdb", map[string]string{"app": "web"}, 1, 2)
+	emptyPDB := selectorPDB("my-app", "all-pdb", nil, 1, 2)
+	emptyPDB.Spec.Selector = &metav1.LabelSelector{}
+	nilPDB := selectorPDB("my-app", "nil-pdb", nil, 0, 0)
+	nilPDB.Spec.Selector = nil
+
+	pod := labeledPod("my-app", "web-1", "node-a1", map[string]string{"app": "web"})
+	hc := NewChecker(nil, fakek8s.NewSimpleClientset(pod), nil, nil)
+	targets := map[string]bool{"node-a1": true}
+
+	got := hc.findMultiPDBPods(context.Background(), []policyv1.PodDisruptionBudget{*webPDB, *emptyPDB}, targets, map[string][]corev1.Pod{})
+	if len(got) != 1 || fmt.Sprint(got[0].PDBs) != "[all-pdb web-pdb]" {
+		t.Errorf("an empty selector matches every pod, so web-1 has 2 PDBs; got %+v", got)
+	}
+
+	got = hc.findMultiPDBPods(context.Background(), []policyv1.PodDisruptionBudget{*webPDB, *nilPDB}, targets, map[string][]corev1.Pod{})
+	if len(got) != 0 {
+		t.Errorf("a nil selector matches nothing; got %+v", got)
+	}
+}
+
+func TestScaleDownBlockers_NilAndEmptySelectors(t *testing.T) {
+	emptyPDB := selectorPDB("my-app", "all-pdb", nil, 0, 1)
+	emptyPDB.Spec.Selector = &metav1.LabelSelector{}
+	nilPDB := selectorPDB("my-app", "nil-pdb", nil, 0, 0)
+	nilPDB.Spec.Selector = nil
+	hc := NewChecker(nil, fakek8s.NewSimpleClientset(
+		ngNode("n1", "workers"),
+		appPod("my-app", "web-1", "web", "n1"),
+		emptyPDB, nilPDB,
+	), nil, nil)
+
+	report, err := hc.ScaleDownBlockers(context.Background(), "prod", "workers", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Blockers) != 1 || report.Blockers[0].Name != "all-pdb" {
+		t.Errorf("want only all-pdb (empty selector covers web-1), got %+v", report.Blockers)
 	}
 }

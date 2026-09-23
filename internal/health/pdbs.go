@@ -333,6 +333,11 @@ func (hc *HealthChecker) targetNodeSet(ctx context.Context, targets []string) (n
 // several PDBs before it looks at any budget, so a not-Ready pod is refused
 // even under an AlwaysAllow policy. Namespaces whose pods can't be listed are
 // skipped.
+//
+// Selectors match as in the eviction API (getPodDisruptionBudgets), which
+// uses metav1.LabelSelectorAsSelector like every matcher in this file: a nil
+// selector matches no pod, and an empty selector ({}) matches every pod in
+// the namespace.
 func (hc *HealthChecker) findMultiPDBPods(ctx context.Context, pdbs []policyv1.PodDisruptionBudget, targetNodes map[string]bool, podsByNamespace map[string][]corev1.Pod) []MultiPDBPod {
 	type namedSelector struct {
 		name string
