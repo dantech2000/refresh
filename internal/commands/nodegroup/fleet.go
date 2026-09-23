@@ -40,7 +40,10 @@ type clusterUpdateResult struct {
 // matching nodegroups serially (blast-radius control), with one batch
 // confirmation, an aggregate summary, and a worst-outcome exit code.
 func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(ctx, cmd, 60*time.Second)
+	// No overall deadline: clusters roll serially, so one --timeout across the
+	// whole fleet would starve later clusters. --timeout applies per cluster
+	// (see updateOneClusterInFleet); the run stays signal-cancellable.
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, 0)
 	if err != nil {
 		return err
 	}
@@ -51,7 +54,11 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 	jsonOut := flags.format == "json" && !flags.healthOnly
 
 	regions := resolveUpdateRegions(cmd, awsCfg)
-	targets, err := discoverFleetTargets(ctx, awsCfg, regions)
+	// Discovery is bounded by --timeout so a stalled region can't hang an
+	// unattended run.
+	discoverCtx, cancelDiscover := fleetClusterContext(ctx, flags.timeout)
+	targets, err := discoverFleetTargets(discoverCtx, awsCfg, regions)
+	cancelDiscover()
 	if err != nil {
 		return err
 	}
@@ -109,6 +116,9 @@ func updateOneClusterInFleet(ctx context.Context, tgt clusterTarget, nodegroupPa
 	res := clusterUpdateResult{Cluster: tgt.cluster, Region: tgt.region}
 	eksClient := eks.NewFromConfig(tgt.awsCfg)
 
+	ctx, cancel := fleetClusterContext(ctx, flags.timeout)
+	defer cancel()
+
 	done, err := preflightHealthCheck(ctx, tgt.awsCfg, eksClient, tgt.cluster, flags)
 	if err != nil {
 		// Block (or, in unattended mode, a warn-level hard stop).
@@ -133,6 +143,15 @@ func updateOneClusterInFleet(ctx context.Context, tgt clusterTarget, nodegroupPa
 		res.Error = monErr.Error()
 	}
 	return res
+}
+
+// fleetClusterContext scopes --timeout to a single cluster in a fleet run
+// (health gate + roll + verify). timeout <= 0 means no per-cluster limit.
+func fleetClusterContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 // resolveUpdateRegions picks the regions to sweep for --all-clusters: explicit
@@ -182,21 +201,31 @@ func discoverFleetTargets(ctx context.Context, baseCfg aws.Config, regions []str
 func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) error {
 	color.Cyan("Fleet dry-run: %d cluster(s)", len(targets))
 	for _, tgt := range targets {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		color.Cyan("\n=== %s (%s) ===", tgt.cluster, tgt.region)
-		eksClient := eks.NewFromConfig(tgt.awsCfg)
-		selected, err := selectNodegroupsForUpdate(ctx, eksClient, tgt.cluster, nodegroupPattern, true)
-		if err != nil {
-			color.Red("  %v", err)
-			continue
-		}
-		if err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.force, flags.quiet); err != nil {
-			color.Red("  %v", err)
-		}
-		if !flags.quiet {
-			printChangelogsForNodegroups(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.changelog)
-		}
+		fleetDryRunCluster(ctx, tgt, nodegroupPattern, flags)
 	}
 	return nil
+}
+
+// fleetDryRunCluster previews one cluster under a per-cluster --timeout.
+func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) {
+	ctx, cancel := fleetClusterContext(ctx, flags.timeout)
+	defer cancel()
+	eksClient := eks.NewFromConfig(tgt.awsCfg)
+	selected, err := selectNodegroupsForUpdate(ctx, eksClient, tgt.cluster, nodegroupPattern, true)
+	if err != nil {
+		color.Red("  %v", err)
+		return
+	}
+	if err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.force, flags.quiet); err != nil {
+		color.Red("  %v", err)
+	}
+	if !flags.quiet {
+		printChangelogsForNodegroups(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.changelog)
+	}
 }
 
 // printFleetSummary renders the end-of-run aggregate.

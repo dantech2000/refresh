@@ -55,7 +55,7 @@ Examples:
 			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon to skip (repeatable; for addons managed via Helm/GitOps)"},
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to skip (repeatable)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Overall operation timeout", Value: upgradeDefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Overall upgrade timeout (not read from REFRESH_TIMEOUT, which only sets API/read timeouts)", Value: upgradeDefaultTimeout},
 			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "How often to poll in-flight updates", Value: 15 * time.Second},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Plan output format (table, json, yaml, plain)", Value: "table"},
 		},

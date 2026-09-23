@@ -111,7 +111,9 @@ before updating. -o json|yaml emits a machine-readable result/summary.`,
 			// Update operations can legitimately run for minutes when --wait is
 			// used, so the timeout default matches the legacy update-all command
 			// rather than the 60s read-path default.
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: 10 * time.Minute, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
+			// Not bound to REFRESH_TIMEOUT: that env sets short API/read timeouts
+			// and must not cap a long-running update.
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Timeout for the update's API calls; with --wait, --wait-timeout per add-on is added on top (not read from REFRESH_TIMEOUT)", Value: 10 * time.Minute},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "addon", Aliases: []string{"a"}, Usage: "Add-on name (e.g., vpc-cni)"},
 			&cli.StringFlag{Name: "version", Usage: "Target version or 'latest' (can be provided as third positional)", Value: "latest"},
@@ -142,7 +144,9 @@ func updateAllHiddenCommand() *cli.Command {
 		Usage:     "Update all EKS add-ons to their latest versions",
 		ArgsUsage: "[cluster]",
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: 10 * time.Minute, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
+			// Not bound to REFRESH_TIMEOUT: that env sets short API/read timeouts
+			// and must not cap a long-running update.
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Timeout for the update's API calls; with --wait, --wait-timeout per add-on is added on top (not read from REFRESH_TIMEOUT)", Value: 10 * time.Minute},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "parallel", Aliases: []string{"p"}, Usage: "Update addons in parallel (faster but riskier)"},
 			&cli.BoolFlag{Name: "wait", Usage: "Wait for each update to complete before proceeding"},

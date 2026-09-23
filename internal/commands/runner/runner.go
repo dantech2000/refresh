@@ -49,13 +49,10 @@ func checkCredentialsStrict(ctx context.Context, cfg aws.Config) error {
 	return nil
 }
 
-// setupAWS is the shared body of SetupAWS/SetupAWSWithTimeout/SetupAWSStrict.
+// setupAWS is the shared body of the SetupAWS* helpers.
 // On error the internal context is canceled and the returned cancel is nil.
-func setupAWS(ctx context.Context, cmd *cli.Command, defaultTimeout time.Duration, check credentialCheck) (context.Context, context.CancelFunc, aws.Config, error) {
-	timeout := cmd.Duration("timeout")
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
+// timeout <= 0 means no deadline (the context is then only signal-cancellable).
+func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, check credentialCheck) (context.Context, context.CancelFunc, aws.Config, error) {
 	// Derive from the action's context (cancelled on Ctrl+C / SIGTERM by main)
 	// so signal handling propagates to in-flight AWS calls. ctx is nil only
 	// for hand-constructed invocations in tests.
@@ -69,36 +66,60 @@ func setupAWS(ctx context.Context, cmd *cli.Command, defaultTimeout time.Duratio
 		ctx, cancel = context.WithCancel(ctx)
 	}
 
-	cfg, err := awsconfig.Load(ctx, cmd)
+	// Config loading and the credential check (STS, SSO, IMDS) always run
+	// under --timeout, even when the returned context has a longer or no
+	// deadline, so a stalled credential source can't hang the command.
+	checkCtx, cancelCheck := checkContext(ctx, cmd.Duration("timeout"), timeout)
+	defer cancelCheck()
+
+	cfg, err := awsconfig.Load(checkCtx, cmd)
 	if err != nil {
 		cancel()
 		color.Red("Failed to load AWS config: %v", err)
 		return nil, nil, aws.Config{}, err
 	}
-	if err := check(ctx, cfg); err != nil {
+	if err := check(checkCtx, cfg); err != nil {
 		cancel()
 		return nil, nil, aws.Config{}, err
 	}
 	return ctx, cancel, cfg, nil
 }
 
+// checkContext bounds the setup phase by apiTimeout (--timeout) when that is
+// shorter than the returned context's timeout (or that has no deadline).
+func checkContext(ctx context.Context, apiTimeout, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if apiTimeout > 0 && (timeout <= 0 || apiTimeout < timeout) {
+		return context.WithTimeout(ctx, apiTimeout)
+	}
+	return ctx, func() {}
+}
+
 // SetupAWS opens a context with the command's timeout, loads the AWS config,
 // and checks credentials. On error, the returned cancel is nil and the
 // internal context has already been cancelled.
 func SetupAWS(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, 0, checkCredentialsLenient)
+	return setupAWS(ctx, cmd, cmd.Duration("timeout"), checkCredentialsLenient)
 }
 
-// SetupAWSWithTimeout is like SetupAWS but falls back to defaultTimeout
-// when cmd.Duration("timeout") is zero.
-func SetupAWSWithTimeout(ctx context.Context, cmd *cli.Command, defaultTimeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, defaultTimeout, checkCredentialsLenient)
+// SetupAWSWithDeadline is like SetupAWS but uses the given timeout for the
+// returned context instead of --timeout. A timeout <= 0 means no deadline:
+// the context is cancelled only by Ctrl+C / SIGTERM. Use it when a command
+// scopes its own deadlines (per cluster, per wait) and --timeout alone would
+// cut a long-running operation short.
+func SetupAWSWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
+	return setupAWS(ctx, cmd, timeout, checkCredentialsLenient)
 }
 
 // SetupAWSStrict is like SetupAWS but uses ValidateAWSCredentials and prints
 // the credential help message on failure (used by destructive commands).
 func SetupAWSStrict(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, 0, checkCredentialsStrict)
+	return setupAWS(ctx, cmd, cmd.Duration("timeout"), checkCredentialsStrict)
+}
+
+// SetupAWSStrictWithDeadline is SetupAWSStrict with an explicit timeout in
+// place of --timeout (<= 0 means no deadline; see SetupAWSWithDeadline).
+func SetupAWSStrictWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
+	return setupAWS(ctx, cmd, timeout, checkCredentialsStrict)
 }
 
 // ParseFilters parses repeated key=value --filter flag values into a map.

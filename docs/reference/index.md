@@ -25,7 +25,7 @@ These are accepted on every command.
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout for API calls (e.g. 60s, 2m) |
+| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout for API calls (e.g. 60s, 2m); REFRESH_TIMEOUT sets this and list/describe/check timeouts, not long-running update waits |
 | `--max-concurrency, -C int` | `REFRESH_MAX_CONCURRENCY` | `8` | Global max concurrency for multi-region operations |
 | `--no-color` | — | — | Disable colored output (a non-empty NO_COLOR env var is also honored) |
 | `--profile string` | — | — | AWS shared-config profile (overrides the active context for this invocation) |
