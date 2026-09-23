@@ -35,6 +35,7 @@ type EKSAPI interface {
 	DescribeAddon(ctx context.Context, params *eks.DescribeAddonInput, optFns ...func(*eks.Options)) (*eks.DescribeAddonOutput, error)
 	DescribeAddonVersions(ctx context.Context, params *eks.DescribeAddonVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error)
 	UpdateAddon(ctx context.Context, params *eks.UpdateAddonInput, optFns ...func(*eks.Options)) (*eks.UpdateAddonOutput, error)
+	DescribeUpdate(ctx context.Context, params *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error)
 	DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error)
 }
 
@@ -56,8 +57,59 @@ func NewService(eksClient EKSAPI, logger *slog.Logger) *ServiceImpl {
 	}
 }
 
-// List returns all addons for a cluster
+// List returns all addons for a cluster. An add-on that could not be
+// described (API error, or never reached because ctx ended) is still listed,
+// by name, with Status UNKNOWN and no version, so callers that count
+// installed add-ons see every one. Use ListDetailed to get the reasons.
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]AddonSummary, error) {
+	results, err := s.listAddons(ctx, clusterName, options)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]AddonSummary, 0, len(results))
+	for _, r := range results {
+		if r.summary != nil {
+			summaries = append(summaries, *r.summary)
+			continue
+		}
+		unknown := AddonSummary{Name: r.name, Status: "UNKNOWN"}
+		if options.ShowHealth {
+			unknown.Health = "UNKNOWN"
+		}
+		summaries = append(summaries, unknown)
+	}
+	return summaries, nil
+}
+
+// ListDetailed lists a cluster's add-ons and keeps the ones that could not be
+// described apart from the ones that were (see ListResult).
+func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, options ListOptions) (ListResult, error) {
+	results, err := s.listAddons(ctx, clusterName, options)
+	if err != nil {
+		return ListResult{}, err
+	}
+	res := ListResult{Summaries: make([]AddonSummary, 0, len(results))}
+	for _, r := range results {
+		if r.summary != nil {
+			res.Summaries = append(res.Summaries, *r.summary)
+			continue
+		}
+		res.Failures = append(res.Failures, r.name+": "+r.failure)
+	}
+	return res, nil
+}
+
+// addonResult is one add-on's outcome in listAddons: summary is nil when the
+// add-on could not be described, and failure then says why.
+type addonResult struct {
+	name    string
+	summary *AddonSummary
+	failure string
+}
+
+// listAddons describes every installed add-on in parallel. Each result is
+// named, including add-ons never dispatched because ctx ended first.
+func (s *ServiceImpl) listAddons(ctx context.Context, clusterName string, options ListOptions) ([]addonResult, error) {
 	s.logger.Info("listing addons", "cluster", clusterName)
 
 	addonNames, err := s.ListAddonNames(ctx, clusterName)
@@ -65,36 +117,51 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		return nil, err
 	}
 
-	summaries := common.ForEachParallel(ctx, addonNames, common.DefaultItemConcurrency,
-		func(fctx context.Context, name string) AddonSummary {
+	type outcome struct {
+		done bool // false for items ForEachParallel never dispatched
+		addonResult
+	}
+	outcomes := common.ForEachParallel(ctx, addonNames, common.DefaultItemConcurrency,
+		func(fctx context.Context, name string) outcome {
 			desc, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
 				return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
 					ClusterName: aws.String(clusterName),
 					AddonName:   aws.String(name),
 				})
 			})
-			if err != nil || desc.Addon == nil {
-				return AddonSummary{
-					Name:   name,
-					Status: "UNKNOWN",
-					Health: "Unknown",
-				}
+			if err != nil {
+				s.logger.Warn("could not describe addon", "cluster", clusterName, "addon", name, "error", err)
+				return outcome{done: true, addonResult: addonResult{name: name, failure: awserr.Summary(err)}}
+			}
+			if desc == nil || desc.Addon == nil {
+				return outcome{done: true, addonResult: addonResult{name: name, failure: "empty DescribeAddon response"}}
 			}
 
 			health := ""
 			if options.ShowHealth {
 				health = mapAddonHealth(desc.Addon.Status)
 			}
-
-			return AddonSummary{
+			return outcome{done: true, addonResult: addonResult{name: name, summary: &AddonSummary{
 				Name:    aws.ToString(desc.Addon.AddonName),
 				Version: aws.ToString(desc.Addon.AddonVersion),
 				Status:  string(desc.Addon.Status),
 				Health:  health,
-			}
+			}}}
 		})
 
-	return summaries, nil
+	results := make([]addonResult, len(outcomes))
+	for i, o := range outcomes {
+		if !o.done {
+			reason := "listing stopped early"
+			if cerr := ctx.Err(); cerr != nil {
+				reason = cerr.Error()
+			}
+			results[i] = addonResult{name: addonNames[i], failure: "not described: " + reason}
+			continue
+		}
+		results[i] = o.addonResult
+	}
+	return results, nil
 }
 
 // ListAddonNames returns the names of every add-on installed on the cluster,
@@ -203,7 +270,8 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	k8sVersion := s.clusterK8sVersion(ctx, clusterName)
 
 	targetVersion := options.Version
-	if strings.EqualFold(targetVersion, "latest") || targetVersion == "" {
+	resolvedLatest := strings.EqualFold(targetVersion, "latest") || targetVersion == ""
+	if resolvedLatest {
 		if k8sVersion == "" {
 			// Without the cluster's Kubernetes version we can't scope "latest" to
 			// versions the cluster can actually run. Falling back to the globally
@@ -240,13 +308,6 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	}
 	previousVersion := aws.ToString(currentDesc.Addon.AddonVersion)
 
-	// Pre-update health check: refuse to update while the addon is mid-operation.
-	if options.HealthCheck {
-		if err := s.preUpdateHealthCheck(ctx, clusterName, addonName); err != nil {
-			return nil, err
-		}
-	}
-
 	result := &AddonUpdateResult{
 		AddonName:       addonName,
 		PreviousVersion: previousVersion,
@@ -254,8 +315,26 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 		StartedAt:       time.Now(),
 	}
 
+	// Already-current and downgrade guard. A configuration change is a real
+	// update even at the same version, so the guard applies only without one.
+	if options.Configuration == "" && previousVersion != "" {
+		if done := s.versionGuard(currentDesc.Addon.Status, resolvedLatest, result); done {
+			return result, nil
+		}
+		if result.Status == StatusInProgress {
+			return s.attachInFlight(ctx, clusterName, addonName, result, options)
+		}
+	}
+
+	// Pre-update health check: refuse to update while the addon is mid-operation.
+	if options.HealthCheck {
+		if err := s.preUpdateHealthCheck(ctx, clusterName, addonName); err != nil {
+			return nil, err
+		}
+	}
+
 	if options.DryRun {
-		result.Status = "DRY_RUN"
+		result.Status = StatusDryRun
 		result.UpdateID = "dry-run"
 		return result, nil
 	}
@@ -292,18 +371,89 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 			waitCtx, cancel = context.WithTimeout(ctx, options.WaitTimeout)
 			defer cancel()
 		}
-		if err := s.waitForAddonUpdate(waitCtx, clusterName, addonName, options.PollInterval); err != nil {
-			result.Status = "WAIT_FAILED"
+		if err := s.waitForAddonUpdate(waitCtx, clusterName, addonName, result.UpdateID, targetVersion, options.PollInterval); err != nil {
+			result.Status = StatusWaitFailed
+			result.Error = awserr.Summary(err)
 			return result, err
 		}
-		result.Status = "COMPLETED"
+		result.Status = StatusCompleted
 		if err := s.postUpdateHealthCheck(ctx, clusterName, addonName); err != nil {
-			result.Status = "COMPLETED_WITH_ISSUES"
+			result.Status = StatusCompletedWithIssues
 			result.HealthIssues = err.Error()
 			s.logger.Warn("post-update health check found issues", "addon", addonName, "issues", err)
 		}
 	}
 
+	return result, nil
+}
+
+// versionGuard compares the installed version (result.PreviousVersion) with
+// the target (result.NewVersion) given the add-on's status. It returns true
+// when result is final (UP_TO_DATE). It sets Status to IN_PROGRESS when an
+// operation is already in flight at the target (the caller attaches to it),
+// and sets Warning for a pinned downgrade. Otherwise the update proceeds; a
+// DEGRADED or failed add-on at the target is re-applied, the repair path
+// preUpdateHealthCheck allows.
+func (s *ServiceImpl) versionGuard(status ekstypes.AddonStatus, resolvedLatest bool, result *AddonUpdateResult) bool {
+	installed, target, addonName := result.PreviousVersion, result.NewVersion, result.AddonName
+	cmp := CompareVersions(installed, target)
+	// "latest" never downgrades: an installed version newer than the newest
+	// catalog entry counts as at target.
+	atTarget := cmp == 0 || (cmp > 0 && resolvedLatest)
+	switch {
+	case atTarget && status == ekstypes.AddonStatusActive:
+		s.logger.Info("addon already up to date", "addon", addonName, "installed", installed, "target", target)
+		result.NewVersion = installed
+		result.Status = StatusUpToDate
+		return true
+	case atTarget && (status == ekstypes.AddonStatusUpdating || status == ekstypes.AddonStatusCreating):
+		result.NewVersion = installed
+		result.Status = StatusInProgress
+	case atTarget && cmp > 0:
+		// Not ACTIVE, but re-applying "latest" would downgrade: leave it.
+		result.NewVersion = installed
+		result.Status = StatusUpToDate
+		result.Warning = fmt.Sprintf("%s is %s at %s, newer than the latest catalog version %s; not re-applied",
+			addonName, status, installed, target)
+		return true
+	case atTarget:
+		s.logger.Info("re-applying addon at its current version", "addon", addonName, "version", installed, "status", status)
+	case cmp > 0:
+		result.Warning = fmt.Sprintf("downgrading %s from %s to %s", addonName, installed, target)
+		s.logger.Warn("addon downgrade requested", "addon", addonName, "installed", installed, "target", target)
+	}
+	return false
+}
+
+// attachInFlight handles an add-on that is already CREATING/UPDATING at the
+// target version. Without Wait (or on a dry run) it reports IN_PROGRESS.
+// With Wait it waits for the add-on to settle ACTIVE, confirms the version,
+// and runs the post-update health check, like a normal waited update.
+func (s *ServiceImpl) attachInFlight(ctx context.Context, clusterName, addonName string, result *AddonUpdateResult, options UpdateOptions) (*AddonUpdateResult, error) {
+	s.logger.Info("addon update already in progress at target", "addon", addonName, "version", result.NewVersion)
+	if !options.Wait || options.DryRun {
+		return result, nil
+	}
+	fail := func(err error) (*AddonUpdateResult, error) {
+		result.Status = StatusWaitFailed
+		result.Error = awserr.Summary(err)
+		return result, err
+	}
+	if err := s.WaitUntilActive(ctx, clusterName, addonName, options.WaitTimeout, options.PollInterval); err != nil {
+		return fail(err)
+	}
+	current, _, err := s.AddonStatus(ctx, clusterName, addonName)
+	if err != nil {
+		return fail(err)
+	}
+	if CompareVersions(current, result.NewVersion) != 0 {
+		return fail(fmt.Errorf("addon %s settled at %s, not %s", addonName, current, result.NewVersion))
+	}
+	result.Status = StatusCompleted
+	if err := s.postUpdateHealthCheck(ctx, clusterName, addonName); err != nil {
+		result.Status = StatusCompletedWithIssues
+		result.HealthIssues = err.Error()
+	}
 	return result, nil
 }
 
@@ -385,6 +535,11 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 			Wait:        options.Wait,
 			WaitTimeout: options.WaitTimeout,
 		})
+		if err != nil && result != nil {
+			// The update was submitted but its wait failed: keep the result
+			// so the update ID and the reason reach the output.
+			return *result
+		}
 		if err != nil {
 			// One line: the status lands in a table cell, and a formatted
 			// AWS error carries multi-line remediation text.

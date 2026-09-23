@@ -49,6 +49,20 @@ type Nodegroup struct {
 type Addon struct {
 	Name    string
 	Version string
+	// Status defaults to ACTIVE.
+	Status string
+	// Available is the version catalog DescribeAddonVersions returns for
+	// this add-on, newest first, all compatible with the cluster version.
+	Available []string
+	// UpdateStatus is the final DescribeUpdate status of an UpdateAddon
+	// update: "" or "Successful" applies the new version; "Failed" or
+	// "Cancelled" leaves the add-on as it is.
+	UpdateStatus string
+	// HealthIssue, when set, is reported as a DescribeAddon health issue.
+	HealthIssue string
+	// DescribeAddonError, when set, makes DescribeAddon for this add-on fail
+	// with that API error code (HTTP 403 for AccessDenied*, else 400).
+	DescribeAddonError string
 }
 
 // Cluster is an EKS cluster in the fake world.
@@ -67,9 +81,12 @@ type Server struct {
 	mu       sync.Mutex
 	clusters map[string]*Cluster
 	updates  map[string]func() // update ID -> mutation applied on first DescribeUpdate
-	nextID   int
-	stsError string
-	calls    []string
+	// updateStatus overrides an update's DescribeUpdate status; the default
+	// is Successful. A non-Successful update never applies its mutation.
+	updateStatus map[string]string
+	nextID       int
+	stsError     string
+	calls        []string
 }
 
 // New starts a fake AWS endpoint serving clusters and configures the process
@@ -78,7 +95,7 @@ type Server struct {
 // refresh context, and no reachable Kubernetes cluster.
 func New(tb testing.TB, clusters ...*Cluster) *Server {
 	tb.Helper()
-	s := &Server{clusters: map[string]*Cluster{}, updates: map[string]func(){}}
+	s := &Server{clusters: map[string]*Cluster{}, updates: map[string]func(){}, updateStatus: map[string]string{}}
 	for _, c := range clusters {
 		s.clusters[c.Name] = c
 	}
@@ -228,7 +245,7 @@ func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, map[string]any{"clusterVersions": versions})
 		return
 	case get && len(parts) == 2 && parts[0] == "addons" && parts[1] == "supported-versions":
-		writeJSON(w, map[string]any{"addons": []any{}})
+		writeJSON(w, map[string]any{"addons": s.addonVersionsJSON(r.URL.Query().Get("addonName"), r.URL.Query().Get("kubernetesVersion"))})
 		return
 	}
 
@@ -280,7 +297,7 @@ func (s *Server) serveEKSCluster(w http.ResponseWriter, r *http.Request, c *Clus
 	case "node-groups":
 		s.serveNodegroups(w, r, c, rest[1:], body)
 	case "addons":
-		serveAddons(w, r, c, rest[1:])
+		s.serveAddons(w, r, c, rest[1:], body)
 	default:
 		unsupported(w, r, "eks")
 	}
@@ -302,11 +319,21 @@ func (s *Server) serveClusterUpdates(w http.ResponseWriter, r *http.Request, c *
 			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No update found for ID: "+rest[0])
 			return
 		}
+		status := s.updateStatus[rest[0]]
+		if status == "" {
+			status = "Successful"
+		}
+		update := map[string]any{"id": rest[0], "status": status, "type": "VersionUpdate"}
+		if status != "Successful" {
+			update["errors"] = []any{map[string]any{"errorCode": "AdmissionRequestDenied", "errorMessage": "fake update failure"}}
+			writeJSON(w, map[string]any{"update": update})
+			return
+		}
 		if apply != nil {
 			apply()
 			s.updates[rest[0]] = nil
 		}
-		writeJSON(w, map[string]any{"update": map[string]any{"id": rest[0], "status": "Successful", "type": "VersionUpdate"}})
+		writeJSON(w, map[string]any{"update": update})
 	default:
 		unsupported(w, r, "eks")
 	}
@@ -356,32 +383,109 @@ func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Clus
 	}
 }
 
-// serveAddons handles ListAddons and DescribeAddon.
-func serveAddons(w http.ResponseWriter, r *http.Request, c *Cluster, rest []string) {
-	if r.Method != http.MethodGet {
-		unsupported(w, r, "eks")
-		return
-	}
-	switch len(rest) {
-	case 0:
+// serveAddons handles ListAddons, DescribeAddon, and UpdateAddon.
+func (s *Server) serveAddons(w http.ResponseWriter, r *http.Request, c *Cluster, rest []string, body []byte) {
+	get, post := r.Method == http.MethodGet, r.Method == http.MethodPost
+	switch {
+	case get && len(rest) == 0:
 		names := []string{}
 		for _, a := range c.Addons {
 			names = append(names, a.Name)
 		}
 		writeJSON(w, map[string]any{"addons": names})
-	case 1:
-		for _, a := range c.Addons {
-			if a.Name == rest[0] {
-				writeJSON(w, map[string]any{"addon": map[string]any{
-					"addonName": a.Name, "addonVersion": a.Version, "clusterName": c.Name, "status": "ACTIVE",
-				}})
-				return
-			}
+	case get && len(rest) == 1:
+		a := findAddon(c, rest[0])
+		if a == nil {
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No addon: "+rest[0])
+			return
 		}
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No addon: "+rest[0])
+		if a.DescribeAddonError != "" {
+			status := http.StatusBadRequest
+			if strings.HasPrefix(a.DescribeAddonError, "AccessDenied") {
+				status = http.StatusForbidden
+			}
+			writeError(w, status, a.DescribeAddonError, "fake DescribeAddon failure for "+a.Name)
+			return
+		}
+		writeJSON(w, map[string]any{"addon": addonJSON(c, a)})
+	case post && len(rest) == 2 && rest[1] == "update":
+		a := findAddon(c, rest[0])
+		if a == nil {
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No addon: "+rest[0])
+			return
+		}
+		var in struct {
+			AddonVersion string `json:"addonVersion"`
+		}
+		_ = json.Unmarshal(body, &in)
+		target := in.AddonVersion
+		if target == "" {
+			target = a.Version
+		}
+		update := s.startUpdate("AddonUpdate", func() { a.Version = target })
+		if id, ok := update["id"].(string); ok && a.UpdateStatus != "" {
+			s.updateStatus[id] = a.UpdateStatus
+		}
+		writeJSON(w, map[string]any{"update": update})
 	default:
 		unsupported(w, r, "eks")
 	}
+}
+
+func findAddon(c *Cluster, name string) *Addon {
+	for _, a := range c.Addons {
+		if a.Name == name {
+			return a
+		}
+	}
+	return nil
+}
+
+func addonJSON(c *Cluster, a *Addon) map[string]any {
+	status := a.Status
+	if status == "" {
+		status = "ACTIVE"
+	}
+	issues := []any{}
+	if a.HealthIssue != "" {
+		issues = append(issues, map[string]any{"code": "InsufficientNumberOfReplicas", "message": a.HealthIssue})
+	}
+	return map[string]any{
+		"addonName":    a.Name,
+		"addonVersion": a.Version,
+		"clusterName":  c.Name,
+		"status":       status,
+		"health":       map[string]any{"issues": issues},
+	}
+}
+
+// addonVersionsJSON answers DescribeAddonVersions for addonName from the
+// Available catalogs of every cluster's add-on of that name.
+func (s *Server) addonVersionsJSON(addonName, k8sVersion string) []any {
+	versions := []any{}
+	seen := map[string]bool{}
+	for _, c := range s.clusters {
+		if a := findAddon(c, addonName); a != nil {
+			cv := k8sVersion
+			if cv == "" {
+				cv = c.Version
+			}
+			for _, v := range a.Available {
+				if seen[v] {
+					continue
+				}
+				seen[v] = true
+				versions = append(versions, map[string]any{
+					"addonVersion":    v,
+					"compatibilities": []any{map[string]any{"clusterVersion": cv}},
+				})
+			}
+		}
+	}
+	if len(versions) == 0 {
+		return []any{}
+	}
+	return []any{map[string]any{"addonName": addonName, "addonVersions": versions}}
 }
 
 // startUpdate records an in-progress update whose mutation lands on the first
