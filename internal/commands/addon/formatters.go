@@ -157,12 +157,15 @@ func addonUpdatePlain(results []addons.AddonUpdateResult) *ui.PlainTable {
 	return t
 }
 
-// writeUpdateIssues writes post-update health issues to w (stderr under `-o
-// plain`); the TSV STATUS column only says COMPLETED_WITH_ISSUES.
+// writeUpdateIssues writes post-update health issues and wait failures to w
+// (stderr); the STATUS column only says COMPLETED_WITH_ISSUES or WAIT_FAILED.
 func writeUpdateIssues(w io.Writer, results []addons.AddonUpdateResult) {
 	for _, r := range results {
 		if r.HealthIssues != "" {
 			_, _ = fmt.Fprintf(w, "%s: post-update health check found issues: %s\n", r.AddonName, r.HealthIssues)
+		}
+		if r.Error != "" {
+			_, _ = fmt.Fprintf(w, "%s: update %s did not complete: %s\n", r.AddonName, r.UpdateID, r.Error)
 		}
 	}
 }
@@ -192,17 +195,22 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 	successCount := 0
 	failCount := 0
 	warnCount := 0
+	upToDateCount := 0
 	for _, r := range results {
 		var status string
-		if strings.Contains(r.Status, "FAILED") {
+		switch {
+		case strings.Contains(r.Status, "FAILED"):
 			status = color.RedString(r.Status)
 			failCount++
-		} else if r.Status == "DRY_RUN" {
+		case r.Status == addons.StatusDryRun:
 			status = color.YellowString(r.Status)
-		} else if r.Status == "COMPLETED_WITH_ISSUES" {
+		case r.Status == addons.StatusCompletedWithIssues:
 			status = color.YellowString(r.Status)
 			warnCount++
-		} else {
+		case r.Status == addons.StatusUpToDate:
+			status = r.Status
+			upToDateCount++
+		default:
 			status = color.GreenString(r.Status)
 			successCount++
 		}
@@ -222,9 +230,13 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 		if warnCount > 0 {
 			summary += fmt.Sprintf(", %s with issues", color.YellowString("%d", warnCount))
 		}
+		if upToDateCount > 0 {
+			summary += fmt.Sprintf(", %d up to date", upToDateCount)
+		}
 		summary += fmt.Sprintf(", %s failed", color.RedString("%d", failCount))
 		ui.Outf("%s\n", summary)
 	}
+	writeUpdateIssues(ui.Stderr, results)
 
 	return nil
 }

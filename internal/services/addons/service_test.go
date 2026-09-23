@@ -68,6 +68,12 @@ func (m *mockEKSClient) UpdateAddon(ctx context.Context, params *eks.UpdateAddon
 	}, nil
 }
 
+func (m *mockEKSClient) DescribeUpdate(ctx context.Context, params *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+	return &eks.DescribeUpdateOutput{
+		Update: &ekstypes.Update{Id: params.UpdateId, Status: ekstypes.UpdateStatusSuccessful},
+	}, nil
+}
+
 func (m *mockEKSClient) DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
 	if m.describeClusterErr != nil {
 		return nil, m.describeClusterErr

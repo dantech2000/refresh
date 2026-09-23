@@ -6,10 +6,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/dantech2000/refresh/internal/mocks"
 )
@@ -61,6 +63,7 @@ func TestUpgradeAddons_ChoosesTargetCompatibleVersion(t *testing.T) {
 			Status: ekstypes.UpdateStatusInProgress,
 		}}, nil
 	}
+	mocks.SettleAddonUpdates(m)
 	svc := newTestService(m)
 
 	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
@@ -144,6 +147,7 @@ func TestUpgradeAddons_SkipIsExactName(t *testing.T) {
 					Status: ekstypes.UpdateStatusInProgress,
 				}}, nil
 			}
+			mocks.SettleAddonUpdates(m)
 			svc := newTestService(m)
 
 			if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", tc.skip, nil); err != nil {
@@ -185,6 +189,7 @@ func TestUpgradeAddons_DependencyOrder(t *testing.T) {
 			Status: ekstypes.UpdateStatusInProgress,
 		}}, nil
 	}
+	mocks.SettleAddonUpdates(m)
 	svc := newTestService(m)
 
 	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
@@ -299,6 +304,7 @@ func TestUpgradeAddons_ResumeThenConverges(t *testing.T) {
 			Status: ekstypes.UpdateStatusInProgress,
 		}}, nil
 	}
+	mocks.SettleAddonUpdates(m)
 	svc := newTestService(m)
 
 	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
@@ -325,5 +331,59 @@ func TestUpgradeAddons_NoCompatibleVersionFails(t *testing.T) {
 	}
 	if m.Calls.UpdateAddon != 0 {
 		t.Fatalf("UpdateAddon calls = %d, want 0", m.Calls.UpdateAddon)
+	}
+}
+
+// Resume path: a permanent error while attaching to an in-flight add-on
+// update fails the phase at once with the permission guidance, instead of a
+// bare deadline error after addonWaitTimeout.
+func TestUpgradeAddons_ResumeWaitFailsFastOnPermanentError(t *testing.T) {
+	var mu sync.Mutex
+	describeCalls := 0
+
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithAddon("vpc-cni", "v1.31.5-eksbuild.1", ekstypes.AddonStatusActive).
+		Build()
+	versionsByK8s(m, "vpc-cni", map[string][]string{"1.32": {"v1.32.2-eksbuild.1"}})
+	m.DescribeAddonFn = func(_ context.Context, in *eks.DescribeAddonInput, _ ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
+		mu.Lock()
+		describeCalls++
+		n := describeCalls
+		mu.Unlock()
+		if n == 1 { // status read: mid-update from a previous run
+			return &eks.DescribeAddonOutput{Addon: &ekstypes.Addon{
+				AddonName: in.AddonName, AddonVersion: aws.String("v1.31.5-eksbuild.1"), Status: ekstypes.AddonStatusUpdating,
+			}}, nil
+		}
+		return nil, &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "not authorized to perform: eks:DescribeAddon"}
+	}
+	svc := newTestService(m)
+
+	start := time.Now()
+	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil)
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("resume wait took %v; a permanent error must fail fast", time.Since(start))
+	}
+	if err == nil || !strings.Contains(err.Error(), "insufficient AWS permissions") || !strings.Contains(err.Error(), "vpc-cni") {
+		t.Fatalf("err = %v, want a formatted permission error naming vpc-cni", err)
+	}
+}
+
+// Update path: an add-on update EKS reports Failed halts the phase, even
+// though the add-on stays ACTIVE.
+func TestUpgradeAddons_FailedUpdateHaltsPhase(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithAddon("vpc-cni", "v1.31.5-eksbuild.1", ekstypes.AddonStatusActive).
+		WithUpdateAddon("u-vpc").
+		WithUpdateStatuses("u-vpc", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusFailed).
+		Build()
+	versionsByK8s(m, "vpc-cni", map[string][]string{"1.32": {"v1.32.2-eksbuild.1"}})
+	svc := newTestService(m)
+
+	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "u-vpc Failed") {
+		t.Fatalf("err = %v, want the failed update named", err)
 	}
 }

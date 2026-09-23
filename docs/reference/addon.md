@@ -108,6 +108,19 @@ if any add-on update fails.
   refresh addon update my-cluster --all --dependency-order --wait
   refresh addon update my-cluster --all --skip vpc-cni --parallel
 
+--all cannot be combined with an add-on name or version.
+
+An ACTIVE add-on already at the target version is reported as UP_TO_DATE and
+left alone; one that is DEGRADED or failed at the target is re-applied, and
+one already UPDATING at the target is IN_PROGRESS. 'latest' never downgrades. A pinned version older than the installed
+one proceeds with a warning. A name that only partially matches an installed
+add-on is confirmed on a terminal; without one, pass the exact name or --yes.
+
+With --wait, the command follows the EKS update until it succeeds, fails, or
+is cancelled, then checks that the add-on reports the target version. Exit
+codes: 0 success, 1 failure, 2 updated but the post-update health check found
+issues (COMPLETED_WITH_ISSUES).
+
 Use --health-check to verify the add-on is ACTIVE and version-compatible
 before updating. -o json|yaml emits a machine-readable result/summary.
 
@@ -127,6 +140,7 @@ before updating. -o json|yaml emits a machine-readable result/summary.
 | `--wait-timeout duration` | — | `5m0s` | Per-addon wait timeout (with --wait) |
 | `--dependency-order` | — | — | (--all only) Update addons in dependency-safe order (vpc-cni -> coredns/kube-proxy -> others) |
 | `--skip, -s string` | — | — | (--all only) Skip specific addons (repeatable) |
+| `--yes, -y` | — | — | Accept a partial add-on name match without prompting (for unattended/CI use) |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
 | `--help, -h` | — | — | show help |
 
