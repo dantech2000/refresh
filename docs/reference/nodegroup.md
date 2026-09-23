@@ -185,7 +185,8 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | `--nodegroup, -n string` | — | — | Nodegroup name or partial name pattern (if not set, update all). A pattern that is not an exact name needs confirmation, or --yes without a terminal |
 | `--all-clusters` | — | — | Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r. |
 | `--region, -r string` | — | — | Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS) |
-| `--force, -f` | — | — | Force update if possible |
+| `--force, -f` | — | — | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll |
+| `--reroll` | — | — | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--dry-run, -d` | — | — | Preview changes without executing them |
 | `--no-wait` | — | — | Don't wait for update completion (original behavior) |
 | `--quiet, -q` | — | — | Minimal output mode (does not prompt: warn-level health findings stop the run unless --yes is given) |

@@ -49,6 +49,7 @@ type DryRunner struct {
 	clusterName         string
 	k8sVersion          string
 	force               bool
+	reroll              bool
 	quiet               bool
 	latestAMICache      *awsClient.LatestAMICache
 	describeNodegroupFn func(context.Context, string) (*types.Nodegroup, error)
@@ -98,12 +99,25 @@ func NewDryRunner(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client,
 	}, nil
 }
 
+// Options are the update flags that change the preview.
+type Options struct {
+	// Force previews `nodegroup update --force`: every nodegroup would be
+	// force-updated (PodDisruptionBudgets are not honored).
+	Force bool
+	// Reroll previews `nodegroup update --reroll`: a nodegroup already on
+	// the latest AMI is rolled instead of skipped.
+	Reroll bool
+	// Quiet suppresses the human preview.
+	Quiet bool
+}
+
 // PerformDryRun shows what would be updated without making changes.
-func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, force bool, quiet bool) error {
-	runner, err := newDryRunner(ctx, awsCfg, eksClient, clusterName, force, quiet)
+func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, opts Options) error {
+	runner, err := newDryRunner(ctx, awsCfg, eksClient, clusterName, opts.Force, opts.Quiet)
 	if err != nil {
 		return err
 	}
+	runner.reroll = opts.Reroll
 
 	result := runner.Analyze(ctx, selectedNodegroups)
 	runner.DisplayResults(result)
@@ -113,11 +127,12 @@ func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client
 
 // Preview analyzes the selected nodegroups, in order, without printing
 // anything. It backs the -o json/yaml dry-run document.
-func Preview(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, force bool) ([]NodegroupUpdate, error) {
-	dr, err := newDryRunner(ctx, awsCfg, eksClient, clusterName, force, true)
+func Preview(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, opts Options) ([]NodegroupUpdate, error) {
+	dr, err := newDryRunner(ctx, awsCfg, eksClient, clusterName, opts.Force, true)
 	if err != nil {
 		return nil, err
 	}
+	dr.reroll = opts.Reroll
 	out := make([]NodegroupUpdate, 0, len(selectedNodegroups))
 	for _, ng := range selectedNodegroups {
 		out = append(out, dr.analyzeNodegroup(ctx, ng))
@@ -208,6 +223,12 @@ func (dr *DryRunner) analyzeNodegroup(ctx context.Context, ngName string) Nodegr
 	if update.CurrentAMI == "" || update.LatestAMI == "" {
 		update.Action = refreshTypes.ActionUpdate
 		update.Reason = "AMI status unknown, update recommended"
+		return update
+	}
+
+	if update.CurrentAMI == update.LatestAMI && dr.reroll {
+		update.Action = refreshTypes.ActionUpdate
+		update.Reason = "already on latest AMI; --reroll rolls it anyway"
 		return update
 	}
 
@@ -302,6 +323,9 @@ func (dr *DryRunner) DisplayResults(result *DryRunResult) {
 	color.Cyan("\nDRY RUN: Preview of nodegroup updates for cluster %s\n", dr.clusterName)
 	if dr.force {
 		color.Yellow("Force update would be enabled")
+	}
+	if dr.reroll {
+		color.Yellow("Re-roll would be enabled: nodegroups already on the latest AMI are rolled too")
 	}
 	ui.Outln()
 

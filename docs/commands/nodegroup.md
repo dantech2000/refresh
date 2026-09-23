@@ -160,8 +160,14 @@ nodegroups in the cluster.
 !!! note "Custom-AMI nodegroups are skipped"
     Nodegroups whose AMI is managed via a launch template (`AmiType=CUSTOM`)
     are detected and **skipped** with guidance: their AMI rolls when you publish
-    a new launch-template version, not via this command. `--force` does not
-    change this. `--dry-run` shows them with the action `skip-custom`.
+    a new launch-template version and point the nodegroup at it, not via this
+    command. `--force` and `--reroll` do not change this. `--dry-run` shows
+    them with the action `skip-custom`.
+
+!!! note "Re-roll a nodegroup that is already on the latest AMI"
+    A nodegroup already on the latest AMI is skipped. To roll it anyway, pass
+    `--reroll`. `--force` also rolls it, but EKS then evicts pods even when a
+    PodDisruptionBudget blocks the drain.
 
 ### Fleet mode
 
@@ -197,7 +203,8 @@ also exits `4` right away if no region can be listed.
 | `--region, -r` | Region(s) for `--all-clusters` discovery (default: partition EKS regions / `REFRESH_EKS_REGIONS`) |
 | `--dry-run, -d` | Preview changes without executing |
 | `--changelog` | In dry-run, print full `amazon-eks-ami` release notes between the current and target AMI |
-| `--force, -f` | Force the update where possible |
+| `--force, -f` | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use `--reroll` |
+| `--reroll` | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--no-wait` | Don't wait for update completion (start-and-return) |
 | `--quiet, -q` | Minimal output. `--quiet` does not prompt: a warn-level health result stops the run unless you pass `--yes` |
 | `--skip-health-check, -s` | Skip pre-flight health validation |

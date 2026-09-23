@@ -232,6 +232,7 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 	tests := []struct {
 		name        string
 		force       bool
+		reroll      bool
 		status      types.NodegroupStatus
 		currentAMI  string
 		latestAMI   string
@@ -250,6 +251,9 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 		{name: "force", force: true, status: types.NodegroupStatusActive, want: refreshTypes.ActionForceUpdate},
 		{name: "unknown", status: types.NodegroupStatusActive, currentAMI: "", latestAMI: "ami-new", want: refreshTypes.ActionUpdate},
 		{name: "latest", status: types.NodegroupStatusActive, currentAMI: "ami-new", latestAMI: "ami-new", want: refreshTypes.ActionSkipLatest},
+		{name: "latest with reroll", reroll: true, status: types.NodegroupStatusActive, currentAMI: "ami-new", latestAMI: "ami-new", want: refreshTypes.ActionUpdate},
+		{name: "outdated with reroll", reroll: true, status: types.NodegroupStatusActive, currentAMI: "ami-old", latestAMI: "ami-new", want: refreshTypes.ActionUpdate},
+		{name: "custom with reroll", reroll: true, status: types.NodegroupStatusActive, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
 		{name: "outdated", status: types.NodegroupStatusActive, currentAMI: "ami-old", latestAMI: "ami-new", want: refreshTypes.ActionUpdate},
 	}
 
@@ -259,6 +263,7 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 				clusterName: "test-cluster",
 				k8sVersion:  "1.30",
 				force:       tt.force,
+				reroll:      tt.reroll,
 				quiet:       true,
 				describeNodegroupFn: func(_ context.Context, name string) (*types.Nodegroup, error) {
 					if tt.describeErr != nil {
@@ -286,7 +291,7 @@ func TestNewDryRunnerAndPerformDryRunErrorPaths(t *testing.T) {
 	if _, err := NewDryRunner(context.Background(), aws.Config{}, nil, "cluster", false, true); err == nil {
 		t.Fatal("expected error for nil EKS client")
 	}
-	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, false, true); err == nil {
+	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, Options{Quiet: true}); err == nil {
 		t.Fatal("expected error for nil EKS client")
 	}
 }
@@ -332,7 +337,7 @@ func TestPerformDryRunSuccessWithInjectedRunner(t *testing.T) {
 		}, nil
 	}
 
-	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, false, true); err != nil {
+	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, Options{Quiet: true}); err != nil {
 		t.Fatalf("PerformDryRun() = %v", err)
 	}
 }

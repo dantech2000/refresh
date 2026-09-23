@@ -480,7 +480,7 @@ func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern
 		color.Red("  %v", err)
 		return
 	}
-	if err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.force, flags.quiet); err != nil {
+	if err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.dryRunOptions()); err != nil {
 		color.Red("  %v", err)
 	}
 	if !flags.quiet {
@@ -507,7 +507,7 @@ func fleetDryRunDocument(ctx context.Context, targets []clusterTarget, nodegroup
 			if err != nil {
 				return dryRunPlan{}, err
 			}
-			return dryRunDocument(cctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.force)
+			return dryRunDocument(cctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags)
 		}()
 		if err != nil {
 			res.Error = err.Error()

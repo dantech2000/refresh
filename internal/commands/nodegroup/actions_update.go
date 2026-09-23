@@ -37,7 +37,7 @@ import (
 // updateAMIFlags collects the flags that govern runUpdateAMI's behavior.
 type updateAMIFlags struct {
 	force, dryRun, noWait, quiet, skipHealthCheck, healthOnly bool
-	yes, requireHealthy, skipVerify, changelog, live          bool
+	yes, requireHealthy, skipVerify, changelog, live, reroll  bool
 	timeout, pollInterval                                     time.Duration
 	format                                                    string
 	kubeconfig, kubeContext                                   string
@@ -54,6 +54,7 @@ func readUpdateAMIFlags(cmd *cli.Command) (updateAMIFlags, error) {
 	// --health-only`) are parsed natively by urfave/cli v3.
 	return updateAMIFlags{
 		force:           cmd.Bool("force"),
+		reroll:          cmd.Bool("reroll"),
 		dryRun:          cmd.Bool("dry-run"),
 		noWait:          cmd.Bool("no-wait"),
 		quiet:           cmd.Bool("quiet"),
@@ -108,6 +109,11 @@ func (f updateAMIFlags) noPromptReason() string {
 		return "-o " + f.format + " does not prompt"
 	}
 	return "no interactive terminal for confirmation"
+}
+
+// dryRunOptions maps the run flags to the dry-run preview options.
+func (f updateAMIFlags) dryRunOptions() dryrun.Options {
+	return dryrun.Options{Force: f.force, Reroll: f.reroll, Quiet: f.quiet}
 }
 
 // noticeOut is where per-nodegroup notices (skips, failures, warnings) go:
@@ -190,14 +196,14 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 
 	if flags.dryRun {
 		if flags.machine() {
-			plan, perr := dryRunDocument(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.force)
+			plan, perr := dryRunDocument(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
 			if perr != nil {
 				return perr
 			}
 			_, perr = runner.EncodeStdout(flags.format, plan)
 			return perr
 		}
-		if derr := dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.force, flags.quiet); derr != nil {
+		if derr := dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.dryRunOptions()); derr != nil {
 			return derr
 		}
 		if !flags.quiet {
@@ -682,17 +688,18 @@ type dryRunPlan struct {
 	Cluster    string            `json:"cluster" yaml:"cluster"`
 	DryRun     bool              `json:"dryRun" yaml:"dryRun"`
 	Force      bool              `json:"force" yaml:"force"`
+	Reroll     bool              `json:"reroll,omitempty" yaml:"reroll,omitempty"`
 	Nodegroups []dryRunNodegroup `json:"nodegroups" yaml:"nodegroups"`
 }
 
 // dryRunDocument previews the selected nodegroups without printing, for
 // -o json/yaml.
-func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selected []string, force bool) (dryRunPlan, error) {
-	updates, err := dryrun.Preview(ctx, awsCfg, eksClient, clusterName, selected, force)
+func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selected []string, flags updateAMIFlags) (dryRunPlan, error) {
+	updates, err := dryrun.Preview(ctx, awsCfg, eksClient, clusterName, selected, flags.dryRunOptions())
 	if err != nil {
 		return dryRunPlan{}, err
 	}
-	plan := dryRunPlan{Cluster: clusterName, DryRun: true, Force: force, Nodegroups: make([]dryRunNodegroup, 0, len(updates))}
+	plan := dryRunPlan{Cluster: clusterName, DryRun: true, Force: flags.force, Reroll: flags.reroll, Nodegroups: make([]dryRunNodegroup, 0, len(updates))}
 	for _, u := range updates {
 		plan.Nodegroups = append(plan.Nodegroups, dryRunNodegroup{
 			Name:       u.Name,
@@ -712,7 +719,8 @@ func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 // best-effort behavior.
 //
 // The already-on-latest skip mirrors the dry-run preview (ActionSkipLatest) so
-// the real run matches what `--dry-run` promised; `--force` bypasses it.
+// the real run matches what `--dry-run` promised; `--reroll` (and `--force`)
+// bypass it.
 func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, nodegroups []string, flags updateAMIFlags) ([]refreshTypes.UpdateProgress, updateOutcomes) {
 	skipLatest := newLatestAMISkipChecker(ctx, awsCfg, eksClient, clusterName, flags)
 	// Progress lines are human-only. Skip and failure notices always print:
@@ -734,7 +742,7 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 		// recommended AMI. Skip with clear guidance instead of mis-rolling.
 		if nodegroup.AmiType == ekstypes.AMITypesCustom {
 			flags.notice(color.FgYellow, "Nodegroup %s uses a custom AMI (AmiType=CUSTOM); refresh can't select a recommended AMI.", ng)
-			flags.notice(color.FgYellow, "  Publish a new launch template version with your AMI and roll it (e.g. update the LT, then `nodegroup update --force`).")
+			flags.notice(color.FgYellow, "  Publish a new launch template version with the new AMI, then point the nodegroup at it (e.g. `aws eks update-nodegroup-version --launch-template name=<lt>,version=<n>`).")
 			outcomes.Custom = append(outcomes.Custom, ng)
 			continue
 		}
@@ -744,7 +752,7 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 			continue
 		}
 		if skipLatest(nodegroup) {
-			flags.notice(color.FgGreen, "Nodegroup %s is already on the latest AMI. Skipping (use --force to update anyway).", ng)
+			flags.notice(color.FgGreen, "Nodegroup %s is already on the latest AMI. Skipping (use --reroll to roll it anyway).", ng)
 			outcomes.Skipped = append(outcomes.Skipped, ng)
 			continue
 		}
@@ -787,11 +795,12 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 
 // newLatestAMISkipChecker returns a predicate reporting whether a nodegroup is
 // already on the latest recommended AMI for its type and should be skipped.
-// With --force it always returns false. AMI resolution is best-effort: when
+// With --reroll or --force it always returns false. AMI resolution is
+// best-effort: when
 // the current or latest AMI can't be determined the nodegroup is NOT skipped
 // (same as the dry-run preview's "AMI status unknown, update recommended").
 func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, flags updateAMIFlags) func(*ekstypes.Nodegroup) bool {
-	if flags.force {
+	if flags.force || flags.reroll {
 		return func(*ekstypes.Nodegroup) bool { return false }
 	}
 

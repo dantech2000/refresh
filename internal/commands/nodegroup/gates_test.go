@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 )
@@ -226,6 +229,53 @@ func TestUpdate_DryRunSkipsCustomAMI(t *testing.T) {
 		if actions["custom"] != "skip-custom" || actions["busy"] != "skip-updating" {
 			t.Errorf("force=%v: actions = %v, want custom=skip-custom busy=skip-updating", force, actions)
 		}
+	}
+}
+
+// --reroll bypasses the already-on-latest skip without an AMI lookup, the
+// same way --force does.
+func TestLatestAMISkipChecker_RerollNeverSkips(t *testing.T) {
+	// A nil EKS client proves the check returns before any AWS call.
+	skip := newLatestAMISkipChecker(t.Context(), aws.Config{}, nil, "prod", updateAMIFlags{reroll: true})
+	if skip(&ekstypes.Nodegroup{}) {
+		t.Error("--reroll must not skip a nodegroup already on the latest AMI")
+	}
+}
+
+// --reroll rolls without force: UpdateNodegroupVersion gets force=false, so
+// EKS still honors PodDisruptionBudgets. --force keeps sending force=true.
+func TestUpdate_RerollDoesNotForce(t *testing.T) {
+	for _, tc := range []struct {
+		flag      string
+		wantForce bool
+	}{{"--reroll", false}, {"--force", true}} {
+		t.Run(tc.flag, func(t *testing.T) {
+			srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
+			stdout, stderr, err := runNodegroup(t, "update", "prod", "web", tc.flag, "--skip-health-check", "--poll-interval", "5ms", "-o", "json")
+			if err != nil {
+				t.Fatalf("update %s: %v\nstderr:\n%s", tc.flag, err, stderr)
+			}
+			doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+			if !containsItem(doc["started"], "web") {
+				t.Fatalf("started = %v, want [web]", doc["started"])
+			}
+			if got := srv.Cluster("prod").Nodegroups[0].UpdateForce; got != tc.wantForce {
+				t.Errorf("UpdateNodegroupVersion force = %v, want %v", got, tc.wantForce)
+			}
+		})
+	}
+}
+
+// The -o json dry-run plan records --reroll.
+func TestUpdate_DryRunRecordsReroll(t *testing.T) {
+	fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
+	stdout, stderr, err := runNodegroup(t, "update", "prod", "--dry-run", "--reroll", "-o", "json")
+	if err != nil {
+		t.Fatalf("dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	if doc["reroll"] != true || doc["force"] != false {
+		t.Errorf("plan reroll=%v force=%v, want true/false", doc["reroll"], doc["force"])
 	}
 }
 
