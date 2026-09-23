@@ -159,6 +159,10 @@ Examples:
    # Non-interactive (CI) run
    refresh cluster upgrade -c prod-east --to 1.33 --yes
 
+   # Machine-readable run: one JSON document {plan, report} on stdout,
+   # progress on stderr (-o json/yaml never prompts, so it needs --yes)
+   refresh cluster upgrade -c prod-east --to 1.33 --yes -o json
+
 #### Flags
 
 | Flag | Env | Default | Description |
@@ -173,6 +177,6 @@ Examples:
 | `--quiet, -q` | — | — | Suppress progress output |
 | `--timeout, -t duration` | — | `4h0m0s` | Overall upgrade timeout (not read from REFRESH_TIMEOUT, which only sets API/read timeouts) |
 | `--poll-interval, -p duration` | — | `15s` | How often to poll in-flight updates |
-| `--format, -o string` | — | `table` | Plan output format (table, json, yaml, plain) |
+| `--format, -o string` | — | `table` | Output format (table, json, yaml, plain). json/yaml print one document: the plan with --dry-run or when blocked, else {plan, report} after the run (requires --yes) |
 | `--help, -h` | — | — | show help |
 
