@@ -227,7 +227,7 @@ does not set them:
 |---|---|---|---|
 | `nodegroup update` | `--wait-timeout` | `40m` | The whole run. With `--all-clusters`, each cluster (health gate, roll, verify) gets its own `--wait-timeout`. `0` means no limit |
 | `cluster upgrade` | `--wait-timeout` | `4h` | The whole upgrade. `0` means no limit |
-| `addon update` | `--timeout, -t` | `10m` | The update API calls. With `--wait`, each add-on (or each batch of 3 with `--parallel`) also gets `--wait-timeout` (default `5m`) |
+| `addon update` | `--timeout, -t` | `10m` | The update API calls. With `--wait`, each add-on (or each batch of 3 with `--parallel`) also gets `--wait-timeout` (default `5m`). `--wait-timeout 0` means no limit |
 | `nodegroup scale --wait` | `--wait-timeout` | `5m` | Added to the global `--timeout`, plus one more `--timeout` with `--health-check`. `0` means no limit |
 
 Before 0.11, the wait flag was `--timeout/-t` on `nodegroup update` and
