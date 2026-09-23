@@ -94,8 +94,8 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 // waitForClusterActive polls the cluster until its status is ACTIVE and
 // returns it, so callers read the settled version without another call. Like
 // waitForUpdate, it reports transient describe failures via progress and
-// keeps polling; only ctx, permanent API errors, and a FAILED cluster end the
-// wait early.
+// keeps polling; only ctx, permanent API errors, and a FAILED or DELETING
+// cluster end the wait early (neither ever becomes ACTIVE).
 func (s *Service) waitForClusterActive(ctx context.Context, clusterName string, progress ProgressFunc) (*ekstypes.Cluster, error) {
 	interval := s.PollInterval
 	if interval <= 0 {
@@ -123,6 +123,8 @@ func (s *Service) waitForClusterActive(ctx context.Context, clusterName string, 
 			return out.Cluster, nil
 		case out.Cluster.Status == ekstypes.ClusterStatusFailed:
 			return nil, fmt.Errorf("cluster %s entered FAILED status", clusterName)
+		case out.Cluster.Status == ekstypes.ClusterStatusDeleting:
+			return nil, fmt.Errorf("cluster %s is being deleted (status DELETING); it will not become ACTIVE", clusterName)
 		}
 
 		select {
