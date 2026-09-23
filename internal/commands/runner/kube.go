@@ -48,7 +48,7 @@ func KubeContextFlag() *cli.StringFlag {
 var (
 	// kubeWarnOut, when set, replaces stderr for the notices below.
 	kubeWarnOut io.Writer
-	probeKube             = health.ProbeConnection
+	probeKube   = health.ProbeConnection
 )
 
 // kubeWarn returns where kube notices go: kubeWarnOut when a test set it,

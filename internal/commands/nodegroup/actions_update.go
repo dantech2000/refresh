@@ -490,7 +490,7 @@ func healthProblems(summary health.HealthSummary) string {
 			continue
 		}
 		failed := r.Status == health.StatusFail
-		if summary.Decision == health.DecisionBlock && !(failed && r.IsBlocking) {
+		if summary.Decision == health.DecisionBlock && (!failed || !r.IsBlocking) {
 			continue
 		}
 		if !failed && r.Status != health.StatusWarn {
