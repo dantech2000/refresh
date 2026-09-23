@@ -12,11 +12,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	"github.com/aws/smithy-go"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/dryrun"
@@ -338,30 +338,8 @@ type fleetDiscovery struct {
 	// failed regions could not be listed; their clusters are unknown.
 	failed []regionDiscoveryError
 	// skipped regions are default-sweep regions these credentials can't
-	// reach (see regionInaccessible). They are not failures.
+	// reach (see awserr.IsRegionInaccessible). They are not failures.
 	skipped []string
-}
-
-// inaccessibleRegionCodes are API error codes from a region the caller's
-// credentials can't use: an SCP region restriction (AccessDenied*), a region
-// that isn't enabled for the account (UnrecognizedClientException,
-// InvalidClientTokenId, AuthFailure, OptInRequired), or a disabled region.
-var inaccessibleRegionCodes = map[string]bool{
-	"AccessDenied":                true,
-	"AccessDeniedException":       true,
-	"UnrecognizedClientException": true,
-	"InvalidClientTokenId":        true,
-	"AuthFailure":                 true,
-	"OptInRequired":               true,
-	"RegionDisabledException":     true,
-}
-
-// regionInaccessible reports whether err says the region is closed to these
-// credentials, as opposed to a transient failure (throttling after retries,
-// 5xx, timeouts) that must still fail the run.
-func regionInaccessible(err error) bool {
-	var ae smithy.APIError
-	return errors.As(err, &ae) && inaccessibleRegionCodes[ae.ErrorCode()]
 }
 
 // discoverFleetTargets lists clusters in each region (bounded concurrency) and
@@ -399,7 +377,7 @@ func discoverFleetTargets(ctx context.Context, baseCfg aws.Config, regions []str
 		switch {
 		case r.err == nil:
 			d.targets = append(d.targets, r.targets...)
-		case skipInaccessible && regionInaccessible(r.err):
+		case skipInaccessible && awserr.IsRegionInaccessible(r.err):
 			d.skipped = append(d.skipped, regions[i])
 		default:
 			msg := awsinternal.FormatAWSError(r.err, "listing clusters in "+regions[i]).Error()

@@ -164,6 +164,28 @@ func IsNetworkError(err error) bool {
 		errors.Is(err, io.ErrUnexpectedEOF)
 }
 
+// inaccessibleRegionCodes are API error codes from a region the caller's
+// credentials can't use: an SCP region restriction (AccessDenied*), a region
+// that isn't enabled for the account (UnrecognizedClientException,
+// InvalidClientTokenId, AuthFailure, OptInRequired), or a disabled region.
+var inaccessibleRegionCodes = map[string]bool{
+	"AccessDenied":                true,
+	"AccessDeniedException":       true,
+	"UnrecognizedClientException": true,
+	"InvalidClientTokenId":        true,
+	"AuthFailure":                 true,
+	"OptInRequired":               true,
+	"RegionDisabledException":     true,
+}
+
+// IsRegionInaccessible reports whether err says a region is closed to these
+// credentials, as opposed to a transient failure (throttling after retries,
+// 5xx, timeouts) that must still fail a run. Multi-region sweeps use it to
+// skip such regions when the user did not ask for them by name.
+func IsRegionInaccessible(err error) bool {
+	return inaccessibleRegionCodes[apiErrorCode(err)]
+}
+
 // containsAny reports whether s contains any pattern, case-insensitively.
 // Patterns must be lower case.
 func containsAny(s string, patterns []string) bool {

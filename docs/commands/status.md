@@ -21,6 +21,12 @@ attention, so it doubles as a CI gate.
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
 | `--timeout, -t` | Operation timeout |
 
+With `--all-regions` and no `-r` or `REFRESH_EKS_REGIONS`, regions these
+credentials can't use (an SCP denial, a region not enabled for the account)
+are skipped with one note on stderr and don't count as failed regions. A
+region you name with `-r` still fails if it's denied. Other region failures
+print one warning line each.
+
 ## Examples
 
 ```bash

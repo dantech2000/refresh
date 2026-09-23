@@ -195,6 +195,29 @@ func TestFormatAWSError_CancelGetsNoNetworkHelp(t *testing.T) {
 	}
 }
 
+func TestIsRegionInaccessible(t *testing.T) {
+	for _, code := range []string{"AccessDenied", "AccessDeniedException", "UnrecognizedClientException", "InvalidClientTokenId", "AuthFailure", "OptInRequired", "RegionDisabledException"} {
+		if !IsRegionInaccessible(apiErr(code, "x")) {
+			t.Errorf("%s: want inaccessible", code)
+		}
+		// Still classified after FormatAWSError and a caller's %w wrap.
+		if !IsRegionInaccessible(fmt.Errorf("region x: %w", FormatAWSError(apiErr(code, "x"), "listing clusters"))) {
+			t.Errorf("%s: want inaccessible through FormatAWSError", code)
+		}
+	}
+	for _, err := range []error{
+		nil,
+		apiErr("ThrottlingException", "x"),
+		apiErr("ServerException", "x"),
+		context.DeadlineExceeded,
+		errors.New("AccessDeniedException: plain string, not an API error"),
+	} {
+		if IsRegionInaccessible(err) {
+			t.Errorf("%v: want not inaccessible", err)
+		}
+	}
+}
+
 func TestSummary(t *testing.T) {
 	cases := map[string]error{
 		"":                                    nil,

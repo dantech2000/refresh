@@ -172,24 +172,6 @@ func TestDiscoverFleetTargets_CollectsRegionErrors(t *testing.T) {
 	}
 }
 
-func TestRegionInaccessible(t *testing.T) {
-	for _, code := range []string{"AccessDenied", "AccessDeniedException", "UnrecognizedClientException", "InvalidClientTokenId", "AuthFailure", "OptInRequired", "RegionDisabledException"} {
-		if !regionInaccessible(apiErr(code)) {
-			t.Errorf("%s: want inaccessible", code)
-		}
-	}
-	for _, err := range []error{
-		apiErr("ThrottlingException"),
-		apiErr("ServerException"),
-		context.DeadlineExceeded,
-		errors.New("AccessDeniedException: plain string, not an API error"),
-	} {
-		if regionInaccessible(err) {
-			t.Errorf("%v: want not inaccessible", err)
-		}
-	}
-}
-
 // Default sweep: regions an SCP denies are skipped with one note, and a run
 // whose reachable clusters update cleanly exits 0.
 func TestFleetDiscovery_DefaultSweepSkipsDeniedRegions(t *testing.T) {

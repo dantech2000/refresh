@@ -2,7 +2,9 @@ package statuscmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sort"
@@ -14,6 +16,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/commands/statusview"
@@ -31,7 +34,7 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	regions := resolveRegions(cmd, awsCfg)
+	regions, defaultSweep := resolveRegions(cmd, awsCfg)
 	maxConc := appconfig.ClampMaxConcurrency(cmd.Int("max-concurrency"))
 	opts := statussvc.ListOptions{
 		NamePattern:    strings.TrimSpace(cmd.Args().First()),
@@ -39,15 +42,15 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	start := time.Now()
-	var (
-		statuses   []statussvc.ClusterStatus
-		regionErrs []error
-	)
+	var sweep fleetSweep
 	gather := func() error {
-		statuses, regionErrs = gatherFleet(ctx, awsCfg, regions, opts, maxConc)
-		// Only a total failure (no data from any region) is fatal.
-		if len(statuses) == 0 && len(regionErrs) > 0 {
-			return regionErrs[0]
+		// Only the default all-regions sweep skips regions closed to these
+		// credentials; a region the user asked for by name still fails.
+		sweep = gatherFleet(ctx, awsCfg, regions, opts, maxConc, defaultSweep)
+		// Only a total failure (no data from any region) is fatal. The one
+		// error gets the full formatted text.
+		if len(sweep.statuses) == 0 && len(sweep.errs) > 0 {
+			return sweep.errs[0]
 		}
 		return nil
 	}
@@ -55,9 +58,10 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	elapsed := time.Since(start)
+	statuses, regionErrs := sweep.statuses, sweep.errs
 
-	for _, e := range regionErrs {
-		fmt.Fprintln(os.Stderr, color.YellowString("warning: %v", e))
+	if err := reportSweep(os.Stderr, len(regions), sweep); err != nil {
+		return err
 	}
 
 	sortStatuses(statuses, cmd.String("sort"), cmd.Bool("desc"))
@@ -76,20 +80,70 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 
 // resolveRegions picks the region set: explicit --region wins, then
 // --all-regions (partition sweep / REFRESH_EKS_REGIONS), else the config region.
-func resolveRegions(cmd *cli.Command, awsCfg aws.Config) []string {
+// defaultSweep reports a partition sweep nobody scoped: not -r, not
+// REFRESH_EKS_REGIONS, not the config region. Only that sweep skips regions
+// closed to these credentials (the fleet discovery rule from #331).
+func resolveRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string, defaultSweep bool) {
 	if r := cmd.StringSlice("region"); len(r) > 0 {
-		return r
+		return r, false
 	}
 	if cmd.Bool("all-regions") {
 		if env := appconfig.RegionsFromEnv(); len(env) > 0 {
-			return env
+			return env, false
 		}
-		return appconfig.GetRegionsForPartition(awsCfg.Region)
+		return appconfig.GetRegionsForPartition(awsCfg.Region), true
 	}
 	if awsCfg.Region != "" {
-		return []string{awsCfg.Region}
+		return []string{awsCfg.Region}, false
 	}
-	return appconfig.GetRegionsForPartition(awsCfg.Region)
+	return appconfig.GetRegionsForPartition(awsCfg.Region), true
+}
+
+// regionScopeHint tells the user how to narrow the region sweep.
+const regionScopeHint = "scope with -r or REFRESH_EKS_REGIONS"
+
+// regionError is a failed region sweep. It unwraps to the service error, so
+// callers can still classify it.
+type regionError struct {
+	Region string
+	Err    error
+}
+
+func (e *regionError) Error() string { return fmt.Sprintf("region %s: %v", e.Region, e.Err) }
+func (e *regionError) Unwrap() error { return e.Err }
+
+// fleetSweep is the outcome of gatherFleet.
+type fleetSweep struct {
+	statuses []statussvc.ClusterStatus
+	// errs holds one *regionError per failed region.
+	errs []error
+	// skipped regions were closed to these credentials in a default sweep.
+	// They are not failures.
+	skipped []string
+}
+
+// reportSweep writes the sweep's problems to w: one line naming the skipped
+// regions, and one single-line warning per failed region (the full formatted
+// AWS error runs to 15+ lines, once per region). It fails with exit 4 when
+// every region was skipped, so an empty table is never a false pass.
+func reportSweep(w io.Writer, regions int, s fleetSweep) error {
+	if len(s.skipped) > 0 {
+		_, _ = fmt.Fprintln(w, color.YellowString("Skipped %d region(s) not accessible to these credentials: %s (%s)",
+			len(s.skipped), strings.Join(s.skipped, ", "), regionScopeHint))
+	}
+	for _, e := range s.errs {
+		msg := awserr.Summary(e)
+		var re *regionError
+		if errors.As(e, &re) {
+			msg = fmt.Sprintf("region %s: %s", re.Region, awserr.Summary(re.Err))
+		}
+		_, _ = fmt.Fprintln(w, color.YellowString("warning: %s", msg))
+	}
+	if regions > 0 && len(s.skipped) == regions {
+		return cli.Exit(fmt.Sprintf("could not list clusters in any of %d region(s): none is accessible to these credentials; %s",
+			regions, regionScopeHint), exitIncomplete)
+	}
+	return nil
 }
 
 // regionLister is the per-region status sweep gatherFleet fans out over.
@@ -105,7 +159,7 @@ var newRegionService = func(cfg aws.Config, logger *slog.Logger) regionLister {
 
 // gatherFleet fans out across regions with bounded concurrency, returning the
 // merged cluster statuses and any per-region errors.
-func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts statussvc.ListOptions, maxConc int) ([]statussvc.ClusterStatus, []error) {
+func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts statussvc.ListOptions, maxConc int, skipInaccessible bool) fleetSweep {
 	if maxConc <= 0 {
 		maxConc = appconfig.DefaultMaxConcurrency
 	}
@@ -114,11 +168,10 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 	// Info level into the TUI. (REF-129)
 	logger := factory.NewDefaultLogger(nil)
 	var (
-		mu   sync.Mutex
-		all  []statussvc.ClusterStatus
-		errs []error
-		wg   sync.WaitGroup
-		sem  = make(chan struct{}, maxConc)
+		mu    sync.Mutex
+		sweep fleetSweep
+		wg    sync.WaitGroup
+		sem   = make(chan struct{}, maxConc)
 	)
 	for _, region := range regions {
 		wg.Add(1)
@@ -136,14 +189,19 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 			defer mu.Unlock()
 			// Keep partial rows even on error: a cancelled sweep returns the
 			// clusters it reached plus "not evaluated" rows for the rest.
-			all = append(all, statuses...)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("region %s: %w", r, err))
+			sweep.statuses = append(sweep.statuses, statuses...)
+			switch {
+			case err == nil:
+			case skipInaccessible && awserr.IsRegionInaccessible(err):
+				sweep.skipped = append(sweep.skipped, r)
+			default:
+				sweep.errs = append(sweep.errs, &regionError{Region: r, Err: err})
 			}
 		}(region)
 	}
 	wg.Wait()
-	return all, errs
+	sort.Strings(sweep.skipped)
+	return sweep
 }
 
 // Exit codes for `refresh status` (documented in the command help).
