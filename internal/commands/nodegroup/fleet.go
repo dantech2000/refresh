@@ -1,11 +1,8 @@
 package nodegroup
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,6 +15,7 @@ import (
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // clusterTarget is a cluster to update plus the region-scoped AWS config to
@@ -72,7 +70,7 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 		if !isInteractive() {
 			return fmt.Errorf("fleet update would modify %d cluster(s); re-run with --yes (no interactive terminal for confirmation)", len(targets))
 		}
-		if !promptYesNo(fmt.Sprintf("Update matching nodegroups across %d cluster(s) in %d region(s)?", len(targets), len(regions))) {
+		if !promptYesNo(ctx, fmt.Sprintf("Update matching nodegroups across %d cluster(s) in %d region(s)?", len(targets), len(regions))) {
 			color.Yellow("Fleet update cancelled")
 			return fmt.Errorf("fleet update cancelled")
 		}
@@ -255,13 +253,7 @@ func fleetExit(results []clusterUpdateResult) error {
 }
 
 // promptYesNo asks a yes/no question on the terminal; defaults to no.
-func promptYesNo(question string) bool {
+func promptYesNo(ctx context.Context, question string) bool {
 	fmt.Printf("%s [y/N]: ", question)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return false
-	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	return answer == "y" || answer == "yes"
+	return ui.Confirm(ctx)
 }

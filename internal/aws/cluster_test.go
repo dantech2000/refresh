@@ -52,14 +52,14 @@ func TestMatchingClusters_EmptyList(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestConfirmClusterSelection_ZeroMatchesReturnsError(t *testing.T) {
-	_, err := confirmClusterSelection(nil, "ghost")
+	_, err := confirmClusterSelection(t.Context(), nil, "ghost")
 	if err == nil {
 		t.Error("expected error for 0 matches")
 	}
 }
 
 func TestConfirmClusterSelection_SingleMatchReturnsIt(t *testing.T) {
-	got, err := confirmClusterSelection([]string{"prod-east"}, "prod")
+	got, err := confirmClusterSelection(t.Context(), []string{"prod-east"}, "prod")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

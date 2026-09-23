@@ -1,10 +1,14 @@
 package aws
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/fatih/color"
+
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // MatchingNodegroups returns nodegroup names that contain the given pattern.
@@ -26,7 +30,7 @@ func MatchingNodegroups(nodegroups []string, pattern string) []string {
 
 // ConfirmNodegroupSelection prompts user to confirm when multiple nodegroups match.
 // Returns the selected nodegroups or error if user cancels.
-func ConfirmNodegroupSelection(matches []string, pattern string) ([]string, error) {
+func ConfirmNodegroupSelection(ctx context.Context, matches []string, pattern string) ([]string, error) {
 	switch {
 	case len(matches) == 0:
 		return nil, fmt.Errorf("no nodegroups found matching pattern: %s", pattern)
@@ -36,12 +40,12 @@ func ConfirmNodegroupSelection(matches []string, pattern string) ([]string, erro
 		// No pattern specified - user wants to update all
 		return matches, nil
 	default:
-		return promptForNodegroupConfirmation(matches, pattern)
+		return promptForNodegroupConfirmation(ctx, matches, pattern)
 	}
 }
 
 // promptForNodegroupConfirmation displays matching nodegroups and prompts for confirmation.
-func promptForNodegroupConfirmation(matches []string, pattern string) ([]string, error) {
+func promptForNodegroupConfirmation(ctx context.Context, matches []string, pattern string) ([]string, error) {
 	color.Yellow("Multiple nodegroups match pattern '%s':", pattern)
 	for i, ng := range matches {
 		fmt.Printf("  %d) %s\n", i+1, ng)
@@ -49,7 +53,10 @@ func promptForNodegroupConfirmation(matches []string, pattern string) ([]string,
 
 	color.Cyan("Update all %d matching nodegroups? (y/N): ", len(matches))
 
-	response, err := readPromptLine()
+	response, err := ui.ReadLine(ctx)
+	if errors.Is(err, ui.ErrPromptCancelled) {
+		return nil, fmt.Errorf("operation cancelled")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("operation cancelled: failed to read input")
 	}
