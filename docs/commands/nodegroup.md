@@ -165,6 +165,19 @@ refresh nodegroup update --all-clusters --dry-run            # fleet-wide plan
 refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one region
 ```
 
+Fleet mode selects nodegroups only with `-n`. It rejects positional
+arguments, `--cluster`, and `--kube-context`, because it matches each cluster
+to a kubeconfig context by endpoint. An exported `EKS_CLUSTER_NAME` is
+ignored.
+
+In the default region sweep (no `-r`, no `REFRESH_EKS_REGIONS`), regions your
+credentials can't use are skipped with one stderr note. Examples are regions
+an SCP denies and opt-in regions that are not enabled. Skipped regions don't
+change the exit code. Any other listing failure (throttling, a server error, a
+timeout), or any failure in a region you named, is reported on stderr and in
+the summary (`discoveryErrors` in `-o json`), and the run exits `4`. The run
+also exits `4` right away if no region can be listed.
+
 ### Flags
 
 | Flag | Description |
@@ -183,6 +196,7 @@ refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one re
 | `--yes, -y` | Assume yes: skip confirmation prompts (multi-match selection, warn-level health) for CI |
 | `--require-healthy` | Treat warn-level health findings as a hard stop (exit `2`) instead of prompting |
 | `--skip-verify` | Skip post-roll verification (nodes ACTIVE, no new stuck pods) |
+| `--live` | Force the live per-node roll panel, also when stdout is not a color terminal (a snapshot at most every 15s, only on change) |
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--poll-interval, -p` | Polling interval for update status (default `15s`) |
 | `--timeout, -t` | Max time to wait for update completion (default `40m`; applies per cluster with `--all-clusters`; `0` = no limit) |
@@ -200,7 +214,11 @@ refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one re
     appear as they happen instead of on the next poll. Access is optional and
     degrades gracefully: without `watch` the panel polls, and without any
     Kubernetes access the roll still runs — you just get the coarse EKS update
-    status instead of per-node detail.
+    status instead of per-node detail. The panel is on by default only when
+    stdout is a color terminal. When output is piped, in CI, or with
+    `NO_COLOR`, you get the standard progress lines instead. `--live` forces
+    the panel there too, as a snapshot at most every 15s and only when
+    something changed.
 
 ### Exit-code contract
 

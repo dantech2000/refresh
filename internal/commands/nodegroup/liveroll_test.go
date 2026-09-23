@@ -104,3 +104,30 @@ func TestMonitorAlongsidePanel_ParentCancelDoesNotResume(t *testing.T) {
 		t.Fatalf("err = %v, heldBack = %v, calls = %d; want ErrCancelled, true, 1", err, heldBack, calls)
 	}
 }
+
+// The live panel is the default only on an interactive stdout (a color
+// terminal); piped/CI/NO_COLOR runs keep the monitor's progress lines unless
+// --live forces the panel. Multi-nodegroup and quiet/JSON runs never get it.
+func TestShowLivePanel(t *testing.T) {
+	cases := []struct {
+		name                     string
+		updates                  int
+		quiet, live, interactive bool
+		want                     bool
+	}{
+		{"interactive single roll", 1, false, false, true, true},
+		{"piped or NO_COLOR", 1, false, false, false, false},
+		{"--live overrides a pipe", 1, false, true, false, true},
+		{"--live on a terminal", 1, false, true, true, true},
+		{"quiet wins over --live", 1, true, true, true, false},
+		{"several nodegroups", 2, false, true, true, false},
+		{"nothing started", 0, false, true, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := showLivePanel(tc.updates, tc.quiet, tc.live, tc.interactive); got != tc.want {
+				t.Errorf("showLivePanel = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

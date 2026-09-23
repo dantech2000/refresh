@@ -149,6 +149,10 @@ and rolls them serially with one batch confirmation, an aggregate summary, and a
 worst-outcome exit code:
    refresh nodegroup update --all-clusters --dry-run        # fleet-wide plan
    refresh nodegroup update --all-clusters -r us-east-1 --yes
+Fleet mode takes no positional args and rejects --cluster and --kube-context
+(each cluster's kubeconfig context is matched by endpoint). A region that
+can't be listed is reported and makes the run exit 4. The default sweep skips
+regions these credentials can't use (SCP-denied or not enabled) with a note.
 
 Unattended / CI use:
    --yes              skip confirmation prompts (multi-match selection, warnings)
@@ -157,8 +161,10 @@ Unattended / CI use:
    Without a TTY and without --yes, a prompt-requiring run fails fast.
 
 Exit codes:
-   0  success            2  health warnings (--health-only / --require-healthy)
+   0  success            1  error, interrupt, or monitoring timeout
+   2  health warnings (--health-only / --require-healthy)
    3  health blocked     4  one or more nodegroup updates failed to start
+   5  post-roll verification found issues
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 
@@ -185,6 +191,6 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | `--kubeconfig string` | — | — | Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--format, -o string` | — | `table` | Output format: health results with --health-only; a JSON run summary with -o json |
-| `--live` | — | — | Force the live per-node roll view and report why if the cluster API can't be reached (the panel is already the default for an interactive single-nodegroup roll) |
+| `--live` | — | — | Force the live per-node roll view, also when stdout is not a color terminal (appends a snapshot at most every 15s, only on change), and report why if the cluster API can't be reached. The panel is already the default for a single-nodegroup roll on a color terminal |
 | `--help, -h` | — | — | show help |
 

@@ -1,8 +1,11 @@
 package rollview
 
 import (
+	"bytes"
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dantech2000/refresh/internal/noderoll"
 	"github.com/dantech2000/refresh/internal/render"
@@ -138,3 +141,51 @@ func TestRollComplete_DemoTimelineOnlyAtEnd(t *testing.T) {
 		}
 	}
 }
+
+// Appending snapshots (piped/CI) must never repaint faster than
+// liveRollAppendRepaint; in place, the existing cadence rules hold.
+func TestRollRepaintInterval(t *testing.T) {
+	cases := []struct {
+		name              string
+		poll              time.Duration
+		watching, inPlace bool
+		want              time.Duration
+	}{
+		{"in place, default poll, polling", 15 * time.Second, false, true, liveRollPoll},
+		{"in place, default poll, watching", 15 * time.Second, true, true, liveRollWatchRepaint},
+		{"in place, fast poll kept", 500 * time.Millisecond, false, true, 500 * time.Millisecond},
+		{"in place, zero poll", 0, true, true, liveRollWatchRepaint},
+		{"append, watching", 15 * time.Second, true, false, liveRollAppendRepaint},
+		{"append, fast poll throttled", 10 * time.Millisecond, false, false, liveRollAppendRepaint},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rollRepaintInterval(tc.poll, tc.watching, tc.inPlace); got != tc.want {
+				t.Errorf("rollRepaintInterval = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Appended snapshots of an unchanged roll must be identical (no spinner
+// animation) so the live region prints them once.
+func TestRunRoll_AppendModeSkipsUnchangedFrames(t *testing.T) {
+	var buf bytes.Buffer
+	th := render.New(render.ColorNone, true)
+	snap := noderoll.Snapshot{Total: 1, Nodes: []noderoll.NodeView{{Name: "ip-1", Phase: noderoll.PhaseReady}}}
+	obs := &staticObserver{snap: snap}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	_ = runRoll(ctx, th, &buf, obs, rollMeta{Nodegroup: "ng", Desired: 1}, time.Millisecond, func(noderoll.Snapshot) bool {
+		calls++
+		return calls >= 5
+	})
+	if n := strings.Count(buf.String(), "rolling ng"); n != 1 {
+		t.Fatalf("unchanged roll printed %d frames, want 1:\n%s", n, buf.String())
+	}
+}
+
+type staticObserver struct{ snap noderoll.Snapshot }
+
+func (o *staticObserver) Snapshot(context.Context) (noderoll.Snapshot, error) { return o.snap, nil }
