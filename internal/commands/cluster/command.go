@@ -14,7 +14,7 @@ import (
 func Command() *cli.Command {
 	return &cli.Command{
 		Name:  "cluster",
-		Usage: "Cluster operations (list, get, upgrade)",
+		Usage: "Cluster operations (list, describe, upgrade-check, upgrade)",
 		Description: `Discover and operate on EKS clusters: list them (optionally across all
 regions), describe one in depth, run an upgrade readiness check
 (upgrade-check), and orchestrate a full control-plane + add-on + nodegroup

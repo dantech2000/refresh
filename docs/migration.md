@@ -55,9 +55,9 @@ recommended AMI.
 | (also set min/max) | `refresh nodegroup scale my-cluster -n ng-1 --desired 5 --min 3 --max 8` |
 | (safe scale-down) | `refresh nodegroup scale my-cluster -n ng-1 --desired 2 --check-pdbs --wait` |
 
-`--check-pdbs` refuses a scale-down when a Pod Disruption Budget that allows 0
-disruptions covers pods on the nodegroup's nodes (EKS does not honor PDBs when
-it removes nodes for a scaling change); `--force` overrides it.
+`--check-pdbs` refuses a scale-down when the removed nodes could hold more of a
+Pod Disruption Budget's pods than it allows (EKS does not honor PDBs when it
+removes nodes for a scaling change); `--force` overrides it.
 `--health-check` validates cluster health before and after.
 
 ## Update (roll) a nodegroup AMI
@@ -72,7 +72,8 @@ it removes nodes for a scaling change); `--force` overrides it.
 
 `refresh nodegroup update` runs pre-flight health gates, monitors progress live,
 and skips custom-AMI nodegroups with guidance. It exits with a meaningful code:
-`0` ok, `2` warn, `3` blocked, `4` failed.
+`0` ok, `1` error or interrupt, `2` warn, `3` blocked, `4` failed to start,
+`5` verification issues. See [Exit codes](concepts/exit-codes.md).
 
 ## Update add-ons
 
@@ -103,18 +104,21 @@ upgrade.
 | (preview the full ordered plan) | `refresh cluster upgrade my-cluster --to 1.33 --dry-run` |
 
 `refresh cluster upgrade` orchestrates the whole sequence — control plane →
-add-ons → nodegroups — with per-phase health gates and confirmations. It is
-resumable: re-running re-derives the plan from live cluster state.
+add-ons → nodegroups — with per-phase health gates and confirmations. Unlike a
+bare `UpdateClusterVersion`, it refreshes Cluster Insights before each hop and
+blocks on problems. It is resumable: re-running re-derives the plan from live
+cluster state.
 
 ## Fleet status
 
 | You used to run | Now run |
 | --- | --- |
-| (loop `aws eks list-clusters` + `describe-cluster` per region) | `refresh status` |
+| (loop `aws eks list-clusters` + `describe-cluster` per region) | `refresh status -A` |
 
-`refresh status` is the front door: it summarizes patch posture (stale
-control planes, outdated nodegroup AMIs, add-on drift) across your clusters and
-regions in one view.
+`refresh status` is the front door: it summarizes patch posture (support
+window, outdated nodegroup AMIs, nodegroups behind the control plane, add-on
+drift, control-plane health) across your clusters and regions in one view.
+Use `refresh status -A` for every region.
 
 ## Context switching
 

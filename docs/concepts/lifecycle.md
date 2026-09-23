@@ -17,6 +17,8 @@ support window (standard vs. extended support, with the extended-support cost
 exposure), stale AMIs, and add-ons behind their latest compatible version.
 
 It's designed to run in CI: a non-zero exit means "something needs attention."
+A row whose data could not be read is marked incomplete and never counts as
+current (exit `4`).
 
 ## 2. Readiness — am I safe to upgrade?
 
@@ -33,18 +35,21 @@ This is the heart of the tool:
   nodegroups to the latest recommended AMI.
 - [`refresh addon update`](../commands/addon.md#update) updates EKS add-ons.
 
-Both run **pre-flight health gates** first (capacity, node readiness,
-PodDisruptionBudgets, critical workloads), support **dry-run** previews
-(including the AMI changelog), stream **live progress**, and — for nodegroup
-rolls — run **post-roll verification** that nodes returned Ready with no
-newly-stuck pods.
+Both support **dry-run** previews and follow the EKS update to its end.
+Nodegroup rolls also run [**pre-flight health gates**](health-checks.md)
+first (capacity, node readiness, PodDisruptionBudgets that would block the
+drain, critical workloads), show the AMI changelog in a dry-run, stream
+**live progress**, and run **post-roll verification** that nodes returned
+Ready with no newly-stuck pods. `addon update --health-check` checks the
+add-on before the update.
 
 The patch stage is also where the **safety story** lives:
 
 - **Health gates** block a roll when the cluster isn't healthy enough.
 - **`--dry-run`** shows exactly what would change.
-- **Idempotency** — mutating calls carry a client request token, so a retried
-  request can't trigger a second disruptive rollout.
+- **Idempotency** — mutating calls carry a client request token, so an SDK
+  retry of the same request can't trigger a second disruptive rollout. A
+  nodegroup that is already `UPDATING` is skipped.
 - **Custom-AMI awareness** — nodegroups whose AMI is managed via a launch
   template are detected and skipped with guidance, not rolled blindly.
 
@@ -52,8 +57,10 @@ The patch stage is also where the **safety story** lives:
 
 [`refresh cluster upgrade`](../commands/cluster.md#upgrade) sequences a full
 cluster upgrade: **control plane → add-ons → nodegroups**, with a health gate
-after each phase. It's resumable by re-deriving the plan from live cluster
-state (no state files to corrupt).
+after each phase. Before each control-plane step it asks EKS to re-evaluate
+Cluster Insights and blocks on problems, and before each nodegroup roll it
+runs the pre-flight health checks. It's resumable by re-deriving the plan
+from live cluster state (no state files to corrupt).
 
 ## Supporting surface
 

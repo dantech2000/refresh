@@ -23,7 +23,19 @@ refresh status -A -o json
 ```
 
 `status` exits non-zero when the fleet needs attention, so it doubles as a CI
-gate. See [`refresh status`](../commands/status.md).
+gate:
+
+```bash
+refresh status -A -o json > status.json
+case $? in
+  0) echo "fleet current" ;;
+  2) echo "stale AMIs, add-ons behind, or health issues" ;;
+  3) echo "a cluster is on extended support or unsupported" ;;
+  4) echo "incomplete data: check the errors in status.json" ;;
+esac
+```
+
+See [`refresh status`](../commands/status.md).
 
 ---
 
@@ -49,7 +61,8 @@ See [`cluster upgrade-check`](../commands/cluster.md#upgrade-check).
 ## Patch a single nodegroup
 
 Always preview first. `--changelog` prints the `amazon-eks-ami` release notes
-between the current and target AMI so you know what's changing.
+between the current and target AMI so you know what's changing. Bottlerocket
+and Windows nodegroups get a link to their own release notes instead.
 
 ```bash
 # Preview the roll + read the AMI changelog
@@ -76,6 +89,9 @@ refresh nodegroup update --all-clusters -r us-east-1 -r us-west-2 --dry-run
 refresh nodegroup update --all-clusters -r us-east-1 -r us-west-2 --yes
 ```
 
+Each cluster gets its own `--timeout`. A region that can't be listed makes
+the run exit `4`; see [fleet mode](../commands/nodegroup.md#fleet-mode).
+
 ---
 
 ## Unattended / CI patch
@@ -96,8 +112,11 @@ esac
 ```
 
 !!! warning "TTY-less runs need `--yes`"
-    Without a terminal and without `--yes`, a run that would otherwise prompt
-    fails fast — so CI never hangs waiting on stdin.
+    Without a terminal, with `--quiet`, or with `-o json`, a run that would
+    otherwise prompt fails fast unless you pass `--yes` — so CI never hangs
+    waiting on stdin. A nodegroup pattern that is not an exact name also
+    needs `--yes`. Pass exact cluster names in scripts: `--yes` does not
+    accept a partial cluster name.
 
 ---
 
@@ -121,9 +140,9 @@ See [`addon update`](../commands/addon.md#update).
 
 EKS does not honor PodDisruptionBudgets when a scaling change removes nodes: it
 terminates them and their pods go down. `--check-pdbs` refuses the scale-down
-if it could remove more of a PDB's pods than the PDB allows. The gate assumes
-the worst case: the removed nodes are the ones that hold the most of the PDB's
-pods.
+(exit `1`) if it could remove more of a PDB's pods than the PDB allows. The
+gate assumes the worst case: the removed nodes are the ones that hold the most
+of the PDB's pods. If it can't read the PDBs, it refuses too.
 
 ```bash
 # Preview the gate's verdict and the blocking PDBs (no changes)
@@ -177,5 +196,13 @@ refresh cluster upgrade -c prod-east --to 1.33 --yes --skip aws-load-balancer-co
 ```
 
 The plan is re-derived from live state on every run, so rerunning after a
-failure (or Ctrl+C) resumes where it left off. See
-[`cluster upgrade`](../commands/cluster.md#upgrade).
+failure (or Ctrl+C) resumes where it left off. `refresh` prints the exact
+command to rerun. For CI, get one JSON document with the plan and what the
+run did:
+
+```bash
+refresh cluster upgrade -c prod-east --to 1.33 --yes -o json 2>upgrade.log | jq '.report'
+```
+
+The run needs `eks:StartInsightsRefresh` and `eks:DescribeInsightsRefresh`
+for the readiness gate. See [`cluster upgrade`](../commands/cluster.md#upgrade).

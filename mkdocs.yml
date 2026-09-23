@@ -94,6 +94,7 @@ nav:
       - The upgrade lifecycle: concepts/lifecycle.md
       - Configuration & AWS auth: concepts/configuration.md
       - Contexts: concepts/contexts.md
+      - Pre-flight health checks: concepts/health-checks.md
       - Output formats: concepts/output.md
       - Exit codes: concepts/exit-codes.md
   - Commands:

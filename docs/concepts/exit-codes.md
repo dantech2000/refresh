@@ -7,7 +7,16 @@
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | A general error (bad flags, AWS error, not found, etc.) |
+| `1` | A general error (bad flags, AWS error, not found, a missing `--yes`, etc.) |
+
+An interrupt (Ctrl+C or SIGTERM) exits `1`. A second Ctrl+C ends the process
+at once.
+
+A partial result is never a success. `nodegroup list` and `addon list` exit
+`1` when they could not describe some items: they print what they got, name
+the failures on stderr, and add a `failures` key with `-o json`/`-o yaml`.
+`cluster list` with several regions warns on stderr for each failed region and
+exits `0`, but it fails when no region answers.
 
 `refresh status` exits non-zero when the fleet has items needing attention, so
 it works as a gate (e.g. fail a pipeline if anything is on extended support or
@@ -56,18 +65,20 @@ outcome:
 | Code | Meaning |
 |---|---|
 | `0` | Success — updates started/completed as expected |
+| `1` | An error, an interrupt (Ctrl+C), a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` |
 | `2` | Health **warnings** (with `--health-only` or `--require-healthy`) |
 | `3` | Health **blocked** — a pre-flight check failed; nothing was rolled |
 | `4` | One or more nodegroup updates **failed to start** |
 | `5` | Post-roll **verification** found issues (nodes not Ready / newly-stuck pods) |
 
-An interrupt (Ctrl+C) or a monitoring timeout exits `1`. The EKS update keeps
-running in AWS; check it with `refresh nodegroup list <cluster>`.
+After an interrupt or a monitoring timeout, the EKS update keeps running in
+AWS; check it with `refresh nodegroup list <cluster>`.
 
 In fleet mode (`--all-clusters`) the run exits with the worst code across
-clusters (`5`, then `4`, then `3`, then `2`, then `1`). A cluster stopped
-by health warnings (`--health-only` or `--require-healthy`) counts as `2`. A region whose clusters could
-not be listed also counts as `4`. The exception is a region in the default
+clusters (`5`, then `4`, then `3`, then `2`, then `1`). A cluster stopped by
+health warnings (`--health-only` or `--require-healthy`) counts as `2`, and
+an interrupted or timed-out cluster counts as `1`. A region whose clusters
+could not be listed also counts as `4`. The exception is a region in the default
 sweep that your credentials can't use (SCP-denied or not enabled). That
 region is skipped with a note on stderr and doesn't count.
 
@@ -86,3 +97,19 @@ esac
 
 See [`nodegroup update`](../commands/nodegroup.md#update) for the flags that
 drive these (`--health-only`, `--require-healthy`, `--skip-verify`).
+
+## `nodegroup scale`
+
+`nodegroup scale --check-pdbs` exits `1` and changes nothing when it refuses a
+scale-down, or when it cannot read the PDBs. See
+[Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
+
+## `cluster upgrade`
+
+| Code | Meaning |
+|---|---|
+| `0` | The plan finished, or there was nothing to do. A `--dry-run` with no blocker |
+| `1` | The plan has a blocker (also with `--dry-run`), a phase failed, the run was interrupted, or it timed out |
+
+After a failure or an interrupt, `refresh` prints the command that resumes
+the upgrade. See [`cluster upgrade`](../commands/cluster.md#upgrade).

@@ -10,7 +10,9 @@ refresh addon <list|describe|update> [args] [flags]
 ```
 
 The cluster is a positional on each subcommand, or `--cluster/-c`, falling back
-to the [active context](../concepts/contexts.md).
+to the [active context](../concepts/contexts.md). `list` and `describe` also
+fall back to the kubeconfig's current cluster; `update` never does. See
+[Cluster resolution](../concepts/configuration.md#cluster-resolution).
 
 ---
 
@@ -28,11 +30,11 @@ refresh addon list [cluster] [flags]
 | Flag | Description |
 |---|---|
 | `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
-| `--show-health, -H` | Include a health mapping/badge in table output |
+| `--show-health, -H` | Include a health mapping/badge in table output. Without it, `HEALTH` shows `-` |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--watch, -w` | Re-run and redraw every `--watch-interval` until interrupted |
+| `--watch, -w` | Re-run and redraw every `--watch-interval` until interrupted (not with `-o json`/`-o yaml`) |
 | `--watch-interval` | Refresh interval for `--watch` (default `10s`) |
-| `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
 
 If some add-ons can't be described (for example, a missing
 `eks:DescribeAddon` permission), the command prints the add-ons it did get and
@@ -74,7 +76,7 @@ installed add-ons.
 | `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
 | `--addon, -a` | Add-on name (e.g. `vpc-cni`); or pass as second positional |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
 
 ### Examples
 
@@ -96,7 +98,9 @@ refresh addon update [cluster] [addon] [version] [flags]
 
 For a single add-on, pass the add-on name and an optional version (the third
 positional or `--version`, defaulting to `latest`). The command exits non-zero
-if any add-on update fails.
+if any add-on update fails. With `--all --parallel`, an add-on that was not
+started before the deadline or Ctrl+C is reported as
+`FAILED: not attempted: <reason>`, and the command exits `1`.
 
 `--all` can't be combined with an add-on name or version. The command rejects
 that combination before it makes any AWS call.
@@ -118,9 +122,10 @@ that combination before it makes any AWS call.
 
 ### Add-on names
 
-An exact name, or an exact name in a different case, goes ahead. A name that
-only partially matches one installed add-on (`cni` for `vpc-cni`) needs a
-confirmation:
+An exact name, or an exact name in a different case, goes ahead. The names
+come from `eks:ListAddons`. A name that only partially matches one installed
+add-on (`cni` for `vpc-cni`) needs a confirmation. A name that matches several
+add-ons fails and lists them. For a partial match:
 
 - On a terminal, the command asks you to confirm the match.
 - Without a terminal, the command fails and names the candidate. Pass the
@@ -144,6 +149,12 @@ add-on reports the target version.
 
 The result is printed in every output format, also when the wait fails. See
 [exit codes](../concepts/exit-codes.md#addon-update).
+
+| Code | Meaning |
+|---|---|
+| `0` | Success, including `UP_TO_DATE` and `IN_PROGRESS` |
+| `1` | An update failed, was not started, or its wait failed |
+| `2` | `COMPLETED_WITH_ISSUES`: the update landed, but the post-update health check found issues |
 
 ### Flags
 
