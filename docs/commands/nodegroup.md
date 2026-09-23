@@ -51,7 +51,7 @@ refresh nodegroup list [cluster] [flags]
 refresh nodegroup list my-cluster --filter amiStatus=outdated
 
 # Plain TSV for scripting
-refresh nodegroup list my-cluster -o plain | awk '{print $1}'
+refresh nodegroup list my-cluster -o plain | awk -F'\t' 'NR>1 {print $1}'
 
 # Watch a roll progress live
 refresh nodegroup list my-cluster --watch

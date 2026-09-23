@@ -18,20 +18,25 @@ import (
 
 // OutputClustersTable renders a table of cluster summaries. The human path uses
 // the render design system (tokenized status/health cells, a health summary
-// chip line); `-o plain` keeps the uncolored tab-separated table.
+// chip line); `-o plain` writes pure TSV (header + one row per cluster) and
+// sends the empty-list notice to stderr.
 func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
+	if ui.PlainOutput() {
+		if len(summaries) == 0 {
+			_, _ = fmt.Fprintln(os.Stderr, "No EKS clusters found")
+		}
+		clusterListPlain(summaries, multiRegion, showHealth).Render()
+		return nil
+	}
 	if len(summaries) == 0 {
 		color.Yellow("No EKS clusters found")
 		return nil
 	}
-	if !ui.PlainOutput() {
-		th := render.Default(os.Stdout)
-		for _, line := range clusterListLines(th, summaries, multiRegion, showHealth) {
-			fmt.Println(line)
-		}
-		return nil
+	th := render.Default(os.Stdout)
+	for _, line := range clusterListLines(th, summaries, multiRegion, showHealth) {
+		fmt.Println(line)
 	}
-	return outputClustersPlain(summaries, elapsed, multiRegion, showHealth)
+	return nil
 }
 
 // WriteClustersHint renders the cluster table to w (typically stderr) as a
@@ -46,88 +51,6 @@ func WriteClustersHint(w io.Writer, summaries []clustersvc.ClusterSummary) {
 	for _, line := range clusterListLines(th, summaries, false, false) {
 		_, _ = fmt.Fprintln(w, line)
 	}
-}
-
-// outputClustersPlain renders the uncolored tab-separated cluster table for
-// `-o plain`.
-func outputClustersPlain(summaries []clustersvc.ClusterSummary, elapsed time.Duration, multiRegion bool, showHealth bool) error {
-	if multiRegion {
-		regions := make(map[string]bool)
-		for _, s := range summaries {
-			regions[s.Region] = true
-		}
-		ui.Outf("EKS Clusters (%d regions, %d clusters)\n", len(regions), len(summaries))
-	} else {
-		ui.Outf("EKS Clusters (%d clusters)\n", len(summaries))
-	}
-	ui.PrintElapsed(elapsed)
-
-	cols := []ui.Column{{Title: "CLUSTER", Min: 14, Align: ui.AlignLeft}}
-	if multiRegion {
-		cols = append(cols, ui.Column{Title: "REGION", Min: 10, Align: ui.AlignLeft})
-	}
-	cols = append(cols,
-		ui.Column{Title: "STATUS", Min: 7, Align: ui.AlignLeft},
-		ui.Column{Title: "VERSION", Min: 7, Align: ui.AlignLeft},
-	)
-	if showHealth {
-		cols = append(cols, ui.Column{Title: "HEALTH", Min: 8, Align: ui.AlignLeft})
-	}
-	cols = append(cols, ui.Column{Title: "READY/DESIRED", Min: 15, Align: ui.AlignRight})
-
-	tbl := ui.NewPTable(cols, ui.CyanHeaders())
-	for _, s := range summaries {
-		row := []string{s.Name}
-		if multiRegion {
-			row = append(row, s.Region)
-		}
-		row = append(row, formatStatus(s.Status), s.Version)
-		if showHealth {
-			row = append(row, formatClusterHealth(s.Health))
-		}
-		row = append(row, formatNodeCount(s.NodeCount))
-		tbl.AddRow(row...)
-	}
-	tbl.Render()
-
-	if showHealth {
-		renderHealthSummary(summaries)
-	}
-	return nil
-}
-
-func renderHealthSummary(summaries []clustersvc.ClusterSummary) {
-	healthy, warning, critical, updating := 0, 0, 0, 0
-	for _, s := range summaries {
-		if s.Health != nil {
-			switch s.Health.Decision {
-			case health.DecisionProceed:
-				healthy++
-			case health.DecisionWarn:
-				warning++
-			case health.DecisionBlock:
-				critical++
-			}
-		}
-		if strings.Contains(strings.ToUpper(s.Status), "UPDAT") {
-			updating++
-		}
-	}
-	ui.Outf("\nSummary: ")
-	var parts []string
-	if healthy > 0 {
-		parts = append(parts, color.GreenString("%d", healthy)+" healthy")
-	}
-	if warning > 0 {
-		parts = append(parts, color.YellowString("%d", warning)+" warning")
-	}
-	if critical > 0 {
-		parts = append(parts, color.RedString("%d", critical)+" critical")
-	}
-	if updating > 0 {
-		parts = append(parts, color.CyanString("%d", updating)+" updating")
-	}
-	ui.Outln(strings.Join(parts, ", "))
 }
 
 // OutputClustersTree renders cluster summaries grouped by region as a tree.

@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
@@ -59,7 +58,6 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	var res nodegroupsvc.ListResult
-	start := time.Now()
 	if err := runner.WithSpinner("nodegroup", "Nodegroup information gathered!", func() error {
 		var lerr error
 		res, lerr = svc.ListDetailed(ctx, clusterName, opts)
@@ -72,7 +70,7 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 	// just table/plain — matching cluster list and keeping JSON/YAML scriptable. (REF-49)
 	items := sortNodegroupSummaries(res.Summaries, cmd.String("sort"), cmd.Bool("desc"))
 
-	if err := writeNodegroupList(cmd.String("format"), clusterName, items, res.Failures, time.Since(start)); err != nil {
+	if err := writeNodegroupList(cmd.String("format"), clusterName, items, res.Failures); err != nil {
 		return err
 	}
 	return reportListProblems(warnOut, clusterName, res)
@@ -84,7 +82,7 @@ var warnOut io.Writer = os.Stderr
 // writeNodegroupList prints what was gathered in the requested format. When
 // some nodegroups could not be described, JSON/YAML carry them under
 // "failures" so "count" is never mistaken for the full nodegroup count.
-func writeNodegroupList(format, clusterName string, items []nodegroupsvc.NodegroupSummary, failures []string, elapsed time.Duration) error {
+func writeNodegroupList(format, clusterName string, items []nodegroupsvc.NodegroupSummary, failures []string) error {
 	payload := map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)}
 	if len(failures) > 0 {
 		payload["failures"] = failures
@@ -92,7 +90,7 @@ func writeNodegroupList(format, clusterName string, items []nodegroupsvc.Nodegro
 	if handled, err := runner.EncodeStdout(format, payload); handled {
 		return err
 	}
-	return outputNodegroupsTable(clusterName, items, elapsed)
+	return outputNodegroupsTable(clusterName, items)
 }
 
 // reportListProblems warns on w about incomplete list data. A failed

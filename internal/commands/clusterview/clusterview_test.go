@@ -11,6 +11,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
@@ -106,8 +107,6 @@ func TestSortClusterSummaries_UnknownKeyFallsBackToName(t *testing.T) {
 	}
 }
 
-// ── formatStatus ─────────────────────────────────────────────────────────────
-
 // REF-66: formatAge must read sensibly for sub-minute and clamp negatives
 // (clock skew) instead of printing "0 minutes" / "-N minutes".
 func TestFormatAge(t *testing.T) {
@@ -128,60 +127,6 @@ func TestFormatAge(t *testing.T) {
 				t.Errorf("formatAge(%v) = %q, want %q", tc.d, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestFormatStatus(t *testing.T) {
-	cases := map[string]string{
-		"ACTIVE":   "Active",
-		"active":   "Active",
-		"CREATING": "Creating",
-		"UPDATING": "Updating",
-		"DELETING": "Deleting",
-		"FAILED":   "Failed",
-		"unknown":  "unknown",
-	}
-	for input, want := range cases {
-		got := formatStatus(input)
-		if !strings.Contains(got, want) {
-			t.Errorf("formatStatus(%q) = %q, want substring %q", input, got, want)
-		}
-	}
-}
-
-// ── formatHealth ─────────────────────────────────────────────────────────────
-
-func TestFormatHealth_Nil(t *testing.T) {
-	if got := formatHealth(nil); !strings.Contains(got, "UNKNOWN") {
-		t.Errorf("nil health summary: got %q, want UNKNOWN", got)
-	}
-}
-
-func TestFormatHealth_Proceed(t *testing.T) {
-	h := &health.HealthSummary{Decision: health.DecisionProceed, Results: []health.HealthResult{{Status: health.StatusPass}}}
-	if got := formatHealth(h); !strings.Contains(got, "PASS") {
-		t.Errorf("proceed decision: got %q, want PASS", got)
-	}
-}
-
-func TestFormatHealth_Warn(t *testing.T) {
-	h := &health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"some warning"}}
-	if got := formatHealth(h); !strings.Contains(got, "WARN") {
-		t.Errorf("warn decision: got %q, want WARN", got)
-	}
-}
-
-func TestFormatHealth_Block(t *testing.T) {
-	h := &health.HealthSummary{Decision: health.DecisionBlock, Errors: []string{"critical issue"}}
-	if got := formatHealth(h); !strings.Contains(got, "FAIL") {
-		t.Errorf("block decision: got %q, want FAIL", got)
-	}
-}
-
-func TestFormatHealth_DefaultDecision(t *testing.T) {
-	h := &health.HealthSummary{Decision: "SOME_OTHER_DECISION"}
-	if got := formatHealth(h); !strings.Contains(got, "UNKNOWN") {
-		t.Errorf("unknown decision: got %q, want UNKNOWN", got)
 	}
 }
 
@@ -220,54 +165,6 @@ func TestTreeStatusWithHealth_NilSummaryReturnsClusterStatus(t *testing.T) {
 	got := treeStatusWithHealth("CREATING", nil)
 	if got != "CREATING" {
 		t.Errorf("got %q, want CREATING (nil summary should pass through)", got)
-	}
-}
-
-// ── formatAddonHealth ─────────────────────────────────────────────────────────
-
-func TestFormatAddonHealth(t *testing.T) {
-	cases := []struct {
-		input string
-		want  string
-	}{
-		{"Healthy", "PASS"},
-		{"Issues", "FAIL"},
-		{"Failed", "FAIL"},
-		{"Updating", "IN PROGRESS"},
-		{"Unknown", "UNKNOWN"},
-	}
-	for _, c := range cases {
-		got := formatAddonHealth(c.input)
-		if !strings.Contains(got, c.want) {
-			t.Errorf("formatAddonHealth(%q) = %q, want substring %q", c.input, got, c.want)
-		}
-	}
-}
-
-// ── formatClusterHealth ───────────────────────────────────────────────────────
-
-func TestFormatClusterHealth_Nil(t *testing.T) {
-	if got := formatClusterHealth(nil); !strings.Contains(got, "UNKNOWN") {
-		t.Errorf("nil: got %q, want UNKNOWN", got)
-	}
-}
-
-func TestFormatClusterHealth_Decisions(t *testing.T) {
-	cases := []struct {
-		d    health.Decision
-		want string
-	}{
-		{health.DecisionProceed, "PASS"},
-		{health.DecisionWarn, "WARN"},
-		{health.DecisionBlock, "FAIL"},
-		{"OTHER", "UNKNOWN"},
-	}
-	for _, c := range cases {
-		h := &health.HealthSummary{Decision: c.d}
-		got := formatClusterHealth(h)
-		if !strings.Contains(got, c.want) {
-			t.Errorf("formatClusterHealth(Decision=%q) = %q, want %q", c.d, got, c.want)
-		}
 	}
 }
 
@@ -345,14 +242,15 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 		}
 	}
 
-	// Plain path (-o plain) keeps the uncolored key/value banner for grep/awk.
+	// Plain path (-o plain): FIELD/VALUE TSV only, endpoint untruncated.
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
 	plain, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, time.Second) })
 	if err != nil {
 		t.Fatalf("plain error: %v", err)
 	}
-	if !strings.Contains(plain, "Cluster Information") {
-		t.Errorf("plain output missing banner: %q", plain)
+	rows := plaintest.Check(t, plain, "FIELD", "VALUE")
+	if got, _ := plaintest.Field(rows, "endpoint"); got != details.Endpoint {
+		t.Errorf("plain endpoint = %q, want the full %d-char endpoint", got, len(details.Endpoint))
 	}
 }

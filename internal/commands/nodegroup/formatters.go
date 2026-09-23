@@ -15,40 +15,39 @@ import (
 )
 
 // outputNodegroupsTable renders the nodegroup list. The human path uses the
-// render design system (tokenized STATUS/AMI cells); `-o plain` keeps the
-// uncolored tab-separated table.
-func outputNodegroupsTable(clusterName string, items []nodegroupsvc.NodegroupSummary, elapsed time.Duration) error {
+// render design system (tokenized STATUS/AMI cells); `-o plain` writes pure
+// TSV (header + one row per nodegroup) and sends the empty-list notice to
+// stderr.
+func outputNodegroupsTable(clusterName string, items []nodegroupsvc.NodegroupSummary) error {
+	if ui.PlainOutput() {
+		if len(items) == 0 {
+			_, _ = fmt.Fprintf(os.Stderr, "No nodegroups found for cluster: %s\n", clusterName)
+		}
+		nodegroupListPlain(items).Render()
+		return nil
+	}
 	if len(items) == 0 {
 		color.Yellow("No nodegroups found for cluster: %s", clusterName)
 		return nil
 	}
-	if !ui.PlainOutput() {
-		th := render.Default(os.Stdout)
-		for _, line := range nodegroupListLines(th, clusterName, items) {
-			fmt.Println(line)
-		}
-		return nil
+	th := render.Default(os.Stdout)
+	for _, line := range nodegroupListLines(th, clusterName, items) {
+		fmt.Println(line)
 	}
-	return outputNodegroupsPlain(clusterName, items, elapsed)
+	return nil
 }
 
-func outputNodegroupsPlain(clusterName string, items []nodegroupsvc.NodegroupSummary, elapsed time.Duration) error {
-	ui.Outf("Nodegroups for cluster: %s\n", clusterName)
-	ui.Outf("Retrieved in %s\n", ui.ElapsedString(elapsed))
-	ui.Outln()
-
-	columns := []ui.Column{
-		{Title: "NAME", Min: 4, Max: 60, Align: ui.AlignLeft},
-		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
-		{Title: "INSTANCE", Min: 10, Max: 0, Align: ui.AlignLeft},
-		{Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft},
-		{Title: "AMI STATUS", Min: 9, Max: 0, Align: ui.AlignLeft},
-		{Title: "NODES", Min: 7, Max: 0, Align: ui.AlignRight},
+// nodegroupListPlain builds the `nodegroup list -o plain` table. Headers come
+// from nodegroupListColumns, the human table's column set.
+func nodegroupListPlain(items []nodegroupsvc.NodegroupSummary) *ui.PlainTable {
+	cols := nodegroupListColumns()
+	headers := make([]string, len(cols))
+	for i, c := range cols {
+		headers[i] = c.Title
 	}
-
-	table := ui.NewPTable(columns, ui.CyanHeaders())
+	t := ui.NewPlainTable(headers...)
 	for _, ng := range items {
-		table.AddRow(
+		t.Row(
 			ng.Name,
 			ng.Status,
 			ng.InstanceType,
@@ -57,12 +56,12 @@ func outputNodegroupsPlain(clusterName string, items []nodegroupsvc.NodegroupSum
 			nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize),
 		)
 	}
-	table.Render()
-	return nil
+	return t
 }
 
-// plainVersionCell is the `-o plain` VERSION cell; a nodegroup behind the
-// control plane gets a "(behind)" marker so grep/awk can find it.
+// plainVersionCell is the `-o plain` VERSION cell. The human table marks a
+// nodegroup behind the control plane with a warning glyph; plain has no
+// glyphs, so it gets a "(behind)" marker that grep/awk can find.
 func plainVersionCell(ng nodegroupsvc.NodegroupSummary) string {
 	if ng.VersionBehind {
 		return ng.K8sVersion + " (behind)"
@@ -70,15 +69,21 @@ func plainVersionCell(ng nodegroupsvc.NodegroupSummary) string {
 	return orDash(ng.K8sVersion)
 }
 
-// plainAMICell is the `-o plain` AMI STATUS cell.
+// plainAMICell is the `-o plain` AMI cell, in the human table's vocabulary.
 func plainAMICell(ng nodegroupsvc.NodegroupSummary) string {
 	if ng.AMILookupError != "" {
-		return color.YellowString(amiLookupFailedText)
+		return amiLookupFailedText
 	}
-	return ng.AMIStatus.ColorString()
+	return ng.AMIStatus.String()
 }
 
+// outputNodegroupDetailsTable renders one nodegroup. `-o plain` writes a
+// FIELD/VALUE TSV (see nodegroupDetailPlain).
 func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed time.Duration) error {
+	if ui.PlainOutput() {
+		nodegroupDetailPlain(details).Render()
+		return nil
+	}
 	ui.Outf("Nodegroup: %s\n", color.CyanString(details.Name))
 	ui.Outf("Retrieved in %s\n\n", ui.ElapsedString(elapsed))
 
@@ -99,7 +104,7 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 		Add("Current AMI", details.CurrentAMI).
 		Add("Latest AMI", latestAMI).
 		AddColored("AMI Status", amiStatus, amiStatusColor).
-		Add("Scaling", fmt.Sprintf("%d desired (%d-%d)", details.Scaling.DesiredSize, details.Scaling.MinSize, details.Scaling.MaxSize))
+		Add("Scaling", scalingText(details.Scaling))
 	table.Render()
 
 	if details.Workloads.TotalPods > 0 || details.Workloads.PodDisruption != "" {
@@ -133,6 +138,49 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 		instTable.Render()
 	}
 	return nil
+}
+
+func scalingText(s nodegroupsvc.ScalingConfig) string {
+	return fmt.Sprintf("%d desired (%d-%d)", s.DesiredSize, s.MinSize, s.MaxSize)
+}
+
+// nodegroupDetailPlain builds the `nodegroup describe -o plain` FIELD/VALUE
+// table: the human view's fields (lowercased), untruncated, then one
+// "instance/<id>" row per instance with space-separated key=value pairs.
+func nodegroupDetailPlain(d *nodegroupsvc.NodegroupDetails) *ui.PlainTable {
+	latestAMI, amiStatus := d.LatestAMI, d.AMIStatus.String()
+	if d.AMILookupError != "" {
+		latestAMI, amiStatus = amiLookupFailedText, amiLookupFailedText
+	}
+	t := ui.NewPlainKV()
+	t.Add("name", d.Name).
+		Add("status", d.Status).
+		Add("instance", d.InstanceType).
+		Add("ami type", d.AmiType).
+		Add("capacity", d.CapacityType).
+		Add("current ami", d.CurrentAMI).
+		Add("latest ami", latestAMI).
+		Add("ami status", amiStatus).
+		Add("scaling", scalingText(d.Scaling))
+	if d.Workloads.TotalPods > 0 || d.Workloads.PodDisruption != "" {
+		t.Add("total pods", fmt.Sprintf("%d", d.Workloads.TotalPods)).
+			Add("critical pods", fmt.Sprintf("%d", d.Workloads.CriticalPods)).
+			Add("pdbs", d.Workloads.PodDisruption)
+	}
+	for _, inst := range d.Instances {
+		launched := ""
+		if !inst.LaunchTime.IsZero() {
+			launched = inst.LaunchTime.Format("2006-01-02")
+		}
+		t.Add("instance/"+inst.InstanceID, ui.PlainPairs(
+			"type", inst.InstanceType,
+			"launched", launched,
+			"lifecycle", inst.Lifecycle,
+			"state", inst.State,
+			"az", inst.AZ,
+		))
+	}
+	return t
 }
 
 func sortNodegroupSummaries(items []nodegroupsvc.NodegroupSummary, key string, desc bool) []nodegroupsvc.NodegroupSummary {

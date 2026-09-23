@@ -12,7 +12,7 @@ Every list/describe command (and most others) supports `-o` / `--format`:
 
 ```bash
 refresh cluster list -o json | jq -r '.clusters[] | select(.status=="ACTIVE") | .name'
-refresh nodegroup list -c prod -o plain | awk -F'\t' '{print $1, $4}'
+refresh nodegroup list -c prod -o plain | awk -F'\t' 'NR>1 {print $1, $4}'
 refresh cluster list -o tree
 ```
 
@@ -48,11 +48,59 @@ refresh status -o json | jq -r '.clusters[] | select(.staleAmi.behind > 0) | .na
 `createdAt`), so `refresh nodegroup describe prod -n ng-a -o json | jq '.instanceType'`
 and the same filter through `yq` on `-o yaml` both work.
 
-## `plain` is robust TSV
+## The `plain` contract
 
-`plain` strips ANSI color and neutralizes any embedded tabs/newlines in a cell,
-so one logical row is always exactly one well-formed TSV line — safe for
-`awk -F'\t'`.
+`-o plain` writes pure TSV to stdout, and nothing else:
+
+- The first line is a header row. The column names are the same as the
+  `table` view's headers, in the same order.
+- Each following line is one item (a cluster, a nodegroup, an add-on, an
+  insight, an update result).
+- There is no title, no "Retrieved in" line, no blank line, no footer, no
+  glyph, and no color.
+- A cell with an embedded tab or newline gets a space in its place, so one
+  item is always exactly one line.
+- An empty cell is written as `-`, so every line has the same number of
+  fields, even with `IFS=$'\t' read`.
+- Values are never truncated (the `table` view shortens some, such as long
+  endpoints and insight IDs).
+
+Messages that are not data go to stderr. Examples are "No nodegroups found",
+warnings, and the parts of the `cluster upgrade-check` report that are not
+insight rows (the readiness verdict, support, control plane, and version
+skew). An empty list prints the header row only.
+
+Skip the header with `NR>1` in awk or `tail -n +2`:
+
+```bash
+refresh cluster list -o plain | awk -F'\t' 'NR>1 {print $1}'
+refresh addon list -c prod -o plain | tail -n +2 | cut -f1,2
+```
+
+### Describe commands: `FIELD` / `VALUE`
+
+`cluster describe`, `nodegroup describe`, `addon describe`, and
+`cluster upgrade-check --id` write two columns: a `FIELD`/`VALUE` header, then
+one row per attribute. Field names are lowercase (`status`, `endpoint`,
+`ami status`). Repeated items use a `<kind>/<name>` field, and their value
+is a list of `key=value` pairs:
+
+```text
+FIELD	VALUE
+name	prod
+status	ACTIVE
+endpoint	https://ABC123.gr7.us-east-1.eks.amazonaws.com
+nodegroup/web	instance=m5.large nodes=3 status=ACTIVE
+addon/vpc-cni	version=v1.18.3-eksbuild.1 status=ACTIVE health=Healthy
+```
+
+```bash
+refresh cluster describe -c prod -o plain | awk -F'\t' '$1=="endpoint" {print $2}'
+```
+
+`plain` carries at least the data the `table` view shows. For example,
+`cluster describe` also lists the subnet and security group IDs and deletion
+protection.
 
 ## The human display (design system)
 

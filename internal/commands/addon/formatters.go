@@ -1,58 +1,72 @@
 package addon
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/fatih/color"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/ui"
-	"gopkg.in/yaml.v3"
 )
 
 // outputAddonsTable renders the add-on list. The human path uses the render
-// design system (tokenized STATUS/HEALTH cells); `-o plain` keeps the uncolored
-// tab-separated table.
+// design system (tokenized STATUS/HEALTH cells); `-o plain` writes pure TSV
+// (header + one row per add-on) and sends the empty-list notice to stderr.
 func outputAddonsTable(cluster string, rows []addons.AddonSummary, elapsed time.Duration) error {
+	if ui.PlainOutput() {
+		if len(rows) == 0 {
+			_, _ = fmt.Fprintf(os.Stderr, "No add-ons found for cluster: %s\n", cluster)
+		}
+		addonListPlain(rows).Render()
+		return nil
+	}
 	if len(rows) == 0 {
 		ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
 		ui.PrintElapsed(elapsed)
 		color.Yellow("No add-ons found")
 		return nil
 	}
-	if !ui.PlainOutput() {
-		th := render.Default(os.Stdout)
-		for _, line := range addonListLines(th, cluster, rows) {
-			fmt.Println(line)
-		}
-		return nil
+	th := render.Default(os.Stdout)
+	for _, line := range addonListLines(th, cluster, rows) {
+		fmt.Println(line)
 	}
-	return outputAddonsPlain(cluster, rows, elapsed)
-}
-
-func outputAddonsPlain(cluster string, rows []addons.AddonSummary, elapsed time.Duration) error {
-	ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
-	ui.PrintElapsed(elapsed)
-
-	columns := []ui.Column{
-		{Title: "NAME", Min: 4, Max: 24, Align: ui.AlignLeft},
-		{Title: "VERSION", Min: 8, Max: 0, Align: ui.AlignLeft},
-		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
-		{Title: "HEALTH", Min: 8, Max: 0, Align: ui.AlignLeft},
-	}
-	table := ui.NewPTable(columns, ui.CyanHeaders())
-	for _, r := range rows {
-		table.AddRow(r.Name, r.Version, ui.StatusColorString(r.Status), healthBadge(r.Health))
-	}
-	table.Render()
 	return nil
 }
 
+// columnTitles returns the header titles of cols.
+func columnTitles(cols []ui.Column) []string {
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = c.Title
+	}
+	return out
+}
+
+// addonListPlain builds the `addon list -o plain` table, with the human
+// table's headers and raw status/health values.
+func addonListPlain(rows []addons.AddonSummary) *ui.PlainTable {
+	t := ui.NewPlainTable(columnTitles(addonListColumns())...)
+	for _, r := range rows {
+		t.Row(r.Name, r.Version, r.Status, r.Health)
+	}
+	return t
+}
+
+// outputAddonDetailsTable renders one add-on. `-o plain` writes a FIELD/VALUE
+// TSV (see addonDetailPlain).
 func outputAddonDetailsTable(cluster string, d *addons.AddonDetails) error {
+	if ui.PlainOutput() {
+		addonDetailPlain(cluster, d).Render()
+		return nil
+	}
 	fmt.Printf("Add-on Details: %s (%s)\n", color.CyanString(d.Name), color.WhiteString(cluster))
 	fmt.Printf("Version: %s\n", d.Version)
 	fmt.Printf("Status: %s\n", ui.StatusColorString(d.Status))
@@ -85,7 +99,83 @@ func outputAddonDetailsTable(cluster string, d *addons.AddonDetails) error {
 	return nil
 }
 
+// addonDetailPlain builds the `addon describe -o plain` FIELD/VALUE table.
+// Each issue is an "issue/<code>" row; the configuration is compact JSON on
+// one line.
+func addonDetailPlain(cluster string, d *addons.AddonDetails) *ui.PlainTable {
+	t := ui.NewPlainKV()
+	t.Add("name", d.Name).
+		Add("cluster", cluster).
+		Add("version", d.Version).
+		Add("status", d.Status).
+		Add("health", d.Health).
+		Add("arn", d.ARN).
+		Add("service account role", d.ServiceAccountRole)
+	if d.CreatedAt != nil {
+		t.Add("created", d.CreatedAt.Format(time.RFC3339))
+	}
+	if d.ModifiedAt != nil {
+		t.Add("modified", d.ModifiedAt.Format(time.RFC3339))
+	}
+	for _, issue := range d.Issues {
+		v := issue.Message
+		if len(issue.ResourceIDs) > 0 {
+			v += " [" + strings.Join(issue.ResourceIDs, ", ") + "]"
+		}
+		t.Add("issue/"+issue.Code, v)
+	}
+	if len(d.Configuration) > 0 {
+		cfg, err := json.Marshal(d.Configuration)
+		if err != nil {
+			cfg = []byte(fmt.Sprint(d.Configuration))
+		}
+		t.Add("configuration", string(cfg))
+	}
+	return t
+}
+
+// updateResultColumns is the add-on update result column set, shared by the
+// human table and the `-o plain` header.
+func updateResultColumns() []ui.Column {
+	return []ui.Column{
+		{Title: "ADDON", Min: 20, Max: 30, Align: ui.AlignLeft},
+		{Title: "PREVIOUS", Min: 15, Max: 0, Align: ui.AlignLeft},
+		{Title: "NEW", Min: 15, Max: 0, Align: ui.AlignLeft},
+		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
+		{Title: "UPDATE ID", Min: 9, Max: 0, Align: ui.AlignLeft},
+	}
+}
+
+// addonUpdatePlain builds the `addon update [--all] -o plain` table: one row
+// per add-on update result. UPDATE ID is "-" when no EKS update started (dry
+// run, already current).
+func addonUpdatePlain(results []addons.AddonUpdateResult) *ui.PlainTable {
+	t := ui.NewPlainTable(columnTitles(updateResultColumns())...)
+	for _, r := range results {
+		t.Row(r.AddonName, r.PreviousVersion, r.NewVersion, r.Status, r.UpdateID)
+	}
+	return t
+}
+
+// writeUpdateIssues writes post-update health issues to w (stderr under `-o
+// plain`); the TSV STATUS column only says COMPLETED_WITH_ISSUES.
+func writeUpdateIssues(w io.Writer, results []addons.AddonUpdateResult) {
+	for _, r := range results {
+		if r.HealthIssues != "" {
+			_, _ = fmt.Fprintf(w, "%s: post-update health check found issues: %s\n", r.AddonName, r.HealthIssues)
+		}
+	}
+}
+
 func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, dryRun bool) error {
+	if ui.PlainOutput() {
+		if len(results) == 0 {
+			_, _ = fmt.Fprintf(os.Stderr, "No addons to update for cluster: %s\n", cluster)
+		}
+		writeUpdateIssues(os.Stderr, results)
+		addonUpdatePlain(results).Render()
+		return nil
+	}
 	mode := ""
 	if dryRun {
 		mode = " (DRY RUN)"
@@ -97,13 +187,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 		return nil
 	}
 
-	columns := []ui.Column{
-		{Title: "ADDON", Min: 20, Max: 30, Align: ui.AlignLeft},
-		{Title: "PREVIOUS", Min: 15, Max: 0, Align: ui.AlignLeft},
-		{Title: "NEW", Min: 15, Max: 0, Align: ui.AlignLeft},
-		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
-	}
-	table := ui.NewPTable(columns, ui.CyanHeaders())
+	table := ui.NewPTable(updateResultColumns(), ui.CyanHeaders())
 
 	successCount := 0
 	failCount := 0
@@ -128,7 +212,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 			newVersion = color.GreenString(r.NewVersion)
 		}
 
-		table.AddRow(r.AddonName, r.PreviousVersion, newVersion, status)
+		table.AddRow(r.AddonName, r.PreviousVersion, newVersion, status, orDashID(r.UpdateID))
 	}
 	table.Render()
 
@@ -143,4 +227,12 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 	}
 
 	return nil
+}
+
+// orDashID renders an empty update ID (dry run, already current) as "-".
+func orDashID(id string) string {
+	if id == "" {
+		return "-"
+	}
+	return id
 }

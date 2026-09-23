@@ -17,12 +17,7 @@ func addonListLines(th *render.Theme, cluster string, rows []addons.AddonSummary
 			th.Paint(pal.Dim, fmt.Sprintf(" · %d", len(rows))),
 		"",
 	}
-	tbl := th.NewTable(
-		ui.Column{Title: "NAME", Min: 4, Max: 24},
-		ui.Column{Title: "VERSION", Min: 8},
-		ui.Column{Title: "STATUS", Min: 10},
-		ui.Column{Title: "HEALTH", Min: 8},
-	)
+	tbl := th.NewTable(addonListColumns()...)
 	for _, r := range rows {
 		tbl.Row(
 			th.Paint(pal.White, r.Name),
@@ -33,6 +28,17 @@ func addonListLines(th *render.Theme, cluster string, rows []addons.AddonSummary
 	}
 	out = append(out, tbl.Render()...)
 	return out
+}
+
+// addonListColumns is the `addon list` column set, shared by the human table
+// and the `-o plain` header.
+func addonListColumns() []ui.Column {
+	return []ui.Column{
+		{Title: "NAME", Min: 4, Max: 24},
+		{Title: "VERSION", Min: 8},
+		{Title: "STATUS", Min: 10},
+		{Title: "HEALTH", Min: 8},
+	}
 }
 
 func addonHealthToken(th *render.Theme, health string) string {
