@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -164,15 +163,6 @@ func resolveAddonName(ctx context.Context, lister addonNameLister, clusterName, 
 	}
 }
 
-// stdinIsTerminal and promptLine are vars so tests can simulate a TTY and an
-// answer.
-var (
-	stdinIsTerminal = func() bool {
-		return ui.IsTerminal(os.Stdin)
-	}
-	promptLine = ui.ReadLine
-)
-
 // confirmPartialAddon decides whether `addon update` may act on match, a
 // substring match for the requested name. --yes accepts it with a note on
 // stderr; otherwise a terminal user is asked. Without a terminal, or with
@@ -184,11 +174,11 @@ func confirmPartialAddon(ctx context.Context, requested, match string, yes, mach
 		_, _ = yellow.Fprintf(ui.Stderr, "No add-on named %q; using the partial match %q (--yes)\n", requested, match)
 		return nil
 	}
-	if machine || !stdinIsTerminal() {
+	if machine || !runner.StdinIsTerminal() {
 		return fmt.Errorf("no add-on named %q (partial match: %s); pass the exact name, or --yes to accept the match (no interactive terminal for confirmation)", requested, match)
 	}
 	_, _ = yellow.Fprintf(ui.Stderr, "No add-on named %q. Use %q? [y/N]: ", requested, match)
-	answer, err := promptLine(ctx)
+	answer, err := runner.PromptLine(ctx)
 	if err != nil {
 		return ui.PromptError(err)
 	}
@@ -247,6 +237,10 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	warnAllOnlyFlags(cmd)
+	// An update that can't be confirmed fails before any AWS call.
+	if err := runner.RequireYesUnattended(cmd); err != nil {
+		return err
+	}
 	// With --wait, --timeout covers the API calls and --wait-timeout the wait,
 	// so a long --wait-timeout isn't cut short by --timeout.
 	setupTimeout := cmd.Duration("timeout")
@@ -293,6 +287,11 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 		version = "latest"
 	}
 
+	warned, err := confirmAddonUpdate(ctx, cmd, addonSvc, clusterName, addonName, version)
+	if err != nil {
+		return err
+	}
+
 	result, updateErr := addonSvc.Update(ctx, clusterName, addonName, addons.UpdateOptions{
 		Version:     version,
 		DryRun:      cmd.Bool("dry-run"),
@@ -303,7 +302,7 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	if result == nil {
 		return updateErr
 	}
-	if result.Warning != "" {
+	if result.Warning != "" && result.Warning != warned {
 		_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "warning: %s\n", result.Warning)
 	}
 
@@ -347,6 +346,74 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	return updateExitError(result, updateErr)
 }
 
+// addonUpdater is the part of the addons service the confirmation preview
+// uses.
+type addonUpdater interface {
+	Update(ctx context.Context, clusterName, addonName string, options addons.UpdateOptions) (*addons.AddonUpdateResult, error)
+}
+
+// confirmAddonUpdate asks before a single add-on update changes anything:
+// "Update coredns v1.11.1 → v1.11.4 on prod? [y/N]". It previews the update
+// (a dry run) to learn both versions, and asks only when the update would
+// submit a change: an add-on already at the target, or already updating to
+// it, is not asked about. --yes and --dry-run skip it; RequireYesUnattended
+// has already failed a run that cannot prompt. It returns the preview's
+// warning (a downgrade) when it printed it, so the caller does not print it
+// twice.
+func confirmAddonUpdate(ctx context.Context, cmd *cli.Command, svc addonUpdater, clusterName, addonName, version string) (warned string, err error) {
+	if cmd.Bool("yes") || cmd.Bool("dry-run") {
+		return "", nil
+	}
+	preview, err := svc.Update(ctx, clusterName, addonName, addons.UpdateOptions{Version: version, DryRun: true})
+	if err != nil {
+		return "", err
+	}
+	if preview == nil || preview.Status != addons.StatusDryRun {
+		return "", nil
+	}
+	if preview.Warning != "" {
+		_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "warning: %s\n", preview.Warning)
+		warned = preview.Warning
+	}
+	question := fmt.Sprintf("Update %s %s → %s on %s?", addonName, preview.PreviousVersion, preview.NewVersion, clusterName)
+	return warned, runner.ConfirmMutation(ctx, question)
+}
+
+// addonBulkUpdater is the part of the addons service the --all preview uses.
+type addonBulkUpdater interface {
+	UpdateAll(ctx context.Context, clusterName string, options addons.UpdateAllOptions) ([]addons.AddonUpdateResult, error)
+}
+
+// confirmUpdateAll asks once before `addon update --all` changes anything,
+// listing each add-on that would change. It previews the run (a dry run);
+// when nothing would change, it does not ask.
+func confirmUpdateAll(ctx context.Context, cmd *cli.Command, svc addonBulkUpdater, clusterName string, options addons.UpdateAllOptions) error {
+	if cmd.Bool("yes") || options.DryRun {
+		return nil
+	}
+	previewOpts := options
+	previewOpts.DryRun, previewOpts.Wait, previewOpts.HealthCheck, previewOpts.Parallel = true, false, false, false
+	var preview []addons.AddonUpdateResult
+	if err := runner.WithSpinner("addon", "Update plan computed", func() error {
+		var perr error
+		preview, perr = svc.UpdateAll(ctx, clusterName, previewOpts)
+		return perr
+	}); err != nil {
+		return err
+	}
+	var changes []string
+	for _, r := range preview {
+		if r.Status == addons.StatusDryRun {
+			changes = append(changes, fmt.Sprintf("  %s %s → %s", r.AddonName, r.PreviousVersion, r.NewVersion))
+		}
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprintln(ui.Stderr, strings.Join(changes, "\n"))
+	return runner.ConfirmMutation(ctx, fmt.Sprintf("Update %d add-on(s) on %s?", len(changes), clusterName))
+}
+
 // exitNeedsAttention is the exit code for an update that landed but whose
 // post-update health check found issues (COMPLETED_WITH_ISSUES).
 const exitNeedsAttention = 2
@@ -368,6 +435,10 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	if err := rejectAllWithTarget(cmd); err != nil {
+		return err
+	}
+	// An update that can't be confirmed fails before any AWS call.
+	if err := runner.RequireYesUnattended(cmd); err != nil {
 		return err
 	}
 	// The overall deadline depends on how many add-ons get updated, which is
@@ -410,6 +481,10 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 		DependencyOrder: cmd.Bool("dependency-order"),
 		HealthCheck:     cmd.Bool("health-check"),
 		Timeout:         timeout,
+	}
+
+	if err := confirmUpdateAll(ctx, cmd, addonSvc, clusterName, options); err != nil {
+		return err
 	}
 
 	var results []addons.AddonUpdateResult

@@ -145,7 +145,7 @@ func handleTimeout(monitor *refreshTypes.ProgressMonitor, config refreshTypes.Mo
 	return ErrMonitorTimeout
 }
 
-// ErrMonitorTimeout is returned by MonitorUpdates when --timeout elapses before
+// ErrMonitorTimeout is returned by MonitorUpdates when the wait timeout (--wait-timeout) elapses before
 // every update reaches a terminal state.
 var ErrMonitorTimeout = errors.New("monitoring timeout reached")
 

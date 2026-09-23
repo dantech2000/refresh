@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v3"
+
+	"github.com/dantech2000/refresh/internal/commands/runner"
 )
 
 // Command returns the addon command group with list/describe/update subcommands.
@@ -115,7 +117,12 @@ codes: 0 success, 1 failure, 2 updated but the post-update health check found
 issues (COMPLETED_WITH_ISSUES).
 
 Use --health-check to verify the add-on is ACTIVE and version-compatible
-before updating. -o json|yaml emits a machine-readable result/summary.`,
+before updating. -o json|yaml emits a machine-readable result/summary.
+
+Before it changes anything, update asks for confirmation
+("Update coredns v1.11.1 → v1.11.4 on prod? [y/N]"; with --all, one prompt
+for every add-on that would change). --yes skips the prompt. With -o json|yaml
+or without a terminal, --yes is required. --dry-run never prompts.`,
 		Flags: []cli.Flag{
 			// Update operations can legitimately run for minutes when --wait is
 			// used, so the timeout default matches the legacy update-all command
@@ -128,13 +135,13 @@ before updating. -o json|yaml emits a machine-readable result/summary.`,
 			&cli.StringFlag{Name: "version", Usage: "Target version or 'latest' (can be provided as third positional)", Value: "latest"},
 			&cli.BoolFlag{Name: "all", Usage: "Update all add-ons in the cluster to their latest versions"},
 			&cli.BoolFlag{Name: "health-check", Usage: "Verify the addon is ACTIVE before updating and validate version compatibility with the cluster"},
-			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview without applying changes"},
-			&cli.BoolFlag{Name: "parallel", Aliases: []string{"p"}, Usage: "(--all only) Update addons in parallel"},
+			runner.DryRunFlag("Preview without applying changes (never prompts)"),
+			&cli.BoolFlag{Name: "parallel", Usage: "(--all only) Update addons in parallel"},
 			&cli.BoolFlag{Name: "wait", Usage: "Wait for each update to complete"},
-			&cli.DurationFlag{Name: "wait-timeout", Usage: "Per-addon wait timeout (with --wait)", Value: 5 * time.Minute},
+			runner.WaitTimeoutFlag("How long to wait for each add-on update to finish, with --wait (0 = no limit)", 5*time.Minute),
 			&cli.BoolFlag{Name: "dependency-order", Usage: "(--all only) Update addons in dependency-safe order (vpc-cni -> coredns/kube-proxy -> others)"},
-			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "(--all only) Skip specific addons (repeatable)"},
-			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Accept a partial add-on name match without prompting (for unattended/CI use)"},
+			&cli.StringSliceFlag{Name: "skip", Usage: "(--all only) Skip specific addons (repeatable)"},
+			runner.YesFlag("Update without the confirmation prompt and accept a partial add-on name match (required with -o json/yaml or without a terminal)"),
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -158,12 +165,13 @@ func updateAllHiddenCommand() *cli.Command {
 			// and must not cap a long-running update.
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Timeout for the update's API calls; with --wait, --wait-timeout per add-on is added on top (not read from REFRESH_TIMEOUT)", Value: 10 * time.Minute},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
-			&cli.BoolFlag{Name: "parallel", Aliases: []string{"p"}, Usage: "Update addons in parallel (faster but riskier)"},
+			&cli.BoolFlag{Name: "parallel", Usage: "Update addons in parallel (faster but riskier)"},
 			&cli.BoolFlag{Name: "wait", Usage: "Wait for each update to complete before proceeding"},
-			&cli.DurationFlag{Name: "wait-timeout", Usage: "Timeout for waiting on each addon update", Value: 5 * time.Minute},
+			runner.WaitTimeoutFlag("How long to wait for each add-on update to finish, with --wait (0 = no limit)", 5*time.Minute),
 			&cli.BoolFlag{Name: "health-check", Usage: "Verify each addon is ACTIVE before updating and validate version compatibility"},
-			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview changes without applying"},
-			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Skip specific addons (can be repeated)"},
+			runner.DryRunFlag("Preview changes without applying (never prompts)"),
+			runner.YesFlag("Update without the confirmation prompt (required with -o json/yaml or without a terminal)"),
+			&cli.StringSliceFlag{Name: "skip", Usage: "Skip specific addons (can be repeated)"},
 			&cli.BoolFlag{Name: "dependency-order", Usage: "Update addons in dependency-safe order (vpc-cni → coredns/kube-proxy → others)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},

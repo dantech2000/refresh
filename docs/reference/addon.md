@@ -122,6 +122,11 @@ issues (COMPLETED_WITH_ISSUES).
 Use --health-check to verify the add-on is ACTIVE and version-compatible
 before updating. -o json|yaml emits a machine-readable result/summary.
 
+Before it changes anything, update asks for confirmation
+("Update coredns v1.11.1 → v1.11.4 on prod? [y/N]"; with --all, one prompt
+for every add-on that would change). --yes skips the prompt. With -o json|yaml
+or without a terminal, --yes is required. --dry-run never prompts.
+
 #### Flags
 
 | Flag | Env | Default | Description |
@@ -132,13 +137,13 @@ before updating. -o json|yaml emits a machine-readable result/summary.
 | `--version string` | — | `latest` | Target version or 'latest' (can be provided as third positional) |
 | `--all` | — | — | Update all add-ons in the cluster to their latest versions |
 | `--health-check` | — | — | Verify the addon is ACTIVE before updating and validate version compatibility with the cluster |
-| `--dry-run, -d` | — | — | Preview without applying changes |
-| `--parallel, -p` | — | — | (--all only) Update addons in parallel |
+| `--dry-run, -d` | — | — | Preview without applying changes (never prompts) |
+| `--parallel` | — | — | (--all only) Update addons in parallel |
 | `--wait` | — | — | Wait for each update to complete |
-| `--wait-timeout duration` | — | `5m0s` | Per-addon wait timeout (with --wait) |
+| `--wait-timeout duration` | — | `5m0s` | How long to wait for each add-on update to finish, with --wait (0 = no limit) |
 | `--dependency-order` | — | — | (--all only) Update addons in dependency-safe order (vpc-cni -> coredns/kube-proxy -> others) |
-| `--skip, -s string` | — | — | (--all only) Skip specific addons (repeatable) |
-| `--yes, -y` | — | — | Accept a partial add-on name match without prompting (for unattended/CI use) |
+| `--skip string` | — | — | (--all only) Skip specific addons (repeatable) |
+| `--yes, -y` | — | — | Update without the confirmation prompt and accept a partial add-on name match (required with -o json/yaml or without a terminal) |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
 | `--help, -h` | — | — | show help |
 

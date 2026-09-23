@@ -65,7 +65,7 @@ func readUpdateAMIFlags(cmd *cli.Command) (updateAMIFlags, error) {
 		skipVerify:      cmd.Bool("skip-verify"),
 		changelog:       cmd.Bool("changelog"),
 		live:            cmd.Bool("live"),
-		timeout:         cmd.Duration("timeout"),
+		timeout:         runner.WaitTimeout(cmd, "timeout"),
 		pollInterval:    cmd.Duration("poll-interval"),
 		format:          strings.ToLower(cmd.String("format")),
 		kubeconfig:      cmd.String("kubeconfig"),
@@ -154,8 +154,8 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	// --timeout <= 0 means no limit, here and in the monitor (not a 60s fallback).
-	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, cmd.Duration("timeout"))
+	// --wait-timeout <= 0 means no limit, here and in the monitor (not a 60s fallback).
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, runner.WaitTimeout(cmd, "timeout"))
 	if err != nil {
 		return err
 	}

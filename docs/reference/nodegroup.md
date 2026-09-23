@@ -108,11 +108,15 @@ picks which nodes go, so the gate assumes the removed nodes are the ones that
 hold the most of the PDB's pods. --force scales down anyway and prints the blockers as a
 warning. --health-check validates cluster health before and after; --dry-run
 previews the impact (and the PDB verdict) without executing; --wait blocks
-until the operation settles.
+until the operation settles, for up to --wait-timeout.
+
+Before it changes anything, scale asks for confirmation
+("Scale prod/ng-default desired 3 → 1? [y/N]"). --yes skips the prompt;
+without a terminal, --yes is required. --dry-run never prompts.
 
   refresh nodegroup scale my-cluster -n ng-default --desired 5
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
-  refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force
+  refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force --yes
 
 #### Flags
 
@@ -127,10 +131,12 @@ until the operation settles.
 | `--check-pdbs` | — | — | Refuse a scale-down that could remove more of a Pod Disruption Budget's pods than it allows |
 | `--force` | — | — | With --check-pdbs, scale down even if PDBs would block it (the blockers are printed as a warning) |
 | `--wait` | — | — | Wait for scaling operation to complete |
-| `--op-timeout duration` | — | `5m0s` | Scaling operation timeout for --wait (added on top of --timeout; 0 = no limit) |
+| `--wait-timeout duration` | — | `5m0s` | How long to wait for the scaling to finish with --wait (added on top of --timeout; 0 = no limit) |
+| `--op-timeout duration` | — | — | Deprecated: use --wait-timeout |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
-| `--dry-run` | — | — | Preview scaling impact without executing |
+| `--dry-run, -d` | — | — | Preview scaling impact without executing (never prompts) |
+| `--yes, -y` | — | — | Scale without the confirmation prompt (required without a terminal) |
 | `--help, -h` | — | — | show help |
 
 ### refresh nodegroup update
@@ -185,14 +191,15 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | `--nodegroup, -n string` | — | — | Nodegroup name or partial name pattern (if not set, update all). A pattern that is not an exact name needs confirmation, or --yes without a terminal |
 | `--all-clusters` | — | — | Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r. |
 | `--region, -r string` | — | — | Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS) |
-| `--force, -f` | — | — | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll |
+| `--force` | — | — | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll |
 | `--reroll` | — | — | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--dry-run, -d` | — | — | Preview changes without executing them |
 | `--no-wait` | — | — | Don't wait for update completion (original behavior) |
 | `--quiet, -q` | — | — | Minimal output mode (does not prompt: a run that needs a confirmation, such as warn-level health findings or a nodegroup pattern that is not an exact name, stops unless --yes is given) |
-| `--timeout, -t duration` | — | `40m0s` | Maximum time to wait for update completion (per cluster with --all-clusters; 0 = no limit) |
-| `--poll-interval, -p duration` | — | `15s` | Polling interval for checking update status |
-| `--skip-health-check, -s` | — | — | Skip pre-flight health validation |
+| `--wait-timeout duration` | — | `40m0s` | How long to wait for the update to finish (per cluster with --all-clusters; 0 = no limit; not read from REFRESH_TIMEOUT) |
+| `--timeout, -t duration` | — | — | Deprecated: use --wait-timeout |
+| `--poll-interval duration` | — | `15s` | Polling interval for checking update status |
+| `--skip-health-check` | — | — | Skip pre-flight health validation |
 | `--health-only` | — | — | Run health check only, don't update (exit code: 0=pass, 2=warn, 3=block) |
 | `--yes, -y` | — | — | Assume yes: skip confirmation prompts (a nodegroup pattern that is not an exact name, warn-level health) for unattended/CI use |
 | `--require-healthy` | — | — | Treat warn-level health findings as a hard stop (exit 2) instead of prompting |

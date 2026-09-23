@@ -74,15 +74,19 @@ Get detailed information about an EKS cluster including networking,
 security configuration, add-ons, and health status. Direct EKS API calls
 provide fast, comprehensive results without CloudFormation dependency.
 
+Health status and add-ons are shown by default; --no-health and --no-addons
+skip them. --detailed adds networking and security, --show-security adds the
+security analysis alone.
+
 #### Flags
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
-| `--detailed, -d` | — | — | Show comprehensive information including networking and security |
-| `--show-health, -H` | — | — | Include health status from existing health framework |
-| `--show-security, -s` | — | — | Include security configuration analysis |
-| `--include-addons, -a` | — | — | Include EKS add-on information |
+| `--detailed` | — | — | Show comprehensive information including networking and security |
+| `--no-health` | — | — | Skip the health checks (shown by default) |
+| `--show-security` | — | — | Include security configuration analysis |
+| `--no-addons` | — | — | Skip the EKS add-on section (shown by default) |
 | `--check-readiness, -R` | — | — | Measure real Kubernetes node readiness (Ready/desired) via the cluster API; without it NODES shows desired count only |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for --check-readiness (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
@@ -180,17 +184,18 @@ Examples:
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
 | `--to string` | — | — | Target Kubernetes version (e.g. 1.33) |
 | `--dry-run, -d` | — | — | Print the full ordered plan without mutating anything |
-| `--yes, -y` | — | — | Skip per-phase confirmation prompts |
+| `--yes, -y` | — | — | Skip per-phase confirmation prompts (required with -o json/yaml or without a terminal) |
 | `--force` | — | — | Force nodegroup rolls when pods can't be drained due to PDBs |
 | `--skip-insights-check` | — | — | Upgrade without the EKS Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself |
 | `--skip-health-check` | — | — | Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
-| `--skip, -s string` | — | — | Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps) |
+| `--skip string` | — | — | Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps) |
 | `--skip-nodegroup string` | — | — | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | — | — | Suppress progress output |
-| `--timeout, -t duration` | — | `4h0m0s` | Overall upgrade timeout (not read from REFRESH_TIMEOUT, which only sets API/read timeouts) |
-| `--poll-interval, -p duration` | — | `15s` | How often to poll in-flight updates |
+| `--wait-timeout duration` | — | `4h0m0s` | How long to wait for the whole upgrade to finish (0 = no limit; not read from REFRESH_TIMEOUT, which only sets API timeouts) |
+| `--timeout, -t duration` | — | — | Deprecated: use --wait-timeout |
+| `--poll-interval duration` | — | `15s` | How often to poll in-flight updates |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain). json/yaml print one document: the plan with --dry-run or when blocked, else {plan, report} after the run (requires --yes) |
 | `--help, -h` | — | — | show help |
 

@@ -69,7 +69,7 @@ Pass --use to switch to the context immediately after saving.
 |---|---|---|---|
 | `--cluster, -c string` | — | — | EKS cluster name |
 | `--region, -r string` | — | — | AWS region (optional) |
-| `--profile, -p string` | — | — | AWS shared-config profile (optional) |
+| `--profile string` | — | — | AWS shared-config profile (optional) |
 | `--use` | — | — | Switch to this context after adding |
 | `--help, -h` | — | — | show help |
 

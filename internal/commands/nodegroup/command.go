@@ -8,6 +8,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/flagcanon"
 )
 
 // Command returns the nodegroup command group with list, describe, scale, and
@@ -103,11 +104,15 @@ picks which nodes go, so the gate assumes the removed nodes are the ones that
 hold the most of the PDB's pods. --force scales down anyway and prints the blockers as a
 warning. --health-check validates cluster health before and after; --dry-run
 previews the impact (and the PDB verdict) without executing; --wait blocks
-until the operation settles.
+until the operation settles, for up to --wait-timeout.
+
+Before it changes anything, scale asks for confirmation
+("Scale prod/ng-default desired 3 → 1? [y/N]"). --yes skips the prompt;
+without a terminal, --yes is required. --dry-run never prompts.
 
   refresh nodegroup scale my-cluster -n ng-default --desired 5
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
-  refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force`,
+  refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force --yes`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name", Required: true},
@@ -118,10 +123,13 @@ until the operation settles.
 			&cli.BoolFlag{Name: "check-pdbs", Usage: "Refuse a scale-down that could remove more of a Pod Disruption Budget's pods than it allows"},
 			&cli.BoolFlag{Name: "force", Usage: "With --check-pdbs, scale down even if PDBs would block it (the blockers are printed as a warning)"},
 			&cli.BoolFlag{Name: "wait", Usage: "Wait for scaling operation to complete"},
-			&cli.DurationFlag{Name: "op-timeout", Usage: "Scaling operation timeout for --wait (added on top of --timeout; 0 = no limit)", Value: 5 * time.Minute},
+			runner.WaitTimeoutFlag("How long to wait for the scaling to finish with --wait (added on top of --timeout; 0 = no limit)", 5*time.Minute),
+			// Deprecated in 0.11.0 for the shared --wait-timeout name.
+			flagcanon.DeprecatedDuration("op-timeout", "wait-timeout"),
 			runner.KubeconfigFlag("workload/PDB health checks"),
 			runner.KubeContextFlag(),
-			&cli.BoolFlag{Name: "dry-run", Usage: "Preview scaling impact without executing"},
+			runner.DryRunFlag("Preview scaling impact without executing (never prompts)"),
+			runner.YesFlag("Scale without the confirmation prompt (required without a terminal)"),
 		},
 		Action: runScale,
 	}
@@ -171,16 +179,20 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name or partial name pattern (if not set, update all). A pattern that is not an exact name needs confirmation, or --yes without a terminal"},
 			&cli.BoolFlag{Name: "all-clusters", Usage: "Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r."},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS)"},
-			&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll"},
+			&cli.BoolFlag{Name: "force", Usage: "Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll"},
 			&cli.BoolFlag{Name: "reroll", Usage: "Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored"},
-			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview changes without executing them"},
+			runner.DryRunFlag("Preview changes without executing them"),
 			&cli.BoolFlag{Name: "no-wait", Usage: "Don't wait for update completion (original behavior)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Minimal output mode (does not prompt: a run that needs a confirmation, such as warn-level health findings or a nodegroup pattern that is not an exact name, stops unless --yes is given)"},
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Maximum time to wait for update completion (per cluster with --all-clusters; 0 = no limit)", Value: appconfig.DefaultUpdateTimeout},
-			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "Polling interval for checking update status", Value: appconfig.DefaultPollInterval},
-			&cli.BoolFlag{Name: "skip-health-check", Aliases: []string{"s"}, Usage: "Skip pre-flight health validation"},
+			runner.WaitTimeoutFlag("How long to wait for the update to finish (per cluster with --all-clusters; 0 = no limit; not read from REFRESH_TIMEOUT)", appconfig.DefaultUpdateTimeout),
+			// Deprecated in 0.11.0: the local --timeout/-t meant the wait
+			// timeout and clashed with the global API --timeout. Kept hidden
+			// for one release.
+			flagcanon.DeprecatedDuration("timeout", "wait-timeout", "t"),
+			&cli.DurationFlag{Name: "poll-interval", Usage: "Polling interval for checking update status", Value: appconfig.DefaultPollInterval},
+			&cli.BoolFlag{Name: "skip-health-check", Usage: "Skip pre-flight health validation"},
 			&cli.BoolFlag{Name: "health-only", Usage: "Run health check only, don't update (exit code: 0=pass, 2=warn, 3=block)"},
-			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Assume yes: skip confirmation prompts (a nodegroup pattern that is not an exact name, warn-level health) for unattended/CI use"},
+			runner.YesFlag("Assume yes: skip confirmation prompts (a nodegroup pattern that is not an exact name, warn-level health) for unattended/CI use"),
 			&cli.BoolFlag{Name: "require-healthy", Usage: "Treat warn-level health findings as a hard stop (exit 2) instead of prompting"},
 			&cli.BoolFlag{Name: "skip-verify", Usage: "Skip post-roll verification (nodes ACTIVE, no new stuck pods)"},
 			&cli.BoolFlag{Name: "changelog", Usage: "In dry-run, print the amazon-eks-ami release notes between the current and target AMI for AL2/AL2023 nodegroups; Bottlerocket and Windows nodegroups get a link to their own release notes"},

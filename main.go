@@ -26,6 +26,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	statuscmd "github.com/dantech2000/refresh/internal/commands/statuscmd"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/flagcanon"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -71,9 +72,19 @@ func colorizeHelp(text string) string {
 }
 
 func newApp() *cli.Command {
-	return &cli.Command{
-		Name:                  "refresh",
-		Usage:                 "Manage and monitor AWS EKS clusters and nodegroups",
+	app := &cli.Command{
+		Name:  "refresh",
+		Usage: "EKS upgrade companion: status, readiness, patch, upgrade",
+		Description: `refresh keeps EKS clusters up to date in four steps:
+
+   1. refresh status                 Find what is out of date in the fleet.
+   2. refresh cluster upgrade-check  Check if a cluster is ready to upgrade.
+   3. refresh nodegroup update       Patch nodegroups and add-ons.
+      refresh addon update
+   4. refresh cluster upgrade        Upgrade control plane, add-ons, nodegroups.
+
+Commands that change a cluster support --dry-run. Use --yes in scripts to
+skip the confirmation prompts.`,
 		Version:               commands.VersionInfo.Version,
 		EnableShellCompletion: true,
 		Flags: []cli.Flag{
@@ -103,16 +114,18 @@ func newApp() *cli.Command {
 			// subcommand, so awsconfig.Load sees these on all AWS-touching commands
 			// (nodegroup/addon/cluster describe, …), honoring the documented
 			// "flags override the active context for this invocation" precedence.
-			// No -r/-p aliases: -p already means --poll-interval/--parallel and the
-			// list commands keep their own repeatable -r/--region slice, which
-			// shadows this string flag cleanly. (REF-47)
+			// -r is the canon region letter (REF-164); the multi-region commands
+			// keep their own repeatable -r/--region slice, which shadows this
+			// string flag by name and alias. No -p: it has no canon meaning.
+			// (REF-47)
 			&cli.StringFlag{
 				Name:  "profile",
 				Usage: "AWS shared-config profile (overrides the active context for this invocation)",
 			},
 			&cli.StringFlag{
-				Name:  "region",
-				Usage: "AWS region (overrides the active context for this invocation)",
+				Name:    "region",
+				Aliases: []string{"r"},
+				Usage:   "AWS region (overrides the active context for this invocation)",
 			},
 			// Logging verbosity. Default warn (quiet); --verbose is a shortcut for
 			// --log-level debug. No -v alias (that's --version). (REF-37)
@@ -159,6 +172,10 @@ func newApp() *cli.Command {
 			commands.GenDocsCommand(),
 		},
 	}
+	// A shorthand removed in 0.11.0 fails with its replacement instead of a
+	// bare "flag provided but not defined". (REF-164)
+	flagcanon.Install(app)
+	return app
 }
 
 // disableColor turns off color on both streams in every output library.
