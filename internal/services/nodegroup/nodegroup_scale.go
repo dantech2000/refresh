@@ -40,13 +40,16 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 		}
 	}
 
+	if err := s.checkScaleBounds(ctx, clusterName, nodegroupName, desired, min, max); err != nil {
+		return err
+	}
+
 	// A scaling config change does not honor PDBs: EKS terminates the
 	// surplus nodes without waiting for evictions. So with --check-pdbs a
 	// scale-down that could take a PDB below its budget is refused unless
-	// Force is set. A lower --max alone is a scale-down too when it clamps
-	// the current desired size.
+	// Force is set.
 	if options.CheckPDBs && !options.Force {
-		check, err := s.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired, min, max)
+		check, err := s.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired)
 		if err != nil {
 			return err
 		}
@@ -301,9 +304,8 @@ func scaleUpdateErrorDetails(details []ekstypes.ErrorDetail) string {
 type ScaleDownPDBCheck struct {
 	// CurrentDesired is the nodegroup's desired size before the change.
 	CurrentDesired int32
-	// RequestedDesired is the desired size the change leads to: the requested
-	// desired size when set, otherwise CurrentDesired clamped into the
-	// requested min/max bounds (a --max below CurrentDesired lowers it).
+	// RequestedDesired is the requested desired size, or CurrentDesired when
+	// --desired is not set.
 	RequestedDesired int32
 	// ScaleDown is true when RequestedDesired < CurrentDesired. The other
 	// fields are only filled in for a scale-down.
@@ -350,38 +352,27 @@ func (e *ScaleDownBlockedError) Error() string {
 	return b.String()
 }
 
-// CheckScaleDownPDBs reports whether the requested scaling change is a
-// scale-down and, if so, which PDBs it could violate. The target desired size
-// is desired when set; otherwise it is the current desired size clamped into
-// the requested min/max bounds, so a --max below the current desired size is
-// a scale-down and a --min above it is a scale-up. The PDB scan is scoped to
-// the nodegroup's nodes and assumes the worst case: the removed nodes are the
-// ones that hold the most of a PDB's pods (see
+// CheckScaleDownPDBs reports whether scaling nodegroupName to desired is a
+// scale-down and, if so, which PDBs it could violate. The PDB scan is scoped
+// to the nodegroup's nodes and assumes the worst case: the removed nodes are
+// the ones that hold the most of a PDB's pods (see
 // health.HealthChecker.ScaleDownBlockers).
-// A change with no sizes set is never a scale-down. It returns an error when
-// the check can't be done (no health checker or Kubernetes client, or a
-// failed API call): the caller asked for PDB validation, so "couldn't check"
-// must not read as "no blockers".
-func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32) (*ScaleDownPDBCheck, error) {
-	if desired == nil && min == nil && max == nil {
+// A nil desired is never a scale-down: Scale refuses a --min/--max change
+// that would need the desired size to move (see checkScaleBounds). It returns
+// an error when the check can't be done (no health checker or Kubernetes
+// client, or a failed API call): the caller asked for PDB validation, so
+// "couldn't check" must not read as "no blockers".
+func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodegroupName string, desired *int32) (*ScaleDownPDBCheck, error) {
+	if desired == nil {
 		return &ScaleDownPDBCheck{}, nil
 	}
-	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
-		return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(nodegroupName),
-		})
-	})
+	current, err := s.currentDesiredSize(ctx, clusterName, nodegroupName)
 	if err != nil {
-		return nil, fmt.Errorf("PDB validation: %w", awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName)))
+		return nil, fmt.Errorf("PDB validation: %w", err)
 	}
-	if desc == nil || desc.Nodegroup == nil || desc.Nodegroup.ScalingConfig == nil || desc.Nodegroup.ScalingConfig.DesiredSize == nil {
-		return nil, fmt.Errorf("PDB validation: nodegroup %s/%s has no scaling config", clusterName, nodegroupName)
-	}
-	current := *desc.Nodegroup.ScalingConfig.DesiredSize
 	check := &ScaleDownPDBCheck{
 		CurrentDesired:   current,
-		RequestedDesired: effectiveDesired(current, desired, min, max),
+		RequestedDesired: *desired,
 	}
 	check.ScaleDown = check.RequestedDesired < check.CurrentDesired
 	if !check.ScaleDown {
@@ -400,18 +391,40 @@ func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodeg
 	return check, nil
 }
 
-// effectiveDesired is the desired size a scaling change leads to: desired
-// when set, otherwise current clamped into the requested min/max bounds.
-func effectiveDesired(current int32, desired, min, max *int32) int32 {
-	if desired != nil {
-		return *desired
+// checkScaleBounds refuses, before any change, a --min/--max change without
+// --desired that puts the current desired size outside the new bounds. EKS
+// does not document moving the desired size into new bounds, so the user
+// must set the new node count explicitly.
+func (s *ServiceImpl) checkScaleBounds(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32) error {
+	if desired != nil || (min == nil && max == nil) {
+		return nil
 	}
-	eff := current
-	if max != nil && eff > *max {
-		eff = *max
+	current, err := s.currentDesiredSize(ctx, clusterName, nodegroupName)
+	if err != nil {
+		return err
 	}
-	if min != nil && eff < *min {
-		eff = *min
+	if max != nil && *max < current {
+		return fmt.Errorf("--max %d is below the current desired size %d; pass --desired to change the node count", *max, current)
 	}
-	return eff
+	if min != nil && *min > current {
+		return fmt.Errorf("--min %d is above the current desired size %d; pass --desired to change the node count", *min, current)
+	}
+	return nil
+}
+
+// currentDesiredSize reads the nodegroup's current desired size.
+func (s *ServiceImpl) currentDesiredSize(ctx context.Context, clusterName, nodegroupName string) (int32, error) {
+	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+		return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(clusterName),
+			NodegroupName: aws.String(nodegroupName),
+		})
+	})
+	if err != nil {
+		return 0, awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))
+	}
+	if desc == nil || desc.Nodegroup == nil || desc.Nodegroup.ScalingConfig == nil || desc.Nodegroup.ScalingConfig.DesiredSize == nil {
+		return 0, fmt.Errorf("nodegroup %s/%s has no scaling config", clusterName, nodegroupName)
+	}
+	return *desc.Nodegroup.ScalingConfig.DesiredSize, nil
 }

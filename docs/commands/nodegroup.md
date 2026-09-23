@@ -115,6 +115,10 @@ refresh nodegroup describe my-cluster ng-default --show-instances --show-workloa
 
 Change a managed nodegroup's desired/min/max size. Any subset of
 `--desired/--min/--max` may be set; unspecified bounds are left unchanged.
+Only `--desired` changes the node count. If you omit `--desired`, a `--max`
+below the current desired size, or a `--min` above it, fails before any change
+(exit `1`). Pass `--desired` with the new bounds to scale and change the
+bounds together.
 
 ```bash
 refresh nodegroup scale [cluster] -n <nodegroup> [flags]
@@ -147,9 +151,7 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     Auto Scaling group picks which nodes go, so the gate assumes the removed
     nodes are the ones that hold the most of the PDB's pods. The gate fails
     closed: if it can't read the PDBs or pods (for example, no Kubernetes
-    access), it refuses the scale-down too. A `--max` below the current
-    desired size is a scale-down too: EKS lowers the desired size to the new
-    maximum, so the gate checks that size. Pass `--force` to scale down
+    access), it refuses the scale-down too. Pass `--force` to scale down
     anyway. Combine `--dry-run --check-pdbs` to see the verdict and the
     blocking PDBs before you touch anything. See
     [Scale-down PDB gate](../concepts/health-checks.md#scale-down-pdb-gate).

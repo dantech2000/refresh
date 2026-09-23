@@ -178,7 +178,7 @@ func TestScale_CheckPDBsWithoutKubeClientRefuses(t *testing.T) {
 func TestCheckScaleDownPDBs(t *testing.T) {
 	svc, _ := scaleGateService(3, blockedCluster())
 
-	check, err := svc.CheckScaleDownPDBs(context.Background(), "prod", "workers", aws.Int32(1), nil, nil)
+	check, err := svc.CheckScaleDownPDBs(context.Background(), "prod", "workers", aws.Int32(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestCheckScaleDownPDBs(t *testing.T) {
 		t.Errorf("unexpected check: %+v", check)
 	}
 
-	check, err = svc.CheckScaleDownPDBs(context.Background(), "prod", "workers", nil, nil, nil)
+	check, err = svc.CheckScaleDownPDBs(context.Background(), "prod", "workers", nil)
 	if err != nil || check.ScaleDown || check.Refused() {
 		t.Errorf("nil desired is never a scale-down, got %+v, %v", check, err)
 	}

@@ -18,45 +18,60 @@ import (
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
-// PDB gate: effective target size when --desired is not set
+// --min/--max without --desired
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestScale_CheckPDBsRefusesMaxOnlyBelowCurrent(t *testing.T) {
-	// --max 1 on a 3-node group lowers the desired size to 1: a scale-down.
+func TestScale_MaxOnlyBelowCurrentFails(t *testing.T) {
+	// Even with --force, a --max below the current desired size needs an
+	// explicit --desired: nothing is sent to EKS.
+	for _, opts := range []ScaleOptions{{}, {CheckPDBs: true}, {CheckPDBs: true, Force: true}} {
+		svc, api := scaleGateService(3, blockedCluster())
+
+		err := svc.Scale(context.Background(), "prod", "workers", nil, nil, aws.Int32(1), opts)
+		if err == nil || err.Error() != "--max 1 is below the current desired size 3; pass --desired to change the node count" {
+			t.Fatalf("%+v: want the --max bounds error, got %v", opts, err)
+		}
+		var blocked *ScaleDownBlockedError
+		if errors.As(err, &blocked) {
+			t.Errorf("%+v: a bounds error is not a PDB refusal", opts)
+		}
+		if api.Calls.UpdateNodegroupConfig != 0 {
+			t.Errorf("%+v: UpdateNodegroupConfig called %d times, want 0", opts, api.Calls.UpdateNodegroupConfig)
+		}
+	}
+}
+
+func TestScale_MinOnlyAboveCurrentFails(t *testing.T) {
 	svc, api := scaleGateService(3, blockedCluster())
 
-	err := svc.Scale(context.Background(), "prod", "workers", nil, nil, aws.Int32(1), ScaleOptions{CheckPDBs: true})
-	var blocked *ScaleDownBlockedError
-	if !errors.As(err, &blocked) {
-		t.Fatalf("want *ScaleDownBlockedError, got %v", err)
+	err := svc.Scale(context.Background(), "prod", "workers", nil, aws.Int32(5), nil, ScaleOptions{})
+	if err == nil || err.Error() != "--min 5 is above the current desired size 3; pass --desired to change the node count" {
+		t.Fatalf("want the --min bounds error, got %v", err)
 	}
 	if api.Calls.UpdateNodegroupConfig != 0 {
-		t.Fatalf("UpdateNodegroupConfig called %d times; a refused scale must not mutate", api.Calls.UpdateNodegroupConfig)
-	}
-	if blocked.Check.CurrentDesired != 3 || blocked.Check.RequestedDesired != 1 {
-		t.Errorf("want 3 -> 1, got %+v", blocked.Check)
-	}
-	if !strings.Contains(err.Error(), "down from 3 to 1") {
-		t.Errorf("error should name the effective sizes:\n%s", err)
+		t.Errorf("UpdateNodegroupConfig called %d times, want 0", api.Calls.UpdateNodegroupConfig)
 	}
 }
 
-func TestScale_CheckPDBsMaxOnlyAboveCurrentIsNotScaleDown(t *testing.T) {
-	svc, api := scaleGateService(3, blockedCluster())
-
-	if err := svc.Scale(context.Background(), "prod", "workers", nil, nil, aws.Int32(8), ScaleOptions{CheckPDBs: true}); err != nil {
-		t.Fatalf("--max above the current desired size is not a scale-down, got %v", err)
-	}
-	if api.Calls.UpdateNodegroupConfig != 1 {
-		t.Errorf("UpdateNodegroupConfig called %d times, want 1", api.Calls.UpdateNodegroupConfig)
-	}
-}
-
-func TestScale_CheckPDBsMinOnlyNeverRefused(t *testing.T) {
-	for _, minSize := range []int32{0, 3, 5} {
+func TestScale_MaxOnlyAboveCurrentProceeds(t *testing.T) {
+	for _, maxSize := range []int32{3, 8} {
 		svc, api := scaleGateService(3, blockedCluster())
+
+		if err := svc.Scale(context.Background(), "prod", "workers", nil, nil, aws.Int32(maxSize), ScaleOptions{CheckPDBs: true}); err != nil {
+			t.Fatalf("--max %d at or above the current desired size should proceed, got %v", maxSize, err)
+		}
+		if api.Calls.UpdateNodegroupConfig != 1 {
+			t.Errorf("--max %d: UpdateNodegroupConfig called %d times, want 1", maxSize, api.Calls.UpdateNodegroupConfig)
+		}
+	}
+}
+
+func TestScale_MinOnlyBelowCurrentProceeds(t *testing.T) {
+	for _, minSize := range []int32{0, 3} {
+		svc, api := scaleGateService(3, blockedCluster())
+
 		if err := svc.Scale(context.Background(), "prod", "workers", nil, aws.Int32(minSize), nil, ScaleOptions{CheckPDBs: true}); err != nil {
-			t.Fatalf("--min %d alone is never a scale-down, got %v", minSize, err)
+			t.Fatalf("--min %d at or below the current desired size should proceed, got %v", minSize, err)
 		}
 		if api.Calls.UpdateNodegroupConfig != 1 {
 			t.Errorf("--min %d: UpdateNodegroupConfig called %d times, want 1", minSize, api.Calls.UpdateNodegroupConfig)
@@ -64,33 +79,31 @@ func TestScale_CheckPDBsMinOnlyNeverRefused(t *testing.T) {
 	}
 }
 
-func TestCheckScaleDownPDBs_EffectiveDesired(t *testing.T) {
-	i := aws.Int32
-	cases := []struct {
-		name          string
-		desired, mn   *int32
-		mx            *int32
-		wantRequested int32
-		wantScaleDown bool
-	}{
-		{"desired wins", i(1), nil, i(8), 1, true},
-		{"max clamps down", nil, nil, i(2), 2, true},
-		{"max above current", nil, nil, i(8), 3, false},
-		{"max equal to current", nil, nil, i(3), 3, false},
-		{"min raises", nil, i(5), nil, 5, false},
-		{"min below current", nil, i(1), nil, 3, false},
+func TestScale_DesiredWithLowerMaxIsGated(t *testing.T) {
+	// With --desired the bounds check steps aside and the PDB gate decides.
+	svc, api := scaleGateService(3, blockedCluster())
+
+	err := svc.Scale(context.Background(), "prod", "workers", aws.Int32(1), nil, aws.Int32(1), ScaleOptions{CheckPDBs: true})
+	var blocked *ScaleDownBlockedError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("want *ScaleDownBlockedError, got %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			svc, _ := scaleGateService(3, blockedCluster())
-			check, err := svc.CheckScaleDownPDBs(context.Background(), "prod", "workers", tc.desired, tc.mn, tc.mx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if check.RequestedDesired != tc.wantRequested || check.ScaleDown != tc.wantScaleDown {
-				t.Errorf("got requested=%d scaleDown=%v, want %d/%v", check.RequestedDesired, check.ScaleDown, tc.wantRequested, tc.wantScaleDown)
-			}
-		})
+	if api.Calls.UpdateNodegroupConfig != 0 {
+		t.Errorf("UpdateNodegroupConfig called %d times, want 0", api.Calls.UpdateNodegroupConfig)
+	}
+}
+
+func TestScale_BoundsCheckDescribeErrorFails(t *testing.T) {
+	svc, api := scaleGateService(3, blockedCluster())
+	api.DescribeNodegroupFn = func(context.Context, *eks.DescribeNodegroupInput, ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+		return nil, mocks.AccessDenied()
+	}
+
+	if err := svc.Scale(context.Background(), "prod", "workers", nil, nil, aws.Int32(1), ScaleOptions{}); err == nil {
+		t.Fatal("a failed DescribeNodegroup must fail the bounds check")
+	}
+	if api.Calls.UpdateNodegroupConfig != 0 {
+		t.Errorf("UpdateNodegroupConfig called %d times, want 0", api.Calls.UpdateNodegroupConfig)
 	}
 }
 
@@ -107,7 +120,8 @@ type scaleWaitFixture struct {
 
 	mu sync.Mutex
 	// describeNGAfterUpdates records how many DescribeUpdate calls had been
-	// made when DescribeNodegroup was first called (-1 = never).
+	// made at the first DescribeNodegroup of the wait (-1 = never). The
+	// pre-change bounds check (before any DescribeUpdate) does not count.
 	describeNGAfterUpdates int
 	updates                int
 }
@@ -134,7 +148,7 @@ func newScaleWaitFixture(cfg ekstypes.NodegroupScalingConfig, statuses ...ekstyp
 	}
 	api.DescribeNodegroupFn = func(_ context.Context, in *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
 		f.mu.Lock()
-		if f.describeNGAfterUpdates < 0 {
+		if f.describeNGAfterUpdates < 0 && f.updates > 0 {
 			f.describeNGAfterUpdates = f.updates
 		}
 		f.mu.Unlock()

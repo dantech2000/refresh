@@ -82,7 +82,7 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 	var pdbCheck *nodegroupsvc.ScaleDownPDBCheck
 	var pdbCheckErr error
 	if opts.CheckPDBs && (opts.DryRun || opts.Force) {
-		pdbCheck, pdbCheckErr = svc.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired, minSize, maxSize)
+		pdbCheck, pdbCheckErr = svc.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired)
 	}
 
 	if opts.DryRun {
