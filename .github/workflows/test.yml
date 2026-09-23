@@ -5,9 +5,9 @@ name: Test
 # other jobs already passed on the PR, so they skip on push.
 on:
   push:
-    branches: ["main", "master"]
+    branches: ["main"]
   pull_request:
-    branches: ["main", "master"]
+    branches: ["main"]
 
 # Cancel superseded runs when new commits are pushed to the same ref.
 concurrency:
