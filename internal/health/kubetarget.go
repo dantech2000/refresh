@@ -66,7 +66,7 @@ func DescribeTarget(ctx context.Context, api ClusterDescriber, name, region stri
 // target cluster. Callers must not use a Kubernetes client in this case.
 type ClusterMismatchError struct {
 	Target  TargetCluster
-	Context string // kubeconfig context that was considered ("" for in-cluster)
+	Context string // kubeconfig context that was considered
 	Server  string // that context's API server
 }
 
@@ -79,8 +79,6 @@ func (e *ClusterMismatchError) Error() string {
 	switch {
 	case e.Context != "":
 		src = fmt.Sprintf("kubeconfig context %q (server %s)", e.Context, e.Server)
-	case e.Server != "":
-		src = fmt.Sprintf("in-cluster config (server %s)", e.Server)
 	default:
 		src = "the resolved Kubernetes config"
 	}

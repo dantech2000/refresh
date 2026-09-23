@@ -87,6 +87,11 @@ func ResolveClusterKubeClient(ctx context.Context, req KubeRequest) (kubernetes.
 		}
 		return nil, target
 	}
+	if diag.Unverified && noticeOnce("unverified|"+target.Name) {
+		_, _ = color.New(color.FgYellow).Fprintf(kubeWarnOut,
+			"Warning: using in-cluster Kubernetes config (server %s); could not verify it is EKS cluster %s (%s)\n",
+			diag.Server, target.Name, target.Endpoint)
+	}
 	if diag.SwitchedFrom != "" && req.Verbose && noticeOnce("switch|"+target.Name+"|"+diag.Context) {
 		_, _ = fmt.Fprintf(kubeWarnOut, "Using kubeconfig context %q for %s (current context %q points at another cluster)\n",
 			diag.Context, target.Name, diag.SwitchedFrom)

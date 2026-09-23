@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"k8s.io/client-go/rest"
 
 	"github.com/dantech2000/refresh/internal/mocks"
 )
@@ -160,5 +161,25 @@ func TestDescribeTarget(t *testing.T) {
 	want := TargetCluster{Name: "prod", Region: "us-east-1", ARN: "arn:aws:eks:us-east-1:111122223333:cluster/prod", Endpoint: prodEndpoint}
 	if got != want {
 		t.Errorf("DescribeTarget() = %+v, want %+v", got, want)
+	}
+}
+
+func TestResolveRESTConfig_InClusterIsUsedButUnverified(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "missing"))
+	prev := inClusterConfig
+	inClusterConfig = func() (*rest.Config, error) { return &rest.Config{Host: "https://10.100.0.1:443"}, nil }
+	t.Cleanup(func() { inClusterConfig = prev })
+
+	cfg, diag, err := resolveRESTConfig("", &TargetCluster{Name: "prod", Endpoint: prodEndpoint})
+	if err != nil || cfg == nil {
+		t.Fatalf("resolveRESTConfig() = %v, %v; in-cluster config should be used", cfg, err)
+	}
+	if diag.Source != "in-cluster" || !diag.Unverified {
+		t.Errorf("diag = %+v, want in-cluster and Unverified", diag)
+	}
+
+	// Without a target there is nothing to verify.
+	if _, diag, _ := resolveRESTConfig("", nil); diag.Unverified {
+		t.Errorf("diag = %+v, want Unverified=false without a target", diag)
 	}
 }
