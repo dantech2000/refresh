@@ -183,7 +183,7 @@ refresh cluster upgrade-check -c prod-east --id bc8b2f86       # by short ID
 | `--show-passing` | Include `PASSING` insights (hidden by default) |
 | `--id` | Show the detail view for one insight — accepts its short ID (from the table), full ID, or a case-insensitive name substring |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--exit-zero` | Exit `0` even when the check finds warnings or blockers (report mode) |
+| `--exit-zero` | Exit `0` even when the check finds warnings, blockers, or unreadable items (report mode) |
 | `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
 
 ### Exit codes (CI gate)
@@ -195,7 +195,11 @@ The exit code follows the readiness verdict:
 | `0` | `READY` | No finding |
 | `2` | `REVIEW` | A `WARNING` insight, a nodegroup behind the control plane, an addon behind latest, or a control-plane health warning |
 | `3` | `NOT READY` | An `ERROR` or `UNKNOWN` insight, a nodegroup at the kubelet skew limit, or a failed control-plane health check |
+| `4` | `INCOMPLETE` | Nothing blocks, but a nodegroup or add-on could not be read (listed under `incomplete` in `-o json`) |
 | `1` | | An error (AWS error, cluster not found, interrupt) |
+
+Precedence is `3`, then `4`, then `2`: the item that could not be read could
+be a blocker.
 
 `UNKNOWN` blocks because `cluster upgrade` refuses a hop on it too. With
 `-o json`/`-o yaml`, the document is printed first, then the exit code

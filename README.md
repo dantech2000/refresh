@@ -175,8 +175,8 @@ Every command follows one contract:
 | `4` | Incomplete data or partial failure: some items or regions could not be read, or some updates failed |
 | `5` | Post-action verification failed (`nodegroup update`, `nodegroup scale`, `addon update`) |
 
-`cluster upgrade-check` is a CI gate: it exits `2` for warnings and `3` for
-blockers. Pass `--exit-zero` to get the report without failing the job. See
+`cluster upgrade-check` is a CI gate: it exits `2` for warnings, `3` for
+blockers, and `4` when a nodegroup or add-on could not be read. Pass `--exit-zero` to get the report without failing the job. See
 [Exit codes](https://drod.dev/refresh/concepts/exit-codes/) for the codes
 each command returns and CI examples.
 

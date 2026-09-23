@@ -22,7 +22,9 @@ Rules that apply to every command:
 - A partial result is never a success. The command names what it could not
   read on stderr, adds a `failures` or `errors` key to the JSON/YAML
   document, and exits `4`.
-- An interrupt exits `1`. A second Ctrl+C ends the process at once.
+- An interrupt exits `1`. A second Ctrl+C ends the process at once. Data
+  cut short by Ctrl+C is an interrupted run, so it exits `1`, not `4`. Data
+  cut short by the `--timeout` deadline is a partial result and exits `4`.
 - With `--watch`, a partial result (`4`) prints a warning and the watch
   continues. Any other error ends the watch.
 - `--help` for every command lists the codes that command can return and
@@ -35,7 +37,7 @@ Rules that apply to every command:
 | [`status`](#status) | `0`, `1`, `2` stale or needs attention, `3` extended support or unsupported, `4` incomplete data |
 | `cluster list` | `0`, `1` (also when no region answered), `4` a region failed, or a cluster could not be fully read |
 | `cluster describe` | `0`, `1`, `4` some add-ons or nodegroups could not be read |
-| [`cluster upgrade-check`](#cluster-upgrade-check) | `0` ready, `1`, `2` warnings only, `3` blocked |
+| [`cluster upgrade-check`](#cluster-upgrade-check) | `0` ready, `1`, `2` warnings only, `3` blocked, `4` a nodegroup or add-on could not be read |
 | [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker |
 | `nodegroup list` | `0`, `1`, `4` a nodegroup could not be described |
 | `nodegroup describe` | `0`, `1` |
@@ -97,18 +99,23 @@ insights in the report, the version skew, and the control-plane health check:
 | `0` | Ready: no finding |
 | `2` | Needs attention (`REVIEW`): a `WARNING` insight, a nodegroup behind the control plane but inside the kubelet skew limit, an addon behind its latest compatible version, or a control-plane health warning |
 | `3` | Blocked (`NOT READY`): an `ERROR` or `UNKNOWN` insight, a nodegroup at the kubelet skew limit (3 minors behind), or a failed control-plane health check (for example, etcd near its size limit) |
+| `4` | Incomplete (`INCOMPLETE`): nothing blocks, but a nodegroup or add-on could not be read. The document lists them under `incomplete` |
 | `1` | An error, such as an AWS error, a cluster that does not exist, or an interrupt |
 
 `UNKNOWN` blocks because `cluster upgrade` refuses a hop on an `UNKNOWN`
 insight too: EKS could not evaluate it, so nothing says the upgrade is safe.
-When both apply, `3` wins over `2`.
+
+Precedence is `3`, then `4`, then `2`. A known blocker wins over missing
+data. Missing data wins over warnings, because the item that could not be
+read (for example, a throttled `DescribeNodegroup` on the one nodegroup 3
+minors behind) could be a blocker.
 
 `--category` and `--status` narrow the insights, and the gate looks only at
 the insights in the report. With `--id`, the exit code reflects that one
 insight: `0` for `PASSING`, `2` for `WARNING`, `3` for `ERROR` or `UNKNOWN`.
 
-`--exit-zero` turns the gate off. The command prints the same report and
-exits `0` unless an error stops it. Use it where you want the report without
+`--exit-zero` turns the gate off, for `2`, `3`, and `4`. The command prints
+the same report and exits `0` unless an error or an interrupt stops it. Use it where you want the report without
 failing the job.
 
 ```bash
@@ -117,6 +124,7 @@ case $? in
   0) echo "ready to upgrade" ;;
   2) echo "warnings: review readiness.json" ;;
   3) echo "blocked: do not upgrade" ;;
+  4) echo "incomplete: see .incomplete in readiness.json" ;;
   *) echo "check failed" ;;
 esac
 ```
@@ -206,9 +214,10 @@ codes, review these changes:
 
 | Command | Before | Now |
 |---|---|---|
-| `cluster upgrade-check` | Always `0` | `2` for warnings, `3` for blockers. Add `--exit-zero` to keep the old behavior |
+| `cluster upgrade-check` | Always `0` | `2` for warnings, `3` for blockers, `4` when a nodegroup or add-on could not be read. Add `--exit-zero` to keep the old behavior |
 | `cluster list` (some regions failed) | `0` with a stderr warning | `4` |
 | `status` (every region skipped as not accessible) | `4` | `1` |
+| `status`, `cluster list`, `cluster describe`, `nodegroup list`, `addon list`, fleet mode (Ctrl+C after some data came back) | `4` | `1` |
 | `status` (a region answered with no clusters, another failed) | `1` | `4` |
 | `nodegroup update --all-clusters` (no region listed, or discovery hit `--timeout`) | `4` | `1` |
 | `cluster describe` (add-ons or nodegroups unreadable) | `0` with a stderr warning | `4` |
