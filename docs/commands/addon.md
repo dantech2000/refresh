@@ -58,7 +58,7 @@ refresh addon describe [cluster] [addon] [flags]
 ```
 
 `describe` has the alias `get`. The add-on name may be the second positional or
-`--addon/-a`, and a case-insensitive substring is resolved against the
+`--addon/-a`, and a unique case-insensitive substring is resolved against the
 installed add-ons.
 
 ### Flags

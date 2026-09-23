@@ -52,7 +52,7 @@ func checkServiceQuotas(ctx context.Context, sq serviceQuotaAPI, md metricDataAP
 	limit, err := onDemandVCPULimit(ctx, sq)
 	if err != nil {
 		return HealthResult{Name: "Service Quotas", Status: StatusPass, Skipped: true,
-			Message: fmt.Sprintf("service-quota headroom unavailable: %s", errSummary(err))}
+			Message: fmt.Sprintf("service-quota headroom unavailable: %s", awserr.Summary(err))}
 	}
 	usage, ok, err := onDemandVCPUUsage(ctx, md)
 	if err != nil || !ok {

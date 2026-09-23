@@ -27,7 +27,7 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	if err != nil {
 		result.Status = StatusFail
 		result.Score = 0
-		result.Message = fmt.Sprintf("Failed to list nodegroups: %s", errSummary(err))
+		result.Message = fmt.Sprintf("Failed to list nodegroups: %s", awserr.Summary(err))
 		return result
 	}
 
@@ -56,7 +56,7 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	for i, ngName := range nodegroupNames {
 		ngDesc := described[i]
 		if ngDesc.err != nil {
-			result.Details = append(result.Details, fmt.Sprintf("Failed to describe nodegroup %s: %s", ngName, errSummary(ngDesc.err)))
+			result.Details = append(result.Details, fmt.Sprintf("Failed to describe nodegroup %s: %s", ngName, awserr.Summary(ngDesc.err)))
 			continue
 		}
 		if ctx.Err() != nil && ngDesc.ng == nil {

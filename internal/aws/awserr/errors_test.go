@@ -195,6 +195,20 @@ func TestFormatAWSError_CancelGetsNoNetworkHelp(t *testing.T) {
 	}
 }
 
+func TestSummary(t *testing.T) {
+	cases := map[string]error{
+		"":                                    nil,
+		"AccessDeniedException: no eks:ListX": FormatAWSError(apiErr("AccessDeniedException", "no eks:ListX"), "listing"),
+		"network connectivity issue while listing.": FormatAWSError(dialErr(syscall.ECONNREFUSED), "listing"),
+		"plain": errors.New("plain"),
+	}
+	for want, in := range cases {
+		if got := Summary(in); got != want {
+			t.Errorf("Summary(%v) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestFormatPermissionError_ListsPermissions(t *testing.T) {
 	err := formatPermissionError(errors.New("denied"), "listing clusters")
 	if !strings.Contains(err.Error(), "listing clusters") || !strings.Contains(err.Error(), "eks:ListClusters") {

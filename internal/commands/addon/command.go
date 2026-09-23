@@ -64,7 +64,7 @@ func describeCommand() *cli.Command {
 		ArgsUsage: "[cluster] [addon]",
 		Description: `Show detailed information for one add-on: its version, status, and
 configuration. The add-on name may be the second positional or --addon, and a
-case-insensitive substring is resolved against the installed add-ons.
+unique case-insensitive substring is resolved against the installed add-ons.
 
   refresh addon describe my-cluster vpc-cni
   refresh addon describe my-cluster coredns -o json`,

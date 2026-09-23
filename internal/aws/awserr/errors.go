@@ -240,6 +240,21 @@ func FormatAWSError(err error, operation string) error {
 	return fmt.Errorf("error while %s: %w", operation, err)
 }
 
+// Summary renders err on one line, for a table cell or a status field where
+// FormatAWSError's multi-line remediation text would break the layout. An AWS
+// API error shows its code and message; any other error shows its first line.
+func Summary(err error) string {
+	if err == nil {
+		return ""
+	}
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		return fmt.Sprintf("%s: %s", ae.ErrorCode(), ae.ErrorMessage())
+	}
+	msg, _, _ := strings.Cut(err.Error(), "\n")
+	return strings.TrimSpace(msg)
+}
+
 func formatRegionError(err error, operation string) error {
 	return fmt.Errorf(`AWS region configuration issue while %s.
 

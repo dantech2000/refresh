@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -46,11 +47,6 @@ type ServiceImpl struct {
 }
 
 // NewService creates a new addon service
-// EKS returns the underlying EKS client abstraction so the command layer can do
-// lightweight lookups (e.g. resolving an add-on name) without building a second
-// client. EKSAPI includes ListAddons, so it satisfies the resolver's interface.
-func (s *ServiceImpl) EKS() EKSAPI { return s.eksClient }
-
 func NewService(eksClient EKSAPI, logger *slog.Logger) *ServiceImpl {
 	return &ServiceImpl{
 		eksClient: eksClient,
@@ -62,15 +58,7 @@ func NewService(eksClient EKSAPI, logger *slog.Logger) *ServiceImpl {
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]AddonSummary, error) {
 	s.logger.Info("listing addons", "cluster", clusterName)
 
-	addonNames, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing add-ons for cluster %s", clusterName),
-		func(rc context.Context, token *string) (*eks.ListAddonsOutput, error) {
-			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
-				ClusterName: aws.String(clusterName),
-				NextToken:   token,
-			})
-		},
-		func(out *eks.ListAddonsOutput) ([]string, *string) { return out.Addons, out.NextToken },
-	)
+	addonNames, err := s.ListAddonNames(ctx, clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +93,20 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		})
 
 	return summaries, nil
+}
+
+// ListAddonNames returns the names of every add-on installed on the cluster,
+// following ListAddons pagination.
+func (s *ServiceImpl) ListAddonNames(ctx context.Context, clusterName string) ([]string, error) {
+	return awsinternal.ListAllPages(ctx, fmt.Sprintf("listing add-ons for cluster %s", clusterName),
+		func(rc context.Context, token *string) (*eks.ListAddonsOutput, error) {
+			return s.eksClient.ListAddons(rc, &eks.ListAddonsInput{
+				ClusterName: aws.String(clusterName),
+				NextToken:   token,
+			})
+		},
+		func(out *eks.ListAddonsOutput) ([]string, *string) { return out.Addons, out.NextToken },
+	)
 }
 
 // Describe returns detailed information about an addon
@@ -222,14 +224,16 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 		return nil, err
 	}
 
-	currentDesc, err := s.eksClient.DescribeAddon(ctx, &eks.DescribeAddonInput{
-		ClusterName: aws.String(clusterName),
-		AddonName:   aws.String(addonName),
+	currentDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
+		return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
+			ClusterName: aws.String(clusterName),
+			AddonName:   aws.String(addonName),
+		})
 	})
 	if err != nil {
-		return nil, fmt.Errorf("getting current addon version: %w", err)
+		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("getting the current version of addon %s", addonName))
 	}
-	if currentDesc.Addon == nil {
+	if currentDesc == nil || currentDesc.Addon == nil {
 		return nil, fmt.Errorf("getting current addon version: empty DescribeAddon response for %s", addonName)
 	}
 	previousVersion := aws.ToString(currentDesc.Addon.AddonVersion)
@@ -270,9 +274,9 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 		return s.eksClient.UpdateAddon(rc, input)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("updating addon: %w", err)
+		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("updating addon %s", addonName))
 	}
-	if out.Update == nil {
+	if out == nil || out.Update == nil {
 		return nil, fmt.Errorf("updating addon: empty Update in UpdateAddon response for %s", addonName)
 	}
 
@@ -380,10 +384,12 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 			WaitTimeout: options.WaitTimeout,
 		})
 		if err != nil {
+			// One line: the status lands in a table cell, and a formatted
+			// AWS error carries multi-line remediation text.
 			return AddonUpdateResult{
 				AddonName:       a.Name,
 				PreviousVersion: a.Version,
-				Status:          fmt.Sprintf("FAILED: %v", err),
+				Status:          "FAILED: " + awserr.Summary(err),
 			}
 		}
 		return *result

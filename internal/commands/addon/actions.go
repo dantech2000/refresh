@@ -4,12 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
@@ -81,7 +78,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	addonSvc := factory.NewAddonService(cfg, nil)
-	addonName, err = resolveAddonName(ctx, addonSvc.EKS(), clusterName, addonName)
+	addonName, err = resolveAddonName(ctx, addonSvc, clusterName, addonName)
 	if err != nil {
 		return err
 	}
@@ -97,33 +94,47 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	return outputAddonDetailsTable(clusterName, details)
 }
 
-// listAddonsAPI is the subset of the EKS client used by resolveAddonName,
-// extracted so the resolver is testable.
-type listAddonsAPI interface {
-	ListAddons(ctx context.Context, in *eks.ListAddonsInput, optFns ...func(*eks.Options)) (*eks.ListAddonsOutput, error)
+// addonNameLister lists a cluster's installed add-on names (the addons
+// service), extracted so resolveAddonName is testable.
+type addonNameLister interface {
+	ListAddonNames(ctx context.Context, clusterName string) ([]string, error)
 }
 
-var validAddonRe = regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9-_]*$`)
-
-// resolveAddonName matches a user-supplied addon string against the cluster's
-// installed addons, allowing case-insensitive substring matches. Returns a
-// formatted error if ListAddons fails (e.g. AccessDeniedException) instead of
-// dereferencing the nil response.
-func resolveAddonName(ctx context.Context, eksClient listAddonsAPI, clusterName, addonName string) (string, error) {
-	if validAddonRe.MatchString(addonName) {
-		return addonName, nil
-	}
-	list, err := eksClient.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String(clusterName)})
+// resolveAddonName matches a user-supplied add-on name against the cluster's
+// installed add-ons: an exact match first, then a case-insensitive exact
+// match, then a unique case-insensitive substring. Several substring matches
+// are an error that lists them; no match is a not-found error that lists the
+// installed add-ons.
+func resolveAddonName(ctx context.Context, lister addonNameLister, clusterName, addonName string) (string, error) {
+	names, err := lister.ListAddonNames(ctx, clusterName)
 	if err != nil {
-		return "", awsinternal.FormatAWSError(err, fmt.Sprintf("listing add-ons for cluster %s", clusterName))
+		return "", err
 	}
-	lower := strings.ToLower(addonName)
-	for _, n := range list.Addons {
-		if strings.EqualFold(n, addonName) || strings.Contains(strings.ToLower(n), lower) {
+	for _, n := range names {
+		if n == addonName {
 			return n, nil
 		}
 	}
-	return "", fmt.Errorf("invalid add-on name '%s'. Available: %s", addonName, strings.Join(list.Addons, ", "))
+	for _, n := range names {
+		if strings.EqualFold(n, addonName) {
+			return n, nil
+		}
+	}
+	lower := strings.ToLower(addonName)
+	var matches []string
+	for _, n := range names {
+		if strings.Contains(strings.ToLower(n), lower) {
+			matches = append(matches, n)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return "", fmt.Errorf("invalid add-on name '%s'. Available: %s", addonName, strings.Join(names, ", "))
+	default:
+		return "", fmt.Errorf("add-on name '%s' is ambiguous; it matches %s. Pass the full name", addonName, strings.Join(matches, ", "))
+	}
 }
 
 // warnAllOnlyFlags warns when flags that only apply to `addon update --all`
@@ -177,7 +188,7 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	// version resolution, compatibility validation, optional health checks,
 	// and optional wait behavior as `update --all`.
 	addonSvc := factory.NewAddonService(cfg, nil)
-	addonName, err = resolveAddonName(ctx, addonSvc.EKS(), clusterName, addonName)
+	addonName, err = resolveAddonName(ctx, addonSvc, clusterName, addonName)
 	if err != nil {
 		return err
 	}

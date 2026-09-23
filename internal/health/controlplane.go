@@ -82,7 +82,7 @@ func checkControlPlaneMetrics(ctx context.Context, api metricDataAPI, clusterNam
 			Name:    "Control Plane",
 			Status:  StatusWarn,
 			Score:   70,
-			Message: fmt.Sprintf("Unable to fetch control-plane metrics: %s", errSummary(err)),
+			Message: fmt.Sprintf("Unable to fetch control-plane metrics: %s", awserr.Summary(err)),
 			Skipped: true,
 		}
 	}
