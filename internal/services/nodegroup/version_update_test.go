@@ -18,6 +18,7 @@ import (
 func TestStartVersionUpdate_RetriesThrottlingWithOneToken(t *testing.T) {
 	var tokens []string
 	m := &mocks.EKSAPI{
+		DescribeNodegroupFn: describeNodegroupAt("1.31"),
 		UpdateNodegroupVersionFn: func(_ context.Context, in *eks.UpdateNodegroupVersionInput, _ ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error) {
 			tokens = append(tokens, aws.ToString(in.ClientRequestToken))
 			if !in.Force {
@@ -53,6 +54,7 @@ func TestStartVersionUpdate_RetriesThrottlingWithOneToken(t *testing.T) {
 // permission guidance that names the denied IAM action.
 func TestStartVersionUpdate_AccessDeniedIsFormattedNotRetried(t *testing.T) {
 	m := &mocks.EKSAPI{
+		DescribeNodegroupFn: describeNodegroupAt("1.31"),
 		UpdateNodegroupVersionFn: func(context.Context, *eks.UpdateNodegroupVersionInput, ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error) {
 			return nil, &smithy.GenericAPIError{
 				Code:    "AccessDeniedException",
@@ -100,5 +102,49 @@ func TestDescribeNodegroup_RetriesAndFormats(t *testing.T) {
 	}
 	if _, err := newTestService(empty).DescribeNodegroup(context.Background(), "prod", "ng-a"); err == nil || !strings.Contains(err.Error(), "empty response") {
 		t.Errorf("empty describe: err = %v, want empty response", err)
+	}
+}
+
+// describeNodegroupAt answers DescribeNodegroup with a nodegroup on version.
+func describeNodegroupAt(version string) func(context.Context, *eks.DescribeNodegroupInput, ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+	return func(_ context.Context, in *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+		ng := stubNodegroup(aws.ToString(in.NodegroupName), ekstypes.NodegroupStatusActive)
+		ng.Version = aws.String(version)
+		return &eks.DescribeNodegroupOutput{Nodegroup: ng}, nil
+	}
+}
+
+// An AMI patch pins Version to the nodegroup's current minor, so it can never
+// become a minor-version upgrade to the cluster's version.
+func TestStartVersionUpdate_PinsCurrentVersion(t *testing.T) {
+	var got *string
+	m := &mocks.EKSAPI{
+		DescribeNodegroupFn: describeNodegroupAt("1.31"),
+		UpdateNodegroupVersionFn: func(_ context.Context, in *eks.UpdateNodegroupVersionInput, _ ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error) {
+			got = in.Version
+			return &eks.UpdateNodegroupVersionOutput{Update: &ekstypes.Update{Id: aws.String("upd-1")}}, nil
+		},
+	}
+	if _, err := newTestService(m).StartVersionUpdate(context.Background(), "prod", "ng-a", VersionUpdateOptions{}); err != nil {
+		t.Fatalf("StartVersionUpdate: %v", err)
+	}
+	if aws.ToString(got) != "1.31" {
+		t.Errorf("UpdateNodegroupVersion Version = %v, want 1.31", aws.ToString(got))
+	}
+}
+
+// If the nodegroup can't be described, no update is started: sending the
+// request without a Version could upgrade the minor.
+func TestStartVersionUpdate_DescribeFailureStartsNothing(t *testing.T) {
+	m := &mocks.EKSAPI{
+		DescribeNodegroupFn: func(context.Context, *eks.DescribeNodegroupInput, ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+			return nil, mocks.AccessDenied()
+		},
+	}
+	if _, err := newTestService(m).StartVersionUpdate(context.Background(), "prod", "ng-a", VersionUpdateOptions{}); err == nil {
+		t.Fatal("want an error")
+	}
+	if m.Calls.UpdateNodegroupVersion != 0 {
+		t.Errorf("UpdateNodegroupVersion calls = %d, want 0", m.Calls.UpdateNodegroupVersion)
 	}
 }
