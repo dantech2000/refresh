@@ -115,6 +115,10 @@ refresh nodegroup describe my-cluster ng-default --show-instances --show-workloa
 
 Change a managed nodegroup's desired/min/max size. Any subset of
 `--desired/--min/--max` may be set; unspecified bounds are left unchanged.
+Only `--desired` changes the node count. If you omit `--desired`, a `--max`
+below the current desired size, or a `--min` above it, fails before any change
+(exit `1`). Pass `--desired` with the new bounds to scale and change the
+bounds together.
 
 ```bash
 refresh nodegroup scale [cluster] -n <nodegroup> [flags]
@@ -132,7 +136,7 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 | `--health-check` | Validate cluster health before and after scaling |
 | `--check-pdbs` | Refuse a scale-down that could remove more of a Pod Disruption Budget's pods than it allows |
 | `--force` | With `--check-pdbs`, scale down anyway and print the blocking PDBs as a warning |
-| `--wait` | Wait for the scaling operation to complete |
+| `--wait` | Wait for the EKS update to finish, then check that the nodegroup has the requested sizes |
 | `--op-timeout` | Scaling operation timeout for `--wait` (default `5m`; added on top of `--timeout`; `0` = no limit) |
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint |
@@ -151,6 +155,14 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     anyway. Combine `--dry-run --check-pdbs` to see the verdict and the
     blocking PDBs before you touch anything. See
     [Scale-down PDB gate](../concepts/health-checks.md#scale-down-pdb-gate).
+
+With `--wait`, `refresh` follows the EKS update that the scaling request
+starts. If the update fails or is cancelled, the command exits non-zero with
+the update's error details. When the update succeeds, `refresh` reads the
+nodegroup and fails if a requested size (`--desired`, `--min`, `--max`) does
+not match. With `--desired`, it also waits for the nodegroup to be `ACTIVE`.
+Throttling and network errors during the wait are retried. A permanent error,
+such as a missing `eks:DescribeUpdate` permission, stops the wait at once.
 
 ### Examples
 

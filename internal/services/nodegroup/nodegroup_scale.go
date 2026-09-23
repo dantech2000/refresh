@@ -10,14 +10,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 )
 
-// scalePollInterval is how often waitForScaleCompletion re-checks nodegroup
-// status while waiting for a scaling operation to finish.
+// scalePollInterval is how often the --wait loop re-checks the scaling
+// update and the nodegroup.
 const scalePollInterval = 5 * time.Second
 
 // Scale updates the desired/min/max size for a nodegroup.
@@ -37,6 +38,10 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 		if summary.Decision == health.DecisionWarn {
 			s.logger.Warn("pre-scaling health warnings", "warnings", summary.Warnings)
 		}
+	}
+
+	if err := s.checkScaleBounds(ctx, clusterName, nodegroupName, desired, min, max); err != nil {
+		return err
 	}
 
 	// A scaling config change does not honor PDBs: EKS terminates the
@@ -68,7 +73,7 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 		}
 	}
 
-	_, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.UpdateNodegroupConfigOutput, error) {
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.UpdateNodegroupConfigOutput, error) {
 		return s.eksClient.UpdateNodegroupConfig(rc, input)
 	})
 	if err != nil {
@@ -76,7 +81,11 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 	}
 
 	if options.Wait {
-		if err := s.waitForScaleCompletion(ctx, clusterName, nodegroupName, desired, options.Timeout); err != nil {
+		var updateID string
+		if out != nil && out.Update != nil {
+			updateID = aws.ToString(out.Update.Id)
+		}
+		if err := s.waitForScaleCompletion(ctx, clusterName, nodegroupName, updateID, desired, min, max, options.Timeout); err != nil {
 			return err
 		}
 	}
@@ -93,39 +102,202 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 	return nil
 }
 
-func (s *ServiceImpl) waitForScaleCompletion(ctx context.Context, clusterName, nodegroupName string, desired *int32, timeout time.Duration) error {
+// waitForScaleCompletion follows the EKS update updateID until it is
+// Successful, Failed, or Cancelled. After Successful it confirms the
+// nodegroup reports every requested size and, when desired was requested,
+// waits for the nodegroup to be ACTIVE at that size. Transient poll errors
+// (throttling, 5xx, network) are polled through; a permanent API error
+// (AccessDenied, validation) fails at once. timeout > 0 caps the whole wait.
+func (s *ServiceImpl) waitForScaleCompletion(ctx context.Context, clusterName, nodegroupName, updateID string, desired, min, max *int32, timeout time.Duration) error {
+	ref := clusterName + "/" + nodegroupName
+	if updateID == "" {
+		return fmt.Errorf("waiting for nodegroup %s scaling: EKS returned no update ID", ref)
+	}
 	waitCtx := ctx
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		waitCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	ticker := time.NewTicker(scalePollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-waitCtx.Done():
-			return fmt.Errorf("timed out waiting for nodegroup scaling to complete: %w", waitCtx.Err())
-		case <-ticker.C:
-			out, err := s.eksClient.DescribeNodegroup(waitCtx, &eks.DescribeNodegroupInput{
+	interval := s.scalePollInterval
+	if interval <= 0 {
+		interval = scalePollInterval
+	}
+
+	// Phase 1: the EKS update is the authority on whether the change applied.
+	op := fmt.Sprintf("checking scaling update %s of nodegroup %s", updateID, ref)
+	var lastErr error
+	var lastStatus ekstypes.UpdateStatus
+	err := scalePollUntil(waitCtx, interval, func() (bool, error) {
+		out, err := common.WithRetry(waitCtx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeUpdateOutput, error) {
+			return s.eksClient.DescribeUpdate(rc, &eks.DescribeUpdateInput{
+				Name:          aws.String(clusterName),
+				NodegroupName: aws.String(nodegroupName),
+				UpdateId:      aws.String(updateID),
+			})
+		})
+		if err != nil {
+			lastErr = err
+			return false, s.scalePollError(waitCtx, err, op)
+		}
+		if out == nil || out.Update == nil {
+			return false, nil
+		}
+		lastStatus = out.Update.Status
+		switch out.Update.Status {
+		case ekstypes.UpdateStatusSuccessful:
+			return true, nil
+		case ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusCancelled:
+			return false, fmt.Errorf("nodegroup %s scaling update %s %s%s", ref, updateID, out.Update.Status, scaleUpdateErrorDetails(out.Update.Errors))
+		}
+		return false, nil
+	}, func(ctxErr error) error {
+		what := fmt.Sprintf("timed out waiting for nodegroup %s scaling update %s", ref, updateID)
+		if lastStatus != "" {
+			what += fmt.Sprintf(" (last status %s)", lastStatus)
+		}
+		return scaleWaitTimeoutError(ctxErr, what, lastErr)
+	})
+	if err != nil {
+		return err
+	}
+
+	// Phase 2: EKS says the update succeeded; make sure the nodegroup agrees
+	// and, with --desired, wait for it to settle ACTIVE.
+	op = fmt.Sprintf("confirming the scaling config of nodegroup %s", ref)
+	lastErr = nil
+	var lastNGStatus ekstypes.NodegroupStatus
+	return scalePollUntil(waitCtx, interval, func() (bool, error) {
+		out, err := common.WithRetry(waitCtx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+			return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
 				ClusterName:   aws.String(clusterName),
 				NodegroupName: aws.String(nodegroupName),
 			})
-			if err != nil {
-				s.logger.Warn("failed to describe nodegroup while waiting", "error", err)
-				continue
-			}
-			ng := out.Nodegroup
-			if ng == nil {
-				continue
-			}
-			if ng.Status == ekstypes.NodegroupStatusActive {
-				if desired == nil || (ng.ScalingConfig != nil && ng.ScalingConfig.DesiredSize != nil && *ng.ScalingConfig.DesiredSize == *desired) {
-					return nil
-				}
-			}
+		})
+		if err != nil {
+			lastErr = err
+			return false, s.scalePollError(waitCtx, err, op)
+		}
+		if out == nil || out.Nodegroup == nil {
+			return false, nil
+		}
+		ng := out.Nodegroup
+		lastNGStatus = ng.Status
+		if mismatch := scalingConfigMismatch(ng.ScalingConfig, desired, min, max); mismatch != "" {
+			return false, fmt.Errorf("nodegroup %s scaling update %s reported Successful, but the nodegroup %s", ref, updateID, mismatch)
+		}
+		if desired == nil {
+			return true, nil
+		}
+		return ng.Status == ekstypes.NodegroupStatusActive, nil
+	}, func(ctxErr error) error {
+		what := fmt.Sprintf("timed out waiting for nodegroup %s to settle at the new scaling config", ref)
+		if lastNGStatus != "" {
+			what += fmt.Sprintf(" (last status %s)", lastNGStatus)
+		}
+		return scaleWaitTimeoutError(ctxErr, what, lastErr)
+	})
+}
+
+// scalingConfigMismatch describes how cfg differs from the requested sizes,
+// or returns "" when every requested size matches.
+func scalingConfigMismatch(cfg *ekstypes.NodegroupScalingConfig, desired, min, max *int32) string {
+	if cfg == nil {
+		return "reports no scaling config"
+	}
+	var diffs []string
+	check := func(name string, want, got *int32) {
+		if want == nil {
+			return
+		}
+		if got == nil {
+			diffs = append(diffs, fmt.Sprintf("%s size is unset, not %d", name, *want))
+			return
+		}
+		if *got != *want {
+			diffs = append(diffs, fmt.Sprintf("%s size is %d, not %d", name, *got, *want))
 		}
 	}
+	check("desired", desired, cfg.DesiredSize)
+	check("min", min, cfg.MinSize)
+	check("max", max, cfg.MaxSize)
+	if len(diffs) == 0 {
+		return ""
+	}
+	return strings.Join(diffs, ", ")
+}
+
+// scalePollUntil calls check at once and then every interval until it
+// reports done or returns an error. When ctx ends first, it returns
+// onTimeout(ctx.Err()).
+func scalePollUntil(ctx context.Context, interval time.Duration, check func() (bool, error), onTimeout func(error) error) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		done, err := check()
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return onTimeout(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// scalePollError classifies a failed status poll. It returns nil to keep
+// polling on a transient error (throttling, 5xx, network) or when ctx has
+// ended (the poll loop then reports the timeout), and a formatted error for
+// a permanent API error such as AccessDenied, which polling will not fix.
+func (s *ServiceImpl) scalePollError(ctx context.Context, err error, op string) error {
+	if !scaleKeepPolling(ctx, err) {
+		return awsinternal.FormatAWSError(err, op)
+	}
+	if ctx.Err() == nil {
+		s.logger.Warn("transient error while waiting for scaling; still polling", "op", op, "error", err)
+	}
+	return nil
+}
+
+// scaleKeepPolling reports whether a failed status poll is worth repeating.
+func scaleKeepPolling(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || common.IsRetryable(err) || awserr.IsNetworkError(err)
+}
+
+// scaleWaitTimeoutError reports a wait that ran out of time, with the last
+// poll error when there was one.
+func scaleWaitTimeoutError(ctxErr error, what string, lastErr error) error {
+	if lastErr != nil {
+		return fmt.Errorf("%s: %w (last poll error: %s)", what, ctxErr, awserr.Summary(lastErr))
+	}
+	return fmt.Errorf("%s: %w", what, ctxErr)
+}
+
+// scaleUpdateErrorDetails renders an EKS update's error details as
+// ": CODE: msg [ids]; ...", or "" when there are none.
+func scaleUpdateErrorDetails(details []ekstypes.ErrorDetail) string {
+	if len(details) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(details))
+	for _, d := range details {
+		p := string(d.ErrorCode)
+		if msg := aws.ToString(d.ErrorMessage); msg != "" {
+			if p != "" {
+				p += ": "
+			}
+			p += msg
+		}
+		if len(d.ResourceIds) > 0 {
+			p += " [" + strings.Join(d.ResourceIds, ", ") + "]"
+		}
+		parts = append(parts, p)
+	}
+	return ": " + strings.Join(parts, "; ")
 }
 
 // ScaleDownPDBCheck is the result of CheckScaleDownPDBs.
@@ -185,28 +357,21 @@ func (e *ScaleDownBlockedError) Error() string {
 // to the nodegroup's nodes and assumes the worst case: the removed nodes are
 // the ones that hold the most of a PDB's pods (see
 // health.HealthChecker.ScaleDownBlockers).
-// A nil desired is never a scale-down. It returns an error when the check
-// can't be done (no health checker or Kubernetes client, or a failed API
-// call): the caller asked for PDB validation, so "couldn't check" must not
-// read as "no blockers".
+// A nil desired is never a scale-down: Scale refuses a --min/--max change
+// that would need the desired size to move (see checkScaleBounds). It returns
+// an error when the check can't be done (no health checker or Kubernetes
+// client, or a failed API call): the caller asked for PDB validation, so
+// "couldn't check" must not read as "no blockers".
 func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodegroupName string, desired *int32) (*ScaleDownPDBCheck, error) {
 	if desired == nil {
 		return &ScaleDownPDBCheck{}, nil
 	}
-	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
-		return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(nodegroupName),
-		})
-	})
+	current, err := s.currentDesiredSize(ctx, clusterName, nodegroupName)
 	if err != nil {
-		return nil, fmt.Errorf("PDB validation: %w", awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName)))
-	}
-	if desc == nil || desc.Nodegroup == nil || desc.Nodegroup.ScalingConfig == nil || desc.Nodegroup.ScalingConfig.DesiredSize == nil {
-		return nil, fmt.Errorf("PDB validation: nodegroup %s/%s has no scaling config", clusterName, nodegroupName)
+		return nil, fmt.Errorf("PDB validation: %w", err)
 	}
 	check := &ScaleDownPDBCheck{
-		CurrentDesired:   *desc.Nodegroup.ScalingConfig.DesiredSize,
+		CurrentDesired:   current,
 		RequestedDesired: *desired,
 	}
 	check.ScaleDown = check.RequestedDesired < check.CurrentDesired
@@ -224,4 +389,42 @@ func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodeg
 	check.Scoped = report.Scoped
 	check.Note = report.Note
 	return check, nil
+}
+
+// checkScaleBounds refuses, before any change, a --min/--max change without
+// --desired that puts the current desired size outside the new bounds. EKS
+// does not document moving the desired size into new bounds, so the user
+// must set the new node count explicitly.
+func (s *ServiceImpl) checkScaleBounds(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32) error {
+	if desired != nil || (min == nil && max == nil) {
+		return nil
+	}
+	current, err := s.currentDesiredSize(ctx, clusterName, nodegroupName)
+	if err != nil {
+		return err
+	}
+	if max != nil && *max < current {
+		return fmt.Errorf("--max %d is below the current desired size %d; pass --desired to change the node count", *max, current)
+	}
+	if min != nil && *min > current {
+		return fmt.Errorf("--min %d is above the current desired size %d; pass --desired to change the node count", *min, current)
+	}
+	return nil
+}
+
+// currentDesiredSize reads the nodegroup's current desired size.
+func (s *ServiceImpl) currentDesiredSize(ctx context.Context, clusterName, nodegroupName string) (int32, error) {
+	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+		return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(clusterName),
+			NodegroupName: aws.String(nodegroupName),
+		})
+	})
+	if err != nil {
+		return 0, awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))
+	}
+	if desc == nil || desc.Nodegroup == nil || desc.Nodegroup.ScalingConfig == nil || desc.Nodegroup.ScalingConfig.DesiredSize == nil {
+		return 0, fmt.Errorf("nodegroup %s/%s has no scaling config", clusterName, nodegroupName)
+	}
+	return *desc.Nodegroup.ScalingConfig.DesiredSize, nil
 }
