@@ -53,10 +53,10 @@ type HealthSummary struct {
 
 // HealthChecker performs various health checks on the EKS cluster
 type HealthChecker struct {
-	eksClient   *eks.Client
+	eksClient   nodegroupAPI
 	k8sClient   kubernetes.Interface
 	cwClient    *cloudwatch.Client
-	asgClient   *autoscaling.Client
+	asgClient   asgAPI
 	nodeMetrics NodeMetricsLister // optional; enables the live utilization check
 	sqClient    serviceQuotaAPI   // optional; enables the vCPU quota headroom check
 	// optional; scopes the PDB drain-blocker check to these managed nodegroups
@@ -69,15 +69,30 @@ type HealthChecker struct {
 // NewChecker creates a new health checker instance
 func NewChecker(eksClient *eks.Client, k8sClient kubernetes.Interface, cwClient *cloudwatch.Client, asgClient *autoscaling.Client) *HealthChecker {
 	hc := &HealthChecker{
-		eksClient: eksClient,
 		k8sClient: k8sClient,
 		cwClient:  cwClient,
-		asgClient: asgClient,
 	}
+	// Assign only non-nil pointers so the interface fields stay nil (a typed
+	// nil pointer in an interface would defeat the nil checks).
 	if eksClient != nil {
+		hc.eksClient = eksClient
 		hc.ngDescriber = eksClient
 	}
+	if asgClient != nil {
+		hc.asgClient = asgClient
+	}
 	return hc
+}
+
+// nodegroupAPI is the slice of the EKS API the node and capacity checks use.
+type nodegroupAPI interface {
+	ListNodegroups(ctx context.Context, in *eks.ListNodegroupsInput, optFns ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error)
+	DescribeNodegroup(ctx context.Context, in *eks.DescribeNodegroupInput, optFns ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error)
+}
+
+// asgAPI is the slice of the Auto Scaling API the capacity check uses.
+type asgAPI interface {
+	DescribeAutoScalingGroups(ctx context.Context, in *autoscaling.DescribeAutoScalingGroupsInput, optFns ...func(*autoscaling.Options)) (*autoscaling.DescribeAutoScalingGroupsOutput, error)
 }
 
 // RunAllChecks executes all health checks and returns a summary. The checks

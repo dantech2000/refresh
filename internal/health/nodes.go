@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -22,20 +23,11 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	}
 
 	// Get all nodegroups in the cluster (with pagination)
-	nodegroupNames, err := common.Paginate(ctx, func(ctx context.Context, token *string) ([]string, *string, error) {
-		ngOut, err := hc.eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
-			ClusterName: aws.String(clusterName),
-			NextToken:   token,
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		return ngOut.Nodegroups, ngOut.NextToken, nil
-	})
+	nodegroupNames, err := hc.listNodegroupNames(ctx, clusterName)
 	if err != nil {
 		result.Status = StatusFail
 		result.Score = 0
-		result.Message = fmt.Sprintf("Failed to list nodegroups: %v", err)
+		result.Message = fmt.Sprintf("Failed to list nodegroups: %s", awserr.Summary(err))
 		return result
 	}
 
@@ -49,18 +41,31 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	// NotReady/cordoned nodes, and an UPDATING one can be fully serving).
 	realTotal, realReady, notReadyNodes, haveRealCounts := hc.kubernetesNodeCounts(ctx)
 
-	// Check each nodegroup
-	for _, ngName := range nodegroupNames {
-		ngDesc, err := hc.eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(ngName),
+	// Describe the nodegroups concurrently; results come back in input order.
+	type ngDescribe struct {
+		ng  *types.Nodegroup
+		err error
+	}
+	described := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
+		func(fctx context.Context, ngName string) ngDescribe {
+			ng, err := hc.describeNodegroup(fctx, clusterName, ngName)
+			return ngDescribe{ng: ng, err: err}
 		})
-		if err != nil {
-			result.Details = append(result.Details, fmt.Sprintf("Failed to describe nodegroup %s: %v", ngName, err))
+
+	// Check each nodegroup
+	for i, ngName := range nodegroupNames {
+		ngDesc := described[i]
+		if ngDesc.err != nil {
+			result.Details = append(result.Details, fmt.Sprintf("Failed to describe nodegroup %s: %s", ngName, awserr.Summary(ngDesc.err)))
+			continue
+		}
+		if ctx.Err() != nil && ngDesc.ng == nil {
+			// ForEachParallel stopped dispatching; the item never ran.
+			result.Details = append(result.Details, fmt.Sprintf("Failed to describe nodegroup %s: %v", ngName, ctx.Err()))
 			continue
 		}
 
-		nodegroup := ngDesc.Nodegroup
+		nodegroup := ngDesc.ng
 		if nodegroup == nil {
 			result.Details = append(result.Details, fmt.Sprintf("Empty describe response for nodegroup %s", ngName))
 			continue
@@ -148,6 +153,38 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	}
 
 	return result
+}
+
+// listNodegroupNames lists every managed nodegroup in the cluster, with the
+// shared retry and error-formatting policy.
+func (hc *HealthChecker) listNodegroupNames(ctx context.Context, clusterName string) ([]string, error) {
+	return awserr.ListAllPages(ctx, fmt.Sprintf("listing nodegroups for cluster %s", clusterName),
+		func(rc context.Context, token *string) (*eks.ListNodegroupsOutput, error) {
+			return hc.eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{
+				ClusterName: aws.String(clusterName),
+				NextToken:   token,
+			})
+		},
+		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
+	)
+}
+
+// describeNodegroup describes one nodegroup with retry, formatting a failure.
+// A nil nodegroup with a nil error means an empty describe response.
+func (hc *HealthChecker) describeNodegroup(ctx context.Context, clusterName, ngName string) (*types.Nodegroup, error) {
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+		return hc.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(clusterName),
+			NodegroupName: aws.String(ngName),
+		})
+	})
+	if err != nil {
+		return nil, awserr.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s", ngName))
+	}
+	if out == nil {
+		return nil, nil
+	}
+	return out.Nodegroup, nil
 }
 
 // maxEstimatedNodeHealthScore caps the Node Health score when it is derived

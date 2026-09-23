@@ -36,7 +36,7 @@ No sudo privileges required - works seamlessly across macOS, Linux, and Unix sys
 	}
 }
 
-func installManPage(_ context.Context, cmd *cli.Command) error {
+func installManPage(ctx context.Context, cmd *cli.Command) error {
 	// Generate the man page content (ToMan moved to urfave/cli-docs in v3)
 	manContent, err := docs.ToMan(cmd.Root())
 	if err != nil {
@@ -62,7 +62,7 @@ func installManPage(_ context.Context, cmd *cli.Command) error {
 
 	// Check if the directory is already in MANPATH
 	manParentDir := filepath.Dir(manDir) // Remove /man1 to get the base man directory
-	if !isInManPath(manParentDir) {
+	if !isInManPath(ctx, manParentDir) {
 		fmt.Printf("\nTo make the man page accessible, add the following to your shell profile:\n")
 		fmt.Printf("  export MANPATH=\"%s:$MANPATH\"\n", manParentDir)
 		fmt.Printf("\nOr run temporarily:\n")
@@ -72,7 +72,7 @@ func installManPage(_ context.Context, cmd *cli.Command) error {
 	}
 
 	// Update man database if available
-	updateManDB()
+	updateManDB(ctx)
 
 	return nil
 }
@@ -122,9 +122,9 @@ func isWritableDir(dir string) bool {
 	return true
 }
 
-func isInManPath(dir string) bool {
+func isInManPath(ctx context.Context, dir string) bool {
 	// Get the current MANPATH
-	cmd := exec.Command("manpath")
+	cmd := exec.CommandContext(ctx, "manpath")
 	output, err := cmd.Output()
 	if err != nil {
 		return false
@@ -141,18 +141,18 @@ func isInManPath(dir string) bool {
 	return false
 }
 
-func updateManDB() {
+func updateManDB(ctx context.Context) {
 	switch runtime.GOOS {
 	case "darwin":
 		// On macOS, try to update the man database
 		if _, err := exec.LookPath("makewhatis"); err == nil {
-			cmd := exec.Command("makewhatis", "/usr/local/share/man")
+			cmd := exec.CommandContext(ctx, "makewhatis", "/usr/local/share/man")
 			_ = cmd.Run() // Ignore errors, this is optional
 		}
 	case "linux":
 		// On Linux, try to update the man database
 		if _, err := exec.LookPath("mandb"); err == nil {
-			cmd := exec.Command("mandb", "-q")
+			cmd := exec.CommandContext(ctx, "mandb", "-q")
 			_ = cmd.Run() // Ignore errors, this is optional
 		}
 	}

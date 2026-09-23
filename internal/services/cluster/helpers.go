@@ -58,6 +58,10 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 				s.logger.Warn("failed to describe add-on", "cluster", clusterName, "addon", addonName, "error", err)
 				return nil
 			}
+			if describeOutput == nil || describeOutput.Addon == nil {
+				s.logger.Warn("empty add-on describe response", "cluster", clusterName, "addon", addonName)
+				return nil
+			}
 
 			addon := describeOutput.Addon
 			health := "Unknown"
@@ -123,6 +127,10 @@ func (s *ServiceImpl) getClusterNodegroups(ctx context.Context, clusterName stri
 			})
 			if err != nil {
 				s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", nodegroupName, "error", err)
+				return nil
+			}
+			if describeOutput == nil || describeOutput.Nodegroup == nil {
+				s.logger.Warn("empty nodegroup describe response", "cluster", clusterName, "nodegroup", nodegroupName)
 				return nil
 			}
 

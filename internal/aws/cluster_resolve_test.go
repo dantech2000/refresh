@@ -178,6 +178,27 @@ func TestResolveClusterPattern_NothingResolvesWrapsSentinel(t *testing.T) {
 	}
 }
 
+// A kubeconfig that fails to load keeps both the sentinel and the load error
+// in the chain (%w, not %v).
+func TestResolveClusterPattern_BrokenKubeconfigWrapsCause(t *testing.T) {
+	dir := isolateConfig(t)
+	kc := filepath.Join(dir, "kubeconfig")
+	writeFile(t, kc, "{not: [valid")
+	t.Setenv("KUBECONFIG", kc)
+
+	_, _, err := resolveClusterPattern("", true)
+	if !errors.Is(err, ErrNoClusterSpecified) {
+		t.Fatalf("err = %v, want ErrNoClusterSpecified", err)
+	}
+	multi, ok := err.(interface{ Unwrap() []error })
+	if !ok || len(multi.Unwrap()) != 2 {
+		t.Fatalf("err = %v, want it to wrap the sentinel and the kubeconfig error", err)
+	}
+	if !strings.Contains(err.Error(), "loading kubeconfig") {
+		t.Errorf("err = %v, want the kubeconfig load cause", err)
+	}
+}
+
 // fakeSpinner records whether it is still running.
 type fakeSpinner struct{ running bool }
 

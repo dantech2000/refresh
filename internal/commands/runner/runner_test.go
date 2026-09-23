@@ -142,8 +142,10 @@ func TestCheckContext(t *testing.T) {
 func TestSetupAWS_NilContextFallsBack(t *testing.T) {
 	cmd := newTimeoutCommand(t)
 
-	//nolint:staticcheck // nil context is the case under test
-	_, cancel, _, err := setupAWS(nil, cmd, 0, func(context.Context, aws.Config) error { return nil })
+	// A nil context is the case under test. Pass it through a typed variable,
+	// not a literal nil, so staticcheck SA1012 has nothing to flag.
+	var nilCtx context.Context
+	_, cancel, _, err := setupAWS(nilCtx, cmd, 0, func(context.Context, aws.Config) error { return nil })
 	if err != nil {
 		t.Fatalf("setupAWS() = %v", err)
 	}

@@ -21,6 +21,9 @@ type fakeEKSClient struct {
 	clustersPages   [][]string
 	nodegroupsPages map[string][][]string
 	addonsPages     map[string][][]string
+	// emptyDescribes makes DescribeNodegroup/DescribeAddon return a response
+	// with no Nodegroup/Addon, which the SDK can hand back.
+	emptyDescribes bool
 }
 
 func (f *fakeEKSClient) ListClusters(ctx context.Context, in *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
@@ -79,6 +82,9 @@ func (f *fakeEKSClient) ListNodegroups(ctx context.Context, in *eks.ListNodegrou
 }
 
 func (f *fakeEKSClient) DescribeNodegroup(ctx context.Context, in *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+	if f.emptyDescribes {
+		return &eks.DescribeNodegroupOutput{}, nil
+	}
 	name := aws.ToString(in.NodegroupName)
 	desired := int32(2)
 	return &eks.DescribeNodegroupOutput{Nodegroup: &eksTypes.Nodegroup{
@@ -110,6 +116,9 @@ func (f *fakeEKSClient) ListAddons(ctx context.Context, in *eks.ListAddonsInput,
 }
 
 func (f *fakeEKSClient) DescribeAddon(ctx context.Context, in *eks.DescribeAddonInput, _ ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
+	if f.emptyDescribes {
+		return &eks.DescribeAddonOutput{}, nil
+	}
 	name := aws.ToString(in.AddonName)
 	return &eks.DescribeAddonOutput{Addon: &eksTypes.Addon{
 		AddonName:    &name,
@@ -214,5 +223,24 @@ func TestGetClusterAddons_Pagination(t *testing.T) {
 	}
 	if len(addons) != 3 {
 		t.Fatalf("expected 3 addons from paginated results, got %d", len(addons))
+	}
+}
+
+// Empty describe responses are skipped, not dereferenced.
+func TestClusterHelpers_EmptyDescribeResponses(t *testing.T) {
+	fake := &fakeEKSClient{
+		nodegroupsPages: map[string][][]string{"test": {{"ng-a"}}},
+		addonsPages:     map[string][][]string{"test": {{"coredns"}}},
+		emptyDescribes:  true,
+	}
+	svc := newTestServiceWithFake(t, fake)
+
+	ngs, err := svc.getClusterNodegroups(t.Context(), "test")
+	if err != nil || len(ngs) != 0 {
+		t.Errorf("getClusterNodegroups = %v, %v; want no nodegroups and no error", ngs, err)
+	}
+	addons, err := svc.getClusterAddons(t.Context(), "test")
+	if err != nil || len(addons) != 0 {
+		t.Errorf("getClusterAddons = %v, %v; want no add-ons and no error", addons, err)
 	}
 }

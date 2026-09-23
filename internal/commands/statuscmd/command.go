@@ -26,7 +26,11 @@ Exit codes (for CI/cron):
      sweep that timed out) or a region could not be listed
 
 When several apply, the highest-priority code wins: 3, then 2, then 4.
-Incomplete data never exits 0; rows with errors are marked in the output.`,
+Incomplete data never exits 0; rows with errors are marked in the output.
+
+With --all-regions (not -r or REFRESH_EKS_REGIONS), regions these credentials
+cannot use (an SCP denial, a region not enabled) are skipped with one note and
+do not count as failed. If no region is accessible, status exits 4.`,
 		Flags: []cli.Flag{
 			// --timeout and --max-concurrency come from the global/persistent
 			// flags (see main.go); status reads them via cmd.Duration/cmd.Int and

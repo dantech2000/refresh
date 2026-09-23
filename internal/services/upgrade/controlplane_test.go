@@ -188,3 +188,31 @@ func TestUpgradeControlPlane_ContextCancelStopsWatching(t *testing.T) {
 		t.Fatalf("UpdateClusterVersion calls = %d, want 1", m.Calls.UpdateClusterVersion)
 	}
 }
+
+// A cluster that is being deleted (or has failed) never becomes ACTIVE; the
+// wait must fail fast with a clear error instead of spinning until the
+// deadline.
+func TestWaitForClusterActive_TerminalStatusFailsFast(t *testing.T) {
+	for _, status := range []ekstypes.ClusterStatus{ekstypes.ClusterStatusDeleting, ekstypes.ClusterStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			m := mocks.NewEKSAPI().Build()
+			m.DescribeClusterFn = func(_ context.Context, in *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
+				return &eks.DescribeClusterOutput{Cluster: &ekstypes.Cluster{Name: in.Name, Version: aws.String("1.31"), Status: status}}, nil
+			}
+			svc := newTestService(m)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := svc.waitForClusterActive(ctx, "prod-east", noopProgress)
+			if err == nil || ctx.Err() != nil {
+				t.Fatalf("err = %v (ctx err %v), want a fast status error", err, ctx.Err())
+			}
+			if !strings.Contains(err.Error(), string(status)) {
+				t.Errorf("err = %v, want it to name status %s", err, status)
+			}
+			if m.Calls.DescribeCluster != 1 {
+				t.Errorf("DescribeCluster calls = %d, want 1", m.Calls.DescribeCluster)
+			}
+		})
+	}
+}

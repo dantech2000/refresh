@@ -71,10 +71,10 @@ func TestManPageHelpersAndInstall(t *testing.T) {
 	if !isWritableDir(dir) {
 		t.Fatalf("expected writable dir %q", dir)
 	}
-	if isInManPath(dir) {
+	if isInManPath(t.Context(), dir) {
 		t.Fatal("temp dir should not be in MANPATH")
 	}
-	updateManDB()
+	updateManDB(t.Context())
 
 	app := &cli.Command{Name: "refresh", Usage: "test app"}
 
