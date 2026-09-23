@@ -21,6 +21,11 @@ import (
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
+// ErrCancelled is returned by MonitorUpdates when the user interrupts
+// monitoring (Ctrl+C / SIGTERM). The EKS updates keep running in AWS; callers
+// must not treat the roll as finished (e.g. skip post-roll verification).
+var ErrCancelled = errors.New("interrupted; the EKS update continues in the background")
+
 // statusResult holds the result of a status check for a single update.
 type statusResult struct {
 	index  int
@@ -66,7 +71,7 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 			if errors.Is(monitorCtx.Err(), context.Canceled) {
 				return handleUserCancellation(monitor, config)
 			}
-			return handleTimeout(config)
+			return handleTimeout(monitor, config)
 
 		case <-ticker.C:
 			allComplete, err := checkAllUpdatesWithChannels(monitorCtx, eksClient, monitor, config)
@@ -91,20 +96,25 @@ func printMonitoringHeader(monitor *refreshTypes.ProgressMonitor, config refresh
 	fmt.Printf("Press Ctrl+C to stop monitoring (updates will continue)\n\n")
 }
 
-// handleUserCancellation handles graceful cancellation by user signal.
+// handleUserCancellation handles graceful cancellation by user signal. It
+// returns ErrCancelled so callers stop instead of treating the roll as done.
 func handleUserCancellation(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	if !config.Quiet && len(monitor.Updates) > 0 {
 		color.Yellow("\nMonitoring cancelled by user. Updates are still running in AWS.")
-		fmt.Printf("Use 'refresh list --cluster %s' to check status manually.\n", monitor.Updates[0].ClusterName)
+		fmt.Printf("Use 'refresh nodegroup list %s' to check status manually.\n", monitor.Updates[0].ClusterName)
 	}
-	return nil
+	return ErrCancelled
 }
 
 // handleTimeout handles monitoring timeout.
-func handleTimeout(config refreshTypes.MonitorConfig) error {
+func handleTimeout(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	if !config.Quiet {
 		color.Red("\nMonitoring timeout reached after %v", config.Timeout)
-		fmt.Printf("Updates may still be running. Use 'refresh list' to check status.\n")
+		if len(monitor.Updates) > 0 {
+			fmt.Printf("Updates may still be running. Use 'refresh nodegroup list %s' to check status.\n", monitor.Updates[0].ClusterName)
+		} else {
+			fmt.Printf("Updates may still be running. Use 'refresh nodegroup list' to check status.\n")
+		}
 	}
 	return fmt.Errorf("monitoring timeout reached")
 }

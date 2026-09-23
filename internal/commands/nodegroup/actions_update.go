@@ -2,6 +2,7 @@ package nodegroup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -151,7 +152,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		}
 	case flags.noWait:
 		if !quiet {
-			fmt.Printf("Started %d nodegroup update(s). Use 'refresh list --cluster %s' to check status.\n",
+			fmt.Printf("Started %d nodegroup update(s). Use 'refresh nodegroup list %s' to check status.\n",
 				len(outcomes.Started), clusterName)
 		}
 	default:
@@ -171,9 +172,10 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	verify := !flags.skipVerify && !flags.noWait
 	var verifyClient kubernetes.Interface
 	var preroll pendingPodSet
+	var prerollOK bool
 	if verify {
 		verifyClient, _ = health.GetKubernetesClient()
-		preroll = snapshotPendingPods(ctx, verifyClient)
+		preroll, prerollOK = snapshotPendingPods(ctx, verifyClient)
 	}
 
 	updates, outcomes := startNodegroupUpdates(ctx, awsCfg, eksClient, clusterName, selected, flags)
@@ -213,12 +215,20 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	monErr := monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
 
 	verifyFailed := false
-	if verify && monErr == nil && len(outcomes.Started) > 0 {
-		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll)
+	if verify && shouldVerifyPostRoll(ctx, monErr) && len(outcomes.Started) > 0 {
+		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll, prerollOK)
 		outcomes.Verification = &result
 		verifyFailed = !result.OK()
 	}
 	return outcomes, verifyFailed, monErr
+}
+
+// shouldVerifyPostRoll reports whether post-roll verification can run. It is
+// skipped when monitoring failed (a Failed/Cancelled update, a timeout, or a
+// user interrupt) or ctx is done: after Ctrl+C every call would fail with
+// "context canceled" and report false issues.
+func shouldVerifyPostRoll(ctx context.Context, monErr error) bool {
+	return monErr == nil && ctx.Err() == nil
 }
 
 // printVerification renders the post-roll verification block.
@@ -241,8 +251,12 @@ func printVerification(v PostRollVerification) {
 
 // updateExit maps an update run to the exit-code contract: monitoring failures
 // propagate (exit 1), start failures yield exit 4, a successful roll whose
-// post-roll verification found issues yields exit 5, otherwise success.
+// post-roll verification found issues yields exit 5, otherwise success. A user
+// interrupt exits 1 with a hint that the EKS update keeps running.
 func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
+	if errors.Is(monErr, monitoring.ErrCancelled) {
+		return fmt.Errorf("%w; check with 'refresh nodegroup list %s'", monErr, o.Cluster)
+	}
 	if monErr != nil {
 		return monErr
 	}

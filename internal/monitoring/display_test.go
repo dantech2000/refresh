@@ -2,6 +2,7 @@ package monitoring
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -272,9 +273,16 @@ func TestHandleUserCancellation_VerboseWithUpdates(t *testing.T) {
 	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
 	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
 	cfg := refreshTypes.MonitorConfig{Quiet: false}
-	// Should return nil and not panic
-	if err := handleUserCancellation(monitor, cfg); err != nil {
-		t.Errorf("expected nil error, got %v", err)
+	var err error
+	out := captureStdout(func() { err = handleUserCancellation(monitor, cfg) })
+	if !errors.Is(err, ErrCancelled) {
+		t.Errorf("expected ErrCancelled, got %v", err)
+	}
+	if !strings.Contains(out, "refresh nodegroup list") {
+		t.Errorf("hint should name 'refresh nodegroup list', got:\n%s", out)
+	}
+	if strings.Contains(out, "refresh list --cluster") {
+		t.Errorf("hint uses stale command name, got:\n%s", out)
 	}
 }
 
