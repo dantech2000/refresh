@@ -2,6 +2,7 @@ package addons
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -14,6 +15,12 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 )
+
+// ErrNoVersionsFound is returned (wrapped) by GetAvailableVersions when the
+// API call succeeded but EKS lists no version of the addon, or none
+// compatible with the requested Kubernetes version. Callers use errors.Is to
+// tell "genuinely incompatible" apart from an API failure.
+var ErrNoVersionsFound = errors.New("no versions found")
 
 // GetAvailableVersions returns available versions for an addon, newest first.
 // Pass k8sVersion to restrict results to versions compatible with that
@@ -61,7 +68,7 @@ func (s *ServiceImpl) GetAvailableVersions(ctx context.Context, addonName string
 		}
 	}
 	if len(versions) == 0 {
-		return nil, fmt.Errorf("no versions found for addon %s", addonName)
+		return nil, fmt.Errorf("%w for addon %s", ErrNoVersionsFound, addonName)
 	}
 
 	// Newest first: callers treat versions[0] as "latest".
