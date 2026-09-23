@@ -136,7 +136,25 @@ func handleTimeout(monitor *refreshTypes.ProgressMonitor, config refreshTypes.Mo
 			fmt.Printf("Updates may still be running. Use 'refresh nodegroup list' to check status.\n")
 		}
 	}
-	return fmt.Errorf("monitoring timeout reached")
+	return ErrMonitorTimeout
+}
+
+// ErrMonitorTimeout is returned by MonitorUpdates when --timeout elapses before
+// every update reaches a terminal state.
+var ErrMonitorTimeout = errors.New("monitoring timeout reached")
+
+// DisplayStopped prints the banner for a monitor run that ended before every
+// update was terminal: the timeout banner when err is ErrMonitorTimeout, the
+// user-cancellation banner when err is ErrCancelled. It is for callers that ran
+// the monitor quietly (e.g. under the live roll panel) and need the banner once
+// the panel has stopped. It prints nothing when config.Quiet is set.
+func DisplayStopped(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig, err error) {
+	switch {
+	case errors.Is(err, ErrMonitorTimeout):
+		_ = handleTimeout(monitor, config)
+	case errors.Is(err, ErrCancelled):
+		_ = handleUserCancellation(monitor, config)
+	}
 }
 
 // checkAllUpdatesWithChannels checks all update statuses concurrently using channels.
@@ -238,6 +256,20 @@ func checkSingleUpdate(ctx context.Context, eksClient *eks.Client, update *refre
 	}
 
 	return result
+}
+
+// AllComplete reports whether every monitored update has reached a terminal
+// state (successful, failed, or cancelled).
+func AllComplete(monitor *refreshTypes.ProgressMonitor) bool {
+	if len(monitor.Updates) == 0 {
+		return false
+	}
+	for _, u := range monitor.Updates {
+		if !isUpdateComplete(u.Status) {
+			return false
+		}
+	}
+	return true
 }
 
 // isUpdateComplete checks if an update has reached a terminal state.

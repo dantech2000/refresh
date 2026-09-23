@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -246,6 +248,166 @@ func TestUpgradeNodegroups_InvokesObserverPerRoll(t *testing.T) {
 	}
 	if len(observed) != 2 || observed[0] != "workers-a" || observed[1] != "workers-c" {
 		t.Fatalf("observer calls = %v, want [workers-a workers-c] (only rolled nodegroups, in order)", observed)
+	}
+}
+
+// A failed roll never converges, so a live observer would never finish on its
+// own. The DescribeUpdate wait must stay authoritative: once EKS reports
+// FAILED, the observer is cancelled and joined, and the AWS error comes back
+// promptly instead of after the full --timeout.
+func TestUpgradeNodegroups_FailedRollStopsObserver(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
+		Build()
+	_ = captureNodegroupRolls(m)
+	var polls atomic.Int32
+	m.DescribeUpdateFn = func(_ context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+		u := &ekstypes.Update{Id: in.UpdateId, Status: ekstypes.UpdateStatusInProgress}
+		if polls.Add(1) >= 3 {
+			u.Status = ekstypes.UpdateStatusFailed
+			u.Errors = []ekstypes.ErrorDetail{{
+				ErrorCode:    ekstypes.ErrorCodePodEvictionFailure,
+				ErrorMessage: aws.String("Reached max retries while trying to evict pods from nodes"),
+			}}
+		}
+		return &eks.DescribeUpdateOutput{Update: u}, nil
+	}
+
+	var started, stopped atomic.Bool
+	observer := func(ctx context.Context, _ string) {
+		started.Store(true)
+		<-ctx.Done() // a panel whose roll never completes
+		stopped.Store(true)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := newTestService(m).UpgradeNodegroups(ctx, "prod-east", "1.32",
+		NodegroupRollOptions{Observer: observer}, nil)
+
+	if err == nil || !strings.Contains(err.Error(), "failed") || !strings.Contains(err.Error(), "evict pods") {
+		t.Fatalf("err = %v, want the FAILED status with the AWS error", err)
+	}
+	if !started.Load() || !stopped.Load() {
+		t.Fatalf("observer started=%v stopped=%v; want it run and joined before return", started.Load(), stopped.Load())
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("UpgradeNodegroups took %v; observer blocked the EKS wait", elapsed)
+	}
+}
+
+// While the live observer runs, the wait's progress lines must not reach the
+// progress callback (they would draw over the panel). They are flushed, in
+// order, after the observer is joined; without an observer they pass through
+// immediately.
+func TestUpgradeNodegroups_HoldsWaitProgressWhileObserving(t *testing.T) {
+	newMock := func() *mocks.EKSAPI {
+		m := mocks.NewEKSAPI().
+			WithCluster("prod-east", "1.32").
+			WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
+			Build()
+		_ = captureNodegroupRolls(m)
+		var polls atomic.Int32
+		m.DescribeUpdateFn = func(_ context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+			if polls.Add(1) <= 2 {
+				return nil, fmt.Errorf("transient describe failure")
+			}
+			return &eks.DescribeUpdateOutput{Update: &ekstypes.Update{Id: in.UpdateId, Status: ekstypes.UpdateStatusSuccessful}}, nil
+		}
+		return m
+	}
+
+	var observing atomic.Bool
+	var mu sync.Mutex
+	var lines []string
+	var duringPanel int
+	progress := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if observing.Load() {
+			duringPanel++
+		}
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	observer := func(ctx context.Context, _ string) {
+		observing.Store(true)
+		<-ctx.Done()
+		observing.Store(false)
+	}
+
+	if err := newTestService(newMock()).UpgradeNodegroups(context.Background(), "prod-east", "1.32",
+		NodegroupRollOptions{Observer: observer}, progress); err != nil {
+		t.Fatalf("UpgradeNodegroups: %v", err)
+	}
+	if duringPanel != 0 {
+		t.Fatalf("%d progress line(s) printed while the panel was live: %q", duringPanel, lines)
+	}
+	warnings := 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, "warning: checking") {
+			warnings++
+		}
+	}
+	if warnings != 2 {
+		t.Fatalf("got %d held warning lines after the panel stopped, want 2: %q", warnings, lines)
+	}
+	if last := lines[len(lines)-1]; last != "nodegroup workers-a is at 1.32" {
+		t.Fatalf("last line = %q, want the terminal-state line after the flushed warnings", last)
+	}
+
+	// No observer: the same warnings go straight through.
+	lines = nil
+	if err := newTestService(newMock()).UpgradeNodegroups(context.Background(), "prod-east", "1.32",
+		NodegroupRollOptions{}, progress); err != nil {
+		t.Fatalf("UpgradeNodegroups without observer: %v", err)
+	}
+	if len(lines) < 3 || !strings.HasPrefix(lines[1], "warning: checking") {
+		t.Fatalf("without an observer, progress lines = %q; want warnings passed through", lines)
+	}
+}
+
+// A panel that returns early (no labelled nodes, baseline failure, or a roll
+// that already looks complete) leaves nothing on screen, so held lines must be
+// flushed then and later lines passed straight through — not held until the
+// EKS wait ends.
+func TestUpgradeNodegroups_ReleasesProgressWhenObserverReturnsEarly(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
+		Build()
+	_ = captureNodegroupRolls(m)
+
+	var observerDone, terminal atomic.Bool
+	var polls atomic.Int32
+	m.DescribeUpdateFn = func(_ context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+		// Keep failing (emitting warnings) until the observer has returned and
+		// a couple of warnings came after that, then succeed.
+		if !observerDone.Load() || polls.Add(1) <= 2 {
+			return nil, fmt.Errorf("transient describe failure")
+		}
+		terminal.Store(true)
+		return &eks.DescribeUpdateOutput{Update: &ekstypes.Update{Id: in.UpdateId, Status: ekstypes.UpdateStatusSuccessful}}, nil
+	}
+
+	var mu sync.Mutex
+	warningsBeforeTerminal := 0
+	progress := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.HasPrefix(fmt.Sprintf(format, args...), "warning: checking") && !terminal.Load() {
+			warningsBeforeTerminal++
+		}
+	}
+	observer := func(context.Context, string) { observerDone.Store(true) } // nothing to draw
+
+	if err := newTestService(m).UpgradeNodegroups(context.Background(), "prod-east", "1.32",
+		NodegroupRollOptions{Observer: observer}, progress); err != nil {
+		t.Fatalf("UpgradeNodegroups: %v", err)
+	}
+	if warningsBeforeTerminal < 2 {
+		t.Fatalf("only %d warning(s) reached progress before the update was terminal; want them released once the observer returned", warningsBeforeTerminal)
 	}
 }
 

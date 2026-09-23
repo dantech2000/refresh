@@ -102,3 +102,39 @@ func TestRollComplete(t *testing.T) {
 		t.Error("expected not complete mid-roll")
 	}
 }
+
+// With surge, the new nodes can all be Ready while every old node still
+// serves. That is not a finished roll: old (baseline) nodes must be gone.
+func TestRollComplete_SurgeWithOldNodesRemaining(t *testing.T) {
+	done := rollComplete(2)
+	surge := noderoll.Snapshot{
+		Total: 4, ReadyTarget: 2,
+		Nodes: []noderoll.NodeView{
+			{Name: "old-1", OnTarget: false, Ready: true, Phase: noderoll.PhaseReady},
+			{Name: "old-2", OnTarget: false, Ready: true, Phase: noderoll.PhaseReady},
+			{Name: "new-1", OnTarget: true, Ready: true, Phase: noderoll.PhaseReady},
+			{Name: "new-2", OnTarget: true, Ready: true, Phase: noderoll.PhaseReady},
+		},
+	}
+	if done(surge) {
+		t.Fatal("surge snapshot with 2 old Ready nodes reported complete")
+	}
+	surge.Nodes = surge.Nodes[2:]
+	surge.Total = 2
+	if !done(surge) {
+		t.Fatal("expected complete once the old nodes are gone")
+	}
+}
+
+// The scripted surge roll is only complete on its final frame, after the last
+// old node has drained away.
+func TestRollComplete_DemoTimelineOnlyAtEnd(t *testing.T) {
+	frames := noderoll.DemoTimeline()
+	done := rollComplete(3)
+	for i, f := range frames {
+		want := i == len(frames)-1
+		if got := done(f); got != want {
+			t.Errorf("frame %d: complete = %v, want %v", i, got, want)
+		}
+	}
+}
