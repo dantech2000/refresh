@@ -24,6 +24,8 @@ func fakeStreams(t *testing.T, stdoutTTY, stderrTTY bool) (readOut, readErr func
 		t.Fatal(err)
 	}
 	origOut, origErr, origSeam, origNoColor := os.Stdout, os.Stderr, isTerminalFd, color.NoColor
+	origOff := colorOff.Load()
+	SetColorDisabled(false)
 	os.Stdout, os.Stderr = outF, errF
 	isTerminalFd = func(fd uintptr) bool {
 		switch fd {
@@ -36,6 +38,7 @@ func fakeStreams(t *testing.T, stdoutTTY, stderrTTY bool) (readOut, readErr func
 	}
 	t.Cleanup(func() {
 		os.Stdout, os.Stderr, isTerminalFd, color.NoColor = origOut, origErr, origSeam, origNoColor
+		SetColorDisabled(origOff)
 		_ = outF.Close()
 		_ = errF.Close()
 	})
@@ -161,5 +164,70 @@ func TestStderrStripsSplitEscape(t *testing.T) {
 	_, _ = Stderr.Write([]byte("1mb\x1b[0m\n"))
 	if got := readErr(); got != "ab\n" {
 		t.Fatalf("stderr = %q, want %q", got, "ab\n")
+	}
+}
+
+// On a terminal with color off, only SGR color codes go: cursor control such
+// as the spinner's erase-line must survive.
+func TestStderrKeepsCursorControlOnTTYWithoutColor(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TERM", "xterm-256color")
+	_, readErr := fakeStreams(t, false, true)
+	_, _ = Stderr.Write([]byte("\r\x1b[Kframe \x1b[31mred\x1b[0m\x1b[3"))
+	_, _ = Stderr.Write([]byte("2mgreen\x1b[0m\n"))
+	if got, want := readErr(), "\r\x1b[Kframe redgreen\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+// When stderr is not a terminal every escape goes, cursor control included.
+func TestStderrDropsAllEscapesWhenNotTTY(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+	_, readErr := fakeStreams(t, true, false)
+	_, _ = Stderr.Write([]byte("\r\x1b[Kframe \x1b[31mred\x1b[0m\n"))
+	if got, want := readErr(), "\rframe red\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+// NO_COLOR on a terminal keeps an animated spinner, uncolored.
+func TestSpinnerAnimatesWithoutColorOnTTY(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TERM", "xterm-256color")
+	_, readErr := fakeStreams(t, false, true)
+	s := NewFunSpinner([]string{"working"})
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if !s.animated {
+		t.Fatal("spinner should animate on a TTY with NO_COLOR")
+	}
+	s.Stop()
+	got := readErr()
+	if !strings.Contains(got, "\x1b[K") || !strings.Contains(got, "working") {
+		t.Fatalf("spinner frame missing erase-line or text: %q", got)
+	}
+	if rest := strings.ReplaceAll(got, "\x1b[K", ""); strings.ContainsRune(rest, 0x1b) {
+		t.Fatalf("spinner wrote color codes with NO_COLOR: %q", got)
+	}
+}
+
+// TERM=dumb cannot erase a line, so no spinner frames are written.
+func TestSpinnerOffOnDumbTerminal(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "dumb")
+	_, readErr := fakeStreams(t, true, true)
+	s := NewFunSpinner([]string{"working"})
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if s.animated {
+		t.Fatal("spinner must not animate with TERM=dumb")
+	}
+	s.Stop()
+	s.Success("done")
+	if got := readErr(); got != "" {
+		t.Fatalf("spinner wrote with TERM=dumb: %q", got)
 	}
 }

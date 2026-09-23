@@ -13,9 +13,11 @@ import (
 var funSpinnerInterval = 2 * time.Second
 
 // spinnerOutputIsTerminal reports whether spinner output (stderr) is an
-// interactive terminal. Overridable in tests.
+// interactive terminal that supports cursor control. TERM=dumb cannot erase a
+// line, so it gets no spinner. NO_COLOR alone keeps an uncolored spinner:
+// cursor control is not color. Overridable in tests.
 var spinnerOutputIsTerminal = func() bool {
-	return IsTerminal(os.Stderr)
+	return IsTerminal(os.Stderr) && os.Getenv("TERM") != "dumb"
 }
 
 // spinnerOut returns where spinners write: the stream that

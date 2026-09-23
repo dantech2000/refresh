@@ -94,13 +94,15 @@ func StderrColor(attrs ...color.Attribute) *color.Color {
 }
 
 // stderrWriter writes to os.Stderr (read at write time, so tests that swap
-// os.Stderr capture it) and strips ANSI escape sequences unless stderr is a
-// color terminal. The escape state carries across writes, so a sequence split
-// over two writes is still removed.
+// os.Stderr capture it). It passes bytes through when stderr is a color
+// terminal. On a terminal with color disabled (NO_COLOR, --no-color,
+// TERM=dumb) it drops only SGR color sequences (CSI ... m), so cursor control
+// such as the spinner's erase-line still works. When stderr is not a terminal
+// it drops every escape sequence. The escape state carries across writes, so
+// a sequence split over two writes is still handled.
 type stderrWriter struct {
-	mu       sync.Mutex
-	inEscape bool
-	escLen   int
+	mu      sync.Mutex
+	pending []byte // escape sequence read so far, starting with ESC
 }
 
 // Stderr is the writer for every human line on stderr: warnings, notices,
@@ -113,43 +115,49 @@ func (s *stderrWriter) Fd() uintptr { return os.Stderr.Fd() }
 
 func (s *stderrWriter) Write(p []byte) (int, error) {
 	dst := os.Stderr
-	if StreamColor(dst) {
+	tty := IsTerminal(dst)
+	if tty && !ColorDisabled() {
 		return dst.Write(p)
 	}
 	s.mu.Lock()
-	out := s.strip(p)
+	out := s.filter(p, tty)
 	s.mu.Unlock()
-	if _, err := dst.Write(out); err != nil {
-		return 0, err
+	if len(out) > 0 {
+		if _, err := dst.Write(out); err != nil {
+			return 0, err
+		}
 	}
 	return len(p), nil
 }
 
-// strip removes ANSI escape sequences from p. It mirrors StripANSI but keeps
-// its state between calls.
-func (s *stderrWriter) strip(p []byte) []byte {
+// filter removes escape sequences from p: only SGR color sequences when
+// keepControl is true, all of them otherwise.
+func (s *stderrWriter) filter(p []byte, keepControl bool) []byte {
 	const maxEscapeLen = 32
 	out := make([]byte, 0, len(p))
 	for _, b := range p {
 		if b == 0x1b {
-			s.inEscape = true
-			s.escLen = 0
+			// A new ESC ends any unfinished sequence.
+			if keepControl {
+				out = append(out, s.pending...)
+			}
+			s.pending = append(s.pending[:0], b)
 			continue
 		}
-		if s.inEscape {
-			s.escLen++
-			if s.escLen > maxEscapeLen {
-				s.inEscape = false
-				s.escLen = 0
-				continue
-			}
-			if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') {
-				s.inEscape = false
-				s.escLen = 0
-			}
+		if len(s.pending) == 0 {
+			out = append(out, b)
 			continue
 		}
-		out = append(out, b)
+		s.pending = append(s.pending, b)
+		final := (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+		if !final && len(s.pending) <= maxEscapeLen {
+			continue
+		}
+		sgr := final && b == 'm' && len(s.pending) >= 2 && s.pending[1] == '['
+		if keepControl && !sgr {
+			out = append(out, s.pending...)
+		}
+		s.pending = s.pending[:0]
 	}
 	return out
 }
