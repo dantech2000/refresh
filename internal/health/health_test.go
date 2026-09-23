@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -309,6 +310,131 @@ func TestCheckPodDisruptionBudgets_NeverBlocking(t *testing.T) {
 	result := hc.CheckPodDisruptionBudgets(context.Background())
 	if result.IsBlocking {
 		t.Error("PDB check result should never be blocking regardless of outcome")
+	}
+}
+
+// pdbAllowing returns a PDB covering app=<app> with the given live status.
+func pdbAllowing(namespace, name, app string, allowed, expected int32) *policyv1.PodDisruptionBudget {
+	p := pdb(namespace, name, app)
+	p.Status = policyv1.PodDisruptionBudgetStatus{
+		DisruptionsAllowed: allowed,
+		CurrentHealthy:     expected,
+		DesiredHealthy:     expected,
+		ExpectedPods:       expected,
+	}
+	return p
+}
+
+func hasDetail(details []string, substr string) bool {
+	for _, d := range details {
+		if strings.Contains(d, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCheckPodDisruptionBudgets_ZeroDisruptionsAllowedWarns(t *testing.T) {
+	// Regression: minAvailable == replicas gives full selector coverage but
+	// blocks every drain. The check used to PASS here.
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		deploy("my-app", "frontend"),
+		pdbAllowing("my-app", "frontend-pdb", "frontend", 0, 3),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusWarn {
+		t.Fatalf("drain blocker: status = %s, want WARN (msg: %s)", result.Status, result.Message)
+	}
+	if result.IsBlocking {
+		t.Error("drain blocker should be WARN-level, not blocking by default")
+	}
+	if !strings.Contains(result.Message, "stall on eviction") {
+		t.Errorf("message should explain the roll will stall, got %q", result.Message)
+	}
+	if !hasDetail(result.Details, "my-app/frontend-pdb") {
+		t.Errorf("details should name the blocking PDB, got %v", result.Details)
+	}
+	if result.Score > 50 {
+		t.Errorf("drain blocker score = %d, want <= 50", result.Score)
+	}
+	if d := aggregateResults([]HealthResult{result}).Decision; d != DecisionWarn {
+		t.Errorf("decision = %s, want WARN", d)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_DrainBlockerWithNoDeployments(t *testing.T) {
+	// A blocking PDB must be reported even when no deployments are counted
+	// (e.g. a StatefulSet-only namespace).
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("data"),
+		pdbAllowing("data", "db-pdb", "db", 0, 1),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusWarn || !hasDetail(result.Details, "data/db-pdb") {
+		t.Errorf("drain blocker without deployments: status = %s, details = %v", result.Status, result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_SystemNamespaceDrainBlocker(t *testing.T) {
+	// A stuck kube-system PDB blocks a drain just like a user one.
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("kube-system"),
+		pdbAllowing("kube-system", "coredns", "coredns", 0, 2),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusWarn || !hasDetail(result.Details, "kube-system/coredns") {
+		t.Errorf("kube-system drain blocker: status = %s, details = %v", result.Status, result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_EmptyPDBNotABlocker(t *testing.T) {
+	// A PDB that matches no pods (ExpectedPods == 0) reports 0 disruptions
+	// allowed but blocks nothing.
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		deploy("my-app", "frontend"),
+		pdbAllowing("my-app", "frontend-pdb", "frontend", 1, 3),
+		pdbAllowing("my-app", "orphan-pdb", "gone", 0, 0),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusPass {
+		t.Errorf("empty PDB: status = %s, want PASS (msg: %s, details: %v)", result.Status, result.Message, result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_HealthyPDBPasses(t *testing.T) {
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		deploy("my-app", "frontend"),
+		pdbAllowing("my-app", "frontend-pdb", "frontend", 1, 3),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusPass || result.Score != 100 {
+		t.Errorf("healthy PDB: status = %s score = %d, want PASS/100", result.Status, result.Score)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_DefaultNamespaceCounted(t *testing.T) {
+	// Regression: deployments in "default" used to be skipped, so a cluster
+	// with all its apps in default and no PDBs reported PASS / score 100.
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("default"),
+		deploy("default", "web"),
+		deploy("default", "api"),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusWarn {
+		t.Errorf("default namespace: status = %s, want WARN (msg: %s)", result.Status, result.Message)
+	}
+	if result.Score != 0 {
+		t.Errorf("default namespace: score = %d, want 0", result.Score)
 	}
 }
 

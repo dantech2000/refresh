@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
@@ -20,10 +21,31 @@ type PDBInfo struct {
 	ExpectedPods       int32  `json:"expectedPods" yaml:"expectedPods"`
 }
 
-// AtRisk reports whether this PDB currently allows zero voluntary disruptions,
-// meaning a node drain (as happens during a scale-down) would be blocked until
-// the workload recovers.
-func (p PDBInfo) AtRisk() bool { return p.DisruptionsAllowed <= 0 }
+// AtRisk reports whether this PDB currently allows zero voluntary disruptions
+// while covering at least one pod, meaning a node drain (scale-down or node
+// roll) that evicts one of its pods will be blocked until the workload
+// recovers. A PDB that matches no pods (ExpectedPods == 0) blocks nothing.
+func (p PDBInfo) AtRisk() bool { return p.DisruptionsAllowed <= 0 && p.ExpectedPods > 0 }
+
+// systemNamespaces are skipped when counting deployments for PDB coverage and
+// when listing user PDBs. "default" is deliberately absent: real workloads run
+// there and must be counted.
+var systemNamespaces = map[string]bool{
+	"kube-system":     true,
+	"kube-public":     true,
+	"kube-node-lease": true,
+}
+
+func pdbInfoFrom(pdb policyv1.PodDisruptionBudget) PDBInfo {
+	return PDBInfo{
+		Namespace:          pdb.Namespace,
+		Name:               pdb.Name,
+		DisruptionsAllowed: pdb.Status.DisruptionsAllowed,
+		CurrentHealthy:     pdb.Status.CurrentHealthy,
+		DesiredHealthy:     pdb.Status.DesiredHealthy,
+		ExpectedPods:       pdb.Status.ExpectedPods,
+	}
+}
 
 // ListPodDisruptionBudgets returns a structured snapshot of every PDB in user
 // namespaces with its current disruption status. Returns (nil, nil) when no
@@ -36,29 +58,19 @@ func (hc *HealthChecker) ListPodDisruptionBudgets(ctx context.Context) ([]PDBInf
 	if err != nil {
 		return nil, fmt.Errorf("listing PodDisruptionBudgets: %w", err)
 	}
-	systemNamespaces := map[string]bool{
-		"kube-system":     true,
-		"kube-public":     true,
-		"kube-node-lease": true,
-	}
 	out := make([]PDBInfo, 0, len(pdbs.Items))
 	for _, pdb := range pdbs.Items {
 		if systemNamespaces[pdb.Namespace] {
 			continue
 		}
-		out = append(out, PDBInfo{
-			Namespace:          pdb.Namespace,
-			Name:               pdb.Name,
-			DisruptionsAllowed: pdb.Status.DisruptionsAllowed,
-			CurrentHealthy:     pdb.Status.CurrentHealthy,
-			DesiredHealthy:     pdb.Status.DesiredHealthy,
-			ExpectedPods:       pdb.Status.ExpectedPods,
-		})
+		out = append(out, pdbInfoFrom(pdb))
 	}
 	return out, nil
 }
 
-// CheckPodDisruptionBudgets validates PDB configuration for user workloads
+// CheckPodDisruptionBudgets validates PDB configuration for user workloads:
+// it flags PDBs that would block a node drain right now, and measures how many
+// deployments are covered by a PDB at all.
 func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthResult {
 	result := HealthResult{
 		Name:       "Pod Disruption Budgets",
@@ -84,12 +96,16 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 		return result
 	}
 
-	// Get all deployments in user namespaces (excluding system namespaces)
-	systemNamespaces := map[string]bool{
-		"kube-system":     true,
-		"kube-public":     true,
-		"kube-node-lease": true,
-		"default":         true,
+	// A PDB that currently allows zero disruptions blocks every eviction of
+	// the pods it covers, so a node roll stalls on drain and EKS eventually
+	// fails the update with PodEvictionFailure. System namespaces are included
+	// on purpose: a stuck kube-system PDB blocks a drain just the same.
+	var drainBlockers []string
+	for _, pdb := range pdbs.Items {
+		if info := pdbInfoFrom(pdb); info.AtRisk() {
+			drainBlockers = append(drainBlockers, fmt.Sprintf("%s/%s (%d/%d pods healthy, 0 disruptions allowed)",
+				info.Namespace, info.Name, info.CurrentHealthy, info.ExpectedPods))
+		}
 	}
 
 	namespaces, err := hc.k8sClient.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
@@ -157,33 +173,45 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 		}
 	}
 
-	// Calculate score and status
-	if totalDeployments == 0 {
+	// Calculate score and status from deployment coverage.
+	switch {
+	case totalDeployments == 0:
 		result.Status = StatusPass
 		result.Score = 100
 		result.Message = "No user deployments found"
-		return result
+	case len(unprotectedDeployments) == 0:
+		result.Status = StatusPass
+		result.Score = 100
+		result.Message = fmt.Sprintf("All %d deployments have PDB protection", totalDeployments)
+	default:
+		// For PDBs, we're more lenient - it's a warning, not a failure
+		pdbCoveragePercentage := (protectedDeployments * 100) / totalDeployments
+		result.Score = pdbCoveragePercentage
+		result.Status = StatusWarn // Still warning, not fail
+		if pdbCoveragePercentage >= 50 {
+			result.Message = fmt.Sprintf("%d deployments missing PDBs", len(unprotectedDeployments))
+			if len(unprotectedDeployments) <= 5 {
+				result.Details = append(result.Details, fmt.Sprintf("Unprotected: %v", unprotectedDeployments))
+			} else {
+				result.Details = append(result.Details, fmt.Sprintf("Unprotected: %v... (+%d more)", unprotectedDeployments[:5], len(unprotectedDeployments)-5))
+			}
+		} else {
+			result.Message = fmt.Sprintf("%d/%d deployments missing PDBs", len(unprotectedDeployments), totalDeployments)
+			result.Details = append(result.Details, "Consider creating PDBs for critical workloads")
+		}
 	}
 
-	// For PDBs, we're more lenient - it's a warning, not a failure
-	pdbCoveragePercentage := (protectedDeployments * 100) / totalDeployments
-	result.Score = pdbCoveragePercentage
-
-	if len(unprotectedDeployments) == 0 {
-		result.Status = StatusPass
-		result.Message = fmt.Sprintf("All %d deployments have PDB protection", totalDeployments)
-	} else if pdbCoveragePercentage >= 50 {
+	// A drain blocker outranks coverage: full coverage is no comfort if a PDB
+	// will stop the roll. It stays WARN (non-blocking) so existing pipelines
+	// are not hard-stopped; --require-healthy escalates WARN to a hard stop.
+	if len(drainBlockers) > 0 {
 		result.Status = StatusWarn
-		result.Message = fmt.Sprintf("%d deployments missing PDBs", len(unprotectedDeployments))
-		if len(unprotectedDeployments) <= 5 {
-			result.Details = append(result.Details, fmt.Sprintf("Unprotected: %v", unprotectedDeployments))
-		} else {
-			result.Details = append(result.Details, fmt.Sprintf("Unprotected: %v... (+%d more)", unprotectedDeployments[:5], len(unprotectedDeployments)-5))
+		result.Score = min(result.Score, 50)
+		result.Message = fmt.Sprintf("%d PDB(s) allow 0 disruptions; node roll will stall on eviction", len(drainBlockers))
+		for _, b := range drainBlockers {
+			result.Details = append(result.Details, "Drain blocker: "+b)
 		}
-	} else {
-		result.Status = StatusWarn // Still warning, not fail
-		result.Message = fmt.Sprintf("%d/%d deployments missing PDBs", len(unprotectedDeployments), totalDeployments)
-		result.Details = append(result.Details, "Consider creating PDBs for critical workloads")
+		result.Details = append(result.Details, "Scale up the workload or relax minAvailable/maxUnavailable before rolling nodes")
 	}
 
 	return result

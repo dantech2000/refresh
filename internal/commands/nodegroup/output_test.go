@@ -115,7 +115,7 @@ func TestPrintScaleDownPDBImpact_AllHealthy(t *testing.T) {
 
 func TestPrintScaleDownPDBImpact_AtRisk(t *testing.T) {
 	pdbs := []health.PDBInfo{
-		{Namespace: "app", Name: "web", DisruptionsAllowed: 0, CurrentHealthy: 1, DesiredHealthy: 1},
+		{Namespace: "app", Name: "web", DisruptionsAllowed: 0, CurrentHealthy: 1, DesiredHealthy: 1, ExpectedPods: 1},
 		{Namespace: "app", Name: "api", DisruptionsAllowed: 3},
 	}
 	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
