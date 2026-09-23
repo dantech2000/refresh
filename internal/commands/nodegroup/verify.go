@@ -17,21 +17,22 @@ import (
 // left stuck.
 type pendingPodSet map[string]struct{}
 
-// snapshotPendingPods captures the set of currently-Pending pods. Returns an
-// empty set when no kube client is available or the list fails (best-effort).
-func snapshotPendingPods(ctx context.Context, k8sClient kubernetes.Interface) pendingPodSet {
-	set := pendingPodSet{}
+// snapshotPendingPods captures the set of currently-Pending pods. ok is false
+// when no kube client is available or the List call fails; callers must then
+// treat the pod check as skipped, not as "nothing pending".
+func snapshotPendingPods(ctx context.Context, k8sClient kubernetes.Interface) (set pendingPodSet, ok bool) {
 	if k8sClient == nil {
-		return set
+		return nil, false
 	}
 	pods, err := k8sClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: "status.phase=Pending"})
 	if err != nil {
-		return set
+		return nil, false
 	}
+	set = pendingPodSet{}
 	for _, p := range pods.Items {
 		set[p.Namespace+"/"+p.Name] = struct{}{}
 	}
-	return set
+	return set, true
 }
 
 // PostRollVerification is the result of verifying a completed AMI roll.
@@ -52,8 +53,10 @@ type nodegroupDescriber interface {
 // verifyPostRoll confirms each updated nodegroup returned to ACTIVE and, when a
 // kube client is available, that no pods became newly stuck Pending relative to
 // the pre-roll snapshot. Without kube access it degrades to the AWS-side
-// nodegroup-status check (mirroring how pre-flight degrades).
-func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient kubernetes.Interface, clusterName string, nodegroups []string, preroll pendingPodSet) PostRollVerification {
+// nodegroup-status check (mirroring how pre-flight degrades). prerollOK is the
+// ok result of the pre-roll snapshotPendingPods call; if either snapshot
+// failed, the pod check is reported as skipped rather than passed or failed.
+func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient kubernetes.Interface, clusterName string, nodegroups []string, preroll pendingPodSet, prerollOK bool) PostRollVerification {
 	var v PostRollVerification
 
 	for _, ng := range nodegroups {
@@ -81,7 +84,15 @@ func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient
 		return v
 	}
 
-	after := snapshotPendingPods(ctx, k8sClient)
+	if !prerollOK {
+		v.Checks = append(v.Checks, "pod verification skipped (could not list Pending pods before the roll)")
+		return v
+	}
+	after, ok := snapshotPendingPods(ctx, k8sClient)
+	if !ok {
+		v.Checks = append(v.Checks, "pod verification skipped (could not list Pending pods after the roll)")
+		return v
+	}
 	var newlyPending []string
 	for key := range after {
 		if _, existed := preroll[key]; !existed {

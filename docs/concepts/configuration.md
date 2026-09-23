@@ -50,7 +50,7 @@ These are accepted on every command:
 | Variable | Equivalent / effect |
 |---|---|
 | `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION` | Standard AWS SDK resolution |
-| `REFRESH_TIMEOUT` | Default for `--timeout` |
+| `REFRESH_TIMEOUT` | Default for `--timeout` on API/read commands (list, describe, checks). Not applied to `cluster upgrade`, `addon update`, or `nodegroup update`, whose `--timeout` bounds a long-running wait |
 | `REFRESH_MAX_CONCURRENCY` | Default for `--max-concurrency` |
 | `REFRESH_LOG_LEVEL` | Default for `--log-level` |
 | `REFRESH_EKS_REGIONS` | Region set for fleet discovery (`nodegroup update --all-clusters`) |

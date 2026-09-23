@@ -85,6 +85,11 @@ type UpdateAllOptions struct {
 	WaitTimeout     time.Duration `json:"waitTimeout"`
 	SkipAddons      []string      `json:"skipAddons,omitempty"`
 	DependencyOrder bool          `json:"dependencyOrder"` // update in dependency-safe order (vpc-cni before coredns/kube-proxy, etc.)
+	// Timeout, when > 0, is the base deadline for the run. With Wait and a
+	// WaitTimeout, the run's deadline grows by WaitTimeout per add-on (per
+	// batch when Parallel), so one overall timeout can't truncate the
+	// per-add-on waits. Zero leaves the caller's context untouched.
+	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
 // CompatibilityMatrix tracks addon version compatibility with Kubernetes versions

@@ -121,7 +121,7 @@ operation settles.
 | `--health-check` | — | — | Validate cluster health before and after scaling |
 | `--check-pdbs` | — | — | Validate Pod Disruption Budgets before scaling down |
 | `--wait` | — | — | Wait for scaling operation to complete |
-| `--op-timeout duration` | — | `5m0s` | Scaling operation timeout |
+| `--op-timeout duration` | — | `5m0s` | Scaling operation timeout for --wait (added on top of --timeout; 0 = no limit) |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--dry-run` | — | — | Preview scaling impact without executing |
 | `--help, -h` | — | — | show help |
@@ -172,7 +172,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | `--dry-run, -d` | — | — | Preview changes without executing them |
 | `--no-wait` | — | — | Don't wait for update completion (original behavior) |
 | `--quiet, -q` | — | — | Minimal output mode |
-| `--timeout, -t duration` | — | `40m0s` | Maximum time to wait for update completion |
+| `--timeout, -t duration` | — | `40m0s` | Maximum time to wait for update completion (per cluster with --all-clusters; 0 = no limit) |
 | `--poll-interval, -p duration` | — | `15s` | Polling interval for checking update status |
 | `--skip-health-check, -s` | — | — | Skip pre-flight health validation |
 | `--health-only` | — | — | Run health check only, don't update (exit code: 0=pass, 2=warn, 3=block) |

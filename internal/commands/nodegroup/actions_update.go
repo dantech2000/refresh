@@ -2,6 +2,7 @@ package nodegroup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -89,7 +90,8 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		return runFleetUpdate(ctx, cmd)
 	}
 
-	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(ctx, cmd, 60*time.Second)
+	// --timeout <= 0 means no limit, here and in the monitor (not a 60s fallback).
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, cmd.Duration("timeout"))
 	if err != nil {
 		return err
 	}
@@ -151,7 +153,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		}
 	case flags.noWait:
 		if !quiet {
-			fmt.Printf("Started %d nodegroup update(s). Use 'refresh list --cluster %s' to check status.\n",
+			fmt.Printf("Started %d nodegroup update(s). Use 'refresh nodegroup list %s' to check status.\n",
 				len(outcomes.Started), clusterName)
 		}
 	default:
@@ -171,9 +173,10 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	verify := !flags.skipVerify && !flags.noWait
 	var verifyClient kubernetes.Interface
 	var preroll pendingPodSet
+	var prerollOK bool
 	if verify {
 		verifyClient, _ = health.GetKubernetesClient()
-		preroll = snapshotPendingPods(ctx, verifyClient)
+		preroll, prerollOK = snapshotPendingPods(ctx, verifyClient)
 	}
 
 	updates, outcomes := startNodegroupUpdates(ctx, awsCfg, eksClient, clusterName, selected, flags)
@@ -213,12 +216,20 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	monErr := monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
 
 	verifyFailed := false
-	if verify && monErr == nil && len(outcomes.Started) > 0 {
-		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll)
+	if verify && shouldVerifyPostRoll(ctx, monErr) && len(outcomes.Started) > 0 {
+		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll, prerollOK)
 		outcomes.Verification = &result
 		verifyFailed = !result.OK()
 	}
 	return outcomes, verifyFailed, monErr
+}
+
+// shouldVerifyPostRoll reports whether post-roll verification can run. It is
+// skipped when monitoring failed (a Failed/Cancelled update, a timeout, or a
+// user interrupt) or ctx is done: after Ctrl+C every call would fail with
+// "context canceled" and report false issues.
+func shouldVerifyPostRoll(ctx context.Context, monErr error) bool {
+	return monErr == nil && ctx.Err() == nil
 }
 
 // printVerification renders the post-roll verification block.
@@ -241,8 +252,12 @@ func printVerification(v PostRollVerification) {
 
 // updateExit maps an update run to the exit-code contract: monitoring failures
 // propagate (exit 1), start failures yield exit 4, a successful roll whose
-// post-roll verification found issues yields exit 5, otherwise success.
+// post-roll verification found issues yields exit 5, otherwise success. A user
+// interrupt exits 1 with a hint that the EKS update keeps running.
 func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
+	if errors.Is(monErr, monitoring.ErrCancelled) {
+		return fmt.Errorf("%w; check with 'refresh nodegroup list %s'", monErr, o.Cluster)
+	}
 	if monErr != nil {
 		return monErr
 	}
@@ -317,7 +332,7 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 		return true, healthExitError(summary.Decision)
 	}
 
-	return applyHealthDecision(summary, flags)
+	return applyHealthDecision(ctx, summary, flags)
 }
 
 // healthExitError maps a health decision to the --health-only exit-code
@@ -344,7 +359,7 @@ func healthExitError(decision health.Decision) error {
 //
 // With --health-only the exit code encodes the verdict so CI can gate on it
 // without parsing output: 0 = pass, 2 = warnings, 3 = blocked.
-func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (done bool, err error) {
+func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flags updateAMIFlags) (done bool, err error) {
 	switch summary.Decision {
 	case health.DecisionBlock:
 		ui.DisplayHealthCheckComplete(summary.Decision)
@@ -378,7 +393,7 @@ func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (do
 		if !isInteractive() {
 			return true, fmt.Errorf("health checks reported warnings; re-run with --yes to proceed or --require-healthy to fail (no interactive terminal for confirmation)")
 		}
-		if !flags.quiet && !ui.PromptContinueWithWarnings(summary.Warnings) {
+		if !flags.quiet && !ui.PromptContinueWithWarnings(ctx, summary.Warnings) {
 			color.Yellow("Update cancelled by user")
 			return true, fmt.Errorf("update cancelled")
 		}
@@ -435,7 +450,7 @@ func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clust
 			return nil, fmt.Errorf("pattern %q matched %d nodegroups; re-run with --yes to update all, or a more specific name (no interactive terminal for selection)", pattern, len(matches))
 		}
 	}
-	selected, err := awsinternal.ConfirmNodegroupSelection(matches, pattern)
+	selected, err := awsinternal.ConfirmNodegroupSelection(ctx, matches, pattern)
 	if err != nil {
 		color.Red("%v", err)
 		return nil, err

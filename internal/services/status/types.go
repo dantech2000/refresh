@@ -87,6 +87,13 @@ func (c ClusterStatus) NeedsAttention() bool {
 	return c.StaleAMI.Behind > 0 || c.AddonsBehind.Behind > 0 || c.HealthIssues > 0
 }
 
+// Incomplete reports whether any data source for the cluster failed, so the
+// row cannot be trusted as current (drives the exit-code "incomplete data"
+// signal).
+func (c ClusterStatus) Incomplete() bool {
+	return len(c.Errors) > 0
+}
+
 // SupportRisk reports whether the cluster is on extended or unsupported EKS
 // (drives the exit-code "support risk" signal).
 func (c ClusterStatus) SupportRisk() bool {

@@ -1,8 +1,8 @@
 package aws
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -55,7 +55,7 @@ func ClusterName(ctx context.Context, awsCfg aws.Config, cliFlag string) (string
 	}
 
 	// Handle matches with user confirmation
-	selectedCluster, err := confirmClusterSelection(matches, pattern)
+	selectedCluster, err := confirmClusterSelection(ctx, matches, pattern)
 	if err != nil {
 		// Show available clusters for reference
 		if len(matches) == 0 {
@@ -186,19 +186,19 @@ func MatchingClusters(clusters []string, pattern string) []string {
 
 // confirmClusterSelection prompts user to confirm when multiple clusters match.
 // Returns the selected cluster or error if user cancels.
-func confirmClusterSelection(matches []string, pattern string) (string, error) {
+func confirmClusterSelection(ctx context.Context, matches []string, pattern string) (string, error) {
 	switch len(matches) {
 	case 0:
 		return "", fmt.Errorf("no clusters found matching pattern: %s", pattern)
 	case 1:
 		return matches[0], nil
 	default:
-		return promptForClusterSelection(matches, pattern)
+		return promptForClusterSelection(ctx, matches, pattern)
 	}
 }
 
 // promptForClusterSelection displays matching clusters and prompts for selection.
-func promptForClusterSelection(matches []string, pattern string) (string, error) {
+func promptForClusterSelection(ctx context.Context, matches []string, pattern string) (string, error) {
 	color.Yellow("Multiple clusters match pattern '%s':", pattern)
 	for i, cluster := range matches {
 		fmt.Printf("  %d) %s\n", i+1, cluster)
@@ -206,7 +206,10 @@ func promptForClusterSelection(matches []string, pattern string) (string, error)
 
 	color.Cyan("Select cluster number (1-%d) or press Enter to cancel: ", len(matches))
 
-	response, err := readPromptLine()
+	response, err := ui.ReadLine(ctx)
+	if errors.Is(err, ui.ErrPromptCancelled) {
+		return "", fmt.Errorf("operation cancelled")
+	}
 	if err != nil {
 		return "", fmt.Errorf("operation cancelled: failed to read input")
 	}
@@ -223,15 +226,4 @@ func promptForClusterSelection(matches []string, pattern string) (string, error)
 	}
 
 	return "", fmt.Errorf("invalid selection: %s", response)
-}
-
-// readPromptLine reads one line from stdin. Unlike fmt.Scanln, a bare Enter
-// returns an empty string instead of an error, so prompts can honor their
-// advertised "press Enter to cancel/decline" behavior.
-func readPromptLine() (string, error) {
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && line == "" {
-		return "", err
-	}
-	return strings.TrimSpace(line), nil
 }

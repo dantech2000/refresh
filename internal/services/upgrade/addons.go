@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -42,7 +43,10 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 
 		versions, err := svc.GetAvailableVersions(ctx, a.Name, targetVersion)
 		if err != nil {
-			return fmt.Errorf("addon %s: no version compatible with %s: %w", a.Name, targetVersion, err)
+			if errors.Is(err, addons.ErrNoVersionsFound) {
+				return fmt.Errorf("addon %s: no version compatible with %s: %w", a.Name, targetVersion, err)
+			}
+			return fmt.Errorf("addon %s: looking up versions compatible with %s: %w", a.Name, targetVersion, err)
 		}
 		chosen := versions[0].Version
 

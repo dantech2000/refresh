@@ -1,8 +1,7 @@
 package ui
 
 import (
-	"bufio"
-	"os"
+	"context"
 	"strings"
 
 	"github.com/fatih/color"
@@ -149,20 +148,13 @@ func GetHealthDecisionColor(decision health.Decision) func(format string, a ...a
 // The default is No: this guards a rolling update on a cluster that just
 // failed health warnings, so a bare Enter (or unreadable/closed stdin, as in
 // CI) must not silently proceed.
-func PromptContinueWithWarnings(warnings []string) bool {
+func PromptContinueWithWarnings(ctx context.Context, warnings []string) bool {
 	if len(warnings) > 0 {
 		Outf("\n%d warning(s) reported above.", len(warnings))
 	}
 	Outf("\nProceed with update? (y/N): ")
 
-	reader := bufio.NewReader(os.Stdin)
-	response, err := reader.ReadString('\n')
-	if err != nil && response == "" {
-		return false
-	}
-
-	response = strings.TrimSpace(strings.ToLower(response))
-	return response == "y" || response == "yes"
+	return Confirm(ctx)
 }
 
 // DisplayHealthCheckStart displays the start of health check process
