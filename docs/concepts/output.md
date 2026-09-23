@@ -39,17 +39,20 @@ meant for a person goes to stderr or is not printed:
   an error that names the missing flag, usually `--yes`.
 
 The exit code is the same as in the human view. When a command fails before
-it has a result (bad credentials, a blocked health gate, a missing `--yes`),
-stdout is empty and the error is on stderr.
+it has a result (bad credentials, a missing `--yes`), stdout is empty and the
+error is on stderr. A `nodegroup update` that the health gate stops is the
+exception: stdout gets the run summary with nothing started and the `health`
+verdict, the health report goes to stderr, and the error names the checks
+that blocked or warned.
 
 The documents for the mutating commands:
 
 | Command | Document on stdout |
 |---|---|
-| `nodegroup update` | The run summary: `cluster`, `started`, `skipped`, `customUnmanaged`, `failed`, and `verification` |
+| `nodegroup update` | The run summary: `cluster`, `started`, `skipped`, `customUnmanaged`, `failed`, `verification`, and `health` (the pre-flight verdict, when a check ran) |
 | `nodegroup update --dry-run` | The preview: `cluster`, `dryRun`, `force`, and one `nodegroups` entry per nodegroup with its `action` (`update`, `force-update`, `skip-updating`, `skip-latest`) |
 | `nodegroup update --health-only` | The health verdict. The exit code is `0`, `2`, or `3` |
-| `nodegroup update --all-clusters` | `clusters` (one result per cluster, or one preview with `--dry-run`), plus `discoveryErrors` and `skippedRegions`. With no clusters found, `clusters` is an empty list |
+| `nodegroup update --all-clusters` | `clusters` (one result per cluster, with its `health` verdict when a check ran, or one preview with `--dry-run`), plus `discoveryErrors` and `skippedRegions`. With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
 | `cluster upgrade --dry-run` | The plan |
 | `cluster upgrade --yes` | `{plan, report}`: the plan the run started from and what it did (`completed`, `failedAt`, `remaining`). A blocked plan prints the plan alone and exits `1` |
 
@@ -113,6 +116,11 @@ Messages that are not data go to stderr. Examples are "No nodegroups found",
 warnings, and the parts of the `cluster upgrade-check` report that are not
 insight rows (the readiness verdict, support, control plane, and version
 skew). An empty list prints the header row only.
+
+`cluster upgrade -o plain` writes one row per plan step (`HOP`, `STEP`,
+`TYPE`, `TARGET`, `VERSION`, `STATUS`, `DESCRIPTION`, `REASON`). The plan's
+summary line, its warnings, and everything after the plan (prompts,
+progress, the report) go to stderr.
 
 Skip the header with `NR>1` in awk or `tail -n +2`:
 

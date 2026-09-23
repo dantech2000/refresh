@@ -4,9 +4,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
+	"github.com/dantech2000/refresh/internal/ui"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 // These tests run cluster commands end to end against the fake AWS endpoint
@@ -95,6 +98,38 @@ func TestUpgradeMachineOutput_DryRunPrintsBarePlan(t *testing.T) {
 	}
 	if got := srv.Cluster("prod"); got.Version != "1.31" {
 		t.Errorf("dry run changed the control plane to %s", got.Version)
+	}
+}
+
+// -o plain writes only the plan's TSV rows to stdout, for --dry-run and for
+// an executed run alike; the summary line, progress, and report go to stderr.
+func TestUpgradePlainOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"dry-run", []string{"--dry-run"}},
+		{"executed", []string{"--yes", "--poll-interval", "5ms"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(func() { ui.SetPlainOutput(false); pterm.EnableColor() })
+			fakeaws.New(t, upgradeWorld())
+			args := append([]string{"upgrade", "prod", "--to", "1.32", "-o", "plain"}, tc.args...)
+			stdout, stderr, err := runCluster(t, args...)
+			if err != nil {
+				t.Fatalf("upgrade -o plain: %v\nstderr:\n%s", err, stderr)
+			}
+			rows := plaintest.Check(t, stdout, upgradePlanPlainHeaders...)
+			if len(rows) == 0 {
+				t.Fatalf("no plan rows on stdout:\n%s", stdout)
+			}
+			if !strings.Contains(stderr, "upgrade plan: prod 1.31 -> 1.32") {
+				t.Errorf("stderr missing the plan summary line; got:\n%s", stderr)
+			}
+			if tc.name == "executed" && !strings.Contains(stderr, "Upgrade complete") {
+				t.Errorf("stderr missing the completion line; got:\n%s", stderr)
+			}
+		})
 	}
 }
 

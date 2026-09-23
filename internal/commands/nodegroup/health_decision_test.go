@@ -139,14 +139,14 @@ func TestApplyHealthDecision_WarnHealthOnlyDoesNotPrompt(t *testing.T) {
 }
 
 func TestHealthExitError(t *testing.T) {
-	if err := healthExitError(health.DecisionProceed); err != nil {
+	if err := healthExitError(health.HealthSummary{Decision: health.DecisionProceed}); err != nil {
 		t.Fatalf("Proceed should exit 0 (nil error), got %v", err)
 	}
 	var coder cli.ExitCoder
-	if err := healthExitError(health.DecisionWarn); !errors.As(err, &coder) || coder.ExitCode() != 2 {
+	if err := healthExitError(health.HealthSummary{Decision: health.DecisionWarn}); !errors.As(err, &coder) || coder.ExitCode() != 2 {
 		t.Fatalf("Warn should exit 2, got %v", err)
 	}
-	if err := healthExitError(health.DecisionBlock); !errors.As(err, &coder) || coder.ExitCode() != 3 {
+	if err := healthExitError(health.HealthSummary{Decision: health.DecisionBlock}); !errors.As(err, &coder) || coder.ExitCode() != 3 {
 		t.Fatalf("Block should exit 3, got %v", err)
 	}
 }

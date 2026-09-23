@@ -157,12 +157,19 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	eksClient := eks.NewFromConfig(awsCfg)
 
 	summary, done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, nodegroupPattern, flags)
-	if summary != nil {
-		if _, eerr := runner.EncodeStdout(flags.format, summary); eerr != nil {
-			return eerr
-		}
-	}
 	if err != nil || done {
+		// -o json/yaml: --health-only prints the verdict; a run the health
+		// gate stopped prints the (empty) run summary with the verdict, so
+		// a CI consumer can see which checks stopped it.
+		if flags.machine() && summary != nil {
+			var doc any = updateDocument{updateOutcomes: updateOutcomes{Cluster: clusterName}, Health: summary}
+			if flags.healthOnly {
+				doc = summary
+			}
+			if _, eerr := runner.EncodeStdout(flags.format, doc); eerr != nil {
+				return eerr
+			}
+		}
 		return err
 	}
 
@@ -201,7 +208,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	outcomes, verifyFailed, monErr := executeUpdates(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
 
 	if flags.machine() {
-		if _, err := runner.EncodeStdout(flags.format, outcomes); err != nil {
+		if _, err := runner.EncodeStdout(flags.format, updateDocument{updateOutcomes: outcomes, Health: summary}); err != nil {
 			return err
 		}
 		return updateExit(outcomes, monErr, verifyFailed)
@@ -382,10 +389,11 @@ func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
 // preflightHealthCheck runs the pre-update health checks. Returns done=true if
 // the caller should stop here (block decision, user cancelled, or --health-only).
 //
-// With --health-only and -o json/yaml it prints nothing and returns the
-// summary for the caller to encode (the single-cluster path encodes it, the
-// fleet path collects one per cluster, so stdout gets one document per run).
-// err then carries the verdict's exit code (0/2/3). Otherwise summary is nil.
+// summary is the verdict whenever a check ran (nil when it was skipped), for
+// the -o json/yaml document: the single-cluster path encodes it, and the
+// fleet path stores it per cluster, so stdout gets one document per run.
+// With -o json/yaml the report goes to stderr (unless --quiet), and with
+// --health-only err carries the verdict's exit code (0/2/3).
 func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName, nodegroupPattern string, flags updateAMIFlags) (summary *health.HealthSummary, done bool, err error) {
 	// Only --skip-health-check and --dry-run disable the health gate. --force is
 	// deliberately NOT here: it only sets UpdateNodegroupVersion.Force (forcing
@@ -403,8 +411,10 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 		return nil, false, nil
 	}
 
-	// -o json/yaml suppresses all human chrome so stdout is pure data; with
-	// --health-only the exit code still encodes the decision (0/2/3).
+	// The human view prints the banner, spinner, and report on stdout. With
+	// -o json/yaml stdout is pure data: the report goes to stderr instead, so
+	// a CI log still shows why a run stopped. The kube-client diagnostics
+	// always go to stderr.
 	humanOutput := !flags.quiet && !flags.machine()
 
 	if humanOutput {
@@ -412,7 +422,7 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	}
 	cwClient := cloudwatch.NewFromConfig(awsCfg)
 	asgClient := autoscaling.NewFromConfig(awsCfg)
-	k8sClient, kubeSel := resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, humanOutput)
+	k8sClient, kubeSel := resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, !flags.quiet)
 	checker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
 	// Attach metrics-server (best-effort) for live CPU+memory drain headroom; the
 	// utilization check skips cleanly if it isn't installed. (REF-142)
@@ -443,27 +453,59 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 		spinner.Success("Health validation complete!")
 		ui.DisplayHealthResults(result)
 	}
+	// With --health-only the verdict is the document itself.
+	if flags.machine() && !flags.healthOnly && !flags.quiet {
+		ui.WriteHealthResults(os.Stderr, result)
+	}
 
 	if flags.machineHealthOutput() {
-		return &result, true, healthExitError(result.Decision)
+		return &result, true, healthExitError(result)
 	}
 
 	done, err = applyHealthDecision(ctx, result, flags)
-	return nil, done, err
+	return &result, done, err
 }
 
-// healthExitError maps a health decision to the --health-only exit-code
+// healthExitError maps a health verdict to the --health-only exit-code
 // contract: 0 = pass, 2 = warnings, 3 = blocked. Messages go to stderr via
 // urfave/cli, keeping stdout pure data for JSON/YAML output.
-func healthExitError(decision health.Decision) error {
-	switch decision {
+func healthExitError(summary health.HealthSummary) error {
+	switch summary.Decision {
 	case health.DecisionBlock:
-		return cli.Exit("pre-flight health checks failed", 3)
+		return cli.Exit("pre-flight health checks failed: "+healthProblems(summary), 3)
 	case health.DecisionWarn:
-		return cli.Exit("health checks completed with warnings", 2)
+		return cli.Exit("health checks completed with warnings: "+healthProblems(summary), 2)
 	default:
 		return nil
 	}
+}
+
+// healthProblems names the checks behind a verdict, for error messages and
+// notices: the blocking failures for BLOCK, else the checks that warned or
+// failed. Each is "Name: message", joined with "; ".
+func healthProblems(summary health.HealthSummary) string {
+	var out []string
+	for _, r := range summary.Results {
+		if r.Skipped {
+			continue
+		}
+		failed := r.Status == health.StatusFail
+		if summary.Decision == health.DecisionBlock && !(failed && r.IsBlocking) {
+			continue
+		}
+		if !failed && r.Status != health.StatusWarn {
+			continue
+		}
+		out = append(out, r.Name+": "+r.Message)
+	}
+	if len(out) == 0 {
+		// No per-check results: fall back to the summary's messages.
+		out = append(append(out, summary.Errors...), summary.Warnings...)
+	}
+	if len(out) == 0 {
+		return "no check details reported"
+	}
+	return strings.Join(out, "; ")
 }
 
 // applyHealthDecision interprets a health summary against the run flags. It
@@ -487,15 +529,15 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 			ui.DisplayHealthCheckComplete(summary.Decision)
 		}
 		if flags.healthOnly {
-			return true, cli.Exit("pre-flight health checks failed", 3)
+			return true, healthExitError(summary)
 		}
-		return true, fmt.Errorf("pre-flight health checks failed")
+		return true, fmt.Errorf("pre-flight health checks failed: %s", healthProblems(summary))
 	case health.DecisionWarn:
 		if flags.healthOnly {
 			if human {
 				ui.DisplayHealthCheckComplete(summary.Decision)
 			}
-			return true, cli.Exit("health checks completed with warnings", 2)
+			return true, healthExitError(summary)
 		}
 		// --require-healthy turns warnings into a hard stop (the strict-pipeline
 		// knob) instead of a prompt.
@@ -503,22 +545,22 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 			if human {
 				ui.DisplayHealthCheckComplete(summary.Decision)
 			}
-			return true, cli.Exit("health checks reported warnings and --require-healthy is set", 2)
+			return true, cli.Exit("health checks reported warnings and --require-healthy is set: "+healthProblems(summary), 2)
 		}
 		// --yes proceeds past warnings without prompting.
 		if flags.yes {
-			// Surface the auto-accepted WARN so an operator (e.g. a fleet update
-			// that auto-accepts) sees it instead of proceeding silently. With
-			// -o json/yaml it goes to stderr so stdout stays pure data.
+			// Surface the auto-accepted warnings so an operator (e.g. a fleet
+			// update that auto-accepts) sees them instead of proceeding
+			// silently. With -o json/yaml this goes to stderr.
 			if !flags.quiet {
-				flags.notice(color.FgYellow, "Health check reported warnings; proceeding")
+				flags.notice(color.FgYellow, "Health check reported warnings; proceeding: %s", healthProblems(summary))
 			}
 			return false, nil
 		}
 		// Without a TTY (CI/cron), or with -o json/yaml, and without --yes,
 		// fail fast rather than block on a prompt that can't be answered.
 		if !flags.canPrompt() {
-			return true, fmt.Errorf("health checks reported warnings; re-run with --yes to proceed or --require-healthy to fail (%s)", flags.noPromptReason())
+			return true, fmt.Errorf("health checks reported warnings (%s); re-run with --yes to proceed or --require-healthy to fail (%s)", healthProblems(summary), flags.noPromptReason())
 		}
 		if !flags.quiet && !ui.PromptContinueWithWarnings(ctx, summary.Warnings) {
 			color.Yellow("Update cancelled by user")
@@ -589,6 +631,13 @@ type updateOutcomes struct {
 	Custom       []string              `json:"customUnmanaged" yaml:"customUnmanaged"` // custom-AMI nodegroups (managed via LT)
 	Failed       []string              `json:"failed" yaml:"failed"`                   // describe or UpdateNodegroupVersion failed
 	Verification *PostRollVerification `json:"verification,omitempty" yaml:"verification,omitempty"`
+}
+
+// updateDocument is the -o json/yaml document of a single-cluster update: the
+// run summary's fields plus the pre-flight verdict when a check ran.
+type updateDocument struct {
+	updateOutcomes
+	Health *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`
 }
 
 // dryRunNodegroup is one nodegroup's previewed action in a -o json/yaml

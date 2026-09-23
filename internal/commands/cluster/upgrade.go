@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -122,11 +123,20 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	if runner.IsMachineFormat(format) {
 		return runUpgradeMachine(ctx, cmd, svc, plan, clusterName, format)
 	}
-	// Sets up -o plain; table and plain both render the plan below.
+	// Switches the UI into plain mode for -o plain.
 	if _, eerr := runner.EncodeStdout(format, plan); eerr != nil {
 		return eerr
 	}
-	renderPlan(plan)
+	// out receives everything after the plan. With -o plain, stdout is only
+	// the plan's TSV rows, so the rest (progress, prompts, the report) goes to
+	// stderr.
+	out := io.Writer(os.Stdout)
+	if ui.PlainOutput() {
+		writeUpgradePlanPlain(os.Stdout, os.Stderr, plan)
+		out = os.Stderr
+	} else {
+		renderPlan(plan)
+	}
 
 	// A plan with blockers prints and exits non-zero without mutating.
 	if plan.Blocked() {
@@ -136,14 +146,13 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 		return nil
 	}
 	if plan.PendingSteps() == 0 {
-		ui.Outln()
-		ui.Outf("Nothing to do: %s already satisfies %s.\n", clusterName, plan.TargetVersion)
+		_, _ = fmt.Fprintf(out, "\nNothing to do: %s already satisfies %s.\n", clusterName, plan.TargetVersion)
 		return nil
 	}
 
 	progress := func(format string, args ...any) {
 		if !cmd.Bool("quiet") {
-			ui.Outf("  "+format+"\n", args...)
+			_, _ = fmt.Fprintf(out, "  "+format+"\n", args...)
 		}
 	}
 
@@ -151,8 +160,9 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	// the cluster API is reachable (resolved quietly — best-effort). Falls back to
 	// text progress otherwise. Rendering stays in this view layer; the
 	// orchestrator only invokes the injected observer. (REF-126)
+	// The panel draws on stdout, so -o plain skips it.
 	var ngObserver upgrade.RollObserver
-	if !cmd.Bool("quiet") {
+	if !cmd.Bool("quiet") && !ui.PlainOutput() {
 		if kube, _ := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, "", "", false); kube != nil {
 			timeout, poll := cmd.Duration("timeout"), cmd.Duration("poll-interval")
 			ngObserver = func(octx context.Context, ng string) {
@@ -162,20 +172,18 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	opts := executeOptions(cmd)
-	opts.Confirm = func(label string) bool { return promptPhase(ctx, label) }
+	opts.Confirm = func(label string) bool { return promptPhase(ctx, out, label) }
 	opts.Progress = progress
 	opts.NodegroupObserver = ngObserver
 	report, err := svc.Execute(ctx, plan, opts)
 
-	renderReport(report)
+	renderReport(out, report)
 	if err != nil {
-		ui.Outln()
-		ui.Outf("Resume with: %s\n", color.CyanString(resumeCommand(clusterName, plan)))
+		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", color.CyanString(resumeCommand(clusterName, plan)))
 		return err
 	}
 
-	ui.Outln()
-	ui.Outf("%s\n", color.GreenString("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
+	_, _ = fmt.Fprintf(out, "\n%s\n", color.GreenString("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
 	return nil
 }
 
@@ -239,8 +247,8 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 // promptPhase asks for confirmation before a mutating phase. Bare Enter, a
 // read error, or Ctrl+C declines (safe default). Answers come from the shared
 // stdin reader, so piped input for several phases is not lost between prompts.
-func promptPhase(ctx context.Context, label string) bool {
-	fmt.Printf("\nProceed with %s? (y/N): ", label)
+func promptPhase(ctx context.Context, w io.Writer, label string) bool {
+	_, _ = fmt.Fprintf(w, "\nProceed with %s? (y/N): ", label)
 	return ui.Confirm(ctx)
 }
 
@@ -285,19 +293,19 @@ func stepMarkerAndNote(step upgrade.Step) (string, string) {
 	}
 }
 
-// renderReport prints the completed / failed-at / remaining summary.
-func renderReport(report *upgrade.Report) {
+// renderReport writes the completed / failed-at / remaining summary to w.
+func renderReport(w io.Writer, report *upgrade.Report) {
 	if report == nil {
 		return
 	}
-	ui.Outln()
+	_, _ = fmt.Fprintln(w)
 	for _, c := range report.Completed {
-		ui.Outf("%s %s\n", color.GreenString("completed:"), c)
+		_, _ = fmt.Fprintf(w, "%s %s\n", color.GreenString("completed:"), c)
 	}
 	if report.FailedAt != "" {
-		ui.Outf("%s %s\n", color.RedString("failed at:"), report.FailedAt)
+		_, _ = fmt.Fprintf(w, "%s %s\n", color.RedString("failed at:"), report.FailedAt)
 	}
 	for _, r := range report.Remaining {
-		ui.Outf("%s %s\n", color.YellowString("remaining:"), r)
+		_, _ = fmt.Fprintf(w, "%s %s\n", color.YellowString("remaining:"), r)
 	}
 }

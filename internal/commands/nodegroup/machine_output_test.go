@@ -146,21 +146,36 @@ func TestUpdateMachineOutput_HealthGateStaysOffStdout(t *testing.T) {
 	if !containsItem(doc["skipped"], "web") {
 		t.Errorf("skipped = %v, want [web]", doc["skipped"])
 	}
-	if !strings.Contains(stderr, "Health check reported warnings; proceeding") {
-		t.Errorf("stderr missing the auto-accepted warning; got:\n%s", stderr)
+	if h, ok := doc["health"].(map[string]any); !ok || h["decision"] != "WARN" {
+		t.Errorf("health = %v, want the WARN verdict in the run summary", doc["health"])
+	}
+	if !strings.Contains(stderr, "Health check reported warnings; proceeding: Node Health: Nodegroups still scaling") {
+		t.Errorf("stderr missing the auto-accepted warnings; got:\n%s", stderr)
 	}
 }
 
-// Without --yes, a warning verdict can't be confirmed with -o json: the run
-// stops with an error and stdout stays empty.
+// Without --yes, a warning verdict can't be confirmed with -o json. The run
+// stops; the error names the warning checks, stderr has the health report,
+// and stdout has the empty run summary with the verdict.
 func TestUpdateMachineOutput_HealthWarnNeedsYes(t *testing.T) {
-	fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
-	stdout, _, err := runNodegroup(t, "update", "prod", "-o", "json")
+	srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
+	stdout, stderr, err := runNodegroup(t, "update", "prod", "-o", "json")
 	if err == nil || !strings.Contains(err.Error(), "-o json does not prompt") {
 		t.Fatalf("err = %v, want a --yes hint that names -o json", err)
 	}
-	if stdout != "" {
-		t.Errorf("stdout = %q, want empty", stdout)
+	if !strings.Contains(err.Error(), "Cluster Capacity:") {
+		t.Errorf("error does not name the warning check: %v", err)
+	}
+	if !strings.Contains(stderr, "Cluster Health Assessment") {
+		t.Errorf("stderr has no health report; got:\n%s", stderr)
+	}
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	h, ok := doc["health"].(map[string]any)
+	if !ok || h["decision"] != "WARN" {
+		t.Errorf("health = %v, want a WARN verdict", doc["health"])
+	}
+	if started, _ := doc["started"].([]any); len(started) != 0 || calledPath(srv, "/update-version") {
+		t.Error("a run stopped by the health gate must not start an update")
 	}
 }
 
@@ -227,10 +242,11 @@ func TestFleetMachineOutput_DryRun(t *testing.T) {
 
 // Fleet --health-only with -o yaml collects one verdict per cluster into the
 // one fleet document instead of printing a document per cluster. The exit
-// code stays the worst per-cluster verdict.
+// code stays the worst per-cluster verdict. It changes nothing, so it needs
+// no --yes.
 func TestFleetMachineOutput_HealthOnlyCollectsVerdicts(t *testing.T) {
 	fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
-	stdout, stderr, err := runNodegroup(t, "update", "--all-clusters", "-r", "us-east-1", "--health-only", "--yes", "-o", "yaml")
+	stdout, stderr, err := runNodegroup(t, "update", "--all-clusters", "-r", "us-east-1", "--health-only", "-o", "yaml")
 	if code := exitCodeOf(err); code != 0 && code != 3 {
 		t.Fatalf("exit code = %d (err %v), want 0 or 3\nstderr:\n%s", code, err, stderr)
 	}
@@ -241,6 +257,21 @@ func TestFleetMachineOutput_HealthOnlyCollectsVerdicts(t *testing.T) {
 	}
 	if _, ok := clusters[0].(map[string]any)["health"]; !ok {
 		t.Errorf("fleet --health-only entry has no health verdict: %v", clusters[0])
+	}
+}
+
+// A fleet roll records each cluster's pre-flight verdict too, not only with
+// --health-only, so a blocked or warned cluster shows why.
+func TestFleetMachineOutput_RollRecordsHealth(t *testing.T) {
+	fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31", Status: "UPDATING"}))
+	stdout, stderr, err := runNodegroup(t, "update", "--all-clusters", "-r", "us-east-1", "--yes", "-o", "json")
+	if err != nil {
+		t.Fatalf("fleet: %v\nstderr:\n%s", err, stderr)
+	}
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	entry := doc["clusters"].([]any)[0].(map[string]any)
+	if h, ok := entry["health"].(map[string]any); !ok || h["decision"] != "WARN" {
+		t.Errorf("fleet entry health = %v, want the WARN verdict", entry["health"])
 	}
 }
 

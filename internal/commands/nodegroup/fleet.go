@@ -199,8 +199,9 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	// One confirmation for the whole batch (or --yes); without a TTY or with
-	// -o json/yaml, require --yes rather than hang.
-	if !flags.yes {
+	// -o json/yaml, require --yes rather than hang. --health-only changes
+	// nothing, so it needs no confirmation.
+	if !flags.yes && !flags.healthOnly {
 		if !flags.canPrompt() {
 			return fmt.Errorf("fleet update would modify %d cluster(s); re-run with --yes (%s)", len(targets), flags.noPromptReason())
 		}

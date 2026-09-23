@@ -27,7 +27,8 @@ type KubeRequest struct {
 	// (proxied or tunnelled API servers); a one-line note says so.
 	KubeContext string
 	// Verbose prints diagnostics for an unreachable or unconfigured cluster
-	// API. A cluster mismatch is always reported on stderr.
+	// API, on stderr like every notice here. A cluster mismatch is always
+	// reported.
 	Verbose bool
 	// SkipNote says what degrades when no client is returned, e.g.
 	// "Workload/PDB checks will be skipped."
@@ -45,9 +46,19 @@ func KubeContextFlag() *cli.StringFlag {
 
 // Seams for tests.
 var (
-	kubeWarnOut io.Writer = os.Stderr
+	// kubeWarnOut, when set, replaces stderr for the notices below.
+	kubeWarnOut io.Writer
 	probeKube             = health.ProbeConnection
 )
+
+// kubeWarn returns where kube notices go: kubeWarnOut when a test set it,
+// else os.Stderr as it is at call time.
+func kubeWarn() io.Writer {
+	if kubeWarnOut != nil {
+		return kubeWarnOut
+	}
+	return os.Stderr
+}
 
 // kubeNotices dedupes cluster-mismatch and context notices, which several
 // resolutions for the same cluster in one run would otherwise repeat. One set
@@ -86,10 +97,10 @@ func ResolveClusterKubeClient(ctx context.Context, req KubeRequest) (kubernetes.
 	target, err := health.DescribeTarget(ctx, req.API, req.Cluster, req.Region)
 	if err != nil {
 		if req.Verbose {
-			color.Yellow("Kubernetes checks unavailable: cannot verify the kubeconfig targets %s: %v",
+			_, _ = color.New(color.FgYellow).Fprintf(kubeWarn(), "Kubernetes checks unavailable: cannot verify the kubeconfig targets %s: %v\n",
 				req.Cluster, awsinternal.FormatAWSError(err, "describing cluster"))
 			if req.SkipNote != "" {
-				color.Yellow("%s", req.SkipNote)
+				_, _ = color.New(color.FgYellow).Fprintf(kubeWarn(), "%s\n", req.SkipNote)
 			}
 		}
 		return nil, health.KubeSelection{Target: target}
@@ -102,27 +113,27 @@ func ResolveClusterKubeClient(ctx context.Context, req KubeRequest) (kubernetes.
 		case errors.As(err, &mm):
 			if noticeOnce(ctx, "mismatch|"+target.Name+"|"+mm.Server) {
 				warn := color.New(color.FgYellow)
-				_, _ = warn.Fprintf(kubeWarnOut, "Warning: skipping Kubernetes checks: %v\n", mm)
+				_, _ = warn.Fprintf(kubeWarn(), "Warning: skipping Kubernetes checks: %v\n", mm)
 				if !mm.InCluster {
-					_, _ = warn.Fprintf(kubeWarnOut, "  To add a context for %s, run: %s (or pass --kube-context)\n",
+					_, _ = warn.Fprintf(kubeWarn(), "  To add a context for %s, run: %s (or pass --kube-context)\n",
 						target.Name, target.UpdateKubeconfigHint())
 				}
 				if req.SkipNote != "" {
-					_, _ = warn.Fprintf(kubeWarnOut, "  %s\n", req.SkipNote)
+					_, _ = warn.Fprintf(kubeWarn(), "  %s\n", req.SkipNote)
 				}
 			}
 		case health.IsProbeError(err):
 			if req.Verbose {
-				color.Yellow("Kubernetes API unreachable via %s: %v", sel.Diag, err)
+				_, _ = color.New(color.FgYellow).Fprintf(kubeWarn(), "Kubernetes API unreachable via %s: %v\n", sel.Diag, err)
 				if req.SkipNote != "" {
-					color.Yellow("%s", req.SkipNote)
+					_, _ = color.New(color.FgYellow).Fprintf(kubeWarn(), "%s\n", req.SkipNote)
 				}
 			}
 		default:
 			if req.Verbose {
-				color.Yellow("Kubernetes checks unavailable: %v (%s)", err, sel.Diag)
+				_, _ = color.New(color.FgYellow).Fprintf(kubeWarn(), "Kubernetes checks unavailable: %v (%s)\n", err, sel.Diag)
 				if req.SkipNote != "" {
-					color.Yellow("%s", req.SkipNote)
+					_, _ = color.New(color.FgYellow).Fprintf(kubeWarn(), "%s\n", req.SkipNote)
 				}
 			}
 		}
@@ -133,12 +144,12 @@ func ResolveClusterKubeClient(ctx context.Context, req KubeRequest) (kubernetes.
 	switch {
 	case diag.Unverified:
 		if noticeOnce(ctx, "unverified|"+target.Name+"|"+diag.Context) {
-			_, _ = fmt.Fprintf(kubeWarnOut, "Note: using kubeconfig context %q (server %s) as requested; not verified as EKS cluster %s (%s)\n",
+			_, _ = fmt.Fprintf(kubeWarn(), "Note: using kubeconfig context %q (server %s) as requested; not verified as EKS cluster %s (%s)\n",
 				diag.Context, diag.Server, target.Name, target.Endpoint)
 		}
 	case diag.SwitchedFrom != "" && req.Verbose:
 		if noticeOnce(ctx, "switch|"+target.Name+"|"+diag.Context) {
-			_, _ = fmt.Fprintf(kubeWarnOut, "Using kubeconfig context %q for %s (current context %q points at another cluster)\n",
+			_, _ = fmt.Fprintf(kubeWarn(), "Using kubeconfig context %q for %s (current context %q points at another cluster)\n",
 				diag.Context, target.Name, diag.SwitchedFrom)
 		}
 	}
