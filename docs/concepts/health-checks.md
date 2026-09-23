@@ -98,7 +98,7 @@ through PDBs.
 
 EKS does not honor PDBs when a scaling change removes nodes. The Auto Scaling
 group picks the nodes and terminates them. With `--check-pdbs`,
-`nodegroup scale` refuses a scale-down (exit `1`, before any change) when the
+`nodegroup scale` refuses a scale-down (exit `3`, before any change) when the
 removed nodes could hold more of a PDB's pods than the PDB allows. The gate
 assumes the worst case: the removed nodes are the ones that hold the most of
 the PDB's pods. The error shows the numbers for each PDB.

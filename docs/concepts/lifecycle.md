@@ -25,7 +25,9 @@ current (exit `4`).
 [`refresh cluster upgrade-check`](../commands/cluster.md#upgrade-check) answers
 "can I bump the control plane?" It combines **EKS Cluster Insights** (the
 upstream-deprecation / config checks AWS surfaces in the console) with a local
-**version-skew** analysis. It is strictly read-only.
+**version-skew** analysis. It is strictly read-only, and it works as a CI
+gate: it exits `0` when ready, `2` for warnings, and `3` when something blocks
+the upgrade (`--exit-zero` turns the gate off).
 
 ## 3. Patch — roll it, safely
 

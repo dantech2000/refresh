@@ -39,8 +39,8 @@ refresh addon list [cluster] [flags]
 If some add-ons can't be described (for example, a missing
 `eks:DescribeAddon` permission), the command prints the add-ons it did get and
 names each failed add-on on stderr. `-o json|yaml` lists them under
-`failures`. Then the command exits `1`, so a partial list never looks
-complete.
+`failures`. Then the command exits `4` (incomplete data), so a partial list
+never looks complete.
 
 !!! tip "Watch an update land"
     `refresh addon list my-cluster --watch` keeps the listing live, so you can
@@ -97,10 +97,11 @@ refresh addon update [cluster] [addon] [version] [flags]
 ```
 
 For a single add-on, pass the add-on name and an optional version (the third
-positional or `--version`, defaulting to `latest`). The command exits non-zero
-if any add-on update fails. With `--all --parallel`, an add-on that was not
-started before the deadline or Ctrl+C is reported as
-`FAILED: not attempted: <reason>`, and the command exits `1`.
+positional or `--version`, defaulting to `latest`). A failed single-add-on
+update exits `1`. With `--all`, a failed add-on update exits `4`. With
+`--all --parallel`, an add-on that was not started before the deadline or
+Ctrl+C is reported as `FAILED: not attempted: <reason>`. The command exits
+`4` after a deadline and `1` after Ctrl+C.
 
 `--all` can't be combined with an add-on name or version. The command rejects
 that combination before it makes any AWS call.
@@ -139,14 +140,15 @@ update is `Successful`, `Failed`, or `Cancelled`. Then it checks that the
 add-on reports the target version.
 
 - A `Failed` or `Cancelled` update, or an add-on at a different version,
-  gives `WAIT_FAILED` and exit code `1`. The result keeps the update ID and
+  gives `WAIT_FAILED` and exit code `1` (`4` with `--all`). The result keeps the update ID and
   puts the reason in its `error` field.
 - A throttling, server, or network error while polling is retried until
   `--wait-timeout`. A timeout error names the last poll error.
 - A permanent API error while polling (for example, a missing
   `eks:DescribeUpdate` permission) fails at once.
 - If the update lands but the post-update health check finds issues, the
-  result is `COMPLETED_WITH_ISSUES` and the command exits `2`.
+  result is `COMPLETED_WITH_ISSUES` and the command exits `5` (post-action
+  verification failed).
 
 The result is printed in every output format, also when the wait fails. See
 [exit codes](../concepts/exit-codes.md#addon-update).
