@@ -53,7 +53,7 @@ func outputNodegroupsPlain(clusterName string, items []nodegroupsvc.NodegroupSum
 			ng.Status,
 			ng.InstanceType,
 			plainVersionCell(ng),
-			ng.AMIStatus.ColorString(),
+			plainAMICell(ng),
 			nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize),
 		)
 	}
@@ -70,9 +70,26 @@ func plainVersionCell(ng nodegroupsvc.NodegroupSummary) string {
 	return orDash(ng.K8sVersion)
 }
 
+// plainAMICell is the `-o plain` AMI STATUS cell.
+func plainAMICell(ng nodegroupsvc.NodegroupSummary) string {
+	if ng.AMILookupError != "" {
+		return color.YellowString(amiLookupFailedText)
+	}
+	return ng.AMIStatus.ColorString()
+}
+
 func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed time.Duration) error {
 	ui.Outf("Nodegroup: %s\n", color.CyanString(details.Name))
 	ui.Outf("Retrieved in %s\n\n", ui.ElapsedString(elapsed))
+
+	latestAMI := details.LatestAMI
+	amiStatus := details.AMIStatus.PlainString()
+	amiStatusColor := func(string) string { return details.AMIStatus.ColorString() }
+	if details.AMILookupError != "" {
+		latestAMI = amiLookupFailedText
+		amiStatus = amiLookupFailedText
+		amiStatusColor = func(s string) string { return color.YellowString("%s", s) }
+	}
 
 	table := ui.NewDynamicTable()
 	table.AddStatus("Status", details.Status).
@@ -80,8 +97,8 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 		Add("AMI Type", details.AmiType).
 		Add("Capacity", details.CapacityType).
 		Add("Current AMI", details.CurrentAMI).
-		Add("Latest AMI", details.LatestAMI).
-		AddColored("AMI Status", details.AMIStatus.PlainString(), func(string) string { return details.AMIStatus.ColorString() }).
+		Add("Latest AMI", latestAMI).
+		AddColored("AMI Status", amiStatus, amiStatusColor).
 		Add("Scaling", fmt.Sprintf("%d desired (%d-%d)", details.Scaling.DesiredSize, details.Scaling.MinSize, details.Scaling.MaxSize))
 	table.Render()
 

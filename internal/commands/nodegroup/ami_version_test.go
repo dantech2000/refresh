@@ -13,8 +13,8 @@ import (
 // (no explicit Version) can only roll to the latest 1.31 AMI. A nodegroup
 // already on that AMI must be skipped; one on an older 1.31 AMI must not.
 func TestLatestAMISkipPredicate_UsesNodegroupVersion(t *testing.T) {
-	latest := awsinternal.NewLatestAMICache(func(_ context.Context, v string, _ ekstypes.AMITypes) string {
-		return map[string]string{"1.31": "ami-131-latest", "1.32": "ami-132-latest"}[v]
+	latest := awsinternal.NewLatestAMICache(func(_ context.Context, v string, _ ekstypes.AMITypes) (string, error) {
+		return map[string]string{"1.31": "ami-131-latest", "1.32": "ami-132-latest"}[v], nil
 	})
 	current := map[string]string{
 		"ng-latest":     "ami-131-latest",

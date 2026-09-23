@@ -24,9 +24,9 @@ func newAMIVersionTestService(api EKSAPI, currentByNG map[string]string, lookups
 	svc.currentAMIFn = func(_ context.Context, ng *ekstypes.Nodegroup) string {
 		return currentByNG[aws.ToString(ng.NodegroupName)]
 	}
-	svc.latestAMIFn = func(_ context.Context, v string, _ ekstypes.AMITypes) string {
+	svc.latestAMIFn = func(_ context.Context, v string, _ ekstypes.AMITypes) (string, error) {
 		lookups.Add(1)
-		return latestAMIByVersion[v]
+		return latestAMIByVersion[v], nil
 	}
 	return svc
 }

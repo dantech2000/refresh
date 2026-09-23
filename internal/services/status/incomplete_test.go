@@ -232,3 +232,44 @@ func TestAssembleCluster_DescribeAddonFailure(t *testing.T) {
 		t.Error("a failed DescribeAddon must not flag the cluster as stale")
 	}
 }
+
+// amiLookupFailingNodegroups mimics nodegroup.ListWithFailures when the
+// latest-AMI SSM lookup is denied: every nodegroup is summarized with an
+// Unknown AMI status and also reported as a failure.
+type amiLookupFailingNodegroups struct{}
+
+func (amiLookupFailingNodegroups) ListWithFailures(context.Context, string, nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
+	const reason = "reading SSM parameter /aws/service/eks/optimized-ami/1.32/...: AccessDeniedException"
+	return []nodegroup.NodegroupSummary{
+			{Name: "ng-a", AMIStatus: types.AMIUnknown, AMILookupError: reason},
+			{Name: "ng-b", AMIStatus: types.AMIUnknown, AMILookupError: reason},
+		}, []string{
+			"ng-a: latest AMI lookup failed: " + reason,
+			"ng-b: latest AMI lookup failed: " + reason,
+		}, nil
+}
+
+// A failed latest-AMI lookup must make the row incomplete (exit 4) instead of
+// reading as "0 stale", and must not double-count the nodegroups.
+func TestAssembleCluster_LatestAMILookupFailureMarksIncomplete(t *testing.T) {
+	api := mocks.NewEKSAPI().WithCluster("prod", "1.32").Build()
+	api.ListClustersFn = listClusters("prod")
+	svc := newTestService(nil, nil, &fakeAddons{})
+	svc.clusterAPI = api
+	svc.nodegroups = amiLookupFailingNodegroups{}
+
+	statuses, err := svc.ListClusterStatuses(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c := statuses[0]
+	if !c.Incomplete() || !strings.Contains(strings.Join(c.Errors, ";"), "latest AMI lookup failed") {
+		t.Errorf("want an incomplete row naming the AMI lookup, got %v", c.Errors)
+	}
+	if c.NodegroupCount != 2 {
+		t.Errorf("NodegroupCount = %d, want 2 (no double count)", c.NodegroupCount)
+	}
+	if c.StaleAMI.Behind != 0 || c.StaleAMI.Total != 2 {
+		t.Errorf("StaleAMI = %+v, want 0 behind of 2", c.StaleAMI)
+	}
+}

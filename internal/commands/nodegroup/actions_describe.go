@@ -56,7 +56,14 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if handled, err := runner.EncodeStdout(cmd.String("format"), details); handled {
+		if err != nil {
+			return err
+		}
+	} else if err := outputNodegroupDetailsTable(details, time.Since(start)); err != nil {
 		return err
 	}
-	return outputNodegroupDetailsTable(details, time.Since(start))
+	if lerr := details.LatestAMILookupErr(); lerr != nil {
+		warnAMILookup(warnOut, 1, lerr)
+	}
+	return nil
 }

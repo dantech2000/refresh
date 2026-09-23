@@ -2,6 +2,7 @@ package addons
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,62 @@ func TestUpdateAllBudget(t *testing.T) {
 				t.Errorf("updateAllBudget = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// Regression: with --parallel, when the UpdateAll deadline fires before every
+// add-on was dispatched, the undispatched add-ons must still come back as
+// named FAILED rows (never zero-valued blank rows).
+func TestUpdateAll_ParallelDeadlineFillsUndispatched(t *testing.T) {
+	names := []string{"a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"}
+	b := mocks.NewEKSAPI().WithCluster("prod", "1.32")
+	for _, n := range names {
+		b = b.WithAddon(n, "v1.0.0", ekstypes.AddonStatusActive).
+			WithAddonVersions(n, []string{"v1.1.0"}, "1.32")
+	}
+	m := b.Build()
+	// UpdateAddon blocks until the run's deadline, then fails the way the SDK
+	// does when its context ends.
+	m.UpdateAddonFn = func(ctx context.Context, _ *eks.UpdateAddonInput, _ ...func(*eks.Options)) (*eks.UpdateAddonOutput, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	svc := NewService(m, logger())
+	results, err := svc.UpdateAll(context.Background(), "prod", UpdateAllOptions{
+		Parallel: true,
+		Timeout:  200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAll = %v", err)
+	}
+	if len(results) != len(names) {
+		t.Fatalf("results = %d, want %d", len(results), len(names))
+	}
+	seen := map[string]bool{}
+	notAttempted := 0
+	for i, r := range results {
+		if r.AddonName == "" {
+			t.Errorf("result %d is a blank row: %+v", i, r)
+			continue
+		}
+		seen[r.AddonName] = true
+		if !strings.HasPrefix(r.Status, "FAILED") {
+			t.Errorf("%s: Status = %q, want FAILED", r.AddonName, r.Status)
+		}
+		if r.PreviousVersion != "v1.0.0" {
+			t.Errorf("%s: PreviousVersion = %q, want v1.0.0", r.AddonName, r.PreviousVersion)
+		}
+		if strings.Contains(r.Status, "not attempted") {
+			notAttempted++
+		}
+	}
+	if len(seen) != len(names) {
+		t.Errorf("distinct add-ons = %d, want %d", len(seen), len(names))
+	}
+	// Only maxParallelAddonUpdates can be in flight before the deadline.
+	if want := len(names) - maxParallelAddonUpdates; notAttempted != want {
+		t.Errorf("not attempted = %d, want %d", notAttempted, want)
 	}
 }
 
