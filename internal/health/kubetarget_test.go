@@ -204,6 +204,55 @@ func TestConnect_ExplicitContext(t *testing.T) {
 	}
 }
 
+func TestConnect_KubeconfigEnvList(t *testing.T) {
+	// $KUBECONFIG lists several files; the prod context is only in the first,
+	// and one entry does not exist. client-go merges the files that exist.
+	prodOnly := `apiVersion: v1
+kind: Config
+current-context: prod
+clusters:
+- name: prod
+  cluster:
+    server: ` + prodEndpoint + `
+contexts:
+- name: prod
+  context:
+    cluster: prod
+    user: u
+users:
+- name: u
+  user: {}
+`
+	stagingOnly := strings.NewReplacer("prod", "staging", prodEndpoint, stagingEndpoint).Replace(prodOnly)
+	a := writeKubeconfig(t, prodOnly)
+	b := writeKubeconfig(t, stagingOnly)
+	missing := filepath.Join(t.TempDir(), "missing")
+	list := strings.Join([]string{missing, a, b}, string(os.PathListSeparator))
+	t.Setenv("KUBECONFIG", list)
+
+	_, sel, err := connect(t, "", "", prodTarget, nil)
+	if err != nil {
+		t.Fatalf("Connect() with a $KUBECONFIG list: %v", err)
+	}
+	if sel.Diag.Source != "KUBECONFIG" || sel.Diag.Path != list || sel.Diag.Context != "prod" {
+		t.Errorf("diag = %+v, want source KUBECONFIG, the whole list, context prod", sel.Diag)
+	}
+	if !SameClusterEndpoint(sel.config.Host, prodEndpoint) {
+		t.Errorf("selected host = %q, want the prod endpoint", sel.config.Host)
+	}
+
+	// The context in the second file is found too.
+	_, sel, err = connect(t, "", "", stagingTarget, nil)
+	if err != nil || sel.Diag.Context != "staging" || sel.Diag.SwitchedFrom != "prod" {
+		t.Errorf("staging from the second file: diag = %+v err = %v", sel.Diag, err)
+	}
+
+	// BuildKubeClient reads the same list.
+	if _, diag, err := BuildKubeClient(""); err != nil || diag.Context != "prod" {
+		t.Errorf("BuildKubeClient() with a $KUBECONFIG list: diag = %+v err = %v", diag, err)
+	}
+}
+
 func TestConnect_InCluster(t *testing.T) {
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "missing"))
 	prev := inClusterConfig

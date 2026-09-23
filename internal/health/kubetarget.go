@@ -202,7 +202,7 @@ func targetCandidates(kubeconfigPath, kubeContext string, target TargetCluster) 
 		return nil, diag, &ClusterMismatchError{Target: target, Server: icCfg.Host, InCluster: true}
 	}
 
-	rules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: path}
+	rules := kubeconfigRules(path, source)
 	raw, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{}).RawConfig()
 	base := KubeDiag{Source: source, Path: path}
 	if err != nil {
