@@ -96,13 +96,17 @@ func scaleCommand() *cli.Command {
 		Description: `Change a managed nodegroup's desired/min/max size. Any subset of
 --desired/--min/--max may be set; unspecified bounds are left unchanged.
 
---check-pdbs validates Pod Disruption Budgets before scaling down so you don't
-strand workloads; --health-check validates cluster health before and after;
---dry-run previews the impact without executing; --wait blocks until the
-operation settles.
+--check-pdbs refuses a scale-down (exit 1, before any change) when a Pod
+Disruption Budget that allows 0 disruptions covers pods on the nodegroup's
+nodes. EKS does not honor PDBs when a scaling change removes nodes, so those
+pods would go down. --force scales down anyway and prints the blockers as a
+warning. --health-check validates cluster health before and after; --dry-run
+previews the impact (and the PDB verdict) without executing; --wait blocks
+until the operation settles.
 
   refresh nodegroup scale my-cluster -n ng-default --desired 5
-  refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait`,
+  refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
+  refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force`,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
@@ -111,7 +115,8 @@ operation settles.
 			&cli.IntFlag{Name: "min", Usage: "Minimum node count"},
 			&cli.IntFlag{Name: "max", Usage: "Maximum node count"},
 			&cli.BoolFlag{Name: "health-check", Usage: "Validate cluster health before and after scaling"},
-			&cli.BoolFlag{Name: "check-pdbs", Usage: "Validate Pod Disruption Budgets before scaling down"},
+			&cli.BoolFlag{Name: "check-pdbs", Usage: "Refuse a scale-down when a Pod Disruption Budget allowing 0 disruptions covers pods on the nodegroup's nodes"},
+			&cli.BoolFlag{Name: "force", Usage: "With --check-pdbs, scale down even if PDBs would block it (the blockers are printed as a warning)"},
 			&cli.BoolFlag{Name: "wait", Usage: "Wait for scaling operation to complete"},
 			&cli.DurationFlag{Name: "op-timeout", Usage: "Scaling operation timeout for --wait (added on top of --timeout; 0 = no limit)", Value: 5 * time.Minute},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config)"},

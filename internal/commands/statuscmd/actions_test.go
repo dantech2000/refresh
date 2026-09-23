@@ -143,7 +143,7 @@ func TestGatherFleet_FailedRegionIsIncomplete(t *testing.T) {
 		}}}
 	})
 
-	sweep := gatherFleet(context.Background(), aws.Config{}, []string{"us-east-1", "eu-west-1"}, statussvc.ListOptions{}, 2, false)
+	sweep := gatherFleet(context.Background(), aws.Config{}, []string{"us-east-1", "eu-west-1"}, statussvc.ListOptions{}, false)
 	statuses, errs := sweep.statuses, sweep.errs
 	if len(statuses) != 1 || len(errs) != 1 {
 		t.Fatalf("got %d statuses / %d region errors, want 1 / 1", len(statuses), len(errs))
@@ -162,7 +162,7 @@ func TestGatherFleet_KeepsPartialRowsOnError(t *testing.T) {
 			err:      context.DeadlineExceeded,
 		}
 	})
-	sweep := gatherFleet(context.Background(), aws.Config{}, []string{"us-east-1"}, statussvc.ListOptions{}, 1, false)
+	sweep := gatherFleet(context.Background(), aws.Config{}, []string{"us-east-1"}, statussvc.ListOptions{}, false)
 	statuses, errs := sweep.statuses, sweep.errs
 	if len(statuses) != 1 || statuses[0].Name != "late" {
 		t.Fatalf("partial rows dropped: %+v", statuses)
@@ -204,7 +204,7 @@ func deniedFleet(t *testing.T) {
 func TestGatherFleet_DefaultSweepSkipsInaccessibleRegions(t *testing.T) {
 	deniedFleet(t)
 	regions := []string{"us-east-1", "sa-east-1", "ap-south-1", "eu-west-1"}
-	sweep := gatherFleet(context.Background(), aws.Config{}, regions, statussvc.ListOptions{}, 4, true)
+	sweep := gatherFleet(context.Background(), aws.Config{}, regions, statussvc.ListOptions{}, true)
 
 	if strings.Join(sweep.skipped, ",") != "ap-south-1,sa-east-1" {
 		t.Errorf("skipped = %v, want ap-south-1,sa-east-1", sweep.skipped)
@@ -233,7 +233,7 @@ func TestGatherFleet_DefaultSweepSkipsInaccessibleRegions(t *testing.T) {
 	if got := exitCode(exitForStatuses(sweep.statuses, len(sweep.errs))); got != 4 {
 		t.Errorf("exit = %d, want 4 for the throttled region", got)
 	}
-	clean := gatherFleet(context.Background(), aws.Config{}, regions[:3], statussvc.ListOptions{}, 3, true)
+	clean := gatherFleet(context.Background(), aws.Config{}, regions[:3], statussvc.ListOptions{}, true)
 	if len(clean.errs) != 0 || exitCode(exitForStatuses(clean.statuses, len(clean.errs))) != 0 {
 		t.Errorf("skipped regions alone must not fail the run: errs = %v", clean.errs)
 	}
@@ -244,7 +244,7 @@ func TestGatherFleet_DefaultSweepSkipsInaccessibleRegions(t *testing.T) {
 func TestGatherFleet_ExplicitRegionsKeepFailures(t *testing.T) {
 	deniedFleet(t)
 	regions := []string{"us-east-1", "sa-east-1", "ap-south-1"}
-	sweep := gatherFleet(context.Background(), aws.Config{}, regions, statussvc.ListOptions{}, 3, false)
+	sweep := gatherFleet(context.Background(), aws.Config{}, regions, statussvc.ListOptions{}, false)
 	if len(sweep.skipped) != 0 || len(sweep.errs) != 2 {
 		t.Fatalf("skipped = %v, errs = %v; want 0 skipped, 2 failed", sweep.skipped, sweep.errs)
 	}

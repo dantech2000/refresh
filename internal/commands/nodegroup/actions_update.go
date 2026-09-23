@@ -520,12 +520,12 @@ func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clust
 // updateOutcomes records the per-nodegroup disposition of an update run, used
 // for the JSON summary (-o json) and the exit-code contract.
 type updateOutcomes struct {
-	Cluster      string                `json:"cluster"`
-	Started      []string              `json:"started"`
-	Skipped      []string              `json:"skipped"`         // already on latest, or already updating
-	Custom       []string              `json:"customUnmanaged"` // custom-AMI nodegroups (managed via LT)
-	Failed       []string              `json:"failed"`          // describe or UpdateNodegroupVersion failed
-	Verification *PostRollVerification `json:"verification,omitempty"`
+	Cluster      string                `json:"cluster" yaml:"cluster"`
+	Started      []string              `json:"started" yaml:"started"`
+	Skipped      []string              `json:"skipped" yaml:"skipped"`                 // already on latest, or already updating
+	Custom       []string              `json:"customUnmanaged" yaml:"customUnmanaged"` // custom-AMI nodegroups (managed via LT)
+	Failed       []string              `json:"failed" yaml:"failed"`                   // describe or UpdateNodegroupVersion failed
+	Verification *PostRollVerification `json:"verification,omitempty" yaml:"verification,omitempty"`
 }
 
 // startNodegroupUpdates starts a version update, through the nodegroup

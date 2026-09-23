@@ -10,113 +10,113 @@ import (
 // ClusterDetails contains comprehensive cluster information
 type ClusterDetails struct {
 	// Basic cluster info
-	Name            string    `json:"name"`
-	Status          string    `json:"status"`
-	Version         string    `json:"version"`
-	PlatformVersion string    `json:"platformVersion"`
-	Endpoint        string    `json:"endpoint"`
-	CreatedAt       time.Time `json:"createdAt"`
-	Region          string    `json:"region"`
+	Name            string    `json:"name" yaml:"name"`
+	Status          string    `json:"status" yaml:"status"`
+	Version         string    `json:"version" yaml:"version"`
+	PlatformVersion string    `json:"platformVersion" yaml:"platformVersion"`
+	Endpoint        string    `json:"endpoint" yaml:"endpoint"`
+	CreatedAt       time.Time `json:"createdAt" yaml:"createdAt"`
+	Region          string    `json:"region" yaml:"region"`
 
 	// Support is the EKS version support posture (tier + days remaining),
 	// resolved via the shared status resolver. Populated by the command layer.
-	Support *status.SupportPosture `json:"support,omitempty"`
+	Support *status.SupportPosture `json:"support,omitempty" yaml:"support,omitempty"`
 
 	// Health information (integration with existing health framework)
-	Health *health.HealthSummary `json:"health,omitempty"`
+	Health *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`
 
 	// HealthIssues are AWS-reported control-plane health issues (DescribeCluster's
 	// Health.Issues) — degraded resources, IAM/permission failures, etc. Distinct
 	// from the computed Health summary above. Always populated when present, even
 	// without ShowHealth.
-	HealthIssues []HealthIssue `json:"healthIssues,omitempty"`
+	HealthIssues []HealthIssue `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
 
 	// Networking details
-	Networking NetworkingInfo `json:"networking"`
+	Networking NetworkingInfo `json:"networking" yaml:"networking"`
 
 	// Security configuration
-	Security SecurityInfo `json:"security"`
+	Security SecurityInfo `json:"security" yaml:"security"`
 
 	// Add-ons and nodegroups
-	Addons     []AddonInfo        `json:"addons"`
-	Nodegroups []NodegroupSummary `json:"nodegroups"`
+	Addons     []AddonInfo        `json:"addons" yaml:"addons"`
+	Nodegroups []NodegroupSummary `json:"nodegroups" yaml:"nodegroups"`
 
 	// Operational metadata
-	Tags map[string]string `json:"tags"`
+	Tags map[string]string `json:"tags" yaml:"tags"`
 }
 
 // ClusterSummary is used for list operations
 type ClusterSummary struct {
-	Name      string                `json:"name"`
-	Status    string                `json:"status"`
-	Version   string                `json:"version"`
-	Region    string                `json:"region"`
-	Health    *health.HealthSummary `json:"health,omitempty"`
-	NodeCount NodeCountInfo         `json:"nodeCount"`
-	CreatedAt time.Time             `json:"createdAt"`
-	Tags      map[string]string     `json:"tags,omitempty"`
+	Name      string                `json:"name" yaml:"name"`
+	Status    string                `json:"status" yaml:"status"`
+	Version   string                `json:"version" yaml:"version"`
+	Region    string                `json:"region" yaml:"region"`
+	Health    *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`
+	NodeCount NodeCountInfo         `json:"nodeCount" yaml:"nodeCount"`
+	CreatedAt time.Time             `json:"createdAt" yaml:"createdAt"`
+	Tags      map[string]string     `json:"tags,omitempty" yaml:"tags,omitempty"`
 }
 
 // HealthIssue is one AWS-reported health issue on a cluster/nodegroup/addon —
 // the common shape behind EKS's ClusterIssue / NodegroupIssue / AddonIssue.
 type HealthIssue struct {
-	Code        string   `json:"code"`
-	Message     string   `json:"message"`
-	ResourceIds []string `json:"resourceIds,omitempty"`
+	Code        string   `json:"code" yaml:"code"`
+	Message     string   `json:"message" yaml:"message"`
+	ResourceIds []string `json:"resourceIds,omitempty" yaml:"resourceIds,omitempty"`
 }
 
 // NetworkingInfo contains VPC and networking details
 type NetworkingInfo struct {
-	VpcId            string             `json:"vpcId"`
-	VpcCidr          string             `json:"vpcCidr,omitempty"`
-	SubnetIds        []string           `json:"subnetIds"`
-	SecurityGroupIds []string           `json:"securityGroupIds"`
-	EndpointAccess   EndpointAccessInfo `json:"endpointAccess"`
+	VpcId            string             `json:"vpcId" yaml:"vpcId"`
+	VpcCidr          string             `json:"vpcCidr,omitempty" yaml:"vpcCidr,omitempty"`
+	SubnetIds        []string           `json:"subnetIds" yaml:"subnetIds"`
+	SecurityGroupIds []string           `json:"securityGroupIds" yaml:"securityGroupIds"`
+	EndpointAccess   EndpointAccessInfo `json:"endpointAccess" yaml:"endpointAccess"`
 }
 
 // EndpointAccessInfo describes cluster endpoint configuration
 type EndpointAccessInfo struct {
-	PrivateAccess bool     `json:"privateAccess"`
-	PublicAccess  bool     `json:"publicAccess"`
-	PublicCidrs   []string `json:"publicCidrs,omitempty"`
+	PrivateAccess bool     `json:"privateAccess" yaml:"privateAccess"`
+	PublicAccess  bool     `json:"publicAccess" yaml:"publicAccess"`
+	PublicCidrs   []string `json:"publicCidrs,omitempty" yaml:"publicCidrs,omitempty"`
 }
 
 // SecurityInfo contains cluster security configuration
 type SecurityInfo struct {
-	EncryptionEnabled  bool     `json:"encryptionEnabled"`
-	KmsKeyArn          string   `json:"kmsKeyArn,omitempty"`
-	ServiceRoleArn     string   `json:"serviceRoleArn"`
-	LoggingEnabled     []string `json:"loggingEnabled"`
-	DeletionProtection bool     `json:"deletionProtection"`
+	EncryptionEnabled  bool     `json:"encryptionEnabled" yaml:"encryptionEnabled"`
+	KmsKeyArn          string   `json:"kmsKeyArn,omitempty" yaml:"kmsKeyArn,omitempty"`
+	ServiceRoleArn     string   `json:"serviceRoleArn" yaml:"serviceRoleArn"`
+	LoggingEnabled     []string `json:"loggingEnabled" yaml:"loggingEnabled"`
+	DeletionProtection bool     `json:"deletionProtection" yaml:"deletionProtection"`
 }
 
 // AddonInfo contains EKS add-on information
 type AddonInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Status  string `json:"status"`
-	Health  string `json:"health,omitempty"`
+	Name    string `json:"name" yaml:"name"`
+	Version string `json:"version" yaml:"version"`
+	Status  string `json:"status" yaml:"status"`
+	Health  string `json:"health,omitempty" yaml:"health,omitempty"`
 }
 
 // NodegroupSummary contains basic nodegroup information
 type NodegroupSummary struct {
-	Name         string `json:"name"`
-	Status       string `json:"status"`
-	InstanceType string `json:"instanceType"`
-	DesiredSize  int32  `json:"desiredSize"`
+	Name         string `json:"name" yaml:"name"`
+	Status       string `json:"status" yaml:"status"`
+	InstanceType string `json:"instanceType" yaml:"instanceType"`
+	DesiredSize  int32  `json:"desiredSize" yaml:"desiredSize"`
 	// ReadyNodes is valid only when ReadyKnown is true (a measured Kubernetes
 	// Ready=True count). Otherwise readiness was not measured. (REF-130)
-	ReadyNodes int32 `json:"readyNodes"`
-	ReadyKnown bool  `json:"readyKnown"`
+	ReadyNodes int32 `json:"readyNodes" yaml:"readyNodes"`
+	ReadyKnown bool  `json:"readyKnown" yaml:"readyKnown"`
 }
 
 // NodeCountInfo aggregates node information across nodegroups. Ready is a
 // measured count only when ReadyKnown is true; otherwise only Total (desired
 // capacity) is meaningful. (REF-130)
 type NodeCountInfo struct {
-	Ready      int32 `json:"ready"`
-	Total      int32 `json:"total"`
-	ReadyKnown bool  `json:"readyKnown"`
+	Ready      int32 `json:"ready" yaml:"ready"`
+	Total      int32 `json:"total" yaml:"total"`
+	ReadyKnown bool  `json:"readyKnown" yaml:"readyKnown"`
 }
 
 // DescribeOptions controls what information to include in describe operations

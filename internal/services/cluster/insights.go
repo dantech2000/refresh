@@ -49,7 +49,7 @@ type InsightSummary struct {
 
 // InsightDetail is the DescribeInsight detail view (recommendation + resources).
 type InsightDetail struct {
-	InsightSummary
+	InsightSummary `yaml:",inline"`
 	Recommendation string              `json:"recommendation,omitempty" yaml:"recommendation,omitempty"`
 	Resources      []string            `json:"resources,omitempty" yaml:"resources,omitempty"`
 	AdditionalInfo map[string]string   `json:"additionalInfo,omitempty" yaml:"additionalInfo,omitempty"`

@@ -119,15 +119,19 @@ See [`addon update`](../commands/addon.md#update).
 
 ## Safe scale-down
 
-Scaling down can strand pods behind a PodDisruptionBudget. Preview the exact PDBs
-that would constrain the operation before touching anything.
+EKS does not honor PodDisruptionBudgets when a scaling change removes nodes: it
+terminates them and their pods go down. `--check-pdbs` refuses the scale-down
+if a PDB that allows 0 disruptions covers pods on the nodegroup's nodes.
 
 ```bash
-# Preview the constraining PDBs (no changes)
+# Preview the gate's verdict and the blocking PDBs (no changes)
 refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --dry-run
 
-# Scale down for real, gated on PDBs, waiting for it to settle
+# Scale down for real, refused if a PDB blocks it, waiting for it to settle
 refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --wait
+
+# Accept the disruption and scale down anyway
+refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --force
 ```
 
 See [`nodegroup scale`](../commands/nodegroup.md#scale).
