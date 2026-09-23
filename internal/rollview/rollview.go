@@ -199,23 +199,40 @@ func runRoll(ctx context.Context, th *render.Theme, w io.Writer, obs noderoll.Ob
 	tr := noderoll.NewTracker()
 	lr := th.NewLiveRegion(w)
 	frame := 0
+	var last []string
 	return lr.Run(ctx, interval, func() ([]string, bool) {
 		snap, err := obs.Snapshot(ctx)
+		if err != nil && ctx.Err() != nil && last != nil {
+			// Stopped mid-read (the EKS update finished): keep the last good
+			// frame instead of painting a spurious "context canceled" error.
+			return last, true
+		}
 		if err != nil {
 			return []string{th.Token(render.Fail, "observer error: "+err.Error())}, true
 		}
 		tr.Observe(snap)
 		frame++
 		m.Frame = frame
-		return rollPanelLines(th, snap, tr.Recent(6), m), done(snap)
+		last = rollPanelLines(th, snap, tr.Recent(6), m)
+		return last, done(snap)
 	})
 }
 
-// rollComplete reports whether every node is the desired count, Ready, and on
-// the target AMI.
+// rollComplete reports whether the desired count of nodes is Ready on the
+// target AMI, nothing is draining or joining, and no old (baseline) node
+// remains. With surge, enough new nodes can be Ready while every old node is
+// still serving, so ReadyTarget alone is not enough.
 func rollComplete(desired int) func(noderoll.Snapshot) bool {
 	return func(s noderoll.Snapshot) bool {
-		return s.Total > 0 && s.ReadyTarget >= desired && s.Draining == 0 && s.Joining == 0
+		if s.Total == 0 || s.ReadyTarget < desired || s.Draining != 0 || s.Joining != 0 {
+			return false
+		}
+		for _, n := range s.Nodes {
+			if !n.OnTarget {
+				return false
+			}
+		}
+		return true
 	}
 }
 
@@ -240,9 +257,12 @@ func SimulatedRoll(ctx context.Context, nodegroup string) error {
 
 // LiveRollForUpdate renders the live per-node roll panel for a real update by
 // observing live Kubernetes state until every roll-start node is replaced
-// (rollComplete) or the timeout fires. Purely visual and best-effort: it never
-// returns an error to the caller, so it cannot affect the update or its exit
-// code — EKS DescribeUpdate remains authoritative. Old-vs-new is determined by a
+// (rollComplete), ctx is cancelled, or the timeout fires. Callers run it
+// concurrently with the EKS DescribeUpdate wait and cancel ctx once the update
+// is terminal (see common.RunAlongside), so a failed roll that never converges
+// stops the panel promptly. Purely visual and best-effort: it never returns an
+// error, so it cannot affect the update or its exit code — EKS DescribeUpdate
+// remains authoritative. Old-vs-new is determined by a
 // roll-start baseline (no need to know the target AMI ID up front).
 func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup string, timeout, pollInterval time.Duration) {
 	if kube == nil {

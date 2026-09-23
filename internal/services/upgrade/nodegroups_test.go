@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -246,6 +248,53 @@ func TestUpgradeNodegroups_InvokesObserverPerRoll(t *testing.T) {
 	}
 	if len(observed) != 2 || observed[0] != "workers-a" || observed[1] != "workers-c" {
 		t.Fatalf("observer calls = %v, want [workers-a workers-c] (only rolled nodegroups, in order)", observed)
+	}
+}
+
+// A failed roll never converges, so a live observer would never finish on its
+// own. The DescribeUpdate wait must stay authoritative: once EKS reports
+// FAILED, the observer is cancelled and joined, and the AWS error comes back
+// promptly instead of after the full --timeout.
+func TestUpgradeNodegroups_FailedRollStopsObserver(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
+		Build()
+	_ = captureNodegroupRolls(m)
+	var polls atomic.Int32
+	m.DescribeUpdateFn = func(_ context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+		u := &ekstypes.Update{Id: in.UpdateId, Status: ekstypes.UpdateStatusInProgress}
+		if polls.Add(1) >= 3 {
+			u.Status = ekstypes.UpdateStatusFailed
+			u.Errors = []ekstypes.ErrorDetail{{
+				ErrorCode:    ekstypes.ErrorCodePodEvictionFailure,
+				ErrorMessage: aws.String("Reached max retries while trying to evict pods from nodes"),
+			}}
+		}
+		return &eks.DescribeUpdateOutput{Update: u}, nil
+	}
+
+	var started, stopped atomic.Bool
+	observer := func(ctx context.Context, _ string) {
+		started.Store(true)
+		<-ctx.Done() // a panel whose roll never completes
+		stopped.Store(true)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := newTestService(m).UpgradeNodegroups(ctx, "prod-east", "1.32",
+		NodegroupRollOptions{Observer: observer}, nil)
+
+	if err == nil || !strings.Contains(err.Error(), "failed") || !strings.Contains(err.Error(), "evict pods") {
+		t.Fatalf("err = %v, want the FAILED status with the AWS error", err)
+	}
+	if !started.Load() || !stopped.Load() {
+		t.Fatalf("observer started=%v stopped=%v; want it run and joined before return", started.Load(), stopped.Load())
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("UpgradeNodegroups took %v; observer blocked the EKS wait", elapsed)
 	}
 }
 

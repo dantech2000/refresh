@@ -195,6 +195,29 @@ func TestDisplayCompletionSummary_AnyFailedReturnsError(t *testing.T) {
 	}
 }
 
+// The returned error must carry the nodegroup and AWS error, since the live
+// roll panel suppresses the monitor's own output while the roll runs.
+func TestDisplayCompletionSummary_FailedErrorIncludesAWSMessage(t *testing.T) {
+	monitor := testMonitorWithUpdates(ekstypes.UpdateStatusFailed)
+	monitor.Updates[0].ErrorMessage = "PodEvictionFailure: Reached max retries"
+	err := DisplayCompletionSummary(monitor, refreshTypes.MonitorConfig{Quiet: true})
+	if err == nil || !strings.Contains(err.Error(), "ng: PodEvictionFailure: Reached max retries") {
+		t.Fatalf("err = %v, want it to name the nodegroup and AWS error", err)
+	}
+}
+
+func TestAllComplete(t *testing.T) {
+	if AllComplete(testMonitorWithUpdates()) {
+		t.Error("no updates must not count as complete")
+	}
+	if AllComplete(testMonitorWithUpdates(ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusInProgress)) {
+		t.Error("an in-progress update must not count as complete")
+	}
+	if !AllComplete(testMonitorWithUpdates(ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusSuccessful, ekstypes.UpdateStatusCancelled)) {
+		t.Error("all terminal updates must count as complete")
+	}
+}
+
 func TestDisplayCompletionSummary_CancelledDoesNotReturnError(t *testing.T) {
 	// Cancelled is not the same as failed — it should not surface as an error.
 	monitor := testMonitorWithUpdates(

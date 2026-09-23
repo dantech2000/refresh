@@ -3,6 +3,7 @@ package monitoring
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -152,11 +153,20 @@ func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refr
 			color.RedString("%d", failed))
 	}
 
-	// Return error if any updates failed
+	// Return error if any updates failed, carrying the AWS error details so
+	// they surface even when the summary above was suppressed.
+	var failures []string
 	for _, update := range monitor.Updates {
 		if update.Status == types.UpdateStatusFailed {
-			return fmt.Errorf("one or more nodegroup updates failed")
+			msg := update.NodegroupName
+			if update.ErrorMessage != "" {
+				msg += ": " + update.ErrorMessage
+			}
+			failures = append(failures, msg)
 		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("one or more nodegroup updates failed: %s", strings.Join(failures, "; "))
 	}
 
 	return nil

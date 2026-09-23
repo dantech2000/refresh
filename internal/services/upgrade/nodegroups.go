@@ -18,11 +18,12 @@ import (
 type NodegroupGate func(ctx context.Context, nodegroupName string) error
 
 // RollObserver renders a live view of a single nodegroup roll. It is supplied
-// by the command (view) layer and invoked by the nodegroup phase AFTER a roll
-// starts and BEFORE the authoritative DescribeUpdate wait — so rendering never
-// happens in the service itself. It must be best-effort and bounded (it must
-// not block the roll or affect its result); a nil observer means text progress
-// only.
+// by the command (view) layer and run by the nodegroup phase concurrently with
+// the authoritative DescribeUpdate wait once a roll starts — so rendering never
+// happens in the service itself. Its ctx is cancelled as soon as the update
+// reaches a terminal state (or the wait otherwise ends), and it must return
+// promptly then; it never affects the result. A nil observer means text
+// progress only.
 type RollObserver func(ctx context.Context, nodegroupName string)
 
 // NodegroupRollOptions tunes the nodegroup phase.
@@ -107,20 +108,25 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 	}
 	progress("nodegroup %s roll to %s started (update %s)", nodegroupName, targetVersion, updateID)
 
-	// Live per-node panel (view layer, best-effort) while the roll proceeds; the
-	// DescribeUpdate wait below stays authoritative for the result.
+	// Live per-node panel (view layer, best-effort) runs alongside the
+	// DescribeUpdate wait, which stays authoritative for the result: once EKS
+	// reports a terminal status (including FAILED), the panel is cancelled and
+	// joined, so a roll that never converges can't hold the wait hostage.
+	var observe func(context.Context)
 	if observer != nil {
-		observer(ctx, nodegroupName)
+		observe = func(octx context.Context) { observer(octx, nodegroupName) }
 	}
-
-	if updateID != "" {
-		if err := s.waitForUpdate(ctx, &eks.DescribeUpdateInput{
+	if err := common.RunAlongside(ctx, observe, func(wctx context.Context) error {
+		if updateID == "" {
+			return nil
+		}
+		return s.waitForUpdate(wctx, &eks.DescribeUpdateInput{
 			Name:          aws.String(clusterName),
 			NodegroupName: aws.String(nodegroupName),
 			UpdateId:      aws.String(updateID),
-		}, fmt.Sprintf("nodegroup %s roll to %s", nodegroupName, targetVersion), progress); err != nil {
-			return err
-		}
+		}, fmt.Sprintf("nodegroup %s roll to %s", nodegroupName, targetVersion), progress)
+	}); err != nil {
+		return err
 	}
 	progress("nodegroup %s is at %s", nodegroupName, targetVersion)
 	return nil

@@ -210,6 +210,20 @@ func checkSingleUpdate(ctx context.Context, eksClient *eks.Client, update *refre
 	return result
 }
 
+// AllComplete reports whether every monitored update has reached a terminal
+// state (successful, failed, or cancelled).
+func AllComplete(monitor *refreshTypes.ProgressMonitor) bool {
+	if len(monitor.Updates) == 0 {
+		return false
+	}
+	for _, u := range monitor.Updates {
+		if !isUpdateComplete(u.Status) {
+			return false
+		}
+	}
+	return true
+}
+
 // isUpdateComplete checks if an update has reached a terminal state.
 func isUpdateComplete(status types.UpdateStatus) bool {
 	return status == types.UpdateStatusSuccessful ||

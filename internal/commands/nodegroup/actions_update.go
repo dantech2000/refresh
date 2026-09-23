@@ -199,18 +199,32 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	}
 	// Live per-node roll view — now the DEFAULT for an interactive single-nodegroup
 	// roll (nodes draining/joining/terminating, pod eviction, warnings). Purely
-	// visual: EKS DescribeUpdate (below) stays authoritative for the result, and a
-	// missing/unreachable cluster API degrades silently to the standard monitor.
-	// The kube client is resolved quietly by default; --live makes the fallback
-	// reason explicit when the cluster can't be reached. (REF-126)
+	// visual: it runs alongside the EKS DescribeUpdate monitor, which stays
+	// authoritative for the result and stops the panel once the update is
+	// terminal (a failed roll never converges, so the panel can't be the gate).
+	// A missing/unreachable cluster API degrades silently to the standard
+	// monitor. The kube client is resolved quietly by default; --live makes the
+	// fallback reason explicit when the cluster can't be reached. (REF-126)
+	var livePanel func(context.Context)
 	if len(updates) == 1 && !quiet {
 		if kube := resolveHealthKubeClient(ctx, flags.kubeconfig, flags.live); kube != nil {
-			rollview.LiveRollForUpdate(ctx, kube, updates[0].NodegroupName, flags.timeout, flags.pollInterval)
+			ng := updates[0].NodegroupName
+			livePanel = func(pctx context.Context) {
+				rollview.LiveRollForUpdate(pctx, kube, ng, flags.timeout, flags.pollInterval)
+			}
+			// The panel owns the terminal while it runs; the monitor polls
+			// silently and its summary is printed after the panel stops.
 			monitor.Quiet, config.Quiet = true, true
 		}
 	}
 
-	monErr := monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
+	monErr := common.RunAlongside(ctx, livePanel, func(mctx context.Context) error {
+		return monitoring.MonitorUpdates(mctx, eksClient, monitor, config)
+	})
+	if livePanel != nil && monitoring.AllComplete(monitor) {
+		monitor.Quiet, config.Quiet = false, false
+		monErr = monitoring.DisplayCompletionSummary(monitor, config)
+	}
 
 	verifyFailed := false
 	if verify && monErr == nil && len(outcomes.Started) > 0 {
