@@ -59,6 +59,8 @@ type HealthChecker struct {
 	asgClient   *autoscaling.Client
 	nodeMetrics NodeMetricsLister // optional; enables the live utilization check
 	sqClient    serviceQuotaAPI   // optional; enables the vCPU quota headroom check
+	// optional; scopes the PDB drain-blocker check to these managed nodegroups
+	targetNodegroups []string
 }
 
 // NewChecker creates a new health checker instance
