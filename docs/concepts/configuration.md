@@ -232,7 +232,8 @@ does not set them:
 
 Before 0.11, the wait flag was `--timeout/-t` on `nodegroup update` and
 `cluster upgrade`, and `--op-timeout` on `nodegroup scale`. These names still
-work in 0.11 and print a deprecation warning. They go away in 0.12.
+work in 0.11 and print a deprecation warning. They go away in 0.12. If you
+pass an old name together with `--wait-timeout`, the command fails.
 
 `--poll-interval` on `nodegroup update` and `cluster upgrade` must be greater
 than `0`. A zero or negative value fails before any AWS call.
