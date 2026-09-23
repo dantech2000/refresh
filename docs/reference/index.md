@@ -27,7 +27,7 @@ These are accepted on every command.
 |---|---|---|---|
 | `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout for API calls (e.g. 60s, 2m) |
 | `--max-concurrency, -C int` | `REFRESH_MAX_CONCURRENCY` | `8` | Global max concurrency for multi-region operations |
-| `--no-color` | `NO_COLOR` | — | Disable colored output (NO_COLOR env is also honored) |
+| `--no-color` | — | — | Disable colored output (a non-empty NO_COLOR env var is also honored) |
 | `--profile string` | — | — | AWS shared-config profile (overrides the active context for this invocation) |
 | `--region string` | — | — | AWS region (overrides the active context for this invocation) |
 | `--log-level string` | `REFRESH_LOG_LEVEL` | `warn` | Log verbosity: debug, info, warn, error |
