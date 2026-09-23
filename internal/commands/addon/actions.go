@@ -406,11 +406,21 @@ func confirmUpdateAll(ctx context.Context, cmd *cli.Command, svc addonBulkUpdate
 	}); err != nil {
 		return err
 	}
-	var changes []string
+	var changes, failed []string
 	for _, r := range preview {
-		if r.Status == addons.StatusDryRun {
+		switch r.Status {
+		case addons.StatusDryRun:
 			changes = append(changes, fmt.Sprintf("  %s %s → %s", r.AddonName, r.PreviousVersion, r.NewVersion))
+		case addons.StatusUpToDate, addons.StatusInProgress:
+		default:
+			// Fail closed: an add-on the preview could not read may still
+			// be updated by the real run, and the user never saw it.
+			failed = append(failed, fmt.Sprintf("  %s: %s", r.AddonName, r.Status))
 		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("could not preview every add-on, so nothing was changed:\n%s\nre-run, skip them with --skip, or add --yes to update without confirmation",
+			strings.Join(failed, "\n"))
 	}
 	if len(changes) == 0 {
 		return nil
