@@ -169,7 +169,7 @@ refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one re
 
 | Flag | Description |
 |---|---|
-| `--cluster, -c` | EKS cluster name or partial pattern (overrides the active context; the kubeconfig is not used). If neither this flag nor a positional names a cluster, `EKS_CLUSTER_NAME` is used. See [cluster resolution](../concepts/configuration.md#cluster-resolution) |
+| `--cluster, -c` | EKS cluster name or partial pattern (overrides the active context; the kubeconfig is not used). Falls back to `EKS_CLUSTER_NAME` unless a positional is clearly the cluster (with `--nodegroup`, or two positionals). See [cluster resolution](../concepts/configuration.md#cluster-resolution) |
 | `--nodegroup, -n` | Nodegroup name or partial pattern (if unset, update all). An exact name selects only that nodegroup |
 | `--all-clusters` | Fleet mode: roll matching nodegroups across all discovered clusters (serial); scope with `-r` |
 | `--region, -r` | Region(s) for `--all-clusters` discovery (default: partition EKS regions / `REFRESH_EKS_REGIONS`) |

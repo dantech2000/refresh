@@ -31,21 +31,31 @@ them.
 Every command that targets one cluster resolves it in this order (first match
 wins):
 
-1. The `--cluster, -c` flag on the command line.
+1. The `--cluster, -c` flag.
 2. The first positional argument.
-3. The `EKS_CLUSTER_NAME` environment variable.
-4. The cluster of the active `refresh` context (`refresh use <name>`).
-5. The cluster of the current kubeconfig context. Only read-only commands use
+3. The cluster of the active `refresh` context (`refresh use <name>`).
+4. The cluster of the current kubeconfig context. Only read-only commands use
    this step.
 
-`EKS_CLUSTER_NAME` never overrides a cluster that you type. The first
-positional argument is always the cluster, also when `EKS_CLUSTER_NAME` is
-set. To use the variable with a nodegroup or add-on, name that with its flag:
+`nodegroup update` also reads the `EKS_CLUSTER_NAME` environment variable.
+No other command reads it. The variable never overrides a cluster that is
+clearly on the command line:
+
+- If you pass `--cluster`, `--cluster` is the cluster.
+- If you pass `--nodegroup` and one positional argument, the positional
+  argument is the cluster.
+- If you pass two positional arguments, the first is the cluster and the
+  second is the nodegroup.
+- In all other cases, `EKS_CLUSTER_NAME` is the cluster, and one positional
+  argument is the nodegroup pattern. refresh prints
+  `Using cluster <name> from EKS_CLUSTER_NAME` to stderr.
 
 ```bash
 export EKS_CLUSTER_NAME=staging
-refresh nodegroup update --nodegroup ng-a       # staging / ng-a
 refresh nodegroup update prod --nodegroup ng-a  # prod / ng-a
+refresh nodegroup update prod ng-a              # prod / ng-a
+refresh nodegroup update ng-a                   # staging / ng-a (with a note)
+refresh nodegroup update                        # staging / all nodegroups (with a note)
 ```
 
 Mutating commands (`cluster upgrade`, `addon update`, `nodegroup update`,
@@ -95,7 +105,7 @@ These are accepted on every command:
 | `REFRESH_MAX_CONCURRENCY` | Default for `--max-concurrency` |
 | `REFRESH_LOG_LEVEL` | Default for `--log-level` |
 | `REFRESH_EKS_REGIONS` | Region set for fleet discovery (`nodegroup update --all-clusters`) |
-| `EKS_CLUSTER_NAME` | Default cluster for single-cluster commands, after `--cluster` and the positional argument (see [Cluster resolution](#cluster-resolution)) |
+| `EKS_CLUSTER_NAME` | Default cluster for `nodegroup update` only. A cluster given with `--cluster`, or positionally with `--nodegroup` or a second positional, wins (see [Cluster resolution](#cluster-resolution)) |
 | `NO_COLOR` | Disable colored output |
 | `REFRESH_NO_UPDATE_CHECK` | Disable the `refresh version` self-update check. Any value except `0`, `false`, or `no` disables it |
 | `KUBECONFIG` | kubeconfig path for workload/PDB health checks |

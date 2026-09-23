@@ -147,19 +147,14 @@ func ParseFilters(filters []string) map[string]string {
 	return out
 }
 
-// ClusterEnvVar names the environment variable that supplies a cluster when
-// neither --cluster nor a positional names one.
-const ClusterEnvVar = "EKS_CLUSTER_NAME"
-
-// RequestedCluster returns the cluster name requested by the user, in this
-// order: --cluster/-c on the command line (so positionals can fill later
-// slots), the first positional arg, then $EKS_CLUSTER_NAME. It returns ""
-// when none is set; the caller then falls back to the active context.
+// RequestedCluster returns the cluster name requested by the user: --cluster
+// when explicitly set (so positionals can fill later slots), otherwise the
+// first positional arg.
 //
-// The env var is read here, not as a --cluster flag source: urfave/cli
-// reports an env-sourced flag as set, which would let the env var beat an
-// explicit positional and shift the positional into the next slot. Keep
-// --cluster flags free of Sources.
+// Keep --cluster flags free of env Sources: urfave/cli reports an
+// env-sourced flag as set, so the env var would beat an explicit positional
+// and shift the positional into the next slot. `nodegroup update` reads
+// EKS_CLUSTER_NAME itself.
 func RequestedCluster(cmd *cli.Command) string {
 	if v := flagValueIfSet(cmd, "cluster"); v != "" {
 		return v
@@ -168,15 +163,11 @@ func RequestedCluster(cmd *cli.Command) string {
 	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
 		return args[0]
 	}
-	if v := strings.TrimSpace(os.Getenv(ClusterEnvVar)); v != "" {
-		return v
-	}
 	return strings.TrimSpace(cmd.String("cluster"))
 }
 
 // ResolveCluster resolves the cluster for a mutating command. Resolution
-// order: --cluster flag, first positional, $EKS_CLUSTER_NAME, active
-// `refresh use` context. The
+// order: --cluster flag, first positional, active `refresh use` context. The
 // kubeconfig current context is never used, so a stray kubeconfig cannot pick
 // the target of a mutation. A cluster from the context is announced on
 // stderr. It never lists clusters: when nothing resolves it returns an error

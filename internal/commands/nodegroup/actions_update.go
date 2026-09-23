@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -627,10 +628,39 @@ func latestAMISkipPredicate(ctx context.Context, clusterVersion string, latestAM
 	}
 }
 
+// clusterEnvVar supplies the cluster for `nodegroup update` when the command
+// line does not name one. No other command reads it.
+const clusterEnvVar = "EKS_CLUSTER_NAME"
+
+// clusterEnvNoteOut receives the note printed when the cluster comes from
+// clusterEnvVar. It is a var so tests can capture it.
+var clusterEnvNoteOut io.Writer = os.Stderr
+
 // updateClusterAndNodegroupPatterns resolves the (cluster, nodegroup) slots
-// from flags and positionals via the shared runner helpers.
+// from flags, positionals and EKS_CLUSTER_NAME:
+//
+//   - --cluster/-c on the command line wins.
+//   - A positional cluster wins over EKS_CLUSTER_NAME when it can only be the
+//     cluster: --nodegroup/-n is set, or there are two positionals.
+//   - Otherwise EKS_CLUSTER_NAME is the cluster and a lone positional is the
+//     nodegroup pattern (the behavior before the env var stopped being a
+//     --cluster flag source). A note on stderr names the cluster.
+//
+// The env var is read here and not as a flag source because urfave/cli
+// reports an env-sourced flag as set, which let it override
+// `nodegroup update prod --nodegroup ng-a` and roll ng-a on the env cluster.
 func updateClusterAndNodegroupPatterns(cmd *cli.Command) (string, string) {
-	clusterPattern := runner.RequestedCluster(cmd)
-	nodegroupPattern := runner.PositionalSlot(cmd, "nodegroup", "cluster")
-	return clusterPattern, nodegroupPattern
+	env := strings.TrimSpace(os.Getenv(clusterEnvVar))
+	args := cmd.Args().Slice()
+	positionalIsCluster := len(args) >= 2 || (len(args) == 1 && cmd.IsSet("nodegroup"))
+	if env == "" || cmd.IsSet("cluster") || positionalIsCluster {
+		return runner.RequestedCluster(cmd), runner.PositionalSlot(cmd, "nodegroup", "cluster")
+	}
+
+	_, _ = color.New(color.FgYellow).Fprintf(clusterEnvNoteOut, "Using cluster %s from %s\n", env, clusterEnvVar)
+	nodegroupPattern := strings.TrimSpace(cmd.String("nodegroup"))
+	if !cmd.IsSet("nodegroup") && len(args) == 1 {
+		nodegroupPattern = args[0]
+	}
+	return env, nodegroupPattern
 }

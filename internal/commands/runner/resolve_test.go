@@ -19,7 +19,6 @@ func noClusterEnv(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("REFRESH_CONFIG_HOME", dir)
 	t.Setenv("REFRESH_CONTEXT", "")
-	t.Setenv(ClusterEnvVar, "")
 	t.Setenv("KUBECONFIG", filepath.Join(dir, "missing-kubeconfig"))
 }
 
