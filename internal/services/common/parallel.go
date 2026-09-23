@@ -31,6 +31,13 @@ func ForEachParallel[T, R any](ctx context.Context, items []T, maxConcurrency in
 			wg.Wait()
 			return results
 		}
+		// select picks at random when a slot frees up just as ctx is
+		// cancelled, so re-check: never start new work after cancellation.
+		if ctx.Err() != nil {
+			<-sem
+			wg.Wait()
+			return results
+		}
 		wg.Add(1)
 		go func(i int, it T) {
 			defer wg.Done()
