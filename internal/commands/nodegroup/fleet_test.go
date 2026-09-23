@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/smithy-go"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
@@ -132,17 +133,31 @@ func fakeLister(byRegion map[string][]string, errs map[string]error) listCluster
 	}
 }
 
+func apiErr(code string) error {
+	// Wrapped the way the SDK's operation errors wrap the API error.
+	return fmt.Errorf("operation error EKS: ListClusters: %w", &smithy.GenericAPIError{Code: code, Message: code + " message"})
+}
+
+func captureFleetStderr(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := fleetStderr
+	fleetStderr = &buf
+	t.Cleanup(func() { fleetStderr = prev })
+	return &buf
+}
+
 func TestDiscoverFleetTargets_CollectsRegionErrors(t *testing.T) {
 	list := fakeLister(
 		map[string][]string{"us-east-1": {"a", "b"}, "us-west-2": {"c"}},
-		map[string]error{"eu-west-1": errors.New("AccessDeniedException: eks:ListClusters")},
+		map[string]error{"eu-west-1": apiErr("ThrottlingException")},
 	)
-	targets, regionErrs, err := discoverFleetTargets(context.Background(), aws.Config{}, []string{"us-east-1", "eu-west-1", "us-west-2"}, list)
+	d, err := discoverFleetTargets(context.Background(), aws.Config{}, []string{"us-east-1", "eu-west-1", "us-west-2"}, true, list)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got []string
-	for _, tg := range targets {
+	for _, tg := range d.targets {
 		got = append(got, tg.region+"/"+tg.cluster)
 		if tg.awsCfg.Region != tg.region {
 			t.Errorf("target %s has config region %q", tg.cluster, tg.awsCfg.Region)
@@ -151,8 +166,102 @@ func TestDiscoverFleetTargets_CollectsRegionErrors(t *testing.T) {
 	if strings.Join(got, ",") != "us-east-1/a,us-east-1/b,us-west-2/c" {
 		t.Errorf("targets = %v", got)
 	}
-	if len(regionErrs) != 1 || regionErrs[0].Region != "eu-west-1" || !strings.Contains(regionErrs[0].Error, "AccessDenied") {
-		t.Errorf("regionErrs = %+v", regionErrs)
+	// Throttling that outlived the retries is a failure even in the default sweep.
+	if len(d.failed) != 1 || d.failed[0].Region != "eu-west-1" || !strings.Contains(d.failed[0].Error, "ThrottlingException") || len(d.skipped) != 0 {
+		t.Errorf("failed = %+v, skipped = %v", d.failed, d.skipped)
+	}
+}
+
+func TestRegionInaccessible(t *testing.T) {
+	for _, code := range []string{"AccessDenied", "AccessDeniedException", "UnrecognizedClientException", "InvalidClientTokenId", "AuthFailure", "OptInRequired", "RegionDisabledException"} {
+		if !regionInaccessible(apiErr(code)) {
+			t.Errorf("%s: want inaccessible", code)
+		}
+	}
+	for _, err := range []error{
+		apiErr("ThrottlingException"),
+		apiErr("ServerException"),
+		context.DeadlineExceeded,
+		errors.New("AccessDeniedException: plain string, not an API error"),
+	} {
+		if regionInaccessible(err) {
+			t.Errorf("%v: want not inaccessible", err)
+		}
+	}
+}
+
+// Default sweep: regions an SCP denies are skipped with one note, and a run
+// whose reachable clusters update cleanly exits 0.
+func TestFleetDiscovery_DefaultSweepSkipsDeniedRegions(t *testing.T) {
+	buf := captureFleetStderr(t)
+	regions := []string{"us-east-1", "sa-east-1", "ap-south-1"}
+	list := fakeLister(
+		map[string][]string{"us-east-1": {"prod"}},
+		map[string]error{"sa-east-1": apiErr("AccessDeniedException"), "ap-south-1": apiErr("UnrecognizedClientException")},
+	)
+	d, err := discoverFleetTargets(context.Background(), aws.Config{}, regions, true, list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.failed) != 0 || strings.Join(d.skipped, ",") != "sa-east-1,ap-south-1" || len(d.targets) != 1 {
+		t.Fatalf("discovery = %+v", d)
+	}
+	if err := checkDiscovery(len(regions), d); err != nil {
+		t.Fatalf("checkDiscovery: %v", err)
+	}
+	want := "Skipped 2 region(s) not accessible to these credentials: sa-east-1, ap-south-1 (scope with -r or REFRESH_EKS_REGIONS)"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("stderr = %q, want %q", buf.String(), want)
+	}
+	if strings.Count(buf.String(), "\n") != 1 {
+		t.Errorf("want one stderr line, got %q", buf.String())
+	}
+	clean := []clusterUpdateResult{{Cluster: "prod", Outcomes: updateOutcomes{Started: []string{"ng"}}}}
+	if err := fleetExit(clean, d.failed); err != nil {
+		t.Errorf("fleetExit = %v, want nil", err)
+	}
+	if err := discoveryExit(d.failed); err != nil {
+		t.Errorf("dry-run discoveryExit = %v, want nil", err)
+	}
+}
+
+// Regions the user asked for (-r / REFRESH_EKS_REGIONS) are never skipped: a
+// denied one fails the run.
+func TestFleetDiscovery_ExplicitRegionDeniedFails(t *testing.T) {
+	_ = captureFleetStderr(t)
+	regions := []string{"us-east-1", "sa-east-1"}
+	list := fakeLister(map[string][]string{"us-east-1": {"prod"}}, map[string]error{"sa-east-1": apiErr("AccessDeniedException")})
+	d, err := discoverFleetTargets(context.Background(), aws.Config{}, regions, false, list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.skipped) != 0 || len(d.failed) != 1 {
+		t.Fatalf("discovery = %+v", d)
+	}
+	if err := checkDiscovery(len(regions), d); err != nil {
+		t.Fatalf("checkDiscovery: %v (clusters were found, the run continues)", err)
+	}
+	clean := []clusterUpdateResult{{Cluster: "prod", Outcomes: updateOutcomes{Started: []string{"ng"}}}}
+	if got := exitCodeOf(fleetExit(clean, d.failed)); got != 4 {
+		t.Errorf("fleetExit = %d, want 4", got)
+	}
+	if got := discoveryExit(d.failed); exitCodeOf(got) != 4 || !strings.Contains(got.Error(), "REFRESH_EKS_REGIONS") {
+		t.Errorf("discoveryExit = %v, want exit 4 with the scope hint", got)
+	}
+}
+
+// If every default region is denied, nothing is reachable: fail.
+func TestFleetDiscovery_AllDefaultRegionsDenied(t *testing.T) {
+	_ = captureFleetStderr(t)
+	regions := []string{"us-east-1", "eu-west-1"}
+	list := fakeLister(nil, map[string]error{"us-east-1": apiErr("AccessDeniedException"), "eu-west-1": apiErr("OptInRequired")})
+	d, err := discoverFleetTargets(context.Background(), aws.Config{}, regions, true, list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = checkDiscovery(len(regions), d)
+	if exitCodeOf(err) != 4 || !strings.Contains(err.Error(), "-r or REFRESH_EKS_REGIONS") {
+		t.Fatalf("checkDiscovery = %v, want exit 4 with the scope hint", err)
 	}
 }
 
@@ -162,12 +271,12 @@ func TestDiscoverFleetTargets_CancelledContextIsAnError(t *testing.T) {
 		cancel()
 		return nil, c.Err()
 	}
-	targets, regionErrs, err := discoverFleetTargets(ctx, aws.Config{}, []string{"us-east-1", "us-west-2"}, list)
+	d, err := discoverFleetTargets(ctx, aws.Config{}, []string{"us-east-1", "us-west-2"}, true, list)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
-	if targets != nil || regionErrs != nil {
-		t.Errorf("want no partial result, got targets=%v regionErrs=%v", targets, regionErrs)
+	if d.targets != nil || d.failed != nil || d.skipped != nil {
+		t.Errorf("want no partial result, got %+v", d)
 	}
 }
 
@@ -187,31 +296,31 @@ func TestDiscoveryStopError(t *testing.T) {
 }
 
 func TestCheckDiscovery(t *testing.T) {
-	var buf bytes.Buffer
-	prev := fleetStderr
-	fleetStderr = &buf
-	t.Cleanup(func() { fleetStderr = prev })
+	buf := captureFleetStderr(t)
 
 	denied := []regionDiscoveryError{{Region: "eu-west-1", Error: "denied"}}
+	three := make([]clusterTarget, 3)
 	cases := []struct {
-		name             string
-		regions, targets int
-		errs             []regionDiscoveryError
-		want             int
+		name    string
+		regions int
+		d       fleetDiscovery
+		want    int
 	}{
-		{"clean", 2, 3, nil, 0},
-		{"clean but empty", 2, 0, nil, 0},
-		{"all regions failed", 1, 0, denied, 4},
-		{"some failed, none found elsewhere", 2, 0, denied, 4},
-		{"some failed, clusters found elsewhere", 2, 3, denied, 0},
+		{"clean", 2, fleetDiscovery{targets: three}, 0},
+		{"clean but empty", 2, fleetDiscovery{}, 0},
+		{"all regions failed", 1, fleetDiscovery{failed: denied}, 4},
+		{"some failed, none found elsewhere", 2, fleetDiscovery{failed: denied}, 4},
+		{"some failed, clusters found elsewhere", 2, fleetDiscovery{targets: three, failed: denied}, 0},
+		{"skipped plus failed covers every region", 2, fleetDiscovery{failed: denied, skipped: []string{"sa-east-1"}}, 4},
+		{"skipped only, reachable region empty", 2, fleetDiscovery{skipped: []string{"sa-east-1"}}, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			buf.Reset()
-			if got := exitCodeOf(checkDiscovery(tc.regions, tc.targets, tc.errs)); got != tc.want {
+			if got := exitCodeOf(checkDiscovery(tc.regions, tc.d)); got != tc.want {
 				t.Errorf("exit = %d, want %d", got, tc.want)
 			}
-			if len(tc.errs) > 0 && !strings.Contains(buf.String(), "skipping region eu-west-1: denied") {
+			if len(tc.d.failed) > 0 && !strings.Contains(buf.String(), "skipping region eu-west-1: denied") {
 				t.Errorf("missing stderr warning, got %q", buf.String())
 			}
 		})

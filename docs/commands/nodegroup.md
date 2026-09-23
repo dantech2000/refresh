@@ -168,9 +168,15 @@ refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one re
 Fleet mode selects nodegroups only with `-n`. It rejects positional
 arguments, `--cluster`, and `--kube-context`, because it matches each cluster
 to a kubeconfig context by endpoint. An exported `EKS_CLUSTER_NAME` is
-ignored. If a region can't be listed (denied, throttled, timed out), `refresh`
-warns on stderr, lists the region in the summary (`discoveryErrors` in
-`-o json`), and exits `4`. It exits `4` right away if no region can be listed.
+ignored.
+
+In the default region sweep (no `-r`, no `REFRESH_EKS_REGIONS`), regions your
+credentials can't use are skipped with one stderr note. Examples are regions
+an SCP denies and opt-in regions that are not enabled. Skipped regions don't
+change the exit code. Any other listing failure (throttling, a server error, a
+timeout), or any failure in a region you named, is reported on stderr and in
+the summary (`discoveryErrors` in `-o json`), and the run exits `4`. The run
+also exits `4` right away if no region can be listed.
 
 ### Flags
 

@@ -141,7 +141,8 @@ worst-outcome exit code:
    refresh nodegroup update --all-clusters -r us-east-1 --yes
 Fleet mode takes no positional args and rejects --cluster and --kube-context
 (each cluster's kubeconfig context is matched by endpoint). A region that
-can't be listed is reported and makes the run exit 4.
+can't be listed is reported and makes the run exit 4. The default sweep skips
+regions these credentials can't use (SCP-denied or not enabled) with a note.
 
 Unattended / CI use:
    --yes              skip confirmation prompts (multi-match selection, warnings)

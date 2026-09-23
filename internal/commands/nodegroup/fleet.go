@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/smithy-go"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
@@ -128,18 +129,20 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 	nodegroupPattern := cmd.String("nodegroup")
 	jsonOut := flags.format == "json" && !flags.healthOnly
 
-	regions := resolveUpdateRegions(cmd, awsCfg)
+	regions, explicitRegions := resolveUpdateRegions(cmd, awsCfg)
 	// Discovery is bounded by --timeout so a stalled region can't hang an
-	// unattended run.
+	// unattended run. Only the default region sweep skips regions these
+	// credentials can't reach (SCP region restrictions, opt-in regions).
 	discoverCtx, cancelDiscover := fleetClusterContext(ctx, flags.timeout)
-	targets, regionErrs, err := discoverFleetTargets(discoverCtx, awsCfg, regions, listRegionClusters)
+	disc, err := discoverFleetTargets(discoverCtx, awsCfg, regions, !explicitRegions, listRegionClusters)
 	cancelDiscover()
 	if err != nil {
 		return discoveryStopError(ctx, err, flags.timeout)
 	}
-	if err := checkDiscovery(len(regions), len(targets), regionErrs); err != nil {
+	if err := checkDiscovery(len(regions), disc); err != nil {
 		return err
 	}
+	targets, regionErrs := disc.targets, disc.failed
 	if len(targets) == 0 {
 		color.Yellow("No clusters found across %d region(s)", len(regions))
 		return nil
@@ -185,6 +188,9 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 		if len(regionErrs) > 0 {
 			payload["discoveryErrors"] = regionErrs
 		}
+		if len(disc.skipped) > 0 {
+			payload["skippedRegions"] = disc.skipped
+		}
 		if _, err := runner.EncodeStdout("json", payload); err != nil {
 			return err
 		}
@@ -208,23 +214,30 @@ func discoveryStopError(ctx context.Context, err error, timeout time.Duration) e
 	return cli.Exit(fmt.Sprintf("fleet discovery did not finish within --timeout %s", timeout), 4)
 }
 
-// checkDiscovery warns on stderr for each region that failed to list, and
-// fails (exit 4) when no region could be listed, or when the reachable regions
-// had no clusters but some regions failed. Nothing is known about the failed
-// regions, so "no clusters found" would be a false pass.
-func checkDiscovery(regions, targets int, regionErrs []regionDiscoveryError) error {
-	for _, re := range regionErrs {
+// regionScopeHint tells the user how to narrow the region sweep.
+const regionScopeHint = "scope with -r or REFRESH_EKS_REGIONS"
+
+// checkDiscovery reports discovery problems on stderr: one line naming the
+// regions skipped as not accessible, and one warning per region that failed.
+// It fails (exit 4) when no region could be listed, or when the reachable
+// regions had no clusters but some regions failed. Nothing is known about the
+// failed regions, so "no clusters found" would be a false pass. Skipped
+// regions alone never fail a run that reached at least one region.
+func checkDiscovery(regions int, d fleetDiscovery) error {
+	if len(d.skipped) > 0 {
+		_, _ = fmt.Fprintln(fleetStderr, color.YellowString("Skipped %d region(s) not accessible to these credentials: %s (%s)",
+			len(d.skipped), strings.Join(d.skipped, ", "), regionScopeHint))
+	}
+	for _, re := range d.failed {
 		_, _ = fmt.Fprintln(fleetStderr, color.YellowString("Warning: skipping region %s: %s", re.Region, re.Error))
 	}
-	if len(regionErrs) == 0 {
-		return nil
+	if regions > 0 && len(d.failed)+len(d.skipped) == regions {
+		return cli.Exit(fmt.Sprintf("fleet discovery failed: could not list clusters in any of %d region(s) (%d not accessible, %d failed); %s",
+			regions, len(d.skipped), len(d.failed), regionScopeHint), 4)
 	}
-	if len(regionErrs) == regions {
-		return cli.Exit(fmt.Sprintf("fleet discovery failed: could not list clusters in any of %d region(s)", regions), 4)
-	}
-	if targets == 0 {
-		return cli.Exit(fmt.Sprintf("no clusters found in %d reachable region(s); %d region(s) could not be listed",
-			regions-len(regionErrs), len(regionErrs)), 4)
+	if len(d.failed) > 0 && len(d.targets) == 0 {
+		return cli.Exit(fmt.Sprintf("no clusters found in %d reachable region(s); %d region(s) could not be listed; %s",
+			regions-len(d.failed)-len(d.skipped), len(d.failed), regionScopeHint), 4)
 	}
 	return nil
 }
@@ -234,7 +247,7 @@ func discoveryExit(regionErrs []regionDiscoveryError) error {
 	if len(regionErrs) == 0 {
 		return nil
 	}
-	return cli.Exit(fmt.Sprintf("fleet discovery could not list clusters in %d region(s)", len(regionErrs)), 4)
+	return cli.Exit(fmt.Sprintf("fleet discovery could not list clusters in %d region(s); %s", len(regionErrs), regionScopeHint), 4)
 }
 
 // updateOneClusterInFleet runs the per-cluster pipeline (health gate → select →
@@ -305,22 +318,57 @@ func fleetClusterContext(ctx context.Context, timeout time.Duration) (context.Co
 
 // resolveUpdateRegions picks the regions to sweep for --all-clusters: explicit
 // --region wins, then REFRESH_EKS_REGIONS, else the partition's EKS regions.
-func resolveUpdateRegions(cmd *cli.Command, awsCfg aws.Config) []string {
+// explicit reports whether the user chose the regions (-r or the env var).
+func resolveUpdateRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string, explicit bool) {
 	if r := cmd.StringSlice("region"); len(r) > 0 {
-		return r
+		return r, true
 	}
 	if env := appconfig.RegionsFromEnv(); len(env) > 0 {
-		return env
+		return env, true
 	}
-	return appconfig.GetRegionsForPartition(awsCfg.Region)
+	return appconfig.GetRegionsForPartition(awsCfg.Region), false
+}
+
+// fleetDiscovery is the outcome of the region sweep.
+type fleetDiscovery struct {
+	targets []clusterTarget
+	// failed regions could not be listed; their clusters are unknown.
+	failed []regionDiscoveryError
+	// skipped regions are default-sweep regions these credentials can't
+	// reach (see regionInaccessible). They are not failures.
+	skipped []string
+}
+
+// inaccessibleRegionCodes are API error codes from a region the caller's
+// credentials can't use: an SCP region restriction (AccessDenied*), a region
+// that isn't enabled for the account (UnrecognizedClientException,
+// InvalidClientTokenId, AuthFailure, OptInRequired), or a disabled region.
+var inaccessibleRegionCodes = map[string]bool{
+	"AccessDenied":                true,
+	"AccessDeniedException":       true,
+	"UnrecognizedClientException": true,
+	"InvalidClientTokenId":        true,
+	"AuthFailure":                 true,
+	"OptInRequired":               true,
+	"RegionDisabledException":     true,
+}
+
+// regionInaccessible reports whether err says the region is closed to these
+// credentials, as opposed to a transient failure (throttling after retries,
+// 5xx, timeouts) that must still fail the run.
+func regionInaccessible(err error) bool {
+	var ae smithy.APIError
+	return errors.As(err, &ae) && inaccessibleRegionCodes[ae.ErrorCode()]
 }
 
 // discoverFleetTargets lists clusters in each region (bounded concurrency) and
 // returns one target per cluster with a region-scoped config. A region whose
-// listing fails is returned in regionErrs (in region order) instead of being
-// dropped. If ctx ends before discovery finishes, it returns ctx.Err(): the
-// target list would be incomplete, and unstarted regions report nothing.
-func discoverFleetTargets(ctx context.Context, baseCfg aws.Config, regions []string, list listClustersFunc) (targets []clusterTarget, regionErrs []regionDiscoveryError, err error) {
+// listing fails is kept (in region order) instead of being dropped: as
+// skipped when skipInaccessible is set and the error says the region is
+// closed to these credentials, else as failed. If ctx ends before discovery
+// finishes, it returns ctx.Err(): the target list would be incomplete, and
+// unstarted regions report nothing.
+func discoverFleetTargets(ctx context.Context, baseCfg aws.Config, regions []string, skipInaccessible bool, list listClustersFunc) (fleetDiscovery, error) {
 	type regionResult struct {
 		targets []clusterTarget
 		err     error
@@ -340,29 +388,38 @@ func discoverFleetTargets(ctx context.Context, baseCfg aws.Config, regions []str
 			return regionResult{targets: ts}
 		})
 	if err := ctx.Err(); err != nil {
-		return nil, nil, fmt.Errorf("fleet discovery stopped: %w", err)
+		return fleetDiscovery{}, fmt.Errorf("fleet discovery stopped: %w", err)
 	}
 
+	var d fleetDiscovery
 	for i, r := range perRegion {
-		if r.err != nil {
-			regionErrs = append(regionErrs, regionDiscoveryError{Region: regions[i], Error: r.err.Error()})
-			continue
+		switch {
+		case r.err == nil:
+			d.targets = append(d.targets, r.targets...)
+		case skipInaccessible && regionInaccessible(r.err):
+			d.skipped = append(d.skipped, regions[i])
+		default:
+			msg := awsinternal.FormatAWSError(r.err, "listing clusters in "+regions[i]).Error()
+			d.failed = append(d.failed, regionDiscoveryError{Region: regions[i], Error: msg})
 		}
-		targets = append(targets, r.targets...)
 	}
-	return targets, regionErrs, nil
+	return d, nil
 }
 
-// listRegionClusters lists every EKS cluster in cfg's region. ListAllPages
-// already formats errors with awsinternal.FormatAWSError.
+// listRegionClusters lists every EKS cluster in cfg's region. It returns the
+// raw SDK error so discovery can classify it by API error code before
+// formatting it.
 func listRegionClusters(ctx context.Context, cfg aws.Config) ([]string, error) {
 	eksClient := eks.NewFromConfig(cfg)
-	return awsinternal.ListAllPages(ctx, fmt.Sprintf("listing clusters in %s", cfg.Region),
-		func(rc context.Context, token *string) (*eks.ListClustersOutput, error) {
-			return eksClient.ListClusters(rc, &eks.ListClustersInput{NextToken: token})
-		},
-		func(out *eks.ListClustersOutput) ([]string, *string) { return out.Clusters, out.NextToken },
-	)
+	return common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
+		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListClustersOutput, error) {
+			return eksClient.ListClusters(rrc, &eks.ListClustersInput{NextToken: token})
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		return out.Clusters, out.NextToken, nil
+	})
 }
 
 // fleetDryRun prints the per-cluster plan without mutating anything.
