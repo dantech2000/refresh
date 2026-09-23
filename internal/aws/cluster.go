@@ -311,11 +311,8 @@ func confirmClusterSelection(ctx context.Context, matches []string, pattern stri
 func promptForSingleClusterMatch(ctx context.Context, match, pattern string) (string, error) {
 	_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "No cluster named %q. Use %q? [y/N]: ", pattern, match)
 	response, err := promptLine(ctx)
-	if errors.Is(err, ui.ErrPromptCancelled) {
-		return "", fmt.Errorf("operation cancelled")
-	}
 	if err != nil {
-		return "", fmt.Errorf("operation cancelled: failed to read input")
+		return "", ui.PromptError(err)
 	}
 	switch strings.ToLower(response) {
 	case "y", "yes":
@@ -335,11 +332,8 @@ func promptForClusterSelection(ctx context.Context, matches []string, pattern st
 	_, _ = color.New(color.FgCyan).Fprintf(os.Stderr, "Select cluster number (1-%d) or press Enter to cancel: ", len(matches))
 
 	response, err := promptLine(ctx)
-	if errors.Is(err, ui.ErrPromptCancelled) {
-		return "", fmt.Errorf("operation cancelled")
-	}
 	if err != nil {
-		return "", fmt.Errorf("operation cancelled: failed to read input")
+		return "", ui.PromptError(err)
 	}
 
 	if response == "" {

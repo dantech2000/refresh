@@ -37,6 +37,27 @@ wins):
 4. The cluster of the current kubeconfig context. Only read-only commands use
    this step.
 
+`nodegroup update` also reads the `EKS_CLUSTER_NAME` environment variable.
+No other command reads it. The variable never overrides a cluster that is
+clearly on the command line:
+
+- If you pass `--cluster`, `--cluster` is the cluster.
+- If you pass `--nodegroup` and one positional argument, the positional
+  argument is the cluster.
+- If you pass two positional arguments, the first is the cluster and the
+  second is the nodegroup.
+- In all other cases, `EKS_CLUSTER_NAME` is the cluster, and one positional
+  argument is the nodegroup pattern. refresh prints
+  `Using cluster <name> from EKS_CLUSTER_NAME` to stderr.
+
+```bash
+export EKS_CLUSTER_NAME=staging
+refresh nodegroup update prod --nodegroup ng-a  # prod / ng-a
+refresh nodegroup update prod ng-a              # prod / ng-a
+refresh nodegroup update ng-a                   # staging / ng-a (with a note)
+refresh nodegroup update                        # staging / all nodegroups (with a note)
+```
+
 Mutating commands (`cluster upgrade`, `addon update`, `nodegroup update`,
 `nodegroup scale`) never use the kubeconfig. A kubeconfig that points at
 another cluster cannot select the target of a change. If a mutating command
@@ -84,9 +105,9 @@ These are accepted on every command:
 | `REFRESH_MAX_CONCURRENCY` | Default for `--max-concurrency` |
 | `REFRESH_LOG_LEVEL` | Default for `--log-level` |
 | `REFRESH_EKS_REGIONS` | Region set for fleet discovery (`nodegroup update --all-clusters`) |
-| `EKS_CLUSTER_NAME` | Default cluster for `nodegroup update` |
+| `EKS_CLUSTER_NAME` | Default cluster for `nodegroup update` only. A cluster given with `--cluster`, or positionally with `--nodegroup` or a second positional, wins (see [Cluster resolution](#cluster-resolution)) |
 | `NO_COLOR` | Disable colored output |
-| `REFRESH_NO_UPDATE_CHECK` | Disable the `refresh version` self-update check |
+| `REFRESH_NO_UPDATE_CHECK` | Disable the `refresh version` self-update check. Any value except `0`, `false`, or `no` disables it |
 | `KUBECONFIG` | kubeconfig path for workload/PDB health checks |
 | `REFRESH_IN_CLUSTER_NAME` | EKS cluster a pod runs in; lets in-cluster config be used for that cluster |
 

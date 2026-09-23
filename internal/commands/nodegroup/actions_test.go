@@ -12,6 +12,7 @@ import (
 // *cli.Command captured from the action.
 func parseUpdateTestCommand(t *testing.T, args []string, clusterFlag, nodegroupFlag string) *cli.Command {
 	t.Helper()
+	t.Setenv(clusterEnvVar, "") // an exported EKS_CLUSTER_NAME must not change these cases
 	var captured *cli.Command
 	cmd := &cli.Command{
 		Name: "test",
