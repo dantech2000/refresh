@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/smithy-go"
+
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 )
 
 func TestWithCluster_UnknownNameIsTypedNotFound(t *testing.T) {
@@ -367,31 +369,104 @@ func TestPageSize_PassThroughAndEdgeCases(t *testing.T) {
 	ctx := context.Background()
 	m := NewEKSAPI().WithPageSize(1).Build()
 
-	// A Fn that pages by hand keeps its own token, for every list call.
-	custom := aws.String("custom")
-	m.ListClustersFn = func(context.Context, *eks.ListClustersInput, ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
-		return &eks.ListClustersOutput{Clusters: []string{"a", "b"}, NextToken: custom}, nil
-	}
-	m.ListAddonsFn = func(context.Context, *eks.ListAddonsInput, ...func(*eks.Options)) (*eks.ListAddonsOutput, error) {
-		return &eks.ListAddonsOutput{Addons: []string{"a", "b"}, NextToken: custom}, nil
-	}
-	m.ListNodegroupsFn = func(context.Context, *eks.ListNodegroupsInput, ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
-		return &eks.ListNodegroupsOutput{Nodegroups: []string{"a", "b"}, NextToken: custom}, nil
-	}
-	m.ListInsightsFn = func(context.Context, *eks.ListInsightsInput, ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
-		return &eks.ListInsightsOutput{Insights: make([]ekstypes.InsightSummary, 2), NextToken: custom}, nil
-	}
-	m.DescribeAddonVersionsFn = func(context.Context, *eks.DescribeAddonVersionsInput, ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
-		return &eks.DescribeAddonVersionsOutput{Addons: make([]ekstypes.AddonInfo, 2), NextToken: custom}, nil
-	}
-	c, _ := m.ListClusters(ctx, &eks.ListClustersInput{})
-	a, _ := m.ListAddons(ctx, &eks.ListAddonsInput{})
-	n, _ := m.ListNodegroups(ctx, &eks.ListNodegroupsInput{})
-	i, _ := m.ListInsights(ctx, &eks.ListInsightsInput{})
-	v, _ := m.DescribeAddonVersions(ctx, &eks.DescribeAddonVersionsInput{})
-	if len(c.Clusters) != 2 || len(a.Addons) != 2 || len(n.Nodegroups) != 2 || len(i.Insights) != 2 || len(v.Addons) != 2 ||
-		c.NextToken != custom || a.NextToken != custom || n.NextToken != custom || i.NextToken != custom || v.NextToken != custom {
-		t.Fatal("hand-paged results must pass through unchanged")
+	// A Fn that pages by hand gets its own tokens back unchanged, so a
+	// paging caller reads every page of it, for every list call.
+	var got [5][]string
+	got[0] = drainHandPaged(t, "ListClusters", func(ctx context.Context, tok *string) ([]string, *string, error) {
+		out, err := m.ListClusters(ctx, &eks.ListClustersInput{NextToken: tok})
+		if err != nil {
+			return nil, nil, err
+		}
+		return out.Clusters, out.NextToken, nil
+	}, func(fn handPageFn) {
+		m.ListClustersFn = func(_ context.Context, in *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
+			items, next, err := fn(in.NextToken)
+			if err != nil {
+				return nil, err
+			}
+			return &eks.ListClustersOutput{Clusters: items, NextToken: next}, nil
+		}
+	})
+	got[1] = drainHandPaged(t, "ListAddons", func(ctx context.Context, tok *string) ([]string, *string, error) {
+		out, err := m.ListAddons(ctx, &eks.ListAddonsInput{NextToken: tok})
+		if err != nil {
+			return nil, nil, err
+		}
+		return out.Addons, out.NextToken, nil
+	}, func(fn handPageFn) {
+		m.ListAddonsFn = func(_ context.Context, in *eks.ListAddonsInput, _ ...func(*eks.Options)) (*eks.ListAddonsOutput, error) {
+			items, next, err := fn(in.NextToken)
+			if err != nil {
+				return nil, err
+			}
+			return &eks.ListAddonsOutput{Addons: items, NextToken: next}, nil
+		}
+	})
+	got[2] = drainHandPaged(t, "ListNodegroups", func(ctx context.Context, tok *string) ([]string, *string, error) {
+		out, err := m.ListNodegroups(ctx, &eks.ListNodegroupsInput{NextToken: tok})
+		if err != nil {
+			return nil, nil, err
+		}
+		return out.Nodegroups, out.NextToken, nil
+	}, func(fn handPageFn) {
+		m.ListNodegroupsFn = func(_ context.Context, in *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+			items, next, err := fn(in.NextToken)
+			if err != nil {
+				return nil, err
+			}
+			return &eks.ListNodegroupsOutput{Nodegroups: items, NextToken: next}, nil
+		}
+	})
+	got[3] = drainHandPaged(t, "ListInsights", func(ctx context.Context, tok *string) ([]string, *string, error) {
+		out, err := m.ListInsights(ctx, &eks.ListInsightsInput{NextToken: tok})
+		if err != nil {
+			return nil, nil, err
+		}
+		var names []string
+		for _, i := range out.Insights {
+			names = append(names, aws.ToString(i.Name))
+		}
+		return names, out.NextToken, nil
+	}, func(fn handPageFn) {
+		m.ListInsightsFn = func(_ context.Context, in *eks.ListInsightsInput, _ ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+			items, next, err := fn(in.NextToken)
+			if err != nil {
+				return nil, err
+			}
+			out := &eks.ListInsightsOutput{NextToken: next}
+			for _, it := range items {
+				out.Insights = append(out.Insights, ekstypes.InsightSummary{Name: aws.String(it)})
+			}
+			return out, nil
+		}
+	})
+	got[4] = drainHandPaged(t, "DescribeAddonVersions", func(ctx context.Context, tok *string) ([]string, *string, error) {
+		out, err := m.DescribeAddonVersions(ctx, &eks.DescribeAddonVersionsInput{NextToken: tok})
+		if err != nil {
+			return nil, nil, err
+		}
+		var names []string
+		for _, a := range out.Addons {
+			names = append(names, aws.ToString(a.AddonName))
+		}
+		return names, out.NextToken, nil
+	}, func(fn handPageFn) {
+		m.DescribeAddonVersionsFn = func(_ context.Context, in *eks.DescribeAddonVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
+			items, next, err := fn(in.NextToken)
+			if err != nil {
+				return nil, err
+			}
+			out := &eks.DescribeAddonVersionsOutput{NextToken: next}
+			for _, it := range items {
+				out.Addons = append(out.Addons, ekstypes.AddonInfo{AddonName: aws.String(it)})
+			}
+			return out, nil
+		}
+	})
+	for i, g := range got {
+		if strings.Join(g, ",") != "p1a,p1b,p2a,p3a" {
+			t.Errorf("list call %d read %v, want every hand-made page in order", i, g)
+		}
 	}
 
 	// Errors pass through.
@@ -424,4 +499,67 @@ func TestPageSize_PassThroughAndEdgeCases(t *testing.T) {
 	if err != nil || len(ng.Nodegroups) != 0 || ng.NextToken != nil {
 		t.Fatalf("empty ListNodegroups = %#v, %v", ng, err)
 	}
+}
+
+// handPageFn serves one page of a hand-paged listing for a token.
+type handPageFn func(token *string) (items []string, next *string, err error)
+
+// handPage is a three-page listing keyed by its own tokens, the way a test
+// Fn that does its own paging would answer.
+func handPage(token *string) ([]string, *string, error) {
+	switch aws.ToString(token) {
+	case "":
+		return []string{"p1a", "p1b"}, aws.String("hand-2"), nil
+	case "hand-2":
+		return []string{"p2a"}, aws.String("hand-3"), nil
+	case "hand-3":
+		return []string{"p3a"}, nil, nil
+	default:
+		return nil, nil, APIError("InvalidParameterException", "unknown token "+aws.ToString(token))
+	}
+}
+
+// drainHandPaged installs handPage as the Fn (through install), then reads
+// the listing with awserr.ListAllPages the way the services do. It fails
+// fast if a token repeats or the listing runs past a small page budget, so
+// a mock that swallows the caller's token can't loop or truncate silently.
+func drainHandPaged(t *testing.T, name string, call func(context.Context, *string) ([]string, *string, error), install func(handPageFn)) []string {
+	t.Helper()
+	install(handPage)
+	seen := map[string]bool{}
+	calls := 0
+	items, err := awserr.ListAllPages(context.Background(), name,
+		func(ctx context.Context, token *string) ([]string, error) {
+			calls++
+			if calls > 10 {
+				t.Fatalf("%s: more than 10 pages; the paging loop does not advance", name)
+			}
+			if token != nil {
+				if seen[*token] {
+					t.Fatalf("%s: token %q requested twice", name, *token)
+				}
+				seen[*token] = true
+			}
+			items, next, err := call(ctx, token)
+			if err != nil {
+				return nil, err
+			}
+			if next != nil && seen[*next] {
+				t.Fatalf("%s: token %q returned twice", name, *next)
+			}
+			return append(items, "\x00next="+aws.ToString(next)), nil
+		},
+		func(page []string) ([]string, *string) {
+			last := page[len(page)-1]
+			next := strings.TrimPrefix(last, "\x00next=")
+			if next == "" {
+				return page[:len(page)-1], nil
+			}
+			return page[:len(page)-1], aws.String(next)
+		},
+	)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return items
 }

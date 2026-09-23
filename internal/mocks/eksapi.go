@@ -73,7 +73,7 @@ func (m *EKSAPI) ListAddons(ctx context.Context, in *eks.ListAddonsInput, optFns
 	if m.ListAddonsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListAddons (cluster=%s)", ptrStr(in.ClusterName)))
 	}
-	if m.PageSize <= 0 {
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
 		return m.ListAddonsFn(ctx, in, optFns...)
 	}
 	full := *in
@@ -98,7 +98,7 @@ func (m *EKSAPI) DescribeAddonVersions(ctx context.Context, in *eks.DescribeAddo
 	if m.DescribeAddonVersionsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeAddonVersions (addon=%s)", ptrStr(in.AddonName)))
 	}
-	if m.PageSize <= 0 {
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
 		return m.DescribeAddonVersionsFn(ctx, in, optFns...)
 	}
 	full := *in
@@ -131,7 +131,7 @@ func (m *EKSAPI) ListNodegroups(ctx context.Context, in *eks.ListNodegroupsInput
 	if m.ListNodegroupsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListNodegroups (cluster=%s)", ptrStr(in.ClusterName)))
 	}
-	if m.PageSize <= 0 {
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
 		return m.ListNodegroupsFn(ctx, in, optFns...)
 	}
 	full := *in
@@ -164,7 +164,7 @@ func (m *EKSAPI) ListClusters(ctx context.Context, in *eks.ListClustersInput, op
 	if m.ListClustersFn == nil {
 		panic("mocks.EKSAPI: unexpected call to ListClusters")
 	}
-	if m.PageSize <= 0 {
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
 		return m.ListClustersFn(ctx, in, optFns...)
 	}
 	full := *in
@@ -213,7 +213,7 @@ func (m *EKSAPI) ListInsights(ctx context.Context, in *eks.ListInsightsInput, op
 	if m.ListInsightsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListInsights (cluster=%s)", ptrStr(in.ClusterName)))
 	}
-	if m.PageSize <= 0 {
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
 		return m.ListInsightsFn(ctx, in, optFns...)
 	}
 	full := *in

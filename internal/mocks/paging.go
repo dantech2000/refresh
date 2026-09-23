@@ -14,6 +14,13 @@ import (
 // mock encodes the next offset so a stale or foreign token is detectable.
 const pageTokenPrefix = "mock-page-"
 
+// isMockPageToken reports whether token is nil (a first page) or one this
+// mock issued. Any other token belongs to a Fn that pages by hand, so the
+// list methods forward it to that Fn unchanged instead of interpreting it.
+func isMockPageToken(token *string) bool {
+	return token == nil || strings.HasPrefix(*token, pageTokenPrefix)
+}
+
 // pageSlice returns the page of items that token points at, at most size
 // long, and the token for the following page (nil on the last page). A nil
 // token starts at the beginning. An unknown or out-of-range token fails with
@@ -39,7 +46,8 @@ func pageSlice[T any](items []T, token *string, size int) ([]T, *string, error) 
 // The page* helpers run when EKSAPI.PageSize > 0. Each asks the configured Fn
 // for the full, unpaged result (NextToken cleared), then returns only the
 // page the caller's token selects. A Fn that already returns its own
-// NextToken is passed through untouched, so hand-written paging still works.
+// NextToken is passed through untouched, and its later tokens (not ours)
+// reach it unchanged, so hand-written paging still works.
 
 func (m *EKSAPI) pageListClusters(in *eks.ListClustersInput, out *eks.ListClustersOutput) (*eks.ListClustersOutput, error) {
 	if out.NextToken != nil {

@@ -62,28 +62,37 @@ type updateScript struct {
 func NewEKSAPI() *EKSAPIBuilder {
 	b := &EKSAPIBuilder{m: &EKSAPI{}}
 
-	b.m.ListClustersFn = func(_ context.Context, _ *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
-		return &eks.ListClustersOutput{}, nil
-	}
 	b.m.ListAddonsFn = func(_ context.Context, in *eks.ListAddonsInput, _ ...func(*eks.Options)) (*eks.ListAddonsOutput, error) {
+		if err := checkToken(in.NextToken); err != nil {
+			return nil, err
+		}
 		if err := b.checkCluster(in.ClusterName); err != nil {
 			return nil, err
 		}
 		return &eks.ListAddonsOutput{}, nil
 	}
 	b.m.ListNodegroupsFn = func(_ context.Context, in *eks.ListNodegroupsInput, _ ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+		if err := checkToken(in.NextToken); err != nil {
+			return nil, err
+		}
 		if err := b.checkCluster(in.ClusterName); err != nil {
 			return nil, err
 		}
 		return &eks.ListNodegroupsOutput{}, nil
 	}
 	b.m.ListInsightsFn = func(_ context.Context, in *eks.ListInsightsInput, _ ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+		if err := checkToken(in.NextToken); err != nil {
+			return nil, err
+		}
 		if err := b.checkCluster(in.ClusterName); err != nil {
 			return nil, err
 		}
 		return &eks.ListInsightsOutput{}, nil
 	}
-	b.m.DescribeAddonVersionsFn = func(_ context.Context, _ *eks.DescribeAddonVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
+	b.m.DescribeAddonVersionsFn = func(_ context.Context, in *eks.DescribeAddonVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
+		if err := checkToken(in.NextToken); err != nil {
+			return nil, err
+		}
 		return &eks.DescribeAddonVersionsOutput{}, nil
 	}
 	b.WithSupportedVersions(DefaultSupportedVersions...)
@@ -97,7 +106,10 @@ func NewEKSAPI() *EKSAPIBuilder {
 		}
 		return out, nil
 	}
-	b.m.ListClustersFn = func(_ context.Context, _ *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
+	b.m.ListClustersFn = func(_ context.Context, in *eks.ListClustersInput, _ ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
+		if err := checkToken(in.NextToken); err != nil {
+			return nil, err
+		}
 		out := &eks.ListClustersOutput{}
 		for _, c := range b.clusters {
 			out.Clusters = append(out.Clusters, aws.ToString(c.Name))
@@ -199,6 +211,17 @@ func (b *EKSAPIBuilder) checkCluster(name *string) error {
 	return clusterNotFound(aws.ToString(name))
 }
 
+// checkToken rejects any NextToken reaching a builder Fn. The builder's Fns
+// never page by hand: with paging on, the list methods clear the mock's own
+// tokens before calling them, so a token that gets here is one the mock never
+// issued, and EKS answers that with InvalidParameterException.
+func checkToken(token *string) error {
+	if token == nil {
+		return nil
+	}
+	return invalidParameter(fmt.Sprintf("The nextToken %q is not valid.", *token))
+}
+
 func clusterNotFound(name string) error {
 	return notFound(fmt.Sprintf("No cluster found for name: %s.", name))
 }
@@ -271,6 +294,9 @@ func (b *EKSAPIBuilder) WithAddonVersions(addonName string, versions []string, k
 	prev := b.m.DescribeAddonVersionsFn
 
 	b.m.DescribeAddonVersionsFn = func(ctx context.Context, in *eks.DescribeAddonVersionsInput, opts ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
+		if err := checkToken(in.NextToken); err != nil {
+			return nil, err
+		}
 		if aws.ToString(in.AddonName) == addonName {
 			vinfos := make([]ekstypes.AddonVersionInfo, 0, len(versions))
 			for _, v := range versions {
@@ -351,6 +377,9 @@ func (b *EKSAPIBuilder) WithInsight(cluster, name string, status ekstypes.Insigh
 	b.insights[cluster] = append(b.insights[cluster], insightSpec{name: name, status: status, k8sVersion: k8sVersion})
 
 	b.m.ListInsightsFn = func(_ context.Context, in *eks.ListInsightsInput, _ ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+		if err := checkToken(in.NextToken); err != nil {
+			return nil, err
+		}
 		if err := b.checkCluster(in.ClusterName); err != nil {
 			return nil, err
 		}
