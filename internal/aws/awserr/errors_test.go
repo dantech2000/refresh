@@ -45,7 +45,7 @@ func dnsErr(host string) error {
 
 func http403() error {
 	return sdkOpErr(&awshttp.ResponseError{ResponseError: &smithyhttp.ResponseError{
-		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: 403}},
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusForbidden}},
 		Err:      errors.New("forbidden"),
 	}})
 }

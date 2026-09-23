@@ -213,7 +213,7 @@ func compareSemver(current, latest string) (int, bool) {
 	if !ok1 || !ok2 {
 		return 0, false
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		switch {
 		case cur[i] < lat[i]:
 			return -1, true

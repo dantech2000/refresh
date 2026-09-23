@@ -373,7 +373,7 @@ dispatch:
 	allSummaries := make([]ClusterSummary, 0)
 	var failedRegions []string
 	var firstErr error
-	for i := 0; i < dispatched; i++ {
+	for range dispatched {
 		result := <-resultChan
 		if result.err != nil {
 			s.logger.Warn("failed to list clusters in region", "region", result.region, "error", result.err)

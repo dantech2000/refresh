@@ -91,7 +91,7 @@ func RenderProgressBar(score int, status health.HealthStatus) string {
 	}
 
 	// Fill the progress bar
-	for i := 0; i < barLength; i++ {
+	for i := range barLength {
 		if i < filledLength {
 			bar.WriteString(fillChar)
 		} else {

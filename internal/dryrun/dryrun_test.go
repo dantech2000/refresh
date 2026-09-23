@@ -175,13 +175,13 @@ func TestDryRunResult_ConcurrentWrites(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			dr.categorizeUpdate(result, NodegroupUpdate{Name: "ng", Action: refreshTypes.ActionUpdate})
 			done <- struct{}{}
 		}()
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 	if len(result.UpdatesNeeded) != 10 {
@@ -346,7 +346,7 @@ func TestDescribeNodegroupFallbackWithFakeEKS(t *testing.T) {
 		Credentials: aws.AnonymousCredentials{},
 		HTTPClient: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			return &http.Response{
-				StatusCode: 200,
+				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
 				Body:       io.NopCloser(strings.NewReader(`{"nodegroup":{"nodegroupName":"ng","status":"ACTIVE"}}`)),
 			}, nil
@@ -381,7 +381,7 @@ func TestDefaultDescribeClusterWithFakeEKS(t *testing.T) {
 		Credentials: aws.AnonymousCredentials{},
 		HTTPClient: roundTripFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{
-				StatusCode: 200,
+				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
 				Body:       io.NopCloser(strings.NewReader(`{"cluster":{"name":"cluster","version":"1.30"}}`)),
 			}, nil
