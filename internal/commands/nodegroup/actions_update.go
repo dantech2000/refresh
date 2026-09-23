@@ -254,6 +254,12 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	}
 
 	verifyFailed := false
+	// Verification is cluster-wide (new stuck pods), so it can't be scoped to
+	// the updates that completed while an unmonitored roll may still be
+	// running. Skip it, and say why.
+	if verify && errors.Is(monErr, monitoring.ErrUnmonitored) && !quiet {
+		color.Yellow("Post-roll verification skipped: the outcome of one or more updates is unknown.")
+	}
 	if verify && shouldVerifyPostRoll(ctx, monErr) && len(outcomes.Started) > 0 {
 		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll, prerollOK)
 		outcomes.Verification = &result

@@ -318,8 +318,9 @@ func TestCheckSingleUpdate_RetriesThrottling(t *testing.T) {
 	}
 }
 
-// AccessDenied is not retried; the monitor stops with a formatted error that
-// names the IAM action instead of polling forever.
+// AccessDenied is not retried; the update is settled as unmonitored and the
+// monitor returns a formatted error that names the IAM action instead of
+// polling forever.
 func TestMonitorUpdates_AccessDeniedStopsWithFormattedError(t *testing.T) {
 	update := &refreshTypes.UpdateProgress{ClusterName: "cluster", NodegroupName: "ng", UpdateID: "upd-a"}
 	m := describeUpdateSequence(ekstypes.UpdateStatusSuccessful, errAccessDenied)
@@ -337,12 +338,69 @@ func TestMonitorUpdates_AccessDeniedStopsWithFormattedError(t *testing.T) {
 	}
 	cfg := refreshTypes.MonitorConfig{Quiet: true, PollInterval: time.Millisecond, Timeout: 5 * time.Second}
 	err := MonitorUpdates(context.Background(), denied, testMonitorWithUpdates(ekstypes.UpdateStatusInProgress), cfg)
-	if err == nil || errors.Is(err, ErrCancelled) || errors.Is(err, ErrMonitorTimeout) {
-		t.Fatalf("err = %v, want a permanent status-check error", err)
+	if !errors.Is(err, ErrUnmonitored) || errors.Is(err, ErrCancelled) || errors.Is(err, ErrMonitorTimeout) {
+		t.Fatalf("err = %v, want ErrUnmonitored", err)
 	}
-	for _, want := range []string{"permissions", "eks:DescribeUpdate", "continues in the background"} {
+	for _, want := range []string{"permissions", "eks:DescribeUpdate", "continue in the background"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error missing %q:\n%s", want, err)
+		}
+	}
+}
+
+// One update failing permanently (AccessDenied) must not stop monitoring of
+// the others: they are polled to Successful and shown in the final display,
+// and the error names only the update that could not be monitored.
+func TestMonitorUpdates_OneUnmonitoredUpdateDoesNotStopTheOthers(t *testing.T) {
+	var mu sync.Mutex
+	polls := map[string]int{}
+	m := &mocks.EKSAPI{
+		DescribeUpdateFn: func(_ context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+			ng := aws.ToString(in.NodegroupName)
+			if ng == "ng-denied" {
+				return nil, errAccessDenied
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			polls[ng]++
+			status := ekstypes.UpdateStatusInProgress
+			if polls[ng] >= 3 { // still rolling after the denied update settles
+				status = ekstypes.UpdateStatusSuccessful
+			}
+			return &eks.DescribeUpdateOutput{Update: &ekstypes.Update{Id: in.UpdateId, Status: status}}, nil
+		},
+	}
+	monitor := &refreshTypes.ProgressMonitor{StartTime: time.Now()}
+	for _, ng := range []string{"ng-a", "ng-denied", "ng-b"} {
+		monitor.Updates = append(monitor.Updates, refreshTypes.UpdateProgress{
+			NodegroupName: ng, ClusterName: "prod", UpdateID: "upd-" + ng,
+			Status: ekstypes.UpdateStatusInProgress, StartTime: time.Now(),
+		})
+	}
+	cfg := refreshTypes.MonitorConfig{PollInterval: time.Millisecond, Timeout: 5 * time.Second}
+
+	var err error
+	out := captureStdout(func() { err = MonitorUpdates(context.Background(), m, monitor, cfg) })
+
+	for _, i := range []int{0, 2} {
+		if got := monitor.Updates[i].Status; got != ekstypes.UpdateStatusSuccessful {
+			t.Errorf("%s status = %s, want Successful", monitor.Updates[i].NodegroupName, got)
+		}
+	}
+	if monitor.Updates[1].MonitorErr == nil || monitor.Updates[1].Status == ekstypes.UpdateStatusFailed {
+		t.Errorf("ng-denied = %+v, want MonitorErr set and not EKS Failed", monitor.Updates[1])
+	}
+	if !errors.Is(err, ErrUnmonitored) {
+		t.Fatalf("err = %v, want ErrUnmonitored", err)
+	}
+	if !strings.Contains(err.Error(), "ng-denied (upd-ng-denied)") || strings.Contains(err.Error(), "ng-a") || strings.Contains(err.Error(), "ng-b") {
+		t.Errorf("error must name only ng-denied:\n%s", err)
+	}
+	// The final display lists both completed rolls and the unmonitored one.
+	summary := out[strings.LastIndex(out, "Monitoring finished"):]
+	for _, want := range []string{"[SUCCESSFUL] ng-a", "[SUCCESSFUL] ng-b", "[MONITORING FAILED] ng-denied", "2 successful, 0 failed, 1 not monitored"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("final display missing %q:\n%s", want, summary)
 		}
 	}
 }
@@ -353,13 +411,11 @@ func TestCheckAllUpdates_TransportErrorIsPolledThrough(t *testing.T) {
 	m := describeUpdateSequence(ekstypes.UpdateStatusSuccessful, errors.New("dial tcp: connection refused"))
 	monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
 	cfg := refreshTypes.MonitorConfig{Quiet: true}
-	done, err := checkAllUpdatesWithChannels(context.Background(), m, monitor, cfg)
-	if err != nil || done || monitor.Updates[0].LastCheckError == "" {
-		t.Fatalf("first poll = %v, %v, LastCheckError %q; want not done, nil, recorded", done, err, monitor.Updates[0].LastCheckError)
+	if done := checkAllUpdatesWithChannels(context.Background(), m, monitor, cfg); done || monitor.Updates[0].LastCheckError == "" || monitor.Updates[0].MonitorErr != nil {
+		t.Fatalf("first poll: done %v, update %+v; want not done, transient error recorded", done, monitor.Updates[0])
 	}
-	done, err = checkAllUpdatesWithChannels(context.Background(), m, monitor, cfg)
-	if err != nil || !done || monitor.Updates[0].LastCheckError != "" {
-		t.Fatalf("second poll = %v, %v, LastCheckError %q; want done, nil, cleared", done, err, monitor.Updates[0].LastCheckError)
+	if done := checkAllUpdatesWithChannels(context.Background(), m, monitor, cfg); !done || monitor.Updates[0].LastCheckError != "" {
+		t.Fatalf("second poll: done %v, LastCheckError %q; want done, cleared", done, monitor.Updates[0].LastCheckError)
 	}
 }
 
@@ -414,18 +470,16 @@ func TestCheckSingleUpdateAndAllUpdates(t *testing.T) {
 	}
 
 	monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful)
-	allComplete, err := checkAllUpdatesWithChannels(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), monitor, cfg)
-	if err != nil || !allComplete {
-		t.Fatalf("checkAllUpdatesWithChannels = %v, %v", allComplete, err)
+	if !checkAllUpdatesWithChannels(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), monitor, cfg) {
+		t.Fatal("checkAllUpdatesWithChannels: want all complete")
 	}
 	if monitor.Updates[0].Status != ekstypes.UpdateStatusSuccessful {
 		t.Fatalf("monitor update not updated: %+v", monitor.Updates[0])
 	}
 
 	empty := &refreshTypes.ProgressMonitor{Quiet: true}
-	allComplete, err = checkAllUpdatesWithChannels(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), empty, cfg)
-	if err != nil || allComplete {
-		t.Fatalf("empty checkAllUpdatesWithChannels = %v, %v", allComplete, err)
+	if checkAllUpdatesWithChannels(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), empty, cfg) {
+		t.Fatal("empty checkAllUpdatesWithChannels: want not complete")
 	}
 }
 

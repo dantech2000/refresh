@@ -1,6 +1,7 @@
 package monitoring
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -78,8 +79,7 @@ func printUpdateProgressTree(updates []refreshTypes.UpdateProgress) int {
 		}
 
 		// Print nodegroup name with status
-		statusPrefix := ui.GetStatusPrefix(update.Status)
-		fmt.Printf("%s%s %s\n", prefix, statusPrefix, color.YellowString(update.NodegroupName))
+		fmt.Printf("%s%s %s\n", prefix, statusPrefixFor(update), color.YellowString(update.NodegroupName))
 		lineCount++
 
 		// Print update details
@@ -88,6 +88,8 @@ func printUpdateProgressTree(updates []refreshTypes.UpdateProgress) int {
 
 		statusText := statusColor(string(update.Status))
 		switch {
+		case update.MonitorErr != nil:
+			statusText = color.YellowString("%s: %s", monitoringFailedLabel, firstLine(update.MonitorErr.Error()))
 		case update.Status == types.UpdateStatusFailed || update.Status == types.UpdateStatusCancelled:
 			if update.ErrorMessage != "" {
 				statusText = color.RedString("%s: %s", string(update.Status), update.ErrorMessage)
@@ -128,7 +130,17 @@ func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refr
 
 		totalDuration := time.Since(monitor.StartTime)
 
-		fmt.Printf("\nAll updates completed in %v\n\n", totalDuration.Round(time.Second))
+		unmonitored := 0
+		for _, update := range monitor.Updates {
+			if update.MonitorErr != nil {
+				unmonitored++
+			}
+		}
+		if unmonitored == 0 {
+			fmt.Printf("\nAll updates completed in %v\n\n", totalDuration.Round(time.Second))
+		} else {
+			fmt.Printf("\nMonitoring finished in %v\n\n", totalDuration.Round(time.Second))
+		}
 
 		// Print cluster name as root
 		if len(monitor.Updates) > 0 {
@@ -140,6 +152,9 @@ func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refr
 		successful := 0
 		failed := 0
 		for _, update := range monitor.Updates {
+			if update.MonitorErr != nil {
+				continue
+			}
 			switch update.Status {
 			case types.UpdateStatusSuccessful:
 				successful++
@@ -148,18 +163,29 @@ func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refr
 			}
 		}
 
-		fmt.Printf("\nResults: %s successful, %s failed\n",
+		fmt.Printf("\nResults: %s successful, %s failed",
 			color.GreenString("%d", successful),
 			color.RedString("%d", failed))
+		if unmonitored > 0 {
+			fmt.Printf(", %s not monitored", color.YellowString("%d", unmonitored))
+		}
+		fmt.Println()
 	}
 
 	// Return an error if any update did not succeed. Failures carry the AWS
 	// error details so they surface even when the summary above was
 	// suppressed. A Cancelled update is counted as failed above and must not
-	// exit 0 (or trigger verification).
-	var failures []string
+	// exit 0 (or trigger verification). An update that could not be
+	// monitored has an unknown outcome and must not exit 0 either.
+	var failures, unmonitored []string
+	var monitorErrs []error
 	cancelled := false
 	for _, update := range monitor.Updates {
+		if update.MonitorErr != nil {
+			unmonitored = append(unmonitored, update.NodegroupName+" ("+update.UpdateID+")")
+			monitorErrs = append(monitorErrs, update.MonitorErr)
+			continue
+		}
 		switch update.Status {
 		case types.UpdateStatusFailed:
 			msg := update.NodegroupName
@@ -171,14 +197,31 @@ func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refr
 			cancelled = true
 		}
 	}
-	if len(failures) > 0 {
-		return fmt.Errorf("one or more nodegroup updates failed: %s", strings.Join(failures, "; "))
+	var errs []error
+	switch {
+	case len(failures) > 0:
+		errs = append(errs, fmt.Errorf("one or more nodegroup updates failed: %s", strings.Join(failures, "; ")))
+	case cancelled:
+		errs = append(errs, fmt.Errorf("one or more nodegroup updates were cancelled"))
 	}
-	if cancelled {
-		return fmt.Errorf("one or more nodegroup updates were cancelled")
+	if len(unmonitored) > 0 {
+		errs = append(errs, fmt.Errorf("%w: %s; the EKS update(s) continue in the background: %w",
+			ErrUnmonitored, strings.Join(unmonitored, ", "), errors.Join(monitorErrs...)))
 	}
+	return errors.Join(errs...)
+}
 
-	return nil
+// monitoringFailedLabel marks an update whose status could not be polled. It
+// is distinct from the EKS FAILED status: the update's outcome is unknown.
+const monitoringFailedLabel = "MONITORING FAILED"
+
+// statusPrefixFor returns the tree prefix for an update, marking one that
+// could not be monitored instead of showing its last-known EKS status.
+func statusPrefixFor(update refreshTypes.UpdateProgress) string {
+	if update.MonitorErr != nil {
+		return "[" + monitoringFailedLabel + "]"
+	}
+	return ui.GetStatusPrefix(update.Status)
 }
 
 // printCompletionSummaryTree displays completion summary in tree format
@@ -196,22 +239,23 @@ func printCompletionSummaryTree(updates []refreshTypes.UpdateProgress) {
 		}
 
 		// Print nodegroup name with status
-		statusPrefix := ui.GetStatusPrefix(update.Status)
-		fmt.Printf("%s%s %s\n", prefix, statusPrefix, color.YellowString(update.NodegroupName))
+		fmt.Printf("%s%s %s\n", prefix, statusPrefixFor(update), color.YellowString(update.NodegroupName))
 
 		// Print completion details
 		duration := time.Since(update.StartTime).Round(time.Second)
 
 		var statusText string
-		switch update.Status {
-		case types.UpdateStatusSuccessful:
+		switch {
+		case update.MonitorErr != nil:
+			statusText = color.YellowString("%s: %s", monitoringFailedLabel, firstLine(update.MonitorErr.Error()))
+		case update.Status == types.UpdateStatusSuccessful:
 			statusText = color.GreenString("SUCCESSFUL")
-		case types.UpdateStatusFailed:
+		case update.Status == types.UpdateStatusFailed:
 			statusText = color.RedString("FAILED")
 			if update.ErrorMessage != "" {
 				statusText = color.RedString("FAILED: %s", update.ErrorMessage)
 			}
-		case types.UpdateStatusCancelled:
+		case update.Status == types.UpdateStatusCancelled:
 			statusText = color.YellowString("CANCELLED")
 		default:
 			statusText = color.WhiteString(string(update.Status))

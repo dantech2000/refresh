@@ -28,6 +28,12 @@ import (
 // must not treat the roll as finished (e.g. skip post-roll verification).
 var ErrCancelled = errors.New("interrupted; the EKS update continues in the background")
 
+// ErrUnmonitored is wrapped by the error MonitorUpdates returns when status
+// polling failed permanently for one or more updates (e.g. AccessDenied or
+// ResourceNotFound on DescribeUpdate). Their EKS outcome is unknown, so
+// callers must not treat the roll as verified.
+var ErrUnmonitored = errors.New("could not monitor nodegroup update(s)")
+
 // UpdateDescriber is the EKS call the monitor polls. *eks.Client satisfies it.
 type UpdateDescriber interface {
 	DescribeUpdate(ctx context.Context, params *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error)
@@ -83,15 +89,7 @@ func MonitorUpdates(ctx context.Context, eksClient UpdateDescriber, monitor *ref
 			return handleTimeout(monitor, cfg)
 
 		case <-ticker.C:
-			allComplete, err := checkAllUpdatesWithChannels(monitorCtx, eksClient, monitor, cfg)
-			if err != nil {
-				// A permanent status-check failure (e.g. AccessDenied on
-				// DescribeUpdate) won't clear on the next poll. The caller
-				// prints the returned error.
-				return fmt.Errorf("stopped monitoring (the EKS update continues in the background): %w", err)
-			}
-
-			if allComplete {
+			if checkAllUpdatesWithChannels(monitorCtx, eksClient, monitor, cfg) {
 				return DisplayCompletionSummary(monitor, cfg)
 			}
 		}
@@ -165,11 +163,12 @@ func DisplayStopped(monitor *refreshTypes.ProgressMonitor, config refreshTypes.M
 	}
 }
 
-// checkAllUpdatesWithChannels checks all update statuses concurrently. A
-// transient check failure is recorded on the update and polled through; a
-// permanent one (a typed AWS error that retrying can't fix, such as
-// AccessDenied) is returned so the monitor stops instead of polling forever.
-func checkAllUpdatesWithChannels(ctx context.Context, eksClient UpdateDescriber, monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) (bool, error) {
+// checkAllUpdatesWithChannels checks all update statuses concurrently and
+// reports whether every update is settled. A transient check failure is
+// recorded on the update and polled through. A permanent one (a typed AWS
+// error that retrying can't fix, such as AccessDenied) settles only that
+// update, with MonitorErr set, so the other updates keep being monitored.
+func checkAllUpdatesWithChannels(ctx context.Context, eksClient UpdateDescriber, monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) bool {
 	// Create buffered channel for results
 	resultsChan := make(chan statusResult, len(monitor.Updates))
 
@@ -180,8 +179,8 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient UpdateDescriber,
 	for i := range monitor.Updates {
 		update := &monitor.Updates[i]
 
-		// Skip completed updates
-		if isUpdateComplete(update.Status) {
+		// Skip settled updates (terminal, or no longer pollable)
+		if isSettled(*update) {
 			continue
 		}
 
@@ -203,22 +202,23 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient UpdateDescriber,
 
 	// Collect results
 	now := time.Now()
-	allComplete := true
-	var permanentErr error
 
 	for result := range resultsChan {
 		update := &monitor.Updates[result.index]
 
 		if result.err != nil {
-			if permanentErr == nil && ctx.Err() == nil && isPermanentCheckError(result.err) {
-				permanentErr = awsinternal.FormatAWSError(result.err,
+			if ctx.Err() == nil && isPermanentCheckError(result.err) {
+				// Polling this update again would fail the same way. Stop
+				// polling it; its EKS outcome is unknown, not Failed.
+				update.MonitorErr = awsinternal.FormatAWSError(result.err,
 					fmt.Sprintf("checking the status of nodegroup %s update %s", update.NodegroupName, update.UpdateID))
+				update.LastCheckError = ""
+				continue
 			}
 			// Transient polling failure: the update is likely still running
 			// in AWS. Record it separately so the display doesn't render an
 			// in-flight update as FAILED.
 			update.LastCheckError = result.err.Error()
-			allComplete = false
 			continue
 		}
 
@@ -226,21 +226,6 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient UpdateDescriber,
 		update.LastChecked = now
 		update.ErrorMessage = result.errMsg
 		update.LastCheckError = ""
-
-		if !isUpdateComplete(update.Status) {
-			allComplete = false
-		}
-	}
-	if permanentErr != nil {
-		return false, permanentErr
-	}
-
-	// Also check updates that were skipped (already complete)
-	for _, update := range monitor.Updates {
-		if !isUpdateComplete(update.Status) {
-			allComplete = false
-			break
-		}
 	}
 
 	// Display current status
@@ -248,7 +233,22 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient UpdateDescriber,
 		DisplayProgressUpdate(monitor)
 	}
 
-	return allComplete && len(monitor.Updates) > 0, nil
+	return AllComplete(monitor)
+}
+
+// isSettled reports whether the monitor is done with an update: it reached a
+// terminal EKS status, or its status can no longer be polled (MonitorErr).
+func isSettled(u refreshTypes.UpdateProgress) bool {
+	return isUpdateComplete(u.Status) || u.MonitorErr != nil
+}
+
+// firstLine returns the first line of s, for one-line display of a
+// multi-line formatted error.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
 }
 
 // isPermanentCheckError reports whether a failed status check will fail the
@@ -299,14 +299,15 @@ func checkSingleUpdate(ctx context.Context, eksClient UpdateDescriber, update *r
 	return result
 }
 
-// AllComplete reports whether every monitored update has reached a terminal
-// state (successful, failed, or cancelled).
+// AllComplete reports whether every monitored update is settled: it reached a
+// terminal state (successful, failed, or cancelled), or its status could not
+// be monitored (see ErrUnmonitored).
 func AllComplete(monitor *refreshTypes.ProgressMonitor) bool {
 	if len(monitor.Updates) == 0 {
 		return false
 	}
 	for _, u := range monitor.Updates {
-		if !isUpdateComplete(u.Status) {
+		if !isSettled(u) {
 			return false
 		}
 	}

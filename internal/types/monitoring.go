@@ -20,6 +20,10 @@ type UpdateProgress struct {
 	// network blip). It is display-only: the update may well still be running
 	// in AWS, so it must not be rendered as a FAILED update.
 	LastCheckError string
+	// MonitorErr is set when status polling failed permanently (e.g.
+	// AccessDenied or ResourceNotFound on DescribeUpdate). The monitor stops
+	// polling this update, but its EKS outcome is unknown: it is not Failed.
+	MonitorErr error
 }
 
 // ProgressMonitor holds the state of a set of nodegroup updates being
