@@ -210,6 +210,8 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 
 	app := newApp()
+	// Every command's help ends with its exit codes (REF-165).
+	_ = commands.DocumentExitCodes(app)
 	app.Writer = out
 	app.ErrWriter = errOut
 	// urfave/cli prints ExitCoder messages (cli.Exit) to its package-level

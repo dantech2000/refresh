@@ -104,10 +104,25 @@ func (c *pausableDeadline) Deadline() (time.Time, bool) {
 
 func (c *pausableDeadline) Done() <-chan struct{} { return c.done }
 
+// Err reports why c is done. The parent's cancellation reaches c through a
+// context.AfterFunc goroutine, so right after the parent is cancelled that
+// goroutine may not have run yet. Err checks the parent itself, so a caller
+// that asks "was this an interrupt?" after the parent was cancelled always
+// sees it (REF-165: Ctrl+C exits 1, not 4).
 func (c *pausableDeadline) Err() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.err
+	err := c.err
+	c.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if perr := c.parent.Err(); perr != nil {
+		c.finish(perr)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.err
+	}
+	return nil
 }
 
 // Value delegates to the parent. It must not expose an internal cancelCtx:

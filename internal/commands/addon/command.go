@@ -110,9 +110,7 @@ one proceeds with a warning. A name that only partially matches an installed
 add-on is confirmed on a terminal; without one, pass the exact name or --yes.
 
 With --wait, the command follows the EKS update until it succeeds, fails, or
-is cancelled, then checks that the add-on reports the target version. Exit
-codes: 0 success, 1 failure, 2 updated but the post-update health check found
-issues (COMPLETED_WITH_ISSUES).
+is cancelled, then checks that the add-on reports the target version.
 
 Use --health-check to verify the add-on is ACTIVE and version-compatible
 before updating. -o json|yaml emits a machine-readable result/summary.`,

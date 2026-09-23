@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 )
 
@@ -29,10 +30,13 @@ func TestListAllRegions_HangingEKSFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "failed in all 3 regions") {
 		t.Errorf("error = %v, want every region reported as failed", err)
 	}
+	if code := runner.ExitCodeOf(err); code != runner.ExitError {
+		t.Errorf("exit code = %d, want 1 (total failure)", code)
+	}
 }
 
-// A partial failure keeps exit 0 (REF-165 tracks a distinct code) but is
-// visible: one stderr warning per failed region and an incomplete-list line.
+// A partial failure prints what was gathered, warns once per failed region
+// with an incomplete-list line, and exits 4 (REF-165).
 func TestListAllRegions_PartialFailureWarns(t *testing.T) {
 	srv := fakeaws.New(t, listWorld())
 	t.Setenv("REFRESH_EKS_REGIONS", "us-east-1,eu-west-1")
@@ -44,8 +48,8 @@ func TestListAllRegions_PartialFailureWarns(t *testing.T) {
 	})
 
 	stdout, stderr, err := runCluster(t, "list", "-A", "-o", "json")
-	if err != nil {
-		t.Fatalf("cluster list: %v\nstderr:\n%s", err, stderr)
+	if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+		t.Fatalf("exit code = %d (err %v), want 4\nstderr:\n%s", code, err, stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 	if doc["count"] != float64(1) {
@@ -60,6 +64,17 @@ func TestListAllRegions_PartialFailureWarns(t *testing.T) {
 	}
 	if strings.Contains(stderr, "level=WARN") {
 		t.Errorf("stderr still has a raw slog line:\n%s", stderr)
+	}
+
+	// The table and tree views print the gathered rows, then exit 4 too.
+	for _, args := range [][]string{{"list", "-A"}, {"list", "--tree"}} {
+		stdout, _, err := runCluster(t, args...)
+		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+			t.Errorf("%v: exit code = %d (err %v), want 4", args, code, err)
+		}
+		if !strings.Contains(stdout, "prod") {
+			t.Errorf("%v: stdout lacks the gathered cluster:\n%s", args, stdout)
+		}
 	}
 }
 
@@ -76,7 +91,7 @@ func TestListAllRegions_DefaultSweepSkipsInaccessible(t *testing.T) {
 
 	stdout, stderr, err := runCluster(t, "list", "-A", "-o", "json")
 	if err != nil {
-		t.Fatalf("cluster list: %v\nstderr:\n%s", err, stderr)
+		t.Fatalf("cluster list: %v (skipped regions are not failures: want exit 0)\nstderr:\n%s", err, stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 	if doc["count"] != float64(1) {
@@ -91,6 +106,9 @@ func TestListAllRegions_DefaultSweepSkipsInaccessible(t *testing.T) {
 	stdout, _, err = runCluster(t, "list", "-A", "-o", "json")
 	if err == nil || !strings.Contains(err.Error(), "none is accessible") {
 		t.Errorf("err = %v, want a none-accessible error", err)
+	}
+	if code := runner.ExitCodeOf(err); code != runner.ExitError {
+		t.Errorf("exit code = %d, want 1 (total failure)", code)
 	}
 	if stdout != "" {
 		t.Errorf("stdout = %q, want empty", stdout)

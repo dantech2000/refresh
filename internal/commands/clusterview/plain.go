@@ -196,11 +196,14 @@ func writeUpgradeCheckInfo(w io.Writer, report *clustersvc.UpgradeReport) {
 	_, _ = fmt.Fprintf(w, "version skew (control plane %s): ", valueOrDash(report.Skew.ControlPlaneVersion))
 	if len(report.Skew.Findings) == 0 {
 		_, _ = fmt.Fprintln(w, "nodegroups and addons are current")
-		return
+	} else {
+		_, _ = fmt.Fprintf(w, "%d finding(s)\n", len(report.Skew.Findings))
+		for _, f := range report.Skew.Findings {
+			_, _ = fmt.Fprintf(w, "  %s\n", f)
+		}
 	}
-	_, _ = fmt.Fprintf(w, "%d finding(s)\n", len(report.Skew.Findings))
-	for _, f := range report.Skew.Findings {
-		_, _ = fmt.Fprintf(w, "  %s\n", f)
+	for _, m := range report.Incomplete {
+		_, _ = fmt.Fprintf(w, "could not read %s\n", m)
 	}
 }
 

@@ -164,15 +164,21 @@ lives at [drod.dev/refresh](https://drod.dev/refresh/) and under
 
 ## Exit codes
 
-| Command | Codes |
-|---|---|
-| All | `0` success, `1` error or interrupt (Ctrl+C) |
-| `status` | `2` needs attention, `3` extended/unsupported, `4` incomplete data |
-| `nodegroup update` | `2` health warnings, `3` health blocked, `4` failed to start, `5` post-roll verification issues |
-| `addon update` | `2` updated, but the post-update health check found issues |
+Every command follows one contract:
 
-See [Exit codes](https://drod.dev/refresh/concepts/exit-codes/) for the
-details and CI examples.
+| Code | Meaning |
+|---|---|
+| `0` | OK |
+| `1` | Error or interrupt (Ctrl+C) |
+| `2` | Needs attention: warnings or stale items (`status`, `cluster upgrade-check`, `nodegroup update` health warnings) |
+| `3` | Blocked or unsupported: a gate stopped the operation (`cluster upgrade-check`, `cluster upgrade`, `nodegroup update`, `nodegroup scale --check-pdbs`), or a cluster is on extended support |
+| `4` | Incomplete data or partial failure: some items or regions could not be read, or some updates failed |
+| `5` | Post-action verification failed (`nodegroup update`, `nodegroup scale`, `addon update`) |
+
+`cluster upgrade-check` is a CI gate: it exits `2` for warnings, `3` for
+blockers, and `4` when a nodegroup or add-on could not be read. Pass `--exit-zero` to get the report without failing the job. See
+[Exit codes](https://drod.dev/refresh/concepts/exit-codes/) for the codes
+each command returns and CI examples.
 
 
 ## Health checks

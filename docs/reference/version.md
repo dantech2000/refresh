@@ -18,6 +18,8 @@ adds measurable latency, and is skipped when stdout is piped/redirected. Disable
 it with --no-update-check, or set REFRESH_NO_UPDATE_CHECK to any non-empty
 value other than 0, false, or no.
 
+Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
+
 ## Flags
 
 | Flag | Env | Default | Description |

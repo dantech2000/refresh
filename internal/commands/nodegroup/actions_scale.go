@@ -2,6 +2,7 @@ package nodegroup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -100,9 +101,27 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 		warnForcedScaleDown(ui.Stderr, clusterName, nodegroupName, pdbCheck, pdbCheckErr)
 	}
 
-	return runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
+	return scaleExit(runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
 		return svc.Scale(ctx, clusterName, nodegroupName, desired, minSize, maxSize, opts)
-	})
+	}))
+}
+
+// scaleExit maps a scale error to the exit-code contract: exit 3 when the
+// --check-pdbs gate or the pre-scaling health check blocked the scale (nothing
+// changed), exit 5 when the scale was applied but the post-scaling health
+// check found blocking issues, else the error unchanged (exit 1).
+func scaleExit(err error) error {
+	var blocked *nodegroupsvc.ScaleDownBlockedError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &blocked), errors.Is(err, nodegroupsvc.ErrScaleHealthBlocked):
+		return cli.Exit(err.Error(), runner.ExitBlocked)
+	case errors.Is(err, nodegroupsvc.ErrScaleVerifyFailed):
+		return cli.Exit(err.Error(), runner.ExitVerifyFailed)
+	default:
+		return err
+	}
 }
 
 // warnForcedScaleDown prints, to w, the PDB blockers (or the failed check)

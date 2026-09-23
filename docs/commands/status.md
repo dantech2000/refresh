@@ -74,8 +74,10 @@ then exits `4`, unless a higher-priority code applies.
 | `2` | Something needs attention: a stale AMI, an add-on behind, a nodegroup behind the control plane, or a control-plane health issue |
 | `3` | A cluster is on extended support or unsupported |
 | `4` | Incomplete data, or a region could not be listed |
+| `1` | An error, or nothing could be gathered: every region failed or was skipped |
 
-Precedence is `3`, then `2`, then `4`. See
+Precedence is `3`, then `2`, then `4`. `4` means some data is missing. If
+nothing could be gathered, `status` fails with `1` instead. See
 [Exit codes](../concepts/exit-codes.md#status).
 
 ## Examples

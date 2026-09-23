@@ -166,7 +166,14 @@ with no AWS.
 - **Output:** every list/describe command supports `-o table|json|yaml|plain[|tree]` via
   `runner.EncodeStdout`, and follows the output contract above. A partial result (items that
   could not be read) is never a success: name the failures on stderr, add `failures` to the
-  JSON/YAML payload, and exit non-zero.
+  JSON/YAML payload, and exit 4.
+- **Exit codes** (REF-165, `docs/concepts/exit-codes.md`): one contract for every command.
+  `0` ok · `1` error or interrupt · `2` needs attention (warnings/stale) · `3` blocked or
+  unsupported (a gate stopped it, nothing changed) · `4` incomplete data or partial failure ·
+  `5` post-action verification failed. Use the `runner.Exit*` constants with
+  `cli.Exit(msg, code)`, returned unwrapped (urfave does not unwrap). Print the document
+  first, then return the exit error. A new command needs an `exitCodeHelp` entry in
+  `internal/commands/exitcodes.go`; a test walks the CLI tree and fails without it.
 - **AWS calls:** wrap in `common.WithRetry`; format errors with `awsinternal.FormatAWSError`
   (or `awserr.FormatAWSError` below `internal/ui`); page list calls with `ListAllPages`.
   Set `ClientRequestToken: aws.String(common.IdempotencyToken())` on mutating calls (Update*).
