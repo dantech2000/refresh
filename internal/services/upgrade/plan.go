@@ -77,19 +77,16 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		simNodegroups[ng.Name] = ng.Version
 	}
 
-	// Resume after an interrupted multi-hop run: the control plane may have
-	// reached a hop's version while that hop's addons/nodegroups never
-	// caught up. Planning only the next control-plane move would leave them
-	// on the previous era's versions, so finish the current version first.
-	if len(hops) > 0 && hops[0] != currentVersion && s.needsCatchUp(ctx, addonsSvc, addonList, nodegroups, currentVersion, opts) {
-		plan.Hops = append(plan.Hops, s.catchUpHop(ctx, addonsSvc, addonList, nodegroups, cluster, currentVersion, opts))
-		// Only nodegroups the catch-up can actually roll advance; ones
-		// already beyond the kubelet skew stay put so the next hop's
-		// readiness step still blocks on them.
-		for _, ng := range nodegroups {
-			if !beyondKubeletSkew(ng.Version, currentVersion) {
-				advanceSimulation(simNodegroups, []nodegroupState{ng}, currentVersion, opts.SkipNodegroups)
-			}
+	// Before the next control-plane step, finish work at the live version
+	// that the step depends on: addons an interrupted hop left incompatible
+	// with the live control plane, and nodegroups the next step would push
+	// beyond the kubelet skew. Everything else rolls with the regular hops.
+	if hops[0] != currentVersion {
+		preRoll := preRollNodegroups(nodegroups, currentVersion, hops[0], opts.SkipNodegroups)
+		addonLag := s.addonsIncompatible(ctx, addonsSvc, addonList, currentVersion, opts.SkipAddons)
+		if addonLag || len(preRoll) > 0 {
+			plan.Hops = append(plan.Hops, s.catchUpHop(ctx, addonsSvc, addonList, preRoll, addonLag, cluster, currentVersion, opts))
+			advanceSimulation(simNodegroups, preRoll, currentVersion, opts.SkipNodegroups)
 		}
 	}
 
@@ -121,34 +118,41 @@ func advanceSimulation(sim map[string]string, nodegroups []nodegroupState, versi
 	}
 }
 
-// needsCatchUp reports whether addons or nodegroups lag the live control-plane
-// version, i.e. a previous run moved the control plane but was interrupted
-// before the rest of that hop finished. Signals:
-//   - a rollable nodegroup sits exactly one minor behind the control plane
-//     (nodegroup rolls are the last phase of a hop, so this catches every
-//     interruption point on clusters with managed nodegroups; nodegroups
-//     further behind predate the run and stay with the kubelet-skew gate);
-//   - an addon's installed version is not among the versions EKS lists as
-//     compatible with the control-plane version.
+// preRollNodegroups returns the nodegroups that must roll to the live
+// control-plane version before the control plane moves to nextVersion. A
+// nodegroup qualifies only on its own version: it is rollable (not custom-AMI,
+// not skipped), nextVersion would put it beyond the kubelet skew, and it is
+// still within the skew of the live control plane, so a roll to that version
+// is supported. A nodegroup that is further behind is not pre-rolled; the next
+// hop's readiness step blocks on it instead.
 //
-// An addon that is merely not the newest compatible build does not trigger a
-// catch-up; the next hop's addon phase moves it anyway. Version-lookup API
-// errors are not treated as lag here: the regular hop steps surface them.
-func (s *Service) needsCatchUp(ctx context.Context, svc *addons.ServiceImpl, addonList []addons.AddonSummary, nodegroups []nodegroupState, cpVersion string, opts PlanOptions) bool {
-	cpMinor, err := minorVersion(cpVersion)
-	if err != nil {
-		return false
-	}
+// A nodegroup within the skew of nextVersion is not rolled early, even when it
+// lags the control plane: the regular hop rolls it once, straight to the hop
+// target.
+func preRollNodegroups(nodegroups []nodegroupState, cpVersion, nextVersion string, skip []string) []nodegroupState {
+	var out []nodegroupState
 	for _, ng := range nodegroups {
-		if ng.CustomAMI || matchesAny(ng.Name, opts.SkipNodegroups) {
+		if ng.CustomAMI || matchesAny(ng.Name, skip) || versionAtLeast(ng.Version, cpVersion) {
 			continue
 		}
-		if ngMinor, err := minorVersion(ng.Version); err == nil && ngMinor == cpMinor-1 {
-			return true
+		if beyondKubeletSkew(ng.Version, nextVersion) && !beyondKubeletSkew(ng.Version, cpVersion) {
+			out = append(out, ng)
 		}
 	}
+	return out
+}
+
+// addonsIncompatible reports whether an installed addon's version is not
+// among the versions EKS lists as compatible with the live control-plane
+// version, i.e. a previous run moved the control plane but was interrupted
+// before that hop's addon phase finished.
+//
+// An addon that is merely not the newest compatible build does not count;
+// the next hop's addon phase moves it anyway. Version-lookup API errors are
+// not treated as lag here: the regular hop steps surface them.
+func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImpl, addonList []addons.AddonSummary, cpVersion string, skip []string) bool {
 	for _, a := range addonList {
-		if isSkippedAddon(a.Name, opts.SkipAddons) {
+		if isSkippedAddon(a.Name, skip) {
 			continue
 		}
 		versions, err := svc.GetAvailableVersions(ctx, a.Name, cpVersion)
@@ -169,23 +173,22 @@ func (s *Service) needsCatchUp(ctx context.Context, svc *addons.ServiceImpl, add
 	return false
 }
 
-// catchUpHop builds a same-version hop that finishes the work of an
-// interrupted hop: addons to the latest version compatible with the live
-// control plane and nodegroups rolled to it. The control-plane step is
-// already satisfied, and no readiness step is needed because the control
-// plane does not move. A nodegroup already beyond the kubelet skew of the
-// control plane is not rolled across that gap here: its step is blocked,
-// like the skew blocker in a regular hop's readiness step.
-func (s *Service) catchUpHop(ctx context.Context, svc *addons.ServiceImpl, addonList []addons.AddonSummary, nodegroups []nodegroupState, cluster *ekstypes.Cluster, cpVersion string, opts PlanOptions) Hop {
+// catchUpHop builds a same-version hop that runs before the next
+// control-plane step. It updates addons to the latest version compatible with
+// the live control plane only when withAddons is set (an addon is
+// incompatible with it), and rolls only the preRoll nodegroups to it. The
+// control-plane step is already satisfied, and no readiness step is needed
+// because the control plane does not move.
+func (s *Service) catchUpHop(ctx context.Context, svc *addons.ServiceImpl, addonList []addons.AddonSummary, preRoll []nodegroupState, withAddons bool, cluster *ekstypes.Cluster, cpVersion string, opts PlanOptions) Hop {
 	hop := Hop{From: cpVersion, To: cpVersion}
 	hop.Steps = append(hop.Steps, controlPlaneStep(cpVersion, aws.ToString(cluster.Version), cpVersion, cluster.Status))
-	hop.Steps = append(hop.Steps, s.addonSteps(ctx, svc, addonList, cpVersion, opts.SkipAddons)...)
-	ngSteps := nodegroupSteps(nodegroups, cpVersion, opts.SkipNodegroups)
-	for i, ng := range nodegroups {
-		if ngSteps[i].Status == StatusPending && beyondKubeletSkew(ng.Version, cpVersion) {
-			ngSteps[i].Status = StatusBlocked
-			ngSteps[i].Reason = fmt.Sprintf("nodegroup %s at %s already exceeds the kubelet skew limit (%d minors) against the control plane at %s",
-				ng.Name, ng.Version, kubeletSkew, cpVersion)
+	if withAddons {
+		hop.Steps = append(hop.Steps, s.addonSteps(ctx, svc, addonList, cpVersion, opts.SkipAddons)...)
+	}
+	ngSteps := nodegroupSteps(preRoll, cpVersion, opts.SkipNodegroups)
+	for i := range ngSteps {
+		if ngSteps[i].Status == StatusPending && ngSteps[i].Reason == "" {
+			ngSteps[i].Reason = "the next control-plane step would exceed the kubelet skew limit"
 		}
 	}
 	hop.Steps = append(hop.Steps, ngSteps...)

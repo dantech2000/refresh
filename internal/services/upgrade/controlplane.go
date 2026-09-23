@@ -37,10 +37,7 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 		// Another update (possibly a previous run of this orchestrator) is in
 		// flight; attach and watch rather than fail.
 		progress("cluster is already UPDATING; attaching to the in-flight update")
-		if err := s.waitForClusterActive(ctx, clusterName, progress); err != nil {
-			return err
-		}
-		cluster, err = s.describeCluster(ctx, clusterName)
+		cluster, err = s.waitForClusterActive(ctx, clusterName, progress)
 		if err != nil {
 			return err
 		}
@@ -83,10 +80,7 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 
 	// Gate: the cluster itself must be ACTIVE at the new version before the
 	// addon phase may start.
-	if err := s.waitForClusterActive(ctx, clusterName, progress); err != nil {
-		return err
-	}
-	cluster, err = s.describeCluster(ctx, clusterName)
+	cluster, err = s.waitForClusterActive(ctx, clusterName, progress)
 	if err != nil {
 		return err
 	}
@@ -97,8 +91,12 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 	return nil
 }
 
-// waitForClusterActive polls the cluster until its status is ACTIVE.
-func (s *Service) waitForClusterActive(ctx context.Context, clusterName string, progress ProgressFunc) error {
+// waitForClusterActive polls the cluster until its status is ACTIVE and
+// returns it, so callers read the settled version without another call. Like
+// waitForUpdate, it reports transient describe failures via progress and
+// keeps polling; only ctx, permanent API errors, and a FAILED cluster end the
+// wait early.
+func (s *Service) waitForClusterActive(ctx context.Context, clusterName string, progress ProgressFunc) (*ekstypes.Cluster, error) {
 	interval := s.PollInterval
 	if interval <= 0 {
 		interval = defaultPollInterval
@@ -107,20 +105,29 @@ func (s *Service) waitForClusterActive(ctx context.Context, clusterName string, 
 	defer ticker.Stop()
 
 	for {
-		cluster, err := s.describeCluster(ctx, clusterName)
-		if err != nil {
-			return err
-		}
-		switch cluster.Status {
-		case ekstypes.ClusterStatusActive:
-			return nil
-		case ekstypes.ClusterStatusFailed:
-			return fmt.Errorf("cluster %s entered FAILED status", clusterName)
+		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+			return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
+		})
+		switch {
+		case err != nil:
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if isPermanentAPIError(err) {
+				return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s", clusterName))
+			}
+			progress("warning: checking cluster %s: %v", clusterName, err)
+		case out.Cluster == nil:
+			return nil, fmt.Errorf("cluster %s not found", clusterName)
+		case out.Cluster.Status == ekstypes.ClusterStatusActive:
+			return out.Cluster, nil
+		case out.Cluster.Status == ekstypes.ClusterStatusFailed:
+			return nil, fmt.Errorf("cluster %s entered FAILED status", clusterName)
 		}
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-ticker.C:
 		}
 	}

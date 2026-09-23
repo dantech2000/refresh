@@ -192,6 +192,12 @@ sequential **hops**. Each hop runs: readiness (cluster insights + kubelet
 version skew) → control plane → add-ons (dependency order, versions compatible
 with the hop target) → nodegroup rolls.
 
+A nodegroup that lags the control plane normally rolls once per hop, straight
+to the hop target. The plan rolls a nodegroup early, to the current
+control-plane version, only when the next control-plane step would put it past
+the kubelet skew limit (3 minor versions). A nodegroup already past that limit,
+or one that is custom-AMI or skipped, blocks the plan instead.
+
 !!! note "Resumable by design"
     The plan is re-derived from live cluster state on every run — no state
     file. Rerunning after a failure (or Ctrl+C) resumes where it left off, and

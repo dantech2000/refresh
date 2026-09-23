@@ -25,6 +25,7 @@ type fakeWorld struct {
 	ngVersions     map[string]string // name -> k8s version
 	failAddons     bool              // make UpdateAddon fail (gate failure simulation)
 	hangUpdates    bool              // make DescribeUpdate never complete (SIGINT simulation)
+	customAMI      map[string]bool   // nodegroups reported with AMI type CUSTOM
 }
 
 // latestFor maps a k8s version to the fake addon catalogue's latest
@@ -115,10 +116,14 @@ func newWorldMock(w *fakeWorld) *mocks.EKSAPI {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		name := aws.ToString(in.NodegroupName)
+		amiType := ekstypes.AMITypesAl2023X8664Standard
+		if w.customAMI[name] {
+			amiType = ekstypes.AMITypesCustom
+		}
 		return &eks.DescribeNodegroupOutput{Nodegroup: &ekstypes.Nodegroup{
 			NodegroupName: in.NodegroupName,
 			Version:       aws.String(w.ngVersions[name]),
-			AmiType:       ekstypes.AMITypesAl2023X8664Standard,
+			AmiType:       amiType,
 			Status:        ekstypes.NodegroupStatusActive,
 		}}, nil
 	}
