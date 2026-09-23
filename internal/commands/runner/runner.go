@@ -66,17 +66,32 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 		ctx, cancel = context.WithCancel(ctx)
 	}
 
-	cfg, err := awsconfig.Load(ctx, cmd)
+	// Config loading and the credential check (STS, SSO, IMDS) always run
+	// under --timeout, even when the returned context has a longer or no
+	// deadline, so a stalled credential source can't hang the command.
+	checkCtx, cancelCheck := checkContext(ctx, cmd.Duration("timeout"), timeout)
+	defer cancelCheck()
+
+	cfg, err := awsconfig.Load(checkCtx, cmd)
 	if err != nil {
 		cancel()
 		color.Red("Failed to load AWS config: %v", err)
 		return nil, nil, aws.Config{}, err
 	}
-	if err := check(ctx, cfg); err != nil {
+	if err := check(checkCtx, cfg); err != nil {
 		cancel()
 		return nil, nil, aws.Config{}, err
 	}
 	return ctx, cancel, cfg, nil
+}
+
+// checkContext bounds the setup phase by apiTimeout (--timeout) when that is
+// shorter than the returned context's timeout (or that has no deadline).
+func checkContext(ctx context.Context, apiTimeout, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if apiTimeout > 0 && (timeout <= 0 || apiTimeout < timeout) {
+		return context.WithTimeout(ctx, apiTimeout)
+	}
+	return ctx, func() {}
 }
 
 // SetupAWS opens a context with the command's timeout, loads the AWS config,
