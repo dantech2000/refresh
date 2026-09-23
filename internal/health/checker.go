@@ -4,9 +4,11 @@ import (
 	"context"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -30,25 +32,25 @@ const (
 
 // HealthResult represents the result of a single health check
 type HealthResult struct {
-	Name       string       `json:"name"`
-	Status     HealthStatus `json:"status"`
-	Score      int          `json:"score"` // 0-100
-	Message    string       `json:"message"`
-	Details    []string     `json:"details,omitempty"`
-	IsBlocking bool         `json:"isBlocking"`
+	Name       string       `json:"name" yaml:"name"`
+	Status     HealthStatus `json:"status" yaml:"status"`
+	Score      int          `json:"score" yaml:"score"` // 0-100
+	Message    string       `json:"message" yaml:"message"`
+	Details    []string     `json:"details,omitempty" yaml:"details,omitempty"`
+	IsBlocking bool         `json:"isBlocking" yaml:"isBlocking"`
 	// Skipped marks a check that could not be evaluated (e.g. no Kubernetes
 	// client) rather than measured. Skipped checks are excluded from the
 	// OverallScore so a missing prerequisite doesn't silently drag the score.
-	Skipped bool `json:"skipped,omitempty"`
+	Skipped bool `json:"skipped,omitempty" yaml:"skipped,omitempty"`
 }
 
 // HealthSummary represents the overall health check results
 type HealthSummary struct {
-	Results      []HealthResult `json:"results"`
-	OverallScore int            `json:"overallScore"`
-	Decision     Decision       `json:"decision"`
-	Warnings     []string       `json:"warnings,omitempty"`
-	Errors       []string       `json:"errors,omitempty"`
+	Results      []HealthResult `json:"results" yaml:"results"`
+	OverallScore int            `json:"overallScore" yaml:"overallScore"`
+	Decision     Decision       `json:"decision" yaml:"decision"`
+	Warnings     []string       `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	Errors       []string       `json:"errors,omitempty" yaml:"errors,omitempty"`
 }
 
 // HealthChecker performs various health checks on the EKS cluster
@@ -80,6 +82,23 @@ func NewChecker(eksClient *eks.Client, k8sClient kubernetes.Interface, cwClient 
 	}
 	if asgClient != nil {
 		hc.asgClient = asgClient
+	}
+	return hc
+}
+
+// NewCheckerForConfig builds the fully wired checker every command uses: EKS,
+// CloudWatch, Auto Scaling and Service Quotas clients from awsCfg, plus the
+// optional Kubernetes client and node-metrics lister (either may be nil).
+func NewCheckerForConfig(awsCfg aws.Config, k8sClient kubernetes.Interface, metrics NodeMetricsLister) *HealthChecker {
+	hc := NewChecker(
+		eks.NewFromConfig(awsCfg),
+		k8sClient,
+		cloudwatch.NewFromConfig(awsCfg),
+		autoscaling.NewFromConfig(awsCfg),
+	)
+	hc.SetServiceQuotas(servicequotas.NewFromConfig(awsCfg))
+	if metrics != nil {
+		hc.SetNodeMetrics(metrics)
 	}
 	return hc
 }

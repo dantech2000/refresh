@@ -3,6 +3,7 @@ package nodegroup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -169,64 +170,101 @@ func TestOutputNodegroupDetailsTable_Plain(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// printScaleDownPDBImpact
+// printScaleDryRunPDBGate / warnForcedScaleDown
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestPrintScaleDownPDBImpact_None(t *testing.T) {
-	out := captureStdout(t, func() { printScaleDownPDBImpact(nil) })
-	if !strings.Contains(out, "none found") {
-		t.Errorf("expected a 'none found' message, got: %q", out)
+func blockedCheck(scoped bool) *nodegroupsvc.ScaleDownPDBCheck {
+	return &nodegroupsvc.ScaleDownPDBCheck{
+		CurrentDesired: 3, RequestedDesired: 1, ScaleDown: true, Scoped: scoped,
+		Blockers: []health.PDBInfo{
+			{Namespace: "app", Name: "web", CurrentHealthy: 1, DesiredHealthy: 1, ExpectedPods: 1},
+			{Namespace: "app", Name: "operator", StatusNotSynced: true},
+		},
 	}
 }
 
-func TestPrintScaleDownPDBImpact_AllHealthy(t *testing.T) {
-	pdbs := []health.PDBInfo{
-		{Namespace: "app", Name: "web", DisruptionsAllowed: 2},
-		{Namespace: "app", Name: "api", DisruptionsAllowed: 1},
+func TestPrintScaleDryRunPDBGate(t *testing.T) {
+	cases := map[string]struct {
+		check    *nodegroupsvc.ScaleDownPDBCheck
+		checkErr error
+		force    bool
+		want     []string
+		notWant  []string
+	}{
+		"not a scale-down": {
+			check: &nodegroupsvc.ScaleDownPDBCheck{CurrentDesired: 2, RequestedDesired: 4},
+			want:  []string{"not a scale-down"},
+		},
+		"no blockers": {
+			check:   &nodegroupsvc.ScaleDownPDBCheck{CurrentDesired: 3, RequestedDesired: 1, ScaleDown: true, Scoped: true},
+			want:    []string{"no PodDisruptionBudget blocks removing nodes from ng"},
+			notWant: []string{"REFUSED"},
+		},
+		"blocked": {
+			check: blockedCheck(true),
+			want: []string{"would be REFUSED", "2 PodDisruptionBudget(s) with pods on this nodegroup's nodes",
+				"app/web (1/1 pods healthy", "app/operator (PDB status not synced", "--force"},
+		},
+		"blocked, unscoped": {
+			check: blockedCheck(false),
+			want:  []string{"would be REFUSED", "could not scope"},
+		},
+		"blocked, forced": {
+			check:   blockedCheck(true),
+			force:   true,
+			want:    []string{"would be overridden by --force", "app/web"},
+			notWant: []string{"REFUSED"},
+		},
+		"check failed": {
+			checkErr: errors.New("no Kubernetes client configured"),
+			want:     []string{"would be REFUSED", "no Kubernetes client configured"},
+		},
+		"check failed, forced": {
+			checkErr: errors.New("no Kubernetes client configured"),
+			force:    true,
+			want:     []string{"--force would scale anyway"},
+			notWant:  []string{"REFUSED"},
+		},
 	}
-	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
-	if !strings.Contains(out, "none currently block a drain") {
-		t.Errorf("all-healthy PDBs should report nothing blocks, got: %q", out)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			printScaleDryRunPDBGate(&buf, "prod", "ng", tc.check, tc.checkErr, tc.force)
+			out := buf.String()
+			for _, w := range tc.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("output missing %q:\n%s", w, out)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(out, w) {
+					t.Errorf("output should not contain %q:\n%s", w, out)
+				}
+			}
+		})
 	}
 }
 
-func TestPrintScaleDownPDBImpact_EmptyPDBNotAtRisk(t *testing.T) {
-	// A PDB matching no pods reports 0 disruptions allowed but blocks nothing.
-	pdbs := []health.PDBInfo{{Namespace: "app", Name: "orphan", DisruptionsAllowed: 0, ExpectedPods: 0}}
-	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
-	if !strings.Contains(out, "none currently block a drain") {
-		t.Errorf("empty PDB should not be flagged, got: %q", out)
+func TestWarnForcedScaleDown(t *testing.T) {
+	var buf bytes.Buffer
+	warnForcedScaleDown(&buf, "prod", "ng", blockedCheck(true), nil)
+	out := buf.String()
+	for _, w := range []string{"--force", "prod/ng down from 3 to 1", "2 PodDisruptionBudget(s)", "app/web", "app/operator"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("warning missing %q:\n%s", w, out)
+		}
 	}
-}
 
-func TestPrintScaleDownPDBImpact_AtRisk(t *testing.T) {
-	pdbs := []health.PDBInfo{
-		{Namespace: "app", Name: "web", DisruptionsAllowed: 0, CurrentHealthy: 1, DesiredHealthy: 1, ExpectedPods: 1},
-		{Namespace: "app", Name: "api", DisruptionsAllowed: 3},
+	buf.Reset()
+	warnForcedScaleDown(&buf, "prod", "ng", &nodegroupsvc.ScaleDownPDBCheck{CurrentDesired: 3, RequestedDesired: 1, ScaleDown: true}, nil)
+	if buf.Len() != 0 {
+		t.Errorf("no blockers should print nothing, got %q", buf.String())
 	}
-	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
-	if !strings.Contains(out, "at risk") {
-		t.Errorf("at-risk PDBs should be flagged, got: %q", out)
-	}
-	if !strings.Contains(out, "app/web") {
-		t.Errorf("the at-risk PDB should be named, got: %q", out)
-	}
-}
 
-func TestPrintScaleDownPDBImpact_SystemAndUnsyncedPDBs(t *testing.T) {
-	pdbs := []health.PDBInfo{
-		{Namespace: "kube-system", Name: "coredns", DisruptionsAllowed: 0, CurrentHealthy: 2, DesiredHealthy: 2, ExpectedPods: 2},
-		{Namespace: "app", Name: "operator", DisruptionsAllowed: 0, StatusNotSynced: true},
-	}
-	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
-	if !strings.Contains(out, "at risk (2)") {
-		t.Errorf("both PDBs should be at risk, got: %q", out)
-	}
-	if !strings.Contains(out, "kube-system/coredns") {
-		t.Errorf("a kube-system blocker should be named, got: %q", out)
-	}
-	if !strings.Contains(out, "app/operator: disruptionsAllowed=0, status not synced") {
-		t.Errorf("an unsynced PDB should say its status is not synced, got: %q", out)
+	buf.Reset()
+	warnForcedScaleDown(&buf, "prod", "ng", nil, errors.New("listing PodDisruptionBudgets: forbidden"))
+	if !strings.Contains(buf.String(), "could not validate PodDisruptionBudgets") || !strings.Contains(buf.String(), "forbidden") {
+		t.Errorf("a failed check should be reported, got %q", buf.String())
 	}
 }
 

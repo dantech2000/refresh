@@ -23,6 +23,7 @@ import (
 	ctxcmd "github.com/dantech2000/refresh/internal/commands/ctxcmd"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	nodegroupcmd "github.com/dantech2000/refresh/internal/commands/nodegroup"
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	statuscmd "github.com/dantech2000/refresh/internal/commands/statuscmd"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
@@ -85,7 +86,7 @@ func newApp() *cli.Command {
 			&cli.IntFlag{
 				Name:    "max-concurrency",
 				Aliases: []string{"C"},
-				Usage:   "Global max concurrency for multi-region operations",
+				Usage:   "Global max concurrency for multi-region operations (for status: clusters evaluated at once per region; regions at once = min(4, this))",
 				Value:   appconfig.DefaultMaxConcurrency,
 				Sources: cli.EnvVars("REFRESH_MAX_CONCURRENCY"),
 			},
@@ -207,8 +208,9 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	app.Writer = out
 	app.ErrWriter = errOut
 	// Run threads ctx into every command action, so signal cancellation from
-	// main propagates to in-flight AWS calls.
-	return app.Run(ctx, args)
+	// main propagates to in-flight AWS calls. The kubeconfig notice dedupe is
+	// per run.
+	return app.Run(runner.WithKubeNotices(ctx), args)
 }
 
 func main() {

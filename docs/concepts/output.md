@@ -11,7 +11,7 @@ Every list/describe command (and most others) supports `-o` / `--format`:
 | `tree` | Hierarchical region → cluster view (**`cluster list` only**) |
 
 ```bash
-refresh cluster list -o json | jq '.[] | select(.status=="ACTIVE") .name'
+refresh cluster list -o json | jq -r '.clusters[] | select(.status=="ACTIVE") | .name'
 refresh nodegroup list -c prod -o plain | awk -F'\t' 'NR>1 {print $1, $4}'
 refresh cluster list -o tree
 ```
@@ -21,10 +21,32 @@ refresh cluster list -o tree
     with a clear error and a non-zero exit — it will **not** silently fall back
     to a table. This protects scripts that expect JSON.
 
+## JSON envelopes
+
+List commands wrap their rows in an object, so a jq filter starts from the
+array key, not from `.[]`:
+
+| Command | Top-level shape |
+|---|---|
+| `cluster list` | `{"clusters": [...], "count": N}` |
+| `nodegroup list` | `{"cluster": "...", "nodegroups": [...], "count": N}`, plus `"failures"` when some nodegroups could not be described |
+| `addon list` | `{"cluster": "...", "addons": [...], "count": N}` |
+| `status` | `{"clusters": [...]}` |
+
+Describe commands (`cluster describe`, `nodegroup describe`, `addon describe`)
+print the object itself, with no envelope.
+
+```bash
+refresh nodegroup list -c prod -o json | jq -r '.nodegroups[] | select(.amiStatus == "Outdated") | .name'
+refresh addon list prod -o json | jq -r '.addons[] | "\(.name) \(.version)"'
+refresh status -o json | jq -r '.clusters[] | select(.staleAmi.behind > 0) | .name'
+```
+
 ## Key consistency
 
 `json` and `yaml` emit the **same** camelCase keys (e.g. `instanceType`,
-`createdAt`), so `jq '.instanceType'` and `yq '.instanceType'` both work.
+`createdAt`), so `refresh nodegroup describe prod -n ng-a -o json | jq '.instanceType'`
+and the same filter through `yq` on `-o yaml` both work.
 
 ## The `plain` contract
 

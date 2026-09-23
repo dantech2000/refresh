@@ -1,0 +1,68 @@
+addons:
+  - health: s-health
+    name: s-name
+    status: s-status
+    version: s-version
+createdAt: "2026-01-02T03:04:05Z"
+endpoint: s-endpoint
+health:
+  decision: s-decision
+  errors:
+    - s-string
+  overallScore: 4
+  results:
+    - details:
+        - s-string
+      isBlocking: true
+      message: s-message
+      name: s-name
+      score: 6
+      skipped: true
+      status: s-status
+  warnings:
+    - s-string
+healthIssues:
+  - code: s-code
+    message: s-message
+    resourceIds:
+      - s-string
+name: s-name
+networking:
+  endpointAccess:
+    privateAccess: true
+    publicAccess: true
+    publicCidrs:
+      - s-string
+  securityGroupIds:
+    - s-string
+  subnetIds:
+    - s-string
+  vpcCidr: s-vpccidr
+  vpcId: s-vpcid
+nodegroups:
+  - desiredSize: 4
+    instanceType: s-instancetype
+    name: s-name
+    readyKnown: true
+    readyNodes: 4
+    status: s-status
+platformVersion: s-platformversion
+region: s-region
+security:
+  deletionProtection: true
+  encryptionEnabled: true
+  kmsKeyArn: s-kmskeyarn
+  loggingEnabled:
+    - s-string
+  serviceRoleArn: s-servicerolearn
+status: s-status
+support:
+  daysRemaining: 5
+  extendedUntil: "2026-01-02T03:04:05Z"
+  extraCostUsdPerHour: 1.5
+  fallback: true
+  standardUntil: "2026-01-02T03:04:05Z"
+  tier: s-tier
+tags:
+  s-string: s-string
+version: s-version

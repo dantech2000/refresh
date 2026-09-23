@@ -64,8 +64,6 @@ func stubKubeSeams(t *testing.T) (*bytes.Buffer, *int) {
 	probes := 0
 	prevOut, prevProbe := kubeWarnOut, probeKube
 	kubeWarnOut = &buf
-	kubeNotices.Clear() // notices dedupe per process; each test starts fresh
-	t.Cleanup(func() { kubeNotices.Clear() })
 	probeKube = func(context.Context, kubernetes.Interface) error { probes++; return nil }
 	t.Cleanup(func() { kubeWarnOut, probeKube = prevOut, prevProbe })
 	return &buf, &probes
@@ -81,8 +79,9 @@ func writeTestKubeconfig(t *testing.T) string {
 }
 
 func TestResolveClusterKubeClient_MismatchSkipsWithWarning(t *testing.T) {
+	runCtx := WithKubeNotices(context.Background())
 	out, probes := stubKubeSeams(t)
-	client, _ := ResolveClusterKubeClient(context.Background(), KubeRequest{
+	client, _ := ResolveClusterKubeClient(runCtx, KubeRequest{
 		API:        eksWithEndpoint(testOtherEndpoint),
 		Cluster:    "mismatch-prod",
 		Region:     "us-east-1",
@@ -109,12 +108,41 @@ func TestResolveClusterKubeClient_MismatchSkipsWithWarning(t *testing.T) {
 
 	// A second resolution for the same cluster in one run doesn't repeat it.
 	out.Reset()
-	_, _ = ResolveClusterKubeClient(context.Background(), KubeRequest{
+	_, _ = ResolveClusterKubeClient(runCtx, KubeRequest{
 		API: eksWithEndpoint(testOtherEndpoint), Cluster: "mismatch-prod", Region: "us-east-1",
 		Kubeconfig: writeTestKubeconfig(t),
 	})
 	if out.Len() != 0 {
 		t.Errorf("repeated mismatch warning: %q", out.String())
+	}
+
+	// A new run starts with a fresh dedupe set and warns again.
+	out.Reset()
+	_, _ = ResolveClusterKubeClient(WithKubeNotices(context.Background()), KubeRequest{
+		API: eksWithEndpoint(testOtherEndpoint), Cluster: "mismatch-prod", Region: "us-east-1",
+		Kubeconfig: writeTestKubeconfig(t),
+	})
+	if !strings.Contains(out.String(), "mismatch-prod") {
+		t.Errorf("a new run should warn again, got %q", out.String())
+	}
+}
+
+func TestNoticeOnce_PerRun(t *testing.T) {
+	bare := context.Background()
+	for range 2 {
+		if !noticeOnce(bare, "k") {
+			t.Error("without a dedupe set every notice prints")
+		}
+	}
+	run := WithKubeNotices(bare)
+	if !noticeOnce(run, "k") {
+		t.Error("the first notice in a run prints")
+	}
+	if noticeOnce(run, "k") {
+		t.Error("a repeated notice in the same run is deduped")
+	}
+	if !noticeOnce(WithKubeNotices(bare), "k") {
+		t.Error("another run has its own set")
 	}
 }
 

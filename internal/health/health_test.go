@@ -873,3 +873,35 @@ func TestCheckCriticalWorkloads_ContainersNotReady(t *testing.T) {
 		t.Errorf("not-ready container pod: status = %s, want FAIL or WARN", result.Status)
 	}
 }
+
+func TestDrainBlockers_ScopedWithoutMutatingChecker(t *testing.T) {
+	client := fakek8s.NewSimpleClientset(
+		ngNode("node-a1", "ng-a"),
+		ngNode("node-b1", "ng-b"),
+		appPod("my-app", "web-1", "web", "node-a1"),
+		appPod("my-app", "batch-1", "batch", "node-b1"),
+		pdbAllowing("my-app", "web-pdb", "web", 0, 1),
+		pdbAllowing("my-app", "batch-pdb", "batch", 0, 1),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	report, err := hc.DrainBlockers(context.Background(), "prod", []string{"ng-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Scoped || len(report.Blockers) != 1 || report.Blockers[0].Name != "web-pdb" {
+		t.Fatalf("want only web-pdb, scoped; got %+v", report)
+	}
+	if len(hc.targetNodegroups) != 0 {
+		t.Errorf("DrainBlockers must not set the checker's target nodegroups, got %v", hc.targetNodegroups)
+	}
+	if got := report.Blockers[0].DrainBlockerSummary(); got != "my-app/web-pdb (1/1 pods healthy, 0 disruptions allowed)" {
+		t.Errorf("DrainBlockerSummary = %q", got)
+	}
+}
+
+func TestDrainBlockers_NoKubeClient(t *testing.T) {
+	hc := NewChecker(nil, nil, nil, nil)
+	if _, err := hc.DrainBlockers(context.Background(), "prod", []string{"ng-a"}); !errors.Is(err, ErrNoKubeClient) {
+		t.Errorf("want ErrNoKubeClient, got %v", err)
+	}
+}
