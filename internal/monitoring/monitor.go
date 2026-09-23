@@ -98,10 +98,11 @@ func printMonitoringHeader(monitor *refreshTypes.ProgressMonitor, config refresh
 
 // handleUserCancellation handles graceful cancellation by user signal. It
 // returns ErrCancelled so callers stop instead of treating the roll as done.
+// The "check with refresh nodegroup list" hint is left to the caller's error
+// (see nodegroup updateExit) so it prints once, in quiet/JSON runs too.
 func handleUserCancellation(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	if !config.Quiet && len(monitor.Updates) > 0 {
 		color.Yellow("\nMonitoring cancelled by user. Updates are still running in AWS.")
-		fmt.Printf("Use 'refresh nodegroup list %s' to check status manually.\n", monitor.Updates[0].ClusterName)
 	}
 	return ErrCancelled
 }

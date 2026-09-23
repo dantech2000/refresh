@@ -278,11 +278,10 @@ func TestHandleUserCancellation_VerboseWithUpdates(t *testing.T) {
 	if !errors.Is(err, ErrCancelled) {
 		t.Errorf("expected ErrCancelled, got %v", err)
 	}
-	if !strings.Contains(out, "refresh nodegroup list") {
-		t.Errorf("hint should name 'refresh nodegroup list', got:\n%s", out)
-	}
-	if strings.Contains(out, "refresh list --cluster") {
-		t.Errorf("hint uses stale command name, got:\n%s", out)
+	// The status-check hint comes from the caller's returned error (updateExit);
+	// printing it here too would show it twice.
+	if strings.Contains(out, "refresh nodegroup list") || strings.Contains(out, "refresh list") {
+		t.Errorf("cancellation display must not repeat the status-check hint, got:\n%s", out)
 	}
 }
 
