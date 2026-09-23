@@ -1,3 +1,5 @@
+// Package common provides the shared service helpers: AWS retry with
+// backoff, pagination, bounded parallel fan-out, and a TTL cache.
 package common
 
 import (

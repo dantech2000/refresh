@@ -1,3 +1,5 @@
+// Package nodegroup lists, describes, scales, and updates EKS managed
+// nodegroups, including AMI staleness checks.
 package nodegroup
 
 import (

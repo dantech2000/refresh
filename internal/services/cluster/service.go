@@ -1,3 +1,5 @@
+// Package cluster lists and describes EKS clusters, with optional health,
+// networking, and upgrade-insight details.
 package cluster
 
 import (

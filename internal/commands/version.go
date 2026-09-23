@@ -1,3 +1,5 @@
+// Package commands holds the top-level utility commands: version, shell
+// completion, man page install, and the hidden docs generator.
 package commands
 
 import (
