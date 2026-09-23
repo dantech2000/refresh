@@ -12,20 +12,11 @@ import (
 )
 
 // MatchingNodegroups returns nodegroup names that contain the given pattern.
-// If pattern is empty, returns all nodegroups.
+// If a nodegroup is named exactly pattern, only that nodegroup is returned, so
+// "ng-a" never also selects "ng-a-spot" or "ng-a2". If pattern is empty,
+// returns all nodegroups.
 func MatchingNodegroups(nodegroups []string, pattern string) []string {
-	if pattern == "" {
-		return nodegroups
-	}
-
-	matches := make([]string, 0, len(nodegroups))
-	for _, ng := range nodegroups {
-		if strings.Contains(ng, pattern) {
-			matches = append(matches, ng)
-		}
-	}
-
-	return matches
+	return matchPreferExact(nodegroups, pattern)
 }
 
 // ConfirmNodegroupSelection prompts user to confirm when multiple nodegroups match.

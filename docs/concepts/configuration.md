@@ -26,6 +26,36 @@ refresh status --profile prod --region us-east-1
 Credentials themselves come from the standard SDK chain — `refresh` never stores
 them.
 
+## Cluster resolution
+
+Every command that targets one cluster resolves it in this order (first match
+wins):
+
+1. The `--cluster, -c` flag.
+2. The first positional argument.
+3. The cluster of the active `refresh` context (`refresh use <name>`).
+4. The cluster of the current kubeconfig context. Only read-only commands use
+   this step.
+
+Mutating commands (`cluster upgrade`, `addon update`, `nodegroup update`,
+`nodegroup scale`) never use the kubeconfig. A kubeconfig that points at
+another cluster cannot select the target of a change. If a mutating command
+takes the cluster from the active context, it prints
+`Using cluster <cluster> (from context <name>)` to stderr.
+
+If none of the steps gives a cluster, the command fails with a non-zero exit.
+Read-only commands (`describe`, `list`, `upgrade-check`) also print the
+available clusters to stderr. Mutating commands print only the error.
+
+The name can be a partial pattern:
+
+- An exact name always wins. `-c prod` selects `prod`, not `prod-legacy`.
+- If only one cluster contains the pattern, `refresh` asks you to confirm it.
+  Without a terminal, mutating commands fail and name the candidate. Read-only
+  commands use the candidate and print a note to stderr.
+- If several clusters contain the pattern, `refresh` asks you to pick one.
+  Without a terminal, the command fails and lists the candidates.
+
 ## Global flags
 
 These are accepted on every command:

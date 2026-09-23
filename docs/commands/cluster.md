@@ -212,7 +212,7 @@ with the hop target) → nodegroup rolls.
 | `--dry-run, -d` | Print the full ordered plan without mutating anything |
 | `--yes, -y` | Skip per-phase confirmation prompts |
 | `--force` | Force nodegroup rolls when pods can't be drained due to PDBs |
-| `--skip, -s` | Add-on to skip (repeatable; for add-ons managed via Helm/GitOps) |
+| `--skip, -s` | Add-on name to skip, exact and case-insensitive (repeatable; for add-ons managed via Helm/GitOps) |
 | `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | Suppress progress output |
 | `--poll-interval, -p` | How often to poll in-flight updates (default `15s`) |

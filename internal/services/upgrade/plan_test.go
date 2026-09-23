@@ -297,6 +297,21 @@ func TestBuildPlan_SkipListsAreManualSteps(t *testing.T) {
 	}
 }
 
+// --skip matches addon names exactly: a substring leaves the step pending.
+func TestBuildPlan_SkipAddonSubstringDoesNotSkip(t *testing.T) {
+	svc := newTestService(twoHopMock())
+
+	plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{
+		SkipAddons: []string{"cni"},
+	})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if s := findStep(t, plan.Hops[0].Steps, StepAddon, "vpc-cni"); s.Status == StatusManual {
+		t.Fatalf("addon vpc-cni skipped by substring %q; --skip must be exact", "cni")
+	}
+}
+
 func findStep(t *testing.T, steps []Step, typ StepType, target string) Step {
 	t.Helper()
 	for _, s := range steps {

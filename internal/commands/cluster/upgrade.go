@@ -52,7 +52,7 @@ Examples:
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Print the full ordered plan without mutating anything"},
 			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Skip per-phase confirmation prompts"},
 			&cli.BoolFlag{Name: "force", Usage: "Force nodegroup rolls when pods can't be drained due to PDBs"},
-			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon to skip (repeatable; for addons managed via Helm/GitOps)"},
+			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to skip (repeatable)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Overall upgrade timeout (not read from REFRESH_TIMEOUT, which only sets API/read timeouts)", Value: upgradeDefaultTimeout},
@@ -74,8 +74,9 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, cmd)
-	if err != nil || listed {
+	// Mutating: no cluster list on empty input, and no kubeconfig fallback.
+	clusterName, err := runner.ResolveCluster(ctx, awsCfg, cmd)
+	if err != nil {
 		return err
 	}
 

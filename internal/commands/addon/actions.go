@@ -162,8 +162,9 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, cmd)
-	if err != nil || listed {
+	// Mutating: no cluster list on empty input, and no kubeconfig fallback.
+	clusterName, err := runner.ResolveCluster(ctx, cfg, cmd)
+	if err != nil {
 		return err
 	}
 
@@ -241,16 +242,11 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	requested := runner.RequestedCluster(cmd)
-	if strings.TrimSpace(requested) == "" {
-		return fmt.Errorf("cluster name is required")
-	}
-
 	resolveCtx, cancelResolve := ctx, context.CancelFunc(func() {})
 	if timeout > 0 {
 		resolveCtx, cancelResolve = context.WithTimeout(ctx, timeout)
 	}
-	clusterName, err := awsinternal.ClusterName(resolveCtx, cfg, requested)
+	clusterName, err := runner.ResolveCluster(resolveCtx, cfg, cmd)
 	cancelResolve()
 	if err != nil {
 		return err
