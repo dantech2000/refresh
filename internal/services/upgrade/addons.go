@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,14 +36,17 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 	addonList = addons.SortByDependency(addonList)
 
 	for _, a := range addonList {
-		if matchesAny(a.Name, skip) {
+		if isSkippedAddon(a.Name, skip) {
 			progress("addon %s: skipped (managed out-of-band)", a.Name)
 			continue
 		}
 
 		versions, err := svc.GetAvailableVersions(ctx, a.Name, targetVersion)
 		if err != nil {
-			return fmt.Errorf("addon %s: no version compatible with %s: %w", a.Name, targetVersion, err)
+			if errors.Is(err, addons.ErrNoVersionsFound) {
+				return fmt.Errorf("addon %s: no version compatible with %s: %w", a.Name, targetVersion, err)
+			}
+			return fmt.Errorf("addon %s: looking up versions compatible with %s: %w", a.Name, targetVersion, err)
 		}
 		chosen := versions[0].Version
 

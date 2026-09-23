@@ -113,7 +113,7 @@ operation settles.
 			&cli.BoolFlag{Name: "health-check", Usage: "Validate cluster health before and after scaling"},
 			&cli.BoolFlag{Name: "check-pdbs", Usage: "Validate Pod Disruption Budgets before scaling down"},
 			&cli.BoolFlag{Name: "wait", Usage: "Wait for scaling operation to complete"},
-			&cli.DurationFlag{Name: "op-timeout", Usage: "Scaling operation timeout", Value: 5 * time.Minute},
+			&cli.DurationFlag{Name: "op-timeout", Usage: "Scaling operation timeout for --wait (added on top of --timeout; 0 = no limit)", Value: 5 * time.Minute},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config)"},
 			runner.KubeContextFlag(),
 			&cli.BoolFlag{Name: "dry-run", Usage: "Preview scaling impact without executing"},
@@ -152,7 +152,7 @@ Exit codes:
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or partial name pattern (overrides kubeconfig)", Sources: cli.EnvVars("EKS_CLUSTER_NAME")},
+			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or partial name pattern (overrides the active context; kubeconfig is not used)", Sources: cli.EnvVars("EKS_CLUSTER_NAME")},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name or partial name pattern (if not set, update all)"},
 			&cli.BoolFlag{Name: "all-clusters", Usage: "Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r."},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS)"},
@@ -160,7 +160,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview changes without executing them"},
 			&cli.BoolFlag{Name: "no-wait", Usage: "Don't wait for update completion (original behavior)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Minimal output mode"},
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Maximum time to wait for update completion", Value: 40 * time.Minute},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Maximum time to wait for update completion (per cluster with --all-clusters; 0 = no limit)", Value: 40 * time.Minute},
 			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "Polling interval for checking update status", Value: 15 * time.Second},
 			&cli.BoolFlag{Name: "skip-health-check", Aliases: []string{"s"}, Usage: "Skip pre-flight health validation"},
 			&cli.BoolFlag{Name: "health-only", Usage: "Run health check only, don't update (exit code: 0=pass, 2=warn, 3=block)"},

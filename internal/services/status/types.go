@@ -73,6 +73,10 @@ type ClusterStatus struct {
 	NodegroupCount int                 `json:"nodegroupCount" yaml:"nodegroupCount"`
 	StaleAMI       StaleAMISummary     `json:"staleAmi" yaml:"staleAmi"`
 	AddonsBehind   AddonsBehindSummary `json:"addonsBehind" yaml:"addonsBehind"`
+	// NodegroupsBehindControlPlane counts nodegroups on an older Kubernetes
+	// minor than the control plane (a half-finished upgrade). StaleAMI can't
+	// show this: AMI freshness is judged against each nodegroup's own minor.
+	NodegroupsBehindControlPlane int `json:"nodegroupsBehindControlPlane" yaml:"nodegroupsBehindControlPlane"`
 	// HealthIssues is the count of AWS-reported control-plane health issues
 	// (DescribeCluster Health.Issues) — degraded resources, IAM failures, etc.
 	HealthIssues int `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
@@ -81,10 +85,18 @@ type ClusterStatus struct {
 	Errors []string `json:"errors,omitempty" yaml:"errors,omitempty"`
 }
 
-// NeedsAttention reports whether the cluster has any stale AMIs or addons
-// behind latest (drives the exit-code "something stale" signal).
+// NeedsAttention reports whether the cluster has any stale AMIs, nodegroups
+// behind the control plane, or addons behind latest (drives the exit-code
+// "something stale" signal).
 func (c ClusterStatus) NeedsAttention() bool {
-	return c.StaleAMI.Behind > 0 || c.AddonsBehind.Behind > 0 || c.HealthIssues > 0
+	return c.StaleAMI.Behind > 0 || c.NodegroupsBehindControlPlane > 0 || c.AddonsBehind.Behind > 0 || c.HealthIssues > 0
+}
+
+// Incomplete reports whether any data source for the cluster failed, so the
+// row cannot be trusted as current (drives the exit-code "incomplete data"
+// signal).
+func (c ClusterStatus) Incomplete() bool {
+	return len(c.Errors) > 0
 }
 
 // SupportRisk reports whether the cluster is on extended or unsupported EKS

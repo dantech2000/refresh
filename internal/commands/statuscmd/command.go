@@ -21,7 +21,12 @@ staleness, and addons behind latest.
 Exit codes (for CI/cron):
   0  everything current and in standard support
   2  something stale (nodegroup AMI or addon behind latest)
-  3  a cluster is on extended support or unsupported`,
+  3  a cluster is on extended support or unsupported
+  4  incomplete data: a cluster row has errors (a failed AWS call or a
+     sweep that timed out) or a region could not be listed
+
+When several apply, the highest-priority code wins: 3, then 2, then 4.
+Incomplete data never exits 0; rows with errors are marked in the output.`,
 		Flags: []cli.Flag{
 			// --timeout and --max-concurrency come from the global/persistent
 			// flags (see main.go); status reads them via cmd.Duration/cmd.Int and

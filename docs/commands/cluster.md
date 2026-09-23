@@ -212,12 +212,12 @@ with the hop target) → nodegroup rolls.
 | `--dry-run, -d` | Print the full ordered plan without mutating anything |
 | `--yes, -y` | Skip per-phase confirmation prompts |
 | `--force` | Force nodegroup rolls when pods can't be drained due to PDBs |
-| `--skip, -s` | Add-on to skip (repeatable; for add-ons managed via Helm/GitOps) |
+| `--skip, -s` | Add-on name to skip, exact and case-insensitive (repeatable; for add-ons managed via Helm/GitOps) |
 | `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | Suppress progress output |
 | `--poll-interval, -p` | How often to poll in-flight updates (default `15s`) |
 | `--format, -o` | Plan output format: `table` (default), `json`, `yaml`, `plain` |
-| `--timeout, -t` | Overall operation timeout (default `4h`; env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Overall upgrade timeout (default `4h`; not read from `REFRESH_TIMEOUT`) |
 
 !!! tip "Exit code in dry-run"
     A dry-run (or any run) whose plan contains a **blocker** prints the plan and

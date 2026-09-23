@@ -3,6 +3,7 @@ package monitoring
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -152,11 +153,29 @@ func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refr
 			color.RedString("%d", failed))
 	}
 
-	// Return error if any updates failed
+	// Return an error if any update did not succeed. Failures carry the AWS
+	// error details so they surface even when the summary above was
+	// suppressed. A Cancelled update is counted as failed above and must not
+	// exit 0 (or trigger verification).
+	var failures []string
+	cancelled := false
 	for _, update := range monitor.Updates {
-		if update.Status == types.UpdateStatusFailed {
-			return fmt.Errorf("one or more nodegroup updates failed")
+		switch update.Status {
+		case types.UpdateStatusFailed:
+			msg := update.NodegroupName
+			if update.ErrorMessage != "" {
+				msg += ": " + update.ErrorMessage
+			}
+			failures = append(failures, msg)
+		case types.UpdateStatusCancelled:
+			cancelled = true
 		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("one or more nodegroup updates failed: %s", strings.Join(failures, "; "))
+	}
+	if cancelled {
+		return fmt.Errorf("one or more nodegroup updates were cancelled")
 	}
 
 	return nil

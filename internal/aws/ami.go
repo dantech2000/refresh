@@ -5,6 +5,7 @@ package aws
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
@@ -119,6 +120,77 @@ func LatestReleaseVersionForType(ctx context.Context, ssmClient *ssm.Client, k8s
 		return ""
 	}
 	return *out.Parameter.Value
+}
+
+// NodegroupK8sVersion returns the Kubernetes minor a managed nodegroup runs
+// (ng.Version), falling back to clusterVersion when the nodegroup doesn't
+// report one. Latest-AMI lookups must use this, not the cluster version:
+// UpdateNodegroupVersion without an explicit Version keeps the nodegroup on
+// its current minor, so between a control-plane upgrade and the nodegroup
+// upgrade the recommended AMI for the cluster's minor is never reachable.
+func NodegroupK8sVersion(ng *types.Nodegroup, clusterVersion string) string {
+	if ng != nil {
+		if v := aws.ToString(ng.Version); v != "" {
+			return v
+		}
+	}
+	return clusterVersion
+}
+
+// AMILookupFunc resolves an AMI attribute (image ID or release version) for a
+// Kubernetes version and AMI type. It returns "" when unknown.
+type AMILookupFunc func(ctx context.Context, k8sVersion string, amiType types.AMITypes) string
+
+// LatestAMICache memoizes an AMILookupFunc per (k8sVersion, amiType). It is
+// safe for concurrent use, and concurrent callers for the same key share a
+// single lookup, so a parallel fan-out over nodegroups costs one SSM call per
+// distinct key.
+type LatestAMICache struct {
+	lookup  AMILookupFunc
+	mu      sync.Mutex
+	entries map[amiCacheKey]*amiCacheEntry
+}
+
+type amiCacheKey struct {
+	version string
+	amiType types.AMITypes
+}
+
+type amiCacheEntry struct {
+	once  sync.Once
+	value string
+}
+
+// NewLatestAMICache returns a cache backed by lookup.
+func NewLatestAMICache(lookup AMILookupFunc) *LatestAMICache {
+	return &LatestAMICache{lookup: lookup, entries: make(map[amiCacheKey]*amiCacheEntry)}
+}
+
+// NewLatestAMIIDCache returns a cache of LatestAmiIDForType lookups.
+func NewLatestAMIIDCache(ssmClient *ssm.Client) *LatestAMICache {
+	return NewLatestAMICache(func(ctx context.Context, v string, t types.AMITypes) string {
+		return LatestAmiIDForType(ctx, ssmClient, v, t)
+	})
+}
+
+// Get returns the memoized lookup result for (k8sVersion, amiType).
+func (c *LatestAMICache) Get(ctx context.Context, k8sVersion string, amiType types.AMITypes) string {
+	key := amiCacheKey{version: k8sVersion, amiType: amiType}
+	c.mu.Lock()
+	e, ok := c.entries[key]
+	if !ok {
+		e = &amiCacheEntry{}
+		c.entries[key] = e
+	}
+	c.mu.Unlock()
+	e.once.Do(func() { e.value = c.lookup(ctx, k8sVersion, amiType) })
+	return e.value
+}
+
+// ForNodegroup returns the lookup result for the nodegroup's own Kubernetes
+// version (see NodegroupK8sVersion) and AMI type.
+func (c *LatestAMICache) ForNodegroup(ctx context.Context, ng *types.Nodegroup, clusterVersion string) string {
+	return c.Get(ctx, NodegroupK8sVersion(ng, clusterVersion), ng.AmiType)
 }
 
 // buildSSMParameterPath constructs the SSM parameter path for the given AMI type.

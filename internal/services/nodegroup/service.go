@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
@@ -57,6 +57,10 @@ type ServiceImpl struct {
 	asgClient     *autoscaling.Client
 	ec2Client     *ec2.Client
 	ssmClient     *ssm.Client
+
+	// Test seams; nil in production (the real EC2/ASG/SSM lookups are used).
+	currentAMIFn func(context.Context, *ekstypes.Nodegroup) string
+	latestAMIFn  awsinternal.AMILookupFunc
 }
 
 // NewService creates a new nodegroup service.
@@ -129,22 +133,40 @@ func matchesFilters(s NodegroupSummary, filters map[string]string) bool {
 	return true
 }
 
-// List returns basic nodegroup summaries for a cluster.
+// List returns basic nodegroup summaries for a cluster. Nodegroups that can't
+// be described are logged and left out; use ListWithFailures to learn which.
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, error) {
+	summaries, _, err := s.ListWithFailures(ctx, clusterName, options)
+	return summaries, err
+}
+
+// ngResult is one nodegroup's outcome in ListWithFailures. done stays false
+// for items ForEachParallel never dispatched (ctx ended first).
+type ngResult struct {
+	done    bool
+	summary *NodegroupSummary // nil when filtered out or failed
+	failure string            // non-empty when the nodegroup couldn't be described
+}
+
+// ListWithFailures is List plus a "name: reason" entry for every listed
+// nodegroup left out of the summaries because it could not be described (API
+// error, empty response, or never reached because ctx ended). Nodegroups
+// excluded by options.Filters are not failures.
+func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, []string, error) {
 	s.logger.Info("listing nodegroups", "cluster", clusterName, "options", options)
 
 	if err := validateFilters(options.Filters); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
 	})
 	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
+		return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
 	}
 	if clusterDesc.Cluster == nil {
-		return nil, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
+		return nil, nil, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
 	}
 	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
@@ -158,12 +180,12 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// The latest AMI is constant per (cluster version, AMI type); memoize the
-	// SSM lookup across the (concurrent) per-nodegroup work.
-	latestAMI := s.newLatestAMIResolver(k8sVersion)
+	// The latest AMI is constant per (nodegroup version, AMI type); memoize
+	// the SSM lookup across the (concurrent) per-nodegroup work.
+	latestAMI := s.newLatestAMICache()
 
 	// Measured Kubernetes Ready counts per nodegroup, fetched once (one node
 	// LIST) when a cluster-connected health checker is wired (--check-readiness).
@@ -172,7 +194,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 	readyByNG, haveReady := s.nodegroupReadyCounts(ctx)
 
 	results := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
-		func(fctx context.Context, name string) *NodegroupSummary {
+		func(fctx context.Context, name string) ngResult {
 			desc, err := common.WithRetry(fctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
 				return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
 					ClusterName:   aws.String(clusterName),
@@ -181,12 +203,12 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 			})
 			if err != nil {
 				s.logger.Warn("failed to describe nodegroup", "cluster", clusterName, "nodegroup", name, "error", err)
-				return nil
+				return ngResult{done: true, failure: fmt.Sprintf("%s: %v", name, err)}
 			}
 			ng := desc.Nodegroup
 			if ng == nil {
 				s.logger.Warn("empty DescribeNodegroup response", "cluster", clusterName, "nodegroup", name)
-				return nil
+				return ngResult{done: true, failure: name + ": empty DescribeNodegroup response"}
 			}
 			var desiredSize int32
 			if ng.ScalingConfig != nil {
@@ -203,8 +225,8 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 				instanceType = ng.InstanceTypes[0]
 			}
 
-			currentAmiId := awsinternal.CurrentAmiID(fctx, ng, s.ec2Client, s.asgClient)
-			latestAmiId := latestAMI(fctx, ng.AmiType)
+			currentAmiId := s.currentAMI(fctx, ng)
+			latestAmiId := latestAMI.ForNodegroup(fctx, ng, k8sVersion)
 			amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
 
 			summary := NodegroupSummary{
@@ -216,40 +238,71 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 				ReadyKnown:   readyKnown,
 				CurrentAMI:   currentAmiId,
 				AMIStatus:    amiStatus,
+				K8sVersion:   aws.ToString(ng.Version),
 			}
+			summary.VersionBehind = minorBehind(summary.K8sVersion, k8sVersion)
 			if !matchesFilters(summary, options.Filters) {
-				return nil
+				return ngResult{done: true}
 			}
-			return &summary
+			return ngResult{done: true, summary: &summary}
 		})
 
 	summaries := make([]NodegroupSummary, 0, len(results))
-	for _, r := range results {
-		if r != nil {
-			summaries = append(summaries, *r)
+	var failures []string
+	for i, r := range results {
+		switch {
+		case !r.done:
+			reason := "sweep stopped early"
+			if cerr := ctx.Err(); cerr != nil {
+				reason = cerr.Error()
+			}
+			failures = append(failures, nodegroupNames[i]+": not evaluated: "+reason)
+		case r.failure != "":
+			failures = append(failures, r.failure)
+		case r.summary != nil:
+			summaries = append(summaries, *r.summary)
 		}
 	}
-	return summaries, nil
+	return summaries, failures, nil
 }
 
-// newLatestAMIResolver returns a concurrency-safe, memoized resolver for the
-// latest recommended AMI per AMI type at the given cluster version.
-func (s *ServiceImpl) newLatestAMIResolver(k8sVersion string) func(context.Context, ekstypes.AMITypes) string {
-	var mu sync.Mutex
-	byType := make(map[ekstypes.AMITypes]string)
-	return func(ctx context.Context, amiType ekstypes.AMITypes) string {
-		mu.Lock()
-		if v, ok := byType[amiType]; ok {
-			mu.Unlock()
-			return v
+// minorBehind reports whether Kubernetes version v ("1.31") is an older
+// major.minor than ref. Unparseable or empty versions are never "behind".
+func minorBehind(v, ref string) bool {
+	parse := func(s string) (int, int, bool) {
+		parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(s), "v"), ".", 3)
+		if len(parts) < 2 {
+			return 0, 0, false
 		}
-		mu.Unlock()
-		v := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, amiType)
-		mu.Lock()
-		byType[amiType] = v
-		mu.Unlock()
-		return v
+		major, err1 := strconv.Atoi(parts[0])
+		minor, err2 := strconv.Atoi(parts[1])
+		return major, minor, err1 == nil && err2 == nil
 	}
+	vMaj, vMin, ok1 := parse(v)
+	rMaj, rMin, ok2 := parse(ref)
+	if !ok1 || !ok2 {
+		return false
+	}
+	return vMaj < rMaj || (vMaj == rMaj && vMin < rMin)
+}
+
+// newLatestAMICache returns a concurrency-safe, memoized resolver for the
+// latest recommended AMI per (Kubernetes version, AMI type). Callers key it by
+// the nodegroup's own version: an AMI-only update keeps the nodegroup on its
+// current minor, so the cluster's minor is the wrong baseline.
+func (s *ServiceImpl) newLatestAMICache() *awsinternal.LatestAMICache {
+	if s.latestAMIFn != nil {
+		return awsinternal.NewLatestAMICache(s.latestAMIFn)
+	}
+	return awsinternal.NewLatestAMIIDCache(s.ssmClient)
+}
+
+// currentAMI resolves the AMI the nodegroup's nodes currently run.
+func (s *ServiceImpl) currentAMI(ctx context.Context, ng *ekstypes.Nodegroup) string {
+	if s.currentAMIFn != nil {
+		return s.currentAMIFn(ctx, ng)
+	}
+	return awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
 }
 
 // Describe returns expanded details for a single nodegroup.
@@ -281,8 +334,8 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	}
 	ng := out.Nodegroup
 
-	currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
-	latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
+	currentAmiId := s.currentAMI(ctx, ng)
+	latestAmiId := s.newLatestAMICache().ForNodegroup(ctx, ng, k8sVersion)
 	amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
 
 	var scaling ScalingConfig

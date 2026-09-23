@@ -22,12 +22,14 @@ func newTestService(m *mocks.EKSAPI) *Service {
 }
 
 // twoHopMock builds a cluster two minors behind target with one addon and
-// one nodegroup, everything healthy.
+// one nodegroup, everything healthy. The installed addon build stays in the
+// catalogue (as it does in EKS) so it is not treated as incompatible with the
+// live control plane, which would add a catch-up hop.
 func twoHopMock() *mocks.EKSAPI {
 	return mocks.NewEKSAPI().
 		WithCluster("prod-east", "1.31").
 		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
-		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1"}, "1.32").
+		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
 		Build()
 }
@@ -83,7 +85,7 @@ func TestBuildPlan_LaggingNodegroupBlocks(t *testing.T) {
 	m := mocks.NewEKSAPI().
 		WithCluster("prod-east", "1.31").
 		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
-		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1"}, "1.32").
+		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
 		WithNodegroup("ancient", "1.28", ekstypes.AMITypesAl2023X8664Standard).
 		Build()
 	svc := newTestService(m)
@@ -150,7 +152,7 @@ func TestBuildPlan_BlockingInsight(t *testing.T) {
 	m := mocks.NewEKSAPI().
 		WithCluster("prod-east", "1.31").
 		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
-		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1"}, "1.32").
+		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
 		WithInsight("Deprecated APIs removed in 1.32", ekstypes.InsightStatusValueError, "1.32").
 		Build()
@@ -173,7 +175,7 @@ func TestBuildPlan_WarningInsightDoesNotBlock(t *testing.T) {
 	m := mocks.NewEKSAPI().
 		WithCluster("prod-east", "1.31").
 		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
-		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1"}, "1.32").
+		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
 		WithInsight("Deprecated APIs in 2 manifests", ekstypes.InsightStatusValueWarning, "1.32").
 		Build()
@@ -202,7 +204,7 @@ func TestBuildPlan_CustomAMINodegroupIsManual(t *testing.T) {
 	m := mocks.NewEKSAPI().
 		WithCluster("prod-east", "1.31").
 		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
-		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1"}, "1.32").
+		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
 		WithNodegroup("byo-ami", "1.31", ekstypes.AMITypesCustom).
 		Build()
 	svc := newTestService(m)
@@ -247,7 +249,7 @@ func TestBuildPlan_PartiallyUpgradedClusterMarksCompletedSteps(t *testing.T) {
 	m := mocks.NewEKSAPI().
 		WithCluster("prod-east", "1.32").
 		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
-		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1"}, "1.32").
+		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
 		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
 		Build()
 	svc := newTestService(m)
@@ -292,6 +294,21 @@ func TestBuildPlan_SkipListsAreManualSteps(t *testing.T) {
 	}
 	if s := findStep(t, plan.Hops[0].Steps, StepNodegroup, "workers-a"); s.Status != StatusManual {
 		t.Fatalf("skipped nodegroup status = %s, want manual", s.Status)
+	}
+}
+
+// --skip matches addon names exactly: a substring leaves the step pending.
+func TestBuildPlan_SkipAddonSubstringDoesNotSkip(t *testing.T) {
+	svc := newTestService(twoHopMock())
+
+	plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{
+		SkipAddons: []string{"cni"},
+	})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if s := findStep(t, plan.Hops[0].Steps, StepAddon, "vpc-cni"); s.Status == StatusManual {
+		t.Fatalf("addon vpc-cni skipped by substring %q; --skip must be exact", "cni")
 	}
 }
 

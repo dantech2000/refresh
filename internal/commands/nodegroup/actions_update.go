@@ -2,6 +2,7 @@ package nodegroup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -90,7 +91,8 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		return runFleetUpdate(ctx, cmd)
 	}
 
-	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(ctx, cmd, 60*time.Second)
+	// --timeout <= 0 means no limit, here and in the monitor (not a 60s fallback).
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, cmd.Duration("timeout"))
 	if err != nil {
 		return err
 	}
@@ -105,7 +107,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	eksClient := eks.NewFromConfig(awsCfg)
 	flags := readUpdateAMIFlags(cmd)
 
-	done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, flags)
+	done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, nodegroupPattern, flags)
 	if err != nil || done {
 		return err
 	}
@@ -152,7 +154,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		}
 	case flags.noWait:
 		if !quiet {
-			fmt.Printf("Started %d nodegroup update(s). Use 'refresh list --cluster %s' to check status.\n",
+			fmt.Printf("Started %d nodegroup update(s). Use 'refresh nodegroup list %s' to check status.\n",
 				len(outcomes.Started), clusterName)
 		}
 	default:
@@ -172,9 +174,10 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	verify := !flags.skipVerify && !flags.noWait
 	var verifyClient kubernetes.Interface
 	var preroll pendingPodSet
+	var prerollOK bool
 	if verify {
 		verifyClient, _ = resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, false)
-		preroll = snapshotPendingPods(ctx, verifyClient)
+		preroll, prerollOK = snapshotPendingPods(ctx, verifyClient)
 	}
 
 	updates, outcomes := startNodegroupUpdates(ctx, awsCfg, eksClient, clusterName, selected, flags)
@@ -200,30 +203,63 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	}
 	// Live per-node roll view — now the DEFAULT for an interactive single-nodegroup
 	// roll (nodes draining/joining/terminating, pod eviction, warnings). Purely
-	// visual: EKS DescribeUpdate (below) stays authoritative for the result, and a
-	// missing/unreachable cluster API degrades silently to the standard monitor.
-	// The kube client is resolved quietly by default; --live makes the fallback
-	// reason explicit when the cluster can't be reached. (REF-126)
+	// visual: it runs alongside the EKS DescribeUpdate monitor, which stays
+	// authoritative for the result and stops the panel once the update is
+	// terminal (a failed roll never converges, so the panel can't be the gate).
+	// The monitor is quiet only while the panel draws; if the panel has nothing
+	// to show (unreachable cluster API, no labelled nodes, baseline failure) or
+	// stops early, the monitor's normal progress output takes over. The kube
+	// client is resolved quietly by default; --live makes the fallback reason
+	// explicit when the cluster can't be reached. (REF-126)
+	var livePanel func(context.Context)
 	if len(updates) == 1 && !quiet {
 		kube := verifyClient
 		if kube == nil {
 			kube, _ = resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, flags.live)
 		}
 		if kube != nil {
-			rollview.LiveRollForUpdate(ctx, kube, updates[0].NodegroupName, flags.timeout, flags.pollInterval)
-			monitor.Quiet, config.Quiet = true, true
+			ng := updates[0].NodegroupName
+			livePanel = func(pctx context.Context) {
+				rollview.LiveRollForUpdate(pctx, kube, ng, flags.timeout, flags.pollInterval)
+			}
 		}
 	}
 
-	monErr := monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
+	var monErr error
+	heldBack := false
+	if livePanel == nil {
+		monErr = monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
+	} else {
+		heldBack, monErr = monitorAlongsidePanel(ctx, livePanel, flags.timeout, func(mctx context.Context, q bool) error {
+			monitor.Quiet, config.Quiet = q, q
+			return monitoring.MonitorUpdates(mctx, eksClient, monitor, config)
+		})
+	}
+	if heldBack {
+		// The panel has stopped: print what the quiet monitor held back.
+		monitor.Quiet, config.Quiet = false, false
+		if monitoring.AllComplete(monitor) {
+			monErr = monitoring.DisplayCompletionSummary(monitor, config)
+		} else {
+			monitoring.DisplayStopped(monitor, config, monErr)
+		}
+	}
 
 	verifyFailed := false
-	if verify && monErr == nil && len(outcomes.Started) > 0 {
-		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll)
+	if verify && shouldVerifyPostRoll(ctx, monErr) && len(outcomes.Started) > 0 {
+		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll, prerollOK)
 		outcomes.Verification = &result
 		verifyFailed = !result.OK()
 	}
 	return outcomes, verifyFailed, monErr
+}
+
+// shouldVerifyPostRoll reports whether post-roll verification can run. It is
+// skipped when monitoring failed (a Failed/Cancelled update, a timeout, or a
+// user interrupt) or ctx is done: after Ctrl+C every call would fail with
+// "context canceled" and report false issues.
+func shouldVerifyPostRoll(ctx context.Context, monErr error) bool {
+	return monErr == nil && ctx.Err() == nil
 }
 
 // printVerification renders the post-roll verification block.
@@ -246,8 +282,12 @@ func printVerification(v PostRollVerification) {
 
 // updateExit maps an update run to the exit-code contract: monitoring failures
 // propagate (exit 1), start failures yield exit 4, a successful roll whose
-// post-roll verification found issues yields exit 5, otherwise success.
+// post-roll verification found issues yields exit 5, otherwise success. A user
+// interrupt exits 1 with a hint that the EKS update keeps running.
 func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
+	if errors.Is(monErr, monitoring.ErrCancelled) {
+		return fmt.Errorf("%w; check with 'refresh nodegroup list %s'", monErr, o.Cluster)
+	}
 	if monErr != nil {
 		return monErr
 	}
@@ -262,7 +302,7 @@ func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
 
 // preflightHealthCheck runs the pre-update health checks. Returns done=true if
 // the caller should stop here (block decision, user cancelled, or --health-only).
-func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, flags updateAMIFlags) (done bool, err error) {
+func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName, nodegroupPattern string, flags updateAMIFlags) (done bool, err error) {
 	// Only --skip-health-check and --dry-run disable the health gate. --force is
 	// deliberately NOT here: it only sets UpdateNodegroupVersion.Force (forcing
 	// PDB-drain eviction) and must not silently bypass the pre-flight checks.
@@ -295,6 +335,12 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	// EC2 vCPU quota headroom — a roll surges new nodes against the account
 	// quota; the check skips cleanly if it can't read the limit/usage. (REF-144)
 	checker.SetServiceQuotas(servicequotas.NewFromConfig(awsCfg))
+	// Scope the PDB drain-blocker check to the nodegroups this run may roll, so
+	// a PDB whose pods live only on other nodegroups or Fargate doesn't warn.
+	// Best-effort: if the list fails the check stays cluster-wide.
+	if k8sClient != nil {
+		checker.SetTargetNodegroups(healthTargetNodegroups(ctx, eksClient, clusterName, nodegroupPattern))
+	}
 
 	spinner := ui.NewFunSpinnerForCategory("health")
 	if humanOutput {
@@ -316,7 +362,7 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 		return true, healthExitError(summary.Decision)
 	}
 
-	return applyHealthDecision(summary, flags)
+	return applyHealthDecision(ctx, summary, flags)
 }
 
 // healthExitError maps a health decision to the --health-only exit-code
@@ -343,7 +389,7 @@ func healthExitError(decision health.Decision) error {
 //
 // With --health-only the exit code encodes the verdict so CI can gate on it
 // without parsing output: 0 = pass, 2 = warnings, 3 = blocked.
-func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (done bool, err error) {
+func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flags updateAMIFlags) (done bool, err error) {
 	switch summary.Decision {
 	case health.DecisionBlock:
 		ui.DisplayHealthCheckComplete(summary.Decision)
@@ -377,7 +423,7 @@ func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (do
 		if !isInteractive() {
 			return true, fmt.Errorf("health checks reported warnings; re-run with --yes to proceed or --require-healthy to fail (no interactive terminal for confirmation)")
 		}
-		if !flags.quiet && !ui.PromptContinueWithWarnings(summary.Warnings) {
+		if !flags.quiet && !ui.PromptContinueWithWarnings(ctx, summary.Warnings) {
 			color.Yellow("Update cancelled by user")
 			return true, fmt.Errorf("update cancelled")
 		}
@@ -392,15 +438,32 @@ func applyHealthDecision(summary health.HealthSummary, flags updateAMIFlags) (do
 	return false, nil
 }
 
-// selectNodegroupsForUpdate lists nodegroups matching pattern and confirms the
-// selection interactively when ambiguous.
-func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clusterName, pattern string, yes bool) ([]string, error) {
-	names, err := awsinternal.ListAllPages(ctx, "listing nodegroups",
+// listNodegroupNames returns every managed nodegroup name in the cluster.
+func listNodegroupNames(ctx context.Context, eksClient *eks.Client, clusterName string) ([]string, error) {
+	return awsinternal.ListAllPages(ctx, "listing nodegroups",
 		func(rc context.Context, token *string) (*eks.ListNodegroupsOutput, error) {
 			return eksClient.ListNodegroups(rc, &eks.ListNodegroupsInput{ClusterName: aws.String(clusterName), NextToken: token})
 		},
 		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
 	)
+}
+
+// healthTargetNodegroups returns the nodegroups matching pattern, before any
+// interactive narrowing, for scoping the pre-flight PDB check. It is a superset
+// of the final selection, so no real blocker is hidden. Returns nil on error,
+// which leaves the check cluster-wide.
+func healthTargetNodegroups(ctx context.Context, eksClient *eks.Client, clusterName, pattern string) []string {
+	names, err := listNodegroupNames(ctx, eksClient, clusterName)
+	if err != nil {
+		return nil
+	}
+	return awsinternal.MatchingNodegroups(names, pattern)
+}
+
+// selectNodegroupsForUpdate lists nodegroups matching pattern and confirms the
+// selection interactively when ambiguous.
+func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clusterName, pattern string, yes bool) ([]string, error) {
+	names, err := listNodegroupNames(ctx, eksClient, clusterName)
 	if err != nil {
 		color.Red("Failed to list nodegroups: %v", err)
 		return nil, err
@@ -417,7 +480,7 @@ func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clust
 			return nil, fmt.Errorf("pattern %q matched %d nodegroups; re-run with --yes to update all, or a more specific name (no interactive terminal for selection)", pattern, len(matches))
 		}
 	}
-	selected, err := awsinternal.ConfirmNodegroupSelection(matches, pattern)
+	selected, err := awsinternal.ConfirmNodegroupSelection(ctx, matches, pattern)
 	if err != nil {
 		color.Red("%v", err)
 		return nil, err
@@ -541,19 +604,25 @@ func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *
 
 	ec2Client := ec2.NewFromConfig(awsCfg)
 	asgClient := autoscaling.NewFromConfig(awsCfg)
-	ssmClient := ssm.NewFromConfig(awsCfg)
-	latestByType := make(map[ekstypes.AMITypes]string)
+	return latestAMISkipPredicate(ctx, k8sVersion,
+		awsinternal.NewLatestAMIIDCache(ssm.NewFromConfig(awsCfg)),
+		func(ctx context.Context, ng *ekstypes.Nodegroup) string {
+			return awsinternal.CurrentAmiID(ctx, ng, ec2Client, asgClient)
+		})
+}
 
+// latestAMISkipPredicate compares each nodegroup's current AMI against the
+// latest AMI for the nodegroup's own Kubernetes version (clusterVersion only
+// as a fallback). UpdateNodegroupVersion is called without a Version, so it
+// stays on the nodegroup's minor; comparing against the cluster's minor would
+// never skip a nodegroup that lags the control plane.
+func latestAMISkipPredicate(ctx context.Context, clusterVersion string, latestAMI *awsinternal.LatestAMICache, currentAMI func(context.Context, *ekstypes.Nodegroup) string) func(*ekstypes.Nodegroup) bool {
 	return func(ng *ekstypes.Nodegroup) bool {
-		latest, ok := latestByType[ng.AmiType]
-		if !ok {
-			latest = awsinternal.LatestAmiIDForType(ctx, ssmClient, k8sVersion, ng.AmiType)
-			latestByType[ng.AmiType] = latest
-		}
+		latest := latestAMI.ForNodegroup(ctx, ng, clusterVersion)
 		if latest == "" {
 			return false
 		}
-		current := awsinternal.CurrentAmiID(ctx, ng, ec2Client, asgClient)
+		current := currentAMI(ctx, ng)
 		return current != "" && current == latest
 	}
 }

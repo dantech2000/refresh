@@ -168,10 +168,10 @@ Examples:
 | `--dry-run, -d` | — | — | Print the full ordered plan without mutating anything |
 | `--yes, -y` | — | — | Skip per-phase confirmation prompts |
 | `--force` | — | — | Force nodegroup rolls when pods can't be drained due to PDBs |
-| `--skip, -s string` | — | — | Addon to skip (repeatable; for addons managed via Helm/GitOps) |
+| `--skip, -s string` | — | — | Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps) |
 | `--skip-nodegroup string` | — | — | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | — | — | Suppress progress output |
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `4h0m0s` | Overall operation timeout |
+| `--timeout, -t duration` | — | `4h0m0s` | Overall upgrade timeout (not read from REFRESH_TIMEOUT, which only sets API/read timeouts) |
 | `--poll-interval, -p duration` | — | `15s` | How often to poll in-flight updates |
 | `--format, -o string` | — | `table` | Plan output format (table, json, yaml, plain) |
 | `--help, -h` | — | — | show help |

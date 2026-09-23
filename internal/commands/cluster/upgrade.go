@@ -1,11 +1,8 @@
 package cluster
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -55,10 +52,10 @@ Examples:
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Print the full ordered plan without mutating anything"},
 			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Skip per-phase confirmation prompts"},
 			&cli.BoolFlag{Name: "force", Usage: "Force nodegroup rolls when pods can't be drained due to PDBs"},
-			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon to skip (repeatable; for addons managed via Helm/GitOps)"},
+			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to skip (repeatable)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Overall operation timeout", Value: upgradeDefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
+			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Overall upgrade timeout (not read from REFRESH_TIMEOUT, which only sets API/read timeouts)", Value: upgradeDefaultTimeout},
 			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "How often to poll in-flight updates", Value: 15 * time.Second},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Plan output format (table, json, yaml, plain)", Value: "table"},
 		},
@@ -77,8 +74,9 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, cmd)
-	if err != nil || listed {
+	// Mutating: no cluster list on empty input, and no kubeconfig fallback.
+	clusterName, err := runner.ResolveCluster(ctx, awsCfg, cmd)
+	if err != nil {
 		return err
 	}
 
@@ -152,7 +150,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 
 	report, err := svc.Execute(ctx, plan, upgrade.ExecuteOptions{
 		Yes:               cmd.Bool("yes"),
-		Confirm:           promptPhase,
+		Confirm:           func(label string) bool { return promptPhase(ctx, label) },
 		Progress:          progress,
 		SkipAddons:        cmd.StringSlice("skip"),
 		SkipNodegroups:    cmd.StringSlice("skip-nodegroup"),
@@ -173,17 +171,12 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-// promptPhase asks for confirmation before a mutating phase. Bare Enter or a
-// read error declines (safe default).
-func promptPhase(label string) bool {
+// promptPhase asks for confirmation before a mutating phase. Bare Enter, a
+// read error, or Ctrl+C declines (safe default). Answers come from the shared
+// stdin reader, so piped input for several phases is not lost between prompts.
+func promptPhase(ctx context.Context, label string) bool {
 	fmt.Printf("\nProceed with %s? (y/N): ", label)
-	reader := bufio.NewReader(os.Stdin)
-	answer, err := reader.ReadString('\n')
-	if err != nil {
-		return false
-	}
-	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y" || answer == "yes"
+	return ui.Confirm(ctx)
 }
 
 // renderPlan prints the human-readable plan.

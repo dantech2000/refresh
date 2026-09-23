@@ -2,6 +2,7 @@ package clusterview
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -31,6 +32,20 @@ func OutputClustersTable(summaries []clustersvc.ClusterSummary, elapsed time.Dur
 		return nil
 	}
 	return outputClustersPlain(summaries, elapsed, multiRegion, showHealth)
+}
+
+// WriteClustersHint renders the cluster table to w (typically stderr) as a
+// hint when a command could not resolve a cluster. Unlike OutputClustersTable
+// it never touches stdout, so scripted consumers see no data on failure.
+func WriteClustersHint(w io.Writer, summaries []clustersvc.ClusterSummary) {
+	if len(summaries) == 0 {
+		_, _ = fmt.Fprintln(w, "No EKS clusters found")
+		return
+	}
+	th := render.Default(w)
+	for _, line := range clusterListLines(th, summaries, false, false) {
+		_, _ = fmt.Fprintln(w, line)
+	}
 }
 
 // outputClustersPlain renders the uncolored tab-separated cluster table for

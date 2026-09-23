@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/smithy-go"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/services/addons"
@@ -129,7 +131,20 @@ func (s *Service) listNodegroupStates(ctx context.Context, clusterName string) (
 	return states, nil
 }
 
-// matchesAny reports whether name matches any of the substring patterns.
+// isSkippedAddon reports whether addon is named in skip. --skip takes addon
+// names, so matching is exact (case-insensitive): "proxy" must not skip
+// kube-proxy.
+func isSkippedAddon(addon string, skip []string) bool {
+	for _, s := range skip {
+		if s = strings.TrimSpace(s); s != "" && strings.EqualFold(addon, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesAny reports whether name matches any of the substring patterns
+// (used for --skip-nodegroup, which is documented as a pattern).
 func matchesAny(name string, patterns []string) bool {
 	for _, p := range patterns {
 		if p != "" && strings.Contains(name, p) {
@@ -158,8 +173,17 @@ func (s *Service) waitForUpdate(ctx context.Context, in *eks.DescribeUpdateInput
 				return s.eksClient.DescribeUpdate(rc, in)
 			})
 			if err != nil {
-				// Transient describe failures shouldn't kill a long-running
-				// upgrade watch; report and keep polling.
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				// Transient describe failures (throttling, 5xx, network
+				// drops such as a VPN blip or laptop sleep) shouldn't kill a
+				// long-running upgrade watch; report and keep polling.
+				// Permanent API errors (e.g. AccessDenied) never heal, so
+				// fail fast instead of warning for hours.
+				if isPermanentAPIError(err) {
+					return awsinternal.FormatAWSError(err, fmt.Sprintf("checking %s", what))
+				}
 				progress("warning: checking %s: %v", what, err)
 				continue
 			}
@@ -174,6 +198,19 @@ func (s *Service) waitForUpdate(ctx context.Context, in *eks.DescribeUpdateInput
 			}
 		}
 	}
+}
+
+// isPermanentAPIError reports whether err is an AWS API error that retrying
+// will not fix (AccessDenied, ResourceNotFound, validation, ...). Anything
+// that never produced an API response (DNS failures, refused/reset
+// connections, EOF, timeouts) and retryable API errors (throttling, 5xx)
+// are not permanent: the watch keeps polling through them.
+func isPermanentAPIError(err error) bool {
+	var ae smithy.APIError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return !common.IsRetryable(err)
 }
 
 // updateErrors flattens an update's error details for display.

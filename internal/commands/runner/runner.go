@@ -6,6 +6,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -49,13 +50,10 @@ func checkCredentialsStrict(ctx context.Context, cfg aws.Config) error {
 	return nil
 }
 
-// setupAWS is the shared body of SetupAWS/SetupAWSWithTimeout/SetupAWSStrict.
+// setupAWS is the shared body of the SetupAWS* helpers.
 // On error the internal context is canceled and the returned cancel is nil.
-func setupAWS(ctx context.Context, cmd *cli.Command, defaultTimeout time.Duration, check credentialCheck) (context.Context, context.CancelFunc, aws.Config, error) {
-	timeout := cmd.Duration("timeout")
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
+// timeout <= 0 means no deadline (the context is then only signal-cancellable).
+func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, check credentialCheck) (context.Context, context.CancelFunc, aws.Config, error) {
 	// Derive from the action's context (cancelled on Ctrl+C / SIGTERM by main)
 	// so signal handling propagates to in-flight AWS calls. ctx is nil only
 	// for hand-constructed invocations in tests.
@@ -69,36 +67,60 @@ func setupAWS(ctx context.Context, cmd *cli.Command, defaultTimeout time.Duratio
 		ctx, cancel = context.WithCancel(ctx)
 	}
 
-	cfg, err := awsconfig.Load(ctx, cmd)
+	// Config loading and the credential check (STS, SSO, IMDS) always run
+	// under --timeout, even when the returned context has a longer or no
+	// deadline, so a stalled credential source can't hang the command.
+	checkCtx, cancelCheck := checkContext(ctx, cmd.Duration("timeout"), timeout)
+	defer cancelCheck()
+
+	cfg, err := awsconfig.Load(checkCtx, cmd)
 	if err != nil {
 		cancel()
 		color.Red("Failed to load AWS config: %v", err)
 		return nil, nil, aws.Config{}, err
 	}
-	if err := check(ctx, cfg); err != nil {
+	if err := check(checkCtx, cfg); err != nil {
 		cancel()
 		return nil, nil, aws.Config{}, err
 	}
 	return ctx, cancel, cfg, nil
 }
 
+// checkContext bounds the setup phase by apiTimeout (--timeout) when that is
+// shorter than the returned context's timeout (or that has no deadline).
+func checkContext(ctx context.Context, apiTimeout, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if apiTimeout > 0 && (timeout <= 0 || apiTimeout < timeout) {
+		return context.WithTimeout(ctx, apiTimeout)
+	}
+	return ctx, func() {}
+}
+
 // SetupAWS opens a context with the command's timeout, loads the AWS config,
 // and checks credentials. On error, the returned cancel is nil and the
 // internal context has already been cancelled.
 func SetupAWS(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, 0, checkCredentialsLenient)
+	return setupAWS(ctx, cmd, cmd.Duration("timeout"), checkCredentialsLenient)
 }
 
-// SetupAWSWithTimeout is like SetupAWS but falls back to defaultTimeout
-// when cmd.Duration("timeout") is zero.
-func SetupAWSWithTimeout(ctx context.Context, cmd *cli.Command, defaultTimeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, defaultTimeout, checkCredentialsLenient)
+// SetupAWSWithDeadline is like SetupAWS but uses the given timeout for the
+// returned context instead of --timeout. A timeout <= 0 means no deadline:
+// the context is cancelled only by Ctrl+C / SIGTERM. Use it when a command
+// scopes its own deadlines (per cluster, per wait) and --timeout alone would
+// cut a long-running operation short.
+func SetupAWSWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
+	return setupAWS(ctx, cmd, timeout, checkCredentialsLenient)
 }
 
 // SetupAWSStrict is like SetupAWS but uses ValidateAWSCredentials and prints
 // the credential help message on failure (used by destructive commands).
 func SetupAWSStrict(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, 0, checkCredentialsStrict)
+	return setupAWS(ctx, cmd, cmd.Duration("timeout"), checkCredentialsStrict)
+}
+
+// SetupAWSStrictWithDeadline is SetupAWSStrict with an explicit timeout in
+// place of --timeout (<= 0 means no deadline; see SetupAWSWithDeadline).
+func SetupAWSStrictWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
+	return setupAWS(ctx, cmd, timeout, checkCredentialsStrict)
 }
 
 // ParseFilters parses repeated key=value --filter flag values into a map.
@@ -127,28 +149,44 @@ func RequestedCluster(cmd *cli.Command) string {
 	return strings.TrimSpace(cmd.String("cluster"))
 }
 
-// ResolveClusterOrList resolves the requested cluster name. If no cluster was
-// requested, it prints "No cluster specified. Available clusters:" plus the
-// cluster table and returns listed=true so the caller can short-circuit.
+// ResolveCluster resolves the cluster for a mutating command. Resolution
+// order: --cluster flag, first positional, active `refresh use` context. The
+// kubeconfig current context is never used, so a stray kubeconfig cannot pick
+// the target of a mutation. A cluster from the context is announced on
+// stderr. It never lists clusters: when nothing resolves it returns an error
+// wrapping awsinternal.ErrNoClusterSpecified, and a non-exact name needs
+// interactive confirmation.
+func ResolveCluster(ctx context.Context, cfg aws.Config, cmd *cli.Command) (string, error) {
+	return awsinternal.ClusterName(ctx, cfg, RequestedCluster(cmd))
+}
+
+// ResolveClusterOrList resolves the cluster for a read-only command, using
+// the ResolveCluster order plus a final fallback to the kubeconfig current
+// context. When nothing resolves, it prints the
+// available clusters to stderr as a hint (skipped for -o json/yaml) and
+// returns listed=true with a non-nil error, so the command exits non-zero
+// and stdout stays empty.
 func ResolveClusterOrList(ctx context.Context, cfg aws.Config, cmd *cli.Command) (clusterName string, listed bool, err error) {
-	requested := RequestedCluster(cmd)
-	if strings.TrimSpace(requested) == "" {
-		ui.Outln("No cluster specified. Available clusters:")
-		ui.Outln()
-		start := time.Now()
-		svc := factory.NewClusterService(cfg, false, nil)
-		summaries, lerr := svc.List(ctx, clustersvc.ListOptions{})
-		if lerr != nil {
-			return "", true, lerr
-		}
-		_ = clusterview.OutputClustersTable(summaries, time.Since(start), false, false)
-		return "", true, nil
+	name, err := awsinternal.ClusterNameWithOptions(ctx, cfg, RequestedCluster(cmd), awsinternal.ClusterNameOptions{ReadOnly: true})
+	if err == nil {
+		return name, false, nil
 	}
-	name, err := awsinternal.ClusterName(ctx, cfg, requested)
-	if err != nil {
+	if !errors.Is(err, awsinternal.ErrNoClusterSpecified) {
 		return "", false, err
 	}
-	return name, false, nil
+	switch strings.ToLower(cmd.String("format")) {
+	case "json", "yaml":
+		return "", true, err
+	}
+	svc := factory.NewClusterService(cfg, false, nil)
+	summaries, lerr := svc.List(ctx, clustersvc.ListOptions{})
+	if lerr == nil {
+		_, _ = fmt.Fprintln(os.Stderr, "No cluster specified. Available clusters:")
+		_, _ = fmt.Fprintln(os.Stderr)
+		clusterview.WriteClustersHint(os.Stderr, summaries)
+		_, _ = fmt.Fprintln(os.Stderr)
+	}
+	return "", true, err
 }
 
 // flagValueIfSet returns the trimmed value of flagName only when it was

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
+	"github.com/fatih/color"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -133,7 +135,7 @@ func TestWaitWithContext_ContextCancelledDuringWait(t *testing.T) {
 
 func TestHandleTimeout_ReturnsError(t *testing.T) {
 	cfg := refreshTypes.MonitorConfig{Quiet: true}
-	err := handleTimeout(cfg)
+	err := handleTimeout(refreshTypes.NewProgressMonitor(true, false, 0), cfg)
 	if err == nil {
 		t.Fatal("handleTimeout should return a non-nil error")
 	}
@@ -146,11 +148,49 @@ func TestHandleTimeout_ReturnsError(t *testing.T) {
 // handleUserCancellation
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestHandleUserCancellation_ReturnsNil(t *testing.T) {
+func TestHandleUserCancellation_ReturnsErrCancelled(t *testing.T) {
 	monitor := refreshTypes.NewProgressMonitor(true, false, 0)
 	cfg := refreshTypes.MonitorConfig{Quiet: true}
-	if err := handleUserCancellation(monitor, cfg); err != nil {
-		t.Errorf("handleUserCancellation should return nil, got %v", err)
+	if err := handleUserCancellation(monitor, cfg); !errors.Is(err, ErrCancelled) {
+		t.Errorf("handleUserCancellation should return ErrCancelled, got %v", err)
+	}
+}
+
+// Ctrl+C cancels the root context in main; MonitorUpdates must report that as
+// ErrCancelled (not nil, not a timeout) so callers skip verification.
+func TestMonitorUpdates_ParentCancelReturnsErrCancelled(t *testing.T) {
+	cfg := refreshTypes.MonitorConfig{
+		Quiet:           true,
+		PollInterval:    time.Hour,
+		Timeout:         time.Hour,
+		MaxRetries:      1,
+		BackoffMultiple: 1,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
+	err := MonitorUpdates(ctx, fakeEKSDescribeUpdate(ekstypes.UpdateStatusInProgress, ""), monitor, cfg)
+	if !errors.Is(err, ErrCancelled) {
+		t.Fatalf("MonitorUpdates on cancelled ctx = %v, want ErrCancelled", err)
+	}
+}
+
+// An EKS update that ends Cancelled must surface as an error from the monitor.
+func TestMonitorUpdates_CancelledUpdateReturnsError(t *testing.T) {
+	cfg := refreshTypes.MonitorConfig{
+		Quiet:           true,
+		PollInterval:    time.Millisecond,
+		Timeout:         time.Second,
+		MaxRetries:      1,
+		BackoffMultiple: 1,
+	}
+	monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
+	err := MonitorUpdates(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusCancelled, ""), monitor, cfg)
+	if err == nil {
+		t.Fatal("a Cancelled EKS update should return an error")
+	}
+	if errors.Is(err, ErrCancelled) {
+		t.Errorf("an EKS-side cancellation is not a user interrupt, got %v", err)
 	}
 }
 
@@ -195,15 +235,74 @@ func TestDisplayCompletionSummary_AnyFailedReturnsError(t *testing.T) {
 	}
 }
 
-func TestDisplayCompletionSummary_CancelledDoesNotReturnError(t *testing.T) {
-	// Cancelled is not the same as failed — it should not surface as an error.
+// The returned error must carry the nodegroup and AWS error, since the live
+// roll panel suppresses the monitor's own output while the roll runs.
+func TestDisplayCompletionSummary_FailedErrorIncludesAWSMessage(t *testing.T) {
+	monitor := testMonitorWithUpdates(ekstypes.UpdateStatusFailed)
+	monitor.Updates[0].ErrorMessage = "PodEvictionFailure: Reached max retries"
+	err := DisplayCompletionSummary(monitor, refreshTypes.MonitorConfig{Quiet: true})
+	if err == nil || !strings.Contains(err.Error(), "ng: PodEvictionFailure: Reached max retries") {
+		t.Fatalf("err = %v, want it to name the nodegroup and AWS error", err)
+	}
+}
+
+// After a quiet run under the live panel, the caller prints the banner the
+// monitor held back: timeout on ErrMonitorTimeout, cancellation on ErrCancelled.
+func TestDisplayStopped_PrintsHeldBanner(t *testing.T) {
+	origColor := color.Output
+	t.Cleanup(func() { color.Output = origColor })
+	capture := func(fn func()) string {
+		r, w, _ := os.Pipe()
+		old := os.Stdout
+		os.Stdout, color.Output = w, w
+		fn()
+		_ = w.Close()
+		os.Stdout, color.Output = old, origColor
+		b, _ := io.ReadAll(r)
+		return string(b)
+	}
+	monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
+	cfg := refreshTypes.MonitorConfig{Timeout: 40 * time.Minute}
+
+	out := capture(func() { DisplayStopped(monitor, cfg, ErrMonitorTimeout) })
+	if !strings.Contains(out, "Monitoring timeout reached after 40m0s") {
+		t.Errorf("timeout banner missing; got:\n%s", out)
+	}
+	out = capture(func() { DisplayStopped(monitor, cfg, ErrCancelled) })
+	if !strings.Contains(out, "Monitoring cancelled by user") {
+		t.Errorf("cancellation banner missing; got:\n%s", out)
+	}
+	if out = capture(func() { DisplayStopped(monitor, cfg, nil) }); out != "" {
+		t.Errorf("nil error printed a banner:\n%s", out)
+	}
+	cfg.Quiet = true
+	if out = capture(func() { DisplayStopped(monitor, cfg, ErrMonitorTimeout) }); out != "" {
+		t.Errorf("quiet config printed:\n%s", out)
+	}
+}
+
+func TestAllComplete(t *testing.T) {
+	if AllComplete(testMonitorWithUpdates()) {
+		t.Error("no updates must not count as complete")
+	}
+	if AllComplete(testMonitorWithUpdates(ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusInProgress)) {
+		t.Error("an in-progress update must not count as complete")
+	}
+	if !AllComplete(testMonitorWithUpdates(ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusSuccessful, ekstypes.UpdateStatusCancelled)) {
+		t.Error("all terminal updates must count as complete")
+	}
+}
+
+func TestDisplayCompletionSummary_CancelledReturnsError(t *testing.T) {
+	// A Cancelled update did not roll: it is counted as failed in the summary
+	// and must return an error so the run exits non-zero and skips verification.
 	monitor := testMonitorWithUpdates(
 		ekstypes.UpdateStatusSuccessful,
 		ekstypes.UpdateStatusCancelled,
 	)
 	cfg := refreshTypes.MonitorConfig{Quiet: true}
-	if err := DisplayCompletionSummary(monitor, cfg); err != nil {
-		t.Errorf("cancelled update should not return error, got %v", err)
+	if err := DisplayCompletionSummary(monitor, cfg); err == nil {
+		t.Error("a cancelled update should cause DisplayCompletionSummary to return an error")
 	}
 }
 
@@ -291,5 +390,39 @@ func TestMonitorUpdatesCompletesAndTimesOut(t *testing.T) {
 	timeoutMonitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
 	if err := MonitorUpdates(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusInProgress, ""), timeoutMonitor, timeoutCfg); err == nil {
 		t.Fatal("expected timeout")
+	}
+}
+
+// A zero (or negative) --timeout means "no monitor timeout": monitoring must
+// keep polling until the update finishes, not time out immediately.
+func TestMonitorUpdates_ZeroTimeoutMeansNoLimit(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		cfg := refreshTypes.MonitorConfig{
+			Quiet:           true,
+			PollInterval:    5 * time.Millisecond,
+			Timeout:         timeout,
+			MaxRetries:      1,
+			BackoffMultiple: 1,
+		}
+		monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
+		if err := MonitorUpdates(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), monitor, cfg); err != nil {
+			t.Fatalf("timeout=%v: MonitorUpdates = %v, want nil (no limit)", timeout, err)
+		}
+	}
+}
+
+func TestMonitorContext(t *testing.T) {
+	ctx, cancel := monitorContext(context.Background(), 0)
+	defer cancel()
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal("timeout 0: want no deadline")
+	}
+	ctx2, cancel2 := monitorContext(context.Background(), time.Minute)
+	defer cancel2()
+	if _, ok := ctx2.Deadline(); !ok {
+		t.Fatal("timeout 1m: want a deadline")
+	}
+	if got := formatMonitorTimeout(0); got != "none" {
+		t.Fatalf("formatMonitorTimeout(0) = %q, want none", got)
 	}
 }

@@ -108,7 +108,7 @@ if any add-on update fails.
 | `--dependency-order` | *(`--all` only)* Update in dependency-safe order: `vpc-cni` → `coredns`/`kube-proxy` → others |
 | `--skip, -s` | *(`--all` only)* Skip specific add-ons (repeatable) |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--timeout, -t` | Operation timeout (default `10m`; env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Timeout for the update API calls (default `10m`); with `--wait`, `--wait-timeout` per add-on is added on top. Not read from `REFRESH_TIMEOUT` |
 
 !!! note "`--all`-only flags"
     `--parallel`, `--dependency-order`, and `--skip` apply only with `--all`. On
