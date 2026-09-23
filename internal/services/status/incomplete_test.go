@@ -15,6 +15,8 @@ import (
 
 	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/services/addons"
+	"github.com/dantech2000/refresh/internal/services/nodegroup"
+	"github.com/dantech2000/refresh/internal/types"
 )
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -92,6 +94,92 @@ func TestListClusterStatuses_CancelledSweep(t *testing.T) {
 	// long before the end once ctx is done.
 	if notEvaluated == 0 {
 		t.Error(`expected undispatched clusters to be marked "not evaluated"`)
+	}
+}
+
+// An addon with no version compatible with the cluster makes the real
+// GetAvailableVersions return ErrNoVersionsFound. That is not missing data:
+// the row stays complete and the addon is not counted as behind.
+func TestAssembleCluster_AddonWithNoCompatibleVersion(t *testing.T) {
+	api := mocks.NewEKSAPI().
+		WithCluster("prod", "1.32").
+		WithAddon("legacy-addon", "v0.1.0", ekstypes.AddonStatusActive).
+		Build() // DescribeAddonVersions returns no versions by default
+	api.ListClustersFn = listClusters("prod")
+
+	svc := newTestService(nil, &fakeNodegroups{}, nil)
+	svc.clusterAPI = api
+	svc.addons = addons.NewService(api, discardLogger())
+
+	statuses, err := svc.ListClusterStatuses(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c := statuses[0]
+	if c.Incomplete() {
+		t.Errorf("row flagged incomplete for an addon with no compatible version: %v", c.Errors)
+	}
+	if c.AddonsBehind.Behind != 0 || c.AddonsBehind.Total != 1 {
+		t.Errorf("addons = %+v, want 0 behind of 1", c.AddonsBehind)
+	}
+}
+
+// failingNodegroups mimics nodegroup.ListWithFailures when some nodegroups
+// could not be described.
+type failingNodegroups struct{ failures []string }
+
+func (f failingNodegroups) ListWithFailures(context.Context, string, nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
+	return []nodegroup.NodegroupSummary{{Name: "ng-ok", AMIStatus: types.AMILatest}}, f.failures, nil
+}
+
+// A nodegroup that could not be described must make the row incomplete rather
+// than silently shrinking the AMI totals.
+func TestAssembleCluster_DroppedNodegroup(t *testing.T) {
+	api := mocks.NewEKSAPI().WithCluster("prod", "1.32").Build()
+	api.ListClustersFn = listClusters("prod")
+	svc := newTestService(nil, nil, &fakeAddons{})
+	svc.clusterAPI = api
+	svc.nodegroups = failingNodegroups{failures: []string{"ng-bad: InvalidRequestException: not authorized"}}
+
+	statuses, err := svc.ListClusterStatuses(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c := statuses[0]
+	if !c.Incomplete() || !strings.Contains(strings.Join(c.Errors, ";"), "ng-bad") {
+		t.Errorf("want an error naming ng-bad, got %v", c.Errors)
+	}
+	if c.NodegroupCount != 2 || c.Compute != ComputeManaged {
+		t.Errorf("nodegroups = %d (%s), want 2 managed", c.NodegroupCount, c.Compute)
+	}
+}
+
+// cancelOnList cancels the sweep context from inside a cluster's evaluation,
+// after that cluster was already dispatched.
+type cancelOnList struct{ cancel context.CancelFunc }
+
+func (c cancelOnList) ListWithFailures(context.Context, string, nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
+	c.cancel()
+	return nil, nil, nil
+}
+
+// A deadline that fires after every cluster was dispatched is not a partial
+// sweep: no ctx error is returned.
+func TestListClusterStatuses_LateCancelIsNotPartial(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	api := mocks.NewEKSAPI().WithCluster("prod", "1.32").Build()
+	api.ListClustersFn = listClusters("prod")
+	svc := newTestService(nil, nil, &fakeAddons{})
+	svc.clusterAPI = api
+	svc.nodegroups = cancelOnList{cancel: cancel}
+
+	statuses, err := svc.ListClusterStatuses(ctx, ListOptions{})
+	if err != nil {
+		t.Fatalf("err = %v, want nil when every cluster was evaluated", err)
+	}
+	if len(statuses) != 1 || statuses[0].Name != "prod" {
+		t.Fatalf("statuses = %+v", statuses)
 	}
 }
 

@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,10 +29,11 @@ type ClusterAPI interface {
 	DescribeClusterVersions(ctx context.Context, in *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error)
 }
 
-// NodegroupLister provides per-cluster nodegroup summaries (with AMI status).
+// NodegroupLister provides per-cluster nodegroup summaries (with AMI status),
+// plus a "name: reason" entry for each nodegroup that could not be described.
 // Satisfied by *nodegroup.ServiceImpl.
 type NodegroupLister interface {
-	List(ctx context.Context, clusterName string, options nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, error)
+	ListWithFailures(ctx context.Context, clusterName string, options nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error)
 }
 
 // AddonAnalyzer provides installed addons and their available versions.
@@ -129,13 +131,21 @@ func (s *Service) ListClusterStatuses(ctx context.Context, opts ListOptions) ([]
 		})
 	// ForEachParallel leaves undispatched items zero-valued when ctx is done.
 	// Mark them explicitly so they never render as a healthy "unknown" row.
+	skipped := 0
 	for i := range results {
 		if results[i].Name == "" {
 			results[i] = s.notEvaluated(ctx, names[i])
+			skipped++
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return results, fmt.Errorf("listing cluster statuses in %s: %w", s.region, err)
+	// Report the cancellation only when it actually cost us rows; a deadline
+	// that fires after every cluster was evaluated is not a partial sweep.
+	if skipped > 0 {
+		reason := ctx.Err()
+		if reason == nil {
+			reason = errors.New("sweep stopped early")
+		}
+		return results, fmt.Errorf("listing cluster statuses in %s: %d cluster(s) not evaluated: %w", s.region, skipped, reason)
 	}
 	return results, nil
 }
@@ -192,12 +202,17 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 		cs.HealthIssues = len(cluster.Health.Issues)
 	}
 
-	ngs, ngErr := s.nodegroups.List(ctx, name, nodegroup.ListOptions{})
+	ngs, ngFailures, ngErr := s.nodegroups.ListWithFailures(ctx, name, nodegroup.ListOptions{})
 	if ngErr != nil {
 		cs.Errors = append(cs.Errors, fmt.Sprintf("list nodegroups: %v", ngErr))
 	} else {
-		cs.NodegroupCount = len(ngs)
+		// Failed nodegroups still exist: count them so compute detection
+		// isn't fooled, but their AMI posture is unknown, so flag the row.
+		cs.NodegroupCount = len(ngs) + len(ngFailures)
 		cs.StaleAMI = s.staleAMISummary(ctx, ngs)
+		if len(ngFailures) > 0 {
+			cs.Errors = append(cs.Errors, fmt.Sprintf("describe nodegroup(s): %s", strings.Join(ngFailures, "; ")))
+		}
 	}
 
 	cs.Compute = s.detectCompute(ctx, cluster, cs.NodegroupCount)
@@ -281,12 +296,15 @@ func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) 
 			continue
 		}
 		avail, verr := s.addons.GetAvailableVersions(ctx, a.Name, k8sVersion)
+		if errors.Is(verr, addons.ErrNoVersionsFound) {
+			continue // no compatible version published — nothing to compare
+		}
 		if verr != nil {
 			unreadable = append(unreadable, a.Name+" (latest version unknown)")
 			continue
 		}
 		if len(avail) == 0 {
-			continue // no compatible version published — nothing to compare
+			continue // defensive: treat like ErrNoVersionsFound
 		}
 		latest := avail[0].Version
 		if addons.CompareVersions(a.Version, latest) < 0 {
