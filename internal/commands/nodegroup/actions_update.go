@@ -221,9 +221,14 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	monErr := common.RunAlongside(ctx, livePanel, func(mctx context.Context) error {
 		return monitoring.MonitorUpdates(mctx, eksClient, monitor, config)
 	})
-	if livePanel != nil && monitoring.AllComplete(monitor) {
+	if livePanel != nil {
+		// The panel has stopped: print what the quiet monitor held back.
 		monitor.Quiet, config.Quiet = false, false
-		monErr = monitoring.DisplayCompletionSummary(monitor, config)
+		if monitoring.AllComplete(monitor) {
+			monErr = monitoring.DisplayCompletionSummary(monitor, config)
+		} else {
+			monitoring.DisplayStopped(monitor, config, monErr)
+		}
 	}
 
 	verifyFailed := false

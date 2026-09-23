@@ -298,6 +298,76 @@ func TestUpgradeNodegroups_FailedRollStopsObserver(t *testing.T) {
 	}
 }
 
+// While the live observer runs, the wait's progress lines must not reach the
+// progress callback (they would draw over the panel). They are flushed, in
+// order, after the observer is joined; without an observer they pass through
+// immediately.
+func TestUpgradeNodegroups_HoldsWaitProgressWhileObserving(t *testing.T) {
+	newMock := func() *mocks.EKSAPI {
+		m := mocks.NewEKSAPI().
+			WithCluster("prod-east", "1.32").
+			WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
+			Build()
+		_ = captureNodegroupRolls(m)
+		var polls atomic.Int32
+		m.DescribeUpdateFn = func(_ context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+			if polls.Add(1) <= 2 {
+				return nil, fmt.Errorf("transient describe failure")
+			}
+			return &eks.DescribeUpdateOutput{Update: &ekstypes.Update{Id: in.UpdateId, Status: ekstypes.UpdateStatusSuccessful}}, nil
+		}
+		return m
+	}
+
+	var observing atomic.Bool
+	var mu sync.Mutex
+	var lines []string
+	var duringPanel int
+	progress := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if observing.Load() {
+			duringPanel++
+		}
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	observer := func(ctx context.Context, _ string) {
+		observing.Store(true)
+		<-ctx.Done()
+		observing.Store(false)
+	}
+
+	if err := newTestService(newMock()).UpgradeNodegroups(context.Background(), "prod-east", "1.32",
+		NodegroupRollOptions{Observer: observer}, progress); err != nil {
+		t.Fatalf("UpgradeNodegroups: %v", err)
+	}
+	if duringPanel != 0 {
+		t.Fatalf("%d progress line(s) printed while the panel was live: %q", duringPanel, lines)
+	}
+	warnings := 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, "warning: checking") {
+			warnings++
+		}
+	}
+	if warnings != 2 {
+		t.Fatalf("got %d held warning lines after the panel stopped, want 2: %q", warnings, lines)
+	}
+	if last := lines[len(lines)-1]; last != "nodegroup workers-a is at 1.32" {
+		t.Fatalf("last line = %q, want the terminal-state line after the flushed warnings", last)
+	}
+
+	// No observer: the same warnings go straight through.
+	lines = nil
+	if err := newTestService(newMock()).UpgradeNodegroups(context.Background(), "prod-east", "1.32",
+		NodegroupRollOptions{}, progress); err != nil {
+		t.Fatalf("UpgradeNodegroups without observer: %v", err)
+	}
+	if len(lines) < 3 || !strings.HasPrefix(lines[1], "warning: checking") {
+		t.Fatalf("without an observer, progress lines = %q; want warnings passed through", lines)
+	}
+}
+
 func sprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
 
 func sprintfErr(format string, args ...any) error { return fmt.Errorf(format, args...) }

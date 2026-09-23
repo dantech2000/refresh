@@ -106,7 +106,25 @@ func handleTimeout(config refreshTypes.MonitorConfig) error {
 		color.Red("\nMonitoring timeout reached after %v", config.Timeout)
 		fmt.Printf("Updates may still be running. Use 'refresh list' to check status.\n")
 	}
-	return fmt.Errorf("monitoring timeout reached")
+	return ErrMonitorTimeout
+}
+
+// ErrMonitorTimeout is returned by MonitorUpdates when --timeout elapses before
+// every update reaches a terminal state.
+var ErrMonitorTimeout = errors.New("monitoring timeout reached")
+
+// DisplayStopped prints the banner for a monitor run that ended before every
+// update was terminal: the timeout banner when err is ErrMonitorTimeout, the
+// user-cancellation banner when err is nil. It is for callers that ran the
+// monitor quietly (e.g. under the live roll panel) and need the banner once the
+// panel has stopped. It prints nothing when config.Quiet is set.
+func DisplayStopped(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig, err error) {
+	switch {
+	case errors.Is(err, ErrMonitorTimeout):
+		_ = handleTimeout(config)
+	case err == nil:
+		_ = handleUserCancellation(monitor, config)
+	}
 }
 
 // checkAllUpdatesWithChannels checks all update statuses concurrently using channels.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
+	"github.com/fatih/color"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -203,6 +205,38 @@ func TestDisplayCompletionSummary_FailedErrorIncludesAWSMessage(t *testing.T) {
 	err := DisplayCompletionSummary(monitor, refreshTypes.MonitorConfig{Quiet: true})
 	if err == nil || !strings.Contains(err.Error(), "ng: PodEvictionFailure: Reached max retries") {
 		t.Fatalf("err = %v, want it to name the nodegroup and AWS error", err)
+	}
+}
+
+// After a quiet run under the live panel, the caller prints the banner the
+// monitor held back: timeout on ErrMonitorTimeout, cancellation on nil.
+func TestDisplayStopped_PrintsHeldBanner(t *testing.T) {
+	origColor := color.Output
+	t.Cleanup(func() { color.Output = origColor })
+	capture := func(fn func()) string {
+		r, w, _ := os.Pipe()
+		old := os.Stdout
+		os.Stdout, color.Output = w, w
+		fn()
+		_ = w.Close()
+		os.Stdout, color.Output = old, origColor
+		b, _ := io.ReadAll(r)
+		return string(b)
+	}
+	monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
+	cfg := refreshTypes.MonitorConfig{Timeout: 40 * time.Minute}
+
+	out := capture(func() { DisplayStopped(monitor, cfg, ErrMonitorTimeout) })
+	if !strings.Contains(out, "Monitoring timeout reached after 40m0s") {
+		t.Errorf("timeout banner missing; got:\n%s", out)
+	}
+	out = capture(func() { DisplayStopped(monitor, cfg, nil) })
+	if !strings.Contains(out, "Monitoring cancelled by user") {
+		t.Errorf("cancellation banner missing; got:\n%s", out)
+	}
+	cfg.Quiet = true
+	if out = capture(func() { DisplayStopped(monitor, cfg, ErrMonitorTimeout) }); out != "" {
+		t.Errorf("quiet config printed:\n%s", out)
 	}
 }
 

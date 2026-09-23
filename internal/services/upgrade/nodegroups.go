@@ -3,6 +3,7 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -112,11 +113,18 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 	// DescribeUpdate wait, which stays authoritative for the result: once EKS
 	// reports a terminal status (including FAILED), the panel is cancelled and
 	// joined, so a roll that never converges can't hold the wait hostage.
+	// While the panel owns the terminal, the wait's progress lines are held
+	// back and flushed once the panel has been cancelled and joined, so they
+	// never draw over it. Without an observer, progress goes straight through.
 	var observe func(context.Context)
+	waitProgress := progress
+	var held *heldProgress
 	if observer != nil {
 		observe = func(octx context.Context) { observer(octx, nodegroupName) }
+		held = &heldProgress{}
+		waitProgress = held.add
 	}
-	if err := common.RunAlongside(ctx, observe, func(wctx context.Context) error {
+	err = common.RunAlongside(ctx, observe, func(wctx context.Context) error {
 		if updateID == "" {
 			return nil
 		}
@@ -124,12 +132,44 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 			Name:          aws.String(clusterName),
 			NodegroupName: aws.String(nodegroupName),
 			UpdateId:      aws.String(updateID),
-		}, fmt.Sprintf("nodegroup %s roll to %s", nodegroupName, targetVersion), progress)
-	}); err != nil {
+		}, fmt.Sprintf("nodegroup %s roll to %s", nodegroupName, targetVersion), waitProgress)
+	})
+	if held != nil {
+		held.flush(progress)
+	}
+	if err != nil {
 		return err
 	}
 	progress("nodegroup %s is at %s", nodegroupName, targetVersion)
 	return nil
+}
+
+// heldProgress records progress lines so they can be emitted later, in order.
+// add is safe to call from the wait goroutine; flush runs after it has ended.
+type heldProgress struct {
+	mu    sync.Mutex
+	lines []heldLine
+}
+
+type heldLine struct {
+	format string
+	args   []any
+}
+
+func (h *heldProgress) add(format string, args ...any) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.lines = append(h.lines, heldLine{format: format, args: args})
+}
+
+func (h *heldProgress) flush(progress ProgressFunc) {
+	h.mu.Lock()
+	lines := h.lines
+	h.lines = nil
+	h.mu.Unlock()
+	for _, l := range lines {
+		progress(l.format, l.args...)
+	}
 }
 
 // defaultNodegroupGate verifies the nodegroup is ACTIVE and reports no
