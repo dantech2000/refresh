@@ -155,6 +155,14 @@ func ResolveCluster(ctx context.Context, cfg aws.Config, cmd *cli.Command) (stri
 	return awsinternal.ClusterName(ctx, cfg, RequestedCluster(cmd))
 }
 
+// ResolveClusterNoPrompt is ResolveCluster for a mutating command that must
+// not prompt, even on a TTY (for example an unattended --yes run with
+// -o json/yaml). A non-exact name fails with an error that names the
+// candidate instead of asking for confirmation.
+func ResolveClusterNoPrompt(ctx context.Context, cfg aws.Config, cmd *cli.Command) (string, error) {
+	return awsinternal.ClusterNameWithOptions(ctx, cfg, RequestedCluster(cmd), awsinternal.ClusterNameOptions{NonInteractive: true})
+}
+
 // ResolveClusterOrList resolves the cluster for a read-only command, using
 // the ResolveCluster order plus a final fallback to the kubeconfig current
 // context. When nothing resolves, it prints the

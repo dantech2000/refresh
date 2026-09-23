@@ -61,6 +61,15 @@ const warnMsgMaxWidth = 80
 // enough to play the scripted demo roll in a few seconds.
 const simulateTick = 160 * time.Millisecond
 
+// Interactive reports whether w can host the live panel by default: a
+// terminal with color on. The render level is ColorNone when w is not a
+// terminal, NO_COLOR is set, or --no-color is given. Off such a stream the
+// panel would append a full frame per tick and hold back progress lines, so
+// callers fall back to text progress.
+func Interactive(w io.Writer) bool {
+	return render.DetectLevel(w) != render.ColorNone
+}
+
 // rollRepaintInterval picks the panel cadence. In place, it is the caller's
 // poll interval capped at liveRollPoll (defaulting to a faster repaint when
 // watch-backed). Appending, it is never shorter than liveRollAppendRepaint.
