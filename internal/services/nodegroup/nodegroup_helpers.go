@@ -8,10 +8,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 func firstInstanceType(types []string) string {
@@ -102,12 +102,11 @@ func (s *ServiceImpl) getInstanceDetails(ctx context.Context, instanceIDs []stri
 
 // analyzeWorkloads summarizes pods running on nodegroup nodes and PDB posture.
 // instanceIDs is used only as a fallback when nodes are not labeled with the
-// managed-nodegroup label. The Kubernetes client must point at target; when no
-// kubeconfig context does, the analysis is skipped (ok=false) rather than
-// reading another cluster's nodes.
-func (s *ServiceImpl) analyzeWorkloads(ctx context.Context, target health.TargetCluster, nodegroupName string, instanceIDs []string) (WorkloadInfo, bool) {
-	k8s, _, err := health.ConnectKubeClientForCluster(ctx, "", "", target, nil)
-	if err != nil || k8s == nil {
+// managed-nodegroup label. k8s must already point at the nodegroup's cluster
+// (the caller resolves it with runner.ResolveClusterKubeClient); a nil client
+// skips the analysis (ok=false) rather than reading another cluster's nodes.
+func analyzeWorkloads(ctx context.Context, k8s kubernetes.Interface, nodegroupName string, instanceIDs []string) (WorkloadInfo, bool) {
+	if k8s == nil {
 		return WorkloadInfo{}, false
 	}
 

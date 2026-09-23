@@ -85,6 +85,8 @@ workload placement details. The nodegroup name may be the second positional or
 | `--nodegroup, -n string` | — | — | Nodegroup name (can be provided as second positional) |
 | `--show-instances, -I` | — | — | Include EC2 instance details |
 | `--show-workloads, -W` | — | — | Include workload/pod placement info |
+| `--kubeconfig string` | — | — | Path to the kubeconfig for --show-workloads (defaults to $KUBECONFIG, then ~/.kube/config) |
+| `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
 | `--help, -h` | — | — | show help |
 
@@ -195,7 +197,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | `--yes, -y` | — | — | Assume yes: skip confirmation prompts (a nodegroup pattern that is not an exact name, warn-level health) for unattended/CI use |
 | `--require-healthy` | — | — | Treat warn-level health findings as a hard stop (exit 2) instead of prompting |
 | `--skip-verify` | — | — | Skip post-roll verification (nodes ACTIVE, no new stuck pods) |
-| `--changelog` | — | — | In dry-run, print full amazon-eks-ami release notes between the current and target AMI |
+| `--changelog` | — | — | In dry-run, print the amazon-eks-ami release notes between the current and target AMI for AL2/AL2023 nodegroups; Bottlerocket and Windows nodegroups get a link to their own release notes |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml). json/yaml print one document: the run summary, the --dry-run plan, or the --health-only verdict |

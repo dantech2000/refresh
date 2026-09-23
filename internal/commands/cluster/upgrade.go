@@ -46,7 +46,8 @@ missing ones are a warning instead of a blocker.
 
 Before each nodegroup roll, pre-flight health checks run, including
 PodDisruptionBudgets that would block the drain (they need Kubernetes access
-via kubeconfig; without it the PDB check is skipped with a warning). A drain
+via kubeconfig, or --kubeconfig/--kube-context; without it the PDB check is
+skipped with a warning). A drain
 blocker stops the roll unless --force; health warnings need --yes or a
 confirmation. --skip-health-check turns these checks off.
 
@@ -75,6 +76,8 @@ Examples:
 			&cli.BoolFlag{Name: "force", Usage: "Force nodegroup rolls when pods can't be drained due to PDBs"},
 			&cli.BoolFlag{Name: "skip-insights-check", Usage: "Upgrade without the EKS Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself"},
 			&cli.BoolFlag{Name: "skip-health-check", Usage: "Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended)"},
+			runner.KubeconfigFlag("the PDB drain-blocker checks and the live roll panel"),
+			runner.KubeContextFlag(),
 			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to skip (repeatable)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
@@ -103,6 +106,10 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	if runner.IsMachineFormat(format) && !cmd.Bool("dry-run") && !cmd.Bool("yes") {
 		return fmt.Errorf("cluster upgrade -o %s does not prompt before each phase; add --yes to execute, or --dry-run to print the plan only", strings.ToLower(format))
 	}
+	pollInterval := cmd.Duration("poll-interval")
+	if pollInterval <= 0 {
+		return fmt.Errorf("--poll-interval must be greater than 0 (got %s)", pollInterval)
+	}
 	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
@@ -110,21 +117,15 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	defer cancel()
 
 	// Mutating: no cluster list on empty input, and no kubeconfig fallback.
-	// -o json/yaml runs are unattended (they need --yes), so a partial name
-	// fails with the candidate instead of prompting, even on a TTY.
-	resolve := runner.ResolveCluster
-	if runner.IsMachineFormat(format) {
-		resolve = runner.ResolveClusterNoPrompt
-	}
-	clusterName, err := resolve(ctx, awsCfg, cmd)
+	// -o json/yaml runs are unattended, so a partial name fails with the
+	// candidate instead of prompting, even on a TTY.
+	clusterName, err := runner.ResolveCluster(ctx, awsCfg, cmd)
 	if err != nil {
 		return err
 	}
 
 	svc := upgrade.NewService(eks.NewFromConfig(awsCfg), factory.NewDefaultLogger(nil))
-	if pi := cmd.Duration("poll-interval"); pi > 0 {
-		svc.PollInterval = pi
-	}
+	svc.PollInterval = pollInterval
 
 	planOpts := upgrade.PlanOptions{
 		SkipAddons:        cmd.StringSlice("skip"),
@@ -185,7 +186,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	// the progress lines.
 	var ngObserver upgrade.RollObserver
 	if !cmd.Bool("quiet") && !ui.PlainOutput() && rollview.Interactive(os.Stdout) {
-		if kube, _ := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, "", "", false); kube != nil {
+		if kube, _ := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), false); kube != nil {
 			timeout, poll := cmd.Duration("timeout"), cmd.Duration("poll-interval")
 			ngObserver = func(octx context.Context, ng string) {
 				rollview.LiveRollForUpdate(octx, kube, ng, timeout, poll)
@@ -270,6 +271,11 @@ func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) str
 	parts = append(parts, "cluster", "upgrade", "-c", shellQuote(clusterName), "--to", shellQuote(plan.TargetVersion))
 	for _, name := range []string{"skip", "skip-nodegroup"} {
 		for _, v := range cmd.StringSlice(name) {
+			parts = append(parts, "--"+name, shellQuote(v))
+		}
+	}
+	for _, name := range []string{"kubeconfig", "kube-context"} {
+		if v := strings.TrimSpace(cmd.String(name)); v != "" {
 			parts = append(parts, "--"+name, shellQuote(v))
 		}
 	}

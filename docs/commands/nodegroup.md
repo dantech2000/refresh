@@ -93,11 +93,14 @@ or `--nodegroup/-n`.
 | `--nodegroup, -n` | Nodegroup name (or pass as second positional) |
 | `--show-instances, -I` | Include EC2 instance details |
 | `--show-workloads, -W` | Include workload/pod placement info |
+| `--kubeconfig` | Path to the kubeconfig for `--show-workloads` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
+| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
 | `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
 
 `--show-workloads` reads the cluster through the kubeconfig context whose
-server matches the cluster endpoint.
+server matches the cluster endpoint, or through the context that you name with
+`--kube-context`. If no context is usable, the workloads show as unavailable.
 
 ### Examples
 
@@ -242,7 +245,7 @@ also exits `4` right away if no region can be listed.
 | `--all-clusters` | Fleet mode: roll matching nodegroups across all discovered clusters (serial); scope with `-r` |
 | `--region, -r` | Region(s) for `--all-clusters` discovery (default: partition EKS regions / `REFRESH_EKS_REGIONS`) |
 | `--dry-run, -d` | Preview changes without executing |
-| `--changelog` | In dry-run, print full `amazon-eks-ami` release notes between the current and target AMI (Amazon Linux nodegroups; Bottlerocket and Windows nodegroups get a link to their own release notes) |
+| `--changelog` | In dry-run, print the `amazon-eks-ami` release notes between the current and target AMI for AL2/AL2023 nodegroups. Bottlerocket and Windows nodegroups get a link to their own release notes |
 | `--force, -f` | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use `--reroll` |
 | `--reroll` | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--no-wait` | Don't wait for update completion (start-and-return) |

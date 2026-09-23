@@ -247,15 +247,17 @@ confirmed `ACTIVE` with no health issues, `refresh` runs the same
 [pre-flight health checks](../concepts/health-checks.md) as
 [`nodegroup update`](nodegroup.md#update), scoped to that nodegroup:
 
-- A PodDisruptionBudget that allows 0 disruptions for pods on the nodegroup
-  (including a PDB whose status is not synced) stops the roll, before EKS is
-  asked to roll anything. With `--force` (which lets EKS evict through PDBs)
-  it is a warning instead.
+- A drain blocker on the nodegroup stops the roll, before EKS is asked to
+  roll anything. A drain blocker is a PodDisruptionBudget that allows 0
+  disruptions (including a PDB whose status is not synced), or a pod that
+  more than one PDB selects. With `--force` (which lets EKS evict through
+  PDBs) it is a warning instead.
 - A `BLOCK` health decision stops the roll.
 - Health warnings need `--yes` or a confirmation at the prompt.
 
 The PDB check reads the cluster through the kubeconfig context whose API server
-matches the cluster endpoint. Without one, `refresh` prints a warning, skips the
+matches the cluster endpoint, or through the context that you name with
+`--kube-context`. Without one, `refresh` prints a warning, skips the
 PDB check, and continues. `--skip-health-check` turns off these nodegroup
 checks.
 
@@ -284,9 +286,9 @@ CI, and `NO_COLOR` runs print text progress.
     file. Rerunning after a failure (or Ctrl+C) resumes where it left off, and
     rerunning after success is a no-op. On failure or an interrupt, `refresh`
     prints the exact resume command. It repeats `--profile`, `--region`,
-    `--skip`, `--skip-nodegroup`, `--force`, `--skip-insights-check`,
-    `--skip-health-check`, and `--yes` when you gave them, so the rerun
-    changes the same things in the same account and region. A rerun at the
+    `--skip`, `--skip-nodegroup`, `--kubeconfig`, `--kube-context`, `--force`,
+    `--skip-insights-check`, `--skip-health-check`, and `--yes` when you gave
+    them, so the rerun changes the same things in the same account and region. A rerun at the
     target version moves no control plane, so it needs no insights.
 
 !!! warning "This mutates the control plane"
@@ -307,10 +309,12 @@ CI, and `NO_COLOR` runs print text progress.
 | `--force` | Force nodegroup rolls when pods can't be drained due to PDBs |
 | `--skip-insights-check` | Upgrade without the Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself |
 | `--skip-health-check` | Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
+| `--kubeconfig` | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
+| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
 | `--skip, -s` | Add-on name to skip, exact and case-insensitive (repeatable; for add-ons managed via Helm/GitOps) |
 | `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | Suppress progress output |
-| `--poll-interval, -p` | How often to poll in-flight updates (default `15s`) |
+| `--poll-interval, -p` | How often to poll in-flight updates (default `15s`; must be greater than `0`) |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain`. With `json`/`yaml`, stdout gets one document: the plan for `--dry-run` or a blocked plan, else `{plan, report}` after the run. Progress goes to stderr, and a run without `--dry-run` needs `--yes`. With `plain`, stdout gets the plan as TSV and everything else goes to stderr |
 | `--timeout, -t` | Overall upgrade timeout (default `4h`; not read from `REFRESH_TIMEOUT`) |
 

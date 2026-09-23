@@ -78,8 +78,9 @@ command (CLI wiring)  internal/commands/{statuscmd,cluster,nodegroup,addon,ctxcm
   positional → refresh context → kubeconfig current cluster; prints the
   cluster list hint to stderr and returns an error when nothing resolves);
   `ResolveCluster` for mutating commands (no kubeconfig fallback, never lists);
-  `ResolveClusterNoPrompt` for mutating runs that must never prompt (e.g.
-  `cluster upgrade -o json`). Exact names beat substring matches.
+  `ResolveClusterName` when the caller parsed the requested cluster itself.
+  All of them read `--format` and never prompt for `-o json/yaml`, even on a
+  TTY. Exact names beat substring matches.
   `nodegroup update` reads `EKS_CLUSTER_NAME` in code; never give a
   `--cluster` flag an env `Sources` (urfave reports it as set).
 - `Regions(cmd, allRegions)` is the only way to read a subcommand's
@@ -169,8 +170,9 @@ with no AWS.
 - **AWS calls:** wrap in `common.WithRetry`; format errors with `awsinternal.FormatAWSError`
   (or `awserr.FormatAWSError` below `internal/ui`); page list calls with `ListAllPages`.
   Set `ClientRequestToken: aws.String(common.IdempotencyToken())` on mutating calls (Update*).
-  New IAM actions go in the permission hint in `awserr/errors.go` and in the IAM table in
-  `docs/concepts/configuration.md`.
+  New IAM actions go in `RequiredPermissions` (`awserr/permissions.go`) and in the IAM table in
+  `docs/concepts/configuration.md`; a test fails if the two differ or if code calls an
+  unlisted AWS API.
 - **Concurrency:** fan out per-item AWS calls with `common.ForEachParallel` (bounded); thread
   `ctx` everywhere; multi-region work uses a concurrency cap. Run a best-effort observer next
   to an authoritative wait with `common.RunAlongside`.

@@ -128,8 +128,9 @@ add-on (`cni` for `vpc-cni`) needs a confirmation. A name that matches several
 add-ons fails and lists them. For a partial match:
 
 - On a terminal, the command asks you to confirm the match.
-- Without a terminal, the command fails and names the candidate. Pass the
-  exact name, or pass `--yes` to accept the match.
+- Without a terminal, or with `-o json`/`-o yaml`, the command fails and
+  names the candidate. Pass the exact name, or pass `--yes` to accept the
+  match.
 
 ### Waiting
 

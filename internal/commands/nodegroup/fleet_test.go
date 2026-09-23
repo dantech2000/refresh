@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -375,5 +377,47 @@ func TestValidateFleetFlags_EnvClusterIsNotAnError(t *testing.T) {
 	}
 	if err := runFleetValidation(t, "--all-clusters", "--cluster", "staging"); err == nil {
 		t.Fatal("--cluster on the command line was accepted with EKS_CLUSTER_NAME set")
+	}
+}
+
+// The fleet batch confirmation is a prompt: it goes to stderr, so stdout
+// stays clean.
+func TestPromptYesNo_WritesToStderr(t *testing.T) {
+	dir := t.TempDir()
+	stdinPath := filepath.Join(dir, "stdin")
+	if err := os.WriteFile(stdinPath, []byte("y\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	open := func(name string, create bool) *os.File {
+		t.Helper()
+		var f *os.File
+		var err error
+		if create {
+			f, err = os.Create(filepath.Join(dir, name))
+		} else {
+			f, err = os.Open(filepath.Join(dir, name))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		return f
+	}
+	stdin, stdout, stderr := open("stdin", false), open("stdout", true), open("stderr", true)
+	origIn, origOut, origErr := os.Stdin, os.Stdout, os.Stderr
+	os.Stdin, os.Stdout, os.Stderr = stdin, stdout, stderr
+	restore := func() { os.Stdin, os.Stdout, os.Stderr = origIn, origOut, origErr }
+	t.Cleanup(restore)
+
+	ok := promptYesNo(context.Background(), "Update the fleet?")
+	restore()
+	if !ok {
+		t.Error("promptYesNo = false, want true for \"y\"")
+	}
+	if out, _ := os.ReadFile(stdout.Name()); len(out) != 0 {
+		t.Errorf("stdout = %q, want empty", out)
+	}
+	if out, _ := os.ReadFile(stderr.Name()); !strings.Contains(string(out), "Update the fleet? [y/N]") {
+		t.Errorf("stderr = %q, want the prompt", out)
 	}
 }

@@ -35,11 +35,11 @@ meant for a person goes to stderr or is not printed:
 - Errors, including the AWS credential setup help, print once, on stderr.
   The credential help appears only for a credential problem, not for a
   cancel, a timeout, or a network failure.
-- Machine formats don't ask for confirmation. A run that would ask a
-  question fails with an error that names the missing flag, usually `--yes`.
-  A partial cluster name is the exception outside `cluster upgrade`: on a
-  terminal, `refresh` can still ask on stderr which cluster you meant. Pass
-  the exact name in scripts.
+- Machine formats don't ask for confirmation, even on a terminal. A run that
+  would ask a question fails with an error that names the missing flag,
+  usually `--yes`. A partial cluster name resolves as it does without a
+  terminal: a mutating command fails and names the candidate. Pass the exact
+  name in scripts.
 - An empty list prints `[]`, never `null`.
 
 The exit code is the same as in the human view. When a command fails before

@@ -3,6 +3,8 @@ package nodegroup
 import (
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/dantech2000/refresh/internal/types"
 )
 
@@ -13,8 +15,11 @@ type ListOptions struct {
 
 // DescribeOptions controls describe behavior for nodegroups
 type DescribeOptions struct {
-	ShowInstances bool `json:"showInstances"`
-	ShowWorkloads bool `json:"showWorkloads"`
+	ShowInstances bool `json:"showInstances" yaml:"showInstances"`
+	ShowWorkloads bool `json:"showWorkloads" yaml:"showWorkloads"`
+	// KubeClient reads workload placement for ShowWorkloads. It must point
+	// at the nodegroup's cluster; nil marks the workloads unavailable.
+	KubeClient kubernetes.Interface `json:"-" yaml:"-"`
 }
 
 // ScaleOptions controls intelligent scaling behavior

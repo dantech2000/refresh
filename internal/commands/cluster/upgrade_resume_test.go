@@ -60,6 +60,11 @@ func TestResumeCommand(t *testing.T) {
 			want: "refresh cluster upgrade -c prod --to 1.33 --force --skip-insights-check --skip-health-check",
 		},
 		{
+			name: "kubeconfig and kube-context are kept",
+			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "--kubeconfig", "/tmp/my kube", "--kube-context", "prod-admin", "--force"},
+			want: "refresh cluster upgrade -c prod --to 1.33 --kubeconfig '/tmp/my kube' --kube-context prod-admin --force",
+		},
+		{
 			name: "yes kept for an unattended run",
 			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "-y"},
 			want: "refresh cluster upgrade -c prod --to 1.33 --yes",

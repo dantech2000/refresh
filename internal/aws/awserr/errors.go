@@ -339,21 +339,8 @@ func formatPermissionError(err error, operation string) error {
 	return formatted(err, `insufficient AWS permissions while %s.
 
 Required permissions for refresh tool:
-- eks:ListClusters
-- eks:DescribeCluster
-- eks:ListNodegroups
-- eks:DescribeNodegroup
-- eks:UpdateNodegroupVersion
-- eks:UpdateClusterVersion (for cluster upgrade)
-- eks:DescribeUpdate (for cluster upgrade)
-- eks:DescribeClusterVersions (for cluster upgrade and status support calendar)
-- eks:ListInsights (for cluster upgrade readiness / upgrade-check)
-- eks:StartInsightsRefresh / eks:DescribeInsightsRefresh (for cluster upgrade readiness)
-- eks:DescribeInsight (for upgrade-check insight detail)
-- eks:ListAddons / eks:DescribeAddon / eks:DescribeAddonVersions (for addon status / version-skew)
-- ec2:DescribeImages / ec2:DescribeInstances (for AMI staleness and compute detection)
-- ssm:GetParameter (for the latest recommended EKS AMI lookup)
-- cloudwatch:GetMetricStatistics (for health checks)
+%s
+See %s
 
-Current error: %w`, operation, err)
+Current error: %w`, operation, permissionHint(), PermissionsDocURL, err)
 }
