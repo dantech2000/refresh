@@ -8,10 +8,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
+	asgtypes "github.com/aws/aws-sdk-go-v2/service/autoscaling/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -53,7 +54,7 @@ func (hc *HealthChecker) checkClusterCapacityWith(ctx context.Context, snap *cpu
 	if err != nil {
 		result.Status = StatusWarn
 		result.Score = 70 // Default score when metrics unavailable
-		result.Message = fmt.Sprintf("Unable to fetch CPU metrics: %v", err)
+		result.Message = fmt.Sprintf("Unable to fetch CPU metrics: %s", awserr.Summary(err))
 		result.Details = append(result.Details, "EC2 CPU metrics unavailable - check EKS nodegroup status")
 		return result
 	}
@@ -179,14 +180,16 @@ func (hc *HealthChecker) clusterCPUByInstance(ctx context.Context, clusterName s
 
 		var nextToken *string
 		for {
-			out, err := hc.cwClient.GetMetricData(ctx, &cloudwatch.GetMetricDataInput{
-				StartTime:         aws.Time(startTime),
-				EndTime:           aws.Time(endTime),
-				MetricDataQueries: queries,
-				NextToken:         nextToken,
+			out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
+				return hc.cwClient.GetMetricData(rc, &cloudwatch.GetMetricDataInput{
+					StartTime:         aws.Time(startTime),
+					EndTime:           aws.Time(endTime),
+					MetricDataQueries: queries,
+					NextToken:         nextToken,
+				})
 			})
 			if err != nil {
-				return nil, fmt.Errorf("fetching CPU metrics: %w", err)
+				return nil, awserr.FormatAWSError(err, "fetching CPU metrics")
 			}
 			for _, r := range out.MetricDataResults {
 				var idx int
@@ -251,16 +254,7 @@ func maxFloat(values []float64) float64 {
 // getClusterInstanceIDs retrieves all EC2 instance IDs for the cluster
 func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName string) ([]string, error) {
 	// List all nodegroups in the cluster (with pagination)
-	nodegroupNames, err := common.Paginate(ctx, func(ctx context.Context, token *string) ([]string, *string, error) {
-		ngOutput, err := hc.eksClient.ListNodegroups(ctx, &eks.ListNodegroupsInput{
-			ClusterName: aws.String(clusterName),
-			NextToken:   token,
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to list nodegroups: %w", err)
-		}
-		return ngOutput.Nodegroups, ngOutput.NextToken, nil
-	})
+	nodegroupNames, err := hc.listNodegroupNames(ctx, clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -271,15 +265,12 @@ func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName 
 	// invited throttling. (REF-50)
 	asgNamesPerNG := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
 		func(fctx context.Context, ngName string) []string {
-			descOutput, err := hc.eksClient.DescribeNodegroup(fctx, &eks.DescribeNodegroupInput{
-				ClusterName:   aws.String(clusterName),
-				NodegroupName: aws.String(ngName),
-			})
-			if err != nil || descOutput.Nodegroup == nil || descOutput.Nodegroup.Resources == nil {
+			ng, err := hc.describeNodegroup(fctx, clusterName, ngName)
+			if err != nil || ng == nil || ng.Resources == nil {
 				return nil // Skip failed nodegroups
 			}
 			var names []string
-			for _, asg := range descOutput.Nodegroup.Resources.AutoScalingGroups {
+			for _, asg := range ng.Resources.AutoScalingGroups {
 				if asg.Name != nil {
 					names = append(names, *asg.Name)
 				}
@@ -306,20 +297,29 @@ func (hc *HealthChecker) instanceIDsForASGs(ctx context.Context, asgNames []stri
 		return nil, fmt.Errorf("auto Scaling client not available")
 	}
 
+	// The API accepts up to 100 names per request but returns at most
+	// MaxRecords groups per page (default 50), so set MaxRecords to the chunk
+	// size and follow NextToken; otherwise groups 51-100 of a chunk are lost.
 	const maxNamesPerCall = 100
 	var instanceIDs []string
 	for start := 0; start < len(asgNames); start += maxNamesPerCall {
-		end := start + maxNamesPerCall
-		if end > len(asgNames) {
-			end = len(asgNames)
-		}
-		output, err := hc.asgClient.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
-			AutoScalingGroupNames: asgNames[start:end],
-		})
+		chunk := asgNames[start:min(start+maxNamesPerCall, len(asgNames))]
+		groups, err := awserr.ListAllPages(ctx, "describing Auto Scaling groups",
+			func(rc context.Context, token *string) (*autoscaling.DescribeAutoScalingGroupsOutput, error) {
+				return hc.asgClient.DescribeAutoScalingGroups(rc, &autoscaling.DescribeAutoScalingGroupsInput{
+					AutoScalingGroupNames: chunk,
+					MaxRecords:            aws.Int32(maxNamesPerCall),
+					NextToken:             token,
+				})
+			},
+			func(out *autoscaling.DescribeAutoScalingGroupsOutput) ([]asgtypes.AutoScalingGroup, *string) {
+				return out.AutoScalingGroups, out.NextToken
+			},
+		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to describe ASGs: %w", err)
+			return nil, err
 		}
-		for _, asg := range output.AutoScalingGroups {
+		for _, asg := range groups {
 			for _, instance := range asg.Instances {
 				if instance.InstanceId != nil {
 					instanceIDs = append(instanceIDs, *instance.InstanceId)

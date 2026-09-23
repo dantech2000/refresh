@@ -355,8 +355,8 @@ func TestWaitForUpdate_NetworkErrorsKeepPolling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("waitForUpdate: %v (network errors must keep the watch alive)", err)
 	}
-	if warnings != len(transient) {
-		t.Fatalf("warnings = %d, want %d", warnings, len(transient))
+	if want := unabsorbedErrors(transient); warnings != want {
+		t.Fatalf("warnings = %d, want %d", warnings, want)
 	}
 }
 

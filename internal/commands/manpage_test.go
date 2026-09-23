@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -135,8 +138,26 @@ func TestIsInManPath_FakePathReturnsFalse(t *testing.T) {
 	// A randomly-generated temp path will never appear in MANPATH.
 	// Whether manpath is available or not, the function must return false for it.
 	dir := filepath.Join(t.TempDir(), "definitely-not-in-manpath-12345")
-	if isInManPath(dir) {
+	if isInManPath(t.Context(), dir) {
 		t.Errorf("isInManPath(%q) = true, want false for an unknown temp dir", dir)
+	}
+}
+
+// isInManPath runs manpath under the command context, so a cancelled command
+// does not start it (and reports "not in MANPATH").
+func TestIsInManPath_HonorsContext(t *testing.T) {
+	out, err := exec.Command("manpath").Output()
+	if err != nil {
+		t.Skip("manpath not available")
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(string(out)), ":")
+	if first == "" || !isInManPath(t.Context(), first) {
+		t.Skip("manpath returned no usable entry")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if isInManPath(ctx, first) {
+		t.Errorf("isInManPath with a cancelled context = true, want false (manpath must not run)")
 	}
 }
 

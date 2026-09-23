@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/common"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
@@ -166,15 +167,12 @@ func (s *Service) notEvaluated(ctx context.Context, name string) ClusterStatus {
 }
 
 func (s *Service) listClusterNames(ctx context.Context) ([]string, error) {
-	names, err := common.Paginate(ctx, func(ctx context.Context, token *string) ([]string, *string, error) {
-		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.ListClustersOutput, error) {
+	names, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing clusters in %s", s.region),
+		func(rc context.Context, token *string) (*eks.ListClustersOutput, error) {
 			return s.clusterAPI.ListClusters(rc, &eks.ListClustersInput{NextToken: token})
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("listing clusters in %s: %w", s.region, err)
-		}
-		return out.Clusters, out.NextToken, nil
-	})
+		},
+		func(out *eks.ListClustersOutput) ([]string, *string) { return out.Clusters, out.NextToken },
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +261,9 @@ func (s *Service) amiOldestDays(ctx context.Context, amiIDs []string) *int {
 	if s.ec2 == nil {
 		return nil
 	}
-	out, err := s.ec2.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: dedupe(amiIDs)})
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeImagesOutput, error) {
+		return s.ec2.DescribeImages(rc, &ec2.DescribeImagesInput{ImageIds: dedupe(amiIDs)})
+	})
 	if err != nil || out == nil || len(out.Images) == 0 {
 		return nil
 	}
@@ -354,12 +354,14 @@ func (s *Service) hasKarpenterInstances(ctx context.Context) bool {
 	if s.ec2 == nil {
 		return false
 	}
-	out, err := s.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-		MaxResults: aws.Int32(5),
-		Filters: []ec2types.Filter{
-			{Name: aws.String("tag-key"), Values: karpenterTagKeys},
-			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running"}},
-		},
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeInstancesOutput, error) {
+		return s.ec2.DescribeInstances(rc, &ec2.DescribeInstancesInput{
+			MaxResults: aws.Int32(5),
+			Filters: []ec2types.Filter{
+				{Name: aws.String("tag-key"), Values: karpenterTagKeys},
+				{Name: aws.String("instance-state-name"), Values: []string{"pending", "running"}},
+			},
+		})
 	})
 	if err != nil || out == nil {
 		return false

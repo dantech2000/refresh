@@ -20,6 +20,7 @@ import (
 	"github.com/aws/smithy-go"
 
 	"github.com/dantech2000/refresh/internal/mocks"
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // planShape summarizes a plan as one line per hop: "from→to ng[pending
@@ -320,6 +321,19 @@ func accessDenied(action string) error {
 	return &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "not authorized to perform " + action}
 }
 
+// unabsorbedErrors is how many of errs reach the wait loop as a warning: the
+// retryable ones (EOF, refused dial) are absorbed by common.WithRetry around
+// each poll, the rest (an NXDOMAIN) surface and the loop polls through them.
+func unabsorbedErrors(errs []error) int {
+	n := 0
+	for _, err := range errs {
+		if !common.IsRetryable(err) {
+			n++
+		}
+	}
+	return n
+}
+
 // warningCounter counts "warning:" progress lines.
 func warningCounter() (ProgressFunc, func() int) {
 	var mu sync.Mutex
@@ -390,8 +404,8 @@ func TestUpgradeControlPlane_ActiveWaitSurvivesNetworkErrors(t *testing.T) {
 			if err := svc.UpgradeControlPlane(ctx, "prod-east", "1.32", progress); err != nil {
 				t.Fatalf("UpgradeControlPlane: %v (network errors must keep the wait alive)", err)
 			}
-			if got := warnings(); got != len(errs) {
-				t.Fatalf("warnings = %d, want %d", got, len(errs))
+			if got, want := warnings(), unabsorbedErrors(errs); got != want {
+				t.Fatalf("warnings = %d, want %d", got, want)
 			}
 			if m.Calls.UpdateClusterVersion != tc.wantUpdates {
 				t.Fatalf("UpdateClusterVersion calls = %d, want %d", m.Calls.UpdateClusterVersion, tc.wantUpdates)
@@ -464,8 +478,8 @@ func TestUpgradeNodegroups_AttachSurvivesNetworkErrors(t *testing.T) {
 	if err := svc.UpgradeNodegroups(ctx, "prod-east", "1.32", NodegroupRollOptions{}, progress); err != nil {
 		t.Fatalf("UpgradeNodegroups: %v (network errors must keep the attach wait alive)", err)
 	}
-	if got := warnings(); got != len(errs) {
-		t.Fatalf("warnings = %d, want %d", got, len(errs))
+	if got, want := warnings(), unabsorbedErrors(errs); got != want {
+		t.Fatalf("warnings = %d, want %d", got, want)
 	}
 	if len(*rolls) != 0 {
 		t.Fatalf("rolls = %d, want 0 (the in-flight roll reached 1.32)", len(*rolls))

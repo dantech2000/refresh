@@ -123,6 +123,9 @@ func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, n
 	if err != nil {
 		return awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))
 	}
+	if desc == nil || desc.Nodegroup == nil {
+		return fmt.Errorf("describing nodegroup %s/%s: empty DescribeNodegroup response", clusterName, nodegroupName)
+	}
 
 	color.Cyan("DRY RUN: Would scale nodegroup %s in cluster %s", nodegroupName, clusterName)
 	isScaleDown := false

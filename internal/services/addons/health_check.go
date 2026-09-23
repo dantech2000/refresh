@@ -24,6 +24,9 @@ func (s *ServiceImpl) preUpdateHealthCheck(ctx context.Context, clusterName, add
 	if err != nil {
 		return fmt.Errorf("pre-update health check: %w", err)
 	}
+	if desc == nil || desc.Addon == nil {
+		return fmt.Errorf("pre-update health check: empty DescribeAddon response for %s", addonName)
+	}
 
 	switch desc.Addon.Status {
 	case ekstypes.AddonStatusActive:
@@ -49,6 +52,9 @@ func (s *ServiceImpl) postUpdateHealthCheck(ctx context.Context, clusterName, ad
 	})
 	if err != nil {
 		return fmt.Errorf("post-update health check: %w", err)
+	}
+	if desc == nil || desc.Addon == nil {
+		return fmt.Errorf("post-update health check: empty DescribeAddon response for %s", addonName)
 	}
 
 	addon := desc.Addon

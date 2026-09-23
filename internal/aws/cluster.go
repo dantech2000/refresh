@@ -145,7 +145,7 @@ func resolveClusterPattern(cliFlag string, allowKubeconfig bool) (pattern, fromC
 	}
 	name, err := extractClusterFromKubeconfig()
 	if err != nil {
-		return "", "", fmt.Errorf("%w (kubeconfig: %v)", ErrNoClusterSpecified, err)
+		return "", "", fmt.Errorf("%w (kubeconfig: %w)", ErrNoClusterSpecified, err)
 	}
 	return name, "", nil
 }
@@ -176,7 +176,7 @@ func extractClusterFromKubeconfig() (string, error) {
 
 	rawConfig, err := clientConfig.RawConfig()
 	if err != nil {
-		return "", fmt.Errorf("failed to load kubeconfig: %v", err)
+		return "", fmt.Errorf("loading kubeconfig: %w", err)
 	}
 
 	currentContext := rawConfig.Contexts[rawConfig.CurrentContext]
