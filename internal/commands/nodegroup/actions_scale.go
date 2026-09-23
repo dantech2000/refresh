@@ -17,6 +17,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func runScale(ctx context.Context, cmd *cli.Command) error {
@@ -96,7 +97,7 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if opts.CheckPDBs && opts.Force {
-		warnForcedScaleDown(os.Stderr, clusterName, nodegroupName, pdbCheck, pdbCheckErr)
+		warnForcedScaleDown(ui.Stderr, clusterName, nodegroupName, pdbCheck, pdbCheckErr)
 	}
 
 	return runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
@@ -107,7 +108,7 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 // warnForcedScaleDown prints, to w, the PDB blockers (or the failed check)
 // that --force is overriding. It prints nothing when the gate would pass.
 func warnForcedScaleDown(w io.Writer, clusterName, nodegroupName string, check *nodegroupsvc.ScaleDownPDBCheck, checkErr error) {
-	warn := color.New(color.FgYellow)
+	warn := ui.ColorFor(w, color.FgYellow)
 	if checkErr != nil {
 		_, _ = warn.Fprintf(w, "Warning: --force: could not validate PodDisruptionBudgets, scaling anyway: %v\n", checkErr)
 		return
@@ -129,10 +130,10 @@ func printScaleDryRunPDBGate(w io.Writer, clusterName, nodegroupName string, che
 	switch {
 	case checkErr != nil:
 		if force {
-			_, _ = color.New(color.FgYellow).Fprintf(w, "\nPDB gate: could not validate PodDisruptionBudgets (%v); --force would scale anyway.\n", checkErr)
+			_, _ = ui.ColorFor(w, color.FgYellow).Fprintf(w, "\nPDB gate: could not validate PodDisruptionBudgets (%v); --force would scale anyway.\n", checkErr)
 			return
 		}
-		_, _ = color.New(color.FgRed).Fprintf(w, "\nPDB gate: would be REFUSED, PodDisruptionBudgets could not be validated: %v\n", checkErr)
+		_, _ = ui.ColorFor(w, color.FgRed).Fprintf(w, "\nPDB gate: would be REFUSED, PodDisruptionBudgets could not be validated: %v\n", checkErr)
 	case check == nil || !check.ScaleDown:
 		_, _ = fmt.Fprintln(w, "\nPDB gate: not a scale-down; nothing to check.")
 	case !check.Refused():
@@ -140,7 +141,7 @@ func printScaleDryRunPDBGate(w io.Writer, clusterName, nodegroupName string, che
 		if check.Note != "" {
 			msg += " " + check.Note + "."
 		}
-		_, _ = color.New(color.FgGreen).Fprintln(w, msg)
+		_, _ = ui.ColorFor(w, color.FgGreen).Fprintln(w, msg)
 	default:
 		verdict := "would be REFUSED"
 		c := color.New(color.FgRed)

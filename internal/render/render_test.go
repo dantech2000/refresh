@@ -2,8 +2,12 @@ package render
 
 import (
 	"bytes"
+	"io"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/fatih/color"
 
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -220,5 +224,46 @@ func TestLiveRows(t *testing.T) {
 		if got := rows(frame, c.width); got != c.want {
 			t.Errorf("rows(width=%d) = %d, want %d", c.width, got, c.want)
 		}
+	}
+}
+
+// Each stream gets its own level: a TTY stderr is colored even when stdout
+// is piped (fatih's global then says no color), and a redirected stderr is
+// never colored.
+func TestDetectLevelPerStream(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("COLORTERM", "")
+	prevNoColor := color.NoColor
+	t.Cleanup(func() { color.NoColor = prevNoColor })
+
+	for _, tc := range []struct {
+		stdoutTTY, stderrTTY bool
+	}{{true, true}, {true, false}, {false, true}, {false, false}} {
+		restore := ui.SetTerminalCheck(func(fd uintptr) bool {
+			switch fd {
+			case os.Stdout.Fd():
+				return tc.stdoutTTY
+			case os.Stderr.Fd():
+				return tc.stderrTTY
+			}
+			return false
+		})
+		ui.InitColor()
+		want := func(tty bool) ColorLevel {
+			if tty {
+				return Color256
+			}
+			return ColorNone
+		}
+		if got := DetectLevel(os.Stdout); got != want(tc.stdoutTTY) {
+			t.Errorf("stdoutTTY=%v stderrTTY=%v: stdout level = %d, want %d", tc.stdoutTTY, tc.stderrTTY, got, want(tc.stdoutTTY))
+		}
+		for _, w := range []io.Writer{os.Stderr, ui.Stderr} {
+			if got := DetectLevel(w); got != want(tc.stderrTTY) {
+				t.Errorf("stdoutTTY=%v stderrTTY=%v: stderr level = %d, want %d", tc.stdoutTTY, tc.stderrTTY, got, want(tc.stderrTTY))
+			}
+		}
+		restore()
 	}
 }

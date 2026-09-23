@@ -18,7 +18,7 @@ const insightTimeLayout = "2006-01-02 15:04"
 // (verdict, support, control plane, version skew) as text on stderr.
 func OutputUpgradeCheck(report *clustersvc.UpgradeReport) error {
 	if ui.PlainOutput() {
-		writeUpgradeCheckInfo(os.Stderr, report)
+		writeUpgradeCheckInfo(ui.Stderr, report)
 		upgradeCheckPlain(report).Render()
 		return nil
 	}

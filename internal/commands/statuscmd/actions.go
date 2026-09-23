@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -22,6 +21,7 @@ import (
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/services/common"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func runStatus(ctx context.Context, cmd *cli.Command) error {
@@ -61,7 +61,7 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 	elapsed := time.Since(start)
 	statuses, regionErrs := sweep.statuses, sweep.errs
 
-	if err := reportSweep(os.Stderr, len(regions), sweep); err != nil {
+	if err := reportSweep(ui.Stderr, len(regions), sweep); err != nil {
 		return err
 	}
 

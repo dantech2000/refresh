@@ -21,7 +21,7 @@ import (
 func outputNodegroupsTable(clusterName string, items []nodegroupsvc.NodegroupSummary) error {
 	if ui.PlainOutput() {
 		if len(items) == 0 {
-			_, _ = fmt.Fprintf(os.Stderr, "No nodegroups found for cluster: %s\n", clusterName)
+			_, _ = fmt.Fprintf(ui.Stderr, "No nodegroups found for cluster: %s\n", clusterName)
 		}
 		nodegroupListPlain(items).Render()
 		return nil

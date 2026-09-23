@@ -26,6 +26,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	statuscmd "github.com/dantech2000/refresh/internal/commands/statuscmd"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 var (
@@ -160,8 +161,9 @@ func newApp() *cli.Command {
 	}
 }
 
-// disableColor turns off color in both output libraries.
+// disableColor turns off color on both streams in every output library.
 func disableColor() {
+	ui.SetColorDisabled(true)
 	color.NoColor = true
 	pterm.DisableColor()
 }
@@ -192,6 +194,9 @@ func colorDisabled(args []string) bool {
 }
 
 func run(ctx context.Context, args []string, out, errOut io.Writer) error {
+	// Stdout color follows stdout alone; stderr decides for itself through
+	// ui.Stderr and ui.StderrColor.
+	ui.InitColor()
 	if colorDisabled(args) {
 		disableColor()
 	}
@@ -225,10 +230,10 @@ func main() {
 		stop()
 	}()
 
-	if err := run(ctx, os.Args, os.Stdout, os.Stderr); err != nil {
+	if err := run(ctx, os.Args, os.Stdout, ui.Stderr); err != nil {
 		// Errors belong on stderr: scripted consumers piping stdout must not
 		// find error text mixed into their data.
-		fmt.Fprintln(os.Stderr, color.RedString("Error: %v", err))
+		_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgRed).Sprintf("Error: %v", err))
 		exitProcess(1)
 	}
 }
