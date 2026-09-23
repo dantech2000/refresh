@@ -150,7 +150,13 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	warnAllOnlyFlags(cmd)
-	ctx, cancel, cfg, err := runner.SetupAWSStrict(ctx, cmd)
+	// With --wait, --timeout covers the API calls and --wait-timeout the wait,
+	// so a long --wait-timeout isn't cut short by --timeout.
+	setupTimeout := cmd.Duration("timeout")
+	if cmd.Bool("wait") && setupTimeout > 0 && cmd.Duration("wait-timeout") > 0 {
+		setupTimeout += cmd.Duration("wait-timeout")
+	}
+	ctx, cancel, cfg, err := runner.SetupAWSStrictWithDeadline(ctx, cmd, setupTimeout)
 	if err != nil {
 		return err
 	}
@@ -220,7 +226,16 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
 		return err
 	}
-	ctx, cancel, cfg, err := runner.SetupAWSStrict(ctx, cmd)
+	// The overall deadline depends on how many add-ons get updated, which is
+	// only known after listing them. With --wait, the setup context gets no
+	// deadline here; the service applies --timeout plus --wait-timeout per
+	// add-on (addons.UpdateAllOptions.Timeout).
+	timeout := cmd.Duration("timeout")
+	setupTimeout := timeout
+	if cmd.Bool("wait") {
+		setupTimeout = 0
+	}
+	ctx, cancel, cfg, err := runner.SetupAWSStrictWithDeadline(ctx, cmd, setupTimeout)
 	if err != nil {
 		return err
 	}
@@ -231,7 +246,12 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("cluster name is required")
 	}
 
-	clusterName, err := awsinternal.ClusterName(ctx, cfg, requested)
+	resolveCtx, cancelResolve := ctx, context.CancelFunc(func() {})
+	if timeout > 0 {
+		resolveCtx, cancelResolve = context.WithTimeout(ctx, timeout)
+	}
+	clusterName, err := awsinternal.ClusterName(resolveCtx, cfg, requested)
+	cancelResolve()
 	if err != nil {
 		return err
 	}
@@ -250,6 +270,7 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 		SkipAddons:      cmd.StringSlice("skip"),
 		DependencyOrder: cmd.Bool("dependency-order"),
 		HealthCheck:     cmd.Bool("health-check"),
+		Timeout:         timeout,
 	}
 
 	var results []addons.AddonUpdateResult

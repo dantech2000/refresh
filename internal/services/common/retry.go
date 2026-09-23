@@ -62,6 +62,12 @@ func shouldRetry(err error) bool {
 	return containsAnyFold(s, []string{"throttl", "rate exceeded", "timeout", "temporarily unavailable", "connection reset"})
 }
 
+// IsRetryable reports whether err is a transient condition (throttling,
+// server-side fault, network glitch) that is worth retrying or polling
+// through. Permanent errors such as AccessDenied or validation failures
+// return false, as do context cancellations.
+func IsRetryable(err error) bool { return shouldRetry(err) }
+
 // IdempotencyToken returns a random token for AWS APIs that accept a
 // ClientRequestToken. Setting it explicitly ONCE per logical operation lets
 // retry wrappers re-issue the request without risking a double-apply (the SDK

@@ -21,6 +21,11 @@ import (
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
+// ErrCancelled is returned by MonitorUpdates when the user interrupts
+// monitoring (Ctrl+C / SIGTERM). The EKS updates keep running in AWS; callers
+// must not treat the roll as finished (e.g. skip post-roll verification).
+var ErrCancelled = errors.New("interrupted; the EKS update continues in the background")
+
 // statusResult holds the result of a status check for a single update.
 type statusResult struct {
 	index  int
@@ -43,8 +48,9 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
 
-	// Create a cancellable context with timeout
-	monitorCtx, cancel := context.WithTimeout(ctx, config.Timeout)
+	// A timeout <= 0 means "no monitor timeout": wait until the updates finish
+	// or the user cancels (matching the live roll view's handling of 0).
+	monitorCtx, cancel := monitorContext(ctx, config.Timeout)
 	defer cancel()
 
 	if !config.Quiet {
@@ -66,7 +72,7 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 			if errors.Is(monitorCtx.Err(), context.Canceled) {
 				return handleUserCancellation(monitor, config)
 			}
-			return handleTimeout(config)
+			return handleTimeout(monitor, config)
 
 		case <-ticker.C:
 			allComplete, err := checkAllUpdatesWithChannels(monitorCtx, eksClient, monitor, config)
@@ -84,27 +90,51 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 	}
 }
 
+// monitorContext bounds ctx by timeout, or only by cancellation when
+// timeout <= 0 (no limit).
+func monitorContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+// formatMonitorTimeout renders the monitor timeout for display ("none" for
+// no limit).
+func formatMonitorTimeout(timeout time.Duration) string {
+	if timeout <= 0 {
+		return "none"
+	}
+	return timeout.String()
+}
+
 // printMonitoringHeader displays initial monitoring information.
 func printMonitoringHeader(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) {
 	fmt.Printf("\nMonitoring %d nodegroup update(s)...\n", len(monitor.Updates))
-	fmt.Printf("Timeout: %v | Poll interval: %v\n", config.Timeout, config.PollInterval)
+	fmt.Printf("Timeout: %s | Poll interval: %v\n", formatMonitorTimeout(config.Timeout), config.PollInterval)
 	fmt.Printf("Press Ctrl+C to stop monitoring (updates will continue)\n\n")
 }
 
-// handleUserCancellation handles graceful cancellation by user signal.
+// handleUserCancellation handles graceful cancellation by user signal. It
+// returns ErrCancelled so callers stop instead of treating the roll as done.
+// The "check with refresh nodegroup list" hint is left to the caller's error
+// (see nodegroup updateExit) so it prints once, in quiet/JSON runs too.
 func handleUserCancellation(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	if !config.Quiet && len(monitor.Updates) > 0 {
 		color.Yellow("\nMonitoring cancelled by user. Updates are still running in AWS.")
-		fmt.Printf("Use 'refresh list --cluster %s' to check status manually.\n", monitor.Updates[0].ClusterName)
 	}
-	return nil
+	return ErrCancelled
 }
 
 // handleTimeout handles monitoring timeout.
-func handleTimeout(config refreshTypes.MonitorConfig) error {
+func handleTimeout(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	if !config.Quiet {
 		color.Red("\nMonitoring timeout reached after %v", config.Timeout)
-		fmt.Printf("Updates may still be running. Use 'refresh list' to check status.\n")
+		if len(monitor.Updates) > 0 {
+			fmt.Printf("Updates may still be running. Use 'refresh nodegroup list %s' to check status.\n", monitor.Updates[0].ClusterName)
+		} else {
+			fmt.Printf("Updates may still be running. Use 'refresh nodegroup list' to check status.\n")
+		}
 	}
 	return ErrMonitorTimeout
 }
@@ -115,14 +145,14 @@ var ErrMonitorTimeout = errors.New("monitoring timeout reached")
 
 // DisplayStopped prints the banner for a monitor run that ended before every
 // update was terminal: the timeout banner when err is ErrMonitorTimeout, the
-// user-cancellation banner when err is nil. It is for callers that ran the
-// monitor quietly (e.g. under the live roll panel) and need the banner once the
-// panel has stopped. It prints nothing when config.Quiet is set.
+// user-cancellation banner when err is ErrCancelled. It is for callers that ran
+// the monitor quietly (e.g. under the live roll panel) and need the banner once
+// the panel has stopped. It prints nothing when config.Quiet is set.
 func DisplayStopped(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig, err error) {
 	switch {
 	case errors.Is(err, ErrMonitorTimeout):
-		_ = handleTimeout(config)
-	case err == nil:
+		_ = handleTimeout(monitor, config)
+	case errors.Is(err, ErrCancelled):
 		_ = handleUserCancellation(monitor, config)
 	}
 }

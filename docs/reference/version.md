@@ -15,12 +15,13 @@ when a newer version is available.
 
 The check runs at most once per day (cached under the user config dir), never
 adds measurable latency, and is skipped when stdout is piped/redirected. Disable
-it with --no-update-check or REFRESH_NO_UPDATE_CHECK=1.
+it with --no-update-check, or set REFRESH_NO_UPDATE_CHECK to any non-empty
+value other than 0, false, or no.
 
 ## Flags
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--no-update-check` | `REFRESH_NO_UPDATE_CHECK` | — | Skip the check for a newer release |
+| `--no-update-check` | — | — | Skip the check for a newer release (also REFRESH_NO_UPDATE_CHECK) |
 | `--help, -h` | — | — | show help |
 

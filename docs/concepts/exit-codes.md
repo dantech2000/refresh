@@ -13,6 +13,20 @@
 it works as a gate (e.g. fail a pipeline if anything is on extended support or
 badly behind).
 
+## `status`
+
+| Code | Meaning |
+|---|---|
+| `0` | Every cluster is current and in standard support |
+| `2` | Something is stale (nodegroup AMI or addon behind latest) |
+| `3` | A cluster is on extended support or unsupported |
+| `4` | **Incomplete data**: a cluster row has errors (a failed AWS call, or a sweep that timed out before it reached the cluster), or a region could not be listed |
+
+When more than one applies, the highest-priority code wins: `3`, then `2`,
+then `4`. Incomplete data never exits `0`. Rows with errors show an unknown
+marker and their error text in the table, an `ERRORS` column in `-o plain`, and
+an `errors` field in `-o json`/`-o yaml`.
+
 ## `nodegroup update`
 
 The patch command has a richer contract so unattended runs can branch on the

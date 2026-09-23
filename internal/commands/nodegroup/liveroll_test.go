@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/dantech2000/refresh/internal/monitoring"
 )
 
 // A panel that returns at once (kube context mismatch, no labelled nodes,
@@ -63,6 +65,29 @@ func TestMonitorAlongsidePanel_PanelDrawsUntilTerminal(t *testing.T) {
 	}
 }
 
+// --timeout 0 means no monitor limit: the restarted monitor must not get a
+// deadline, and a user cancel during it must come back as ErrCancelled (so the
+// caller skips post-roll verification).
+func TestMonitorAlongsidePanel_ZeroTimeoutAndCancelOnRestart(t *testing.T) {
+	heldBack, err := monitorAlongsidePanel(context.Background(), func(context.Context) {}, 0,
+		func(ctx context.Context, quiet bool) error {
+			if quiet {
+				<-ctx.Done()
+				return monitoring.ErrCancelled
+			}
+			if _, ok := ctx.Deadline(); ok {
+				t.Error("restarted monitor got a deadline with --timeout 0")
+			}
+			return monitoring.ErrCancelled // user pressed Ctrl+C during the loud run
+		})
+	if heldBack || !errors.Is(err, monitoring.ErrCancelled) {
+		t.Fatalf("heldBack = %v, err = %v; want false, ErrCancelled", heldBack, err)
+	}
+	if shouldVerifyPostRoll(context.Background(), err) {
+		t.Fatal("verification must be skipped after a cancelled restarted monitor")
+	}
+}
+
 // A user cancel (parent ctx) ends the quiet run; it must not be mistaken for
 // the panel stopping early and restart the monitor.
 func TestMonitorAlongsidePanel_ParentCancelDoesNotResume(t *testing.T) {
@@ -73,9 +98,9 @@ func TestMonitorAlongsidePanel_ParentCancelDoesNotResume(t *testing.T) {
 			calls++
 			cancel()
 			<-mctx.Done()
-			return nil
+			return monitoring.ErrCancelled
 		})
-	if err != nil || !heldBack || calls != 1 {
-		t.Fatalf("err = %v, heldBack = %v, calls = %d; want nil, true, 1", err, heldBack, calls)
+	if !errors.Is(err, monitoring.ErrCancelled) || !heldBack || calls != 1 {
+		t.Fatalf("err = %v, heldBack = %v, calls = %d; want ErrCancelled, true, 1", err, heldBack, calls)
 	}
 }
