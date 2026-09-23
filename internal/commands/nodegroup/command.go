@@ -96,10 +96,11 @@ func scaleCommand() *cli.Command {
 		Description: `Change a managed nodegroup's desired/min/max size. Any subset of
 --desired/--min/--max may be set; unspecified bounds are left unchanged.
 
---check-pdbs refuses a scale-down (exit 1, before any change) when a Pod
-Disruption Budget that allows 0 disruptions covers pods on the nodegroup's
-nodes. EKS does not honor PDBs when a scaling change removes nodes, so those
-pods would go down. --force scales down anyway and prints the blockers as a
+--check-pdbs refuses a scale-down (exit 1, before any change) when it could
+remove more of a Pod Disruption Budget's pods than the PDB allows. EKS does not
+honor PDBs when a scaling change removes nodes, and the Auto Scaling group
+picks which nodes go, so the gate assumes the removed nodes are the ones that
+hold the most of the PDB's pods. --force scales down anyway and prints the blockers as a
 warning. --health-check validates cluster health before and after; --dry-run
 previews the impact (and the PDB verdict) without executing; --wait blocks
 until the operation settles.
@@ -115,7 +116,7 @@ until the operation settles.
 			&cli.IntFlag{Name: "min", Usage: "Minimum node count"},
 			&cli.IntFlag{Name: "max", Usage: "Maximum node count"},
 			&cli.BoolFlag{Name: "health-check", Usage: "Validate cluster health before and after scaling"},
-			&cli.BoolFlag{Name: "check-pdbs", Usage: "Refuse a scale-down when a Pod Disruption Budget allowing 0 disruptions covers pods on the nodegroup's nodes"},
+			&cli.BoolFlag{Name: "check-pdbs", Usage: "Refuse a scale-down that could remove more of a Pod Disruption Budget's pods than it allows"},
 			&cli.BoolFlag{Name: "force", Usage: "With --check-pdbs, scale down even if PDBs would block it (the blockers are printed as a warning)"},
 			&cli.BoolFlag{Name: "wait", Usage: "Wait for scaling operation to complete"},
 			&cli.DurationFlag{Name: "op-timeout", Usage: "Scaling operation timeout for --wait (added on top of --timeout; 0 = no limit)", Value: 5 * time.Minute},

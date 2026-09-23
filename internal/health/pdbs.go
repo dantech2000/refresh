@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -33,6 +34,30 @@ type PDBInfo struct {
 	// subresource). The counts are then not trustworthy: the controller leaves
 	// ExpectedPods at 0, but the eviction API still refuses the PDB's pods.
 	StatusNotSynced bool `json:"statusNotSynced,omitempty" yaml:"statusNotSynced,omitempty"`
+	// The ScaleDown fields are set only on a ScaleDownBlockers result.
+	// Removing ScaleDownNodes nodes can take down ScaleDownLoss of the PDB's
+	// covered pods (worst case: the removed nodes are the ones that hold the
+	// most of them), which is more than the PDB allows. CoveredNodes is the
+	// number of the nodegroup's nodes that hold covered pods.
+	ScaleDownNodes int32 `json:"scaleDownNodes,omitempty" yaml:"scaleDownNodes,omitempty"`
+	ScaleDownLoss  int32 `json:"scaleDownLoss,omitempty" yaml:"scaleDownLoss,omitempty"`
+	CoveredNodes   int32 `json:"coveredNodes,omitempty" yaml:"coveredNodes,omitempty"`
+}
+
+// MultiPDBPod is a pod that more than one PDB selects. The eviction API
+// refuses to evict such a pod ("more than one PodDisruptionBudget"), so a
+// drain of its node stalls whatever the PDBs allow.
+type MultiPDBPod struct {
+	Namespace string   `json:"namespace" yaml:"namespace"`
+	Name      string   `json:"name" yaml:"name"`
+	Node      string   `json:"node,omitempty" yaml:"node,omitempty"`
+	PDBs      []string `json:"pdbs" yaml:"pdbs"`
+}
+
+// DrainBlockerSummary describes m as a drain blocker.
+func (m MultiPDBPod) DrainBlockerSummary() string {
+	return fmt.Sprintf("pod %s/%s is covered by %d PDBs (%s); the eviction API refuses such pods",
+		m.Namespace, m.Name, len(m.PDBs), strings.Join(m.PDBs, ", "))
 }
 
 // AtRisk reports whether this PDB currently allows zero voluntary disruptions
@@ -136,13 +161,9 @@ func (hc *HealthChecker) checkPodDisruptionBudgets(ctx context.Context, clusterN
 		return result
 	}
 
-	blockerPDBs, scoped, note := hc.findDrainBlockers(ctx, clusterName, hc.targetNodegroups, pdbs.Items)
-	drainBlockers := make([]string, 0, len(blockerPDBs))
-	for _, b := range blockerPDBs {
-		drainBlockers = append(drainBlockers, b.DrainBlockerSummary())
-	}
-	if note != "" {
-		result.Details = append(result.Details, note)
+	report := hc.findDrainBlockers(ctx, clusterName, hc.targetNodegroups, pdbs.Items)
+	if report.Note != "" {
+		result.Details = append(result.Details, report.Note)
 	}
 
 	namespaces, err := hc.k8sClient.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
@@ -152,7 +173,7 @@ func (hc *HealthChecker) checkPodDisruptionBudgets(ctx context.Context, clusterN
 		result.Message = fmt.Sprintf("Failed to list namespaces: %v", err)
 		// applyDrainBlockers replaces Message, so keep the error in Details.
 		result.Details = append(result.Details, result.Message)
-		applyDrainBlockers(&result, drainBlockers, scoped)
+		applyDrainBlockers(&result, report)
 		return result
 	}
 
@@ -241,40 +262,36 @@ func (hc *HealthChecker) checkPodDisruptionBudgets(ctx context.Context, clusterN
 		}
 	}
 
-	applyDrainBlockers(&result, drainBlockers, scoped)
+	applyDrainBlockers(&result, report)
 	return result
 }
 
 // findDrainBlockers returns the PDBs that allow zero disruptions while
-// covering pods. Such a PDB blocks every eviction of its pods, so a node roll
-// stalls on drain and EKS eventually fails the update with PodEvictionFailure.
-// System namespaces are included on purpose: a stuck kube-system PDB blocks a
-// drain just the same.
+// covering pods, and the pods that more than one PDB selects. Either blocks
+// the eviction of a pod, so a node roll stalls on drain and EKS eventually
+// fails the update with PodEvictionFailure. System namespaces are included on
+// purpose: a stuck kube-system PDB blocks a drain just the same.
 //
-// When targets is non-empty, a PDB only counts if it gates the eviction of at
-// least one pod on a node of those nodegroups, and scoped is true. Otherwise
-// every at-risk PDB is reported and scoped is false. That fallback also applies
-// when the node list fails, or when no node carries a target nodegroup label:
-// the check fails open instead of passing on nothing. The one exception is
-// targets whose total desired size is 0 (read with DescribeNodegroup for
-// clusterName): they have nothing to drain, so no PDB blocks them, and note
-// says so.
-func (hc *HealthChecker) findDrainBlockers(ctx context.Context, clusterName string, targets []string, pdbs []policyv1.PodDisruptionBudget) (blockers []PDBInfo, scoped bool, note string) {
+// When targets is non-empty, a PDB or pod only counts if it gates the eviction
+// of at least one pod on a node of those nodegroups, and Scoped is true.
+// Otherwise every at-risk PDB and multi-PDB pod is reported and Scoped is
+// false. That fallback also applies when the node list fails, or when no node
+// carries a target nodegroup label: the check fails open instead of passing on
+// nothing. The one exception is targets whose total desired size is 0 (read
+// with DescribeNodegroup for clusterName): they have nothing to drain, so
+// nothing blocks them, and Note says so.
+func (hc *HealthChecker) findDrainBlockers(ctx context.Context, clusterName string, targets []string, pdbs []policyv1.PodDisruptionBudget) DrainBlockerReport {
+	var report DrainBlockerReport
 	var targetNodes map[string]bool
 	if len(targets) > 0 {
-		nodes, err := hc.k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("%s in (%s)", nodeLabelNodegroup, strings.Join(targets, ",")),
-		})
+		nodes, listed := hc.targetNodeSet(ctx, targets)
 		switch {
-		case err == nil && len(nodes.Items) > 0:
-			scoped = true
-			targetNodes = make(map[string]bool, len(nodes.Items))
-			for _, n := range nodes.Items {
-				targetNodes[n.Name] = true
-			}
-		case err == nil:
+		case len(nodes) > 0:
+			report.Scoped = true
+			targetNodes = nodes
+		case listed:
 			if desired, derr := hc.targetsDesiredSize(ctx, clusterName, targets); derr == nil && desired == 0 {
-				return nil, true, "Target nodegroup(s) have no nodes; nothing to drain"
+				return DrainBlockerReport{Scoped: true, Note: "Target nodegroup(s) have no nodes; nothing to drain"}
 			}
 		}
 	}
@@ -285,17 +302,104 @@ func (hc *HealthChecker) findDrainBlockers(ctx context.Context, clusterName stri
 		if !info.AtRisk() {
 			continue
 		}
-		if scoped && !hc.pdbCoversTargetNode(ctx, pdb, targetNodes, podsByNamespace) {
+		if report.Scoped && !hc.pdbCoversTargetNode(ctx, pdb, targetNodes, podsByNamespace) {
 			continue
 		}
-		blockers = append(blockers, info)
+		report.Blockers = append(report.Blockers, info)
 	}
-	return blockers, scoped, ""
+	report.MultiPDBPods = hc.findMultiPDBPods(ctx, pdbs, targetNodes, podsByNamespace)
+	return report
+}
+
+// targetNodeSet returns the names of the nodes of the given managed
+// nodegroups. listed is false when the node list fails.
+func (hc *HealthChecker) targetNodeSet(ctx context.Context, targets []string) (nodes map[string]bool, listed bool) {
+	list, err := hc.k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s in (%s)", nodeLabelNodegroup, strings.Join(targets, ",")),
+	})
+	if err != nil {
+		return nil, false
+	}
+	nodes = make(map[string]bool, len(list.Items))
+	for _, n := range list.Items {
+		nodes[n.Name] = true
+	}
+	return nodes, true
+}
+
+// findMultiPDBPods returns the pods that more than one PDB selects, limited to
+// pods on targetNodes when it is non-nil. Every pod whose eviction consults
+// PDBs counts (see evictionIgnoresPDBs): the eviction API refuses a pod with
+// several PDBs before it looks at any budget, so a not-Ready pod is refused
+// even under an AlwaysAllow policy. Namespaces whose pods can't be listed are
+// skipped.
+//
+// Selectors match as in the eviction API (getPodDisruptionBudgets), which
+// uses metav1.LabelSelectorAsSelector like every matcher in this file: a nil
+// selector matches no pod, and an empty selector ({}) matches every pod in
+// the namespace.
+func (hc *HealthChecker) findMultiPDBPods(ctx context.Context, pdbs []policyv1.PodDisruptionBudget, targetNodes map[string]bool, podsByNamespace map[string][]corev1.Pod) []MultiPDBPod {
+	type namedSelector struct {
+		name string
+		sel  labels.Selector
+	}
+	byNamespace := make(map[string][]namedSelector)
+	var namespaces []string
+	for _, pdb := range pdbs {
+		sel, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
+		if err != nil {
+			continue
+		}
+		if _, seen := byNamespace[pdb.Namespace]; !seen {
+			namespaces = append(namespaces, pdb.Namespace)
+		}
+		byNamespace[pdb.Namespace] = append(byNamespace[pdb.Namespace], namedSelector{pdb.Name, sel})
+	}
+
+	var out []MultiPDBPod
+	for _, ns := range namespaces {
+		selectors := byNamespace[ns]
+		if len(selectors) < 2 {
+			continue
+		}
+		pods, err := hc.namespacePods(ctx, ns, podsByNamespace)
+		if err != nil {
+			continue
+		}
+		for _, p := range pods {
+			if targetNodes != nil && !targetNodes[p.Spec.NodeName] {
+				continue
+			}
+			if evictionIgnoresPDBs(p) {
+				continue
+			}
+			var matched []string
+			for _, s := range selectors {
+				if s.sel.Matches(labels.Set(p.Labels)) {
+					matched = append(matched, s.name)
+				}
+			}
+			if len(matched) > 1 {
+				slices.Sort(matched)
+				out = append(out, MultiPDBPod{Namespace: p.Namespace, Name: p.Name, Node: p.Spec.NodeName, PDBs: matched})
+			}
+		}
+	}
+	return out
 }
 
 // DrainBlockerSummary describes p as a drain blocker, e.g.
 // "ns/name (1/1 pods healthy, 0 disruptions allowed)".
+// A ScaleDownBlockers result also states the worst-case arithmetic.
 func (p PDBInfo) DrainBlockerSummary() string {
+	if p.ScaleDownNodes > 0 {
+		status := fmt.Sprintf("%d/%d pods healthy, %d disruption(s) allowed", p.CurrentHealthy, p.ExpectedPods, p.allowedDisruptions())
+		if p.StatusNotSynced {
+			status = "PDB status not synced, 0 disruptions allowed"
+		}
+		return fmt.Sprintf("%s/%s (%s; covered pods run on %d of the nodegroup's nodes, so removing %d node(s) can take down %d pod(s), more than the %d allowed)",
+			p.Namespace, p.Name, status, p.CoveredNodes, p.ScaleDownNodes, p.ScaleDownLoss, p.allowedDisruptions())
+	}
 	if p.StatusNotSynced {
 		return fmt.Sprintf("%s/%s (PDB status not synced, 0 disruptions allowed; evictions are refused)", p.Namespace, p.Name)
 	}
@@ -306,14 +410,19 @@ func (p PDBInfo) DrainBlockerSummary() string {
 // configured, so PDBs can't be read.
 var ErrNoKubeClient = errors.New("no Kubernetes client configured")
 
-// DrainBlockerReport is the result of DrainBlockers.
+// DrainBlockerReport is the result of DrainBlockers and ScaleDownBlockers.
 type DrainBlockerReport struct {
 	// Blockers are the PDBs that allow 0 disruptions and would refuse an
-	// eviction from the nodes being drained.
+	// eviction from the nodes being drained. For ScaleDownBlockers they are
+	// the PDBs that the scale-down could take below their budget.
 	Blockers []PDBInfo
-	// Scoped is true when Blockers was narrowed to pods on the target
+	// MultiPDBPods are the pods on the nodes being drained that more than one
+	// PDB selects; the eviction API refuses them. ScaleDownBlockers leaves it
+	// empty, as a scale-down does not evict.
+	MultiPDBPods []MultiPDBPod
+	// Scoped is true when the report was narrowed to pods on the target
 	// nodegroups' nodes. False means the check fell back to every at-risk
-	// PDB in the cluster.
+	// PDB and multi-PDB pod in the cluster.
 	Scoped bool
 	// Note explains a short-circuit, such as targets with nothing to drain.
 	Note string
@@ -333,8 +442,95 @@ func (hc *HealthChecker) DrainBlockers(ctx context.Context, clusterName string, 
 	if err != nil {
 		return DrainBlockerReport{}, fmt.Errorf("listing PodDisruptionBudgets: %w", err)
 	}
-	blockers, scoped, note := hc.findDrainBlockers(ctx, clusterName, nodegroups, pdbs.Items)
-	return DrainBlockerReport{Blockers: blockers, Scoped: scoped, Note: note}, nil
+	return hc.findDrainBlockers(ctx, clusterName, nodegroups, pdbs.Items), nil
+}
+
+// ScaleDownBlockers lists the PDBs that removing `remove` nodes from managed
+// nodegroup could take below their budget. A scaling change terminates nodes
+// without evicting their pods, and the Auto Scaling group picks which nodes
+// go. So a PDB counts when the `remove` nodes that hold the most of its
+// covered pods hold more of them than it allows to be disrupted. A covered pod
+// counts when its eviction would be gated by the PDB (see evictionGatedByPDB).
+// An unsynced PDB allows 0.
+//
+// When the nodegroup's nodes can't be listed or none carry its label, it
+// falls back to the DrainBlockers rules: every PDB that allows 0 disruptions
+// counts, unless the nodegroup's desired size is 0. It returns
+// ErrNoKubeClient without a Kubernetes client and an error when PDBs or pods
+// can't be listed, so a gate never reads "couldn't check" as "no blockers".
+func (hc *HealthChecker) ScaleDownBlockers(ctx context.Context, clusterName, nodegroup string, remove int32) (DrainBlockerReport, error) {
+	if hc.k8sClient == nil {
+		return DrainBlockerReport{}, ErrNoKubeClient
+	}
+	if remove <= 0 {
+		return DrainBlockerReport{Scoped: true}, nil
+	}
+	pdbs, err := hc.k8sClient.PolicyV1().PodDisruptionBudgets("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DrainBlockerReport{}, fmt.Errorf("listing PodDisruptionBudgets: %w", err)
+	}
+	nodeSet, _ := hc.targetNodeSet(ctx, []string{nodegroup})
+	if len(nodeSet) == 0 {
+		report := hc.findDrainBlockers(ctx, clusterName, []string{nodegroup}, pdbs.Items)
+		report.MultiPDBPods = nil
+		return report, nil
+	}
+
+	report := DrainBlockerReport{Scoped: true}
+	podsByNamespace := make(map[string][]corev1.Pod)
+	for _, pdb := range pdbs.Items {
+		info := pdbInfoFrom(pdb)
+		sel, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
+		if err != nil {
+			if info.AtRisk() {
+				report.Blockers = append(report.Blockers, info)
+			}
+			continue
+		}
+		pods, err := hc.namespacePods(ctx, pdb.Namespace, podsByNamespace)
+		if err != nil {
+			return DrainBlockerReport{}, fmt.Errorf("listing pods in namespace %s: %w", pdb.Namespace, err)
+		}
+		perNode := make(map[string]int32)
+		for _, p := range pods {
+			if nodeSet[p.Spec.NodeName] && sel.Matches(labels.Set(p.Labels)) && evictionGatedByPDB(p, pdb) {
+				perNode[p.Spec.NodeName]++
+			}
+		}
+		loss := worstCaseLoss(perNode, int(remove))
+		if loss > info.allowedDisruptions() {
+			info.ScaleDownNodes = remove
+			info.ScaleDownLoss = loss
+			info.CoveredNodes = int32(len(perNode)) //nolint:gosec // bounded by the node count
+			report.Blockers = append(report.Blockers, info)
+		}
+	}
+	return report, nil
+}
+
+// allowedDisruptions is the number of pods p lets go right now: 0 when its
+// status is not synced, since the eviction API then refuses its pods.
+func (p PDBInfo) allowedDisruptions() int32 {
+	if p.StatusNotSynced {
+		return 0
+	}
+	return max(p.DisruptionsAllowed, 0)
+}
+
+// worstCaseLoss returns the number of pods on the k nodes of perNode that
+// hold the most pods.
+func worstCaseLoss(perNode map[string]int32, k int) int32 {
+	counts := make([]int32, 0, len(perNode))
+	for _, c := range perNode {
+		counts = append(counts, c)
+	}
+	slices.Sort(counts)
+	slices.Reverse(counts)
+	var loss int32
+	for _, c := range counts[:min(k, len(counts))] {
+		loss += c
+	}
+	return loss
 }
 
 // nodegroupDescriber is the slice of the EKS API that reads a nodegroup's
@@ -380,19 +576,41 @@ func (hc *HealthChecker) pdbCoversTargetNode(ctx context.Context, pdb policyv1.P
 	if err != nil {
 		return true
 	}
-	pods, ok := podsByNamespace[pdb.Namespace]
-	if !ok {
-		list, err := hc.k8sClient.CoreV1().Pods(pdb.Namespace).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return true
-		}
-		pods = list.Items
-		podsByNamespace[pdb.Namespace] = pods
+	pods, err := hc.namespacePods(ctx, pdb.Namespace, podsByNamespace)
+	if err != nil {
+		return true
 	}
 	for _, p := range pods {
 		if targetNodes[p.Spec.NodeName] && sel.Matches(labels.Set(p.Labels)) && evictionGatedByPDB(p, pdb) {
 			return true
 		}
+	}
+	return false
+}
+
+// namespacePods lists the pods of namespace once, caching them in cache.
+func (hc *HealthChecker) namespacePods(ctx context.Context, namespace string, cache map[string][]corev1.Pod) ([]corev1.Pod, error) {
+	if pods, ok := cache[namespace]; ok {
+		return pods, nil
+	}
+	list, err := hc.k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	cache[namespace] = list.Items
+	return list.Items, nil
+}
+
+// evictionIgnoresPDBs reports whether the eviction API deletes pod without
+// consulting any PDB: pods that are Succeeded, Failed, Pending or already
+// being deleted.
+func evictionIgnoresPDBs(pod corev1.Pod) bool {
+	if pod.DeletionTimestamp != nil {
+		return true
+	}
+	switch pod.Status.Phase {
+	case corev1.PodSucceeded, corev1.PodFailed, corev1.PodPending:
+		return true
 	}
 	return false
 }
@@ -404,11 +622,7 @@ func (hc *HealthChecker) pdbCoversTargetNode(ctx context.Context, pdb policyv1.P
 // IfHealthyBudget policy, while the budget is met (currentHealthy >=
 // desiredHealthy > 0).
 func evictionGatedByPDB(pod corev1.Pod, pdb policyv1.PodDisruptionBudget) bool {
-	if pod.DeletionTimestamp != nil {
-		return false
-	}
-	switch pod.Status.Phase {
-	case corev1.PodSucceeded, corev1.PodFailed, corev1.PodPending:
+	if evictionIgnoresPDBs(pod) {
 		return false
 	}
 	if podReady(pod) {
@@ -431,23 +645,39 @@ func podReady(pod corev1.Pod) bool {
 	return false
 }
 
-// applyDrainBlockers folds drain blockers into result. A blocker outranks
-// coverage: full coverage is no comfort if a PDB will stop the roll. It stays
-// WARN (non-blocking) so existing pipelines are not hard-stopped;
-// --require-healthy escalates WARN to a hard stop.
-func applyDrainBlockers(result *HealthResult, blockers []string, scoped bool) {
-	if len(blockers) == 0 {
+// applyDrainBlockers folds the drain blockers in report into result. A
+// blocker outranks coverage: full coverage is no comfort if a PDB will stop
+// the roll. It stays WARN (non-blocking) so existing pipelines are not
+// hard-stopped; --require-healthy escalates WARN to a hard stop.
+func applyDrainBlockers(result *HealthResult, report DrainBlockerReport) {
+	if len(report.Blockers) == 0 && len(report.MultiPDBPods) == 0 {
 		return
 	}
 	result.Status = StatusWarn
 	result.Score = min(result.Score, 50)
-	if scoped {
-		result.Message = fmt.Sprintf("%d PDB(s) allow 0 disruptions on the target nodegroup(s); node roll will stall on eviction", len(blockers))
+	var parts []string
+	if n := len(report.Blockers); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d PDB(s) allow 0 disruptions", n))
+	}
+	if n := len(report.MultiPDBPods); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d pod(s) are covered by more than one PDB", n))
+	}
+	what := strings.Join(parts, " and ")
+	if report.Scoped {
+		result.Message = what + " on the target nodegroup(s); node roll will stall on eviction"
 	} else {
-		result.Message = fmt.Sprintf("%d PDB(s) allow 0 disruptions and may block a drain", len(blockers))
+		result.Message = what + "; this may block a drain"
 	}
-	for _, b := range blockers {
-		result.Details = append(result.Details, "Drain blocker: "+b)
+	for _, b := range report.Blockers {
+		result.Details = append(result.Details, "Drain blocker: "+b.DrainBlockerSummary())
 	}
-	result.Details = append(result.Details, "Scale up the workload or relax minAvailable/maxUnavailable before rolling nodes")
+	for _, p := range report.MultiPDBPods {
+		result.Details = append(result.Details, "Drain blocker: "+p.DrainBlockerSummary())
+	}
+	if len(report.Blockers) > 0 {
+		result.Details = append(result.Details, "Scale up the workload or relax minAvailable/maxUnavailable before rolling nodes")
+	}
+	if len(report.MultiPDBPods) > 0 {
+		result.Details = append(result.Details, "Narrow the PDB selectors so each pod matches at most one PDB before rolling nodes")
+	}
 }
