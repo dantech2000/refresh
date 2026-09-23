@@ -182,3 +182,43 @@ func TestLiveRedrawTTY(t *testing.T) {
 		t.Fatalf("redraw missing cursor-up/clear: %q", buf.String())
 	}
 }
+
+// On a narrow terminal, a line wider than the screen wraps onto extra rows.
+// The repaint must move up by wrapped rows, not logical lines, or the tail of
+// the previous frame stays on screen.
+func TestLiveRedrawCountsWrappedRows(t *testing.T) {
+	var buf bytes.Buffer
+	lr := &LiveRegion{w: &buf, tty: true, width: func() int { return 10 }}
+	colored := "\x1b[32m" + strings.Repeat("g", 12) + "\x1b[0m" // 12 cells + ANSI → 2 rows
+	lr.Draw([]string{
+		strings.Repeat("a", 25), // 3 rows
+		strings.Repeat("b", 10), // exactly full → 1 row
+		"",                      // 1 row
+		colored,                 // 2 rows (escape codes take no cells)
+	})
+	buf.Reset()
+	lr.Draw([]string{"z"})
+	if !strings.HasPrefix(buf.String(), "\x1b[7A\x1b[0J") {
+		t.Fatalf("repaint = %q, want cursor-up 7 wrapped rows", buf.String())
+	}
+}
+
+func TestLiveRows(t *testing.T) {
+	frame := []string{"abcdef", "", "日本語"} // CJK: 6 cells
+	cases := []struct{ width, want int }{
+		{0, 3},  // unknown width → one row per line
+		{-1, 3}, // unknown width → one row per line
+		{80, 3},
+		{4, 5},  // 6 cells → 2, "" → 1, 6 cells → 2
+		{1, 10}, // 6 + 1 + 3 (one wide rune per row)
+		{5, 5},  // 2 + 1 + 2
+		// Width 3: a wide rune can't use the last column, so 日本語 takes 3
+		// rows. ceil(6/3) = 2 would under-count.
+		{3, 6}, // 2 + 1 + 3
+	}
+	for _, c := range cases {
+		if got := rows(frame, c.width); got != c.want {
+			t.Errorf("rows(width=%d) = %d, want %d", c.width, got, c.want)
+		}
+	}
+}

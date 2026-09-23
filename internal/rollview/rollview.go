@@ -38,6 +38,29 @@ const liveRollWatchRepaint = 1 * time.Second
 // the ones that changed.
 const liveRollAppendRepaint = 15 * time.Second
 
+// maxConsecutiveObserverErrors is how many snapshot reads in a row may fail
+// before the panel gives up. A single API blip (throttling, a dropped
+// connection) keeps the last frame and retries on the next tick instead of
+// ending the panel for the rest of the roll.
+const maxConsecutiveObserverErrors = 5
+
+// recentEventCount is how many lifecycle events the panel's feed shows.
+const recentEventCount = 6
+
+// rollProgressBarWidth is the cell width of the header's replaced/desired bar.
+const rollProgressBarWidth = 16
+
+// podEvictionBarWidth is the cell width of a draining node's eviction bar.
+const podEvictionBarWidth = 5
+
+// warnMsgMaxWidth caps a Warning event message, in display cells, so a
+// verbose message can't blow out the panel width.
+const warnMsgMaxWidth = 80
+
+// simulateTick is the frame cadence of `nodegroup update --simulate`: fast
+// enough to play the scripted demo roll in a few seconds.
+const simulateTick = 160 * time.Millisecond
+
 // rollRepaintInterval picks the panel cadence. In place, it is the caller's
 // poll interval capped at liveRollPoll (defaulting to a faster repaint when
 // watch-backed). Appending, it is never shorter than liveRollAppendRepaint.
@@ -119,7 +142,7 @@ func rollPanelLines(th *render.Theme, snap noderoll.Snapshot, events []noderoll.
 		head + " " + th.Paint(pal.White, "rolling "+m.Nodegroup) +
 			th.Paint(pal.Dim, "   ") + th.Paint(pal.Peach, m.OldAMI) +
 			th.Paint(pal.Dim, " → ") + th.Paint(pal.Green, m.NewAMI),
-		th.Bar(replaced, m.Desired, 16, pal.Green) + "  " +
+		th.Bar(replaced, m.Desired, rollProgressBarWidth, pal.Green) + "  " +
 			th.Paint(pal.White, fmt.Sprintf("%d/%d replaced", replaced, m.Desired)) +
 			th.Paint(pal.Dim, " · ") + th.Paint(pal.White, fmt.Sprintf("%d new ready", snap.ReadyTarget)),
 		"",
@@ -148,6 +171,9 @@ func rollPanelLines(th *render.Theme, snap noderoll.Snapshot, events []noderoll.
 		st, text := eventToken(e.Kind)
 		out = append(out, "    "+th.Glyph(st)+" "+th.Paint(pal.White, e.Node)+th.Paint(pal.Dim, "  "+text))
 	}
+	if snap.WarningsCapped > 0 {
+		out = append(out, "    "+th.Paint(pal.Dim, fmt.Sprintf("(showing first %d warning events)", snap.WarningsCapped)))
+	}
 
 	// Warning events explain *why* a node is stuck (failed drain/eviction,
 	// sandbox failures) — surfaced beneath the lifecycle feed.
@@ -164,15 +190,11 @@ func rollPanelLines(th *render.Theme, snap noderoll.Snapshot, events []noderoll.
 	return out
 }
 
-// oneLineWarn collapses an event message to a single line and clamps its length
-// so a verbose message can't blow out the panel width.
+// oneLineWarn collapses an event message to a single line and clamps it to
+// warnMsgMaxWidth display cells. The cut is rune-safe (never splits a UTF-8
+// sequence) and ANSI-aware (escape codes take no width and are kept whole).
 func oneLineWarn(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	const max = 80
-	if len(s) > max {
-		return s[:max-1] + "…"
-	}
-	return s
+	return ui.TruncateANSI(strings.Join(strings.Fields(s), " "), warnMsgMaxWidth)
 }
 
 func spin(th *render.Theme, frame int) string {
@@ -203,7 +225,7 @@ func nodeStateCell(th *render.Theme, n noderoll.NodeView) string {
 			if evicted < 0 {
 				evicted = 0
 			}
-			s += th.Paint(th.Pal.Dim, " · evicting ") + th.Bar(evicted, n.PodsTotal, 5, th.Pal.Yellow) +
+			s += th.Paint(th.Pal.Dim, " · evicting ") + th.Bar(evicted, n.PodsTotal, podEvictionBarWidth, th.Pal.Yellow) +
 				th.Paint(th.Pal.Dim, fmt.Sprintf(" %d/%d pods", evicted, n.PodsTotal))
 		}
 	default:
@@ -218,10 +240,14 @@ func nodeStateCell(th *render.Theme, n noderoll.NodeView) string {
 
 // runRoll drives the live panel from obs until done(snapshot) is true or ctx is
 // cancelled, repainting in place on a TTY and appending snapshots when piped.
+// A failed snapshot read keeps the last good frame with a one-line error under
+// it and retries on the next tick; only maxConsecutiveObserverErrors failures
+// in a row end the panel.
 func runRoll(ctx context.Context, th *render.Theme, w io.Writer, obs noderoll.Observer, m rollMeta, interval time.Duration, done func(noderoll.Snapshot) bool) error {
 	tr := noderoll.NewTracker()
 	lr := th.NewLiveRegion(w)
 	frame := 0
+	failures := 0
 	var last []string
 	return lr.Run(ctx, interval, func() ([]string, bool) {
 		snap, err := obs.Snapshot(ctx)
@@ -231,8 +257,20 @@ func runRoll(ctx context.Context, th *render.Theme, w io.Writer, obs noderoll.Ob
 			return last, true
 		}
 		if err != nil {
-			return []string{th.Token(render.Fail, "observer error: "+err.Error())}, true
+			failures++
+			if ctx.Err() != nil {
+				// Stopped before any good frame: nothing to retry for.
+				return []string{th.Token(render.Fail, "observer error: "+err.Error())}, true
+			}
+			if failures >= maxConsecutiveObserverErrors {
+				msg := fmt.Sprintf("observer error: %v (giving up after %d failed reads)", err, failures)
+				return append(append([]string(nil), last...), th.Token(render.Fail, msg)), true
+			}
+			msg := fmt.Sprintf("observer error: %s (retrying, %d/%d)",
+				oneLineWarn(err.Error()), failures, maxConsecutiveObserverErrors)
+			return append(append([]string(nil), last...), th.Token(render.Warn, msg)), false
 		}
+		failures = 0
 		tr.Observe(snap)
 		// Animate the spinner only when repainting in place. Appended
 		// snapshots keep a fixed glyph, so an unchanged roll yields an
@@ -241,7 +279,7 @@ func runRoll(ctx context.Context, th *render.Theme, w io.Writer, obs noderoll.Ob
 			frame++
 		}
 		m.Frame = frame
-		last = rollPanelLines(th, snap, tr.Recent(6), m)
+		last = rollPanelLines(th, snap, tr.Recent(recentEventCount), m)
 		return last, done(snap)
 	})
 }
@@ -275,11 +313,11 @@ func SimulatedRoll(ctx context.Context, nodegroup string) error {
 	obs := noderoll.NewScriptedObserver(noderoll.DemoTimeline())
 
 	fmt.Println()
-	if err := runRoll(ctx, th, os.Stdout, obs, m, 160*time.Millisecond, rollComplete(m.Desired)); err != nil {
+	if err := runRoll(ctx, th, os.Stdout, obs, m, simulateTick, rollComplete(m.Desired)); err != nil {
 		return err
 	}
 	fmt.Println()
-	fmt.Println(th.Token(render.Healthy, fmt.Sprintf("%s rolled — 3/3 on %s", nodegroup, m.NewAMI)))
+	fmt.Println(th.Token(render.Healthy, fmt.Sprintf("%s rolled — %d/%d on %s", nodegroup, m.Desired, m.Desired, m.NewAMI)))
 	return nil
 }
 

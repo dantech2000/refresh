@@ -40,6 +40,7 @@ func TestKubeObserver_PodEviction(t *testing.T) {
 		pod("static-1", "ip-1", corev1.PodRunning, false, true),       // mirror -> excluded
 		pod("elsewhere", "ip-other", corev1.PodRunning, false, false), // different node
 	)
+	enforcePodFieldSelector(t, client) // the fake ignores spec.nodeName selectors
 	obs := NewKubeObserver(client, ng, newAMI)
 
 	s, err := obs.Snapshot(ctx)

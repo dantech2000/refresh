@@ -1,5 +1,7 @@
 package noderoll
 
+import "sort"
+
 // EventKind classifies a node lifecycle transition during a roll.
 type EventKind string
 
@@ -16,13 +18,19 @@ type Event struct {
 	Kind EventKind `json:"kind"`
 }
 
+// trackerEventCapacity bounds how many events a Tracker retains. The panel
+// only shows the last few, and a long roll of a large nodegroup would
+// otherwise grow the history without bound.
+const trackerEventCapacity = 256
+
 // Tracker derives lifecycle events by diffing successive snapshots — turning
 // the observer's point-in-time state into the "node came online / went offline"
-// feed the live panel shows. It is pure: feed it snapshots, read Events.
+// feed the live panel shows. It is pure: feed it snapshots, read Recent. It
+// keeps the last trackerEventCapacity events; older ones are dropped.
 type Tracker struct {
 	prev   map[string]Phase
 	seeded bool
-	Events []Event
+	events []Event
 }
 
 // NewTracker returns an empty Tracker.
@@ -48,16 +56,31 @@ func (t *Tracker) Observe(s Snapshot) {
 			continue
 		}
 		if k := eventForPhase(n.Phase); k != "" {
-			t.Events = append(t.Events, Event{Node: n.Name, Kind: k})
+			t.add(Event{Node: n.Name, Kind: k})
 		}
 	}
-	// Disappeared → terminated.
+	// Disappeared → terminated, sorted by name (map order is random).
+	var gone []string
 	for name := range t.prev {
 		if _, ok := cur[name]; !ok {
-			t.Events = append(t.Events, Event{Node: name, Kind: EvtTerminated})
+			gone = append(gone, name)
 		}
 	}
+	sort.Strings(gone)
+	for _, name := range gone {
+		t.add(Event{Node: name, Kind: EvtTerminated})
+	}
 	t.prev = cur
+}
+
+// add appends e and drops the oldest events past trackerEventCapacity. The
+// trim shifts in place, so the backing array stays bounded.
+func (t *Tracker) add(e Event) {
+	t.events = append(t.events, e)
+	if over := len(t.events) - trackerEventCapacity; over > 0 {
+		n := copy(t.events, t.events[over:])
+		t.events = t.events[:n]
+	}
 }
 
 func eventForPhase(p Phase) EventKind {
@@ -73,10 +96,12 @@ func eventForPhase(p Phase) EventKind {
 	}
 }
 
-// Recent returns the last n events (fewer if not enough have accrued).
+// Recent returns a copy of the last n events (fewer if not enough have
+// accrued; every retained event when n <= 0).
 func (t *Tracker) Recent(n int) []Event {
-	if n <= 0 || len(t.Events) <= n {
-		return t.Events
+	src := t.events
+	if n > 0 && len(src) > n {
+		src = src[len(src)-n:]
 	}
-	return t.Events[len(t.Events)-n:]
+	return append([]Event(nil), src...)
 }

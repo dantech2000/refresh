@@ -62,7 +62,7 @@ func TestRollPanel_FromKubeObserver(t *testing.T) {
 
 	th := render.New(render.ColorNone, true)
 	m := rollMeta{Nodegroup: "spot-burst", OldAMI: "ami-old", NewAMI: "ami-new", Desired: 3}
-	joined := strings.Join(rollPanelLines(th, snap, tr.Recent(6), m), "\n")
+	joined := strings.Join(rollPanelLines(th, snap, tr.Recent(recentEventCount), m), "\n")
 
 	for _, want := range []string{
 		"rolling spot-burst",
