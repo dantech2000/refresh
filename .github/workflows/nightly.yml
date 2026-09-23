@@ -1,0 +1,51 @@
+name: Nightly
+
+# Slow checks that are too expensive for every PR: a deep shuffled race run
+# to catch rare flakes, and govulncheck against main so a newly published
+# advisory for an existing dependency surfaces without waiting for a PR.
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily, off the top of the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  race-deep:
+    name: Race stress (shuffled, x20)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The shuffle seed is printed per package; reproduce a failure with
+      # `go test -race -shuffle=<seed> -run <Test> ./<pkg>`.
+      - name: Test (race, shuffled, x20)
+        run: go test -race -count=20 -shuffle=on -timeout=60m ./...
+
+  govulncheck:
+    name: Run govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+          govulncheck ./...
