@@ -114,15 +114,20 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 	// reports a terminal status (including FAILED), the panel is cancelled and
 	// joined, so a roll that never converges can't hold the wait hostage.
 	// While the panel owns the terminal, the wait's progress lines are held
-	// back and flushed once the panel has been cancelled and joined, so they
-	// never draw over it. Without an observer, progress goes straight through.
+	// back so they never draw over it. They are flushed as soon as the
+	// observer returns — when the wait ends, or earlier if the panel has
+	// nothing to show or the roll already looks complete — and later lines
+	// pass straight through. Without an observer, nothing is held.
 	var observe func(context.Context)
 	waitProgress := progress
 	var held *heldProgress
 	if observer != nil {
-		observe = func(octx context.Context) { observer(octx, nodegroupName) }
-		held = &heldProgress{}
+		held = &heldProgress{out: progress}
 		waitProgress = held.add
+		observe = func(octx context.Context) {
+			defer held.release()
+			observer(octx, nodegroupName)
+		}
 	}
 	err = common.RunAlongside(ctx, observe, func(wctx context.Context) error {
 		if updateID == "" {
@@ -134,9 +139,6 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 			UpdateId:      aws.String(updateID),
 		}, fmt.Sprintf("nodegroup %s roll to %s", nodegroupName, targetVersion), waitProgress)
 	})
-	if held != nil {
-		held.flush(progress)
-	}
 	if err != nil {
 		return err
 	}
@@ -144,11 +146,14 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 	return nil
 }
 
-// heldProgress records progress lines so they can be emitted later, in order.
-// add is safe to call from the wait goroutine; flush runs after it has ended.
+// heldProgress buffers progress lines until release, then flushes them to out
+// in order and passes later lines straight through. add and release may run
+// on different goroutines; the lock keeps flushed and new lines in order.
 type heldProgress struct {
-	mu    sync.Mutex
-	lines []heldLine
+	mu       sync.Mutex
+	out      ProgressFunc
+	released bool
+	lines    []heldLine
 }
 
 type heldLine struct {
@@ -159,17 +164,21 @@ type heldLine struct {
 func (h *heldProgress) add(format string, args ...any) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.released {
+		h.out(format, args...)
+		return
+	}
 	h.lines = append(h.lines, heldLine{format: format, args: args})
 }
 
-func (h *heldProgress) flush(progress ProgressFunc) {
+func (h *heldProgress) release() {
 	h.mu.Lock()
-	lines := h.lines
-	h.lines = nil
-	h.mu.Unlock()
-	for _, l := range lines {
-		progress(l.format, l.args...)
+	defer h.mu.Unlock()
+	h.released = true
+	for _, l := range h.lines {
+		h.out(l.format, l.args...)
 	}
+	h.lines = nil
 }
 
 // defaultNodegroupGate verifies the nodegroup is ACTIVE and reports no

@@ -368,6 +368,49 @@ func TestUpgradeNodegroups_HoldsWaitProgressWhileObserving(t *testing.T) {
 	}
 }
 
+// A panel that returns early (no labelled nodes, baseline failure, or a roll
+// that already looks complete) leaves nothing on screen, so held lines must be
+// flushed then and later lines passed straight through — not held until the
+// EKS wait ends.
+func TestUpgradeNodegroups_ReleasesProgressWhenObserverReturnsEarly(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
+		Build()
+	_ = captureNodegroupRolls(m)
+
+	var observerDone, terminal atomic.Bool
+	var polls atomic.Int32
+	m.DescribeUpdateFn = func(_ context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+		// Keep failing (emitting warnings) until the observer has returned and
+		// a couple of warnings came after that, then succeed.
+		if !observerDone.Load() || polls.Add(1) <= 2 {
+			return nil, fmt.Errorf("transient describe failure")
+		}
+		terminal.Store(true)
+		return &eks.DescribeUpdateOutput{Update: &ekstypes.Update{Id: in.UpdateId, Status: ekstypes.UpdateStatusSuccessful}}, nil
+	}
+
+	var mu sync.Mutex
+	warningsBeforeTerminal := 0
+	progress := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.HasPrefix(fmt.Sprintf(format, args...), "warning: checking") && !terminal.Load() {
+			warningsBeforeTerminal++
+		}
+	}
+	observer := func(context.Context, string) { observerDone.Store(true) } // nothing to draw
+
+	if err := newTestService(m).UpgradeNodegroups(context.Background(), "prod-east", "1.32",
+		NodegroupRollOptions{Observer: observer}, progress); err != nil {
+		t.Fatalf("UpgradeNodegroups: %v", err)
+	}
+	if warningsBeforeTerminal < 2 {
+		t.Fatalf("only %d warning(s) reached progress before the update was terminal; want them released once the observer returned", warningsBeforeTerminal)
+	}
+}
+
 func sprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
 
 func sprintfErr(format string, args ...any) error { return fmt.Errorf(format, args...) }
