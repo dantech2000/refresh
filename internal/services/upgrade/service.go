@@ -213,17 +213,6 @@ func isPermanentAPIError(err error) bool {
 	return !common.IsRetryable(err)
 }
 
-// isSkippedAddon reports whether addon name is in the skip list, using
-// exact, case-insensitive matching (addon names are exact identifiers).
-func isSkippedAddon(name string, skip []string) bool {
-	for _, s := range skip {
-		if s != "" && strings.EqualFold(strings.TrimSpace(s), name) {
-			return true
-		}
-	}
-	return false
-}
-
 // updateErrors flattens an update's error details for display.
 func updateErrors(u *ekstypes.Update) string {
 	if u == nil || len(u.Errors) == 0 {
