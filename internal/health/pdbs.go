@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // PDBInfo is a structured snapshot of one PodDisruptionBudget's disruption
@@ -100,6 +104,13 @@ func (hc *HealthChecker) ListPodDisruptionBudgets(ctx context.Context) ([]PDBInf
 // it flags PDBs that would block a node drain right now, and measures how many
 // deployments are covered by a PDB at all.
 func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthResult {
+	return hc.checkPodDisruptionBudgets(ctx, "")
+}
+
+// checkPodDisruptionBudgets is CheckPodDisruptionBudgets for clusterName.
+// The cluster name lets the scoped drain-blocker check read the target
+// nodegroups' desired size when none of their nodes are found.
+func (hc *HealthChecker) checkPodDisruptionBudgets(ctx context.Context, clusterName string) HealthResult {
 	result := HealthResult{
 		Name:       "Pod Disruption Budgets",
 		IsBlocking: false, // PDBs are warning-level, not blocking
@@ -124,7 +135,10 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 		return result
 	}
 
-	drainBlockers, scoped := hc.findDrainBlockers(ctx, pdbs.Items)
+	drainBlockers, scoped, note := hc.findDrainBlockers(ctx, clusterName, pdbs.Items)
+	if note != "" {
+		result.Details = append(result.Details, note)
+	}
 
 	namespaces, err := hc.k8sClient.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -235,19 +249,27 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 // When target nodegroups are set (SetTargetNodegroups), a PDB only counts if it
 // gates the eviction of at least one pod on a node of those nodegroups, and
 // scoped is true. Otherwise every at-risk PDB is reported and scoped is false.
-// That fallback also applies when the node list fails or the targets resolve
-// to no labelled nodes: the check fails open instead of passing on nothing.
-func (hc *HealthChecker) findDrainBlockers(ctx context.Context, pdbs []policyv1.PodDisruptionBudget) (blockers []string, scoped bool) {
+// That fallback also applies when the node list fails, or when no node carries
+// a target nodegroup label: the check fails open instead of passing on
+// nothing. The one exception is targets whose total desired size is 0 (read
+// with DescribeNodegroup for clusterName): they have nothing to drain, so no
+// PDB blocks them, and note says so.
+func (hc *HealthChecker) findDrainBlockers(ctx context.Context, clusterName string, pdbs []policyv1.PodDisruptionBudget) (blockers []string, scoped bool, note string) {
 	var targetNodes map[string]bool
 	if len(hc.targetNodegroups) > 0 {
 		nodes, err := hc.k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("%s in (%s)", nodeLabelNodegroup, strings.Join(hc.targetNodegroups, ",")),
 		})
-		if err == nil && len(nodes.Items) > 0 {
+		switch {
+		case err == nil && len(nodes.Items) > 0:
 			scoped = true
 			targetNodes = make(map[string]bool, len(nodes.Items))
 			for _, n := range nodes.Items {
 				targetNodes[n.Name] = true
+			}
+		case err == nil:
+			if desired, derr := hc.targetsDesiredSize(ctx, clusterName); derr == nil && desired == 0 {
+				return nil, true, "Target nodegroup(s) have no nodes; nothing to drain"
 			}
 		}
 	}
@@ -269,7 +291,41 @@ func (hc *HealthChecker) findDrainBlockers(ctx context.Context, pdbs []policyv1.
 		blockers = append(blockers, fmt.Sprintf("%s/%s (%d/%d pods healthy, 0 disruptions allowed)",
 			info.Namespace, info.Name, info.CurrentHealthy, info.ExpectedPods))
 	}
-	return blockers, scoped
+	return blockers, scoped, ""
+}
+
+// nodegroupDescriber is the slice of the EKS API that reads a nodegroup's
+// scaling config.
+type nodegroupDescriber interface {
+	DescribeNodegroup(ctx context.Context, params *eks.DescribeNodegroupInput, optFns ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error)
+}
+
+// targetsDesiredSize sums the desired size of the target nodegroups. It
+// returns an error when the size can't be known (no EKS client or cluster
+// name, a failed call, or a nodegroup without a scaling config), so callers
+// can fail open.
+func (hc *HealthChecker) targetsDesiredSize(ctx context.Context, clusterName string) (int32, error) {
+	if hc.ngDescriber == nil || clusterName == "" {
+		return 0, fmt.Errorf("no EKS client or cluster name to describe the target nodegroups")
+	}
+	var total int32
+	for _, ng := range hc.targetNodegroups {
+		out, err := common.WithRetry(ctx, common.DefaultRetryConfig,
+			func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+				return hc.ngDescriber.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+					ClusterName:   aws.String(clusterName),
+					NodegroupName: aws.String(ng),
+				})
+			})
+		if err != nil {
+			return 0, fmt.Errorf("describing nodegroup %s: %w", ng, err)
+		}
+		if out == nil || out.Nodegroup == nil || out.Nodegroup.ScalingConfig == nil {
+			return 0, fmt.Errorf("nodegroup %s has no scaling config", ng)
+		}
+		total += aws.ToInt32(out.Nodegroup.ScalingConfig.DesiredSize)
+	}
+	return total, nil
 }
 
 // pdbCoversTargetNode reports whether pdb gates the eviction of any pod on one

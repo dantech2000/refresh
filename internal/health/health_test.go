@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -15,6 +18,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	fakek8s "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/dantech2000/refresh/internal/mocks"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -688,6 +693,90 @@ func TestCheckPodDisruptionBudgets_NotReadyPodAlwaysAllow(t *testing.T) {
 	result := hc.CheckPodDisruptionBudgets(context.Background())
 	if hasDetail(result.Details, "web-pdb") {
 		t.Errorf("AlwaysAllow PDB must not block a not-Ready pod, got %v", result.Details)
+	}
+}
+
+// desiredSizeDescriber answers DescribeNodegroup with the given desired size
+// per nodegroup, or with err when it is set.
+func desiredSizeDescriber(sizes map[string]int32, err error) *mocks.EKSAPI {
+	api := mocks.NewEKSAPI().Build()
+	api.DescribeNodegroupFn = func(_ context.Context, in *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+		if err != nil {
+			return nil, err
+		}
+		size, ok := sizes[aws.ToString(in.NodegroupName)]
+		if !ok {
+			return nil, errors.New("ResourceNotFoundException: no such nodegroup")
+		}
+		return &eks.DescribeNodegroupOutput{Nodegroup: &ekstypes.Nodegroup{
+			NodegroupName: in.NodegroupName,
+			ScalingConfig: &ekstypes.NodegroupScalingConfig{DesiredSize: aws.Int32(size)},
+		}}, nil
+	}
+	return api
+}
+
+// noTargetNodesClient has one unlabelled node running a pod that an unrelated
+// zero-disruption PDB covers; no node belongs to ng-a.
+func noTargetNodesClient() *fakek8s.Clientset {
+	return fakek8s.NewSimpleClientset(
+		userNamespace("kube-system"),
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},
+		appPod("kube-system", "coredns-1", "coredns", "n1"),
+		pdbAllowing("kube-system", "coredns", "coredns", 0, 1),
+	)
+}
+
+func TestCheckPodDisruptionBudgets_TargetScaledToZeroHasNoBlockers(t *testing.T) {
+	// Regression: a nodegroup scaled to 0 has nothing to drain, so an
+	// unrelated zero-disruption PDB elsewhere must not warn.
+	hc := NewChecker(nil, noTargetNodesClient(), nil, nil)
+	hc.ngDescriber = desiredSizeDescriber(map[string]int32{"ng-a": 0, "ng-b": 0}, nil)
+	hc.SetTargetNodegroups([]string{"ng-a", "ng-b"})
+	result := hc.checkPodDisruptionBudgets(context.Background(), "prod")
+	if result.Status != StatusPass {
+		t.Errorf("scaled-to-0 targets: status = %s msg = %q, want PASS", result.Status, result.Message)
+	}
+	if hasDetail(result.Details, "coredns") {
+		t.Errorf("coredns must not be reported for an empty target, got %v", result.Details)
+	}
+	if !hasDetail(result.Details, "have no nodes") {
+		t.Errorf("details should say the targets have no nodes, got %v", result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_TargetsWithNoLabelledNodes(t *testing.T) {
+	// ng-a wants 2 nodes but no node carries its label, so the scoped check
+	// can't match pods. It fails open with the cluster-wide wording.
+	hc := NewChecker(nil, noTargetNodesClient(), nil, nil)
+	hc.ngDescriber = desiredSizeDescriber(map[string]int32{"ng-a": 2}, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.checkPodDisruptionBudgets(context.Background(), "prod")
+	if result.Status != StatusWarn || !strings.Contains(result.Message, "may block a drain") {
+		t.Errorf("unlabelled nodes: status = %s msg = %q, want unscoped WARN", result.Status, result.Message)
+	}
+	if !hasDetail(result.Details, "kube-system/coredns") {
+		t.Errorf("details should name coredns, got %v", result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_TargetsDescribeFailsFallsBack(t *testing.T) {
+	cases := map[string]func(hc *HealthChecker){
+		"describe error": func(hc *HealthChecker) {
+			hc.ngDescriber = desiredSizeDescriber(nil, errors.New("AccessDeniedException: not authorized"))
+		},
+		"no EKS client": func(hc *HealthChecker) { hc.ngDescriber = nil },
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			hc := NewChecker(nil, noTargetNodesClient(), nil, nil)
+			setup(hc)
+			hc.SetTargetNodegroups([]string{"ng-a"})
+			result := hc.checkPodDisruptionBudgets(context.Background(), "prod")
+			if result.Status != StatusWarn || !strings.Contains(result.Message, "may block a drain") {
+				t.Errorf("status = %s msg = %q, want unscoped WARN", result.Status, result.Message)
+			}
+		})
 	}
 }
 
