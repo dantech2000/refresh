@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -29,6 +30,8 @@ type EKSAPI interface {
 	DescribeUpdate(ctx context.Context, params *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error)
 	DescribeClusterVersions(ctx context.Context, params *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error)
 	ListInsights(ctx context.Context, params *eks.ListInsightsInput, optFns ...func(*eks.Options)) (*eks.ListInsightsOutput, error)
+	StartInsightsRefresh(ctx context.Context, params *eks.StartInsightsRefreshInput, optFns ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error)
+	DescribeInsightsRefresh(ctx context.Context, params *eks.DescribeInsightsRefreshInput, optFns ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error)
 	ListAddons(ctx context.Context, params *eks.ListAddonsInput, optFns ...func(*eks.Options)) (*eks.ListAddonsOutput, error)
 	DescribeAddon(ctx context.Context, params *eks.DescribeAddonInput, optFns ...func(*eks.Options)) (*eks.DescribeAddonOutput, error)
 	DescribeAddonVersions(ctx context.Context, params *eks.DescribeAddonVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error)
@@ -49,14 +52,24 @@ type Service struct {
 	// PollInterval is how often in-flight updates are re-checked.
 	// Tests shrink it; defaults to defaultPollInterval.
 	PollInterval time.Duration
+
+	// InsightsRefreshTimeout bounds the wait for an on-demand cluster insights
+	// refresh. Tests shrink it; defaults to defaultInsightsRefreshTimeout.
+	InsightsRefreshTimeout time.Duration
+
+	// refreshedAt records when an insights refresh last completed, keyed by
+	// cluster and control-plane version (see refreshInsights).
+	refreshMu   sync.Mutex
+	refreshedAt map[string]time.Time
 }
 
 // NewService creates the upgrade orchestrator service.
 func NewService(eksClient EKSAPI, logger *slog.Logger) *Service {
 	return &Service{
-		eksClient:    eksClient,
-		logger:       logger,
-		PollInterval: defaultPollInterval,
+		eksClient:              eksClient,
+		logger:                 logger,
+		PollInterval:           defaultPollInterval,
+		InsightsRefreshTimeout: defaultInsightsRefreshTimeout,
 	}
 }
 

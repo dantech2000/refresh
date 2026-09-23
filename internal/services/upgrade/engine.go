@@ -28,7 +28,10 @@ type ExecuteOptions struct {
 	SkipAddons     []string
 	SkipNodegroups []string
 	Force          bool
-	// NodegroupGate overrides the built-in pre-roll health gate.
+	// SkipInsightsCheck leaves Cluster Insights out of the live readiness
+	// re-gate before each control-plane hop (--skip-insights-check).
+	SkipInsightsCheck bool
+	// NodegroupGate is an extra pre-roll gate run after the built-in one.
 	NodegroupGate NodegroupGate
 	// NodegroupObserver, when set, renders a live per-node roll view during each
 	// nodegroup roll. Supplied by the command (view) layer; nil → text progress.
@@ -146,7 +149,7 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 			// re-gated against live state right before its control plane
 			// moves.
 			precheck: func(ctx context.Context) error {
-				return s.checkHopReadiness(ctx, plan.ClusterName, hop.To, opts.Progress)
+				return s.checkHopReadiness(ctx, plan.ClusterName, hop.To, opts.SkipInsightsCheck, opts.Progress)
 			},
 			run: func(ctx context.Context) error {
 				return s.UpgradeControlPlane(ctx, plan.ClusterName, hop.To, opts.Progress)
