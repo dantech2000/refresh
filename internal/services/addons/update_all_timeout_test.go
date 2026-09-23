@@ -105,13 +105,13 @@ func TestUpdateAll_WaitDeadlineScalesWithAddonCount(t *testing.T) {
 		WithAddonVersions("kube-proxy", []string{"v1.32.1"}, "1.32").
 		Build()
 
-	var deadlines []time.Duration
+	var deadlines []time.Time
 	m.UpdateAddonFn = func(ctx context.Context, _ *eks.UpdateAddonInput, _ ...func(*eks.Options)) (*eks.UpdateAddonOutput, error) {
-		if dl, ok := ctx.Deadline(); ok {
-			deadlines = append(deadlines, time.Until(dl))
-		} else {
-			deadlines = append(deadlines, -1)
+		dl, ok := ctx.Deadline()
+		if !ok {
+			t.Error("UpdateAddon ran with no deadline")
 		}
+		deadlines = append(deadlines, dl)
 		// Fail fast (non-retryable) so no wait polling happens in the test.
 		return nil, &ekstypes.InvalidParameterException{Message: aws.String("stop")}
 	}
@@ -123,17 +123,24 @@ func TestUpdateAll_WaitDeadlineScalesWithAddonCount(t *testing.T) {
 		Wait:        true,
 		WaitTimeout: 5 * time.Minute,
 	})
+	end := time.Now()
 	if err != nil {
 		t.Fatalf("UpdateAll = %v", err)
 	}
 	if len(deadlines) != 3 {
 		t.Fatalf("UpdateAddon calls = %d, want 3", len(deadlines))
 	}
-	// 10m + 3×5m = 25m; allow for elapsed test time.
-	want := 25*time.Minute - time.Since(start) - time.Second
-	for i, d := range deadlines {
-		if d < want {
-			t.Errorf("call %d: deadline in %v, want >= ~25m (was the overall timeout applied unscaled?)", i, d)
+	// The run gets exactly Timeout + 3×WaitTimeout = 25m, set once when the
+	// run starts: the deadline must fall in [start+25m, end+25m], and every
+	// add-on shares it. A budget that is too small or too large (say,
+	// WaitTimeout counted twice) lands outside the window.
+	const budget = 10*time.Minute + 3*5*time.Minute
+	for i, dl := range deadlines {
+		if dl.Before(start.Add(budget)) || dl.After(end.Add(budget)) {
+			t.Errorf("call %d: deadline %v after start, want exactly %v (window %v)", i, dl.Sub(start), budget, end.Sub(start))
+		}
+		if !dl.Equal(deadlines[0]) {
+			t.Errorf("call %d: deadline differs from call 0; the budget must be one deadline for the whole run", i)
 		}
 	}
 }
