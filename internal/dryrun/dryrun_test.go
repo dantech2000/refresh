@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
+	awsClient "github.com/dantech2000/refresh/internal/aws"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
@@ -429,3 +430,33 @@ func TestPrintNodegroupListIncludesAmiDetails(t *testing.T) {
 }
 
 var _ = eks.DescribeNodegroupInput{}
+
+// Cluster on 1.32, nodegroups on 1.31: the preview must compare against the
+// latest 1.31 AMI (what the real run rolls to), not the 1.32 one.
+func TestAnalyzeUsesNodegroupVersionForLatestAMI(t *testing.T) {
+	current := map[string]string{"ng-latest": "ami-131-latest", "ng-old": "ami-131-older"}
+	dr := &DryRunner{
+		clusterName: "test-cluster",
+		k8sVersion:  "1.32",
+		quiet:       true,
+		describeNodegroupFn: func(_ context.Context, name string) (*types.Nodegroup, error) {
+			return &types.Nodegroup{
+				NodegroupName: aws.String(name),
+				Version:       aws.String("1.31"),
+				AmiType:       types.AMITypesAl2023X8664Standard,
+				Status:        types.NodegroupStatusActive,
+			}, nil
+		},
+		currentAmiFn: func(_ context.Context, ng *types.Nodegroup) string { return current[aws.ToString(ng.NodegroupName)] },
+		latestAMICache: awsClient.NewLatestAMICache(func(_ context.Context, v string, _ types.AMITypes) string {
+			return map[string]string{"1.31": "ami-131-latest", "1.32": "ami-132-latest"}[v]
+		}),
+	}
+
+	if got := dr.analyzeNodegroup(context.Background(), "ng-latest"); got.Action != refreshTypes.ActionSkipLatest || got.LatestAMI != "ami-131-latest" {
+		t.Errorf("ng-latest: Action = %v, LatestAMI = %q; want SkipLatest vs ami-131-latest", got.Action, got.LatestAMI)
+	}
+	if got := dr.analyzeNodegroup(context.Background(), "ng-old"); got.Action != refreshTypes.ActionUpdate || got.LatestAMI != "ami-131-latest" {
+		t.Errorf("ng-old: Action = %v, LatestAMI = %q; want Update vs ami-131-latest", got.Action, got.LatestAMI)
+	}
+}
