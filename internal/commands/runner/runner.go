@@ -49,7 +49,7 @@ func checkCredentialsStrict(ctx context.Context, cfg aws.Config) error {
 	return nil
 }
 
-// setupAWS is the shared body of SetupAWS/SetupAWSWithTimeout/SetupAWSStrict.
+// setupAWS is the shared body of the SetupAWS* helpers.
 // On error the internal context is canceled and the returned cancel is nil.
 // timeout <= 0 means no deadline (the context is then only signal-cancellable).
 func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, check credentialCheck) (context.Context, context.CancelFunc, aws.Config, error) {
@@ -84,16 +84,6 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 // internal context has already been cancelled.
 func SetupAWS(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
 	return setupAWS(ctx, cmd, cmd.Duration("timeout"), checkCredentialsLenient)
-}
-
-// SetupAWSWithTimeout is like SetupAWS but falls back to defaultTimeout
-// when cmd.Duration("timeout") is zero.
-func SetupAWSWithTimeout(ctx context.Context, cmd *cli.Command, defaultTimeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
-	timeout := cmd.Duration("timeout")
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	return setupAWS(ctx, cmd, timeout, checkCredentialsLenient)
 }
 
 // SetupAWSWithDeadline is like SetupAWS but uses the given timeout for the
