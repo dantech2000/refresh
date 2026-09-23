@@ -25,6 +25,9 @@ type ScaleOptions struct {
 	Wait        bool          `json:"wait"`
 	Timeout     time.Duration `json:"timeout"`
 	DryRun      bool          `json:"dryRun"`
+	// Force skips the CheckPDBs scale-down refusal. The caller is expected
+	// to have run CheckScaleDownPDBs itself to warn about the blockers.
+	Force bool `json:"force"`
 }
 
 // ScalingConfig models the EKS managed nodegroup scaling configuration
