@@ -155,3 +155,36 @@ func TestFormatScaleQuestion(t *testing.T) {
 		}
 	}
 }
+
+// A --check-pdbs dry run whose PDBs can't be read shows the preview, then
+// fails (exit 1) as the real run would; with --force it exits 0.
+func TestScale_DryRunPDBGateExit(t *testing.T) {
+	t.Setenv("KUBECONFIG", t.TempDir()+"/none")
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantCode int
+	}{
+		{"unreadable PDBs fail", nil, runner.ExitError},
+		{"--force passes", []string{"--force"}, runner.ExitOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withScalePrompt(t, false, "")
+			srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5}))
+			args := append([]string{"scale", "prod", "-n", "ng-a", "--desired", "1", "--check-pdbs", "--dry-run"}, tc.args...)
+			stdout, stderr, err := runNodegroup(t, args...)
+			if got := runner.ExitCodeOf(err); got != tc.wantCode {
+				t.Fatalf("exit code = %d (err %v), want %d\nstderr:\n%s", got, err, tc.wantCode, stderr)
+			}
+			if tc.wantCode != runner.ExitOK && !strings.Contains(err.Error(), "PDB validation for prod/ng-a") {
+				t.Errorf("err = %v, want the PDB validation error", err)
+			}
+			if !strings.Contains(stdout, "No changes were made") {
+				t.Errorf("stdout missing the preview:\n%s", stdout)
+			}
+			if calledPath(srv, "/update-config") {
+				t.Error("UpdateNodegroupConfig called")
+			}
+		})
+	}
+}

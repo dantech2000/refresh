@@ -160,7 +160,9 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     closed: if it can't read the PDBs or pods (for example, no Kubernetes
     access), it refuses the scale-down too. Pass `--force` to scale down
     anyway. Combine `--dry-run --check-pdbs` to see the verdict and the
-    blocking PDBs before you touch anything. See
+    blocking PDBs before you touch anything. The preview exits with the code
+    the real run would: `3` if the gate refuses, `1` if it can't read the
+    PDBs. See
     [Scale-down PDB gate](../concepts/health-checks.md#scale-down-pdb-gate).
 
 With `--wait`, `refresh` follows the EKS update that the scaling request

@@ -112,6 +112,11 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 			printScaleDryRunPDBGate(os.Stdout, clusterName, nodegroupName, pdbCheck, pdbCheckErr, opts.Force)
 		}
 		fmt.Println("\nNo changes were made. Re-run without --dry-run to execute.")
+		// The preview exits as the real run would at the gate: 3 when it
+		// would refuse the scale-down, 1 when the PDBs could not be read.
+		if opts.CheckPDBs && !opts.Force {
+			return scaleExit(scaleDryRunGateErr(clusterName, nodegroupName, pdbCheck, pdbCheckErr))
+		}
 		return nil
 	}
 
@@ -150,6 +155,18 @@ func scaleExit(err error) error {
 	default:
 		return err
 	}
+}
+
+// scaleDryRunGateErr returns the error the --check-pdbs gate would stop a
+// real scale with (without --force), or nil when the gate would pass.
+func scaleDryRunGateErr(clusterName, nodegroupName string, check *nodegroupsvc.ScaleDownPDBCheck, checkErr error) error {
+	if checkErr != nil {
+		return checkErr
+	}
+	if check != nil && check.Refused() {
+		return &nodegroupsvc.ScaleDownBlockedError{Cluster: clusterName, Nodegroup: nodegroupName, Check: *check}
+	}
+	return nil
 }
 
 // warnForcedScaleDown prints, to w, the PDB blockers (or the failed check)

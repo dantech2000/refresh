@@ -147,7 +147,7 @@ the upgrade, with the `--wait-timeout`, `--yes`, and other flags you gave. See
 |---|---|
 | `0` | The scaling request was accepted (and, with `--wait`, it settled) |
 | `1` | An error, including a `--check-pdbs` check that could not read the PDBs, a declined confirmation, or a missing `--yes` without a terminal |
-| `3` | Blocked: `--check-pdbs` refused a scale-down, or the pre-scaling health check (`--health-check`) blocked it. Nothing changed |
+| `3` | Blocked: `--check-pdbs` refused a scale-down, or the pre-scaling health check (`--health-check`) blocked it. Nothing changed. A `--dry-run` with `--check-pdbs` exits `3` or `1` where the real run would |
 | `5` | The scale was applied, but the post-scaling health check found blocking issues |
 
 See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
