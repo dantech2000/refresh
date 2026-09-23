@@ -233,6 +233,20 @@ func warnAllOnlyFlags(cmd *cli.Command) {
 	}
 }
 
+// updateSetupTimeout returns the deadline for a single add-on update. With
+// --wait, --timeout covers the API calls and --wait-timeout the wait, so a
+// long --wait-timeout isn't cut short by --timeout. A result <= 0 means no
+// deadline: --timeout 0, or --wait with --wait-timeout 0 (no wait limit).
+func updateSetupTimeout(apiTimeout, waitTimeout time.Duration, wait bool) time.Duration {
+	if apiTimeout <= 0 || !wait {
+		return apiTimeout
+	}
+	if waitTimeout <= 0 {
+		return 0
+	}
+	return apiTimeout + waitTimeout
+}
+
 func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
 		return err
@@ -242,12 +256,7 @@ func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	if err := runner.RequireYesUnattended(cmd); err != nil {
 		return err
 	}
-	// With --wait, --timeout covers the API calls and --wait-timeout the wait,
-	// so a long --wait-timeout isn't cut short by --timeout.
-	setupTimeout := cmd.Duration("timeout")
-	if cmd.Bool("wait") && setupTimeout > 0 && cmd.Duration("wait-timeout") > 0 {
-		setupTimeout += cmd.Duration("wait-timeout")
-	}
+	setupTimeout := updateSetupTimeout(cmd.Duration("timeout"), cmd.Duration("wait-timeout"), cmd.Bool("wait"))
 	ctx, cancel, cfg, err := runner.SetupAWSWithDeadline(ctx, cmd, setupTimeout)
 	if err != nil {
 		return err

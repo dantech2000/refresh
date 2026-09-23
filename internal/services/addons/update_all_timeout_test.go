@@ -24,7 +24,7 @@ func TestUpdateAllBudget(t *testing.T) {
 		{"no wait", UpdateAllOptions{Timeout: 10 * time.Minute}, 4, 10 * time.Minute},
 		{"serial wait scales by count", UpdateAllOptions{Timeout: 10 * time.Minute, Wait: true, WaitTimeout: 5 * time.Minute}, 4, 30 * time.Minute},
 		{"parallel wait scales by batch", UpdateAllOptions{Timeout: 10 * time.Minute, Wait: true, WaitTimeout: 5 * time.Minute, Parallel: true}, 4, 20 * time.Minute},
-		{"wait without wait-timeout", UpdateAllOptions{Timeout: 10 * time.Minute, Wait: true}, 4, 10 * time.Minute},
+		{"wait-timeout 0 is no limit", UpdateAllOptions{Timeout: 10 * time.Minute, Wait: true}, 4, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

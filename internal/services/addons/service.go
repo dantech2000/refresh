@@ -459,13 +459,17 @@ func (s *ServiceImpl) attachInFlight(ctx context.Context, clusterName, addonName
 
 // updateAllBudget returns the deadline for an UpdateAll run over n add-ons:
 // Timeout, plus WaitTimeout for each serial step when waiting (n steps, or
-// n/maxParallelAddonUpdates rounded up when Parallel). Zero means no deadline.
+// n/maxParallelAddonUpdates rounded up when Parallel). Zero means no deadline,
+// which is also the result of Wait with WaitTimeout <= 0 (no wait limit).
 func updateAllBudget(options UpdateAllOptions, n int) time.Duration {
 	if options.Timeout <= 0 {
 		return 0
 	}
-	if !options.Wait || options.WaitTimeout <= 0 {
+	if !options.Wait {
 		return options.Timeout
+	}
+	if options.WaitTimeout <= 0 {
+		return 0
 	}
 	steps := n
 	if options.Parallel {
