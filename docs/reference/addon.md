@@ -30,7 +30,7 @@ refresh addon list [options] [cluster]
 ```
 
 List the managed EKS add-ons installed on a cluster along with their
-current version, status, and (with --health) a health badge.
+current version, status, and (with --show-health) a health badge.
 
 Use --watch to keep the listing live: it redraws on the --watch-interval
 (top-style on a terminal, appended when the output is piped) so you can watch
