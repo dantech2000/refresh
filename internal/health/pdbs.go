@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
@@ -21,16 +22,25 @@ type PDBInfo struct {
 	CurrentHealthy     int32  `json:"currentHealthy" yaml:"currentHealthy"`
 	DesiredHealthy     int32  `json:"desiredHealthy" yaml:"desiredHealthy"`
 	ExpectedPods       int32  `json:"expectedPods" yaml:"expectedPods"`
+	// StatusNotSynced is set when the disruption controller has not observed
+	// the PDB's latest spec, or reports the DisruptionAllowed condition with
+	// reason SyncFailed (bare pods, custom resources without a /scale
+	// subresource). The counts are then not trustworthy: the controller leaves
+	// ExpectedPods at 0, but the eviction API still refuses the PDB's pods.
+	StatusNotSynced bool `json:"statusNotSynced,omitempty" yaml:"statusNotSynced,omitempty"`
 }
 
 // AtRisk reports whether this PDB currently allows zero voluntary disruptions
-// while covering at least one pod, meaning a node drain (scale-down or node
-// roll) that evicts one of its pods will be blocked until the workload
-// recovers. A PDB that matches no pods (ExpectedPods == 0) blocks nothing.
-func (p PDBInfo) AtRisk() bool { return p.DisruptionsAllowed <= 0 && p.ExpectedPods > 0 }
+// while it may cover pods, meaning a node drain (scale-down or node roll) that
+// evicts one of its pods will be blocked until the workload recovers.
+// ExpectedPods == 0 means "matches no pods" only when the status is synced; an
+// unsynced PDB that allows 0 disruptions is at risk whatever it counts.
+func (p PDBInfo) AtRisk() bool {
+	return p.DisruptionsAllowed <= 0 && (p.ExpectedPods > 0 || p.StatusNotSynced)
+}
 
-// systemNamespaces are skipped when counting deployments for PDB coverage and
-// when listing user PDBs. "default" is deliberately absent: real workloads run
+// systemNamespaces are skipped when counting deployments for PDB coverage.
+// "default" is deliberately absent: real workloads run
 // there and must be counted.
 var systemNamespaces = map[string]bool{
 	"kube-system":     true,
@@ -52,12 +62,25 @@ func pdbInfoFrom(pdb policyv1.PodDisruptionBudget) PDBInfo {
 		CurrentHealthy:     pdb.Status.CurrentHealthy,
 		DesiredHealthy:     pdb.Status.DesiredHealthy,
 		ExpectedPods:       pdb.Status.ExpectedPods,
+		StatusNotSynced:    !pdbStatusSynced(pdb),
 	}
 }
 
-// ListPodDisruptionBudgets returns a structured snapshot of every PDB in user
-// namespaces with its current disruption status. Returns (nil, nil) when no
-// Kubernetes client is configured so callers can degrade gracefully. (REF-4)
+// pdbStatusSynced reports whether the disruption controller has observed the
+// PDB's current spec and computed its status without a sync failure.
+func pdbStatusSynced(pdb policyv1.PodDisruptionBudget) bool {
+	if pdb.Status.ObservedGeneration < pdb.Generation {
+		return false
+	}
+	c := meta.FindStatusCondition(pdb.Status.Conditions, policyv1.DisruptionAllowedCondition)
+	return c == nil || c.Reason != policyv1.SyncFailedReason
+}
+
+// ListPodDisruptionBudgets returns a structured snapshot of every PDB in the
+// cluster with its current disruption status. System namespaces are included:
+// a stuck kube-system PDB (e.g. coredns) blocks a drain just like a user one.
+// Returns (nil, nil) when no Kubernetes client is configured so callers can
+// degrade gracefully. (REF-4)
 func (hc *HealthChecker) ListPodDisruptionBudgets(ctx context.Context) ([]PDBInfo, error) {
 	if hc.k8sClient == nil {
 		return nil, nil
@@ -68,9 +91,6 @@ func (hc *HealthChecker) ListPodDisruptionBudgets(ctx context.Context) ([]PDBInf
 	}
 	out := make([]PDBInfo, 0, len(pdbs.Items))
 	for _, pdb := range pdbs.Items {
-		if systemNamespaces[pdb.Namespace] {
-			continue
-		}
 		out = append(out, pdbInfoFrom(pdb))
 	}
 	return out, nil
@@ -111,6 +131,8 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 		result.Status = StatusWarn
 		result.Score = 60
 		result.Message = fmt.Sprintf("Failed to list namespaces: %v", err)
+		// applyDrainBlockers replaces Message, so keep the error in Details.
+		result.Details = append(result.Details, result.Message)
 		applyDrainBlockers(&result, drainBlockers, scoped)
 		return result
 	}
@@ -210,17 +232,18 @@ func (hc *HealthChecker) CheckPodDisruptionBudgets(ctx context.Context) HealthRe
 // System namespaces are included on purpose: a stuck kube-system PDB blocks a
 // drain just the same.
 //
-// When target nodegroups are set (SetTargetNodegroups), a PDB only counts if at
-// least one pod it covers runs on a node of those nodegroups, and scoped is
-// true. Otherwise (no targets, or the node list failed) every at-risk PDB is
-// reported and scoped is false.
+// When target nodegroups are set (SetTargetNodegroups), a PDB only counts if it
+// gates the eviction of at least one pod on a node of those nodegroups, and
+// scoped is true. Otherwise every at-risk PDB is reported and scoped is false.
+// That fallback also applies when the node list fails or the targets resolve
+// to no labelled nodes: the check fails open instead of passing on nothing.
 func (hc *HealthChecker) findDrainBlockers(ctx context.Context, pdbs []policyv1.PodDisruptionBudget) (blockers []string, scoped bool) {
 	var targetNodes map[string]bool
 	if len(hc.targetNodegroups) > 0 {
 		nodes, err := hc.k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("%s in (%s)", nodeLabelNodegroup, strings.Join(hc.targetNodegroups, ",")),
 		})
-		if err == nil {
+		if err == nil && len(nodes.Items) > 0 {
 			scoped = true
 			targetNodes = make(map[string]bool, len(nodes.Items))
 			for _, n := range nodes.Items {
@@ -238,20 +261,22 @@ func (hc *HealthChecker) findDrainBlockers(ctx context.Context, pdbs []policyv1.
 		if scoped && !hc.pdbCoversTargetNode(ctx, pdb, targetNodes, podsByNamespace) {
 			continue
 		}
+		if info.StatusNotSynced {
+			blockers = append(blockers, fmt.Sprintf("%s/%s (PDB status not synced, 0 disruptions allowed; evictions are refused)",
+				info.Namespace, info.Name))
+			continue
+		}
 		blockers = append(blockers, fmt.Sprintf("%s/%s (%d/%d pods healthy, 0 disruptions allowed)",
 			info.Namespace, info.Name, info.CurrentHealthy, info.ExpectedPods))
 	}
 	return blockers, scoped
 }
 
-// pdbCoversTargetNode reports whether any pod selected by pdb runs on one of
-// targetNodes. Pods are listed once per namespace and cached in podsByNamespace.
-// If the pods can't be listed it returns true, so a blocker is never hidden by
-// a transient API error.
+// pdbCoversTargetNode reports whether pdb gates the eviction of any pod on one
+// of targetNodes. Pods are listed once per namespace and cached in
+// podsByNamespace. If the pods can't be listed it returns true, so a blocker
+// is never hidden by a transient API error.
 func (hc *HealthChecker) pdbCoversTargetNode(ctx context.Context, pdb policyv1.PodDisruptionBudget, targetNodes map[string]bool, podsByNamespace map[string][]corev1.Pod) bool {
-	if len(targetNodes) == 0 {
-		return false
-	}
 	sel, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
 	if err != nil {
 		return true
@@ -266,8 +291,42 @@ func (hc *HealthChecker) pdbCoversTargetNode(ctx context.Context, pdb policyv1.P
 		podsByNamespace[pdb.Namespace] = pods
 	}
 	for _, p := range pods {
-		if targetNodes[p.Spec.NodeName] && sel.Matches(labels.Set(p.Labels)) {
+		if targetNodes[p.Spec.NodeName] && sel.Matches(labels.Set(p.Labels)) && evictionGatedByPDB(p, pdb) {
 			return true
+		}
+	}
+	return false
+}
+
+// evictionGatedByPDB mirrors the eviction API's rules for when pdb can refuse
+// the eviction of pod. The API ignores PDBs for pods that are Succeeded,
+// Failed, Pending or already being deleted. It also lets a not-Ready pod go
+// when unhealthyPodEvictionPolicy is AlwaysAllow, or, under the default
+// IfHealthyBudget policy, while the budget is met (currentHealthy >=
+// desiredHealthy > 0).
+func evictionGatedByPDB(pod corev1.Pod, pdb policyv1.PodDisruptionBudget) bool {
+	if pod.DeletionTimestamp != nil {
+		return false
+	}
+	switch pod.Status.Phase {
+	case corev1.PodSucceeded, corev1.PodFailed, corev1.PodPending:
+		return false
+	}
+	if podReady(pod) {
+		return true
+	}
+	if p := pdb.Spec.UnhealthyPodEvictionPolicy; p != nil && *p == policyv1.AlwaysAllow {
+		return false
+	}
+	st := pdb.Status
+	return st.DesiredHealthy <= 0 || st.CurrentHealthy < st.DesiredHealthy
+}
+
+// podReady reports whether pod has the Ready condition set to True.
+func podReady(pod corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
 		}
 	}
 	return false
