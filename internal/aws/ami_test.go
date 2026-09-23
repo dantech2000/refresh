@@ -14,92 +14,6 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// buildSSMParameterPath
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestBuildSSMParameterPath_AL2X8664(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesAl2X8664)
-	want := "/aws/service/eks/optimized-ami/1.29/amazon-linux-2/recommended/image_id"
-	if path != want {
-		t.Errorf("got %q, want %q", path, want)
-	}
-}
-
-func TestBuildSSMParameterPath_AL2Arm64(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesAl2Arm64)
-	if !strings.Contains(path, "amazon-linux-2-arm64") {
-		t.Errorf("expected arm64 path, got %q", path)
-	}
-}
-
-func TestBuildSSMParameterPath_AL2GPU(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesAl2X8664Gpu)
-	if !strings.Contains(path, "amazon-linux-2-gpu") {
-		t.Errorf("expected GPU path, got %q", path)
-	}
-}
-
-func TestBuildSSMParameterPath_AL2023X8664(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesAl2023X8664Standard)
-	if !strings.Contains(path, "amazon-linux-2023") || !strings.Contains(path, "x86_64") {
-		t.Errorf("expected AL2023 x86_64 path, got %q", path)
-	}
-}
-
-func TestBuildSSMParameterPath_AL2023Arm64(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesAl2023Arm64Standard)
-	if !strings.Contains(path, "amazon-linux-2023") || !strings.Contains(path, "arm64") {
-		t.Errorf("expected AL2023 arm64 path, got %q", path)
-	}
-}
-
-func TestBuildSSMParameterPath_BottlerocketX8664(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesBottlerocketX8664)
-	if !strings.Contains(path, "bottlerocket") || !strings.Contains(path, "x86_64") {
-		t.Errorf("expected bottlerocket x86_64 path, got %q", path)
-	}
-}
-
-func TestBuildSSMParameterPath_BottlerocketArm64(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesBottlerocketArm64)
-	if !strings.Contains(path, "bottlerocket") || !strings.Contains(path, "arm64") {
-		t.Errorf("expected bottlerocket arm64 path, got %q", path)
-	}
-}
-
-func TestBuildSSMParameterPath_WindowsFull2019(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesWindowsFull2019X8664)
-	if !strings.Contains(path, "windows") || !strings.Contains(path, "2019") {
-		t.Errorf("expected windows 2019 full path, got %q", path)
-	}
-}
-
-func TestBuildSSMParameterPath_WindowsFull2022(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesWindowsFull2022X8664)
-	if !strings.Contains(path, "windows") || !strings.Contains(path, "2022") {
-		t.Errorf("expected windows 2022 path, got %q", path)
-	}
-}
-
-func TestBuildSSMParameterPath_RemainingExplicitTypes(t *testing.T) {
-	cases := map[types.AMITypes]string{
-		types.AMITypesAl2023X8664Nvidia:       "nvidia",
-		types.AMITypesAl2023X8664Neuron:       "neuron",
-		types.AMITypesAl2023Arm64Nvidia:       "arm64/nvidia",
-		types.AMITypesBottlerocketX8664Nvidia: "x86_64/nvidia",
-		types.AMITypesBottlerocketArm64Nvidia: "arm64/nvidia",
-		types.AMITypesWindowsCore2019X8664:    "windows-2019-core",
-		types.AMITypesWindowsCore2022X8664:    "windows-2022-core",
-	}
-	for amiType, want := range cases {
-		path := buildSSMParameterPath("1.30", amiType)
-		if !strings.Contains(path, want) {
-			t.Fatalf("buildSSMParameterPath(%s) = %q, want substring %q", amiType, path, want)
-		}
-	}
-}
-
 func TestCurrentAmiIDEmptyNodegroupPaths(t *testing.T) {
 	if got := CurrentAmiID(context.Background(), &types.Nodegroup{}, nil, nil); got != "" {
 		t.Fatalf("CurrentAmiID empty nodegroup = %q, want empty", got)
@@ -179,75 +93,85 @@ func TestLatestAmiIDForType_EmptyValueIsError(t *testing.T) {
 	}
 }
 
-func TestBuildSSMParameterPathUnknownUsesInference(t *testing.T) {
-	path := buildSSMParameterPath("1.30", types.AMITypes("AL2023_ARM64_CUSTOMISH"))
-	if !strings.Contains(path, "amazon-linux-2023/arm64") {
-		t.Fatalf("unknown AL2023 arm path = %q", path)
+// ──────────────────────────────────────────────────────────────────────────────
+// buildSSMParameterPath / buildReleaseVersionParameterPath
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Every AMI type the SDK knows must map to the SSM parameters AWS documents:
+//   - https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html
+//   - https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id-bottlerocket.html
+//   - https://docs.aws.amazon.com/eks/latest/userguide/retrieve-windows-ami-id.html
+func TestBuildSSMParameterPath_AllAMITypes(t *testing.T) {
+	const (
+		al  = "/aws/service/eks/optimized-ami/1.33/"
+		br  = "/aws/service/bottlerocket/aws-k8s-1.33"
+		win = "/aws/service/ami-windows-latest/Windows_Server-"
+	)
+	cases := map[types.AMITypes]struct{ image, release string }{
+		types.AMITypesAl2X8664:    {al + "amazon-linux-2/recommended/image_id", al + "amazon-linux-2/recommended/release_version"},
+		types.AMITypesAl2Arm64:    {al + "amazon-linux-2-arm64/recommended/image_id", al + "amazon-linux-2-arm64/recommended/release_version"},
+		types.AMITypesAl2X8664Gpu: {al + "amazon-linux-2-gpu/recommended/image_id", al + "amazon-linux-2-gpu/recommended/release_version"},
+
+		types.AMITypesAl2023X8664Standard: {al + "amazon-linux-2023/x86_64/standard/recommended/image_id", al + "amazon-linux-2023/x86_64/standard/recommended/release_version"},
+		types.AMITypesAl2023Arm64Standard: {al + "amazon-linux-2023/arm64/standard/recommended/image_id", al + "amazon-linux-2023/arm64/standard/recommended/release_version"},
+		types.AMITypesAl2023X8664Nvidia:   {al + "amazon-linux-2023/x86_64/nvidia/recommended/image_id", al + "amazon-linux-2023/x86_64/nvidia/recommended/release_version"},
+		types.AMITypesAl2023Arm64Nvidia:   {al + "amazon-linux-2023/arm64/nvidia/recommended/image_id", al + "amazon-linux-2023/arm64/nvidia/recommended/release_version"},
+		types.AMITypesAl2023X8664Neuron:   {al + "amazon-linux-2023/x86_64/neuron/recommended/image_id", al + "amazon-linux-2023/x86_64/neuron/recommended/release_version"},
+
+		types.AMITypesBottlerocketX8664:           {br + "/x86_64/latest/image_id", br + "/x86_64/latest/image_version"},
+		types.AMITypesBottlerocketArm64:           {br + "/arm64/latest/image_id", br + "/arm64/latest/image_version"},
+		types.AMITypesBottlerocketX8664Nvidia:     {br + "-nvidia/x86_64/latest/image_id", br + "-nvidia/x86_64/latest/image_version"},
+		types.AMITypesBottlerocketArm64Nvidia:     {br + "-nvidia/arm64/latest/image_id", br + "-nvidia/arm64/latest/image_version"},
+		types.AMITypesBottlerocketX8664Fips:       {br + "-fips/x86_64/latest/image_id", br + "-fips/x86_64/latest/image_version"},
+		types.AMITypesBottlerocketArm64Fips:       {br + "-fips/arm64/latest/image_id", br + "-fips/arm64/latest/image_version"},
+		types.AMITypesBottlerocketX8664NvidiaFips: {br + "-nvidia-fips/x86_64/latest/image_id", br + "-nvidia-fips/x86_64/latest/image_version"},
+		types.AMITypesBottlerocketArm64NvidiaFips: {br + "-nvidia-fips/arm64/latest/image_id", br + "-nvidia-fips/arm64/latest/image_version"},
+
+		// Windows publishes no release-version parameter.
+		types.AMITypesWindowsCore2019X8664: {win + "2019-English-Core-EKS_Optimized-1.33/image_id", ""},
+		types.AMITypesWindowsFull2019X8664: {win + "2019-English-Full-EKS_Optimized-1.33/image_id", ""},
+		types.AMITypesWindowsCore2022X8664: {win + "2022-English-Core-EKS_Optimized-1.33/image_id", ""},
+		types.AMITypesWindowsFull2022X8664: {win + "2022-English-Full-EKS_Optimized-1.33/image_id", ""},
+		types.AMITypesWindowsCore2025X8664: {win + "2025-English-Core-EKS_Optimized-1.33/image_id", ""},
+		types.AMITypesWindowsFull2025X8664: {win + "2025-English-Full-EKS_Optimized-1.33/image_id", ""},
+
+		// A custom AMI has no recommended AMI: no lookup at all.
+		types.AMITypesCustom: {"", ""},
 	}
-}
 
-var _ = aws.String
-
-func TestBuildSSMParameterPath_CustomReturnsEmpty(t *testing.T) {
-	path := buildSSMParameterPath("1.29", types.AMITypesCustom)
-	if path != "" {
-		t.Errorf("expected empty path for custom AMI, got %q", path)
-	}
-}
-
-func TestBuildSSMParameterPath_ContainsK8sVersion(t *testing.T) {
-	for _, version := range []string{"1.27", "1.28", "1.29", "1.30"} {
-		path := buildSSMParameterPath(version, types.AMITypesAl2X8664)
-		if !strings.Contains(path, version) {
-			t.Errorf("path %q does not contain k8s version %s", path, version)
+	for _, amiType := range types.AMITypes("").Values() {
+		want, ok := cases[amiType]
+		if !ok {
+			t.Errorf("AMI type %s has no expected SSM path in this table", amiType)
+			continue
+		}
+		if got := buildSSMParameterPath("1.33", amiType); got != want.image {
+			t.Errorf("image path for %s = %q, want %q", amiType, got, want.image)
+		}
+		if got := buildReleaseVersionParameterPath("1.33", amiType); got != want.release {
+			t.Errorf("release path for %s = %q, want %q", amiType, got, want.release)
 		}
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// inferSSMPath
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestInferSSMPath_AL2023X8664(t *testing.T) {
-	path := inferSSMPath("/base", "AL2023_X86_64_STANDARD")
-	if !strings.Contains(path, "amazon-linux-2023") || !strings.Contains(path, "x86_64") {
-		t.Errorf("unexpected path: %q", path)
+// AMI types newer than the SDK enum fall back to the base variant of their
+// family, in that family's own parameter tree. Anything else is "unknown".
+func TestBuildSSMParameterPath_InfersUnknownTypes(t *testing.T) {
+	cases := map[string]string{
+		"AL2023_ARM64_CUSTOMISH": "/aws/service/eks/optimized-ami/1.30/amazon-linux-2023/arm64/standard/recommended/image_id",
+		"AL2023_x86_64_FUTURE":   "/aws/service/eks/optimized-ami/1.30/amazon-linux-2023/x86_64/standard/recommended/image_id",
+		"BOTTLEROCKET_ARM_64_X":  "/aws/service/bottlerocket/aws-k8s-1.30/arm64/latest/image_id",
+		"BOTTLEROCKET_x86_64_X":  "/aws/service/bottlerocket/aws-k8s-1.30/x86_64/latest/image_id",
+		"AL2_ARM_64_X":           "/aws/service/eks/optimized-ami/1.30/amazon-linux-2-arm64/recommended/image_id",
+		"WINDOWS_CORE_2030_X":    "",
+		"UNKNOWN_TYPE":           "",
 	}
-}
-
-func TestInferSSMPath_AL2023Arm64(t *testing.T) {
-	path := inferSSMPath("/base", "AL2023_ARM_64_STANDARD")
-	if !strings.Contains(path, "amazon-linux-2023") || !strings.Contains(path, "arm64") {
-		t.Errorf("unexpected path: %q", path)
+	for amiType, want := range cases {
+		if got := buildSSMParameterPath("1.30", types.AMITypes(amiType)); got != want {
+			t.Errorf("buildSSMParameterPath(%s) = %q, want %q", amiType, got, want)
+		}
 	}
-}
-
-func TestInferSSMPath_BottlerocketX8664(t *testing.T) {
-	path := inferSSMPath("/base", "BOTTLEROCKET_X86_64")
-	if !strings.Contains(path, "bottlerocket") || !strings.Contains(path, "x86_64") {
-		t.Errorf("unexpected path: %q", path)
-	}
-}
-
-func TestInferSSMPath_BottlerocketArm64(t *testing.T) {
-	path := inferSSMPath("/base", "BOTTLEROCKET_ARM_64")
-	if !strings.Contains(path, "bottlerocket") || !strings.Contains(path, "arm64") {
-		t.Errorf("unexpected path: %q", path)
-	}
-}
-
-func TestInferSSMPath_UnknownReturnsEmpty(t *testing.T) {
-	// Unrecognized AMI types must resolve to "" (status Unknown) rather than
-	// silently comparing against the AL2 parameter, which is wrong for other
-	// families and absent entirely for k8s >= 1.33.
-	if path := inferSSMPath("/base", "UNKNOWN_TYPE"); path != "" {
-		t.Errorf("unknown type should return empty path, got %q", path)
-	}
-}
-
-func TestInferSSMPath_AL2Arm64(t *testing.T) {
-	path := inferSSMPath("/base", "AL2_ARM_64")
-	if !strings.Contains(path, "amazon-linux-2-arm64") {
-		t.Errorf("unexpected path: %q", path)
+	if got := buildReleaseVersionParameterPath("1.30", "BOTTLEROCKET_x86_64_X"); got != "/aws/service/bottlerocket/aws-k8s-1.30/x86_64/latest/image_version" {
+		t.Errorf("inferred Bottlerocket release path = %q", got)
 	}
 }
