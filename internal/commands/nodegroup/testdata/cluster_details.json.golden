@@ -1,0 +1,96 @@
+{
+  "name": "s-name",
+  "status": "s-status",
+  "version": "s-version",
+  "platformVersion": "s-platformversion",
+  "endpoint": "s-endpoint",
+  "createdAt": "2026-01-02T03:04:05Z",
+  "region": "s-region",
+  "support": {
+    "tier": "s-tier",
+    "standardUntil": "2026-01-02T03:04:05Z",
+    "extendedUntil": "2026-01-02T03:04:05Z",
+    "daysRemaining": 5,
+    "extraCostUsdPerHour": 1.5,
+    "fallback": true
+  },
+  "health": {
+    "results": [
+      {
+        "name": "s-name",
+        "status": "s-status",
+        "score": 6,
+        "message": "s-message",
+        "details": [
+          "s-string"
+        ],
+        "isBlocking": true,
+        "skipped": true
+      }
+    ],
+    "overallScore": 4,
+    "decision": "s-decision",
+    "warnings": [
+      "s-string"
+    ],
+    "errors": [
+      "s-string"
+    ]
+  },
+  "healthIssues": [
+    {
+      "code": "s-code",
+      "message": "s-message",
+      "resourceIds": [
+        "s-string"
+      ]
+    }
+  ],
+  "networking": {
+    "vpcId": "s-vpcid",
+    "vpcCidr": "s-vpccidr",
+    "subnetIds": [
+      "s-string"
+    ],
+    "securityGroupIds": [
+      "s-string"
+    ],
+    "endpointAccess": {
+      "privateAccess": true,
+      "publicAccess": true,
+      "publicCidrs": [
+        "s-string"
+      ]
+    }
+  },
+  "security": {
+    "encryptionEnabled": true,
+    "kmsKeyArn": "s-kmskeyarn",
+    "serviceRoleArn": "s-servicerolearn",
+    "loggingEnabled": [
+      "s-string"
+    ],
+    "deletionProtection": true
+  },
+  "addons": [
+    {
+      "name": "s-name",
+      "version": "s-version",
+      "status": "s-status",
+      "health": "s-health"
+    }
+  ],
+  "nodegroups": [
+    {
+      "name": "s-name",
+      "status": "s-status",
+      "instanceType": "s-instancetype",
+      "desiredSize": 4,
+      "readyNodes": 4,
+      "readyKnown": true
+    }
+  ],
+  "tags": {
+    "s-string": "s-string"
+  }
+}

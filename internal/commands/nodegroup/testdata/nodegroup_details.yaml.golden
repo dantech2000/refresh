@@ -1,0 +1,26 @@
+amiLookupError: s-amilookuperror
+amiStatus: Updating
+amiType: s-amitype
+capacityType: s-capacitytype
+currentAmi: s-currentami
+health: s-healthstatus
+instanceType: s-instancetype
+instances:
+  - availabilityZone: s-az
+    instanceId: s-instanceid
+    instanceType: s-instancetype
+    launchTime: "2026-01-02T03:04:05Z"
+    lifecycle: s-lifecycle
+    state: s-state
+latestAmi: s-latestami
+name: s-name
+scaling:
+  autoScaling: true
+  desiredSize: 3
+  maxSize: 3
+  minSize: 3
+status: s-status
+workloads:
+  criticalPods: 3
+  podDisruption: s-poddisruption
+  totalPods: 3

@@ -3,7 +3,9 @@ package nodegroup
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
+	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,9 +16,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
-	"github.com/dantech2000/refresh/internal/health"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
-	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func runScale(ctx context.Context, cmd *cli.Command) error {
@@ -52,6 +52,7 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 		Wait:        cmd.Bool("wait"),
 		Timeout:     cmd.Duration("op-timeout"),
 		DryRun:      cmd.Bool("dry-run"),
+		Force:       cmd.Bool("force"),
 	}
 
 	desired, err := int32PtrIfSet(cmd, "desired")
@@ -72,24 +73,93 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 	// dry-run preview and a real scale, so the preview surfaces it too. (REF-143)
 	warnInstanceTypeAvailability(ctx, svc, clusterName, cmd.String("nodegroup"))
 
+	nodegroupName := cmd.String("nodegroup")
+
+	// --check-pdbs gate. Without --force the service refuses a blocked
+	// scale-down itself; with --force (or --dry-run) run the check here so the
+	// overridden blockers are shown before anything changes.
+	var pdbCheck *nodegroupsvc.ScaleDownPDBCheck
+	var pdbCheckErr error
+	if opts.CheckPDBs && (opts.DryRun || opts.Force) {
+		pdbCheck, pdbCheckErr = svc.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired)
+	}
+
 	if opts.DryRun {
-		// With --check-pdbs, surface the actual PDBs that would constrain a
-		// scale-down (name/namespace/disruptions-allowed), not just a generic
-		// warning. svc carries a health checker whenever --check-pdbs is set. (REF-4)
-		var pdbs []health.PDBInfo
-		if cmd.Bool("check-pdbs") {
-			if p, perr := svc.PodDisruptionBudgets(ctx); perr != nil {
-				color.Yellow("Could not load PodDisruptionBudgets for preview: %v", perr)
-			} else {
-				pdbs = p
-			}
+		if err := printScaleDryRun(ctx, eks.NewFromConfig(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
+			return err
 		}
-		return printScaleDryRun(ctx, eks.NewFromConfig(awsCfg), clusterName, cmd.String("nodegroup"), desired, minSize, maxSize, pdbs)
+		if opts.CheckPDBs {
+			printScaleDryRunPDBGate(os.Stdout, clusterName, nodegroupName, pdbCheck, pdbCheckErr, opts.Force)
+		}
+		fmt.Println("\nNo changes were made. Re-run without --dry-run to execute.")
+		return nil
+	}
+
+	if opts.CheckPDBs && opts.Force {
+		warnForcedScaleDown(os.Stderr, clusterName, nodegroupName, pdbCheck, pdbCheckErr)
 	}
 
 	return runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
-		return svc.Scale(ctx, clusterName, cmd.String("nodegroup"), desired, minSize, maxSize, opts)
+		return svc.Scale(ctx, clusterName, nodegroupName, desired, minSize, maxSize, opts)
 	})
+}
+
+// warnForcedScaleDown prints, to w, the PDB blockers (or the failed check)
+// that --force is overriding. It prints nothing when the gate would pass.
+func warnForcedScaleDown(w io.Writer, clusterName, nodegroupName string, check *nodegroupsvc.ScaleDownPDBCheck, checkErr error) {
+	warn := color.New(color.FgYellow)
+	if checkErr != nil {
+		_, _ = warn.Fprintf(w, "Warning: --force: could not validate PodDisruptionBudgets, scaling anyway: %v\n", checkErr)
+		return
+	}
+	if check == nil || !check.Refused() {
+		return
+	}
+	_, _ = warn.Fprintf(w, "Warning: --force: scaling %s/%s down from %d to %d despite %d PodDisruptionBudget(s) that allow 0 disruptions:\n",
+		clusterName, nodegroupName, check.CurrentDesired, check.RequestedDesired, len(check.Blockers))
+	for _, p := range check.Blockers {
+		_, _ = fmt.Fprintf(w, "  - %s\n", p.DrainBlockerSummary())
+	}
+	_, _ = warn.Fprintln(w, "EKS terminates the removed nodes without honoring these PDBs; their pods on those nodes go down.")
+}
+
+// printScaleDryRunPDBGate shows what the --check-pdbs gate would decide for
+// the previewed scale.
+func printScaleDryRunPDBGate(w io.Writer, clusterName, nodegroupName string, check *nodegroupsvc.ScaleDownPDBCheck, checkErr error, force bool) {
+	switch {
+	case checkErr != nil:
+		if force {
+			_, _ = color.New(color.FgYellow).Fprintf(w, "\nPDB gate: could not validate PodDisruptionBudgets (%v); --force would scale anyway.\n", checkErr)
+			return
+		}
+		_, _ = color.New(color.FgRed).Fprintf(w, "\nPDB gate: would be REFUSED, PodDisruptionBudgets could not be validated: %v\n", checkErr)
+	case check == nil || !check.ScaleDown:
+		_, _ = fmt.Fprintln(w, "\nPDB gate: not a scale-down; nothing to check.")
+	case !check.Refused():
+		msg := fmt.Sprintf("\nPDB gate: no PodDisruptionBudget blocks removing nodes from %s.", nodegroupName)
+		if check.Note != "" {
+			msg += " " + check.Note + "."
+		}
+		_, _ = color.New(color.FgGreen).Fprintln(w, msg)
+	default:
+		verdict := "would be REFUSED"
+		c := color.New(color.FgRed)
+		if force {
+			verdict = "would be overridden by --force"
+			c = color.New(color.FgYellow)
+		}
+		scope := "with pods on this nodegroup's nodes"
+		if !check.Scoped {
+			scope = "in the cluster (could not scope to this nodegroup's nodes)"
+		}
+		_, _ = c.Fprintf(w, "\nPDB gate: %s. %d PodDisruptionBudget(s) %s allow 0 disruptions:\n", verdict, len(check.Blockers), scope)
+		for _, p := range check.Blockers {
+			_, _ = fmt.Fprintf(w, "  - %s\n", p.DrainBlockerSummary())
+		}
+		if !force {
+			_, _ = fmt.Fprintf(w, "Scale up the workload or relax the PDB first, or pass --force to scale %s/%s down anyway.\n", clusterName, nodegroupName)
+		}
+	}
 }
 
 // scaleSetupTimeout returns the overall deadline for a scale run. --timeout
@@ -115,7 +185,7 @@ func scaleSetupTimeout(apiTimeout, opTimeout time.Duration, wait, healthCheck bo
 
 // printScaleDryRun shows the current vs requested scaling configuration
 // without executing, honoring the flag's "Preview scaling impact" promise.
-func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, nodegroupName string, desired, minSize, maxSize *int32, pdbs []health.PDBInfo) error {
+func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, nodegroupName string, desired, minSize, maxSize *int32) error {
 	desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
 		ClusterName:   aws.String(clusterName),
 		NodegroupName: aws.String(nodegroupName),
@@ -128,11 +198,7 @@ func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, n
 	}
 
 	color.Cyan("DRY RUN: Would scale nodegroup %s in cluster %s", nodegroupName, clusterName)
-	isScaleDown := false
 	if sc := desc.Nodegroup.ScalingConfig; sc != nil {
-		if desired != nil && *desired < aws.ToInt32(sc.DesiredSize) {
-			isScaleDown = true
-		}
 		printScaleChange := func(label string, current *int32, requested *int32) {
 			switch {
 			case requested == nil:
@@ -148,46 +214,7 @@ func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, n
 		printScaleChange("Max", sc.MaxSize, maxSize)
 	}
 
-	// On a scale-down, node drains can be blocked by PodDisruptionBudgets that
-	// currently allow zero voluntary disruptions. List the specific PDBs at
-	// risk (or confirm none constrain the change). (REF-4)
-	if isScaleDown && pdbs != nil {
-		printScaleDownPDBImpact(pdbs)
-	}
-
-	fmt.Println("\nNo changes were made. Re-run without --dry-run to execute.")
 	return nil
-}
-
-// printScaleDownPDBImpact lists the PodDisruptionBudgets that would constrain a
-// scale-down: those currently allowing zero voluntary disruptions block a node
-// drain until their workload recovers. PDBs in system namespaces (e.g.
-// kube-system/coredns) are included: they block a drain just the same. (REF-4)
-func printScaleDownPDBImpact(pdbs []health.PDBInfo) {
-	if len(pdbs) == 0 {
-		ui.Outln("\nPod Disruption Budgets: none found in any namespace — nothing constrains this scale-down.")
-		return
-	}
-	var atRisk []health.PDBInfo
-	for _, p := range pdbs {
-		if p.AtRisk() {
-			atRisk = append(atRisk, p)
-		}
-	}
-	if len(atRisk) == 0 {
-		color.Green("\nPod Disruption Budgets: %d found; none currently block a drain.", len(pdbs))
-		return
-	}
-	color.Yellow("\nPod Disruption Budgets at risk (%d): these allow 0 disruptions now and may block node drain:", len(atRisk))
-	for _, p := range atRisk {
-		if p.StatusNotSynced {
-			fmt.Printf("  %s/%s: disruptionsAllowed=%d, status not synced (evictions are refused)\n",
-				p.Namespace, p.Name, p.DisruptionsAllowed)
-			continue
-		}
-		fmt.Printf("  %s/%s: disruptionsAllowed=%d, healthy=%d/%d\n",
-			p.Namespace, p.Name, p.DisruptionsAllowed, p.CurrentHealthy, p.DesiredHealthy)
-	}
 }
 
 // int32PtrIfSet returns &v for cmd.Int(name) when the flag was explicitly set,

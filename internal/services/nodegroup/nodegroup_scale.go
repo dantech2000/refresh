@@ -2,7 +2,9 @@ package nodegroup
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -37,28 +39,16 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 		}
 	}
 
-	if options.CheckPDBs && s.healthChecker != nil && desired != nil {
-		desc, err := s.eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(nodegroupName),
-		})
+	// A scaling config change does not honor PDBs: EKS terminates the
+	// surplus nodes without waiting for evictions. So with --check-pdbs a
+	// scale-down that a PDB would block is refused unless Force is set.
+	if options.CheckPDBs && !options.Force {
+		check, err := s.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired)
 		if err != nil {
-			// The user explicitly asked for PDB validation; silently skipping
-			// it on a describe failure would scale down without the check.
-			return fmt.Errorf("PDB validation: failed to describe nodegroup %s/%s: %w", clusterName, nodegroupName, err)
+			return err
 		}
-		if desc.Nodegroup == nil {
-			return fmt.Errorf("PDB validation: empty describe response for nodegroup %s/%s", clusterName, nodegroupName)
-		}
-		if desc.Nodegroup.ScalingConfig != nil && desc.Nodegroup.ScalingConfig.DesiredSize != nil &&
-			*desired < *desc.Nodegroup.ScalingConfig.DesiredSize {
-			pdb := s.healthChecker.CheckPodDisruptionBudgets(ctx)
-			switch pdb.Status {
-			case health.StatusFail:
-				return fmt.Errorf("PDB validation failed: %s", pdb.Message)
-			case health.StatusWarn:
-				s.logger.Warn("PDB validation warnings before scale-down", "message", pdb.Message, "details", pdb.Details)
-			}
+		if check.Refused() {
+			return &ScaleDownBlockedError{Cluster: clusterName, Nodegroup: nodegroupName, Check: *check}
 		}
 	}
 
@@ -135,4 +125,97 @@ func (s *ServiceImpl) waitForScaleCompletion(ctx context.Context, clusterName, n
 			}
 		}
 	}
+}
+
+// ScaleDownPDBCheck is the result of CheckScaleDownPDBs.
+type ScaleDownPDBCheck struct {
+	// CurrentDesired is the nodegroup's desired size before the change.
+	CurrentDesired int32
+	// RequestedDesired is the requested desired size, or CurrentDesired when
+	// --desired is not set.
+	RequestedDesired int32
+	// ScaleDown is true when RequestedDesired < CurrentDesired. The other
+	// fields are only filled in for a scale-down.
+	ScaleDown bool
+	// Blockers are the PDBs that allow 0 disruptions and cover pods on the
+	// nodegroup's nodes (or on any node, when Scoped is false).
+	Blockers []health.PDBInfo
+	// Scoped is true when Blockers is narrowed to the nodegroup's nodes.
+	Scoped bool
+	// Note explains a short-circuit in the check, if any.
+	Note string
+}
+
+// Refused reports whether the check refuses the scale.
+func (c ScaleDownPDBCheck) Refused() bool { return c.ScaleDown && len(c.Blockers) > 0 }
+
+// ScaleDownBlockedError is returned by Scale with CheckPDBs when a scale-down
+// would terminate nodes that run pods of a PDB allowing 0 disruptions.
+type ScaleDownBlockedError struct {
+	Cluster   string
+	Nodegroup string
+	Check     ScaleDownPDBCheck
+}
+
+func (e *ScaleDownBlockedError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "refusing to scale %s/%s down from %d to %d: %d PodDisruptionBudget(s) allow 0 disruptions",
+		e.Cluster, e.Nodegroup, e.Check.CurrentDesired, e.Check.RequestedDesired, len(e.Check.Blockers))
+	if e.Check.Scoped {
+		b.WriteString(" for pods on this nodegroup's nodes")
+	} else {
+		b.WriteString(" (could not scope to this nodegroup's nodes, so every such PDB in the cluster counts)")
+	}
+	b.WriteString(":")
+	for _, p := range e.Check.Blockers {
+		b.WriteString("\n  - ")
+		b.WriteString(p.DrainBlockerSummary())
+	}
+	b.WriteString("\nA scaling change does not wait for PDBs: EKS terminates the removed nodes and their pods go down with them.")
+	b.WriteString("\nScale up the workload or relax the PDB first, or re-run with --force to scale down anyway.")
+	return b.String()
+}
+
+// CheckScaleDownPDBs reports whether scaling nodegroupName to desired is a
+// scale-down and, if so, which PDBs would be violated by it. The PDB scan is
+// scoped to the nodegroup's nodes (see health.HealthChecker.DrainBlockers).
+// A nil desired is never a scale-down. It returns an error when the check
+// can't be done (no health checker or Kubernetes client, or a failed API
+// call): the caller asked for PDB validation, so "couldn't check" must not
+// read as "no blockers".
+func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodegroupName string, desired *int32) (*ScaleDownPDBCheck, error) {
+	if desired == nil {
+		return &ScaleDownPDBCheck{}, nil
+	}
+	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+		return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(clusterName),
+			NodegroupName: aws.String(nodegroupName),
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("PDB validation: %w", awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName)))
+	}
+	if desc == nil || desc.Nodegroup == nil || desc.Nodegroup.ScalingConfig == nil || desc.Nodegroup.ScalingConfig.DesiredSize == nil {
+		return nil, fmt.Errorf("PDB validation: nodegroup %s/%s has no scaling config", clusterName, nodegroupName)
+	}
+	check := &ScaleDownPDBCheck{
+		CurrentDesired:   *desc.Nodegroup.ScalingConfig.DesiredSize,
+		RequestedDesired: *desired,
+	}
+	check.ScaleDown = check.RequestedDesired < check.CurrentDesired
+	if !check.ScaleDown {
+		return check, nil
+	}
+	if s.healthChecker == nil {
+		return nil, errors.New("PDB validation: no health checker configured")
+	}
+	report, err := s.healthChecker.DrainBlockers(ctx, clusterName, []string{nodegroupName})
+	if err != nil {
+		return nil, fmt.Errorf("PDB validation for %s/%s: %w (fix cluster access with --kubeconfig/--kube-context, or use --force to skip the PDB gate)", clusterName, nodegroupName, err)
+	}
+	check.Blockers = report.Blockers
+	check.Scoped = report.Scoped
+	check.Note = report.Note
+	return check, nil
 }
