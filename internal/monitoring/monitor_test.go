@@ -36,7 +36,7 @@ func fakeEKSDescribeUpdate(status ekstypes.UpdateStatus, errMsg string) *eks.Cli
 			}
 			body += `}`
 			return &http.Response{
-				StatusCode: 200,
+				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
 				Body:       io.NopCloser(strings.NewReader(body)),
 			}, nil
@@ -55,7 +55,7 @@ func fakeEKSErrorThenSuccess() *eks.Client {
 				return nil, errors.New("temporary")
 			}
 			return &http.Response{
-				StatusCode: 200,
+				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
 				Body:       io.NopCloser(strings.NewReader(`{"update":{"id":"upd-a","status":"Successful"}}`)),
 			}, nil

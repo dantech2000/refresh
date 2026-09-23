@@ -2,15 +2,21 @@
 # CI doesn't drift with the action's defaults. (REF-43)
 #
 # Enabled = the v2 default set (errcheck, govet, ineffassign, staticcheck,
-# unused) plus a curated, high-signal layer that the codebase already passes.
+# unused) plus a curated, high-signal layer the codebase passes cleanly.
 #
-# Intentionally NOT enabled:
-#   - misspell: its US locale rewrites "Cancelled"/"CANCELLED", which are the
-#     literal AWS EKS UpdateStatus enum values this code matches against —
-#     "fixing" them would break status handling.
-#   - gocritic (unlambda/ifElseChain) and unparam (always-nil error returns kept
-#     for interface symmetry): stylistic / intentional-design noise. Worth a
-#     dedicated cleanup pass, not a CI-pinning change.
+# Evaluated and intentionally NOT enabled (tooling audit, 2026-09):
+#   - paralleltest: tests swap package-level seams (e.g. watchIsTerminal), so
+#     t.Parallel() is unsafe without a test refactor.
+#   - wrapcheck: errors are formatted at the command boundary by
+#     awsinternal.FormatAWSError instead.
+#   - goconst, godot, perfsprint, prealloc, dupl, gocritic's performance tag:
+#     style / micro-perf noise.
+#   - exhaustive: partial switches on AWS enums are deliberate.
+#   - contextcheck: false positive on runner.Watch's fn().
+#
+# misspell runs with the DEFAULT locale on purpose: a US locale would rewrite
+# "Cancelled"/"CANCELLED", the literal AWS EKS UpdateStatus enum values this
+# code matches against.
 version: "2"
 
 run:
@@ -18,9 +24,26 @@ run:
 
 linters:
   enable:
-    - revive      # configurable golint replacement
-    - unconvert   # redundant type conversions
-    - bodyclose   # HTTP response bodies must be closed
+    - revive          # configurable golint replacement
+    - unconvert       # redundant type conversions
+    - bodyclose       # HTTP response bodies must be closed
+    - errorlint       # %w over %v, errors.As/Is over type assertions and ==
+    - nilerr          # returning nil after checking err != nil
+    - noctx           # exec.Command / http calls without a context
+    - copyloopvar     # redundant Go<1.22 loop-var copies
+    - intrange        # for i := 0; i < n; i++ -> for i := range n
+    - usestdlibvars   # http.MethodGet over "GET", etc.
+    - forcetypeassert # unchecked x.(T) (prod code only)
+    - errname         # ErrFoo / FooError naming
+    - misspell        # default (non-US) locale; see header
+    - whitespace      # leading/trailing blank lines in blocks
+    - thelper         # t.Helper() first in test helpers
+    - tparallel       # consistent t.Parallel() use
+    - gosec           # security; tuned via settings below (prod code only)
+    - unparam         # unused params / always-nil results (prod code only)
+    - gocritic        # diagnostic tag only
+    - gocyclo         # ratchet
+    - gocognit        # ratchet
   settings:
     revive:
       rules:
@@ -40,9 +63,29 @@ linters:
         - name: unexported-return
         - name: unreachable-code
         - name: var-declaration
+        - name: var-naming # Id -> ID, Url -> URL, ...
+    gocritic:
+      enabled-tags: [diagnostic]
+      disabled-checks:
+        - ifElseChain # style; not worth the churn
+    gocyclo:
+      min-complexity: 30
+    gocognit:
+      min-complexity: 45
+    gosec:
+      excludes:
+        - G304 # file inclusion via variable: user-supplied kubeconfig/config paths are the point of a CLI
+        - G703 # path traversal taint: same reason
+        - G706 # log injection taint: local CLI output, not a log sink
   exclusions:
     generated: lax
+    rules:
+      # Test fixtures write temp files with ordinary perms, use literal helper
+      # args, and assert on known types; these findings there are noise.
+      - path: _test\.go
+        linters: [gosec, unparam, forcetypeassert]
 
 formatters:
   enable:
     - gofmt
+    - goimports

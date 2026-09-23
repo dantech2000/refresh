@@ -1,3 +1,5 @@
+// Package health runs the pre-flight cluster health checks (nodes, workloads,
+// PDBs, capacity, quotas, utilization) that gate nodegroup and addon updates.
 package health
 
 import (

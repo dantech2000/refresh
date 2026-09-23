@@ -168,7 +168,7 @@ func TestListMachineOutput_CredentialFailure(t *testing.T) {
 	if strings.Contains(stderr, help) {
 		t.Errorf("credential help was printed as well as returned (main would print it twice):\n%s", stderr)
 	}
-	if _, ok := err.(cli.ExitCoder); ok {
+	if _, ok := err.(cli.ExitCoder); ok { //nolint:errorlint // mirrors cli.HandleExitCoder, which only honors an unwrapped ExitCoder
 		t.Errorf("credential failure should exit 1 through main, got an exit coder: %v", err)
 	}
 }

@@ -294,8 +294,8 @@ func TestDescribe_MapsHealthIssues(t *testing.T) {
 	if got.Message != "control plane could not assume the cluster IAM role" {
 		t.Errorf("issue message = %q", got.Message)
 	}
-	if len(got.ResourceIds) != 1 || got.ResourceIds[0] != "arn:aws:iam::123456789012:role/eksClusterRole" {
-		t.Errorf("resource ids = %v", got.ResourceIds)
+	if len(got.ResourceIDs) != 1 || got.ResourceIDs[0] != "arn:aws:iam::123456789012:role/eksClusterRole" {
+		t.Errorf("resource ids = %v", got.ResourceIDs)
 	}
 }
 

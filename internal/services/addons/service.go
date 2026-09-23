@@ -1,3 +1,5 @@
+// Package addons lists, describes, and updates EKS add-ons, including version
+// compatibility and post-update health checks.
 package addons
 
 import (

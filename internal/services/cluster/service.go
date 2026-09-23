@@ -1,3 +1,5 @@
+// Package cluster lists and describes EKS clusters, with optional health,
+// networking, and upgrade-insight details.
 package cluster
 
 import (
@@ -144,7 +146,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 			details.HealthIssues = append(details.HealthIssues, HealthIssue{
 				Code:        string(issue.Code),
 				Message:     aws.ToString(issue.Message),
-				ResourceIds: issue.ResourceIds,
+				ResourceIDs: issue.ResourceIds,
 			})
 		}
 	}
@@ -158,15 +160,15 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 		}
 
 		details.Networking = NetworkingInfo{
-			VpcId:            aws.ToString(cluster.ResourcesVpcConfig.VpcId),
-			SubnetIds:        cluster.ResourcesVpcConfig.SubnetIds,
-			SecurityGroupIds: cluster.ResourcesVpcConfig.SecurityGroupIds,
+			VpcID:            aws.ToString(cluster.ResourcesVpcConfig.VpcId),
+			SubnetIDs:        cluster.ResourcesVpcConfig.SubnetIds,
+			SecurityGroupIDs: cluster.ResourcesVpcConfig.SecurityGroupIds,
 			EndpointAccess:   endpointAccess,
 		}
 
 		// Get VPC CIDR if detailed information requested
-		if options.Detailed && details.Networking.VpcId != "" {
-			if cidr, err := s.getVpcCidr(ctx, details.Networking.VpcId); err == nil {
+		if options.Detailed && details.Networking.VpcID != "" {
+			if cidr, err := s.getVpcCidr(ctx, details.Networking.VpcID); err == nil {
 				details.Networking.VpcCidr = cidr
 			}
 		}
@@ -373,7 +375,7 @@ dispatch:
 	allSummaries := make([]ClusterSummary, 0)
 	var failedRegions []string
 	var firstErr error
-	for i := 0; i < dispatched; i++ {
+	for range dispatched {
 		result := <-resultChan
 		if result.err != nil {
 			s.logger.Warn("failed to list clusters in region", "region", result.region, "error", result.err)
