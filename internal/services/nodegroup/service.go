@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
@@ -48,6 +49,7 @@ type EKSAPI interface {
 	DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error)
 	UpdateNodegroupConfig(ctx context.Context, params *eks.UpdateNodegroupConfigInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupConfigOutput, error)
 	UpdateNodegroupVersion(ctx context.Context, params *eks.UpdateNodegroupVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error)
+	DescribeUpdate(ctx context.Context, params *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error)
 }
 
 // ServiceImpl is the nodegroup service.
@@ -63,6 +65,8 @@ type ServiceImpl struct {
 	// Test seams; nil in production (the real EC2/ASG/SSM lookups are used).
 	currentAMIFn func(context.Context, *ekstypes.Nodegroup) string
 	latestAMIFn  awsinternal.AMILookupFunc
+	// scalePollInterval overrides the Scale --wait poll interval (0 = default).
+	scalePollInterval time.Duration
 }
 
 // NewService creates a new nodegroup service.
