@@ -93,7 +93,7 @@ func promptStarted(ctx context.Context) (context.Context, <-chan struct{}) {
 }
 
 // readAsync runs p.ReadLine(ctx) in a goroutine and returns its result.
-func readAsync(p *ui.PromptReader, ctx context.Context) <-chan string {
+func readAsync(ctx context.Context, p *ui.PromptReader) <-chan string {
 	res := make(chan string, 1)
 	go func() {
 		line, err := p.ReadLine(ctx)
@@ -120,7 +120,7 @@ func TestAPIContextPromptOutlivesDeadline(t *testing.T) {
 	}
 
 	ctx, started := promptStarted(apiCtx)
-	res := readAsync(p, ctx)
+	res := readAsync(ctx, p)
 	<-started
 	if _, err := w.Write([]byte("y\n")); err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestAPIContextPausesDeadlineDuringPrompt(t *testing.T) {
 	apiCtx, cancel := apiContext(t.Context(), time.Hour)
 	defer cancel()
 	ctx, started := promptStarted(apiCtx)
-	res := readAsync(p, ctx)
+	res := readAsync(ctx, p)
 	<-started
 
 	if !deadlineMoves(apiCtx) {
