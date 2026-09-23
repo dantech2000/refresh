@@ -80,13 +80,14 @@ func TestBuildPlan_TwoMinorsBehindYieldsTwoHops(t *testing.T) {
 
 // Acceptance (REF-98): a blocker (lagging nodegroup beyond the kubelet skew)
 // renders the plan with the blocker called out; the command layer exits
-// non-zero on Blocked().
+// non-zero on Blocked(). At 1.27 the nodegroup is already beyond the skew of
+// the live 1.31 control plane, so it can't be pre-rolled either.
 func TestBuildPlan_LaggingNodegroupBlocks(t *testing.T) {
 	m := mocks.NewEKSAPI().
 		WithCluster("prod-east", "1.31").
 		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
 		WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
-		WithNodegroup("ancient", "1.28", ekstypes.AMITypesAl2023X8664Standard).
+		WithNodegroup("ancient", "1.27", ekstypes.AMITypesAl2023X8664Standard).
 		Build()
 	svc := newTestService(m)
 
@@ -95,7 +96,7 @@ func TestBuildPlan_LaggingNodegroupBlocks(t *testing.T) {
 		t.Fatalf("BuildPlan: %v", err)
 	}
 	if !plan.Blocked() {
-		t.Fatal("plan should be blocked: nodegroup at 1.28 vs target 1.32 exceeds skew 3")
+		t.Fatal("plan should be blocked: nodegroup at 1.27 vs target 1.32 exceeds skew 3")
 	}
 	blockers := plan.Blockers()
 	if len(blockers) == 0 || !strings.Contains(blockers[0], "ancient") {

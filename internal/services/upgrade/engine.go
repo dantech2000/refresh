@@ -123,6 +123,7 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 	for _, hop := range plan.Hops {
 		hop := hop
 		var cpSteps, addonSteps, ngSteps []Step
+		var ngNames []string
 		for _, st := range hop.Steps {
 			if st.Status != StatusPending {
 				continue
@@ -134,6 +135,7 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 				addonSteps = append(addonSteps, st)
 			case StepNodegroup:
 				ngSteps = append(ngSteps, st)
+				ngNames = append(ngNames, st.Target)
 			}
 		}
 
@@ -164,6 +166,7 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 			run: func(ctx context.Context) error {
 				return s.UpgradeNodegroups(ctx, plan.ClusterName, hop.To, NodegroupRollOptions{
 					SkipPatterns: opts.SkipNodegroups,
+					Only:         ngNames,
 					Force:        opts.Force,
 					Gate:         opts.NodegroupGate,
 					Observer:     opts.NodegroupObserver,
