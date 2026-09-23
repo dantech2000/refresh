@@ -205,7 +205,7 @@ func TestResolveClusterName_SpinnerStoppedBeforePrompt(t *testing.T) {
 			t.Cleanup(func() { newResolveSpinner, promptLine = origSpinner, origPrompt })
 			newResolveSpinner = func() resolveSpinner { return spin }
 			prompted := false
-			promptLine = func() (string, error) {
+			promptLine = func(context.Context) (string, error) {
 				prompted = true
 				if spin.running {
 					t.Error("prompt shown while the spinner is still running")

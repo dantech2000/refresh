@@ -48,7 +48,7 @@ func TestApplyHealthDecision_HealthOnlyPrintsBannerEvenWhenQuiet(t *testing.T) {
 	var done bool
 	var err error
 	out := captureStdout(t, func() {
-		done, err = applyHealthDecision(summary, flags)
+		done, err = applyHealthDecision(t.Context(), summary, flags)
 	})
 
 	if !done {
@@ -71,7 +71,7 @@ func TestApplyHealthDecision_QuietSuppressesBannerOnRegularUpdate(t *testing.T) 
 
 	var done bool
 	out := captureStdout(t, func() {
-		done, _ = applyHealthDecision(summary, flags)
+		done, _ = applyHealthDecision(t.Context(), summary, flags)
 	})
 
 	if done {
@@ -88,7 +88,7 @@ func TestApplyHealthDecision_NonQuietProceedPrintsBanner(t *testing.T) {
 	summary := health.HealthSummary{Decision: health.DecisionProceed}
 
 	out := captureStdout(t, func() {
-		_, _ = applyHealthDecision(summary, flags)
+		_, _ = applyHealthDecision(t.Context(), summary, flags)
 	})
 
 	if !strings.Contains(out, "PASS") {
@@ -104,7 +104,7 @@ func TestApplyHealthDecision_BlockReturnsErrorAndPrintsBanner(t *testing.T) {
 	var done bool
 	var err error
 	out := captureStdout(t, func() {
-		done, err = applyHealthDecision(summary, flags)
+		done, err = applyHealthDecision(t.Context(), summary, flags)
 	})
 
 	if !done {
@@ -126,7 +126,7 @@ func TestApplyHealthDecision_WarnHealthOnlyDoesNotPrompt(t *testing.T) {
 
 	// captureStdout also redirects os.Stdout; the prompt would block on stdin if invoked.
 	out := captureStdout(t, func() {
-		done, err := applyHealthDecision(summary, flags)
+		done, err := applyHealthDecision(t.Context(), summary, flags)
 		if !done {
 			t.Error("expected done=true on WARN+healthOnly")
 		}
@@ -177,7 +177,7 @@ func TestApplyHealthDecision_WarnAutoAcceptedPrintsWarning(t *testing.T) {
 	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"capacity"}}
 
 	out := captureStdout(t, func() {
-		done, err := applyHealthDecision(summary, flags)
+		done, err := applyHealthDecision(t.Context(), summary, flags)
 		if done {
 			t.Error("expected done=false so update can proceed")
 		}
@@ -198,7 +198,7 @@ func TestApplyHealthDecision_WarnAutoAcceptedQuietSuppressesWarning(t *testing.T
 	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"capacity"}}
 
 	out := captureStdout(t, func() {
-		_, _ = applyHealthDecision(summary, flags)
+		_, _ = applyHealthDecision(t.Context(), summary, flags)
 	})
 
 	if strings.Contains(out, "proceeding") {
@@ -212,7 +212,7 @@ func TestApplyHealthDecision_WarnAutoAcceptedJsonSuppressesWarning(t *testing.T)
 	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"capacity"}}
 
 	out := captureStdout(t, func() {
-		_, _ = applyHealthDecision(summary, flags)
+		_, _ = applyHealthDecision(t.Context(), summary, flags)
 	})
 
 	if strings.Contains(out, "proceeding") {

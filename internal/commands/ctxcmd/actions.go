@@ -1,10 +1,10 @@
 package ctxcmd
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strconv"
 	"strings"
 
@@ -12,9 +12,10 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
-func runUse(_ context.Context, cmd *cli.Command) error {
+func runUse(ctx context.Context, cmd *cli.Command) error {
 	f, err := cliconfig.Load()
 	if err != nil {
 		return err
@@ -25,7 +26,7 @@ func runUse(_ context.Context, cmd *cli.Command) error {
 
 	name := strings.TrimSpace(cmd.Args().First())
 	if name == "" {
-		picked, err := pickContext(f)
+		picked, err := pickContext(ctx, f)
 		if err != nil {
 			return err
 		}
@@ -166,7 +167,7 @@ func contextRemoveCommand() *cli.Command {
 	}
 }
 
-func pickContext(f *cliconfig.File) (string, error) {
+func pickContext(ctx context.Context, f *cliconfig.File) (string, error) {
 	names := f.Names()
 	color.Cyan("Available contexts:")
 	for i, n := range names {
@@ -178,12 +179,10 @@ func pickContext(f *cliconfig.File) (string, error) {
 		fmt.Printf("  %s %d) %-20s cluster=%s region=%s\n", marker, i+1, n, ctx.Cluster, orDash(ctx.Region))
 	}
 	fmt.Print("Select context [number or name]: ")
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil {
+	line, err := ui.ReadLine(ctx)
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
-	line = strings.TrimSpace(line)
 	if line == "" {
 		return "", fmt.Errorf("no selection made")
 	}

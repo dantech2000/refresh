@@ -44,14 +44,14 @@ func TestMatchingNodegroups_EmptyListReturnsEmpty(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestConfirmNodegroupSelection_EmptyReturnsError(t *testing.T) {
-	_, err := ConfirmNodegroupSelection(nil, "workers")
+	_, err := ConfirmNodegroupSelection(t.Context(), nil, "workers")
 	if err == nil {
 		t.Error("expected error for 0 matches")
 	}
 }
 
 func TestConfirmNodegroupSelection_SingleMatchReturnsIt(t *testing.T) {
-	got, err := ConfirmNodegroupSelection([]string{"workers"}, "work")
+	got, err := ConfirmNodegroupSelection(t.Context(), []string{"workers"}, "work")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestConfirmNodegroupSelection_SingleMatchReturnsIt(t *testing.T) {
 
 func TestConfirmNodegroupSelection_EmptyPatternReturnsAll(t *testing.T) {
 	ngs := []string{"workers", "gpu-nodes"}
-	got, err := ConfirmNodegroupSelection(ngs, "")
+	got, err := ConfirmNodegroupSelection(t.Context(), ngs, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

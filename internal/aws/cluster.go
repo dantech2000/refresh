@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -47,7 +46,7 @@ type resolveSpinner interface {
 // spinner is stopped before any prompt is shown (its redraw erases the line).
 var (
 	newResolveSpinner = func() resolveSpinner { return ui.NewFunSpinnerForCategory("general") }
-	promptLine        = readPromptLine
+	promptLine        = ui.ReadLine
 )
 
 // ListClustersAPI is the EKS subset needed to resolve cluster names.
@@ -108,7 +107,7 @@ func resolveClusterName(ctx context.Context, api ListClustersAPI, pattern string
 	matches := MatchingClusters(clusters, pattern)
 
 	// Handle matches with user confirmation
-	selectedCluster, err := confirmClusterSelection(matches, pattern, opts)
+	selectedCluster, err := confirmClusterSelection(ctx, matches, pattern, opts)
 	if err != nil {
 		// Show available clusters for reference
 		if len(matches) == 0 {
@@ -283,7 +282,7 @@ func matchPreferExact(names []string, pattern string) []string {
 // returned as-is. A single non-exact (substring) match is confirmed on a TTY;
 // without one it is accepted only for read-only callers. Multiple matches
 // prompt for a choice on a TTY and fail without one.
-func confirmClusterSelection(matches []string, pattern string, opts ClusterNameOptions) (string, error) {
+func confirmClusterSelection(ctx context.Context, matches []string, pattern string, opts ClusterNameOptions) (string, error) {
 	switch len(matches) {
 	case 0:
 		return "", fmt.Errorf("no clusters found matching pattern: %s", pattern)
@@ -293,7 +292,7 @@ func confirmClusterSelection(matches []string, pattern string, opts ClusterNameO
 			return match, nil
 		}
 		if stdinIsTerminal() {
-			return promptForSingleClusterMatch(match, pattern)
+			return promptForSingleClusterMatch(ctx, match, pattern)
 		}
 		if opts.ReadOnly {
 			_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "No cluster named %q; using the only partial match %q\n", pattern, match)
@@ -304,14 +303,17 @@ func confirmClusterSelection(matches []string, pattern string, opts ClusterNameO
 		if !stdinIsTerminal() {
 			return "", fmt.Errorf("pattern %q matched %d clusters (%s); pass the exact name with --cluster (no interactive terminal for selection)", pattern, len(matches), strings.Join(matches, ", "))
 		}
-		return promptForClusterSelection(matches, pattern)
+		return promptForClusterSelection(ctx, matches, pattern)
 	}
 }
 
 // promptForSingleClusterMatch asks the user to confirm a non-exact match.
-func promptForSingleClusterMatch(match, pattern string) (string, error) {
+func promptForSingleClusterMatch(ctx context.Context, match, pattern string) (string, error) {
 	_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "No cluster named %q. Use %q? [y/N]: ", pattern, match)
-	response, err := promptLine()
+	response, err := promptLine(ctx)
+	if errors.Is(err, ui.ErrPromptCancelled) {
+		return "", fmt.Errorf("operation cancelled")
+	}
 	if err != nil {
 		return "", fmt.Errorf("operation cancelled: failed to read input")
 	}
@@ -324,7 +326,7 @@ func promptForSingleClusterMatch(match, pattern string) (string, error) {
 }
 
 // promptForClusterSelection displays matching clusters and prompts for selection.
-func promptForClusterSelection(matches []string, pattern string) (string, error) {
+func promptForClusterSelection(ctx context.Context, matches []string, pattern string) (string, error) {
 	_, _ = color.New(color.FgYellow).Fprintf(os.Stderr, "Multiple clusters match pattern '%s':\n", pattern)
 	for i, cluster := range matches {
 		_, _ = fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, cluster)
@@ -332,7 +334,10 @@ func promptForClusterSelection(matches []string, pattern string) (string, error)
 
 	_, _ = color.New(color.FgCyan).Fprintf(os.Stderr, "Select cluster number (1-%d) or press Enter to cancel: ", len(matches))
 
-	response, err := promptLine()
+	response, err := promptLine(ctx)
+	if errors.Is(err, ui.ErrPromptCancelled) {
+		return "", fmt.Errorf("operation cancelled")
+	}
 	if err != nil {
 		return "", fmt.Errorf("operation cancelled: failed to read input")
 	}
@@ -349,15 +354,4 @@ func promptForClusterSelection(matches []string, pattern string) (string, error)
 	}
 
 	return "", fmt.Errorf("invalid selection: %s", response)
-}
-
-// readPromptLine reads one line from stdin. Unlike fmt.Scanln, a bare Enter
-// returns an empty string instead of an error, so prompts can honor their
-// advertised "press Enter to cancel/decline" behavior.
-func readPromptLine() (string, error) {
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && line == "" {
-		return "", err
-	}
-	return strings.TrimSpace(line), nil
 }
