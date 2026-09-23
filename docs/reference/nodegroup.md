@@ -172,7 +172,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--cluster, -c string` | `EKS_CLUSTER_NAME` | — | EKS cluster name or partial name pattern (overrides the active context; kubeconfig is not used) |
+| `--cluster, -c string` | — | — | EKS cluster name or partial name pattern (overrides the active context; kubeconfig is not used). Falls back to EKS_CLUSTER_NAME unless a positional is clearly the cluster (with --nodegroup, or two positionals) |
 | `--nodegroup, -n string` | — | — | Nodegroup name or partial name pattern (if not set, update all) |
 | `--all-clusters` | — | — | Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r. |
 | `--region, -r string` | — | — | Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS) |
