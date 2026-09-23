@@ -61,10 +61,15 @@ func TestListClusterStatuses_CancelledSweep(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	api := mocks.NewEKSAPI().WithCluster("any", "1.32").Build()
-	api.ListClustersFn = func(context.Context, *eks.ListClustersInput, ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
+	b := mocks.NewEKSAPI()
+	for _, name := range names {
+		b.WithCluster(name, "1.32")
+	}
+	api := b.Build()
+	list := api.ListClustersFn
+	api.ListClustersFn = func(ctx context.Context, in *eks.ListClustersInput, opts ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
 		cancel() // the sweep times out right after listing
-		return &eks.ListClustersOutput{Clusters: names}, nil
+		return list(ctx, in, opts...)
 	}
 	svc := newTestService(nil, &fakeNodegroups{}, &fakeAddons{})
 	svc.clusterAPI = api
@@ -241,12 +246,12 @@ type amiLookupFailingNodegroups struct{}
 func (amiLookupFailingNodegroups) ListWithFailures(context.Context, string, nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
 	const reason = "reading SSM parameter /aws/service/eks/optimized-ami/1.32/...: AccessDeniedException"
 	return []nodegroup.NodegroupSummary{
-			{Name: "ng-a", AMIStatus: types.AMIUnknown, AMILookupError: reason},
-			{Name: "ng-b", AMIStatus: types.AMIUnknown, AMILookupError: reason},
-		}, []string{
-			"ng-a: latest AMI lookup failed: " + reason,
-			"ng-b: latest AMI lookup failed: " + reason,
-		}, nil
+		{Name: "ng-a", AMIStatus: types.AMIUnknown, AMILookupError: reason},
+		{Name: "ng-b", AMIStatus: types.AMIUnknown, AMILookupError: reason},
+	}, []string{
+		"ng-a: latest AMI lookup failed: " + reason,
+		"ng-b: latest AMI lookup failed: " + reason,
+	}, nil
 }
 
 // A failed latest-AMI lookup must make the row incomplete (exit 4) instead of

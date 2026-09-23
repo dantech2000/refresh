@@ -22,7 +22,7 @@ func TestEKSAPIBuilderDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	clusters, err := mock.ListClusters(ctx, &eks.ListClustersInput{})
-	if err != nil || clusters == nil {
+	if err != nil || len(clusters.Clusters) != 1 || clusters.Clusters[0] != "prod" {
 		t.Fatalf("ListClusters() = %v, %v", clusters, err)
 	}
 	addons, err := mock.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String("prod")})

@@ -514,7 +514,8 @@ func TestUpgradeNodegroups_OnlyLimitsThePhase(t *testing.T) {
 		WithCluster("prod-east", "1.32").
 		WithNodegroup("old", "1.29", ekstypes.AMITypesAl2023X8664Standard).
 		WithNodegroup("mid", "1.31", ekstypes.AMITypesAl2023X8664Standard).
-		WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-old", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
+		WithUpdateStatuses("u-mid", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
 		Build()
 	rolls := captureNodegroupRolls(m)
 	svc := newTestService(m)
