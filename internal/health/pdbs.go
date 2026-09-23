@@ -19,8 +19,8 @@ import (
 )
 
 // PDBInfo is a structured snapshot of one PodDisruptionBudget's disruption
-// status, used by `nodegroup scale --dry-run` to show which PDBs would
-// constrain a scale-down. (REF-4)
+// status, reported by the pre-flight PDB check, DrainBlockers, and
+// ScaleDownBlockers (`nodegroup scale --check-pdbs`). (REF-4)
 type PDBInfo struct {
 	Namespace          string `json:"namespace" yaml:"namespace"`
 	Name               string `json:"name" yaml:"name"`
@@ -104,26 +104,6 @@ func pdbStatusSynced(pdb policyv1.PodDisruptionBudget) bool {
 	}
 	c := meta.FindStatusCondition(pdb.Status.Conditions, policyv1.DisruptionAllowedCondition)
 	return c == nil || c.Reason != policyv1.SyncFailedReason
-}
-
-// ListPodDisruptionBudgets returns a structured snapshot of every PDB in the
-// cluster with its current disruption status. System namespaces are included:
-// a stuck kube-system PDB (e.g. coredns) blocks a drain just like a user one.
-// Returns (nil, nil) when no Kubernetes client is configured so callers can
-// degrade gracefully. (REF-4)
-func (hc *HealthChecker) ListPodDisruptionBudgets(ctx context.Context) ([]PDBInfo, error) {
-	if hc.k8sClient == nil {
-		return nil, nil
-	}
-	pdbs, err := hc.k8sClient.PolicyV1().PodDisruptionBudgets("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("listing PodDisruptionBudgets: %w", err)
-	}
-	out := make([]PDBInfo, 0, len(pdbs.Items))
-	for _, pdb := range pdbs.Items {
-		out = append(out, pdbInfoFrom(pdb))
-	}
-	return out, nil
 }
 
 // CheckPodDisruptionBudgets validates PDB configuration for user workloads:

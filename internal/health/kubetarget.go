@@ -32,7 +32,6 @@ const InClusterNameEnv = "REFRESH_IN_CLUSTER_NAME"
 type TargetCluster struct {
 	Name     string
 	Region   string
-	ARN      string
 	Endpoint string
 }
 
@@ -52,7 +51,7 @@ type ClusterDescriber interface {
 	DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error)
 }
 
-// DescribeTarget looks up the target cluster's API endpoint and ARN. The raw
+// DescribeTarget looks up the target cluster's API endpoint. The raw
 // AWS error is returned so the caller can format it (the health package can't
 // import internal/aws without a cycle).
 func DescribeTarget(ctx context.Context, api ClusterDescriber, name, region string) (TargetCluster, error) {
@@ -65,7 +64,6 @@ func DescribeTarget(ctx context.Context, api ClusterDescriber, name, region stri
 	}
 	t := TargetCluster{Name: name, Region: region}
 	if out != nil && out.Cluster != nil {
-		t.ARN = aws.ToString(out.Cluster.Arn)
 		t.Endpoint = aws.ToString(out.Cluster.Endpoint)
 	}
 	return t, nil

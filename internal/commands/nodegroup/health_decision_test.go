@@ -62,9 +62,8 @@ func TestApplyHealthDecision_HealthOnlyPrintsBannerEvenWhenQuiet(t *testing.T) {
 	}
 }
 
-// Quiet alone (no --health-only) must suppress the banner during the regular
-// update flow — the previous step's spinner success line already told the
-// user the checks ran.
+// Quiet alone (no --health-only) must suppress the PASS banner during the
+// regular update flow.
 func TestApplyHealthDecision_QuietSuppressesBannerOnRegularUpdate(t *testing.T) {
 	flags := updateAMIFlags{healthOnly: false, quiet: true}
 	summary := health.HealthSummary{Decision: health.DecisionProceed}

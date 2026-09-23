@@ -20,8 +20,9 @@ type EKSAPIBuilder struct {
 	m *EKSAPI
 
 	// clusters holds every cluster registered with WithCluster, in order.
-	// DescribeCluster, ListClusters, ListNodegroups, ListAddons and
-	// ListInsights consult it once it is non-empty.
+	// DescribeCluster, ListClusters, ListNodegroups, ListAddons, ListInsights,
+	// StartInsightsRefresh and DescribeInsightsRefresh consult it once it is
+	// non-empty.
 	clusters []*ekstypes.Cluster
 
 	// supportedVersions is what DescribeClusterVersions offers.
@@ -175,9 +176,9 @@ func clusterARN(region, name string) string {
 // and ListClusters lists it. Calling WithCluster again accumulates clusters;
 // re-registering a name replaces it.
 //
-// Once any cluster is registered, DescribeCluster, ListNodegroups, ListAddons
-// and ListInsights fail with ResourceNotFoundException for any other name,
-// as EKS does.
+// Once any cluster is registered, DescribeCluster, ListNodegroups,
+// ListAddons, ListInsights, StartInsightsRefresh and DescribeInsightsRefresh
+// fail with ResourceNotFoundException for any other name, as EKS does.
 func (b *EKSAPIBuilder) WithCluster(name, k8sVersion string, opts ...ClusterOption) *EKSAPIBuilder {
 	c := &ekstypes.Cluster{
 		Name:            aws.String(name),

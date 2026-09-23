@@ -89,8 +89,8 @@ func checkControlPlaneMetrics(ctx context.Context, api metricDataAPI, clusterNam
 	return evaluateControlPlane(m)
 }
 
-// controlPlaneQuery pairs a CloudWatch query id with its AWS/EKS metric name and
-// statistic. Sum for counters (request totals), Maximum for gauges (etcd size,
+// controlPlaneQueries pairs each CloudWatch query id with its AWS/EKS metric
+// name and statistic. Sum for counters (request totals), Maximum for gauges (etcd size,
 // pending pods).
 var controlPlaneQueries = []struct {
 	id, metric, stat string

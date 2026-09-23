@@ -82,14 +82,14 @@ func newApp() *cli.Command {
 				Aliases: []string{"t"},
 				Usage:   "Operation timeout for API calls (e.g. 60s, 2m); REFRESH_TIMEOUT sets this and list/describe/check timeouts, not long-running update waits",
 				Value:   appconfig.DefaultTimeout,
-				Sources: cli.EnvVars("REFRESH_TIMEOUT"),
+				Sources: cli.EnvVars(appconfig.EnvTimeout),
 			},
 			&cli.IntFlag{
 				Name:    "max-concurrency",
 				Aliases: []string{"C"},
 				Usage:   "Global max concurrency for multi-region operations (for status: clusters evaluated at once per region; regions at once = min(4, this))",
 				Value:   appconfig.DefaultMaxConcurrency,
-				Sources: cli.EnvVars("REFRESH_MAX_CONCURRENCY"),
+				Sources: cli.EnvVars(appconfig.EnvMaxConcurrency),
 			},
 			// NO_COLOR is deliberately not a flag source: urfave/cli parses env
 			// sources with strconv.ParseBool, so NO_COLOR=yes would fail every

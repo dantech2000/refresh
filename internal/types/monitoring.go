@@ -30,10 +30,10 @@ type UpdateProgress struct {
 // monitored. It is not safe for concurrent use: the monitoring loop owns it
 // and is its only writer.
 type ProgressMonitor struct {
-	Updates     []UpdateProgress
-	StartTime   time.Time
-	Quiet       bool
-	Timeout     time.Duration
+	Updates   []UpdateProgress
+	StartTime time.Time
+	// LastPrinted is how many lines the last progress redraw wrote, so the
+	// next one can move the cursor up over them.
 	LastPrinted int
 }
 

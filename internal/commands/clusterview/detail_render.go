@@ -156,8 +156,8 @@ func statusToken(th *render.Theme, status string) string {
 	return th.Token(render.StatusFromString(status), status)
 }
 
-// healthCardLines renders the HEALTH section: a verdict + score bar + a
-// one-line summary. Shared by `cluster describe` and `upgrade-check`.
+// healthCardLines renders the `cluster describe` HEALTH section: a verdict +
+// score bar + a one-line summary.
 func healthCardLines(th *render.Theme, h *health.HealthSummary) []string {
 	st, col := decisionStatusColor(th, h.Decision)
 	head := th.Section("HEALTH") +

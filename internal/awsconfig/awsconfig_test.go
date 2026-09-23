@@ -90,12 +90,10 @@ func TestLoadIgnoresContextWhenAWSRegionSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	// AWS_REGION env should win over the context's region (SDK default chain).
-	// We don't pass WithRegion when context's region is set but env is set first;
-	// however since we DO pass WithRegion("eu-west-1") last it wins. This test
-	// documents current behavior: explicit context region overrides env.
-	if cfg.Region != "eu-west-1" {
-		t.Logf("cfg.Region = %q (context override applied last)", cfg.Region)
+	// AWS_REGION wins over the context's region: Load does not pass
+	// WithRegion when AWS_REGION is set.
+	if cfg.Region != "ap-south-1" {
+		t.Errorf("cfg.Region = %q, want ap-south-1 from AWS_REGION", cfg.Region)
 	}
 }
 

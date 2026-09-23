@@ -246,11 +246,6 @@ users:
 	if err != nil || sel.Diag.Context != "staging" || sel.Diag.SwitchedFrom != "prod" {
 		t.Errorf("staging from the second file: diag = %+v err = %v", sel.Diag, err)
 	}
-
-	// BuildKubeClient reads the same list.
-	if _, diag, err := BuildKubeClient(""); err != nil || diag.Context != "prod" {
-		t.Errorf("BuildKubeClient() with a $KUBECONFIG list: diag = %+v err = %v", diag, err)
-	}
 }
 
 func TestConnect_InCluster(t *testing.T) {
@@ -297,7 +292,7 @@ func TestDescribeTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := TargetCluster{Name: "prod", Region: "us-east-1", ARN: "arn:aws:eks:us-east-1:111122223333:cluster/prod", Endpoint: prodEndpoint}
+	want := TargetCluster{Name: "prod", Region: "us-east-1", Endpoint: prodEndpoint}
 	if got != want {
 		t.Errorf("DescribeTarget() = %+v, want %+v", got, want)
 	}

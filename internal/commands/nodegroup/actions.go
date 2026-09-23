@@ -17,10 +17,11 @@ import (
 // resolveHealthKubeClient builds the Kubernetes client for the pre-flight
 // health checks from an optional --kubeconfig path, verifies that it points at
 // clusterName (not just whatever kubeconfig context is current), and probes
-// connectivity. On any failure it emits an actionable diagnostic and returns
-// nil, so the kube-dependent checks degrade to "skipped" rather than running
-// against the wrong cluster or failing silently. The returned target lets the
-// caller build a metrics client against the same cluster.
+// connectivity. On any failure it returns nil (a cluster mismatch is always
+// reported on stderr, other failures only when humanOutput is set), so the
+// kube-dependent checks degrade to "skipped" rather than running against the
+// wrong cluster. The returned KubeSelection lets the caller build a metrics
+// client (health.BuildMetricsClient) against the same cluster.
 func resolveHealthKubeClient(ctx context.Context, api health.ClusterDescriber, region, clusterName, kubeconfig, kubeContext string, humanOutput bool) (kubernetes.Interface, health.KubeSelection) {
 	return runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
 		API:         api,

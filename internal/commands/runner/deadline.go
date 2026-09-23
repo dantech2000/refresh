@@ -7,8 +7,9 @@ import (
 )
 
 // pausableDeadline is a context with a timeout that stops counting while it
-// is paused. setupAWS pauses it for interactive prompts, so time the user
-// spends answering is not taken from the --timeout budget of the AWS calls.
+// is paused. apiContext registers its pause with ui.WithPromptScope, so a
+// prompt pauses it and the time the user spends answering is not taken from
+// the --timeout budget of the AWS calls.
 // It is cancelled when its parent is cancelled, when cancel is called, or
 // when the unpaused time reaches the timeout (Err is then
 // context.DeadlineExceeded).

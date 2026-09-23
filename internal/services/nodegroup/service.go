@@ -56,7 +56,6 @@ type ServiceImpl struct {
 	logger        *slog.Logger
 	awsConfig     aws.Config
 	healthChecker *health.HealthChecker
-	cache         *Cache
 	asgClient     *autoscaling.Client
 	ec2Client     *ec2.Client
 	ssmClient     *ssm.Client
@@ -68,13 +67,11 @@ type ServiceImpl struct {
 
 // NewService creates a new nodegroup service.
 func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logger *slog.Logger) *ServiceImpl {
-	cache := NewCache()
 	return &ServiceImpl{
 		eksClient:     eks.NewFromConfig(awsConfig),
 		logger:        logger,
 		awsConfig:     awsConfig,
 		healthChecker: healthChecker,
-		cache:         cache,
 		asgClient:     autoscaling.NewFromConfig(awsConfig),
 		ec2Client:     ec2.NewFromConfig(awsConfig),
 		ssmClient:     ssm.NewFromConfig(awsConfig),
@@ -411,7 +408,6 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 		target := health.TargetCluster{
 			Name:     clusterName,
 			Region:   s.awsConfig.Region,
-			ARN:      aws.ToString(clusterDesc.Cluster.Arn),
 			Endpoint: aws.ToString(clusterDesc.Cluster.Endpoint),
 		}
 		if wi, ok := s.analyzeWorkloads(ctx, target, aws.ToString(ng.NodegroupName), instanceIDs); ok {

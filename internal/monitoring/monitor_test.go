@@ -104,7 +104,7 @@ func TestIsUpdateComplete_Degraded(t *testing.T) {
 
 func TestHandleTimeout_ReturnsError(t *testing.T) {
 	cfg := refreshTypes.MonitorConfig{Quiet: true}
-	err := handleTimeout(&refreshTypes.ProgressMonitor{Quiet: true}, cfg)
+	err := handleTimeout(&refreshTypes.ProgressMonitor{}, cfg)
 	if err == nil {
 		t.Fatal("handleTimeout should return a non-nil error")
 	}
@@ -118,7 +118,7 @@ func TestHandleTimeout_ReturnsError(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestHandleUserCancellation_ReturnsErrCancelled(t *testing.T) {
-	monitor := &refreshTypes.ProgressMonitor{Quiet: true}
+	monitor := &refreshTypes.ProgressMonitor{}
 	cfg := refreshTypes.MonitorConfig{Quiet: true}
 	if err := handleUserCancellation(monitor, cfg); !errors.Is(err, ErrCancelled) {
 		t.Errorf("handleUserCancellation should return ErrCancelled, got %v", err)
@@ -272,7 +272,7 @@ func TestDisplayCompletionSummary_CancelledReturnsError(t *testing.T) {
 }
 
 func TestDisplayCompletionSummary_EmptyMonitorReturnsNil(t *testing.T) {
-	monitor := &refreshTypes.ProgressMonitor{Quiet: true}
+	monitor := &refreshTypes.ProgressMonitor{}
 	cfg := refreshTypes.MonitorConfig{Quiet: true}
 	if err := DisplayCompletionSummary(monitor, cfg); err != nil {
 		t.Errorf("empty monitor: expected nil, got %v", err)
@@ -477,7 +477,7 @@ func TestCheckSingleUpdateAndAllUpdates(t *testing.T) {
 		t.Fatalf("monitor update not updated: %+v", monitor.Updates[0])
 	}
 
-	empty := &refreshTypes.ProgressMonitor{Quiet: true}
+	empty := &refreshTypes.ProgressMonitor{}
 	if checkAllUpdatesWithChannels(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), empty, cfg) {
 		t.Fatal("empty checkAllUpdatesWithChannels: want not complete")
 	}

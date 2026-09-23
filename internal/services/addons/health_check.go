@@ -77,8 +77,8 @@ func (s *ServiceImpl) postUpdateHealthCheck(ctx context.Context, clusterName, ad
 }
 
 // clusterK8sVersion returns the cluster's Kubernetes version, memoized per
-// cluster name, or "" when it cannot be determined (callers degrade to
-// unfiltered/skip-validation behavior rather than failing the operation).
+// cluster name, or "" when it cannot be determined. Validation of a pinned
+// version is then skipped; resolving "latest" fails (see Update).
 func (s *ServiceImpl) clusterK8sVersion(ctx context.Context, clusterName string) string {
 	if v, ok := s.k8sVersions.Load(clusterName); ok {
 		if version, ok := v.(string); ok {

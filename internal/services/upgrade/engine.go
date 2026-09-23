@@ -23,8 +23,8 @@ type ExecuteOptions struct {
 	Confirm ConfirmFunc
 	// Progress receives human-readable progress lines.
 	Progress ProgressFunc
-	// SkipAddons / SkipNodegroups / Force mirror the plan options and are
-	// passed through to the phase executors.
+	// SkipAddons / SkipNodegroups mirror the plan options; Force is passed to
+	// UpdateNodegroupVersion. All three reach the phase executors.
 	SkipAddons     []string
 	SkipNodegroups []string
 	Force          bool

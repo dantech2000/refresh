@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/mattn/go-isatty"
 	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -23,8 +22,8 @@ func runList(ctx context.Context, cmd *cli.Command) error {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
 		return err
 	}
-	// Each --watch iteration performs the full setup+fetch+render cycle so a
-	// fresh service (and cache) is used every time.
+	// Each --watch iteration performs the full setup+fetch+render cycle, so
+	// every iteration reads fresh data.
 	return runner.Watch(ctx, cmd, func() error { return listAddonsOnce(ctx, cmd) })
 }
 
@@ -169,7 +168,7 @@ func resolveAddonName(ctx context.Context, lister addonNameLister, clusterName, 
 // answer.
 var (
 	stdinIsTerminal = func() bool {
-		return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+		return ui.IsTerminal(os.Stdin)
 	}
 	promptLine = ui.ReadLine
 )

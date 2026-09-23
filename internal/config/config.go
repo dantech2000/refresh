@@ -27,12 +27,6 @@ const (
 
 	// DefaultUpdateTimeout is the default timeout for AMI update operations.
 	DefaultUpdateTimeout = 40 * time.Minute
-
-	// DefaultCacheTTL is the default time-to-live for cached data.
-	DefaultCacheTTL = 5 * time.Minute
-
-	// DefaultListCacheTTL is the TTL for list operation cache.
-	DefaultListCacheTTL = 2 * time.Minute
 )
 
 // ClampMaxConcurrency returns v clamped to [1, MaxConcurrencyCap].
@@ -47,7 +41,7 @@ func ClampMaxConcurrency(v int) int {
 	return v
 }
 
-// Environment variable names as constants for type safety and refactoring.
+// Environment variable names read by the global flags and region helpers.
 const (
 	EnvTimeout        = "REFRESH_TIMEOUT"
 	EnvMaxConcurrency = "REFRESH_MAX_CONCURRENCY"
