@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.11.0](https://github.com/dantech2000/refresh/compare/v0.10.4...v0.11.0) (2026-09-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* Removed shorthands: cluster describe -d (--detailed), -s (--show-security), -a (add-ons show by default; --no-addons hides them); cluster upgrade -s (--skip), -p (--poll-interval); nodegroup update -f (--force), -s (--skip-health-check), -p (--poll-interval); addon update -s (--skip), -p (--parallel); context add -p (--profile). Renamed flags (old names deprecated, removed in 0.12.0): --timeout/-t after nodegroup update and cluster upgrade is now --wait-timeout; nodegroup scale --op-timeout is now --wait-timeout; cluster describe --show-health and --include-addons are replaced by --no-health and --no-addons. addon update and nodegroup scale now ask for confirmation before they change anything, and cluster upgrade needs --yes without a terminal: use --yes in scripts.
+* cluster upgrade-check now exits 2 (warnings) or 3 (blockers) instead of always 0; pass --exit-zero for the old behavior. cluster list exits 4 on a partial region failure instead of 0. Also: cluster describe exits 4 on unreadable parts, nodegroup list and addon list exit 4 instead of 1 on partial results, cluster upgrade and nodegroup scale --check-pdbs exit 3 instead of 1 when blocked, and addon update exits 5 instead of 2 for COMPLETED_WITH_ISSUES (4 instead of 1 for failed add-ons with --all).
+
+### Features
+
+* consistent exit codes and upgrade-check as a CI gate (REF-165) ([#358](https://github.com/dantech2000/refresh/issues/358)) ([94f3669](https://github.com/dantech2000/refresh/commit/94f36699e51d435d08ccc02b3d926786946f81a6))
+* consistent flag shorthands and shared mutating-command flags (REF-164) ([#357](https://github.com/dantech2000/refresh/issues/357)) ([a613d28](https://github.com/dantech2000/refresh/commit/a613d289f1552072d2b47179d306584d7588ffa7))
+
+
+### Bug Fixes
+
+* **common:** never start ForEachParallel work after cancellation ([#360](https://github.com/dantech2000/refresh/issues/360)) ([cc9f85d](https://github.com/dantech2000/refresh/commit/cc9f85d32a01d5fe683dbcd86a2e600777405918))
+* **nodegroup:** gate --max scale-downs on PDBs and wait on the EKS update ([#359](https://github.com/dantech2000/refresh/issues/359)) ([950670a](https://github.com/dantech2000/refresh/commit/950670a0a5e83cc225868928f257bbc5339a41ba))
+
 ## [0.10.4](https://github.com/dantech2000/refresh/compare/v0.10.3...v0.10.4) (2026-09-23)
 
 
