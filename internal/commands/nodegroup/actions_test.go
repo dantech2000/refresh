@@ -2,9 +2,12 @@ package nodegroup
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/urfave/cli/v3"
+
+	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
 // parseUpdateTestCommand runs a throwaway command through the real v3 parser
@@ -19,6 +22,7 @@ func parseUpdateTestCommand(t *testing.T, args []string, clusterFlag, nodegroupF
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}},
 			&cli.BoolFlag{Name: "health-only", Aliases: []string{"H"}},
+			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Value: appconfig.DefaultPollInterval},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 			captured = c
@@ -105,7 +109,11 @@ func TestReadUpdateAMIFlagsReadsTrailingHealthOnly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := parseUpdateTestCommand(t, tt.args, "", "")
-			if got := readUpdateAMIFlags(cmd).healthOnly; got != tt.want {
+			flags, err := readUpdateAMIFlags(cmd)
+			if err != nil {
+				t.Fatalf("readUpdateAMIFlags: %v", err)
+			}
+			if got := flags.healthOnly; got != tt.want {
 				t.Fatalf("readUpdateAMIFlags().healthOnly = %v, want %v", got, tt.want)
 			}
 		})
@@ -121,5 +129,28 @@ func TestTrailingValueFlagNotMistakenForPositional(t *testing.T) {
 	if gotCluster != "develop" || gotNodegroup != "groupC" {
 		t.Fatalf("updateClusterAndNodegroupPatterns() = %q, %q; want %q, %q",
 			gotCluster, gotNodegroup, "develop", "groupC")
+	}
+}
+
+// A zero or negative --poll-interval would panic the monitor's ticker after
+// the roll started; it must fail in flag parsing, before any AWS call.
+func TestReadUpdateAMIFlagsRejectsNonPositivePollInterval(t *testing.T) {
+	for _, v := range []string{"0s", "-5s"} {
+		cmd := parseUpdateTestCommand(t, []string{"develop", "--poll-interval", v}, "", "")
+		if _, err := readUpdateAMIFlags(cmd); err == nil || !strings.Contains(err.Error(), "--poll-interval must be greater than 0") {
+			t.Errorf("--poll-interval %s: err = %v, want a validation error", v, err)
+		}
+	}
+	flags, err := readUpdateAMIFlags(parseUpdateTestCommand(t, []string{"develop"}, "", ""))
+	if err != nil || flags.pollInterval != appconfig.DefaultPollInterval {
+		t.Errorf("default: pollInterval = %v, err = %v; want %v, nil", flags.pollInterval, err, appconfig.DefaultPollInterval)
+	}
+}
+
+// The real update command must reject --poll-interval 0 before it touches AWS.
+func TestUpdateCommandRejectsZeroPollIntervalBeforeAWS(t *testing.T) {
+	err := updateAMICommand().Run(context.Background(), []string{"update", "develop", "--poll-interval", "0"})
+	if err == nil || !strings.Contains(err.Error(), "--poll-interval must be greater than 0") {
+		t.Fatalf("err = %v, want the poll-interval validation error", err)
 	}
 }
