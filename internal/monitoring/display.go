@@ -152,10 +152,14 @@ func DisplayCompletionSummary(monitor *refreshTypes.ProgressMonitor, config refr
 			color.RedString("%d", failed))
 	}
 
-	// Return error if any updates failed
+	// Return an error if any update did not succeed. A Cancelled update is
+	// counted as failed above and must not exit 0 (or trigger verification).
 	for _, update := range monitor.Updates {
-		if update.Status == types.UpdateStatusFailed {
+		switch update.Status {
+		case types.UpdateStatusFailed:
 			return fmt.Errorf("one or more nodegroup updates failed")
+		case types.UpdateStatusCancelled:
+			return fmt.Errorf("one or more nodegroup updates were cancelled")
 		}
 	}
 
