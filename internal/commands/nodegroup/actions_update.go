@@ -65,7 +65,7 @@ func readUpdateAMIFlags(cmd *cli.Command) (updateAMIFlags, error) {
 		skipVerify:      cmd.Bool("skip-verify"),
 		changelog:       cmd.Bool("changelog"),
 		live:            cmd.Bool("live"),
-		timeout:         cmd.Duration("timeout"),
+		timeout:         runner.WaitTimeout(cmd, "timeout"),
 		pollInterval:    cmd.Duration("poll-interval"),
 		format:          strings.ToLower(cmd.String("format")),
 		kubeconfig:      cmd.String("kubeconfig"),
@@ -136,7 +136,7 @@ func (f updateAMIFlags) notice(attr color.Attribute, format string, args ...any)
 	_, _ = ui.ColorFor(f.noticeOut(), attr).Fprintf(f.noticeOut(), format+"\n", args...)
 }
 
-func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
+func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsDocument); err != nil {
 		return err
 	}
@@ -154,12 +154,14 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	// --timeout <= 0 means no limit, here and in the monitor (not a 60s fallback).
-	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, cmd.Duration("timeout"))
+	// --wait-timeout <= 0 means no limit, here and in the monitor (not a 60s fallback).
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, runner.WaitTimeout(cmd, "timeout"))
 	if err != nil {
 		return err
 	}
 	defer cancel()
+	// The run deadline is --wait-timeout: a timeout names it.
+	defer runner.WaitDeadlineHint(&err)
 
 	requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(cmd)
 	// -o json/yaml never prompts for a partial cluster name.

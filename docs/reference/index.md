@@ -29,7 +29,7 @@ These are accepted on every command.
 | `--max-concurrency, -C int` | `REFRESH_MAX_CONCURRENCY` | `8` | Global max concurrency for multi-region operations (for status: clusters evaluated at once per region; regions at once = min(4, this)) |
 | `--no-color` | — | — | Disable colored output (a non-empty NO_COLOR env var is also honored) |
 | `--profile string` | — | — | AWS shared-config profile (overrides the active context for this invocation) |
-| `--region string` | — | — | AWS region (overrides the active context for this invocation) |
+| `--region, -r string` | — | — | AWS region (overrides the active context for this invocation) |
 | `--log-level string` | `REFRESH_LOG_LEVEL` | `warn` | Log verbosity: debug, info, warn, error |
 | `--verbose` | — | — | Shortcut for --log-level debug |
 | `--help, -h` | — | — | show help |

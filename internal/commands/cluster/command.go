@@ -7,6 +7,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/flagcanon"
 )
 
 // Command returns the cluster command group with list, describe, upgrade-check,
@@ -71,13 +72,22 @@ func describeCommand() *cli.Command {
 		ArgsUsage: "[cluster]",
 		Description: `Get detailed information about an EKS cluster including networking,
 security configuration, add-ons, and health status. Direct EKS API calls
-provide fast, comprehensive results without CloudFormation dependency.`,
+provide fast, comprehensive results without CloudFormation dependency.
+
+Health status and add-ons are shown by default; --no-health and --no-addons
+skip them. --detailed adds networking and security, --show-security adds the
+security analysis alone.`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
-			&cli.BoolFlag{Name: "detailed", Aliases: []string{"d"}, Usage: "Show comprehensive information including networking and security"},
-			&cli.BoolFlag{Name: "show-health", Aliases: []string{"H"}, Usage: "Include health status from existing health framework", Value: true},
-			&cli.BoolFlag{Name: "show-security", Aliases: []string{"s"}, Usage: "Include security configuration analysis"},
-			&cli.BoolFlag{Name: "include-addons", Aliases: []string{"a"}, Usage: "Include EKS add-on information", Value: true},
+			&cli.BoolFlag{Name: "detailed", Usage: "Show comprehensive information including networking and security"},
+			&cli.BoolFlag{Name: "no-health", Usage: "Skip the health checks (shown by default)"},
+			&cli.BoolFlag{Name: "show-security", Usage: "Include security configuration analysis"},
+			&cli.BoolFlag{Name: "no-addons", Usage: "Skip the EKS add-on section (shown by default)"},
+			// Deprecated in 0.11.0: both were on by default, so the switches did
+			// nothing. --show-health=false / --include-addons=false still map to
+			// --no-health / --no-addons with a warning, for one release.
+			flagcanon.DeprecatedSwitch("show-health", "no-health", "H"),
+			flagcanon.DeprecatedSwitch("include-addons", "no-addons"),
 			&cli.BoolFlag{Name: "check-readiness", Aliases: []string{"R"}, Usage: "Measure real Kubernetes node readiness (Ready/desired) via the cluster API; without it NODES shows desired count only"},
 			runner.KubeconfigFlag("--check-readiness"),
 			runner.KubeContextFlag(),

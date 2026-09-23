@@ -9,6 +9,7 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -54,10 +55,10 @@ func updateCalls(srv *fakeaws.Server) int {
 // answers, for the duration of the test.
 func withTTY(t *testing.T, tty bool, answer string) {
 	t.Helper()
-	origTTY, origPrompt := stdinIsTerminal, promptLine
-	stdinIsTerminal = func() bool { return tty }
-	promptLine = func(context.Context) (string, error) { return answer, nil }
-	t.Cleanup(func() { stdinIsTerminal, promptLine = origTTY, origPrompt })
+	origTTY, origPrompt := runner.StdinIsTerminal, runner.PromptLine
+	runner.StdinIsTerminal = func() bool { return tty }
+	runner.PromptLine = func(context.Context) (string, error) { return answer, nil }
+	t.Cleanup(func() { runner.StdinIsTerminal, runner.PromptLine = origTTY, origPrompt })
 }
 
 // --all with an add-on name or version fails before any AWS call.
@@ -90,7 +91,7 @@ func TestUpdate_WaitFailedEncodesResult(t *testing.T) {
 	fakeaws.New(t, addonCluster(&fakeaws.Addon{
 		Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}, UpdateStatus: "Failed",
 	}))
-	stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--wait", "-o", "json")
+	stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--wait", "-o", "json", "--yes")
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit code = %d (err %v), want 1\nstderr:\n%s", code, err, stderr)
 	}
@@ -108,7 +109,7 @@ func TestUpdate_WaitFailedEncodesResult(t *testing.T) {
 func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 	t.Run("completed", func(t *testing.T) {
 		srv := fakeaws.New(t, addonCluster(&fakeaws.Addon{Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}}))
-		stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--wait", "-o", "json")
+		stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--wait", "-o", "json", "--yes")
 		if err != nil {
 			t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
 		}
@@ -124,7 +125,7 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 		fakeaws.New(t, addonCluster(&fakeaws.Addon{
 			Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}, HealthIssue: "1 of 2 replicas ready",
 		}))
-		stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--wait", "-o", "json")
+		stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--wait", "-o", "json", "--yes")
 		if code := exitCodeOf(err); code != 5 {
 			t.Fatalf("exit code = %d (err %v), want 5\nstderr:\n%s", code, err, stderr)
 		}
@@ -137,7 +138,7 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 		fakeaws.New(t, addonCluster(&fakeaws.Addon{
 			Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}, HealthIssue: "1 of 2 replicas ready",
 		}))
-		_, stderr, err := runAddon(t, "update", "prod", "--all", "--wait", "-o", "json")
+		_, stderr, err := runAddon(t, "update", "prod", "--all", "--wait", "-o", "json", "--yes")
 		if code := exitCodeOf(err); code != 5 {
 			t.Fatalf("exit code = %d (err %v), want 5\nstderr:\n%s", code, err, stderr)
 		}
@@ -147,7 +148,7 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 			&fakeaws.Addon{Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0"}, UpdateStatus: "Cancelled"},
 			&fakeaws.Addon{Name: "coredns", Version: "v1.11.4", Available: []string{"v1.11.3"}},
 		))
-		stdout, _, err := runAddon(t, "update", "prod", "--all", "--wait", "-o", "json")
+		stdout, _, err := runAddon(t, "update", "prod", "--all", "--wait", "-o", "json", "--yes")
 		if code := exitCodeOf(err); code != 4 {
 			t.Fatalf("exit code = %d (err %v), want 4 (a failed add-on in --all)", code, err)
 		}
@@ -171,7 +172,7 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 func TestUpdate_VersionGuard(t *testing.T) {
 	t.Run("up to date", func(t *testing.T) {
 		srv := fakeaws.New(t, addonCluster(&fakeaws.Addon{Name: "coredns", Version: "v1.11.4", Available: []string{"v1.11.3"}}))
-		stdout, stderr, err := runAddon(t, "update", "prod", "coredns", "-o", "json")
+		stdout, stderr, err := runAddon(t, "update", "prod", "coredns", "-o", "json", "--yes")
 		if err != nil {
 			t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
 		}
@@ -185,14 +186,14 @@ func TestUpdate_VersionGuard(t *testing.T) {
 	})
 	t.Run("up to date plain", func(t *testing.T) {
 		fakeaws.New(t, addonCluster(&fakeaws.Addon{Name: "coredns", Version: "v1.11.3", Available: []string{"v1.11.3"}}))
-		stdout, _, err := runAddon(t, "update", "prod", "coredns", "-o", "plain")
+		stdout, _, err := runAddon(t, "update", "prod", "coredns", "-o", "plain", "--yes")
 		if err != nil || !strings.Contains(stdout, "UP_TO_DATE") {
 			t.Fatalf("stdout = %q, err = %v; want an UP_TO_DATE row", stdout, err)
 		}
 	})
 	t.Run("pinned downgrade", func(t *testing.T) {
 		srv := fakeaws.New(t, addonCluster(&fakeaws.Addon{Name: "vpc-cni", Version: "v1.19.0", Available: []string{"v1.19.0", "v1.18.0"}}))
-		stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "v1.18.0", "-o", "json")
+		stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "v1.18.0", "-o", "json", "--yes")
 		if err != nil {
 			t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
 		}
@@ -225,12 +226,13 @@ func TestUpdate_PartialAddonName(t *testing.T) {
 		wantErr    string
 		wantUpdate bool
 	}{
-		{name: "no tty", args: []string{"cni"}, wantErr: "no add-on named \"cni\" (partial match: vpc-cni)"},
+		{name: "no tty needs --yes", args: []string{"cni"}, wantErr: "add --yes to proceed"},
+		{name: "no tty dry run names the match", args: []string{"cni", "--dry-run"}, wantErr: "no add-on named \"cni\" (partial match: vpc-cni)"},
 		{name: "no tty with --yes", args: []string{"cni", "--yes"}, wantUpdate: true},
 		{name: "tty yes", tty: true, answer: "y", format: "table", args: []string{"cni"}, wantUpdate: true},
 		{name: "tty no", tty: true, answer: "n", format: "table", args: []string{"cni"}, wantErr: "cancelled"},
-		{name: "tty with -o json never prompts", tty: true, answer: "y", args: []string{"cni"}, wantErr: "no add-on named \"cni\" (partial match: vpc-cni)"},
-		{name: "case-insensitive exact", args: []string{"VPC-CNI"}, wantUpdate: true},
+		{name: "tty with -o json never prompts", tty: true, answer: "y", args: []string{"cni"}, wantErr: "-o json does not prompt for confirmation"},
+		{name: "case-insensitive exact", args: []string{"VPC-CNI", "--yes"}, wantUpdate: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

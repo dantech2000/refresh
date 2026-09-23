@@ -15,6 +15,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/flagcanon"
 	"github.com/dantech2000/refresh/internal/rollview"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -71,18 +72,23 @@ Examples:
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "to", Usage: "Target Kubernetes version (e.g. 1.33)", Required: true},
-			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Print the full ordered plan without mutating anything"},
-			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Skip per-phase confirmation prompts"},
+			runner.DryRunFlag("Print the full ordered plan without mutating anything"),
+			runner.YesFlag("Skip per-phase confirmation prompts (required with -o json/yaml or without a terminal)"),
 			&cli.BoolFlag{Name: "force", Usage: "Force nodegroup rolls when pods can't be drained due to PDBs"},
 			&cli.BoolFlag{Name: "skip-insights-check", Usage: "Upgrade without the EKS Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself"},
 			&cli.BoolFlag{Name: "skip-health-check", Usage: "Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended)"},
 			runner.KubeconfigFlag("the PDB drain-blocker checks and the live roll panel"),
 			runner.KubeContextFlag(),
-			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
+			&cli.StringSliceFlag{Name: "skip", Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to skip (repeatable)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Overall upgrade timeout (not read from REFRESH_TIMEOUT, which only sets API/read timeouts)", Value: upgradeDefaultTimeout},
-			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "How often to poll in-flight updates", Value: appconfig.DefaultPollInterval},
+			runner.WaitTimeoutFlag("How long to wait for the whole upgrade to finish (0 = no limit; not read from REFRESH_TIMEOUT, which only sets API timeouts)", upgradeDefaultTimeout),
+			// Deprecated in 0.11.0: the local --timeout/-t meant the wait
+			// timeout and clashed with the global API --timeout. Kept hidden
+			// for one release; the global --timeout before the subcommand
+			// still sets the API timeout.
+			flagcanon.DeprecatedDuration("timeout", "wait-timeout", "t"),
+			&cli.DurationFlag{Name: "poll-interval", Usage: "How often to poll in-flight updates", Value: appconfig.DefaultPollInterval},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain). json/yaml print one document: the plan with --dry-run or when blocked, else {plan, report} after the run (requires --yes)", Value: "table"},
 		},
 		Action: runUpgrade,
@@ -96,7 +102,7 @@ type upgradeResult struct {
 	Report *upgrade.Report `json:"report" yaml:"report"`
 }
 
-func runUpgrade(ctx context.Context, cmd *cli.Command) error {
+func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	format := cmd.String("format")
 	if err := runner.ValidateFormat(format, runner.FormatsStandard); err != nil {
 		return err
@@ -106,15 +112,24 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	if runner.IsMachineFormat(format) && !cmd.Bool("dry-run") && !cmd.Bool("yes") {
 		return fmt.Errorf("cluster upgrade -o %s does not prompt before each phase; add --yes to execute, or --dry-run to print the plan only", strings.ToLower(format))
 	}
+	// Without a terminal, the per-phase prompts can't be answered: fail now,
+	// before any AWS call, instead of declining the first phase.
+	if err := runner.RequireYesUnattended(cmd); err != nil {
+		return err
+	}
 	pollInterval := cmd.Duration("poll-interval")
 	if pollInterval <= 0 {
 		return fmt.Errorf("--poll-interval must be greater than 0 (got %s)", pollInterval)
 	}
-	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
+	// The run's deadline is --wait-timeout (the whole upgrade), not the
+	// global API --timeout.
+	waitTimeout := runner.WaitTimeout(cmd, "timeout")
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, waitTimeout)
 	if err != nil {
 		return err
 	}
 	defer cancel()
+	defer runner.WaitDeadlineHint(&err)
 
 	// Mutating: no cluster list on empty input, and no kubeconfig fallback.
 	// -o json/yaml runs are unattended, so a partial name fails with the
@@ -187,9 +202,9 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	var ngObserver upgrade.RollObserver
 	if !cmd.Bool("quiet") && !ui.PlainOutput() && rollview.Interactive(os.Stdout) {
 		if kube, _ := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), false); kube != nil {
-			timeout, poll := cmd.Duration("timeout"), cmd.Duration("poll-interval")
+			poll := cmd.Duration("poll-interval")
 			ngObserver = func(octx context.Context, ng string) {
-				rollview.LiveRollForUpdate(octx, kube, ng, timeout, poll)
+				rollview.LiveRollForUpdate(octx, kube, ng, waitTimeout, poll)
 			}
 		}
 	}
@@ -213,7 +228,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 
 // buildUpgradePlan builds the plan behind a spinner. The insights refresh can
 // take minutes, so its progress lines stop the spinner and go to stderr
-// (unless --quiet). Ctrl+C or --timeout while planning is reported as an
+// (unless --quiet). Ctrl+C or --wait-timeout while planning is reported as an
 // interrupt, not as a blocked plan.
 func buildUpgradePlan(ctx context.Context, cmd *cli.Command, svc *upgrade.Service, clusterName string, opts upgrade.PlanOptions) (*upgrade.Plan, error) {
 	spinner := ui.NewFunSpinnerForCategory("cluster")
@@ -255,8 +270,9 @@ func executeOptions(cmd *cli.Command, gate *nodegroupHealthGate) upgrade.Execute
 // resumeCommand is the command that resumes an interrupted or failed run. It
 // repeats every flag that decides what is mutated and where: the root
 // --profile/--region (placed before the subcommand), the resolved cluster
-// name, the target, --skip, --skip-nodegroup, --force, --skip-insights-check,
-// --skip-health-check, and --yes. Only flags the user set are included, so
+// name, the target, --skip, --skip-nodegroup, --kubeconfig, --kube-context,
+// --wait-timeout, --force, --skip-insights-check, --skip-health-check, and
+// --yes. Only flags the user set are included, so
 // an unattended run's command stays unattended and an attended one still
 // confirms each phase. Values are shell-quoted.
 func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) string {
@@ -279,12 +295,30 @@ func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) str
 			parts = append(parts, "--"+name, shellQuote(v))
 		}
 	}
+	// A wait timeout the user chose (also through the deprecated local
+	// --timeout) carries over as --wait-timeout.
+	if cmd.IsSet("wait-timeout") || flagcanon.LocalIsSet(cmd, "timeout") {
+		parts = append(parts, "--wait-timeout", shortDuration(runner.WaitTimeout(cmd, "timeout")))
+	}
 	for _, name := range []string{"force", "skip-insights-check", "skip-health-check", "yes"} {
 		if cmd.Bool(name) {
 			parts = append(parts, "--"+name)
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+// shortDuration formats d without trailing zero units: 1h, 1h30m, 45m, 90s
+// stays 1m30s. The result is a valid Go duration and needs no shell quoting.
+func shortDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }
 
 // shellQuote returns s as one POSIX shell word: unchanged when it holds only

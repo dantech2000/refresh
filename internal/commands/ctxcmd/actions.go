@@ -113,7 +113,7 @@ Pass --use to switch to the context immediately after saving.
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name", Required: true},
 			&cli.StringFlag{Name: "region", Aliases: []string{"r"}, Usage: "AWS region (optional)"},
-			&cli.StringFlag{Name: "profile", Aliases: []string{"p"}, Usage: "AWS shared-config profile (optional)"},
+			&cli.StringFlag{Name: "profile", Usage: "AWS shared-config profile (optional)"},
 			&cli.BoolFlag{Name: "use", Usage: "Switch to this context after adding"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {

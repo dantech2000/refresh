@@ -121,6 +121,19 @@ that combination before it makes any AWS call.
   and prints `warning: downgrading <addon> from <installed> to <target>` on
   stderr. The result also carries the text in its `warning` field.
 
+### Confirmation
+
+New in 0.11: before it sends an update, `addon update` asks for confirmation,
+for example `Update coredns v1.11.1 → v1.11.4 on prod? [y/N]`. Only `y` or
+`yes` continues. With `--all`, the command lists every add-on that would
+change and asks once. An add-on that is already at the target, or already
+updating to it, is not asked about.
+
+- `--yes` skips the prompt.
+- `--dry-run` never prompts.
+- With `-o json`/`-o yaml`, or without a terminal, a run without `--yes` or
+  `--dry-run` fails before any AWS call. Add `--yes` to scripts.
+
 ### Add-on names
 
 An exact name, or an exact name in a different case, goes ahead. The names
@@ -168,13 +181,13 @@ The result is printed in every output format, also when the wait fails. See
 | `--version` | Target version or `latest` (default; or pass as third positional) |
 | `--all` | Update every add-on in the cluster to its latest version |
 | `--health-check` | Verify the add-on is ACTIVE and version-compatible before updating |
-| `--dry-run, -d` | Preview without applying changes |
+| `--dry-run, -d` | Preview without applying changes. Never prompts |
 | `--wait` | Wait for each update to complete |
-| `--wait-timeout` | Per-add-on wait timeout, with `--wait` (default `5m`) |
-| `--parallel, -p` | *(`--all` only)* Update add-ons in parallel |
+| `--wait-timeout` | How long to wait for each add-on update to finish, with `--wait` (default `5m`; `0` = no limit) |
+| `--parallel` | *(`--all` only)* Update add-ons in parallel |
 | `--dependency-order` | *(`--all` only)* Update in dependency-safe order: `vpc-cni` → `coredns`/`kube-proxy` → others |
-| `--skip, -s` | *(`--all` only)* Skip specific add-ons (repeatable) |
-| `--yes, -y` | Accept a partial add-on name match without a prompt (for unattended/CI use) |
+| `--skip` | *(`--all` only)* Skip specific add-ons (repeatable) |
+| `--yes, -y` | Update without the confirmation prompt, and accept a partial add-on name match (required with `-o json`/`yaml` or without a terminal) |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
 | `--timeout, -t` | Timeout for the update API calls (default `10m`); with `--wait`, `--wait-timeout` per add-on is added on top. Not read from `REFRESH_TIMEOUT` |
 
@@ -187,8 +200,11 @@ The result is printed in every output format, also when the wait fails. See
 ### Examples
 
 ```bash
-# vpc-cni -> latest
+# vpc-cni -> latest (asks for confirmation)
 refresh addon update my-cluster vpc-cni
+
+# The same in a script: no prompt
+refresh addon update my-cluster vpc-cni --yes -o json
 
 # Pin a version
 refresh addon update my-cluster coredns v1.11.1

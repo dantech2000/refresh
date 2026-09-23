@@ -137,11 +137,18 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 | `--check-pdbs` | Refuse a scale-down that could remove more of a Pod Disruption Budget's pods than it allows |
 | `--force` | With `--check-pdbs`, scale down anyway and print the blocking PDBs as a warning |
 | `--wait` | Wait for the EKS update to finish, then check that the nodegroup has the requested sizes |
-| `--op-timeout` | Scaling operation timeout for `--wait` (default `5m`; added on top of `--timeout`; `0` = no limit) |
+| `--wait-timeout` | How long to wait for the scaling to finish with `--wait` (default `5m`; added on top of `--timeout`; `0` = no limit). Replaces `--op-timeout`, which still works in 0.11 with a deprecation warning |
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint |
-| `--dry-run` | Preview the scaling impact without executing |
-| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`). With `--wait`, `--op-timeout` is added on top |
+| `--dry-run, -d` | Preview the scaling impact without executing. Never prompts |
+| `--yes, -y` | Scale without the confirmation prompt (required without a terminal) |
+| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`). With `--wait`, `--wait-timeout` is added on top |
+
+!!! warning "Confirmation (new in 0.11)"
+    Before it changes a size, `scale` asks for confirmation, for example
+    `Scale prod/ng-default desired 3 → 1? [y/N]`. Only `y` or `yes`
+    continues. `--yes` skips the prompt. Without a terminal, a run without
+    `--yes` or `--dry-run` fails before any AWS call. Add `--yes` to scripts.
 
 !!! warning "A scale-down does not honor PDBs"
     When a scaling change lowers the desired size, EKS terminates the removed
@@ -177,7 +184,7 @@ refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --dry-
 refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
 
 # Scale down even though a PDB blocks it (the blockers print as a warning)
-refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --force
+refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --force --yes
 ```
 
 ---
@@ -232,7 +239,7 @@ refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one re
 Fleet mode selects nodegroups only with `-n`. It rejects positional
 arguments, `--cluster`, and `--kube-context`, because it matches each cluster
 to a kubeconfig context by endpoint. An exported `EKS_CLUSTER_NAME` is
-ignored. `--timeout` applies to each cluster separately. `--health-only`
+ignored. `--wait-timeout` applies to each cluster separately. `--health-only`
 asks for no batch confirmation, because it changes nothing.
 
 Discovery uses the same region rules as `status -A`: `-r`, then
@@ -259,11 +266,11 @@ run fails at once with exit `1`: nothing was gathered.
 | `--region, -r` | Region(s) for `--all-clusters` discovery (default: partition EKS regions / `REFRESH_EKS_REGIONS`) |
 | `--dry-run, -d` | Preview changes without executing |
 | `--changelog` | In dry-run, print the `amazon-eks-ami` release notes between the current and target AMI for AL2/AL2023 nodegroups. Bottlerocket and Windows nodegroups get a link to their own release notes |
-| `--force, -f` | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use `--reroll` |
+| `--force` | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use `--reroll` |
 | `--reroll` | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--no-wait` | Don't wait for update completion (start-and-return) |
 | `--quiet, -q` | Minimal output. `--quiet` does not prompt. A run that needs a confirmation (warn-level health findings, a nodegroup pattern that is not an exact name, the fleet batch) stops unless you pass `--yes` |
-| `--skip-health-check, -s` | Skip pre-flight health validation |
+| `--skip-health-check` | Skip pre-flight health validation |
 | `--health-only` | Run the health check only, don't update (exit `0`=pass / `2`=warn / `3`=block) |
 | `--yes, -y` | Assume yes: skip confirmation prompts (a nodegroup pattern that is not an exact name, warn-level health) for CI |
 | `--require-healthy` | Treat warn-level health findings as a hard stop (exit `2`) instead of prompting |
@@ -271,8 +278,9 @@ run fails at once with exit `1`: nothing was gathered.
 | `--live` | Force the live per-node roll panel, also when stdout is not a color terminal (a snapshot at most every 15s, only on change) |
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (not with `--all-clusters`) |
-| `--poll-interval, -p` | Polling interval for update status (default `15s`; must be greater than `0`) |
-| `--timeout, -t` | Max time to wait for update completion (default `40m`; applies per cluster with `--all-clusters`; `0` = no limit) |
+| `--poll-interval` | Polling interval for update status (default `15s`; must be greater than `0`) |
+| `--wait-timeout` | How long to wait for the update to finish (default `40m`; applies per cluster with `--all-clusters`; `0` = no limit; not read from `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Global API timeout when given before the subcommand. After the subcommand it is a deprecated alias of `--wait-timeout` in 0.11 and prints a warning |
 | `--format, -o` | `table` (default), `json`, or `yaml`: one document on stdout (the run summary, the `--dry-run` preview, or the `--health-only` verdict), with notices on stderr |
 
 !!! warning "Unattended / CI"

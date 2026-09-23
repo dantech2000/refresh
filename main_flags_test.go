@@ -24,9 +24,12 @@ var shadowAllowlist = map[string]string{
 	"refresh status --region":           "repeatable scan regions; read via runner.Regions",
 	"refresh cluster list --region":     "repeatable scan regions; read via runner.Regions",
 	"refresh nodegroup update --region": "repeatable fleet discovery regions (--all-clusters); read via runner.Regions",
-	// Different meaning and default from the global API timeout.
-	"refresh nodegroup update --timeout": "wait for update completion (default 40m), not the API timeout",
-	"refresh cluster upgrade --timeout":  "overall upgrade timeout, not the API timeout",
+	// Hidden, deprecated aliases of --wait-timeout (0.11.0, removed in
+	// 0.12.0). The API timeout is read through runner.APITimeout, which skips
+	// hidden local --timeout flags and uses the global one.
+	"refresh nodegroup update --timeout": "deprecated alias of --wait-timeout; API timeout via runner.APITimeout",
+	"refresh cluster upgrade --timeout":  "deprecated alias of --wait-timeout; API timeout via runner.APITimeout",
+	// Different default from the global API timeout.
 	"refresh addon update --timeout":     "update API budget (default 10m), not read from REFRESH_TIMEOUT",
 	"refresh addon update-all --timeout": "update API budget (default 10m), not read from REFRESH_TIMEOUT",
 	// The values are saved into the context, not used as an override.

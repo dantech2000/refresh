@@ -45,7 +45,7 @@ type clusterUpdateResult struct {
 	// Interrupted means the user stopped the run (Ctrl+C / SIGTERM) while this
 	// cluster was in progress; any started EKS update keeps running in AWS.
 	Interrupted bool `json:"interrupted,omitempty" yaml:"interrupted,omitempty"`
-	// TimedOut means monitoring hit the per-cluster --timeout before the
+	// TimedOut means monitoring hit the per-cluster --wait-timeout before the
 	// updates were terminal; they may still be running in AWS.
 	TimedOut bool   `json:"timedOut,omitempty" yaml:"timedOut,omitempty"`
 	Error    string `json:"error,omitempty" yaml:"error,omitempty"`
@@ -116,7 +116,7 @@ func validateFleetFlags(cmd *cli.Command) error {
 // runFleetUpdate is "patch Tuesday": discover clusters across regions and roll
 // matching nodegroups serially (blast-radius control), with one batch
 // confirmation, an aggregate summary, and a worst-outcome exit code.
-func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
+func runFleetUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	if err := validateFleetFlags(cmd); err != nil {
 		return err
 	}
@@ -124,14 +124,16 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	// No overall deadline: clusters roll serially, so one --timeout across the
-	// whole fleet would starve later clusters. --timeout applies per cluster
+	// No overall deadline: clusters roll serially, so one --wait-timeout across the
+	// whole fleet would starve later clusters. --wait-timeout applies per cluster
 	// (see updateOneClusterInFleet); the run stays signal-cancellable.
 	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, 0)
 	if err != nil {
 		return err
 	}
 	defer cancel()
+	// Each cluster's deadline is --wait-timeout: a timeout names it.
+	defer runner.WaitDeadlineHint(&err)
 
 	nodegroupPattern := cmd.String("nodegroup")
 	// -o json/yaml: stdout gets one document for the whole fleet run (with
@@ -139,7 +141,7 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 	machine := flags.machine()
 
 	regions, explicitRegions := resolveUpdateRegions(cmd, awsCfg)
-	// Discovery is bounded by --timeout so a stalled region can't hang an
+	// Discovery is bounded by --wait-timeout so a stalled region can't hang an
 	// unattended run. Only the default region sweep skips regions these
 	// credentials can't reach (SCP region restrictions, opt-in regions).
 	discoverCtx, cancelDiscover := fleetClusterContext(ctx, flags.timeout)
@@ -224,13 +226,13 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 }
 
 // discoveryStopError maps a discovery that ended with ctx done: a user
-// interrupt passes through, and the --timeout bound gets a message naming
+// interrupt passes through, and the --wait-timeout bound gets a message naming
 // it. Both exit 1: discovery gathered nothing (REF-165).
 func discoveryStopError(ctx context.Context, err error, timeout time.Duration) error {
 	if ctx.Err() != nil || !errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	return fmt.Errorf("fleet discovery did not finish within --timeout %s: %w", timeout, err)
+	return fmt.Errorf("fleet discovery did not finish within --wait-timeout %s: %w", timeout, err)
 }
 
 // regionScopeHint tells the user how to narrow the region sweep.
@@ -344,7 +346,7 @@ func recordMonitorError(res *clusterUpdateResult, monErr error) {
 	}
 }
 
-// fleetClusterContext scopes --timeout to a single cluster in a fleet run
+// fleetClusterContext scopes --wait-timeout to a single cluster in a fleet run
 // (health gate + roll + verify). timeout <= 0 means no per-cluster limit.
 func fleetClusterContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
@@ -453,7 +455,7 @@ func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern 
 	return nil
 }
 
-// fleetDryRunCluster previews one cluster under a per-cluster --timeout.
+// fleetDryRunCluster previews one cluster under a per-cluster --wait-timeout.
 func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) {
 	ctx, cancel := fleetClusterContext(ctx, flags.timeout)
 	defer cancel()

@@ -148,3 +148,80 @@ much like `aws ... --output text` but tab-separated and stable.
 refresh nodegroup list my-cluster -o plain | awk -F'\t' 'NR>1 {print $1}'
 refresh cluster list -A -o json | jq '.clusters[].name'
 ```
+
+## Migrating to 0.11
+
+0.11 gives every one-letter shorthand a single meaning across the CLI (see
+[Flag shorthands](concepts/configuration.md#flag-shorthands)). Shorthands that
+meant something else on one command were removed, and the wait timeouts got
+one name. A removed shorthand fails with a message that names its
+replacement:
+
+```text
+Error: -d was removed from 'cluster describe' in 0.11.0; use --detailed
+```
+
+### Removed shorthands
+
+| Command | Removed | Use instead |
+| --- | --- | --- |
+| `cluster describe` | `-d` | `--detailed` |
+| `cluster describe` | `-s` | `--show-security` |
+| `cluster describe` | `-a` | nothing: add-ons are shown by default (`--no-addons` hides them) |
+| `cluster upgrade` | `-s` | `--skip` |
+| `cluster upgrade` | `-p` | `--poll-interval` |
+| `nodegroup update` | `-f` | `--force` |
+| `nodegroup update` | `-s` | `--skip-health-check` |
+| `nodegroup update` | `-p` | `--poll-interval` |
+| `addon update` | `-s` | `--skip` |
+| `addon update` | `-p` | `--parallel` |
+| `context add` | `-p` | `--profile` |
+
+### Renamed and deprecated flags
+
+These old names still work in 0.11. Each one prints a one-line warning on
+stderr. They go away in 0.12.
+
+| Command | Old | New |
+| --- | --- | --- |
+| `nodegroup update` | `--timeout`, `-t` (after the subcommand) | `--wait-timeout` |
+| `cluster upgrade` | `--timeout`, `-t` (after the subcommand) | `--wait-timeout` |
+| `nodegroup scale` | `--op-timeout` | `--wait-timeout` |
+| `cluster describe` | `--show-health` | nothing: on by default |
+| `cluster describe` | `--show-health=false` | `--no-health` |
+| `cluster describe` | `--include-addons` | nothing: on by default |
+| `cluster describe` | `--include-addons=false` | `--no-addons` |
+
+The global `--timeout/-t` before the subcommand is still the API timeout:
+`refresh -t 2m cluster upgrade ...`.
+
+### New shorthands
+
+| Command | Added |
+| --- | --- |
+| every command | `-r` for the global `--region` |
+| `nodegroup scale` | `-d` (`--dry-run`), `-y` (`--yes`) |
+
+### New confirmation prompts
+
+`addon update` and `nodegroup scale` now ask before they change anything:
+
+```text
+Update coredns v1.11.1 → v1.11.4 on prod? [y/N]
+Scale prod/ng-a desired 3 → 1? [y/N]
+```
+
+`cluster upgrade` also fails at once without a terminal unless you pass
+`--yes` (before, its phase prompts read end-of-file and stopped the run).
+
+To keep scripts working:
+
+1. Add `--yes` (or `-y`) to every `addon update`, `nodegroup scale`, and
+   `cluster upgrade` call in a script, cron job, or CI pipeline.
+2. Replace `--timeout` after `nodegroup update` or `cluster upgrade` with
+   `--wait-timeout`.
+3. Replace `--op-timeout` with `--wait-timeout`.
+4. Replace each removed shorthand with its long flag from the table above.
+
+With `-o json`/`-o yaml`, or without a terminal, a run without `--yes` fails
+before any AWS call and names `--yes`. `--dry-run` never prompts.

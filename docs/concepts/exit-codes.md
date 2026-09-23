@@ -86,7 +86,7 @@ not count as a failure. When you name the regions with `-r` or
 - When no region answered (every region failed, or every region was
   skipped), nothing was gathered. The command prints an error and exits `1`.
   For `nodegroup update --all-clusters`, a discovery that does not finish
-  within `--timeout` also exits `1`.
+  within `--wait-timeout` also exits `1`.
 
 ## `cluster upgrade-check`
 
@@ -138,14 +138,15 @@ esac
 | `3` | The plan has a blocker, also with `--dry-run`. Nothing changed |
 
 After a failure or an interrupt, `refresh` prints the command that resumes
-the upgrade. See [`cluster upgrade`](../commands/cluster.md#upgrade).
+the upgrade, with the `--wait-timeout`, `--yes`, and other flags you gave. See
+[`cluster upgrade`](../commands/cluster.md#upgrade).
 
 ## `nodegroup scale`
 
 | Code | Meaning |
 |---|---|
 | `0` | The scaling request was accepted (and, with `--wait`, it settled) |
-| `1` | An error, including a `--check-pdbs` check that could not read the PDBs |
+| `1` | An error, including a `--check-pdbs` check that could not read the PDBs, a declined confirmation, or a missing `--yes` without a terminal |
 | `3` | Blocked: `--check-pdbs` refused a scale-down, or the pre-scaling health check (`--health-check`) blocked it. Nothing changed |
 | `5` | The scale was applied, but the post-scaling health check found blocking issues |
 
@@ -219,7 +220,7 @@ codes, review these changes:
 | `status` (every region skipped as not accessible) | `4` | `1` |
 | `status`, `cluster list`, `cluster describe`, `nodegroup list`, `addon list`, fleet mode (Ctrl+C after some data came back) | `4` | `1` |
 | `status` (a region answered with no clusters, another failed) | `1` | `4` |
-| `nodegroup update --all-clusters` (no region listed, or discovery hit `--timeout`) | `4` | `1` |
+| `nodegroup update --all-clusters` (no region listed, or discovery hit `--wait-timeout`) | `4` | `1` |
 | `cluster describe` (add-ons or nodegroups unreadable) | `0` with a stderr warning | `4` |
 | `nodegroup list`, `addon list` (items not described) | `1` | `4` |
 | `cluster upgrade` (blocked plan) | `1` | `3` |
