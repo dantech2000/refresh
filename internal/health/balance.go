@@ -26,7 +26,7 @@ func (hc *HealthChecker) checkResourceBalanceWith(ctx context.Context, snap *cpu
 	if err != nil {
 		result.Status = StatusWarn
 		result.Score = 80
-		result.Message = fmt.Sprintf("Unable to fetch detailed metrics: %v", err)
+		result.Message = fmt.Sprintf("Unable to fetch detailed metrics: %s", errSummary(err))
 		result.Details = append(result.Details, "Node-level EC2 metrics unavailable")
 		return result
 	}

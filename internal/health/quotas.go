@@ -9,6 +9,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
+
+	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // EC2 On-Demand Standard (A, C, D, H, I, M, R, T, Z) vCPU quota — the limit a
@@ -49,7 +52,7 @@ func checkServiceQuotas(ctx context.Context, sq serviceQuotaAPI, md metricDataAP
 	limit, err := onDemandVCPULimit(ctx, sq)
 	if err != nil {
 		return HealthResult{Name: "Service Quotas", Status: StatusPass, Skipped: true,
-			Message: fmt.Sprintf("service-quota headroom unavailable: %v", err)}
+			Message: fmt.Sprintf("service-quota headroom unavailable: %s", errSummary(err))}
 	}
 	usage, ok, err := onDemandVCPUUsage(ctx, md)
 	if err != nil || !ok {
@@ -60,12 +63,14 @@ func checkServiceQuotas(ctx context.Context, sq serviceQuotaAPI, md metricDataAP
 }
 
 func onDemandVCPULimit(ctx context.Context, sq serviceQuotaAPI) (float64, error) {
-	out, err := sq.GetServiceQuota(ctx, &servicequotas.GetServiceQuotaInput{
-		ServiceCode: aws.String(ec2ServiceCode),
-		QuotaCode:   aws.String(onDemandVCPUQuota),
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*servicequotas.GetServiceQuotaOutput, error) {
+		return sq.GetServiceQuota(rc, &servicequotas.GetServiceQuotaInput{
+			ServiceCode: aws.String(ec2ServiceCode),
+			QuotaCode:   aws.String(onDemandVCPUQuota),
+		})
 	})
 	if err != nil {
-		return 0, err
+		return 0, awserr.FormatAWSError(err, "reading the EC2 On-Demand vCPU quota")
 	}
 	if out == nil || out.Quota == nil || out.Quota.Value == nil {
 		return 0, fmt.Errorf("no quota value returned")
@@ -76,29 +81,31 @@ func onDemandVCPULimit(ctx context.Context, sq serviceQuotaAPI) (float64, error)
 func onDemandVCPUUsage(ctx context.Context, md metricDataAPI) (usage float64, ok bool, err error) {
 	end := time.Now()
 	start := end.Add(-quotaUsageWindow)
-	out, err := md.GetMetricData(ctx, &cloudwatch.GetMetricDataInput{
-		StartTime: aws.Time(start),
-		EndTime:   aws.Time(end),
-		MetricDataQueries: []cwtypes.MetricDataQuery{{
-			Id: aws.String("vcpu"),
-			MetricStat: &cwtypes.MetricStat{
-				Metric: &cwtypes.Metric{
-					Namespace:  aws.String(quotaUsageNamespace),
-					MetricName: aws.String("ResourceCount"),
-					Dimensions: []cwtypes.Dimension{
-						{Name: aws.String("Service"), Value: aws.String("EC2")},
-						{Name: aws.String("Type"), Value: aws.String("Resource")},
-						{Name: aws.String("Resource"), Value: aws.String("vCPU")},
-						{Name: aws.String("Class"), Value: aws.String("Standard/OnDemand")},
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
+		return md.GetMetricData(rc, &cloudwatch.GetMetricDataInput{
+			StartTime: aws.Time(start),
+			EndTime:   aws.Time(end),
+			MetricDataQueries: []cwtypes.MetricDataQuery{{
+				Id: aws.String("vcpu"),
+				MetricStat: &cwtypes.MetricStat{
+					Metric: &cwtypes.Metric{
+						Namespace:  aws.String(quotaUsageNamespace),
+						MetricName: aws.String("ResourceCount"),
+						Dimensions: []cwtypes.Dimension{
+							{Name: aws.String("Service"), Value: aws.String("EC2")},
+							{Name: aws.String("Type"), Value: aws.String("Resource")},
+							{Name: aws.String("Resource"), Value: aws.String("vCPU")},
+							{Name: aws.String("Class"), Value: aws.String("Standard/OnDemand")},
+						},
 					},
+					Period: aws.Int32(int32(quotaUsageWindow.Seconds())),
+					Stat:   aws.String("Maximum"),
 				},
-				Period: aws.Int32(int32(quotaUsageWindow.Seconds())),
-				Stat:   aws.String("Maximum"),
-			},
-		}},
+			}},
+		})
 	})
 	if err != nil {
-		return 0, false, err
+		return 0, false, awserr.FormatAWSError(err, "reading EC2 vCPU usage")
 	}
 	for _, r := range out.MetricDataResults {
 		if aws.ToString(r.Id) == "vcpu" && len(r.Values) > 0 {

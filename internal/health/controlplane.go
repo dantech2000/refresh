@@ -8,6 +8,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+
+	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // EKS standard control-plane etcd limit. At 8 GiB etcd raises a no-space alarm
@@ -79,7 +82,7 @@ func checkControlPlaneMetrics(ctx context.Context, api metricDataAPI, clusterNam
 			Name:    "Control Plane",
 			Status:  StatusWarn,
 			Score:   70,
-			Message: fmt.Sprintf("Unable to fetch control-plane metrics: %v", err),
+			Message: fmt.Sprintf("Unable to fetch control-plane metrics: %s", errSummary(err)),
 			Skipped: true,
 		}
 	}
@@ -122,13 +125,15 @@ func fetchControlPlaneMetrics(ctx context.Context, api metricDataAPI, clusterNam
 		})
 	}
 
-	out, err := api.GetMetricData(ctx, &cloudwatch.GetMetricDataInput{
-		StartTime:         aws.Time(start),
-		EndTime:           aws.Time(end),
-		MetricDataQueries: queries,
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
+		return api.GetMetricData(rc, &cloudwatch.GetMetricDataInput{
+			StartTime:         aws.Time(start),
+			EndTime:           aws.Time(end),
+			MetricDataQueries: queries,
+		})
 	})
 	if err != nil {
-		return controlPlaneMetrics{}, err
+		return controlPlaneMetrics{}, awserr.FormatAWSError(err, "fetching control-plane metrics")
 	}
 
 	var m controlPlaneMetrics
