@@ -42,6 +42,23 @@ func TestExitForStatuses(t *testing.T) {
 			want: 2,
 		},
 		{
+			name: "nodegroup behind control plane → 2",
+			statuses: []statussvc.ClusterStatus{{
+				Support:                      statussvc.SupportPosture{Tier: statussvc.SupportStandard},
+				NodegroupsBehindControlPlane: 1,
+			}},
+			want: 2,
+		},
+		{
+			name: "nodegroup behind control plane + incomplete → 2 (beats 4)",
+			statuses: []statussvc.ClusterStatus{{
+				Support:                      statussvc.SupportPosture{Tier: statussvc.SupportStandard},
+				NodegroupsBehindControlPlane: 1,
+				Errors:                       []string{"describe nodegroup(s): ng-broken: boom"},
+			}},
+			want: 2,
+		},
+		{
 			name: "extended support → 3 (beats stale)",
 			statuses: []statussvc.ClusterStatus{{
 				Support:  statussvc.SupportPosture{Tier: statussvc.SupportExtended},

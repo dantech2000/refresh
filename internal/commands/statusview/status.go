@@ -154,10 +154,11 @@ func errorsCell(c statussvc.ClusterStatus) string {
 }
 
 func summaryFooter(statuses []statussvc.ClusterStatus, elapsed time.Duration) string {
-	staleNodegroups, addonsBehind, supportRisk := 0, 0, 0
+	staleNodegroups, addonsBehind, supportRisk, ngBehindCP := 0, 0, 0, 0
 	for _, c := range statuses {
 		staleNodegroups += c.StaleAMI.Behind
 		addonsBehind += c.AddonsBehind.Behind
+		ngBehindCP += c.NodegroupsBehindControlPlane
 		if c.SupportRisk() {
 			supportRisk++
 		}
@@ -168,6 +169,9 @@ func summaryFooter(statuses []statussvc.ClusterStatus, elapsed time.Duration) st
 		fmt.Sprintf("%d addons behind", addonsBehind),
 		fmt.Sprintf("%d extended/unsupported", supportRisk),
 	}
+	if ngBehindCP > 0 {
+		parts = append(parts, fmt.Sprintf("%d nodegroups behind control plane", ngBehindCP))
+	}
 	incomplete := countIncomplete(statuses)
 	if incomplete > 0 {
 		parts = append(parts, fmt.Sprintf("%d incomplete", incomplete))
@@ -176,7 +180,7 @@ func summaryFooter(statuses []statussvc.ClusterStatus, elapsed time.Duration) st
 	if elapsed > 0 {
 		line += fmt.Sprintf("  (%s)", elapsed.Round(time.Millisecond))
 	}
-	if supportRisk > 0 || staleNodegroups > 0 || addonsBehind > 0 || incomplete > 0 {
+	if supportRisk > 0 || staleNodegroups > 0 || addonsBehind > 0 || ngBehindCP > 0 || incomplete > 0 {
 		return line
 	}
 	return color.GreenString(line)

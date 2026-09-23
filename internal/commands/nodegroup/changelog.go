@@ -170,7 +170,9 @@ func printChangelogsForNodegroups(ctx context.Context, awsCfg aws.Config, eksCli
 			continue
 		}
 		current := aws.ToString(desc.Nodegroup.ReleaseVersion)
-		target := awsinternal.LatestReleaseVersionForType(ctx, ssmClient, k8sVersion, desc.Nodegroup.AmiType)
+		// Target the nodegroup's own minor: the update keeps it there.
+		ngVersion := awsinternal.NodegroupK8sVersion(desc.Nodegroup, k8sVersion)
+		target := awsinternal.LatestReleaseVersionForType(ctx, ssmClient, ngVersion, desc.Nodegroup.AmiType)
 		if current == "" || target == "" || current == target {
 			continue
 		}

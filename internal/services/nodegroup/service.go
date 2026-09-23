@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
@@ -57,6 +57,10 @@ type ServiceImpl struct {
 	asgClient     *autoscaling.Client
 	ec2Client     *ec2.Client
 	ssmClient     *ssm.Client
+
+	// Test seams; nil in production (the real EC2/ASG/SSM lookups are used).
+	currentAMIFn func(context.Context, *ekstypes.Nodegroup) string
+	latestAMIFn  awsinternal.AMILookupFunc
 }
 
 // NewService creates a new nodegroup service.
@@ -179,9 +183,9 @@ func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, 
 		return nil, nil, err
 	}
 
-	// The latest AMI is constant per (cluster version, AMI type); memoize the
-	// SSM lookup across the (concurrent) per-nodegroup work.
-	latestAMI := s.newLatestAMIResolver(k8sVersion)
+	// The latest AMI is constant per (nodegroup version, AMI type); memoize
+	// the SSM lookup across the (concurrent) per-nodegroup work.
+	latestAMI := s.newLatestAMICache()
 
 	// Measured Kubernetes Ready counts per nodegroup, fetched once (one node
 	// LIST) when a cluster-connected health checker is wired (--check-readiness).
@@ -221,8 +225,8 @@ func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, 
 				instanceType = ng.InstanceTypes[0]
 			}
 
-			currentAmiId := awsinternal.CurrentAmiID(fctx, ng, s.ec2Client, s.asgClient)
-			latestAmiId := latestAMI(fctx, ng.AmiType)
+			currentAmiId := s.currentAMI(fctx, ng)
+			latestAmiId := latestAMI.ForNodegroup(fctx, ng, k8sVersion)
 			amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
 
 			summary := NodegroupSummary{
@@ -234,7 +238,9 @@ func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, 
 				ReadyKnown:   readyKnown,
 				CurrentAMI:   currentAmiId,
 				AMIStatus:    amiStatus,
+				K8sVersion:   aws.ToString(ng.Version),
 			}
+			summary.VersionBehind = minorBehind(summary.K8sVersion, k8sVersion)
 			if !matchesFilters(summary, options.Filters) {
 				return ngResult{done: true}
 			}
@@ -260,24 +266,43 @@ func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, 
 	return summaries, failures, nil
 }
 
-// newLatestAMIResolver returns a concurrency-safe, memoized resolver for the
-// latest recommended AMI per AMI type at the given cluster version.
-func (s *ServiceImpl) newLatestAMIResolver(k8sVersion string) func(context.Context, ekstypes.AMITypes) string {
-	var mu sync.Mutex
-	byType := make(map[ekstypes.AMITypes]string)
-	return func(ctx context.Context, amiType ekstypes.AMITypes) string {
-		mu.Lock()
-		if v, ok := byType[amiType]; ok {
-			mu.Unlock()
-			return v
+// minorBehind reports whether Kubernetes version v ("1.31") is an older
+// major.minor than ref. Unparseable or empty versions are never "behind".
+func minorBehind(v, ref string) bool {
+	parse := func(s string) (int, int, bool) {
+		parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(s), "v"), ".", 3)
+		if len(parts) < 2 {
+			return 0, 0, false
 		}
-		mu.Unlock()
-		v := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, amiType)
-		mu.Lock()
-		byType[amiType] = v
-		mu.Unlock()
-		return v
+		major, err1 := strconv.Atoi(parts[0])
+		minor, err2 := strconv.Atoi(parts[1])
+		return major, minor, err1 == nil && err2 == nil
 	}
+	vMaj, vMin, ok1 := parse(v)
+	rMaj, rMin, ok2 := parse(ref)
+	if !ok1 || !ok2 {
+		return false
+	}
+	return vMaj < rMaj || (vMaj == rMaj && vMin < rMin)
+}
+
+// newLatestAMICache returns a concurrency-safe, memoized resolver for the
+// latest recommended AMI per (Kubernetes version, AMI type). Callers key it by
+// the nodegroup's own version: an AMI-only update keeps the nodegroup on its
+// current minor, so the cluster's minor is the wrong baseline.
+func (s *ServiceImpl) newLatestAMICache() *awsinternal.LatestAMICache {
+	if s.latestAMIFn != nil {
+		return awsinternal.NewLatestAMICache(s.latestAMIFn)
+	}
+	return awsinternal.NewLatestAMIIDCache(s.ssmClient)
+}
+
+// currentAMI resolves the AMI the nodegroup's nodes currently run.
+func (s *ServiceImpl) currentAMI(ctx context.Context, ng *ekstypes.Nodegroup) string {
+	if s.currentAMIFn != nil {
+		return s.currentAMIFn(ctx, ng)
+	}
+	return awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
 }
 
 // Describe returns expanded details for a single nodegroup.
@@ -309,8 +334,8 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	}
 	ng := out.Nodegroup
 
-	currentAmiId := awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
-	latestAmiId := awsinternal.LatestAmiIDForType(ctx, s.ssmClient, k8sVersion, ng.AmiType)
+	currentAmiId := s.currentAMI(ctx, ng)
+	latestAmiId := s.newLatestAMICache().ForNodegroup(ctx, ng, k8sVersion)
 	amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
 
 	var scaling ScalingConfig
