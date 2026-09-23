@@ -44,7 +44,7 @@ func TestResolveAddonName_ListAddonsErrorReturnsFormattedError(t *testing.T) {
 	}
 	svc := addons.NewService(m, slog.New(slog.DiscardHandler))
 
-	got, err := resolveAddonName(t.Context(), svc, "my-cluster", "vpc cni")
+	got, _, err := resolveAddonName(t.Context(), svc, "my-cluster", "vpc cni")
 	if got != "" || err == nil {
 		t.Fatalf("got %q, %v; want an error", got, err)
 	}
@@ -62,25 +62,26 @@ func TestResolveAddonName_Matching(t *testing.T) {
 	)
 	cases := []struct {
 		in, want, wantErr string
+		partial           bool
 	}{
 		{in: "vpc-cni", want: "vpc-cni"},                                      // exact wins over the case-insensitive twin
 		{in: "COREDNS", want: "coredns"},                                      // case-insensitive exact
-		{in: "pod-identity", want: "eks-pod-identity-agent"},                  // unique substring, second page
-		{in: "PROXY", want: "kube-proxy"},                                     // case-insensitive substring
+		{in: "pod-identity", want: "eks-pod-identity-agent", partial: true},   // unique substring, second page
+		{in: "PROXY", want: "kube-proxy", partial: true},                      // case-insensitive substring
 		{in: "csi-driver", wantErr: "ambiguous"},                              // two substring matches
 		{in: "totally bogus", wantErr: "invalid add-on name 'totally bogus'"}, // no match
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			got, err := resolveAddonName(t.Context(), svc, "my-cluster", tc.in)
+			got, partial, err := resolveAddonName(t.Context(), svc, "my-cluster", tc.in)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("got %q, %v; want error containing %q", got, err, tc.wantErr)
 				}
 				return
 			}
-			if err != nil || got != tc.want {
-				t.Fatalf("got %q, %v; want %q", got, err, tc.want)
+			if err != nil || got != tc.want || partial != tc.partial {
+				t.Fatalf("got %q (partial %v), %v; want %q (partial %v)", got, partial, err, tc.want, tc.partial)
 			}
 		})
 	}
@@ -88,7 +89,7 @@ func TestResolveAddonName_Matching(t *testing.T) {
 
 func TestResolveAddonName_AmbiguousListsCandidates(t *testing.T) {
 	svc, _ := pagedAddons([]string{"aws-ebs-csi-driver", "aws-efs-csi-driver", "coredns"})
-	_, err := resolveAddonName(t.Context(), svc, "my-cluster", "csi")
+	_, _, err := resolveAddonName(t.Context(), svc, "my-cluster", "csi")
 	if err == nil || !strings.Contains(err.Error(), "aws-ebs-csi-driver") || !strings.Contains(err.Error(), "aws-efs-csi-driver") ||
 		strings.Contains(err.Error(), "coredns") {
 		t.Errorf("err = %v, want it to list exactly the two csi candidates", err)

@@ -105,6 +105,18 @@ if any add-on update fails.
   refresh addon update my-cluster --all --dependency-order --wait
   refresh addon update my-cluster --all --skip vpc-cni --parallel
 
+--all cannot be combined with an add-on name or version.
+
+An add-on already at the target version is reported as UP_TO_DATE and left
+alone; 'latest' never downgrades. A pinned version older than the installed
+one proceeds with a warning. A name that only partially matches an installed
+add-on is confirmed on a terminal; without one, pass the exact name or --yes.
+
+With --wait, the command follows the EKS update until it succeeds, fails, or
+is cancelled, then checks that the add-on reports the target version. Exit
+codes: 0 success, 1 failure, 2 updated but the post-update health check found
+issues (COMPLETED_WITH_ISSUES).
+
 Use --health-check to verify the add-on is ACTIVE and version-compatible
 before updating. -o json|yaml emits a machine-readable result/summary.`,
 		Flags: []cli.Flag{
@@ -125,6 +137,7 @@ before updating. -o json|yaml emits a machine-readable result/summary.`,
 			&cli.DurationFlag{Name: "wait-timeout", Usage: "Per-addon wait timeout (with --wait)", Value: 5 * time.Minute},
 			&cli.BoolFlag{Name: "dependency-order", Usage: "(--all only) Update addons in dependency-safe order (vpc-cni -> coredns/kube-proxy -> others)"},
 			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "(--all only) Skip specific addons (repeatable)"},
+			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Accept a partial add-on name match without prompting (for unattended/CI use)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

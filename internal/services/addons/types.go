@@ -12,6 +12,15 @@ type AddonSummary struct {
 	Health  string `json:"health" yaml:"health"`
 }
 
+// ListResult is the full outcome of an add-on listing.
+type ListResult struct {
+	// Summaries are the add-ons that were described.
+	Summaries []AddonSummary
+	// Failures has a "name: reason" entry for every installed add-on left out
+	// of Summaries because it could not be described.
+	Failures []string
+}
+
 // AddonDetails contains expanded addon information
 type AddonDetails struct {
 	Name               string         `json:"name" yaml:"name"`
@@ -43,15 +52,41 @@ type AddonVersionInfo struct {
 	RequiresIAMPolicy bool     `json:"requiresIamPolicy"`
 }
 
+// Update result statuses set by Update. A result can also carry the EKS
+// update status (InProgress) when the caller did not wait, or a "FAILED: ..."
+// status from UpdateAll.
+const (
+	// StatusDryRun: --dry-run; nothing was sent.
+	StatusDryRun = "DRY_RUN"
+	// StatusUpToDate: the add-on is already at (or, for "latest", above) the
+	// target version; no UpdateAddon call was made.
+	StatusUpToDate = "UP_TO_DATE"
+	// StatusCompleted: the EKS update succeeded and the add-on reports the
+	// target version.
+	StatusCompleted = "COMPLETED"
+	// StatusCompletedWithIssues: the update landed but the post-update health
+	// check found problems (see HealthIssues).
+	StatusCompletedWithIssues = "COMPLETED_WITH_ISSUES"
+	// StatusWaitFailed: the update was submitted but did not complete: it
+	// failed or was cancelled in EKS, the add-on ended at another version, or
+	// the wait timed out (see Error).
+	StatusWaitFailed = "WAIT_FAILED"
+)
+
 // AddonUpdateResult contains the result of an addon update
 type AddonUpdateResult struct {
-	AddonName       string    `json:"addonName" yaml:"addonName"`
-	PreviousVersion string    `json:"previousVersion" yaml:"previousVersion"`
-	NewVersion      string    `json:"newVersion" yaml:"newVersion"`
-	UpdateID        string    `json:"updateId" yaml:"updateId"`
-	Status          string    `json:"status" yaml:"status"`
-	HealthIssues    string    `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
-	StartedAt       time.Time `json:"startedAt" yaml:"startedAt"`
+	AddonName       string `json:"addonName" yaml:"addonName"`
+	PreviousVersion string `json:"previousVersion" yaml:"previousVersion"`
+	NewVersion      string `json:"newVersion" yaml:"newVersion"`
+	UpdateID        string `json:"updateId" yaml:"updateId"`
+	Status          string `json:"status" yaml:"status"`
+	HealthIssues    string `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
+	// Warning is set when the update needs the user's attention but still
+	// proceeds, e.g. a pinned version older than the installed one.
+	Warning string `json:"warning,omitempty" yaml:"warning,omitempty"`
+	// Error is the reason for a WAIT_FAILED status.
+	Error     string    `json:"error,omitempty" yaml:"error,omitempty"`
+	StartedAt time.Time `json:"startedAt" yaml:"startedAt"`
 }
 
 // ListOptions controls addon listing behavior
