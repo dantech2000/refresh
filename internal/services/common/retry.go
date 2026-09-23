@@ -2,15 +2,24 @@ package common
 
 import (
 	"context"
-	"crypto/rand"
+	crand "crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
+	"math/rand/v2"
+	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/smithy-go"
 )
 
 // RetryConfig controls retry behavior for AWS API calls.
+//
+// WithRetry runs on top of the SDK's own standard retryer (3 attempts per
+// call), so each WithRetry attempt can already be up to 3 requests. Keep
+// MaxAttempts small; values above maxRetryAttempts are clamped.
 type RetryConfig struct {
 	MaxAttempts       int
 	InitialBackoff    time.Duration
@@ -25,8 +34,42 @@ var DefaultRetryConfig = RetryConfig{
 	BackoffMultiplier: 2.0,
 }
 
+// maxRetryAttempts caps WithRetry attempts whatever the config asks for.
+// Layered on the SDK retryer, 10 attempts is up to 30 requests for one call.
+const maxRetryAttempts = 10
+
+// withDefaults fills each zero or invalid field from DefaultRetryConfig
+// independently, so a partial config (say, only MaxAttempts) keeps its other
+// fields, and clamps the attempt count and the initial backoff.
+func (c RetryConfig) withDefaults() RetryConfig {
+	if c.MaxAttempts <= 0 {
+		c.MaxAttempts = DefaultRetryConfig.MaxAttempts
+	}
+	if c.MaxAttempts > maxRetryAttempts {
+		c.MaxAttempts = maxRetryAttempts
+	}
+	if c.InitialBackoff <= 0 {
+		c.InitialBackoff = DefaultRetryConfig.InitialBackoff
+	}
+	if c.MaxBackoff <= 0 {
+		c.MaxBackoff = DefaultRetryConfig.MaxBackoff
+	}
+	if c.InitialBackoff > c.MaxBackoff {
+		c.InitialBackoff = c.MaxBackoff
+	}
+	switch {
+	case c.BackoffMultiplier <= 0:
+		c.BackoffMultiplier = DefaultRetryConfig.BackoffMultiplier
+	case c.BackoffMultiplier < 1:
+		c.BackoffMultiplier = 1
+	}
+	return c
+}
+
 // retryableErrorCodes are typed AWS API error codes that indicate a transient
-// condition worth retrying (throttling and server-side hiccups).
+// condition worth retrying (throttling and server-side hiccups). The SDK's
+// default throttle and retryable codes are checked as well, through
+// sdkRetryables.
 var retryableErrorCodes = map[string]bool{
 	"ThrottlingException":         true,
 	"Throttling":                  true,
@@ -42,9 +85,15 @@ var retryableErrorCodes = map[string]bool{
 	"ServerException":             true,
 }
 
-// shouldRetry classifies transient errors. Typed AWS API errors are judged by
-// their error code (and server fault classification); substring matching is
-// only the fallback for transport-level errors that never reached the API.
+// sdkRetryables is the SDK standard retryer's own classification: canceled
+// requests, errors that declare RetryableError(), connection errors (dial,
+// refused, reset, temporary, timeout), 5xx status codes, and the default
+// retryable and throttle error codes.
+var sdkRetryables = retry.IsErrorRetryables(retry.DefaultRetryables)
+
+// shouldRetry classifies transient errors with typed checks only: API error
+// codes and fault, the SDK's retryable classification, and the syscall and io
+// errors a dropped connection surfaces as.
 func shouldRetry(err error) bool {
 	if err == nil {
 		return false
@@ -54,12 +103,18 @@ func shouldRetry(err error) bool {
 		return false
 	}
 	var ae smithy.APIError
-	if errors.As(err, &ae) {
-		return retryableErrorCodes[ae.ErrorCode()] || ae.ErrorFault() == smithy.FaultServer
+	if errors.As(err, &ae) && (retryableErrorCodes[ae.ErrorCode()] || ae.ErrorFault() == smithy.FaultServer) {
+		return true
 	}
-	// Best-effort string checks for throttling/network glitches.
-	s := err.Error()
-	return containsAnyFold(s, []string{"throttl", "rate exceeded", "timeout", "temporarily unavailable", "connection reset"})
+	switch sdkRetryables.IsErrorRetryable(err) {
+	case aws.TrueTernary:
+		return true
+	case aws.FalseTernary:
+		return false
+	}
+	return errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // IsRetryable reports whether err is a transient condition (throttling,
@@ -75,93 +130,65 @@ func IsRetryable(err error) bool { return shouldRetry(err) }
 // caller-level retries).
 func IdempotencyToken() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := crand.Read(b); err != nil {
 		// Fall back to a time-based token; uniqueness is what matters here.
 		return time.Now().UTC().Format("20060102T150405.000000000")
 	}
 	return hex.EncodeToString(b)
 }
 
-func containsAnyFold(haystack string, needles []string) bool {
-	for _, n := range needles {
-		if len(n) == 0 {
-			continue
-		}
-		if indexFold(haystack, n) >= 0 {
-			return true
-		}
+// jitter returns a uniformly random duration in [0, d] ("full jitter"), so
+// concurrent callers that fail together do not retry in lockstep. Tests
+// replace it to make waits deterministic.
+var jitter = func(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
 	}
-	return false
+	return time.Duration(rand.Int64N(int64(d) + 1))
 }
 
-// indexFold returns index of needle in haystack, case-insensitive, or -1.
-func indexFold(haystack, needle string) int {
-	hl := len(haystack)
-	nl := len(needle)
-	if nl == 0 || nl > hl {
-		return -1
+// sleep waits for d or until ctx ends. Tests replace it with a fake clock.
+var sleep = func(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
-	for i := 0; i <= hl-nl; i++ {
-		match := true
-		for j := 0; j < nl; j++ {
-			hc := haystack[i+j]
-			nc := needle[j]
-			if hc >= 'A' && hc <= 'Z' {
-				hc += 'a' - 'A'
-			}
-			if nc >= 'A' && nc <= 'Z' {
-				nc += 'a' - 'A'
-			}
-			if hc != nc {
-				match = false
-				break
-			}
-		}
-		if match {
-			return i
-		}
-	}
-	return -1
 }
 
-// WithRetry runs fn with exponential backoff respecting context cancellation.
+// WithRetry runs fn with capped exponential backoff and full jitter,
+// respecting context cancellation. Zero fields in cfg take their
+// DefaultRetryConfig value; MaxAttempts is capped at maxRetryAttempts.
 func WithRetry[T any](ctx context.Context, cfg RetryConfig, fn func(context.Context) (T, error)) (T, error) {
 	var zero T
-	if cfg.MaxAttempts <= 0 {
-		cfg = DefaultRetryConfig
-	}
+	cfg = cfg.withDefaults()
 	backoff := cfg.InitialBackoff
 	for attempt := 1; ; attempt++ {
 		// Respect ctx cancellation between attempts
-		select {
-		case <-ctx.Done():
-			return zero, ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			return zero, err
 		}
 
 		result, err := fn(ctx)
 		if err == nil {
 			return result, nil
 		}
-		if !shouldRetry(err) || attempt == cfg.MaxAttempts {
+		if !shouldRetry(err) || attempt >= cfg.MaxAttempts {
 			return zero, err
 		}
 
-		// Wait with context awareness
-		wait := backoff
-		if wait > cfg.MaxBackoff && cfg.MaxBackoff > 0 {
-			wait = cfg.MaxBackoff
+		if err := sleep(ctx, jitter(backoff)); err != nil {
+			return zero, err
 		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return zero, ctx.Err()
-		case <-timer.C:
+		// Grow the ceiling, clamped so it never passes MaxBackoff (and never
+		// overflows however many attempts run).
+		next := time.Duration(float64(backoff) * cfg.BackoffMultiplier)
+		if next > cfg.MaxBackoff || next < backoff {
+			next = cfg.MaxBackoff
 		}
-		// Exponential increase
-		if cfg.BackoffMultiplier > 1 {
-			backoff = time.Duration(float64(backoff) * cfg.BackoffMultiplier)
-		}
+		backoff = next
 	}
 }
