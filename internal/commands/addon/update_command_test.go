@@ -6,9 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // These tests run `refresh addon ...` end to end against the fake AWS
@@ -16,6 +18,8 @@ import (
 
 func runAddon(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	// -o plain switches process-wide output state; restore it for the next test.
+	t.Cleanup(func() { ui.SetPlainOutput(false); pterm.EnableColor() })
 	return fakeaws.Run(t, fakeaws.App(Command()), append([]string{"refresh", "addon"}, args...)...)
 }
 
