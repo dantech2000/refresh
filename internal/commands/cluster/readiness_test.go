@@ -9,22 +9,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fatih/color"
+	"k8s.io/client-go/kubernetes"
 
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
-// captureColor collects what fatih/color writes while fn runs. The
-// diagnostics resolveReadinessKubeClient prints go through color.Yellow.
-func captureColor(t *testing.T, fn func()) string {
+// captureStderr collects what is written to os.Stderr while fn runs: the
+// kube diagnostics resolveReadinessKubeClient prints go there.
+func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	prev := color.Output
+	prev := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	color.Output = w
-	t.Cleanup(func() { color.Output = prev })
+	os.Stderr = w
+	defer func() { os.Stderr = prev }()
 	fn()
 	_ = w.Close()
 	var buf bytes.Buffer
@@ -68,7 +69,7 @@ func TestResolveReadinessKubeClient_DescribeFailure(t *testing.T) {
 
 	for _, human := range []bool{true, false} {
 		var client any
-		out := captureColor(t, func() {
+		out := captureStderr(t, func() {
 			c, sel := resolveReadinessKubeClient(context.Background(), api, "us-east-1", "ghost", kubeconfig, "", human)
 			client = c
 			if sel.Target.Endpoint != "" {
@@ -97,9 +98,22 @@ func TestResolveReadinessKubeClient_KubeconfigMismatch(t *testing.T) {
 	api := mocks.NewEKSAPI().WithCluster("prod", "1.32", mocks.ClusterRegion("eu-west-1")).Build()
 	kubeconfig := readinessKubeconfig(t, "https://0000000000000000000000000000AAAA.gr7.eu-west-1.eks.amazonaws.com")
 
-	client, sel := resolveReadinessKubeClient(context.Background(), api, "eu-west-1", "prod", kubeconfig, "", false)
-	if client != nil {
+	var gotClient bool
+	var sel health.KubeSelection
+	out := captureStderr(t, func() {
+		var c kubernetes.Interface
+		c, sel = resolveReadinessKubeClient(context.Background(), api, "eu-west-1", "prod", kubeconfig, "", false)
+		gotClient = c != nil
+	})
+	if gotClient {
 		t.Fatal("got a client for a kubeconfig that targets another cluster")
+	}
+	// The mismatch warning prints even for machine output: it explains why
+	// readiness is partial.
+	for _, want := range []string{"skipping Kubernetes checks", "aws eks update-kubeconfig --name prod --region eu-west-1", "Node readiness will show desired capacity only"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("warning %q should mention %q", out, want)
+		}
 	}
 	if sel.Target.Name != "prod" || !strings.Contains(sel.Target.Endpoint, ".gr7.eu-west-1.eks.amazonaws.com") || sel.Target.ARN == "" {
 		t.Fatalf("target = %+v, want the described prod cluster", sel.Target)
@@ -115,7 +129,7 @@ func TestResolveReadinessKubeClient_UnreachableAPI(t *testing.T) {
 	kubeconfig := readinessKubeconfig(t, endpoint)
 
 	var gotClient bool
-	out := captureColor(t, func() {
+	out := captureStderr(t, func() {
 		c, _ := resolveReadinessKubeClient(context.Background(), api, "us-east-1", "prod", kubeconfig, "", true)
 		gotClient = c != nil
 	})
