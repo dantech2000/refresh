@@ -706,7 +706,7 @@ func desiredSizeDescriber(sizes map[string]int32, err error) *mocks.EKSAPI {
 		}
 		size, ok := sizes[aws.ToString(in.NodegroupName)]
 		if !ok {
-			return nil, errors.New("ResourceNotFoundException: no such nodegroup")
+			return nil, mocks.NotFound()
 		}
 		return &eks.DescribeNodegroupOutput{Nodegroup: &ekstypes.Nodegroup{
 			NodegroupName: in.NodegroupName,
@@ -763,7 +763,7 @@ func TestCheckPodDisruptionBudgets_TargetsWithNoLabelledNodes(t *testing.T) {
 func TestCheckPodDisruptionBudgets_TargetsDescribeFailsFallsBack(t *testing.T) {
 	cases := map[string]func(hc *HealthChecker){
 		"describe error": func(hc *HealthChecker) {
-			hc.ngDescriber = desiredSizeDescriber(nil, errors.New("AccessDeniedException: not authorized"))
+			hc.ngDescriber = desiredSizeDescriber(nil, mocks.AccessDenied())
 		},
 		"no EKS client": func(hc *HealthChecker) { hc.ngDescriber = nil },
 	}

@@ -2,7 +2,6 @@ package status
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,6 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+
+	"github.com/dantech2000/refresh/internal/mocks"
 )
 
 func TestClassifySupport(t *testing.T) {
@@ -58,7 +59,7 @@ func TestClassifySupport(t *testing.T) {
 func TestResolveSupport_FallbackCalendar(t *testing.T) {
 	// API errors → resolver falls back to the compiled-in calendar and flags it.
 	svc := &Service{
-		clusterAPI: &fakeClusterAPI{versionsErr: errors.New("access denied")},
+		clusterAPI: &fakeClusterAPI{versionsErr: mocks.AccessDenied()},
 		now:        func() time.Time { return date(2026, 6, 11) },
 	}
 	p := svc.resolveSupport(context.Background(), "1.31")
@@ -128,7 +129,7 @@ func TestSupportResolver_Reuse(t *testing.T) {
 	}
 
 	// API failure → compiled-in fallback calendar.
-	rf := NewSupportResolver(&fakeClusterAPI{versionsErr: errors.New("access denied")})
+	rf := NewSupportResolver(&fakeClusterAPI{versionsErr: mocks.AccessDenied()})
 	rf.now = func() time.Time { return date(2026, 6, 11) }
 	pf := rf.Resolve(context.Background(), "1.31")
 	if !pf.Fallback || pf.Tier != SupportExtended {
@@ -157,7 +158,7 @@ func (f *fakeClusterAPI) ListClusters(_ context.Context, _ *eks.ListClustersInpu
 func (f *fakeClusterAPI) DescribeCluster(_ context.Context, in *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
 	c, ok := f.describe[aws.ToString(in.Name)]
 	if !ok {
-		return nil, errors.New("cluster not found")
+		return nil, mocks.NotFound()
 	}
 	return &eks.DescribeClusterOutput{Cluster: c}, nil
 }
