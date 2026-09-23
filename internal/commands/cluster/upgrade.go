@@ -55,7 +55,7 @@ Examples:
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Print the full ordered plan without mutating anything"},
 			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "Skip per-phase confirmation prompts"},
 			&cli.BoolFlag{Name: "force", Usage: "Force nodegroup rolls when pods can't be drained due to PDBs"},
-			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon to skip (repeatable; for addons managed via Helm/GitOps)"},
+			&cli.StringSliceFlag{Name: "skip", Aliases: []string{"s"}, Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to skip (repeatable)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Overall operation timeout", Value: upgradeDefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},

@@ -129,7 +129,20 @@ func (s *Service) listNodegroupStates(ctx context.Context, clusterName string) (
 	return states, nil
 }
 
-// matchesAny reports whether name matches any of the substring patterns.
+// isSkippedAddon reports whether addon is named in skip. --skip takes addon
+// names, so matching is exact (case-insensitive): "proxy" must not skip
+// kube-proxy.
+func isSkippedAddon(addon string, skip []string) bool {
+	for _, s := range skip {
+		if s = strings.TrimSpace(s); s != "" && strings.EqualFold(addon, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesAny reports whether name matches any of the substring patterns
+// (used for --skip-nodegroup, which is documented as a pattern).
 func matchesAny(name string, patterns []string) bool {
 	for _, p := range patterns {
 		if p != "" && strings.Contains(name, p) {
