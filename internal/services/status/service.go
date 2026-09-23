@@ -208,15 +208,20 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 	} else {
 		// Failed nodegroups still exist: count them so compute detection
 		// isn't fooled, but their AMI posture is unknown, so flag the row.
+		// A nodegroup whose latest-AMI lookup failed is both summarized and
+		// reported as a failure; count it once.
 		cs.NodegroupCount = len(ngs) + len(ngFailures)
 		cs.StaleAMI = s.staleAMISummary(ctx, ngs)
 		for _, ng := range ngs {
 			if ng.VersionBehind {
 				cs.NodegroupsBehindControlPlane++
 			}
+			if ng.AMILookupError != "" {
+				cs.NodegroupCount--
+			}
 		}
 		if len(ngFailures) > 0 {
-			cs.Errors = append(cs.Errors, fmt.Sprintf("describe nodegroup(s): %s", strings.Join(ngFailures, "; ")))
+			cs.Errors = append(cs.Errors, fmt.Sprintf("nodegroup(s): %s", strings.Join(ngFailures, "; ")))
 		}
 	}
 

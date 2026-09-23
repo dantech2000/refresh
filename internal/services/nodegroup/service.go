@@ -140,33 +140,56 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 	return summaries, err
 }
 
-// ngResult is one nodegroup's outcome in ListWithFailures. done stays false
+// ngResult is one nodegroup's outcome in ListDetailed. done stays false
 // for items ForEachParallel never dispatched (ctx ended first).
 type ngResult struct {
-	done    bool
-	summary *NodegroupSummary // nil when filtered out or failed
-	failure string            // non-empty when the nodegroup couldn't be described
+	done         bool
+	summary      *NodegroupSummary // nil when filtered out or failed
+	failure      string            // non-empty when the nodegroup couldn't be described
+	amiLookupErr error             // latest-AMI lookup failure that left AMIStatus Unknown
 }
 
 // ListWithFailures is List plus a "name: reason" entry for every listed
-// nodegroup left out of the summaries because it could not be described (API
-// error, empty response, or never reached because ctx ended). Nodegroups
-// excluded by options.Filters are not failures.
+// nodegroup whose data is incomplete: left out of the summaries because it
+// could not be described (API error, empty response, or never reached because
+// ctx ended), or summarized with an AMI status that is Unknown only because
+// its latest recommended AMI could not be resolved. Nodegroups excluded by
+// options.Filters are not failures.
 func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, []string, error) {
+	res, err := s.ListDetailed(ctx, clusterName, options)
+	if err != nil {
+		return nil, nil, err
+	}
+	var failures []string
+	failures = append(failures, res.Failures...)
+	failures = append(failures, res.AMILookupFailures...)
+	return res.Summaries, failures, nil
+}
+
+// latestAMILookupMatters reports whether a failed latest-AMI lookup leaves
+// the nodegroup's AMI status undetermined. Custom-AMI nodegroups have no
+// recommended AMI, and an updating nodegroup reports Updating either way.
+func latestAMILookupMatters(ng *ekstypes.Nodegroup) bool {
+	return ng.AmiType != ekstypes.AMITypesCustom && ng.Status != ekstypes.NodegroupStatusUpdating
+}
+
+// ListDetailed lists a cluster's nodegroups and keeps describe failures and
+// latest-AMI lookup failures apart (see ListResult).
+func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, options ListOptions) (ListResult, error) {
 	s.logger.Info("listing nodegroups", "cluster", clusterName, "options", options)
 
 	if err := validateFilters(options.Filters); err != nil {
-		return nil, nil, err
+		return ListResult{}, err
 	}
 
 	clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
 	})
 	if err != nil {
-		return nil, nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
+		return ListResult{}, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
 	}
 	if clusterDesc.Cluster == nil {
-		return nil, nil, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
+		return ListResult{}, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
 	}
 	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
@@ -180,7 +203,7 @@ func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, 
 		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
 	)
 	if err != nil {
-		return nil, nil, err
+		return ListResult{}, err
 	}
 
 	// The latest AMI is constant per (nodegroup version, AMI type); memoize
@@ -226,8 +249,14 @@ func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, 
 			}
 
 			currentAmiId := s.currentAMI(fctx, ng)
-			latestAmiId := latestAMI.ForNodegroup(fctx, ng, k8sVersion)
+			latestAmiId, lookupErr := latestAMI.ForNodegroup(fctx, ng, k8sVersion)
 			amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
+			if lookupErr != nil {
+				s.logger.Warn("failed to resolve latest AMI", "cluster", clusterName, "nodegroup", name, "error", lookupErr)
+				if !latestAMILookupMatters(ng) {
+					lookupErr = nil
+				}
+			}
 
 			summary := NodegroupSummary{
 				Name:         aws.ToString(ng.NodegroupName),
@@ -241,13 +270,16 @@ func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, 
 				K8sVersion:   aws.ToString(ng.Version),
 			}
 			summary.VersionBehind = minorBehind(summary.K8sVersion, k8sVersion)
+			if lookupErr != nil {
+				summary.AMILookupError = lookupErr.Error()
+			}
 			if !matchesFilters(summary, options.Filters) {
 				return ngResult{done: true}
 			}
-			return ngResult{done: true, summary: &summary}
+			return ngResult{done: true, summary: &summary, amiLookupErr: lookupErr}
 		})
 
-	summaries := make([]NodegroupSummary, 0, len(results))
+	res := ListResult{Summaries: make([]NodegroupSummary, 0, len(results))}
 	var failures []string
 	for i, r := range results {
 		switch {
@@ -260,10 +292,18 @@ func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, 
 		case r.failure != "":
 			failures = append(failures, r.failure)
 		case r.summary != nil:
-			summaries = append(summaries, *r.summary)
+			res.Summaries = append(res.Summaries, *r.summary)
+			if r.amiLookupErr != nil {
+				res.AMILookupFailures = append(res.AMILookupFailures,
+					nodegroupNames[i]+": latest AMI lookup failed: "+r.amiLookupErr.Error())
+				if res.AMILookupErr == nil {
+					res.AMILookupErr = r.amiLookupErr
+				}
+			}
 		}
 	}
-	return summaries, failures, nil
+	res.Failures = failures
+	return res, nil
 }
 
 // minorBehind reports whether Kubernetes version v ("1.31") is an older
@@ -335,8 +375,11 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	ng := out.Nodegroup
 
 	currentAmiId := s.currentAMI(ctx, ng)
-	latestAmiId := s.newLatestAMICache().ForNodegroup(ctx, ng, k8sVersion)
+	latestAmiId, lookupErr := s.newLatestAMICache().ForNodegroup(ctx, ng, k8sVersion)
 	amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiId, latestAmiId)
+	if lookupErr != nil && !latestAMILookupMatters(ng) {
+		lookupErr = nil
+	}
 
 	var scaling ScalingConfig
 	if sc := ng.ScalingConfig; sc != nil {
@@ -358,6 +401,10 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 		LatestAMI:    latestAmiId,
 		AMIStatus:    amiStatus,
 		Scaling:      scaling,
+		amiLookupErr: lookupErr,
+	}
+	if lookupErr != nil {
+		details.AMILookupError = lookupErr.Error()
 	}
 	// Resolve backing instances once from the nodegroup we already described;
 	// workloads and instance details reuse the result.

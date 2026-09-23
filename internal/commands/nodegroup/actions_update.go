@@ -618,8 +618,8 @@ func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *
 // never skip a nodegroup that lags the control plane.
 func latestAMISkipPredicate(ctx context.Context, clusterVersion string, latestAMI *awsinternal.LatestAMICache, currentAMI func(context.Context, *ekstypes.Nodegroup) string) func(*ekstypes.Nodegroup) bool {
 	return func(ng *ekstypes.Nodegroup) bool {
-		latest := latestAMI.ForNodegroup(ctx, ng, clusterVersion)
-		if latest == "" {
+		latest, err := latestAMI.ForNodegroup(ctx, ng, clusterVersion)
+		if err != nil || latest == "" {
 			return false
 		}
 		current := currentAMI(ctx, ng)

@@ -73,6 +73,25 @@ type NodegroupSummary struct {
 	// need a version upgrade; VersionBehind carries that signal.
 	K8sVersion    string `json:"k8sVersion" yaml:"k8sVersion"`
 	VersionBehind bool   `json:"versionBehind" yaml:"versionBehind"`
+	// AMILookupError is set when the latest recommended AMI could not be
+	// resolved (e.g. no ssm:GetParameter permission or throttling). AMIStatus
+	// is then Unknown because of the failure, not because nothing is stale.
+	AMILookupError string `json:"amiLookupError,omitempty" yaml:"amiLookupError,omitempty"`
+}
+
+// ListResult is the full outcome of a nodegroup listing.
+type ListResult struct {
+	// Summaries are the nodegroups that were described (and matched the filters).
+	Summaries []NodegroupSummary
+	// Failures has a "name: reason" entry for every listed nodegroup left out
+	// of Summaries because it could not be described.
+	Failures []string
+	// AMILookupFailures has a "name: reason" entry for every nodegroup in
+	// Summaries whose latest recommended AMI could not be resolved.
+	AMILookupFailures []string
+	// AMILookupErr is the first latest-AMI lookup error, kept unflattened so
+	// the command layer can format it (e.g. name the missing IAM permission).
+	AMILookupErr error
 }
 
 // NodegroupDetails extends summary with health and optional instance/workload details
@@ -87,10 +106,21 @@ type NodegroupDetails struct {
 	CurrentAMI string          `json:"currentAmi"`
 	LatestAMI  string          `json:"latestAmi"`
 	AMIStatus  types.AMIStatus `json:"amiStatus"`
+	// AMILookupError is set when the latest recommended AMI could not be
+	// resolved; see NodegroupSummary.AMILookupError.
+	AMILookupError string `json:"amiLookupError,omitempty" yaml:"amiLookupError,omitempty"`
+	// amiLookupErr is the unflattened lookup error, for LatestAMILookupErr.
+	amiLookupErr error
 
 	Scaling ScalingConfig        `json:"scaling"`
 	Health  *health.HealthStatus `json:"health,omitempty"`
 
 	Instances []InstanceDetails `json:"instances"`
 	Workloads WorkloadInfo      `json:"workloads"`
+}
+
+// LatestAMILookupErr returns the error from resolving the latest recommended
+// AMI, or nil when the lookup succeeded or was not needed.
+func (d *NodegroupDetails) LatestAMILookupErr() error {
+	return d.amiLookupErr
 }

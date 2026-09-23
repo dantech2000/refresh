@@ -195,7 +195,9 @@ func (dr *DryRunner) currentAmi(ctx context.Context, ng *types.Nodegroup) string
 
 // latestAmi resolves the latest recommended AMI for the nodegroup's AMI type
 // at the nodegroup's own Kubernetes version (the real update keeps the
-// nodegroup on its minor), memoized per (version, type).
+// nodegroup on its minor), memoized per (version, type). A failed lookup
+// returns "", which the preview reports as "AMI status unknown, update
+// recommended" rather than "already on latest".
 func (dr *DryRunner) latestAmi(ctx context.Context, ng *types.Nodegroup) string {
 	if dr.latestAmiFn != nil {
 		return dr.latestAmiFn(ctx, ng)
@@ -203,7 +205,11 @@ func (dr *DryRunner) latestAmi(ctx context.Context, ng *types.Nodegroup) string 
 	if dr.latestAMICache == nil {
 		dr.latestAMICache = awsClient.NewLatestAMIIDCache(dr.ssmClient)
 	}
-	return dr.latestAMICache.ForNodegroup(ctx, ng, dr.k8sVersion)
+	latest, err := dr.latestAMICache.ForNodegroup(ctx, ng, dr.k8sVersion)
+	if err != nil {
+		return ""
+	}
+	return latest
 }
 
 // categorizeUpdate adds an update to the appropriate category in the result.
