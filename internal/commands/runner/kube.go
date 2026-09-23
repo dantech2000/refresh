@@ -35,6 +35,16 @@ type KubeRequest struct {
 	SkipNote string
 }
 
+// KubeconfigFlag is the --kubeconfig flag shared by every command that uses a
+// Kubernetes client. purpose names what the client is for, e.g.
+// "workload/PDB health checks".
+func KubeconfigFlag(purpose string) *cli.StringFlag {
+	return &cli.StringFlag{
+		Name:  "kubeconfig",
+		Usage: "Path to the kubeconfig for " + purpose + " (defaults to $KUBECONFIG, then ~/.kube/config)",
+	}
+}
+
 // KubeContextFlag is the --kube-context flag shared by every command that
 // takes --kubeconfig.
 func KubeContextFlag() *cli.StringFlag {

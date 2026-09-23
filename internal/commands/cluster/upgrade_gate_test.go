@@ -20,6 +20,7 @@ import (
 // fakeGateChecker is a scripted healthGateChecker.
 type fakeGateChecker struct {
 	blockers   []health.PDBInfo
+	multiPDB   []health.MultiPDBPod
 	drainErr   error
 	decision   health.Decision
 	targets    []string
@@ -48,7 +49,7 @@ func (f *fakeGateChecker) RunAllChecks(context.Context, string) health.HealthSum
 
 func (f *fakeGateChecker) DrainBlockers(context.Context, string, []string) (health.DrainBlockerReport, error) {
 	f.drainCalls++
-	return health.DrainBlockerReport{Blockers: f.blockers, Scoped: true}, f.drainErr
+	return health.DrainBlockerReport{Blockers: f.blockers, MultiPDBPods: f.multiPDB, Scoped: true}, f.drainErr
 }
 
 // gateWorld is a cluster at 1.32 with one nodegroup at 1.31: upgrading to
@@ -123,6 +124,35 @@ func TestUpgradeGate_ForceRollsPastDrainBlocker(t *testing.T) {
 	if m.Calls.UpdateNodegroupVersion != 1 || !strings.Contains(warn.String(), "shop/checkout") {
 		t.Fatalf("rolls = %d, warn = %q; want 1 roll and the blocker in a warning", m.Calls.UpdateNodegroupVersion, warn.String())
 	}
+}
+
+// A pod that several PDBs select is refused by the eviction API, so it stops
+// the roll like a 0-disruption PDB; --force rolls past it with a warning.
+func TestUpgradeGate_MultiPDBPodIsDrainBlocker(t *testing.T) {
+	multi := []health.MultiPDBPod{{Namespace: "shop", Name: "checkout-0", PDBs: []string{"checkout", "shop-all"}}}
+
+	t.Run("fails without --force", func(t *testing.T) {
+		m, svc, plan := gateWorld(t)
+		err := runGated(t, svc, plan, newTestGate(&fakeGateChecker{multiPDB: multi}, true, &bytes.Buffer{}))
+		if err == nil || !strings.Contains(err.Error(), "shop/checkout-0") || !strings.Contains(err.Error(), "--force") {
+			t.Fatalf("err = %v, want the multi-PDB pod named with the --force hint", err)
+		}
+		if m.Calls.UpdateNodegroupVersion != 0 {
+			t.Fatalf("UpdateNodegroupVersion calls = %d, want 0", m.Calls.UpdateNodegroupVersion)
+		}
+	})
+	t.Run("--force warns and rolls", func(t *testing.T) {
+		m, svc, plan := gateWorld(t)
+		var warn bytes.Buffer
+		g := newTestGate(&fakeGateChecker{multiPDB: multi}, true, &warn)
+		g.force = true
+		if err := runGated(t, svc, plan, g); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if m.Calls.UpdateNodegroupVersion != 1 || !strings.Contains(warn.String(), "shop/checkout-0") {
+			t.Fatalf("rolls = %d, warn = %q; want 1 roll and the pod in a warning", m.Calls.UpdateNodegroupVersion, warn.String())
+		}
+	})
 }
 
 // A PDB list failure is not "no blockers".

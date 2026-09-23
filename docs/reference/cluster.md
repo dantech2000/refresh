@@ -150,7 +150,8 @@ missing ones are a warning instead of a blocker.
 
 Before each nodegroup roll, pre-flight health checks run, including
 PodDisruptionBudgets that would block the drain (they need Kubernetes access
-via kubeconfig; without it the PDB check is skipped with a warning). A drain
+via kubeconfig, or --kubeconfig/--kube-context; without it the PDB check is
+skipped with a warning). A drain
 blocker stops the roll unless --force; health warnings need --yes or a
 confirmation. --skip-health-check turns these checks off.
 
@@ -183,6 +184,8 @@ Examples:
 | `--force` | — | — | Force nodegroup rolls when pods can't be drained due to PDBs |
 | `--skip-insights-check` | — | — | Upgrade without the EKS Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself |
 | `--skip-health-check` | — | — | Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
+| `--kubeconfig string` | — | — | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel (defaults to $KUBECONFIG, then ~/.kube/config) |
+| `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--skip, -s string` | — | — | Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps) |
 | `--skip-nodegroup string` | — | — | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | — | — | Suppress progress output |

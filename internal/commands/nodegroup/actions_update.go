@@ -162,7 +162,8 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	defer cancel()
 
 	requestedCluster, nodegroupPattern := updateClusterAndNodegroupPatterns(cmd)
-	clusterName, err := awsinternal.ClusterName(ctx, awsCfg, requestedCluster)
+	// -o json/yaml never prompts for a partial cluster name.
+	clusterName, err := runner.ResolveClusterName(ctx, awsCfg, requestedCluster, cmd.String("format"))
 	if err != nil {
 		return err
 	}

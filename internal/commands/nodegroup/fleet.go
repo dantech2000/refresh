@@ -578,8 +578,8 @@ func fleetExit(results []clusterUpdateResult, regionErrs []regionDiscoveryError)
 	return cli.Exit(fmt.Sprintf("fleet update finished with issues (worst exit code %d)", worst), worst)
 }
 
-// promptYesNo asks a yes/no question on the terminal; defaults to no.
+// promptYesNo asks a yes/no question on stderr; defaults to no.
 func promptYesNo(ctx context.Context, question string) bool {
-	fmt.Printf("%s [y/N]: ", question)
+	_, _ = fmt.Fprintf(ui.Stderr, "%s [y/N]: ", question)
 	return ui.Confirm(ctx)
 }

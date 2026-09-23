@@ -27,8 +27,8 @@ type healthGateChecker interface {
 
 // nodegroupHealthGate is the pre-roll gate `cluster upgrade` runs before each
 // nodegroup roll, after the orchestrator's built-in ACTIVE check. It fails
-// the roll when a PodDisruptionBudget would block draining the nodegroup
-// (unless --force) or the pre-flight health decision is BLOCK. Warnings
+// the roll when a PodDisruptionBudget allows 0 disruptions or a pod is
+// covered by more than one PDB on the nodegroup (unless --force) or the pre-flight health decision is BLOCK. Warnings
 // follow the phase-confirmation rules: --yes proceeds, otherwise the user is
 // asked. Without Kubernetes access the PDB check is skipped with a warning,
 // as in `nodegroup update`.
@@ -69,10 +69,12 @@ func newNodegroupHealthGate(cmd *cli.Command, awsCfg aws.Config, clusterName str
 		warn:    ui.Stderr,
 		connect: func(ctx context.Context) (healthGateChecker, bool) {
 			kube, sel := runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
-				API:     eks.NewFromConfig(awsCfg),
-				Cluster: clusterName,
-				Region:  awsCfg.Region,
-				Verbose: !quiet,
+				API:         eks.NewFromConfig(awsCfg),
+				Cluster:     clusterName,
+				Region:      awsCfg.Region,
+				Kubeconfig:  cmd.String("kubeconfig"),
+				KubeContext: cmd.String("kube-context"),
+				Verbose:     !quiet,
 			})
 			var metrics health.NodeMetricsLister
 			if kube != nil {
@@ -107,16 +109,12 @@ func (g *nodegroupHealthGate) check(ctx context.Context, nodegroup string) error
 		if err != nil {
 			return fmt.Errorf("checking PodDisruptionBudgets for nodegroup %s: %w (pass --skip-health-check to roll without this check)", nodegroup, err)
 		}
-		if len(report.Blockers) > 0 {
-			names := make([]string, 0, len(report.Blockers))
-			for _, b := range report.Blockers {
-				names = append(names, b.Namespace+"/"+b.Name)
-			}
+		if blockers := drainBlockerNames(report); len(blockers) > 0 {
 			if !g.force {
-				return fmt.Errorf("%d PodDisruptionBudget(s) allow 0 disruptions and would block draining nodegroup %s: %s; let the workloads recover or relax the PDBs, or pass --force to evict anyway",
-					len(names), nodegroup, strings.Join(names, ", "))
+				return fmt.Errorf("%d drain blocker(s) would stop draining nodegroup %s: %s; let the workloads recover, relax the PDBs, or narrow PDB selectors so each pod matches one PDB, or pass --force to evict anyway",
+					len(blockers), nodegroup, strings.Join(blockers, "; "))
 			}
-			g.warnf("Warning: --force: rolling nodegroup %s although these PDBs allow 0 disruptions: %s\n", nodegroup, strings.Join(names, ", "))
+			g.warnf("Warning: --force: rolling nodegroup %s despite these drain blockers: %s\n", nodegroup, strings.Join(blockers, "; "))
 		}
 		// Scope the PDB part of the full health check to this nodegroup.
 		g.checker.SetTargetNodegroups([]string{nodegroup})
@@ -143,6 +141,20 @@ func (g *nodegroupHealthGate) check(ctx context.Context, nodegroup string) error
 		}
 	}
 	return nil
+}
+
+// drainBlockerNames lists what in report would refuse an eviction: each PDB
+// that allows 0 disruptions, and each pod that more than one PDB selects (the
+// eviction API refuses it), as in the pre-flight PDB check.
+func drainBlockerNames(report health.DrainBlockerReport) []string {
+	names := make([]string, 0, len(report.Blockers)+len(report.MultiPDBPods))
+	for _, b := range report.Blockers {
+		names = append(names, "PDB "+b.Namespace+"/"+b.Name+" allows 0 disruptions")
+	}
+	for _, p := range report.MultiPDBPods {
+		names = append(names, fmt.Sprintf("pod %s/%s is covered by %d PDBs (%s)", p.Namespace, p.Name, len(p.PDBs), strings.Join(p.PDBs, ", ")))
+	}
+	return names
 }
 
 func (g *nodegroupHealthGate) warnf(format string, args ...any) {

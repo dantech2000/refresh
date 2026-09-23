@@ -178,18 +178,23 @@ func RequestedCluster(cmd *cli.Command) string {
 // kubeconfig current context is never used, so a stray kubeconfig cannot pick
 // the target of a mutation. A cluster from the context is announced on
 // stderr. It never lists clusters: when nothing resolves it returns an error
-// wrapping awsinternal.ErrNoClusterSpecified, and a non-exact name needs
-// interactive confirmation.
+// wrapping awsinternal.ErrNoClusterSpecified. A non-exact name needs
+// interactive confirmation, except with -o json/yaml (see ResolveClusterName).
 func ResolveCluster(ctx context.Context, cfg aws.Config, cmd *cli.Command) (string, error) {
-	return awsinternal.ClusterName(ctx, cfg, RequestedCluster(cmd))
+	return ResolveClusterName(ctx, cfg, RequestedCluster(cmd), cmd.String("format"))
 }
 
-// ResolveClusterNoPrompt is ResolveCluster for a mutating command that must
-// not prompt, even on a TTY (for example an unattended --yes run with
-// -o json/yaml). A non-exact name fails with an error that names the
-// candidate instead of asking for confirmation.
-func ResolveClusterNoPrompt(ctx context.Context, cfg aws.Config, cmd *cli.Command) (string, error) {
-	return awsinternal.ClusterNameWithOptions(ctx, cfg, RequestedCluster(cmd), awsinternal.ClusterNameOptions{NonInteractive: true})
+// ResolveClusterName is ResolveCluster for a caller that parsed the requested
+// cluster itself. With a machine format (-o json/yaml) it never prompts, even
+// on a TTY: a non-exact name fails with an error that names the candidate.
+func ResolveClusterName(ctx context.Context, cfg aws.Config, requested, format string) (string, error) {
+	return awsinternal.ClusterNameWithOptions(ctx, cfg, requested, mutatingClusterOptions(format))
+}
+
+// mutatingClusterOptions returns the resolution options for a mutating
+// command run with the given -o format.
+func mutatingClusterOptions(format string) awsinternal.ClusterNameOptions {
+	return awsinternal.ClusterNameOptions{NonInteractive: IsMachineFormat(format)}
 }
 
 // ResolveClusterOrList resolves the cluster for a read-only command, using
@@ -199,7 +204,10 @@ func ResolveClusterNoPrompt(ctx context.Context, cfg aws.Config, cmd *cli.Comman
 // returns listed=true with a non-nil error, so the command exits non-zero
 // and stdout stays empty.
 func ResolveClusterOrList(ctx context.Context, cfg aws.Config, cmd *cli.Command) (clusterName string, listed bool, err error) {
-	name, err := awsinternal.ClusterNameWithOptions(ctx, cfg, RequestedCluster(cmd), awsinternal.ClusterNameOptions{ReadOnly: true})
+	// -o json/yaml never prompts: a partial name resolves as it would
+	// without a terminal.
+	opts := awsinternal.ClusterNameOptions{ReadOnly: true, NonInteractive: IsMachineFormat(cmd.String("format"))}
+	name, err := awsinternal.ClusterNameWithOptions(ctx, cfg, RequestedCluster(cmd), opts)
 	if err == nil {
 		return name, false, nil
 	}
