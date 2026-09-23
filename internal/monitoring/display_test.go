@@ -159,8 +159,8 @@ func forceInteractiveDisplay(t *testing.T) {
 
 func TestDisplayProgressUpdate_SetsLastPrinted(t *testing.T) {
 	forceInteractiveDisplay(t)
-	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
-	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
+	monitor := &refreshTypes.ProgressMonitor{}
+	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusInProgress))
 	monitor.StartTime = time.Now()
 
 	captureStdout(func() {
@@ -172,7 +172,7 @@ func TestDisplayProgressUpdate_SetsLastPrinted(t *testing.T) {
 }
 
 func TestDisplayProgressUpdate_EmptyMonitor(t *testing.T) {
-	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
+	monitor := &refreshTypes.ProgressMonitor{}
 	monitor.StartTime = time.Now()
 	// Should not panic on empty updates
 	captureStdout(func() {
@@ -182,8 +182,8 @@ func TestDisplayProgressUpdate_EmptyMonitor(t *testing.T) {
 
 func TestDisplayProgressUpdate_WithPreviousOutput(t *testing.T) {
 	forceInteractiveDisplay(t)
-	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
-	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
+	monitor := &refreshTypes.ProgressMonitor{}
+	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusInProgress))
 	monitor.StartTime = time.Now()
 	monitor.LastPrinted = 5 // simulate previous output
 
@@ -201,8 +201,8 @@ func TestDisplayProgressUpdate_NonInteractiveAppendsOnly(t *testing.T) {
 	displayIsTerminal = func() bool { return false }
 	t.Cleanup(func() { displayIsTerminal = old })
 
-	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
-	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
+	monitor := &refreshTypes.ProgressMonitor{}
+	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusInProgress))
 	monitor.StartTime = time.Now()
 	monitor.LastPrinted = 5 // would trigger a clear when interactive
 
@@ -222,8 +222,8 @@ func TestDisplayProgressUpdate_NonInteractiveAppendsOnly(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestDisplayCompletionSummary_VerboseOutputsResults(t *testing.T) {
-	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
-	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusSuccessful))
+	monitor := &refreshTypes.ProgressMonitor{}
+	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusSuccessful))
 	monitor.StartTime = time.Now().Add(-5 * time.Second)
 	cfg := refreshTypes.MonitorConfig{Quiet: false}
 	out := captureStdout(func() {
@@ -235,7 +235,7 @@ func TestDisplayCompletionSummary_VerboseOutputsResults(t *testing.T) {
 }
 
 func TestDisplayCompletionSummary_VerboseEmptyUpdates(t *testing.T) {
-	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
+	monitor := &refreshTypes.ProgressMonitor{}
 	monitor.StartTime = time.Now()
 	cfg := refreshTypes.MonitorConfig{Quiet: false}
 	// Should not panic
@@ -249,9 +249,9 @@ func TestDisplayCompletionSummary_VerboseEmptyUpdates(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestPrintMonitoringHeader_ContainsUpdateCount(t *testing.T) {
-	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
-	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
-	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
+	monitor := &refreshTypes.ProgressMonitor{}
+	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusInProgress))
+	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusInProgress))
 	cfg := refreshTypes.MonitorConfig{
 		Quiet:        false,
 		PollInterval: 5 * time.Second,
@@ -270,8 +270,8 @@ func TestPrintMonitoringHeader_ContainsUpdateCount(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestHandleUserCancellation_VerboseWithUpdates(t *testing.T) {
-	monitor := refreshTypes.NewProgressMonitor(false, false, 0)
-	monitor.AddUpdate(singleUpdate(ekstypes.UpdateStatusInProgress))
+	monitor := &refreshTypes.ProgressMonitor{}
+	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusInProgress))
 	cfg := refreshTypes.MonitorConfig{Quiet: false}
 	var err error
 	out := captureStdout(func() { err = handleUserCancellation(monitor, cfg) })

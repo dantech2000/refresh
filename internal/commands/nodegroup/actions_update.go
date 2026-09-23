@@ -29,7 +29,7 @@ import (
 	"github.com/dantech2000/refresh/internal/monitoring"
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/rollview"
-	"github.com/dantech2000/refresh/internal/services/common"
+	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -43,7 +43,13 @@ type updateAMIFlags struct {
 	kubeconfig, kubeContext                                   string
 }
 
-func readUpdateAMIFlags(cmd *cli.Command) updateAMIFlags {
+// readUpdateAMIFlags reads and validates the update flags. Call it before any
+// AWS call, so a bad value fails fast and never after a roll has started.
+func readUpdateAMIFlags(cmd *cli.Command) (updateAMIFlags, error) {
+	// A zero or negative poll interval would panic the monitor's ticker.
+	if pi := cmd.Duration("poll-interval"); pi <= 0 {
+		return updateAMIFlags{}, fmt.Errorf("--poll-interval must be greater than 0 (got %s)", pi)
+	}
 	// Flags placed after positional args (e.g. `update-ami my-cluster
 	// --health-only`) are parsed natively by urfave/cli v3.
 	return updateAMIFlags{
@@ -63,7 +69,7 @@ func readUpdateAMIFlags(cmd *cli.Command) updateAMIFlags {
 		format:          strings.ToLower(cmd.String("format")),
 		kubeconfig:      cmd.String("kubeconfig"),
 		kubeContext:     cmd.String("kube-context"),
-	}
+	}, nil
 }
 
 // isInteractive reports whether stdin is a terminal, so unattended runs (CI,
@@ -92,6 +98,10 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Bool("all-clusters") {
 		return runFleetUpdate(ctx, cmd)
 	}
+	flags, err := readUpdateAMIFlags(cmd)
+	if err != nil {
+		return err
+	}
 
 	// --timeout <= 0 means no limit, here and in the monitor (not a 60s fallback).
 	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, cmd.Duration("timeout"))
@@ -107,7 +117,6 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	eksClient := eks.NewFromConfig(awsCfg)
-	flags := readUpdateAMIFlags(cmd)
 
 	done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, nodegroupPattern, flags)
 	if err != nil || done {
@@ -194,11 +203,9 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		Timeout:   flags.timeout,
 	}
 	config := refreshTypes.MonitorConfig{
-		PollInterval:    flags.pollInterval,
-		MaxRetries:      3,
-		BackoffMultiple: 2.0,
-		Quiet:           quiet,
-		Timeout:         flags.timeout,
+		PollInterval: flags.pollInterval,
+		Quiet:        quiet,
+		Timeout:      flags.timeout,
 	}
 	// Live per-node roll view: the DEFAULT for an interactive single-nodegroup
 	// roll (nodes draining/joining/terminating, pod eviction, warnings), where
@@ -248,6 +255,12 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	}
 
 	verifyFailed := false
+	// Verification is cluster-wide (new stuck pods), so it can't be scoped to
+	// the updates that completed while an unmonitored roll may still be
+	// running. Skip it, and say why.
+	if verify && errors.Is(monErr, monitoring.ErrUnmonitored) && !quiet {
+		color.Yellow("Post-roll verification skipped: the outcome of one or more updates is unknown.")
+	}
 	if verify && shouldVerifyPostRoll(ctx, monErr) && len(outcomes.Started) > 0 {
 		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll, prerollOK)
 		outcomes.Verification = &result
@@ -504,13 +517,6 @@ func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clust
 	return selected, nil
 }
 
-// startNodegroupUpdates issues UpdateNodegroupVersion for each selected
-// nodegroup that isn't already updating or already on the latest AMI,
-// returning successful update progress entries. Per-nodegroup failures are
-// logged and skipped, matching the original best-effort behavior.
-//
-// The already-on-latest skip mirrors the dry-run preview (ActionSkipLatest) so
-// the real run matches what `--dry-run` promised; `--force` bypasses it.
 // updateOutcomes records the per-nodegroup disposition of an update run, used
 // for the JSON summary (-o json) and the exit-code contract.
 type updateOutcomes struct {
@@ -522,42 +528,43 @@ type updateOutcomes struct {
 	Verification *PostRollVerification `json:"verification,omitempty"`
 }
 
+// startNodegroupUpdates starts a version update, through the nodegroup
+// service, for each selected nodegroup that isn't already updating or already
+// on the latest AMI, returning successful update progress entries.
+// Per-nodegroup failures are logged and skipped, matching the original
+// best-effort behavior.
+//
+// The already-on-latest skip mirrors the dry-run preview (ActionSkipLatest) so
+// the real run matches what `--dry-run` promised; `--force` bypasses it.
 func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, nodegroups []string, flags updateAMIFlags) ([]refreshTypes.UpdateProgress, updateOutcomes) {
 	skipLatest := newLatestAMISkipChecker(ctx, awsCfg, eksClient, clusterName, flags)
 	human := !flags.quiet && flags.format != "json"
 
+	ngSvc := factory.NewNodegroupService(awsCfg, false, nil)
 	outcomes := updateOutcomes{Cluster: clusterName}
 	updates := make([]refreshTypes.UpdateProgress, 0, len(nodegroups))
 	for _, ng := range nodegroups {
-		desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(ng),
-		})
+		nodegroup, err := ngSvc.DescribeNodegroup(ctx, clusterName, ng)
 		if err != nil {
 			color.Red("Failed to describe nodegroup %s: %v", ng, err)
-			outcomes.Failed = append(outcomes.Failed, ng)
-			continue
-		}
-		if desc.Nodegroup == nil {
-			color.Red("Failed to describe nodegroup %s: empty response", ng)
 			outcomes.Failed = append(outcomes.Failed, ng)
 			continue
 		}
 		// Custom-AMI nodegroups: EKS doesn't manage the AMI (it lives in the
 		// user's launch template), so UpdateNodegroupVersion can't pick a
 		// recommended AMI. Skip with clear guidance instead of mis-rolling.
-		if desc.Nodegroup.AmiType == ekstypes.AMITypesCustom {
+		if nodegroup.AmiType == ekstypes.AMITypesCustom {
 			color.Yellow("Nodegroup %s uses a custom AMI (AmiType=CUSTOM); refresh can't select a recommended AMI.", ng)
 			color.Yellow("  Publish a new launch template version with your AMI and roll it (e.g. update the LT, then `nodegroup update --force`).")
 			outcomes.Custom = append(outcomes.Custom, ng)
 			continue
 		}
-		if desc.Nodegroup.Status == ekstypes.NodegroupStatusUpdating {
+		if nodegroup.Status == ekstypes.NodegroupStatusUpdating {
 			color.Yellow("Nodegroup %s is already UPDATING. Skipping update.", ng)
 			outcomes.Skipped = append(outcomes.Skipped, ng)
 			continue
 		}
-		if skipLatest(desc.Nodegroup) {
+		if skipLatest(nodegroup) {
 			color.Green("Nodegroup %s is already on the latest AMI. Skipping (use --force to update anyway).", ng)
 			outcomes.Skipped = append(outcomes.Skipped, ng)
 			continue
@@ -566,20 +573,17 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 			color.Cyan("Starting update for nodegroup %s...", ng)
 		}
 
-		// ClientRequestToken makes the mutating call idempotent: a retry (or a
-		// fleet run that revisits a cluster) won't trigger a second AMI rollout.
-		resp, err := eksClient.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
-			ClusterName:        aws.String(clusterName),
-			NodegroupName:      aws.String(ng),
-			Force:              flags.force,
-			ClientRequestToken: aws.String(common.IdempotencyToken()),
-		})
+		// The service pins one ClientRequestToken across its retries, so a
+		// throttled or dropped request can't start a second roll. A new run or
+		// a fleet revisit sends a new request; the UPDATING skip above is what
+		// keeps it from rolling the nodegroup again.
+		update, err := ngSvc.StartVersionUpdate(ctx, clusterName, ng, nodegroupsvc.VersionUpdateOptions{Force: flags.force})
 		if err != nil {
 			color.Red("Failed to update nodegroup %s: %v", ng, err)
 			outcomes.Failed = append(outcomes.Failed, ng)
 			continue
 		}
-		if resp.Update == nil || resp.Update.Id == nil {
+		if update == nil || update.Id == nil {
 			color.Red("Update for nodegroup %s returned no update ID", ng)
 			outcomes.Failed = append(outcomes.Failed, ng)
 			continue
@@ -588,15 +592,15 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 		now := time.Now()
 		updates = append(updates, refreshTypes.UpdateProgress{
 			NodegroupName: ng,
-			UpdateID:      *resp.Update.Id,
+			UpdateID:      *update.Id,
 			ClusterName:   clusterName,
-			Status:        resp.Update.Status,
+			Status:        update.Status,
 			StartTime:     now,
 			LastChecked:   now,
 		})
 		outcomes.Started = append(outcomes.Started, ng)
 		if human {
-			color.Green("Update started for nodegroup %s (ID: %s)", ng, *resp.Update.Id)
+			color.Green("Update started for nodegroup %s (ID: %s)", ng, *update.Id)
 		}
 	}
 	return updates, outcomes

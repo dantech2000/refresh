@@ -116,6 +116,10 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 	if err := validateFleetFlags(cmd); err != nil {
 		return err
 	}
+	flags, err := readUpdateAMIFlags(cmd)
+	if err != nil {
+		return err
+	}
 	// No overall deadline: clusters roll serially, so one --timeout across the
 	// whole fleet would starve later clusters. --timeout applies per cluster
 	// (see updateOneClusterInFleet); the run stays signal-cancellable.
@@ -125,7 +129,6 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	flags := readUpdateAMIFlags(cmd)
 	nodegroupPattern := cmd.String("nodegroup")
 	jsonOut := flags.format == "json" && !flags.healthOnly
 
