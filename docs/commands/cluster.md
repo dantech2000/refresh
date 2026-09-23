@@ -217,7 +217,7 @@ with the hop target) → nodegroup rolls.
 | `--quiet, -q` | Suppress progress output |
 | `--poll-interval, -p` | How often to poll in-flight updates (default `15s`) |
 | `--format, -o` | Plan output format: `table` (default), `json`, `yaml`, `plain` |
-| `--timeout, -t` | Overall operation timeout (default `4h`; env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Overall upgrade timeout (default `4h`; not read from `REFRESH_TIMEOUT`) |
 
 !!! tip "Exit code in dry-run"
     A dry-run (or any run) whose plan contains a **blocker** prints the plan and

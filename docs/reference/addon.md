@@ -115,7 +115,7 @@ before updating. -o json|yaml emits a machine-readable result/summary.
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `10m0s` | Operation timeout |
+| `--timeout, -t duration` | — | `10m0s` | Timeout for the update's API calls; with --wait, --wait-timeout per add-on is added on top (not read from REFRESH_TIMEOUT) |
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
 | `--addon, -a string` | — | — | Add-on name (e.g., vpc-cni) |
 | `--version string` | — | `latest` | Target version or 'latest' (can be provided as third positional) |
