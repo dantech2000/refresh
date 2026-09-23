@@ -36,12 +36,15 @@ type releaseNote struct {
 
 // amiChangelog is the current→target AMI release delta plus best-effort notes.
 type amiChangelog struct {
-	Current  string        `json:"current" yaml:"current"`
-	Target   string        `json:"target" yaml:"target"`
-	Behind   int           `json:"releasesBehind" yaml:"releasesBehind"`
-	Notes    []releaseNote `json:"notes,omitempty" yaml:"notes,omitempty"`
-	Degraded bool          `json:"degraded,omitempty" yaml:"degraded,omitempty"`
-	Reason   string        `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Current string        `json:"current" yaml:"current"`
+	Target  string        `json:"target" yaml:"target"`
+	Behind  int           `json:"releasesBehind" yaml:"releasesBehind"`
+	Notes   []releaseNote `json:"notes,omitempty" yaml:"notes,omitempty"`
+	// NotesURL points at the family's own release notes when they are not
+	// amazon-eks-ami's (Bottlerocket, Windows); Notes and Behind stay empty.
+	NotesURL string `json:"notesUrl,omitempty" yaml:"notesUrl,omitempty"`
+	Degraded bool   `json:"degraded,omitempty" yaml:"degraded,omitempty"`
+	Reason   string `json:"reason,omitempty" yaml:"reason,omitempty"`
 }
 
 // releaseDate returns the trailing 8-digit date stamp from a release version/tag.
@@ -87,8 +90,21 @@ type ghRelease struct {
 // buildAMIChangelog computes the release delta and, best-effort, summarized
 // notes for the amazon-eks-ami releases strictly after current up to target.
 // Any failure degrades to just the version delta — it never blocks an update.
-func buildAMIChangelog(ctx context.Context, httpClient *http.Client, current, target string) amiChangelog {
+//
+// Only the Amazon Linux families publish through amazon-eks-ami with
+// date-stamped versions. Other families (Bottlerocket's 1.20.3-5d9ac849,
+// whose commit hash can be all digits) never reach the date parser: they get
+// a pointer to their own release notes instead.
+func buildAMIChangelog(ctx context.Context, httpClient *http.Client, amiType ekstypes.AMITypes, current, target string) amiChangelog {
 	cl := amiChangelog{Current: current, Target: target}
+	if url, eksAMI := awsinternal.AMIReleaseNotes(amiType); !eksAMI {
+		cl.NotesURL = url
+		if url == "" {
+			cl.Degraded = true
+			cl.Reason = "no release notes source for AMI type " + string(amiType)
+		}
+		return cl
+	}
 	curDate, okC := releaseDate(current)
 	tgtDate, okT := releaseDate(target)
 	if !okC || !okT {
@@ -177,7 +193,7 @@ func printChangelogsForNodegroups(ctx context.Context, awsCfg aws.Config, eksCli
 			continue
 		}
 		fmt.Printf("  nodegroup %s:\n", ng)
-		printChangelog(buildAMIChangelog(ctx, nil, current, target), full)
+		printChangelog(buildAMIChangelog(ctx, nil, desc.Nodegroup.AmiType, current, target), full)
 	}
 }
 
@@ -187,6 +203,10 @@ func printChangelog(cl amiChangelog, full bool) {
 		delta += fmt.Sprintf(" (%d release(s) behind)", cl.Behind)
 	}
 	color.Cyan("    AMI changelog: %s", delta)
+	if cl.NotesURL != "" {
+		fmt.Printf("      see release notes: %s\n", cl.NotesURL)
+		return
+	}
 	if cl.Degraded {
 		color.Yellow("      release notes unavailable (%s)", cl.Reason)
 		return

@@ -117,13 +117,15 @@ func LatestAmiIDForType(ctx context.Context, ssmClient *ssm.Client, k8sVersion s
 // LatestReleaseVersionForType returns the latest recommended AMI *release
 // version* (e.g. "1.31.0-20260601") for an AMI type — the human-meaningful
 // counterpart of LatestAmiIDForType, used for changelog/version-delta display.
-// Returns "" for custom AMIs or when the SSM parameter is unavailable.
+// For Bottlerocket this is the image_version parameter (e.g. "1.20.3-5d9ac849"),
+// which matches the nodegroup's releaseVersion. Returns "" for custom and
+// Windows AMIs (AWS publishes no release-version parameter for Windows) or
+// when the SSM parameter is unavailable.
 func LatestReleaseVersionForType(ctx context.Context, ssmClient *ssm.Client, k8sVersion string, amiType types.AMITypes) string {
-	imgPath := buildSSMParameterPath(k8sVersion, amiType)
-	if imgPath == "" {
+	relPath := buildReleaseVersionParameterPath(k8sVersion, amiType)
+	if relPath == "" {
 		return ""
 	}
-	relPath := strings.TrimSuffix(imgPath, "image_id") + "release_version"
 
 	out, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(relPath)})
 	if err != nil || out.Parameter == nil || out.Parameter.Value == nil {
@@ -134,10 +136,10 @@ func LatestReleaseVersionForType(ctx context.Context, ssmClient *ssm.Client, k8s
 
 // NodegroupK8sVersion returns the Kubernetes minor a managed nodegroup runs
 // (ng.Version), falling back to clusterVersion when the nodegroup doesn't
-// report one. Latest-AMI lookups must use this, not the cluster version:
-// UpdateNodegroupVersion without an explicit Version keeps the nodegroup on
-// its current minor, so between a control-plane upgrade and the nodegroup
-// upgrade the recommended AMI for the cluster's minor is never reachable.
+// report one. Latest-AMI lookups must use this, not the cluster version: an
+// AMI patch (nodegroup.StartVersionUpdate) pins the nodegroup's current minor,
+// so between a control-plane upgrade and the nodegroup upgrade the
+// recommended AMI for the cluster's minor is never reachable.
 func NodegroupK8sVersion(ng *types.Nodegroup, clusterVersion string) string {
 	if ng != nil {
 		if v := aws.ToString(ng.Version); v != "" {
@@ -250,83 +252,179 @@ func (c *LatestAMICache) ForNodegroup(ctx context.Context, ng *types.Nodegroup, 
 	return c.Get(ctx, NodegroupK8sVersion(ng, clusterVersion), ng.AmiType)
 }
 
-// buildSSMParameterPath constructs the SSM parameter path for the given AMI type.
-// Reference: https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html
-func buildSSMParameterPath(k8sVersion string, amiType types.AMITypes) string {
-	basePrefix := "/aws/service/eks/optimized-ami/" + k8sVersion
+// SSM parameter paths for the recommended EKS-optimized AMIs. Each AMI family
+// publishes under a different tree:
+//
+//   - Amazon Linux: /aws/service/eks/optimized-ami/<ver>/<ami-type>/recommended/{image_id,release_version}
+//     https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html
+//   - Bottlerocket: /aws/service/bottlerocket/aws-k8s-<ver>[-flavor]/<arch>/latest/{image_id,image_version}
+//     https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id-bottlerocket.html
+//   - Windows: /aws/service/ami-windows-latest/Windows_Server-<release>-English-<Core|Full>-EKS_Optimized-<ver>/image_id
+//     https://docs.aws.amazon.com/eks/latest/userguide/retrieve-windows-ami-id.html
+//     (no release-version parameter is published)
+type amiFamily int
 
-	// AMI type to SSM path mapping
-	amiPaths := map[types.AMITypes]string{
-		// Amazon Linux 2
-		types.AMITypesAl2X8664:    "/amazon-linux-2/recommended/image_id",
-		types.AMITypesAl2Arm64:    "/amazon-linux-2-arm64/recommended/image_id",
-		types.AMITypesAl2X8664Gpu: "/amazon-linux-2-gpu/recommended/image_id",
+const (
+	familyUnknown amiFamily = iota
+	familyAmazonLinux
+	familyBottlerocket
+	familyWindows
+)
 
-		// Amazon Linux 2023
-		types.AMITypesAl2023X8664Standard: "/amazon-linux-2023/x86_64/standard/recommended/image_id",
-		types.AMITypesAl2023Arm64Standard: "/amazon-linux-2023/arm64/standard/recommended/image_id",
-		types.AMITypesAl2023X8664Nvidia:   "/amazon-linux-2023/x86_64/nvidia/recommended/image_id",
-		types.AMITypesAl2023X8664Neuron:   "/amazon-linux-2023/x86_64/neuron/recommended/image_id",
-		types.AMITypesAl2023Arm64Nvidia:   "/amazon-linux-2023/arm64/nvidia/recommended/image_id",
-
-		// Bottlerocket
-		types.AMITypesBottlerocketX8664:       "/bottlerocket/x86_64/recommended/image_id",
-		types.AMITypesBottlerocketArm64:       "/bottlerocket/arm64/recommended/image_id",
-		types.AMITypesBottlerocketX8664Nvidia: "/bottlerocket/x86_64/nvidia/recommended/image_id",
-		types.AMITypesBottlerocketArm64Nvidia: "/bottlerocket/arm64/nvidia/recommended/image_id",
-
-		// Windows
-		types.AMITypesWindowsFull2019X8664: "/windows/windows-2019-full/recommended/image_id",
-		types.AMITypesWindowsCore2019X8664: "/windows/windows-2019-core/recommended/image_id",
-		types.AMITypesWindowsFull2022X8664: "/windows/windows-2022-full/recommended/image_id",
-		types.AMITypesWindowsCore2022X8664: "/windows/windows-2022-core/recommended/image_id",
-	}
-
-	if path, ok := amiPaths[amiType]; ok {
-		return basePrefix + path
-	}
-
-	// Custom AMI - cannot determine latest from SSM
-	if amiType == types.AMITypesCustom {
-		return ""
-	}
-
-	// Fallback: try to infer from AMI type string
-	return inferSSMPath(basePrefix, string(amiType))
+// amiSSMSpec identifies one AMI type's parameter within its family's tree.
+type amiSSMSpec struct {
+	family amiFamily
+	// variant is the Amazon Linux <ami-type> segment, the Bottlerocket
+	// "-flavor" suffix (possibly empty), or the Windows "<release>-English-<option>".
+	variant string
+	arch    string // Bottlerocket only
 }
 
-// inferSSMPath attempts to infer the SSM parameter path from the AMI type string.
-func inferSSMPath(basePrefix, amiTypeStr string) string {
+var amiSSMSpecs = map[types.AMITypes]amiSSMSpec{
+	// Amazon Linux 2
+	types.AMITypesAl2X8664:    {family: familyAmazonLinux, variant: "amazon-linux-2"},
+	types.AMITypesAl2Arm64:    {family: familyAmazonLinux, variant: "amazon-linux-2-arm64"},
+	types.AMITypesAl2X8664Gpu: {family: familyAmazonLinux, variant: "amazon-linux-2-gpu"},
+
+	// Amazon Linux 2023
+	types.AMITypesAl2023X8664Standard: {family: familyAmazonLinux, variant: "amazon-linux-2023/x86_64/standard"},
+	types.AMITypesAl2023Arm64Standard: {family: familyAmazonLinux, variant: "amazon-linux-2023/arm64/standard"},
+	types.AMITypesAl2023X8664Nvidia:   {family: familyAmazonLinux, variant: "amazon-linux-2023/x86_64/nvidia"},
+	types.AMITypesAl2023Arm64Nvidia:   {family: familyAmazonLinux, variant: "amazon-linux-2023/arm64/nvidia"},
+	types.AMITypesAl2023X8664Neuron:   {family: familyAmazonLinux, variant: "amazon-linux-2023/x86_64/neuron"},
+
+	// Bottlerocket
+	types.AMITypesBottlerocketX8664:           {family: familyBottlerocket, arch: "x86_64"},
+	types.AMITypesBottlerocketArm64:           {family: familyBottlerocket, arch: "arm64"},
+	types.AMITypesBottlerocketX8664Nvidia:     {family: familyBottlerocket, variant: "-nvidia", arch: "x86_64"},
+	types.AMITypesBottlerocketArm64Nvidia:     {family: familyBottlerocket, variant: "-nvidia", arch: "arm64"},
+	types.AMITypesBottlerocketX8664Fips:       {family: familyBottlerocket, variant: "-fips", arch: "x86_64"},
+	types.AMITypesBottlerocketArm64Fips:       {family: familyBottlerocket, variant: "-fips", arch: "arm64"},
+	types.AMITypesBottlerocketX8664NvidiaFips: {family: familyBottlerocket, variant: "-nvidia-fips", arch: "x86_64"},
+	types.AMITypesBottlerocketArm64NvidiaFips: {family: familyBottlerocket, variant: "-nvidia-fips", arch: "arm64"},
+
+	// Windows
+	types.AMITypesWindowsCore2019X8664: {family: familyWindows, variant: "2019-English-Core"},
+	types.AMITypesWindowsFull2019X8664: {family: familyWindows, variant: "2019-English-Full"},
+	types.AMITypesWindowsCore2022X8664: {family: familyWindows, variant: "2022-English-Core"},
+	types.AMITypesWindowsFull2022X8664: {family: familyWindows, variant: "2022-English-Full"},
+	types.AMITypesWindowsCore2025X8664: {family: familyWindows, variant: "2025-English-Core"},
+	types.AMITypesWindowsFull2025X8664: {family: familyWindows, variant: "2025-English-Full"},
+}
+
+// buildSSMParameterPath returns the SSM parameter holding the latest
+// recommended AMI ID for the AMI type, or "" when there is none to look up
+// (custom or unrecognized AMI types).
+func buildSSMParameterPath(k8sVersion string, amiType types.AMITypes) string {
+	spec, ok := lookupAMISSMSpec(amiType)
+	if !ok {
+		return ""
+	}
+	switch spec.family {
+	case familyAmazonLinux:
+		return "/aws/service/eks/optimized-ami/" + k8sVersion + "/" + spec.variant + "/recommended/image_id"
+	case familyBottlerocket:
+		return "/aws/service/bottlerocket/aws-k8s-" + k8sVersion + spec.variant + "/" + spec.arch + "/latest/image_id"
+	case familyWindows:
+		return "/aws/service/ami-windows-latest/Windows_Server-" + spec.variant + "-EKS_Optimized-" + k8sVersion + "/image_id"
+	default:
+		return ""
+	}
+}
+
+// buildReleaseVersionParameterPath returns the SSM parameter holding the
+// latest recommended AMI release version for the AMI type, or "" when AWS
+// publishes none (custom, unrecognized, and Windows AMI types).
+func buildReleaseVersionParameterPath(k8sVersion string, amiType types.AMITypes) string {
+	spec, ok := lookupAMISSMSpec(amiType)
+	if !ok {
+		return ""
+	}
+	img := buildSSMParameterPath(k8sVersion, amiType)
+	switch spec.family {
+	case familyAmazonLinux:
+		return strings.TrimSuffix(img, "image_id") + "release_version"
+	case familyBottlerocket:
+		return strings.TrimSuffix(img, "image_id") + "image_version"
+	default:
+		return ""
+	}
+}
+
+// Release-notes pages per AMI family.
+const (
+	amazonEKSAMIReleasesURL = "https://github.com/awslabs/amazon-eks-ami/releases"
+	bottlerocketReleasesURL = "https://github.com/bottlerocket-os/bottlerocket/releases"
+	windowsAMIReleasesURL   = "https://docs.aws.amazon.com/eks/latest/userguide/eks-ami-versions-windows.html"
+)
+
+// AMIReleaseNotes returns where an AMI type's release notes live. eksAMI is
+// true only for the Amazon Linux families, whose releases are published by
+// awslabs/amazon-eks-ami with a date-stamped release version (e.g.
+// "1.31.0-20260601"). Bottlerocket and Windows version differently, so their
+// versions must not be read as amazon-eks-ami dates. url is "" for custom and
+// unrecognized AMI types.
+func AMIReleaseNotes(amiType types.AMITypes) (url string, eksAMI bool) {
+	spec, ok := lookupAMISSMSpec(amiType)
+	if !ok {
+		return "", false
+	}
+	switch spec.family {
+	case familyAmazonLinux:
+		return amazonEKSAMIReleasesURL, true
+	case familyBottlerocket:
+		return bottlerocketReleasesURL, false
+	case familyWindows:
+		return windowsAMIReleasesURL, false
+	default:
+		return "", false
+	}
+}
+
+// lookupAMISSMSpec resolves an AMI type to its SSM spec, inferring one for
+// AMI types newer than this SDK's enum. Custom AMIs have no recommended AMI.
+func lookupAMISSMSpec(amiType types.AMITypes) (amiSSMSpec, bool) {
+	if amiType == types.AMITypesCustom {
+		return amiSSMSpec{}, false
+	}
+	if spec, ok := amiSSMSpecs[amiType]; ok {
+		return spec, true
+	}
+	return inferAMISSMSpec(string(amiType))
+}
+
+// inferAMISSMSpec guesses the SSM spec from an AMI type string the SDK enum
+// doesn't know yet. It only infers the base variant of each family; anything
+// else resolves to "unknown" rather than compare against the wrong AMI.
+func inferAMISSMSpec(amiTypeStr string) (amiSSMSpec, bool) {
 	amiTypeStr = strings.ToUpper(amiTypeStr)
 
 	// EKS AMI type strings use "ARM_64" (e.g. AL2023_ARM_64_STANDARD, BOTTLEROCKET_ARM_64);
 	// check for "ARM" to match both "ARM64" and "ARM_64" variants.
 	isArm := strings.Contains(amiTypeStr, "ARM")
+	arch := "x86_64"
+	if isArm {
+		arch = "arm64"
+	}
 
 	switch {
 	case strings.Contains(amiTypeStr, "AL2023"):
-		if isArm {
-			return basePrefix + "/amazon-linux-2023/arm64/standard/recommended/image_id"
-		}
-		return basePrefix + "/amazon-linux-2023/x86_64/standard/recommended/image_id"
+		return amiSSMSpec{family: familyAmazonLinux, variant: "amazon-linux-2023/" + arch + "/standard"}, true
 
 	case strings.Contains(amiTypeStr, "BOTTLEROCKET"):
-		if isArm {
-			return basePrefix + "/bottlerocket/arm64/recommended/image_id"
-		}
-		return basePrefix + "/bottlerocket/x86_64/recommended/image_id"
+		return amiSSMSpec{family: familyBottlerocket, arch: arch}, true
 
 	case strings.Contains(amiTypeStr, "AL2"):
 		if isArm {
-			return basePrefix + "/amazon-linux-2-arm64/recommended/image_id"
+			return amiSSMSpec{family: familyAmazonLinux, variant: "amazon-linux-2-arm64"}, true
 		}
-		return basePrefix + "/amazon-linux-2/recommended/image_id"
+		return amiSSMSpec{family: familyAmazonLinux, variant: "amazon-linux-2"}, true
 
 	default:
 		// Unrecognized AMI type (future families, custom strings): resolving
 		// against the AL2 path would silently compare the wrong AMI — and the
 		// AL2 parameter no longer exists for k8s >= 1.33. Report "unknown"
 		// instead.
-		return ""
+		return amiSSMSpec{}, false
 	}
 }

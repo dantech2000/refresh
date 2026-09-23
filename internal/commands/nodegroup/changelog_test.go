@@ -4,7 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 )
 
 func TestReleaseDate(t *testing.T) {
@@ -50,7 +53,7 @@ func TestBuildAMIChangelog_Fetched(t *testing.T) {
 	eksAMIReleasesURL = srv.URL
 	defer func() { eksAMIReleasesURL = oldURL }()
 
-	cl := buildAMIChangelog(context.Background(), srv.Client(), "1.31.0-20260201", "1.31.0-20260601")
+	cl := buildAMIChangelog(context.Background(), srv.Client(), ekstypes.AMITypesAl2023X8664Standard, "1.31.0-20260201", "1.31.0-20260601")
 	if cl.Degraded {
 		t.Fatalf("unexpected degraded: %s", cl.Reason)
 	}
@@ -64,8 +67,43 @@ func TestBuildAMIChangelog_Fetched(t *testing.T) {
 }
 
 func TestBuildAMIChangelog_DegradesOnUnparseable(t *testing.T) {
-	cl := buildAMIChangelog(context.Background(), nil, "custom-x", "also-custom")
+	cl := buildAMIChangelog(context.Background(), nil, ekstypes.AMITypesAl2023X8664Standard, "custom-x", "also-custom")
 	if !cl.Degraded {
 		t.Error("expected degraded when release dates can't be parsed")
+	}
+}
+
+// Bottlerocket and Windows versions are not amazon-eks-ami date stamps: they
+// must never reach the date parser or the amazon-eks-ami releases API, even
+// when a Bottlerocket commit hash is all digits and would parse as a date.
+func TestBuildAMIChangelog_NonAmazonLinuxFamilies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("amazon-eks-ami releases API called for a non-Amazon Linux AMI")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	oldURL := eksAMIReleasesURL
+	eksAMIReleasesURL = srv.URL
+	defer func() { eksAMIReleasesURL = oldURL }()
+
+	cases := []struct {
+		amiType         ekstypes.AMITypes
+		current, target string
+		url             string
+	}{
+		{ekstypes.AMITypesBottlerocketX8664, "1.20.3-5d9ac849", "1.21.0-0a1b2c3d", "https://github.com/bottlerocket-os/bottlerocket/releases"},
+		// All-digit commit hashes: 8 digits each, which the date parser would accept.
+		{ekstypes.AMITypesBottlerocketArm64Nvidia, "1.20.3-20240101", "1.21.0-20260601", "https://github.com/bottlerocket-os/bottlerocket/releases"},
+		{ekstypes.AMITypesWindowsCore2022X8664, "1.31-2026.01.14", "1.31-2026.09.14", "https://docs.aws.amazon.com/eks/latest/userguide/eks-ami-versions-windows.html"},
+	}
+	for _, tc := range cases {
+		cl := buildAMIChangelog(context.Background(), srv.Client(), tc.amiType, tc.current, tc.target)
+		if cl.NotesURL != tc.url || cl.Behind != 0 || len(cl.Notes) != 0 || cl.Degraded {
+			t.Errorf("%s: changelog = %+v, want only NotesURL %s", tc.amiType, cl, tc.url)
+		}
+		out := captureStdout(t, func() { printChangelog(cl, false) })
+		if !strings.Contains(out, "see release notes: "+tc.url) || strings.Contains(out, "unavailable") {
+			t.Errorf("%s: printed %q", tc.amiType, out)
+		}
 	}
 }
