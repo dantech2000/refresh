@@ -64,6 +64,8 @@ func stubKubeSeams(t *testing.T) (*bytes.Buffer, *int) {
 	probes := 0
 	prevOut, prevProbe := kubeWarnOut, probeKube
 	kubeWarnOut = &buf
+	kubeNotices.Clear() // notices dedupe per process; each test starts fresh
+	t.Cleanup(func() { kubeNotices.Clear() })
 	probeKube = func(context.Context, kubernetes.Interface) error { probes++; return nil }
 	t.Cleanup(func() { kubeWarnOut, probeKube = prevOut, prevProbe })
 	return &buf, &probes
