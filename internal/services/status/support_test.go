@@ -227,24 +227,25 @@ func TestFallbackPosture(t *testing.T) {
 
 // A cluster with upgrade policy STANDARD never pays the extended-support
 // premium; EKS auto-upgrades it at the end of standard support.
-func TestApplyUpgradePolicy(t *testing.T) {
+func TestApplySupportType(t *testing.T) {
 	ext := classifySupport(date(2026, 3, 23), date(2027, 3, 23), date(2026, 6, 11), false)
 	if ext.ExtraCostUSDPerHour == 0 {
 		t.Fatal("precondition: extended posture should carry the premium")
 	}
 
-	if got := applyUpgradePolicy(ext, nil); got != ext {
-		t.Errorf("nil policy changed the posture: %+v", got)
+	if got := ApplySupportType(ext, ""); got != ext {
+		t.Errorf("no policy changed the posture: %+v", got)
 	}
-	extended := &ekstypes.UpgradePolicyResponse{SupportType: ekstypes.SupportTypeExtended}
-	if got := applyUpgradePolicy(ext, extended); got != ext {
+	if got := ApplySupportType(ext, ekstypes.SupportTypeExtended); got != ext {
 		t.Errorf("EXTENDED policy changed the posture: %+v", got)
 	}
 
-	standard := &ekstypes.UpgradePolicyResponse{SupportType: ekstypes.SupportTypeStandard}
-	got := applyUpgradePolicy(ext, standard)
+	got := ApplySupportType(ext, ekstypes.SupportTypeStandard)
 	if !got.AutoUpgradeAtStandardEnd || got.ExtraCostUSDPerHour != 0 {
 		t.Errorf("STANDARD policy = %+v, want auto-upgrade and no premium", got)
+	}
+	if SupportTypeOf(nil) != "" || SupportTypeOf(&ekstypes.Cluster{}) != "" {
+		t.Error("SupportTypeOf without a policy should be empty")
 	}
 	if got.Tier != ext.Tier {
 		t.Errorf("tier changed: %s", got.Tier)

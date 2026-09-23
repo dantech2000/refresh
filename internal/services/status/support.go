@@ -100,18 +100,27 @@ func resolveSupportPosture(ctx context.Context, api supportVersionsAPI, version 
 	return classifySupport(std, ext, now, false)
 }
 
-// applyUpgradePolicy adjusts a version's support posture for one cluster's
-// upgrade policy. With SupportType STANDARD the cluster never enters extended
-// support: EKS auto-upgrades it at the end of standard support and never
-// bills the extended-support premium.
+// ApplySupportType adjusts a version's support posture for one cluster's
+// upgrade policy (UpgradePolicy.SupportType). With STANDARD the cluster never
+// enters extended support: EKS auto-upgrades it at the end of standard support
+// and never bills the extended-support premium.
 // https://docs.aws.amazon.com/eks/latest/userguide/disable-extended-support.html
-func applyUpgradePolicy(p SupportPosture, policy *ekstypes.UpgradePolicyResponse) SupportPosture {
-	if policy == nil || policy.SupportType != ekstypes.SupportTypeStandard {
+func ApplySupportType(p SupportPosture, supportType ekstypes.SupportType) SupportPosture {
+	if supportType != ekstypes.SupportTypeStandard {
 		return p
 	}
 	p.AutoUpgradeAtStandardEnd = true
 	p.ExtraCostUSDPerHour = 0
 	return p
+}
+
+// SupportTypeOf returns a cluster's upgrade-policy support type, or "" when
+// the cluster reports no policy.
+func SupportTypeOf(c *ekstypes.Cluster) ekstypes.SupportType {
+	if c == nil || c.UpgradePolicy == nil {
+		return ""
+	}
+	return c.UpgradePolicy.SupportType
 }
 
 // resolveSupport returns the support posture for a Kubernetes version, caching

@@ -30,6 +30,19 @@ func TestSupportFormatters(t *testing.T) {
 		t.Errorf("extended token = %q", got)
 	}
 
+	// STANDARD upgrade policy: the auto-upgrade note replaces the premium.
+	stdPolicy := &status.SupportPosture{Tier: status.SupportExtended, DaysRemaining: intp(90), AutoUpgradeAtStandardEnd: true}
+	if got := supportPlain(stdPolicy); got != "extended (90d), auto-upgrades at end of standard support" {
+		t.Errorf("STANDARD-policy extended plain = %q", got)
+	}
+	if got := supportToken(th, stdPolicy); !strings.Contains(got, "auto-upgrades at end of standard support") || strings.Contains(got, "/hr") {
+		t.Errorf("STANDARD-policy extended token = %q", got)
+	}
+	stdPolicyStd := &status.SupportPosture{Tier: status.SupportStandard, DaysRemaining: intp(200), AutoUpgradeAtStandardEnd: true}
+	if got := supportPlain(stdPolicyStd); got != "standard (200d), auto-upgrades at end of standard support" {
+		t.Errorf("STANDARD-policy standard plain = %q", got)
+	}
+
 	if got := supportPlain(&status.SupportPosture{Tier: status.SupportUnsupported}); got != "unsupported" {
 		t.Errorf("unsupported plain = %q", got)
 	}

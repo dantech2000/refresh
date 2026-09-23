@@ -15,6 +15,7 @@
     "autoUpgradeAtStandardEnd": true,
     "fallback": true
   },
+  "supportType": "s-supporttype",
   "health": {
     "results": [
       {
