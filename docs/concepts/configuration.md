@@ -77,8 +77,9 @@ The name can be a partial pattern:
 - If several clusters contain the pattern, `refresh` asks you to pick one.
   Without a terminal, the command fails and lists the candidates.
 - `--yes` does not accept a partial cluster name. In scripts, pass the exact
-  name. `cluster upgrade -o json`/`-o yaml` never asks, even on a terminal:
-  a partial name fails and names the candidate.
+  name.
+- With `-o json` or `-o yaml`, `refresh` never asks, even on a terminal. The
+  pattern resolves as it does without a terminal.
 
 Prompts wait until you answer or press Ctrl+C. The time you take to answer
 does not count against `--timeout`.
@@ -179,8 +180,8 @@ does not set them:
 | `addon update` | `--timeout, -t` | `10m` | The update API calls. With `--wait`, each add-on (or each batch of 3 with `--parallel`) also gets `--wait-timeout` (default `5m`) |
 | `nodegroup scale --wait` | `--op-timeout` | `5m` | Added to the global `--timeout`, plus one more `--timeout` with `--health-check`. `0` means no limit |
 
-`--poll-interval` on `nodegroup update` must be greater than `0`. A zero or
-negative value fails before any AWS call.
+`--poll-interval` on `nodegroup update` and `cluster upgrade` must be greater
+than `0`. A zero or negative value fails before any AWS call.
 
 ## Environment variables
 

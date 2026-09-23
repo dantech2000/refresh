@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/factory"
@@ -43,6 +44,17 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	opts := nodegroupsvc.DescribeOptions{
 		ShowInstances: cmd.Bool("show-instances"),
 		ShowWorkloads: cmd.Bool("show-workloads"),
+	}
+	if opts.ShowWorkloads {
+		opts.KubeClient, _ = runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
+			API:         eks.NewFromConfig(awsCfg),
+			Cluster:     clusterName,
+			Region:      awsCfg.Region,
+			Kubeconfig:  cmd.String("kubeconfig"),
+			KubeContext: cmd.String("kube-context"),
+			Verbose:     !runner.IsMachineFormat(cmd.String("format")),
+			SkipNote:    "Workload placement will show as unavailable.",
+		})
 	}
 
 	var details *nodegroupsvc.NodegroupDetails

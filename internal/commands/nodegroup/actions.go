@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/fatih/color"
 	"k8s.io/client-go/kubernetes"
@@ -12,6 +11,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/health"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // resolveHealthKubeClient builds the Kubernetes client for the pre-flight
@@ -37,19 +37,19 @@ func resolveHealthKubeClient(ctx context.Context, api health.ClusterDescriber, r
 // warnInstanceTypeAvailability runs the EC2 instance-type-availability pre-flight
 // and prints a non-blocking warning for any (type, AZ) the nodegroup spans where
 // the type isn't offered — nodes would fail to launch there. Best-effort: any
-// error is swallowed so it never blocks a scale or roll. (REF-143)
+// error is swallowed so it never blocks a scale or roll. The warning goes to
+// stderr. (REF-143)
 func warnInstanceTypeAvailability(ctx context.Context, svc *nodegroupsvc.ServiceImpl, clusterName, nodegroupName string) {
-	warnInstanceTypeAvailabilityTo(ctx, os.Stdout, svc, clusterName, nodegroupName)
+	warnInstanceTypeAvailabilityTo(ctx, ui.Stderr, svc, clusterName, nodegroupName)
 }
 
-// warnInstanceTypeAvailabilityTo is warnInstanceTypeAvailability writing to
-// w, so a -o json/yaml run can send the warning to stderr.
+// warnInstanceTypeAvailabilityTo is warnInstanceTypeAvailability writing to w.
 func warnInstanceTypeAvailabilityTo(ctx context.Context, w io.Writer, svc *nodegroupsvc.ServiceImpl, clusterName, nodegroupName string) {
 	unavailable, err := svc.CheckInstanceTypeAvailability(ctx, clusterName, nodegroupName)
 	if err != nil || len(unavailable) == 0 {
 		return
 	}
-	yellow := color.New(color.FgYellow)
+	yellow := ui.ColorFor(w, color.FgYellow)
 	_, _ = yellow.Fprintln(w, "Pre-flight: instance type(s) not offered in some of the nodegroup's AZs — new nodes may fail to launch there:")
 	for _, u := range unavailable {
 		_, _ = fmt.Fprintf(w, "  - %s not offered in %s\n", u.InstanceType, u.AvailabilityZone)

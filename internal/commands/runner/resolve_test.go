@@ -12,6 +12,23 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 )
 
+// A mutating command run with -o json/yaml must never prompt for a partial
+// cluster name, even on a TTY; table and plain runs may.
+func TestMutatingClusterOptions_MachineFormatsNeverPrompt(t *testing.T) {
+	for format, want := range map[string]bool{
+		"json": true, "YAML": true, "yaml": true,
+		"table": false, "plain": false, "": false,
+	} {
+		got := mutatingClusterOptions(format)
+		if got.NonInteractive != want {
+			t.Errorf("mutatingClusterOptions(%q).NonInteractive = %v, want %v", format, got.NonInteractive, want)
+		}
+		if got.ReadOnly {
+			t.Errorf("mutatingClusterOptions(%q).ReadOnly = true, want false (no kubeconfig fallback for a mutation)", format)
+		}
+	}
+}
+
 // noClusterEnv removes every cluster source (flag aside): no active refresh
 // context and no kubeconfig.
 func noClusterEnv(t *testing.T) {

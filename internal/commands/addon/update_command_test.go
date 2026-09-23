@@ -209,8 +209,9 @@ func TestUpdate_VersionGuard(t *testing.T) {
 	})
 }
 
-// A partial add-on name needs --yes without a terminal, and is confirmed on
-// one. Exact and case-insensitive names proceed.
+// A partial add-on name needs --yes without a terminal or with -o json, and
+// is confirmed on a terminal otherwise. Exact and case-insensitive names
+// proceed.
 func TestUpdate_PartialAddonName(t *testing.T) {
 	world := func() *fakeaws.Cluster {
 		return addonCluster(&fakeaws.Addon{Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}})
@@ -219,22 +220,28 @@ func TestUpdate_PartialAddonName(t *testing.T) {
 		name       string
 		tty        bool
 		answer     string
+		format     string // default json
 		args       []string
 		wantErr    string
 		wantUpdate bool
 	}{
 		{name: "no tty", args: []string{"cni"}, wantErr: "no add-on named \"cni\" (partial match: vpc-cni)"},
 		{name: "no tty with --yes", args: []string{"cni", "--yes"}, wantUpdate: true},
-		{name: "tty yes", tty: true, answer: "y", args: []string{"cni"}, wantUpdate: true},
-		{name: "tty no", tty: true, answer: "n", args: []string{"cni"}, wantErr: "cancelled"},
+		{name: "tty yes", tty: true, answer: "y", format: "table", args: []string{"cni"}, wantUpdate: true},
+		{name: "tty no", tty: true, answer: "n", format: "table", args: []string{"cni"}, wantErr: "cancelled"},
+		{name: "tty with -o json never prompts", tty: true, answer: "y", args: []string{"cni"}, wantErr: "no add-on named \"cni\" (partial match: vpc-cni)"},
 		{name: "case-insensitive exact", args: []string{"VPC-CNI"}, wantUpdate: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			withTTY(t, tc.tty, tc.answer)
 			srv := fakeaws.New(t, world())
+			format := tc.format
+			if format == "" {
+				format = "json"
+			}
 			args := append([]string{"update", "prod"}, tc.args...)
-			args = append(args, "-o", "json")
+			args = append(args, "-o", format)
 			_, stderr, err := runAddon(t, args...)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {

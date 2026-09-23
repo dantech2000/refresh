@@ -163,6 +163,23 @@ func TestUpgradeMachineOutput_RequiresYes(t *testing.T) {
 	}
 }
 
+// --poll-interval 0 (or less) is rejected before any AWS call, as in
+// `nodegroup update`, instead of being silently ignored.
+func TestUpgrade_RejectsNonPositivePollInterval(t *testing.T) {
+	for _, pi := range []string{"0", "0s", "-1s"} {
+		t.Run(pi, func(t *testing.T) {
+			srv := fakeaws.New(t, upgradeWorld())
+			_, _, err := runCluster(t, "upgrade", "prod", "--to", "1.32", "--dry-run", "--poll-interval", pi)
+			if err == nil || !strings.Contains(err.Error(), "--poll-interval must be greater than 0") {
+				t.Fatalf("err = %v, want the --poll-interval error", err)
+			}
+			if calls := srv.Calls(); len(calls) != 0 {
+				t.Errorf("AWS was called before the flag check: %v", calls)
+			}
+		})
+	}
+}
+
 // A credential failure prints nothing on stdout, and the returned error
 // carries the setup help once (main prints it to stderr).
 func TestListMachineOutput_CredentialFailure(t *testing.T) {

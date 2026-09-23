@@ -175,15 +175,16 @@ var (
 
 // confirmPartialAddon decides whether `addon update` may act on match, a
 // substring match for the requested name. --yes accepts it with a note on
-// stderr; otherwise a terminal user is asked, and without a terminal the
-// command fails and names the candidate.
-func confirmPartialAddon(ctx context.Context, requested, match string, yes bool) error {
+// stderr; otherwise a terminal user is asked. Without a terminal, or with
+// -o json/yaml (machine formats never prompt), the command fails and names
+// the candidate.
+func confirmPartialAddon(ctx context.Context, requested, match string, yes, machine bool) error {
 	yellow := ui.StderrColor(color.FgYellow)
 	if yes {
 		_, _ = yellow.Fprintf(ui.Stderr, "No add-on named %q; using the partial match %q (--yes)\n", requested, match)
 		return nil
 	}
-	if !stdinIsTerminal() {
+	if machine || !stdinIsTerminal() {
 		return fmt.Errorf("no add-on named %q (partial match: %s); pass the exact name, or --yes to accept the match (no interactive terminal for confirmation)", requested, match)
 	}
 	_, _ = yellow.Fprintf(ui.Stderr, "No add-on named %q. Use %q? [y/N]: ", requested, match)
@@ -279,7 +280,7 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	if partial {
-		if err := confirmPartialAddon(ctx, requested, addonName, cmd.Bool("yes")); err != nil {
+		if err := confirmPartialAddon(ctx, requested, addonName, cmd.Bool("yes"), runner.IsMachineFormat(cmd.String("format"))); err != nil {
 			return err
 		}
 	}
