@@ -42,7 +42,10 @@ type clusterUpdateResult struct {
 // matching nodegroups serially (blast-radius control), with one batch
 // confirmation, an aggregate summary, and a worst-outcome exit code.
 func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(ctx, cmd, 60*time.Second)
+	// No overall deadline: clusters roll serially, so one --timeout across the
+	// whole fleet would starve later clusters. --timeout applies per cluster
+	// (see updateOneClusterInFleet); the run stays signal-cancellable.
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, 0)
 	if err != nil {
 		return err
 	}
@@ -111,6 +114,9 @@ func updateOneClusterInFleet(ctx context.Context, tgt clusterTarget, nodegroupPa
 	res := clusterUpdateResult{Cluster: tgt.cluster, Region: tgt.region}
 	eksClient := eks.NewFromConfig(tgt.awsCfg)
 
+	ctx, cancel := fleetClusterContext(ctx, flags.timeout)
+	defer cancel()
+
 	done, err := preflightHealthCheck(ctx, tgt.awsCfg, eksClient, tgt.cluster, flags)
 	if err != nil {
 		// Block (or, in unattended mode, a warn-level hard stop).
@@ -135,6 +141,15 @@ func updateOneClusterInFleet(ctx context.Context, tgt clusterTarget, nodegroupPa
 		res.Error = monErr.Error()
 	}
 	return res
+}
+
+// fleetClusterContext scopes --timeout to a single cluster in a fleet run
+// (health gate + roll + verify). timeout <= 0 means no per-cluster limit.
+func fleetClusterContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 // resolveUpdateRegions picks the regions to sweep for --all-clusters: explicit

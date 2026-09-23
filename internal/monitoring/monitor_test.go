@@ -293,3 +293,37 @@ func TestMonitorUpdatesCompletesAndTimesOut(t *testing.T) {
 		t.Fatal("expected timeout")
 	}
 }
+
+// A zero (or negative) --timeout means "no monitor timeout": monitoring must
+// keep polling until the update finishes, not time out immediately.
+func TestMonitorUpdates_ZeroTimeoutMeansNoLimit(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		cfg := refreshTypes.MonitorConfig{
+			Quiet:           true,
+			PollInterval:    5 * time.Millisecond,
+			Timeout:         timeout,
+			MaxRetries:      1,
+			BackoffMultiple: 1,
+		}
+		monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
+		if err := MonitorUpdates(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), monitor, cfg); err != nil {
+			t.Fatalf("timeout=%v: MonitorUpdates = %v, want nil (no limit)", timeout, err)
+		}
+	}
+}
+
+func TestMonitorContext(t *testing.T) {
+	ctx, cancel := monitorContext(context.Background(), 0)
+	defer cancel()
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal("timeout 0: want no deadline")
+	}
+	ctx2, cancel2 := monitorContext(context.Background(), time.Minute)
+	defer cancel2()
+	if _, ok := ctx2.Deadline(); !ok {
+		t.Fatal("timeout 1m: want a deadline")
+	}
+	if got := formatMonitorTimeout(0); got != "none" {
+		t.Fatalf("formatMonitorTimeout(0) = %q, want none", got)
+	}
+}

@@ -89,7 +89,8 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) error {
 		return runFleetUpdate(ctx, cmd)
 	}
 
-	ctx, cancel, awsCfg, err := runner.SetupAWSWithTimeout(ctx, cmd, 60*time.Second)
+	// --timeout <= 0 means no limit, here and in the monitor (not a 60s fallback).
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, cmd.Duration("timeout"))
 	if err != nil {
 		return err
 	}

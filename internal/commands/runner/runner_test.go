@@ -66,6 +66,33 @@ func TestSetupAWS_DerivesFromParentContext(t *testing.T) {
 	}
 }
 
+// setupAWS applies the timeout it is given (not --timeout), and timeout <= 0
+// means no deadline: long-running callers (fleet update, scale --wait) rely on
+// this to scope deadlines themselves.
+func TestSetupAWS_TimeoutScoping(t *testing.T) {
+	cmd := newTimeoutCommand(t) // --timeout defaults to 1m
+	noop := func(context.Context, aws.Config) error { return nil }
+
+	ctx, cancel, _, err := setupAWS(context.Background(), cmd, 0, noop)
+	if err != nil {
+		t.Fatalf("setupAWS() = %v", err)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		t.Error("timeout 0: want no deadline")
+	}
+	cancel()
+
+	ctx, cancel, _, err = setupAWS(context.Background(), cmd, 3*time.Hour, noop)
+	if err != nil {
+		t.Fatalf("setupAWS() = %v", err)
+	}
+	dl, ok := ctx.Deadline()
+	if !ok || time.Until(dl) < 2*time.Hour {
+		t.Errorf("timeout 3h: deadline = %v (ok=%v), want ~3h out", dl, ok)
+	}
+	cancel()
+}
+
 // setupAWS must tolerate a nil context (hand-constructed invocations in tests).
 func TestSetupAWS_NilContextFallsBack(t *testing.T) {
 	cmd := newTimeoutCommand(t)
