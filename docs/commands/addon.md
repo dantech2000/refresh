@@ -127,7 +127,9 @@ New in 0.11: before it sends an update, `addon update` asks for confirmation,
 for example `Update coredns v1.11.1 → v1.11.4 on prod? [y/N]`. Only `y` or
 `yes` continues. With `--all`, the command lists every add-on that would
 change and asks once. An add-on that is already at the target, or already
-updating to it, is not asked about.
+updating to it, is not asked about. If the `--all` preview cannot read an
+add-on, the command changes nothing and names that add-on. Re-run, skip it
+with `--skip`, or add `--yes`.
 
 - `--yes` skips the prompt.
 - `--dry-run` never prompts.

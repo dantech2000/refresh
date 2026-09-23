@@ -149,6 +149,25 @@ func TestUpdateAll_Confirmation(t *testing.T) {
 			t.Errorf("prompts = %d, want 0", *asked)
 		}
 	})
+	// An add-on the preview could not read would be updated unseen by the
+	// real run, so the command fails closed: no prompt, no update.
+	t.Run("a failed preview fails closed", func(t *testing.T) {
+		asked := withPrompt(t, true, "y")
+		w := world()
+		w.Addons[1].Version = "v1.18.0"
+		w.Addons[1].DescribeAddonError = "AccessDeniedException"
+		srv := fakeaws.New(t, w)
+		_, stderr, err := runAddon(t, "update", "prod", "--all")
+		if err == nil || !strings.Contains(err.Error(), "could not preview every add-on") || !strings.Contains(err.Error(), "vpc-cni") {
+			t.Fatalf("err = %v, want the preview failure naming vpc-cni\nstderr:\n%s", err, stderr)
+		}
+		if *asked != 0 {
+			t.Errorf("prompts = %d, want 0", *asked)
+		}
+		if n := updateCalls(srv); n != 0 {
+			t.Errorf("UpdateAddon calls = %d, want 0", n)
+		}
+	})
 	t.Run("hidden update-all needs --yes without a tty", func(t *testing.T) {
 		withPrompt(t, false, "")
 		srv := fakeaws.New(t, world())
