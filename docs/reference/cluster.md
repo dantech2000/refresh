@@ -48,8 +48,6 @@ region/cluster hierarchy. Use --watch to redraw on the --watch-interval
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout (e.g. 60s, 2m) |
-| `--max-concurrency, -C int` | `REFRESH_MAX_CONCURRENCY` | `8` | Max concurrent region requests |
 | `--all-regions, -A` | — | — | Query all EKS-supported regions |
 | `--sort string` | — | `name` | Sort by field: name,status,version,region |
 | `--desc` | — | — | Sort descending |
@@ -80,7 +78,6 @@ provide fast, comprehensive results without CloudFormation dependency.
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout (e.g. 60s, 2m) |
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
 | `--detailed, -d` | — | — | Show comprehensive information including networking and security |
 | `--show-health, -H` | — | — | Include health status from existing health framework |
@@ -122,7 +119,6 @@ Examples:
 | Flag | Env | Default | Description |
 |---|---|---|---|
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout (e.g. 60s, 2m) |
 | `--category string` | — | `UPGRADE_READINESS` | Insight category (UPGRADE_READINESS, MISCONFIGURATION) |
 | `--status string` | — | — | Filter by insight status (PASSING, WARNING, ERROR, UNKNOWN) |
 | `--show-passing` | — | — | Include PASSING insights (hidden by default) |

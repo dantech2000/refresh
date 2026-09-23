@@ -53,6 +53,15 @@ func TestFleetLines_HealthIssueHint(t *testing.T) {
 	// A health-issue cluster is flagged "need attention" and the hint names the cause.
 	mustContain(t, joined, "▲  prod-east")
 	mustContain(t, joined, "has 2 control-plane health issue(s)")
+	// The row itself shows the cause in the HEALTH column (health issues alone
+	// make status exit 2).
+	mustContain(t, joined, "HEALTH")
+	mustContain(t, joined, "2 issue(s)")
+
+	rows := plaintest.Check(t, fleetPlainOut(t, fleet), fleetPlainHeaders...)
+	if got := rows[0][7]; got != "2 issue(s)" {
+		t.Errorf("plain HEALTH cell = %q, want \"2 issue(s)\"", got)
+	}
 }
 
 func TestFleetLines_Pretty(t *testing.T) {
@@ -218,7 +227,7 @@ func TestOutputFleetPlain_BehindCPKeepsColumnCount(t *testing.T) {
 	}
 }
 
-var fleetPlainHeaders = []string{"CLUSTER", "REGION", "VERSION", "SUPPORT", "COMPUTE", "STALE AMI", "ADDONS", "ERRORS"}
+var fleetPlainHeaders = []string{"CLUSTER", "REGION", "VERSION", "SUPPORT", "COMPUTE", "STALE AMI", "ADDONS", "HEALTH", "ERRORS"}
 
 // fleetPlainOut runs OutputFleetTable under -o plain and returns stdout.
 func fleetPlainOut(t *testing.T, fleet []statussvc.ClusterStatus) string {
@@ -279,7 +288,7 @@ func TestOutputFleetPlain_Contract(t *testing.T) {
 			t.Errorf("%s SUPPORT..ADDONS = %q, want %q", name, got, want)
 		}
 	}
-	if got := byName["bare"][7]; got != "addons: AccessDenied line two" {
+	if got := byName["bare"][8]; got != "addons: AccessDenied line two" {
 		t.Errorf("ERRORS cell = %q", got)
 	}
 

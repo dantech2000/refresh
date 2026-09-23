@@ -123,7 +123,7 @@ func TestContextEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, ctx, ok := loaded.Active()
+	name, ctx, ok, _ := loaded.Active()
 	if !ok || name != "dev" || ctx.Cluster != "dev-eks" || ctx.Region != "us-east-1" {
 		t.Errorf("active = (%s, %+v, %v), want dev/dev-eks/us-east-1", name, ctx, ok)
 	}

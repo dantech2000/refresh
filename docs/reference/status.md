@@ -14,7 +14,9 @@ staleness, and addons behind latest.
 
 Exit codes (for CI/cron):
   0  everything current and in standard support
-  2  something stale (nodegroup AMI or addon behind latest)
+  2  something needs attention: a stale nodegroup AMI, an addon behind
+     latest, a nodegroup behind the control-plane version, or an
+     AWS-reported control-plane health issue (HEALTH column)
   3  a cluster is on extended support or unsupported
   4  incomplete data: a cluster row has errors (a failed AWS call or a
      sweep that timed out) or a region could not be listed

@@ -43,6 +43,11 @@ type ClusterDetails struct {
 
 	// Operational metadata
 	Tags map[string]string `json:"tags" yaml:"tags"`
+
+	// Warnings are partial failures (an add-on or nodegroup that could not be
+	// read). The command layer reports them on stderr; they are not part of
+	// the machine output.
+	Warnings []string `json:"-" yaml:"-"`
 }
 
 // ClusterSummary is used for list operations
@@ -55,6 +60,10 @@ type ClusterSummary struct {
 	NodeCount NodeCountInfo         `json:"nodeCount" yaml:"nodeCount"`
 	CreatedAt time.Time             `json:"createdAt" yaml:"createdAt"`
 	Tags      map[string]string     `json:"tags,omitempty" yaml:"tags,omitempty"`
+	// Warnings are partial failures for this row (the cluster or its
+	// nodegroups could not be read). The command layer reports them on
+	// stderr; they are not part of the machine output.
+	Warnings []string `json:"-" yaml:"-"`
 }
 
 // HealthIssue is one AWS-reported health issue on a cluster/nodegroup/addon —

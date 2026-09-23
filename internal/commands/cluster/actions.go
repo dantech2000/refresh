@@ -3,13 +3,16 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
@@ -67,9 +70,14 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 		filters["name"] = pattern
 	}
 
-	allRegions := cmd.Bool("all-regions") || cmd.Bool("tree") || cmd.String("format") == "tree"
+	format := strings.ToLower(strings.TrimSpace(cmd.String("format")))
+	tree := wantsTree(format, cmd.Bool("tree"), cmd.IsSet("format"))
+	allRegions := cmd.Bool("all-regions") || tree
+	// runner.Regions honors a global `refresh --region X cluster list` too;
+	// the local repeatable -r would otherwise shadow it.
+	regions := runner.Regions(cmd)
 	options := clustersvc.ListOptions{
-		Regions:        cmd.StringSlice("region"),
+		Regions:        regions,
 		ShowHealth:     cmd.Bool("show-health"),
 		Filters:        filters,
 		AllRegions:     allRegions,
@@ -78,7 +86,7 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 
 	startTime := time.Now()
 	var summaries []clustersvc.ClusterSummary
-	if allRegions || len(cmd.StringSlice("region")) > 0 {
+	if allRegions || len(regions) > 0 {
 		summaries, err = runMultiRegionListWithProgress(ctx, clusterService, options)
 	} else {
 		err = runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
@@ -93,16 +101,51 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 	elapsed := time.Since(startTime)
 
 	summaries = clusterview.SortClusterSummaries(summaries, cmd.String("sort"), cmd.Bool("desc"))
+	warnClusterRows(ui.Stderr, summaries)
 
-	format := strings.ToLower(cmd.String("format"))
-	if format == "tree" || (format == "" && cmd.Bool("tree")) {
+	if tree {
 		return clusterview.OutputClustersTree(summaries, elapsed, allRegions, cmd.Bool("show-health"))
 	}
 	payload := map[string]any{"clusters": summaries, "count": len(summaries)}
-	if handled, err := runner.EncodeStdout(cmd.String("format"), payload); handled {
+	if handled, err := runner.EncodeStdout(format, payload); handled {
 		return err
 	}
 	return clusterview.OutputClustersTable(summaries, elapsed, allRegions, cmd.Bool("show-health"))
+}
+
+// wantsTree reports whether cluster list renders the region tree: -o tree,
+// or --tree when -o was not given (--format defaults to "table", so an
+// explicit -o json|yaml|plain wins over --tree).
+func wantsTree(format string, treeFlag, formatSet bool) bool {
+	return format == "tree" || (treeFlag && !formatSet)
+}
+
+// warnClusterRows writes one stderr warning per partial failure in the rows
+// (a cluster or nodegroup that could not be read), so a row with missing data
+// is never mistaken for a complete one.
+func warnClusterRows(w io.Writer, summaries []clustersvc.ClusterSummary) {
+	for _, s := range summaries {
+		for _, msg := range s.Warnings {
+			_, _ = fmt.Fprintln(w, ui.StderrColor(color.FgYellow).Sprintf("warning: cluster %s (%s): %s", s.Name, s.Region, msg))
+		}
+	}
+}
+
+// reportRegionSweep writes the multi-region sweep's partial problems to w:
+// one line naming the skipped regions and one single-line warning per failed
+// region. Partial success keeps exit 0 (REF-165 tracks a distinct exit code).
+func reportRegionSweep(w io.Writer, res clustersvc.RegionListResult) {
+	yellow := ui.StderrColor(color.FgYellow)
+	if len(res.Skipped) > 0 {
+		_, _ = fmt.Fprintln(w, yellow.Sprintf("Skipped %d region(s) not accessible to these credentials: %s (%s)",
+			len(res.Skipped), strings.Join(res.Skipped, ", "), clustersvc.RegionScopeHint))
+	}
+	for _, f := range res.Failed {
+		_, _ = fmt.Fprintln(w, yellow.Sprintf("warning: region %s: %s", f.Region, awserr.Summary(f.Err)))
+	}
+	if len(res.Failed) > 0 {
+		_, _ = fmt.Fprintln(w, yellow.Sprintf("warning: the list is incomplete: %d of %d region(s) failed", len(res.Failed), res.Regions))
+	}
 }
 
 func runDescribe(ctx context.Context, cmd *cli.Command) error {
@@ -163,6 +206,14 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		details.Support = &posture
 	}
 
+	if details != nil {
+		// Add-ons or nodegroups that could not be read would otherwise just be
+		// missing from the output.
+		for _, msg := range details.Warnings {
+			_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgYellow).Sprintf("warning: %s", msg))
+		}
+	}
+
 	if handled, err := runner.EncodeStdout(cmd.String("format"), details); handled {
 		return err
 	}
@@ -176,15 +227,18 @@ func runMultiRegionListWithProgress(ctx context.Context, clusterService *cluster
 	}
 	defer spinner.Stop()
 
-	summaries, regionsQueried, err := clusterService.ListAllRegionsWithMeta(ctx, options)
+	res, err := clusterService.ListAllRegions(ctx, options)
 	if err != nil {
+		spinner.Stop()
+		reportRegionSweep(ui.Stderr, clustersvc.RegionListResult{Skipped: res.Skipped})
 		return nil, err
 	}
 
-	if len(summaries) > 0 {
-		spinner.Success(fmt.Sprintf("Found %d clusters across %d regions!", len(summaries), regionsQueried))
+	if len(res.Summaries) > 0 {
+		spinner.Success(fmt.Sprintf("Found %d clusters across %d regions!", len(res.Summaries), res.Queried))
 	} else {
 		spinner.Success("Search complete - no clusters found")
 	}
-	return summaries, nil
+	reportRegionSweep(ui.Stderr, res)
+	return res.Summaries, nil
 }

@@ -7,7 +7,6 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
-	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
 // Command returns the cluster command group with list, describe, upgrade-check,
@@ -49,8 +48,6 @@ region/cluster hierarchy. Use --watch to redraw on the --watch-interval
   refresh cluster list -o tree
   refresh cluster list --watch --watch-interval 5s`,
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: 60 * time.Second, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
-			&cli.IntFlag{Name: "max-concurrency", Aliases: []string{"C"}, Usage: "Max concurrent region requests", Value: appconfig.DefaultMaxConcurrency, Sources: cli.EnvVars("REFRESH_MAX_CONCURRENCY")},
 			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Query all EKS-supported regions"},
 			&cli.StringFlag{Name: "sort", Usage: "Sort by field: name,status,version,region", Value: "name"},
 			&cli.BoolFlag{Name: "desc", Usage: "Sort descending"},
@@ -76,7 +73,6 @@ func describeCommand() *cli.Command {
 security configuration, add-ons, and health status. Direct EKS API calls
 provide fast, comprehensive results without CloudFormation dependency.`,
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "detailed", Aliases: []string{"d"}, Usage: "Show comprehensive information including networking and security"},
 			&cli.BoolFlag{Name: "show-health", Aliases: []string{"H"}, Usage: "Include health status from existing health framework", Value: true},

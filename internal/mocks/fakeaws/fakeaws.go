@@ -66,6 +66,27 @@ type Server struct {
 	nextID   int
 	stsError string
 	calls    []string
+	// regionError returns the EKS error code to answer for a region, or "".
+	regionError func(region string) string
+	// hangEKS makes every EKS call block until the client gives up.
+	hangEKS bool
+}
+
+// FailRegions makes every EKS call signed for a region fail with the API
+// error code that code returns for it ("" answers normally). An
+// AccessDeniedException models a region closed to these credentials.
+func (s *Server) FailRegions(code func(region string) string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.regionError = code
+}
+
+// HangEKS makes every EKS call block until the client cancels it, as with an
+// endpoint that accepts connections and never answers.
+func (s *Server) HangEKS() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hangEKS = true
 }
 
 // New starts a fake AWS endpoint serving clusters and configures the process
@@ -145,14 +166,23 @@ func (s *Server) Cluster(name string) Cluster {
 
 // signingService extracts the SigV4 signing name from the Authorization
 // header ("Credential=AKID/date/region/<service>/aws4_request").
-var signingService = regexp.MustCompile(`Credential=[^/]+/[^/]+/[^/]+/([^/]+)/aws4_request`)
+var signingService = regexp.MustCompile(`Credential=[^/]+/[^/]+/([^/]+)/([^/]+)/aws4_request`)
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
-	service := ""
+	service, region := "", ""
 	if m := signingService.FindStringSubmatch(r.Header.Get("Authorization")); m != nil {
-		service = m[1]
+		region, service = m[1], m[2]
 	}
 	body, _ := io.ReadAll(r.Body)
+
+	s.mu.Lock()
+	hang := s.hangEKS && service == "eks"
+	s.mu.Unlock()
+	if hang {
+		// Block outside the lock so other calls still get answered.
+		<-r.Context().Done()
+		return
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,6 +192,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case "sts":
 		s.serveSTS(w)
 	case "eks":
+		if s.regionError != nil {
+			if code := s.regionError(region); code != "" {
+				writeError(w, http.StatusForbidden, code, "fakeaws: region "+region+" answers "+code)
+				return
+			}
+		}
 		s.serveEKS(w, r, body)
 	default:
 		unsupported(w, r, service)

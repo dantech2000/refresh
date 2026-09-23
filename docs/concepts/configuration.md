@@ -85,8 +85,14 @@ These are accepted on every command:
 |---|---|---|
 | `--profile` | — | AWS shared-config profile (overrides the active context) |
 | `--region` | — | AWS region (overrides the active context) |
-| `--timeout, -t` | varies | Per-operation timeout for API calls (e.g. `60s`, `2m`) |
-| `--max-concurrency, -C` | — | Max concurrency for multi-region operations |
+| `--timeout, -t` | `60s` | Per-operation timeout for API calls (e.g. `60s`, `2m`). `cluster upgrade`, `nodegroup update`, and `addon update` have their own `--timeout` for the long-running wait |
+| `--max-concurrency, -C` | `8` | Max concurrency for multi-region operations |
+
+A global flag works the same before or after the subcommand:
+`refresh -t 5s cluster list` and `refresh cluster list -t 5s` are equal. The
+same is true for `refresh --region eu-west-1 status` and
+`refresh status --region eu-west-1`. On `status` and `cluster list`, `-r` is
+repeatable, and a local `-r` wins over the global `--region`.
 | `--log-level` | `warn` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `--verbose` | off | Shortcut for `--log-level debug` |
 | `--no-color` | off | Disable colored output (`NO_COLOR` is also honored) |
@@ -104,7 +110,8 @@ These are accepted on every command:
 | `REFRESH_TIMEOUT` | Default for `--timeout` on API/read commands (list, describe, checks). Not applied to `cluster upgrade`, `addon update`, or `nodegroup update`, whose `--timeout` bounds a long-running wait |
 | `REFRESH_MAX_CONCURRENCY` | Default for `--max-concurrency` |
 | `REFRESH_LOG_LEVEL` | Default for `--log-level` |
-| `REFRESH_EKS_REGIONS` | Region set for fleet discovery (`nodegroup update --all-clusters`) |
+| `REFRESH_EKS_REGIONS` | Comma-separated region set for multi-region sweeps: `status -A`, `cluster list -A`, and `nodegroup update --all-clusters`. `-r/--region` wins over it. When it is set, a region these credentials cannot use fails the sweep instead of being skipped |
+| `REFRESH_CONTEXT` | Name of a saved context to use for this shell, instead of the saved current context (see [Contexts](contexts.md)). If no saved context has that name, every command fails before any AWS call and lists the known names |
 | `EKS_CLUSTER_NAME` | Default cluster for `nodegroup update` only. A cluster given with `--cluster`, or positionally with `--nodegroup` or a second positional, wins (see [Cluster resolution](#cluster-resolution)) |
 | `NO_COLOR` | Disable colored output |
 | `REFRESH_NO_UPDATE_CHECK` | Disable the `refresh version` self-update check. Any value except `0`, `false`, or `no` disables it |

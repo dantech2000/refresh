@@ -93,7 +93,9 @@ func resolveClusterName(ctx context.Context, api ListClustersAPI, pattern string
 	clusters, err := listClusterNames(ctx, api)
 	if err != nil {
 		spinner.Stop()
-		return "", FormatAWSError(err, "listing EKS clusters")
+		// listClusterNames (ListAllPages) already formatted the error;
+		// formatting it again would print the IAM help twice.
+		return "", err
 	}
 	// Success stops the spinner. It must happen before confirmClusterSelection:
 	// a running spinner redraws its line and would erase any prompt.
@@ -137,13 +139,17 @@ func resolveClusterPattern(cliFlag string, allowKubeconfig bool) (pattern, fromC
 	if cliFlag = strings.TrimSpace(cliFlag); cliFlag != "" {
 		return cliFlag, "", nil
 	}
-	if ctxName, name := activeContextCluster(); name != "" {
+	ctxName, name, err := activeContextCluster()
+	if err != nil {
+		return "", "", err
+	}
+	if name != "" {
 		return name, ctxName, nil
 	}
 	if !allowKubeconfig {
 		return "", "", fmt.Errorf("%w (mutating commands do not use the kubeconfig current context)", ErrNoClusterSpecified)
 	}
-	name, err := extractClusterFromKubeconfig()
+	name, err = extractClusterFromKubeconfig()
 	if err != nil {
 		return "", "", fmt.Errorf("%w (kubeconfig: %w)", ErrNoClusterSpecified, err)
 	}
@@ -151,15 +157,18 @@ func resolveClusterPattern(cliFlag string, allowKubeconfig bool) (pattern, fromC
 }
 
 // activeContextCluster returns the active refresh context's name and cluster.
-func activeContextCluster() (ctxName, cluster string) {
-	f, err := cliconfig.Load()
-	if err != nil {
-		return "", ""
+// An unreadable context file counts as no context; an unknown REFRESH_CONTEXT
+// is an error.
+func activeContextCluster() (ctxName, cluster string, err error) {
+	f, lerr := cliconfig.Load()
+	if lerr != nil {
+		return "", "", nil //nolint:nilerr // an unreadable context file counts as no context, as before
 	}
-	if name, ctx, ok := f.Active(); ok {
-		return name, strings.TrimSpace(ctx.Cluster)
+	name, ctx, ok, err := f.Active()
+	if err != nil || !ok {
+		return "", "", err
 	}
-	return "", ""
+	return name, strings.TrimSpace(ctx.Cluster), nil
 }
 
 // extractClusterFromKubeconfig extracts the cluster name from the current kubeconfig context.

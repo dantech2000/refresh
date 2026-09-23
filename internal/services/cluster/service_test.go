@@ -47,7 +47,7 @@ func TestBuildListCacheKey_RegionOrderStable(t *testing.T) {
 	}
 }
 
-// Regression: ListAllRegionsWithMeta must narrow each per-region goroutine's
+// Regression: ListAllRegions must narrow each per-region goroutine's
 // options.Regions to a single region. Without this, every goroutine computes
 // the same cache key (hashed from the parent's full region slice), the second
 // to run hits a cache populated by the first, and clusters from one region

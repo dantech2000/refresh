@@ -193,7 +193,7 @@ func TestGetClusterNodegroups_Pagination(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	ngs, err := svc.getClusterNodegroups(ctx, "test")
+	ngs, _, err := svc.getClusterNodegroups(ctx, "test")
 	if err != nil {
 		t.Fatalf("getClusterNodegroups failed: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestGetClusterAddons_Pagination(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	addons, err := svc.getClusterAddons(ctx, "test")
+	addons, _, err := svc.getClusterAddons(ctx, "test")
 	if err != nil {
 		t.Fatalf("getClusterAddons failed: %v", err)
 	}
@@ -235,11 +235,11 @@ func TestClusterHelpers_EmptyDescribeResponses(t *testing.T) {
 	}
 	svc := newTestServiceWithFake(t, fake)
 
-	ngs, err := svc.getClusterNodegroups(t.Context(), "test")
+	ngs, _, err := svc.getClusterNodegroups(t.Context(), "test")
 	if err != nil || len(ngs) != 0 {
 		t.Errorf("getClusterNodegroups = %v, %v; want no nodegroups and no error", ngs, err)
 	}
-	addons, err := svc.getClusterAddons(t.Context(), "test")
+	addons, _, err := svc.getClusterAddons(t.Context(), "test")
 	if err != nil || len(addons) != 0 {
 		t.Errorf("getClusterAddons = %v, %v; want no add-ons and no error", addons, err)
 	}

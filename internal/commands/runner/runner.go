@@ -113,6 +113,20 @@ func SetupAWSWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Du
 	return setupAWS(ctx, cmd, timeout, checkCredentials)
 }
 
+// Regions returns the regions a multi-region command should scan: its own
+// repeatable -r/--region when given, otherwise the global --region placed
+// before the subcommand (`refresh --region X status`). urfave/cli resolves
+// "region" to the subcommand's local slice flag even when only the global
+// one was set, so reading cmd.StringSlice("region") alone would drop the
+// global value. It returns nil when neither is set.
+//
+// Every subcommand that declares its own --region slice must read it through
+// this helper (status, cluster list; nodegroup update --all-clusters should
+// adopt it too).
+func Regions(cmd *cli.Command) []string {
+	return awsconfig.SetFlagValues(cmd, "region")
+}
+
 // ParseFilters parses repeated key=value --filter flag values into a map.
 // Tokens without "=" are ignored.
 func ParseFilters(filters []string) map[string]string {
@@ -250,6 +264,11 @@ func PositionalSlot(cmd *cli.Command, flagName string, priorFlags ...string) str
 // For any other format value it returns handled=false so the caller can fall
 // through to its table renderer.
 func EncodeStdout(format string, payload any) (handled bool, err error) {
+	switch strings.ToLower(format) {
+	case "json", "yaml":
+		// An empty list is `[]`, never `null`, in every machine payload.
+		payload = emptySlices(payload)
+	}
 	switch strings.ToLower(format) {
 	case "json":
 		enc := json.NewEncoder(os.Stdout)

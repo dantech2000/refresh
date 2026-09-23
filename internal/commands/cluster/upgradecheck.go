@@ -10,7 +10,6 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
-	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/status"
@@ -39,7 +38,6 @@ Examples:
    refresh cluster upgrade-check -c prod-east --id "deprecated"   # detail view (by name)`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "category", Usage: "Insight category (UPGRADE_READINESS, MISCONFIGURATION)", Value: "UPGRADE_READINESS"},
 			&cli.StringSliceFlag{Name: "status", Usage: "Filter by insight status (PASSING, WARNING, ERROR, UNKNOWN)"},
 			&cli.BoolFlag{Name: "show-passing", Usage: "Include PASSING insights (hidden by default)"},

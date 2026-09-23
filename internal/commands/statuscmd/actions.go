@@ -85,7 +85,9 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 // REFRESH_EKS_REGIONS, not the config region. Only that sweep skips regions
 // closed to these credentials (the fleet discovery rule from #331).
 func resolveRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string, defaultSweep bool) {
-	if r := cmd.StringSlice("region"); len(r) > 0 {
+	// runner.Regions also honors the global `refresh --region X status`,
+	// which the local repeatable -r would otherwise shadow.
+	if r := runner.Regions(cmd); len(r) > 0 {
 		return r, false
 	}
 	if cmd.Bool("all-regions") {

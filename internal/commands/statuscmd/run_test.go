@@ -57,11 +57,19 @@ func fakeAWSEnv(t *testing.T) {
 // Exit-coded errors are returned, not passed to os.Exit.
 func runStatusCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	return runRefreshCLI(t, append([]string{"status"}, args...)...)
+}
+
+// runRefreshCLI runs `refresh args...`, so a test can place global flags
+// before the subcommand.
+func runRefreshCLI(t *testing.T, args ...string) (string, error) {
+	t.Helper()
 	root := &cli.Command{
 		Name: "refresh",
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Value: time.Minute},
 			&cli.IntFlag{Name: "max-concurrency", Value: 4},
+			&cli.StringFlag{Name: "region"},
 		},
 		Commands:       []*cli.Command{Command()},
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
@@ -76,7 +84,7 @@ func runStatusCLI(t *testing.T, args ...string) (string, error) {
 	var runErr error
 	func() {
 		defer func() { os.Stdout = orig }()
-		runErr = root.Run(context.Background(), append([]string{"refresh", "status"}, args...))
+		runErr = root.Run(context.Background(), append([]string{"refresh"}, args...))
 	}()
 	_ = w.Close()
 	var buf bytes.Buffer
@@ -152,5 +160,42 @@ func TestRunStatus_RejectsUnknownFormat(t *testing.T) {
 	})
 	if _, err := runStatusCLI(t, "-o", "xml"); err == nil {
 		t.Fatal("status -o xml succeeded")
+	}
+}
+
+// A fleet with no clusters prints `"clusters": []`, not null.
+func TestRunStatus_EmptyFleetJSONIsEmptyList(t *testing.T) {
+	fakeAWSEnv(t)
+	stubRegionService(t, func(aws.Config) regionLister { return fakeRegion{} })
+
+	out, err := runStatusCLI(t, "-r", "us-east-1", "-o", "json")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, `"clusters": []`) {
+		t.Errorf("empty fleet JSON = %s, want \"clusters\": []", out)
+	}
+}
+
+// `refresh --region X status` sweeps X, like `refresh status --region X`.
+// The local repeatable -r used to shadow the global flag, so the sweep ran in
+// the default region instead.
+func TestRunStatus_GlobalRegionBeforeSubcommand(t *testing.T) {
+	fakeAWSEnv(t)
+	for _, argv := range [][]string{
+		{"--region", "eu-west-1", "status", "-o", "json"},
+		{"status", "--region", "eu-west-1", "-o", "json"},
+	} {
+		var swept []string
+		stubRegionService(t, func(cfg aws.Config) regionLister {
+			swept = append(swept, cfg.Region)
+			return fakeRegion{}
+		})
+		if _, err := runRefreshCLI(t, argv...); err != nil {
+			t.Fatalf("%v: %v", argv, err)
+		}
+		if len(swept) != 1 || swept[0] != "eu-west-1" {
+			t.Errorf("%v swept %v, want [eu-west-1]", argv, swept)
+		}
 	}
 }

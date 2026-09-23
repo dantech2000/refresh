@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
@@ -41,6 +42,8 @@ type ServiceImpl struct {
 	cache         *Cache
 	logger        *slog.Logger
 	awsConfig     aws.Config
+	// regionLister replaces the per-region List in ListAllRegions (tests).
+	regionLister func(ctx context.Context, region string, options ListOptions) ([]ClusterSummary, error)
 }
 
 const (
@@ -49,7 +52,7 @@ const (
 	defaultCacheTTLList     = 2 * time.Minute
 
 	// defaultRegionListConcurrency caps concurrent per-region List calls in
-	// ListAllRegionsWithMeta when no --max-concurrency is given.
+	// ListAllRegions when no --max-concurrency is given.
 	defaultRegionListConcurrency = 8
 )
 
@@ -200,21 +203,25 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 
 	// Add add-ons information if requested
 	if options.IncludeAddons {
-		addons, err := s.getClusterAddons(ctx, name)
+		addons, warnings, err := s.getClusterAddons(ctx, name)
 		if err != nil {
-			s.logger.Warn("failed to get cluster add-ons", "cluster", name, "error", err)
+			s.logger.Debug("failed to get cluster add-ons", "cluster", name, "error", err)
+			details.Warnings = append(details.Warnings, "could not list add-ons: "+awserr.Summary(err))
 		} else {
 			details.Addons = addons
+			details.Warnings = append(details.Warnings, warnings...)
 		}
 	}
 
 	// Add nodegroups information if detailed
 	if options.Detailed {
-		nodegroups, err := s.getClusterNodegroups(ctx, name)
+		nodegroups, warnings, err := s.getClusterNodegroups(ctx, name)
 		if err != nil {
-			s.logger.Warn("failed to get cluster nodegroups", "cluster", name, "error", err)
+			s.logger.Debug("failed to get cluster nodegroups", "cluster", name, "error", err)
+			details.Warnings = append(details.Warnings, "could not list nodegroups: "+awserr.Summary(err))
 		} else {
 			details.Nodegroups = nodegroups
+			details.Warnings = append(details.Warnings, warnings...)
 		}
 	}
 
@@ -304,18 +311,20 @@ func (s *ServiceImpl) forRegion(region string) *ServiceImpl {
 
 // resolveRegions picks the region set for a multi-region operation in
 // preference order: explicit options, REFRESH_EKS_REGIONS env, partition default.
-func (s *ServiceImpl) resolveRegions(options ListOptions) []string {
+// defaultSweep reports the partition default, which nobody scoped. Only that
+// sweep skips regions closed to these credentials, as `status -A` does.
+func (s *ServiceImpl) resolveRegions(options ListOptions) (regions []string, defaultSweep bool) {
 	if len(options.Regions) > 0 {
-		return options.Regions
+		return options.Regions, false
 	}
 	if env := appconfig.RegionsFromEnv(); len(env) > 0 {
-		return env
+		return env, false
 	}
-	return appconfig.GetRegionsForPartition(s.awsConfig.Region)
+	return appconfig.GetRegionsForPartition(s.awsConfig.Region), true
 }
 
 // regionOptionsFor returns options narrowed to a single AWS region. The
-// returned value is what ListAllRegionsWithMeta hands to each per-region
+// returned value is what ListAllRegions hands to each per-region
 // goroutine so the per-region List's cache key (which hashes options.Regions)
 // distinguishes between regions instead of colliding on the parent's full
 // region slice.
@@ -326,77 +335,104 @@ func regionOptionsFor(options ListOptions, region string) ListOptions {
 	return out
 }
 
-// ListAllRegionsWithMeta is like ListAllRegions but also returns the number of
-// regions that were actually queried, so the caller can display an accurate
-// progress message.
-func (s *ServiceImpl) ListAllRegionsWithMeta(ctx context.Context, options ListOptions) ([]ClusterSummary, int, error) {
+// RegionFailure is a region whose cluster list failed or never ran.
+type RegionFailure struct {
+	Region string
+	Err    error
+}
+
+// RegionListResult is the outcome of a multi-region cluster list.
+type RegionListResult struct {
+	Summaries []ClusterSummary
+	// Regions is the number of regions in the sweep.
+	Regions int
+	// Queried is the number of regions that answered.
+	Queried int
+	// Failed lists the failed regions in sweep order. A region that never
+	// started because the context ended fails with the context's cause.
+	Failed []RegionFailure
+	// Skipped lists (sorted) the regions of a default sweep that are closed
+	// to these credentials. They are not failures.
+	Skipped []string
+}
+
+// RegionScopeHint tells the user how to narrow a region sweep.
+const RegionScopeHint = "scope with -r or REFRESH_EKS_REGIONS"
+
+// listRegion lists the clusters of one region.
+func (s *ServiceImpl) listRegion(ctx context.Context, region string, options ListOptions) ([]ClusterSummary, error) {
+	if s.regionLister != nil {
+		return s.regionLister(ctx, region, options)
+	}
+	return s.forRegion(region).List(ctx, options)
+}
+
+// ListAllRegions lists clusters in every region of the sweep, at most
+// options.MaxConcurrency regions at a time. It fails only when no region
+// answered. Partial failures are in the result, for the caller to report.
+func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (RegionListResult, error) {
 	s.logger.Info("listing clusters across all regions", "options", options)
 
-	eksRegions := s.resolveRegions(options)
+	regions, defaultSweep := s.resolveRegions(options)
 	maxConc := options.MaxConcurrency
 	if maxConc <= 0 {
 		maxConc = defaultRegionListConcurrency
 	}
 
 	type regionResult struct {
-		region    string
+		ran       bool
 		summaries []ClusterSummary
 		err       error
 	}
-	resultChan := make(chan regionResult, len(eksRegions))
-	sem := make(chan struct{}, maxConc)
-
-	// Observe cancellation at the dispatch point; track how many goroutines we
-	// actually started so the collection loop below reads exactly that many
-	// and never blocks on results that were never queued. (REF-56)
-	dispatched := 0
-dispatch:
-	for _, region := range eksRegions {
-		select {
-		case sem <- struct{}{}:
-		case <-ctx.Done():
-			break dispatch
+	results := common.ForEachParallel(ctx, regions, maxConc, func(rctx context.Context, r string) regionResult {
+		summaries, err := s.listRegion(rctx, r, regionOptionsFor(options, r))
+		// Copy before stamping the region: List may have returned the
+		// cached slice, which must not be mutated in place.
+		stamped := make([]ClusterSummary, len(summaries))
+		copy(stamped, summaries)
+		for i := range stamped {
+			stamped[i].Region = r
 		}
-		dispatched++
-		go func(r string) {
-			defer func() { <-sem }()
-			summaries, err := s.forRegion(r).List(ctx, regionOptionsFor(options, r))
-			// Copy before stamping the region: List may have returned the
-			// cached slice, which must not be mutated in place.
-			stamped := make([]ClusterSummary, len(summaries))
-			copy(stamped, summaries)
-			for i := range stamped {
-				stamped[i].Region = r
-			}
-			resultChan <- regionResult{region: r, summaries: stamped, err: err}
-		}(region)
-	}
+		return regionResult{ran: true, summaries: stamped, err: err}
+	})
 
-	allSummaries := make([]ClusterSummary, 0)
-	var failedRegions []string
-	var firstErr error
-	for range dispatched {
-		result := <-resultChan
-		if result.err != nil {
-			s.logger.Warn("failed to list clusters in region", "region", result.region, "error", result.err)
-			failedRegions = append(failedRegions, result.region)
-			if firstErr == nil {
-				firstErr = result.err
-			}
-			continue
+	out := RegionListResult{Summaries: make([]ClusterSummary, 0), Regions: len(regions)}
+	for i, r := range regions {
+		res := results[i]
+		if !res.ran {
+			// The context ended before this region got a slot. Count it as
+			// failed, so an interrupted sweep never looks complete.
+			res.err = fmt.Errorf("not queried: %w", context.Cause(ctx))
 		}
-		allSummaries = append(allSummaries, result.summaries...)
+		switch {
+		case res.err == nil:
+			out.Queried++
+			out.Summaries = append(out.Summaries, res.summaries...)
+		case defaultSweep && awserr.IsRegionInaccessible(res.err):
+			s.logger.Debug("skipping region not accessible to these credentials", "region", r, "error", res.err)
+			out.Skipped = append(out.Skipped, r)
+		default:
+			s.logger.Debug("failed to list clusters in region", "region", r, "error", res.err)
+			out.Failed = append(out.Failed, RegionFailure{Region: r, Err: res.err})
+		}
 	}
+	sort.Strings(out.Skipped)
 
-	// Total failure must not masquerade as "no clusters found": expired
-	// credentials or a network outage fail every region at once.
-	if len(failedRegions) == len(eksRegions) && len(eksRegions) > 0 {
-		sort.Strings(failedRegions)
-		return nil, 0, fmt.Errorf("listing clusters failed in all %d regions (e.g. %s): %w",
-			len(eksRegions), failedRegions[0], firstErr)
+	// No region answered. An empty list must not look like "no clusters
+	// found": expired credentials or an outage fail every region at once.
+	if out.Queried == 0 && len(regions) > 0 {
+		if len(out.Failed) == 0 {
+			return out, fmt.Errorf("could not list clusters in any of %d region(s): none is accessible to these credentials; %s",
+				len(regions), RegionScopeHint)
+		}
+		first := out.Failed[0]
+		if len(out.Failed) == len(regions) {
+			return out, fmt.Errorf("listing clusters failed in all %d regions (e.g. %s): %w", len(regions), first.Region, first.Err)
+		}
+		return out, fmt.Errorf("listing clusters failed in %d region(s) (e.g. %s) and %d region(s) are not accessible: %w",
+			len(out.Failed), first.Region, len(out.Skipped), first.Err)
 	}
-
-	return allSummaries, len(eksRegions) - len(failedRegions), nil
+	return out, nil
 }
 
 // Helper methods are implemented in helpers.go

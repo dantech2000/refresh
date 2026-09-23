@@ -8,6 +8,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/mattn/go-isatty"
+	"github.com/pterm/pterm"
 )
 
 // Color is decided per stream: stdout is colored only when stdout is a color
@@ -66,11 +67,28 @@ func StreamColor(w io.Writer) bool {
 	return !ColorDisabled() && IsTerminal(w)
 }
 
-// InitColor sets fatih/color's global (which governs stdout) from stdout
-// alone. fatih does the same at package init; calling it again after flags
-// and seams are in place keeps both decisions on one code path.
+// InitColor sets the stdout color decision of both output libraries from
+// stdout alone: fatih/color's global NoColor and pterm's color switch. pterm
+// otherwise keeps color on when stdout is piped or TERM=dumb, so tree and
+// pterm tables would write escape codes into a file or pipe.
 func InitColor() {
-	color.NoColor = !StreamColor(os.Stdout)
+	on := StreamColor(os.Stdout)
+	color.NoColor = !on
+	if on {
+		pterm.EnableColor()
+	} else {
+		pterm.DisableColor()
+	}
+}
+
+// ResetOutputState clears the process-wide output switches that commands
+// only ever turn on (--no-color, -o plain) and re-derives the color decision.
+// Tests that run several commands in one process call it between runs, so
+// one run's -o plain or --no-color cannot leak into the next.
+func ResetOutputState() {
+	colorOff.Store(false)
+	SetPlainOutput(false)
+	InitColor()
 }
 
 // ColorFor returns a fatih color for writing to w. For stderr, color is on

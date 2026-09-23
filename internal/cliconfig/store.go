@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -138,19 +139,26 @@ func (f *File) Names() []string {
 // Active returns the currently selected context, if any.
 //
 // Resolution order: REFRESH_CONTEXT env var (per-shell override, kubectx-style)
-// then File.Current. Returns ("", Context{}, false) when nothing is set.
-func (f *File) Active() (name string, ctx Context, ok bool) {
+// then File.Current. Returns ("", Context{}, false, nil) when nothing is set.
+// A REFRESH_CONTEXT that names no saved context is an error: falling back to
+// File.Current would point every command at the wrong cluster after a typo.
+func (f *File) Active() (name string, ctx Context, ok bool, err error) {
 	if env := os.Getenv("REFRESH_CONTEXT"); env != "" {
 		if c, found := f.Contexts[env]; found {
-			return env, c, true
+			return env, c, true, nil
 		}
+		known := "none saved"
+		if names := f.Names(); len(names) > 0 {
+			known = strings.Join(names, ", ")
+		}
+		return "", Context{}, false, fmt.Errorf("unknown context %q from REFRESH_CONTEXT; known: %s", env, known)
 	}
 	if f.Current != "" {
 		if c, found := f.Contexts[f.Current]; found {
-			return f.Current, c, true
+			return f.Current, c, true, nil
 		}
 	}
-	return "", Context{}, false
+	return "", Context{}, false, nil
 }
 
 // Use sets `name` as current and rotates the previous pointer.

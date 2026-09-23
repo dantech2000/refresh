@@ -7,6 +7,7 @@ package awsconfig
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -33,8 +34,14 @@ func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 	profileFromFlag := profile != ""
 	regionFromFlag := region != ""
 
+	// Resolve the context even when both flags are set: a mistyped
+	// REFRESH_CONTEXT must fail every command the same way.
+	active, ok, err := activeContext()
+	if err != nil {
+		return aws.Config{}, err
+	}
 	if profile == "" || region == "" {
-		if active, ok := activeContext(); ok {
+		if ok {
 			if profile == "" && active.Profile != "" {
 				profile = active.Profile
 			}
@@ -59,9 +66,49 @@ func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 	return config.LoadDefaultConfig(ctx, opts...)
 }
 
+// SetFlagValues returns the values of the nearest flag called name that was
+// set, searching cmd and then its ancestors. urfave/cli resolves a name to
+// the nearest declaration even when that one is unset, so a subcommand's own
+// repeatable --region would hide a global `refresh --region X` given before
+// the subcommand. A string flag yields one value; a string slice flag yields
+// its non-empty values. It returns nil when no command in the lineage set the
+// flag.
+func SetFlagValues(cmd *cli.Command, name string) []string {
+	if cmd == nil {
+		return nil
+	}
+	for _, c := range cmd.Lineage() {
+		for _, f := range c.Flags {
+			if !slices.Contains(f.Names(), name) || !f.IsSet() {
+				continue
+			}
+			var out []string
+			switch v := f.Get().(type) {
+			case string:
+				out = append(out, v)
+			case []string:
+				out = append(out, v...)
+			}
+			vals := make([]string, 0, len(out))
+			for _, s := range out {
+				if s = strings.TrimSpace(s); s != "" {
+					vals = append(vals, s)
+				}
+			}
+			if len(vals) > 0 {
+				return vals
+			}
+		}
+	}
+	return nil
+}
+
 func flagOrEmpty(cmd *cli.Command, name string) string {
 	if cmd == nil {
 		return ""
+	}
+	if vals := SetFlagValues(cmd, name); len(vals) > 0 {
+		return vals[0]
 	}
 	if value := strings.TrimSpace(cmd.String(name)); value != "" {
 		return value
@@ -74,11 +121,14 @@ func flagOrEmpty(cmd *cli.Command, name string) string {
 	return ""
 }
 
-func activeContext() (cliconfig.Context, bool) {
+// activeContext returns the active refresh context. An unreadable context
+// file counts as no context; a REFRESH_CONTEXT naming no saved context is an
+// error, so a typo never silently targets the saved current context.
+func activeContext() (cliconfig.Context, bool, error) {
 	f, err := cliconfig.Load()
 	if err != nil {
-		return cliconfig.Context{}, false
+		return cliconfig.Context{}, false, nil //nolint:nilerr // an unreadable context file counts as no context, as before
 	}
-	_, ctx, ok := f.Active()
-	return ctx, ok
+	_, ctx, ok, err := f.Active()
+	return ctx, ok, err
 }

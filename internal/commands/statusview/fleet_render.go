@@ -80,6 +80,7 @@ func fleetDataColumns() []ui.Column {
 		{Title: "COMPUTE", Min: 8, Max: 22},
 		{Title: "STALE AMI", Min: 6},
 		{Title: "ADDONS", Min: 6, Max: 26},
+		{Title: "HEALTH", Min: 6},
 	}
 }
 
@@ -111,6 +112,7 @@ func fleetLines(th *render.Theme, statuses []statussvc.ClusterStatus, elapsed ti
 			computePretty(th, c),
 			stalePretty(th, c),
 			addonsPretty(th, c.AddonsBehind),
+			healthPretty(th, c.HealthIssues),
 		)
 	}
 	out = append(out, tbl.Render()...)
@@ -229,6 +231,16 @@ func addonsPretty(th *render.Theme, a statussvc.AddonsBehindSummary) string {
 		names = names[:maxNames]
 	}
 	return th.Token(render.Warn, fmt.Sprintf("%d (%s%s)", a.Behind, strings.Join(names, ","), suffix))
+}
+
+// healthPretty is the HEALTH cell: the count of AWS-reported control-plane
+// health issues. Such issues alone make status exit 2, so the row must show
+// why it needs attention.
+func healthPretty(th *render.Theme, issues int) string {
+	if issues == 0 {
+		return th.Paint(th.Pal.Green, "0")
+	}
+	return th.Token(render.Warn, healthCell(issues))
 }
 
 func footerPretty(th *render.Theme, statuses []statussvc.ClusterStatus, elapsed time.Duration) string {

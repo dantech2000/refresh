@@ -212,6 +212,11 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	app := newApp()
 	app.Writer = out
 	app.ErrWriter = errOut
+	// urfave/cli prints ExitCoder messages (cli.Exit) to its package-level
+	// ErrWriter, not app.ErrWriter. main passes ui.Stderr, which strips ANSI
+	// when stderr is redirected, so a colored exit message never writes raw
+	// escape codes into a log file.
+	cli.ErrWriter = errOut
 	// Run threads ctx into every command action, so signal cancellation from
 	// main propagates to in-flight AWS calls. The kubeconfig notice dedupe is
 	// per run.

@@ -22,7 +22,7 @@ Save contexts first with 'refresh context add', then switch between them:
 
 Per-invocation --region/--profile/--cluster flags still override the active
 context. The REFRESH_CONTEXT env var overrides the saved current pointer for a
-single shell.
+single shell; it must name a saved context, or every command fails.
 
 ## Flags
 

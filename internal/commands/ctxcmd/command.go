@@ -46,7 +46,7 @@ Save contexts first with 'refresh context add', then switch between them:
 
 Per-invocation --region/--profile/--cluster flags still override the active
 context. The REFRESH_CONTEXT env var overrides the saved current pointer for a
-single shell.`,
+single shell; it must name a saved context, or every command fails.`,
 		Action:        runUse,
 		ShellComplete: completeContextNames,
 	}
@@ -58,8 +58,8 @@ func CurrentCommand() *cli.Command {
 		Name:  "current",
 		Usage: "Print the active refresh context",
 		Description: `Print the name and cluster/region/profile of the currently active context
-(set with 'refresh use'). Honors the REFRESH_CONTEXT env override. Prints a hint
-when no context is active.`,
+(set with 'refresh use'). Honors the REFRESH_CONTEXT env override; an unknown
+name there is an error. Prints a hint to stderr when no context is active.`,
 		Action: runCurrent,
 	}
 }

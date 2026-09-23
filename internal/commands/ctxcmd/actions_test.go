@@ -96,6 +96,45 @@ func TestContextActions(t *testing.T) {
 	}
 }
 
+// The "no context" hints go to stderr, so stdout stays empty for scripts.
+// An unknown REFRESH_CONTEXT fails `current` and is a warning in `list`.
+func TestContextHintsAndUnknownEnvContext(t *testing.T) {
+	t.Setenv("REFRESH_CONFIG_HOME", t.TempDir())
+	t.Setenv("REFRESH_CONTEXT", "")
+
+	out, err := captureStdout(t, func() error { return runAction(runCurrent) })
+	if err != nil || out != "" {
+		t.Errorf("current with no context: stdout %q, err %v; want empty stdout, no error", out, err)
+	}
+	out, err = captureStdout(t, func() error { return runCommand(contextListCommand()) })
+	if err != nil || out != "" {
+		t.Errorf("list with no contexts: stdout %q, err %v; want empty stdout, no error", out, err)
+	}
+
+	f := &cliconfig.File{Contexts: map[string]cliconfig.Context{}}
+	for _, n := range []string{"prod", "staging"} {
+		if err := f.Set(n, cliconfig.Context{Cluster: n + "-eks"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.Use("prod"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cliconfig.Save(f); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("REFRESH_CONTEXT", "stagee")
+	out, err = captureStdout(t, func() error { return runAction(runCurrent) })
+	if err == nil || !strings.Contains(err.Error(), `unknown context "stagee"`) || strings.Contains(out, "prod") {
+		t.Errorf("current with REFRESH_CONTEXT=stagee: stdout %q, err %v; want an unknown-context error and no prod", out, err)
+	}
+	out, err = captureStdout(t, func() error { return runCommand(contextListCommand()) })
+	if err != nil || !strings.Contains(out, "staging") || strings.Contains(out, "* ") {
+		t.Errorf("list with REFRESH_CONTEXT=stagee: stdout %q, err %v; want every context and none marked active", out, err)
+	}
+}
+
 func TestContextActionErrorsAndPicker(t *testing.T) {
 	t.Setenv("REFRESH_CONFIG_HOME", t.TempDir())
 	t.Setenv("REFRESH_CONTEXT", "")
