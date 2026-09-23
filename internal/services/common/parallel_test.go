@@ -40,3 +40,20 @@ func TestForEachParallel_StopsOnCancel(t *testing.T) {
 		t.Errorf("fn called %d times; expected the cancel to stop dispatch early", n)
 	}
 }
+
+// With ctx already cancelled, a free slot and ctx.Done are both ready, and
+// select picks at random. ForEachParallel must never start an item anyway.
+func TestForEachParallel_NeverDispatchesAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for range 200 {
+		var started atomic.Int32
+		ForEachParallel(ctx, []int{1, 2, 3, 4, 5, 6, 7, 8}, 8, func(context.Context, int) int {
+			started.Add(1)
+			return 0
+		})
+		if n := started.Load(); n != 0 {
+			t.Fatalf("started %d items with a cancelled context, want 0", n)
+		}
+	}
+}
