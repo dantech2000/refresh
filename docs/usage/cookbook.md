@@ -121,7 +121,9 @@ See [`addon update`](../commands/addon.md#update).
 
 EKS does not honor PodDisruptionBudgets when a scaling change removes nodes: it
 terminates them and their pods go down. `--check-pdbs` refuses the scale-down
-if a PDB that allows 0 disruptions covers pods on the nodegroup's nodes.
+if it could remove more of a PDB's pods than the PDB allows. The gate assumes
+the worst case: the removed nodes are the ones that hold the most of the PDB's
+pods.
 
 ```bash
 # Preview the gate's verdict and the blocking PDBs (no changes)

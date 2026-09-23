@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	fakek8s "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/mocks"
@@ -188,5 +189,83 @@ func TestCheckScaleDownPDBs(t *testing.T) {
 	check, err = svc.CheckScaleDownPDBs(context.Background(), "prod", "workers", nil)
 	if err != nil || check.ScaleDown || check.Refused() {
 		t.Errorf("nil desired is never a scale-down, got %+v, %v", check, err)
+	}
+}
+
+// spreadCluster has web-pdb allowing 1 disruption of 2 web pods, one pod on
+// each of two "workers" nodes (w1, w2). A third node (w3) runs nothing.
+func spreadCluster() []runtime.Object {
+	return []runtime.Object{
+		gateNode("w1", "workers"),
+		gateNode("w2", "workers"),
+		gateNode("w3", "workers"),
+		gatePod("app", "web-1", "web", "w1"),
+		gatePod("app", "web-2", "web", "w2"),
+		gatePDB("app", "web-pdb", "web", 1, 2),
+	}
+}
+
+func TestScale_CheckPDBsRefusesWorstCaseOverBudget(t *testing.T) {
+	// Removing 2 of 3 nodes: the ASG may pick w1 and w2, which takes down
+	// both web pods although web-pdb allows only 1.
+	svc, api := scaleGateService(3, spreadCluster())
+
+	err := svc.Scale(context.Background(), "prod", "workers", aws.Int32(1), nil, nil, ScaleOptions{CheckPDBs: true})
+	var blocked *ScaleDownBlockedError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("want *ScaleDownBlockedError, got %v", err)
+	}
+	if api.Calls.UpdateNodegroupConfig != 0 {
+		t.Fatalf("UpdateNodegroupConfig called %d times; a refused scale must not mutate", api.Calls.UpdateNodegroupConfig)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"1 PodDisruptionBudget(s) could lose more pods on this nodegroup's nodes than they allow",
+		"app/web-pdb (2/2 pods healthy, 1 disruption(s) allowed; covered pods run on 2 of the nodegroup's nodes, so removing 2 node(s) can take down 2 pod(s), more than the 1 allowed)",
+		"--force",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestScale_CheckPDBsAllowsWorstCaseWithinBudget(t *testing.T) {
+	// Removing 1 of 3 nodes takes down at most 1 web pod, which web-pdb allows.
+	svc, api := scaleGateService(3, spreadCluster())
+
+	if err := svc.Scale(context.Background(), "prod", "workers", aws.Int32(2), nil, nil, ScaleOptions{CheckPDBs: true}); err != nil {
+		t.Fatalf("a scale-down within the PDB budget should proceed, got %v", err)
+	}
+	if api.Calls.UpdateNodegroupConfig != 1 {
+		t.Errorf("UpdateNodegroupConfig called %d times, want 1", api.Calls.UpdateNodegroupConfig)
+	}
+}
+
+func TestScale_CheckPDBsWorstCaseForceProceeds(t *testing.T) {
+	svc, api := scaleGateService(3, spreadCluster())
+
+	if err := svc.Scale(context.Background(), "prod", "workers", aws.Int32(1), nil, nil, ScaleOptions{CheckPDBs: true, Force: true}); err != nil {
+		t.Fatalf("--force should scale anyway, got %v", err)
+	}
+	if api.Calls.UpdateNodegroupConfig != 1 {
+		t.Errorf("UpdateNodegroupConfig called %d times, want 1", api.Calls.UpdateNodegroupConfig)
+	}
+}
+
+func TestScale_CheckPDBsPodListFailureRefuses(t *testing.T) {
+	svc, api := scaleGateService(3, nil)
+	client := fakek8s.NewClientset(spreadCluster()...)
+	client.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("pods is forbidden")
+	})
+	svc.healthChecker = health.NewChecker(nil, client, nil, nil)
+
+	err := svc.Scale(context.Background(), "prod", "workers", aws.Int32(1), nil, nil, ScaleOptions{CheckPDBs: true})
+	if err == nil || !strings.Contains(err.Error(), "pods is forbidden") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("want a fail-closed refusal naming the error and --force, got %v", err)
+	}
+	if api.Calls.UpdateNodegroupConfig != 0 {
+		t.Errorf("UpdateNodegroupConfig called %d times, want 0", api.Calls.UpdateNodegroupConfig)
 	}
 }
