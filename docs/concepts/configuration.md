@@ -77,6 +77,26 @@ The name can be a partial pattern:
 - If several clusters contain the pattern, `refresh` asks you to pick one.
   Without a terminal, the command fails and lists the candidates.
 
+### Nodegroup patterns
+
+The nodegroup in `nodegroup update` can also be a partial pattern. A pattern
+that is not an exact nodegroup name always needs a confirmation:
+
+- An exact name always wins. `-n web` selects `web`, not `payments-web`.
+- If only one nodegroup contains the pattern, `refresh` asks you to confirm
+  it. If several nodegroups contain the pattern, `refresh` asks you to confirm
+  all of them.
+- Without a terminal, or with `-o json`/`-o yaml`, the command fails and names
+  the candidates. To accept them, pass `--yes`.
+- In fleet mode (`--all-clusters`), the batch confirmation (or `--yes`)
+  accepts the pattern in each cluster.
+
+```bash
+export EKS_CLUSTER_NAME=staging
+refresh nodegroup update prod        # staging / "prod" is a nodegroup pattern:
+                                     # a match such as prod-mirror needs confirmation
+```
+
 ## Global flags
 
 These are accepted on every command:

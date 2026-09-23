@@ -122,8 +122,9 @@ func TestUpdateMachineOutput_HealthOnly(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
 			stdout, stderr, err := runNodegroup(t, "update", "prod", "--health-only", "-o", format)
-			if code := exitCodeOf(err); code != 0 && code != 2 && code != 3 {
-				t.Fatalf("exit code = %d (err %v), want a verdict code 0/2/3\nstderr:\n%s", code, err, stderr)
+			// The fake cluster warns (no Kubernetes access): exit 2.
+			if code := exitCodeOf(err); code != 2 {
+				t.Fatalf("exit code = %d (err %v), want 2 (WARN)\nstderr:\n%s", code, err, stderr)
 			}
 			doc := fakeaws.RequireOneDocument(t, format, stdout).(map[string]any)
 			if _, ok := doc["decision"]; !ok {
@@ -242,13 +243,14 @@ func TestFleetMachineOutput_DryRun(t *testing.T) {
 
 // Fleet --health-only with -o yaml collects one verdict per cluster into the
 // one fleet document instead of printing a document per cluster. The exit
-// code stays the worst per-cluster verdict. It changes nothing, so it needs
-// no --yes.
+// code stays the worst per-cluster verdict: the fake cluster warns (no
+// Kubernetes access), so it is 2, as for the same cluster on its own. It
+// changes nothing, so it needs no --yes.
 func TestFleetMachineOutput_HealthOnlyCollectsVerdicts(t *testing.T) {
 	fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
 	stdout, stderr, err := runNodegroup(t, "update", "--all-clusters", "-r", "us-east-1", "--health-only", "-o", "yaml")
-	if code := exitCodeOf(err); code != 0 && code != 3 {
-		t.Fatalf("exit code = %d (err %v), want 0 or 3\nstderr:\n%s", code, err, stderr)
+	if code := exitCodeOf(err); code != 2 {
+		t.Fatalf("exit code = %d (err %v), want 2 (WARN)\nstderr:\n%s", code, err, stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "yaml", stdout).(map[string]any)
 	clusters := doc["clusters"].([]any)
