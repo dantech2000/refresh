@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -88,10 +89,13 @@ func newApp() *cli.Command {
 				Value:   appconfig.DefaultMaxConcurrency,
 				Sources: cli.EnvVars("REFRESH_MAX_CONCURRENCY"),
 			},
+			// NO_COLOR is deliberately not a flag source: urfave/cli parses env
+			// sources with strconv.ParseBool, so NO_COLOR=yes would fail every
+			// command. no-color.org says any non-empty value disables color;
+			// Before and run() check it directly.
 			&cli.BoolFlag{
-				Name:    "no-color",
-				Usage:   "Disable colored output (NO_COLOR env is also honored)",
-				Sources: cli.EnvVars("NO_COLOR"),
+				Name:  "no-color",
+				Usage: "Disable colored output (a non-empty NO_COLOR env var is also honored)",
 			},
 			// Global AWS overrides. urfave/cli v3 propagates parent flags to every
 			// subcommand, so awsconfig.Load sees these on all AWS-touching commands
@@ -129,9 +133,8 @@ func newApp() *cli.Command {
 				level = slog.LevelDebug
 			}
 			factory.SetDefaultLogLevel(level)
-			if cmd.Bool("no-color") {
-				color.NoColor = true
-				pterm.DisableColor()
+			if cmd.Bool("no-color") || os.Getenv("NO_COLOR") != "" {
+				disableColor()
 			}
 			return ctx, nil
 		},
@@ -156,7 +159,42 @@ func newApp() *cli.Command {
 	}
 }
 
+// disableColor turns off color in both output libraries.
+func disableColor() {
+	color.NoColor = true
+	pterm.DisableColor()
+}
+
+// colorDisabled reports whether NO_COLOR (any non-empty value, per
+// no-color.org) or a --no-color flag in args disables color. It runs before
+// app.Run because help is printed without calling Before.
+func colorDisabled(args []string) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return true
+	}
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		name, val, hasVal := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !strings.HasPrefix(a, "-") || name != "no-color" {
+			continue
+		}
+		if !hasVal {
+			return true
+		}
+		if b, err := strconv.ParseBool(val); err == nil && b {
+			return true
+		}
+	}
+	return false
+}
+
 func run(ctx context.Context, args []string, out, errOut io.Writer) error {
+	if colorDisabled(args) {
+		disableColor()
+	}
+
 	// Set custom help printer for colored output
 	cli.HelpPrinter = coloredHelpPrinter
 
@@ -178,6 +216,12 @@ func main() {
 	// aborted instead of running to their timeout.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// After the first signal cancels ctx, restore default signal handling so a
+	// second Ctrl+C terminates the process even if something ignores ctx.
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
 
 	if err := run(ctx, os.Args, os.Stdout, os.Stderr); err != nil {
 		// Errors belong on stderr: scripted consumers piping stdout must not

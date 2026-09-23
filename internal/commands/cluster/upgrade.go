@@ -1,11 +1,8 @@
 package cluster
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -152,7 +149,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 
 	report, err := svc.Execute(ctx, plan, upgrade.ExecuteOptions{
 		Yes:               cmd.Bool("yes"),
-		Confirm:           promptPhase,
+		Confirm:           func(label string) bool { return promptPhase(ctx, label) },
 		Progress:          progress,
 		SkipAddons:        cmd.StringSlice("skip"),
 		SkipNodegroups:    cmd.StringSlice("skip-nodegroup"),
@@ -173,17 +170,12 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-// promptPhase asks for confirmation before a mutating phase. Bare Enter or a
-// read error declines (safe default).
-func promptPhase(label string) bool {
+// promptPhase asks for confirmation before a mutating phase. Bare Enter, a
+// read error, or Ctrl+C declines (safe default). Answers come from the shared
+// stdin reader, so piped input for several phases is not lost between prompts.
+func promptPhase(ctx context.Context, label string) bool {
 	fmt.Printf("\nProceed with %s? (y/N): ", label)
-	reader := bufio.NewReader(os.Stdin)
-	answer, err := reader.ReadString('\n')
-	if err != nil {
-		return false
-	}
-	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y" || answer == "yes"
+	return ui.Confirm(ctx)
 }
 
 // renderPlan prints the human-readable plan.

@@ -182,7 +182,7 @@ func TestPromptContinueWithWarnings(t *testing.T) {
 			_, _ = w.WriteString(tt.input)
 			_ = w.Close()
 
-			if got := PromptContinueWithWarnings([]string{"warn"}); got != tt.want {
+			if got := PromptContinueWithWarnings(t.Context(), []string{"warn"}); got != tt.want {
 				t.Fatalf("PromptContinueWithWarnings() = %v, want %v", got, tt.want)
 			}
 		})
@@ -200,7 +200,7 @@ func TestPromptContinueWithWarningsReadError(t *testing.T) {
 	_ = r.Close()
 	_ = w.Close()
 
-	if PromptContinueWithWarnings(nil) {
+	if PromptContinueWithWarnings(t.Context(), nil) {
 		t.Fatal("expected false on read error")
 	}
 }

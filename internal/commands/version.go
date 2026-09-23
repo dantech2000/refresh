@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/mattn/go-isatty"
 	"github.com/urfave/cli/v3"
@@ -63,12 +64,12 @@ when a newer version is available.
 
 The check runs at most once per day (cached under the user config dir), never
 adds measurable latency, and is skipped when stdout is piped/redirected. Disable
-it with --no-update-check or REFRESH_NO_UPDATE_CHECK=1.`,
+it with --no-update-check, or set REFRESH_NO_UPDATE_CHECK to any non-empty
+value other than 0, false, or no.`,
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
-				Name:    "no-update-check",
-				Usage:   "Skip the check for a newer release",
-				Sources: cli.EnvVars("REFRESH_NO_UPDATE_CHECK"),
+				Name:  "no-update-check",
+				Usage: "Skip the check for a newer release (also REFRESH_NO_UPDATE_CHECK)",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -77,6 +78,17 @@ it with --no-update-check or REFRESH_NO_UPDATE_CHECK=1.`,
 			return nil
 		},
 	}
+}
+
+// envTruthy reports whether an opt-out env var is set. Any non-empty value
+// counts except "0", "false" and "no" (case-insensitive), so values like "yes"
+// work instead of failing strconv.ParseBool.
+func envTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "0", "false", "no":
+		return false
+	}
+	return true
 }
 
 // updateChecker is overridable in tests so the hint logic can run against an
@@ -88,7 +100,7 @@ var updateChecker = func() *updatecheck.Checker { return updatecheck.New() }
 // not a TTY, when --no-update-check/REFRESH_NO_UPDATE_CHECK is set, or when the
 // version is "dev"/unparseable. All failures are silent.
 func maybePrintUpdateHint(ctx context.Context, cmd *cli.Command, w io.Writer) {
-	if cmd.Bool("no-update-check") {
+	if cmd.Bool("no-update-check") || envTruthy(os.Getenv("REFRESH_NO_UPDATE_CHECK")) {
 		return
 	}
 	if !stdoutIsTerminal() {

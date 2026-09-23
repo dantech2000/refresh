@@ -127,7 +127,7 @@ func TestContextActionErrorsAndPicker(t *testing.T) {
 	t.Cleanup(func() { os.Stdin = oldStdin })
 	_, _ = w.WriteString("1\n")
 	_ = w.Close()
-	picked, err := pickContext(f)
+	picked, err := pickContext(t.Context(), f)
 	if err != nil || picked != "a" {
 		t.Fatalf("pickContext numeric = %q, %v", picked, err)
 	}
@@ -139,7 +139,7 @@ func TestContextActionErrorsAndPicker(t *testing.T) {
 	os.Stdin = r
 	_, _ = w.WriteString("b\n")
 	_ = w.Close()
-	picked, err = pickContext(f)
+	picked, err = pickContext(t.Context(), f)
 	if err != nil || picked != "b" {
 		t.Fatalf("pickContext name = %q, %v", picked, err)
 	}
@@ -151,7 +151,7 @@ func TestContextActionErrorsAndPicker(t *testing.T) {
 	os.Stdin = r
 	_, _ = w.WriteString("\n")
 	_ = w.Close()
-	if _, err := pickContext(f); err == nil {
+	if _, err := pickContext(t.Context(), f); err == nil {
 		t.Fatal("pickContext should reject empty selection")
 	}
 
@@ -162,7 +162,7 @@ func TestContextActionErrorsAndPicker(t *testing.T) {
 	os.Stdin = r
 	_, _ = w.WriteString("99\n")
 	_ = w.Close()
-	if _, err := pickContext(f); err == nil {
+	if _, err := pickContext(t.Context(), f); err == nil {
 		t.Fatal("pickContext should reject out-of-range selection")
 	}
 }
