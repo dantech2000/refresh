@@ -1,16 +1,21 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/suzuki-shunsuke/pinact/refs/heads/main/json-schema/pinact.json
-# pinact - https://github.com/suzuki-shunsuke/pinact
+# yaml-language-server: $schema=https://raw.githubusercontent.com/suzuki-shunsuke/pinact/refs/tags/v3.9.2/json-schema/pinact.json
+#
+# pinact pins every GitHub Action to a full commit SHA and keeps the release
+# tag as a trailing comment, e.g.
+#   uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+#
+#   pinact run            pin any action that uses a tag or branch
+#   pinact run --update   move pinned actions to their latest release
+#   pinact run --check    fail if any action is not pinned (no changes)
+#
+# Dependabot (.github/dependabot.yml) bumps the pinned SHAs and their tag
+# comments; pinact is for adding new actions and for manual updates.
 version: 3
-# files:
-#   - pattern: action.yaml
-#   - pattern: */action.yaml
 
-# separator: "  # "
+# Only workflows live in this repo; there are no composite actions.
+files:
+  - pattern: .github/workflows/*.yml
 
-ignore_actions:
-# - name: slsa-framework/slsa-github-generator/\.github/workflows/generator_generic_slsa3\.yml
-#   ref: v\d+\.\d+\.\d+
-# - name: actions/.*
-#   ref: main
-# - name: suzuki-shunsuke/.*
-#   ref: release-.*
+# Matches the existing "@<sha> # vX.Y.Z" comments, so pinact doesn't rewrite
+# lines it has already pinned.
+separator: " # "

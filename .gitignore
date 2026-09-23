@@ -50,8 +50,5 @@ Thumbs.db
 *.crt
 *credentials*
 
-# Documentation artifacts
-docs/CLI_HELP.md
-
 # Claude ignore
 .claude/
