@@ -210,6 +210,11 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 		// isn't fooled, but their AMI posture is unknown, so flag the row.
 		cs.NodegroupCount = len(ngs) + len(ngFailures)
 		cs.StaleAMI = s.staleAMISummary(ctx, ngs)
+		for _, ng := range ngs {
+			if ng.VersionBehind {
+				cs.NodegroupsBehindControlPlane++
+			}
+		}
 		if len(ngFailures) > 0 {
 			cs.Errors = append(cs.Errors, fmt.Sprintf("describe nodegroup(s): %s", strings.Join(ngFailures, "; ")))
 		}

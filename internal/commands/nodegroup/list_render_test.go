@@ -67,3 +67,32 @@ func TestNodegroupListLines_ASCII(t *testing.T) {
 		t.Errorf("ASCII fallback still has Unicode glyphs:\n%s", joined)
 	}
 }
+
+// A nodegroup behind the control plane gets a warn-token VERSION cell even
+// when its AMI is the latest for its own minor.
+func TestNodegroupListLines_VersionBehind(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	items := []nodegroupsvc.NodegroupSummary{
+		{Name: "lagging", Status: "ACTIVE", InstanceType: "m6i.large", AMIStatus: types.AMILatest, K8sVersion: "1.31", VersionBehind: true},
+		{Name: "current", Status: "ACTIVE", InstanceType: "m6i.large", AMIStatus: types.AMILatest, K8sVersion: "1.32"},
+	}
+	joined := strings.Join(nodegroupListLines(th, "prod", items), "\n")
+	for _, want := range []string{"VERSION", "▲ 1.31", "1.32"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("nodegroup list missing %q in:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "▲ 1.32") {
+		t.Errorf("current nodegroup version must not be a warn token:\n%s", joined)
+	}
+
+	if got := plainVersionCell(items[0]); got != "1.31 (behind)" {
+		t.Errorf("plainVersionCell(behind) = %q", got)
+	}
+	if got := plainVersionCell(items[1]); got != "1.32" {
+		t.Errorf("plainVersionCell(current) = %q", got)
+	}
+	if got := plainVersionCell(nodegroupsvc.NodegroupSummary{}); got != "-" {
+		t.Errorf("plainVersionCell(empty) = %q", got)
+	}
+}

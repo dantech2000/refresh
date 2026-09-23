@@ -574,19 +574,25 @@ func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *
 
 	ec2Client := ec2.NewFromConfig(awsCfg)
 	asgClient := autoscaling.NewFromConfig(awsCfg)
-	ssmClient := ssm.NewFromConfig(awsCfg)
-	latestByType := make(map[ekstypes.AMITypes]string)
+	return latestAMISkipPredicate(ctx, k8sVersion,
+		awsinternal.NewLatestAMIIDCache(ssm.NewFromConfig(awsCfg)),
+		func(ctx context.Context, ng *ekstypes.Nodegroup) string {
+			return awsinternal.CurrentAmiID(ctx, ng, ec2Client, asgClient)
+		})
+}
 
+// latestAMISkipPredicate compares each nodegroup's current AMI against the
+// latest AMI for the nodegroup's own Kubernetes version (clusterVersion only
+// as a fallback). UpdateNodegroupVersion is called without a Version, so it
+// stays on the nodegroup's minor; comparing against the cluster's minor would
+// never skip a nodegroup that lags the control plane.
+func latestAMISkipPredicate(ctx context.Context, clusterVersion string, latestAMI *awsinternal.LatestAMICache, currentAMI func(context.Context, *ekstypes.Nodegroup) string) func(*ekstypes.Nodegroup) bool {
 	return func(ng *ekstypes.Nodegroup) bool {
-		latest, ok := latestByType[ng.AmiType]
-		if !ok {
-			latest = awsinternal.LatestAmiIDForType(ctx, ssmClient, k8sVersion, ng.AmiType)
-			latestByType[ng.AmiType] = latest
-		}
+		latest := latestAMI.ForNodegroup(ctx, ng, clusterVersion)
 		if latest == "" {
 			return false
 		}
-		current := awsinternal.CurrentAmiID(ctx, ng, ec2Client, asgClient)
+		current := currentAMI(ctx, ng)
 		return current != "" && current == latest
 	}
 }

@@ -47,7 +47,7 @@ type DryRunner struct {
 	k8sVersion          string
 	force               bool
 	quiet               bool
-	latestByType        map[types.AMITypes]string
+	latestAMICache      *awsClient.LatestAMICache
 	describeNodegroupFn func(context.Context, string) (*types.Nodegroup, error)
 	currentAmiFn        func(context.Context, *types.Nodegroup) string
 	latestAmiFn         func(context.Context, *types.Nodegroup) string
@@ -84,15 +84,14 @@ func NewDryRunner(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client,
 	}
 
 	return &DryRunner{
-		eksClient:    eksClient,
-		ec2Client:    ec2.NewFromConfig(awsCfg),
-		asgClient:    autoscaling.NewFromConfig(awsCfg),
-		ssmClient:    ssm.NewFromConfig(awsCfg),
-		clusterName:  clusterName,
-		k8sVersion:   k8sVersion,
-		force:        force,
-		quiet:        quiet,
-		latestByType: make(map[types.AMITypes]string),
+		eksClient:   eksClient,
+		ec2Client:   ec2.NewFromConfig(awsCfg),
+		asgClient:   autoscaling.NewFromConfig(awsCfg),
+		ssmClient:   ssm.NewFromConfig(awsCfg),
+		clusterName: clusterName,
+		k8sVersion:  k8sVersion,
+		force:       force,
+		quiet:       quiet,
 	}, nil
 }
 
@@ -194,21 +193,17 @@ func (dr *DryRunner) currentAmi(ctx context.Context, ng *types.Nodegroup) string
 	return awsClient.CurrentAmiID(ctx, ng, dr.ec2Client, dr.asgClient)
 }
 
-// latestAmi resolves the latest recommended AMI for the nodegroup's AMI type,
-// memoized per type (the result is constant for a given cluster version).
+// latestAmi resolves the latest recommended AMI for the nodegroup's AMI type
+// at the nodegroup's own Kubernetes version (the real update keeps the
+// nodegroup on its minor), memoized per (version, type).
 func (dr *DryRunner) latestAmi(ctx context.Context, ng *types.Nodegroup) string {
 	if dr.latestAmiFn != nil {
 		return dr.latestAmiFn(ctx, ng)
 	}
-	if v, ok := dr.latestByType[ng.AmiType]; ok {
-		return v
+	if dr.latestAMICache == nil {
+		dr.latestAMICache = awsClient.NewLatestAMIIDCache(dr.ssmClient)
 	}
-	v := awsClient.LatestAmiIDForType(ctx, dr.ssmClient, dr.k8sVersion, ng.AmiType)
-	if dr.latestByType == nil {
-		dr.latestByType = make(map[types.AMITypes]string)
-	}
-	dr.latestByType[ng.AmiType] = v
-	return v
+	return dr.latestAMICache.ForNodegroup(ctx, ng, dr.k8sVersion)
 }
 
 // categorizeUpdate adds an update to the appropriate category in the result.

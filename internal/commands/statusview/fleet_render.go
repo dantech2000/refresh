@@ -207,21 +207,25 @@ func addonsPretty(th *render.Theme, a statussvc.AddonsBehindSummary) string {
 }
 
 func footerPretty(th *render.Theme, statuses []statussvc.ClusterStatus, elapsed time.Duration) string {
-	staleNG, addonsBehind, supportRisk := 0, 0, 0
+	staleNG, addonsBehind, supportRisk, ngBehindCP := 0, 0, 0, 0
 	for _, c := range statuses {
 		staleNG += c.StaleAMI.Behind
 		addonsBehind += c.AddonsBehind.Behind
+		ngBehindCP += c.NodegroupsBehindControlPlane
 		if c.SupportRisk() {
 			supportRisk++
 		}
 	}
 	txt := fmt.Sprintf("%d clusters · %d stale nodegroups · %d addons behind · %d extended/unsupported",
 		len(statuses), staleNG, addonsBehind, supportRisk)
+	if ngBehindCP > 0 {
+		txt += fmt.Sprintf(" · %d nodegroups behind control plane", ngBehindCP)
+	}
 	incomplete := countIncomplete(statuses)
 	if incomplete > 0 {
 		txt += fmt.Sprintf(" · %d incomplete", incomplete)
 	}
-	clean := staleNG == 0 && addonsBehind == 0 && supportRisk == 0 && incomplete == 0
+	clean := staleNG == 0 && addonsBehind == 0 && supportRisk == 0 && ngBehindCP == 0 && incomplete == 0
 	line := th.Paint(th.Pal.Dim, txt)
 	if clean {
 		line = th.Paint(th.Pal.Green, txt)
@@ -260,6 +264,8 @@ func hintLine(th *render.Theme, statuses []statussvc.ClusterStatus) string {
 		reason = "is on unsupported EKS"
 	case worst.HealthIssues > 0:
 		reason = fmt.Sprintf("has %d control-plane health issue(s)", worst.HealthIssues)
+	case worst.NodegroupsBehindControlPlane > 0:
+		reason = fmt.Sprintf("has %d nodegroup(s) behind the control plane", worst.NodegroupsBehindControlPlane)
 	case worst.NeedsAttention():
 		reason = "has stale AMIs/addons"
 	}

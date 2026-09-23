@@ -67,6 +67,12 @@ type NodegroupSummary struct {
 	// AMI information - core functionality of refresh tool
 	CurrentAMI string          `json:"currentAmi"`
 	AMIStatus  types.AMIStatus `json:"amiStatus"`
+	// K8sVersion is the nodegroup's Kubernetes minor. VersionBehind is true
+	// when it trails the control plane. AMIStatus is judged against the
+	// nodegroup's own minor, so a lagging nodegroup can be AMILatest and still
+	// need a version upgrade; VersionBehind carries that signal.
+	K8sVersion    string `json:"k8sVersion" yaml:"k8sVersion"`
+	VersionBehind bool   `json:"versionBehind" yaml:"versionBehind"`
 }
 
 // NodegroupDetails extends summary with health and optional instance/workload details
