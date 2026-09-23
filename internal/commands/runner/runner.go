@@ -33,21 +33,11 @@ import (
 // helpers below.
 type credentialCheck func(ctx context.Context, cfg aws.Config) error
 
-// checkCredentialsLenient wraps awsinternal.CheckAWSCredentials.
-func checkCredentialsLenient(ctx context.Context, cfg aws.Config) error {
+// checkCredentials is awsinternal.CheckAWSCredentials. It prints nothing: the
+// returned error carries the setup help (only for a credential problem) and
+// main prints it once, on stderr, so stdout stays clean for -o json/yaml.
+func checkCredentials(ctx context.Context, cfg aws.Config) error {
 	return awsinternal.CheckAWSCredentials(ctx, cfg)
-}
-
-// checkCredentialsStrict wraps awsinternal.ValidateAWSCredentials and prints
-// the help message on failure.
-func checkCredentialsStrict(ctx context.Context, cfg aws.Config) error {
-	if err := awsinternal.ValidateAWSCredentials(ctx, cfg); err != nil {
-		color.Red("%v", err)
-		ui.Outln()
-		awsinternal.PrintCredentialHelp()
-		return fmt.Errorf("AWS credential validation failed")
-	}
-	return nil
 }
 
 // setupAWS is the shared body of the SetupAWS* helpers.
@@ -71,8 +61,8 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 	cfg, err := awsconfig.Load(checkCtx, cmd)
 	if err != nil {
 		cancel()
-		color.Red("Failed to load AWS config: %v", err)
-		return nil, nil, aws.Config{}, err
+		// Returned, not printed: main prints it once, on stderr.
+		return nil, nil, aws.Config{}, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 	if err := check(checkCtx, cfg); err != nil {
 		cancel()
@@ -111,7 +101,7 @@ func checkContext(ctx context.Context, apiTimeout, timeout time.Duration) (conte
 // and checks credentials. On error, the returned cancel is nil and the
 // internal context has already been cancelled.
 func SetupAWS(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, cmd.Duration("timeout"), checkCredentialsLenient)
+	return setupAWS(ctx, cmd, cmd.Duration("timeout"), checkCredentials)
 }
 
 // SetupAWSWithDeadline is like SetupAWS but uses the given timeout for the
@@ -120,19 +110,7 @@ func SetupAWS(ctx context.Context, cmd *cli.Command) (context.Context, context.C
 // scopes its own deadlines (per cluster, per wait) and --timeout alone would
 // cut a long-running operation short.
 func SetupAWSWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, timeout, checkCredentialsLenient)
-}
-
-// SetupAWSStrict is like SetupAWS but uses ValidateAWSCredentials and prints
-// the credential help message on failure (used by destructive commands).
-func SetupAWSStrict(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, cmd.Duration("timeout"), checkCredentialsStrict)
-}
-
-// SetupAWSStrictWithDeadline is SetupAWSStrict with an explicit timeout in
-// place of --timeout (<= 0 means no deadline; see SetupAWSWithDeadline).
-func SetupAWSStrictWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
-	return setupAWS(ctx, cmd, timeout, checkCredentialsStrict)
+	return setupAWS(ctx, cmd, timeout, checkCredentials)
 }
 
 // ParseFilters parses repeated key=value --filter flag values into a map.
@@ -305,6 +283,16 @@ func EncodeStdout(format string, payload any) (handled bool, err error) {
 	}
 }
 
+// IsMachineFormat reports whether format is json or yaml: stdout then carries
+// exactly one document and every human line goes to stderr or is dropped.
+func IsMachineFormat(format string) bool {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json", "yaml":
+		return true
+	}
+	return false
+}
+
 // Output-format presets for ValidateFormat. Commands pass the set they can
 // actually render so an unknown value fails loudly instead of silently
 // falling through to the table renderer.
@@ -313,9 +301,10 @@ var (
 	FormatsStandard = []string{"table", "json", "yaml", "plain"}
 	// FormatsWithTree adds the cluster-list-only hierarchical tree renderer.
 	FormatsWithTree = []string{"table", "json", "yaml", "plain", "tree"}
-	// FormatsTableJSON is for commands that only emit a table or a JSON summary
-	// (e.g. nodegroup update's run summary).
-	FormatsTableJSON = []string{"table", "json"}
+	// FormatsDocument is for commands that emit a human report or one
+	// JSON/YAML document, with no plain TSV table (e.g. nodegroup update's
+	// run summary).
+	FormatsDocument = []string{"table", "json", "yaml"}
 )
 
 // ValidateFormat returns an error when format is not one of allowed. Matching
@@ -347,9 +336,16 @@ var watchIsTerminal = func() bool {
 // cleared between iterations (top-style); when output is piped, iterations
 // append instead. fn should perform the full fetch+render cycle so every
 // iteration shows fresh data.
+//
+// --watch with -o json/yaml is rejected: stdout for those formats carries
+// exactly one document, and a watch would print one per interval. Scripts
+// that poll should run the command in their own loop.
 func Watch(ctx context.Context, cmd *cli.Command, fn func() error) error {
 	if !cmd.Bool("watch") {
 		return fn()
+	}
+	if IsMachineFormat(cmd.String("format")) {
+		return fmt.Errorf("--watch cannot be combined with -o %s: stdout carries one document per run; poll by running the command in a loop instead", strings.ToLower(cmd.String("format")))
 	}
 
 	interval := cmd.Duration("watch-interval")

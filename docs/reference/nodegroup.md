@@ -162,8 +162,11 @@ regions these credentials can't use (SCP-denied or not enabled) with a note.
 Unattended / CI use:
    --yes              skip confirmation prompts (multi-match selection, warnings)
    --require-healthy  treat warn-level health findings as a hard stop
-   -o json            print a JSON run summary (started/skipped/custom/failed)
-   Without a TTY and without --yes, a prompt-requiring run fails fast.
+   -o json|yaml       print one document on stdout: the run summary
+                      (started/skipped/custom/failed), the dry-run plan, or
+                      the --health-only verdict; notices go to stderr
+   Without a TTY, or with -o json|yaml, a run that needs a prompt fails fast
+   unless --yes is given.
 
 Exit codes:
    0  success            1  error, interrupt, or monitoring timeout
@@ -195,7 +198,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | `--changelog` | — | — | In dry-run, print full amazon-eks-ami release notes between the current and target AMI |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for workload/PDB health checks (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
-| `--format, -o string` | — | `table` | Output format: health results with --health-only; a JSON run summary with -o json |
+| `--format, -o string` | — | `table` | Output format (table, json, yaml). json/yaml print one document: the run summary, the --dry-run plan, or the --health-only verdict |
 | `--live` | — | — | Force the live per-node roll view, also when stdout is not a color terminal (appends a snapshot at most every 15s, only on change), and report why if the cluster API can't be reached. The panel is already the default for a single-nodegroup roll on a color terminal |
 | `--help, -h` | — | — | show help |
 

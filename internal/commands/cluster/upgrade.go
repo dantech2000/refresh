@@ -3,6 +3,9 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -46,7 +49,11 @@ Examples:
    refresh cluster upgrade -c prod-east --to 1.33
 
    # Non-interactive (CI) run
-   refresh cluster upgrade -c prod-east --to 1.33 --yes`,
+   refresh cluster upgrade -c prod-east --to 1.33 --yes
+
+   # Machine-readable run: one JSON document {plan, report} on stdout,
+   # progress on stderr (-o json/yaml never prompts, so it needs --yes)
+   refresh cluster upgrade -c prod-east --to 1.33 --yes -o json`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "to", Usage: "Target Kubernetes version (e.g. 1.33)", Required: true},
@@ -58,18 +65,30 @@ Examples:
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Overall upgrade timeout (not read from REFRESH_TIMEOUT, which only sets API/read timeouts)", Value: upgradeDefaultTimeout},
 			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "How often to poll in-flight updates", Value: appconfig.DefaultPollInterval},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Plan output format (table, json, yaml, plain)", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain). json/yaml print one document: the plan with --dry-run or when blocked, else {plan, report} after the run (requires --yes)", Value: "table"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error { return runUpgrade(ctx, cmd) },
 	}
 }
 
+// upgradeResult is the -o json/yaml document of an executed upgrade: the plan
+// the run started from and the engine's report of what it did.
+type upgradeResult struct {
+	Plan   *upgrade.Plan   `json:"plan" yaml:"plan"`
+	Report *upgrade.Report `json:"report" yaml:"report"`
+}
+
 func runUpgrade(ctx context.Context, cmd *cli.Command) error {
-	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
+	format := cmd.String("format")
+	if err := runner.ValidateFormat(format, runner.FormatsStandard); err != nil {
 		return err
 	}
-	// Strict credential validation: this command mutates the control plane.
-	ctx, cancel, awsCfg, err := runner.SetupAWSStrict(ctx, cmd)
+	// -o json/yaml keeps stdout to one document, so a run can't stop to ask
+	// before each phase: executing needs --yes. Checked before any AWS call.
+	if runner.IsMachineFormat(format) && !cmd.Bool("dry-run") && !cmd.Bool("yes") {
+		return fmt.Errorf("cluster upgrade -o %s does not prompt before each phase; add --yes to execute, or --dry-run to print the plan only", strings.ToLower(format))
+	}
+	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -101,17 +120,20 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	format := cmd.String("format")
-	if handled, eerr := runner.EncodeStdout(format, plan); handled || eerr != nil {
-		if eerr != nil {
-			return eerr
-		}
-		if plan.Blocked() {
-			return cli.Exit("", 1)
-		}
-		if cmd.Bool("dry-run") {
-			return nil
-		}
+	if runner.IsMachineFormat(format) {
+		return runUpgradeMachine(ctx, cmd, svc, plan, clusterName, format)
+	}
+	// Switches the UI into plain mode for -o plain.
+	if _, eerr := runner.EncodeStdout(format, plan); eerr != nil {
+		return eerr
+	}
+	// out receives everything after the plan. With -o plain, stdout is only
+	// the plan's TSV rows, so the rest (progress, prompts, the report) goes to
+	// stderr.
+	out := io.Writer(os.Stdout)
+	if ui.PlainOutput() {
+		writeUpgradePlanPlain(os.Stdout, os.Stderr, plan)
+		out = os.Stderr
 	} else {
 		renderPlan(plan)
 	}
@@ -124,14 +146,13 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 		return nil
 	}
 	if plan.PendingSteps() == 0 {
-		ui.Outln()
-		ui.Outf("Nothing to do: %s already satisfies %s.\n", clusterName, plan.TargetVersion)
+		_, _ = fmt.Fprintf(out, "\nNothing to do: %s already satisfies %s.\n", clusterName, plan.TargetVersion)
 		return nil
 	}
 
 	progress := func(format string, args ...any) {
 		if !cmd.Bool("quiet") {
-			ui.Outf("  "+format+"\n", args...)
+			_, _ = fmt.Fprintf(out, "  "+format+"\n", args...)
 		}
 	}
 
@@ -139,8 +160,9 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	// the cluster API is reachable (resolved quietly — best-effort). Falls back to
 	// text progress otherwise. Rendering stays in this view layer; the
 	// orchestrator only invokes the injected observer. (REF-126)
+	// The panel draws on stdout, so -o plain skips it.
 	var ngObserver upgrade.RollObserver
-	if !cmd.Bool("quiet") {
+	if !cmd.Bool("quiet") && !ui.PlainOutput() {
 		if kube, _ := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, "", "", false); kube != nil {
 			timeout, poll := cmd.Duration("timeout"), cmd.Duration("poll-interval")
 			ngObserver = func(octx context.Context, ng string) {
@@ -149,34 +171,84 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	report, err := svc.Execute(ctx, plan, upgrade.ExecuteOptions{
-		Yes:               cmd.Bool("yes"),
-		Confirm:           func(label string) bool { return promptPhase(ctx, label) },
-		Progress:          progress,
-		SkipAddons:        cmd.StringSlice("skip"),
-		SkipNodegroups:    cmd.StringSlice("skip-nodegroup"),
-		Force:             cmd.Bool("force"),
-		NodegroupObserver: ngObserver,
-	})
+	opts := executeOptions(cmd)
+	opts.Confirm = func(label string) bool { return promptPhase(ctx, out, label) }
+	opts.Progress = progress
+	opts.NodegroupObserver = ngObserver
+	report, err := svc.Execute(ctx, plan, opts)
 
-	renderReport(report)
+	renderReport(out, report)
 	if err != nil {
-		resume := fmt.Sprintf("refresh cluster upgrade -c %s --to %s", clusterName, plan.TargetVersion)
-		ui.Outln()
-		ui.Outf("Resume with: %s\n", color.CyanString(resume))
+		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", color.CyanString(resumeCommand(clusterName, plan)))
 		return err
 	}
 
-	ui.Outln()
-	ui.Outf("%s\n", color.GreenString("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
+	_, _ = fmt.Fprintf(out, "\n%s\n", color.GreenString("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
+	return nil
+}
+
+// executeOptions maps the command's flags to the engine options. The caller
+// adds the confirm, progress, and observer hooks.
+func executeOptions(cmd *cli.Command) upgrade.ExecuteOptions {
+	return upgrade.ExecuteOptions{
+		Yes:            cmd.Bool("yes"),
+		SkipAddons:     cmd.StringSlice("skip"),
+		SkipNodegroups: cmd.StringSlice("skip-nodegroup"),
+		Force:          cmd.Bool("force"),
+	}
+}
+
+// resumeCommand is the command that resumes an interrupted or failed run.
+func resumeCommand(clusterName string, plan *upgrade.Plan) string {
+	return fmt.Sprintf("refresh cluster upgrade -c %s --to %s", clusterName, plan.TargetVersion)
+}
+
+// runUpgradeMachine is the -o json/yaml path. Stdout gets exactly one
+// document: the bare plan for --dry-run or a blocked plan (as before), else
+// {plan, report} once execution ends, successful or not. Progress goes to
+// stderr (or nowhere with --quiet); nothing prompts (runUpgrade requires
+// --yes) and there is no live roll panel. Exit codes match the human path.
+func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Service, plan *upgrade.Plan, clusterName, format string) error {
+	if plan.Blocked() || cmd.Bool("dry-run") {
+		if _, err := runner.EncodeStdout(format, plan); err != nil {
+			return err
+		}
+		if plan.Blocked() {
+			return cli.Exit("upgrade blocked: resolve the blockers in the plan and re-run", 1)
+		}
+		return nil
+	}
+
+	report := &upgrade.Report{}
+	var err error
+	if plan.PendingSteps() > 0 {
+		opts := executeOptions(cmd)
+		opts.Progress = func(format string, args ...any) {
+			if !cmd.Bool("quiet") {
+				_, _ = fmt.Fprintf(os.Stderr, "  "+format+"\n", args...)
+			}
+		}
+		var r *upgrade.Report
+		r, err = svc.Execute(ctx, plan, opts)
+		if r != nil {
+			report = r
+		}
+	}
+
+	if _, eerr := runner.EncodeStdout(format, upgradeResult{Plan: plan, Report: report}); eerr != nil {
+		return eerr
+	}
+	if err != nil {
+		return fmt.Errorf("%w (resume with: %s)", err, resumeCommand(clusterName, plan))
+	}
 	return nil
 }
 
 // promptPhase asks for confirmation before a mutating phase. Bare Enter, a
 // read error, or Ctrl+C declines (safe default). Answers come from the shared
 // stdin reader, so piped input for several phases is not lost between prompts.
-func promptPhase(ctx context.Context, label string) bool {
-	fmt.Printf("\nProceed with %s? (y/N): ", label)
+func promptPhase(ctx context.Context, w io.Writer, label string) bool {
+	_, _ = fmt.Fprintf(w, "\nProceed with %s? (y/N): ", label)
 	return ui.Confirm(ctx)
 }
 
@@ -221,19 +293,19 @@ func stepMarkerAndNote(step upgrade.Step) (string, string) {
 	}
 }
 
-// renderReport prints the completed / failed-at / remaining summary.
-func renderReport(report *upgrade.Report) {
+// renderReport writes the completed / failed-at / remaining summary to w.
+func renderReport(w io.Writer, report *upgrade.Report) {
 	if report == nil {
 		return
 	}
-	ui.Outln()
+	_, _ = fmt.Fprintln(w)
 	for _, c := range report.Completed {
-		ui.Outf("%s %s\n", color.GreenString("completed:"), c)
+		_, _ = fmt.Fprintf(w, "%s %s\n", color.GreenString("completed:"), c)
 	}
 	if report.FailedAt != "" {
-		ui.Outf("%s %s\n", color.RedString("failed at:"), report.FailedAt)
+		_, _ = fmt.Fprintf(w, "%s %s\n", color.RedString("failed at:"), report.FailedAt)
 	}
 	for _, r := range report.Remaining {
-		ui.Outf("%s %s\n", color.YellowString("remaining:"), r)
+		_, _ = fmt.Fprintf(w, "%s %s\n", color.YellowString("remaining:"), r)
 	}
 }

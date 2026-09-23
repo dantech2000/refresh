@@ -208,11 +208,13 @@ also exits `4` right away if no region can be listed.
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--poll-interval, -p` | Polling interval for update status (default `15s`) |
 | `--timeout, -t` | Max time to wait for update completion (default `40m`; applies per cluster with `--all-clusters`; `0` = no limit) |
-| `--format, -o` | `table` (default) or `json` (a JSON run summary) |
+| `--format, -o` | `table` (default), `json`, or `yaml`: one document on stdout (the run summary, the `--dry-run` preview, or the `--health-only` verdict), with notices on stderr |
 
 !!! warning "Unattended / CI"
-    Without a TTY **and** without `--yes`, a run that would otherwise prompt
-    fails fast. For cron, pair `--yes` with `--require-healthy` and `-o json`.
+    Without a TTY, or with `-o json`/`-o yaml`, a run that would otherwise
+    prompt fails fast unless you pass `--yes`. For cron, pair `--yes` with
+    `--require-healthy` and `-o json`. See
+    [stdout and stderr](../concepts/output.md#stdout-and-stderr).
 
 !!! note "Kubernetes access for the live roll view"
     During a roll, `refresh` renders a live per-node panel (draining / joining /

@@ -167,7 +167,7 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Bool("wait") && setupTimeout > 0 && cmd.Duration("wait-timeout") > 0 {
 		setupTimeout += cmd.Duration("wait-timeout")
 	}
-	ctx, cancel, cfg, err := runner.SetupAWSStrictWithDeadline(ctx, cmd, setupTimeout)
+	ctx, cancel, cfg, err := runner.SetupAWSWithDeadline(ctx, cmd, setupTimeout)
 	if err != nil {
 		return err
 	}
@@ -254,7 +254,7 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Bool("wait") {
 		setupTimeout = 0
 	}
-	ctx, cancel, cfg, err := runner.SetupAWSStrictWithDeadline(ctx, cmd, setupTimeout)
+	ctx, cancel, cfg, err := runner.SetupAWSWithDeadline(ctx, cmd, setupTimeout)
 	if err != nil {
 		return err
 	}

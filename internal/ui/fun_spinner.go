@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -17,6 +18,11 @@ var funSpinnerInterval = 2 * time.Second
 var spinnerOutputIsTerminal = func() bool {
 	return isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd())
 }
+
+// spinnerOut returns where spinners write: the stream that
+// spinnerOutputIsTerminal checks. It reads os.Stderr on each call so a test
+// that swaps os.Stderr captures it; tests can also replace the func.
+var spinnerOut = func() io.Writer { return os.Stderr }
 
 // FunSpinner provides an entertaining spinner with rotating messages
 type FunSpinner struct {
@@ -38,11 +44,14 @@ func NewFunSpinner(messages []string) *FunSpinner {
 		messages = []string{"Working on it..."}
 	}
 
+	// Frames and the Success line go to stderr (pterm's default is stdout), so
+	// a spinner never adds a line to -o json/yaml output on stdout.
 	spinner := pterm.DefaultSpinner.
 		WithStyle(&pterm.Style{pterm.FgCyan}).
 		WithSequence("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏").
 		WithDelay(100 * time.Millisecond).
-		WithRemoveWhenDone(false)
+		WithRemoveWhenDone(false).
+		WithWriter(spinnerOut())
 
 	return &FunSpinner{
 		spinner:  spinner,

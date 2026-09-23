@@ -298,7 +298,8 @@ func TestValidateFormat(t *testing.T) {
 		{"tree rejected in standard set", "tree", FormatsStandard, true},
 		{"typo rejected", "jsom", FormatsStandard, true},
 		{"xml rejected", "xml", FormatsStandard, true},
-		{"yaml rejected for table/json-only", "yaml", FormatsTableJSON, true},
+		{"yaml valid for document commands", "yaml", FormatsDocument, false},
+		{"plain rejected for document commands", "plain", FormatsDocument, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateFormat(tc.format, tc.allowed)

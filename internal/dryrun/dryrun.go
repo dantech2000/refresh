@@ -108,6 +108,36 @@ func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client
 	return nil
 }
 
+// Preview analyzes the selected nodegroups, in order, without printing
+// anything. It backs the -o json/yaml dry-run document.
+func Preview(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, force bool) ([]NodegroupUpdate, error) {
+	dr, err := newDryRunner(ctx, awsCfg, eksClient, clusterName, force, true)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NodegroupUpdate, 0, len(selectedNodegroups))
+	for _, ng := range selectedNodegroups {
+		out = append(out, dr.analyzeNodegroup(ctx, ng))
+	}
+	return out, nil
+}
+
+// ActionName is the stable machine-readable name of a dry-run action.
+func ActionName(a refreshTypes.DryRunAction) string {
+	switch a {
+	case refreshTypes.ActionUpdate:
+		return "update"
+	case refreshTypes.ActionForceUpdate:
+		return "force-update"
+	case refreshTypes.ActionSkipUpdating:
+		return "skip-updating"
+	case refreshTypes.ActionSkipLatest:
+		return "skip-latest"
+	default:
+		return "unknown"
+	}
+}
+
 // Analyze performs dry-run analysis on the selected nodegroups.
 func (dr *DryRunner) Analyze(ctx context.Context, nodegroups []string) *DryRunResult {
 	result := &DryRunResult{

@@ -177,6 +177,12 @@ func TestWithRetry_ContextCancelledBeforeFn(t *testing.T) {
 }
 
 func TestWithRetry_ContextCancelledDuringBackoff(t *testing.T) {
+	// Full jitter can shrink a wait to ~0, which would let a third call in
+	// before the cancel. Use the whole backoff so the cancel lands in a wait.
+	origJitter := jitter
+	jitter = func(d time.Duration) time.Duration { return d }
+	t.Cleanup(func() { jitter = origJitter })
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cfg := RetryConfig{
