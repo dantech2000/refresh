@@ -112,6 +112,52 @@ func TestFleetLines_AllHealthy(t *testing.T) {
 	}
 }
 
+// A row with errors (failed DescribeCluster, or a cluster the sweep never
+// reached) must not render as current: it gets the unknown glyph, its own chip,
+// a footer count, and its error text.
+func TestFleetLines_IncompleteRow(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	fleet := []statussvc.ClusterStatus{
+		{
+			Name: "ok", Region: "us-east-1", Version: "1.33",
+			Support: statussvc.SupportPosture{Tier: statussvc.SupportStandard, DaysRemaining: iptr(300)},
+			Compute: statussvc.ComputeManaged, NodegroupCount: 1,
+		},
+		{
+			Name: "ghost", Region: "us-west-2",
+			Support: statussvc.SupportPosture{Tier: statussvc.SupportUnknown},
+			Compute: statussvc.ComputeNone,
+			Errors:  []string{"describe cluster: AccessDeniedException"},
+		},
+	}
+	lines := fleetLines(th, fleet, 0)
+	joined := strings.Join(lines, "\n")
+	if lines[2] != "● 1 current   ○ 1 incomplete" {
+		t.Errorf("chips = %q", lines[2])
+	}
+	mustContain(t, joined, "○  ghost")
+	mustContain(t, joined, "INCOMPLETE DATA")
+	mustContain(t, joined, "ghost (us-west-2): describe cluster: AccessDeniedException")
+	mustContain(t, joined, "· 1 incomplete")
+}
+
+func TestOverall_ErroredRowIsNotHealthy(t *testing.T) {
+	c := statussvc.ClusterStatus{
+		Name:    "ghost",
+		Support: statussvc.SupportPosture{Tier: statussvc.SupportUnknown},
+		Errors:  []string{"not evaluated: context deadline exceeded"},
+	}
+	if got := overall(c); got != render.Unknown {
+		t.Errorf("overall = %v, want render.Unknown", got)
+	}
+	if got := errorsCell(c); got != "not evaluated: context deadline exceeded" {
+		t.Errorf("plain errors cell = %q", got)
+	}
+	if got := errorsCell(statussvc.ClusterStatus{}); got != "-" {
+		t.Errorf("plain errors cell for a clean row = %q, want -", got)
+	}
+}
+
 func mustContain(t *testing.T, haystack, needle string) {
 	t.Helper()
 	if !strings.Contains(haystack, needle) {
