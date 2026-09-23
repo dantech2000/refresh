@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v3"
-
-	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
 // Command returns the addon command group with list/describe/update subcommands.
@@ -45,7 +43,6 @@ Examples:
   refresh addon list my-cluster -o plain
   refresh addon list my-cluster --watch --watch-interval 5s`,
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "show-health", Aliases: []string{"H"}, Usage: "Include health mapping in table output"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
@@ -69,7 +66,6 @@ unique case-insensitive substring is resolved against the installed add-ons.
   refresh addon describe my-cluster vpc-cni
   refresh addon describe my-cluster coredns -o json`,
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "addon", Aliases: []string{"a"}, Usage: "Add-on name (e.g., vpc-cni)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},

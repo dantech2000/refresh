@@ -21,20 +21,14 @@ var shadowAllowlist = map[string]string{
 	// A repeatable "scan these regions" slice, not the single-region AWS
 	// override. The action must read it through runner.Regions, which falls
 	// back to the global --region only when the command is not sweeping (-A).
-	"refresh status --region":       "repeatable scan regions; read via runner.Regions",
-	"refresh cluster list --region": "repeatable scan regions; read via runner.Regions",
-	// nodegroup update --all-clusters reads -r in fleet.go, which should adopt
-	// runner.Regions in a follow-up.
-	"refresh nodegroup update --region": "repeatable fleet discovery regions; fleet.go to adopt runner.Regions",
+	"refresh status --region":           "repeatable scan regions; read via runner.Regions",
+	"refresh cluster list --region":     "repeatable scan regions; read via runner.Regions",
+	"refresh nodegroup update --region": "repeatable fleet discovery regions (--all-clusters); read via runner.Regions",
 	// Different meaning and default from the global API timeout.
 	"refresh nodegroup update --timeout": "wait for update completion (default 40m), not the API timeout",
 	"refresh cluster upgrade --timeout":  "overall upgrade timeout, not the API timeout",
 	"refresh addon update --timeout":     "update API budget (default 10m), not read from REFRESH_TIMEOUT",
 	"refresh addon update-all --timeout": "update API budget (default 10m), not read from REFRESH_TIMEOUT",
-	// Same meaning and default as the global flag. Drop these duplicates in a
-	// follow-up to addon/command.go.
-	"refresh addon list --timeout":     "duplicate of the global --timeout; remove in a follow-up",
-	"refresh addon describe --timeout": "duplicate of the global --timeout; remove in a follow-up",
 	// The values are saved into the context, not used as an override.
 	"refresh context add --region":  "value saved into the context",
 	"refresh context add --profile": "value saved into the context",
@@ -169,6 +163,16 @@ func TestGlobalFlagsResolveBeforeOrAfterSubcommand(t *testing.T) {
 			before: []string{"-t", "5s", "nodegroup", "scale", "-n", "x"}, after: []string{"nodegroup", "scale", "-n", "x", "-t", "5s"},
 			check: func(r resolved) bool { return r.timeout == 5*time.Second },
 		},
+		{
+			name: "addon list -t", path: []string{"addon", "list"},
+			before: []string{"-t", "5s", "addon", "list"}, after: []string{"addon", "list", "-t", "5s"},
+			check: func(r resolved) bool { return r.timeout == 5*time.Second },
+		},
+		{
+			name: "addon describe -t", path: []string{"addon", "describe"},
+			before: []string{"-t", "5s", "addon", "describe"}, after: []string{"addon", "describe", "-t", "5s"},
+			check: func(r resolved) bool { return r.timeout == 5*time.Second },
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -195,6 +199,16 @@ func TestGlobalFlagDefaultsUnchanged(t *testing.T) {
 	got := runCaptured(t, []string{"cluster", "list"}, "cluster", "list")
 	if got.timeout != 60*time.Second || got.conc != 8 || got.regions != nil {
 		t.Errorf("cluster list defaults = %+v, want 60s, 8, no regions", got)
+	}
+	for _, path := range [][]string{{"addon", "list"}, {"addon", "describe"}} {
+		if got := runCaptured(t, path, path...); got.timeout != 60*time.Second {
+			t.Errorf("%v timeout = %v, want the global 60s default", path, got.timeout)
+		}
+	}
+	// REFRESH_TIMEOUT still reaches them through the global flag.
+	t.Setenv("REFRESH_TIMEOUT", "7s")
+	if got := runCaptured(t, []string{"addon", "list"}, "addon", "list"); got.timeout != 7*time.Second {
+		t.Errorf("addon list timeout with REFRESH_TIMEOUT=7s = %v", got.timeout)
 	}
 	// The local repeatable -r wins over the global --region, and keeps
 	// every value.
