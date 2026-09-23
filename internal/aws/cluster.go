@@ -33,6 +33,11 @@ type ClusterNameOptions struct {
 	// commands get neither: a kubeconfig that happens to point at prod must
 	// never pick the target of an upgrade.
 	ReadOnly bool
+	// NonInteractive treats the run as having no TTY even when stdin is one,
+	// so resolution never prompts. Set it when a prompt would be wrong, such
+	// as a mutating command run with --yes and -o json/yaml: a non-exact name
+	// then fails with an error that names the candidate(s).
+	NonInteractive bool
 }
 
 // resolveSpinner is the progress indicator shown while clusters are listed.
@@ -281,8 +286,10 @@ func matchPreferExact(names []string, pattern string) []string {
 // confirmClusterSelection picks the cluster from matches. An exact match is
 // returned as-is. A single non-exact (substring) match is confirmed on a TTY;
 // without one it is accepted only for read-only callers. Multiple matches
-// prompt for a choice on a TTY and fail without one.
+// prompt for a choice on a TTY and fail without one. opts.NonInteractive
+// counts as "no TTY".
 func confirmClusterSelection(ctx context.Context, matches []string, pattern string, opts ClusterNameOptions) (string, error) {
+	interactive := !opts.NonInteractive && stdinIsTerminal()
 	switch len(matches) {
 	case 0:
 		return "", fmt.Errorf("no clusters found matching pattern: %s", pattern)
@@ -291,7 +298,7 @@ func confirmClusterSelection(ctx context.Context, matches []string, pattern stri
 		if match == pattern {
 			return match, nil
 		}
-		if stdinIsTerminal() {
+		if interactive {
 			return promptForSingleClusterMatch(ctx, match, pattern)
 		}
 		if opts.ReadOnly {
@@ -300,7 +307,7 @@ func confirmClusterSelection(ctx context.Context, matches []string, pattern stri
 		}
 		return "", fmt.Errorf("no cluster named %q (partial match: %s); pass the exact name with --cluster (no interactive terminal for confirmation)", pattern, match)
 	default:
-		if !stdinIsTerminal() {
+		if !interactive {
 			return "", fmt.Errorf("pattern %q matched %d clusters (%s); pass the exact name with --cluster (no interactive terminal for selection)", pattern, len(matches), strings.Join(matches, ", "))
 		}
 		return promptForClusterSelection(ctx, matches, pattern)
