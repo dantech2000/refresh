@@ -40,6 +40,13 @@ outcome:
 | `4` | One or more nodegroup updates **failed to start** |
 | `5` | Post-roll **verification** found issues (nodes not Ready / newly-stuck pods) |
 
+An interrupt (Ctrl+C) or a monitoring timeout exits `1`. The EKS update keeps
+running in AWS; check it with `refresh nodegroup list <cluster>`.
+
+In fleet mode (`--all-clusters`) the run exits with the worst code across
+clusters (`5`, then `4`, then `3`, then `1`). A region whose clusters could
+not be listed also counts as `4`, so a partial discovery never exits `0`.
+
 Example CI usage:
 
 ```bash
