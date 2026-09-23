@@ -2,78 +2,11 @@ package clusterview
 
 import (
 	"fmt"
-	"strings"
 	"time"
-
-	"github.com/fatih/color"
 
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
-	"github.com/dantech2000/refresh/internal/ui"
 )
-
-// colorString is the signature of fatih/color's *String helpers.
-type colorString = func(format string, a ...interface{}) string
-
-func decisionColor(d health.Decision) colorString {
-	switch d {
-	case health.DecisionProceed:
-		return color.GreenString
-	case health.DecisionWarn:
-		return color.YellowString
-	case health.DecisionBlock:
-		return color.RedString
-	default:
-		return color.WhiteString
-	}
-}
-
-var statusStyles = map[string]struct {
-	label string
-	c     colorString
-}{
-	"ACTIVE":   {"Active", color.GreenString},
-	"CREATING": {"Creating", color.YellowString},
-	"UPDATING": {"Updating", color.YellowString},
-	"DELETING": {"Deleting", color.RedString},
-	"FAILED":   {"Failed", color.RedString},
-}
-
-func formatStatus(status string) string {
-	if s, ok := statusStyles[strings.ToUpper(status)]; ok {
-		return s.c(s.label)
-	}
-	return status
-}
-
-// formatInsightStatus colors an EKS Cluster Insight status: PASSING=green,
-// WARNING=yellow, ERROR=red, UNKNOWN=gray.
-func formatInsightStatus(status string) string {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case clustersvc.InsightStatusPassing:
-		return color.GreenString("PASSING")
-	case clustersvc.InsightStatusWarning:
-		return color.YellowString("WARNING")
-	case clustersvc.InsightStatusError:
-		return color.RedString("ERROR")
-	default:
-		return color.HiBlackString("UNKNOWN")
-	}
-}
-
-// healthLabel returns the short PASS/WARN/FAIL/UNKNOWN label for a decision.
-func healthLabel(d health.Decision) string {
-	switch d {
-	case health.DecisionProceed:
-		return "PASS"
-	case health.DecisionWarn:
-		return "WARN"
-	case health.DecisionBlock:
-		return "FAIL"
-	default:
-		return "UNKNOWN"
-	}
-}
 
 // knownHealthTreeLabel returns the long HEALTHY/WARNING/CRITICAL label the
 // tree view uses for a recognized decision, plus ok=true. For an
@@ -104,68 +37,6 @@ func treeStatusWithHealth(clusterStatus string, h *health.HealthSummary) string 
 		return label
 	}
 	return clusterStatus + " (health unknown)"
-}
-
-func formatHealth(h *health.HealthSummary) string {
-	if h == nil {
-		return color.WhiteString("UNKNOWN")
-	}
-	c := decisionColor(h.Decision)
-	switch h.Decision {
-	case health.DecisionProceed:
-		passed := 0
-		for _, r := range h.Results {
-			if r.Status == health.StatusPass {
-				passed++
-			}
-		}
-		return c("PASS (%d/%d checks passed)", passed, len(h.Results))
-	case health.DecisionWarn:
-		return c("WARN (%d issues)", len(h.Warnings)+len(h.Errors))
-	case health.DecisionBlock:
-		return c("FAIL (%d issues)", len(h.Errors))
-	default:
-		return color.WhiteString("UNKNOWN")
-	}
-}
-
-func formatAddonHealth(h string) string {
-	switch h {
-	case "Healthy":
-		return ui.BadgePass()
-	case "Issues", "Failed":
-		return ui.BadgeFail()
-	case "Updating":
-		return ui.BadgeInProgress()
-	default:
-		return ui.BadgeUnknown()
-	}
-}
-
-func formatClusterHealth(h *health.HealthSummary) string {
-	if h == nil {
-		return color.WhiteString("UNKNOWN")
-	}
-	return decisionColor(h.Decision)(healthLabel(h.Decision))
-}
-
-func formatNodeCount(n clustersvc.NodeCountInfo) string {
-	// Readiness not measured (the common case for a multi-cluster `cluster list`,
-	// which can't reach every cluster's Kubernetes API): show desired capacity
-	// only rather than a fabricated ready count. (REF-130)
-	if !n.ReadyKnown {
-		return fmt.Sprintf("%d desired", n.Total)
-	}
-	switch {
-	case n.Total == 0:
-		return "0/0 ready"
-	case n.Ready == n.Total:
-		return color.GreenString("%d/%d ready", n.Ready, n.Total)
-	case n.Ready == 0:
-		return color.RedString("%d/%d ready", n.Ready, n.Total)
-	default:
-		return color.YellowString("%d/%d ready", n.Ready, n.Total)
-	}
 }
 
 // nodeCountText renders a NODES cell honestly: a measured "ready/desired"

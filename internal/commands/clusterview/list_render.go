@@ -27,20 +27,7 @@ func clusterListLines(th *render.Theme, summaries []clustersvc.ClusterSummary, m
 	}
 	out := []string{head, ""}
 
-	cols := []ui.Column{{Title: "CLUSTER", Min: 14}}
-	if multiRegion {
-		cols = append(cols, ui.Column{Title: "REGION", Min: 10})
-	}
-	cols = append(cols, ui.Column{Title: "STATUS", Min: 9}, ui.Column{Title: "VERSION", Min: 7})
-	if showHealth {
-		cols = append(cols, ui.Column{Title: "HEALTH", Min: 8})
-	}
-	// NODES is desired capacity here: a fleet-wide `cluster list` can't reach
-	// every cluster's Kubernetes API, so it reports the desired count rather
-	// than a fabricated ready/desired fraction. (REF-130)
-	cols = append(cols, ui.Column{Title: "NODES", Min: 7, Align: ui.AlignRight})
-
-	tbl := th.NewTable(cols...)
+	tbl := th.NewTable(clusterListColumns(multiRegion, showHealth)...)
 	for _, s := range summaries {
 		row := []string{th.Paint(pal.White, s.Name)}
 		if multiRegion {
@@ -60,6 +47,23 @@ func clusterListLines(th *render.Theme, summaries []clustersvc.ClusterSummary, m
 		}
 	}
 	return out
+}
+
+// clusterListColumns is the `cluster list` column set, shared by the human
+// table and the `-o plain` header.
+func clusterListColumns(multiRegion, showHealth bool) []ui.Column {
+	cols := []ui.Column{{Title: "CLUSTER", Min: 14}}
+	if multiRegion {
+		cols = append(cols, ui.Column{Title: "REGION", Min: 10})
+	}
+	cols = append(cols, ui.Column{Title: "STATUS", Min: 9}, ui.Column{Title: "VERSION", Min: 7})
+	if showHealth {
+		cols = append(cols, ui.Column{Title: "HEALTH", Min: 8})
+	}
+	// NODES is desired capacity here: a fleet-wide `cluster list` can't reach
+	// every cluster's Kubernetes API, so it reports the desired count rather
+	// than a fabricated ready/desired fraction. (REF-130)
+	return append(cols, ui.Column{Title: "NODES", Min: 7, Align: ui.AlignRight})
 }
 
 // decisionToken renders a cluster's health decision as a colored token, or a

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/aws/smithy-go"
 
@@ -83,7 +82,7 @@ func TestReportListProblems(t *testing.T) {
 func TestWriteNodegroupList_JSONIncludesFailures(t *testing.T) {
 	items := []nodegroupsvc.NodegroupSummary{{Name: "ng-ok", Status: "ACTIVE", AMIStatus: types.AMILatest}}
 	out := captureStdout(t, func() {
-		if err := writeNodegroupList("json", "prod", items, []string{"ng-bad: ThrottlingException"}, time.Second); err != nil {
+		if err := writeNodegroupList("json", "prod", items, []string{"ng-bad: ThrottlingException"}); err != nil {
 			t.Errorf("writeNodegroupList: %v", err)
 		}
 	})
@@ -100,7 +99,7 @@ func TestWriteNodegroupList_JSONIncludesFailures(t *testing.T) {
 	}
 
 	clean := captureStdout(t, func() {
-		if err := writeNodegroupList("json", "prod", items, nil, time.Second); err != nil {
+		if err := writeNodegroupList("json", "prod", items, nil); err != nil {
 			t.Errorf("writeNodegroupList: %v", err)
 		}
 	})

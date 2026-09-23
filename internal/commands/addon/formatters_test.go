@@ -10,6 +10,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/ui"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
@@ -70,14 +71,87 @@ func TestOutputAddonsTable_WithRows(t *testing.T) {
 		}
 	}
 
-	// Plain path (-o plain) keeps the cluster banner + "Retrieved" timing line.
+	// Plain path (-o plain): header + one TSV row per add-on, nothing else.
+	// The header names match the human table's columns.
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
 	plain, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, time.Second) })
 	if err != nil {
 		t.Fatalf("addons plain: %v", err)
 	}
-	if !strings.Contains(plain, "Retrieved") {
-		t.Errorf("addons plain: missing 'Retrieved' timing line: %q", plain)
+	headers := []string{"NAME", "VERSION", "STATUS", "HEALTH"}
+	got := plaintest.Check(t, plain, headers...)
+	if len(got) != 1 || strings.Join(got[0], "|") != "vpc-cni|v1.18.3|ACTIVE|PASS" {
+		t.Errorf("plain rows = %q", got)
+	}
+	for _, h := range headers {
+		if !strings.Contains(out, h) {
+			t.Errorf("human table has no %q column; plain header must match it:\n%s", h, out)
+		}
+	}
+}
+
+func TestOutputAddonsTable_PlainEmptyIsHeaderOnly(t *testing.T) {
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", nil, time.Second) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "NAME\tVERSION\tSTATUS\tHEALTH\n" {
+		t.Errorf("empty plain list should be the header only, got %q", out)
+	}
+}
+
+func TestOutputAddonDetailsTable_Plain(t *testing.T) {
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	d := &addons.AddonDetails{
+		Name: "vpc-cni", Version: "v1.18.3", Status: "DEGRADED", ARN: "arn:aws:eks:addon/vpc-cni",
+		CreatedAt:     &created,
+		Issues:        []addons.AddonIssue{{Code: "InsufficientNumberOfReplicas", Message: "2 of 3\nready", ResourceIDs: []string{"ds/aws-node"}}},
+		Configuration: map[string]any{"env": map[string]any{"WARM_IP_TARGET": "5"}},
+	}
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	out, err := captureStdout(t, func() error { return outputAddonDetailsTable("prod", d) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := plaintest.Check(t, out, "FIELD", "VALUE")
+	for f, v := range map[string]string{
+		"name":                               "vpc-cni",
+		"cluster":                            "prod",
+		"status":                             "DEGRADED",
+		"health":                             "-",
+		"created":                            "2026-01-02T03:04:05Z",
+		"issue/InsufficientNumberOfReplicas": "2 of 3 ready [ds/aws-node]",
+		"configuration":                      `{"env":{"WARM_IP_TARGET":"5"}}`,
+	} {
+		if got, ok := plaintest.Field(rows, f); !ok || got != v {
+			t.Errorf("field %q = %q (found=%v), want %q", f, got, ok, v)
+		}
+	}
+}
+
+func TestOutputUpdateAllResults_Plain(t *testing.T) {
+	results := []addons.AddonUpdateResult{
+		{AddonName: "vpc-cni", PreviousVersion: "v1.18.0", NewVersion: "v1.18.3", Status: "COMPLETED"},
+		{AddonName: "coredns", PreviousVersion: "v1.11.1", NewVersion: "v1.11.3", Status: "COMPLETED_WITH_ISSUES", HealthIssues: "pods not ready"},
+	}
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	out, err := captureStdout(t, func() error { return outputUpdateAllResults("prod", results, false) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := plaintest.Check(t, out, "ADDON", "PREVIOUS", "NEW", "STATUS")
+	if len(rows) != 2 || strings.Join(rows[1], "|") != "coredns|v1.11.1|v1.11.3|COMPLETED_WITH_ISSUES" {
+		t.Errorf("plain rows = %q", rows)
+	}
+
+	// The human table is built from the same column set (pterm writes it to
+	// its own writer, so compare the definitions).
+	if got := strings.Join(columnTitles(updateResultColumns()), "|"); got != "ADDON|PREVIOUS|NEW|STATUS" {
+		t.Errorf("human update table columns = %q", got)
 	}
 }

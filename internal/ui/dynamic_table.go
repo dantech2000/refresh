@@ -51,17 +51,19 @@ func (dt *DynamicTable) AddBool(key string, enabled bool) *DynamicTable {
 	return dt.AddStatus(key, "DISABLED")
 }
 
-// Render prints the table with perfect alignment. Under `-o plain` it emits
-// uncolored "key\tvalue" lines instead.
+// Render prints the table with perfect alignment. Under `-o plain` it emits a
+// FIELD/VALUE header and one uncolored "key\tvalue" line per row instead.
 func (dt *DynamicTable) Render() {
 	if len(dt.rows) == 0 {
 		return
 	}
 
 	if plainOutput {
+		kv := NewPlainKV()
 		for _, row := range dt.rows {
-			Outf("%s\t%s\n", PlainCell(row.Key), PlainCell(row.Value))
+			kv.Add(row.Key, row.Value)
 		}
+		kv.Render()
 		return
 	}
 

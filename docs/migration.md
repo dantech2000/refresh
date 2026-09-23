@@ -139,6 +139,6 @@ Every list/describe command supports `-o table|json|yaml|plain` (plus `tree` for
 much like `aws ... --output text` but tab-separated and stable.
 
 ```bash
-refresh nodegroup list my-cluster -o plain | awk '{print $1}'
+refresh nodegroup list my-cluster -o plain | awk -F'\t' 'NR>1 {print $1}'
 refresh cluster list -A -o json | jq '.clusters[].name'
 ```
