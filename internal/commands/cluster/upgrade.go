@@ -109,7 +109,13 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	defer cancel()
 
 	// Mutating: no cluster list on empty input, and no kubeconfig fallback.
-	clusterName, err := runner.ResolveCluster(ctx, awsCfg, cmd)
+	// -o json/yaml runs are unattended (they need --yes), so a partial name
+	// fails with the candidate instead of prompting, even on a TTY.
+	resolve := runner.ResolveCluster
+	if runner.IsMachineFormat(format) {
+		resolve = runner.ResolveClusterNoPrompt
+	}
+	clusterName, err := resolve(ctx, awsCfg, cmd)
 	if err != nil {
 		return err
 	}
@@ -176,9 +182,11 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	// the cluster API is reachable (resolved quietly — best-effort). Falls back to
 	// text progress otherwise. Rendering stays in this view layer; the
 	// orchestrator only invokes the injected observer. (REF-126)
-	// The panel draws on stdout, so -o plain skips it.
+	// The panel draws on stdout, so -o plain skips it, and so do piped and
+	// NO_COLOR runs: there it would append a frame per tick and hold back
+	// the progress lines.
 	var ngObserver upgrade.RollObserver
-	if !cmd.Bool("quiet") && !ui.PlainOutput() {
+	if !cmd.Bool("quiet") && !ui.PlainOutput() && rollview.Interactive(os.Stdout) {
 		if kube, _ := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, "", "", false); kube != nil {
 			timeout, poll := cmd.Duration("timeout"), cmd.Duration("poll-interval")
 			ngObserver = func(octx context.Context, ng string) {
@@ -196,7 +204,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 
 	renderReport(out, report)
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", color.CyanString(resumeCommand(clusterName, plan)))
+		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", color.CyanString(resumeCommand(cmd, clusterName, plan)))
 		return err
 	}
 
@@ -218,9 +226,53 @@ func executeOptions(cmd *cli.Command, gate *nodegroupHealthGate) upgrade.Execute
 	}
 }
 
-// resumeCommand is the command that resumes an interrupted or failed run.
-func resumeCommand(clusterName string, plan *upgrade.Plan) string {
-	return fmt.Sprintf("refresh cluster upgrade -c %s --to %s", clusterName, plan.TargetVersion)
+// resumeCommand is the command that resumes an interrupted or failed run. It
+// repeats every flag that decides what is mutated and where: the root
+// --profile/--region (placed before the subcommand), the resolved cluster
+// name, the target, --skip, --skip-nodegroup, --force, and --yes. Only flags
+// the user set are included, so an unattended run's command stays
+// unattended and an attended one still confirms each phase. Values are
+// shell-quoted.
+func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) string {
+	parts := []string{"refresh"}
+	for _, name := range []string{"profile", "region"} {
+		if cmd.IsSet(name) {
+			if v := strings.TrimSpace(cmd.String(name)); v != "" {
+				parts = append(parts, "--"+name, shellQuote(v))
+			}
+		}
+	}
+	parts = append(parts, "cluster", "upgrade", "-c", shellQuote(clusterName), "--to", shellQuote(plan.TargetVersion))
+	for _, name := range []string{"skip", "skip-nodegroup"} {
+		for _, v := range cmd.StringSlice(name) {
+			parts = append(parts, "--"+name, shellQuote(v))
+		}
+	}
+	for _, name := range []string{"force", "yes"} {
+		if cmd.Bool(name) {
+			parts = append(parts, "--"+name)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// shellQuote returns s as one POSIX shell word: unchanged when it holds only
+// safe characters, else single-quoted.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("-_./:=,@%+", r) {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // runUpgradeMachine is the -o json/yaml path. Stdout gets exactly one
@@ -260,7 +312,7 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 		return eerr
 	}
 	if err != nil {
-		return fmt.Errorf("%w (resume with: %s)", err, resumeCommand(clusterName, plan))
+		return fmt.Errorf("%w (resume with: %s)", err, resumeCommand(cmd, clusterName, plan))
 	}
 	return nil
 }
