@@ -57,12 +57,14 @@ security:
   serviceRoleArn: s-servicerolearn
 status: s-status
 support:
+  autoUpgradeAtStandardEnd: true
   daysRemaining: 5
   extendedUntil: "2026-01-02T03:04:05Z"
   extraCostUsdPerHour: 1.5
   fallback: true
   standardUntil: "2026-01-02T03:04:05Z"
   tier: s-tier
+supportType: s-supporttype
 tags:
   s-string: s-string
 version: s-version

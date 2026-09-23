@@ -29,6 +29,8 @@ func TestPlainCells_VersionAndSupport(t *testing.T) {
 		{statussvc.SupportPosture{Tier: statussvc.SupportStandard, Fallback: true}, "standard*"},
 		{statussvc.SupportPosture{Tier: statussvc.SupportExtended, ExtendedUntil: &ext, ExtraCostUSDPerHour: 0.6}, "extended until 2027-11-26 +$0.60/hr"},
 		{statussvc.SupportPosture{Tier: statussvc.SupportExtended, Fallback: true}, "extended*"},
+		{statussvc.SupportPosture{Tier: statussvc.SupportStandard, DaysRemaining: &days, AutoUpgradeAtStandardEnd: true}, "standard (40d) auto-upgrades at end of standard support"},
+		{statussvc.SupportPosture{Tier: statussvc.SupportExtended, AutoUpgradeAtStandardEnd: true}, "extended auto-upgrades at end of standard support"},
 		{statussvc.SupportPosture{Tier: statussvc.SupportUnsupported, Fallback: true}, "unsupported*"},
 		{statussvc.SupportPosture{Tier: statussvc.SupportUnknown, Fallback: true}, "unknown"},
 	} {

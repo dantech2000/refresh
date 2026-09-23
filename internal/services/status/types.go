@@ -43,6 +43,10 @@ type SupportPosture struct {
 	// ExtraCostUSDPerHour is the per-cluster premium of the current tier over
 	// standard support (0 unless extended).
 	ExtraCostUSDPerHour float64 `json:"extraCostUsdPerHour,omitempty" yaml:"extraCostUsdPerHour,omitempty"`
+	// AutoUpgradeAtStandardEnd is true when the cluster's upgrade policy is
+	// STANDARD: EKS auto-upgrades it at the end of standard support instead of
+	// moving it to (paid) extended support.
+	AutoUpgradeAtStandardEnd bool `json:"autoUpgradeAtStandardEnd,omitempty" yaml:"autoUpgradeAtStandardEnd,omitempty"`
 	// Fallback is true when the posture came from the compiled-in calendar
 	// because DescribeClusterVersions was unavailable.
 	Fallback bool `json:"fallback,omitempty" yaml:"fallback,omitempty"`

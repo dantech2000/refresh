@@ -262,4 +262,9 @@ func TestFormatPermissionError_ListsPermissions(t *testing.T) {
 	if !strings.Contains(err.Error(), "listing clusters") || !strings.Contains(err.Error(), "eks:ListClusters") {
 		t.Errorf("expected operation and permissions in message, got: %s", err.Error())
 	}
+	for _, action := range []string{"eks:StartInsightsRefresh", "eks:DescribeInsightsRefresh"} {
+		if !strings.Contains(err.Error(), action) {
+			t.Errorf("expected %s (cluster upgrade readiness) in the permission list, got: %s", action, err.Error())
+		}
+	}
 }

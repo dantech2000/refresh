@@ -83,6 +83,32 @@ func TestResolveClusterName_SingleSubstringMatchMutatingNoTTYErrors(t *testing.T
 	}
 }
 
+// NonInteractive never prompts, even on a TTY: a mutating command then fails
+// on a partial match and names the candidate; an exact name still resolves.
+func TestResolveClusterName_NonInteractiveOnTTYNeverPrompts(t *testing.T) {
+	withTTY(t, true)
+	origPrompt := promptLine
+	promptLine = func(context.Context) (string, error) {
+		t.Fatal("NonInteractive resolution prompted")
+		return "", nil
+	}
+	t.Cleanup(func() { promptLine = origPrompt })
+	opts := ClusterNameOptions{NonInteractive: true}
+
+	_, err := resolveClusterName(context.Background(), clustersAPI("prod-legacy", "staging"), "prod", opts)
+	if err == nil || !strings.Contains(err.Error(), "prod-legacy") {
+		t.Fatalf("err = %v, want an error naming the candidate prod-legacy", err)
+	}
+	_, err = resolveClusterName(context.Background(), clustersAPI("prod-east", "prod-west"), "prod", opts)
+	if err == nil || !strings.Contains(err.Error(), "prod-east") {
+		t.Fatalf("err = %v, want an error listing the candidates", err)
+	}
+	got, err := resolveClusterName(context.Background(), clustersAPI("prod-legacy", "prod"), "prod", opts)
+	if err != nil || got != "prod" {
+		t.Fatalf("exact name: got %q, %v; want prod", got, err)
+	}
+}
+
 func TestResolveClusterName_SingleSubstringMatchReadOnlyNoTTYAccepts(t *testing.T) {
 	withTTY(t, false)
 	got, err := resolveClusterName(context.Background(), clustersAPI("prod-legacy", "staging"), "prod", ClusterNameOptions{ReadOnly: true})

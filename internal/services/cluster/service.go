@@ -19,6 +19,7 @@ import (
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/services/status"
 )
 
 // EKSAPI abstracts the subset of EKS client methods used by this service for easier testing
@@ -140,6 +141,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 		CreatedAt:       aws.ToTime(cluster.CreatedAt),
 		Region:          s.awsConfig.Region,
 		Tags:            cluster.Tags,
+		SupportType:     string(status.SupportTypeOf(cluster)),
 	}
 
 	// AWS-reported control-plane health issues (always surfaced — no extra API

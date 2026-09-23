@@ -25,6 +25,13 @@ func TestFleetExit_WorstOutcome(t *testing.T) {
 	}{
 		{"all clean", []clusterUpdateResult{{Outcomes: updateOutcomes{Started: []string{"a"}}}}, nil, 0},
 		{"health blocked", []clusterUpdateResult{{HealthBlocked: true, Error: "block"}}, nil, 3},
+		{"health warnings exit 2 like the single-cluster path", []clusterUpdateResult{{HealthWarned: true, Error: "warn"}}, nil, 2},
+		{
+			"a block outranks warnings",
+			[]clusterUpdateResult{{HealthWarned: true, Error: "warn"}, {HealthBlocked: true, Error: "block"}},
+			nil,
+			3,
+		},
 		{"update failed", []clusterUpdateResult{{Outcomes: updateOutcomes{Failed: []string{"a"}}}}, nil, 4},
 		{"verify failed", []clusterUpdateResult{{VerifyFailed: true, Outcomes: updateOutcomes{Started: []string{"a"}}}}, nil, 5},
 		{

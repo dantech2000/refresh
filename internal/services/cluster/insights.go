@@ -116,11 +116,13 @@ type SkewReport struct {
 // UpgradeReport combines AWS Cluster Insights with the local version-skew view —
 // the full `cluster upgrade-check` result.
 type UpgradeReport struct {
-	Cluster      string                 `json:"cluster" yaml:"cluster"`
-	Support      *status.SupportPosture `json:"support,omitempty" yaml:"support,omitempty"`
-	ControlPlane *health.HealthResult   `json:"controlPlane,omitempty" yaml:"controlPlane,omitempty"`
-	Insights     []InsightSummary       `json:"insights" yaml:"insights"`
-	Skew         SkewReport             `json:"skew" yaml:"skew"`
+	Cluster string                 `json:"cluster" yaml:"cluster"`
+	Support *status.SupportPosture `json:"support,omitempty" yaml:"support,omitempty"`
+	// SupportType is the cluster's upgrade policy (STANDARD or EXTENDED).
+	SupportType  string               `json:"supportType,omitempty" yaml:"supportType,omitempty"`
+	ControlPlane *health.HealthResult `json:"controlPlane,omitempty" yaml:"controlPlane,omitempty"`
+	Insights     []InsightSummary     `json:"insights" yaml:"insights"`
+	Skew         SkewReport           `json:"skew" yaml:"skew"`
 }
 
 // ListInsights returns the cluster's EKS Cluster Insights filtered per opts.
@@ -289,9 +291,10 @@ func (s *ServiceImpl) UpgradeCheck(ctx context.Context, clusterName string, opts
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, "describing cluster")
 	}
-	cpVersion := ""
+	cpVersion, supportType := "", ""
 	if desc != nil && desc.Cluster != nil {
 		cpVersion = aws.ToString(desc.Cluster.Version)
+		supportType = string(status.SupportTypeOf(desc.Cluster))
 	}
 
 	insights, err := s.ListInsights(ctx, clusterName, opts)
@@ -304,7 +307,7 @@ func (s *ServiceImpl) UpgradeCheck(ctx context.Context, clusterName string, opts
 		return nil, err
 	}
 
-	return &UpgradeReport{Cluster: clusterName, Insights: insights, Skew: skew}, nil
+	return &UpgradeReport{Cluster: clusterName, SupportType: supportType, Insights: insights, Skew: skew}, nil
 }
 
 // computeSkew builds the local version-skew report and ordered findings.

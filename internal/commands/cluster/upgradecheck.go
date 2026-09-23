@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
@@ -105,6 +106,7 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 	// behind `refresh status` (REF-145).
 	if report != nil && report.Skew.ControlPlaneVersion != "" {
 		posture := status.NewSupportResolver(eks.NewFromConfig(awsCfg)).Resolve(ctx, report.Skew.ControlPlaneVersion)
+		posture = status.ApplySupportType(posture, ekstypes.SupportType(report.SupportType))
 		report.Support = &posture
 	}
 

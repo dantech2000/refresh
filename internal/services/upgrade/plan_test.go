@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/mocks"
@@ -14,7 +16,35 @@ import (
 
 func testLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
+// newTestService returns a fast-polling service over m. Like EKS after an
+// insights refresh, m reports upgrade-readiness insights for every version
+// the readiness gate asks about: when m's own ListInsights returns none for
+// the requested version, a PASSING insight is added. Tests of the
+// "insights not evaluated" path use newStrictTestService instead.
 func newTestService(m *mocks.EKSAPI) *Service {
+	inner := m.ListInsightsFn
+	m.ListInsightsFn = func(ctx context.Context, in *eks.ListInsightsInput, optFns ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+		out, err := inner(ctx, in, optFns...)
+		if err != nil || out == nil || len(out.Insights) > 0 || in.NextToken != nil {
+			return out, err
+		}
+		if in.Filter != nil && len(in.Filter.KubernetesVersions) == 1 {
+			out.Insights = []ekstypes.InsightSummary{{
+				Id:                aws.String("passing-" + in.Filter.KubernetesVersions[0]),
+				Name:              aws.String("Kubelet version skew"),
+				Category:          ekstypes.CategoryUpgradeReadiness,
+				KubernetesVersion: aws.String(in.Filter.KubernetesVersions[0]),
+				InsightStatus:     &ekstypes.InsightStatus{Status: ekstypes.InsightStatusValuePassing},
+			}}
+		}
+		return out, nil
+	}
+	return newStrictTestService(m)
+}
+
+// newStrictTestService returns a fast-polling service over m as is: no
+// insights are added, so an empty ListInsights result reaches the gate.
+func newStrictTestService(m *mocks.EKSAPI) *Service {
 	s := NewService(m, testLogger())
 	s.PollInterval = time.Millisecond
 	return s

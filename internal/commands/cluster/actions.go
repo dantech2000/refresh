@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
@@ -203,6 +204,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	// `refresh status` (REF-145).
 	if details != nil && details.Version != "" {
 		posture := status.NewSupportResolver(eks.NewFromConfig(awsCfg)).Resolve(ctx, details.Version)
+		posture = status.ApplySupportType(posture, ekstypes.SupportType(details.SupportType))
 		details.Support = &posture
 	}
 

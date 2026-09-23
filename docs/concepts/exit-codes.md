@@ -27,6 +27,27 @@ then `4`. Incomplete data never exits `0`. Rows with errors show an unknown
 marker and their error text in the table, an `ERRORS` column in `-o plain`, and
 an `errors` field in `-o json`/`-o yaml`.
 
+## `addon update`
+
+| Code | Meaning |
+|---|---|
+| `0` | Success: updates started, completed, were already `UP_TO_DATE`, or were already `IN_PROGRESS` |
+| `1` | An update failed: the API call failed, or with `--wait` the EKS update was `Failed`/`Cancelled`, the add-on ended at another version, or the wait timed out (`WAIT_FAILED`) |
+| `2` | **Needs attention**: every update landed, but a post-update health check found issues (`COMPLETED_WITH_ISSUES`) |
+
+With `--all`, a failure (`1`) wins over health issues (`2`). The result is
+printed before the command exits, so `-o json` output always has the update
+ID and status.
+
+```bash
+refresh addon update -c prod vpc-cni --wait -o json
+case $? in
+  0) echo "updated" ;;
+  2) echo "updated, but check the add-on's health" ;;
+  *) echo "update failed" ;;
+esac
+```
+
 ## `nodegroup update`
 
 The patch command has a richer contract so unattended runs can branch on the
@@ -44,7 +65,8 @@ An interrupt (Ctrl+C) or a monitoring timeout exits `1`. The EKS update keeps
 running in AWS; check it with `refresh nodegroup list <cluster>`.
 
 In fleet mode (`--all-clusters`) the run exits with the worst code across
-clusters (`5`, then `4`, then `3`, then `1`). A region whose clusters could
+clusters (`5`, then `4`, then `3`, then `2`, then `1`). A cluster stopped
+by health warnings (`--health-only` or `--require-healthy`) counts as `2`. A region whose clusters could
 not be listed also counts as `4`. The exception is a region in the default
 sweep that your credentials can't use (SCP-denied or not enabled). That
 region is skipped with a note on stderr and doesn't count.

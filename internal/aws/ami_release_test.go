@@ -91,6 +91,17 @@ func TestLatestReleaseVersionForType(t *testing.T) {
 	if got := LatestReleaseVersionForType(context.Background(), c, "1.31", types.AMITypesCustom); got != "" || len(d.asked()) != before {
 		t.Fatalf("custom AMI = %q after %d SSM call(s), want \"\" and none", got, len(d.asked())-before)
 	}
+	// Windows publishes no release-version parameter: no SSM call either.
+	if got := LatestReleaseVersionForType(context.Background(), c, "1.31", types.AMITypesWindowsCore2022X8664); got != "" || len(d.asked()) != before {
+		t.Fatalf("Windows AMI = %q after %d SSM call(s), want \"\" and none", got, len(d.asked())-before)
+	}
+
+	// Bottlerocket reads image_version, which matches the nodegroup's releaseVersion.
+	brPath := "/aws/service/bottlerocket/aws-k8s-1.31/arm64/latest/image_version"
+	br := &recordingSSMDoer{values: map[string]string{brPath: "1.20.3-5d9ac849"}}
+	if got := LatestReleaseVersionForType(context.Background(), recordingSSMClient(br), "1.31", types.AMITypesBottlerocketArm64); got != "1.20.3-5d9ac849" {
+		t.Fatalf("Bottlerocket release version = %q, want 1.20.3-5d9ac849 (asked %v)", got, br.asked())
+	}
 }
 
 // NewLatestAMIIDCache looks the image ID up through SSM once per

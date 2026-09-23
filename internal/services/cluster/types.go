@@ -21,6 +21,9 @@ type ClusterDetails struct {
 	// Support is the EKS version support posture (tier + days remaining),
 	// resolved via the shared status resolver. Populated by the command layer.
 	Support *status.SupportPosture `json:"support,omitempty" yaml:"support,omitempty"`
+	// SupportType is the cluster's upgrade policy (STANDARD or EXTENDED). With
+	// STANDARD, EKS auto-upgrades the cluster at the end of standard support.
+	SupportType string `json:"supportType,omitempty" yaml:"supportType,omitempty"`
 
 	// Health information (integration with existing health framework)
 	Health *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`

@@ -189,7 +189,8 @@ func TestResolveInsightID(t *testing.T) {
 func TestUpgradeCheck_Skew(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: func(_ context.Context, _ *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
-			return &eks.DescribeClusterOutput{Cluster: &ekstypes.Cluster{Name: aws.String("prod"), Version: aws.String("1.31")}}, nil
+			return &eks.DescribeClusterOutput{Cluster: &ekstypes.Cluster{Name: aws.String("prod"), Version: aws.String("1.31"),
+				UpgradePolicy: &ekstypes.UpgradePolicyResponse{SupportType: ekstypes.SupportTypeStandard}}}, nil
 		},
 		ListInsightsFn: func(_ context.Context, _ *eks.ListInsightsInput, _ ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
 			return &eks.ListInsightsOutput{}, nil
@@ -217,6 +218,9 @@ func TestUpgradeCheck_Skew(t *testing.T) {
 	report, err := svc.UpgradeCheck(context.Background(), "prod", UpgradeCheckOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.SupportType != "STANDARD" {
+		t.Errorf("support type = %q, want STANDARD", report.SupportType)
 	}
 	if report.Skew.ControlPlaneVersion != "1.31" {
 		t.Errorf("control plane = %q, want 1.31", report.Skew.ControlPlaneVersion)
