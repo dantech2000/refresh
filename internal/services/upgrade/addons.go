@@ -36,7 +36,7 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 	addonList = addons.SortByDependency(addonList)
 
 	for _, a := range addonList {
-		if matchesAny(a.Name, skip) {
+		if isSkippedAddon(a.Name, skip) {
 			progress("addon %s: skipped (managed out-of-band)", a.Name)
 			continue
 		}

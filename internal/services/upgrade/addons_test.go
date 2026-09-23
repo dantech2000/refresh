@@ -117,6 +117,45 @@ func TestUpgradeAddons_SkipListRespected(t *testing.T) {
 	}
 }
 
+// --skip takes addon names, not patterns: "proxy" must not skip kube-proxy,
+// while the exact name matches case-insensitively.
+func TestUpgradeAddons_SkipIsExactName(t *testing.T) {
+	cases := []struct {
+		skip        []string
+		wantUpdates int
+	}{
+		{skip: []string{"proxy"}, wantUpdates: 1},
+		{skip: []string{"kube"}, wantUpdates: 1},
+		{skip: []string{"KUBE-PROXY"}, wantUpdates: 0},
+		{skip: []string{"kube-proxy"}, wantUpdates: 0},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.skip, ","), func(t *testing.T) {
+			m := mocks.NewEKSAPI().
+				WithCluster("prod-east", "1.32").
+				WithAddon("kube-proxy", "v1.31.3-eksbuild.1", ekstypes.AddonStatusActive).
+				Build()
+			versionsByK8s(m, "kube-proxy", map[string][]string{
+				"1.32": {"v1.32.0-eksbuild.2"},
+			})
+			m.UpdateAddonFn = func(_ context.Context, _ *eks.UpdateAddonInput, _ ...func(*eks.Options)) (*eks.UpdateAddonOutput, error) {
+				return &eks.UpdateAddonOutput{Update: &ekstypes.Update{
+					Id:     aws.String("update-addon-1"),
+					Status: ekstypes.UpdateStatusInProgress,
+				}}, nil
+			}
+			svc := newTestService(m)
+
+			if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", tc.skip, nil); err != nil {
+				t.Fatalf("UpgradeAddons: %v", err)
+			}
+			if m.Calls.UpdateAddon != tc.wantUpdates {
+				t.Fatalf("UpdateAddon calls = %d, want %d", m.Calls.UpdateAddon, tc.wantUpdates)
+			}
+		})
+	}
+}
+
 // Updates run serially in dependency order: vpc-cni before coredns.
 func TestUpgradeAddons_DependencyOrder(t *testing.T) {
 	var mu sync.Mutex

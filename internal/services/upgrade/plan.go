@@ -411,7 +411,7 @@ func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, addon
 			Description: fmt.Sprintf("addon %s → latest compatible with %s", a.Name, hopTo),
 			Status:      StatusPending,
 		}
-		if matchesAny(a.Name, skip) {
+		if isSkippedAddon(a.Name, skip) {
 			step.Status = StatusManual
 			step.Reason = "skipped via --skip (managed out-of-band)"
 			steps = append(steps, step)
