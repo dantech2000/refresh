@@ -113,8 +113,6 @@ func detectUnicode() bool {
 	return true // assume a modern UTF-8 terminal
 }
 
-func isTerminal(w io.Writer) bool { return ui.IsTerminal(w) }
-
 // Paint wraps s in the foreground color for the active level (no-op at
 // ColorNone). Bold is the same with the bold attribute.
 func (t *Theme) Paint(c Color, s string) string { return t.paint(c, s, false) }

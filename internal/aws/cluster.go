@@ -13,7 +13,6 @@ import (
 	"github.com/dantech2000/refresh/internal/cliconfig"
 	"github.com/dantech2000/refresh/internal/ui"
 	"github.com/fatih/color"
-	"github.com/mattn/go-isatty"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -62,7 +61,7 @@ type ListClustersAPI interface {
 // stdinIsTerminal reports whether a prompt can be answered. It is a var so
 // tests can simulate a TTY or an unattended run.
 var stdinIsTerminal = func() bool {
-	return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+	return ui.IsTerminal(os.Stdin)
 }
 
 // ClusterName resolves the EKS cluster name for a mutating command. The

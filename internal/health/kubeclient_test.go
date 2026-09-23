@@ -2,8 +2,6 @@ package health
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,20 +25,18 @@ users:
   user: {}
 `
 
-func TestBuildKubeClient_ExplicitPath(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config")
-	if err := os.WriteFile(path, []byte(testKubeconfig), 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestConnect_ExplicitPath(t *testing.T) {
+	path := writeKubeconfig(t, testKubeconfig)
+	target := TargetCluster{Name: "c", Endpoint: "https://example.com"}
 
-	client, diag, err := BuildKubeClient(path)
+	client, sel, err := ConnectKubeClientForCluster(context.Background(), path, "", target, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if client == nil {
 		t.Fatal("expected a client")
 	}
+	diag := sel.Diag
 	if diag.Source != "--kubeconfig" || diag.Path != path {
 		t.Errorf("diag = %+v, want source=--kubeconfig path=%s", diag, path)
 	}
@@ -52,16 +48,16 @@ func TestBuildKubeClient_ExplicitPath(t *testing.T) {
 	}
 }
 
-func TestBuildKubeClient_ExplicitMissingPathIsError(t *testing.T) {
-	_, diag, err := BuildKubeClient("/no/such/kubeconfig")
+func TestConnect_ExplicitMissingPathIsError(t *testing.T) {
+	_, sel, err := ConnectKubeClientForCluster(context.Background(), "/no/such/kubeconfig", "", prodTarget, nil)
 	if err == nil {
 		t.Fatal("expected an error for a missing explicit kubeconfig")
 	}
 	if !strings.Contains(err.Error(), "/no/such/kubeconfig") {
 		t.Errorf("error %q should name the missing path", err)
 	}
-	if diag.Source != "--kubeconfig" {
-		t.Errorf("diag.Source = %q, want --kubeconfig", diag.Source)
+	if sel.Diag.Source != "--kubeconfig" {
+		t.Errorf("diag.Source = %q, want --kubeconfig", sel.Diag.Source)
 	}
 }
 

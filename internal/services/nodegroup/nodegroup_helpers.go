@@ -22,8 +22,9 @@ func firstInstanceType(types []string) string {
 }
 
 // instanceIDsForNodegroup resolves backing ASG instances from an
-// already-described nodegroup. All ASGs are described in a single batched
-// call (the API accepts up to 50 names).
+// already-described nodegroup. All ASGs are described in one call without
+// paging, so at most one page of groups is read; a managed nodegroup normally
+// has a single ASG.
 func (s *ServiceImpl) instanceIDsForNodegroup(ctx context.Context, ng *ekstypes.Nodegroup) ([]string, bool) {
 	if ng == nil || ng.Resources == nil || s.asgClient == nil {
 		return nil, false

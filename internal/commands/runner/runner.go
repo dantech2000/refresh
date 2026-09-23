@@ -17,7 +17,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/fatih/color"
-	"github.com/mattn/go-isatty"
 	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
@@ -247,16 +246,16 @@ func flagDefault(cmd *cli.Command, flagName string) string {
 //
 // priorFlags lists, in order, the flag name for each prior positional slot.
 // An entry may be "" to mean "this prior slot has no flag and is always
-// positional". For each prior flag name that IS set on the context, this
+// positional". For each prior flag name that IS set on cmd, this
 // helper subtracts 1 from the expected positional index, so flags and
 // positionals can be mixed freely.
 //
 // Example: a command with slot order (cluster, addon, version) where the
 // cluster has --cluster, the addon has --addon, and the version has --version:
 //
-//	cluster := PositionalSlot(c, "cluster")                       // slot 0
-//	addon   := PositionalSlot(c, "addon", "cluster")              // slot 1
-//	version := PositionalSlot(c, "version", "cluster", "addon")   // slot 2
+//	cluster := PositionalSlot(cmd, "cluster")                       // slot 0
+//	addon   := PositionalSlot(cmd, "addon", "cluster")              // slot 1
+//	version := PositionalSlot(cmd, "version", "cluster", "addon")   // slot 2
 //
 // Invocation `--addon=foo my-cluster v1.2.3` yields cluster="my-cluster",
 // addon="foo" (from flag), version="v1.2.3" — the version's positional index
@@ -366,7 +365,7 @@ func ValidateFormat(format string, allowed []string) error {
 // watchIsTerminal reports whether stdout is an interactive terminal.
 // Overridable in tests.
 var watchIsTerminal = func() bool {
-	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+	return ui.IsTerminal(os.Stdout)
 }
 
 // Watch reruns fn every --watch-interval until interrupted when --watch is

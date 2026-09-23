@@ -9,7 +9,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/fatih/color"
-	"github.com/mattn/go-isatty"
 
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -18,7 +17,7 @@ import (
 // displayIsTerminal reports whether stdout is an interactive terminal.
 // Overridable in tests.
 var displayIsTerminal = func() bool {
-	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+	return ui.IsTerminal(os.Stdout)
 }
 
 // DisplayProgressUpdate shows current progress in a live updating format with

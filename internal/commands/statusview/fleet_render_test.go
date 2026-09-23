@@ -208,7 +208,7 @@ func TestFleetLines_NodegroupsBehindControlPlane(t *testing.T) {
 	}
 }
 
-// The -o plain table keeps its 8 tab-separated columns when a nodegroup lags
+// The -o plain table keeps its column count (see fleetPlainHeaders) when a nodegroup lags
 // the control plane, so awk/cut scripts don't break.
 func TestOutputFleetPlain_BehindCPKeepsColumnCount(t *testing.T) {
 	fleet := []statussvc.ClusterStatus{{

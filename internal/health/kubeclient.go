@@ -107,51 +107,6 @@ func kubeconfigRules(path, source string) *clientcmd.ClientConfigLoadingRules {
 	return &clientcmd.ClientConfigLoadingRules{ExplicitPath: path}
 }
 
-// resolveRESTConfig resolves a *rest.Config and a diagnostic from the current
-// kubeconfig context (or in-cluster config), without checking which cluster
-// it points at.
-func resolveRESTConfig(kubeconfigPath string) (*rest.Config, KubeDiag, error) {
-	path, source, err := locateKubeconfig(kubeconfigPath)
-	if err != nil {
-		return nil, KubeDiag{Source: source, Path: path}, err
-	}
-	if path != "" {
-		diag := KubeDiag{Source: source, Path: path}
-		loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(kubeconfigRules(path, source), &clientcmd.ConfigOverrides{})
-		if raw, lerr := loader.RawConfig(); lerr == nil {
-			diag.Context = raw.CurrentContext
-		}
-		cfg, cerr := loader.ClientConfig()
-		if cerr != nil {
-			return nil, diag, fmt.Errorf("loading kubeconfig %s: %w", path, cerr)
-		}
-		return cfg, diag, nil
-	}
-	if icCfg, icErr := inClusterConfig(); icErr == nil {
-		return icCfg, KubeDiag{Source: "in-cluster", Server: icCfg.Host}, nil
-	}
-	return nil, KubeDiag{Source: "none"}, fmt.Errorf("no kubeconfig found and in-cluster config not available")
-}
-
-// BuildKubeClient builds a Kubernetes client, preferring an explicit kubeconfig
-// path, then $KUBECONFIG, then ~/.kube/config, then in-cluster config. It
-// returns a KubeDiag describing what was tried (for diagnostics) alongside the
-// client. An explicit --kubeconfig path that doesn't exist is a hard error.
-//
-// BuildKubeClient does not check which cluster the client points at. Code that
-// acts on a specific EKS cluster must use [ConnectKubeClientForCluster].
-func BuildKubeClient(kubeconfigPath string) (kubernetes.Interface, KubeDiag, error) {
-	cfg, diag, err := resolveRESTConfig(kubeconfigPath)
-	if err != nil {
-		return nil, diag, err
-	}
-	client, nerr := kubernetes.NewForConfig(cfg)
-	if nerr != nil {
-		return nil, diag, fmt.Errorf("building kubernetes client: %w", nerr)
-	}
-	return client, diag, nil
-}
-
 // BuildMetricsClient builds a metrics-server (metrics.k8s.io) node-metrics
 // lister for a selection already made by [ConnectKubeClientForCluster], so
 // both clients talk to the same cluster. A config error is returned;

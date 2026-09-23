@@ -98,7 +98,6 @@ func (s *Service) describeCluster(ctx context.Context, clusterName string) (*eks
 type nodegroupState struct {
 	Name      string
 	Version   string
-	AmiType   ekstypes.AMITypes
 	Status    ekstypes.NodegroupStatus
 	CustomAMI bool
 }
@@ -136,7 +135,6 @@ func (s *Service) listNodegroupStates(ctx context.Context, clusterName string) (
 		states = append(states, nodegroupState{
 			Name:      name,
 			Version:   aws.ToString(ng.Version),
-			AmiType:   ng.AmiType,
 			Status:    ng.Status,
 			CustomAMI: ng.AmiType == ekstypes.AMITypesCustom,
 		})

@@ -2,8 +2,9 @@
 // used across the service packages. Each mock uses function fields so individual
 // test cases can inject their own behavior without subclassing.
 //
-// A single [EKSAPI] struct satisfies addons.EKSAPI, nodegroup.EKSAPI, and
-// cluster.EKSAPI — the union of all their methods.
+// A single [EKSAPI] struct satisfies addons.EKSAPI, nodegroup.EKSAPI,
+// cluster.EKSAPI, upgrade.EKSAPI and status.ClusterAPI — the union of their
+// methods.
 package mocks
 
 import (
@@ -15,8 +16,8 @@ import (
 )
 
 // EKSAPI is a test double for the EKS client. Set any Fn field to control the
-// response for that method; leave it nil to get a "not implemented" panic that
-// identifies the unexpected call in test output.
+// response for that method; leave it nil to get an "unexpected call to
+// <Method>" panic that identifies the call in test output.
 //
 // Calls tracks how many times each method was invoked.
 type EKSAPI struct {

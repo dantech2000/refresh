@@ -1,7 +1,8 @@
 // Package cliconfig manages the persistent CLI context (active cluster,
 // region, AWS profile) used to avoid passing --cluster on every invocation.
 //
-// Storage: $XDG_CONFIG_HOME/refresh/context.yaml (default
+// Storage: $REFRESH_CONFIG_HOME/context.yaml when set, else
+// $XDG_CONFIG_HOME/refresh/context.yaml (default
 // ~/.config/refresh/context.yaml). The schema mirrors kubectx semantics:
 // a named map of contexts, a current pointer, and a previous pointer for
 // `refresh use -`.

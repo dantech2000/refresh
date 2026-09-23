@@ -3,7 +3,6 @@ amiStatus: Updating
 amiType: s-amitype
 capacityType: s-capacitytype
 currentAmi: s-currentami
-health: s-healthstatus
 instanceType: s-instancetype
 instances:
   - availabilityZone: s-az

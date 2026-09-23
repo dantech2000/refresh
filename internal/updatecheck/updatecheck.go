@@ -1,4 +1,4 @@
-// Package updatecheck implements an opt-in, fail-silent "newer release
+// Package updatecheck implements an on-by-default (opt-out), fail-silent "newer release
 // available" check for the refresh CLI.
 //
 // It queries the GitHub Releases API for the latest tag, compares it against
@@ -96,8 +96,8 @@ type release struct {
 
 // LatestTag returns the most recent release tag, using the cached value when it
 // is fresher than checkInterval and otherwise fetching once and updating the
-// cache. It is fail-silent: any network/parse/cache error yields ("", nil-ish)
-// without surfacing the error to the caller's hot path.
+// cache. On a fetch failure it returns the cached tag if there is one;
+// otherwise it returns the error, which callers ignore (fail-silent).
 func (c *Checker) LatestTag(ctx context.Context) (string, error) {
 	cached, ok := c.readCache()
 	if ok && c.now().Sub(cached.LastCheck) < checkInterval {

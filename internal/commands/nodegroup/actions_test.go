@@ -122,7 +122,7 @@ func TestReadUpdateAMIFlagsReadsTrailingHealthOnly(t *testing.T) {
 }
 
 func TestTrailingValueFlagNotMistakenForPositional(t *testing.T) {
-	// `update-ami my-cluster --nodegroup groupC` parses the trailing flag; the
+	// `nodegroup update my-cluster --nodegroup groupC` parses the trailing flag; the
 	// nodegroup slot must read groupC from the flag, and the flag's value must
 	// not be parsed as a positional.
 	cmd := parseUpdateTestCommand(t, []string{"develop", "--nodegroup", "groupC"}, "", "")

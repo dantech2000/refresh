@@ -3,7 +3,6 @@ package nodegroup
 import (
 	"time"
 
-	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/types"
 )
 
@@ -97,7 +96,8 @@ type ListResult struct {
 	AMILookupErr error
 }
 
-// NodegroupDetails extends summary with health and optional instance/workload details
+// NodegroupDetails is the `nodegroup describe` result: AMI status, scaling, and
+// optional instance/workload details.
 type NodegroupDetails struct {
 	Name         string `json:"name" yaml:"name"`
 	Status       string `json:"status" yaml:"status"`
@@ -115,8 +115,7 @@ type NodegroupDetails struct {
 	// amiLookupErr is the unflattened lookup error, for LatestAMILookupErr.
 	amiLookupErr error
 
-	Scaling ScalingConfig        `json:"scaling" yaml:"scaling"`
-	Health  *health.HealthStatus `json:"health,omitempty" yaml:"health,omitempty"`
+	Scaling ScalingConfig `json:"scaling" yaml:"scaling"`
 
 	Instances []InstanceDetails `json:"instances" yaml:"instances"`
 	Workloads WorkloadInfo      `json:"workloads" yaml:"workloads"`

@@ -344,9 +344,10 @@ func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup
 		return
 	}
 	obs := noderoll.NewKubeObserver(kube, nodegroup, "")
-	// Prefer watch streams (informers) over per-poll List calls: node/pod/event
-	// changes surface as they happen, and API load drops to one stream per
-	// resource. On failure (e.g. RBAC without watch) the observer just polls.
+	// Prefer watch streams (informers) over per-poll List calls: node and
+	// Warning-event changes surface as they happen (pods are still listed per
+	// draining node, throttled). On failure (e.g. RBAC without watch) the
+	// observer just polls.
 	watching := obs.StartInformers(ctx) == nil
 	defer obs.StopInformers()
 	if err := obs.CaptureBaseline(ctx); err != nil {

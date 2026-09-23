@@ -252,8 +252,8 @@ func (c *LatestAMICache) ForNodegroup(ctx context.Context, ng *types.Nodegroup, 
 	return c.Get(ctx, NodegroupK8sVersion(ng, clusterVersion), ng.AmiType)
 }
 
-// SSM parameter paths for the recommended EKS-optimized AMIs. Each AMI family
-// publishes under a different tree:
+// amiFamily is an EKS-optimized AMI family. Each family publishes its
+// recommended-AMI SSM parameters under a different tree:
 //
 //   - Amazon Linux: /aws/service/eks/optimized-ami/<ver>/<ami-type>/recommended/{image_id,release_version}
 //     https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html

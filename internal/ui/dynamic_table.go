@@ -43,14 +43,6 @@ func (dt *DynamicTable) AddStatus(key, status string) *DynamicTable {
 	return dt.Add(key, StatusColorString(status))
 }
 
-// AddBool adds a boolean value with automatic ENABLED/DISABLED coloring
-func (dt *DynamicTable) AddBool(key string, enabled bool) *DynamicTable {
-	if enabled {
-		return dt.AddStatus(key, "ENABLED")
-	}
-	return dt.AddStatus(key, "DISABLED")
-}
-
 // Render prints the table with perfect alignment. Under `-o plain` it emits a
 // FIELD/VALUE header and one uncolored "key\tvalue" line per row instead.
 func (dt *DynamicTable) Render() {
@@ -90,14 +82,4 @@ func (dt *DynamicTable) RenderSection(sectionTitle string) {
 		Outf("\n%s:\n", color.CyanString(sectionTitle))
 	}
 	dt.Render()
-}
-
-// Count returns the number of rows in the table
-func (dt *DynamicTable) Count() int {
-	return len(dt.rows)
-}
-
-// IsEmpty returns true if the table has no rows
-func (dt *DynamicTable) IsEmpty() bool {
-	return len(dt.rows) == 0
 }

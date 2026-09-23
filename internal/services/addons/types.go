@@ -129,10 +129,3 @@ type UpdateAllOptions struct {
 	// per-add-on waits. Zero leaves the caller's context untouched.
 	Timeout time.Duration `json:"timeout,omitempty"`
 }
-
-// CompatibilityMatrix tracks addon version compatibility with Kubernetes versions
-type CompatibilityMatrix struct {
-	AddonName       string              `json:"addonName"`
-	Versions        map[string][]string `json:"versions"`        // addon version -> k8s versions
-	DefaultVersions map[string]string   `json:"defaultVersions"` // k8s version -> default addon version
-}

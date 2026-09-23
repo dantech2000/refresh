@@ -43,7 +43,7 @@ func TestGetHealthStatusText(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := GetHealthStatusText(c.status)
-		// Use visibleLength-stripped comparison since the value may be ANSI-colored.
+		// The value may be ANSI-colored, so check containment, not equality.
 		if !strings.Contains(got, c.want) {
 			t.Errorf("GetHealthStatusText(%q) = %q, want it to contain %q", c.status, got, c.want)
 		}

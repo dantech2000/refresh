@@ -13,9 +13,8 @@ type cacheItem struct {
 
 // TTLCache is a thread-safe in-memory cache with per-entry TTLs. Expired
 // entries are deleted lazily on Get — a short-lived CLI process doesn't need
-// a background janitor goroutine. It is the single cache implementation
-// shared by the service packages (cluster and nodegroup previously kept
-// near-identical copies).
+// a background janitor goroutine. Services that cache (the cluster service)
+// use this type instead of keeping their own copy.
 type TTLCache struct {
 	mu         sync.RWMutex
 	items      map[string]cacheItem
