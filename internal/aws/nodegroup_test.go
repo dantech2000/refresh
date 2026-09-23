@@ -18,9 +18,9 @@ func TestMatchingNodegroups_EmptyPatternReturnsAll(t *testing.T) {
 
 func TestMatchingNodegroups_SubstringMatch(t *testing.T) {
 	ngs := []string{"workers", "gpu-workers", "spot-nodes"}
-	got := MatchingNodegroups(ngs, "workers")
+	got := MatchingNodegroups(ngs, "worker")
 	if len(got) != 2 {
-		t.Errorf("expected 2 matches for 'workers', got %d: %v", len(got), got)
+		t.Errorf("expected 2 matches for 'worker', got %d: %v", len(got), got)
 	}
 }
 

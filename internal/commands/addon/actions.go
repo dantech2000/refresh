@@ -156,8 +156,9 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, cmd)
-	if err != nil || listed {
+	// Mutating: never fall back to listing clusters (exit 0) on no input.
+	clusterName, err := runner.ResolveCluster(ctx, cfg, cmd)
+	if err != nil {
 		return err
 	}
 
@@ -226,12 +227,7 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	requested := runner.RequestedCluster(cmd)
-	if strings.TrimSpace(requested) == "" {
-		return fmt.Errorf("cluster name is required")
-	}
-
-	clusterName, err := awsinternal.ClusterName(ctx, cfg, requested)
+	clusterName, err := runner.ResolveCluster(ctx, cfg, cmd)
 	if err != nil {
 		return err
 	}
