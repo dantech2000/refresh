@@ -58,7 +58,9 @@ func (d KubeDiag) String() string {
 var inClusterConfig = rest.InClusterConfig
 
 // locateKubeconfig picks the kubeconfig file: an explicit path, then
-// $KUBECONFIG, then ~/.kube/config. path is "" when no file exists and the
+// $KUBECONFIG, then ~/.kube/config. A $KUBECONFIG value may list several files
+// (colon-separated on Unix); path is then that whole list, and it is used when
+// at least one file in it exists. path is "" when no file exists and the
 // caller should fall back to in-cluster config. An explicit path that doesn't
 // exist is a hard error.
 func locateKubeconfig(kubeconfigPath string) (path, source string, err error) {
@@ -76,8 +78,14 @@ func locateKubeconfig(kubeconfigPath string) (path, source string, err error) {
 	if path == "" {
 		return "", source, nil
 	}
-	if st, statErr := os.Stat(path); statErr == nil && !st.IsDir() {
-		return path, source, nil
+	files := []string{path}
+	if source == "KUBECONFIG" {
+		files = filepath.SplitList(path)
+	}
+	for _, f := range files {
+		if st, statErr := os.Stat(f); f != "" && statErr == nil && !st.IsDir() {
+			return path, source, nil
+		}
 	}
 	if source == "--kubeconfig" {
 		// An explicitly requested file that isn't there is a user error, not a
@@ -86,6 +94,17 @@ func locateKubeconfig(kubeconfigPath string) (path, source string, err error) {
 	}
 	// A missing default/$KUBECONFIG file falls through to in-cluster.
 	return "", source, nil
+}
+
+// kubeconfigRules returns the client-go loading rules for a path from
+// [locateKubeconfig]. A $KUBECONFIG list uses client-go's default precedence
+// rules, which merge the files (the first file to set a value wins). Any other
+// source is a single explicit file.
+func kubeconfigRules(path, source string) *clientcmd.ClientConfigLoadingRules {
+	if source == "KUBECONFIG" {
+		return clientcmd.NewDefaultClientConfigLoadingRules()
+	}
+	return &clientcmd.ClientConfigLoadingRules{ExplicitPath: path}
 }
 
 // resolveRESTConfig resolves a *rest.Config and a diagnostic from the current
@@ -98,10 +117,11 @@ func resolveRESTConfig(kubeconfigPath string) (*rest.Config, KubeDiag, error) {
 	}
 	if path != "" {
 		diag := KubeDiag{Source: source, Path: path}
-		if raw, lerr := clientcmd.LoadFromFile(path); lerr == nil {
+		loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(kubeconfigRules(path, source), &clientcmd.ConfigOverrides{})
+		if raw, lerr := loader.RawConfig(); lerr == nil {
 			diag.Context = raw.CurrentContext
 		}
-		cfg, cerr := clientcmd.BuildConfigFromFlags("", path)
+		cfg, cerr := loader.ClientConfig()
 		if cerr != nil {
 			return nil, diag, fmt.Errorf("loading kubeconfig %s: %w", path, cerr)
 		}

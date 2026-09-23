@@ -61,16 +61,23 @@ type HealthChecker struct {
 	sqClient    serviceQuotaAPI   // optional; enables the vCPU quota headroom check
 	// optional; scopes the PDB drain-blocker check to these managed nodegroups
 	targetNodegroups []string
+	// reads the target nodegroups' desired size when none of their nodes are
+	// found; nil when there is no EKS client
+	ngDescriber nodegroupDescriber
 }
 
 // NewChecker creates a new health checker instance
 func NewChecker(eksClient *eks.Client, k8sClient kubernetes.Interface, cwClient *cloudwatch.Client, asgClient *autoscaling.Client) *HealthChecker {
-	return &HealthChecker{
+	hc := &HealthChecker{
 		eksClient: eksClient,
 		k8sClient: k8sClient,
 		cwClient:  cwClient,
 		asgClient: asgClient,
 	}
+	if eksClient != nil {
+		hc.ngDescriber = eksClient
+	}
+	return hc
 }
 
 // RunAllChecks executes all health checks and returns a summary. The checks
@@ -85,7 +92,7 @@ func (hc *HealthChecker) RunAllChecks(ctx context.Context, clusterName string) H
 		func() HealthResult { return hc.CheckControlPlaneMetrics(ctx, clusterName) },
 		func() HealthResult { return hc.CheckServiceQuotas(ctx, clusterName) },
 		func() HealthResult { return hc.CheckCriticalWorkloads(ctx) },
-		func() HealthResult { return hc.CheckPodDisruptionBudgets(ctx) },
+		func() HealthResult { return hc.checkPodDisruptionBudgets(ctx, clusterName) },
 		func() HealthResult { return hc.checkResourceBalanceWith(ctx, snap) },
 	}
 
