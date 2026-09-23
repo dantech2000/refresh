@@ -9,8 +9,8 @@ refresh current [options]
 ```
 
 Print the name and cluster/region/profile of the currently active context
-(set with 'refresh use'). Honors the REFRESH_CONTEXT env override. Prints a hint
-when no context is active.
+(set with 'refresh use'). Honors the REFRESH_CONTEXT env override; an unknown
+name there is an error. Prints a hint to stderr when no context is active.
 
 ## Flags
 

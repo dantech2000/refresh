@@ -139,6 +139,33 @@ func TestResolveClusterName_NoMatchErrors(t *testing.T) {
 	}
 }
 
+// A ListClusters permission failure carries the IAM help once. The error was
+// formatted by the pager and then again by resolveClusterName.
+func TestResolveClusterName_ListFailureIAMHelpOnce(t *testing.T) {
+	m := mocks.NewEKSAPI().Build()
+	m.ListClustersFn = func(context.Context, *eks.ListClustersInput, ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
+		return nil, mocks.AccessDenied()
+	}
+	_, err := resolveClusterName(context.Background(), m, "prod", ClusterNameOptions{ReadOnly: true})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if n := strings.Count(err.Error(), "Required permissions"); n != 1 {
+		t.Errorf("IAM help appears %d times, want 1:\n%s", n, err)
+	}
+}
+
+// An unknown REFRESH_CONTEXT fails cluster resolution instead of falling
+// back to the kubeconfig or the saved current context.
+func TestResolveClusterPattern_UnknownRefreshContextErrors(t *testing.T) {
+	dir := isolateConfig(t)
+	writeFile(t, filepath.Join(dir, "context.yaml"), "current: prod\ncontexts:\n  prod:\n    cluster: prod-eks\n")
+	t.Setenv("REFRESH_CONTEXT", "prdo")
+	if _, _, err := resolveClusterPattern("", true); err == nil || !strings.Contains(err.Error(), "prdo") {
+		t.Fatalf("err = %v, want an unknown-context error", err)
+	}
+}
+
 func TestResolveClusterPattern_FlagWins(t *testing.T) {
 	dir := isolateConfig(t)
 	writeFile(t, filepath.Join(dir, "context.yaml"), "current: p\ncontexts:\n  p:\n    cluster: from-context\n")

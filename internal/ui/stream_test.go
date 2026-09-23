@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/fatih/color"
+	"github.com/pterm/pterm"
 )
 
 // fakeStreams makes stdout and stderr temp files and fakes which of them is a
@@ -105,6 +106,46 @@ func TestStreamColorPerStream(t *testing.T) {
 				t.Errorf("StreamColor(Stderr) = %v, want %v", got, tt.wantErr)
 			}
 		})
+	}
+}
+
+// InitColor also sets pterm's color switch from stdout, so pterm trees and
+// tables carry no escape codes when stdout is piped or TERM=dumb.
+func TestInitColorSetsPtermFromStdout(t *testing.T) {
+	t.Cleanup(pterm.EnableColor)
+	for _, tc := range []struct {
+		name      string
+		stdoutTTY bool
+		term      string
+		want      bool
+	}{
+		{"tty", true, "xterm-256color", true},
+		{"piped", false, "xterm-256color", false},
+		{"dumb", true, "dumb", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TERM", tc.term)
+			t.Setenv("NO_COLOR", "")
+			fakeStreams(t, tc.stdoutTTY, false)
+			InitColor()
+			if pterm.PrintColor != tc.want {
+				t.Errorf("pterm.PrintColor = %v, want %v", pterm.PrintColor, tc.want)
+			}
+			if got := strings.Contains(pterm.FgRed.Sprint("x"), "\x1b["); got != tc.want {
+				t.Errorf("pterm output has ANSI = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// ResetOutputState clears -o plain and --no-color between in-process runs.
+func TestResetOutputState(t *testing.T) {
+	t.Cleanup(func() { SetPlainOutput(false); SetColorDisabled(false); pterm.EnableColor() })
+	SetPlainOutput(true)
+	SetColorDisabled(true)
+	ResetOutputState()
+	if PlainOutput() || colorOff.Load() {
+		t.Errorf("after reset: plain %v, colorOff %v; want both false", PlainOutput(), colorOff.Load())
 	}
 }
 

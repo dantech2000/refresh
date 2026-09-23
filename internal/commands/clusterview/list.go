@@ -85,7 +85,7 @@ func OutputClustersTree(summaries []clustersvc.ClusterSummary, elapsed time.Dura
 			if showHealth {
 				status = treeStatusWithHealth(c.Status, c.Health)
 			}
-			regionTree.AddClusterToRegion(c.Name, status, c.NodeCount.Ready)
+			regionTree.AddClusterToRegion(c.Name, status, treeNodeCount(c.NodeCount))
 		}
 		regionTree.FinishRegion()
 	}
@@ -118,6 +118,17 @@ func OutputClustersTree(summaries []clustersvc.ClusterSummary, elapsed time.Dura
 			color.GreenString("%d", healthy), color.YellowString("%d", warning), color.RedString("%d", critical))
 	}
 	return nil
+}
+
+// treeNodeCount is the "N nodes" figure of a tree row: the measured Ready
+// count when readiness was measured, otherwise the desired total, as the
+// table's NODES cell does. Ready is 0 when unmeasured, so using it would show
+// every cluster with "0 nodes".
+func treeNodeCount(n clustersvc.NodeCountInfo) int32 {
+	if n.ReadyKnown {
+		return n.Ready
+	}
+	return n.Total
 }
 
 // SortClusterSummaries sorts items in place by key and returns the slice.

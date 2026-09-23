@@ -181,6 +181,31 @@ func TestFormatAWSError_NilReturnsNil(t *testing.T) {
 	}
 }
 
+// Formatting an already formatted error returns it unchanged, so a caller
+// that wraps a ListAllPages error again does not print the IAM help twice.
+func TestFormatAWSError_AlreadyFormattedIsUnchanged(t *testing.T) {
+	for name, cause := range map[string]error{
+		"permission": apiErr("AccessDeniedException", "not authorized"),
+		"credential": apiErr("ExpiredToken", "expired"),
+		"network":    dialErr(syscall.ECONNREFUSED),
+		"other":      errors.New("boom"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			once := FormatAWSError(cause, "listing clusters")
+			twice := FormatAWSError(fmt.Errorf("resolving: %w", once), "listing EKS clusters")
+			if strings.Count(twice.Error(), "listing") != strings.Count(once.Error(), "listing") {
+				t.Errorf("second format changed the message:\nonce:  %s\ntwice: %s", once, twice)
+			}
+			if n := strings.Count(twice.Error(), "Required permissions"); n > 1 {
+				t.Errorf("IAM help printed %d times", n)
+			}
+			if !errors.Is(twice, cause) {
+				t.Error("formatted error no longer wraps the cause")
+			}
+		})
+	}
+}
+
 func TestFormatAWSError_TypedAccessDeniedIsNotRegion(t *testing.T) {
 	err := FormatAWSError(apiErr("AccessDeniedException", "not authorized to perform eks:ListClusters in region us-east-1"), "listing clusters")
 	if strings.Contains(err.Error(), "AWS_DEFAULT_REGION") {

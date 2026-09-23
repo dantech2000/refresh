@@ -47,7 +47,6 @@ grep/awk; -o json|yaml emit structured output. Use --watch to redraw on the
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout (e.g. 60s, 2m) |
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
 | `--sort string` | — | `name` | Sort by field: name,status,instance,nodes |
@@ -82,7 +81,6 @@ workload placement details. The nodegroup name may be the second positional or
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout (e.g. 60s, 2m) |
 | `--cluster, -c string` | — | — | EKS cluster name |
 | `--nodegroup, -n string` | — | — | Nodegroup name (can be provided as second positional) |
 | `--show-instances, -I` | — | — | Include EC2 instance details |
@@ -118,7 +116,6 @@ until the operation settles.
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout (e.g. 60s, 2m) |
 | `--cluster, -c string` | — | — | EKS cluster name |
 | `--nodegroup, -n string` | — | — | Nodegroup name |
 | `--desired int` | — | — | Desired node count |

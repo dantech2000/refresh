@@ -210,6 +210,12 @@ type formattedError struct {
 func (e *formattedError) Error() string { return e.msg }
 func (e *formattedError) Unwrap() error { return e.err }
 
+// formatted builds a formattedError wrapping err. format is a fmt format in
+// which %w stands for err's text.
+func formatted(err error, format string, args ...any) error {
+	return &formattedError{msg: fmt.Sprintf(strings.ReplaceAll(format, "%w", "%v"), args...), err: err}
+}
+
 // FormatAWSError provides user-friendly error messages for AWS errors. Every
 // returned error wraps err.
 //
@@ -221,6 +227,12 @@ func (e *formattedError) Unwrap() error { return e.err }
 func FormatAWSError(err error, operation string) error {
 	if err == nil {
 		return nil
+	}
+	// Already formatted (e.g. by ListAllPages): formatting it again would
+	// repeat the remediation text, such as the IAM permission list.
+	var already *formattedError
+	if errors.As(err, &already) {
+		return err
 	}
 
 	if errors.Is(err, context.Canceled) {
@@ -259,7 +271,7 @@ func FormatAWSError(err error, operation string) error {
 	}
 
 	// Default case - return the error with context
-	return fmt.Errorf("error while %s: %w", operation, err)
+	return formatted(err, "error while %s: %w", operation, err)
 }
 
 // Summary renders err on one line, for a table cell or a status field where
@@ -278,7 +290,7 @@ func Summary(err error) string {
 }
 
 func formatRegionError(err error, operation string) error {
-	return fmt.Errorf(`AWS region configuration issue while %s.
+	return formatted(err, `AWS region configuration issue while %s.
 
 Please verify:
 - AWS_DEFAULT_REGION environment variable is set to a valid region
@@ -291,7 +303,7 @@ Current error: %w`, operation, err)
 }
 
 func formatCredentialError(err error) error {
-	return fmt.Errorf(`AWS credentials not configured or invalid.
+	return formatted(err, `AWS credentials not configured or invalid.
 
 Please set up your AWS credentials using one of these methods:
 
@@ -312,7 +324,7 @@ Current error: %w`, err)
 }
 
 func formatNetworkError(err error, operation string) error {
-	return fmt.Errorf(`network connectivity issue while %s.
+	return formatted(err, `network connectivity issue while %s.
 
 Please check:
 - Internet connection
@@ -324,7 +336,7 @@ Current error: %w`, operation, err)
 }
 
 func formatPermissionError(err error, operation string) error {
-	return fmt.Errorf(`insufficient AWS permissions while %s.
+	return formatted(err, `insufficient AWS permissions while %s.
 
 Required permissions for refresh tool:
 - eks:ListClusters

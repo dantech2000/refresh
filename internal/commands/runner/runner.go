@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -111,6 +112,36 @@ func SetupAWS(ctx context.Context, cmd *cli.Command) (context.Context, context.C
 // cut a long-running operation short.
 func SetupAWSWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Duration) (context.Context, context.CancelFunc, aws.Config, error) {
 	return setupAWS(ctx, cmd, timeout, checkCredentials)
+}
+
+// Regions returns the explicit scan list of a multi-region command: its own
+// repeatable -r/--region values. Without them, and only when the command is
+// not sweeping (allRegions false: no -A, no --tree), the global --region
+// placed before the subcommand counts as the scan list, so
+// `refresh --region X status` equals `refresh status --region X`. urfave/cli
+// resolves "region" to the local slice flag even when only the global one was
+// set, so reading cmd.StringSlice("region") alone would drop it.
+//
+// With a sweep, the global --region only sets the home region and so the
+// partition (`refresh --region cn-north-1 cluster list -A` sweeps the China
+// partition), and REFRESH_EKS_REGIONS still applies downstream. It returns
+// nil when there is no explicit list.
+//
+// Every subcommand that declares its own --region slice must read it through
+// this helper (status, cluster list; nodegroup update --all-clusters should
+// adopt it too).
+func Regions(cmd *cli.Command, allRegions bool) []string {
+	var local []string
+	for _, f := range cmd.Flags {
+		if slices.Contains(f.Names(), "region") && f.IsSet() {
+			local = awsconfig.SetFlagValues(cmd, "region")
+			break
+		}
+	}
+	if len(local) > 0 || allRegions {
+		return local
+	}
+	return awsconfig.SetFlagValues(cmd, "region")
 }
 
 // ParseFilters parses repeated key=value --filter flag values into a map.

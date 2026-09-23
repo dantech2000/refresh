@@ -50,9 +50,13 @@ func runCurrent(_ context.Context, _ *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	name, ctx, ok := f.Active()
+	name, ctx, ok, err := f.Active()
+	if err != nil {
+		return err
+	}
 	if !ok {
-		color.Yellow("No active context. Set one with: refresh use <name>")
+		// A hint, not data: stderr keeps `refresh current` stdout empty.
+		_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgYellow).Sprint("No active context. Set one with: refresh use <name>"))
 		return nil
 	}
 	fmt.Printf("%s  cluster=%s  region=%s  profile=%s\n",
@@ -72,10 +76,15 @@ func contextListCommand() *cli.Command {
 				return err
 			}
 			if len(f.Contexts) == 0 {
-				color.Yellow("No saved contexts. Add one with: refresh context add <name> --cluster <cluster>")
+				_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgYellow).Sprint("No saved contexts. Add one with: refresh context add <name> --cluster <cluster>"))
 				return nil
 			}
-			activeName, _, _ := f.Active()
+			// The list is how a user finds the right name, so an unknown
+			// REFRESH_CONTEXT is a warning here, not an error.
+			activeName, _, _, aerr := f.Active()
+			if aerr != nil {
+				_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgYellow).Sprintf("warning: %v", aerr))
+			}
 			for _, n := range f.Names() {
 				ctx := f.Contexts[n]
 				marker := "  "

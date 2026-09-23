@@ -47,7 +47,6 @@ grep/awk; -o json|yaml emit structured output. Use --watch to redraw on the
   refresh nodegroup list my-cluster -o plain | awk -F'\t' 'NR>1 {print $1}'
   refresh nodegroup list my-cluster --watch`,
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 			&cli.StringFlag{Name: "sort", Usage: "Sort by field: name,status,instance,nodes", Value: "name"},
@@ -77,7 +76,6 @@ workload placement details. The nodegroup name may be the second positional or
   refresh nodegroup describe my-cluster ng-default
   refresh nodegroup describe my-cluster ng-default --show-instances --show-workloads`,
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name (can be provided as second positional)"},
 			&cli.BoolFlag{Name: "show-instances", Aliases: []string{"I"}, Usage: "Include EC2 instance details"},
@@ -109,7 +107,6 @@ until the operation settles.
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
   refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force`,
 		Flags: []cli.Flag{
-			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name", Required: true},
 			&cli.IntFlag{Name: "desired", Usage: "Desired node count"},

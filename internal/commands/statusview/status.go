@@ -53,6 +53,7 @@ func fleetPlain(statuses []statussvc.ClusterStatus) *ui.PlainTable {
 			computeCell(c),
 			staleAMICell(c),
 			addonsCell(c.AddonsBehind),
+			healthCell(c.HealthIssues),
 			errorsCell(c),
 		)
 	}
@@ -145,6 +146,15 @@ func addonsCell(a statussvc.AddonsBehindSummary) string {
 		return "0"
 	}
 	return fmt.Sprintf("%d (%s)", a.Behind, strings.Join(a.Names, ","))
+}
+
+// healthCell is the uncolored HEALTH cell: "0", or the number of AWS-reported
+// control-plane health issues.
+func healthCell(issues int) string {
+	if issues == 0 {
+		return "0"
+	}
+	return fmt.Sprintf("%d issue(s)", issues)
 }
 
 // errorsCell marks a row whose data is incomplete; "-" keeps the TSV column

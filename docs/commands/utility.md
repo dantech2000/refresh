@@ -17,7 +17,7 @@ refresh version [flags]
 |---|---|
 | `--no-update-check` | Skip the check for a newer release (env `REFRESH_NO_UPDATE_CHECK`) |
 
-!!! note "Opt-in update hint"
+!!! note "Update hint (on by default)"
     On an interactive terminal, `version` performs a throttled, fail-silent
     check against GitHub Releases and prints a one-line hint to **stderr** when a
     newer release is available. The check runs at most once per day (cached

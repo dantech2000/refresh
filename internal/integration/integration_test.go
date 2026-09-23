@@ -84,14 +84,14 @@ func TestIntegrationClusterListAllRegions(t *testing.T) {
 	defer cancel()
 
 	svc := clustersvc.NewService(cfg, nil, nil)
-	summaries, regions, err := svc.ListAllRegionsWithMeta(ctx, clustersvc.ListOptions{AllRegions: true})
+	res, err := svc.ListAllRegions(ctx, clustersvc.ListOptions{AllRegions: true})
 	if err != nil {
-		t.Fatalf("ListAllRegionsWithMeta: %v", err)
+		t.Fatalf("ListAllRegions: %v", err)
 	}
-	if regions <= 0 {
-		t.Fatalf("expected at least one region queried, got %d", regions)
+	if res.Queried <= 0 {
+		t.Fatalf("expected at least one region queried, got %d", res.Queried)
 	}
-	for _, s := range summaries {
+	for _, s := range res.Summaries {
 		if s.Name == "" {
 			t.Errorf("cluster summary missing a name: %+v", s)
 		}
