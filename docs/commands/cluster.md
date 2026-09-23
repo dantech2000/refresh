@@ -192,6 +192,51 @@ sequential **hops**. Each hop runs: readiness (cluster insights + kubelet
 version skew) → control plane → add-ons (dependency order, versions compatible
 with the hop target) → nodegroup rolls.
 
+### Readiness gates
+
+**Cluster Insights.** Before each control-plane step (at plan time for the
+first hop, and against live state before every later hop), `refresh` asks EKS
+to re-evaluate the cluster's insights (`StartInsightsRefresh`) and waits up to
+5 minutes for the refresh to finish. EKS otherwise re-evaluates insights only
+about once a day, so right after a control-plane hop the next version usually
+has no insights at all. The readiness step is **blocked** when:
+
+- an insight for the hop version reports `ERROR` or `UNKNOWN`,
+- EKS has no insights for the hop version yet, or
+- the refresh fails or does not finish in time.
+
+EKS no longer enforces insights when it updates the cluster version, so this
+gate is the only check for deprecated APIs and for the kubelet skew of nodes
+outside managed nodegroups (Fargate, Karpenter, self-managed, hybrid, and Auto
+Mode nodes). `--skip-insights-check` turns it off. Use it only when you have
+checked those yourself; the plan then carries a warning.
+
+The refresh needs the IAM actions `eks:StartInsightsRefresh` and
+`eks:DescribeInsightsRefresh`, in addition to `eks:ListInsights`.
+
+`--dry-run` starts no refresh, because `StartInsightsRefresh` is a write API.
+It reads the insights EKS already has. `ERROR` insights still block the
+preview. Missing or `UNKNOWN` insights show as a warning, because a real run
+refreshes them first and blocks until EKS has evaluated the hop version.
+
+**Nodegroup pre-flight.** Before each nodegroup roll, after the nodegroup is
+confirmed `ACTIVE` with no health issues, `refresh` runs the same pre-flight
+health checks as [`nodegroup update`](nodegroup.md#update), scoped to that
+nodegroup:
+
+- A PodDisruptionBudget that allows 0 disruptions for pods on the nodegroup
+  stops the roll, before EKS is asked to roll anything. With `--force` (which
+  lets EKS evict through PDBs) it is a warning instead.
+- A `BLOCK` health decision stops the roll.
+- Health warnings need `--yes` or a confirmation at the prompt.
+
+The PDB check reads the cluster through the kubeconfig context whose API server
+matches the cluster endpoint. Without one, `refresh` prints a warning, skips the
+PDB check, and continues. `--skip-health-check` turns off these nodegroup
+checks.
+
+### Nodegroup rolls
+
 A nodegroup that lags the control plane normally rolls once per hop, straight
 to the hop target. The plan rolls a nodegroup early, to the current
 control-plane version, only when the next control-plane step would put it past
@@ -220,6 +265,8 @@ or one that is custom-AMI or skipped, blocks the plan instead.
 | `--dry-run, -d` | Print the full ordered plan without mutating anything |
 | `--yes, -y` | Skip per-phase confirmation prompts |
 | `--force` | Force nodegroup rolls when pods can't be drained due to PDBs |
+| `--skip-insights-check` | Upgrade without the Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself |
+| `--skip-health-check` | Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
 | `--skip, -s` | Add-on name to skip, exact and case-insensitive (repeatable; for add-ons managed via Helm/GitOps) |
 | `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | Suppress progress output |

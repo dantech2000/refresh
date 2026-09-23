@@ -15,9 +15,9 @@ import (
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
-// NodegroupGate is a pre-flight check run before each nodegroup roll. A nil
-// gate falls back to the built-in check (nodegroup ACTIVE with no reported
-// health issues).
+// NodegroupGate is a pre-flight check run before each nodegroup roll, after
+// the built-in check (nodegroup ACTIVE with no reported health issues)
+// passes. An error stops the phase before the roll starts.
 type NodegroupGate func(ctx context.Context, nodegroupName string) error
 
 // RollObserver renders a live view of a single nodegroup roll. It is supplied
@@ -41,7 +41,8 @@ type NodegroupRollOptions struct {
 	// Force terminates pods that can't be drained due to PDBs (passed
 	// through to UpdateNodegroupVersion).
 	Force bool
-	// Gate overrides the built-in pre-flight health gate.
+	// Gate is an extra pre-flight gate run after the built-in one (e.g. the
+	// command layer's PDB drain-blocker and cluster health checks).
 	Gate NodegroupGate
 	// Observer, when set, renders a live per-node roll view during each roll.
 	Observer RollObserver
@@ -63,10 +64,7 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 		return err
 	}
 
-	gate := opts.Gate
-	if gate == nil {
-		gate = s.defaultNodegroupGate(clusterName)
-	}
+	builtin := s.defaultNodegroupGate(clusterName)
 
 	for _, ng := range nodegroups {
 		if len(opts.Only) > 0 && !slices.Contains(opts.Only, ng.Name) {
@@ -100,8 +98,13 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 			}
 		}
 
-		if err := gate(ctx, ng.Name); err != nil {
+		if err := builtin(ctx, ng.Name); err != nil {
 			return fmt.Errorf("pre-flight gate failed for nodegroup %s (remaining nodegroups not attempted): %w", ng.Name, err)
+		}
+		if opts.Gate != nil {
+			if err := opts.Gate(ctx, ng.Name); err != nil {
+				return fmt.Errorf("pre-flight gate failed for nodegroup %s (remaining nodegroups not attempted): %w", ng.Name, err)
+			}
 		}
 
 		if err := s.rollNodegroup(ctx, clusterName, ng.Name, targetVersion, opts.Force, opts.Observer, progress); err != nil {

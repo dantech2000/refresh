@@ -336,6 +336,7 @@ Required permissions for refresh tool:
 - eks:DescribeUpdate (for cluster upgrade)
 - eks:DescribeClusterVersions (for cluster upgrade and status support calendar)
 - eks:ListInsights (for cluster upgrade readiness / upgrade-check)
+- eks:StartInsightsRefresh / eks:DescribeInsightsRefresh (for cluster upgrade readiness)
 - eks:DescribeInsight (for upgrade-check insight detail)
 - eks:ListAddons / eks:DescribeAddon / eks:DescribeAddonVersions (for addon status / version-skew)
 - ec2:DescribeImages / ec2:DescribeInstances (for AMI staleness and compute detection)

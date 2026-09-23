@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -55,6 +56,15 @@ func TestUpgradeMachineOutput_Executed(t *testing.T) {
 			if got := srv.Cluster("prod"); got.Version != "1.32" || got.Nodegroups[0].Version != "1.32" {
 				t.Errorf("fake cluster after upgrade: control plane %s, web %s; want both 1.32", got.Version, got.Nodegroups[0].Version)
 			}
+			// The readiness gate refreshed insights before reading them.
+			if !slices.Contains(srv.Calls(), "eks POST /clusters/prod/insights-refresh") {
+				t.Errorf("no StartInsightsRefresh call; calls:\n%s", strings.Join(srv.Calls(), "\n"))
+			}
+			// The fake has no Kubernetes API: the roll proceeds and says the
+			// PDB check was skipped.
+			if !strings.Contains(stderr, "PDB drain-blocker checks before nodegroup rolls are skipped") {
+				t.Errorf("stderr has no skipped-PDB-check warning; got:\n%s", stderr)
+			}
 		})
 	}
 }
@@ -98,6 +108,10 @@ func TestUpgradeMachineOutput_DryRunPrintsBarePlan(t *testing.T) {
 	}
 	if got := srv.Cluster("prod"); got.Version != "1.31" {
 		t.Errorf("dry run changed the control plane to %s", got.Version)
+	}
+	// StartInsightsRefresh is a write API; a dry run must not call it.
+	if slices.Contains(srv.Calls(), "eks POST /clusters/prod/insights-refresh") {
+		t.Errorf("dry run started an insights refresh")
 	}
 }
 

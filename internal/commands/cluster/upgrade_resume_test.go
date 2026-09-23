@@ -55,6 +55,11 @@ func TestResumeCommand(t *testing.T) {
 			want: "refresh cluster upgrade -c prod --to 1.33 --force",
 		},
 		{
+			name: "skipped safety checks are kept",
+			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "--skip-health-check", "--skip-insights-check", "--force"},
+			want: "refresh cluster upgrade -c prod --to 1.33 --force --skip-insights-check --skip-health-check",
+		},
+		{
 			name: "yes kept for an unattended run",
 			args: []string{"cluster", "upgrade", "prod", "--to", "1.33", "-y"},
 			want: "refresh cluster upgrade -c prod --to 1.33 --yes",
