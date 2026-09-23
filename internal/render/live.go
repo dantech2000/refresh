@@ -36,7 +36,7 @@ type LiveRegion struct {
 // NewLiveRegion returns a LiveRegion for w. It repaints in place only when w is
 // a terminal and the theme has color enabled.
 func (t *Theme) NewLiveRegion(w io.Writer) *LiveRegion {
-	lr := &LiveRegion{w: w, tty: isTerminal(w) && t.Level != ColorNone}
+	lr := &LiveRegion{w: w, tty: ui.IsTerminal(w) && t.Level != ColorNone}
 	if f, ok := w.(*os.File); ok && lr.tty {
 		lr.width = func() int {
 			cols, _, err := term.GetSize(int(f.Fd()))

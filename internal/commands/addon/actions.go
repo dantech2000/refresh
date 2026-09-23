@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/mattn/go-isatty"
 	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -169,7 +168,7 @@ func resolveAddonName(ctx context.Context, lister addonNameLister, clusterName, 
 // answer.
 var (
 	stdinIsTerminal = func() bool {
-		return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+		return ui.IsTerminal(os.Stdin)
 	}
 	promptLine = ui.ReadLine
 )

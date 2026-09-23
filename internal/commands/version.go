@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mattn/go-isatty"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/types"
@@ -47,13 +46,6 @@ func PrintVersion(w io.Writer) {
 	if VersionInfo.BuildDate != "" {
 		_, _ = fmt.Fprintf(w, "built: %s\n", VersionInfo.BuildDate)
 	}
-}
-
-// stdoutIsTerminal reports whether stdout is an interactive terminal. It
-// mirrors runner.watchIsTerminal so the update-check hint is suppressed for
-// piped/scripted consumers. Overridable in tests.
-var stdoutIsTerminal = func() bool {
-	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
 }
 
 func VersionCommand() *cli.Command {
@@ -94,10 +86,6 @@ func envTruthy(v string) bool {
 	return true
 }
 
-// updateChecker is overridable in tests so the hint logic can run against an
-// httptest server and temp cache without real network.
-var updateChecker = func() *updatecheck.Checker { return updatecheck.New() }
-
 // maybePrintUpdateHint runs the update check (on by default) and writes a one-line hint
 // to w when the local build is behind. It is fully suppressed when stdout is
 // not a TTY, when --no-update-check/REFRESH_NO_UPDATE_CHECK is set, or when the
@@ -106,10 +94,10 @@ func maybePrintUpdateHint(ctx context.Context, cmd *cli.Command, w io.Writer) {
 	if cmd.Bool("no-update-check") || envTruthy(os.Getenv("REFRESH_NO_UPDATE_CHECK")) {
 		return
 	}
-	if !stdoutIsTerminal() {
+	if !ui.IsTerminal(os.Stdout) {
 		return
 	}
-	latest, err := updateChecker().LatestTag(ctx)
+	latest, err := updatecheck.New().LatestTag(ctx)
 	if err != nil || latest == "" {
 		return // fail-silent
 	}

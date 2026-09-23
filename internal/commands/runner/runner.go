@@ -17,7 +17,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/fatih/color"
-	"github.com/mattn/go-isatty"
 	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
@@ -366,7 +365,7 @@ func ValidateFormat(format string, allowed []string) error {
 // watchIsTerminal reports whether stdout is an interactive terminal.
 // Overridable in tests.
 var watchIsTerminal = func() bool {
-	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+	return ui.IsTerminal(os.Stdout)
 }
 
 // Watch reruns fn every --watch-interval until interrupted when --watch is
