@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -19,7 +20,10 @@ import (
 )
 
 func runScale(ctx context.Context, cmd *cli.Command) error {
-	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
+	// --timeout alone would cap --wait (default op-timeout 5m) at the API
+	// timeout (default 60s); widen the deadline to cover the wait too.
+	setupTimeout := scaleSetupTimeout(cmd.Duration("timeout"), cmd.Duration("op-timeout"), cmd.Bool("wait"), cmd.Bool("health-check"))
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, setupTimeout)
 	if err != nil {
 		return err
 	}
@@ -86,6 +90,27 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 	return runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
 		return svc.Scale(ctx, clusterName, cmd.String("nodegroup"), desired, minSize, maxSize, opts)
 	})
+}
+
+// scaleSetupTimeout returns the overall deadline for a scale run. --timeout
+// covers the API calls and pre-checks; with --wait the run also gets the full
+// --op-timeout, plus another --timeout for the post-scale health check. A
+// value <= 0 means no deadline (--timeout 0, or --wait with --op-timeout 0).
+func scaleSetupTimeout(apiTimeout, opTimeout time.Duration, wait, healthCheck bool) time.Duration {
+	if apiTimeout <= 0 {
+		return 0
+	}
+	if !wait {
+		return apiTimeout
+	}
+	if opTimeout <= 0 {
+		return 0
+	}
+	total := apiTimeout + opTimeout
+	if healthCheck {
+		total += apiTimeout
+	}
+	return total
 }
 
 // printScaleDryRun shows the current vs requested scaling configuration

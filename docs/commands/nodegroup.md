@@ -113,7 +113,7 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 | `--health-check` | Validate cluster health before and after scaling |
 | `--check-pdbs` | Validate Pod Disruption Budgets before scaling down |
 | `--wait` | Wait for the scaling operation to complete |
-| `--op-timeout` | Scaling operation timeout (default `5m`) |
+| `--op-timeout` | Scaling operation timeout for `--wait` (default `5m`; added on top of `--timeout`; `0` = no limit) |
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--dry-run` | Preview the scaling impact without executing |
 | `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
@@ -185,7 +185,7 @@ refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one re
 | `--skip-verify` | Skip post-roll verification (nodes ACTIVE, no new stuck pods) |
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--poll-interval, -p` | Polling interval for update status (default `15s`) |
-| `--timeout, -t` | Max time to wait for update completion (default `40m`) |
+| `--timeout, -t` | Max time to wait for update completion (default `40m`; applies per cluster with `--all-clusters`; `0` = no limit) |
 | `--format, -o` | `table` (default) or `json` (a JSON run summary) |
 
 !!! warning "Unattended / CI"

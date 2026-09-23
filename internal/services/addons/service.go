@@ -298,11 +298,33 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	return result, nil
 }
 
+// updateAllBudget returns the deadline for an UpdateAll run over n add-ons:
+// Timeout, plus WaitTimeout for each serial step when waiting (n steps, or
+// n/maxParallelAddonUpdates rounded up when Parallel). Zero means no deadline.
+func updateAllBudget(options UpdateAllOptions, n int) time.Duration {
+	if options.Timeout <= 0 {
+		return 0
+	}
+	if !options.Wait || options.WaitTimeout <= 0 {
+		return options.Timeout
+	}
+	steps := n
+	if options.Parallel {
+		steps = (n + maxParallelAddonUpdates - 1) / maxParallelAddonUpdates
+	}
+	return options.Timeout + time.Duration(steps)*options.WaitTimeout
+}
+
 // UpdateAll updates all addons to their latest versions
 func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options UpdateAllOptions) ([]AddonUpdateResult, error) {
 	s.logger.Info("updating all addons", "cluster", clusterName)
 
-	addons, err := s.List(ctx, clusterName, ListOptions{})
+	listCtx, cancelList := ctx, context.CancelFunc(func() {})
+	if options.Timeout > 0 {
+		listCtx, cancelList = context.WithTimeout(ctx, options.Timeout)
+	}
+	addons, err := s.List(listCtx, clusterName, ListOptions{})
+	cancelList()
 	if err != nil {
 		return nil, fmt.Errorf("listing addons: %w", err)
 	}
@@ -324,6 +346,12 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 	if options.DependencyOrder {
 		toUpdate = sortByDependency(toUpdate)
 		s.logger.Info("addon update order resolved", "order", addonNames(toUpdate))
+	}
+
+	if budget := updateAllBudget(options, len(toUpdate)); budget > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
 	}
 
 	updateOne := func(a AddonSummary) AddonUpdateResult {

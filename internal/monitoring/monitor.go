@@ -48,8 +48,9 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
 
-	// Create a cancellable context with timeout
-	monitorCtx, cancel := context.WithTimeout(ctx, config.Timeout)
+	// A timeout <= 0 means "no monitor timeout": wait until the updates finish
+	// or the user cancels (matching the live roll view's handling of 0).
+	monitorCtx, cancel := monitorContext(ctx, config.Timeout)
 	defer cancel()
 
 	if !config.Quiet {
@@ -89,10 +90,28 @@ func MonitorUpdates(ctx context.Context, eksClient *eks.Client, monitor *refresh
 	}
 }
 
+// monitorContext bounds ctx by timeout, or only by cancellation when
+// timeout <= 0 (no limit).
+func monitorContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+// formatMonitorTimeout renders the monitor timeout for display ("none" for
+// no limit).
+func formatMonitorTimeout(timeout time.Duration) string {
+	if timeout <= 0 {
+		return "none"
+	}
+	return timeout.String()
+}
+
 // printMonitoringHeader displays initial monitoring information.
 func printMonitoringHeader(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) {
 	fmt.Printf("\nMonitoring %d nodegroup update(s)...\n", len(monitor.Updates))
-	fmt.Printf("Timeout: %v | Poll interval: %v\n", config.Timeout, config.PollInterval)
+	fmt.Printf("Timeout: %s | Poll interval: %v\n", formatMonitorTimeout(config.Timeout), config.PollInterval)
 	fmt.Printf("Press Ctrl+C to stop monitoring (updates will continue)\n\n")
 }
 

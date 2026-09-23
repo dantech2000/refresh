@@ -78,7 +78,7 @@ func newApp() *cli.Command {
 			&cli.DurationFlag{
 				Name:    "timeout",
 				Aliases: []string{"t"},
-				Usage:   "Operation timeout for API calls (e.g. 60s, 2m)",
+				Usage:   "Operation timeout for API calls (e.g. 60s, 2m); REFRESH_TIMEOUT sets this and list/describe/check timeouts, not long-running update waits",
 				Value:   appconfig.DefaultTimeout,
 				Sources: cli.EnvVars("REFRESH_TIMEOUT"),
 			},
