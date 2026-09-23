@@ -22,8 +22,8 @@ func runList(ctx context.Context, cmd *cli.Command) error {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
 		return err
 	}
-	// Each --watch iteration performs the full setup+fetch+render cycle so a
-	// fresh service (and cache) is used every time.
+	// Each --watch iteration performs the full setup+fetch+render cycle, so
+	// every iteration reads fresh data.
 	return runner.Watch(ctx, cmd, func() error { return listAddonsOnce(ctx, cmd) })
 }
 

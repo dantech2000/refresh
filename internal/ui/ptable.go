@@ -7,8 +7,8 @@ import (
 	"github.com/pterm/pterm"
 )
 
-// PTable is a pterm-based table that maintains compatibility with the existing Table interface
-// while solving ANSI alignment issues through pterm's robust table implementation.
+// PTable is a pterm-based boxed table with ANSI-aware column sizing
+// (Min/Max/Align) and a `-o plain` TSV mode.
 type PTable struct {
 	columns     []Column
 	rows        [][]string
@@ -24,7 +24,6 @@ func WithPTableHeaderColor(fn func(string) string) PTableOption {
 }
 
 // NewPTable creates a new pterm-based table with the given columns and options.
-// This maintains the same interface as the original table but uses pterm internally.
 func NewPTable(columns []Column, opts ...PTableOption) *PTable {
 	t := &PTable{columns: make([]Column, len(columns))}
 	copy(t.columns, columns)

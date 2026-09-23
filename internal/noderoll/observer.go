@@ -1,7 +1,7 @@
 // Package noderoll observes a managed-nodegroup rolling update in real time —
 // which nodes are draining, terminating, and coming online — by reconciling
 // against live Kubernetes Node state. It is the data source behind the live
-// roll panel; rendering lives in internal/render.
+// roll panel; rendering lives in internal/rollview.
 //
 // EKS's UpdateNodegroupVersion API only reports one coarse status for the whole
 // roll (via DescribeUpdate). The per-node truth comes from the cluster: managed
@@ -80,9 +80,8 @@ type WarnEvent struct {
 	Message string `json:"message"` // human detail (truncated for display)
 }
 
-// Observer yields successive snapshots of a roll. Implementations: a
-// Kubernetes-backed one (below), an ASG-activities fallback, and a scripted
-// one for tests/--simulate.
+// Observer yields successive snapshots of a roll. Implementations:
+// KubeObserver (below) and ScriptedObserver (tests and --simulate).
 type Observer interface {
 	Snapshot(ctx context.Context) (Snapshot, error)
 }

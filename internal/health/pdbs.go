@@ -19,8 +19,8 @@ import (
 )
 
 // PDBInfo is a structured snapshot of one PodDisruptionBudget's disruption
-// status, used by `nodegroup scale --dry-run` to show which PDBs would
-// constrain a scale-down. (REF-4)
+// status, reported by the pre-flight PDB check, DrainBlockers, and
+// ScaleDownBlockers (`nodegroup scale --check-pdbs`). (REF-4)
 type PDBInfo struct {
 	Namespace          string `json:"namespace" yaml:"namespace"`
 	Name               string `json:"name" yaml:"name"`

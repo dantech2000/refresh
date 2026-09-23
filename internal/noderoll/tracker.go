@@ -49,7 +49,7 @@ func (t *Tracker) Observe(s Snapshot) {
 		t.seeded = true
 		return
 	}
-	// Appeared or changed phase (s.Nodes is name-sorted → deterministic order).
+	// Appeared or changed phase, in s.Nodes order (KubeObserver sorts by name).
 	for _, n := range s.Nodes {
 		old, existed := t.prev[n.Name]
 		if existed && old == n.Phase {

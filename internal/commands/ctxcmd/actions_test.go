@@ -146,8 +146,7 @@ func TestContextActionErrorsAndPicker(t *testing.T) {
 	if err := runCommand(contextRemoveCommand()); err == nil {
 		t.Fatal("context remove should require name")
 	}
-	// Empty context list prints via color.Yellow, which writes to the original stdout
-	// handle (not the captured pipe). We verify only that it returns no error.
+	// An empty context list prints its hint to stderr; stdout stays empty.
 	if _, err := captureStdout(t, func() error { return runCommand(contextListCommand()) }); err != nil {
 		t.Fatalf("context list empty: %v", err)
 	}

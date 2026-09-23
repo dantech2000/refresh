@@ -50,7 +50,7 @@ func readUpdateAMIFlags(cmd *cli.Command) (updateAMIFlags, error) {
 	if pi := cmd.Duration("poll-interval"); pi <= 0 {
 		return updateAMIFlags{}, fmt.Errorf("--poll-interval must be greater than 0 (got %s)", pi)
 	}
-	// Flags placed after positional args (e.g. `update-ami my-cluster
+	// Flags placed after positional args (e.g. `nodegroup update my-cluster
 	// --health-only`) are parsed natively by urfave/cli v3.
 	return updateAMIFlags{
 		force:           cmd.Bool("force"),
@@ -397,13 +397,15 @@ func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
 }
 
 // preflightHealthCheck runs the pre-update health checks. Returns done=true if
-// the caller should stop here (block decision, user cancelled, or --health-only).
+// the caller should stop here: a block decision, a warning with
+// --require-healthy or with no way to prompt, a user cancel, or --health-only.
 //
 // summary is the verdict whenever a check ran (nil when it was skipped), for
 // the -o json/yaml document: the single-cluster path encodes it, and the
 // fleet path stores it per cluster, so stdout gets one document per run.
-// With -o json/yaml the report goes to stderr (unless --quiet), and with
-// --health-only err carries the verdict's exit code (0/2/3).
+// With -o json/yaml the report goes to stderr unless --quiet or --health-only
+// (where the verdict is the document), and with --health-only err carries the
+// verdict's exit code (0/2/3).
 func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName, nodegroupPattern string, flags updateAMIFlags) (summary *health.HealthSummary, done bool, err error) {
 	// Only --skip-health-check and --dry-run disable the health gate. --force is
 	// deliberately NOT here: it only sets UpdateNodegroupVersion.Force (forcing
@@ -711,8 +713,8 @@ func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 // startNodegroupUpdates starts a version update, through the nodegroup
 // service, for each selected nodegroup that isn't already updating or already
 // on the latest AMI, returning successful update progress entries.
-// Per-nodegroup failures are logged and skipped, matching the original
-// best-effort behavior.
+// Per-nodegroup failures are reported via flags.notice and recorded in
+// outcomes.Failed (exit 4), and the loop moves on to the next nodegroup.
 //
 // The already-on-latest skip mirrors the dry-run preview (ActionSkipLatest) so
 // the real run matches what `--dry-run` promised; `--reroll` (and `--force`)
@@ -817,9 +819,9 @@ func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *
 
 // latestAMISkipPredicate compares each nodegroup's current AMI against the
 // latest AMI for the nodegroup's own Kubernetes version (clusterVersion only
-// as a fallback). UpdateNodegroupVersion is called without a Version, so it
-// stays on the nodegroup's minor; comparing against the cluster's minor would
-// never skip a nodegroup that lags the control plane.
+// as a fallback). UpdateNodegroupVersion pins Version to the nodegroup's
+// current minor, so the roll stays on that minor; comparing against the
+// cluster's minor would never skip a nodegroup that lags the control plane.
 func latestAMISkipPredicate(ctx context.Context, clusterVersion string, latestAMI *awsinternal.LatestAMICache, currentAMI func(context.Context, *ekstypes.Nodegroup) string) func(*ekstypes.Nodegroup) bool {
 	return func(ng *ekstypes.Nodegroup) bool {
 		latest, err := latestAMI.ForNodegroup(ctx, ng, clusterVersion)

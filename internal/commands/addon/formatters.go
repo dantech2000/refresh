@@ -147,8 +147,8 @@ func updateResultColumns() []ui.Column {
 }
 
 // addonUpdatePlain builds the `addon update [--all] -o plain` table: one row
-// per add-on update result. UPDATE ID is "-" when no EKS update started (dry
-// run, already current).
+// per add-on update result. UPDATE ID is empty when no EKS update started
+// (dry run, already current).
 func addonUpdatePlain(results []addons.AddonUpdateResult) *ui.PlainTable {
 	t := ui.NewPlainTable(columnTitles(updateResultColumns())...)
 	for _, r := range results {

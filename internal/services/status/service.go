@@ -78,7 +78,8 @@ func NewService(awsCfg aws.Config, logger *slog.Logger) *Service {
 		// Defense-in-depth: callers should pass factory.NewDefaultLogger(nil)
 		// (quiet by default, honoring --log-level/--verbose). If a caller still
 		// passes nil, discard service logs rather than falling back to
-		// slog.Default(), which is Info-level and would leak into the TUI. (REF-129)
+		// slog.Default(), which is Info-level and would leak into the command's
+		// terminal output. (REF-129)
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	eksClient := eks.NewFromConfig(awsCfg)

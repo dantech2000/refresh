@@ -1,6 +1,6 @@
 // Package status aggregates fleet-wide EKS patch posture — Kubernetes version,
 // support window, nodegroup AMI staleness, and addons-behind-latest — for the
-// `refresh status` command. It reuses the cluster/nodegroup/addons services and
+// `refresh status` command. It reuses the nodegroup and addons services and
 // is single-region; multi-region fan-out lives in the command layer.
 package status
 
@@ -90,8 +90,8 @@ type ClusterStatus struct {
 }
 
 // NeedsAttention reports whether the cluster has any stale AMIs, nodegroups
-// behind the control plane, or addons behind latest (drives the exit-code
-// "something stale" signal).
+// behind the control plane, addons behind latest, or AWS-reported
+// control-plane health issues (drives the exit-code "something stale" signal).
 func (c ClusterStatus) NeedsAttention() bool {
 	return c.StaleAMI.Behind > 0 || c.NodegroupsBehindControlPlane > 0 || c.AddonsBehind.Behind > 0 || c.HealthIssues > 0
 }

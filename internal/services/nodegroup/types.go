@@ -96,7 +96,8 @@ type ListResult struct {
 	AMILookupErr error
 }
 
-// NodegroupDetails extends summary with health and optional instance/workload details
+// NodegroupDetails is the `nodegroup describe` result: AMI status, scaling, and
+// optional instance/workload details.
 type NodegroupDetails struct {
 	Name         string `json:"name" yaml:"name"`
 	Status       string `json:"status" yaml:"status"`

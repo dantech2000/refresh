@@ -10,7 +10,7 @@ import (
 )
 
 // With the control plane on 1.32 and a nodegroup still on 1.31, the update
-// (no explicit Version) can only roll to the latest 1.31 AMI. A nodegroup
+// (Version pinned to the nodegroup's 1.31) can only roll to the latest 1.31 AMI. A nodegroup
 // already on that AMI must be skipped; one on an older 1.31 AMI must not.
 func TestLatestAMISkipPredicate_UsesNodegroupVersion(t *testing.T) {
 	latest := awsinternal.NewLatestAMICache(func(_ context.Context, v string, _ ekstypes.AMITypes) (string, error) {

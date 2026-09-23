@@ -49,7 +49,7 @@ type clusterUpdateResult struct {
 	// updates were terminal; they may still be running in AWS.
 	TimedOut bool   `json:"timedOut,omitempty" yaml:"timedOut,omitempty"`
 	Error    string `json:"error,omitempty" yaml:"error,omitempty"`
-	// Health is the pre-flight verdict, set with --health-only -o json/yaml.
+	// Health is the pre-flight verdict whenever a check ran (nil when skipped).
 	Health *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`
 }
 

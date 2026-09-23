@@ -139,8 +139,8 @@ func TestResolveClusterName_NoMatchErrors(t *testing.T) {
 	}
 }
 
-// A ListClusters permission failure carries the IAM help once. The error was
-// formatted by the pager and then again by resolveClusterName.
+// A ListClusters permission failure carries the IAM help once. ListAllPages
+// formats the error; resolveClusterName must not format it again.
 func TestResolveClusterName_ListFailureIAMHelpOnce(t *testing.T) {
 	m := mocks.NewEKSAPI().Build()
 	m.ListClustersFn = func(context.Context, *eks.ListClustersInput, ...func(*eks.Options)) (*eks.ListClustersOutput, error) {

@@ -254,10 +254,10 @@ func executeOptions(cmd *cli.Command, gate *nodegroupHealthGate) upgrade.Execute
 // resumeCommand is the command that resumes an interrupted or failed run. It
 // repeats every flag that decides what is mutated and where: the root
 // --profile/--region (placed before the subcommand), the resolved cluster
-// name, the target, --skip, --skip-nodegroup, --force, and --yes. Only flags
-// the user set are included, so an unattended run's command stays
-// unattended and an attended one still confirms each phase. Values are
-// shell-quoted.
+// name, the target, --skip, --skip-nodegroup, --force, --skip-insights-check,
+// --skip-health-check, and --yes. Only flags the user set are included, so
+// an unattended run's command stays unattended and an attended one still
+// confirms each phase. Values are shell-quoted.
 func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) string {
 	parts := []string{"refresh"}
 	for _, name := range []string{"profile", "region"} {
@@ -301,7 +301,7 @@ func shellQuote(s string) string {
 }
 
 // runUpgradeMachine is the -o json/yaml path. Stdout gets exactly one
-// document: the bare plan for --dry-run or a blocked plan (as before), else
+// document: the bare plan for --dry-run or a blocked plan, else
 // {plan, report} once execution ends, successful or not. Progress goes to
 // stderr (or nowhere with --quiet); nothing prompts (runUpgrade requires
 // --yes) and there is no live roll panel. Exit codes match the human path.
