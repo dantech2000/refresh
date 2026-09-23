@@ -98,17 +98,22 @@ func (f updateAMIFlags) machineHealthOutput() bool {
 }
 
 // canPrompt reports whether the run may ask a question on the terminal. It
-// can't without a TTY, and it doesn't with -o json/yaml.
+// can't without a TTY, and it doesn't with -o json/yaml or --quiet: a
+// confirmation then needs --yes.
 func (f updateAMIFlags) canPrompt() bool {
-	return !f.machine() && isInteractive()
+	return !f.machine() && !f.quiet && isInteractive()
 }
 
 // noPromptReason explains, in an error message, why no prompt was shown.
 func (f updateAMIFlags) noPromptReason() string {
-	if f.machine() {
+	switch {
+	case f.machine():
 		return "-o " + f.format + " does not prompt"
+	case f.quiet:
+		return "--quiet does not prompt"
+	default:
+		return "no interactive terminal for confirmation"
 	}
-	return "no interactive terminal for confirmation"
 }
 
 // dryRunOptions maps the run flags to the dry-run preview options.
@@ -569,15 +574,8 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 		// Without a TTY (CI/cron), with -o json/yaml, or with --quiet, and
 		// without --yes, stop rather than prompt. --quiet hides the health
 		// report, so it must never accept the warnings on the user's behalf.
-		reason := ""
-		switch {
-		case !flags.canPrompt():
-			reason = flags.noPromptReason()
-		case flags.quiet:
-			reason = "--quiet does not prompt"
-		}
-		if reason != "" {
-			return true, fmt.Errorf("health checks reported warnings (%s); re-run with --yes to proceed or --require-healthy to fail (%s)", healthProblems(summary), reason)
+		if !flags.canPrompt() {
+			return true, fmt.Errorf("health checks reported warnings (%s); re-run with --yes to proceed or --require-healthy to fail (%s)", healthProblems(summary), flags.noPromptReason())
 		}
 		if !ui.PromptContinueWithWarnings(ctx, summary.Warnings) {
 			color.Yellow("Update cancelled by user")

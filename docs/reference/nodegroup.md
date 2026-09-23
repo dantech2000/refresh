@@ -189,7 +189,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | `--reroll` | — | — | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--dry-run, -d` | — | — | Preview changes without executing them |
 | `--no-wait` | — | — | Don't wait for update completion (original behavior) |
-| `--quiet, -q` | — | — | Minimal output mode (does not prompt: warn-level health findings stop the run unless --yes is given) |
+| `--quiet, -q` | — | — | Minimal output mode (does not prompt: a run that needs a confirmation, such as warn-level health findings or a nodegroup pattern that is not an exact name, stops unless --yes is given) |
 | `--timeout, -t duration` | — | `40m0s` | Maximum time to wait for update completion (per cluster with --all-clusters; 0 = no limit) |
 | `--poll-interval, -p duration` | — | `15s` | Polling interval for checking update status |
 | `--skip-health-check, -s` | — | — | Skip pre-flight health validation |

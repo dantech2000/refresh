@@ -206,7 +206,7 @@ also exits `4` right away if no region can be listed.
 | `--force, -f` | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use `--reroll` |
 | `--reroll` | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--no-wait` | Don't wait for update completion (start-and-return) |
-| `--quiet, -q` | Minimal output. `--quiet` does not prompt: a warn-level health result stops the run unless you pass `--yes` |
+| `--quiet, -q` | Minimal output. `--quiet` does not prompt. A run that needs a confirmation (warn-level health findings, a nodegroup pattern that is not an exact name, the fleet batch) stops unless you pass `--yes` |
 | `--skip-health-check, -s` | Skip pre-flight health validation |
 | `--health-only` | Run the health check only, don't update (exit `0`=pass / `2`=warn / `3`=block) |
 | `--yes, -y` | Assume yes: skip confirmation prompts (a nodegroup pattern that is not an exact name, warn-level health) for CI |

@@ -175,7 +175,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.BoolFlag{Name: "reroll", Usage: "Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored"},
 			&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Preview changes without executing them"},
 			&cli.BoolFlag{Name: "no-wait", Usage: "Don't wait for update completion (original behavior)"},
-			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Minimal output mode (does not prompt: warn-level health findings stop the run unless --yes is given)"},
+			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Minimal output mode (does not prompt: a run that needs a confirmation, such as warn-level health findings or a nodegroup pattern that is not an exact name, stops unless --yes is given)"},
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Maximum time to wait for update completion (per cluster with --all-clusters; 0 = no limit)", Value: appconfig.DefaultUpdateTimeout},
 			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "Polling interval for checking update status", Value: appconfig.DefaultPollInterval},
 			&cli.BoolFlag{Name: "skip-health-check", Aliases: []string{"s"}, Usage: "Skip pre-flight health validation"},

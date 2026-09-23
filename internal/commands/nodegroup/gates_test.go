@@ -59,6 +59,41 @@ func TestUpdate_QuietOnTTYStopsAtWarnings(t *testing.T) {
 	}
 }
 
+// --quiet does not prompt for a nodegroup pattern either: on a terminal, a
+// non-exact or ambiguous pattern needs --yes and names the candidates.
+func TestUpdate_QuietOnTTYPatternNeedsYes(t *testing.T) {
+	for _, tc := range []struct {
+		pattern string
+		want    string
+	}{
+		{"web", "partial match: payments-web"},
+		{"pay", "matched 2 nodegroups (payments-web, payments-api)"},
+	} {
+		t.Run(tc.pattern, func(t *testing.T) {
+			withTerminal(t, true)
+			srv := fakeaws.New(t, prodCluster(
+				&fakeaws.Nodegroup{Name: "payments-web", Version: "1.31"},
+				&fakeaws.Nodegroup{Name: "payments-api", Version: "1.31"},
+			))
+			_, stderr, err := runNodegroup(t, "update", "prod", tc.pattern, "-q", "--skip-health-check")
+			if err == nil {
+				t.Fatalf("err = nil, want a --yes requirement\nstderr:\n%s", stderr)
+			}
+			for _, want := range []string{tc.want, "--quiet does not prompt", "--yes"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+			if strings.Contains(stderr, "[y/N]") || strings.Contains(stderr, "(y/N)") {
+				t.Errorf("--quiet must not prompt; stderr:\n%s", stderr)
+			}
+			if calledPath(srv, "/update-version") {
+				t.Error("--quiet must not start an update for an unconfirmed pattern")
+			}
+		})
+	}
+}
+
 // A pattern that is not an exact nodegroup name never rolls without a
 // confirmation: without a terminal or with -o json it needs --yes.
 func TestUpdate_SingleNonExactPatternNeedsYes(t *testing.T) {

@@ -42,7 +42,7 @@ type clusterUpdateResult struct {
 	// HealthWarned means the health gate stopped this cluster on warnings
 	// (--health-only or --require-healthy): exit 2, as for a single cluster.
 	HealthWarned bool `json:"healthWarned,omitempty" yaml:"healthWarned,omitempty"`
-	VerifyFailed  bool           `json:"verifyFailed" yaml:"verifyFailed"`
+	VerifyFailed bool `json:"verifyFailed" yaml:"verifyFailed"`
 	// Interrupted means the user stopped the run (Ctrl+C / SIGTERM) while this
 	// cluster was in progress; any started EKS update keeps running in AWS.
 	Interrupted bool `json:"interrupted,omitempty" yaml:"interrupted,omitempty"`
