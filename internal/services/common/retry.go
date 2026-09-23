@@ -144,7 +144,7 @@ var jitter = func(d time.Duration) time.Duration {
 	if d <= 0 {
 		return 0
 	}
-	return time.Duration(rand.Int64N(int64(d) + 1))
+	return time.Duration(rand.Int64N(int64(d) + 1)) //nolint:gosec // G404: retry jitter only needs spread, not unpredictability
 }
 
 // sleep waits for d or until ctx ends. Tests replace it with a fake clock.

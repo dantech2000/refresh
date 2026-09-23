@@ -81,7 +81,9 @@ func (s *ServiceImpl) postUpdateHealthCheck(ctx context.Context, clusterName, ad
 // unfiltered/skip-validation behavior rather than failing the operation).
 func (s *ServiceImpl) clusterK8sVersion(ctx context.Context, clusterName string) string {
 	if v, ok := s.k8sVersions.Load(clusterName); ok {
-		return v.(string)
+		if version, ok := v.(string); ok {
+			return version
+		}
 	}
 	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{

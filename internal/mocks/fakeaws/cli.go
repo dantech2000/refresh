@@ -42,15 +42,15 @@ func App(cmds ...*cli.Command) *cli.Command {
 // wrote to stdout and stderr, and the error the action returned. It swaps
 // os.Stdout, os.Stderr, and fatih/color's writers for the duration, so it
 // must not run in parallel with other tests.
-func Run(t testing.TB, app *cli.Command, args ...string) (stdout, stderr string, err error) {
-	t.Helper()
+func Run(tb testing.TB, app *cli.Command, args ...string) (stdout, stderr string, err error) {
+	tb.Helper()
 	outR, outW, perr := os.Pipe()
 	if perr != nil {
-		t.Fatal(perr)
+		tb.Fatal(perr)
 	}
 	errR, errW, perr := os.Pipe()
 	if perr != nil {
-		t.Fatal(perr)
+		tb.Fatal(perr)
 	}
 
 	origOut, origErr := os.Stdout, os.Stderr
@@ -72,7 +72,7 @@ func Run(t testing.TB, app *cli.Command, args ...string) (stdout, stderr string,
 			_ = outW.Close()
 			_ = errW.Close()
 		}()
-		err = app.Run(t.Context(), args)
+		err = app.Run(tb.Context(), args)
 	}()
 	wg.Wait()
 	_ = outR.Close()
@@ -84,11 +84,11 @@ func Run(t testing.TB, app *cli.Command, args ...string) (stdout, stderr string,
 // (format) document whose top level is an object or a list, with nothing
 // before or after it. It returns the decoded document. The object/list rule
 // matters for YAML: a stray human line would otherwise parse as a string.
-func RequireOneDocument(t testing.TB, format, stdout string) any {
-	t.Helper()
+func RequireOneDocument(tb testing.TB, format, stdout string) any {
+	tb.Helper()
 	doc, err := decodeOne(format, stdout)
 	if err != nil {
-		t.Fatalf("stdout is not exactly one %s document: %v\n--- stdout ---\n%s", format, err, stdout)
+		tb.Fatalf("stdout is not exactly one %s document: %v\n--- stdout ---\n%s", format, err, stdout)
 	}
 	return doc
 }

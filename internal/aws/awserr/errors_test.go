@@ -50,10 +50,10 @@ func http403() error {
 	}})
 }
 
-type timeoutErr struct{}
+type timeoutError struct{}
 
-func (timeoutErr) Error() string { return "i/o timeout" }
-func (timeoutErr) Timeout() bool { return true }
+func (timeoutError) Error() string { return "i/o timeout" }
+func (timeoutError) Timeout() bool { return true }
 
 func TestClassification(t *testing.T) {
 	type want struct{ cred, region, network, perm bool }
@@ -89,7 +89,7 @@ func TestClassification(t *testing.T) {
 		{"connection refused", dialErr(syscall.ECONNREFUSED), want{network: true}},
 		{"connection reset", sdkOpErr(os.NewSyscallError("read", syscall.ECONNRESET)), want{network: true}},
 		{"network unreachable", sdkOpErr(os.NewSyscallError("connect", syscall.ENETUNREACH)), want{network: true}},
-		{"timeout interface", sdkOpErr(timeoutErr{}), want{network: true}},
+		{"timeout interface", sdkOpErr(timeoutError{}), want{network: true}},
 		{"response timeout", sdkOpErr(&awshttp.ResponseTimeoutError{TimeoutDur: 1}), want{network: true}},
 		{"unexpected eof", sdkOpErr(fmt.Errorf("read body: %w", io.ErrUnexpectedEOF)), want{network: true}},
 		{"context deadline is not network", sdkOpErr(&url.Error{Op: "Post", URL: "x", Err: context.DeadlineExceeded}), want{}},

@@ -173,7 +173,9 @@ func (c *Checker) writeCache(cc cache) {
 	if c.cachePath == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(c.cachePath), 0o755); err != nil {
+	// cliconfig creates the same <UserConfigDir>/refresh dir 0o755; the cache
+	// file itself is 0o600.
+	if err := os.MkdirAll(filepath.Dir(c.cachePath), 0o755); err != nil { //nolint:gosec // G301: matches cliconfig's mode for the shared dir
 		return
 	}
 	b, err := json.Marshal(cc)

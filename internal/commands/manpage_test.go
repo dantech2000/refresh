@@ -146,7 +146,7 @@ func TestIsInManPath_FakePathReturnsFalse(t *testing.T) {
 // isInManPath runs manpath under the command context, so a cancelled command
 // does not start it (and reports "not in MANPATH").
 func TestIsInManPath_HonorsContext(t *testing.T) {
-	out, err := exec.Command("manpath").Output()
+	out, err := exec.CommandContext(t.Context(), "manpath").Output()
 	if err != nil {
 		t.Skip("manpath not available")
 	}
