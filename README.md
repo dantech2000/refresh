@@ -57,7 +57,7 @@ day-to-day workflow.
   and prints the exact command to resume after a failure.
 - **Unattended-friendly** — idempotent mutating calls, documented exit codes, a
   JSON run summary, and fail-fast (no hanging prompts) without a TTY or with
-  `-o json`.
+  `-o json`: a run that would ask for confirmation fails and names `--yes`.
 - **Custom-AMI aware** — `AmiType=CUSTOM` nodegroups are classified `Custom` and
   skipped on update with guidance instead of being mis-rolled.
 - **Contexts** (kubectx-style) bind a cluster to a region/profile so you stop
@@ -161,6 +161,15 @@ uncolored TSV for grep/awk); `--no-color`/`NO_COLOR` are honored and spinners
 stay off when stderr is not a terminal. The full, always-current reference
 lives at [drod.dev/refresh](https://drod.dev/refresh/) and under
 [`docs/reference/`](docs/reference/).
+
+Each shorthand means the same thing on every command: `-c` cluster, `-n`
+nodegroup, `-a` addon, `-o` format, `-r` region, `-t` timeout, `-d` dry-run,
+`-y` yes, `-q` quiet, `-w` watch, `-f` filter. Commands that change a cluster
+share `--dry-run/-d`, `--yes/-y`, and `--wait-timeout`. `addon update` and
+`nodegroup scale` ask before they act, so pass `--yes` in scripts. Upgrading
+from 0.10? See
+[Migrating to 0.11](https://drod.dev/refresh/migration/#migrating-to-011) for
+the removed shorthands and renamed flags.
 
 ## Exit codes
 

@@ -71,7 +71,8 @@ command (CLI wiring)  internal/commands/{statuscmd,cluster,nodegroup,addon,ctxcm
 - `SetupAWS(ctx, cmd)` opens the API context with the global `--timeout`,
   loads the config, and checks credentials. `SetupAWSWithDeadline(ctx, cmd, d)`
   takes an explicit deadline (`d <= 0` = none) for commands that scope their
-  own long waits (`nodegroup update`, `nodegroup scale --wait`, `addon update`).
+  own long waits (`nodegroup update`, `nodegroup scale --wait`, `addon update`,
+  `cluster upgrade`).
   Prompts under the returned context pause the deadline and wait on the
   signal context (see `apiContext`).
 - Cluster resolution: `ResolveClusterOrList` for read-only commands (flag →
@@ -187,6 +188,21 @@ with no AWS.
   -shuffle=on`, so tests must not depend on order or leak package state.
 - **Context:** commands derive from the signal-cancellable root via `runner.SetupAWS` /
   `SetupAWSWithDeadline`; don't build `context.Background()` in command actions.
+- **Flag shorthands:** each letter has one meaning CLI-wide (`internal/flagcanon`): `-c`
+  cluster, `-n` nodegroup, `-a` addon, `-o` format, `-r` region, `-t` timeout, `-d` dry-run,
+  `-y` yes, `-q` quiet, `-w` watch, `-f` filter. A flag with one of these long names carries
+  its letter; any other shorthand needs a `flagcanon.Allowed` entry with a reason
+  (`TestFlagShorthandCanon` walks the tree). When you remove a shorthand, add it to the
+  removed table in `flagcanon` so the error names the replacement. Keep a renamed flag one
+  release as a hidden alias (`flagcanon.DeprecatedDuration` / `DeprecatedSwitch`), which warns
+  on stderr.
+- **Mutating commands** (`addon update`, `nodegroup scale`, `nodegroup update`, `cluster
+  upgrade`) share `runner.DryRunFlag` (`-d`), `runner.YesFlag` (`-y`), `--wait-timeout`
+  (`runner.WaitTimeoutFlag`, read with `runner.WaitTimeout`), and `--kubeconfig`/`--kube-context`
+  where a kube client is used. Call `runner.RequireYesUnattended(cmd)` before any AWS call
+  (fails for `-o json/yaml` or no TTY without `--yes`), and ask with
+  `runner.ConfirmMutation(ctx, question)` ("… [y/N]" on stderr, shared prompt reader).
+  `--dry-run` never prompts. The global API timeout is `runner.APITimeout(cmd)`.
 
 ## Code patterns (copy these)
 

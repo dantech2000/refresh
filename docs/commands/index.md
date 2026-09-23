@@ -23,9 +23,14 @@ flag-by-flag detail and examples.
 
 Accepted on every command — see [Configuration & AWS auth](../concepts/configuration.md):
 
-`--profile`, `--region`, `--timeout/-t`, `--max-concurrency/-C`,
+`--profile`, `--region/-r`, `--timeout/-t`, `--max-concurrency/-C`,
 `--log-level`, `--verbose`, `--no-color`. They work before or after the
 subcommand (`refresh -t 5s cluster list` equals `refresh cluster list -t 5s`).
+
+Each shorthand letter has one meaning on every command (`-c` cluster, `-n`
+nodegroup, `-a` addon, `-o` format, `-r` region, `-t` timeout, `-d` dry-run,
+`-y` yes, `-q` quiet, `-w` watch, `-f` filter). See
+[Flag shorthands](../concepts/configuration.md#flag-shorthands).
 
 ## Conventions
 

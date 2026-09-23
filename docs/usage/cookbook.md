@@ -89,7 +89,7 @@ refresh nodegroup update --all-clusters -r us-east-1 -r us-west-2 --dry-run
 refresh nodegroup update --all-clusters -r us-east-1 -r us-west-2 --yes
 ```
 
-Each cluster gets its own `--timeout`. A region that can't be listed makes
+Each cluster gets its own `--wait-timeout`. A region that can't be listed makes
 the run exit `4`; see [fleet mode](../commands/nodegroup.md#fleet-mode).
 
 ---
@@ -116,7 +116,9 @@ esac
     otherwise prompt fails fast unless you pass `--yes` — so CI never hangs
     waiting on stdin. A nodegroup pattern that is not an exact name also
     needs `--yes`. Pass exact cluster names in scripts: `--yes` does not
-    accept a partial cluster name.
+    accept a partial cluster name. Since 0.11, `addon update`,
+    `nodegroup scale`, and `cluster upgrade` also need `--yes` in a script,
+    because they ask before they change anything.
 
 ---
 
@@ -126,10 +128,14 @@ Update every add-on in dependency-safe order (`vpc-cni` → `coredns`/`kube-prox
 → others), waiting for each to settle before the next.
 
 ```bash
+# Lists the add-ons that would change and asks once
 refresh addon update prod-east --all --dependency-order --wait
 
 # Skip an add-on you manage via Helm/GitOps
 refresh addon update prod-east --all --dependency-order --wait --skip aws-load-balancer-controller
+
+# In a script: no prompt
+refresh addon update prod-east --all --dependency-order --wait --yes -o json
 ```
 
 See [`addon update`](../commands/addon.md#update).
@@ -151,8 +157,8 @@ refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --dry-r
 # Scale down for real, refused if a PDB blocks it, waiting for it to settle
 refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --wait
 
-# Accept the disruption and scale down anyway
-refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --force
+# Accept the disruption and scale down anyway (no prompt with --yes)
+refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --force --yes
 ```
 
 See [`nodegroup scale`](../commands/nodegroup.md#scale).
