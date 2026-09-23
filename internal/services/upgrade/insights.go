@@ -161,3 +161,49 @@ func insightsVerdict(hopTo string, insights []ekstypes.InsightSummary) (status S
 	}
 	return StatusPending, fmt.Sprintf("%d insight(s) passing; skew OK", len(insights)), nil
 }
+
+// previewInsights is the --dry-run readiness check: it reads the insights EKS
+// already has for hopTo without starting a refresh (a write API). ERROR
+// insights still block. Missing or UNKNOWN insights, and insights that can't
+// be read, are a warning, because a real run refreshes them first and blocks
+// until EKS has evaluated hopTo.
+func (s *Service) previewInsights(ctx context.Context, clusterName, hopTo string, step Step, plan *Plan) (Step, error) {
+	realRun := fmt.Sprintf("a real run will refresh them and block until EKS has evaluated %s", hopTo)
+	insights, err := s.listUpgradeInsights(ctx, clusterName, hopTo)
+	if err != nil {
+		if ctx.Err() != nil {
+			return step, ctx.Err()
+		}
+		step.Reason = fmt.Sprintf("could not read cluster insights for %s (%v); %s", hopTo, err, realRun)
+		plan.Warnings = append(plan.Warnings, step.Reason)
+		return step, nil
+	}
+	status, reason, warnings := insightsVerdict(hopTo, insights)
+	if len(warnings) > 0 {
+		plan.Warnings = append(plan.Warnings,
+			fmt.Sprintf("insight warnings for %s: %s", hopTo, strings.Join(warnings, ", ")))
+	}
+	if status != StatusBlocked {
+		step.Reason = reason + " (not refreshed in a dry run)"
+		return step, nil
+	}
+	hasError := false
+	for _, in := range insights {
+		if in.InsightStatus != nil && in.InsightStatus.Status == ekstypes.InsightStatusValueError {
+			hasError = true
+			break
+		}
+	}
+	if hasError {
+		step.Status, step.Reason = StatusBlocked, reason
+		return step, nil
+	}
+	// Missing or UNKNOWN only: a refresh may resolve them.
+	if len(insights) == 0 {
+		step.Reason = fmt.Sprintf("insights for %s not evaluated yet; %s", hopTo, realRun)
+	} else {
+		step.Reason = fmt.Sprintf("%s; %s", strings.TrimSuffix(reason, "; "+skipInsightsHint), realRun)
+	}
+	plan.Warnings = append(plan.Warnings, step.Reason)
+	return step, nil
+}

@@ -109,6 +109,10 @@ func TestUpgradeMachineOutput_DryRunPrintsBarePlan(t *testing.T) {
 	if got := srv.Cluster("prod"); got.Version != "1.31" {
 		t.Errorf("dry run changed the control plane to %s", got.Version)
 	}
+	// StartInsightsRefresh is a write API; a dry run must not call it.
+	if slices.Contains(srv.Calls(), "eks POST /clusters/prod/insights-refresh") {
+		t.Errorf("dry run started an insights refresh")
+	}
 }
 
 // -o plain writes only the plan's TSV rows to stdout, for --dry-run and for

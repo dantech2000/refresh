@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -271,5 +272,71 @@ func TestExecute_LaterHopWithoutInsightsBlocks(t *testing.T) {
 	}
 	if w.clusterVersion != "1.33" {
 		t.Fatalf("cluster version = %s, want 1.33", w.clusterVersion)
+	}
+}
+
+// --dry-run starts no refresh (a write API). Missing insights are a warning
+// in the preview, since a real run refreshes and then blocks on them.
+func TestReadiness_PreviewDoesNotRefresh(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		insight     ekstypes.InsightStatusValue // "" = no insights
+		wantBlocked bool
+		wantReason  string
+	}{
+		{name: "missing insights warn", wantReason: "insights for 1.32 not evaluated yet; a real run will refresh them and block"},
+		{name: "unknown insight warns", insight: ekstypes.InsightStatusValueUnknown, wantReason: "UNKNOWN"},
+		{name: "passing insight passes", insight: ekstypes.InsightStatusValuePassing, wantReason: "not refreshed in a dry run"},
+		{name: "error insight still blocks", insight: ekstypes.InsightStatusValueError, wantBlocked: true, wantReason: "blocking insight"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := oneHopBuilder()
+			if tc.insight != "" {
+				b = b.WithInsight("prod-east", "Deprecated APIs removed in 1.32", tc.insight, "1.32")
+			}
+			m := b.Build()
+			svc := newStrictTestService(m)
+
+			plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{Preview: true})
+			if err != nil {
+				t.Fatalf("BuildPlan: %v", err)
+			}
+			r := readiness(t, plan)
+			if (r.Status == StatusBlocked) != tc.wantBlocked || !strings.Contains(r.Reason, tc.wantReason) {
+				t.Fatalf("readiness = %+v, want blocked=%v reason containing %q", r, tc.wantBlocked, tc.wantReason)
+			}
+			if m.Calls.StartInsightsRefresh != 0 {
+				t.Fatalf("StartInsightsRefresh calls = %d, want 0 in a dry run", m.Calls.StartInsightsRefresh)
+			}
+		})
+	}
+}
+
+// Ctrl+C during the plan-time refresh is an interrupt, not a blocked plan.
+func TestBuildPlan_InterruptDuringRefreshIsAnError(t *testing.T) {
+	m := oneHopBuilder().
+		WithInsightsRefresh(ekstypes.InsightsRefreshStatusInProgress).
+		WithInsight("prod-east", "Kubelet version skew", ekstypes.InsightStatusValuePassing, "1.32").
+		Build()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	describe := m.DescribeInsightsRefreshFn
+	m.DescribeInsightsRefreshFn = func(c context.Context, in *eks.DescribeInsightsRefreshInput, o ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error) {
+		cancel()
+		return describe(c, in, o...)
+	}
+	svc := newStrictTestService(m)
+
+	plan, err := svc.BuildPlan(ctx, "prod-east", "1.32", PlanOptions{})
+	if !errors.Is(err, context.Canceled) || plan != nil {
+		t.Fatalf("BuildPlan = (%v, %v), want (nil, context.Canceled)", plan, err)
+	}
+	if !strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("err = %v, want it to say interrupted", err)
+	}
+
+	// The execution-time re-gate reports the interrupt the same way.
+	if err := svc.checkHopReadiness(ctx, "prod-east", "1.32", false, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("checkHopReadiness err = %v, want context.Canceled", err)
 	}
 }

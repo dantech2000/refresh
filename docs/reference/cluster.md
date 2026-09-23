@@ -149,7 +149,8 @@ Before each control-plane step, refresh asks EKS to re-evaluate Cluster
 Insights (up to 5m) and blocks on ERROR or UNKNOWN insights, or when EKS has
 not evaluated the hop version yet. EKS itself no longer enforces insights on a
 version update, so this is the only deprecated-API check; --skip-insights-check
-turns it off.
+turns it off. --dry-run starts no refresh: it reads existing insights, and
+missing ones are a warning instead of a blocker.
 
 Before each nodegroup roll, pre-flight health checks run, including
 PodDisruptionBudgets that would block the drain (they need Kubernetes access

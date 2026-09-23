@@ -26,9 +26,40 @@ type PlanOptions struct {
 	// gate (--skip-insights-check). Only the kubelet skew of managed
 	// nodegroups is then checked; the plan carries a warning.
 	SkipInsightsCheck bool
+	// Preview builds the plan for display only (--dry-run): no insights
+	// refresh is started (it is a write API), and insights that EKS has not
+	// evaluated yet are a warning instead of a blocker. A real run refreshes
+	// them and blocks until they exist.
+	Preview bool
 	// Progress, when set, receives progress lines while the plan is built
 	// (the insights refresh can take minutes).
 	Progress ProgressFunc
+}
+
+// insightsMode selects how the readiness gate treats Cluster Insights.
+type insightsMode int
+
+const (
+	// insightsRefresh refreshes insights, then blocks on missing, ERROR, or
+	// UNKNOWN insights (real runs).
+	insightsRefresh insightsMode = iota
+	// insightsPreview reads existing insights without a refresh; missing or
+	// UNKNOWN insights are a warning (--dry-run).
+	insightsPreview
+	// insightsSkip leaves insights out (--skip-insights-check).
+	insightsSkip
+)
+
+// mode returns the insights mode for plan generation.
+func (o PlanOptions) mode() insightsMode {
+	switch {
+	case o.SkipInsightsCheck:
+		return insightsSkip
+	case o.Preview:
+		return insightsPreview
+	default:
+		return insightsRefresh
+	}
 }
 
 // BuildPlan derives the full ordered upgrade plan for clusterName to reach
@@ -100,7 +131,11 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	for _, hopTo := range hops {
 		hop := Hop{From: prevVersion(plan, hopTo), To: hopTo}
 
-		hop.Steps = append(hop.Steps, s.readinessStep(ctx, clusterName, currentVersion, hopTo, nodegroups, simNodegroups, plan, opts.SkipInsightsCheck, opts.Progress))
+		ready, err := s.readinessStep(ctx, clusterName, currentVersion, hopTo, nodegroups, simNodegroups, plan, opts.mode(), opts.Progress)
+		if err != nil {
+			return nil, fmt.Errorf("interrupted while building the upgrade plan: %w", err)
+		}
+		hop.Steps = append(hop.Steps, ready)
 		hop.Steps = append(hop.Steps, controlPlaneStep(currentVersion, aws.ToString(cluster.Version), hopTo, cluster.Status))
 		hop.Steps = append(hop.Steps, s.addonSteps(ctx, addonsSvc, addonList, hopTo, opts.SkipAddons)...)
 		hop.Steps = append(hop.Steps, nodegroupSteps(nodegroups, hopTo, opts.SkipNodegroups)...)
@@ -112,6 +147,11 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		advanceSimulation(simNodegroups, nodegroups, hopTo, opts.SkipNodegroups)
 	}
 
+	// Lookups that fail on a cancelled ctx surface as blocked steps; an
+	// interrupted plan is an error, not a blocked upgrade.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("interrupted while building the upgrade plan: %w", err)
+	}
 	return plan, nil
 }
 
@@ -252,7 +292,10 @@ func (s *Service) checkVersionOffered(ctx context.Context, targetVersion string,
 // from liveVersion. Later hops get a skew-only check here; the engine
 // re-runs the full readiness gate against live state immediately before each
 // hop's control-plane phase (checkHopReadiness).
-func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, hopTo string, nodegroups []nodegroupState, simNodegroups map[string]string, plan *Plan, skipInsights bool, progress ProgressFunc) Step {
+//
+// The error is non-nil only when ctx ends (Ctrl+C or timeout): an interrupted
+// check is not a blocker.
+func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, hopTo string, nodegroups []nodegroupState, simNodegroups map[string]string, plan *Plan, mode insightsMode, progress ProgressFunc) (Step, error) {
 	step := Step{
 		Type:        StepReadiness,
 		Description: fmt.Sprintf("readiness for %s (insights + version skew)", hopTo),
@@ -266,7 +309,7 @@ func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, h
 	if err != nil {
 		step.Status = StatusBlocked
 		step.Reason = err.Error()
-		return step
+		return step, nil //nolint:nilerr // an unparsable version blocks the plan; only ctx errors are returned
 	}
 	var skewViolations []string
 	for _, ng := range nodegroups {
@@ -283,7 +326,7 @@ func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, h
 	if len(skewViolations) > 0 {
 		step.Status = StatusBlocked
 		step.Reason = strings.Join(skewViolations, "; ")
-		return step
+		return step, nil
 	}
 
 	liveMinor, err := minorVersion(liveVersion)
@@ -292,15 +335,17 @@ func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, h
 		// The control plane does not move in this hop (a catch-up or no-op
 		// rerun), so there is nothing for insights to gate.
 		step.Reason = fmt.Sprintf("control plane already at %s; skew OK", liveVersion)
-		return step
+		return step, nil
 	case err == nil && hopMinor > liveMinor+1:
 		step.Reason = "skew OK; insights are checked against live state before this hop"
-		return step
-	case skipInsights:
+		return step, nil
+	case mode == insightsSkip:
 		step.Reason = "insights check skipped (--skip-insights-check); skew OK"
 		plan.Warnings = append(plan.Warnings, fmt.Sprintf(
 			"cluster insights for %s were not checked (--skip-insights-check): deprecated APIs and kubelet skew of nodes outside managed nodegroups (Fargate, Karpenter, self-managed, hybrid) are unverified", hopTo))
-		return step
+		return step, nil
+	case mode == insightsPreview:
+		return s.previewInsights(ctx, clusterName, hopTo, step, plan)
 	}
 
 	// Cluster Insights. EKS re-evaluates them only about once a day, so ask
@@ -308,19 +353,21 @@ func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, h
 	// control-plane hop usually has no insights at all. ERROR, UNKNOWN, and
 	// missing insights block; WARNING is surfaced but does not block.
 	if err := s.refreshInsights(ctx, clusterName, liveVersion, progress); err != nil {
-		step.Status = StatusBlocked
 		if ctx.Err() != nil {
-			step.Reason = fmt.Sprintf("insights refresh for %s interrupted: %v", hopTo, err)
-			return step
+			return step, ctx.Err()
 		}
+		step.Status = StatusBlocked
 		step.Reason = fmt.Sprintf("could not refresh cluster insights for %s: %v; %s", hopTo, err, skipInsightsHint)
-		return step
+		return step, nil
 	}
 	insights, err := s.listUpgradeInsights(ctx, clusterName, hopTo)
 	if err != nil {
+		if ctx.Err() != nil {
+			return step, ctx.Err()
+		}
 		step.Status = StatusBlocked
 		step.Reason = fmt.Sprintf("could not read cluster insights for %s: %v; %s", hopTo, err, skipInsightsHint)
-		return step
+		return step, nil
 	}
 
 	status, reason, warnings := insightsVerdict(hopTo, insights)
@@ -329,7 +376,7 @@ func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, h
 		plan.Warnings = append(plan.Warnings,
 			fmt.Sprintf("insight warnings for %s: %s", hopTo, strings.Join(warnings, ", ")))
 	}
-	return step
+	return step, nil
 }
 
 // checkHopReadiness re-evaluates the readiness gate for hopTo against the
@@ -358,7 +405,14 @@ func (s *Service) checkHopReadiness(ctx context.Context, clusterName, hopTo stri
 	}
 
 	scratch := &Plan{}
-	step := s.readinessStep(ctx, clusterName, liveVersion, hopTo, nodegroups, live, scratch, skipInsights, progress)
+	mode := insightsRefresh
+	if skipInsights {
+		mode = insightsSkip
+	}
+	step, err := s.readinessStep(ctx, clusterName, liveVersion, hopTo, nodegroups, live, scratch, mode, progress)
+	if err != nil {
+		return err
+	}
 	for _, w := range scratch.Warnings {
 		progress("warning: %s", w)
 	}

@@ -41,7 +41,8 @@ Before each control-plane step, refresh asks EKS to re-evaluate Cluster
 Insights (up to 5m) and blocks on ERROR or UNKNOWN insights, or when EKS has
 not evaluated the hop version yet. EKS itself no longer enforces insights on a
 version update, so this is the only deprecated-API check; --skip-insights-check
-turns it off.
+turns it off. --dry-run starts no refresh: it reads existing insights, and
+missing ones are a warning instead of a blocker.
 
 Before each nodegroup roll, pre-flight health checks run, including
 PodDisruptionBudgets that would block the drain (they need Kubernetes access
@@ -129,15 +130,12 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 		SkipAddons:        cmd.StringSlice("skip"),
 		SkipNodegroups:    cmd.StringSlice("skip-nodegroup"),
 		SkipInsightsCheck: cmd.Bool("skip-insights-check"),
+		// A dry run starts no insights refresh (a write API).
+		Preview: cmd.Bool("dry-run"),
 	}
 	healthGate := newNodegroupHealthGate(cmd, awsCfg, clusterName)
 
-	var plan *upgrade.Plan
-	err = runner.WithSpinner("cluster", "Upgrade plan computed!", func() error {
-		var perr error
-		plan, perr = svc.BuildPlan(ctx, clusterName, cmd.String("to"), planOpts)
-		return perr
-	})
+	plan, err := buildUpgradePlan(ctx, cmd, svc, clusterName, planOpts)
 	if err != nil {
 		return err
 	}
@@ -212,6 +210,33 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
+// buildUpgradePlan builds the plan behind a spinner. The insights refresh can
+// take minutes, so its progress lines stop the spinner and go to stderr
+// (unless --quiet). Ctrl+C or --timeout while planning is reported as an
+// interrupt, not as a blocked plan.
+func buildUpgradePlan(ctx context.Context, cmd *cli.Command, svc *upgrade.Service, clusterName string, opts upgrade.PlanOptions) (*upgrade.Plan, error) {
+	spinner := ui.NewFunSpinnerForCategory("cluster")
+	if err := spinner.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start spinner: %w", err)
+	}
+	defer spinner.Stop()
+	if !cmd.Bool("quiet") {
+		opts.Progress = func(format string, args ...any) {
+			spinner.Stop()
+			_, _ = fmt.Fprintf(ui.Stderr, "  "+format+"\n", args...)
+		}
+	}
+	plan, err := svc.BuildPlan(ctx, clusterName, cmd.String("to"), opts)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, cli.Exit(fmt.Sprintf("upgrade interrupted before it started; nothing was changed: %v", err), 1)
+		}
+		return nil, err
+	}
+	spinner.Success("Upgrade plan computed!")
+	return plan, nil
+}
+
 // executeOptions maps the command's flags to the engine options, with gate
 // as the pre-roll health gate. The caller adds the confirm, progress, and
 // observer hooks.
@@ -248,7 +273,7 @@ func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) str
 			parts = append(parts, "--"+name, shellQuote(v))
 		}
 	}
-	for _, name := range []string{"force", "yes"} {
+	for _, name := range []string{"force", "skip-insights-check", "skip-health-check", "yes"} {
 		if cmd.Bool(name) {
 			parts = append(parts, "--"+name)
 		}

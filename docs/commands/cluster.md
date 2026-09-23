@@ -214,6 +214,11 @@ checked those yourself; the plan then carries a warning.
 The refresh needs the IAM actions `eks:StartInsightsRefresh` and
 `eks:DescribeInsightsRefresh`, in addition to `eks:ListInsights`.
 
+`--dry-run` starts no refresh, because `StartInsightsRefresh` is a write API.
+It reads the insights EKS already has. `ERROR` insights still block the
+preview. Missing or `UNKNOWN` insights show as a warning, because a real run
+refreshes them first and blocks until EKS has evaluated the hop version.
+
 **Nodegroup pre-flight.** Before each nodegroup roll, after the nodegroup is
 confirmed `ACTIVE` with no health issues, `refresh` runs the same pre-flight
 health checks as [`nodegroup update`](nodegroup.md#update), scoped to that
