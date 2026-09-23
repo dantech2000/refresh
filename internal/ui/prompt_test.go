@@ -91,13 +91,16 @@ func TestPromptReaderScopeIgnoresAPIDeadline(t *testing.T) {
 	defer cancel()
 	<-apiCtx.Done()
 	paused, resumed := 0, 0
+	started := make(chan struct{})
 	ctx := WithPromptScope(apiCtx, t.Context(), func() func() {
 		paused++
+		close(started)
 		return func() { resumed++ }
 	})
 
+	// Answer only once the prompt is waiting, after the deadline passed.
 	go func() {
-		time.Sleep(20 * time.Millisecond)
+		<-started
 		_, _ = w.Write([]byte("y\n"))
 	}()
 	got, err := p.ReadLine(ctx)
