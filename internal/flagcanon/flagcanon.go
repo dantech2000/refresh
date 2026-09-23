@@ -179,7 +179,8 @@ func Warn(cmd *cli.Command, flag, hint string) {
 
 // DeprecatedDuration returns a hidden --name duration flag kept for one
 // release as an alias of --replacement. Setting it prints a deprecation
-// warning; the caller reads it through runner.WaitTimeout.
+// warning; the caller reads it through runner.WaitTimeout. Setting both
+// flags is an error, since one would silently override the other.
 func DeprecatedDuration(name, replacement string, aliases ...string) *cli.DurationFlag {
 	return &cli.DurationFlag{
 		Name:    name,
@@ -187,6 +188,10 @@ func DeprecatedDuration(name, replacement string, aliases ...string) *cli.Durati
 		Hidden:  true,
 		Usage:   "Deprecated: use --" + replacement,
 		Action: func(_ context.Context, cmd *cli.Command, _ time.Duration) error {
+			if LocalIsSet(cmd, replacement) {
+				return fmt.Errorf("--%s on '%s' is a deprecated alias of --%s; pass only --%s",
+					name, commandPath(cmd), replacement, replacement)
+			}
 			Warn(cmd, "--"+name, "use --"+replacement)
 			return nil
 		},
