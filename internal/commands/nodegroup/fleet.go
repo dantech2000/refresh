@@ -223,12 +223,13 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 }
 
 // discoveryStopError maps a discovery that ended with ctx done: a user
-// interrupt passes through (exit 1), and the --timeout bound becomes exit 4.
+// interrupt passes through, and the --timeout bound gets a message naming
+// it. Both exit 1: discovery gathered nothing (REF-165).
 func discoveryStopError(ctx context.Context, err error, timeout time.Duration) error {
 	if ctx.Err() != nil || !errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	return cli.Exit(fmt.Sprintf("fleet discovery did not finish within --timeout %s", timeout), 4)
+	return fmt.Errorf("fleet discovery did not finish within --timeout %s: %w", timeout, err)
 }
 
 // regionScopeHint tells the user how to narrow the region sweep.
@@ -236,10 +237,11 @@ const regionScopeHint = "scope with -r or REFRESH_EKS_REGIONS"
 
 // checkDiscovery reports discovery problems on stderr: one line naming the
 // regions skipped as not accessible, and one warning per region that failed.
-// It fails (exit 4) when no region could be listed, or when the reachable
-// regions had no clusters but some regions failed. Nothing is known about the
-// failed regions, so "no clusters found" would be a false pass. Skipped
-// regions alone never fail a run that reached at least one region.
+// It fails with exit 1 when no region could be listed (nothing was
+// gathered), and with exit 4 when the reachable regions had no clusters but
+// some regions failed. Nothing is known about the failed regions, so "no
+// clusters found" would be a false pass. Skipped regions alone never fail a
+// run that reached at least one region.
 func checkDiscovery(regions int, d fleetDiscovery) error {
 	if len(d.skipped) > 0 {
 		_, _ = fmt.Fprintln(fleetStderr, color.YellowString("Skipped %d region(s) not accessible to these credentials: %s (%s)",
@@ -249,8 +251,8 @@ func checkDiscovery(regions int, d fleetDiscovery) error {
 		_, _ = fmt.Fprintln(fleetStderr, color.YellowString("Warning: skipping region %s: %s", re.Region, re.Error))
 	}
 	if regions > 0 && len(d.failed)+len(d.skipped) == regions {
-		return cli.Exit(fmt.Sprintf("fleet discovery failed: could not list clusters in any of %d region(s) (%d not accessible, %d failed); %s",
-			regions, len(d.skipped), len(d.failed), regionScopeHint), 4)
+		return fmt.Errorf("fleet discovery failed: could not list clusters in any of %d region(s) (%d not accessible, %d failed); %s",
+			regions, len(d.skipped), len(d.failed), regionScopeHint)
 	}
 	if len(d.failed) > 0 && len(d.targets) == 0 {
 		return cli.Exit(fmt.Sprintf("no clusters found in %d reachable region(s); %d region(s) could not be listed; %s",

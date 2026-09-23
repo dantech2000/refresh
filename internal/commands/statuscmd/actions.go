@@ -48,9 +48,10 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 		// Only the default all-regions sweep skips regions closed to these
 		// credentials; a region the user asked for by name still fails.
 		sweep = gatherFleet(ctx, awsCfg, regions, opts, defaultSweep)
-		// Only a total failure (no data from any region) is fatal. The one
-		// error gets the full formatted text.
-		if len(sweep.statuses) == 0 && len(sweep.errs) > 0 {
+		// Only a total failure is fatal (exit 1): no row, and no region
+		// answered. The one error gets the full formatted text. When some
+		// data came back, the missing regions make it incomplete (exit 4).
+		if len(sweep.statuses) == 0 && sweep.answered == 0 && len(sweep.errs) > 0 {
 			return sweep.errs[0]
 		}
 		return nil
@@ -127,12 +128,15 @@ type fleetSweep struct {
 	// skipped regions were closed to these credentials in a default sweep.
 	// They are not failures.
 	skipped []string
+	// answered counts the regions that listed their clusters.
+	answered int
 }
 
 // reportSweep writes the sweep's problems to w: one line naming the skipped
 // regions, and one single-line warning per failed region (the full formatted
-// AWS error runs to 15+ lines, once per region). It fails with exit 4 when
-// every region was skipped, so an empty table is never a false pass.
+// AWS error runs to 15+ lines, once per region). It fails (exit 1) when every
+// region was skipped: nothing could be gathered, so an empty table is never a
+// false pass.
 func reportSweep(w io.Writer, regions int, s fleetSweep) error {
 	if len(s.skipped) > 0 {
 		_, _ = fmt.Fprintln(w, color.YellowString("Skipped %d region(s) not accessible to these credentials: %s (%s)",
@@ -147,8 +151,8 @@ func reportSweep(w io.Writer, regions int, s fleetSweep) error {
 		_, _ = fmt.Fprintln(w, color.YellowString("warning: %s", msg))
 	}
 	if regions > 0 && len(s.skipped) == regions {
-		return cli.Exit(fmt.Sprintf("could not list clusters in any of %d region(s): none is accessible to these credentials; %s",
-			regions, regionScopeHint), exitIncomplete)
+		return fmt.Errorf("could not list clusters in any of %d region(s): none is accessible to these credentials; %s",
+			regions, regionScopeHint)
 	}
 	return nil
 }
@@ -215,6 +219,7 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 		sweep.statuses = append(sweep.statuses, res.statuses...)
 		switch {
 		case res.err == nil:
+			sweep.answered++
 		case skipInaccessible && awserr.IsRegionInaccessible(res.err):
 			sweep.skipped = append(sweep.skipped, r)
 		default:
