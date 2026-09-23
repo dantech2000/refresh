@@ -171,7 +171,7 @@ func PromptContinueWithWarnings(ctx context.Context, warnings []string) bool {
 
 // DisplayHealthCheckStart displays the start of health check process
 func DisplayHealthCheckStart(clusterName string) {
-	Outf("\nrefresh update-ami --cluster %s\n\n", clusterName)
+	Outf("\nrefresh nodegroup update --cluster %s\n\n", clusterName)
 }
 
 // DisplayHealthCheckComplete displays completion message based on decision
