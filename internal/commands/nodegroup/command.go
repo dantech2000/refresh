@@ -44,7 +44,7 @@ grep/awk; -o json|yaml emit structured output. Use --watch to redraw on the
 --watch-interval (top-style on a terminal, appended when piped) until Ctrl+C.
 
   refresh nodegroup list my-cluster --filter amiStatus=outdated
-  refresh nodegroup list my-cluster -o plain | awk '{print $1}'
+  refresh nodegroup list my-cluster -o plain | awk -F'\t' 'NR>1 {print $1}'
   refresh nodegroup list my-cluster --watch`,
 		Flags: []cli.Flag{
 			&cli.DurationFlag{Name: "timeout", Aliases: []string{"t"}, Usage: "Operation timeout (e.g. 60s, 2m)", Value: appconfig.DefaultTimeout, Sources: cli.EnvVars("REFRESH_TIMEOUT")},
