@@ -45,7 +45,6 @@ Examples:
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout |
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
 | `--show-health, -H` | — | — | Include health mapping in table output |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
@@ -74,7 +73,6 @@ unique case-insensitive substring is resolved against the installed add-ons.
 
 | Flag | Env | Default | Description |
 |---|---|---|---|
-| `--timeout, -t duration` | `REFRESH_TIMEOUT` | `1m0s` | Operation timeout |
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
 | `--addon, -a string` | — | — | Add-on name (e.g., vpc-cni) |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |

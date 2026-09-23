@@ -372,11 +372,14 @@ func fleetClusterContext(ctx context.Context, timeout time.Duration) (context.Co
 	return context.WithTimeout(ctx, timeout)
 }
 
-// resolveUpdateRegions picks the regions to sweep for --all-clusters: explicit
-// --region wins, then REFRESH_EKS_REGIONS, else the partition's EKS regions.
-// explicit reports whether the user chose the regions (-r or the env var).
+// resolveUpdateRegions picks the regions to sweep for --all-clusters: the
+// local -r/--region wins, then REFRESH_EKS_REGIONS, else the partition's EKS
+// regions. --all-clusters is a sweep, so a global --region before the
+// subcommand only sets the home region (awsCfg.Region, and so the partition);
+// see runner.Regions. explicit reports whether the user chose the regions
+// (-r or the env var).
 func resolveUpdateRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string, explicit bool) {
-	if r := cmd.StringSlice("region"); len(r) > 0 {
+	if r := runner.Regions(cmd, true); len(r) > 0 {
 		return r, true
 	}
 	if env := appconfig.RegionsFromEnv(); len(env) > 0 {
