@@ -173,7 +173,9 @@ func (c *Checker) writeCache(cc cache) {
 	if c.cachePath == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(c.cachePath), 0o755); err != nil {
+	// cliconfig creates the same <UserConfigDir>/refresh dir 0o755; the cache
+	// file itself is 0o600.
+	if err := os.MkdirAll(filepath.Dir(c.cachePath), 0o755); err != nil { //nolint:gosec // G301: matches cliconfig's mode for the shared dir
 		return
 	}
 	b, err := json.Marshal(cc)
@@ -213,7 +215,7 @@ func compareSemver(current, latest string) (int, bool) {
 	if !ok1 || !ok2 {
 		return 0, false
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		switch {
 		case cur[i] < lat[i]:
 			return -1, true

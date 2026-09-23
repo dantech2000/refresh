@@ -148,7 +148,6 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	var details *clustersvc.ClusterDetails
-	startTime := time.Now()
 	if err := runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
 		var derr error
 		details, derr = clusterService.Describe(ctx, clusterName, options)
@@ -167,7 +166,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	if handled, err := runner.EncodeStdout(cmd.String("format"), details); handled {
 		return err
 	}
-	return clusterview.OutputClusterDetailsTable(details, time.Since(startTime))
+	return clusterview.OutputClusterDetailsTable(details)
 }
 
 func runMultiRegionListWithProgress(ctx context.Context, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, error) {

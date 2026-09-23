@@ -199,8 +199,8 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 	})
 
 	var sweep fleetSweep
-	for i, res := range results {
-		r := regions[i]
+	for i, r := range regions {
+		res := results[i]
 		if !res.ran {
 			res.err = fmt.Errorf("not queried: %w", context.Cause(ctx))
 		}

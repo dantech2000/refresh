@@ -216,10 +216,10 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 		CreatedAt:       time.Now().Add(-48 * time.Hour),
 		Health:          &health.HealthSummary{Decision: health.DecisionWarn},
 		Networking: clustersvc.NetworkingInfo{
-			VpcId:            "vpc-1",
+			VpcID:            "vpc-1",
 			VpcCidr:          "10.0.0.0/16",
-			SubnetIds:        []string{"subnet-1"},
-			SecurityGroupIds: []string{"sg-1"},
+			SubnetIDs:        []string{"subnet-1"},
+			SecurityGroupIDs: []string{"sg-1"},
 		},
 		Security: clustersvc.SecurityInfo{
 			EncryptionEnabled:  true,
@@ -232,7 +232,7 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 
 	// Human path (render design system): sectioned detail, no "Cluster
 	// Information" banner.
-	out, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, time.Second) })
+	out, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details) })
 	if err != nil {
 		t.Fatalf("table error: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 	// Plain path (-o plain): FIELD/VALUE TSV only, endpoint untruncated.
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
-	plain, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, time.Second) })
+	plain, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details) })
 	if err != nil {
 		t.Fatalf("plain error: %v", err)
 	}

@@ -1,3 +1,5 @@
+// Package ui holds the terminal output helpers: tables, trees, spinners,
+// prompts, status and health badges, and the plain (TSV) output mode.
 package ui
 
 import (

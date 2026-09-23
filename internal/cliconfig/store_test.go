@@ -92,13 +92,14 @@ func TestPathDefaultHome(t *testing.T) {
 	resetHooks(t)
 	t.Setenv("REFRESH_CONFIG_HOME", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
-	userHomeDir = func() (string, error) { return "/home/tester", nil }
+	home := filepath.FromSlash("/home/tester")
+	userHomeDir = func() (string, error) { return home, nil }
 
 	got, err := Path()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join("/home/tester", ".config", "refresh", "context.yaml"); got != want {
+	if want := filepath.Join(home, ".config", "refresh", "context.yaml"); got != want {
 		t.Fatalf("Path() = %q, want %q", got, want)
 	}
 }

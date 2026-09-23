@@ -138,10 +138,14 @@ func TestStderrColorDisabledEverywhere(t *testing.T) {
 		setup func(t *testing.T)
 	}{
 		{"no-color flag", func(t *testing.T) {
+			t.Helper()
 			SetColorDisabled(true)
 			t.Cleanup(func() { SetColorDisabled(false) })
 		}},
-		{"TERM=dumb", func(t *testing.T) { t.Setenv("TERM", "dumb") }},
+		{"TERM=dumb", func(t *testing.T) {
+			t.Helper()
+			t.Setenv("TERM", "dumb")
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("NO_COLOR", "")

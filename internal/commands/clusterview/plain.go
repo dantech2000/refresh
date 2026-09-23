@@ -67,14 +67,14 @@ func clusterDetailPlain(d *clustersvc.ClusterDetails) *ui.PlainTable {
 		t.Add("support", supportPlain(d.Support))
 	}
 	t.Add("endpoint", d.Endpoint)
-	if d.Networking.VpcId != "" {
-		vpc := d.Networking.VpcId
+	if d.Networking.VpcID != "" {
+		vpc := d.Networking.VpcID
 		if d.Networking.VpcCidr != "" {
 			vpc += " (" + d.Networking.VpcCidr + ")"
 		}
 		t.Add("vpc", vpc)
-		t.Add("subnets", strings.Join(d.Networking.SubnetIds, ","))
-		t.Add("security groups", strings.Join(d.Networking.SecurityGroupIds, ","))
+		t.Add("subnets", strings.Join(d.Networking.SubnetIDs, ","))
+		t.Add("security groups", strings.Join(d.Networking.SecurityGroupIDs, ","))
 	}
 	logging := "disabled"
 	if len(d.Security.LoggingEnabled) > 0 {
@@ -130,8 +130,8 @@ func clusterDetailPlain(d *clustersvc.ClusterDetails) *ui.PlainTable {
 
 	for _, iss := range d.HealthIssues {
 		v := iss.Message
-		if len(iss.ResourceIds) > 0 {
-			v += " [" + strings.Join(iss.ResourceIds, ", ") + "]"
+		if len(iss.ResourceIDs) > 0 {
+			v += " [" + strings.Join(iss.ResourceIDs, ", ") + "]"
 		}
 		t.Add("health issue/"+iss.Code, v)
 	}

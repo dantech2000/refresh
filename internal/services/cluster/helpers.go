@@ -14,18 +14,18 @@ import (
 )
 
 // getVpcCidr retrieves the CIDR block for a VPC
-func (s *ServiceImpl) getVpcCidr(ctx context.Context, vpcId string) (string, error) {
+func (s *ServiceImpl) getVpcCidr(ctx context.Context, vpcID string) (string, error) {
 	output, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeVpcsOutput, error) {
 		return s.ec2Client.DescribeVpcs(rc, &ec2.DescribeVpcsInput{
-			VpcIds: []string{vpcId},
+			VpcIds: []string{vpcID},
 		})
 	})
 	if err != nil {
-		return "", awsinternal.FormatAWSError(err, fmt.Sprintf("describing VPC %s", vpcId))
+		return "", awsinternal.FormatAWSError(err, fmt.Sprintf("describing VPC %s", vpcID))
 	}
 
 	if len(output.Vpcs) == 0 {
-		return "", fmt.Errorf("VPC %s not found", vpcId)
+		return "", fmt.Errorf("VPC %s not found", vpcID)
 	}
 
 	return aws.ToString(output.Vpcs[0].CidrBlock), nil

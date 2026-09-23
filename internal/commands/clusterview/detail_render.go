@@ -14,7 +14,7 @@ import (
 // clusterDetailLines builds the human `cluster describe` view as a slice of
 // lines (pure, so it is golden-testable). Sections: a name/status header,
 // OVERVIEW key/values, NODEGROUPS + ADD-ONS tables, and a HEALTH card.
-func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails, elapsed time.Duration) []string {
+func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails) []string {
 	pal := th.Pal
 
 	header := th.Bold(pal.White, d.Name) + "   " + statusToken(th, d.Status)
@@ -37,8 +37,8 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails, elapsed 
 	if d.Endpoint != "" {
 		kv = append(kv, [2]string{"endpoint", th.Paint(pal.Sky, truncateEndpoint(d.Endpoint))})
 	}
-	if d.Networking.VpcId != "" {
-		vpc := d.Networking.VpcId
+	if d.Networking.VpcID != "" {
+		vpc := d.Networking.VpcID
 		if d.Networking.VpcCidr != "" {
 			vpc += " (" + d.Networking.VpcCidr + ")"
 		}
@@ -141,8 +141,8 @@ func healthIssueLines(th *render.Theme, issues []clustersvc.HealthIssue) []strin
 			label += ": " + iss.Message
 		}
 		out = append(out, "  "+th.Token(render.Fail, label))
-		if len(iss.ResourceIds) > 0 {
-			out = append(out, "    "+th.Paint(th.Pal.Dim, strings.Join(iss.ResourceIds, ", ")))
+		if len(iss.ResourceIDs) > 0 {
+			out = append(out, "    "+th.Paint(th.Pal.Dim, strings.Join(iss.ResourceIDs, ", ")))
 		}
 	}
 	return out

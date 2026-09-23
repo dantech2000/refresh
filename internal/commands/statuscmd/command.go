@@ -3,8 +3,6 @@
 package statuscmd
 
 import (
-	"context"
-
 	"github.com/urfave/cli/v3"
 )
 
@@ -48,6 +46,6 @@ at once in each region. It sweeps min(4, --max-concurrency) regions at once.`,
 			&cli.StringFlag{Name: "sort", Usage: "Sort by field: cluster,region,version,support,stale", Value: "cluster"},
 			&cli.BoolFlag{Name: "desc", Usage: "Sort descending"},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error { return runStatus(ctx, cmd) },
+		Action: runStatus,
 	}
 }

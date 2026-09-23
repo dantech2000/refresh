@@ -182,14 +182,14 @@ func BenchmarkDynamicTable_Add(b *testing.B) {
 	table := NewDynamicTable()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		table.Add(fmt.Sprintf("Key%d", i), fmt.Sprintf("Value%d", i))
 	}
 }
 
 func BenchmarkDynamicTable_Render(b *testing.B) {
 	table := NewDynamicTable()
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		table.Add(fmt.Sprintf("Key%d", i), fmt.Sprintf("Value%d", i))
 	}
 
@@ -199,7 +199,7 @@ func BenchmarkDynamicTable_Render(b *testing.B) {
 	defer func() { os.Stdout = originalStdout }()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		table.Render()
 	}
 }

@@ -46,7 +46,7 @@ func TestShouldRetry_Classification(t *testing.T) {
 		{"access denied", &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "request timeout budget"}, false},
 		{"not found", &smithy.GenericAPIError{Code: "ResourceNotFoundException"}, false},
 		{"http 503", &awshttp.ResponseError{ResponseError: &smithyhttp.ResponseError{
-			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: 503}}, Err: errors.New("x")}}, true},
+			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusServiceUnavailable}}, Err: errors.New("x")}}, true},
 		{"dial refused", &url.Error{Op: "Post", URL: "u", Err: &net.OpError{Op: "dial", Net: "tcp",
 			Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}}, true},
 		{"connection reset", os.NewSyscallError("read", syscall.ECONNRESET), true},

@@ -121,7 +121,6 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 	var out []phase
 	for _, hop := range plan.Hops {
-		hop := hop
 		var cpSteps, addonSteps, ngSteps []Step
 		var ngNames []string
 		for _, st := range hop.Steps {

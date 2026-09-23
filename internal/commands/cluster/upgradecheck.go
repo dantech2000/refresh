@@ -46,7 +46,7 @@ Examples:
 			&cli.StringFlag{Name: "id", Usage: "Show the detail view for one insight — accepts its ID, a short ID prefix (as shown in the table), or a name substring"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error { return runUpgradeCheck(ctx, cmd) },
+		Action: runUpgradeCheck,
 	}
 }
 

@@ -85,9 +85,9 @@ func getManPageDir() string {
 		homeDir = "."
 	}
 	userDirs := []string{
-		filepath.Join(homeDir, ".local/share/man/man1"),
-		filepath.Join(homeDir, ".local/man/man1"),
-		filepath.Join(homeDir, "man/man1"),
+		filepath.Join(homeDir, ".local", "share", "man", "man1"),
+		filepath.Join(homeDir, ".local", "man", "man1"),
+		filepath.Join(homeDir, "man", "man1"),
 	}
 
 	// Check user directories first (writable without sudo)
@@ -98,7 +98,7 @@ func getManPageDir() string {
 	}
 
 	// Default to the standard user-local directory
-	return filepath.Join(homeDir, ".local/share/man/man1")
+	return filepath.Join(homeDir, ".local", "share", "man", "man1")
 }
 
 func isWritableDir(dir string) bool {

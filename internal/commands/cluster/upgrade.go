@@ -67,7 +67,7 @@ Examples:
 			&cli.DurationFlag{Name: "poll-interval", Aliases: []string{"p"}, Usage: "How often to poll in-flight updates", Value: appconfig.DefaultPollInterval},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain). json/yaml print one document: the plan with --dry-run or when blocked, else {plan, report} after the run (requires --yes)", Value: "table"},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error { return runUpgrade(ctx, cmd) },
+		Action: runUpgrade,
 	}
 }
 

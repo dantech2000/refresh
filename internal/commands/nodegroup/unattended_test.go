@@ -17,7 +17,9 @@ func exitCodeOf(err error) int {
 	if err == nil {
 		return 0
 	}
-	if ec, ok := err.(cli.ExitCoder); ok {
+	// Type-assert, not errors.As: cli.HandleExitCoder only honors an unwrapped
+	// ExitCoder, so a wrapped one would really exit 1.
+	if ec, ok := err.(cli.ExitCoder); ok { //nolint:errorlint // mirrors cli.HandleExitCoder's unwrapped check
 		return ec.ExitCode()
 	}
 	return -1

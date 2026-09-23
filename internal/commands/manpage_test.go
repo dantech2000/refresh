@@ -118,7 +118,7 @@ func TestIsWritableDirConcurrentSafe(t *testing.T) {
 
 	// Run multiple concurrent tests
 	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			result := isWritableDir(tempDir)
 			if !result {
@@ -129,7 +129,7 @@ func TestIsWritableDirConcurrentSafe(t *testing.T) {
 	}
 
 	// Wait for all goroutines to complete
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }
@@ -146,7 +146,7 @@ func TestIsInManPath_FakePathReturnsFalse(t *testing.T) {
 // isInManPath runs manpath under the command context, so a cancelled command
 // does not start it (and reports "not in MANPATH").
 func TestIsInManPath_HonorsContext(t *testing.T) {
-	out, err := exec.Command("manpath").Output()
+	out, err := exec.CommandContext(t.Context(), "manpath").Output()
 	if err != nil {
 		t.Skip("manpath not available")
 	}
@@ -172,7 +172,7 @@ func BenchmarkIsWritableDir(b *testing.B) {
 	_ = os.MkdirAll(tempDir, 0755)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		isWritableDir(tempDir)
 	}
 }
