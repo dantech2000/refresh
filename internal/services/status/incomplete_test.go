@@ -61,10 +61,15 @@ func TestListClusterStatuses_CancelledSweep(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	api := mocks.NewEKSAPI().WithCluster("any", "1.32").Build()
-	api.ListClustersFn = func(context.Context, *eks.ListClustersInput, ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
+	b := mocks.NewEKSAPI()
+	for _, name := range names {
+		b.WithCluster(name, "1.32")
+	}
+	api := b.Build()
+	list := api.ListClustersFn
+	api.ListClustersFn = func(ctx context.Context, in *eks.ListClustersInput, opts ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
 		cancel() // the sweep times out right after listing
-		return &eks.ListClustersOutput{Clusters: names}, nil
+		return list(ctx, in, opts...)
 	}
 	svc := newTestService(nil, &fakeNodegroups{}, &fakeAddons{})
 	svc.clusterAPI = api

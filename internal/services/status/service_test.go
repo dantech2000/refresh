@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -28,19 +29,31 @@ func (f *fakeNodegroups) ListWithFailures(_ context.Context, cluster string, _ n
 type fakeAddons struct {
 	installed map[string][]addons.AddonSummary
 	available map[string][]addons.AddonVersionInfo
+	// versionErr makes GetAvailableVersions fail for an addon with an API
+	// error (throttling, AccessDenied, network), as the real service does
+	// once its retries give up.
+	versionErr map[string]error
 }
 
 func (f *fakeAddons) List(_ context.Context, cluster string, _ addons.ListOptions) ([]addons.AddonSummary, error) {
 	return f.installed[cluster], nil
 }
 
-// GetAvailableVersions mirrors the real service: no versions is an
-// ErrNoVersionsFound error, never an empty slice with a nil error.
+// GetAvailableVersions mirrors the real service: an API failure is returned
+// wrapped, no versions is an ErrNoVersionsFound error (never an empty slice
+// with a nil error), and versions come back sorted newest first whatever
+// order the fixture lists them in.
 func (f *fakeAddons) GetAvailableVersions(_ context.Context, addonName, _ string) ([]addons.AddonVersionInfo, error) {
-	v := f.available[addonName]
+	if err := f.versionErr[addonName]; err != nil {
+		return nil, fmt.Errorf("describing addon versions: %w", err)
+	}
+	v := slices.Clone(f.available[addonName])
 	if len(v) == 0 {
 		return nil, fmt.Errorf("%w for addon %s", addons.ErrNoVersionsFound, addonName)
 	}
+	slices.SortStableFunc(v, func(a, b addons.AddonVersionInfo) int {
+		return addons.CompareVersions(b.Version, a.Version)
+	})
 	return v, nil
 }
 

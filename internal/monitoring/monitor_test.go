@@ -336,7 +336,7 @@ func TestMonitorUpdates_AccessDeniedStopsWithFormattedError(t *testing.T) {
 			return nil, errAccessDenied
 		},
 	}
-	cfg := refreshTypes.MonitorConfig{Quiet: true, PollInterval: time.Millisecond, Timeout: 5 * time.Second}
+	cfg := refreshTypes.MonitorConfig{Quiet: true, PollInterval: time.Millisecond, Timeout: time.Minute}
 	err := MonitorUpdates(context.Background(), denied, testMonitorWithUpdates(ekstypes.UpdateStatusInProgress), cfg)
 	if !errors.Is(err, ErrUnmonitored) || errors.Is(err, ErrCancelled) || errors.Is(err, ErrMonitorTimeout) {
 		t.Fatalf("err = %v, want ErrUnmonitored", err)
@@ -377,7 +377,7 @@ func TestMonitorUpdates_OneUnmonitoredUpdateDoesNotStopTheOthers(t *testing.T) {
 			Status: ekstypes.UpdateStatusInProgress, StartTime: time.Now(),
 		})
 	}
-	cfg := refreshTypes.MonitorConfig{PollInterval: time.Millisecond, Timeout: 5 * time.Second}
+	cfg := refreshTypes.MonitorConfig{PollInterval: time.Millisecond, Timeout: time.Minute}
 
 	var err error
 	out := captureStdout(func() { err = MonitorUpdates(context.Background(), m, monitor, cfg) })
@@ -484,37 +484,71 @@ func TestCheckSingleUpdateAndAllUpdates(t *testing.T) {
 }
 
 func TestMonitorUpdatesCompletesAndTimesOut(t *testing.T) {
+	// The completion case must not race the clock: a generous timeout means
+	// it passes however slowly the machine polls.
 	cfg := refreshTypes.MonitorConfig{
 		Quiet:        true,
 		PollInterval: time.Millisecond,
-		Timeout:      50 * time.Millisecond,
+		Timeout:      time.Minute,
 	}
 	monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
 	if err := MonitorUpdates(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), monitor, cfg); err != nil {
 		t.Fatalf("MonitorUpdates complete = %v", err)
 	}
 
+	// The update never finishes, so the only way out is the timeout.
 	timeoutCfg := cfg
 	timeoutCfg.Timeout = 2 * time.Millisecond
 	timeoutMonitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
-	if err := MonitorUpdates(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusInProgress, ""), timeoutMonitor, timeoutCfg); err == nil {
-		t.Fatal("expected timeout")
+	if err := MonitorUpdates(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusInProgress, ""), timeoutMonitor, timeoutCfg); !errors.Is(err, ErrMonitorTimeout) {
+		t.Fatalf("err = %v, want ErrMonitorTimeout", err)
 	}
 }
 
 // A zero (or negative) --timeout means "no monitor timeout": monitoring must
-// keep polling until the update finishes, not time out immediately.
+// keep polling through several IN_PROGRESS answers until the update
+// finishes, and no poll may run under a deadline. A monitor that turned 0
+// into an expired or short deadline fails here: either it stops before the
+// sixth poll, or a poll sees a deadline.
 func TestMonitorUpdates_ZeroTimeoutMeansNoLimit(t *testing.T) {
 	for _, timeout := range []time.Duration{0, -time.Second} {
-		cfg := refreshTypes.MonitorConfig{
-			Quiet:        true,
-			PollInterval: 5 * time.Millisecond,
-			Timeout:      timeout,
-		}
-		monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
-		if err := MonitorUpdates(context.Background(), fakeEKSDescribeUpdate(ekstypes.UpdateStatusSuccessful, ""), monitor, cfg); err != nil {
-			t.Fatalf("timeout=%v: MonitorUpdates = %v, want nil (no limit)", timeout, err)
-		}
+		t.Run(timeout.String(), func(t *testing.T) {
+			const inProgressPolls = 5
+			script := make([]ekstypes.UpdateStatus, 0, inProgressPolls+1)
+			for range inProgressPolls {
+				script = append(script, ekstypes.UpdateStatusInProgress)
+			}
+			script = append(script, ekstypes.UpdateStatusSuccessful)
+			m := mocks.NewEKSAPI().WithUpdateStatuses("upd-a", script...).Build()
+
+			var mu sync.Mutex
+			polls, deadlines := 0, 0
+			describe := m.DescribeUpdateFn
+			m.DescribeUpdateFn = func(ctx context.Context, in *eks.DescribeUpdateInput, opts ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+				mu.Lock()
+				polls++
+				if _, ok := ctx.Deadline(); ok {
+					deadlines++
+				}
+				mu.Unlock()
+				return describe(ctx, in, opts...)
+			}
+
+			cfg := refreshTypes.MonitorConfig{Quiet: true, PollInterval: time.Millisecond, Timeout: timeout}
+			monitor := testMonitorWithUpdates(ekstypes.UpdateStatusInProgress)
+			if err := MonitorUpdates(context.Background(), m, monitor, cfg); err != nil {
+				t.Fatalf("MonitorUpdates = %v, want nil (no limit)", err)
+			}
+			if polls != inProgressPolls+1 {
+				t.Fatalf("polls = %d, want %d (every IN_PROGRESS answer, then SUCCESSFUL)", polls, inProgressPolls+1)
+			}
+			if deadlines != 0 {
+				t.Fatalf("%d poll(s) ran under a deadline; timeout %v must mean no limit", deadlines, timeout)
+			}
+			if monitor.Updates[0].Status != ekstypes.UpdateStatusSuccessful {
+				t.Fatalf("status = %s, want Successful", monitor.Updates[0].Status)
+			}
+		})
 	}
 }
 

@@ -37,6 +37,13 @@ type EKSAPI struct {
 	ListInsightsFn            func(ctx context.Context, in *eks.ListInsightsInput, optFns ...func(*eks.Options)) (*eks.ListInsightsOutput, error)
 	DescribeInsightFn         func(ctx context.Context, in *eks.DescribeInsightInput, optFns ...func(*eks.Options)) (*eks.DescribeInsightOutput, error)
 
+	// PageSize, when > 0, makes every list call (ListClusters, ListAddons,
+	// ListNodegroups, ListInsights, DescribeAddonVersions) return at most
+	// PageSize items per page and a NextToken for the rest, the way the real
+	// API pages. The Fn still returns the full result; the mock does the
+	// slicing, so Fn fields set after Build are paged too. 0 means no paging.
+	PageSize int
+
 	// mu guards Calls: services fan out describe calls concurrently, so the
 	// counters must be safe to increment from multiple goroutines. Read them
 	// only after the operation under test has returned.
@@ -66,7 +73,16 @@ func (m *EKSAPI) ListAddons(ctx context.Context, in *eks.ListAddonsInput, optFns
 	if m.ListAddonsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListAddons (cluster=%s)", ptrStr(in.ClusterName)))
 	}
-	return m.ListAddonsFn(ctx, in, optFns...)
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
+		return m.ListAddonsFn(ctx, in, optFns...)
+	}
+	full := *in
+	full.NextToken = nil
+	out, err := m.ListAddonsFn(ctx, &full, optFns...)
+	if err != nil || out == nil {
+		return out, err
+	}
+	return m.pageListAddons(in, out)
 }
 
 func (m *EKSAPI) DescribeAddon(ctx context.Context, in *eks.DescribeAddonInput, optFns ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
@@ -82,7 +98,16 @@ func (m *EKSAPI) DescribeAddonVersions(ctx context.Context, in *eks.DescribeAddo
 	if m.DescribeAddonVersionsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeAddonVersions (addon=%s)", ptrStr(in.AddonName)))
 	}
-	return m.DescribeAddonVersionsFn(ctx, in, optFns...)
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
+		return m.DescribeAddonVersionsFn(ctx, in, optFns...)
+	}
+	full := *in
+	full.NextToken = nil
+	out, err := m.DescribeAddonVersionsFn(ctx, &full, optFns...)
+	if err != nil || out == nil {
+		return out, err
+	}
+	return m.pageDescribeAddonVersions(in, out)
 }
 
 func (m *EKSAPI) UpdateAddon(ctx context.Context, in *eks.UpdateAddonInput, optFns ...func(*eks.Options)) (*eks.UpdateAddonOutput, error) {
@@ -106,7 +131,16 @@ func (m *EKSAPI) ListNodegroups(ctx context.Context, in *eks.ListNodegroupsInput
 	if m.ListNodegroupsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListNodegroups (cluster=%s)", ptrStr(in.ClusterName)))
 	}
-	return m.ListNodegroupsFn(ctx, in, optFns...)
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
+		return m.ListNodegroupsFn(ctx, in, optFns...)
+	}
+	full := *in
+	full.NextToken = nil
+	out, err := m.ListNodegroupsFn(ctx, &full, optFns...)
+	if err != nil || out == nil {
+		return out, err
+	}
+	return m.pageListNodegroups(in, out)
 }
 
 func (m *EKSAPI) DescribeNodegroup(ctx context.Context, in *eks.DescribeNodegroupInput, optFns ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
@@ -130,7 +164,16 @@ func (m *EKSAPI) ListClusters(ctx context.Context, in *eks.ListClustersInput, op
 	if m.ListClustersFn == nil {
 		panic("mocks.EKSAPI: unexpected call to ListClusters")
 	}
-	return m.ListClustersFn(ctx, in, optFns...)
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
+		return m.ListClustersFn(ctx, in, optFns...)
+	}
+	full := *in
+	full.NextToken = nil
+	out, err := m.ListClustersFn(ctx, &full, optFns...)
+	if err != nil || out == nil {
+		return out, err
+	}
+	return m.pageListClusters(in, out)
 }
 
 func (m *EKSAPI) UpdateClusterVersion(ctx context.Context, in *eks.UpdateClusterVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateClusterVersionOutput, error) {
@@ -170,7 +213,16 @@ func (m *EKSAPI) ListInsights(ctx context.Context, in *eks.ListInsightsInput, op
 	if m.ListInsightsFn == nil {
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListInsights (cluster=%s)", ptrStr(in.ClusterName)))
 	}
-	return m.ListInsightsFn(ctx, in, optFns...)
+	if m.PageSize <= 0 || !isMockPageToken(in.NextToken) {
+		return m.ListInsightsFn(ctx, in, optFns...)
+	}
+	full := *in
+	full.NextToken = nil
+	out, err := m.ListInsightsFn(ctx, &full, optFns...)
+	if err != nil || out == nil {
+		return out, err
+	}
+	return m.pageListInsights(in, out)
 }
 
 func (m *EKSAPI) DescribeInsight(ctx context.Context, in *eks.DescribeInsightInput, optFns ...func(*eks.Options)) (*eks.DescribeInsightOutput, error) {

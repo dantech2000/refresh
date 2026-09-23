@@ -10,6 +10,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
+
+	"github.com/dantech2000/refresh/internal/mocks"
 )
 
 func TestNodegroupK8sVersion(t *testing.T) {
@@ -64,7 +66,7 @@ func TestLatestAMICache_KeysByVersionAndTypeAndDedupesConcurrentLookups(t *testi
 // A failed lookup is returned to the caller but not memoized: the next Get
 // looks it up again, and a later success is then cached.
 func TestLatestAMICache_DoesNotCacheFailures(t *testing.T) {
-	errThrottled := errors.New("ThrottlingException: rate exceeded")
+	errThrottled := mocks.Throttling()
 	var calls atomic.Int32
 	cache := NewLatestAMICache(func(context.Context, string, types.AMITypes) (string, error) {
 		if calls.Add(1) == 1 {
@@ -89,7 +91,7 @@ func TestLatestAMICache_DoesNotCacheFailures(t *testing.T) {
 
 // Waiters on an in-flight lookup share its result, including its error.
 func TestLatestAMICache_ConcurrentWaitersShareFailure(t *testing.T) {
-	errDenied := errors.New("AccessDeniedException")
+	errDenied := mocks.AccessDenied()
 	release := make(chan struct{})
 	var calls atomic.Int32
 	cache := NewLatestAMICache(func(context.Context, string, types.AMITypes) (string, error) {

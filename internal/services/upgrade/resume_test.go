@@ -194,7 +194,7 @@ func TestUpgradeNodegroups_AttachesToInFlightRoll(t *testing.T) {
 			m := mocks.NewEKSAPI().
 				WithCluster("prod-east", "1.32").
 				WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
-				WithDescribeUpdate(ekstypes.UpdateStatusSuccessful).
+				WithUpdateStatuses("u-workers-a", ekstypes.UpdateStatusInProgress, ekstypes.UpdateStatusSuccessful).
 				Build()
 			var mu sync.Mutex
 			describes := 0

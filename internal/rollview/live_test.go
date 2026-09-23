@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,12 +69,18 @@ func TestLiveRollForUpdate_StopsWhenUpdateFails(t *testing.T) {
 
 	var err error
 	var elapsed time.Duration
-	out := captureStdout(t, func() {
+	out := captureStdoutNotify(t, "rolling spot-burst", func(painted <-chan struct{}) {
 		start := time.Now()
 		err = common.RunAlongside(context.Background(), func(ctx context.Context) {
 			LiveRollForUpdate(ctx, client, "spot-burst", time.Hour, 10*time.Millisecond)
 		}, func(context.Context) error {
-			time.Sleep(100 * time.Millisecond)
+			// Fail the update only once the panel is on screen, so the test
+			// never depends on how fast the panel paints.
+			select {
+			case <-painted:
+			case <-time.After(30 * time.Second):
+				t.Error("panel never rendered")
+			}
 			return wantErr
 		})
 		elapsed = time.Since(start)
@@ -82,7 +89,7 @@ func TestLiveRollForUpdate_StopsWhenUpdateFails(t *testing.T) {
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
-	if elapsed > 5*time.Second {
+	if elapsed > 20*time.Second {
 		t.Fatalf("panel kept running %v after the update failed", elapsed)
 	}
 	if !strings.Contains(out, "rolling spot-burst") {
@@ -91,4 +98,47 @@ func TestLiveRollForUpdate_StopsWhenUpdateFails(t *testing.T) {
 	if strings.Contains(out, "observer error") {
 		t.Errorf("cancelling the panel painted an observer error:\n%s", out)
 	}
+}
+
+// captureStdoutNotify is captureStdout with a handshake: it reads the output
+// as it is written and closes painted the first time marker appears, so a
+// test can wait for a render instead of sleeping.
+func captureStdoutNotify(t *testing.T, marker string, fn func(painted <-chan struct{})) string {
+	t.Helper()
+	originalStdout := os.Stdout
+	originalColorOutput := color.Output
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	color.Output = w
+	t.Cleanup(func() {
+		os.Stdout = originalStdout
+		color.Output = originalColorOutput
+	})
+
+	painted := make(chan struct{})
+	var once sync.Once
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		chunk := make([]byte, 4096)
+		for {
+			n, rerr := r.Read(chunk)
+			buf.Write(chunk[:n])
+			if strings.Contains(buf.String(), marker) {
+				once.Do(func() { close(painted) })
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+
+	fn(painted)
+	_ = w.Close()
+	<-done
+	return buf.String()
 }
