@@ -158,10 +158,18 @@ func (s *Service) waitForUpdate(ctx context.Context, in *eks.DescribeUpdateInput
 				return s.eksClient.DescribeUpdate(rc, in)
 			})
 			if err != nil {
-				// Transient describe failures shouldn't kill a long-running
-				// upgrade watch; report and keep polling.
-				progress("warning: checking %s: %v", what, err)
-				continue
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				// Transient describe failures (throttling, 5xx, network)
+				// shouldn't kill a long-running upgrade watch; report and
+				// keep polling. Permanent ones (e.g. AccessDenied) never
+				// heal, so fail fast instead of warning for hours.
+				if common.IsRetryable(err) {
+					progress("warning: checking %s: %v", what, err)
+					continue
+				}
+				return awsinternal.FormatAWSError(err, fmt.Sprintf("checking %s", what))
 			}
 			if out.Update == nil {
 				continue

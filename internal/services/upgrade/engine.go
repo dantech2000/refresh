@@ -47,7 +47,11 @@ type Report struct {
 type phase struct {
 	label string
 	steps []Step // the plan steps this phase covers (pending ones only)
-	run   func(ctx context.Context) error
+	// precheck, when set, is a read-only gate evaluated against live state
+	// before the confirmation prompt; an error stops the run without
+	// starting the phase.
+	precheck func(ctx context.Context) error
+	run      func(ctx context.Context) error
 }
 
 // Execute runs the plan: hops in order, phases (control plane → addons →
@@ -73,6 +77,17 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 	for i, ph := range phases {
 		if len(ph.steps) == 0 {
 			continue // nothing pending in this phase
+		}
+
+		if ph.precheck != nil {
+			if err := ph.precheck(ctx); err != nil {
+				report.FailedAt = ph.label
+				report.Remaining = pendingLabels(phases[i+1:])
+				if ctx.Err() != nil {
+					return report, fmt.Errorf("interrupted before %s (rerun the same command to resume): %w", ph.label, err)
+				}
+				return report, fmt.Errorf("%s not started: %w", ph.label, err)
+			}
 		}
 
 		if !opts.Yes {
@@ -125,6 +140,13 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 		out = append(out, phase{
 			label: fmt.Sprintf("control plane %s → %s", hop.From, hop.To),
 			steps: cpSteps,
+			// Plan-time readiness only saw the cluster as it was then (and
+			// EKS insights only cover the next minor), so every hop is
+			// re-gated against live state right before its control plane
+			// moves.
+			precheck: func(ctx context.Context) error {
+				return s.checkHopReadiness(ctx, plan.ClusterName, hop.To, opts.Progress)
+			},
 			run: func(ctx context.Context) error {
 				return s.UpgradeControlPlane(ctx, plan.ClusterName, hop.To, opts.Progress)
 			},
