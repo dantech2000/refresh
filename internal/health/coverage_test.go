@@ -169,39 +169,79 @@ func TestListPodDisruptionBudgets_NilClient(t *testing.T) {
 	}
 }
 
-func TestListPodDisruptionBudgets_SkipsSystemNamespaces(t *testing.T) {
-	client := fakek8s.NewSimpleClientset(
-		pdbWithStatus("my-app", "frontend", 2, 5, 4, 5),
-		pdbWithStatus("kube-system", "coredns", 1, 2, 1, 2),
-		pdbWithStatus("kube-public", "x", 0, 0, 0, 0),
-		pdbWithStatus("kube-node-lease", "y", 0, 0, 0, 0),
-	)
+func TestListPodDisruptionBudgets_CopiesStatus(t *testing.T) {
+	client := fakek8s.NewSimpleClientset(pdbWithStatus("my-app", "frontend", 2, 5, 4, 5))
 	hc := NewChecker(nil, client, nil, nil)
 	pdbs, err := hc.ListPodDisruptionBudgets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(pdbs) != 1 {
-		t.Fatalf("expected 1 user-namespace PDB, got %d: %+v", len(pdbs), pdbs)
+		t.Fatalf("expected 1 PDB, got %d: %+v", len(pdbs), pdbs)
 	}
 	got := pdbs[0]
 	if got.Namespace != "my-app" || got.Name != "frontend" {
 		t.Errorf("got %s/%s, want my-app/frontend", got.Namespace, got.Name)
 	}
-	if got.DisruptionsAllowed != 2 || got.CurrentHealthy != 5 || got.DesiredHealthy != 4 || got.ExpectedPods != 5 {
+	if got.DisruptionsAllowed != 2 || got.CurrentHealthy != 5 || got.DesiredHealthy != 4 || got.ExpectedPods != 5 || got.StatusNotSynced {
 		t.Errorf("status fields not copied through: %+v", got)
 	}
 }
 
-func TestListPodDisruptionBudgets_EmptyWhenNoUserPDBs(t *testing.T) {
-	client := fakek8s.NewSimpleClientset(pdbWithStatus("kube-system", "coredns", 1, 2, 1, 2))
+func TestListPodDisruptionBudgets_IncludesSystemNamespaces(t *testing.T) {
+	// Regression: the scale dry-run said "nothing constrains this scale-down"
+	// while pre-flight reported kube-system/coredns as a drain blocker.
+	client := fakek8s.NewSimpleClientset(
+		pdbWithStatus("my-app", "frontend", 2, 5, 4, 5),
+		pdbWithStatus("kube-system", "coredns", 0, 2, 2, 2),
+	)
 	hc := NewChecker(nil, client, nil, nil)
 	pdbs, err := hc.ListPodDisruptionBudgets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(pdbs) != 0 {
-		t.Errorf("expected 0 user PDBs, got %d", len(pdbs))
+	var coredns *PDBInfo
+	for i := range pdbs {
+		if pdbs[i].Namespace == "kube-system" && pdbs[i].Name == "coredns" {
+			coredns = &pdbs[i]
+		}
+	}
+	if len(pdbs) != 2 || coredns == nil {
+		t.Fatalf("expected my-app/frontend and kube-system/coredns, got %+v", pdbs)
+	}
+	if !coredns.AtRisk() {
+		t.Errorf("kube-system/coredns should be at risk: %+v", *coredns)
+	}
+	if r := hc.CheckPodDisruptionBudgets(context.Background()); !hasDetail(r.Details, "kube-system/coredns") {
+		t.Errorf("pre-flight and the list should agree on coredns, got %v", r.Details)
+	}
+}
+
+func TestListPodDisruptionBudgets_MarksUnsyncedStatus(t *testing.T) {
+	stale := pdbWithStatus("my-app", "stale", 0, 0, 0, 0)
+	stale.Generation, stale.Status.ObservedGeneration = 3, 2
+	failed := pdbWithStatus("my-app", "failed", 0, 0, 0, 0)
+	failed.Status.Conditions = []metav1.Condition{{
+		Type: policyv1.DisruptionAllowedCondition, Status: metav1.ConditionFalse, Reason: policyv1.SyncFailedReason,
+	}}
+	ok := pdbWithStatus("my-app", "ok", 0, 0, 0, 0)
+	ok.Status.Conditions = []metav1.Condition{{
+		Type: policyv1.DisruptionAllowedCondition, Status: metav1.ConditionFalse, Reason: policyv1.InsufficientPodsReason,
+	}}
+	client := fakek8s.NewSimpleClientset(stale, failed, ok)
+	hc := NewChecker(nil, client, nil, nil)
+	pdbs, err := hc.ListPodDisruptionBudgets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]bool{"stale": true, "failed": true, "ok": false}
+	for _, p := range pdbs {
+		if p.StatusNotSynced != want[p.Name] {
+			t.Errorf("%s: StatusNotSynced = %v, want %v", p.Name, p.StatusNotSynced, want[p.Name])
+		}
+		if p.AtRisk() != want[p.Name] {
+			t.Errorf("%s: AtRisk() = %v, want %v", p.Name, p.AtRisk(), want[p.Name])
+		}
 	}
 }
 
@@ -342,22 +382,26 @@ func TestNodeMetricsFromSnapshot_EmptyErrors(t *testing.T) {
 
 func TestPDBInfo_AtRisk(t *testing.T) {
 	cases := []struct {
-		allowed  int32
-		expected int32
-		want     bool
+		allowed   int32
+		expected  int32
+		notSynced bool
+		want      bool
 	}{
-		{-1, 3, true},
-		{0, 3, true},
-		{1, 3, false},
-		{5, 5, false},
-		// A PDB that matches no pods blocks nothing.
-		{0, 0, false},
-		{-1, 0, false},
+		{-1, 3, false, true},
+		{0, 3, false, true},
+		{1, 3, false, false},
+		{5, 5, false, false},
+		// A synced PDB that matches no pods blocks nothing.
+		{0, 0, false, false},
+		{-1, 0, false, false},
+		// An unsynced PDB's ExpectedPods of 0 does not mean "no pods".
+		{0, 0, true, true},
+		{1, 0, true, false},
 	}
 	for _, tc := range cases {
-		p := PDBInfo{DisruptionsAllowed: tc.allowed, ExpectedPods: tc.expected}
+		p := PDBInfo{DisruptionsAllowed: tc.allowed, ExpectedPods: tc.expected, StatusNotSynced: tc.notSynced}
 		if got := p.AtRisk(); got != tc.want {
-			t.Errorf("AtRisk(allowed=%d, expected=%d) = %v, want %v", tc.allowed, tc.expected, got, tc.want)
+			t.Errorf("AtRisk(allowed=%d, expected=%d, notSynced=%v) = %v, want %v", tc.allowed, tc.expected, tc.notSynced, got, tc.want)
 		}
 	}
 }

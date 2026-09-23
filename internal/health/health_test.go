@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -15,6 +18,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	fakek8s "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/dantech2000/refresh/internal/mocks"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -429,10 +434,15 @@ func ngNode(name, nodegroup string) *corev1.Node {
 	}}
 }
 
+// appPod returns a Running, Ready pod labeled app=<app> on node.
 func appPod(namespace, name, app, node string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, Labels: map[string]string{"app": app}},
 		Spec:       corev1.PodSpec{NodeName: node},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
 	}
 }
 
@@ -498,6 +508,296 @@ func TestCheckPodDisruptionBudgets_NamespaceListFailureKeepsBlockers(t *testing.
 	}
 	if !hasDetail(result.Details, "my-app/web-pdb") {
 		t.Errorf("blocker details should survive a namespace list failure, got %v", result.Details)
+	}
+	if !hasDetail(result.Details, "Failed to list namespaces: forbidden") {
+		t.Errorf("the namespace list error should survive the blocker message, got %v", result.Details)
+	}
+}
+
+// syncFailedPDB returns a PDB for app=<app> whose status the disruption
+// controller could not compute (bare pods, or a custom resource without a
+// /scale subresource): 0 disruptions allowed, 0 expected pods, and the
+// DisruptionAllowed condition False with reason SyncFailed.
+func syncFailedPDB(namespace, name, app string) *policyv1.PodDisruptionBudget {
+	p := pdb(namespace, name, app)
+	p.Generation, p.Status.ObservedGeneration = 1, 1
+	p.Status.Conditions = []metav1.Condition{{
+		Type:   policyv1.DisruptionAllowedCondition,
+		Status: metav1.ConditionFalse,
+		Reason: policyv1.SyncFailedReason,
+	}}
+	return p
+}
+
+func TestCheckPodDisruptionBudgets_SyncFailedPDBOnTarget(t *testing.T) {
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		ngNode("n1", "ng-a"),
+		appPod("my-app", "op-0", "op", "n1"),
+		syncFailedPDB("my-app", "op-pdb", "op"),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusWarn || !strings.Contains(result.Message, "stall on eviction") {
+		t.Errorf("SyncFailed PDB on the target: status = %s msg = %q, want scoped WARN", result.Status, result.Message)
+	}
+	if !hasDetail(result.Details, "my-app/op-pdb (PDB status not synced") {
+		t.Errorf("details should name op-pdb as not synced, got %v", result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_SyncFailedPDBOffTarget(t *testing.T) {
+	// The SyncFailed PDB's pods run on ng-b only; rolling ng-a is clear.
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		ngNode("n1", "ng-a"),
+		ngNode("n2", "ng-b"),
+		appPod("my-app", "op-0", "op", "n2"),
+		syncFailedPDB("my-app", "op-pdb", "op"),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if hasDetail(result.Details, "op-pdb") {
+		t.Errorf("op-pdb has no pods on ng-a and must not be reported, got %v", result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_UnobservedPDBOnTarget(t *testing.T) {
+	// The controller has not yet observed generation 2, so the status is
+	// stale. The eviction API refuses evictions until it catches up.
+	p := pdbAllowing("my-app", "web-pdb", "web", 0, 0)
+	p.Generation, p.Status.ObservedGeneration = 2, 1
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		ngNode("n1", "ng-a"),
+		appPod("my-app", "web-1", "web", "n1"),
+		p,
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if !hasDetail(result.Details, "my-app/web-pdb (PDB status not synced") {
+		t.Errorf("unobserved PDB on the target should be a blocker, got %v", result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_SyncFailedPDBUnscoped(t *testing.T) {
+	// Without targets there is no pod lookup, so a SyncFailed PDB that allows
+	// 0 disruptions is reported: its ExpectedPods of 0 means nothing.
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		syncFailedPDB("my-app", "op-pdb", "op"),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if !strings.Contains(result.Message, "may block a drain") || !hasDetail(result.Details, "my-app/op-pdb") {
+		t.Errorf("unscoped SyncFailed PDB: msg = %q details = %v", result.Message, result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_SyncedEmptyPDBScopedNotABlocker(t *testing.T) {
+	// A synced PDB with ExpectedPods == 0 matches no pods, even if a pod with
+	// its labels is on the target (e.g. created after the last sync).
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		ngNode("n1", "ng-a"),
+		appPod("my-app", "web-1", "web", "n1"),
+		pdbAllowing("my-app", "web-pdb", "web", 0, 0),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if hasDetail(result.Details, "web-pdb") {
+		t.Errorf("synced empty PDB must not be reported, got %v", result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_PodsEvictionIgnores(t *testing.T) {
+	// Every web pod on the target is one the eviction API lets go without
+	// consulting the PDB, so web-pdb does not stall the roll.
+	now := metav1.Now()
+	succeeded := appPod("my-app", "web-done", "web", "n1")
+	succeeded.Status.Phase = corev1.PodSucceeded
+	failed := appPod("my-app", "web-failed", "web", "n1")
+	failed.Status.Phase = corev1.PodFailed
+	pending := appPod("my-app", "web-pending", "web", "n1")
+	pending.Status.Phase = corev1.PodPending
+	deleting := appPod("my-app", "web-deleting", "web", "n1")
+	deleting.DeletionTimestamp = &now
+	deleting.Finalizers = []string{"example.com/hold"}
+
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		ngNode("n1", "ng-a"),
+		ngNode("n2", "ng-b"),
+		succeeded, failed, pending, deleting,
+		appPod("my-app", "web-1", "web", "n2"),
+		pdbAllowing("my-app", "web-pdb", "web", 0, 1),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if hasDetail(result.Details, "web-pdb") {
+		t.Errorf("false positive: no pod on the target is gated by web-pdb, got %v", result.Details)
+	}
+}
+
+func TestEvictionGatedByPDB_NotReadyPods(t *testing.T) {
+	alwaysAllow := policyv1.AlwaysAllow
+	ifHealthy := policyv1.IfHealthyBudget
+	notReady := *appPod("my-app", "web-1", "web", "n1")
+	notReady.Status.Conditions[0].Status = corev1.ConditionFalse
+	ready := *appPod("my-app", "web-2", "web", "n1")
+
+	cases := []struct {
+		name   string
+		pod    corev1.Pod
+		policy *policyv1.UnhealthyPodEvictionPolicyType
+		// healthy, desired are the PDB's CurrentHealthy and DesiredHealthy.
+		healthy, desired int32
+		want             bool
+	}{
+		{"ready pod is gated", ready, &alwaysAllow, 1, 2, true},
+		{"not ready, AlwaysAllow", notReady, &alwaysAllow, 1, 2, false},
+		{"not ready, budget not met", notReady, nil, 1, 2, true},
+		{"not ready, IfHealthyBudget, budget not met", notReady, &ifHealthy, 1, 2, true},
+		{"not ready, budget met", notReady, nil, 2, 2, false},
+		{"not ready, no desired count", notReady, nil, 0, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := pdbAllowing("my-app", "web-pdb", "web", 0, 2)
+			p.Spec.UnhealthyPodEvictionPolicy = tc.policy
+			p.Status.CurrentHealthy, p.Status.DesiredHealthy = tc.healthy, tc.desired
+			if got := evictionGatedByPDB(tc.pod, *p); got != tc.want {
+				t.Errorf("evictionGatedByPDB() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckPodDisruptionBudgets_NotReadyPodAlwaysAllow(t *testing.T) {
+	// The only web pod on the target is not Ready and the PDB lets unhealthy
+	// pods go, so rolling ng-a is clear.
+	alwaysAllow := policyv1.AlwaysAllow
+	pod := appPod("my-app", "web-1", "web", "n1")
+	pod.Status.Conditions[0].Status = corev1.ConditionFalse
+	p := pdbAllowing("my-app", "web-pdb", "web", 0, 2)
+	p.Status.CurrentHealthy = 1
+	p.Spec.UnhealthyPodEvictionPolicy = &alwaysAllow
+	client := fakek8s.NewSimpleClientset(userNamespace("my-app"), ngNode("n1", "ng-a"), pod, p)
+	hc := NewChecker(nil, client, nil, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if hasDetail(result.Details, "web-pdb") {
+		t.Errorf("AlwaysAllow PDB must not block a not-Ready pod, got %v", result.Details)
+	}
+}
+
+// desiredSizeDescriber answers DescribeNodegroup with the given desired size
+// per nodegroup, or with err when it is set.
+func desiredSizeDescriber(sizes map[string]int32, err error) *mocks.EKSAPI {
+	api := mocks.NewEKSAPI().Build()
+	api.DescribeNodegroupFn = func(_ context.Context, in *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+		if err != nil {
+			return nil, err
+		}
+		size, ok := sizes[aws.ToString(in.NodegroupName)]
+		if !ok {
+			return nil, errors.New("ResourceNotFoundException: no such nodegroup")
+		}
+		return &eks.DescribeNodegroupOutput{Nodegroup: &ekstypes.Nodegroup{
+			NodegroupName: in.NodegroupName,
+			ScalingConfig: &ekstypes.NodegroupScalingConfig{DesiredSize: aws.Int32(size)},
+		}}, nil
+	}
+	return api
+}
+
+// noTargetNodesClient has one unlabelled node running a pod that an unrelated
+// zero-disruption PDB covers; no node belongs to ng-a.
+func noTargetNodesClient() *fakek8s.Clientset {
+	return fakek8s.NewSimpleClientset(
+		userNamespace("kube-system"),
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},
+		appPod("kube-system", "coredns-1", "coredns", "n1"),
+		pdbAllowing("kube-system", "coredns", "coredns", 0, 1),
+	)
+}
+
+func TestCheckPodDisruptionBudgets_TargetScaledToZeroHasNoBlockers(t *testing.T) {
+	// Regression: a nodegroup scaled to 0 has nothing to drain, so an
+	// unrelated zero-disruption PDB elsewhere must not warn.
+	hc := NewChecker(nil, noTargetNodesClient(), nil, nil)
+	hc.ngDescriber = desiredSizeDescriber(map[string]int32{"ng-a": 0, "ng-b": 0}, nil)
+	hc.SetTargetNodegroups([]string{"ng-a", "ng-b"})
+	result := hc.checkPodDisruptionBudgets(context.Background(), "prod")
+	if result.Status != StatusPass {
+		t.Errorf("scaled-to-0 targets: status = %s msg = %q, want PASS", result.Status, result.Message)
+	}
+	if hasDetail(result.Details, "coredns") {
+		t.Errorf("coredns must not be reported for an empty target, got %v", result.Details)
+	}
+	if !hasDetail(result.Details, "have no nodes") {
+		t.Errorf("details should say the targets have no nodes, got %v", result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_TargetsWithNoLabelledNodes(t *testing.T) {
+	// ng-a wants 2 nodes but no node carries its label, so the scoped check
+	// can't match pods. It fails open with the cluster-wide wording.
+	hc := NewChecker(nil, noTargetNodesClient(), nil, nil)
+	hc.ngDescriber = desiredSizeDescriber(map[string]int32{"ng-a": 2}, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.checkPodDisruptionBudgets(context.Background(), "prod")
+	if result.Status != StatusWarn || !strings.Contains(result.Message, "may block a drain") {
+		t.Errorf("unlabelled nodes: status = %s msg = %q, want unscoped WARN", result.Status, result.Message)
+	}
+	if !hasDetail(result.Details, "kube-system/coredns") {
+		t.Errorf("details should name coredns, got %v", result.Details)
+	}
+}
+
+func TestCheckPodDisruptionBudgets_TargetsDescribeFailsFallsBack(t *testing.T) {
+	cases := map[string]func(hc *HealthChecker){
+		"describe error": func(hc *HealthChecker) {
+			hc.ngDescriber = desiredSizeDescriber(nil, errors.New("AccessDeniedException: not authorized"))
+		},
+		"no EKS client": func(hc *HealthChecker) { hc.ngDescriber = nil },
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			hc := NewChecker(nil, noTargetNodesClient(), nil, nil)
+			setup(hc)
+			hc.SetTargetNodegroups([]string{"ng-a"})
+			result := hc.checkPodDisruptionBudgets(context.Background(), "prod")
+			if result.Status != StatusWarn || !strings.Contains(result.Message, "may block a drain") {
+				t.Errorf("status = %s msg = %q, want unscoped WARN", result.Status, result.Message)
+			}
+		})
+	}
+}
+
+func TestCheckPodDisruptionBudgets_TargetsWithNoNodesFallBackUnscoped(t *testing.T) {
+	// No node carries the ng-a label (e.g. the nodegroup is scaled to 0 or the
+	// label is missing). The scoped check has nothing to match against, so it
+	// falls back to the cluster-wide check instead of passing.
+	client := fakek8s.NewSimpleClientset(
+		userNamespace("my-app"),
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},
+		appPod("my-app", "batch-1", "batch", "n1"),
+		pdbAllowing("my-app", "batch-pdb", "batch", 0, 1),
+	)
+	hc := NewChecker(nil, client, nil, nil)
+	hc.SetTargetNodegroups([]string{"ng-a"})
+	result := hc.CheckPodDisruptionBudgets(context.Background())
+	if result.Status != StatusWarn || !strings.Contains(result.Message, "may block a drain") {
+		t.Errorf("no target nodes: status = %s msg = %q, want unscoped WARN", result.Status, result.Message)
+	}
+	if !hasDetail(result.Details, "my-app/batch-pdb") {
+		t.Errorf("details should name batch-pdb, got %v", result.Details)
 	}
 }
 

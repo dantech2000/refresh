@@ -158,10 +158,11 @@ func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, n
 
 // printScaleDownPDBImpact lists the PodDisruptionBudgets that would constrain a
 // scale-down: those currently allowing zero voluntary disruptions block a node
-// drain until their workload recovers. (REF-4)
+// drain until their workload recovers. PDBs in system namespaces (e.g.
+// kube-system/coredns) are included: they block a drain just the same. (REF-4)
 func printScaleDownPDBImpact(pdbs []health.PDBInfo) {
 	if len(pdbs) == 0 {
-		ui.Outln("\nPod Disruption Budgets: none found in user namespaces — nothing constrains this scale-down.")
+		ui.Outln("\nPod Disruption Budgets: none found in any namespace — nothing constrains this scale-down.")
 		return
 	}
 	var atRisk []health.PDBInfo
@@ -176,6 +177,11 @@ func printScaleDownPDBImpact(pdbs []health.PDBInfo) {
 	}
 	color.Yellow("\nPod Disruption Budgets at risk (%d): these allow 0 disruptions now and may block node drain:", len(atRisk))
 	for _, p := range atRisk {
+		if p.StatusNotSynced {
+			fmt.Printf("  %s/%s: disruptionsAllowed=%d, status not synced (evictions are refused)\n",
+				p.Namespace, p.Name, p.DisruptionsAllowed)
+			continue
+		}
 		fmt.Printf("  %s/%s: disruptionsAllowed=%d, healthy=%d/%d\n",
 			p.Namespace, p.Name, p.DisruptionsAllowed, p.CurrentHealthy, p.DesiredHealthy)
 	}

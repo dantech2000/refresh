@@ -136,6 +136,23 @@ func TestPrintScaleDownPDBImpact_AtRisk(t *testing.T) {
 	}
 }
 
+func TestPrintScaleDownPDBImpact_SystemAndUnsyncedPDBs(t *testing.T) {
+	pdbs := []health.PDBInfo{
+		{Namespace: "kube-system", Name: "coredns", DisruptionsAllowed: 0, CurrentHealthy: 2, DesiredHealthy: 2, ExpectedPods: 2},
+		{Namespace: "app", Name: "operator", DisruptionsAllowed: 0, StatusNotSynced: true},
+	}
+	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
+	if !strings.Contains(out, "at risk (2)") {
+		t.Errorf("both PDBs should be at risk, got: %q", out)
+	}
+	if !strings.Contains(out, "kube-system/coredns") {
+		t.Errorf("a kube-system blocker should be named, got: %q", out)
+	}
+	if !strings.Contains(out, "app/operator: disruptionsAllowed=0, status not synced") {
+		t.Errorf("an unsynced PDB should say its status is not synced, got: %q", out)
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // printVerification + PostRollVerification.OK
 // ──────────────────────────────────────────────────────────────────────────────
