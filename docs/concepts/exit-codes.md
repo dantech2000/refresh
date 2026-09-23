@@ -11,7 +11,7 @@ script can branch on the result without reading the output.
 | `1` | Error or interrupt: bad flags, an AWS error, not found, a missing `--yes`, Ctrl+C, or SIGTERM. |
 | `2` | Needs attention. The command finished, but it found warnings or stale items. |
 | `3` | Blocked or unsupported. A gate stopped the operation and nothing changed, or the target is on extended support or unsupported. |
-| `4` | Incomplete data or partial failure. The command printed what it gathered, but some of it is missing or failed. |
+| `4` | Incomplete data or partial failure. The command printed what it gathered, but some of it is missing or failed. If nothing could be gathered, the command fails with `1` instead. |
 | `5` | Post-action verification failed. The change was applied, but the check after it found issues. |
 
 Rules that apply to every command:
@@ -61,27 +61,30 @@ staleness is part of its verdict.
 | `2` | Something needs attention: a stale nodegroup AMI, an addon behind latest, a nodegroup behind the control-plane version, or an AWS-reported control-plane health issue (the `HEALTH` column) |
 | `3` | A cluster is on extended support or unsupported |
 | `4` | Incomplete data: a cluster row has errors (a failed AWS call, or a sweep that timed out before it reached the cluster), or a region could not be listed |
+| `1` | An error, or nothing could be gathered: every region failed or was skipped |
 
 When more than one applies, the highest-priority code wins: `3`, then `2`,
 then `4`. Incomplete data never exits `0`. Rows with errors show an unknown
 marker and their error text in the table, an `ERRORS` column in `-o plain`,
-and an `errors` field in `-o json`/`-o yaml`. If no region is accessible,
-`status` exits `4`.
+and an `errors` field in `-o json`/`-o yaml`.
 
 ## Region sweeps
 
 `status`, `cluster list -A`, and `nodegroup update --all-clusters` share one
-rule for regions. The default sweep (no `-r` and no `REFRESH_EKS_REGIONS`)
+rule for regions: `4` means some data is missing; if nothing could be
+gathered, the command fails with `1`. The default sweep (no `-r` and no `REFRESH_EKS_REGIONS`)
 skips regions your credentials can't use, such as an SCP denial or a region
 that is not enabled. It prints one note on stderr, and a skipped region does
 not count as a failure. When you name the regions with `-r` or
 `REFRESH_EKS_REGIONS`, a denied region is a failure.
 
-- `cluster list` exits `4` when some regions failed, after it prints the
-  clusters from the regions that answered. When no region answered, it exits
-  `1` and prints no list.
-- `status` exits `4` when a region failed or no region is accessible.
-- `nodegroup update --all-clusters` counts a region it could not list as `4`.
+- A region that failed while at least one other region answered (even with
+  no clusters) makes the run exit `4`. `cluster list` and `status` print what
+  the answering regions returned first.
+- When no region answered (every region failed, or every region was
+  skipped), nothing was gathered. The command prints an error and exits `1`.
+  For `nodegroup update --all-clusters`, a discovery that does not finish
+  within `--timeout` also exits `1`.
 
 ## `cluster upgrade-check`
 
@@ -205,6 +208,9 @@ codes, review these changes:
 |---|---|---|
 | `cluster upgrade-check` | Always `0` | `2` for warnings, `3` for blockers. Add `--exit-zero` to keep the old behavior |
 | `cluster list` (some regions failed) | `0` with a stderr warning | `4` |
+| `status` (every region skipped as not accessible) | `4` | `1` |
+| `status` (a region answered with no clusters, another failed) | `1` | `4` |
+| `nodegroup update --all-clusters` (no region listed, or discovery hit `--timeout`) | `4` | `1` |
 | `cluster describe` (add-ons or nodegroups unreadable) | `0` with a stderr warning | `4` |
 | `nodegroup list`, `addon list` (items not described) | `1` | `4` |
 | `cluster upgrade` (blocked plan) | `1` | `3` |
