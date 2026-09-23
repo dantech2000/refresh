@@ -84,7 +84,11 @@ type Observer interface {
 }
 
 // KubeObserver reads node state from the cluster's Kubernetes API, scoped to a
-// single managed nodegroup. It is read-only and safe to poll.
+// single managed nodegroup. It is read-only against the cluster and safe to
+// poll repeatedly, but it is NOT safe for concurrent use: Snapshot and
+// CaptureBaseline update per-roll bookkeeping (the baseline, drain-start pod
+// counts) without locking. Drive it from a single goroutine, as the live panel
+// does.
 type KubeObserver struct {
 	client    kubernetes.Interface
 	nodegroup string
@@ -97,6 +101,13 @@ type KubeObserver struct {
 	// drainStart remembers the evictable-pod count when a node first appears
 	// Draining, so the panel can show evicted/total as pods leave.
 	drainStart map[string]int
+	// podCounts caches the last evictable-pod count per draining node, read at
+	// podCountsAt. With podRefresh > 0 (set when watch-backed, where repaints
+	// are fast and read a local cache) the per-node pod Lists run at most once
+	// per podRefresh; with 0 (polling) every Snapshot re-reads.
+	podCounts   map[string]int
+	podCountsAt time.Time
+	podRefresh  time.Duration
 	// inf, when set (StartInformers), serves reads from informer caches fed by
 	// watch streams instead of issuing List calls per snapshot.
 	inf *informerSet
@@ -202,7 +213,7 @@ func (o *KubeObserver) fillWarnings(ctx context.Context, snap *Snapshot, nodeSet
 
 // listWarningEvents returns cluster Warning events: from the informer cache
 // when watching (its factory tweak pre-filters to type=Warning), else via a
-// bounded List call.
+// paginated List call.
 func (o *KubeObserver) listWarningEvents(ctx context.Context) ([]corev1.Event, error) {
 	if o.inf != nil {
 		ptrs, err := o.inf.events.List(labels.Everything())
@@ -215,30 +226,41 @@ func (o *KubeObserver) listWarningEvents(ctx context.Context) ([]corev1.Event, e
 		}
 		return events, nil
 	}
-	evList, err := o.client.CoreV1().Events(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
-		FieldSelector: "type=Warning",
-		Limit:         200,
-	})
-	if err != nil {
-		return nil, err
+	// Narrow server-side to Warning events and page through all of them. A
+	// single capped List would drop an arbitrary subset: items come back in
+	// key order, not newest-first. type=Warning is as narrow as the server
+	// allows here, because kubelet-emitted pod events are matched by
+	// Source.Host, which is not a selectable field.
+	var events []corev1.Event
+	opts := metav1.ListOptions{
+		FieldSelector: warningFieldSelector,
+		Limit:         warningEventPageSize,
 	}
-	return evList.Items, nil
+	for {
+		page, err := o.client.CoreV1().Events(metav1.NamespaceAll).List(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, page.Items...)
+		if page.Continue == "" {
+			return events, nil
+		}
+		opts.Continue = page.Continue
+	}
 }
+
+// warningFieldSelector restricts event reads to Warning events server-side.
+const warningFieldSelector = "type=" + corev1.EventTypeWarning
+
+// warningEventPageSize is the page size of the paginated Warning-event List.
+const warningEventPageSize = 500
 
 // fillPodEviction counts the evictable pods on each draining node and records
 // the count at drain start, so the panel can show evicted/total. Best-effort:
-// a list failure leaves the pod fields zero (the panel just omits the bar).
+// a failed read for a node leaves that node's pod fields zero (the panel just
+// omits its bar).
 func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
-	pods, err := o.listPods(ctx)
-	if err != nil {
-		return
-	}
-	counts := make(map[string]int)
-	for _, p := range pods {
-		if isEvictablePod(p) {
-			counts[p.Spec.NodeName]++
-		}
-	}
+	counts := o.drainingPodCounts(ctx, snap.Nodes)
 	if o.drainStart == nil {
 		o.drainStart = make(map[string]int)
 	}
@@ -247,7 +269,10 @@ func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
 		if n.Phase != PhaseDraining {
 			continue
 		}
-		cur := counts[n.Name]
+		cur, ok := counts[n.Name]
+		if !ok {
+			continue
+		}
 		if _, seen := o.drainStart[n.Name]; !seen {
 			o.drainStart[n.Name] = cur
 		}
@@ -256,22 +281,64 @@ func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
 	}
 }
 
-// listPods returns all pods in the cluster (drain accounting needs pods on
-// every draining node, whatever their namespace): from the informer cache when
-// watching, else via a List call.
-func (o *KubeObserver) listPods(ctx context.Context) ([]*corev1.Pod, error) {
-	if o.inf != nil {
-		return o.inf.pods.List(labels.Everything())
+// drainingPodCounts returns the evictable-pod count of each draining node
+// whose pods could be read. Each read is scoped to one node with a
+// spec.nodeName field selector (indexed server-side), so the cost scales with
+// the draining set, not with the cluster's pod count. When podRefresh is set,
+// a recent result for the same draining set is reused.
+func (o *KubeObserver) drainingPodCounts(ctx context.Context, nodes []NodeView) map[string]int {
+	var draining []string
+	for _, n := range nodes {
+		if n.Phase == PhaseDraining {
+			draining = append(draining, n.Name)
+		}
 	}
-	list, err := o.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if o.podRefresh > 0 && o.podCounts != nil && time.Since(o.podCountsAt) < o.podRefresh && sameKeys(o.podCounts, draining) {
+		return o.podCounts
+	}
+	counts := make(map[string]int, len(draining))
+	for _, name := range draining {
+		pods, err := o.listPodsOnNode(ctx, name)
+		if err != nil {
+			continue
+		}
+		c := 0
+		for i := range pods {
+			if isEvictablePod(&pods[i]) {
+				c++
+			}
+		}
+		counts[name] = c
+	}
+	o.podCounts, o.podCountsAt = counts, time.Now()
+	return counts
+}
+
+// sameKeys reports whether m holds exactly the names in keys.
+func sameKeys(m map[string]int, keys []string) bool {
+	if len(m) != len(keys) {
+		return false
+	}
+	for _, k := range keys {
+		if _, ok := m[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// podsOnNodeSelector is the field selector that scopes a pod List to one node.
+func podsOnNodeSelector(node string) string { return "spec.nodeName=" + node }
+
+// listPodsOnNode lists the pods scheduled to node, across all namespaces.
+func (o *KubeObserver) listPodsOnNode(ctx context.Context, node string) ([]corev1.Pod, error) {
+	list, err := o.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: podsOnNodeSelector(node),
+	})
 	if err != nil {
 		return nil, err
 	}
-	pods := make([]*corev1.Pod, len(list.Items))
-	for i := range list.Items {
-		pods[i] = &list.Items[i]
-	}
-	return pods, nil
+	return list.Items, nil
 }
 
 // scopeWarnings filters cluster Warning events down to those concerning the
