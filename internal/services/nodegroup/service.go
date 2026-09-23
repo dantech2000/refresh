@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -219,7 +220,9 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 				ReadyKnown:   readyKnown,
 				CurrentAMI:   currentAmiId,
 				AMIStatus:    amiStatus,
+				K8sVersion:   aws.ToString(ng.Version),
 			}
+			summary.VersionBehind = minorBehind(summary.K8sVersion, k8sVersion)
 			if !matchesFilters(summary, options.Filters) {
 				return nil
 			}
@@ -233,6 +236,26 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		}
 	}
 	return summaries, nil
+}
+
+// minorBehind reports whether Kubernetes version v ("1.31") is an older
+// major.minor than ref. Unparseable or empty versions are never "behind".
+func minorBehind(v, ref string) bool {
+	parse := func(s string) (int, int, bool) {
+		parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(s), "v"), ".", 3)
+		if len(parts) < 2 {
+			return 0, 0, false
+		}
+		major, err1 := strconv.Atoi(parts[0])
+		minor, err2 := strconv.Atoi(parts[1])
+		return major, minor, err1 == nil && err2 == nil
+	}
+	vMaj, vMin, ok1 := parse(v)
+	rMaj, rMin, ok2 := parse(ref)
+	if !ok1 || !ok2 {
+		return false
+	}
+	return vMaj < rMaj || (vMaj == rMaj && vMin < rMin)
 }
 
 // newLatestAMICache returns a concurrency-safe, memoized resolver for the

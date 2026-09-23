@@ -169,6 +169,11 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 	} else {
 		cs.NodegroupCount = len(ngs)
 		cs.StaleAMI = s.staleAMISummary(ctx, ngs)
+		for _, ng := range ngs {
+			if ng.VersionBehind {
+				cs.NodegroupsBehindControlPlane++
+			}
+		}
 	}
 
 	cs.Compute = s.detectCompute(ctx, cluster, cs.NodegroupCount)

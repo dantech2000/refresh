@@ -38,6 +38,14 @@ func TestExitForStatuses(t *testing.T) {
 			want: 2,
 		},
 		{
+			name: "nodegroup behind control plane → 2",
+			statuses: []statussvc.ClusterStatus{{
+				Support:                      statussvc.SupportPosture{Tier: statussvc.SupportStandard},
+				NodegroupsBehindControlPlane: 1,
+			}},
+			want: 2,
+		},
+		{
 			name: "extended support → 3 (beats stale)",
 			statuses: []statussvc.ClusterStatus{{
 				Support:  statussvc.SupportPosture{Tier: statussvc.SupportExtended},

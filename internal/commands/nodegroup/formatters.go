@@ -41,6 +41,7 @@ func outputNodegroupsPlain(clusterName string, items []nodegroupsvc.NodegroupSum
 		{Title: "NAME", Min: 4, Max: 60, Align: ui.AlignLeft},
 		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
 		{Title: "INSTANCE", Min: 10, Max: 0, Align: ui.AlignLeft},
+		{Title: "VERSION", Min: 7, Max: 0, Align: ui.AlignLeft},
 		{Title: "AMI STATUS", Min: 9, Max: 0, Align: ui.AlignLeft},
 		{Title: "NODES", Min: 7, Max: 0, Align: ui.AlignRight},
 	}
@@ -51,12 +52,22 @@ func outputNodegroupsPlain(clusterName string, items []nodegroupsvc.NodegroupSum
 			ng.Name,
 			ng.Status,
 			ng.InstanceType,
+			plainVersionCell(ng),
 			ng.AMIStatus.ColorString(),
 			nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize),
 		)
 	}
 	table.Render()
 	return nil
+}
+
+// plainVersionCell is the `-o plain` VERSION cell; a nodegroup behind the
+// control plane gets a "(behind)" marker so grep/awk can find it.
+func plainVersionCell(ng nodegroupsvc.NodegroupSummary) string {
+	if ng.VersionBehind {
+		return ng.K8sVersion + " (behind)"
+	}
+	return orDash(ng.K8sVersion)
 }
 
 func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed time.Duration) error {

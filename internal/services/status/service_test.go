@@ -115,6 +115,9 @@ func TestListClusterStatuses_Fleet(t *testing.T) {
 	if !prod.NeedsAttention() {
 		t.Error("prod should need attention (stale AMI + addon behind)")
 	}
+	if prod.NodegroupsBehindControlPlane != 0 {
+		t.Errorf("prod nodegroups behind control plane = %d, want 0", prod.NodegroupsBehindControlPlane)
+	}
 
 	auto := byName["auto"]
 	if auto.Compute != ComputeAutoMode {
@@ -209,5 +212,34 @@ func TestListClusterStatuses_NameFilter(t *testing.T) {
 	}
 	if len(statuses) != 2 {
 		t.Fatalf("name filter returned %d, want 2", len(statuses))
+	}
+}
+
+// A half-finished upgrade (control plane 1.32, nodegroup on the newest 1.31
+// AMI) has no stale AMI, but must still count as behind and need attention.
+func TestAssembleCluster_NodegroupBehindControlPlane(t *testing.T) {
+	api := &fakeClusterAPI{
+		clusters: []string{"prod"},
+		describe: map[string]*ekstypes.Cluster{
+			"prod": {Name: aws.String("prod"), Version: aws.String("1.32")},
+		},
+	}
+	ng := &fakeNodegroups{byCluster: map[string][]nodegroup.NodegroupSummary{
+		"prod": {
+			{Name: "ng-lag", AMIStatus: types.AMILatest, K8sVersion: "1.31", VersionBehind: true},
+			{Name: "ng-cur", AMIStatus: types.AMILatest, K8sVersion: "1.32"},
+		},
+	}}
+	svc := newTestService(api, ng, &fakeAddons{})
+	cs := svc.assembleCluster(context.Background(), "prod")
+
+	if cs.StaleAMI.Behind != 0 {
+		t.Errorf("stale AMI behind = %d, want 0", cs.StaleAMI.Behind)
+	}
+	if cs.NodegroupsBehindControlPlane != 1 {
+		t.Errorf("nodegroups behind control plane = %d, want 1", cs.NodegroupsBehindControlPlane)
+	}
+	if !cs.NeedsAttention() {
+		t.Error("a nodegroup behind the control plane should need attention")
 	}
 }

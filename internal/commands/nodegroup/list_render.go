@@ -22,6 +22,7 @@ func nodegroupListLines(th *render.Theme, cluster string, items []nodegroupsvc.N
 		ui.Column{Title: "NAME", Min: 4, Max: 60},
 		ui.Column{Title: "STATUS", Min: 10},
 		ui.Column{Title: "INSTANCE", Min: 10},
+		ui.Column{Title: "VERSION", Min: 7},
 		ui.Column{Title: "AMI", Min: 9},
 		ui.Column{Title: "NODES", Min: 7, Align: ui.AlignRight},
 	)
@@ -30,6 +31,7 @@ func nodegroupListLines(th *render.Theme, cluster string, items []nodegroupsvc.N
 			th.Paint(pal.White, ng.Name),
 			th.Token(render.StatusFromString(ng.Status), ng.Status),
 			th.Paint(pal.Text, ng.InstanceType),
+			versionCell(th, ng),
 			amiToken(th, ng.AMIStatus),
 			th.Paint(pal.Text, nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize)),
 		)
@@ -47,6 +49,15 @@ func nodeCountText(readyKnown bool, ready, desired int32) string {
 		return fmt.Sprintf("%d/%d", ready, desired)
 	}
 	return fmt.Sprintf("%d", desired)
+}
+
+// versionCell renders the nodegroup's Kubernetes minor, as a warn token when
+// it trails the control plane (AMI status alone can't show that skew).
+func versionCell(th *render.Theme, ng nodegroupsvc.NodegroupSummary) string {
+	if ng.VersionBehind {
+		return th.Token(render.Warn, ng.K8sVersion)
+	}
+	return th.Paint(th.Pal.Text, orDash(ng.K8sVersion))
 }
 
 // amiToken renders a nodegroup's AMI freshness as a status token.

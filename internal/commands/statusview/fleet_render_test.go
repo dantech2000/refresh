@@ -118,3 +118,21 @@ func mustContain(t *testing.T, haystack, needle string) {
 		t.Errorf("output missing %q in:\n%s", needle, haystack)
 	}
 }
+
+func TestFleetLines_NodegroupsBehindControlPlane(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	fleet := []statussvc.ClusterStatus{{
+		Name: "prod-east", Region: "us-east-1", Version: "1.32",
+		Support:                      statussvc.SupportPosture{Tier: statussvc.SupportStandard, DaysRemaining: iptr(200)},
+		Compute:                      statussvc.ComputeManaged,
+		NodegroupCount:               2,
+		NodegroupsBehindControlPlane: 1,
+	}}
+	joined := strings.Join(fleetLines(th, fleet, 0), "\n")
+	mustContain(t, joined, "▲  prod-east")
+	mustContain(t, joined, "1 nodegroups behind control plane")
+	mustContain(t, joined, "has 1 nodegroup(s) behind the control plane")
+
+	footer := summaryFooter(fleet, 0)
+	mustContain(t, footer, "1 nodegroups behind control plane")
+}

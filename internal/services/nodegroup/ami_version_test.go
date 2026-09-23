@@ -73,6 +73,38 @@ func TestList_ComparesAMIAgainstNodegroupVersion(t *testing.T) {
 	if n := lookups.Load(); n != 2 {
 		t.Errorf("latest-AMI lookups = %d, want 2 (one per distinct version/type)", n)
 	}
+
+	// AMI freshness is per nodegroup minor, so the version skew against the
+	// control plane is reported separately.
+	for _, s := range summaries {
+		wantBehind := s.Name != "ng-current"
+		if s.VersionBehind != wantBehind {
+			t.Errorf("%s: VersionBehind = %v, want %v", s.Name, s.VersionBehind, wantBehind)
+		}
+		if s.Name == "ng-lag-latest" && s.K8sVersion != "1.31" {
+			t.Errorf("%s: K8sVersion = %q, want 1.31", s.Name, s.K8sVersion)
+		}
+	}
+}
+
+func TestMinorBehind(t *testing.T) {
+	cases := []struct {
+		v, ref string
+		want   bool
+	}{
+		{"1.31", "1.32", true},
+		{"1.32", "1.32", false},
+		{"1.33", "1.32", false},
+		{"1.9", "1.10", true}, // numeric, not lexical
+		{"", "1.32", false},
+		{"1.31", "", false},
+		{"garbage", "1.32", false},
+	}
+	for _, tc := range cases {
+		if got := minorBehind(tc.v, tc.ref); got != tc.want {
+			t.Errorf("minorBehind(%q, %q) = %v, want %v", tc.v, tc.ref, got, tc.want)
+		}
+	}
 }
 
 func TestDescribe_ComparesAMIAgainstNodegroupVersion(t *testing.T) {
