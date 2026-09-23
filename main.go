@@ -86,7 +86,7 @@ func newApp() *cli.Command {
 			&cli.IntFlag{
 				Name:    "max-concurrency",
 				Aliases: []string{"C"},
-				Usage:   "Global max concurrency for multi-region operations (for status: clusters evaluated at once per region; regions are capped at 4)",
+				Usage:   "Global max concurrency for multi-region operations (for status: clusters evaluated at once per region; regions at once = min(4, this))",
 				Value:   appconfig.DefaultMaxConcurrency,
 				Sources: cli.EnvVars("REFRESH_MAX_CONCURRENCY"),
 			},

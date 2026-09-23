@@ -87,6 +87,34 @@ func TestGatherFleet_CapsRegionsAndPassesClusterConcurrency(t *testing.T) {
 	})
 }
 
+// -C 1 (set to avoid throttling) sweeps one region at a time.
+func TestGatherFleet_MaxConcurrencyOneIsSerial(t *testing.T) {
+	var live, peak atomic.Int32
+	var gotConc sync.Map
+	release := make(chan struct{})
+	close(release)
+	stubRegionService(t, func(cfg aws.Config) regionLister {
+		return blockingRegion{region: cfg.Region, live: &live, peak: &peak, gotConc: &gotConc, release: release}
+	})
+
+	regions := manyRegions(6)
+	sweep := gatherFleet(context.Background(), aws.Config{}, regions, statussvc.ListOptions{MaxConcurrency: 1}, false)
+	if p := peak.Load(); p != 1 {
+		t.Errorf("peak concurrent regions = %d, want 1", p)
+	}
+	if len(sweep.statuses) != len(regions) || len(sweep.errs) != 0 {
+		t.Fatalf("got %d statuses / %v errors", len(sweep.statuses), sweep.errs)
+	}
+}
+
+func TestRegionFanout(t *testing.T) {
+	for in, want := range map[int]int{0: 4, -1: 4, 1: 1, 3: 3, 4: 4, 8: 4, 64: 4} {
+		if got := regionFanout(in); got != want {
+			t.Errorf("regionFanout(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
 // A cancelled context must not leave gatherFleet blocked on the semaphore, and
 // every region it never reached counts as failed.
 func TestGatherFleet_CancelDoesNotBlock(t *testing.T) {

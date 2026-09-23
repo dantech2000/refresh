@@ -26,8 +26,8 @@ With --all-regions (not -r or REFRESH_EKS_REGIONS), regions these credentials
 cannot use (an SCP denial, a region not enabled) are skipped with one note and
 do not count as failed. If no region is accessible, status exits 4.
 
-Concurrency: status sweeps at most 4 regions at once, and --max-concurrency
-(-C) sets how many clusters it evaluates at once in each region.
+Concurrency: --max-concurrency (-C) sets how many clusters status evaluates
+at once in each region. It sweeps min(4, --max-concurrency) regions at once.
 
 ## Flags
 

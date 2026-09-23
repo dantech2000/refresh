@@ -36,7 +36,7 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 
 	regions, defaultSweep := resolveRegions(cmd, awsCfg)
 	// --max-concurrency bounds the clusters evaluated at once in each
-	// region; regions themselves are capped at regionConcurrency.
+	// region, and regions at min(regionConcurrency, --max-concurrency).
 	opts := statussvc.ListOptions{
 		NamePattern:    strings.TrimSpace(cmd.Args().First()),
 		MaxConcurrency: appconfig.ClampMaxConcurrency(cmd.Int("max-concurrency")),
@@ -160,9 +160,19 @@ var newRegionService = func(cfg aws.Config, logger *slog.Logger) regionLister {
 
 // regionConcurrency caps how many regions gatherFleet sweeps at once. Each
 // region already fans out over its clusters (opts.MaxConcurrency, from
-// --max-concurrency), so applying --max-concurrency to regions too would
-// multiply: 64 regions x 64 clusters x several describes each.
+// --max-concurrency), so applying --max-concurrency alone to regions too
+// would multiply: 64 regions x 64 clusters x several describes each.
 const regionConcurrency = 4
+
+// regionFanout is how many regions gatherFleet sweeps at once:
+// regionConcurrency, lowered to --max-concurrency when that is smaller, so
+// -C 1 (set to avoid throttling) means one region at a time.
+func regionFanout(maxConcurrency int) int {
+	if maxConcurrency > 0 && maxConcurrency < regionConcurrency {
+		return maxConcurrency
+	}
+	return regionConcurrency
+}
 
 // regionSweep is one region's result inside gatherFleet.
 type regionSweep struct {
@@ -171,7 +181,8 @@ type regionSweep struct {
 	err      error
 }
 
-// gatherFleet sweeps regions, at most regionConcurrency at a time, and merges
+// gatherFleet sweeps regions, at most regionFanout(opts.MaxConcurrency) at a
+// time, and merges
 // the cluster statuses (in region order) and per-region errors. If ctx ends
 // before a region starts, that region is reported as failed with ctx's error,
 // so an interrupted sweep never looks complete.
@@ -180,7 +191,7 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 	// global --log-level/--verbose (quiet by default) instead of leaking at
 	// Info level into the TUI. (REF-129)
 	logger := factory.NewDefaultLogger(nil)
-	results := common.ForEachParallel(ctx, regions, regionConcurrency, func(rctx context.Context, r string) regionSweep {
+	results := common.ForEachParallel(ctx, regions, regionFanout(opts.MaxConcurrency), func(rctx context.Context, r string) regionSweep {
 		cfg := baseCfg.Copy()
 		cfg.Region = r
 		statuses, err := newRegionService(cfg, logger).ListClusterStatuses(rctx, opts)
