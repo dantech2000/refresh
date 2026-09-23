@@ -170,12 +170,12 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 			if _, err := runner.EncodeStdout(flags.format, fleetDocument(plans, disc)); err != nil {
 				return err
 			}
-			return discoveryExit(regionErrs)
+			return runner.UnlessInterrupted(ctx, discoveryExit(regionErrs))
 		}
 		if err := fleetDryRun(ctx, targets, nodegroupPattern, flags); err != nil {
 			return err
 		}
-		return discoveryExit(regionErrs)
+		return runner.UnlessInterrupted(ctx, discoveryExit(regionErrs))
 	}
 
 	// One confirmation for the whole batch (or --yes); without a TTY or with
@@ -214,7 +214,8 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) error {
 	} else {
 		printFleetSummary(results, regionErrs)
 	}
-	if err := fleetExit(results, regionErrs); err != nil || len(results) == len(targets) {
+	// After Ctrl+C the run exits 1, whatever the clusters reported.
+	if err := runner.UnlessInterrupted(ctx, fleetExit(results, regionErrs)); err != nil || len(results) == len(targets) {
 		return err
 	}
 	// Interrupted between clusters: nothing was in progress, but the fleet

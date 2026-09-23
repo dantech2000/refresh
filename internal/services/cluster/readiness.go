@@ -17,6 +17,9 @@ const (
 	ReadinessReady Readiness = iota
 	// ReadinessReview: warnings only (exit 2).
 	ReadinessReview
+	// ReadinessIncomplete: nothing blocks, but some skew data could not be
+	// read, so the verdict does not cover everything (exit 4).
+	ReadinessIncomplete
 	// ReadinessBlocked: something blocks the upgrade (exit 3).
 	ReadinessBlocked
 )
@@ -26,7 +29,11 @@ const (
 // because the readiness gate in `cluster upgrade` refuses a hop on it), a
 // nodegroup at the kubelet skew limit, or a failed control-plane health
 // check. Review: a WARNING insight, a nodegroup behind the control plane, an
-// addon behind latest, or a control-plane health warning.
+// addon behind latest, or a control-plane health warning. Incomplete: some
+// nodegroups or add-ons could not be read (r.Incomplete). Precedence:
+// blocked, then incomplete, then review, then ready. A known blocker wins
+// over missing data; missing data wins over warnings, because the unread
+// item could be a blocker.
 func (r *UpgradeReport) Readiness() (Readiness, []string) {
 	if r == nil {
 		return ReadinessReady, nil
@@ -82,9 +89,16 @@ func (r *UpgradeReport) Readiness() (Readiness, []string) {
 		warnings = append(warnings, "control-plane health warning")
 	}
 
+	var missing []string
+	if n := len(r.Incomplete); n > 0 {
+		missing = append(missing, fmt.Sprintf("%d nodegroup(s)/addon(s) could not be read", n))
+	}
+
 	switch {
 	case len(blockers) > 0:
-		return ReadinessBlocked, append(blockers, warnings...)
+		return ReadinessBlocked, append(append(blockers, missing...), warnings...)
+	case len(missing) > 0:
+		return ReadinessIncomplete, append(missing, warnings...)
 	case len(warnings) > 0:
 		return ReadinessReview, warnings
 	default:

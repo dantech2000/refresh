@@ -73,7 +73,7 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 	if err := writeNodegroupList(cmd.String("format"), clusterName, items, res.Failures); err != nil {
 		return err
 	}
-	return reportListProblems(warnOut, clusterName, res)
+	return runner.UnlessInterrupted(ctx, reportListProblems(warnOut, clusterName, res))
 }
 
 // warnOut receives list/describe warnings; a variable so tests can capture it.

@@ -1,6 +1,10 @@
 package runner
 
 import (
+	"context"
+	"errors"
+	"fmt"
+
 	"github.com/urfave/cli/v3"
 )
 
@@ -46,4 +50,16 @@ func ExitCodeOf(err error) int {
 // printed a partial result. --watch keeps polling after one.
 func IsIncomplete(err error) bool {
 	return err != nil && ExitCodeOf(err) == ExitIncomplete
+}
+
+// UnlessInterrupted returns err, except that a non-nil err after an
+// interrupt (Ctrl+C or SIGTERM cancelled ctx) becomes a plain error, which
+// exits 1: data cut short by an interrupt is an interrupted run, not a
+// partial result. A --timeout deadline (context.DeadlineExceeded) is not an
+// interrupt, so partial data from it keeps its code (4).
+func UnlessInterrupted(ctx context.Context, err error) error {
+	if err == nil || ctx == nil || !errors.Is(ctx.Err(), context.Canceled) {
+		return err
+	}
+	return fmt.Errorf("interrupted: %w", err) // a wrapped ExitCoder exits 1 (urfave does not unwrap)
 }

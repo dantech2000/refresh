@@ -137,3 +137,76 @@ func TestUpgradeCheckExitCode_ErrorIsOne(t *testing.T) {
 		t.Fatalf("exit code = %d (err %v), want 1", code, err)
 	}
 }
+
+// A nodegroup or add-on whose skew could not be read makes the check
+// incomplete (exit 4): the unread nodegroup could be the one past the skew
+// limit. A blocker still wins (3); 4 wins over warnings (2).
+func TestUpgradeCheckExitCode_Incomplete(t *testing.T) {
+	denied := func(version string) *fakeaws.Cluster {
+		w := checkWorld("1.32", nil)
+		w.Nodegroups = append(w.Nodegroups, &fakeaws.Nodegroup{Name: "old", Version: version, DescribeNodegroupError: "AccessDeniedException"})
+		return w
+	}
+	t.Run("unreadable nodegroup", func(t *testing.T) {
+		fakeaws.New(t, denied("1.29"))
+		stdout, stderr, err := runCluster(t, "upgrade-check", "prod", "-o", "json")
+		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+			t.Fatalf("exit code = %d (err %v), want 4\nstderr:\n%s", code, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		inc, _ := doc["incomplete"].([]any)
+		if len(inc) != 1 || !strings.HasPrefix(inc[0].(string), "nodegroup old: AccessDeniedException") {
+			t.Errorf("incomplete = %v, want the unreadable nodegroup", doc["incomplete"])
+		}
+		if _, _, err := runCluster(t, "upgrade-check", "prod", "-o", "json", "--exit-zero"); err != nil {
+			t.Errorf("--exit-zero: %v", err)
+		}
+	})
+	t.Run("table shows it", func(t *testing.T) {
+		fakeaws.New(t, denied("1.29"))
+		stdout, _, err := runCluster(t, "upgrade-check", "prod")
+		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+			t.Fatalf("exit code = %d, want 4", code)
+		}
+		for _, want := range []string{"INCOMPLETE", "could not read nodegroup old"} {
+			if !strings.Contains(stdout, want) {
+				t.Errorf("table lacks %q:\n%s", want, stdout)
+			}
+		}
+	})
+	t.Run("plain names it on stderr", func(t *testing.T) {
+		fakeaws.New(t, denied("1.29"))
+		_, stderr, err := runCluster(t, "upgrade-check", "prod", "-o", "plain")
+		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+			t.Fatalf("exit code = %d, want 4", code)
+		}
+		if !strings.Contains(stderr, "could not read nodegroup old") {
+			t.Errorf("stderr lacks the unreadable nodegroup:\n%s", stderr)
+		}
+	})
+	t.Run("blocker wins", func(t *testing.T) {
+		w := denied("1.29")
+		w.Insights = []*fakeaws.Insight{{ID: "ins-err", Name: "Deprecated APIs", Status: "ERROR"}}
+		fakeaws.New(t, w)
+		_, _, err := runCluster(t, "upgrade-check", "prod", "-o", "json")
+		if code := runner.ExitCodeOf(err); code != runner.ExitBlocked {
+			t.Fatalf("exit code = %d, want 3", code)
+		}
+	})
+	t.Run("wins over warnings", func(t *testing.T) {
+		w := denied("1.29")
+		w.Insights = []*fakeaws.Insight{{ID: "ins-warn", Name: "Kube-proxy skew", Status: "WARNING"}}
+		fakeaws.New(t, w)
+		_, _, err := runCluster(t, "upgrade-check", "prod", "-o", "json")
+		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+			t.Fatalf("exit code = %d, want 4", code)
+		}
+	})
+	t.Run("unreadable addon", func(t *testing.T) {
+		fakeaws.New(t, checkWorld("1.32", []*fakeaws.Addon{{Name: "vpc-cni", Version: "v1.19.0", DescribeAddonError: "AccessDeniedException"}}))
+		_, _, err := runCluster(t, "upgrade-check", "prod", "-o", "json")
+		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+			t.Fatalf("exit code = %d, want 4", code)
+		}
+	})
+}

@@ -125,10 +125,13 @@ nodegroup/addon skew, and the control-plane health check:
    3  blocked: an ERROR or UNKNOWN insight (as 'cluster upgrade' blocks on
       both), a nodegroup at the kubelet skew limit, or a failed
       control-plane health check
+   4  incomplete: nothing blocks, but a nodegroup or addon could not be
+      read (listed under "incomplete")
    1  error (AWS error, not found, interrupt)
+Precedence: 3, then 4, then 2.
 With --id, the exit code reflects that one insight's status. With -o json or
 -o yaml, the document is printed first, then the exit code applies.
---exit-zero always exits 0 on a completed check (report mode).
+--exit-zero exits 0 on a completed check (report mode), also when incomplete.
 
 Examples:
    refresh cluster upgrade-check -c prod-east
@@ -148,7 +151,7 @@ Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
 | `--show-passing` | — | — | Include PASSING insights (hidden by default) |
 | `--id string` | — | — | Show the detail view for one insight — accepts its ID, a short ID prefix (as shown in the table), or a name substring |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
-| `--exit-zero` | — | — | Exit 0 even when the check finds warnings (2) or blockers (3): report mode |
+| `--exit-zero` | — | — | Exit 0 even when the check finds warnings (2), blockers (3), or unreadable items (4): report mode |
 | `--help, -h` | — | — | show help |
 
 ### refresh cluster upgrade

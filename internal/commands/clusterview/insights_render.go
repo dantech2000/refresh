@@ -13,11 +13,14 @@ import (
 
 // upgradeVerdict maps the report's readiness (clustersvc.UpgradeReport.
 // Readiness, which the command's exit code also follows) to one token:
-// blocked is NOT READY, warnings only is REVIEW, otherwise READY.
+// blocked is NOT READY, unreadable skew data is INCOMPLETE, warnings only
+// is REVIEW, otherwise READY.
 func upgradeVerdict(report *clustersvc.UpgradeReport) (render.Status, string) {
 	switch level, _ := report.Readiness(); level {
 	case clustersvc.ReadinessBlocked:
 		return render.Fail, "NOT READY"
+	case clustersvc.ReadinessIncomplete:
+		return render.Unknown, "INCOMPLETE"
 	case clustersvc.ReadinessReview:
 		return render.Warn, "REVIEW"
 	default:
@@ -137,6 +140,9 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 		for _, f := range report.Skew.Findings {
 			out = append(out, "  "+th.Token(render.Warn, f))
 		}
+	}
+	for _, m := range report.Incomplete {
+		out = append(out, "  "+th.Token(render.Unknown, "could not read "+m))
 	}
 	return out
 }

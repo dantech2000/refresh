@@ -76,12 +76,12 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return err
 		}
-		return exitForStatuses(statuses, len(regionErrs))
+		return runner.UnlessInterrupted(ctx, exitForStatuses(statuses, len(regionErrs)))
 	}
 	if err := statusview.OutputFleetTable(statuses, elapsed); err != nil {
 		return err
 	}
-	return exitForStatuses(statuses, len(regionErrs))
+	return runner.UnlessInterrupted(ctx, exitForStatuses(statuses, len(regionErrs)))
 }
 
 // resolveRegions picks the region set: explicit --region wins, then

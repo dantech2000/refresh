@@ -43,6 +43,10 @@ type Nodegroup struct {
 	// UpdateForce records the force field of the last UpdateNodegroupVersion
 	// request (for assertions).
 	UpdateForce bool
+	// DescribeNodegroupError, when set, makes DescribeNodegroup for this
+	// nodegroup fail with that API error code (HTTP 403 for AccessDenied*,
+	// else 400).
+	DescribeNodegroupError string
 }
 
 // Addon is an installed EKS addon in the fake world.
@@ -411,6 +415,14 @@ func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Clus
 		ng := findNodegroup(c, rest[0])
 		if ng == nil {
 			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No node group found for name: "+rest[0]+".")
+			return
+		}
+		if ng.DescribeNodegroupError != "" {
+			status := http.StatusBadRequest
+			if strings.HasPrefix(ng.DescribeNodegroupError, "AccessDenied") {
+				status = http.StatusForbidden
+			}
+			writeError(w, status, ng.DescribeNodegroupError, "fake DescribeNodegroup failure for "+ng.Name)
 			return
 		}
 		writeJSON(w, map[string]any{"nodegroup": nodegroupJSON(c, ng)})

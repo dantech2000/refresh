@@ -109,7 +109,7 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 		if err := clusterview.OutputClustersTree(summaries, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
 			return err
 		}
-		return listIncompleteExit(summaries, failedRegions)
+		return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, failedRegions))
 	}
 	if summaries == nil {
 		summaries = []clustersvc.ClusterSummary{} // -o json|yaml: [], not null
@@ -119,17 +119,18 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return err
 		}
-		return listIncompleteExit(summaries, failedRegions)
+		return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, failedRegions))
 	}
 	if err := clusterview.OutputClustersTable(summaries, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
 		return err
 	}
-	return listIncompleteExit(summaries, failedRegions)
+	return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, failedRegions))
 }
 
 // listIncompleteExit returns exit 4 (incomplete data) after a list printed a
 // partial result: some regions failed, or some cluster rows could not be
-// fully read. Regions skipped by the default sweep are not failures.
+// fully read. Regions skipped by the default sweep are not failures. The
+// caller turns it into exit 1 after an interrupt.
 func listIncompleteExit(summaries []clustersvc.ClusterSummary, failedRegions int) error {
 	rows := 0
 	for _, s := range summaries {
@@ -249,12 +250,12 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return err
 		}
-		return describeIncompleteExit(details)
+		return runner.UnlessInterrupted(ctx, describeIncompleteExit(details))
 	}
 	if err := clusterview.OutputClusterDetailsTable(details); err != nil {
 		return err
 	}
-	return describeIncompleteExit(details)
+	return runner.UnlessInterrupted(ctx, describeIncompleteExit(details))
 }
 
 // describeIncompleteExit returns exit 4 (incomplete data) when some of the

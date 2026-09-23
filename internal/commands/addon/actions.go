@@ -55,7 +55,7 @@ func listAddonsOnce(ctx context.Context, cmd *cli.Command) error {
 	if err := writeAddonList(cmd.String("format"), clusterName, res, time.Since(start)); err != nil {
 		return err
 	}
-	return reportListFailures(ui.Stderr, clusterName, res.Failures)
+	return runner.UnlessInterrupted(ctx, reportListFailures(ui.Stderr, clusterName, res.Failures))
 }
 
 // writeAddonList prints what was gathered in the requested format. When some
