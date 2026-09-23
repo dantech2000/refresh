@@ -69,6 +69,20 @@ func nameOr(c statussvc.ClusterStatus) string {
 	return c.Name
 }
 
+// fleetDataColumns is the fleet table's named columns, shared by the human
+// table (which prepends an untitled glyph column) and the `-o plain` header.
+func fleetDataColumns() []ui.Column {
+	return []ui.Column{
+		{Title: "CLUSTER", Min: 8},
+		{Title: "REGION", Min: 6},
+		{Title: "VERSION", Min: 7},
+		{Title: "SUPPORT", Min: 10, Max: 34},
+		{Title: "COMPUTE", Min: 8, Max: 22},
+		{Title: "STALE AMI", Min: 6},
+		{Title: "ADDONS", Min: 6, Max: 26},
+	}
+}
+
 // fleetLines builds the human fleet dashboard as a slice of lines (pure, so it
 // is golden-testable). th carries the color level / unicode capability.
 func fleetLines(th *render.Theme, statuses []statussvc.ClusterStatus, elapsed time.Duration) []string {
@@ -82,16 +96,7 @@ func fleetLines(th *render.Theme, statuses []statussvc.ClusterStatus, elapsed ti
 		"",
 	}
 
-	tbl := th.NewTable(
-		ui.Column{Title: "", Min: 1},
-		ui.Column{Title: "CLUSTER", Min: 8},
-		ui.Column{Title: "REGION", Min: 6},
-		ui.Column{Title: "VERSION", Min: 7},
-		ui.Column{Title: "SUPPORT", Min: 10, Max: 34},
-		ui.Column{Title: "COMPUTE", Min: 8, Max: 22},
-		ui.Column{Title: "STALE AMI", Min: 6},
-		ui.Column{Title: "ADDONS", Min: 6, Max: 26},
-	)
+	tbl := th.NewTable(append([]ui.Column{{Title: "", Min: 1}}, fleetDataColumns()...)...)
 	for _, c := range statuses {
 		version := c.Version
 		if version == "" {
@@ -185,6 +190,13 @@ func stalePretty(th *render.Theme, c statussvc.ClusterStatus) string {
 	if c.StaleAMI.Behind == 0 && c.NodegroupsBehindControlPlane == 0 {
 		return th.Paint(th.Pal.Green, "0")
 	}
+	return th.Token(render.Warn, staleAMIText(c))
+}
+
+// staleAMIText is the uncolored STALE AMI text for a managed-nodegroup
+// cluster: "0", or "behind/total (oldest Nd)" plus any nodegroups behind the
+// control plane.
+func staleAMIText(c statussvc.ClusterStatus) string {
 	txt := "0"
 	if c.StaleAMI.Behind > 0 {
 		txt = fmt.Sprintf("%d/%d", c.StaleAMI.Behind, c.StaleAMI.Total)
@@ -192,7 +204,7 @@ func stalePretty(th *render.Theme, c statussvc.ClusterStatus) string {
 			txt += fmt.Sprintf(" (%dd)", *c.StaleAMI.OldestDays)
 		}
 	}
-	return th.Token(render.Warn, txt+behindCPSuffix(c))
+	return txt + behindCPSuffix(c)
 }
 
 // behindCPSuffix names nodegroups on an older Kubernetes minor than the

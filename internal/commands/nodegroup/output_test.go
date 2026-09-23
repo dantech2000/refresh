@@ -14,6 +14,7 @@ import (
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 // captureStdout is defined in health_decision_test.go (redirects both
@@ -25,7 +26,7 @@ import (
 
 func TestOutputNodegroupsTable_Empty(t *testing.T) {
 	out := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", nil, time.Second); err != nil {
+		if err := outputNodegroupsTable("my-cluster", nil); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
@@ -41,7 +42,7 @@ func TestOutputNodegroupsTable_WithRows(t *testing.T) {
 	}
 	// Human path (render design system): captured in full via fmt.Println.
 	out := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", items, 2*time.Second); err != nil {
+		if err := outputNodegroupsTable("my-cluster", items); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
@@ -51,16 +52,52 @@ func TestOutputNodegroupsTable_WithRows(t *testing.T) {
 		}
 	}
 
-	// Plain path keeps the original cluster banner.
+	// Plain path: header + one TSV row per nodegroup, nothing else. The header
+	// names match the human table's columns.
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
 	plain := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", items, 2*time.Second); err != nil {
+		if err := outputNodegroupsTable("my-cluster", items); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
-	if !strings.Contains(plain, "Nodegroups for cluster: my-cluster") {
-		t.Errorf("plain output missing cluster banner; got:\n%s", plain)
+	headers := []string{"NAME", "STATUS", "INSTANCE", "VERSION", "AMI", "NODES"}
+	rows := plaintest.Check(t, plain, headers...)
+	if len(rows) != len(items) {
+		t.Fatalf("got %d rows, want %d:\n%s", len(rows), len(items), plain)
+	}
+	if got := strings.Join(rows[1], "|"); got != "spot|UPDATING|t3.medium|-|Outdated|2" {
+		t.Errorf("row = %q", got)
+	}
+	for _, h := range headers {
+		if !strings.Contains(out, h) {
+			t.Errorf("human table has no %q column; plain header must match it:\n%s", h, out)
+		}
+	}
+}
+
+func TestOutputNodegroupsTable_PlainEmptyIsHeaderOnly(t *testing.T) {
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	out := captureStdout(t, func() {
+		if err := outputNodegroupsTable("my-cluster", nil); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	if out != "NAME\tSTATUS\tINSTANCE\tVERSION\tAMI\tNODES\n" {
+		t.Errorf("empty plain list should be the header only, got %q", out)
+	}
+}
+
+func TestNodegroupListPlain_BehindAndLookupFailure(t *testing.T) {
+	items := []nodegroupsvc.NodegroupSummary{
+		{Name: "old\tname", Status: "ACTIVE", K8sVersion: "1.29", VersionBehind: true, AMILookupError: "denied", DesiredSize: 2, ReadyNodes: 1, ReadyKnown: true},
+	}
+	var buf bytes.Buffer
+	nodegroupListPlain(items).Write(&buf)
+	rows := plaintest.Check(t, buf.String(), "NAME", "STATUS", "INSTANCE", "VERSION", "AMI", "NODES")
+	if got := strings.Join(rows[0], "|"); got != "old name|ACTIVE|-|1.29 (behind)|unknown (lookup failed)|1/2" {
+		t.Errorf("row = %q", got)
 	}
 }
 
@@ -89,6 +126,45 @@ func TestOutputNodegroupDetailsTable(t *testing.T) {
 	for _, want := range []string{"workers", "m5.large", "ami-aaa", "ami-bbb", "Workloads", "2 PDBs"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("details output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestOutputNodegroupDetailsTable_Plain(t *testing.T) {
+	details := &nodegroupsvc.NodegroupDetails{
+		Name:         "workers",
+		Status:       "ACTIVE",
+		InstanceType: "m5.large",
+		AmiType:      "AL2_x86_64",
+		CapacityType: "ON_DEMAND",
+		CurrentAMI:   "ami-aaa",
+		LatestAMI:    "ami-bbb",
+		AMIStatus:    types.AMIOutdated,
+		Scaling:      nodegroupsvc.ScalingConfig{DesiredSize: 3, MinSize: 1, MaxSize: 5},
+		Workloads:    nodegroupsvc.WorkloadInfo{TotalPods: 10, CriticalPods: 2, PodDisruption: "2 PDBs"},
+		Instances: []nodegroupsvc.InstanceDetails{{
+			InstanceID: "i-0123456789abcdef0123", InstanceType: "m5.large",
+			LaunchTime: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Lifecycle: "on-demand", State: "running", AZ: "us-east-1a",
+		}},
+	}
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	out := captureStdout(t, func() {
+		if err := outputNodegroupDetailsTable(details, time.Second); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	rows := plaintest.Check(t, out, "FIELD", "VALUE")
+	for f, v := range map[string]string{
+		"name":       "workers",
+		"ami status": "Outdated",
+		"scaling":    "3 desired (1-5)",
+		"pdbs":       "2 PDBs",
+		// The human table truncates instance IDs; plain never does.
+		"instance/i-0123456789abcdef0123": "type=m5.large launched=2026-01-02 lifecycle=on-demand state=running az=us-east-1a",
+	} {
+		if got, ok := plaintest.Field(rows, f); !ok || got != v {
+			t.Errorf("field %q = %q (found=%v), want %q", f, got, ok, v)
 		}
 	}
 }
