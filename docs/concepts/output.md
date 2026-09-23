@@ -12,7 +12,7 @@ Every list/describe command (and most others) supports `-o` / `--format`:
 
 ```bash
 refresh cluster list -o json | jq -r '.clusters[] | select(.status=="ACTIVE") | .name'
-refresh nodegroup list -c prod -o plain | awk -F'\t' 'NR>1 {print $1, $4}'
+refresh nodegroup list -c prod -o plain | awk -F'\t' 'NR>1 {print $1, $5}'   # NAME, AMI
 refresh cluster list -o tree
 ```
 
@@ -35,8 +35,12 @@ meant for a person goes to stderr or is not printed:
 - Errors, including the AWS credential setup help, print once, on stderr.
   The credential help appears only for a credential problem, not for a
   cancel, a timeout, or a network failure.
-- Machine formats never prompt. A run that would ask a question fails with
-  an error that names the missing flag, usually `--yes`.
+- Machine formats don't ask for confirmation. A run that would ask a
+  question fails with an error that names the missing flag, usually `--yes`.
+  A partial cluster name is the exception outside `cluster upgrade`: on a
+  terminal, `refresh` can still ask on stderr which cluster you meant. Pass
+  the exact name in scripts.
+- An empty list prints `[]`, never `null`.
 
 The exit code is the same as in the human view. When a command fails before
 it has a result (bad credentials, a missing `--yes`), stdout is empty and the
@@ -57,8 +61,9 @@ The documents for the mutating commands:
 | `cluster upgrade --yes` | `{plan, report}`: the plan the run started from and what it did (`completed`, `failedAt`, `remaining`). A blocked plan prints the plan alone and exits `1` |
 
 `cluster upgrade -o json|yaml` without `--dry-run` needs `--yes`, because it
-can't confirm each phase. `nodegroup update -o json|yaml` needs `--yes` when a
-pattern matches more than one nodegroup or the health checks warn.
+can't confirm each phase. It fails before any AWS call without it.
+`nodegroup update -o json|yaml` needs `--yes` when the nodegroup pattern is
+not an exact name or the health checks warn.
 
 `--watch` can't be combined with `-o json` or `-o yaml`, because it would
 print one document per interval. To poll from a script, run the command in a
@@ -76,9 +81,9 @@ array key, not from `.[]`:
 | Command | Top-level shape |
 |---|---|
 | `cluster list` | `{"clusters": [...], "count": N}` |
-| `nodegroup list` | `{"cluster": "...", "nodegroups": [...], "count": N}`, plus `"failures"` when some nodegroups could not be described |
-| `addon list` | `{"cluster": "...", "addons": [...], "count": N}` |
-| `status` | `{"clusters": [...]}` |
+| `nodegroup list` | `{"cluster": "...", "nodegroups": [...], "count": N}`, plus `"failures"` when some nodegroups could not be described. A nodegroup whose latest-AMI lookup failed has an `amiLookupError` field |
+| `addon list` | `{"cluster": "...", "addons": [...], "count": N}`, plus `"failures"` when some add-ons could not be described |
+| `status` | `{"clusters": [...]}`. A row with incomplete data has an `errors` list |
 
 Describe commands (`cluster describe`, `nodegroup describe`, `addon describe`)
 print the object itself, with no envelope.
@@ -174,24 +179,33 @@ or color settings, so scripts are never surprised.
 
 ## Color
 
-Color auto-disables when stdout is piped. Force it off with `--no-color` or the
-`NO_COLOR` environment variable.
+Each stream decides on color for itself. stdout is colored only when stdout
+is a color terminal, and stderr only when stderr is one. So with `2>log`,
+the log file gets no escape codes, and warnings on a terminal stay colored
+when stdout is piped. `--no-color`, a non-empty `NO_COLOR` (any value), or
+`TERM=dumb` turns color off on both streams, also in `--help` output.
 
 ## Live node-roll view
 
-When you patch a nodegroup's AMI, `refresh nodegroup update --live` shows a
-**real-time, per-node view** of the roll — nodes draining (with pod-eviction
-progress), terminating, and coming online — instead of a single spinner. It is
-line-oriented (it redraws in place on a terminal and appends snapshots when
-piped); it is **not** a full-screen TUI.
+When you roll one nodegroup on a color terminal, `refresh nodegroup update`
+shows a **real-time, per-node view** of the roll — nodes draining (with
+pod-eviction progress), terminating, and coming online — instead of a single
+spinner. `cluster upgrade` shows the same panel for its nodegroup rolls. It
+is line-oriented (it redraws in place); it is **not** a full-screen TUI.
+
+When stdout is piped, in CI, or with `NO_COLOR`, you get the standard
+progress lines instead. `--live` forces the panel there too: it appends a
+snapshot at most every 15s, and only when something changed.
 
 ```bash
 refresh nodegroup update -c prod -n web --live
 ```
 
-`--live` requires cluster (kubeconfig) access and a single nodegroup; it falls
-back to standard monitoring otherwise, and the EKS update status stays
-authoritative for the result regardless. Old-vs-new is determined from a
+The panel needs cluster (kubeconfig) access and a single nodegroup, and it is
+off with `--quiet`. Without them, `refresh` falls back to standard monitoring.
+The EKS update status stays authoritative for the result regardless: the panel
+stops when the EKS update ends, also when it fails. A failed Kubernetes read
+keeps the last frame with a retry notice. Old-vs-new is determined from a
 roll-start baseline, so it works for any roll.
 
 To preview the view with **no AWS and no cluster** (demos, or just to see the

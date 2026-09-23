@@ -31,14 +31,16 @@ It turns "I think we're behind on patches" into a safe, repeatable loop:
 
 The product is the **upgrade workflow**, with safety first:
 
-- **Pre-flight health gates** — capacity, node readiness, PodDisruptionBudgets,
-  and critical-workload checks run *before* anything mutates.
+- **Pre-flight health gates** — capacity, node readiness, PodDisruptionBudgets
+  that would block a drain, and critical-workload checks run *before* nodes
+  roll.
 - **Dry-run everything** — preview exactly what would change (including the AMI
   changelog and which PDBs would constrain a scale-down) before you commit.
 - **Live monitoring + verification** — watch rollouts in real time, then confirm
   nodes came back Ready with no newly-stuck pods.
-- **Built for CI/cron** — unattended flags, machine-readable output, and a
-  documented exit-code contract.
+- **Built for CI/cron** — unattended flags, one JSON/YAML document on stdout,
+  pure TSV with `-o plain`, and a documented exit-code contract. Missing or
+  failed data is reported as incomplete, never as healthy.
 
 It intentionally does **not** try to be a general EKS browser or a cost tool —
 that's `k9s`/the console/Kubecost territory. `refresh` does the upgrade loop well.
@@ -74,7 +76,7 @@ refresh nodegroup update -c prod --dry-run --changelog
 refresh nodegroup update -c prod --yes --require-healthy
 
 # Patch every add-on, in dependency-safe order
-refresh addon update --all --dependency-order --wait
+refresh addon update -c prod --all --dependency-order --wait
 ```
 
 Next: the [quickstart](getting-started/quickstart.md) walks through a first run

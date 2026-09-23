@@ -11,7 +11,9 @@ refresh context add|list|remove [args] [flags]
 ```
 
 The active context fills in cluster/region/profile defaults for every command.
-Per-invocation flags still override it. For the conceptual overview see
+Per-invocation flags still override it. A mutating command that takes its
+cluster from the context prints `Using cluster <cluster> (from context <name>)`
+to stderr. For the conceptual overview see
 [Contexts](../concepts/contexts.md); this page is the command-reference detail.
 
 !!! note "Where contexts are stored"
@@ -33,7 +35,8 @@ refresh use [context-name|-]
 
 - `refresh use prod` — make `prod` active.
 - `refresh use -` — toggle back to the previously active context.
-- `refresh use` — no name: pick interactively from the saved list.
+- `refresh use` — no name: pick interactively from the saved list. The
+  answer can also come from a pipe: `printf prod | refresh use`.
 
 Per-invocation `--region/--profile/--cluster` flags still override the active
 context.
@@ -69,7 +72,9 @@ refresh context <list|add|remove> [args] [flags]
 ### context list
 
 List every saved context with its cluster, region, and profile. The active
-context is marked with a `*`. Aliased as `ls`.
+context is marked with a `*`. Aliased as `ls`. Hints go to stderr. If
+`REFRESH_CONTEXT` names an unknown context, `context list` prints a warning
+instead of failing, so you can find the right name.
 
 ```bash
 refresh context list

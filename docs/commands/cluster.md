@@ -9,7 +9,10 @@ refresh cluster <list|describe|upgrade-check|upgrade> [args] [flags]
 ```
 
 The cluster argument is a positional on most subcommands, or `--cluster/-c`,
-falling back to the [active context](../concepts/contexts.md).
+falling back to the [active context](../concepts/contexts.md). The read-only
+subcommands also fall back to the kubeconfig's current cluster; `upgrade`
+never does. See
+[Cluster resolution](../concepts/configuration.md#cluster-resolution).
 
 ---
 
@@ -24,7 +27,14 @@ refresh cluster list [name-pattern] [flags]
 
 Scope with `-A` (every EKS-supported region) or repeated `-r`. Filter and sort
 in-process, then render as a table, structured output, or a region/cluster
-tree.
+tree. See [Regions](../concepts/configuration.md#regions) for how `-r`, the
+global `--region`, and `REFRESH_EKS_REGIONS` combine.
+
+With several regions, a region that fails prints one warning on stderr and
+the command still exits `0`. If no region answers (for example, the timeout
+ends first), the command fails instead of printing an empty list. The
+default `-A` sweep skips regions these credentials can't use, the same way
+`status -A` does. A cluster that could not be read is a stderr warning too.
 
 ### Flags
 
@@ -40,12 +50,13 @@ tree.
 | `--tree, -T` | Hierarchical region/cluster tree (implies `--all-regions`) |
 | `--watch, -w` | Re-run and redraw every `--watch-interval` until interrupted |
 | `--watch-interval` | Refresh interval for `--watch` (default `10s`) |
-| `--max-concurrency, -C` | Max concurrent region requests |
-| `--timeout, -t` | Operation timeout (default `60s`; env `REFRESH_TIMEOUT`) |
+| `--max-concurrency, -C` | Global: max concurrent region requests |
+| `--timeout, -t` | Global operation timeout (default `60s`; env `REFRESH_TIMEOUT`) |
 
 !!! tip "`tree` view"
     `-o tree` (or `--tree`) renders a region → cluster hierarchy and implies
-    `--all-regions`, so it's the quickest way to eyeball the whole fleet.
+    `--all-regions`, so it's the quickest way to eyeball the whole fleet. An
+    explicit `-o` wins over `--tree`.
 
 ### Examples
 
@@ -90,8 +101,13 @@ refresh cluster describe [cluster] [flags]
 | `--include-addons, -a` | Include EKS add-on information (default `true`) |
 | `--check-readiness, -R` | Measure real Kubernetes node readiness (`Ready/desired`) via the cluster API; without it the `NODES` column shows the desired count only |
 | `--kubeconfig` | Path to the kubeconfig for `--check-readiness` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
+| `--kube-context` | Kubeconfig context for `--check-readiness`, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
+
+The support window uses the cluster's upgrade policy. `-o json`/`-o yaml`
+include it as `supportType` (`STANDARD` clusters are auto-upgraded at the end
+of standard support). `cluster upgrade-check` reports it the same way.
 
 ### Examples
 
@@ -157,11 +173,18 @@ refresh cluster upgrade-check -c prod-east --id bc8b2f86       # by short ID
 |---|---|
 | `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
 | `--category` | Insight category: `UPGRADE_READINESS` (default), `MISCONFIGURATION` |
-| `--status` | Filter by insight status: `PASSING`, `WARNING`, `ERROR`, `UNKNOWN` (repeatable) |
+| `--status` | Filter by insight status: `PASSING`, `WARNING`, `ERROR`, `UNKNOWN` |
 | `--show-passing` | Include `PASSING` insights (hidden by default) |
 | `--id` | Show the detail view for one insight — accepts its short ID (from the table), full ID, or a case-insensitive name substring |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
+| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
+
+`upgrade-check` reads the insights EKS already has. It does not start an
+insights refresh, so right after a control-plane change the list can be
+empty or stale. `cluster upgrade` refreshes them before each hop.
+
+With `-o plain`, stdout has only the insight rows. The readiness verdict,
+support, control plane, and version skew go to stderr.
 
 ### Examples
 
@@ -220,13 +243,14 @@ preview. Missing or `UNKNOWN` insights show as a warning, because a real run
 refreshes them first and blocks until EKS has evaluated the hop version.
 
 **Nodegroup pre-flight.** Before each nodegroup roll, after the nodegroup is
-confirmed `ACTIVE` with no health issues, `refresh` runs the same pre-flight
-health checks as [`nodegroup update`](nodegroup.md#update), scoped to that
-nodegroup:
+confirmed `ACTIVE` with no health issues, `refresh` runs the same
+[pre-flight health checks](../concepts/health-checks.md) as
+[`nodegroup update`](nodegroup.md#update), scoped to that nodegroup:
 
 - A PodDisruptionBudget that allows 0 disruptions for pods on the nodegroup
-  stops the roll, before EKS is asked to roll anything. With `--force` (which
-  lets EKS evict through PDBs) it is a warning instead.
+  (including a PDB whose status is not synced) stops the roll, before EKS is
+  asked to roll anything. With `--force` (which lets EKS evict through PDBs)
+  it is a warning instead.
 - A `BLOCK` health decision stops the roll.
 - Health warnings need `--yes` or a confirmation at the prompt.
 
@@ -243,18 +267,34 @@ control-plane version, only when the next control-plane step would put it past
 the kubelet skew limit (3 minor versions). A nodegroup already past that limit,
 or one that is custom-AMI or skipped, blocks the plan instead.
 
+If an installed add-on is not compatible with the live control-plane version
+(for example, after an interrupted hop), the plan first adds a catch-up hop
+that updates it for the current version, before the next control-plane step.
+
+If a nodegroup is already `UPDATING` when its turn comes, `refresh` waits for
+that update to settle, reads the version again, and then skips it or rolls it.
+During long waits, throttling, server, and network errors are retried;
+permanent errors such as `AccessDenied` fail at once.
+
+The live node-roll panel shows only when stdout is a color terminal. Piped,
+CI, and `NO_COLOR` runs print text progress.
+
 !!! note "Resumable by design"
     The plan is re-derived from live cluster state on every run — no state
     file. Rerunning after a failure (or Ctrl+C) resumes where it left off, and
-    rerunning after success is a no-op. On failure, `refresh` prints the exact
-    resume command. It repeats `--profile`, `--region`, `--skip`,
-    `--skip-nodegroup`, `--force`, and `--yes` when you gave them, so the
-    rerun changes the same things in the same account and region.
+    rerunning after success is a no-op. On failure or an interrupt, `refresh`
+    prints the exact resume command. It repeats `--profile`, `--region`,
+    `--skip`, `--skip-nodegroup`, `--force`, `--skip-insights-check`,
+    `--skip-health-check`, and `--yes` when you gave them, so the rerun
+    changes the same things in the same account and region. A rerun at the
+    target version moves no control plane, so it needs no insights.
 
 !!! warning "This mutates the control plane"
-    `cluster upgrade` uses strict credential validation and confirms each
-    mutating phase unless you pass `--yes`. A multi-hop upgrade legitimately
-    runs for hours; the default timeout is `4h`. Start with `--dry-run`.
+    `cluster upgrade` confirms each mutating phase unless you pass `--yes`.
+    A multi-hop upgrade legitimately runs for hours; the default timeout is
+    `4h` (`REFRESH_TIMEOUT` does not change it). Ctrl+C or the timeout while
+    the plan is built exits as an interrupt and changes nothing. Start with
+    `--dry-run`.
 
 ### Flags
 
@@ -271,7 +311,7 @@ or one that is custom-AMI or skipped, blocks the plan instead.
 | `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | Suppress progress output |
 | `--poll-interval, -p` | How often to poll in-flight updates (default `15s`) |
-| `--format, -o` | `table` (default), `json`, `yaml`, `plain`. With `json`/`yaml`, stdout gets one document: the plan for `--dry-run` or a blocked plan, else `{plan, report}` after the run. Progress goes to stderr, and a run without `--dry-run` needs `--yes` |
+| `--format, -o` | `table` (default), `json`, `yaml`, `plain`. With `json`/`yaml`, stdout gets one document: the plan for `--dry-run` or a blocked plan, else `{plan, report}` after the run. Progress goes to stderr, and a run without `--dry-run` needs `--yes`. With `plain`, stdout gets the plan as TSV and everything else goes to stderr |
 | `--timeout, -t` | Overall upgrade timeout (default `4h`; not read from `REFRESH_TIMEOUT`) |
 
 !!! tip "Exit code in dry-run"

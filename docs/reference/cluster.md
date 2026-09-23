@@ -2,7 +2,7 @@
 
 # refresh cluster
 
-> Cluster operations (list, get, upgrade)
+> Cluster operations (list, describe, upgrade-check, upgrade)
 
 ```
 refresh cluster [options] <command>
