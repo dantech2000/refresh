@@ -79,16 +79,6 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 	}
 }
 
-// PodDisruptionBudgets returns the cluster's PDB disruption snapshot via the
-// health checker, or (nil, nil) when no health checker / k8s client is wired.
-// Used by `nodegroup scale --dry-run` to preview PDB impact. (REF-4)
-func (s *ServiceImpl) PodDisruptionBudgets(ctx context.Context) ([]health.PDBInfo, error) {
-	if s.healthChecker == nil {
-		return nil, nil
-	}
-	return s.healthChecker.ListPodDisruptionBudgets(ctx)
-}
-
 // nodegroupReadyCounts returns measured Kubernetes Ready=True counts per
 // nodegroup, or (nil, false) when no cluster-connected health checker is wired
 // (the common case for a plain `nodegroup list`). (REF-130)

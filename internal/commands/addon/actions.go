@@ -212,10 +212,17 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	// Honor -o json|yaml for the single-addon result (REF-55); table/plain fall
-	// through to the human-readable summary below.
+	// Honor -o json|yaml for the single-addon result (REF-55); -o plain gets
+	// the same one-row TSV as `update --all`, and table falls through to the
+	// human-readable summary below.
 	if handled, encErr := runner.EncodeStdout(cmd.String("format"), result); handled {
 		return encErr
+	}
+	if ui.PlainOutput() {
+		results := []addons.AddonUpdateResult{*result}
+		writeUpdateIssues(os.Stderr, results)
+		addonUpdatePlain(results).Render()
+		return nil
 	}
 
 	switch result.Status {

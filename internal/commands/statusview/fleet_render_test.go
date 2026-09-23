@@ -5,10 +5,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dantech2000/refresh/internal/render"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/ui"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 func iptr(i int) *int { return &i }
@@ -184,15 +186,12 @@ func TestFleetLines_NodegroupsBehindControlPlane(t *testing.T) {
 	// The STALE AMI cell gives the row's reason, not a bare "0".
 	mustContain(t, joined, "▲ 0 · 1 behind CP")
 
-	footer := summaryFooter(fleet, 0)
-	mustContain(t, footer, "1 nodegroups behind control plane")
-
 	// -o plain carries the same text in the same column.
 	if got := staleAMICell(fleet[0]); !strings.Contains(got, "0 · 1 behind CP") {
 		t.Errorf("plain STALE AMI cell = %q, want it to name the nodegroup behind CP", got)
 	}
 	fleet[0].StaleAMI = statussvc.StaleAMISummary{Total: 2, Behind: 1, OldestDays: iptr(30)}
-	if got := staleAMICell(fleet[0]); !strings.Contains(got, "1/2 (oldest 30d) · 1 behind CP") {
+	if got := staleAMICell(fleet[0]); !strings.Contains(got, "1/2 (30d) · 1 behind CP") {
 		t.Errorf("plain STALE AMI cell = %q", got)
 	}
 	if got := stalePretty(th, fleet[0]); !strings.Contains(got, "1/2 (30d) · 1 behind CP") {
@@ -210,6 +209,20 @@ func TestOutputFleetPlain_BehindCPKeepsColumnCount(t *testing.T) {
 		NodegroupCount:               2,
 		NodegroupsBehindControlPlane: 2,
 	}}
+	rows := plaintest.Check(t, fleetPlainOut(t, fleet), fleetPlainHeaders...)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if !strings.Contains(rows[0][5], "0 · 2 behind CP") {
+		t.Errorf("STALE AMI cell = %q, want \"0 · 2 behind CP\"", rows[0][5])
+	}
+}
+
+var fleetPlainHeaders = []string{"CLUSTER", "REGION", "VERSION", "SUPPORT", "COMPUTE", "STALE AMI", "ADDONS", "ERRORS"}
+
+// fleetPlainOut runs OutputFleetTable under -o plain and returns stdout.
+func fleetPlainOut(t *testing.T, fleet []statussvc.ClusterStatus) string {
+	t.Helper()
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
 	r, w, err := os.Pipe()
@@ -218,27 +231,72 @@ func TestOutputFleetPlain_BehindCPKeepsColumnCount(t *testing.T) {
 	}
 	orig := os.Stdout
 	os.Stdout = w
-	perr := outputFleetPlain(fleet, 0)
+	perr := OutputFleetTable(fleet, time.Second)
 	os.Stdout = orig
 	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	if perr != nil {
-		t.Fatalf("outputFleetPlain: %v", perr)
+		t.Fatalf("OutputFleetTable: %v", perr)
 	}
-	var row string
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "prod-east") {
-			row = line
+	return string(out)
+}
+
+// -o plain is pure TSV: no footer, no glyphs, the human table's column names
+// and vocabulary, and nothing truncated.
+func TestOutputFleetPlain_Contract(t *testing.T) {
+	fleet := sampleFleet()
+	fleet = append(fleet,
+		statussvc.ClusterStatus{
+			Name: "auto", Region: "us-east-1", Version: "1.31",
+			Support:      statussvc.SupportPosture{Tier: statussvc.SupportExtended, DaysRemaining: iptr(40), ExtraCostUSDPerHour: 0.5},
+			Compute:      statussvc.ComputeAutoMode,
+			AddonsBehind: statussvc.AddonsBehindSummary{Total: 5, Behind: 3, Names: []string{"a", "b", "c"}},
+		},
+		statussvc.ClusterStatus{Name: "karp", Region: "us-east-1", Version: "1.32", Compute: statussvc.ComputeKarpenter},
+		statussvc.ClusterStatus{Name: "bare", Region: "us-east-1", Version: "1.32", Errors: []string{"addons: AccessDenied\nline two"}},
+	)
+	out := fleetPlainOut(t, fleet)
+	rows := plaintest.Check(t, out, fleetPlainHeaders...)
+	if len(rows) != len(fleet) {
+		t.Fatalf("got %d rows, want %d (no footer):\n%s", len(rows), len(fleet), out)
+	}
+	for _, glyph := range []string{"⚠", "✖", "🤖", "✔", "▲", "●"} {
+		if strings.Contains(out, glyph) {
+			t.Errorf("plain output contains glyph %q:\n%s", glyph, out)
 		}
 	}
-	if row == "" {
-		t.Fatalf("no prod-east row in:\n%s", out)
+	byName := map[string][]string{}
+	for _, r := range rows {
+		byName[r[0]] = r
 	}
-	cells := strings.Split(row, "\t")
-	if len(cells) != 8 {
-		t.Fatalf("row has %d cells, want 8: %q", len(cells), row)
+	for name, want := range map[string][]string{
+		"data-eu": {"unsupported", "5 nodegroups", "5/5 (47d)", "2 (vpc-cni,coredns)"},
+		"auto":    {"extended (40d) +$0.50/hr", "Auto Mode", "n/a", "3 (a,b,c)"},
+		"karp":    {"unknown", "Karpenter", "n/a", "0"},
+		"bare":    {"unknown", "none", "n/a", "0"},
+	} {
+		if got := byName[name][3:7]; strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("%s SUPPORT..ADDONS = %q, want %q", name, got, want)
+		}
 	}
-	if !strings.Contains(cells[5], "0 · 2 behind CP") {
-		t.Errorf("STALE AMI cell = %q, want \"0 · 2 behind CP\"", cells[5])
+	if got := byName["bare"][7]; got != "addons: AccessDenied line two" {
+		t.Errorf("ERRORS cell = %q", got)
+	}
+
+	// Every header but ERRORS is a human table column, in the same order.
+	human := fleetLines(render.New(render.ColorNone, true), fleet, 0)
+	var headerLine string
+	for _, l := range human {
+		if strings.Contains(l, "CLUSTER") && strings.Contains(l, "STALE AMI") {
+			headerLine = l
+		}
+	}
+	rest := headerLine
+	for _, h := range fleetPlainHeaders[:len(fleetPlainHeaders)-1] {
+		i := strings.Index(rest, h)
+		if i < 0 {
+			t.Fatalf("human header %q lacks %q (in order)", headerLine, h)
+		}
+		rest = rest[i+len(h):]
 	}
 }

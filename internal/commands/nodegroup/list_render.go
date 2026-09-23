@@ -18,14 +18,7 @@ func nodegroupListLines(th *render.Theme, cluster string, items []nodegroupsvc.N
 			th.Paint(pal.Dim, fmt.Sprintf(" · %d", len(items))),
 		"",
 	}
-	tbl := th.NewTable(
-		ui.Column{Title: "NAME", Min: 4, Max: 60},
-		ui.Column{Title: "STATUS", Min: 10},
-		ui.Column{Title: "INSTANCE", Min: 10},
-		ui.Column{Title: "VERSION", Min: 7},
-		ui.Column{Title: "AMI", Min: 9},
-		ui.Column{Title: "NODES", Min: 7, Align: ui.AlignRight},
-	)
+	tbl := th.NewTable(nodegroupListColumns()...)
 	for _, ng := range items {
 		tbl.Row(
 			th.Paint(pal.White, ng.Name),
@@ -38,6 +31,19 @@ func nodegroupListLines(th *render.Theme, cluster string, items []nodegroupsvc.N
 	}
 	out = append(out, tbl.Render()...)
 	return out
+}
+
+// nodegroupListColumns is the `nodegroup list` column set, shared by the
+// human table and the `-o plain` header.
+func nodegroupListColumns() []ui.Column {
+	return []ui.Column{
+		{Title: "NAME", Min: 4, Max: 60},
+		{Title: "STATUS", Min: 10},
+		{Title: "INSTANCE", Min: 10},
+		{Title: "VERSION", Min: 7},
+		{Title: "AMI", Min: 9},
+		{Title: "NODES", Min: 7, Align: ui.AlignRight},
+	}
 }
 
 // nodeCountText renders the NODES cell honestly: a measured "ready/desired"

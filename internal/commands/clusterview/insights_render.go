@@ -72,6 +72,19 @@ func insightToken(th *render.Theme, status string) string {
 	}
 }
 
+// insightColumns is the upgrade-check insights column set, shared by the
+// human table and the `-o plain` header.
+func insightColumns() []ui.Column {
+	return []ui.Column{
+		{Title: "ID", Min: 8},
+		{Title: "NAME", Min: 20, Max: 48},
+		{Title: "CATEGORY", Min: 14},
+		{Title: "STATUS", Min: 10},
+		{Title: "K8S", Min: 6},
+		{Title: "LAST REFRESH", Min: 14},
+	}
+}
+
 // upgradeCheckLines builds the human `cluster upgrade-check` view (pure,
 // golden-testable): a readiness verdict, the AWS Cluster Insights table, and the
 // local version-skew section.
@@ -92,14 +105,7 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 	if len(report.Insights) == 0 {
 		out = append(out, "  "+th.Token(render.Healthy, "no upgrade insights to address"))
 	} else {
-		tbl := th.NewTable(
-			ui.Column{Title: "ID", Min: 8},
-			ui.Column{Title: "NAME", Min: 20, Max: 48},
-			ui.Column{Title: "CATEGORY", Min: 14},
-			ui.Column{Title: "STATUS", Min: 10},
-			ui.Column{Title: "K8S", Min: 6},
-			ui.Column{Title: "LAST REFRESH", Min: 14},
-		)
+		tbl := th.NewTable(insightColumns()...)
 		var errc, warnc, passc int
 		for _, in := range report.Insights {
 			switch strings.ToUpper(in.Status) {

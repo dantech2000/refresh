@@ -10,12 +10,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
@@ -39,8 +35,6 @@ type EKSAPI interface {
 type ServiceImpl struct {
 	eksClient     EKSAPI
 	ec2Client     *ec2.Client
-	iamClient     *iam.Client
-	stsClient     *sts.Client
 	healthChecker *health.HealthChecker
 	cache         *Cache
 	logger        *slog.Logger
@@ -66,8 +60,6 @@ func NewService(awsConfig aws.Config, healthChecker *health.HealthChecker, logge
 	return &ServiceImpl{
 		eksClient:     eks.NewFromConfig(awsConfig),
 		ec2Client:     ec2.NewFromConfig(awsConfig),
-		iamClient:     iam.NewFromConfig(awsConfig),
-		stsClient:     sts.NewFromConfig(awsConfig),
 		healthChecker: healthChecker,
 		cache:         NewCache(defaultCacheTTLDescribe),
 		logger:        logger,
@@ -291,20 +283,17 @@ func (s *ServiceImpl) List(ctx context.Context, options ListOptions) ([]ClusterS
 }
 
 // forRegion returns a ServiceImpl bound to the given AWS region. It reuses the
-// shared cache and logger, but rebuilds the health checker: its EKS/CloudWatch/
-// ASG clients are region-bound, so reusing the parent's checker would evaluate
-// clusters against the wrong region's APIs.
+// shared cache and logger, but rebuilds the health checker the same way the
+// factory does: its AWS clients are region-bound, so reusing the parent's
+// checker would evaluate clusters against the wrong region's APIs. The
+// Kubernetes client and node-metrics lister are not carried over: they talk to
+// one cluster's API server, not to every cluster in the region.
 func (s *ServiceImpl) forRegion(region string) *ServiceImpl {
 	regionConfig := s.awsConfig.Copy()
 	regionConfig.Region = region
 	hc := s.healthChecker
 	if hc != nil {
-		hc = health.NewChecker(
-			eks.NewFromConfig(regionConfig),
-			nil,
-			cloudwatch.NewFromConfig(regionConfig),
-			autoscaling.NewFromConfig(regionConfig),
-		)
+		hc = health.NewCheckerForConfig(regionConfig, nil, nil)
 	}
 	out := NewService(regionConfig, hc, s.logger)
 	out.cache = s.cache

@@ -55,8 +55,10 @@ recommended AMI.
 | (also set min/max) | `refresh nodegroup scale my-cluster -n ng-1 --desired 5 --min 3 --max 8` |
 | (safe scale-down) | `refresh nodegroup scale my-cluster -n ng-1 --desired 2 --check-pdbs --wait` |
 
-`--check-pdbs` validates Pod Disruption Budgets before scaling down so you don't
-strand workloads; `--health-check` validates cluster health before and after.
+`--check-pdbs` refuses a scale-down when a Pod Disruption Budget that allows 0
+disruptions covers pods on the nodegroup's nodes (EKS does not honor PDBs when
+it removes nodes for a scaling change); `--force` overrides it.
+`--health-check` validates cluster health before and after.
 
 ## Update (roll) a nodegroup AMI
 
@@ -139,6 +141,6 @@ Every list/describe command supports `-o table|json|yaml|plain` (plus `tree` for
 much like `aws ... --output text` but tab-separated and stable.
 
 ```bash
-refresh nodegroup list my-cluster -o plain | awk '{print $1}'
+refresh nodegroup list my-cluster -o plain | awk -F'\t' 'NR>1 {print $1}'
 refresh cluster list -A -o json | jq '.clusters[].name'
 ```

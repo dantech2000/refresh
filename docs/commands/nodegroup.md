@@ -51,7 +51,7 @@ refresh nodegroup list [cluster] [flags]
 refresh nodegroup list my-cluster --filter amiStatus=outdated
 
 # Plain TSV for scripting
-refresh nodegroup list my-cluster -o plain | awk '{print $1}'
+refresh nodegroup list my-cluster -o plain | awk -F'\t' 'NR>1 {print $1}'
 
 # Watch a roll progress live
 refresh nodegroup list my-cluster --watch
@@ -111,16 +111,21 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 | `--min` | Minimum node count |
 | `--max` | Maximum node count |
 | `--health-check` | Validate cluster health before and after scaling |
-| `--check-pdbs` | Validate Pod Disruption Budgets before scaling down |
+| `--check-pdbs` | Refuse a scale-down when a Pod Disruption Budget that allows 0 disruptions covers pods on the nodegroup's nodes |
+| `--force` | With `--check-pdbs`, scale down anyway and print the blocking PDBs as a warning |
 | `--wait` | Wait for the scaling operation to complete |
 | `--op-timeout` | Scaling operation timeout for `--wait` (default `5m`; added on top of `--timeout`; `0` = no limit) |
 | `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--dry-run` | Preview the scaling impact without executing |
 | `--timeout, -t` | Operation timeout (env `REFRESH_TIMEOUT`) |
 
-!!! tip "Preview which PDBs would block a scale-down"
-    Combine `--dry-run --check-pdbs` to preview the **specific** Pod Disruption
-    Budgets that would constrain a scale-down — before you touch anything.
+!!! warning "A scale-down does not honor PDBs"
+    When a scaling change lowers the desired size, EKS terminates the removed
+    nodes without waiting for Pod Disruption Budgets. With `--check-pdbs`,
+    `refresh` refuses the scale-down (exit 1, before any change) if a PDB that
+    allows 0 disruptions covers pods on the nodegroup's nodes, and lists those
+    PDBs. Pass `--force` to scale down anyway. Combine `--dry-run --check-pdbs`
+    to see the verdict and the blocking PDBs before you touch anything.
 
 ### Examples
 
@@ -128,11 +133,14 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 # Scale up to 5 nodes
 refresh nodegroup scale my-cluster -n ng-default --desired 5
 
-# Safe scale-down: preview the PDBs that would constrain it
+# Safe scale-down: preview the PDB gate's verdict and any blocking PDBs
 refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --dry-run
 
-# Scale down for real, gated on PDBs, and wait for it to settle
+# Scale down for real, refused if a PDB blocks it, and wait for it to settle
 refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
+
+# Scale down even though a PDB blocks it (the blockers print as a warning)
+refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --force
 ```
 
 ---

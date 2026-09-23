@@ -1,7 +1,9 @@
 package nodegroup
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 // captureStdout is defined in health_decision_test.go (redirects both
@@ -23,7 +26,7 @@ import (
 
 func TestOutputNodegroupsTable_Empty(t *testing.T) {
 	out := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", nil, time.Second); err != nil {
+		if err := outputNodegroupsTable("my-cluster", nil); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
@@ -39,7 +42,7 @@ func TestOutputNodegroupsTable_WithRows(t *testing.T) {
 	}
 	// Human path (render design system): captured in full via fmt.Println.
 	out := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", items, 2*time.Second); err != nil {
+		if err := outputNodegroupsTable("my-cluster", items); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
@@ -49,16 +52,52 @@ func TestOutputNodegroupsTable_WithRows(t *testing.T) {
 		}
 	}
 
-	// Plain path keeps the original cluster banner.
+	// Plain path: header + one TSV row per nodegroup, nothing else. The header
+	// names match the human table's columns.
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
 	plain := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", items, 2*time.Second); err != nil {
+		if err := outputNodegroupsTable("my-cluster", items); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
-	if !strings.Contains(plain, "Nodegroups for cluster: my-cluster") {
-		t.Errorf("plain output missing cluster banner; got:\n%s", plain)
+	headers := []string{"NAME", "STATUS", "INSTANCE", "VERSION", "AMI", "NODES"}
+	rows := plaintest.Check(t, plain, headers...)
+	if len(rows) != len(items) {
+		t.Fatalf("got %d rows, want %d:\n%s", len(rows), len(items), plain)
+	}
+	if got := strings.Join(rows[1], "|"); got != "spot|UPDATING|t3.medium|-|Outdated|2" {
+		t.Errorf("row = %q", got)
+	}
+	for _, h := range headers {
+		if !strings.Contains(out, h) {
+			t.Errorf("human table has no %q column; plain header must match it:\n%s", h, out)
+		}
+	}
+}
+
+func TestOutputNodegroupsTable_PlainEmptyIsHeaderOnly(t *testing.T) {
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	out := captureStdout(t, func() {
+		if err := outputNodegroupsTable("my-cluster", nil); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	if out != "NAME\tSTATUS\tINSTANCE\tVERSION\tAMI\tNODES\n" {
+		t.Errorf("empty plain list should be the header only, got %q", out)
+	}
+}
+
+func TestNodegroupListPlain_BehindAndLookupFailure(t *testing.T) {
+	items := []nodegroupsvc.NodegroupSummary{
+		{Name: "old\tname", Status: "ACTIVE", K8sVersion: "1.29", VersionBehind: true, AMILookupError: "denied", DesiredSize: 2, ReadyNodes: 1, ReadyKnown: true},
+	}
+	var buf bytes.Buffer
+	nodegroupListPlain(items).Write(&buf)
+	rows := plaintest.Check(t, buf.String(), "NAME", "STATUS", "INSTANCE", "VERSION", "AMI", "NODES")
+	if got := strings.Join(rows[0], "|"); got != "old name|ACTIVE|-|1.29 (behind)|unknown (lookup failed)|1/2" {
+		t.Errorf("row = %q", got)
 	}
 }
 
@@ -91,65 +130,141 @@ func TestOutputNodegroupDetailsTable(t *testing.T) {
 	}
 }
 
+func TestOutputNodegroupDetailsTable_Plain(t *testing.T) {
+	details := &nodegroupsvc.NodegroupDetails{
+		Name:         "workers",
+		Status:       "ACTIVE",
+		InstanceType: "m5.large",
+		AmiType:      "AL2_x86_64",
+		CapacityType: "ON_DEMAND",
+		CurrentAMI:   "ami-aaa",
+		LatestAMI:    "ami-bbb",
+		AMIStatus:    types.AMIOutdated,
+		Scaling:      nodegroupsvc.ScalingConfig{DesiredSize: 3, MinSize: 1, MaxSize: 5},
+		Workloads:    nodegroupsvc.WorkloadInfo{TotalPods: 10, CriticalPods: 2, PodDisruption: "2 PDBs"},
+		Instances: []nodegroupsvc.InstanceDetails{{
+			InstanceID: "i-0123456789abcdef0123", InstanceType: "m5.large",
+			LaunchTime: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Lifecycle: "on-demand", State: "running", AZ: "us-east-1a",
+		}},
+	}
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	out := captureStdout(t, func() {
+		if err := outputNodegroupDetailsTable(details, time.Second); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	rows := plaintest.Check(t, out, "FIELD", "VALUE")
+	for f, v := range map[string]string{
+		"name":       "workers",
+		"ami status": "Outdated",
+		"scaling":    "3 desired (1-5)",
+		"pdbs":       "2 PDBs",
+		// The human table truncates instance IDs; plain never does.
+		"instance/i-0123456789abcdef0123": "type=m5.large launched=2026-01-02 lifecycle=on-demand state=running az=us-east-1a",
+	} {
+		if got, ok := plaintest.Field(rows, f); !ok || got != v {
+			t.Errorf("field %q = %q (found=%v), want %q", f, got, ok, v)
+		}
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
-// printScaleDownPDBImpact
+// printScaleDryRunPDBGate / warnForcedScaleDown
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestPrintScaleDownPDBImpact_None(t *testing.T) {
-	out := captureStdout(t, func() { printScaleDownPDBImpact(nil) })
-	if !strings.Contains(out, "none found") {
-		t.Errorf("expected a 'none found' message, got: %q", out)
+func blockedCheck(scoped bool) *nodegroupsvc.ScaleDownPDBCheck {
+	return &nodegroupsvc.ScaleDownPDBCheck{
+		CurrentDesired: 3, RequestedDesired: 1, ScaleDown: true, Scoped: scoped,
+		Blockers: []health.PDBInfo{
+			{Namespace: "app", Name: "web", CurrentHealthy: 1, DesiredHealthy: 1, ExpectedPods: 1},
+			{Namespace: "app", Name: "operator", StatusNotSynced: true},
+		},
 	}
 }
 
-func TestPrintScaleDownPDBImpact_AllHealthy(t *testing.T) {
-	pdbs := []health.PDBInfo{
-		{Namespace: "app", Name: "web", DisruptionsAllowed: 2},
-		{Namespace: "app", Name: "api", DisruptionsAllowed: 1},
+func TestPrintScaleDryRunPDBGate(t *testing.T) {
+	cases := map[string]struct {
+		check    *nodegroupsvc.ScaleDownPDBCheck
+		checkErr error
+		force    bool
+		want     []string
+		notWant  []string
+	}{
+		"not a scale-down": {
+			check: &nodegroupsvc.ScaleDownPDBCheck{CurrentDesired: 2, RequestedDesired: 4},
+			want:  []string{"not a scale-down"},
+		},
+		"no blockers": {
+			check:   &nodegroupsvc.ScaleDownPDBCheck{CurrentDesired: 3, RequestedDesired: 1, ScaleDown: true, Scoped: true},
+			want:    []string{"no PodDisruptionBudget blocks removing nodes from ng"},
+			notWant: []string{"REFUSED"},
+		},
+		"blocked": {
+			check: blockedCheck(true),
+			want: []string{"would be REFUSED", "2 PodDisruptionBudget(s) with pods on this nodegroup's nodes",
+				"app/web (1/1 pods healthy", "app/operator (PDB status not synced", "--force"},
+		},
+		"blocked, unscoped": {
+			check: blockedCheck(false),
+			want:  []string{"would be REFUSED", "could not scope"},
+		},
+		"blocked, forced": {
+			check:   blockedCheck(true),
+			force:   true,
+			want:    []string{"would be overridden by --force", "app/web"},
+			notWant: []string{"REFUSED"},
+		},
+		"check failed": {
+			checkErr: errors.New("no Kubernetes client configured"),
+			want:     []string{"would be REFUSED", "no Kubernetes client configured"},
+		},
+		"check failed, forced": {
+			checkErr: errors.New("no Kubernetes client configured"),
+			force:    true,
+			want:     []string{"--force would scale anyway"},
+			notWant:  []string{"REFUSED"},
+		},
 	}
-	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
-	if !strings.Contains(out, "none currently block a drain") {
-		t.Errorf("all-healthy PDBs should report nothing blocks, got: %q", out)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			printScaleDryRunPDBGate(&buf, "prod", "ng", tc.check, tc.checkErr, tc.force)
+			out := buf.String()
+			for _, w := range tc.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("output missing %q:\n%s", w, out)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(out, w) {
+					t.Errorf("output should not contain %q:\n%s", w, out)
+				}
+			}
+		})
 	}
 }
 
-func TestPrintScaleDownPDBImpact_EmptyPDBNotAtRisk(t *testing.T) {
-	// A PDB matching no pods reports 0 disruptions allowed but blocks nothing.
-	pdbs := []health.PDBInfo{{Namespace: "app", Name: "orphan", DisruptionsAllowed: 0, ExpectedPods: 0}}
-	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
-	if !strings.Contains(out, "none currently block a drain") {
-		t.Errorf("empty PDB should not be flagged, got: %q", out)
+func TestWarnForcedScaleDown(t *testing.T) {
+	var buf bytes.Buffer
+	warnForcedScaleDown(&buf, "prod", "ng", blockedCheck(true), nil)
+	out := buf.String()
+	for _, w := range []string{"--force", "prod/ng down from 3 to 1", "2 PodDisruptionBudget(s)", "app/web", "app/operator"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("warning missing %q:\n%s", w, out)
+		}
 	}
-}
 
-func TestPrintScaleDownPDBImpact_AtRisk(t *testing.T) {
-	pdbs := []health.PDBInfo{
-		{Namespace: "app", Name: "web", DisruptionsAllowed: 0, CurrentHealthy: 1, DesiredHealthy: 1, ExpectedPods: 1},
-		{Namespace: "app", Name: "api", DisruptionsAllowed: 3},
+	buf.Reset()
+	warnForcedScaleDown(&buf, "prod", "ng", &nodegroupsvc.ScaleDownPDBCheck{CurrentDesired: 3, RequestedDesired: 1, ScaleDown: true}, nil)
+	if buf.Len() != 0 {
+		t.Errorf("no blockers should print nothing, got %q", buf.String())
 	}
-	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
-	if !strings.Contains(out, "at risk") {
-		t.Errorf("at-risk PDBs should be flagged, got: %q", out)
-	}
-	if !strings.Contains(out, "app/web") {
-		t.Errorf("the at-risk PDB should be named, got: %q", out)
-	}
-}
 
-func TestPrintScaleDownPDBImpact_SystemAndUnsyncedPDBs(t *testing.T) {
-	pdbs := []health.PDBInfo{
-		{Namespace: "kube-system", Name: "coredns", DisruptionsAllowed: 0, CurrentHealthy: 2, DesiredHealthy: 2, ExpectedPods: 2},
-		{Namespace: "app", Name: "operator", DisruptionsAllowed: 0, StatusNotSynced: true},
-	}
-	out := captureStdout(t, func() { printScaleDownPDBImpact(pdbs) })
-	if !strings.Contains(out, "at risk (2)") {
-		t.Errorf("both PDBs should be at risk, got: %q", out)
-	}
-	if !strings.Contains(out, "kube-system/coredns") {
-		t.Errorf("a kube-system blocker should be named, got: %q", out)
-	}
-	if !strings.Contains(out, "app/operator: disruptionsAllowed=0, status not synced") {
-		t.Errorf("an unsynced PDB should say its status is not synced, got: %q", out)
+	buf.Reset()
+	warnForcedScaleDown(&buf, "prod", "ng", nil, errors.New("listing PodDisruptionBudgets: forbidden"))
+	if !strings.Contains(buf.String(), "could not validate PodDisruptionBudgets") || !strings.Contains(buf.String(), "forbidden") {
+		t.Errorf("a failed check should be reported, got %q", buf.String())
 	}
 }
 

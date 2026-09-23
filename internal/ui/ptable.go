@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
@@ -109,21 +108,18 @@ func (t *PTable) Render() {
 	_ = table.Render()
 }
 
-// renderPlain emits the table as tab-separated values with ANSI stripped:
-// one header line, one line per row, no truncation or box drawing.
+// renderPlain emits the table as tab-separated values (see PlainTable): one
+// header line, one line per row, no truncation or box drawing.
 func (t *PTable) renderPlain() {
 	headers := make([]string, len(t.columns))
 	for i, col := range t.columns {
 		headers[i] = col.Title
 	}
-	Outln(strings.Join(headers, "\t"))
+	pt := NewPlainTable(headers...)
 	for _, row := range t.rows {
-		cells := make([]string, len(row))
-		for i, cell := range row {
-			cells[i] = PlainCell(cell)
-		}
-		Outln(strings.Join(cells, "\t"))
+		pt.Row(row...)
 	}
+	pt.Render()
 }
 
 // CyanHeaders returns the standard cyan header-color option used by all
