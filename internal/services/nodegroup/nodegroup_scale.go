@@ -41,7 +41,8 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 
 	// A scaling config change does not honor PDBs: EKS terminates the
 	// surplus nodes without waiting for evictions. So with --check-pdbs a
-	// scale-down that a PDB would block is refused unless Force is set.
+	// scale-down that could take a PDB below its budget is refused unless
+	// Force is set.
 	if options.CheckPDBs && !options.Force {
 		check, err := s.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired)
 		if err != nil {
@@ -137,8 +138,11 @@ type ScaleDownPDBCheck struct {
 	// ScaleDown is true when RequestedDesired < CurrentDesired. The other
 	// fields are only filled in for a scale-down.
 	ScaleDown bool
-	// Blockers are the PDBs that allow 0 disruptions and cover pods on the
-	// nodegroup's nodes (or on any node, when Scoped is false).
+	// Blockers are the PDBs whose covered pods on the nodegroup's nodes could
+	// lose more pods than the PDB allows, when the removed nodes are the ones
+	// that hold the most of them (see health.HealthChecker.ScaleDownBlockers).
+	// When Scoped is false they are every PDB in the cluster that allows 0
+	// disruptions.
 	Blockers []health.PDBInfo
 	// Scoped is true when Blockers is narrowed to the nodegroup's nodes.
 	Scoped bool
@@ -150,7 +154,7 @@ type ScaleDownPDBCheck struct {
 func (c ScaleDownPDBCheck) Refused() bool { return c.ScaleDown && len(c.Blockers) > 0 }
 
 // ScaleDownBlockedError is returned by Scale with CheckPDBs when a scale-down
-// would terminate nodes that run pods of a PDB allowing 0 disruptions.
+// could terminate more of a PDB's pods than the PDB allows.
 type ScaleDownBlockedError struct {
 	Cluster   string
 	Nodegroup string
@@ -159,12 +163,12 @@ type ScaleDownBlockedError struct {
 
 func (e *ScaleDownBlockedError) Error() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "refusing to scale %s/%s down from %d to %d: %d PodDisruptionBudget(s) allow 0 disruptions",
-		e.Cluster, e.Nodegroup, e.Check.CurrentDesired, e.Check.RequestedDesired, len(e.Check.Blockers))
+	fmt.Fprintf(&b, "refusing to scale %s/%s down from %d to %d: ",
+		e.Cluster, e.Nodegroup, e.Check.CurrentDesired, e.Check.RequestedDesired)
 	if e.Check.Scoped {
-		b.WriteString(" for pods on this nodegroup's nodes")
+		fmt.Fprintf(&b, "%d PodDisruptionBudget(s) could lose more pods on this nodegroup's nodes than they allow", len(e.Check.Blockers))
 	} else {
-		b.WriteString(" (could not scope to this nodegroup's nodes, so every such PDB in the cluster counts)")
+		fmt.Fprintf(&b, "%d PodDisruptionBudget(s) allow 0 disruptions (could not scope to this nodegroup's nodes, so every such PDB in the cluster counts)", len(e.Check.Blockers))
 	}
 	b.WriteString(":")
 	for _, p := range e.Check.Blockers {
@@ -177,8 +181,10 @@ func (e *ScaleDownBlockedError) Error() string {
 }
 
 // CheckScaleDownPDBs reports whether scaling nodegroupName to desired is a
-// scale-down and, if so, which PDBs would be violated by it. The PDB scan is
-// scoped to the nodegroup's nodes (see health.HealthChecker.DrainBlockers).
+// scale-down and, if so, which PDBs it could violate. The PDB scan is scoped
+// to the nodegroup's nodes and assumes the worst case: the removed nodes are
+// the ones that hold the most of a PDB's pods (see
+// health.HealthChecker.ScaleDownBlockers).
 // A nil desired is never a scale-down. It returns an error when the check
 // can't be done (no health checker or Kubernetes client, or a failed API
 // call): the caller asked for PDB validation, so "couldn't check" must not
@@ -210,7 +216,7 @@ func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodeg
 	if s.healthChecker == nil {
 		return nil, errors.New("PDB validation: no health checker configured")
 	}
-	report, err := s.healthChecker.DrainBlockers(ctx, clusterName, []string{nodegroupName})
+	report, err := s.healthChecker.ScaleDownBlockers(ctx, clusterName, nodegroupName, check.CurrentDesired-check.RequestedDesired)
 	if err != nil {
 		return nil, fmt.Errorf("PDB validation for %s/%s: %w (fix cluster access with --kubeconfig/--kube-context, or use --force to skip the PDB gate)", clusterName, nodegroupName, err)
 	}

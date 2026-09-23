@@ -4,8 +4,43 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// kubeletShutdownMessage is the status message the kubelet sets on pods it
+// terminates during a graceful node shutdown (nodeShutdownMessage in
+// pkg/kubelet/nodeshutdown).
+const kubeletShutdownMessage = "Pod was terminated in response to imminent node shutdown."
+
+// staleFailedPod reports whether pod is a Failed pod left behind by eviction
+// or node shutdown. Such pods linger until garbage collection and say nothing
+// about the health of their live replacements. The reasons are:
+//   - "Evicted": kubelet node-pressure eviction.
+//   - "Terminated": graceful node shutdown on kubelet 1.22 and later. Only
+//     skipped when the DisruptionTarget condition (reason
+//     TerminationByKubelet) or the kubelet shutdown message confirms it, since
+//     the reason alone is generic.
+//   - "Shutdown": graceful node shutdown on kubelet 1.21.
+//   - "NodeShutdown": pod admission rejected on a node shutting down.
+func staleFailedPod(pod corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodFailed {
+		return false
+	}
+	switch pod.Status.Reason {
+	case "Evicted", "Shutdown", "NodeShutdown":
+		return true
+	case "Terminated":
+		for _, c := range pod.Status.Conditions {
+			if c.Type == corev1.DisruptionTarget && c.Status == corev1.ConditionTrue &&
+				c.Reason == corev1.PodReasonTerminationByKubelet {
+				return true
+			}
+		}
+		return pod.Status.Message == kubeletShutdownMessage
+	}
+	return false
+}
 
 // CheckCriticalWorkloads validates that critical system workloads are running
 func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResult {
@@ -54,8 +89,7 @@ func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResul
 			// Skip stale Failed pods left behind by eviction or node shutdown:
 			// they linger until garbage collection and say nothing about the
 			// health of the live replacement pods.
-			if pod.Status.Phase == "Failed" &&
-				(pod.Status.Reason == "Evicted" || pod.Status.Reason == "Shutdown" || pod.Status.Reason == "NodeShutdown") {
+			if staleFailedPod(pod) {
 				continue
 			}
 

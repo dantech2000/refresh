@@ -202,7 +202,9 @@ or one that is custom-AMI or skipped, blocks the plan instead.
     The plan is re-derived from live cluster state on every run — no state
     file. Rerunning after a failure (or Ctrl+C) resumes where it left off, and
     rerunning after success is a no-op. On failure, `refresh` prints the exact
-    resume command.
+    resume command. It repeats `--profile`, `--region`, `--skip`,
+    `--skip-nodegroup`, `--force`, and `--yes` when you gave them, so the
+    rerun changes the same things in the same account and region.
 
 !!! warning "This mutates the control plane"
     `cluster upgrade` uses strict credential validation and confirms each

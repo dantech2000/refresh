@@ -51,10 +51,13 @@ func TestApplyHealthDecision_YesProceedsPastWarn(t *testing.T) {
 }
 
 func TestApplyHealthDecision_WarnNoTTYFailsFast(t *testing.T) {
-	// In `go test` stdin is not a terminal, so without --yes/--require-healthy a
-	// warn-level result must fail fast rather than block on a prompt.
+	// Without a terminal, and without --yes/--require-healthy, a warn-level
+	// result must fail fast rather than block on a prompt. The seam keeps
+	// this independent of how `go test` was started (stdin may be /dev/null,
+	// which is a character device).
+	withTerminal(t, false)
 	done, err := applyHealthDecision(t.Context(), warnSummary(), updateAMIFlags{})
-	if !done || err == nil {
+	if !done || err == nil || !strings.Contains(err.Error(), "no interactive terminal") {
 		t.Fatalf("expected fail-fast: done=%v err=%v", done, err)
 	}
 }

@@ -39,6 +39,9 @@ type Nodegroup struct {
 	AmiType string
 	// FailUpdate makes UpdateNodegroupVersion fail with InvalidRequestException.
 	FailUpdate bool
+	// UpdateForce records the force field of the last UpdateNodegroupVersion
+	// request (for assertions).
+	UpdateForce bool
 }
 
 // Addon is an installed EKS addon in the fake world.
@@ -354,8 +357,10 @@ func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Clus
 		}
 		var in struct {
 			Version string `json:"version"`
+			Force   bool   `json:"force"`
 		}
 		_ = json.Unmarshal(body, &in)
+		ng.UpdateForce = in.Force
 		target := in.Version
 		if target == "" {
 			target = ng.Version

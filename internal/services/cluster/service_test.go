@@ -263,9 +263,10 @@ func TestDescribe_MapsHealthIssues(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: func(_ context.Context, in *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
 			return &eks.DescribeClusterOutput{Cluster: &ekstypes.Cluster{
-				Name:    in.Name,
-				Version: aws.String("1.32"),
-				Status:  ekstypes.ClusterStatusActive,
+				Name:          in.Name,
+				Version:       aws.String("1.32"),
+				Status:        ekstypes.ClusterStatusActive,
+				UpgradePolicy: &ekstypes.UpgradePolicyResponse{SupportType: ekstypes.SupportTypeStandard},
 				Health: &ekstypes.ClusterHealth{Issues: []ekstypes.ClusterIssue{{
 					Code:        ekstypes.ClusterIssueCodeInternalFailure,
 					Message:     aws.String("control plane could not assume the cluster IAM role"),
@@ -283,6 +284,9 @@ func TestDescribe_MapsHealthIssues(t *testing.T) {
 	details, err := svc.Describe(context.Background(), "prod", DescribeOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if details.SupportType != "STANDARD" {
+		t.Errorf("support type = %q, want STANDARD", details.SupportType)
 	}
 	if len(details.HealthIssues) != 1 {
 		t.Fatalf("got %d health issues, want 1", len(details.HealthIssues))

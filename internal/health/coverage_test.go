@@ -60,7 +60,7 @@ func notReadyNode(name string) *corev1.Node {
 
 func TestKubernetesNodeCounts_NilClient(t *testing.T) {
 	hc := NewChecker(nil, nil, nil, nil)
-	total, ready, notReady, ok := hc.kubernetesNodeCounts(context.Background())
+	total, ready, notReady, _, ok := hc.kubernetesNodeCounts(context.Background())
 	if ok {
 		t.Error("nil client should report ok=false")
 	}
@@ -72,7 +72,7 @@ func TestKubernetesNodeCounts_NilClient(t *testing.T) {
 func TestKubernetesNodeCounts_AllReady(t *testing.T) {
 	client := fakek8s.NewSimpleClientset(readyNode("n1"), readyNode("n2"), readyNode("n3"))
 	hc := NewChecker(nil, client, nil, nil)
-	total, ready, notReady, ok := hc.kubernetesNodeCounts(context.Background())
+	total, ready, notReady, _, ok := hc.kubernetesNodeCounts(context.Background())
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
@@ -87,7 +87,7 @@ func TestKubernetesNodeCounts_AllReady(t *testing.T) {
 func TestKubernetesNodeCounts_MixedReadiness(t *testing.T) {
 	client := fakek8s.NewSimpleClientset(readyNode("n1"), notReadyNode("n2"), readyNode("n3"))
 	hc := NewChecker(nil, client, nil, nil)
-	total, ready, notReady, ok := hc.kubernetesNodeCounts(context.Background())
+	total, ready, notReady, _, ok := hc.kubernetesNodeCounts(context.Background())
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
@@ -102,7 +102,7 @@ func TestKubernetesNodeCounts_MixedReadiness(t *testing.T) {
 func TestKubernetesNodeCounts_NoNodes(t *testing.T) {
 	client := fakek8s.NewSimpleClientset()
 	hc := NewChecker(nil, client, nil, nil)
-	total, ready, _, ok := hc.kubernetesNodeCounts(context.Background())
+	total, ready, _, _, ok := hc.kubernetesNodeCounts(context.Background())
 	if !ok {
 		t.Fatal("an empty-but-reachable cluster should still report ok=true")
 	}

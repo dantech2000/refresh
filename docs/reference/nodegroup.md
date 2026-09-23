@@ -101,10 +101,11 @@ refresh nodegroup scale [options] [cluster]
 Change a managed nodegroup's desired/min/max size. Any subset of
 --desired/--min/--max may be set; unspecified bounds are left unchanged.
 
---check-pdbs refuses a scale-down (exit 1, before any change) when a Pod
-Disruption Budget that allows 0 disruptions covers pods on the nodegroup's
-nodes. EKS does not honor PDBs when a scaling change removes nodes, so those
-pods would go down. --force scales down anyway and prints the blockers as a
+--check-pdbs refuses a scale-down (exit 1, before any change) when it could
+remove more of a Pod Disruption Budget's pods than the PDB allows. EKS does not
+honor PDBs when a scaling change removes nodes, and the Auto Scaling group
+picks which nodes go, so the gate assumes the removed nodes are the ones that
+hold the most of the PDB's pods. --force scales down anyway and prints the blockers as a
 warning. --health-check validates cluster health before and after; --dry-run
 previews the impact (and the PDB verdict) without executing; --wait blocks
 until the operation settles.
@@ -124,7 +125,7 @@ until the operation settles.
 | `--min int` | — | — | Minimum node count |
 | `--max int` | — | — | Maximum node count |
 | `--health-check` | — | — | Validate cluster health before and after scaling |
-| `--check-pdbs` | — | — | Refuse a scale-down when a Pod Disruption Budget allowing 0 disruptions covers pods on the nodegroup's nodes |
+| `--check-pdbs` | — | — | Refuse a scale-down that could remove more of a Pod Disruption Budget's pods than it allows |
 | `--force` | — | — | With --check-pdbs, scale down even if PDBs would block it (the blockers are printed as a warning) |
 | `--wait` | — | — | Wait for scaling operation to complete |
 | `--op-timeout duration` | — | `5m0s` | Scaling operation timeout for --wait (added on top of --timeout; 0 = no limit) |
@@ -160,13 +161,14 @@ can't be listed is reported and makes the run exit 4. The default sweep skips
 regions these credentials can't use (SCP-denied or not enabled) with a note.
 
 Unattended / CI use:
-   --yes              skip confirmation prompts (multi-match selection, warnings)
+   --yes              skip confirmation prompts (a nodegroup pattern that is
+                      not an exact name, warn-level health findings)
    --require-healthy  treat warn-level health findings as a hard stop
    -o json|yaml       print one document on stdout: the run summary
                       (started/skipped/custom/failed), the dry-run plan, or
                       the --health-only verdict; notices go to stderr
-   Without a TTY, or with -o json|yaml, a run that needs a prompt fails fast
-   unless --yes is given.
+   Without a TTY, with --quiet, or with -o json|yaml, a run that needs a
+   prompt fails fast unless --yes is given.
 
 Exit codes:
    0  success            1  error, interrupt, or monitoring timeout
@@ -181,18 +183,19 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 | Flag | Env | Default | Description |
 |---|---|---|---|
 | `--cluster, -c string` | — | — | EKS cluster name or partial name pattern (overrides the active context; kubeconfig is not used). Falls back to EKS_CLUSTER_NAME unless a positional is clearly the cluster (with --nodegroup, or two positionals) |
-| `--nodegroup, -n string` | — | — | Nodegroup name or partial name pattern (if not set, update all) |
+| `--nodegroup, -n string` | — | — | Nodegroup name or partial name pattern (if not set, update all). A pattern that is not an exact name needs confirmation, or --yes without a terminal |
 | `--all-clusters` | — | — | Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r. |
 | `--region, -r string` | — | — | Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS) |
-| `--force, -f` | — | — | Force update if possible |
+| `--force, -f` | — | — | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll |
+| `--reroll` | — | — | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--dry-run, -d` | — | — | Preview changes without executing them |
 | `--no-wait` | — | — | Don't wait for update completion (original behavior) |
-| `--quiet, -q` | — | — | Minimal output mode |
+| `--quiet, -q` | — | — | Minimal output mode (does not prompt: a run that needs a confirmation, such as warn-level health findings or a nodegroup pattern that is not an exact name, stops unless --yes is given) |
 | `--timeout, -t duration` | — | `40m0s` | Maximum time to wait for update completion (per cluster with --all-clusters; 0 = no limit) |
 | `--poll-interval, -p duration` | — | `15s` | Polling interval for checking update status |
 | `--skip-health-check, -s` | — | — | Skip pre-flight health validation |
 | `--health-only` | — | — | Run health check only, don't update (exit code: 0=pass, 2=warn, 3=block) |
-| `--yes, -y` | — | — | Assume yes: skip confirmation prompts (multi-match selection, warn-level health) for unattended/CI use |
+| `--yes, -y` | — | — | Assume yes: skip confirmation prompts (a nodegroup pattern that is not an exact name, warn-level health) for unattended/CI use |
 | `--require-healthy` | — | — | Treat warn-level health findings as a hard stop (exit 2) instead of prompting |
 | `--skip-verify` | — | — | Skip post-roll verification (nodes ACTIVE, no new stuck pods) |
 | `--changelog` | — | — | In dry-run, print full amazon-eks-ami release notes between the current and target AMI |

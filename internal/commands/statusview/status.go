@@ -66,8 +66,13 @@ func versionCell(c statussvc.ClusterStatus) string {
 	return c.Version
 }
 
+// autoUpgradeNote replaces the extended-support premium for a cluster whose
+// upgrade policy is STANDARD: it never pays extended support.
+const autoUpgradeNote = "auto-upgrades at end of standard support"
+
 // supportCell is the `-o plain` SUPPORT cell: the human tier word, plus the
-// end date and extended-support premium the human table leaves out. A trailing
+// end date and extended-support premium (or the STANDARD-policy auto-upgrade
+// note) the human table leaves out. A trailing
 // "*" marks a posture from the compiled-in calendar (Fallback).
 func supportCell(s statussvc.SupportPosture) string {
 	star := ""
@@ -83,6 +88,9 @@ func supportCell(s statussvc.SupportPosture) string {
 		if s.DaysRemaining != nil {
 			txt += fmt.Sprintf(" (%dd)", *s.DaysRemaining)
 		}
+		if s.AutoUpgradeAtStandardEnd {
+			txt += " " + autoUpgradeNote
+		}
 		return txt + star
 	case statussvc.SupportExtended:
 		txt := "extended"
@@ -92,7 +100,10 @@ func supportCell(s statussvc.SupportPosture) string {
 		if s.DaysRemaining != nil {
 			txt += fmt.Sprintf(" (%dd)", *s.DaysRemaining)
 		}
-		if s.ExtraCostUSDPerHour > 0 {
+		switch {
+		case s.AutoUpgradeAtStandardEnd:
+			txt += " " + autoUpgradeNote
+		case s.ExtraCostUSDPerHour > 0:
 			txt += fmt.Sprintf(" +$%.2f/hr", s.ExtraCostUSDPerHour)
 		}
 		return txt + star

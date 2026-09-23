@@ -195,7 +195,7 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 	}
 	cluster := desc.Cluster
 	cs.Version = aws.ToString(cluster.Version)
-	cs.Support = s.resolveSupport(ctx, cs.Version)
+	cs.Support = ApplySupportType(s.resolveSupport(ctx, cs.Version), SupportTypeOf(cluster))
 	if cluster.Health != nil {
 		cs.HealthIssues = len(cluster.Health.Issues)
 	}
@@ -223,7 +223,7 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 		}
 	}
 
-	cs.Compute = s.detectCompute(ctx, cluster, cs.NodegroupCount)
+	cs.Compute = s.detectCompute(ctx, name, cluster, cs.NodegroupCount)
 
 	behind, addErr := s.addonsBehind(ctx, name, cs.Version)
 	if addErr != nil {
@@ -332,43 +332,58 @@ func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) 
 // provisions (current and legacy).
 var karpenterTagKeys = []string{"karpenter.sh/nodepool", "karpenter.sh/provisioner-name"}
 
+// karpenterClusterFilters returns the alternative EC2 filters that scope an
+// instance to one cluster. Karpenter tags its instances with both
+// kubernetes.io/cluster/<name>=owned and eks:eks-cluster-name=<name>
+// (https://karpenter.sh/docs/concepts/nodeclasses/); older releases set only
+// the first. EC2 ANDs separate filters, so each is its own query.
+func karpenterClusterFilters(clusterName string) []ec2types.Filter {
+	return []ec2types.Filter{
+		{Name: aws.String("tag:kubernetes.io/cluster/" + clusterName), Values: []string{"owned"}},
+		{Name: aws.String("tag:eks:eks-cluster-name"), Values: []string{clusterName}},
+	}
+}
+
 // detectCompute classifies how a cluster runs compute so a nodegroup-less
 // cluster never renders as an empty "nothing to do" row.
-func (s *Service) detectCompute(ctx context.Context, cluster *ekstypes.Cluster, ngCount int) ComputeType {
+func (s *Service) detectCompute(ctx context.Context, clusterName string, cluster *ekstypes.Cluster, ngCount int) ComputeType {
 	if cluster != nil && cluster.ComputeConfig != nil && aws.ToBool(cluster.ComputeConfig.Enabled) {
 		return ComputeAutoMode
 	}
 	if ngCount > 0 {
 		return ComputeManaged
 	}
-	if s.hasKarpenterInstances(ctx) {
+	if s.hasKarpenterInstances(ctx, clusterName) {
 		return ComputeKarpenter
 	}
 	return ComputeNone
 }
 
-// hasKarpenterInstances is a best-effort probe for Karpenter-provisioned EC2
-// instances in the region. Any error (including missing permission) is treated
-// as "no signal".
-func (s *Service) hasKarpenterInstances(ctx context.Context) bool {
-	if s.ec2 == nil {
+// hasKarpenterInstances is a best-effort probe for live Karpenter-provisioned
+// EC2 instances that belong to clusterName. Any error (including missing
+// permission) is treated as "no signal".
+func (s *Service) hasKarpenterInstances(ctx context.Context, clusterName string) bool {
+	if s.ec2 == nil || clusterName == "" {
 		return false
 	}
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeInstancesOutput, error) {
-		return s.ec2.DescribeInstances(rc, &ec2.DescribeInstancesInput{
-			MaxResults: aws.Int32(5),
-			Filters: []ec2types.Filter{
-				{Name: aws.String("tag-key"), Values: karpenterTagKeys},
-				{Name: aws.String("instance-state-name"), Values: []string{"pending", "running"}},
-			},
+	for _, clusterFilter := range karpenterClusterFilters(clusterName) {
+		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeInstancesOutput, error) {
+			return s.ec2.DescribeInstances(rc, &ec2.DescribeInstancesInput{
+				MaxResults: aws.Int32(5),
+				Filters: []ec2types.Filter{
+					clusterFilter,
+					{Name: aws.String("tag-key"), Values: karpenterTagKeys},
+					{Name: aws.String("instance-state-name"), Values: []string{"pending", "running"}},
+				},
+			})
 		})
-	})
-	if err != nil || out == nil {
-		return false
-	}
-	for _, r := range out.Reservations {
-		if len(r.Instances) > 0 {
-			return true
+		if err != nil || out == nil {
+			continue
+		}
+		for _, r := range out.Reservations {
+			if len(r.Instances) > 0 {
+				return true
+			}
 		}
 	}
 	return false

@@ -7,6 +7,10 @@ import (
 	"github.com/dantech2000/refresh/internal/services/status"
 )
 
+// autoUpgradeNote replaces the extended-support premium for a cluster whose
+// upgrade policy is STANDARD: it never pays extended support.
+const autoUpgradeNote = "auto-upgrades at end of standard support"
+
 // supportToken renders an EKS support posture (tier + days remaining, and the
 // extended-support premium when in extended) as a colored token: green for
 // standard, a warning for extended, a failure for unsupported. Reuses the
@@ -21,10 +25,17 @@ func supportToken(th *render.Theme, p *status.SupportPosture) string {
 	}
 	switch p.Tier {
 	case status.SupportStandard:
-		return th.Paint(th.Pal.Green, "standard"+days)
+		txt := "standard" + days
+		if p.AutoUpgradeAtStandardEnd {
+			txt += " · " + autoUpgradeNote
+		}
+		return th.Paint(th.Pal.Green, txt)
 	case status.SupportExtended:
 		txt := "extended" + days
-		if p.ExtraCostUSDPerHour > 0 {
+		switch {
+		case p.AutoUpgradeAtStandardEnd:
+			txt += " · " + autoUpgradeNote
+		case p.ExtraCostUSDPerHour > 0:
 			txt += fmt.Sprintf(" · +$%.2f/hr", p.ExtraCostUSDPerHour)
 		}
 		return th.Token(render.Warn, txt)
@@ -46,10 +57,17 @@ func supportPlain(p *status.SupportPosture) string {
 	}
 	switch p.Tier {
 	case status.SupportStandard:
-		return "standard" + days
+		s := "standard" + days
+		if p.AutoUpgradeAtStandardEnd {
+			s += ", " + autoUpgradeNote
+		}
+		return s
 	case status.SupportExtended:
 		s := "extended" + days
-		if p.ExtraCostUSDPerHour > 0 {
+		switch {
+		case p.AutoUpgradeAtStandardEnd:
+			s += ", " + autoUpgradeNote
+		case p.ExtraCostUSDPerHour > 0:
 			s += fmt.Sprintf(", +$%.2f/hr", p.ExtraCostUSDPerHour)
 		}
 		return s
