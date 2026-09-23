@@ -23,6 +23,7 @@ import (
 	ctxcmd "github.com/dantech2000/refresh/internal/commands/ctxcmd"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	nodegroupcmd "github.com/dantech2000/refresh/internal/commands/nodegroup"
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	statuscmd "github.com/dantech2000/refresh/internal/commands/statuscmd"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
@@ -207,8 +208,9 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	app.Writer = out
 	app.ErrWriter = errOut
 	// Run threads ctx into every command action, so signal cancellation from
-	// main propagates to in-flight AWS calls.
-	return app.Run(ctx, args)
+	// main propagates to in-flight AWS calls. The kubeconfig notice dedupe is
+	// per run.
+	return app.Run(runner.WithKubeNotices(ctx), args)
 }
 
 func main() {

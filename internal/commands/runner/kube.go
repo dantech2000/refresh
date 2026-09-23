@@ -50,11 +50,27 @@ var (
 )
 
 // kubeNotices dedupes cluster-mismatch and context notices, which several
-// resolutions for the same cluster in one run would otherwise repeat.
-var kubeNotices sync.Map
+// resolutions for the same cluster in one run would otherwise repeat. One set
+// lives on the context of each CLI run (WithKubeNotices), so nothing carries
+// over between runs in the same process.
+type kubeNotices struct{ seen sync.Map }
 
-func noticeOnce(key string) bool {
-	_, seen := kubeNotices.LoadOrStore(key, struct{}{})
+type kubeNoticesKey struct{}
+
+// WithKubeNotices returns ctx carrying a fresh notice-dedupe set for
+// ResolveClusterKubeClient. Call it once per CLI run, on the root context.
+func WithKubeNotices(ctx context.Context) context.Context {
+	return context.WithValue(ctx, kubeNoticesKey{}, &kubeNotices{})
+}
+
+// noticeOnce reports whether the notice named key should print: the first
+// time for ctx's run, and always when ctx carries no dedupe set.
+func noticeOnce(ctx context.Context, key string) bool {
+	n, ok := ctx.Value(kubeNoticesKey{}).(*kubeNotices)
+	if !ok {
+		return true
+	}
+	_, seen := n.seen.LoadOrStore(key, struct{}{})
 	return !seen
 }
 
@@ -84,7 +100,7 @@ func ResolveClusterKubeClient(ctx context.Context, req KubeRequest) (kubernetes.
 		var mm *health.ClusterMismatchError
 		switch {
 		case errors.As(err, &mm):
-			if noticeOnce("mismatch|" + target.Name + "|" + mm.Server) {
+			if noticeOnce(ctx, "mismatch|"+target.Name+"|"+mm.Server) {
 				warn := color.New(color.FgYellow)
 				_, _ = warn.Fprintf(kubeWarnOut, "Warning: skipping Kubernetes checks: %v\n", mm)
 				if !mm.InCluster {
@@ -116,12 +132,12 @@ func ResolveClusterKubeClient(ctx context.Context, req KubeRequest) (kubernetes.
 	diag := sel.Diag
 	switch {
 	case diag.Unverified:
-		if noticeOnce("unverified|" + target.Name + "|" + diag.Context) {
+		if noticeOnce(ctx, "unverified|"+target.Name+"|"+diag.Context) {
 			_, _ = fmt.Fprintf(kubeWarnOut, "Note: using kubeconfig context %q (server %s) as requested; not verified as EKS cluster %s (%s)\n",
 				diag.Context, diag.Server, target.Name, target.Endpoint)
 		}
 	case diag.SwitchedFrom != "" && req.Verbose:
-		if noticeOnce("switch|" + target.Name + "|" + diag.Context) {
+		if noticeOnce(ctx, "switch|"+target.Name+"|"+diag.Context) {
 			_, _ = fmt.Fprintf(kubeWarnOut, "Using kubeconfig context %q for %s (current context %q points at another cluster)\n",
 				diag.Context, target.Name, diag.SwitchedFrom)
 		}
