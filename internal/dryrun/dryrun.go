@@ -26,6 +26,9 @@ type DryRunResult struct {
 	UpdatesNeeded  []NodegroupUpdate
 	UpdatesSkipped []NodegroupUpdate
 	AlreadyLatest  []NodegroupUpdate
+	// CustomAMI holds custom-AMI nodegroups, which the real run skips (its
+	// customUnmanaged outcome).
+	CustomAMI []NodegroupUpdate
 }
 
 // NodegroupUpdate contains information about a nodegroup update action.
@@ -133,6 +136,8 @@ func ActionName(a refreshTypes.DryRunAction) string {
 		return "skip-updating"
 	case refreshTypes.ActionSkipLatest:
 		return "skip-latest"
+	case refreshTypes.ActionSkipCustom:
+		return "skip-custom"
 	default:
 		return "unknown"
 	}
@@ -144,6 +149,7 @@ func (dr *DryRunner) Analyze(ctx context.Context, nodegroups []string) *DryRunRe
 		UpdatesNeeded:  make([]NodegroupUpdate, 0),
 		UpdatesSkipped: make([]NodegroupUpdate, 0),
 		AlreadyLatest:  make([]NodegroupUpdate, 0),
+		CustomAMI:      make([]NodegroupUpdate, 0),
 	}
 
 	for _, ng := range nodegroups {
@@ -167,6 +173,17 @@ func (dr *DryRunner) analyzeNodegroup(ctx context.Context, ngName string) Nodegr
 	if err != nil {
 		update.Action = refreshTypes.ActionSkipUpdating
 		update.Reason = fmt.Sprintf("failed to describe: %v", err)
+		return update
+	}
+
+	// The checks below run in the same order as the real update
+	// (startNodegroupUpdates), so the preview names the action it will take.
+	//
+	// Custom-AMI nodegroups are skipped even with --force: the AMI lives in
+	// the launch template, so EKS can't select a recommended AMI.
+	if ng.AmiType == types.AMITypesCustom {
+		update.Action = refreshTypes.ActionSkipCustom
+		update.Reason = "custom AMI (AmiType=CUSTOM); roll it by publishing a new launch template version"
 		return update
 	}
 
@@ -260,6 +277,8 @@ func (dr *DryRunner) categorizeUpdate(result *DryRunResult, update NodegroupUpda
 		result.UpdatesSkipped = append(result.UpdatesSkipped, update)
 	case refreshTypes.ActionSkipLatest:
 		result.AlreadyLatest = append(result.AlreadyLatest, update)
+	case refreshTypes.ActionSkipCustom:
+		result.CustomAMI = append(result.CustomAMI, update)
 	}
 
 	// Print individual result if not quiet
@@ -291,11 +310,15 @@ func (dr *DryRunner) DisplayResults(result *DryRunResult) {
 	ui.Outf("- Nodegroups that would be updated: %d\n", len(result.UpdatesNeeded))
 	ui.Outf("- Nodegroups that would be skipped (already updating): %d\n", len(result.UpdatesSkipped))
 	ui.Outf("- Nodegroups already on latest AMI: %d\n", len(result.AlreadyLatest))
+	if len(result.CustomAMI) > 0 {
+		ui.Outf("- Nodegroups that would be skipped (custom AMI): %d\n", len(result.CustomAMI))
+	}
 
 	// Detailed lists
 	dr.printNodegroupList("Would update:", result.UpdatesNeeded, color.GreenString)
 	dr.printNodegroupList("Would skip (already updating):", result.UpdatesSkipped, color.YellowString)
 	dr.printNodegroupList("Already on latest AMI:", result.AlreadyLatest, color.CyanString)
+	dr.printNodegroupList("Would skip (custom AMI, managed by the launch template):", result.CustomAMI, color.YellowString)
 
 	ui.Outln("\nTo execute these updates, run the same command without --dry-run")
 }

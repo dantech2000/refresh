@@ -17,6 +17,21 @@ import (
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
+func TestActionNameSkipCustom(t *testing.T) {
+	if got := ActionName(refreshTypes.ActionSkipCustom); got != "skip-custom" {
+		t.Errorf("ActionName(ActionSkipCustom) = %q, want skip-custom", got)
+	}
+}
+
+func TestCategorizeUpdateSkipCustom(t *testing.T) {
+	dr := &DryRunner{quiet: true}
+	result := &DryRunResult{}
+	dr.categorizeUpdate(result, NodegroupUpdate{Name: "custom", Action: refreshTypes.ActionSkipCustom})
+	if len(result.CustomAMI) != 1 || len(result.UpdatesNeeded)+len(result.UpdatesSkipped)+len(result.AlreadyLatest) != 0 {
+		t.Errorf("result = %+v, want only CustomAMI", result)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -221,8 +236,15 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 		currentAMI  string
 		latestAMI   string
 		describeErr error
+		amiType     types.AMITypes
 		want        refreshTypes.DryRunAction
 	}{
+		// The real run skips custom AMIs before any other check, even with
+		// --force (customUnmanaged in its summary).
+		{name: "custom", status: types.NodegroupStatusActive, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
+		{name: "custom with force", force: true, status: types.NodegroupStatusActive, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
+		{name: "custom updating", status: types.NodegroupStatusUpdating, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
+		{name: "updating with force", force: true, status: types.NodegroupStatusUpdating, want: refreshTypes.ActionSkipUpdating},
 		{name: "describe error", describeErr: errors.New("boom"), want: refreshTypes.ActionSkipUpdating},
 		{name: "updating", status: types.NodegroupStatusUpdating, want: refreshTypes.ActionSkipUpdating},
 		{name: "force", force: true, status: types.NodegroupStatusActive, want: refreshTypes.ActionForceUpdate},
@@ -245,6 +267,7 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 					return &types.Nodegroup{
 						NodegroupName: aws.String(name),
 						Status:        tt.status,
+						AmiType:       tt.amiType,
 					}, nil
 				},
 				currentAmiFn: func(_ context.Context, _ *types.Nodegroup) string { return tt.currentAMI },

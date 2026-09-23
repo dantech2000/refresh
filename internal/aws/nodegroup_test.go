@@ -56,13 +56,69 @@ func TestConfirmNodegroupSelection_EmptyReturnsError(t *testing.T) {
 	}
 }
 
-func TestConfirmNodegroupSelection_SingleMatchReturnsIt(t *testing.T) {
-	got, err := ConfirmNodegroupSelection(t.Context(), []string{"workers"}, "work")
+// An exact name is returned without a prompt.
+func TestConfirmNodegroupSelection_ExactMatchReturnsIt(t *testing.T) {
+	origPrompt := promptLine
+	t.Cleanup(func() { promptLine = origPrompt })
+	promptLine = func(context.Context) (string, error) {
+		t.Fatal("an exact name must not prompt")
+		return "", nil
+	}
+	got, err := ConfirmNodegroupSelection(t.Context(), []string{"workers"}, "workers")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(got) != 1 || got[0] != "workers" {
 		t.Errorf("expected [workers], got %v", got)
+	}
+}
+
+// A single non-exact (substring) match is confirmed on the prompt stream.
+// Only an explicit yes selects it; Enter or anything else cancels.
+func TestConfirmNodegroupSelection_SingleNonExactMatchPrompts(t *testing.T) {
+	for _, tc := range []struct {
+		answer string
+		want   bool
+	}{{"y", true}, {"YES", true}, {"", false}, {"n", false}} {
+		t.Run("answer="+tc.answer, func(t *testing.T) {
+			var prompt bytes.Buffer
+			origOut, origPrompt := nodegroupPromptOut, promptLine
+			t.Cleanup(func() { nodegroupPromptOut, promptLine = origOut, origPrompt })
+			nodegroupPromptOut = &prompt
+			promptLine = func(context.Context) (string, error) { return tc.answer, nil }
+
+			got, err := ConfirmNodegroupSelection(t.Context(), []string{"payments-web"}, "web")
+			if !strings.Contains(prompt.String(), `No nodegroup named "web". Update "payments-web"? [y/N]`) {
+				t.Errorf("prompt stream = %q, want the single-match question", prompt.String())
+			}
+			if tc.want {
+				if err != nil || len(got) != 1 || got[0] != "payments-web" {
+					t.Errorf("got %v, %v; want [payments-web]", got, err)
+				}
+				return
+			}
+			if err == nil || got != nil {
+				t.Errorf("got %v, %v; want a cancellation", got, err)
+			}
+		})
+	}
+}
+
+func TestNodegroupPatternNeedsConfirmation(t *testing.T) {
+	for _, tc := range []struct {
+		matches []string
+		pattern string
+		want    bool
+	}{
+		{[]string{"web"}, "web", false},
+		{[]string{"payments-web"}, "web", true},
+		{[]string{"web-a", "web-b"}, "web", true},
+		{[]string{"a", "b"}, "", false},
+		{nil, "web", false},
+	} {
+		if got := NodegroupPatternNeedsConfirmation(tc.matches, tc.pattern); got != tc.want {
+			t.Errorf("NodegroupPatternNeedsConfirmation(%v, %q) = %v, want %v", tc.matches, tc.pattern, got, tc.want)
+		}
 	}
 }
 

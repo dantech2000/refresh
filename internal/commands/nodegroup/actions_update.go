@@ -74,7 +74,8 @@ func readUpdateAMIFlags(cmd *cli.Command) (updateAMIFlags, error) {
 
 // isInteractive reports whether stdin is a terminal, so unattended runs (CI,
 // cron) fail fast instead of blocking on a prompt that can never be answered.
-func isInteractive() bool {
+// It is a var so tests can simulate a terminal.
+var isInteractive = func() bool {
 	fi, err := os.Stdin.Stat()
 	if err != nil {
 		return false
@@ -531,7 +532,9 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 		if flags.healthOnly {
 			return true, healthExitError(summary)
 		}
-		return true, fmt.Errorf("pre-flight health checks failed: %s", healthProblems(summary))
+		// Exit 3 on a blocked gate, as documented, for the human and
+		// -o json/yaml paths alike.
+		return true, healthExitError(summary)
 	case health.DecisionWarn:
 		if flags.healthOnly {
 			if human {
@@ -557,12 +560,20 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 			}
 			return false, nil
 		}
-		// Without a TTY (CI/cron), or with -o json/yaml, and without --yes,
-		// fail fast rather than block on a prompt that can't be answered.
-		if !flags.canPrompt() {
-			return true, fmt.Errorf("health checks reported warnings (%s); re-run with --yes to proceed or --require-healthy to fail (%s)", healthProblems(summary), flags.noPromptReason())
+		// Without a TTY (CI/cron), with -o json/yaml, or with --quiet, and
+		// without --yes, stop rather than prompt. --quiet hides the health
+		// report, so it must never accept the warnings on the user's behalf.
+		reason := ""
+		switch {
+		case !flags.canPrompt():
+			reason = flags.noPromptReason()
+		case flags.quiet:
+			reason = "--quiet does not prompt"
 		}
-		if !flags.quiet && !ui.PromptContinueWithWarnings(ctx, summary.Warnings) {
+		if reason != "" {
+			return true, fmt.Errorf("health checks reported warnings (%s); re-run with --yes to proceed or --require-healthy to fail (%s)", healthProblems(summary), reason)
+		}
+		if !ui.PromptContinueWithWarnings(ctx, summary.Warnings) {
 			color.Yellow("Update cancelled by user")
 			return true, fmt.Errorf("update cancelled")
 		}
@@ -600,26 +611,40 @@ func healthTargetNodegroups(ctx context.Context, eksClient *eks.Client, clusterN
 }
 
 // selectNodegroupsForUpdate lists nodegroups matching pattern and confirms the
-// selection interactively when ambiguous. It returns errors without printing
-// them: main (or the fleet summary) reports each error once, on stderr.
+// selection when the pattern is not an exact nodegroup name. It returns errors
+// without printing them: main (or the fleet summary) reports each error once,
+// on stderr.
 func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clusterName, pattern string, flags updateAMIFlags) ([]string, error) {
 	names, err := listNodegroupNames(ctx, eksClient, clusterName)
 	if err != nil {
 		return nil, err
 	}
 	matches := awsinternal.MatchingNodegroups(names, pattern)
-	// An ambiguous pattern (multiple matches) normally prompts. In unattended
-	// mode --yes selects them all; without a TTY or with -o json/yaml, and
-	// without --yes, fail fast instead of hanging on a prompt.
-	if len(matches) > 1 && pattern != "" {
+	// A pattern that is not an exact name (one substring match, or several
+	// matches) normally prompts. --yes accepts the matches; without a TTY or
+	// with -o json/yaml, and without --yes, fail instead of hanging on a
+	// prompt or rolling a nodegroup nobody named.
+	if awsinternal.NodegroupPatternNeedsConfirmation(matches, pattern) {
 		if flags.yes {
+			if len(matches) == 1 {
+				_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "No nodegroup named %q in %s; using the only partial match %q (--yes)\n", pattern, clusterName, matches[0])
+			}
 			return matches, nil
 		}
 		if !flags.canPrompt() {
-			return nil, fmt.Errorf("pattern %q matched %d nodegroups; re-run with --yes to update all, or a more specific name (%s)", pattern, len(matches), flags.noPromptReason())
+			return nil, nodegroupPatternError(clusterName, pattern, matches, flags.noPromptReason())
 		}
 	}
 	return awsinternal.ConfirmNodegroupSelection(ctx, matches, pattern)
+}
+
+// nodegroupPatternError explains why a non-exact pattern was not accepted
+// without a prompt, naming the candidates and the pattern.
+func nodegroupPatternError(clusterName, pattern string, matches []string, reason string) error {
+	if len(matches) == 1 {
+		return fmt.Errorf("no nodegroup named %q in %s (partial match: %s); re-run with --yes to update it, or pass the exact name (%s)", pattern, clusterName, matches[0], reason)
+	}
+	return fmt.Errorf("pattern %q matched %d nodegroups (%s); re-run with --yes to update all, or a more specific name (%s)", pattern, len(matches), strings.Join(matches, ", "), reason)
 }
 
 // updateOutcomes records the per-nodegroup disposition of an update run, used
@@ -644,7 +669,8 @@ type updateDocument struct {
 // dry-run document.
 type dryRunNodegroup struct {
 	Name string `json:"name" yaml:"name"`
-	// Action is update, force-update, skip-updating, or skip-latest.
+	// Action is update, force-update, skip-updating, skip-latest, or
+	// skip-custom (listed under customUnmanaged in the real run's summary).
 	Action     string `json:"action" yaml:"action"`
 	CurrentAMI string `json:"currentAmi,omitempty" yaml:"currentAmi,omitempty"`
 	LatestAMI  string `json:"latestAmi,omitempty" yaml:"latestAmi,omitempty"`
