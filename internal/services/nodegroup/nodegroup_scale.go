@@ -40,7 +40,7 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 		}
 	}
 
-	if err := s.checkScaleBounds(ctx, clusterName, nodegroupName, desired, min, max); err != nil {
+	if err := s.CheckScaleBounds(ctx, clusterName, nodegroupName, desired, min, max); err != nil {
 		return err
 	}
 
@@ -358,7 +358,7 @@ func (e *ScaleDownBlockedError) Error() string {
 // the ones that hold the most of a PDB's pods (see
 // health.HealthChecker.ScaleDownBlockers).
 // A nil desired is never a scale-down: Scale refuses a --min/--max change
-// that would need the desired size to move (see checkScaleBounds). It returns
+// that would need the desired size to move (see CheckScaleBounds). It returns
 // an error when the check can't be done (no health checker or Kubernetes
 // client, or a failed API call): the caller asked for PDB validation, so
 // "couldn't check" must not read as "no blockers".
@@ -391,11 +391,11 @@ func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodeg
 	return check, nil
 }
 
-// checkScaleBounds refuses, before any change, a --min/--max change without
+// CheckScaleBounds refuses, before any change, a --min/--max change without
 // --desired that puts the current desired size outside the new bounds. EKS
 // does not document moving the desired size into new bounds, so the user
 // must set the new node count explicitly.
-func (s *ServiceImpl) checkScaleBounds(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32) error {
+func (s *ServiceImpl) CheckScaleBounds(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32) error {
 	if desired != nil || (min == nil && max == nil) {
 		return nil
 	}

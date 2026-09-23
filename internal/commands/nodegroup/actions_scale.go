@@ -97,6 +97,12 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		pdbCheck, pdbCheckErr = svc.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired)
 	}
 
+	// A --min/--max that excludes the current desired size fails the same way
+	// in a preview, and before the confirmation prompt.
+	if err := svc.CheckScaleBounds(ctx, clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
+		return err
+	}
+
 	if opts.DryRun {
 		if err := printScaleDryRun(ctx, eks.NewFromConfig(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
 			return err

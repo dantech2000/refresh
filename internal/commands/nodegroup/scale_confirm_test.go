@@ -76,6 +76,38 @@ func TestScale_Confirmation(t *testing.T) {
 	}
 }
 
+// A --min/--max that excludes the current desired size fails the same way
+// with --dry-run as without it, and before the confirmation prompt.
+func TestScale_BoundsCheckInDryRunAndBeforePrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"dry run --max", []string{"--max", "1", "--dry-run"}, "--max 1 is below the current desired size 3"},
+		{"dry run --min", []string{"--min", "4", "-d"}, "--min 4 is above the current desired size 3"},
+		{"before the prompt", []string{"--max", "1"}, "--max 1 is below the current desired size 3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := withScalePrompt(t, true, "y")
+			srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5}))
+			stdout, _, err := runNodegroup(t, append([]string{"scale", "prod", "-n", "ng-a"}, tc.args...)...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+			if strings.Contains(stdout, "DRY RUN") {
+				t.Errorf("preview printed despite the bounds error:\n%s", stdout)
+			}
+			if *asked != 0 {
+				t.Errorf("prompts = %d, want 0", *asked)
+			}
+			if calledPath(srv, "/update-config") {
+				t.Error("UpdateNodegroupConfig called")
+			}
+		})
+	}
+}
+
 func TestFormatScaleQuestion(t *testing.T) {
 	sc := ekstypes.NodegroupScalingConfig{DesiredSize: aws.Int32(3), MinSize: aws.Int32(1), MaxSize: aws.Int32(5)}
 	for _, tc := range []struct {
