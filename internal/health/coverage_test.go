@@ -342,18 +342,22 @@ func TestNodeMetricsFromSnapshot_EmptyErrors(t *testing.T) {
 
 func TestPDBInfo_AtRisk(t *testing.T) {
 	cases := []struct {
-		allowed int32
-		want    bool
+		allowed  int32
+		expected int32
+		want     bool
 	}{
-		{-1, true},
-		{0, true},
-		{1, false},
-		{5, false},
+		{-1, 3, true},
+		{0, 3, true},
+		{1, 3, false},
+		{5, 5, false},
+		// A PDB that matches no pods blocks nothing.
+		{0, 0, false},
+		{-1, 0, false},
 	}
 	for _, tc := range cases {
-		p := PDBInfo{DisruptionsAllowed: tc.allowed}
+		p := PDBInfo{DisruptionsAllowed: tc.allowed, ExpectedPods: tc.expected}
 		if got := p.AtRisk(); got != tc.want {
-			t.Errorf("AtRisk(allowed=%d) = %v, want %v", tc.allowed, got, tc.want)
+			t.Errorf("AtRisk(allowed=%d, expected=%d) = %v, want %v", tc.allowed, tc.expected, got, tc.want)
 		}
 	}
 }
