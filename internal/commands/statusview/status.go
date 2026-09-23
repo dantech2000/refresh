@@ -41,6 +41,7 @@ func outputFleetPlain(statuses []statussvc.ClusterStatus, elapsed time.Duration)
 		{Title: "COMPUTE", Min: 10, Max: 28},
 		{Title: "STALE AMI", Min: 9},
 		{Title: "ADDONS BEHIND", Min: 13, Max: 30},
+		{Title: "ERRORS", Min: 6},
 	}
 	table := ui.NewPTable(columns, ui.CyanHeaders())
 	for _, c := range statuses {
@@ -52,6 +53,7 @@ func outputFleetPlain(statuses []statussvc.ClusterStatus, elapsed time.Duration)
 			computeCell(c),
 			staleAMICell(c),
 			addonsCell(c.AddonsBehind),
+			errorsCell(c),
 		)
 	}
 	table.Render()
@@ -142,6 +144,15 @@ func addonsCell(a statussvc.AddonsBehindSummary) string {
 	return color.YellowString(fmt.Sprintf("%d (%s%s)", a.Behind, strings.Join(names, ","), suffix))
 }
 
+// errorsCell marks a row whose data is incomplete; "-" keeps the TSV column
+// non-empty for awk.
+func errorsCell(c statussvc.ClusterStatus) string {
+	if !c.Incomplete() {
+		return "-"
+	}
+	return strings.Join(c.Errors, "; ")
+}
+
 func summaryFooter(statuses []statussvc.ClusterStatus, elapsed time.Duration) string {
 	staleNodegroups, addonsBehind, supportRisk, ngBehindCP := 0, 0, 0, 0
 	for _, c := range statuses {
@@ -161,11 +172,15 @@ func summaryFooter(statuses []statussvc.ClusterStatus, elapsed time.Duration) st
 	if ngBehindCP > 0 {
 		parts = append(parts, fmt.Sprintf("%d nodegroups behind control plane", ngBehindCP))
 	}
+	incomplete := countIncomplete(statuses)
+	if incomplete > 0 {
+		parts = append(parts, fmt.Sprintf("%d incomplete", incomplete))
+	}
 	line := strings.Join(parts, " · ")
 	if elapsed > 0 {
 		line += fmt.Sprintf("  (%s)", elapsed.Round(time.Millisecond))
 	}
-	if supportRisk > 0 || staleNodegroups > 0 || addonsBehind > 0 || ngBehindCP > 0 {
+	if supportRisk > 0 || staleNodegroups > 0 || addonsBehind > 0 || ngBehindCP > 0 || incomplete > 0 {
 		return line
 	}
 	return color.GreenString(line)

@@ -3,6 +3,7 @@ package statuscmd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -65,12 +66,12 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return err
 		}
-		return exitForStatuses(statuses)
+		return exitForStatuses(statuses, len(regionErrs))
 	}
 	if err := statusview.OutputFleetTable(statuses, elapsed); err != nil {
 		return err
 	}
-	return exitForStatuses(statuses)
+	return exitForStatuses(statuses, len(regionErrs))
 }
 
 // resolveRegions picks the region set: explicit --region wins, then
@@ -89,6 +90,17 @@ func resolveRegions(cmd *cli.Command, awsCfg aws.Config) []string {
 		return []string{awsCfg.Region}
 	}
 	return appconfig.GetRegionsForPartition(awsCfg.Region)
+}
+
+// regionLister is the per-region status sweep gatherFleet fans out over.
+type regionLister interface {
+	ListClusterStatuses(ctx context.Context, opts statussvc.ListOptions) ([]statussvc.ClusterStatus, error)
+}
+
+// newRegionService builds the per-region status service; tests swap it for a
+// fake so the multi-region path runs without AWS.
+var newRegionService = func(cfg aws.Config, logger *slog.Logger) regionLister {
+	return statussvc.NewService(cfg, logger)
 }
 
 // gatherFleet fans out across regions with bounded concurrency, returning the
@@ -117,27 +129,37 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 
 			cfg := baseCfg.Copy()
 			cfg.Region = r
-			svc := statussvc.NewService(cfg, logger)
+			svc := newRegionService(cfg, logger)
 			statuses, err := svc.ListClusterStatuses(ctx, opts)
 
 			mu.Lock()
 			defer mu.Unlock()
+			// Keep partial rows even on error: a cancelled sweep returns the
+			// clusters it reached plus "not evaluated" rows for the rest.
+			all = append(all, statuses...)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("region %s: %w", r, err))
-				return
 			}
-			all = append(all, statuses...)
 		}(region)
 	}
 	wg.Wait()
 	return all, errs
 }
 
+// Exit codes for `refresh status` (documented in the command help).
+const (
+	exitStale       = 2
+	exitSupportRisk = 3
+	exitIncomplete  = 4
+)
+
 // exitForStatuses maps the fleet posture to the documented exit-code contract:
-// 3 when any cluster is on extended/unsupported EKS, 2 when something is stale,
-// 0 otherwise.
-func exitForStatuses(statuses []statussvc.ClusterStatus) error {
-	supportRisk, stale := false, false
+// 3 when any cluster is on extended/unsupported EKS, else 2 when something is
+// stale, else 4 when any cluster row has errors or any region failed, else 0.
+// A confirmed finding outranks incomplete data, but incomplete data never
+// exits 0.
+func exitForStatuses(statuses []statussvc.ClusterStatus, failedRegions int) error {
+	supportRisk, stale, incompleteRows := false, false, 0
 	for _, c := range statuses {
 		if c.SupportRisk() {
 			supportRisk = true
@@ -145,12 +167,18 @@ func exitForStatuses(statuses []statussvc.ClusterStatus) error {
 		if c.NeedsAttention() {
 			stale = true
 		}
+		if c.Incomplete() {
+			incompleteRows++
+		}
 	}
 	switch {
 	case supportRisk:
-		return cli.Exit("", 3)
+		return cli.Exit("", exitSupportRisk)
 	case stale:
-		return cli.Exit("", 2)
+		return cli.Exit("", exitStale)
+	case incompleteRows > 0 || failedRegions > 0:
+		return cli.Exit(fmt.Sprintf("incomplete data: %d cluster(s) with errors, %d region(s) failed",
+			incompleteRows, failedRegions), exitIncomplete)
 	default:
 		return nil
 	}

@@ -42,9 +42,7 @@ func TestSetupAWS_DerivesFromParentContext(t *testing.T) {
 	parent, cancelParent := context.WithCancel(context.Background())
 	cmd := newTimeoutCommand(t)
 
-	var got context.Context
-	_, cancel, _, err := setupAWS(parent, cmd, 0, func(ctx context.Context, _ aws.Config) error {
-		got = ctx
+	got, cancel, _, err := setupAWS(parent, cmd, 0, func(context.Context, aws.Config) error {
 		return nil
 	})
 	if err != nil {
@@ -63,6 +61,80 @@ func TestSetupAWS_DerivesFromParentContext(t *testing.T) {
 		// parent cancellation propagated — correct
 	case <-time.After(time.Second):
 		t.Fatal("parent cancellation did not propagate to setupAWS context")
+	}
+}
+
+// setupAWS applies the timeout it is given (not --timeout), and timeout <= 0
+// means no deadline: long-running callers (fleet update, scale --wait) rely on
+// this to scope deadlines themselves.
+func TestSetupAWS_TimeoutScoping(t *testing.T) {
+	cmd := newTimeoutCommand(t) // --timeout defaults to 1m
+	noop := func(context.Context, aws.Config) error { return nil }
+
+	ctx, cancel, _, err := setupAWS(context.Background(), cmd, 0, noop)
+	if err != nil {
+		t.Fatalf("setupAWS() = %v", err)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		t.Error("timeout 0: want no deadline")
+	}
+	cancel()
+
+	ctx, cancel, _, err = setupAWS(context.Background(), cmd, 3*time.Hour, noop)
+	if err != nil {
+		t.Fatalf("setupAWS() = %v", err)
+	}
+	dl, ok := ctx.Deadline()
+	if !ok || time.Until(dl) < 2*time.Hour {
+		t.Errorf("timeout 3h: deadline = %v (ok=%v), want ~3h out", dl, ok)
+	}
+	cancel()
+}
+
+// Even with no overall deadline (timeout 0), the credential check must run
+// under --timeout so a stalled STS/SSO/IMDS call can't hang the command.
+func TestSetupAWS_CredentialCheckBoundedByFlagTimeout(t *testing.T) {
+	cmd := newTimeoutCommand(t) // --timeout defaults to 1m
+	var checkDeadline time.Time
+	var hasDeadline bool
+	ctx, cancel, _, err := setupAWS(context.Background(), cmd, 0, func(c context.Context, _ aws.Config) error {
+		checkDeadline, hasDeadline = c.Deadline()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("setupAWS() = %v", err)
+	}
+	defer cancel()
+	if !hasDeadline || time.Until(checkDeadline) > time.Minute {
+		t.Errorf("credential check deadline = %v (ok=%v), want <= 1m", checkDeadline, hasDeadline)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		t.Error("returned context: want no deadline")
+	}
+	if ctx.Err() != nil {
+		t.Error("returned context must stay live after the check context is released")
+	}
+}
+
+func TestCheckContext(t *testing.T) {
+	cases := []struct {
+		name         string
+		api, overall time.Duration
+		wantDeadline bool
+	}{
+		{"no overall deadline", time.Minute, 0, true},
+		{"overall longer than api", time.Minute, time.Hour, true},
+		{"overall shorter than api", time.Hour, time.Minute, false},
+		{"no api timeout", 0, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := checkContext(context.Background(), tc.api, tc.overall)
+			defer cancel()
+			if _, ok := ctx.Deadline(); ok != tc.wantDeadline {
+				t.Errorf("deadline = %v, want %v", ok, tc.wantDeadline)
+			}
+		})
 	}
 }
 

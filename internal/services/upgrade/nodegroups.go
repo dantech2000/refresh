@@ -3,6 +3,7 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -70,6 +71,22 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 		case ng.CustomAMI:
 			progress("nodegroup %s: MANUAL — custom AMI; build and roll a %s-compatible AMI yourself", ng.Name, targetVersion)
 			continue
+		}
+
+		// Resume support: a rerun after Ctrl+C mid-roll finds the nodegroup
+		// still UPDATING at its old version. Attach and wait for the roll to
+		// settle (like the control-plane and addon phases do) instead of
+		// failing the ACTIVE gate, then re-read the version.
+		if ng.Status == ekstypes.NodegroupStatusUpdating {
+			progress("nodegroup %s is UPDATING (in-flight roll from a previous run); attaching and waiting for it to settle", ng.Name)
+			version, err := s.waitForNodegroupSettled(ctx, clusterName, ng.Name)
+			if err != nil {
+				return fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", ng.Name, err)
+			}
+			if versionAtLeast(version, targetVersion) {
+				progress("nodegroup %s reached %s", ng.Name, version)
+				continue
+			}
 		}
 
 		if err := gate(ctx, ng.Name); err != nil {
@@ -152,5 +169,47 @@ func (s *Service) defaultNodegroupGate(clusterName string) NodegroupGate {
 				nodegroupName, len(ng.Health.Issues), issue.Code, aws.ToString(issue.Message))
 		}
 		return nil
+	}
+}
+
+// waitForNodegroupSettled polls the nodegroup until it leaves the UPDATING /
+// CREATING states, honoring ctx, and returns its Kubernetes version at that
+// point. Whether the settled state is fit for a roll (ACTIVE, no health
+// issues) is left to the pre-flight gate.
+func (s *Service) waitForNodegroupSettled(ctx context.Context, clusterName, nodegroupName string) (string, error) {
+	interval := s.PollInterval
+	if interval <= 0 {
+		interval = defaultPollInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+			return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+				ClusterName:   aws.String(clusterName),
+				NodegroupName: aws.String(nodegroupName),
+			})
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			return "", awsinternal.FormatAWSError(err, fmt.Sprintf("checking nodegroup %s", nodegroupName))
+		}
+		if out.Nodegroup == nil {
+			return "", fmt.Errorf("nodegroup %s not found", nodegroupName)
+		}
+		switch out.Nodegroup.Status {
+		case ekstypes.NodegroupStatusUpdating, ekstypes.NodegroupStatusCreating:
+		default:
+			return aws.ToString(out.Nodegroup.Version), nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }

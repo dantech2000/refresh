@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -16,10 +17,11 @@ import (
 // fakeNodegroups implements NodegroupLister.
 type fakeNodegroups struct {
 	byCluster map[string][]nodegroup.NodegroupSummary
+	failures  map[string][]string
 }
 
-func (f *fakeNodegroups) List(_ context.Context, cluster string, _ nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, error) {
-	return f.byCluster[cluster], nil
+func (f *fakeNodegroups) ListWithFailures(_ context.Context, cluster string, _ nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
+	return f.byCluster[cluster], f.failures[cluster], nil
 }
 
 // fakeAddons implements AddonAnalyzer.
@@ -32,8 +34,14 @@ func (f *fakeAddons) List(_ context.Context, cluster string, _ addons.ListOption
 	return f.installed[cluster], nil
 }
 
+// GetAvailableVersions mirrors the real service: no versions is an
+// ErrNoVersionsFound error, never an empty slice with a nil error.
 func (f *fakeAddons) GetAvailableVersions(_ context.Context, addonName, _ string) ([]addons.AddonVersionInfo, error) {
-	return f.available[addonName], nil
+	v := f.available[addonName]
+	if len(v) == 0 {
+		return nil, fmt.Errorf("%w for addon %s", addons.ErrNoVersionsFound, addonName)
+	}
+	return v, nil
 }
 
 func newTestService(api *fakeClusterAPI, ng *fakeNodegroups, ad *fakeAddons) *Service {
@@ -230,9 +238,15 @@ func TestAssembleCluster_NodegroupBehindControlPlane(t *testing.T) {
 			{Name: "ng-cur", AMIStatus: types.AMILatest, K8sVersion: "1.32"},
 		},
 	}}
+	ng.failures = map[string][]string{"prod": {"ng-broken: boom"}}
 	svc := newTestService(api, ng, &fakeAddons{})
 	cs := svc.assembleCluster(context.Background(), "prod")
 
+	// A failed nodegroup makes the row incomplete, but the behind count from
+	// the nodegroups that did resolve still stands.
+	if !cs.Incomplete() {
+		t.Error("row with a failed nodegroup should be incomplete")
+	}
 	if cs.StaleAMI.Behind != 0 {
 		t.Errorf("stale AMI behind = %d, want 0", cs.StaleAMI.Behind)
 	}
