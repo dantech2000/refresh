@@ -88,6 +88,7 @@ provide fast, comprehensive results without CloudFormation dependency.
 | `--include-addons, -a` | — | — | Include EKS add-on information |
 | `--check-readiness, -R` | — | — | Measure real Kubernetes node readiness (Ready/desired) via the cluster API; without it NODES shows desired count only |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for --check-readiness (defaults to $KUBECONFIG, then ~/.kube/config) |
+| `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
 | `--help, -h` | — | — | show help |
 

@@ -88,6 +88,7 @@ These are accepted on every command:
 | `NO_COLOR` | Disable colored output |
 | `REFRESH_NO_UPDATE_CHECK` | Disable the `refresh version` self-update check |
 | `KUBECONFIG` | kubeconfig path for workload/PDB health checks |
+| `REFRESH_IN_CLUSTER_NAME` | EKS cluster a pod runs in; lets in-cluster config be used for that cluster |
 
 ## Kubeconfig (optional)
 
@@ -96,3 +97,27 @@ PodDisruptionBudget and critical-workload checks used by `nodegroup update` and
 `nodegroup scale --check-pdbs`. Resolution order is `--kubeconfig` →
 `$KUBECONFIG` → `~/.kube/config`. If the cluster is unreachable, those checks are
 **skipped** (with a diagnostic), not failed.
+
+### Matching the kubeconfig to the target cluster
+
+refresh only runs Kubernetes checks against the cluster you target with
+`--cluster`. It compares each kubeconfig context's server with the cluster's
+API endpoint from `DescribeCluster`:
+
+1. If the current context points at the target cluster, refresh uses it.
+2. If another context points at the target cluster, refresh uses that context.
+   If several contexts match, refresh tries them in order until one is reachable.
+3. If no context matches, refresh skips the Kubernetes checks. A warning on
+   stderr names both servers. Run `aws eks update-kubeconfig --name <cluster>
+   --region <region>` to add a context.
+
+Proxied or tunnelled API servers (Teleport, Rancher, an SSH tunnel to
+`localhost`) never match the EKS endpoint. For these, name the context with
+`--kube-context <name>`. refresh trusts a context that you name, and prints a
+one-line note that it could not verify the target.
+
+Inside a pod, the in-cluster config points at the Kubernetes service address,
+so refresh cannot match it to an EKS endpoint. Set
+`REFRESH_IN_CLUSTER_NAME=<eks cluster name>` in the pod to declare its
+cluster. refresh uses the in-cluster config only when this value equals the
+target cluster name.

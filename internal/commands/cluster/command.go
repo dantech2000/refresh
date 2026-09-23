@@ -7,6 +7,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
@@ -84,6 +85,7 @@ provide fast, comprehensive results without CloudFormation dependency.`,
 			&cli.BoolFlag{Name: "include-addons", Aliases: []string{"a"}, Usage: "Include EKS add-on information", Value: true},
 			&cli.BoolFlag{Name: "check-readiness", Aliases: []string{"R"}, Usage: "Measure real Kubernetes node readiness (Ready/desired) via the cluster API; without it NODES shows desired count only"},
 			&cli.StringFlag{Name: "kubeconfig", Usage: "Path to the kubeconfig for --check-readiness (defaults to $KUBECONFIG, then ~/.kube/config)"},
+			runner.KubeContextFlag(),
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error { return runDescribe(ctx, cmd) },

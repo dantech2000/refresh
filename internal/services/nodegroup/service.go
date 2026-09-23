@@ -368,10 +368,16 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 
 	if options.ShowWorkloads {
 		details.Workloads.PodDisruption = "no data"
-		if wi, ok := s.analyzeWorkloads(ctx, aws.ToString(ng.NodegroupName), instanceIDs); ok {
+		target := health.TargetCluster{
+			Name:     clusterName,
+			Region:   s.awsConfig.Region,
+			ARN:      aws.ToString(clusterDesc.Cluster.Arn),
+			Endpoint: aws.ToString(clusterDesc.Cluster.Endpoint),
+		}
+		if wi, ok := s.analyzeWorkloads(ctx, target, aws.ToString(ng.NodegroupName), instanceIDs); ok {
 			details.Workloads = wi
 		} else {
-			details.Workloads.PodDisruption = "unavailable: Kubernetes API not accessible or no matching nodes"
+			details.Workloads.PodDisruption = "unavailable: Kubernetes API not accessible for this cluster (check the kubeconfig context) or no matching nodes"
 		}
 	}
 	if options.ShowInstances && len(instanceIDs) > 0 {

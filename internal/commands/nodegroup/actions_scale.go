@@ -40,7 +40,7 @@ func runScale(ctx context.Context, cmd *cli.Command) error {
 	if withHealth {
 		// Wire a Kubernetes client so workload/PDB checks run against the right
 		// cluster (--kubeconfig), with an actionable diagnostic when unreachable.
-		k8sClient := resolveHealthKubeClient(ctx, cmd.String("kubeconfig"), true)
+		k8sClient, _ := resolveHealthKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), true)
 		svc = factory.NewNodegroupServiceWithHealth(awsCfg, k8sClient, logger)
 	} else {
 		svc = factory.NewNodegroupService(awsCfg, false, logger)
