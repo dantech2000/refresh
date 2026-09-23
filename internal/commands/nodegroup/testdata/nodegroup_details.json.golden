@@ -1,0 +1,33 @@
+{
+  "name": "s-name",
+  "status": "s-status",
+  "instanceType": "s-instancetype",
+  "amiType": "s-amitype",
+  "capacityType": "s-capacitytype",
+  "currentAmi": "s-currentami",
+  "latestAmi": "s-latestami",
+  "amiStatus": "Updating",
+  "amiLookupError": "s-amilookuperror",
+  "scaling": {
+    "desiredSize": 3,
+    "minSize": 3,
+    "maxSize": 3,
+    "autoScaling": true
+  },
+  "health": "s-healthstatus",
+  "instances": [
+    {
+      "instanceId": "s-instanceid",
+      "instanceType": "s-instancetype",
+      "launchTime": "2026-01-02T03:04:05Z",
+      "lifecycle": "s-lifecycle",
+      "state": "s-state",
+      "availabilityZone": "s-az"
+    }
+  ],
+  "workloads": {
+    "totalPods": 3,
+    "criticalPods": 3,
+    "podDisruption": "s-poddisruption"
+  }
+}

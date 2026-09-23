@@ -30,25 +30,25 @@ const (
 
 // HealthResult represents the result of a single health check
 type HealthResult struct {
-	Name       string       `json:"name"`
-	Status     HealthStatus `json:"status"`
-	Score      int          `json:"score"` // 0-100
-	Message    string       `json:"message"`
-	Details    []string     `json:"details,omitempty"`
-	IsBlocking bool         `json:"isBlocking"`
+	Name       string       `json:"name" yaml:"name"`
+	Status     HealthStatus `json:"status" yaml:"status"`
+	Score      int          `json:"score" yaml:"score"` // 0-100
+	Message    string       `json:"message" yaml:"message"`
+	Details    []string     `json:"details,omitempty" yaml:"details,omitempty"`
+	IsBlocking bool         `json:"isBlocking" yaml:"isBlocking"`
 	// Skipped marks a check that could not be evaluated (e.g. no Kubernetes
 	// client) rather than measured. Skipped checks are excluded from the
 	// OverallScore so a missing prerequisite doesn't silently drag the score.
-	Skipped bool `json:"skipped,omitempty"`
+	Skipped bool `json:"skipped,omitempty" yaml:"skipped,omitempty"`
 }
 
 // HealthSummary represents the overall health check results
 type HealthSummary struct {
-	Results      []HealthResult `json:"results"`
-	OverallScore int            `json:"overallScore"`
-	Decision     Decision       `json:"decision"`
-	Warnings     []string       `json:"warnings,omitempty"`
-	Errors       []string       `json:"errors,omitempty"`
+	Results      []HealthResult `json:"results" yaml:"results"`
+	OverallScore int            `json:"overallScore" yaml:"overallScore"`
+	Decision     Decision       `json:"decision" yaml:"decision"`
+	Warnings     []string       `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	Errors       []string       `json:"errors,omitempty" yaml:"errors,omitempty"`
 }
 
 // HealthChecker performs various health checks on the EKS cluster

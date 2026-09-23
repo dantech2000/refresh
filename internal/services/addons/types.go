@@ -6,32 +6,32 @@ import (
 
 // AddonSummary contains basic addon info for listings
 type AddonSummary struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Status  string `json:"status"`
-	Health  string `json:"health"`
+	Name    string `json:"name" yaml:"name"`
+	Version string `json:"version" yaml:"version"`
+	Status  string `json:"status" yaml:"status"`
+	Health  string `json:"health" yaml:"health"`
 }
 
 // AddonDetails contains expanded addon information
 type AddonDetails struct {
-	Name               string         `json:"name"`
-	Version            string         `json:"version"`
-	Status             string         `json:"status"`
-	Health             string         `json:"health"`
-	ARN                string         `json:"arn"`
-	ServiceAccountRole string         `json:"serviceAccountRole,omitempty"`
-	CreatedAt          *time.Time     `json:"createdAt,omitempty"`
-	ModifiedAt         *time.Time     `json:"modifiedAt,omitempty"`
-	Configuration      map[string]any `json:"configuration,omitempty"`
-	Issues             []AddonIssue   `json:"issues,omitempty"`
-	AvailableVersions  []string       `json:"availableVersions,omitempty"`
+	Name               string         `json:"name" yaml:"name"`
+	Version            string         `json:"version" yaml:"version"`
+	Status             string         `json:"status" yaml:"status"`
+	Health             string         `json:"health" yaml:"health"`
+	ARN                string         `json:"arn" yaml:"arn"`
+	ServiceAccountRole string         `json:"serviceAccountRole,omitempty" yaml:"serviceAccountRole,omitempty"`
+	CreatedAt          *time.Time     `json:"createdAt,omitempty" yaml:"createdAt,omitempty"`
+	ModifiedAt         *time.Time     `json:"modifiedAt,omitempty" yaml:"modifiedAt,omitempty"`
+	Configuration      map[string]any `json:"configuration,omitempty" yaml:"configuration,omitempty"`
+	Issues             []AddonIssue   `json:"issues,omitempty" yaml:"issues,omitempty"`
+	AvailableVersions  []string       `json:"availableVersions,omitempty" yaml:"availableVersions,omitempty"`
 }
 
 // AddonIssue represents an issue reported by an addon
 type AddonIssue struct {
-	Code        string   `json:"code"`
-	Message     string   `json:"message"`
-	ResourceIDs []string `json:"resourceIds,omitempty"`
+	Code        string   `json:"code" yaml:"code"`
+	Message     string   `json:"message" yaml:"message"`
+	ResourceIDs []string `json:"resourceIds,omitempty" yaml:"resourceIds,omitempty"`
 }
 
 // AddonVersionInfo contains version-specific information
@@ -45,13 +45,13 @@ type AddonVersionInfo struct {
 
 // AddonUpdateResult contains the result of an addon update
 type AddonUpdateResult struct {
-	AddonName       string    `json:"addonName"`
-	PreviousVersion string    `json:"previousVersion"`
-	NewVersion      string    `json:"newVersion"`
-	UpdateID        string    `json:"updateId"`
-	Status          string    `json:"status"`
-	HealthIssues    string    `json:"healthIssues,omitempty"`
-	StartedAt       time.Time `json:"startedAt"`
+	AddonName       string    `json:"addonName" yaml:"addonName"`
+	PreviousVersion string    `json:"previousVersion" yaml:"previousVersion"`
+	NewVersion      string    `json:"newVersion" yaml:"newVersion"`
+	UpdateID        string    `json:"updateId" yaml:"updateId"`
+	Status          string    `json:"status" yaml:"status"`
+	HealthIssues    string    `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
+	StartedAt       time.Time `json:"startedAt" yaml:"startedAt"`
 }
 
 // ListOptions controls addon listing behavior
