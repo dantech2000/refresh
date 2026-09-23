@@ -3,6 +3,7 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -19,11 +20,12 @@ import (
 type NodegroupGate func(ctx context.Context, nodegroupName string) error
 
 // RollObserver renders a live view of a single nodegroup roll. It is supplied
-// by the command (view) layer and invoked by the nodegroup phase AFTER a roll
-// starts and BEFORE the authoritative DescribeUpdate wait — so rendering never
-// happens in the service itself. It must be best-effort and bounded (it must
-// not block the roll or affect its result); a nil observer means text progress
-// only.
+// by the command (view) layer and run by the nodegroup phase concurrently with
+// the authoritative DescribeUpdate wait once a roll starts — so rendering never
+// happens in the service itself. Its ctx is cancelled as soon as the update
+// reaches a terminal state (or the wait otherwise ends), and it must return
+// promptly then; it never affects the result. A nil observer means text
+// progress only.
 type RollObserver func(ctx context.Context, nodegroupName string)
 
 // NodegroupRollOptions tunes the nodegroup phase.
@@ -124,23 +126,76 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 	}
 	progress("nodegroup %s roll to %s started (update %s)", nodegroupName, targetVersion, updateID)
 
-	// Live per-node panel (view layer, best-effort) while the roll proceeds; the
-	// DescribeUpdate wait below stays authoritative for the result.
+	// Live per-node panel (view layer, best-effort) runs alongside the
+	// DescribeUpdate wait, which stays authoritative for the result: once EKS
+	// reports a terminal status (including FAILED), the panel is cancelled and
+	// joined, so a roll that never converges can't hold the wait hostage.
+	// While the panel owns the terminal, the wait's progress lines are held
+	// back so they never draw over it. They are flushed as soon as the
+	// observer returns — when the wait ends, or earlier if the panel has
+	// nothing to show or the roll already looks complete — and later lines
+	// pass straight through. Without an observer, nothing is held.
+	var observe func(context.Context)
+	waitProgress := progress
+	var held *heldProgress
 	if observer != nil {
-		observer(ctx, nodegroupName)
+		held = &heldProgress{out: progress}
+		waitProgress = held.add
+		observe = func(octx context.Context) {
+			defer held.release()
+			observer(octx, nodegroupName)
+		}
 	}
-
-	if updateID != "" {
-		if err := s.waitForUpdate(ctx, &eks.DescribeUpdateInput{
+	err = common.RunAlongside(ctx, observe, func(wctx context.Context) error {
+		if updateID == "" {
+			return nil
+		}
+		return s.waitForUpdate(wctx, &eks.DescribeUpdateInput{
 			Name:          aws.String(clusterName),
 			NodegroupName: aws.String(nodegroupName),
 			UpdateId:      aws.String(updateID),
-		}, fmt.Sprintf("nodegroup %s roll to %s", nodegroupName, targetVersion), progress); err != nil {
-			return err
-		}
+		}, fmt.Sprintf("nodegroup %s roll to %s", nodegroupName, targetVersion), waitProgress)
+	})
+	if err != nil {
+		return err
 	}
 	progress("nodegroup %s is at %s", nodegroupName, targetVersion)
 	return nil
+}
+
+// heldProgress buffers progress lines until release, then flushes them to out
+// in order and passes later lines straight through. add and release may run
+// on different goroutines; the lock keeps flushed and new lines in order.
+type heldProgress struct {
+	mu       sync.Mutex
+	out      ProgressFunc
+	released bool
+	lines    []heldLine
+}
+
+type heldLine struct {
+	format string
+	args   []any
+}
+
+func (h *heldProgress) add(format string, args ...any) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.released {
+		h.out(format, args...)
+		return
+	}
+	h.lines = append(h.lines, heldLine{format: format, args: args})
+}
+
+func (h *heldProgress) release() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.released = true
+	for _, l := range h.lines {
+		h.out(l.format, l.args...)
+	}
+	h.lines = nil
 }
 
 // defaultNodegroupGate verifies the nodegroup is ACTIVE and reports no
