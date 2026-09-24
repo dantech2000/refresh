@@ -154,8 +154,8 @@ func TestReadiness_SkipInsightsCheckPassesWithWarning(t *testing.T) {
 	if r := readiness(t, plan); !strings.Contains(r.Reason, "skipped") {
 		t.Fatalf("readiness reason = %q, want the skip noted", r.Reason)
 	}
-	if len(plan.Warnings) == 0 || !strings.Contains(strings.Join(plan.Warnings, "\n"), "--skip-insights-check") {
-		t.Fatalf("warnings = %v, want the skipped check called out", plan.Warnings)
+	if len(plan.Notices) == 0 || !strings.Contains(strings.Join(plan.Notices, "\n"), "--skip-insights-check") {
+		t.Fatalf("notices = %v, want the skipped check called out", plan.Notices)
 	}
 	if m.Calls.StartInsightsRefresh != 0 || m.Calls.ListInsights != 0 {
 		t.Fatalf("insights calls: refresh=%d list=%d, want none", m.Calls.StartInsightsRefresh, m.Calls.ListInsights)
@@ -256,8 +256,8 @@ func TestExecute_LaterHopWithoutInsightsBlocks(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "insights for 1.33 not available yet") {
 		t.Fatalf("err = %v, want the missing 1.33 insights named", err)
 	}
-	if !strings.Contains(report.FailedAt, "1.32 → 1.33") {
-		t.Fatalf("failedAt = %q, want the 1.33 control-plane phase", report.FailedAt)
+	if !strings.Contains(report.StoppedAt, "1.32 → 1.33") {
+		t.Fatalf("stoppedAt = %q, want the 1.33 control-plane phase", report.StoppedAt)
 	}
 	if m.Calls.UpdateClusterVersion != 1 {
 		t.Fatalf("UpdateClusterVersion calls = %d, want 1 (hop 1 only)", m.Calls.UpdateClusterVersion)

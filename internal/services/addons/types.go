@@ -68,28 +68,38 @@ type AddonVersionInfo struct {
 	RequiresIAMPolicy bool     `json:"requiresIamPolicy"`
 }
 
-// Update result statuses set by Update. A result can also carry the EKS
-// update status (InProgress) when the caller did not wait, or a "FAILED: ..."
-// status from UpdateAll.
+// The statuses of an add-on update result. docs/concepts/output.md
+// documents them; later versions may add values.
 const (
 	// StatusDryRun: --dry-run; nothing was sent.
-	StatusDryRun = "DRY_RUN"
+	StatusDryRun = "DryRun"
 	// StatusUpToDate: the add-on is already at (or, for "latest", above) the
 	// target version; no UpdateAddon call was made.
-	StatusUpToDate = "UP_TO_DATE"
+	StatusUpToDate = "UpToDate"
 	// StatusInProgress: the add-on is already CREATING/UPDATING at the
 	// target version; no new update was submitted (without Wait).
-	StatusInProgress = "IN_PROGRESS"
-	// StatusCompleted: the EKS update succeeded and the add-on reports the
-	// target version.
-	StatusCompleted = "COMPLETED"
+	StatusInProgress = "InProgress"
+	// StatusStarted: the update was submitted, and the run did not wait for
+	// it (no Wait).
+	StatusStarted = "Started"
+	// StatusCompleted: the EKS update succeeded, the add-on reports the
+	// target version, and the post-update health check passed.
+	StatusCompleted = "Completed"
 	// StatusCompletedWithIssues: the update landed but the post-update health
 	// check found problems (see HealthIssues).
-	StatusCompletedWithIssues = "COMPLETED_WITH_ISSUES"
+	StatusCompletedWithIssues = "CompletedWithIssues"
+	// StatusUnverified: the update landed, but the post-update health check
+	// could not read the add-on (see Failure).
+	StatusUnverified = "Unverified"
 	// StatusWaitFailed: the update was submitted but did not complete: it
 	// failed or was cancelled in EKS, the add-on ended at another version, or
-	// the wait timed out (see Error).
-	StatusWaitFailed = "WAIT_FAILED"
+	// the wait timed out (see Failure).
+	StatusWaitFailed = "WaitFailed"
+	// StatusFailed: the update could not be submitted (see Failure).
+	StatusFailed = "Failed"
+	// StatusNotAttempted: an UpdateAll run stopped before this add-on (see
+	// Failure).
+	StatusNotAttempted = "NotAttempted"
 )
 
 // AddonUpdateResult contains the result of an addon update
@@ -103,10 +113,15 @@ type AddonUpdateResult struct {
 	// Warning is set when the update needs the user's attention but still
 	// proceeds, e.g. a pinned version older than the installed one.
 	Warning string `json:"warning,omitempty" yaml:"warning,omitempty"`
-	// Error is the reason for a WAIT_FAILED status.
-	Error     string    `json:"error,omitempty" yaml:"error,omitempty"`
-	StartedAt time.Time `json:"startedAt" yaml:"startedAt"`
+	// Failure is set for the statuses Unverified, WaitFailed, Failed, and
+	// NotAttempted.
+	Failure   *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
+	StartedAt time.Time     `json:"startedAt" yaml:"startedAt"`
 }
+
+// Failed reports whether the result has a failure: the update could not be
+// submitted, did not complete, could not be verified, or was not attempted.
+func (r AddonUpdateResult) Failed() bool { return r.Failure != nil }
 
 // ListOptions controls addon listing behavior
 type ListOptions struct {

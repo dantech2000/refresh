@@ -16,110 +16,40 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
-	"github.com/dantech2000/refresh/internal/monitoring"
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 func TestFleetExit_WorstOutcome(t *testing.T) {
+	denied := []diag.Failure{diag.New(diag.KindRegion, "eu-west-1", diag.ReasonAccessDenied, "denied")}
 	cases := []struct {
-		name       string
-		results    []clusterUpdateResult
-		regionErrs []regionDiscoveryError
-		want       int
+		name     string
+		statuses []clusterStatus
+		regions  []diag.Failure
+		want     int
 	}{
-		{"all clean", []clusterUpdateResult{{Outcomes: updateOutcomes{Started: []string{"a"}}}}, nil, 0},
-		{"health blocked", []clusterUpdateResult{{HealthBlocked: true, Error: "block"}}, nil, 3},
-		{"health warnings exit 2 like the single-cluster path", []clusterUpdateResult{{HealthWarned: true, Error: "warn"}}, nil, 2},
-		{
-			"a block outranks warnings",
-			[]clusterUpdateResult{{HealthWarned: true, Error: "warn"}, {HealthBlocked: true, Error: "block"}},
-			nil,
-			3,
-		},
-		{"update failed", []clusterUpdateResult{{Outcomes: updateOutcomes{Failed: []string{"a"}}}}, nil, 4},
-		{"verify failed", []clusterUpdateResult{{VerifyFailed: true, Outcomes: updateOutcomes{Started: []string{"a"}}}}, nil, 5},
-		{
-			"worst wins (block + verify → 5)",
-			[]clusterUpdateResult{
-				{HealthBlocked: true, Error: "x"},
-				{VerifyFailed: true, Outcomes: updateOutcomes{Started: []string{"a"}}},
-			},
-			nil,
-			5,
-		},
-		{
-			"error counts as 4",
-			[]clusterUpdateResult{{Error: "monitor boom"}},
-			nil,
-			4,
-		},
-		{
-			"interrupt exits 1 like the single-cluster path",
-			[]clusterUpdateResult{{Interrupted: true, Outcomes: updateOutcomes{Started: []string{"a"}}}},
-			nil,
-			1,
-		},
-		{
-			"monitor timeout exits 1 like the single-cluster path",
-			[]clusterUpdateResult{{TimedOut: true, Outcomes: updateOutcomes{Started: []string{"a"}}}},
-			nil,
-			1,
-		},
-		{
-			"interrupt does not mask a failed start",
-			[]clusterUpdateResult{{Interrupted: true, Outcomes: updateOutcomes{Failed: []string{"a"}}}},
-			nil,
-			4,
-		},
-		{
-			"a roll that ended Failed is a partial result in a fleet (4, not 1)",
-			[]clusterUpdateResult{
-				{Error: "one or more nodegroup updates failed: ng-2: Failed", Outcomes: updateOutcomes{Started: []string{"ng-2"}}},
-				{Outcomes: updateOutcomes{Started: []string{"ng-1"}}},
-			},
-			nil,
-			4,
-		},
-		{
-			"a region that could not be listed fails an otherwise clean run",
-			[]clusterUpdateResult{{Outcomes: updateOutcomes{Started: []string{"a"}}}},
-			[]regionDiscoveryError{{Region: "eu-west-1", Error: "denied"}},
-			4,
-		},
-		{
-			"verification still outranks a discovery error",
-			[]clusterUpdateResult{{VerifyFailed: true, Outcomes: updateOutcomes{Started: []string{"a"}}}},
-			[]regionDiscoveryError{{Region: "eu-west-1", Error: "denied"}},
-			5,
-		},
+		{"all clean", []clusterStatus{clusterSucceeded}, nil, 0},
+		{"health blocked", []clusterStatus{clusterHealthBlocked}, nil, 3},
+		{"health warnings exit 2 like the single-cluster path", []clusterStatus{clusterHealthWarned}, nil, 2},
+		{"a block outranks warnings", []clusterStatus{clusterHealthWarned, clusterHealthBlocked}, nil, 3},
+		{"update failed", []clusterStatus{clusterFailed}, nil, 4},
+		{"incomplete data", []clusterStatus{clusterIncomplete}, nil, 4},
+		{"verify failed", []clusterStatus{clusterVerifyFailed}, nil, 5},
+		{"worst wins (block + verify → 5)", []clusterStatus{clusterHealthBlocked, clusterVerifyFailed}, nil, 5},
+		{"interrupt exits 1 like the single-cluster path", []clusterStatus{clusterInterrupted}, nil, 1},
+		{"monitor timeout exits 1 like the single-cluster path", []clusterStatus{clusterTimedOut}, nil, 1},
+		{"a cluster never reached exits 1", []clusterStatus{clusterSucceeded, clusterNotAttempted}, nil, 1},
+		{"a failed cluster outranks an interrupted one", []clusterStatus{clusterInterrupted, clusterFailed}, nil, 4},
+		{"a region that could not be listed fails an otherwise clean run", []clusterStatus{clusterSucceeded}, denied, 4},
+		{"verification still outranks a discovery error", []clusterStatus{clusterVerifyFailed}, denied, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := exitCodeOf(fleetExit(tc.results, tc.regionErrs)); got != tc.want {
-				t.Errorf("fleetExit = %d, want %d", got, tc.want)
+			var results []clusterUpdateResult
+			for _, s := range tc.statuses {
+				results = append(results, clusterUpdateResult{Status: s})
 			}
-		})
-	}
-}
-
-func TestRecordMonitorError(t *testing.T) {
-	cases := []struct {
-		name                  string
-		err                   error
-		interrupted, timedOut bool
-		wantError             string
-	}{
-		{"nil", nil, false, false, ""},
-		{"cancelled", monitoring.ErrCancelled, true, false, ""},
-		{"wrapped cancelled", fmt.Errorf("x: %w", monitoring.ErrCancelled), true, false, ""},
-		{"timeout", monitoring.ErrMonitorTimeout, false, true, ""},
-		{"other", errors.New("nodegroup ng failed"), false, false, "nodegroup ng failed"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var r clusterUpdateResult
-			recordMonitorError(&r, tc.err)
-			if r.Interrupted != tc.interrupted || r.TimedOut != tc.timedOut || r.Error != tc.wantError {
-				t.Errorf("got interrupted=%v timedOut=%v error=%q", r.Interrupted, r.TimedOut, r.Error)
+			if got := exitCodeOf(fleetExit(results, tc.regions)); got != tc.want {
+				t.Errorf("fleetExit = %d, want %d", got, tc.want)
 			}
 		})
 	}
@@ -130,15 +60,16 @@ func TestSummarizeClusterResult_InterruptAndTimeout(t *testing.T) {
 	color.NoColor = true
 	t.Cleanup(func() { color.NoColor = prev })
 
-	got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Interrupted: true, Outcomes: updateOutcomes{Started: []string{"ng"}}})
+	started := []nodegroupResult{{Name: "ng", Status: ngInProgress, UpdateID: "u-1"}}
+	got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Status: clusterInterrupted, Nodegroups: started})
 	want := "interrupted (update continues in AWS; check with refresh nodegroup list prod)"
 	if got != want {
 		t.Errorf("interrupted = %q, want %q", got, want)
 	}
-	if got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Interrupted: true}); got != "interrupted before any update started" {
+	if got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Status: clusterInterrupted}); got != "interrupted before any update started" {
 		t.Errorf("interrupted before start = %q", got)
 	}
-	if got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", TimedOut: true}); !strings.Contains(got, "monitoring timed out") || strings.Contains(got, "failed") {
+	if got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Status: clusterTimedOut}); !strings.Contains(got, "timed out") || strings.Contains(got, "failed") {
 		t.Errorf("timed out = %q", got)
 	}
 }
@@ -185,9 +116,15 @@ func TestDiscoverFleetTargets_CollectsRegionErrors(t *testing.T) {
 	if strings.Join(got, ",") != "us-east-1/a,us-east-1/b,us-west-2/c" {
 		t.Errorf("targets = %v", got)
 	}
-	// Throttling that outlived the retries is a failure even in the default sweep.
-	if len(d.failed) != 1 || d.failed[0].Region != "eu-west-1" || !strings.Contains(d.failed[0].Error, "ThrottlingException") || len(d.skipped) != 0 {
-		t.Errorf("failed = %+v, skipped = %v", d.failed, d.skipped)
+	// Throttling that outlived the retries is a failure even in the default
+	// sweep: a Region failure with the reason and the IAM action.
+	if len(d.failed) != 1 || len(d.skipped) != 0 {
+		t.Fatalf("failed = %+v, skipped = %v", d.failed, d.skipped)
+	}
+	f := d.failed[0]
+	if f.Kind != diag.KindRegion || f.Name != "eu-west-1" || f.Region != "eu-west-1" || f.Reason != diag.ReasonThrottled ||
+		f.Operation != diag.OpListClusters || !f.Retryable || f.AWSErrorCode != "ThrottlingException" {
+		t.Errorf("failure = %+v", f)
 	}
 }
 
@@ -217,12 +154,9 @@ func TestFleetDiscovery_DefaultSweepSkipsDeniedRegions(t *testing.T) {
 	if strings.Count(buf.String(), "\n") != 1 {
 		t.Errorf("want one stderr line, got %q", buf.String())
 	}
-	clean := []clusterUpdateResult{{Cluster: "prod", Outcomes: updateOutcomes{Started: []string{"ng"}}}}
+	clean := []clusterUpdateResult{{Cluster: "prod", Status: clusterSucceeded}}
 	if err := fleetExit(clean, d.failed); err != nil {
 		t.Errorf("fleetExit = %v, want nil", err)
-	}
-	if err := discoveryExit(d.failed); err != nil {
-		t.Errorf("dry-run discoveryExit = %v, want nil", err)
 	}
 }
 
@@ -236,18 +170,15 @@ func TestFleetDiscovery_ExplicitRegionDeniedFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.skipped) != 0 || len(d.failed) != 1 {
+	if len(d.skipped) != 0 || len(d.failed) != 1 || d.failed[0].Reason != diag.ReasonAccessDenied {
 		t.Fatalf("discovery = %+v", d)
 	}
 	if err := checkDiscovery(len(regions), d); err != nil {
 		t.Fatalf("checkDiscovery: %v (clusters were found, the run continues)", err)
 	}
-	clean := []clusterUpdateResult{{Cluster: "prod", Outcomes: updateOutcomes{Started: []string{"ng"}}}}
+	clean := []clusterUpdateResult{{Cluster: "prod", Status: clusterSucceeded}}
 	if got := exitCodeOf(fleetExit(clean, d.failed)); got != 4 {
 		t.Errorf("fleetExit = %d, want 4", got)
-	}
-	if got := discoveryExit(d.failed); exitCodeOf(got) != 4 || !strings.Contains(got.Error(), "REFRESH_EKS_REGIONS") {
-		t.Errorf("discoveryExit = %v, want exit 4 with the scope hint", got)
 	}
 }
 
@@ -297,10 +228,13 @@ func TestDiscoveryStopError(t *testing.T) {
 	}
 }
 
+// checkDiscovery fails only when no region could be listed. It prints the
+// skipped-region notice, but not the failed regions: the run reports them
+// once, with its other failures.
 func TestCheckDiscovery(t *testing.T) {
 	buf := captureFleetStderr(t)
 
-	denied := []regionDiscoveryError{{Region: "eu-west-1", Error: "denied"}}
+	denied := []diag.Failure{diag.New(diag.KindRegion, "eu-west-1", diag.ReasonAccessDenied, "denied")}
 	three := make([]clusterTarget, 3)
 	cases := []struct {
 		name    string
@@ -311,7 +245,7 @@ func TestCheckDiscovery(t *testing.T) {
 		{"clean", 2, fleetDiscovery{targets: three}, 0},
 		{"clean but empty", 2, fleetDiscovery{}, 0},
 		{"all regions failed", 1, fleetDiscovery{failed: denied}, 1},
-		{"some failed, none found elsewhere", 2, fleetDiscovery{failed: denied}, 4},
+		{"some failed, none found elsewhere", 2, fleetDiscovery{failed: denied}, 0},
 		{"some failed, clusters found elsewhere", 2, fleetDiscovery{targets: three, failed: denied}, 0},
 		{"skipped plus failed covers every region", 2, fleetDiscovery{failed: denied, skipped: []string{"sa-east-1"}}, 1},
 		{"skipped only, reachable region empty", 2, fleetDiscovery{skipped: []string{"sa-east-1"}}, 0},
@@ -322,13 +256,10 @@ func TestCheckDiscovery(t *testing.T) {
 			if got := runner.ExitCodeOf(checkDiscovery(tc.regions, tc.d)); got != tc.want {
 				t.Errorf("exit = %d, want %d", got, tc.want)
 			}
-			if len(tc.d.failed) > 0 && !strings.Contains(buf.String(), "skipping region eu-west-1: denied") {
-				t.Errorf("missing stderr warning, got %q", buf.String())
+			if strings.Contains(buf.String(), "eu-west-1") {
+				t.Errorf("checkDiscovery printed a failed region; the run reports it once: %q", buf.String())
 			}
 		})
-	}
-	if exitCodeOf(discoveryExit(denied)) != 4 || discoveryExit(nil) != nil {
-		t.Error("discoveryExit: want 4 with region errors, nil without")
 	}
 }
 

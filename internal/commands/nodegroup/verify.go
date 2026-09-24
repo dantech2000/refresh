@@ -2,6 +2,7 @@ package nodegroup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -10,6 +11,8 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 // pendingPodSet is a set of "namespace/name" for pods in the Pending phase,
@@ -56,20 +59,25 @@ type nodegroupDescriber interface {
 // nodegroup-status check (mirroring how pre-flight degrades). prerollOK is the
 // ok result of the pre-roll snapshotPendingPods call; if either snapshot
 // failed, the pod check is reported as skipped rather than passed or failed.
-func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient kubernetes.Interface, clusterName string, nodegroups []string, preroll pendingPodSet, prerollOK bool) PostRollVerification {
+//
+// A nodegroup that can't be described after the roll is not a verification
+// issue: its state is unknown. It is returned as a failure (exit 4) instead,
+// with no cluster set.
+func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient kubernetes.Interface, clusterName string, nodegroups []string, preroll pendingPodSet, prerollOK bool) (PostRollVerification, []diag.Failure) {
 	var v PostRollVerification
+	var failures []diag.Failure
 
 	for _, ng := range nodegroups {
 		desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
 			ClusterName:   aws.String(clusterName),
 			NodegroupName: aws.String(ng),
 		})
-		if err != nil {
-			v.Issues = append(v.Issues, fmt.Sprintf("%s: could not describe after roll: %v", ng, err))
-			continue
+		if err == nil && (desc == nil || desc.Nodegroup == nil) {
+			err = errors.New("empty DescribeNodegroup response")
 		}
-		if desc.Nodegroup == nil {
-			v.Issues = append(v.Issues, fmt.Sprintf("%s: empty describe response after roll", ng))
+		if err != nil {
+			failures = append(failures, diag.FromError(diag.KindNodegroup, ng, diag.OpDescribeNodegroup,
+				fmt.Errorf("describing the nodegroup after the roll: %w", err)))
 			continue
 		}
 		if desc.Nodegroup.Status == ekstypes.NodegroupStatusActive {
@@ -81,17 +89,17 @@ func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient
 
 	if k8sClient == nil {
 		v.Checks = append(v.Checks, "pod verification skipped (no Kubernetes access)")
-		return v
+		return v, failures
 	}
 
 	if !prerollOK {
 		v.Checks = append(v.Checks, "pod verification skipped (could not list Pending pods before the roll)")
-		return v
+		return v, failures
 	}
 	after, ok := snapshotPendingPods(ctx, k8sClient)
 	if !ok {
 		v.Checks = append(v.Checks, "pod verification skipped (could not list Pending pods after the roll)")
-		return v
+		return v, failures
 	}
 	var newlyPending []string
 	for key := range after {
@@ -102,12 +110,12 @@ func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient
 	sort.Strings(newlyPending)
 	if len(newlyPending) == 0 {
 		v.Checks = append(v.Checks, "no new Pending pods")
-		return v
+		return v, failures
 	}
 	shown := newlyPending
 	if len(shown) > 5 {
 		shown = shown[:5]
 	}
 	v.Issues = append(v.Issues, fmt.Sprintf("%d pod(s) newly Pending after roll: %v", len(newlyPending), shown))
-	return v
+	return v, failures
 }

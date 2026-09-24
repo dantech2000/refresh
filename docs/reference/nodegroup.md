@@ -124,7 +124,7 @@ without a terminal, --yes is required. --dry-run never prompts.
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
   refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force --yes
 
-Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs or the pre-scaling health check, nothing changed; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs or the pre-scaling health check, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -178,16 +178,18 @@ Unattended / CI use:
    --yes              skip confirmation prompts (a nodegroup pattern that is
                       not an exact name, warn-level health findings)
    --require-healthy  treat warn-level health findings as a hard stop
-   -o json|yaml       print one document on stdout: the run summary
-                      (started/skipped/custom/failed), the dry-run plan, or
-                      the --health-only verdict; notices go to stderr
+   -o json|yaml       print one document on stdout: the run document (a
+                      status per nodegroup, and the failures), the dry-run
+                      plan, or the --health-only verdict; notices go to stderr
    Without a TTY, with --quiet, or with -o json|yaml, a run that needs a
    prompt fails fast unless --yes is given.
 
 Exit codes:
-   0  success            1  error, interrupt, or monitoring timeout
+   0  success            1  error, interrupt, monitoring timeout, or a roll
+                            that ended Failed/Cancelled
    2  health warnings (--health-only / --require-healthy)
-   3  health blocked     4  one or more nodegroup updates failed to start
+   3  health blocked     4  a failure: a nodegroup that could not be read,
+                            or an update that could not start
    5  post-roll verification found issues
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json

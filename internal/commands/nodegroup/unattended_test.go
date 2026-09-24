@@ -9,7 +9,9 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/monitoring"
 )
 
@@ -63,22 +65,35 @@ func TestApplyHealthDecision_WarnNoTTYFailsFast(t *testing.T) {
 }
 
 func TestUpdateExit(t *testing.T) {
-	if got := exitCodeOf(updateExit(updateOutcomes{}, nil, false)); got != 0 {
+	startFailed := newUpdateRun("prod", "us-east-1")
+	startFailed.fail("ng-a", diag.OpUpdateNodegroupVersion, mocks.APIError("InvalidRequestException", "no"))
+	rollFailed := newUpdateRun("prod", "us-east-1")
+	rollFailed.nodegroups = []nodegroupResult{{Name: "ng-a", Status: ngFailed, UpdateID: "u-1"}}
+	readFailure := []diag.Failure{diag.New(diag.KindNodegroup, "ng-a", diag.ReasonThrottled, "x")}
+	clean := newUpdateRun("prod", "us-east-1")
+
+	if got := exitCodeOf(updateExit(clean, nil, nil, false)); got != 0 {
 		t.Errorf("clean run exit = %d, want 0", got)
 	}
-	if got := exitCodeOf(updateExit(updateOutcomes{Failed: []string{"ng-a"}}, nil, false)); got != 4 {
+	if got := exitCodeOf(updateExit(startFailed, startFailed.failures(), nil, false)); got != 4 {
 		t.Errorf("start-failure exit = %d, want 4", got)
 	}
-	if got := exitCodeOf(updateExit(updateOutcomes{}, nil, true)); got != 5 {
+	if got := exitCodeOf(updateExit(clean, readFailure, nil, true)); got != 4 {
+		t.Errorf("read failure with verification issues exit = %d, want 4 (a failure wins over 5)", got)
+	}
+	if got := exitCodeOf(updateExit(clean, nil, nil, true)); got != 5 {
 		t.Errorf("verification-failure exit = %d, want 5", got)
 	}
-	if got := exitCodeOf(updateExit(updateOutcomes{}, cli.Exit("boom", 1), false)); got != 1 {
-		t.Errorf("monitoring-error exit = %d, want 1 (propagated)", got)
+	if got := exitCodeOf(updateExit(rollFailed, rollFailed.failures(), nil, false)); got != 1 {
+		t.Errorf("roll-failure exit = %d, want 1", got)
+	}
+	if got := exitCodeOf(updateExit(clean, nil, monitoring.ErrMonitorTimeout, false)); got != 1 {
+		t.Errorf("monitor timeout exit = %d, want 1", got)
 	}
 }
 
 func TestUpdateExit_UserInterruptIsNonZeroWithHint(t *testing.T) {
-	err := updateExit(updateOutcomes{Cluster: "prod"}, monitoring.ErrCancelled, false)
+	err := updateExit(newUpdateRun("prod", ""), nil, monitoring.ErrCancelled, false)
 	if err == nil {
 		t.Fatal("an interrupted run must not exit 0")
 	}
@@ -89,7 +104,7 @@ func TestUpdateExit_UserInterruptIsNonZeroWithHint(t *testing.T) {
 		t.Errorf("error should point at 'refresh nodegroup list prod', got %q", err.Error())
 	}
 	// The interrupt wins over a stale verifyFailed flag: it must not map to 5.
-	if got := exitCodeOf(updateExit(updateOutcomes{Cluster: "prod"}, monitoring.ErrCancelled, true)); got == 5 || got == 0 {
+	if got := exitCodeOf(updateExit(newUpdateRun("prod", ""), nil, monitoring.ErrCancelled, true)); got == 5 || got == 0 {
 		t.Errorf("interrupt exit = %d, want a general error (not 0 or 5)", got)
 	}
 }

@@ -24,6 +24,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
@@ -173,19 +174,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 
 	summary, done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, nodegroupPattern, flags)
 	if err != nil || done {
-		// -o json/yaml: --health-only prints the verdict; a run the health
-		// gate stopped prints the (empty) run summary with the verdict, so
-		// a CI consumer can see which checks stopped it.
-		if flags.machine() && summary != nil {
-			var doc any = updateDocument{updateOutcomes: newUpdateOutcomes(clusterName), Health: summary}
-			if flags.healthOnly {
-				doc = summary
-			}
-			if _, eerr := runner.EncodeStdout(flags.format, doc); eerr != nil {
-				return eerr
-			}
-		}
-		return err
+		return finishAtHealthGate(newUpdateRun(clusterName, awsCfg.Region), summary, flags, err)
 	}
 
 	selectedNodegroups, err := selectNodegroupsForUpdate(ctx, eksClient, clusterName, nodegroupPattern, flags)
@@ -203,47 +192,85 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 
 	if flags.dryRun {
-		if flags.machine() {
-			plan, perr := dryRunDocument(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
-			if perr != nil {
-				return perr
-			}
-			_, perr = runner.EncodeStdout(flags.format, plan)
-			return perr
-		}
-		if derr := dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.dryRunOptions()); derr != nil {
-			return derr
-		}
-		if !flags.quiet {
-			printChangelogsForNodegroups(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags.changelog)
-		}
-		return nil
+		return runUpdateDryRun(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
 	}
 
-	outcomes, verifyFailed, monErr := executeUpdates(ctx, awsCfg, eksClient, clusterName, selectedNodegroups, flags)
+	run, verifyFailed, monErr := executeUpdates(ctx, awsCfg, eksClient, clusterName, awsCfg.Region, selectedNodegroups, flags)
+	doc := newUpdateDocument(run, summary)
 
 	if flags.machine() {
-		if _, err := runner.EncodeStdout(flags.format, updateDocument{updateOutcomes: outcomes, Health: summary}); err != nil {
+		if _, err := runner.EncodeStdout(flags.format, doc); err != nil {
 			return err
 		}
-		return updateExit(outcomes, monErr, verifyFailed)
+	} else if !flags.quiet {
+		printRunSummary(run, clusterName, flags.noWait)
 	}
-	switch {
-	case len(outcomes.Started) == 0:
-		if !flags.quiet {
-			color.Yellow("No nodegroup updates were started")
+	runner.WriteFailures(flags.format, os.Stdout, ui.Stderr, doc.Failures)
+	return runner.UnlessInterrupted(ctx, updateExit(run, doc.Failures, monErr, verifyFailed))
+}
+
+// finishAtHealthGate ends a run the health gate stopped, or a --health-only
+// run. With -o json/yaml, --health-only prints the verdict, and a run the
+// gate stopped prints the (empty) run document with the verdict, so a CI
+// consumer can see which checks stopped it. The gate's error (and exit code)
+// stands; the reads the checks could not make are named on stderr.
+func finishAtHealthGate(run updateRun, summary *health.HealthSummary, flags updateAMIFlags, gateErr error) error {
+	if summary == nil {
+		return gateErr
+	}
+	if flags.machine() {
+		var doc any = newUpdateDocument(run, summary)
+		if flags.healthOnly {
+			doc = summary
 		}
-	case flags.noWait:
-		if !flags.quiet {
-			fmt.Printf("Started %d nodegroup update(s). Use 'refresh nodegroup list %s' to check status.\n",
-				len(outcomes.Started), clusterName)
-		}
-	default:
-		if !flags.quiet && outcomes.Verification != nil {
-			printVerification(*outcomes.Verification)
+		if _, err := runner.EncodeStdout(flags.format, doc); err != nil {
+			return err
 		}
 	}
-	return updateExit(outcomes, monErr, verifyFailed)
+	runner.WriteFailures(flags.format, os.Stdout, ui.Stderr, healthFailures(run, summary))
+	return gateErr
+}
+
+// runUpdateDryRun previews the selected nodegroups: the plan document with
+// -o json/yaml, else the human preview. A nodegroup the preview could not
+// describe is a failure (exit 4).
+func runUpdateDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selected []string, flags updateAMIFlags) error {
+	var fs []diag.Failure
+	if flags.machine() {
+		plan, err := dryRunDocument(ctx, awsCfg, eksClient, clusterName, selected, flags)
+		if err != nil {
+			return err
+		}
+		if _, err := runner.EncodeStdout(flags.format, plan); err != nil {
+			return err
+		}
+		fs = plan.Failures
+	} else {
+		unreadable, err := dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selected, flags.dryRunOptions())
+		if err != nil {
+			return err
+		}
+		if !flags.quiet {
+			printChangelogsForNodegroups(ctx, awsCfg, eksClient, clusterName, selected, flags.changelog)
+		}
+		fs = dryRunFailures(clusterName, awsCfg.Region, unreadable)
+	}
+	runner.WriteFailures(flags.format, os.Stdout, ui.Stderr, fs)
+	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(fs))
+}
+
+// printRunSummary prints the human end of a single-cluster run: nothing
+// started, the --no-wait hint, or the post-roll verification.
+func printRunSummary(run updateRun, clusterName string, noWait bool) {
+	switch started := run.started(); {
+	case len(started) == 0:
+		color.Yellow("No nodegroup updates were started")
+	case noWait:
+		fmt.Printf("Started %d nodegroup update(s). Use 'refresh nodegroup list %s' to check status.\n",
+			len(started), clusterName)
+	case run.verification != nil:
+		printVerification(*run.verification)
+	}
 }
 
 // executeUpdates runs the mutating part of an update for one cluster: snapshot
@@ -251,7 +278,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 // returns the per-nodegroup outcomes, whether verification failed, and any
 // monitoring error. Output/exit-code decisions are left to the caller so this
 // is reusable by both the single-cluster and fleet paths.
-func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selected []string, flags updateAMIFlags) (updateOutcomes, bool, error) {
+func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName, region string, selected []string, flags updateAMIFlags) (updateRun, bool, error) {
 	verify := !flags.skipVerify && !flags.noWait
 	var verifyClient kubernetes.Interface
 	var preroll pendingPodSet
@@ -261,9 +288,9 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		preroll, prerollOK = snapshotPendingPods(ctx, verifyClient)
 	}
 
-	updates, outcomes := startNodegroupUpdates(ctx, awsCfg, eksClient, clusterName, selected, flags)
+	updates, run := startNodegroupUpdates(ctx, awsCfg, eksClient, clusterName, region, selected, flags)
 	if len(updates) == 0 || flags.noWait {
-		return outcomes, false, nil
+		return run, false, nil
 	}
 
 	// -o json/yaml keeps the monitor silent: stdout carries only the summary.
@@ -323,7 +350,7 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 			monitoring.DisplayStopped(monitor, config, monErr)
 		}
 	}
-	outcomes.RollFailures = rollFailures(monitor.Updates)
+	run.applyMonitorResult(monitor.Updates, monErr)
 
 	verifyFailed := false
 	// Verification is cluster-wide (new stuck pods), so it can't be scoped to
@@ -332,12 +359,15 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	if verify && errors.Is(monErr, monitoring.ErrUnmonitored) && !quiet {
 		color.Yellow("Post-roll verification skipped: the outcome of one or more updates is unknown.")
 	}
-	if verify && shouldVerifyPostRoll(ctx, monErr) && len(outcomes.Started) > 0 {
-		result := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, outcomes.Started, preroll, prerollOK)
-		outcomes.Verification = &result
+	if verify && shouldVerifyPostRoll(ctx, monErr) && len(run.started()) > 0 {
+		result, readFailures := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, run.started(), preroll, prerollOK)
+		run.verification = &result
+		for _, f := range readFailures {
+			run.readFailures = append(run.readFailures, *run.withCluster(f))
+		}
 		verifyFailed = !result.OK()
 	}
-	return outcomes, verifyFailed, monErr
+	return run, verifyFailed, monErr
 }
 
 // showLivePanel decides whether to draw the live roll panel. It only covers a
@@ -380,22 +410,26 @@ func printVerification(v PostRollVerification) {
 	}
 }
 
-// updateExit maps an update run to the exit-code contract: monitoring failures
-// propagate (exit 1), start failures yield exit 4, a successful roll whose
-// post-roll verification found issues yields exit 5, otherwise success. A user
-// interrupt exits 1 with a hint that the EKS update keeps running.
-func updateExit(o updateOutcomes, monErr error, verifyFailed bool) error {
-	if errors.Is(monErr, monitoring.ErrCancelled) {
-		return fmt.Errorf("%w; check with 'refresh nodegroup list %s'", monErr, o.Cluster)
-	}
-	if monErr != nil {
-		return monErr
-	}
-	if len(o.Failed) > 0 {
-		return cli.Exit(fmt.Sprintf("%d nodegroup update(s) failed to start", len(o.Failed)), 4)
-	}
-	if verifyFailed {
-		return cli.Exit("update completed but post-roll verification found issues", 5)
+// updateExit maps a single-cluster update run to the exit-code contract, in
+// this order: exit 1 for an interrupt, a monitoring timeout, or a started
+// update that ended Failed or Cancelled or could not be monitored; exit 4
+// for the other failures (a nodegroup that could not be read, an update that
+// could not start); exit 5 when post-roll verification found issues. The
+// failures themselves are named already (runner.WriteFailures), so the
+// messages only count them.
+func updateExit(run updateRun, fs []diag.Failure, monErr error, verifyFailed bool) error {
+	check := fmt.Sprintf("check with 'refresh nodegroup list %s'", run.cluster)
+	switch {
+	case errors.Is(monErr, monitoring.ErrCancelled):
+		return fmt.Errorf("%w; %s", monErr, check)
+	case errors.Is(monErr, monitoring.ErrMonitorTimeout):
+		return cli.Exit("monitoring timed out before every update finished (--wait-timeout); the EKS update(s) may still be running; "+check, runner.ExitError)
+	case run.rollFailed():
+		return cli.Exit(fmt.Sprintf("%d nodegroup update(s) did not succeed", run.rollFailures()), runner.ExitError)
+	case len(fs) > 0:
+		return runner.IncompleteExit(fs)
+	case verifyFailed:
+		return cli.Exit("update completed but post-roll verification found issues", runner.ExitVerifyFailed)
 	}
 	return nil
 }
@@ -483,8 +517,9 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 }
 
 // healthExitError maps a health verdict to the --health-only exit-code
-// contract: 0 = pass, 2 = warnings, 3 = blocked. Messages go to stderr via
-// urfave/cli, keeping stdout pure data for JSON/YAML output.
+// contract: 0 = pass, 2 = warnings, 3 = blocked, and 4 for a pass whose
+// checks could not read everything (summary.Failures). Messages go to
+// stderr via urfave/cli, keeping stdout pure data for JSON/YAML output.
 func healthExitError(summary health.HealthSummary) error {
 	switch summary.Decision {
 	case health.DecisionBlock:
@@ -492,7 +527,7 @@ func healthExitError(summary health.HealthSummary) error {
 	case health.DecisionWarn:
 		return cli.Exit("health checks completed with warnings: "+healthProblems(summary), 2)
 	default:
-		return nil
+		return runner.IncompleteExit(summary.Failures)
 	}
 }
 
@@ -590,7 +625,7 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 			ui.DisplayHealthCheckComplete(summary.Decision)
 		}
 		if flags.healthOnly {
-			return true, nil
+			return true, healthExitError(summary)
 		}
 	}
 	return false, nil
@@ -625,9 +660,12 @@ func healthTargetNodegroups(ctx context.Context, eksClient *eks.Client, clusterN
 func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clusterName, pattern string, flags updateAMIFlags) ([]string, error) {
 	names, err := listNodegroupNames(ctx, eksClient, clusterName)
 	if err != nil {
-		return nil, err
+		return nil, &listNodegroupsError{err: err}
 	}
 	matches := awsinternal.MatchingNodegroups(names, pattern)
+	if len(matches) == 0 {
+		return nil, &noMatchError{cluster: clusterName, pattern: pattern}
+	}
 	// A pattern that is not an exact name (one substring match, or several
 	// matches) normally prompts. --yes accepts the matches; without a TTY or
 	// with -o json/yaml, and without --yes, fail instead of hanging on a
@@ -655,81 +693,20 @@ func nodegroupPatternError(clusterName, pattern string, matches []string, reason
 	return fmt.Errorf("pattern %q matched %d nodegroups (%s); re-run with --yes to update all, or a more specific name (%s)", pattern, len(matches), strings.Join(matches, ", "), reason)
 }
 
-// updateOutcomes records the per-nodegroup disposition of an update run, used
-// for the run summary (-o json/yaml) and the exit-code contract.
-type updateOutcomes struct {
-	Cluster      string                `json:"cluster" yaml:"cluster"`
-	Started      []string              `json:"started" yaml:"started"`
-	Skipped      []string              `json:"skipped" yaml:"skipped"`                 // already on latest, or already updating
-	Custom       []string              `json:"customUnmanaged" yaml:"customUnmanaged"` // custom-AMI nodegroups (managed via LT)
-	Failed       []string              `json:"failed" yaml:"failed"`                   // describe or UpdateNodegroupVersion failed
-	RollFailures []rollFailure         `json:"rollFailures" yaml:"rollFailures"`       // started, then ended Failed/Cancelled or unmonitored
-	Verification *PostRollVerification `json:"verification,omitempty" yaml:"verification,omitempty"`
-}
-
-// newUpdateOutcomes returns empty outcomes for cluster. Every list is
-// non-nil, so -o json/yaml encodes an empty list as [] and never as null.
-func newUpdateOutcomes(cluster string) updateOutcomes {
-	return updateOutcomes{
-		Cluster:      cluster,
-		Started:      []string{},
-		Skipped:      []string{},
-		Custom:       []string{},
-		Failed:       []string{},
-		RollFailures: []rollFailure{},
-	}
-}
-
-// rollFailureUnmonitored is the status of a roll whose EKS status could not be
-// polled. Its outcome is unknown; the EKS update may still be running.
-const rollFailureUnmonitored = "Unmonitored"
-
-// rollFailure is a started nodegroup update that did not succeed.
-type rollFailure struct {
-	Nodegroup string `json:"nodegroup" yaml:"nodegroup"`
-	UpdateID  string `json:"updateId" yaml:"updateId"`
-	// Status is the EKS update status (Failed or Cancelled), or Unmonitored
-	// when refresh could not poll it.
-	Status string `json:"status" yaml:"status"`
-	Error  string `json:"error,omitempty" yaml:"error,omitempty"`
-}
-
-// rollFailures lists the monitored updates that ended Failed or Cancelled or
-// could not be monitored, in start order. It is never nil.
-func rollFailures(updates []refreshTypes.UpdateProgress) []rollFailure {
-	out := []rollFailure{}
-	for _, u := range updates {
-		f := rollFailure{Nodegroup: u.NodegroupName, UpdateID: u.UpdateID}
-		switch {
-		case u.MonitorErr != nil:
-			f.Status, f.Error = rollFailureUnmonitored, u.MonitorErr.Error()
-		case u.Status == ekstypes.UpdateStatusFailed || u.Status == ekstypes.UpdateStatusCancelled:
-			f.Status, f.Error = string(u.Status), u.ErrorMessage
-		default:
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
-}
-
-// updateDocument is the -o json/yaml document of a single-cluster update: the
-// run summary's fields plus the pre-flight verdict when a check ran.
-type updateDocument struct {
-	updateOutcomes
-	Health *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`
-}
-
 // dryRunNodegroup is one nodegroup's previewed action in a -o json/yaml
 // dry-run document.
 type dryRunNodegroup struct {
 	Name string `json:"name" yaml:"name"`
-	// Action is update, force-update, skip-updating, skip-latest, or
-	// skip-custom (listed under customUnmanaged in the real run's summary).
+	// Action is update, force-update, skip-updating, skip-latest,
+	// skip-custom, or unknown (the nodegroup could not be read; see
+	// Failure).
 	Action     string `json:"action" yaml:"action"`
 	CurrentAMI string `json:"currentAmi,omitempty" yaml:"currentAmi,omitempty"`
 	LatestAMI  string `json:"latestAmi,omitempty" yaml:"latestAmi,omitempty"`
 	Reason     string `json:"reason" yaml:"reason"`
+	// Failure is set when the action is unknown. The same failure is in the
+	// document's failures.
+	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
 }
 
 // dryRunPlan is the -o json/yaml document for `nodegroup update --dry-run`.
@@ -739,51 +716,88 @@ type dryRunPlan struct {
 	Force      bool              `json:"force" yaml:"force"`
 	Reroll     bool              `json:"reroll,omitempty" yaml:"reroll,omitempty"`
 	Nodegroups []dryRunNodegroup `json:"nodegroups" yaml:"nodegroups"`
+	Failures   diag.List         `json:"failures" yaml:"failures"`
+}
+
+// dryRunFailure is the failure of a nodegroup the preview could not
+// describe.
+func dryRunFailure(cluster, region string, u dryrun.NodegroupUpdate) diag.Failure {
+	err := u.Err
+	if err == nil {
+		err = errors.New(u.Reason)
+	}
+	f := diag.FromError(diag.KindNodegroup, u.Name, diag.OpDescribeNodegroup, err)
+	f.Cluster, f.Region = cluster, region
+	return f
+}
+
+// dryRunFailures returns the sorted failures of the unreadable nodegroups of
+// a preview.
+func dryRunFailures(cluster, region string, unreadable []dryrun.NodegroupUpdate) diag.List {
+	var fs diag.List
+	for _, u := range unreadable {
+		fs = append(fs, dryRunFailure(cluster, region, u))
+	}
+	diag.Sort(fs)
+	return fs
 }
 
 // dryRunDocument previews the selected nodegroups without printing, for
-// -o json/yaml.
+// -o json/yaml. A nodegroup that could not be described has the action
+// unknown and a failure.
 func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selected []string, flags updateAMIFlags) (dryRunPlan, error) {
 	updates, err := dryrun.Preview(ctx, awsCfg, eksClient, clusterName, selected, flags.dryRunOptions())
 	if err != nil {
 		return dryRunPlan{}, err
 	}
 	plan := dryRunPlan{Cluster: clusterName, DryRun: true, Force: flags.force, Reroll: flags.reroll, Nodegroups: make([]dryRunNodegroup, 0, len(updates))}
+	var unreadable []dryrun.NodegroupUpdate
 	for _, u := range updates {
-		plan.Nodegroups = append(plan.Nodegroups, dryRunNodegroup{
+		ng := dryRunNodegroup{
 			Name:       u.Name,
 			Action:     dryrun.ActionName(u.Action),
 			CurrentAMI: u.CurrentAMI,
 			LatestAMI:  u.LatestAMI,
 			Reason:     u.Reason,
-		})
+		}
+		if u.Action == refreshTypes.ActionUnknown {
+			f := dryRunFailure(clusterName, awsCfg.Region, u)
+			ng.Failure = &f
+			unreadable = append(unreadable, u)
+		}
+		plan.Nodegroups = append(plan.Nodegroups, ng)
 	}
+	plan.Failures = dryRunFailures(clusterName, awsCfg.Region, unreadable)
 	return plan, nil
 }
 
 // startNodegroupUpdates starts a version update, through the nodegroup
 // service, for each selected nodegroup that isn't already updating or already
-// on the latest AMI, returning successful update progress entries.
-// Per-nodegroup failures are reported via flags.notice and recorded in
-// outcomes.Failed (exit 4), and the loop moves on to the next nodegroup.
+// on the latest AMI, returning successful update progress entries and one
+// result per nodegroup. A nodegroup that can't be described or whose update
+// can't start is recorded as Failed with its failure (exit 4), and the loop
+// moves on to the next nodegroup. The caller reports the failures.
 //
 // The already-on-latest skip mirrors the dry-run preview (ActionSkipLatest) so
 // the real run matches what `--dry-run` promised; `--reroll` (and `--force`)
 // bypass it.
-func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, nodegroups []string, flags updateAMIFlags) ([]refreshTypes.UpdateProgress, updateOutcomes) {
+func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName, region string, nodegroups []string, flags updateAMIFlags) ([]refreshTypes.UpdateProgress, updateRun) {
 	skipLatest := newLatestAMISkipChecker(ctx, awsCfg, eksClient, clusterName, flags)
-	// Progress lines are human-only. Skip and failure notices always print:
-	// to stderr with -o json/yaml (see noticeOut).
+	// Progress lines are human-only. Skip notices always print: to stderr
+	// with -o json/yaml (see noticeOut).
 	human := !flags.quiet && !flags.machine()
 
 	ngSvc := factory.NewNodegroupService(awsCfg, false, nil)
-	outcomes := newUpdateOutcomes(clusterName)
+	run := newUpdateRun(clusterName, region)
 	updates := make([]refreshTypes.UpdateProgress, 0, len(nodegroups))
 	for _, ng := range nodegroups {
+		if ctx.Err() != nil {
+			run.notAttempted(ctx, ng)
+			continue
+		}
 		nodegroup, err := ngSvc.DescribeNodegroup(ctx, clusterName, ng)
 		if err != nil {
-			flags.notice(color.FgRed, "Failed to describe nodegroup %s: %v", ng, err)
-			outcomes.Failed = append(outcomes.Failed, ng)
+			run.fail(ng, diag.OpDescribeNodegroup, err)
 			continue
 		}
 		// Custom-AMI nodegroups: EKS doesn't manage the AMI (it lives in the
@@ -792,17 +806,17 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 		if nodegroup.AmiType == ekstypes.AMITypesCustom {
 			flags.notice(color.FgYellow, "Nodegroup %s uses a custom AMI (AmiType=CUSTOM); refresh can't select a recommended AMI.", ng)
 			flags.notice(color.FgYellow, "  Publish a new launch template version with the new AMI, then point the nodegroup at it (e.g. `aws eks update-nodegroup-version --launch-template name=<lt>,version=<n>`).")
-			outcomes.Custom = append(outcomes.Custom, ng)
+			run.skip(ng, skipCustomAMI)
 			continue
 		}
 		if nodegroup.Status == ekstypes.NodegroupStatusUpdating {
 			flags.notice(color.FgYellow, "Nodegroup %s is already UPDATING. Skipping update.", ng)
-			outcomes.Skipped = append(outcomes.Skipped, ng)
+			run.skip(ng, skipAlreadyUpdating)
 			continue
 		}
 		if skipLatest(nodegroup) {
 			flags.notice(color.FgGreen, "Nodegroup %s is already on the latest AMI. Skipping (use --reroll to roll it anyway).", ng)
-			outcomes.Skipped = append(outcomes.Skipped, ng)
+			run.skip(ng, skipAlreadyLatest)
 			continue
 		}
 		if human {
@@ -815,13 +829,11 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 		// keeps it from rolling the nodegroup again.
 		update, err := ngSvc.StartVersionUpdate(ctx, clusterName, ng, nodegroupsvc.VersionUpdateOptions{Force: flags.force})
 		if err != nil {
-			flags.notice(color.FgRed, "Failed to update nodegroup %s: %v", ng, err)
-			outcomes.Failed = append(outcomes.Failed, ng)
+			run.fail(ng, diag.OpUpdateNodegroupVersion, err)
 			continue
 		}
 		if update == nil || update.Id == nil {
-			flags.notice(color.FgRed, "Update for nodegroup %s returned no update ID", ng)
-			outcomes.Failed = append(outcomes.Failed, ng)
+			run.fail(ng, diag.OpUpdateNodegroupVersion, errors.New("UpdateNodegroupVersion returned no update ID"))
 			continue
 		}
 
@@ -834,12 +846,12 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 			StartTime:     now,
 			LastChecked:   now,
 		})
-		outcomes.Started = append(outcomes.Started, ng)
+		run.nodegroups = append(run.nodegroups, nodegroupResult{Name: ng, Status: ngStarted, UpdateID: *update.Id})
 		if human {
 			color.Green("Update started for nodegroup %s (ID: %s)", ng, *update.Id)
 		}
 	}
-	return updates, outcomes
+	return updates, run
 }
 
 // newLatestAMISkipChecker returns a predicate reporting whether a nodegroup is

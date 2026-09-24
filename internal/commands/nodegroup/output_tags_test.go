@@ -43,12 +43,10 @@ var outputRootTypes = []reflect.Type{
 	reflect.TypeFor[addons.AddonDetails](),
 	reflect.TypeFor[addons.AddonUpdateResult](),
 	reflect.TypeFor[status.FleetStatus](),
-	reflect.TypeFor[updateOutcomes](),
 	reflect.TypeFor[updateDocument](),
 	reflect.TypeFor[dryRunPlan](),
-	reflect.TypeFor[clusterUpdateResult](),
-	reflect.TypeFor[fleetDryRunResult](),
-	reflect.TypeFor[regionDiscoveryError](),
+	reflect.TypeFor[fleetUpdateDocument](),
+	reflect.TypeFor[fleetDryRunDocument](),
 }
 
 var jsonMarshalerType = reflect.TypeFor[json.Marshaler]()

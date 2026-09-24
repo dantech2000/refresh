@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
 
@@ -28,6 +29,17 @@ var ErrScaleHealthBlocked = errors.New("pre-scaling health check blocked operati
 // ErrScaleVerifyFailed marks a scale that was applied but whose
 // post-scaling health check found blocking issues.
 var ErrScaleVerifyFailed = errors.New("post-scaling health check found blocking issues")
+
+// PDBCheckError is returned by CheckScaleDownPDBs (and so by Scale with
+// CheckPDBs) when the check could not read what it needs: the nodegroup's
+// size, or the cluster's PodDisruptionBudgets. Failure describes the read.
+type PDBCheckError struct {
+	Failure diag.Failure
+	Err     error
+}
+
+func (e *PDBCheckError) Error() string { return e.Err.Error() }
+func (e *PDBCheckError) Unwrap() error { return e.Err }
 
 // Scale updates the desired/min/max size for a nodegroup.
 func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName string, desired, min, max *int32, options ScaleOptions) error {
@@ -383,7 +395,9 @@ func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodeg
 	}
 	current, err := s.currentDesiredSize(ctx, clusterName, nodegroupName)
 	if err != nil {
-		return nil, fmt.Errorf("PDB validation: %w", err)
+		f := diag.FromError(diag.KindNodegroup, nodegroupName, diag.OpDescribeNodegroup, err)
+		f.Cluster = clusterName
+		return nil, &PDBCheckError{Failure: f, Err: fmt.Errorf("PDB validation: %w", err)}
 	}
 	check := &ScaleDownPDBCheck{
 		CurrentDesired:   current,
@@ -394,11 +408,15 @@ func (s *ServiceImpl) CheckScaleDownPDBs(ctx context.Context, clusterName, nodeg
 		return check, nil
 	}
 	if s.healthChecker == nil {
-		return nil, errors.New("PDB validation: no health checker configured")
+		err := errors.New("PDB validation: no health checker configured")
+		return nil, &PDBCheckError{Failure: diag.FromError(diag.KindCluster, clusterName, "", err), Err: err}
 	}
 	report, err := s.healthChecker.ScaleDownBlockers(ctx, clusterName, nodegroupName, check.CurrentDesired-check.RequestedDesired)
 	if err != nil {
-		return nil, fmt.Errorf("PDB validation for %s/%s: %w (fix cluster access with --kubeconfig/--kube-context, or use --force to skip the PDB gate)", clusterName, nodegroupName, err)
+		return nil, &PDBCheckError{
+			Failure: diag.FromError(diag.KindCluster, clusterName, "", fmt.Errorf("listing PodDisruptionBudgets: %w", err)),
+			Err:     fmt.Errorf("PDB validation for %s/%s: %w (fix cluster access with --kubeconfig/--kube-context, or use --force to skip the PDB gate)", clusterName, nodegroupName, err),
+		}
 	}
 	check.Blockers = report.Blockers
 	check.Scoped = report.Scoped

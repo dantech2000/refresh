@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
@@ -164,8 +165,8 @@ func TestPostUpdateHealthCheck_Active_NoIssues(t *testing.T) {
 		Build()
 	svc := NewService(m, logger())
 
-	if err := svc.postUpdateHealthCheck(context.Background(), "cluster", "vpc-cni"); err != nil {
-		t.Fatalf("expected nil for healthy ACTIVE addon, got: %v", err)
+	if issues, err := svc.postUpdateHealthCheck(context.Background(), "cluster", "vpc-cni"); err != nil || issues != "" {
+		t.Fatalf("expected no issues for a healthy ACTIVE addon, got: %q, %v", issues, err)
 	}
 }
 
@@ -183,9 +184,9 @@ func TestPostUpdateHealthCheck_NotActive_ReturnsError(t *testing.T) {
 	}
 	svc := NewService(m, logger())
 
-	err := svc.postUpdateHealthCheck(context.Background(), "cluster", "vpc-cni")
-	if err == nil {
-		t.Fatal("expected error for DEGRADED status, got nil")
+	issues, err := svc.postUpdateHealthCheck(context.Background(), "cluster", "vpc-cni")
+	if err != nil || issues == "" {
+		t.Fatalf("expected issues (not a read error) for DEGRADED status, got %q, %v", issues, err)
 	}
 }
 
@@ -208,9 +209,42 @@ func TestPostUpdateHealthCheck_ActiveWithIssues_ReturnsError(t *testing.T) {
 	}
 	svc := NewService(m, logger())
 
-	err := svc.postUpdateHealthCheck(context.Background(), "cluster", "vpc-cni")
-	if err == nil {
-		t.Fatal("expected error for ACTIVE addon with health issues, got nil")
+	issues, err := svc.postUpdateHealthCheck(context.Background(), "cluster", "vpc-cni")
+	if err != nil || issues == "" {
+		t.Fatalf("expected issues for an ACTIVE addon with health issues, got %q, %v", issues, err)
+	}
+}
+
+// A post-update DescribeAddon that fails is a read failure (the add-on's
+// health is unknown), not a health issue: Update reports Unverified with a
+// failure that names eks:DescribeAddon.
+func TestUpdate_PostUpdateReadFailureIsUnverified(t *testing.T) {
+	calls := 0
+	m := waitMock("v1.18.0", ekstypes.AddonStatusActive, "v1.19.0").
+		WithUpdateStatuses("u-1", ekstypes.UpdateStatusSuccessful).
+		Build()
+	mocks.SettleAddonUpdates(m)
+	describe := m.DescribeAddonFn
+	m.DescribeAddonFn = func(ctx context.Context, in *eks.DescribeAddonInput, opts ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
+		calls++
+		// The current-version read, the version confirmation, then the
+		// post-update health check, which fails.
+		if calls >= 3 {
+			return nil, mocks.AccessDenied()
+		}
+		return describe(ctx, in, opts...)
+	}
+	res, err := NewService(m, logger()).Update(t.Context(), "prod", "vpc-cni", waitOpts("latest"))
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if res.Status != StatusUnverified || res.HealthIssues != "" {
+		t.Fatalf("result = %+v, want Unverified with no health issues", res)
+	}
+	f := res.Failure
+	if f == nil || f.Kind != diag.KindAddon || f.Name != "vpc-cni" || f.Cluster != "prod" ||
+		f.Operation != diag.OpDescribeAddon || f.Reason != diag.ReasonAccessDenied || f.UpdateID != "u-1" {
+		t.Errorf("failure = %+v, want an AccessDenied eks:DescribeAddon failure for vpc-cni", f)
 	}
 }
 
@@ -248,7 +282,7 @@ func TestUpdate_DryRun_DoesNotCallUpdateAddon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Status != "DRY_RUN" {
+	if result.Status != StatusDryRun {
 		t.Errorf("status = %s, want DRY_RUN", result.Status)
 	}
 	if m.Calls.UpdateAddon != 0 {
@@ -271,7 +305,7 @@ func TestDescribeAddonEmptyResponse_NoPanic(t *testing.T) {
 	if err := svc.preUpdateHealthCheck(ctx, "cluster", "vpc-cni"); err == nil {
 		t.Error("preUpdateHealthCheck: want an error for an empty response")
 	}
-	if err := svc.postUpdateHealthCheck(ctx, "cluster", "vpc-cni"); err == nil {
+	if _, err := svc.postUpdateHealthCheck(ctx, "cluster", "vpc-cni"); err == nil {
 		t.Error("postUpdateHealthCheck: want an error for an empty response")
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 // HealthStatus represents the status of a health check
@@ -45,6 +47,9 @@ type HealthResult struct {
 	// client) rather than measured. Skipped checks are excluded from the
 	// OverallScore so a missing prerequisite doesn't silently drag the score.
 	Skipped bool `json:"skipped,omitempty" yaml:"skipped,omitempty"`
+	// failures are the reads this check could not make (see
+	// HealthSummary.Failures).
+	failures []diag.Failure
 }
 
 // HealthSummary represents the overall health check results
@@ -54,6 +59,10 @@ type HealthSummary struct {
 	Decision     Decision       `json:"decision" yaml:"decision"`
 	Warnings     []string       `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 	Errors       []string       `json:"errors,omitempty" yaml:"errors,omitempty"`
+	// Failures are the EKS and Kubernetes reads the node and PDB checks could
+	// not make. The check that needed the data warns or fails instead of
+	// passing, so the Decision already accounts for them. [] when empty.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // HealthChecker performs various health checks on the EKS cluster
@@ -153,12 +162,14 @@ func (hc *HealthChecker) RunAllChecks(ctx context.Context, clusterName string) H
 // Decision is driven solely by blocking/warning flags.
 func aggregateResults(results []HealthResult) HealthSummary {
 	var warnings, errors []string
+	var failures diag.List
 	totalScore := 0
 	measuredCount := 0
 	hasBlocking := false
 	hasWarnings := false
 
 	for _, result := range results {
+		failures = append(failures, result.failures...)
 		// A skipped check could not be evaluated (missing prerequisite, e.g. no
 		// Kubernetes/metrics client). It contributes neither to the score nor to
 		// the verdict — otherwise a missing prerequisite would wrongly force a
@@ -200,5 +211,6 @@ func aggregateResults(results []HealthResult) HealthSummary {
 		Decision:     decision,
 		Warnings:     warnings,
 		Errors:       errors,
+		Failures:     failures,
 	}
 }

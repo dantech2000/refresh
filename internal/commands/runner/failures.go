@@ -33,6 +33,22 @@ func ReportFailures(w io.Writer, fs []diag.Failure) {
 	}
 }
 
+// WriteFailures names each failure of a run once, where format puts it: in
+// the table view (TableListsFailures), an INCOMPLETE DATA section on out;
+// for json, yaml, and plain, one warning line each on errOut
+// (ReportFailures). It is for views that end with a summary rather than a
+// table of their own, such as the mutating commands. It writes nothing when
+// fs is empty.
+func WriteFailures(format string, out, errOut io.Writer, fs []diag.Failure) {
+	if !TableListsFailures(format) {
+		ReportFailures(errOut, fs)
+		return
+	}
+	for _, line := range render.Default(out).FailureSection(fs) {
+		_, _ = fmt.Fprintln(out, line)
+	}
+}
+
 // IncompleteExit returns the ExitIncomplete error for a run with failures,
 // or nil when fs is empty:
 //

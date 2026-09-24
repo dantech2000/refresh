@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/flagcanon"
 	"github.com/dantech2000/refresh/internal/rollview"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
@@ -44,7 +46,7 @@ Insights (up to 5m) and blocks on ERROR or UNKNOWN insights, or when EKS has
 not evaluated the hop version yet. EKS itself no longer enforces insights on a
 version update, so this is the only deprecated-API check; --skip-insights-check
 turns it off. --dry-run starts no refresh: it reads existing insights, and
-missing ones are a warning instead of a blocker.
+missing ones are a notice instead of a blocker.
 
 Before each nodegroup roll, pre-flight health checks run, including
 PodDisruptionBudgets that would block the drain (they need Kubernetes access
@@ -67,8 +69,8 @@ Examples:
    # Non-interactive (CI) run
    refresh cluster upgrade -c prod-east --to 1.33 --yes
 
-   # Machine-readable run: one JSON document {plan, report} on stdout,
-   # progress on stderr (-o json/yaml never prompts, so it needs --yes)
+   # Machine-readable run: one JSON document {plan, report, failures} on
+   # stdout, progress on stderr (-o json/yaml never prompts, so it needs --yes)
    refresh cluster upgrade -c prod-east --to 1.33 --yes -o json`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
@@ -90,17 +92,50 @@ Examples:
 			// still sets the API timeout.
 			flagcanon.DeprecatedDuration("timeout", "wait-timeout", "t"),
 			&cli.DurationFlag{Name: "poll-interval", Usage: "How often to poll in-flight updates", Value: appconfig.DefaultPollInterval},
-			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain). json/yaml print one document: the plan with --dry-run or when blocked, else {plan, report} after the run (requires --yes)", Value: "table"},
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain). json/yaml print one document: the plan with --dry-run or when blocked, else {plan, report, failures} after the run (requires --yes)", Value: "table"},
 		},
 		Action: runUpgrade,
 	}
 }
 
 // upgradeResult is the -o json/yaml document of an executed upgrade: the plan
-// the run started from and the engine's report of what it did.
+// the run started from, the engine's report of what it did, and every
+// failure of the run: the plan's, and the one that stopped it.
 type upgradeResult struct {
-	Plan   *upgrade.Plan   `json:"plan" yaml:"plan"`
-	Report *upgrade.Report `json:"report" yaml:"report"`
+	Plan     *upgrade.Plan   `json:"plan" yaml:"plan"`
+	Report   *upgrade.Report `json:"report" yaml:"report"`
+	Failures diag.List       `json:"failures" yaml:"failures"`
+}
+
+// runFailures is the plan's failures plus the one that stopped the run,
+// sorted.
+func runFailures(plan *upgrade.Plan, report *upgrade.Report) diag.List {
+	fs := append(diag.List(nil), plan.Failures...)
+	if report != nil && report.Failure != nil && !slices.Contains(fs, *report.Failure) {
+		fs = append(fs, *report.Failure)
+	}
+	diag.Sort(fs)
+	return fs
+}
+
+// setRegion sets region on each failure that has none: the upgrade service
+// does not know the region.
+func setRegion(fs []diag.Failure, region string) {
+	for i := range fs {
+		if fs[i].Region == "" {
+			fs[i].Region = region
+		}
+	}
+}
+
+// planExit is the exit code of a plan that is printed and not run: 3 when it
+// has a blocker (nothing changed), else 4 when the planner could not read
+// something, else 0.
+func planExit(plan *upgrade.Plan, blocked error) error {
+	if plan.Blocked() {
+		return blocked
+	}
+	return runner.IncompleteExit(plan.Failures)
 }
 
 func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
@@ -156,9 +191,10 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	if err != nil {
 		return err
 	}
+	setRegion(plan.Failures, awsCfg.Region)
 
 	if runner.IsMachineFormat(format) {
-		return runUpgradeMachine(ctx, cmd, svc, plan, clusterName, format, healthGate)
+		return runUpgradeMachine(ctx, cmd, svc, plan, clusterName, awsCfg.Region, format, healthGate)
 	}
 	// Switches the UI into plain mode for -o plain.
 	if _, eerr := runner.EncodeStdout(format, plan); eerr != nil {
@@ -174,17 +210,18 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	} else {
 		renderPlan(plan)
 	}
+	// The reads the planner could not make, named once, before any prompt.
+	runner.WriteFailures(format, os.Stdout, ui.Stderr, plan.Failures)
 
 	// A plan with blockers prints and exits 3 (blocked) without mutating.
-	if plan.Blocked() {
-		return cli.Exit(ui.StderrColor(color.FgRed).Sprint("Upgrade blocked — resolve the blockers above and re-run."), runner.ExitBlocked)
-	}
-	if cmd.Bool("dry-run") {
-		return nil
+	// A plan that is only printed exits 4 when the planner could not read
+	// something.
+	if plan.Blocked() || cmd.Bool("dry-run") {
+		return planExit(plan, cli.Exit(ui.StderrColor(color.FgRed).Sprint("Upgrade blocked — resolve the blockers above and re-run."), runner.ExitBlocked))
 	}
 	if plan.PendingSteps() == 0 {
 		_, _ = fmt.Fprintf(out, "\nNothing to do: %s already satisfies %s.\n", clusterName, plan.TargetVersion)
-		return nil
+		return runner.IncompleteExit(plan.Failures)
 	}
 
 	progress := func(format string, args ...any) {
@@ -218,13 +255,20 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	report, err := svc.Execute(ctx, plan, opts)
 
 	renderReport(out, report)
+	if report != nil && report.Failure != nil {
+		// The plan's failures are on stderr already; add the one that
+		// stopped the run.
+		stop := []diag.Failure{*report.Failure}
+		setRegion(stop, awsCfg.Region)
+		runner.WriteFailures(format, os.Stdout, ui.Stderr, stop)
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", ui.ColorFor(out, color.FgCyan).Sprint(resumeCommand(cmd, clusterName, plan)))
 		return err
 	}
 
 	_, _ = fmt.Fprintf(out, "\n%s\n", ui.ColorFor(out, color.FgGreen).Sprintf("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
-	return nil
+	return runner.IncompleteExit(plan.Failures)
 }
 
 // buildUpgradePlan builds the plan behind a spinner. The insights refresh can
@@ -347,21 +391,20 @@ func shellQuote(s string) string {
 
 // runUpgradeMachine is the -o json/yaml path. Stdout gets exactly one
 // document: the bare plan for --dry-run or a blocked plan, else
-// {plan, report} once execution ends, successful or not. Progress goes to
-// stderr (or nowhere with --quiet); nothing prompts (runUpgrade requires
-// --yes) and there is no live roll panel. Exit codes match the human path.
-func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Service, plan *upgrade.Plan, clusterName, format string, healthGate *nodegroupHealthGate) error {
+// {plan, report, failures} once execution ends, successful or not. Progress
+// goes to stderr (or nowhere with --quiet); nothing prompts (runUpgrade
+// requires --yes) and there is no live roll panel. Exit codes match the
+// human path.
+func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Service, plan *upgrade.Plan, clusterName, region, format string, healthGate *nodegroupHealthGate) error {
 	if plan.Blocked() || cmd.Bool("dry-run") {
 		if _, err := runner.EncodeStdout(format, plan); err != nil {
 			return err
 		}
-		if plan.Blocked() {
-			return cli.Exit("upgrade blocked: resolve the blockers in the plan and re-run", runner.ExitBlocked)
-		}
-		return nil
+		runner.ReportFailures(ui.Stderr, plan.Failures)
+		return planExit(plan, cli.Exit("upgrade blocked: resolve the blockers in the plan and re-run", runner.ExitBlocked))
 	}
 
-	report := &upgrade.Report{}
+	report := upgrade.NewReport()
 	var err error
 	if plan.PendingSteps() > 0 {
 		opts := executeOptions(cmd, healthGate)
@@ -376,15 +419,20 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 		if r != nil {
 			report = r
 		}
+		if report.Failure != nil && report.Failure.Region == "" {
+			report.Failure.Region = region
+		}
 	}
 
-	if _, eerr := runner.EncodeStdout(format, upgradeResult{Plan: plan, Report: report}); eerr != nil {
+	fs := runFailures(plan, report)
+	if _, eerr := runner.EncodeStdout(format, upgradeResult{Plan: plan, Report: report, Failures: fs}); eerr != nil {
 		return eerr
 	}
+	runner.ReportFailures(ui.Stderr, fs)
 	if err != nil {
 		return fmt.Errorf("%w (resume with: %s)", err, resumeCommand(cmd, clusterName, plan))
 	}
-	return nil
+	return runner.IncompleteExit(plan.Failures)
 }
 
 // promptPhase asks for confirmation before a mutating phase. Bare Enter, a
@@ -404,8 +452,8 @@ func renderPlan(plan *upgrade.Plan) {
 	}
 	ui.Outf("Upgrade plan: %s %s (EKS upgrades are sequential minors)\n", color.New(color.Bold).Sprint(plan.ClusterName), path)
 
-	for _, w := range plan.Warnings {
-		ui.Outf("  %s %s\n", color.YellowString("▸ warning:"), w)
+	for _, n := range plan.Notices {
+		ui.Outf("  %s %s\n", color.YellowString("▸ notice:"), n)
 	}
 
 	for _, hop := range plan.Hops {
@@ -436,7 +484,7 @@ func stepMarkerAndNote(step upgrade.Step) (string, string) {
 	}
 }
 
-// renderReport writes the completed / failed-at / remaining summary to w.
+// renderReport writes the completed / stopped-at / remaining summary to w.
 func renderReport(w io.Writer, report *upgrade.Report) {
 	if report == nil {
 		return
@@ -445,8 +493,8 @@ func renderReport(w io.Writer, report *upgrade.Report) {
 	for _, c := range report.Completed {
 		_, _ = fmt.Fprintf(w, "%s %s\n", ui.ColorFor(w, color.FgGreen).Sprint("completed:"), c)
 	}
-	if report.FailedAt != "" {
-		_, _ = fmt.Fprintf(w, "%s %s\n", ui.ColorFor(w, color.FgRed).Sprint("failed at:"), report.FailedAt)
+	if report.StoppedAt != "" {
+		_, _ = fmt.Fprintf(w, "%s %s (%s)\n", ui.ColorFor(w, color.FgRed).Sprint("stopped at:"), report.StoppedAt, report.Status)
 	}
 	for _, r := range report.Remaining {
 		_, _ = fmt.Fprintf(w, "%s %s\n", ui.ColorFor(w, color.FgYellow).Sprint("remaining:"), r)

@@ -117,6 +117,9 @@ const (
 	// which the update skips even with --force: its AMI is in the launch
 	// template, so EKS can't pick a recommended one.
 	ActionSkipCustom
+	// ActionUnknown indicates a nodegroup that could not be read, so the
+	// preview can't say what the update would do. It is a failure.
+	ActionUnknown
 )
 
 // ColorString returns a color-coded representation for terminal display.
@@ -132,6 +135,8 @@ func (a DryRunAction) ColorString() string {
 		return color.CyanString("FORCE UPDATE")
 	case ActionSkipCustom:
 		return color.YellowString("SKIP")
+	case ActionUnknown:
+		return color.RedString("UNKNOWN")
 	default:
 		return color.WhiteString("UNKNOWN")
 	}

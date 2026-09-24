@@ -19,6 +19,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -104,6 +105,13 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		pdbCheck, pdbCheckErr = svc.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired)
 	}
 
+	// A PDB check that could not read what it needs is a failure: named
+	// once, here, in the INCOMPLETE DATA section. Without --force the gate
+	// fails closed (exit 1); with --force the scale goes ahead and the run
+	// exits 4.
+	fs := pdbCheckFailures(awsCfg.Region, pdbCheckErr)
+	runner.WriteFailures("", os.Stdout, ui.Stderr, fs)
+
 	if opts.DryRun {
 		if err := printScaleDryRun(ctx, eks.NewFromConfig(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
 			return err
@@ -113,15 +121,16 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		}
 		fmt.Println("\nNo changes were made. Re-run without --dry-run to execute.")
 		// The preview exits as the real run would at the gate: 3 when it
-		// would refuse the scale-down, 1 when the PDBs could not be read.
+		// would refuse the scale-down, 1 when the PDBs could not be read,
+		// and 4 when --force would scale without them.
 		if opts.CheckPDBs && !opts.Force {
 			return scaleExit(scaleDryRunGateErr(clusterName, nodegroupName, pdbCheck, pdbCheckErr))
 		}
-		return nil
+		return runner.IncompleteExit(fs)
 	}
 
 	if opts.CheckPDBs && opts.Force {
-		warnForcedScaleDown(ui.Stderr, clusterName, nodegroupName, pdbCheck, pdbCheckErr)
+		warnForcedScaleDown(ui.Stderr, clusterName, nodegroupName, pdbCheck)
 	}
 
 	if !cmd.Bool("yes") {
@@ -134,9 +143,40 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		}
 	}
 
-	return scaleExit(runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
+	err = runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
 		return svc.Scale(ctx, clusterName, nodegroupName, desired, minSize, maxSize, opts)
-	}))
+	})
+	var pdbErr *nodegroupsvc.PDBCheckError
+	if errors.As(err, &pdbErr) {
+		runner.WriteFailures("", os.Stdout, ui.Stderr, pdbCheckFailures(awsCfg.Region, pdbErr))
+		return pdbGateClosed()
+	}
+	if err != nil {
+		return scaleExit(err)
+	}
+	return runner.IncompleteExit(fs)
+}
+
+// pdbCheckFailures returns the failure behind a --check-pdbs check that
+// could not read what it needs, with region set, or nil for any other
+// error.
+func pdbCheckFailures(region string, err error) []diag.Failure {
+	var pe *nodegroupsvc.PDBCheckError
+	if !errors.As(err, &pe) {
+		return nil
+	}
+	f := pe.Failure
+	if f.Region == "" {
+		f.Region = region
+	}
+	return []diag.Failure{f}
+}
+
+// pdbGateClosed is the error of a --check-pdbs gate that could not read what
+// it needs: the scale is refused (fail closed), exit 1. The INCOMPLETE DATA
+// section names the read.
+func pdbGateClosed() error {
+	return cli.Exit("scale refused: the PodDisruptionBudgets could not be checked; fix cluster access with --kubeconfig/--kube-context, or pass --force to scale without the PDB gate", runner.ExitError)
 }
 
 // scaleExit maps a scale error to the exit-code contract: exit 3 when the
@@ -160,6 +200,10 @@ func scaleExit(err error) error {
 // scaleDryRunGateErr returns the error the --check-pdbs gate would stop a
 // real scale with (without --force), or nil when the gate would pass.
 func scaleDryRunGateErr(clusterName, nodegroupName string, check *nodegroupsvc.ScaleDownPDBCheck, checkErr error) error {
+	var pe *nodegroupsvc.PDBCheckError
+	if errors.As(checkErr, &pe) {
+		return pdbGateClosed()
+	}
 	if checkErr != nil {
 		return checkErr
 	}
@@ -169,14 +213,11 @@ func scaleDryRunGateErr(clusterName, nodegroupName string, check *nodegroupsvc.S
 	return nil
 }
 
-// warnForcedScaleDown prints, to w, the PDB blockers (or the failed check)
-// that --force is overriding. It prints nothing when the gate would pass.
-func warnForcedScaleDown(w io.Writer, clusterName, nodegroupName string, check *nodegroupsvc.ScaleDownPDBCheck, checkErr error) {
+// warnForcedScaleDown prints, to w, the PDB blockers that --force is
+// overriding. It prints nothing when the gate would pass, or when the check
+// could not run (its failure is on stderr already).
+func warnForcedScaleDown(w io.Writer, clusterName, nodegroupName string, check *nodegroupsvc.ScaleDownPDBCheck) {
 	warn := ui.ColorFor(w, color.FgYellow)
-	if checkErr != nil {
-		_, _ = warn.Fprintf(w, "Warning: --force: could not validate PodDisruptionBudgets, scaling anyway: %v\n", checkErr)
-		return
-	}
 	if check == nil || !check.Refused() {
 		return
 	}
@@ -194,10 +235,10 @@ func printScaleDryRunPDBGate(w io.Writer, clusterName, nodegroupName string, che
 	switch {
 	case checkErr != nil:
 		if force {
-			_, _ = ui.ColorFor(w, color.FgYellow).Fprintf(w, "\nPDB gate: could not validate PodDisruptionBudgets (%v); --force would scale anyway.\n", checkErr)
+			_, _ = ui.ColorFor(w, color.FgYellow).Fprintln(w, "\nPDB gate: could not validate PodDisruptionBudgets (see INCOMPLETE DATA); --force would scale anyway.")
 			return
 		}
-		_, _ = ui.ColorFor(w, color.FgRed).Fprintf(w, "\nPDB gate: would be REFUSED, PodDisruptionBudgets could not be validated: %v\n", checkErr)
+		_, _ = ui.ColorFor(w, color.FgRed).Fprintln(w, "\nPDB gate: would be REFUSED, PodDisruptionBudgets could not be validated (see INCOMPLETE DATA).")
 	case check == nil || !check.ScaleDown:
 		_, _ = fmt.Fprintln(w, "\nPDB gate: not a scale-down; nothing to check.")
 	case !check.Refused():

@@ -14,6 +14,7 @@ import (
 	fakek8s "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
@@ -37,7 +38,7 @@ func TestVerifyPostRoll_ActiveAndNoNewPending(t *testing.T) {
 		t.Fatal("snapshot against a reachable fake API should succeed")
 	}
 
-	v := verifyPostRoll(context.Background(), eksMock, k8s, "c", []string{"ng-a"}, preroll, true)
+	v, _ := verifyPostRoll(context.Background(), eksMock, k8s, "c", []string{"ng-a"}, preroll, true)
 	if !v.OK() {
 		t.Errorf("expected OK, got issues: %v", v.Issues)
 	}
@@ -52,7 +53,7 @@ func TestVerifyPostRoll_NewlyPendingPodIsIssue(t *testing.T) {
 	preroll := pendingPodSet{} // nothing pending before
 	k8s := fakek8s.NewSimpleClientset(pendingPod("default", "stuck-after-roll"))
 
-	v := verifyPostRoll(context.Background(), eksMock, k8s, "c", []string{"ng-a"}, preroll, true)
+	v, _ := verifyPostRoll(context.Background(), eksMock, k8s, "c", []string{"ng-a"}, preroll, true)
 	if v.OK() {
 		t.Error("a newly-pending pod should be flagged as an issue")
 	}
@@ -65,9 +66,30 @@ func TestVerifyPostRoll_DegradedNodegroupIsIssue(t *testing.T) {
 		},
 	}
 	// No kube client → AWS-only verification.
-	v := verifyPostRoll(context.Background(), eksMock, nil, "c", []string{"ng-a"}, nil, false)
+	v, _ := verifyPostRoll(context.Background(), eksMock, nil, "c", []string{"ng-a"}, nil, false)
 	if v.OK() {
 		t.Error("a DEGRADED nodegroup should be flagged as an issue")
+	}
+}
+
+// A nodegroup that can't be described after the roll is a failure (its
+// state is unknown, exit 4), not a verification issue (exit 5).
+func TestVerifyPostRoll_DescribeFailureIsAFailureNotAnIssue(t *testing.T) {
+	eksMock := &mocks.EKSAPI{
+		DescribeNodegroupFn: func(_ context.Context, _ *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+			return nil, mocks.Throttling()
+		},
+	}
+	v, failures := verifyPostRoll(context.Background(), eksMock, nil, "c", []string{"ng-a"}, nil, false)
+	if !v.OK() {
+		t.Errorf("issues = %v, want none: an unreadable nodegroup is not a verification issue", v.Issues)
+	}
+	if len(failures) != 1 {
+		t.Fatalf("failures = %+v, want one", failures)
+	}
+	f := failures[0]
+	if f.Kind != diag.KindNodegroup || f.Name != "ng-a" || f.Operation != diag.OpDescribeNodegroup || f.Reason != diag.ReasonThrottled || !f.Retryable {
+		t.Errorf("failure = %+v", f)
 	}
 }
 
@@ -113,7 +135,7 @@ func TestVerifyPostRoll_PostRollListFailureSkipsPodCheck(t *testing.T) {
 	k8s := fakek8s.NewSimpleClientset(pendingPod("default", "stuck-after-roll"))
 	failPodList(k8s)
 
-	v := verifyPostRoll(context.Background(), activeNodegroupEKS(), k8s, "c", []string{"ng-a"}, pendingPodSet{}, true)
+	v, _ := verifyPostRoll(context.Background(), activeNodegroupEKS(), k8s, "c", []string{"ng-a"}, pendingPodSet{}, true)
 	if !v.OK() {
 		t.Errorf("a skipped pod check is not an issue, got: %v", v.Issues)
 	}
@@ -130,7 +152,7 @@ func TestVerifyPostRoll_PostRollListFailureSkipsPodCheck(t *testing.T) {
 func TestVerifyPostRoll_PreRollSnapshotFailureSkipsPodCheck(t *testing.T) {
 	k8s := fakek8s.NewSimpleClientset(pendingPod("default", "pre-existing"))
 
-	v := verifyPostRoll(context.Background(), activeNodegroupEKS(), k8s, "c", []string{"ng-a"}, nil, false)
+	v, _ := verifyPostRoll(context.Background(), activeNodegroupEKS(), k8s, "c", []string{"ng-a"}, nil, false)
 	if !v.OK() {
 		t.Errorf("pre-existing Pending pods must not be flagged when the pre-roll snapshot failed, got: %v", v.Issues)
 	}

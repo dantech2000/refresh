@@ -17,7 +17,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
-	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
@@ -289,7 +288,7 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 		}
 		versions, err := s.GetAvailableVersions(ctx, addonName, k8sVersion)
 		if err != nil {
-			return nil, fmt.Errorf("resolving latest version: %w", err)
+			return nil, diag.WithOperation(diag.OpDescribeAddonVersions, fmt.Errorf("resolving latest version: %w", err))
 		}
 		if len(versions) == 0 {
 			return nil, fmt.Errorf("resolving latest version: no versions available for %s on Kubernetes %s", addonName, k8sVersion)
@@ -309,7 +308,7 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 		})
 	})
 	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("getting the current version of addon %s", addonName))
+		return nil, diag.WithOperation(diag.OpDescribeAddon, awsinternal.FormatAWSError(err, fmt.Sprintf("getting the current version of addon %s", addonName)))
 	}
 	if currentDesc == nil || currentDesc.Addon == nil {
 		return nil, fmt.Errorf("getting current addon version: empty DescribeAddon response for %s", addonName)
@@ -363,14 +362,14 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 		return s.eksClient.UpdateAddon(rc, input)
 	})
 	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("updating addon %s", addonName))
+		return nil, diag.WithOperation(diag.OpUpdateAddon, awsinternal.FormatAWSError(err, fmt.Sprintf("updating addon %s", addonName)))
 	}
 	if out == nil || out.Update == nil {
-		return nil, fmt.Errorf("updating addon: empty Update in UpdateAddon response for %s", addonName)
+		return nil, diag.WithOperation(diag.OpUpdateAddon, fmt.Errorf("updating addon: empty Update in UpdateAddon response for %s", addonName))
 	}
 
 	result.UpdateID = aws.ToString(out.Update.Id)
-	result.Status = string(out.Update.Status)
+	result.Status = StatusStarted
 
 	if options.Wait {
 		waitCtx := ctx
@@ -381,15 +380,10 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 		}
 		if err := s.waitForAddonUpdate(waitCtx, clusterName, addonName, result.UpdateID, targetVersion, options.PollInterval); err != nil {
 			result.Status = StatusWaitFailed
-			result.Error = awserr.Summary(err)
+			result.Failure = updateFailure(diag.KindUpdate, clusterName, addonName, result.UpdateID, err)
 			return result, err
 		}
-		result.Status = StatusCompleted
-		if err := s.postUpdateHealthCheck(ctx, clusterName, addonName); err != nil {
-			result.Status = StatusCompletedWithIssues
-			result.HealthIssues = err.Error()
-			s.logger.Warn("post-update health check found issues", "addon", addonName, "issues", err)
-		}
+		s.applyPostUpdateCheck(ctx, clusterName, result)
 	}
 
 	return result, nil
@@ -444,7 +438,7 @@ func (s *ServiceImpl) attachInFlight(ctx context.Context, clusterName, addonName
 	}
 	fail := func(err error) (*AddonUpdateResult, error) {
 		result.Status = StatusWaitFailed
-		result.Error = awserr.Summary(err)
+		result.Failure = updateFailure(diag.KindAddon, clusterName, addonName, "", err)
 		return result, err
 	}
 	if err := s.WaitUntilActive(ctx, clusterName, addonName, options.WaitTimeout, options.PollInterval); err != nil {
@@ -457,11 +451,7 @@ func (s *ServiceImpl) attachInFlight(ctx context.Context, clusterName, addonName
 	if CompareVersions(current, result.NewVersion) != 0 {
 		return fail(fmt.Errorf("addon %s settled at %s, not %s", addonName, current, result.NewVersion))
 	}
-	result.Status = StatusCompleted
-	if err := s.postUpdateHealthCheck(ctx, clusterName, addonName); err != nil {
-		result.Status = StatusCompletedWithIssues
-		result.HealthIssues = err.Error()
-	}
+	s.applyPostUpdateCheck(ctx, clusterName, result)
 	return result, nil
 }
 
@@ -488,15 +478,18 @@ func updateAllBudget(options UpdateAllOptions, n int) time.Duration {
 
 // notAttempted is the result for an add-on UpdateAll never started because
 // ctx ended first.
-func notAttempted(ctx context.Context, a AddonSummary) AddonUpdateResult {
-	reason := "update run stopped early"
+func notAttempted(ctx context.Context, clusterName string, a AddonSummary) AddonUpdateResult {
+	reason := "the update run stopped early"
 	if err := ctx.Err(); err != nil {
-		reason = err.Error()
+		reason = "the update run stopped before this add-on: " + err.Error()
 	}
+	f := diag.New(diag.KindAddon, a.Name, diag.ReasonNotAttempted, reason)
+	f.Cluster = clusterName
 	return AddonUpdateResult{
 		AddonName:       a.Name,
 		PreviousVersion: a.Version,
-		Status:          "FAILED: not attempted: " + reason,
+		Status:          StatusNotAttempted,
+		Failure:         &f,
 	}
 }
 
@@ -553,12 +546,11 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 			return *result
 		}
 		if err != nil {
-			// One line: the status lands in a table cell, and a formatted
-			// AWS error carries multi-line remediation text.
 			return AddonUpdateResult{
 				AddonName:       a.Name,
 				PreviousVersion: a.Version,
-				Status:          "FAILED: " + awserr.Summary(err),
+				Status:          StatusFailed,
+				Failure:         updateFailure(diag.KindAddon, clusterName, a.Name, "", err),
 			}
 		}
 		return *result
@@ -589,10 +581,10 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 		}
 		wg.Wait()
 		// The deadline or Ctrl+C stopped dispatch early. Give every add-on
-		// that was never started a named FAILED row, so no blank row renders
+		// that was never started a NotAttempted row, so no blank row renders
 		// and the failure count (and exit code) includes it.
 		for i := dispatched; i < len(toUpdate); i++ {
-			results[i] = notAttempted(ctx, toUpdate[i])
+			results[i] = notAttempted(ctx, clusterName, toUpdate[i])
 		}
 	} else {
 		for i, addon := range toUpdate {

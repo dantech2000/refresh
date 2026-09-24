@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 // StepType identifies which phase a plan step belongs to.
@@ -65,11 +67,17 @@ type Hop struct {
 
 // Plan is the full ordered upgrade plan for a cluster.
 type Plan struct {
-	ClusterName    string   `json:"clusterName" yaml:"clusterName"`
-	CurrentVersion string   `json:"currentVersion" yaml:"currentVersion"`
-	TargetVersion  string   `json:"targetVersion" yaml:"targetVersion"`
-	Hops           []Hop    `json:"hops" yaml:"hops"`
-	Warnings       []string `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	ClusterName    string `json:"clusterName" yaml:"clusterName"`
+	CurrentVersion string `json:"currentVersion" yaml:"currentVersion"`
+	TargetVersion  string `json:"targetVersion" yaml:"targetVersion"`
+	Hops           []Hop  `json:"hops" yaml:"hops"`
+	// Notices are advisory lines, such as insight warnings or a check that
+	// --skip-insights-check turned off. They never change the exit code.
+	Notices []string `json:"notices,omitempty" yaml:"notices,omitempty"`
+	// Failures are the reads the planner could not make: the target-version
+	// check, the Cluster Insights, or an add-on's version catalog. A failed
+	// read in a readiness gate also blocks its step. [] when empty.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // Blockers returns the descriptions of all blocked steps across hops.
