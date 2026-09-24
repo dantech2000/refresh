@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+
+	"go.uber.org/goleak"
 )
 
 func TestForEachParallel_ReturnsInputOrder(t *testing.T) {
@@ -55,5 +57,34 @@ func TestForEachParallel_NeverDispatchesAfterCancel(t *testing.T) {
 		if n := started.Load(); n != 0 {
 			t.Fatalf("started %d items with a cancelled context, want 0", n)
 		}
+	}
+}
+
+// Cancelling mid-run must not leave a worker behind: ForEachParallel returns
+// only after every started item has returned, even when the rest are never
+// dispatched.
+func TestForEachParallel_CancelMidRunJoinsWorkers(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	started := make(chan struct{}, 2)
+	items := make([]int, 10)
+	done := make(chan []int, 1)
+	go func() {
+		done <- ForEachParallel(ctx, items, 2, func(ctx context.Context, _ int) int {
+			started <- struct{}{}
+			<-ctx.Done()
+			return 1
+		})
+	}()
+	<-started
+	<-started
+	cancel()
+	got := <-done
+	ran := 0
+	for _, r := range got {
+		ran += r
+	}
+	if ran != 2 {
+		t.Errorf("items run = %d, want 2 (only the in-flight pair)", ran)
 	}
 }
