@@ -175,7 +175,12 @@ with no AWS.
   structs. Build it with `diag.FromError(kind, name, diag.Op…, err)` (typed classification) or
   `diag.New` for a failure with no error value. Print the stderr lines with
   `runner.ReportFailures` and get the exit error from `runner.IncompleteExit`, both from the same
-  list. `diagtest.CheckFailureFields` enforces this on the output types.
+  list. `diagtest.CheckFailureFields` enforces this on the output types. A partly read row
+  gets `incomplete: true`, never its own error text. A service that makes several AWS calls
+  tags its error with `diag.WithOperation` so the caller can build the failure. Read commands
+  list failures in the table view's `INCOMPLETE DATA` section (`render.FailureSection`) and
+  skip the stderr lines there (`runner.TableListsFailures`). Regions a default sweep skips are
+  not failures: one `runner.ReportSkippedRegions` notice.
 - **Exit codes** (REF-165, `docs/concepts/exit-codes.md`): one contract for every command.
   `0` ok · `1` error or interrupt · `2` needs attention (warnings/stale) · `3` blocked or
   unsupported (a gate stopped it, nothing changed) · `4` incomplete data or partial failure ·

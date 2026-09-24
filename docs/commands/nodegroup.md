@@ -33,9 +33,51 @@ shows a warning in the `VERSION` column (`(behind)` in `-o plain`).
 
 If the latest-AMI lookup fails (for example, a missing `ssm:GetParameter`),
 the AMI column shows `unknown (lookup failed)` and one warning goes to stderr.
-If some nodegroups can't be described, the command prints the rest, names
-the failed ones on stderr, adds `failures` with `-o json`/`-o yaml`, and exits
-`4` (incomplete data).
+The lookup is advisory: the row has an `amiLookupFailure` object with the
+same keys as a failure, and the exit code does not change (see
+[Advisory AMI lookup](../concepts/output.md#advisory-ami-lookup)).
+
+If some nodegroups can't be described, the command prints the rest, lists
+each one under `failures` with `-o json`/`-o yaml`, names it on stderr (or
+under `INCOMPLETE DATA` in the table), and exits `4` (incomplete data):
+
+```json
+{
+  "cluster": "prod",
+  "nodegroups": [
+    {
+      "name": "api",
+      "amiStatus": "Unknown",
+      "amiLookupFailure": {
+        "kind": "Nodegroup",
+        "name": "api",
+        "cluster": "prod",
+        "region": "us-east-1",
+        "operation": "ssm:GetParameter",
+        "reason": "AccessDenied",
+        "retryable": false,
+        "error": "AccessDeniedException: ... not authorized to perform: ssm:GetParameter",
+        "awsErrorCode": "AccessDeniedException"
+      },
+      "...": "..."
+    }
+  ],
+  "count": 1,
+  "failures": [
+    {
+      "kind": "Nodegroup",
+      "name": "web",
+      "cluster": "prod",
+      "region": "us-east-1",
+      "operation": "eks:DescribeNodegroup",
+      "reason": "Throttled",
+      "retryable": true,
+      "error": "ThrottlingException: Rate exceeded",
+      "awsErrorCode": "ThrottlingException"
+    }
+  ]
+}
+```
 
 ```bash
 refresh nodegroup list [cluster] [flags]

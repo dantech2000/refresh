@@ -37,10 +37,34 @@ refresh addon list [cluster] [flags]
 | `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
 
 If some add-ons can't be described (for example, a missing
-`eks:DescribeAddon` permission), the command prints the add-ons it did get and
-names each failed add-on on stderr. `-o json|yaml` lists them under
-`failures`. Then the command exits `4` (incomplete data), so a partial list
-never looks complete.
+`eks:DescribeAddon` permission), the command prints the add-ons it did get
+and names each failed add-on on stderr (or under `INCOMPLETE DATA` in the
+table). `-o json|yaml` lists them under `failures`, which is `[]` when every
+add-on was read. Then the command exits `4` (incomplete data), so a partial
+list never looks complete.
+
+```json
+{
+  "cluster": "prod",
+  "addons": [
+    {"name": "coredns", "version": "v1.11.4-eksbuild.2", "status": "ACTIVE", "health": ""}
+  ],
+  "count": 1,
+  "failures": [
+    {
+      "kind": "Addon",
+      "name": "vpc-cni",
+      "cluster": "prod",
+      "region": "us-east-1",
+      "operation": "eks:DescribeAddon",
+      "reason": "AccessDenied",
+      "retryable": false,
+      "error": "AccessDeniedException: ... not authorized to perform: eks:DescribeAddon",
+      "awsErrorCode": "AccessDeniedException"
+    }
+  ]
+}
+```
 
 !!! tip "Watch an update land"
     `refresh addon list my-cluster --watch` keeps the listing live, so you can
