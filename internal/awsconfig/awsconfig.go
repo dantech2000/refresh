@@ -82,25 +82,31 @@ func SetFlagValues(cmd *cli.Command, name string) []string {
 			if !slices.Contains(f.Names(), name) || !f.IsSet() {
 				continue
 			}
-			var out []string
-			switch v := f.Get().(type) {
-			case string:
-				out = append(out, v)
-			case []string:
-				out = append(out, v...)
-			}
-			vals := make([]string, 0, len(out))
-			for _, s := range out {
-				if s = strings.TrimSpace(s); s != "" {
-					vals = append(vals, s)
-				}
-			}
-			if len(vals) > 0 {
+			if vals := FlagValues(f); len(vals) > 0 {
 				return vals
 			}
 		}
 	}
 	return nil
+}
+
+// FlagValues returns the trimmed, non-empty values of one string or string
+// slice flag, or nil when it has none.
+func FlagValues(f cli.Flag) []string {
+	var out []string
+	switch v := f.Get().(type) {
+	case string:
+		out = append(out, v)
+	case []string:
+		out = append(out, v...)
+	}
+	var vals []string
+	for _, s := range out {
+		if s = strings.TrimSpace(s); s != "" {
+			vals = append(vals, s)
+		}
+	}
+	return vals
 }
 
 func flagOrEmpty(cmd *cli.Command, name string) string {

@@ -40,6 +40,10 @@ type Nodegroup struct {
 	AmiType string
 	// FailUpdate makes UpdateNodegroupVersion fail with InvalidRequestException.
 	FailUpdate bool
+	// UpdateStatus is the final DescribeUpdate status of an
+	// UpdateNodegroupVersion update: "" or "Successful" applies the new
+	// version; "Failed" or "Cancelled" leaves the nodegroup as it is.
+	UpdateStatus string
 	// UpdateForce records the force field of the last UpdateNodegroupVersion
 	// request (for assertions).
 	UpdateForce bool
@@ -461,7 +465,11 @@ func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Clus
 		if target == "" {
 			target = ng.Version
 		}
-		writeJSON(w, map[string]any{"update": s.startUpdate("VersionUpdate", func() { ng.Version = target })})
+		update := s.startUpdate("VersionUpdate", func() { ng.Version = target })
+		if id, ok := update["id"].(string); ok && ng.UpdateStatus != "" {
+			s.updateStatus[id] = ng.UpdateStatus
+		}
+		writeJSON(w, map[string]any{"update": update})
 	case post && len(rest) == 2 && rest[1] == "update-config":
 		ng := findNodegroup(c, rest[0])
 		if ng == nil {

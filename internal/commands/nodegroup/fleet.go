@@ -276,7 +276,7 @@ func discoveryExit(regionErrs []regionDiscoveryError) error {
 // roll → verify) and captures the outcome instead of exiting, so the fleet loop
 // can aggregate.
 func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) clusterUpdateResult {
-	res := clusterUpdateResult{Cluster: tgt.cluster, Region: tgt.region}
+	res := clusterUpdateResult{Cluster: tgt.cluster, Region: tgt.region, Outcomes: newUpdateOutcomes(tgt.cluster)}
 	eksClient := eks.NewFromConfig(tgt.awsCfg)
 
 	ctx, cancel := fleetClusterContext(parent, flags.timeout)
