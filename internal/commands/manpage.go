@@ -72,7 +72,7 @@ func installManPage(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	// Update man database if available
-	updateManDB(ctx)
+	updateManDB(ctx, manParentDir)
 
 	return nil
 }
@@ -141,19 +141,30 @@ func isInManPath(ctx context.Context, dir string) bool {
 	return false
 }
 
-func updateManDB(ctx context.Context) {
-	switch runtime.GOOS {
-	case "darwin":
-		// On macOS, try to update the man database
-		if _, err := exec.LookPath("makewhatis"); err == nil {
-			cmd := exec.CommandContext(ctx, "makewhatis", "/usr/local/share/man")
-			_ = cmd.Run() // Ignore errors, this is optional
-		}
-	case "linux":
-		// On Linux, try to update the man database
-		if _, err := exec.LookPath("mandb"); err == nil {
-			cmd := exec.CommandContext(ctx, "mandb", "-q")
-			_ = cmd.Run() // Ignore errors, this is optional
-		}
+// updateManDB refreshes the man index for manDir (the base man directory,
+// e.g. ~/.local/share/man), where install-man wrote the page. It is optional,
+// so a missing tool or a failure is ignored.
+func updateManDB(ctx context.Context, manDir string) {
+	name, args := manDBCommand(runtime.GOOS, manDir)
+	if name == "" {
+		return
 	}
+	if _, err := exec.LookPath(name); err != nil {
+		return
+	}
+	_ = exec.CommandContext(ctx, name, args...).Run() //nolint:gosec // G204: name is makewhatis or mandb from manDBCommand; errors are ignored, this is optional
+}
+
+// manDBCommand returns the command that indexes manDir on goos, or "" when
+// there is none. makewhatis (macOS) and mandb (Linux) both take the man
+// directory as an argument; without it mandb rebuilds only the system
+// databases, which a user cannot write and which do not include manDir.
+func manDBCommand(goos, manDir string) (string, []string) {
+	switch goos {
+	case "darwin":
+		return "makewhatis", []string{manDir}
+	case "linux":
+		return "mandb", []string{"-q", manDir}
+	}
+	return "", nil
 }
