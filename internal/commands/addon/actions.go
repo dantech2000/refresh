@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +14,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -51,37 +52,40 @@ func listAddonsOnce(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	if err := writeAddonList(cmd.String("format"), clusterName, res, time.Since(start)); err != nil {
+	format := cmd.String("format")
+	failures := listFailures(res.Failures, cfg.Region)
+	if err := writeAddonList(format, clusterName, res.Summaries, failures, time.Since(start)); err != nil {
 		return err
 	}
-	return runner.UnlessInterrupted(ctx, reportListFailures(ui.Stderr, clusterName, res.Failures))
+	if !runner.TableListsFailures(format) {
+		runner.ReportFailures(ui.Stderr, failures)
+	}
+	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(failures))
 }
 
-// writeAddonList prints what was gathered in the requested format. When some
-// add-ons could not be described, JSON/YAML carry them under "failures" so
-// "count" is never mistaken for the full add-on count.
-func writeAddonList(format, clusterName string, res addons.ListResult, elapsed time.Duration) error {
-	payload := map[string]any{"cluster": clusterName, "addons": res.Summaries, "count": len(res.Summaries)}
-	if len(res.Failures) > 0 {
-		payload["failures"] = res.Failures
+// listFailures returns the listing's failures in the cluster's region, in
+// diag.Sort order. fs is not changed.
+func listFailures(fs []diag.Failure, region string) diag.List {
+	out := slices.Clone(fs)
+	for i := range out {
+		if out[i].Region == "" {
+			out[i].Region = region
+		}
 	}
-	if handled, err := runner.EncodeStdout(format, payload); handled {
+	diag.Sort(out)
+	return out
+}
+
+// writeAddonList prints what was gathered in the requested format. The
+// add-ons that could not be described are in the document's "failures" (and
+// the table's INCOMPLETE DATA section), so "count" is never mistaken for the
+// full add-on count.
+func writeAddonList(format, clusterName string, rows []addons.AddonSummary, failures diag.List, elapsed time.Duration) error {
+	doc := addons.AddonList{Cluster: clusterName, Addons: rows, Count: len(rows), Failures: failures}
+	if handled, err := runner.EncodeStdout(format, doc); handled {
 		return err
 	}
-	return outputAddonsTable(clusterName, res.Summaries, elapsed)
-}
-
-// reportListFailures names each add-on that could not be described on w, one
-// per line, and returns exit 4 (incomplete data).
-func reportListFailures(w io.Writer, clusterName string, failures []string) error {
-	if len(failures) == 0 {
-		return nil
-	}
-	yellow := ui.StderrColor(color.FgYellow)
-	for _, f := range failures {
-		_, _ = yellow.Fprintf(w, "warning: add-on %s\n", f)
-	}
-	return cli.Exit(fmt.Sprintf("listing add-ons for cluster %s: %d add-on(s) could not be described; the list is incomplete", clusterName, len(failures)), runner.ExitIncomplete)
+	return outputAddonsTable(clusterName, rows, failures, elapsed)
 }
 
 func runDescribe(ctx context.Context, cmd *cli.Command) error {

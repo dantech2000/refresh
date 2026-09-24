@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 )
 
@@ -27,9 +28,9 @@ func TestUpgradeReportReadiness(t *testing.T) {
 		{"control plane fail", &UpgradeReport{ControlPlane: &health.HealthResult{Status: health.StatusFail}}, ReadinessBlocked, "control-plane health check failed"},
 		{"control plane warn", &UpgradeReport{ControlPlane: &health.HealthResult{Status: health.StatusWarn}}, ReadinessReview, "control-plane health warning"},
 		{"control plane skipped", &UpgradeReport{ControlPlane: &health.HealthResult{Status: health.StatusWarn, Skipped: true}}, ReadinessReady, ""},
-		{"incomplete", &UpgradeReport{Incomplete: []string{"nodegroup a: ThrottlingException"}}, ReadinessIncomplete, "could not be read"},
-		{"incomplete beats warnings", &UpgradeReport{Incomplete: []string{"x"}, Insights: insight("WARNING")}, ReadinessIncomplete, "WARNING"},
-		{"blocker beats incomplete", &UpgradeReport{Incomplete: []string{"x"}, Insights: insight("ERROR")}, ReadinessBlocked, "could not be read"},
+		{"incomplete", &UpgradeReport{Failures: diag.List{diag.New(diag.KindNodegroup, "a", diag.ReasonThrottled, "ThrottlingException")}}, ReadinessIncomplete, "could not be read"},
+		{"incomplete beats warnings", &UpgradeReport{Failures: diag.List{diag.New(diag.KindAddon, "x", diag.ReasonUnknown, "x")}, Insights: insight("WARNING")}, ReadinessIncomplete, "WARNING"},
+		{"blocker beats incomplete", &UpgradeReport{Failures: diag.List{diag.New(diag.KindAddon, "x", diag.ReasonUnknown, "x")}, Insights: insight("ERROR")}, ReadinessBlocked, "could not be read"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, reasons := tc.report.Readiness()

@@ -11,7 +11,9 @@ import (
 
 // OutputClusterDetailsTable renders a single cluster's expanded details. The
 // human path uses the render design system (sections, status tokens, a health
-// card); `-o plain` writes a FIELD/VALUE TSV (see clusterDetailPlain).
+// card, and the INCOMPLETE DATA section for details.Failures); `-o plain`
+// writes a FIELD/VALUE TSV (see clusterDetailPlain), and the caller reports
+// the failures on stderr.
 func OutputClusterDetailsTable(details *clustersvc.ClusterDetails) error {
 	if ui.PlainOutput() {
 		clusterDetailPlain(details).Render()

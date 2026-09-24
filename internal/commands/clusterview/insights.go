@@ -13,9 +13,10 @@ import (
 const insightTimeLayout = "2006-01-02 15:04"
 
 // OutputUpgradeCheck renders the upgrade-check report. The human path uses the
-// render design system (a readiness verdict + tokenized insights + skew). `-o
-// plain` writes the insights as TSV on stdout and the rest of the report
-// (verdict, support, control plane, version skew) as text on stderr.
+// render design system (a readiness verdict + tokenized insights + skew +
+// failures). `-o plain` writes the insights as TSV on stdout and the rest of
+// the report (verdict, support, control plane, version skew) as text on
+// stderr; the caller reports the failures on stderr.
 func OutputUpgradeCheck(report *clustersvc.UpgradeReport) error {
 	if ui.PlainOutput() {
 		writeUpgradeCheckInfo(ui.Stderr, report)

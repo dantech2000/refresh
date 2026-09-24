@@ -12,15 +12,18 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // outputAddonsTable renders the add-on list. The human path uses the render
-// design system (tokenized STATUS/HEALTH cells); `-o plain` writes pure TSV
-// (header + one row per add-on) and sends the empty-list notice to stderr.
-func outputAddonsTable(cluster string, rows []addons.AddonSummary, elapsed time.Duration) error {
+// design system (tokenized STATUS/HEALTH cells, and the INCOMPLETE DATA
+// section for failures); `-o plain` writes pure TSV (header + one row per
+// add-on) and sends the empty-list notice to stderr. The caller reports
+// failures on stderr for -o plain.
+func outputAddonsTable(cluster string, rows []addons.AddonSummary, failures []diag.Failure, elapsed time.Duration) error {
 	if ui.PlainOutput() {
 		if len(rows) == 0 {
 			_, _ = fmt.Fprintf(ui.Stderr, "No add-ons found for cluster: %s\n", cluster)
@@ -28,14 +31,17 @@ func outputAddonsTable(cluster string, rows []addons.AddonSummary, elapsed time.
 		addonListPlain(rows).Render()
 		return nil
 	}
+	th := render.Default(os.Stdout)
 	if len(rows) == 0 {
 		ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
 		ui.PrintElapsed(elapsed)
 		color.Yellow("No add-ons found")
-		return nil
+	} else {
+		for _, line := range addonListLines(th, cluster, rows) {
+			fmt.Println(line)
+		}
 	}
-	th := render.Default(os.Stdout)
-	for _, line := range addonListLines(th, cluster, rows) {
+	for _, line := range th.FailureSection(failures) {
 		fmt.Println(line)
 	}
 	return nil

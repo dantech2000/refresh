@@ -4,10 +4,10 @@ import (
 	"context"
 	"net"
 	"slices"
-	"strings"
 	"syscall"
 	"testing"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/services/addons"
 )
@@ -29,8 +29,8 @@ func TestListClusterStatuses_FollowsNextToken(t *testing.T) {
 	}
 	var got []string
 	for _, s := range statuses {
-		if s.Incomplete() {
-			t.Errorf("%s incomplete: %v", s.Name, s.Errors)
+		if s.Incomplete {
+			t.Errorf("%s incomplete: %s", s.Name, failureText(s.Failures))
 		}
 		got = append(got, s.Name)
 	}
@@ -80,11 +80,13 @@ func TestListClusterStatuses_AddonVersionLookupFailure(t *testing.T) {
 				t.Fatalf("rows = %d, want 1", len(statuses))
 			}
 			cs := statuses[0]
-			if !cs.Incomplete() {
+			if !cs.Incomplete {
 				t.Fatal("row must be incomplete when an addon's latest version is unknown")
 			}
-			if joined := strings.Join(cs.Errors, "; "); !strings.Contains(joined, "vpc-cni (latest version unknown)") {
-				t.Fatalf("errors = %q, want vpc-cni latest version unknown", joined)
+			fs := cs.Failures
+			if len(fs) != 1 || fs[0].Kind != diag.KindAddon || fs[0].Name != "vpc-cni" || fs[0].Cluster != "prod" ||
+				fs[0].Operation != diag.OpDescribeAddonVersions {
+				t.Fatalf("failures = %s, want the vpc-cni DescribeAddonVersions failure", failureText(fs))
 			}
 			if cs.AddonsBehind.Total != 2 || cs.AddonsBehind.Behind != 1 || !slices.Equal(cs.AddonsBehind.Names, []string{"coredns"}) {
 				t.Fatalf("addons behind = %+v, want only coredns (vpc-cni unknown, not behind)", cs.AddonsBehind)

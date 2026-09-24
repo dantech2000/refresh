@@ -17,6 +17,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/status"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func upgradeCheckCommand() *cli.Command {
@@ -47,7 +48,7 @@ nodegroup/addon skew, and the control-plane health check:
       both), a nodegroup at the kubelet skew limit, or a failed
       control-plane health check
    4  incomplete: nothing blocks, but a nodegroup or addon could not be
-      read (listed under "incomplete")
+      read (listed under "failures")
    1  error (AWS error, not found, interrupt)
 Precedence: 3, then 4, then 2.
 With --id, the exit code reflects that one insight's status. With -o json or
@@ -147,14 +148,16 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 		report.ControlPlane = &cp
 	}
 
-	if handled, encErr := runner.EncodeStdout(cmd.String("format"), report); handled {
+	format := cmd.String("format")
+	if handled, encErr := runner.EncodeStdout(format, report); handled {
 		if encErr != nil {
 			return encErr
 		}
-		return finishCheck(ctx, cmd, upgradeCheckExit(report))
-	}
-	if err := clusterview.OutputUpgradeCheck(report); err != nil {
+	} else if err := clusterview.OutputUpgradeCheck(report); err != nil {
 		return err
+	}
+	if !runner.TableListsFailures(format) {
+		runner.ReportFailures(ui.Stderr, report.Failures)
 	}
 	return finishCheck(ctx, cmd, upgradeCheckExit(report))
 }
@@ -179,15 +182,15 @@ func gateExit(cmd *cli.Command, verdict error) error {
 
 // upgradeCheckExit maps the report's readiness to the CI-gate exit code:
 // 3 when something blocks the upgrade, 4 when some skew data could not be
-// read, 2 for warnings only, else nil. See clustersvc.UpgradeReport.Readiness
-// for what counts as which.
+// read (report.Failures), 2 for warnings only, else nil. See
+// clustersvc.UpgradeReport.Readiness for what counts as which.
 func upgradeCheckExit(report *clustersvc.UpgradeReport) error {
 	level, reasons := report.Readiness()
 	switch level {
 	case clustersvc.ReadinessBlocked:
 		return cli.Exit(fmt.Sprintf("upgrade blocked: %s (pass --exit-zero to report only)", strings.Join(reasons, ", ")), runner.ExitBlocked)
 	case clustersvc.ReadinessIncomplete:
-		return cli.Exit(fmt.Sprintf("upgrade check incomplete: %s (pass --exit-zero to report only)", strings.Join(reasons, ", ")), runner.ExitIncomplete)
+		return runner.IncompleteExit(report.Failures)
 	case clustersvc.ReadinessReview:
 		return cli.Exit(fmt.Sprintf("upgrade needs attention: %s (pass --exit-zero to report only)", strings.Join(reasons, ", ")), runner.ExitNeedsAttention)
 	default:

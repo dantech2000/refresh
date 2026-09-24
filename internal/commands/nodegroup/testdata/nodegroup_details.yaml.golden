@@ -1,8 +1,29 @@
-amiLookupError: s-amilookuperror
+amiLookupFailure:
+  awsErrorCode: s-awserrorcode
+  cluster: s-cluster
+  error: s-error
+  kind: s-kind
+  name: s-name
+  operation: s-operation
+  reason: s-reason
+  region: s-region
+  retryable: true
+  updateId: s-updateid
 amiStatus: Updating
 amiType: s-amitype
 capacityType: s-capacitytype
 currentAmi: s-currentami
+failures:
+  - awsErrorCode: s-awserrorcode
+    cluster: s-cluster
+    error: s-error
+    kind: s-kind
+    name: s-name
+    operation: s-operation
+    reason: s-reason
+    region: s-region
+    retryable: true
+    updateId: s-updateid
 instanceType: s-instancetype
 instances:
   - availabilityZone: s-az

@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -18,9 +19,8 @@ import (
 //
 //	warning: nodegroup prod/web (us-east-1): Throttled: ThrottlingException: Rate exceeded
 //
-// The cluster, the region, and the error are left out when they are empty,
-// and the region is left out when it is the item's name (a region failure).
-// The line is yellow when w is a color terminal. fs is not changed.
+// The text after "warning: " is render.FailureText. The line is yellow when
+// w is a color terminal. fs is not changed.
 func ReportFailures(w io.Writer, fs []diag.Failure) {
 	if len(fs) == 0 {
 		return
@@ -29,33 +29,8 @@ func ReportFailures(w io.Writer, fs []diag.Failure) {
 	diag.Sort(sorted)
 	yellow := ui.ColorFor(w, color.FgYellow)
 	for _, f := range sorted {
-		_, _ = fmt.Fprintln(w, yellow.Sprint(failureLine(f)))
+		_, _ = fmt.Fprintln(w, yellow.Sprint("warning: "+render.FailureText(f)))
 	}
-}
-
-// failureLine renders f as one warning line, without color.
-func failureLine(f diag.Failure) string {
-	var b strings.Builder
-	b.WriteString("warning: ")
-	b.WriteString(f.Kind.Noun())
-	b.WriteByte(' ')
-	if f.Cluster != "" {
-		b.WriteString(f.Cluster)
-		b.WriteByte('/')
-	}
-	b.WriteString(f.Name)
-	if f.Region != "" && f.Region != f.Name {
-		b.WriteString(" (")
-		b.WriteString(f.Region)
-		b.WriteByte(')')
-	}
-	b.WriteString(": ")
-	b.WriteString(string(f.Reason))
-	if f.Error != "" {
-		b.WriteString(": ")
-		b.WriteString(f.Error)
-	}
-	return b.String()
 }
 
 // IncompleteExit returns the ExitIncomplete error for a run with failures,

@@ -48,7 +48,7 @@ func TestHealthBadge(t *testing.T) {
 }
 
 func TestOutputAddonsTable_Empty(t *testing.T) {
-	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", nil, time.Second) })
+	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", nil, nil, time.Second) })
 	if err != nil {
 		t.Fatalf("empty addons table: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestOutputAddonsTable_WithRows(t *testing.T) {
 	rows := []addons.AddonSummary{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "PASS"}}
 
 	// Human path (render design system): ADD-ONS header + tokenized rows.
-	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, time.Second) })
+	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, nil, time.Second) })
 	if err != nil {
 		t.Fatalf("addons table: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestOutputAddonsTable_WithRows(t *testing.T) {
 	// The header names match the human table's columns.
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
-	plain, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, time.Second) })
+	plain, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, nil, time.Second) })
 	if err != nil {
 		t.Fatalf("addons plain: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestOutputAddonsTable_WithRows(t *testing.T) {
 func TestOutputAddonsTable_PlainEmptyIsHeaderOnly(t *testing.T) {
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
-	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", nil, time.Second) })
+	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", nil, nil, time.Second) })
 	if err != nil {
 		t.Fatal(err)
 	}

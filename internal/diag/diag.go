@@ -72,8 +72,9 @@ type Failure struct {
 }
 
 // FromError returns the Failure for err: kind and name identify the item, op
-// is the IAM action that failed ("" when there is none), and the reason,
-// retryability, and AWS error code come from Classify. Set Cluster, Region,
+// is the IAM action that failed ("" to use the action err was tagged with by
+// WithOperation, if any), and the reason, retryability, and AWS error code
+// come from Classify. Set Cluster, Region,
 // and UpdateID on the result when they apply; for KindRegion, Region is set
 // to name.
 //
@@ -84,6 +85,9 @@ type Failure struct {
 // code stays ReasonAccessDenied, because a missing IAM action is the more
 // useful diagnosis.
 func FromError(kind Kind, name, op string, err error) Failure {
+	if op == "" {
+		op = OperationOf(err)
+	}
 	reason, retryable, code := Classify(err)
 	if kind == KindRegion && reason != ReasonAccessDenied && awserr.IsRegionInaccessible(err) {
 		reason, retryable = ReasonRegionUnavailable, ReasonRegionUnavailable.Retryable()

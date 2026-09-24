@@ -188,7 +188,7 @@ func TestOutputClustersTable(t *testing.T) {
 	} {
 		t.Run("table/"+tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
-				return OutputClustersTable(tc.items, time.Second, tc.multiRegion, tc.showHealth)
+				return OutputClustersTable(tc.items, nil, time.Second, tc.multiRegion, tc.showHealth)
 			})
 			if err != nil {
 				t.Fatalf("table error: %v", err)
@@ -200,7 +200,7 @@ func TestOutputClustersTable(t *testing.T) {
 
 		t.Run("tree/"+tc.name, func(t *testing.T) {
 			if _, err := captureStdout(t, func() error {
-				return OutputClustersTree(tc.items, time.Second, tc.multiRegion, tc.showHealth)
+				return OutputClustersTree(tc.items, nil, time.Second, tc.multiRegion, tc.showHealth)
 			}); err != nil {
 				t.Fatalf("tree error: %v", err)
 			}
@@ -269,7 +269,7 @@ func TestOutputClustersTree_NodeCount(t *testing.T) {
 		{Name: "unmeasured", Status: "ACTIVE", Region: "us-east-1", NodeCount: clustersvc.NodeCountInfo{Ready: 0, Total: 4}},
 		{Name: "measured", Status: "ACTIVE", Region: "us-east-1", NodeCount: clustersvc.NodeCountInfo{Ready: 2, Total: 4, ReadyKnown: true}},
 	}
-	if _, err := captureStdout(t, func() error { return OutputClustersTree(items, time.Second, false, false) }); err != nil {
+	if _, err := captureStdout(t, func() error { return OutputClustersTree(items, nil, time.Second, false, false) }); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()

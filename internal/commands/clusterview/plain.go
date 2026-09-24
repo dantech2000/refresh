@@ -29,7 +29,7 @@ func columnTitles(cols []ui.Column) []string {
 
 // clusterListPlain builds the `cluster list -o plain` table. Cells use the
 // human table's vocabulary: the raw EKS status, the health decision, and the
-// NODES count.
+// NODES count ("unknown" for an incomplete row with no count).
 func clusterListPlain(summaries []clustersvc.ClusterSummary, multiRegion, showHealth bool) *ui.PlainTable {
 	t := ui.NewPlainTable(columnTitles(clusterListColumns(multiRegion, showHealth))...)
 	for _, s := range summaries {
@@ -45,7 +45,7 @@ func clusterListPlain(summaries []clustersvc.ClusterSummary, multiRegion, showHe
 			}
 			row = append(row, h)
 		}
-		row = append(row, nodeCountInfoText(s.NodeCount))
+		row = append(row, nodesText(s))
 		t.Row(row...)
 	}
 	return t
@@ -201,9 +201,6 @@ func writeUpgradeCheckInfo(w io.Writer, report *clustersvc.UpgradeReport) {
 		for _, f := range report.Skew.Findings {
 			_, _ = fmt.Fprintf(w, "  %s\n", f)
 		}
-	}
-	for _, m := range report.Incomplete {
-		_, _ = fmt.Fprintf(w, "could not read %s\n", m)
 	}
 }
 

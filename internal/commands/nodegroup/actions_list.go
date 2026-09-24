@@ -4,15 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
-	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/diag"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -70,51 +71,53 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 	// just table/plain — matching cluster list and keeping JSON/YAML scriptable. (REF-49)
 	items := sortNodegroupSummaries(res.Summaries, cmd.String("sort"), cmd.Bool("desc"))
 
-	if err := writeNodegroupList(cmd.String("format"), clusterName, items, res.Failures); err != nil {
+	format := cmd.String("format")
+	failures := diag.List(slices.Clone(res.Failures))
+	diag.Sort(failures)
+	if err := writeNodegroupList(format, clusterName, items, failures); err != nil {
 		return err
 	}
-	return runner.UnlessInterrupted(ctx, reportListProblems(warnOut, clusterName, res))
+	warnAMILookup(warnOut, items)
+	if !runner.TableListsFailures(format) {
+		runner.ReportFailures(warnOut, failures)
+	}
+	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(failures))
 }
 
 // warnOut receives list/describe warnings; a variable so tests can capture it.
 var warnOut io.Writer = ui.Stderr
 
-// writeNodegroupList prints what was gathered in the requested format. When
-// some nodegroups could not be described, JSON/YAML carry them under
-// "failures" so "count" is never mistaken for the full nodegroup count.
-func writeNodegroupList(format, clusterName string, items []nodegroupsvc.NodegroupSummary, failures []string) error {
-	payload := map[string]any{"cluster": clusterName, "nodegroups": items, "count": len(items)}
-	if len(failures) > 0 {
-		payload["failures"] = failures
-	}
-	if handled, err := runner.EncodeStdout(format, payload); handled {
+// writeNodegroupList prints what was gathered in the requested format. The
+// nodegroups that could not be described are in the document's "failures"
+// (and the table's INCOMPLETE DATA section), so "count" is never mistaken
+// for the full nodegroup count.
+func writeNodegroupList(format, clusterName string, items []nodegroupsvc.NodegroupSummary, failures diag.List) error {
+	doc := nodegroupsvc.NodegroupList{Cluster: clusterName, Nodegroups: items, Count: len(items), Failures: failures}
+	if handled, err := runner.EncodeStdout(format, doc); handled {
 		return err
 	}
-	return outputNodegroupsTable(clusterName, items)
+	return outputNodegroupsTable(clusterName, items, failures)
 }
 
-// reportListProblems warns on w about incomplete list data. A failed
-// latest-AMI lookup gets one warning (the rows already say "unknown (lookup
-// failed)") and does not change the exit code. Nodegroups that could not be
-// described are named one per line, and the returned error makes the command
-// exit 4 (incomplete data).
-func reportListProblems(w io.Writer, clusterName string, res nodegroupsvc.ListResult) error {
-	if res.AMILookupErr != nil {
-		warnAMILookup(w, len(res.AMILookupFailures), res.AMILookupErr)
+// warnAMILookup writes one advisory line for the nodegroups whose latest
+// recommended AMI could not be looked up. Their rows already say "unknown
+// (lookup failed)" and carry amiLookupFailure; the lookup is advisory, so it
+// does not change the exit code. The line names the reason and the IAM
+// action (ssm:GetParameter) of the first failure.
+func warnAMILookup(w io.Writer, items []nodegroupsvc.NodegroupSummary) {
+	var first *diag.Failure
+	n := 0
+	for _, ng := range items {
+		if ng.AMILookupFailure != nil {
+			if first == nil {
+				first = ng.AMILookupFailure
+			}
+			n++
+		}
 	}
-	if len(res.Failures) == 0 {
-		return nil
+	if first == nil {
+		return
 	}
-	for _, f := range res.Failures {
-		_, _ = fmt.Fprintln(w, color.YellowString("warning: nodegroup %s", f))
-	}
-	return cli.Exit(fmt.Sprintf("listing nodegroups for cluster %s: %d nodegroup(s) could not be described; the list is incomplete", clusterName, len(res.Failures)), runner.ExitIncomplete)
-}
-
-// warnAMILookup prints a single warning for failed latest-AMI lookups,
-// formatted so a missing permission names ssm:GetParameter.
-func warnAMILookup(w io.Writer, n int, err error) {
-	_, _ = fmt.Fprintln(w, color.YellowString("warning: could not look up the latest recommended AMI for %d nodegroup(s); their AMI status shows %q",
-		n, amiLookupFailedText))
-	_, _ = fmt.Fprintln(w, color.YellowString("%v", awsinternal.FormatAWSError(err, "reading the latest recommended EKS AMI from SSM")))
+	_, _ = fmt.Fprintln(w, ui.ColorFor(w, color.FgYellow).Sprintf("warning: could not look up the latest recommended AMI for %d nodegroup(s), so their AMI status shows %q (%s: %s: %s)",
+		n, amiLookupFailedText, first.Operation, first.Reason, first.Error))
 }

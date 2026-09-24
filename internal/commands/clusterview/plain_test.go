@@ -79,7 +79,7 @@ func TestClusterListPlain(t *testing.T) {
 func TestOutputClustersTable_PlainEmptyIsHeaderOnly(t *testing.T) {
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
-	out, err := captureStdout(t, func() error { return OutputClustersTable(nil, time.Second, false, false) })
+	out, err := captureStdout(t, func() error { return OutputClustersTable(nil, nil, time.Second, false, false) })
 	if err != nil {
 		t.Fatal(err)
 	}

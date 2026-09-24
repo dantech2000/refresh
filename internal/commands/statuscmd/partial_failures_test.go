@@ -1,11 +1,12 @@
 package statuscmd
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 func runStatusFake(t *testing.T, args ...string) (stdout, stderr string, err error) {
@@ -13,16 +14,82 @@ func runStatusFake(t *testing.T, args ...string) (stdout, stderr string, err err
 	return fakeaws.Run(t, fakeaws.App(Command()), append([]string{"refresh", "status"}, args...)...)
 }
 
-// A cluster whose one nodegroup cannot be described, so its row has errors
-// and no SSM lookup runs.
+// A cluster whose one nodegroup cannot be described, so its row is
+// incomplete and no SSM lookup runs. Version 1.40 is past the compiled-in
+// support calendar, so the support tier (exit 3) does not depend on today's
+// date.
 func incompleteWorld() *fakeaws.Cluster {
-	return &fakeaws.Cluster{Name: "prod", Version: "1.33", Nodegroups: []*fakeaws.Nodegroup{
-		{Name: "web", Version: "1.33", DescribeNodegroupError: "AccessDeniedException"},
+	return &fakeaws.Cluster{Name: "prod", Version: "1.40", Nodegroups: []*fakeaws.Nodegroup{
+		{Name: "web", Version: "1.40", DescribeNodegroupError: "AccessDeniedException"},
 	}}
 }
 
-// A region that fails the sweep is named on stderr and listed under
-// "failures" in the JSON document, so the fleet is never mistaken for whole.
+// webFailure is the failure incompleteWorld reports, as decoded JSON/YAML.
+var webFailure = map[string]any{
+	"kind":         "Nodegroup",
+	"name":         "web",
+	"cluster":      "prod",
+	"region":       "us-east-1",
+	"operation":    "eks:DescribeNodegroup",
+	"reason":       "AccessDenied",
+	"retryable":    false,
+	"awsErrorCode": "AccessDeniedException",
+}
+
+const webWarning = "warning: nodegroup prod/web (us-east-1): AccessDenied: AccessDeniedException: "
+
+var statusPlainHeaders = []string{"CLUSTER", "REGION", "VERSION", "SUPPORT", "COMPUTE", "STALE AMI", "ADDONS", "HEALTH"}
+
+// The failures contract: one document whose top-level failures names the
+// nodegroup (kind, name, reason, operation, retryable, AWS error code), the
+// row marked incomplete, one named stderr line, exit 4, and pure TSV for
+// -o plain.
+func TestStatus_FailuresContract(t *testing.T) {
+	fakeaws.New(t, incompleteWorld())
+
+	for _, format := range []string{"json", "yaml"} {
+		stdout, stderr, err := runStatusFake(t, "-r", "us-east-1", "-o", format)
+		if got := runner.ExitCodeOf(err); got != runner.ExitIncomplete {
+			t.Fatalf("-o %s: exit = %d (%v), want 4\nstderr:\n%s", format, got, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, format, stdout)
+		fakeaws.RequireFailures(t, doc, webFailure)
+		row := doc.(map[string]any)["clusters"].([]any)[0].(map[string]any)
+		if row["incomplete"] != true {
+			t.Errorf("-o %s: row incomplete = %v, want true", format, row["incomplete"])
+		}
+		if _, ok := row["errors"]; ok {
+			t.Errorf("-o %s: row still has the removed errors key: %v", format, row)
+		}
+		if strings.Count(stderr, webWarning) != 1 {
+			t.Errorf("-o %s: stderr does not name the failure once:\n%s", format, stderr)
+		}
+	}
+
+	stdout, stderr, err := runStatusFake(t, "-r", "us-east-1", "-o", "plain")
+	if got := runner.ExitCodeOf(err); got != runner.ExitIncomplete {
+		t.Fatalf("-o plain: exit = %d (%v), want 4", got, err)
+	}
+	if rows := plaintest.Check(t, stdout, statusPlainHeaders...); len(rows) != 1 {
+		t.Errorf("-o plain: %d rows, want 1", len(rows))
+	}
+	if !strings.Contains(stderr, webWarning) {
+		t.Errorf("-o plain: stderr lacks %q:\n%s", webWarning, stderr)
+	}
+
+	// The human table lists the failure under INCOMPLETE DATA; stderr does
+	// not repeat it.
+	stdout, stderr, _ = runStatusFake(t, "-r", "us-east-1")
+	if !strings.Contains(stdout, "INCOMPLETE DATA") || !strings.Contains(stdout, "nodegroup prod/web (us-east-1): AccessDenied") {
+		t.Errorf("table lacks the INCOMPLETE DATA section:\n%s", stdout)
+	}
+	if strings.Contains(stderr, "warning: nodegroup") {
+		t.Errorf("table run repeats the failure on stderr:\n%s", stderr)
+	}
+}
+
+// A region that cannot be listed is a Region failure (eks:ListClusters),
+// next to the row failures, so the fleet is never mistaken for whole.
 func TestStatus_FailedRegionInFailures(t *testing.T) {
 	srv := fakeaws.New(t, incompleteWorld())
 	srv.FailRegions(func(region string) string {
@@ -33,61 +100,37 @@ func TestStatus_FailedRegionInFailures(t *testing.T) {
 	})
 
 	stdout, stderr, err := runStatusFake(t, "-r", "us-east-1", "-r", "us-west-2", "-o", "json")
-	if err == nil {
-		t.Fatalf("status succeeded with a failed region\nstderr:\n%s", stderr)
+	if got := runner.ExitCodeOf(err); got != runner.ExitIncomplete {
+		t.Fatalf("exit = %d (%v), want 4\nstderr:\n%s", got, err, stderr)
 	}
-	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	want := []any{map[string]any{
-		"region": "us-west-2",
-		"error":  "ExpiredTokenException: fakeaws: region us-west-2 answers ExpiredTokenException",
-	}}
-	if !reflect.DeepEqual(doc["failures"], want) {
-		t.Errorf("failures = %#v, want %#v", doc["failures"], want)
-	}
-	if !strings.Contains(stderr, "warning: region us-west-2: ExpiredTokenException") {
+	doc := fakeaws.RequireOneDocument(t, "json", stdout)
+	fakeaws.RequireFailures(t, doc, webFailure, map[string]any{
+		"kind":         "Region",
+		"name":         "us-west-2",
+		"region":       "us-west-2",
+		"operation":    "eks:ListClusters",
+		"reason":       "CredentialError",
+		"retryable":    false,
+		"awsErrorCode": "ExpiredTokenException",
+		"error":        "ExpiredTokenException: fakeaws: region us-west-2 answers ExpiredTokenException",
+	})
+	if !strings.Contains(stderr, "warning: region us-west-2: CredentialError: ExpiredTokenException") {
 		t.Errorf("stderr does not name the failed region:\n%s", stderr)
-	}
-
-	// Every region answered: no "failures" key.
-	srv.FailRegions(nil)
-	stdout, _, _ = runStatusFake(t, "-r", "us-east-1", "-o", "json")
-	doc = fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	if _, ok := doc["failures"]; ok {
-		t.Errorf("failures present with no failed region: %v", doc["failures"])
 	}
 }
 
-// A cluster row with errors is named on stderr with a one-line reason in the
-// machine and plain formats; stderr used to carry only a count.
-func TestStatus_IncompleteRowNamedOnStderr(t *testing.T) {
-	fakeaws.New(t, incompleteWorld())
-
-	for _, format := range []string{"json", "yaml", "plain"} {
-		stdout, stderr, err := runStatusFake(t, "-r", "us-east-1", "-o", format)
-		if err == nil {
-			t.Fatalf("-o %s: status succeeded with an incomplete row\nstderr:\n%s", format, stderr)
-		}
-		if format != "plain" {
-			fakeaws.RequireOneDocument(t, format, stdout)
-		}
-		want := "warning: cluster prod (us-east-1): nodegroup(s): web: "
-		if !strings.Contains(stderr, want) {
-			t.Errorf("-o %s: stderr lacks %q:\n%s", format, want, stderr)
-		}
-		for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
-			if strings.HasPrefix(line, "warning: cluster") && strings.Count(line, "warning:") != 1 {
-				t.Errorf("-o %s: row warning is not one line: %q", format, line)
-			}
-		}
+// With nothing missing, the document still carries failures: [] and the
+// run exits 0.
+func TestStatus_NoFailuresIsEmptyList(t *testing.T) {
+	fakeaws.New(t, &fakeaws.Cluster{Name: "prod", Version: "1.40", Nodegroups: []*fakeaws.Nodegroup{
+		{Name: "web", Version: "1.40", AmiType: "CUSTOM"}, // no SSM lookup
+	}})
+	stdout, stderr, err := runStatusFake(t, "-r", "us-east-1", "-o", "json")
+	if err != nil {
+		t.Fatalf("status: %v\nstderr:\n%s", err, stderr)
 	}
-
-	// The human table already lists the row under INCOMPLETE DATA; stderr
-	// does not repeat it.
-	stdout, stderr, _ := runStatusFake(t, "-r", "us-east-1")
-	if !strings.Contains(stdout, "INCOMPLETE DATA") {
-		t.Errorf("table lacks the INCOMPLETE DATA section:\n%s", stdout)
-	}
-	if strings.Contains(stderr, "warning: cluster prod") {
-		t.Errorf("table run repeats the row on stderr:\n%s", stderr)
+	fakeaws.RequireFailures(t, fakeaws.RequireOneDocument(t, "json", stdout))
+	if !strings.Contains(stdout, `"failures": []`) {
+		t.Errorf("failures is not an empty list:\n%s", stdout)
 	}
 }

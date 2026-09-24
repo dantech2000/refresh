@@ -4,6 +4,7 @@ package addons
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -82,11 +84,12 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 }
 
 // ListDetailed lists a cluster's add-ons and keeps the ones that could not be
-// described apart from the ones that were (see ListResult).
+// described apart from the ones that were (see ListResult). The returned
+// error is tagged with eks:ListAddons (diag.WithOperation).
 func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, options ListOptions) (ListResult, error) {
 	results, err := s.listAddons(ctx, clusterName, options)
 	if err != nil {
-		return ListResult{}, err
+		return ListResult{}, diag.WithOperation(diag.OpListAddons, err)
 	}
 	res := ListResult{Summaries: make([]AddonSummary, 0, len(results))}
 	for _, r := range results {
@@ -94,7 +97,9 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 			res.Summaries = append(res.Summaries, *r.summary)
 			continue
 		}
-		res.Failures = append(res.Failures, r.name+": "+r.failure)
+		f := r.failure
+		f.Cluster = clusterName
+		res.Failures = append(res.Failures, f)
 	}
 	return res, nil
 }
@@ -104,8 +109,11 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 type addonResult struct {
 	name    string
 	summary *AddonSummary
-	failure string
+	failure diag.Failure
 }
+
+// errEmptyResponse stands for a describe call that returned no item.
+var errEmptyResponse = errors.New("empty response")
 
 // listAddons describes every installed add-on in parallel. Each result is
 // named, including add-ons never dispatched because ctx ended first.
@@ -131,10 +139,10 @@ func (s *ServiceImpl) listAddons(ctx context.Context, clusterName string, option
 			})
 			if err != nil {
 				s.logger.Warn("could not describe addon", "cluster", clusterName, "addon", name, "error", err)
-				return outcome{done: true, addonResult: addonResult{name: name, failure: awserr.Summary(err)}}
+				return outcome{done: true, addonResult: addonResult{name: name, failure: diag.FromError(diag.KindAddon, name, diag.OpDescribeAddon, err)}}
 			}
 			if desc == nil || desc.Addon == nil {
-				return outcome{done: true, addonResult: addonResult{name: name, failure: "empty DescribeAddon response"}}
+				return outcome{done: true, addonResult: addonResult{name: name, failure: diag.FromError(diag.KindAddon, name, diag.OpDescribeAddon, errEmptyResponse)}}
 			}
 
 			health := ""
@@ -152,11 +160,11 @@ func (s *ServiceImpl) listAddons(ctx context.Context, clusterName string, option
 	results := make([]addonResult, len(outcomes))
 	for i, o := range outcomes {
 		if !o.done {
-			reason := "listing stopped early"
-			if cerr := ctx.Err(); cerr != nil {
+			reason := "the listing stopped early"
+			if cerr := context.Cause(ctx); cerr != nil {
 				reason = cerr.Error()
 			}
-			results[i] = addonResult{name: addonNames[i], failure: "not described: " + reason}
+			results[i] = addonResult{name: addonNames[i], failure: diag.New(diag.KindAddon, addonNames[i], diag.ReasonNotAttempted, "not described: "+reason)}
 			continue
 		}
 		results[i] = o.addonResult

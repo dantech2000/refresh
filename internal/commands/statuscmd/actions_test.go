@@ -3,7 +3,6 @@ package statuscmd
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -14,6 +13,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 )
@@ -34,6 +34,7 @@ func TestExitForStatuses(t *testing.T) {
 	cases := []struct {
 		name     string
 		statuses []statussvc.ClusterStatus
+		failures []diag.Failure
 		want     int
 	}{
 		{
@@ -62,9 +63,10 @@ func TestExitForStatuses(t *testing.T) {
 			statuses: []statussvc.ClusterStatus{{
 				Support:                      statussvc.SupportPosture{Tier: statussvc.SupportStandard},
 				NodegroupsBehindControlPlane: 1,
-				Errors:                       []string{"describe nodegroup(s): ng-broken: boom"},
+				Incomplete:                   true,
 			}},
-			want: 2,
+			failures: []diag.Failure{diag.New(diag.KindNodegroup, "ng-broken", diag.ReasonUnknown, "boom")},
+			want:     2,
 		},
 		{
 			name: "extended support → 3 (beats stale)",
@@ -84,7 +86,7 @@ func TestExitForStatuses(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := exitCode(exitForStatuses(tc.statuses, 0)); got != tc.want {
+			if got := exitCode(exitForStatuses(tc.statuses, tc.failures)); got != tc.want {
 				t.Errorf("exit code = %d, want %d", got, tc.want)
 			}
 		})
@@ -94,24 +96,26 @@ func TestExitForStatuses(t *testing.T) {
 func TestExitForStatuses_Incomplete(t *testing.T) {
 	std := statussvc.SupportPosture{Tier: statussvc.SupportStandard}
 	errored := statussvc.ClusterStatus{
-		Name:    "ghost",
-		Support: statussvc.SupportPosture{Tier: statussvc.SupportUnknown},
-		Errors:  []string{"describe cluster: access denied"},
+		Name:       "ghost",
+		Support:    statussvc.SupportPosture{Tier: statussvc.SupportUnknown},
+		Incomplete: true,
 	}
+	rowFailure := []diag.Failure{diag.FromError(diag.KindCluster, "ghost", diag.OpDescribeCluster, mocks.AccessDenied())}
+	regionFailure := []diag.Failure{diag.FromError(diag.KindRegion, "eu-west-1", diag.OpListClusters, mocks.Throttling())}
 	cases := []struct {
-		name          string
-		statuses      []statussvc.ClusterStatus
-		failedRegions int
-		want          int
+		name     string
+		statuses []statussvc.ClusterStatus
+		failures []diag.Failure
+		want     int
 	}{
-		{"errored row → 4", []statussvc.ClusterStatus{{Support: std}, errored}, 0, 4},
-		{"failed region → 4", []statussvc.ClusterStatus{{Support: std}}, 1, 4},
-		{"stale beats incomplete", []statussvc.ClusterStatus{errored, {Support: std, StaleAMI: statussvc.StaleAMISummary{Behind: 1}}}, 1, 2},
-		{"support risk beats incomplete", []statussvc.ClusterStatus{errored, {Support: statussvc.SupportPosture{Tier: statussvc.SupportExtended}}}, 0, 3},
+		{"incomplete row → 4", []statussvc.ClusterStatus{{Support: std}, errored}, rowFailure, 4},
+		{"failed region → 4", []statussvc.ClusterStatus{{Support: std}}, regionFailure, 4},
+		{"stale beats incomplete", []statussvc.ClusterStatus{errored, {Support: std, StaleAMI: statussvc.StaleAMISummary{Behind: 1}}}, rowFailure, 2},
+		{"support risk beats incomplete", []statussvc.ClusterStatus{errored, {Support: statussvc.SupportPosture{Tier: statussvc.SupportExtended}}}, rowFailure, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := exitCode(exitForStatuses(tc.statuses, tc.failedRegions)); got != tc.want {
+			if got := exitCode(exitForStatuses(tc.statuses, tc.failures)); got != tc.want {
 				t.Errorf("exit code = %d, want %d", got, tc.want)
 			}
 		})
@@ -152,17 +156,24 @@ func TestGatherFleet_FailedRegionIsIncomplete(t *testing.T) {
 	if len(statuses) != 1 || len(errs) != 1 {
 		t.Fatalf("got %d statuses / %d region errors, want 1 / 1", len(statuses), len(errs))
 	}
-	if got := exitCode(exitForStatuses(statuses, len(errs))); got != 4 {
+	fs := fleetFailures(sweep)
+	if len(fs) != 1 || fs[0].Kind != diag.KindRegion || fs[0].Name != "eu-west-1" || fs[0].Operation != diag.OpListClusters || fs[0].Reason != diag.ReasonAccessDenied {
+		t.Fatalf("failures = %+v, want the eu-west-1 ListClusters AccessDenied", fs)
+	}
+	if got := exitCode(exitForStatuses(statuses, fs)); got != 4 {
 		t.Errorf("exit code = %d, want 4 (incomplete data)", got)
 	}
 }
 
-// A region whose sweep timed out keeps its partial rows (the service marks the
-// clusters it never reached) and still reports the error.
+// A region whose sweep timed out keeps its partial rows. The service marks
+// the clusters it never reached; those row failures carry the timeout, so
+// the region is not also reported as failed.
 func TestGatherFleet_KeepsPartialRowsOnError(t *testing.T) {
+	late := diag.New(diag.KindCluster, "late", diag.ReasonNotAttempted, "not evaluated: context deadline exceeded")
 	stubRegionService(t, func(cfg aws.Config) regionLister {
+		late.Region = cfg.Region
 		return fakeRegion{
-			statuses: []statussvc.ClusterStatus{{Name: "late", Region: cfg.Region, Errors: []string{"not evaluated: context deadline exceeded"}}},
+			statuses: []statussvc.ClusterStatus{{Name: "late", Region: cfg.Region, Incomplete: true, Failures: []diag.Failure{late}}},
 			err:      context.DeadlineExceeded,
 		}
 	})
@@ -171,10 +182,14 @@ func TestGatherFleet_KeepsPartialRowsOnError(t *testing.T) {
 	if len(statuses) != 1 || statuses[0].Name != "late" {
 		t.Fatalf("partial rows dropped: %+v", statuses)
 	}
-	if len(errs) != 1 || !errors.Is(errs[0], context.DeadlineExceeded) {
-		t.Fatalf("errs = %v, want the deadline error", errs)
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v, want none: the rows carry the failures", errs)
 	}
-	if got := exitCode(exitForStatuses(statuses, len(errs))); got != 4 {
+	fs := fleetFailures(sweep)
+	if len(fs) != 1 || fs[0].Name != "late" || fs[0].Reason != diag.ReasonNotAttempted {
+		t.Fatalf("failures = %+v, want the not-evaluated row", fs)
+	}
+	if got := exitCode(exitForStatuses(statuses, fs)); got != 4 {
 		t.Errorf("exit code = %d, want 4", got)
 	}
 }
@@ -205,7 +220,8 @@ func deniedFleet(t *testing.T) {
 }
 
 // The default sweep skips regions closed to these credentials: one stderr
-// line, not counted as failed regions. Other errors still fail, on one line.
+// notice, not counted as failed regions. Other errors still fail, one
+// warning line each.
 func TestGatherFleet_DefaultSweepSkipsInaccessibleRegions(t *testing.T) {
 	deniedFleet(t)
 	regions := []string{"us-east-1", "sa-east-1", "ap-south-1", "eu-west-1"}
@@ -218,10 +234,12 @@ func TestGatherFleet_DefaultSweepSkipsInaccessibleRegions(t *testing.T) {
 		t.Fatalf("errs = %v, want only the throttled eu-west-1", sweep.errs)
 	}
 
-	var buf bytes.Buffer
-	if err := reportSweep(&buf, len(regions), sweep); err != nil {
-		t.Fatalf("reportSweep = %v, want nil when a region answered", err)
+	if err := allRegionsSkipped(len(regions), sweep.skipped); err != nil {
+		t.Fatalf("allRegionsSkipped = %v, want nil when a region answered", err)
 	}
+	var buf bytes.Buffer
+	runner.ReportSkippedRegions(&buf, sweep.skipped)
+	runner.ReportFailures(&buf, fleetFailures(sweep))
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("stderr has %d lines, want 2 (skip note + one warning):\n%s", len(lines), buf.String())
@@ -229,17 +247,17 @@ func TestGatherFleet_DefaultSweepSkipsInaccessibleRegions(t *testing.T) {
 	if !strings.Contains(lines[0], "Skipped 2 region(s) not accessible to these credentials: ap-south-1, sa-east-1") {
 		t.Errorf("skip line = %q", lines[0])
 	}
-	if !strings.Contains(lines[1], "warning: region eu-west-1: ThrottlingException") {
+	if !strings.HasPrefix(lines[1], "warning: region eu-west-1: Throttled: ThrottlingException") {
 		t.Errorf("warning line = %q", lines[1])
 	}
 
 	// Only the throttled region counts toward exit 4. Clean data plus one
 	// failed region is still incomplete; skipped regions alone are not.
-	if got := exitCode(exitForStatuses(sweep.statuses, len(sweep.errs))); got != 4 {
+	if got := exitCode(exitForStatuses(sweep.statuses, fleetFailures(sweep))); got != 4 {
 		t.Errorf("exit = %d, want 4 for the throttled region", got)
 	}
 	clean := gatherFleet(context.Background(), aws.Config{}, regions[:3], statussvc.ListOptions{}, true)
-	if len(clean.errs) != 0 || exitCode(exitForStatuses(clean.statuses, len(clean.errs))) != 0 {
+	if len(clean.errs) != 0 || exitCode(exitForStatuses(clean.statuses, fleetFailures(clean))) != 0 {
 		t.Errorf("skipped regions alone must not fail the run: errs = %v", clean.errs)
 	}
 }
@@ -254,20 +272,24 @@ func TestGatherFleet_ExplicitRegionsKeepFailures(t *testing.T) {
 		t.Fatalf("skipped = %v, errs = %v; want 0 skipped, 2 failed", sweep.skipped, sweep.errs)
 	}
 	var buf bytes.Buffer
-	_ = reportSweep(&buf, len(regions), sweep)
+	runner.ReportFailures(&buf, fleetFailures(sweep))
 	if n := strings.Count(strings.TrimSpace(buf.String()), "\n") + 1; n != 2 {
 		t.Errorf("stderr has %d lines, want one per failed region:\n%s", n, buf.String())
 	}
-	if got := exitCode(exitForStatuses(sweep.statuses, len(sweep.errs))); got != 4 {
+	// ap-south-1 is not enabled for the account: RegionUnavailable, not a
+	// credential problem, because the credentials already passed STS.
+	if !strings.Contains(buf.String(), "warning: region ap-south-1: RegionUnavailable: UnrecognizedClientException") {
+		t.Errorf("stderr lacks the RegionUnavailable line:\n%s", buf.String())
+	}
+	if got := exitCode(exitForStatuses(sweep.statuses, fleetFailures(sweep))); got != 4 {
 		t.Errorf("exit = %d, want 4", got)
 	}
 }
 
 // Every region skipped is not a clean empty fleet. Nothing was gathered, so
 // it is an error (exit 1), as in `cluster list` (REF-165).
-func TestReportSweep_AllRegionsSkippedFails(t *testing.T) {
-	var buf bytes.Buffer
-	err := reportSweep(&buf, 2, fleetSweep{skipped: []string{"sa-east-1", "ap-south-1"}})
+func TestAllRegionsSkippedFails(t *testing.T) {
+	err := allRegionsSkipped(2, []string{"sa-east-1", "ap-south-1"})
 	if err == nil || !strings.Contains(err.Error(), "none is accessible") {
 		t.Fatalf("err = %v, want a none-accessible error", err)
 	}

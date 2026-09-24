@@ -2,6 +2,8 @@ package addons
 
 import (
 	"time"
+
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 // AddonSummary contains basic addon info for listings
@@ -16,9 +18,20 @@ type AddonSummary struct {
 type ListResult struct {
 	// Summaries are the add-ons that were described.
 	Summaries []AddonSummary
-	// Failures has a "name: reason" entry for every installed add-on left out
-	// of Summaries because it could not be described.
-	Failures []string
+	// Failures has one entry per installed add-on left out of Summaries: it
+	// could not be described, or the listing stopped before it was reached.
+	// Region is not set; the caller knows it.
+	Failures []diag.Failure
+}
+
+// AddonList is the `addon list -o json|yaml` document.
+type AddonList struct {
+	Cluster string         `json:"cluster" yaml:"cluster"`
+	Addons  []AddonSummary `json:"addons" yaml:"addons"`
+	Count   int            `json:"count" yaml:"count"`
+	// Failures are the add-ons that could not be described; the list leaves
+	// them out. [] when every add-on was read.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // AddonDetails contains expanded addon information
@@ -34,6 +47,9 @@ type AddonDetails struct {
 	Configuration      map[string]any `json:"configuration,omitempty" yaml:"configuration,omitempty"`
 	Issues             []AddonIssue   `json:"issues,omitempty" yaml:"issues,omitempty"`
 	AvailableVersions  []string       `json:"availableVersions,omitempty" yaml:"availableVersions,omitempty"`
+	// Failures is always [] today: describe either reads the add-on or
+	// fails. It is here so every document carries the same key.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // AddonIssue represents an issue reported by an addon

@@ -37,7 +37,7 @@ func clusterListLines(th *render.Theme, summaries []clustersvc.ClusterSummary, m
 		if showHealth {
 			row = append(row, decisionToken(th, s.Health))
 		}
-		row = append(row, th.Paint(pal.Text, nodeCountInfoText(s.NodeCount)))
+		row = append(row, nodesCell(th, s))
 		tbl.Row(row...)
 	}
 	out = append(out, tbl.Render()...)
@@ -47,6 +47,25 @@ func clusterListLines(th *render.Theme, summaries []clustersvc.ClusterSummary, m
 		}
 	}
 	return out
+}
+
+// nodesCell is the human NODES cell. An incomplete row (a failure read its
+// cluster or nodegroups) gets the unknown glyph, so a partial count never
+// reads as a complete one; the INCOMPLETE DATA section names the failures.
+func nodesCell(th *render.Theme, s clustersvc.ClusterSummary) string {
+	if s.Incomplete {
+		return th.Token(render.Unknown, nodesText(s))
+	}
+	return th.Paint(th.Pal.Text, nodesText(s))
+}
+
+// nodesText is the NODES text of a row: "unknown" when the row is
+// incomplete and no node was counted, else the node count.
+func nodesText(s clustersvc.ClusterSummary) string {
+	if s.Incomplete && s.NodeCount.Total == 0 {
+		return "unknown"
+	}
+	return nodeCountInfoText(s.NodeCount)
 }
 
 // clusterListColumns is the `cluster list` column set, shared by the human

@@ -30,7 +30,7 @@ const (
 // nodegroup at the kubelet skew limit, or a failed control-plane health
 // check. Review: a WARNING insight, a nodegroup behind the control plane, an
 // addon behind latest, or a control-plane health warning. Incomplete: some
-// nodegroups or add-ons could not be read (r.Incomplete). Precedence:
+// nodegroups or add-ons could not be read (r.Failures). Precedence:
 // blocked, then incomplete, then review, then ready. A known blocker wins
 // over missing data; missing data wins over warnings, because the unread
 // item could be a blocker.
@@ -90,7 +90,7 @@ func (r *UpgradeReport) Readiness() (Readiness, []string) {
 	}
 
 	var missing []string
-	if n := len(r.Incomplete); n > 0 {
+	if n := len(r.Failures); n > 0 {
 		missing = append(missing, fmt.Sprintf("%d nodegroup(s)/addon(s) could not be read", n))
 	}
 

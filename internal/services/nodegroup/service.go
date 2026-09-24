@@ -4,6 +4,7 @@ package nodegroup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
 	"github.com/dantech2000/refresh/internal/types"
@@ -128,36 +130,26 @@ func matchesFilters(s NodegroupSummary, filters map[string]string) bool {
 }
 
 // List returns basic nodegroup summaries for a cluster. Nodegroups that can't
-// be described are logged and left out; use ListWithFailures to learn which.
+// be described are logged and left out; use ListDetailed to learn which.
 func (s *ServiceImpl) List(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, error) {
-	summaries, _, err := s.ListWithFailures(ctx, clusterName, options)
-	return summaries, err
+	res, err := s.ListDetailed(ctx, clusterName, options)
+	return res.Summaries, err
 }
 
 // ngResult is one nodegroup's outcome in ListDetailed. done stays false
 // for items ForEachParallel never dispatched (ctx ended first).
 type ngResult struct {
-	done         bool
-	summary      *NodegroupSummary // nil when filtered out or failed
-	failure      string            // non-empty when the nodegroup couldn't be described
-	amiLookupErr error             // latest-AMI lookup failure that left AMIStatus Unknown
+	done    bool
+	summary *NodegroupSummary // nil when filtered out or failed
+	failure *diag.Failure     // set when the nodegroup couldn't be described
 }
 
-// ListWithFailures is List plus a "name: reason" entry for every listed
-// nodegroup whose data is incomplete: left out of the summaries because it
-// could not be described (API error, empty response, or never reached because
-// ctx ended), or summarized with an AMI status that is Unknown only because
-// its latest recommended AMI could not be resolved. Nodegroups excluded by
-// options.Filters are not failures.
-func (s *ServiceImpl) ListWithFailures(ctx context.Context, clusterName string, options ListOptions) ([]NodegroupSummary, []string, error) {
-	res, err := s.ListDetailed(ctx, clusterName, options)
-	if err != nil {
-		return nil, nil, err
-	}
-	var failures []string
-	failures = append(failures, res.Failures...)
-	failures = append(failures, res.AMILookupFailures...)
-	return res.Summaries, failures, nil
+// failure returns a Failure about nodegroup name of clusterName, in the
+// service's region.
+func (s *ServiceImpl) failure(clusterName, name, op string, err error) *diag.Failure {
+	f := diag.FromError(diag.KindNodegroup, name, op, err)
+	f.Cluster, f.Region = clusterName, s.awsConfig.Region
+	return &f
 }
 
 // latestAMILookupMatters reports whether a failed latest-AMI lookup leaves
@@ -167,8 +159,11 @@ func latestAMILookupMatters(ng *ekstypes.Nodegroup) bool {
 	return ng.AmiType != ekstypes.AMITypesCustom && ng.Status != ekstypes.NodegroupStatusUpdating
 }
 
-// ListDetailed lists a cluster's nodegroups and keeps describe failures and
-// latest-AMI lookup failures apart (see ListResult).
+// ListDetailed lists a cluster's nodegroups. A nodegroup that could not be
+// described is left out of the summaries and reported in the result's
+// Failures; a failed latest-AMI lookup is on the summary (see ListResult).
+// Nodegroups excluded by options.Filters are not failures. The returned
+// error is tagged with the IAM action that failed (diag.WithOperation).
 func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, options ListOptions) (ListResult, error) {
 	s.logger.Info("listing nodegroups", "cluster", clusterName, "options", options)
 
@@ -180,7 +175,8 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
 	})
 	if err != nil {
-		return ListResult{}, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName))
+		return ListResult{}, diag.WithOperation(diag.OpDescribeCluster,
+			awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName)))
 	}
 	if clusterDesc.Cluster == nil {
 		return ListResult{}, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
@@ -197,7 +193,7 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
 	)
 	if err != nil {
-		return ListResult{}, err
+		return ListResult{}, diag.WithOperation(diag.OpListNodegroups, err)
 	}
 
 	// The latest AMI is constant per (nodegroup version, AMI type); memoize
@@ -220,12 +216,12 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 			})
 			if err != nil {
 				s.logger.Debug("failed to describe nodegroup", "cluster", clusterName, "nodegroup", name, "error", err)
-				return ngResult{done: true, failure: fmt.Sprintf("%s: %v", name, err)}
+				return ngResult{done: true, failure: s.failure(clusterName, name, diag.OpDescribeNodegroup, err)}
 			}
 			ng := desc.Nodegroup
 			if ng == nil {
 				s.logger.Debug("empty DescribeNodegroup response", "cluster", clusterName, "nodegroup", name)
-				return ngResult{done: true, failure: name + ": empty DescribeNodegroup response"}
+				return ngResult{done: true, failure: s.failure(clusterName, name, diag.OpDescribeNodegroup, errEmptyResponse)}
 			}
 			var desiredSize int32
 			if ng.ScalingConfig != nil {
@@ -265,39 +261,41 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 			}
 			summary.VersionBehind = minorBehind(summary.K8sVersion, k8sVersion)
 			if lookupErr != nil {
-				summary.AMILookupError = lookupErr.Error()
+				summary.AMILookupFailure = s.failure(clusterName, name, diag.OpGetParameter, lookupErr)
 			}
 			if !matchesFilters(summary, options.Filters) {
 				return ngResult{done: true}
 			}
-			return ngResult{done: true, summary: &summary, amiLookupErr: lookupErr}
+			return ngResult{done: true, summary: &summary}
 		})
 
 	res := ListResult{Summaries: make([]NodegroupSummary, 0, len(results))}
-	var failures []string
 	for i, r := range results {
 		switch {
 		case !r.done:
-			reason := "sweep stopped early"
-			if cerr := ctx.Err(); cerr != nil {
-				reason = cerr.Error()
-			}
-			failures = append(failures, nodegroupNames[i]+": not evaluated: "+reason)
-		case r.failure != "":
-			failures = append(failures, r.failure)
+			f := notAttempted(ctx, nodegroupNames[i])
+			f.Cluster, f.Region = clusterName, s.awsConfig.Region
+			res.Failures = append(res.Failures, f)
+		case r.failure != nil:
+			res.Failures = append(res.Failures, *r.failure)
 		case r.summary != nil:
 			res.Summaries = append(res.Summaries, *r.summary)
-			if r.amiLookupErr != nil {
-				res.AMILookupFailures = append(res.AMILookupFailures,
-					nodegroupNames[i]+": latest AMI lookup failed: "+r.amiLookupErr.Error())
-				if res.AMILookupErr == nil {
-					res.AMILookupErr = r.amiLookupErr
-				}
-			}
 		}
 	}
-	res.Failures = failures
 	return res, nil
+}
+
+// errEmptyResponse stands for a describe call that returned no item.
+var errEmptyResponse = errors.New("empty response")
+
+// notAttempted is the failure of a nodegroup the listing never reached
+// because ctx ended first.
+func notAttempted(ctx context.Context, name string) diag.Failure {
+	reason := "the listing stopped early"
+	if cerr := context.Cause(ctx); cerr != nil {
+		reason = cerr.Error()
+	}
+	return diag.New(diag.KindNodegroup, name, diag.ReasonNotAttempted, "not described: "+reason)
 }
 
 // minorBehind reports whether Kubernetes version v ("1.31") is an older
@@ -395,10 +393,9 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 		LatestAMI:    latestAmiID,
 		AMIStatus:    amiStatus,
 		Scaling:      scaling,
-		amiLookupErr: lookupErr,
 	}
 	if lookupErr != nil {
-		details.AMILookupError = lookupErr.Error()
+		details.AMILookupFailure = s.failure(clusterName, nodegroupName, diag.OpGetParameter, lookupErr)
 	}
 	// Resolve backing instances once from the nodegroup we already described;
 	// workloads and instance details reuse the result.

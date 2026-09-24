@@ -27,15 +27,18 @@ const modulePath = "github.com/dantech2000/refresh/"
 // outputRootTypes are the types passed (directly, or as slice/map elements)
 // to runner.EncodeStdout. Every struct reachable from them is an output type.
 var outputRootTypes = []reflect.Type{
+	reflect.TypeFor[clustersvc.ClusterList](),
 	reflect.TypeFor[clustersvc.ClusterSummary](),
 	reflect.TypeFor[clustersvc.ClusterDetails](),
 	reflect.TypeFor[clustersvc.UpgradeReport](),
 	reflect.TypeFor[clustersvc.InsightDetail](),
 	reflect.TypeFor[upgrade.Plan](),
 	reflect.TypeFor[upgrade.Report](),
+	reflect.TypeFor[nodegroupsvc.NodegroupList](),
 	reflect.TypeFor[nodegroupsvc.NodegroupSummary](),
 	reflect.TypeFor[nodegroupsvc.NodegroupDetails](),
 	reflect.TypeFor[health.HealthSummary](),
+	reflect.TypeFor[addons.AddonList](),
 	reflect.TypeFor[addons.AddonSummary](),
 	reflect.TypeFor[addons.AddonDetails](),
 	reflect.TypeFor[addons.AddonUpdateResult](),

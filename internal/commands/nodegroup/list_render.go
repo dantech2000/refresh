@@ -72,7 +72,7 @@ const amiLookupFailedText = "unknown (lookup failed)"
 
 // amiCell renders a nodegroup's AMI freshness as a status token.
 func amiCell(th *render.Theme, ng nodegroupsvc.NodegroupSummary) string {
-	if ng.AMILookupError != "" {
+	if ng.AMILookupFailure != nil {
 		return th.Token(render.Warn, amiLookupFailedText)
 	}
 	return amiToken(th, ng.AMIStatus)
