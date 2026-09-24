@@ -193,6 +193,8 @@ with no AWS.
   tests set env vars, so they can't use `t.Parallel()`. Don't sleep to wait for goroutines;
   use a handshake (a channel the code under test signals). CI runs `-race -count=5
   -shuffle=on`, so tests must not depend on order or leak package state.
+  Packages that start goroutines have a `goleak.VerifyTestMain` TestMain (`goleak_test.go`);
+  a new package that starts one needs it too, and every goleak ignore needs a comment saying why.
 - **Context:** commands derive from the signal-cancellable root via `runner.SetupAWS` /
   `SetupAWSWithDeadline`; don't build `context.Background()` in command actions.
 - **Flag shorthands:** each letter has one meaning CLI-wide (`internal/flagcanon`): `-c`

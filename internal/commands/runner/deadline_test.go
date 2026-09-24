@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
+
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -175,6 +177,7 @@ func deadlineMoves(ctx context.Context) bool {
 
 // Ctrl+C (the signal context) still cancels a prompt under the API context.
 func TestAPIContextSignalCancelsPrompt(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	for _, timeout := range []time.Duration{time.Hour, 0} {
 		r, w := io.Pipe()
 		t.Cleanup(func() { _ = w.Close() })
