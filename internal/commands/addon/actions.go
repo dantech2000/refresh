@@ -100,12 +100,16 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, cfg, cmd)
+	// With an active context, a lone positional is the add-on.
+	requested, addonName, err := runner.DescribeTarget(cmd, "addon")
+	if err != nil {
+		return err
+	}
+	clusterName, listed, err := runner.ResolveClusterNameOrList(ctx, cfg, cmd, requested)
 	if err != nil || listed {
 		return err
 	}
 
-	addonName := runner.PositionalSlot(cmd, "addon", "cluster")
 	if addonName == "" {
 		return fmt.Errorf("missing add-on name; pass as second argument or --addon <name>")
 	}

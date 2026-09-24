@@ -180,6 +180,29 @@ func RequestedCluster(cmd *cli.Command) string {
 	return strings.TrimSpace(cmd.String("cluster"))
 }
 
+// DescribeTarget returns the requested cluster and the item name for a
+// read-only command whose positionals are [cluster] [item], where itemFlag
+// names the item's flag (e.g. "addon"). With no --cluster and no item flag,
+// a lone positional is the item when the active refresh context names a
+// cluster: `refresh use prod; refresh addon describe vpc-cni` describes
+// vpc-cni in prod's cluster, and cluster is "" so resolution takes the
+// context's. Every other form is the documented one: RequestedCluster and
+// PositionalSlot. The error is a context file or REFRESH_CONTEXT that cannot
+// be used.
+func DescribeTarget(cmd *cli.Command, itemFlag string) (cluster, item string, err error) {
+	args := cmd.Args().Slice()
+	if len(args) == 1 && flagValueIfSet(cmd, "cluster") == "" && flagValueIfSet(cmd, itemFlag) == "" {
+		_, ctxCluster, err := awsinternal.ActiveContextCluster()
+		if err != nil {
+			return "", "", err
+		}
+		if ctxCluster != "" {
+			return "", strings.TrimSpace(args[0]), nil
+		}
+	}
+	return RequestedCluster(cmd), PositionalSlot(cmd, itemFlag, "cluster"), nil
+}
+
 // ResolveCluster resolves the cluster for a mutating command. Resolution
 // order: --cluster flag, first positional, active `refresh use` context. The
 // kubeconfig current context is never used, so a stray kubeconfig cannot pick
@@ -211,10 +234,17 @@ func mutatingClusterOptions(format string) awsinternal.ClusterNameOptions {
 // returns listed=true with a non-nil error, so the command exits non-zero
 // and stdout stays empty.
 func ResolveClusterOrList(ctx context.Context, cfg aws.Config, cmd *cli.Command) (clusterName string, listed bool, err error) {
+	return ResolveClusterNameOrList(ctx, cfg, cmd, RequestedCluster(cmd))
+}
+
+// ResolveClusterNameOrList is ResolveClusterOrList for a caller that parsed
+// the requested cluster itself ("" falls back to the context, then the
+// kubeconfig), such as through DescribeTarget.
+func ResolveClusterNameOrList(ctx context.Context, cfg aws.Config, cmd *cli.Command, requested string) (clusterName string, listed bool, err error) {
 	// -o json/yaml never prompts: a partial name resolves as it would
 	// without a terminal.
 	opts := awsinternal.ClusterNameOptions{ReadOnly: true, NonInteractive: IsMachineFormat(cmd.String("format"))}
-	name, err := awsinternal.ClusterNameWithOptions(ctx, cfg, RequestedCluster(cmd), opts)
+	name, err := awsinternal.ClusterNameWithOptions(ctx, cfg, requested, opts)
 	if err == nil {
 		return name, false, nil
 	}

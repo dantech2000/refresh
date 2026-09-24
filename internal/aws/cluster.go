@@ -143,7 +143,7 @@ func resolveClusterPattern(cliFlag string, allowKubeconfig bool) (pattern, fromC
 	if cliFlag = strings.TrimSpace(cliFlag); cliFlag != "" {
 		return cliFlag, "", nil
 	}
-	ctxName, name, err := activeContextCluster()
+	ctxName, name, err := ActiveContextCluster()
 	if err != nil {
 		return "", "", err
 	}
@@ -160,13 +160,15 @@ func resolveClusterPattern(cliFlag string, allowKubeconfig bool) (pattern, fromC
 	return name, "", nil
 }
 
-// activeContextCluster returns the active refresh context's name and cluster.
-// An unreadable context file counts as no context; an unknown REFRESH_CONTEXT
-// is an error.
-func activeContextCluster() (ctxName, cluster string, err error) {
-	f, lerr := cliconfig.Load()
-	if lerr != nil {
-		return "", "", nil //nolint:nilerr // an unreadable context file counts as no context, as before
+// ActiveContextCluster returns the active refresh context's name and cluster,
+// or empty strings when no context is active. A missing context file means
+// no context. A file that cannot be read or parsed is an error, and so is an
+// unknown REFRESH_CONTEXT: treating either as "no context" would fall back to
+// the kubeconfig and retarget the command without a word.
+func ActiveContextCluster() (ctxName, cluster string, err error) {
+	f, err := cliconfig.Load()
+	if err != nil {
+		return "", "", err
 	}
 	name, ctx, ok, err := f.Active()
 	if err != nil || !ok {
@@ -177,15 +179,15 @@ func activeContextCluster() (ctxName, cluster string, err error) {
 
 // extractClusterFromKubeconfig extracts the cluster name from the current kubeconfig context.
 func extractClusterFromKubeconfig() (string, error) {
-	kubeconfig := os.Getenv("KUBECONFIG")
-	if kubeconfig == "" {
-		kubeconfig = os.ExpandEnv("$HOME/.kube/config")
+	// $KUBECONFIG is a list of files, like PATH: client-go's default rules
+	// merge them as kubectl does and skip entries that do not exist.
+	// Without it, the one file under $HOME must exist.
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if os.Getenv("KUBECONFIG") == "" {
+		rules = &clientcmd.ClientConfigLoadingRules{ExplicitPath: os.ExpandEnv("$HOME/.kube/config")}
 	}
 
-	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig},
-		&clientcmd.ConfigOverrides{},
-	)
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
 
 	rawConfig, err := clientConfig.RawConfig()
 	if err != nil {

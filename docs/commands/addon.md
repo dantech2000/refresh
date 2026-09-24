@@ -93,7 +93,9 @@ refresh addon describe [cluster] [addon] [flags]
 
 `describe` has the alias `get`. The add-on name may be the second positional or
 `--addon/-a`, and a unique case-insensitive substring is resolved against the
-installed add-ons.
+installed add-ons. If a `refresh` context is active and you pass one positional
+argument without `--cluster` or `--addon`, that argument is the add-on name, and
+the cluster comes from the context.
 
 ### Flags
 
@@ -109,6 +111,7 @@ installed add-ons.
 ```bash
 refresh addon describe my-cluster vpc-cni
 refresh addon describe my-cluster coredns -o json
+refresh addon describe vpc-cni        # in the active context's cluster
 ```
 
 ---

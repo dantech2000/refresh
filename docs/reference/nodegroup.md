@@ -76,10 +76,12 @@ refresh nodegroup describe [options] [cluster] [nodegroup]
 Show detailed information for one nodegroup: scaling config, instance
 type(s), AMI/release version and freshness, and (optionally) per-instance and
 workload placement details. The nodegroup name may be the second positional or
---nodegroup.
+--nodegroup. With an active context ('refresh use'), one positional is the
+nodegroup name.
 
   refresh nodegroup describe my-cluster ng-default
   refresh nodegroup describe my-cluster ng-default --show-instances --show-workloads
+  refresh nodegroup describe ng-default   # in the active context's cluster
 
 Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
 

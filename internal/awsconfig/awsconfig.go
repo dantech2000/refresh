@@ -6,6 +6,7 @@ package awsconfig
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -20,50 +21,79 @@ import (
 // Load returns an aws.Config with profile/region resolved from (in order):
 //
 //  1. CLI flags --profile / --region (if cmd is non-nil and they are set)
-//  2. Standard AWS env vars (AWS_PROFILE, AWS_REGION) — handled by SDK
+//  2. Standard AWS env vars (AWS_PROFILE, AWS_DEFAULT_PROFILE, AWS_REGION,
+//     AWS_DEFAULT_REGION), read by the SDK
 //  3. The active refresh context (from cliconfig)
 //  4. AWS SDK defaults (~/.aws/config, IMDS, etc.)
 //
 // CLI-supplied values always win so the user can override the active context
-// for a single invocation.
+// for a single invocation. The context applies as a unit: an env var may set
+// what the context leaves empty, but one that names a different profile or
+// region than the context is an error (see envConflict), so the context's
+// cluster never runs with half of its settings. An unreadable context file
+// and an unknown REFRESH_CONTEXT are errors too.
 func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 	var opts []func(*config.LoadOptions) error
 
 	profile := flagOrEmpty(cmd, "profile")
 	region := flagOrEmpty(cmd, "region")
-	profileFromFlag := profile != ""
-	regionFromFlag := region != ""
 
 	// Resolve the context even when both flags are set: a mistyped
-	// REFRESH_CONTEXT must fail every command the same way.
-	active, ok, err := activeContext()
+	// REFRESH_CONTEXT or a corrupt context file must fail every command the
+	// same way.
+	name, active, ok, err := activeContext()
 	if err != nil {
 		return aws.Config{}, err
 	}
-	if profile == "" || region == "" {
-		if ok {
-			if profile == "" && active.Profile != "" {
-				profile = active.Profile
+	if ok {
+		if profile == "" {
+			if err := envConflict(name, "profile", active.Profile, "AWS_PROFILE", "AWS_DEFAULT_PROFILE"); err != nil {
+				return aws.Config{}, err
 			}
-			if region == "" && active.Region != "" {
-				region = active.Region
+			profile = active.Profile
+		}
+		if region == "" {
+			if err := envConflict(name, "region", active.Region, "AWS_REGION", "AWS_DEFAULT_REGION"); err != nil {
+				return aws.Config{}, err
 			}
+			region = active.Region
 		}
 	}
 
-	// Flag-derived values always win. Context-derived values must NOT shadow
-	// explicit AWS_PROFILE/AWS_REGION env vars (the SDK resolves those itself):
-	// the documented precedence is flags > env vars > refresh context > SDK
-	// defaults, and silently overriding AWS_PROFILE with a saved context could
-	// point a mutating command at the wrong account.
-	if profile != "" && (profileFromFlag || os.Getenv("AWS_PROFILE") == "") {
+	// A flag value, or a context value that no env var contradicts.
+	if profile != "" {
 		opts = append(opts, config.WithSharedConfigProfile(profile))
 	}
-	if region != "" && (regionFromFlag || (os.Getenv("AWS_REGION") == "" && os.Getenv("AWS_DEFAULT_REGION") == "")) {
+	if region != "" {
 		opts = append(opts, config.WithRegion(region))
 	}
 
 	return config.LoadDefaultConfig(ctx, opts...)
+}
+
+// envConflict returns an error when the SDK would read setting from an env
+// var whose value differs from ctxValue, the value the active context saved.
+// envVars are in the SDK's order: the first non-empty one is the one it
+// reads. Letting the env var win would split the context (its cluster and
+// the other setting would run in an account or region it was not saved for);
+// letting the context win would ignore an explicit env var. So neither wins
+// silently.
+func envConflict(ctxName, setting, ctxValue string, envVars ...string) error {
+	if ctxValue == "" {
+		return nil
+	}
+	for _, env := range envVars {
+		v := strings.TrimSpace(os.Getenv(env))
+		if v == "" {
+			continue
+		}
+		if v == ctxValue {
+			return nil
+		}
+		return fmt.Errorf("%s=%s conflicts with %s %q of the active context %q; pass --%s for this command, unset %s, or switch contexts",
+			env, v, setting, ctxValue, ctxName, setting, env)
+	}
+	return nil
 }
 
 // SetFlagValues returns the values of the nearest flag called name that was
@@ -127,14 +157,14 @@ func flagOrEmpty(cmd *cli.Command, name string) string {
 	return ""
 }
 
-// activeContext returns the active refresh context. An unreadable context
-// file counts as no context; a REFRESH_CONTEXT naming no saved context is an
-// error, so a typo never silently targets the saved current context.
-func activeContext() (cliconfig.Context, bool, error) {
+// activeContext returns the active refresh context and its name. A missing
+// context file means no context. A file that cannot be read or parsed is an
+// error, and so is a REFRESH_CONTEXT naming no saved context: either would
+// otherwise silently drop the user's chosen target.
+func activeContext() (string, cliconfig.Context, bool, error) {
 	f, err := cliconfig.Load()
 	if err != nil {
-		return cliconfig.Context{}, false, nil //nolint:nilerr // an unreadable context file counts as no context, as before
+		return "", cliconfig.Context{}, false, err
 	}
-	_, ctx, ok, err := f.Active()
-	return ctx, ok, err
+	return f.Active()
 }
