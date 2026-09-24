@@ -14,8 +14,8 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
-	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // ErrNoVersionsFound is returned (wrapped) by GetAvailableVersions when the

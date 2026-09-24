@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
 
 	"github.com/dantech2000/refresh/internal/aws/awserr"
-	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // EC2 On-Demand Standard (A, C, D, H, I, M, R, T, Z) vCPU quota — the limit a

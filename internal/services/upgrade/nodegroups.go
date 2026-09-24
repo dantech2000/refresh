@@ -13,8 +13,8 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
-	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // NodegroupGate is a pre-flight check run before each nodegroup roll, after

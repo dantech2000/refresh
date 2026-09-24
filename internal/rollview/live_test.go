@@ -14,7 +14,7 @@ import (
 	"github.com/fatih/color"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // captureStdout runs fn and returns everything written to os.Stdout and to

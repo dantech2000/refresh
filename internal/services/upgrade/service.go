@@ -15,8 +15,8 @@ import (
 	"github.com/aws/smithy-go"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/services/addons"
-	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // defaultPollInterval is how often in-flight EKS updates are re-checked.

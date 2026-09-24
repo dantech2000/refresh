@@ -3,7 +3,7 @@ package cluster
 import (
 	"time"
 
-	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // Cache is the cluster service's TTL cache, backed by the shared
