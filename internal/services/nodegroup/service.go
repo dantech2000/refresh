@@ -172,17 +172,20 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 		return ListResult{}, err
 	}
 
-	clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
-		return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
-	})
-	if err != nil {
-		return ListResult{}, diag.WithOperation(diag.OpDescribeCluster,
-			awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName)))
+	k8sVersion := options.ClusterVersion
+	if k8sVersion == "" {
+		clusterDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+			return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
+		})
+		if err != nil {
+			return ListResult{}, diag.WithOperation(diag.OpDescribeCluster,
+				awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s for version info", clusterName)))
+		}
+		if clusterDesc.Cluster == nil {
+			return ListResult{}, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
+		}
+		k8sVersion = aws.ToString(clusterDesc.Cluster.Version)
 	}
-	if clusterDesc.Cluster == nil {
-		return ListResult{}, fmt.Errorf("empty DescribeCluster response for %s", clusterName)
-	}
-	k8sVersion := aws.ToString(clusterDesc.Cluster.Version)
 
 	nodegroupNames, err := awsinternal.ListAllPages(ctx, fmt.Sprintf("listing nodegroups for cluster %s", clusterName),
 		func(rc context.Context, token *string) (*eks.ListNodegroupsOutput, error) {
@@ -198,8 +201,12 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 	}
 
 	// The latest AMI is constant per (nodegroup version, AMI type); memoize
-	// the SSM lookup across the (concurrent) per-nodegroup work.
-	latestAMI := s.newLatestAMICache()
+	// the SSM lookup across the (concurrent) per-nodegroup work, and across
+	// clusters when the caller shares a cache.
+	latestAMI := options.LatestAMI
+	if latestAMI == nil {
+		latestAMI = s.NewLatestAMICache()
+	}
 
 	// Measured Kubernetes Ready counts per nodegroup, fetched once (one node
 	// LIST) when a cluster-connected health checker is wired (--check-readiness).
@@ -319,11 +326,11 @@ func minorBehind(v, ref string) bool {
 	return vMaj < rMaj || (vMaj == rMaj && vMin < rMin)
 }
 
-// newLatestAMICache returns a concurrency-safe, memoized resolver for the
+// NewLatestAMICache returns a concurrency-safe, memoized resolver for the
 // latest recommended AMI per (Kubernetes version, AMI type). Callers key it by
 // the nodegroup's own version: an AMI-only update keeps the nodegroup on its
 // current minor, so the cluster's minor is the wrong baseline.
-func (s *ServiceImpl) newLatestAMICache() *awsinternal.LatestAMICache {
+func (s *ServiceImpl) NewLatestAMICache() *awsinternal.LatestAMICache {
 	if s.latestAMIFn != nil {
 		return awsinternal.NewLatestAMICache(s.latestAMIFn)
 	}
@@ -368,7 +375,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	ng := out.Nodegroup
 
 	currentAmiID := s.currentAMI(ctx, ng)
-	latestAmiID, lookupErr := s.newLatestAMICache().ForNodegroup(ctx, ng, k8sVersion)
+	latestAmiID, lookupErr := s.NewLatestAMICache().ForNodegroup(ctx, ng, k8sVersion)
 	amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiID, latestAmiID)
 	if lookupErr != nil && !latestAMILookupMatters(ng) {
 		lookupErr = nil
