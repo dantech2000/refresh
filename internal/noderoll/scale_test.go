@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -302,6 +303,7 @@ func listOptionsOf(t *testing.T, a k8stesting.Action) metav1.ListOptions {
 // a reliable check here, because client-go's reflector starts helper
 // goroutines that Run does not wait for.)
 func TestStopInformers_WaitsForInformers(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
 	for range 2 {
 		obs := NewKubeObserver(client, ng, newAMI)

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 )
 
 func TestPromptReaderSequentialReadsShareBuffer(t *testing.T) {
@@ -34,6 +36,7 @@ func TestPromptReaderEOFWithoutNewline(t *testing.T) {
 }
 
 func TestPromptReaderCancel(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	r, w := io.Pipe()
 	t.Cleanup(func() { _ = w.Close() })
 	p := NewPromptReader(r)

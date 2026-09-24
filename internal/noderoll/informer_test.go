@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -134,6 +135,7 @@ func TestKubeObserver_InformerWarningsAndEviction(t *testing.T) {
 // TestStopInformers_Idempotent guards the teardown paths: stop without start,
 // double stop, and reads after stop (which must fall back to List calls).
 func TestStopInformers_Idempotent(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	ctx := context.Background()
 	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
 	obs := NewKubeObserver(client, ng, newAMI)

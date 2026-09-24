@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
+
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -175,9 +177,9 @@ func deadlineMoves(ctx context.Context) bool {
 
 // Ctrl+C (the signal context) still cancels a prompt under the API context.
 func TestAPIContextSignalCancelsPrompt(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	for _, timeout := range []time.Duration{time.Hour, 0} {
 		r, w := io.Pipe()
-		t.Cleanup(func() { _ = w.Close() })
 		p := ui.NewPromptReader(r)
 
 		signalCtx, stop := context.WithCancel(t.Context())
@@ -197,6 +199,10 @@ func TestAPIContextSignalCancelsPrompt(t *testing.T) {
 			t.Fatalf("timeout %v: ReadLine did not return after Ctrl+C", timeout)
 		}
 		cancel()
+		// Close now, not in t.Cleanup: the deferred leak check runs before
+		// cleanups, and a read that started before the cancel is still
+		// blocked on the pipe until it closes.
+		_ = w.Close()
 	}
 }
 
