@@ -131,21 +131,15 @@ func (s *Service) resolveSupport(ctx context.Context, version string) SupportPos
 		return SupportPosture{Tier: SupportUnknown}
 	}
 
-	s.supportMu.Lock()
-	if s.supportCache == nil {
-		s.supportCache = make(map[string]SupportPosture)
+	// Concurrent sweeps of clusters on the same version share one lookup.
+	posture, err := s.support.Get(ctx, version, func(ctx context.Context) (SupportPosture, error) {
+		return resolveSupportPosture(ctx, s.clusterAPI, version, s.clock()), nil
+	})
+	if err != nil {
+		// Only a waiter whose ctx ended gets here; resolveSupportPosture
+		// itself never fails, it falls back to the built-in table.
+		return fallbackPosture(version, s.clock())
 	}
-	if cached, ok := s.supportCache[version]; ok {
-		s.supportMu.Unlock()
-		return cached
-	}
-	s.supportMu.Unlock()
-
-	posture := resolveSupportPosture(ctx, s.clusterAPI, version, s.clock())
-
-	s.supportMu.Lock()
-	s.supportCache[version] = posture
-	s.supportMu.Unlock()
 	return posture
 }
 

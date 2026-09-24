@@ -4,16 +4,16 @@ package aws
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+
+	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // CurrentAmiID resolves the current AMI ID for a nodegroup.
@@ -164,9 +164,8 @@ type AMILookupFunc func(ctx context.Context, k8sVersion string, amiType types.AM
 // because its caller's ctx ended, waiters whose own ctx is still live retry
 // it, so one caller's cancellation can't fail the others.
 type LatestAMICache struct {
-	lookup  AMILookupFunc
-	mu      sync.Mutex
-	entries map[amiCacheKey]*amiCacheEntry
+	lookup AMILookupFunc
+	memo   common.Memo[amiCacheKey, string]
 }
 
 type amiCacheKey struct {
@@ -174,17 +173,9 @@ type amiCacheKey struct {
 	amiType types.AMITypes
 }
 
-// amiCacheEntry is one lookup, in flight until done is closed. value and err
-// are written before done is closed and read only after it.
-type amiCacheEntry struct {
-	done  chan struct{}
-	value string
-	err   error
-}
-
 // NewLatestAMICache returns a cache backed by lookup.
 func NewLatestAMICache(lookup AMILookupFunc) *LatestAMICache {
-	return &LatestAMICache{lookup: lookup, entries: make(map[amiCacheKey]*amiCacheEntry)}
+	return &LatestAMICache{lookup: lookup}
 }
 
 // NewLatestAMIIDCache returns a cache of LatestAmiIDForType lookups.
@@ -198,52 +189,9 @@ func NewLatestAMIIDCache(ssmClient *ssm.Client) *LatestAMICache {
 // result is shared by every later call; a failure is returned to the callers
 // that waited on it and then forgotten.
 func (c *LatestAMICache) Get(ctx context.Context, k8sVersion string, amiType types.AMITypes) (string, error) {
-	key := amiCacheKey{version: k8sVersion, amiType: amiType}
-	for {
-		c.mu.Lock()
-		e, ok := c.entries[key]
-		if !ok {
-			e = &amiCacheEntry{done: make(chan struct{})}
-			c.entries[key] = e
-			c.mu.Unlock()
-			return c.run(ctx, key, e)
-		}
-		c.mu.Unlock()
-
-		select {
-		case <-e.done:
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
-		if e.err == nil {
-			return e.value, nil
-		}
-		// The lookup failed because its owner's ctx ended, but ours is still
-		// live: look it up again instead of inheriting that cancellation.
-		if isContextErr(e.err) && ctx.Err() == nil {
-			continue
-		}
-		return "", e.err
-	}
-}
-
-// run performs the lookup for an entry the caller just registered. A failed
-// entry is removed before done is closed, so the next Get starts afresh.
-func (c *LatestAMICache) run(ctx context.Context, key amiCacheKey, e *amiCacheEntry) (string, error) {
-	defer close(e.done)
-	e.value, e.err = c.lookup(ctx, key.version, key.amiType)
-	if e.err != nil {
-		c.mu.Lock()
-		if c.entries[key] == e {
-			delete(c.entries, key)
-		}
-		c.mu.Unlock()
-	}
-	return e.value, e.err
-}
-
-func isContextErr(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	return c.memo.Get(ctx, amiCacheKey{version: k8sVersion, amiType: amiType}, func(ctx context.Context) (string, error) {
+		return c.lookup(ctx, k8sVersion, amiType)
+	})
 }
 
 // ForNodegroup returns the lookup result for the nodegroup's own Kubernetes

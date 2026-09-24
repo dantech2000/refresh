@@ -62,8 +62,23 @@ type Service struct {
 	// now is injectable for tests; nil means time.Now.
 	now func() time.Time
 
-	supportMu    sync.Mutex
-	supportCache map[string]SupportPosture
+	// Sweep-wide lookups shared by every cluster. The zero values work, so
+	// tests can build a Service without them.
+	support       common.Memo[string, SupportPosture]
+	addonVersions common.Memo[addonVersionsKey, addonVersions]
+	latestAMI     *awsinternal.LatestAMICache // nil: one cache per cluster
+}
+
+type addonVersionsKey struct {
+	addon, k8sVersion string
+}
+
+// addonVersions is one GetAvailableVersions answer. None records
+// ErrNoVersionsFound, which is an answer rather than a failure, so it is
+// memoized too.
+type addonVersions struct {
+	latest string
+	none   bool
 }
 
 // ListOptions controls cluster selection for a single-region status sweep.
@@ -84,12 +99,14 @@ func NewService(awsCfg aws.Config, logger *slog.Logger) *Service {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	eksClient := eks.NewFromConfig(awsCfg)
+	ngSvc := nodegroup.NewService(awsCfg, nil, logger)
 	return &Service{
 		region:     awsCfg.Region,
 		clusterAPI: eksClient,
-		nodegroups: nodegroup.NewService(awsCfg, nil, logger),
+		nodegroups: ngSvc,
 		addons:     addons.NewService(eksClient, logger),
 		ec2:        ec2.NewFromConfig(awsCfg),
+		latestAMI:  ngSvc.NewLatestAMICache(),
 	}
 }
 
@@ -236,10 +253,54 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 		cs.HealthIssues = len(cluster.Health.Issues)
 	}
 
-	ngs, ngErr := s.nodegroups.ListDetailed(ctx, name, nodegroup.ListOptions{})
+	// Nodegroups (then compute detection, which needs their count) and
+	// addons are independent: run them side by side so a cluster costs the
+	// slower of the two, not the sum. Each side fills its own fields and
+	// failures, merged below in a fixed order.
+	var (
+		ngSide    = ClusterStatus{Name: name, Region: s.region}
+		addonSide struct {
+			behind   AddonsBehindSummary
+			failures []diag.Failure
+			err      error
+		}
+		wg sync.WaitGroup
+	)
+	wg.Go(func() {
+		addonSide.behind, addonSide.failures, addonSide.err = s.addonsBehind(ctx, name, cs.Version)
+	})
+	s.assembleNodegroups(ctx, &ngSide, name, cluster, cs.Version)
+	wg.Wait()
+
+	cs.NodegroupCount = ngSide.NodegroupCount
+	cs.StaleAMI = ngSide.StaleAMI
+	cs.NodegroupsBehindControlPlane = ngSide.NodegroupsBehindControlPlane
+	cs.Compute = ngSide.Compute
+	for _, f := range ngSide.Failures {
+		s.addFailure(&cs, f)
+	}
+
+	if addonSide.err != nil {
+		s.fail(&cs, diag.KindCluster, name, "", addonSide.err)
+	}
+	for _, f := range addonSide.failures {
+		s.addFailure(&cs, f)
+	}
+	cs.AddonsBehind = addonSide.behind
+
+	return cs
+}
+
+// assembleNodegroups fills the nodegroup fields and compute type of cs (a
+// scratch row owned by the caller's goroutine) for one described cluster.
+func (s *Service) assembleNodegroups(ctx context.Context, cs *ClusterStatus, name string, cluster *ekstypes.Cluster, version string) {
+	ngs, ngErr := s.nodegroups.ListDetailed(ctx, name, nodegroup.ListOptions{
+		ClusterVersion: version,
+		LatestAMI:      s.latestAMI,
+	})
 	if ngErr != nil {
 		// The nodegroup service tags the error with the call that failed.
-		s.fail(&cs, diag.KindCluster, name, "", ngErr)
+		s.fail(cs, diag.KindCluster, name, "", ngErr)
 	} else {
 		// Failed nodegroups still exist: count them so compute detection
 		// isn't fooled, but their AMI posture is unknown, so flag the row.
@@ -252,26 +313,14 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 			// Advisory in `nodegroup list`, but here an unknown AMI status
 			// makes the STALE AMI count incomplete.
 			if ng.AMILookupFailure != nil {
-				s.addFailure(&cs, *ng.AMILookupFailure)
+				s.addFailure(cs, *ng.AMILookupFailure)
 			}
 		}
 		for _, f := range ngs.Failures {
-			s.addFailure(&cs, f)
+			s.addFailure(cs, f)
 		}
 	}
-
 	cs.Compute = s.detectCompute(ctx, name, cluster, cs.NodegroupCount)
-
-	behind, addonFailures, addErr := s.addonsBehind(ctx, name, cs.Version)
-	if addErr != nil {
-		s.fail(&cs, diag.KindCluster, name, "", addErr)
-	}
-	for _, f := range addonFailures {
-		s.addFailure(&cs, f)
-	}
-	cs.AddonsBehind = behind
-
-	return cs
 }
 
 // staleAMISummary counts outdated nodegroup AMIs and, best-effort, the age of
@@ -339,32 +388,70 @@ func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) 
 	}
 	summary := AddonsBehindSummary{Total: len(res.Summaries) + len(res.Failures)}
 	failures := res.Failures
-	for _, a := range res.Summaries {
-		// Comparing "" would count the addon as behind.
-		if a.Version == "" {
-			f := diag.New(diag.KindAddon, a.Name, diag.ReasonUnknown, "DescribeAddon returned no installed version")
-			f.Operation = diag.OpDescribeAddon
-			failures = append(failures, f)
-			continue
-		}
-		avail, verr := s.addons.GetAvailableVersions(ctx, a.Name, k8sVersion)
-		if errors.Is(verr, addons.ErrNoVersionsFound) {
-			continue // no compatible version published — nothing to compare
-		}
-		if verr != nil {
-			failures = append(failures, diag.FromError(diag.KindAddon, a.Name, diag.OpDescribeAddonVersions, verr))
-			continue
-		}
-		if len(avail) == 0 {
-			continue // defensive: treat like ErrNoVersionsFound
-		}
-		latest := avail[0].Version
-		if addons.CompareVersions(a.Version, latest) < 0 {
+
+	// One version lookup per addon, run in parallel. Each result is shared
+	// with every other cluster on the same Kubernetes version.
+	type check struct {
+		done    bool // false for addons ForEachParallel never dispatched
+		behind  bool
+		failure *diag.Failure
+	}
+	checks := common.ForEachParallel(ctx, res.Summaries, common.DefaultItemConcurrency,
+		func(fctx context.Context, a addons.AddonSummary) check {
+			// Comparing "" would count the addon as behind.
+			if a.Version == "" {
+				f := diag.New(diag.KindAddon, a.Name, diag.ReasonUnknown, "DescribeAddon returned no installed version")
+				f.Operation = diag.OpDescribeAddon
+				return check{done: true, failure: &f}
+			}
+			avail, verr := s.latestAddonVersion(fctx, a.Name, k8sVersion)
+			if verr != nil {
+				f := diag.FromError(diag.KindAddon, a.Name, diag.OpDescribeAddonVersions, verr)
+				return check{done: true, failure: &f}
+			}
+			if avail.none {
+				return check{done: true} // no compatible version published — nothing to compare
+			}
+			return check{done: true, behind: addons.CompareVersions(a.Version, avail.latest) < 0}
+		})
+	for i, c := range checks {
+		a := res.Summaries[i]
+		switch {
+		case !c.done:
+			// The sweep was cancelled before this addon was checked; an
+			// unchecked addon must not read as up to date.
+			cause := context.Cause(ctx)
+			if cause == nil {
+				cause = errors.New("sweep stopped early")
+			}
+			failures = append(failures, diag.FromError(diag.KindAddon, a.Name, diag.OpDescribeAddonVersions, cause))
+		case c.failure != nil:
+			failures = append(failures, *c.failure)
+		case c.behind:
 			summary.Behind++
 			summary.Names = append(summary.Names, a.Name)
 		}
 	}
 	return summary, failures, nil
+}
+
+// latestAddonVersion returns the newest version of addon compatible with
+// k8sVersion, memoized for the sweep.
+func (s *Service) latestAddonVersion(ctx context.Context, addon, k8sVersion string) (addonVersions, error) {
+	return s.addonVersions.Get(ctx, addonVersionsKey{addon: addon, k8sVersion: k8sVersion},
+		func(ctx context.Context) (addonVersions, error) {
+			avail, err := s.addons.GetAvailableVersions(ctx, addon, k8sVersion)
+			if errors.Is(err, addons.ErrNoVersionsFound) {
+				return addonVersions{none: true}, nil
+			}
+			if err != nil {
+				return addonVersions{}, err
+			}
+			if len(avail) == 0 {
+				return addonVersions{none: true}, nil // defensive: treat like ErrNoVersionsFound
+			}
+			return addonVersions{latest: avail[0].Version}, nil
+		})
 }
 
 // karpenterTagKeys are the EC2 instance tags Karpenter sets on the nodes it

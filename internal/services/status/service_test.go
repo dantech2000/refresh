@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,9 +22,15 @@ import (
 type fakeNodegroups struct {
 	byCluster map[string][]nodegroup.NodegroupSummary
 	failures  map[string][]diag.Failure
+	// noVersion counts calls that did not pass the cluster version, so
+	// ListDetailed would describe the cluster a second time.
+	noVersion atomic.Int64
 }
 
-func (f *fakeNodegroups) ListDetailed(_ context.Context, cluster string, _ nodegroup.ListOptions) (nodegroup.ListResult, error) {
+func (f *fakeNodegroups) ListDetailed(_ context.Context, cluster string, opts nodegroup.ListOptions) (nodegroup.ListResult, error) {
+	if opts.ClusterVersion == "" {
+		f.noVersion.Add(1)
+	}
 	return nodegroup.ListResult{Summaries: f.byCluster[cluster], Failures: f.failures[cluster]}, nil
 }
 
@@ -44,6 +51,8 @@ type fakeAddons struct {
 	// error (throttling, AccessDenied, network), as the real service does
 	// once its retries give up.
 	versionErr map[string]error
+	// versionCalls counts GetAvailableVersions calls.
+	versionCalls atomic.Int64
 }
 
 func (f *fakeAddons) ListDetailed(_ context.Context, cluster string, _ addons.ListOptions) (addons.ListResult, error) {
@@ -55,6 +64,7 @@ func (f *fakeAddons) ListDetailed(_ context.Context, cluster string, _ addons.Li
 // with a nil error), and versions come back sorted newest first whatever
 // order the fixture lists them in.
 func (f *fakeAddons) GetAvailableVersions(_ context.Context, addonName, _ string) ([]addons.AddonVersionInfo, error) {
+	f.versionCalls.Add(1)
 	if err := f.versionErr[addonName]; err != nil {
 		return nil, fmt.Errorf("describing addon versions: %w", err)
 	}

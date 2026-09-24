@@ -6,6 +6,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/types"
 )
@@ -13,6 +14,14 @@ import (
 // ListOptions controls nodegroup listing behavior
 type ListOptions struct {
 	Filters map[string]string `json:"filters"`
+
+	// ClusterVersion is the cluster's Kubernetes version when the caller
+	// already described the cluster; set, it skips ListDetailed's own
+	// DescribeCluster.
+	ClusterVersion string `json:"-" yaml:"-"`
+	// LatestAMI shares latest-AMI lookups across ListDetailed calls (a fleet
+	// sweep over many clusters). Nil means a cache for this call only.
+	LatestAMI *awsinternal.LatestAMICache `json:"-" yaml:"-"`
 }
 
 // DescribeOptions controls describe behavior for nodegroups
