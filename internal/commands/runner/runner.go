@@ -129,10 +129,13 @@ func SetupAWSWithDeadline(ctx context.Context, cmd *cli.Command, timeout time.Du
 // Every subcommand that declares its own --region slice must read it through
 // this helper (status, cluster list, nodegroup update --all-clusters).
 func Regions(cmd *cli.Command, allRegions bool) []string {
+	// Read the local flag itself: SetFlagValues would fall through to the
+	// global --region when every local value is blank, and a sweep would
+	// then scan only the home region.
 	var local []string
 	for _, f := range cmd.Flags {
 		if slices.Contains(f.Names(), "region") && f.IsSet() {
-			local = awsconfig.SetFlagValues(cmd, "region")
+			local = awsconfig.FlagValues(f)
 			break
 		}
 	}

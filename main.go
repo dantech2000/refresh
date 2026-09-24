@@ -193,6 +193,10 @@ func colorDisabled(args []string) bool {
 		return true
 	}
 	for _, a := range args {
+		// urfave/cli classifies a token after trimming spaces, and reads a
+		// bool flag with an empty "=" value as true. Match both, so help
+		// printed before Before runs honors every --no-color urfave sees.
+		a = strings.TrimSpace(a)
 		if a == "--" {
 			break
 		}
@@ -200,7 +204,7 @@ func colorDisabled(args []string) bool {
 		if !strings.HasPrefix(a, "-") || name != "no-color" {
 			continue
 		}
-		if !hasVal {
+		if !hasVal || val == "" {
 			return true
 		}
 		if b, err := strconv.ParseBool(val); err == nil && b {
