@@ -333,7 +333,7 @@ func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 	if ui.PlainOutput() {
 		results := []addons.AddonUpdateResult{*result}
-		writeUpdateIssues(ui.Stderr, results)
+		writeUpdateIssues(ui.Stderr, results, false)
 		addonUpdatePlain(results).Render()
 		return updateExitError(result, updateErr)
 	}
@@ -526,6 +526,9 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) (err error) {
 		if err != nil {
 			return err
 		}
+		// The table and plain views show each status on stdout; with
+		// -o json/yaml, stderr names every add-on that needs a look.
+		writeUpdateIssues(ui.Stderr, results, true)
 		return updateAllFailureError(ctx, results)
 	}
 	if err := outputUpdateAllResults(clusterName, results, options.DryRun); err != nil {
