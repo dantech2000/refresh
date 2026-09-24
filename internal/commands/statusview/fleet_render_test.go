@@ -94,7 +94,7 @@ func TestFleetLines_Pretty(t *testing.T) {
 
 	// Footer aggregates and the next-step hint point at the worst cluster.
 	mustContain(t, joined, "3 clusters · 5 stale nodegroups · 3 addons behind · 1 extended/unsupported")
-	mustContain(t, joined, "refresh cluster upgrade-check -c data-eu")
+	mustContain(t, joined, "refresh cluster upgrade-check -c data-eu -r eu-central-1")
 }
 
 func TestFleetLines_ASCIIFallback(t *testing.T) {
@@ -305,4 +305,56 @@ func TestOutputFleetPlain_Contract(t *testing.T) {
 		}
 		rest = rest[i+len(h):]
 	}
+}
+
+// An Auto Mode cluster can also run managed nodegroups. Their stale AMIs
+// count in the footer and make status exit 2, so the row shows them instead
+// of "n/a", and COMPUTE names the nodegroups.
+func TestFleetLines_AutoModeWithNodegroupsShowsStaleAMI(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	fleet := []statussvc.ClusterStatus{{
+		Name: "auto", Region: "us-west-2", Version: "1.33",
+		Support:        statussvc.SupportPosture{Tier: statussvc.SupportStandard, DaysRemaining: iptr(100)},
+		Compute:        statussvc.ComputeAutoMode,
+		NodegroupCount: 2,
+		StaleAMI:       statussvc.StaleAMISummary{Total: 2, Behind: 1, OldestDays: iptr(30)},
+	}}
+	joined := strings.Join(fleetLines(th, fleet, nil, 0), "\n")
+	mustContain(t, joined, "Auto Mode + 2 nodegroups")
+	mustContain(t, joined, "▲ 1/2 (30d)")
+	mustContain(t, joined, "1 stale nodegroups")
+
+	rows := plaintest.Check(t, fleetPlainOut(t, fleet), fleetPlainHeaders...)
+	if got := rows[0][4:6]; got[0] != "Auto Mode + 2 nodegroups" || got[1] != "1/2 (30d)" {
+		t.Errorf("plain COMPUTE, STALE AMI = %q, want [Auto Mode + 2 nodegroups 1/2 (30d)]", got)
+	}
+
+	// One nodegroup reads in the singular.
+	fleet[0].NodegroupCount = 1
+	if got := computeCell(fleet[0]); got != "Auto Mode + 1 nodegroup" {
+		t.Errorf("Auto Mode with one nodegroup: COMPUTE = %q, want Auto Mode + 1 nodegroup", got)
+	}
+
+	// Without nodegroups, Auto Mode has no AMIs of its own to report.
+	fleet[0].NodegroupCount, fleet[0].StaleAMI = 0, statussvc.StaleAMISummary{}
+	if got := staleAMICell(fleet[0]); got != "n/a" {
+		t.Errorf("Auto Mode without nodegroups: STALE AMI = %q, want n/a", got)
+	}
+	if got := computeCell(fleet[0]); got != "Auto Mode" {
+		t.Errorf("Auto Mode without nodegroups: COMPUTE = %q, want Auto Mode", got)
+	}
+}
+
+// The next-step hint names the cluster's region, so it works after
+// "status -A" for a cluster outside the default region.
+func TestFleetLines_HintNamesRegion(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	fleet := []statussvc.ClusterStatus{{
+		Name: "far", Region: "ap-southeast-2", Version: "1.33",
+		Support:      statussvc.SupportPosture{Tier: statussvc.SupportStandard, DaysRemaining: iptr(100)},
+		Compute:      statussvc.ComputeManaged,
+		AddonsBehind: statussvc.AddonsBehindSummary{Total: 1, Behind: 1, Names: []string{"coredns"}},
+	}}
+	joined := strings.Join(fleetLines(th, fleet, nil, 0), "\n")
+	mustContain(t, joined, "refresh cluster upgrade-check -c far -r ap-southeast-2")
 }

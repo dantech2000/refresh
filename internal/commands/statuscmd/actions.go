@@ -26,6 +26,9 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsStandard); err != nil {
 		return err
 	}
+	if err := validateSort(cmd.String("sort")); err != nil {
+		return err
+	}
 	ctx, cancel, awsCfg, err := runner.SetupAWS(ctx, cmd)
 	if err != nil {
 		return err
@@ -257,6 +260,19 @@ func exitForStatuses(statuses []statussvc.ClusterStatus, failures []diag.Failure
 	default:
 		return runner.IncompleteExit(failures)
 	}
+}
+
+// sortKeys are the accepted --sort values; "cluster" is the default.
+var sortKeys = []string{"cluster", "region", "version", "support", "stale"}
+
+// validateSort rejects an unknown --sort key before any AWS call, so a typo
+// never silently sorts by cluster. Case and surrounding space are ignored.
+func validateSort(key string) error {
+	k := strings.ToLower(strings.TrimSpace(key))
+	if k == "" || slices.Contains(sortKeys, k) {
+		return nil
+	}
+	return fmt.Errorf("invalid --sort %q (valid: %s)", key, strings.Join(sortKeys, ", "))
 }
 
 func sortStatuses(statuses []statussvc.ClusterStatus, key string, desc bool) {

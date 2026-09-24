@@ -60,7 +60,7 @@ func fleetDataColumns() []ui.Column {
 		{Title: "REGION", Min: 6},
 		{Title: "VERSION", Min: 7},
 		{Title: "SUPPORT", Min: 10, Max: 34},
-		{Title: "COMPUTE", Min: 8, Max: 22},
+		{Title: "COMPUTE", Min: 8, Max: 26},
 		{Title: "STALE AMI", Min: 6},
 		{Title: "ADDONS", Min: 6, Max: 26},
 		{Title: "HEALTH", Min: 6},
@@ -161,7 +161,7 @@ func computePretty(th *render.Theme, c statussvc.ClusterStatus) string {
 	case statussvc.ComputeManaged:
 		return th.Paint(th.Pal.Dim, fmt.Sprintf("%d nodegroups", c.NodegroupCount))
 	case statussvc.ComputeAutoMode:
-		return th.Paint(th.Pal.Teal, "Auto Mode")
+		return th.Paint(th.Pal.Teal, autoModeText(c))
 	case statussvc.ComputeKarpenter:
 		return th.Paint(th.Pal.Teal, "Karpenter")
 	default:
@@ -170,7 +170,7 @@ func computePretty(th *render.Theme, c statussvc.ClusterStatus) string {
 }
 
 func stalePretty(th *render.Theme, c statussvc.ClusterStatus) string {
-	if c.Compute != statussvc.ComputeManaged {
+	if !hasNodegroupAMIs(c) {
 		return th.Paint(th.Pal.Dim, "n/a")
 	}
 	if c.StaleAMI.Behind == 0 && c.NodegroupsBehindControlPlane == 0 {
@@ -258,7 +258,7 @@ func footerPretty(th *render.Theme, statuses []statussvc.ClusterStatus, elapsed 
 }
 
 // hintLine points at the most urgent cluster (a failure first, else a warning)
-// with the command to dig in.
+// with the command to dig in, in that cluster's region.
 func hintLine(th *render.Theme, statuses []statussvc.ClusterStatus) string {
 	var worst *statussvc.ClusterStatus
 	for i := range statuses {
@@ -293,5 +293,16 @@ func hintLine(th *render.Theme, statuses []statussvc.ClusterStatus) string {
 	name := nameOr(*worst)
 	return th.Glyph(st) + " " + th.Paint(th.Pal.White, name) +
 		th.Paint(th.Pal.Dim, " "+reason+" → ") +
-		th.Paint(th.Pal.Blue, "refresh cluster upgrade-check -c "+name)
+		th.Paint(th.Pal.Blue, upgradeCheckCommand(*worst))
+}
+
+// upgradeCheckCommand is the hint's command for one cluster. It names the
+// cluster's region: after a multi-region sweep the cluster may not be in the
+// default region, and upgrade-check would not find it there.
+func upgradeCheckCommand(c statussvc.ClusterStatus) string {
+	cmd := "refresh cluster upgrade-check -c " + nameOr(c)
+	if c.Region != "" {
+		cmd += " -r " + c.Region
+	}
+	return cmd
 }

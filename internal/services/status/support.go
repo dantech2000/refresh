@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -222,10 +223,10 @@ func classifySupport(standardEnd, extendedEnd, now time.Time, fallback bool) Sup
 	switch {
 	case !standardEnd.IsZero() && now.Before(standardEnd):
 		posture.Tier = SupportStandard
-		posture.DaysRemaining = daysBetween(now, standardEnd)
+		posture.DaysRemaining = daysLeft(now, standardEnd)
 	case !extendedEnd.IsZero() && now.Before(extendedEnd):
 		posture.Tier = SupportExtended
-		posture.DaysRemaining = daysBetween(now, extendedEnd)
+		posture.DaysRemaining = daysLeft(now, extendedEnd)
 		posture.ExtraCostUSDPerHour = extendedSupportPremiumUSDPerHour
 	case !standardEnd.IsZero() || !extendedEnd.IsZero():
 		posture.Tier = SupportUnsupported
@@ -235,7 +236,16 @@ func classifySupport(standardEnd, extendedEnd, now time.Time, fallback bool) Sup
 	return posture
 }
 
+// daysBetween is the whole days elapsed from from to to (an age: 23h is 0d).
 func daysBetween(from, to time.Time) *int {
 	d := int(to.Sub(from).Hours() / 24)
+	return &d
+}
+
+// daysLeft counts the days remaining until end, rounding a partial day up:
+// a window with 23h left shows 1d, not 0d. It is only called while now is
+// before end, so the result is at least 1.
+func daysLeft(now, end time.Time) *int {
+	d := int(math.Ceil(end.Sub(now).Hours() / 24))
 	return &d
 }
