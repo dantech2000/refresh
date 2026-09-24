@@ -1,12 +1,18 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/fatih/color"
 
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -28,6 +34,35 @@ func ReportSkippedRegions(w io.Writer, skipped []string) {
 	}
 	_, _ = fmt.Fprintln(w, ui.ColorFor(w, color.FgYellow).Sprintf("Skipped %d region(s) not accessible to these credentials: %s (%s)",
 		len(skipped), strings.Join(skipped, ", "), RegionScopeHint))
+}
+
+// NoRegionAnswered explains a region sweep in which no region answered.
+// Command setup only resolves credentials and makes no STS call, so keys that
+// resolve but are invalid or expired reach the sweep, and each region rejects
+// them with the same codes as a region closed to the account
+// (UnrecognizedClientException, InvalidClientTokenId). skipped holds the
+// regions the sweep skipped as closed, and failed the regions that failed.
+//
+// When a region was skipped or failed as unavailable, it asks STS once and
+// returns the credential error (with the setup help) if STS reports one. It
+// returns nil otherwise (valid credentials, another failure, ctx done), and
+// the caller reports its own error.
+func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, failed []diag.Failure) error {
+	lookalike := len(skipped) > 0 || slices.ContainsFunc(failed, func(f diag.Failure) bool {
+		return f.Reason == diag.ReasonRegionUnavailable
+	})
+	select {
+	case <-ctx.Done():
+		return nil // interrupted or out of time: the caller's error says so
+	default:
+	}
+	if !lookalike {
+		return nil
+	}
+	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil && awserr.IsCredentialError(err) {
+		return err
+	}
+	return nil
 }
 
 // TableListsFailures reports whether the output format is a human view

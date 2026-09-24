@@ -277,7 +277,7 @@ func TestGatherFleet_ExplicitRegionsKeepFailures(t *testing.T) {
 		t.Errorf("stderr has %d lines, want one per failed region:\n%s", n, buf.String())
 	}
 	// ap-south-1 is not enabled for the account: RegionUnavailable, not a
-	// credential problem, because the credentials already passed STS.
+	// credential problem, because another region answered.
 	if !strings.Contains(buf.String(), "warning: region ap-south-1: RegionUnavailable: UnrecognizedClientException") {
 		t.Errorf("stderr lacks the RegionUnavailable line:\n%s", buf.String())
 	}

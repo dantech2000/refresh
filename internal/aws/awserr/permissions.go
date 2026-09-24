@@ -17,7 +17,7 @@ const PermissionsDocURL = "https://drod.dev/refresh/concepts/configuration/#requ
 // docs/concepts/configuration.md matches it row for row and that every AWS
 // API call in the code appears in it.
 var RequiredPermissions = []Permission{
-	{[]string{"sts:GetCallerIdentity"}, "Every AWS command (credential check)"},
+	{[]string{"sts:GetCallerIdentity"}, "Region sweeps in which no region answered (credential check)"},
 	{[]string{"eks:ListClusters"}, "`status`, `cluster list`, `nodegroup update --all-clusters`, partial cluster names"},
 	{[]string{"eks:DescribeCluster"}, "Every cluster command"},
 	{[]string{"eks:ListNodegroups", "eks:DescribeNodegroup"}, "`status`, `nodegroup *`, `cluster describe`/`upgrade-check`/`upgrade`, health checks"},

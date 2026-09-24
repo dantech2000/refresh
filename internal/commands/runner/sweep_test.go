@@ -2,8 +2,13 @@ package runner
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+
+	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -28,5 +33,46 @@ func TestTableListsFailures(t *testing.T) {
 		if got := TableListsFailures(format); got != want {
 			t.Errorf("TableListsFailures(%q) = %v, want %v", format, got, want)
 		}
+	}
+}
+
+// NoRegionAnswered asks STS only when a region looked closed, and returns
+// the credential error only when STS rejects the credentials.
+func TestNoRegionAnswered(t *testing.T) {
+	unavailable := []diag.Failure{{Kind: diag.KindRegion, Name: "us-east-1", Reason: diag.ReasonRegionUnavailable}}
+	throttled := []diag.Failure{{Kind: diag.KindRegion, Name: "us-east-1", Reason: diag.ReasonThrottled}}
+	for _, tc := range []struct {
+		name     string
+		badCreds bool
+		skipped  []string
+		failed   []diag.Failure
+		wantErr  bool
+		stsCalls int
+	}{
+		{name: "skipped, bad credentials", badCreds: true, skipped: []string{"us-east-1"}, wantErr: true, stsCalls: 1},
+		{name: "unavailable, bad credentials", badCreds: true, failed: unavailable, wantErr: true, stsCalls: 1},
+		{name: "skipped, valid credentials", skipped: []string{"us-east-1"}, stsCalls: 1},
+		{name: "throttled only", badCreds: true, failed: throttled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeaws.New(t)
+			if tc.badCreds {
+				srv.FailCredentials("InvalidClientTokenId")
+			}
+			cfg, err := config.LoadDefaultConfig(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = NoRegionAnswered(t.Context(), cfg, tc.skipped, tc.failed)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "AWS credentials not configured or invalid") {
+				t.Errorf("err lacks the credential help:\n%v", err)
+			}
+			if n := len(srv.Calls()); n != tc.stsCalls {
+				t.Errorf("AWS calls = %d, want %d: %v", n, tc.stsCalls, srv.Calls())
+			}
+		})
 	}
 }

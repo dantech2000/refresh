@@ -261,6 +261,9 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 		return discoveryStopError(ctx, err, flags.timeout)
 	}
 	if err := checkDiscovery(len(regions), disc); err != nil {
+		if cerr := runner.NoRegionAnswered(ctx, awsCfg, disc.skipped, disc.failed); cerr != nil {
+			return cerr
+		}
 		runner.WriteFailures(flags.format, os.Stdout, fleetStderr, disc.failed)
 		return err
 	}

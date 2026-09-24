@@ -209,8 +209,10 @@ func New(tb testing.TB, clusters ...*Cluster) *Server {
 	return s
 }
 
-// FailCredentials makes STS GetCallerIdentity fail with the given API error
-// code (for example "InvalidClientTokenId"), as with bad credentials.
+// FailCredentials rejects the credentials, as AWS does with revoked or
+// mistyped keys: STS fails with the given API error code (for example
+// "InvalidClientTokenId"), and every EKS call with
+// UnrecognizedClientException.
 func (s *Server) FailCredentials(code string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -269,6 +271,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case "sts":
 		s.serveSTS(w)
 	case "eks":
+		if s.stsError != "" {
+			writeError(w, http.StatusForbidden, "UnrecognizedClientException", "The security token included in the request is invalid.")
+			return
+		}
 		if s.regionError != nil {
 			if code := s.regionError(region); code != "" {
 				writeError(w, http.StatusForbidden, code, "fakeaws: region "+region+" answers "+code)

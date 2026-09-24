@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/urfave/cli/v3"
@@ -88,7 +89,7 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 	var summaries []clustersvc.ClusterSummary
 	var regionFailures []diag.Failure
 	if allRegions || len(regions) > 0 {
-		summaries, regionFailures, err = runMultiRegionListWithProgress(ctx, clusterService, options)
+		summaries, regionFailures, err = runMultiRegionListWithProgress(ctx, awsCfg, clusterService, options)
 	} else {
 		err = runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
 			var lerr error
@@ -257,7 +258,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 // runMultiRegionListWithProgress returns the gathered clusters and one
 // failure per region that could not be listed, and writes the skipped-region
 // notice. It fails only when no region answered.
-func runMultiRegionListWithProgress(ctx context.Context, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, []diag.Failure, error) {
+func runMultiRegionListWithProgress(ctx context.Context, awsCfg aws.Config, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, []diag.Failure, error) {
 	spinner := ui.NewFunSpinnerForCategory("cluster")
 	if err := spinner.Start(); err != nil {
 		return nil, nil, fmt.Errorf("failed to start spinner: %w", err)
@@ -268,6 +269,9 @@ func runMultiRegionListWithProgress(ctx context.Context, clusterService *cluster
 	if err != nil {
 		spinner.Stop()
 		runner.ReportSkippedRegions(ui.Stderr, res.Skipped)
+		if cerr := runner.NoRegionAnswered(ctx, awsCfg, res.Skipped, res.Failed); cerr != nil {
+			return nil, nil, cerr
+		}
 		return nil, nil, err
 	}
 
