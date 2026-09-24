@@ -224,13 +224,13 @@ func TestUpdateDryRun_DescribeFailureIsAFailure(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			fakeaws.New(t, prodCluster(
 				&fakeaws.Nodegroup{Name: "web", Version: "1.31"},
-				&fakeaws.Nodegroup{Name: "api", Version: "1.31", DescribeNodegroupError: "ThrottlingException"},
+				&fakeaws.Nodegroup{Name: "api", Version: "1.31", DescribeNodegroupError: "AccessDeniedException"},
 			))
 			stdout, stderr, err := runNodegroup(t, "update", "prod", "--dry-run", "-o", format)
 			if code := exitCodeOf(err); code != 4 {
 				t.Fatalf("exit code = %d (err %v), want 4\nstderr:\n%s", code, err, stderr)
 			}
-			const text = "nodegroup prod/api (us-east-1): Throttled: ThrottlingException: fake DescribeNodegroup failure for api"
+			const text = "nodegroup prod/api (us-east-1): AccessDenied: AccessDeniedException: fake DescribeNodegroup failure for api"
 			if format != "json" {
 				requireTableFailure(t, stdout, stderr, text)
 				return
@@ -241,7 +241,7 @@ func TestUpdateDryRun_DescribeFailureIsAFailure(t *testing.T) {
 			if ngs["api"]["action"] != "Unknown" || ngs["web"]["action"] != "Update" {
 				t.Errorf("actions: api=%v web=%v, want unknown/update", ngs["api"]["action"], ngs["web"]["action"])
 			}
-			want := failureWant{kind: "Nodegroup", name: "api", cluster: "prod", reason: "Throttled", operation: "eks:DescribeNodegroup", retryable: true, checkRetryable: true}
+			want := failureWant{kind: "Nodegroup", name: "api", cluster: "prod", reason: "AccessDenied", operation: "eks:DescribeNodegroup", retryable: false, checkRetryable: true}
 			want.check(t, "api.failure", ngs["api"]["failure"])
 			want.check(t, "failures[0]", onlyFailure(t, doc))
 		})

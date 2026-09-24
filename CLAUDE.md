@@ -208,6 +208,9 @@ with no AWS.
   `internal/commands/exitcodes.go`; a test walks the CLI tree and fails without it.
 - **AWS calls:** wrap in `common.WithRetry`; format errors with `awsinternal.FormatAWSError`
   (or `awserr.FormatAWSError` below `internal/ui`); page list calls with `ListAllPages`.
+  `TestAWSCallsAreRetried` (`internal/common/awscall_guard_test.go`) fails on an SDK operation
+  call outside a `WithRetry` or `ListAllPages` function literal, unless its function is in
+  that test's commented allowlist (status polls that already poll through transient errors).
   Set `ClientRequestToken: aws.String(common.IdempotencyToken())` on mutating calls (Update*).
   New IAM actions go in `RequiredPermissions` (`awserr/permissions.go`) and in the IAM table in
   `docs/concepts/configuration.md`; a test fails if the two differ or if code calls an

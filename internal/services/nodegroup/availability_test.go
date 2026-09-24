@@ -7,15 +7,30 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+
+	"github.com/dantech2000/refresh/internal/mocks"
 )
 
 // fakeOfferingsAPI serves subnet→AZ mappings and per-instance-type offered AZs.
 type fakeOfferingsAPI struct {
 	subnetAZ map[string]string   // subnetID → AZ
 	offered  map[string][]string // instanceType → AZs offering it
+
+	subnetErrs  []error // returned by the first DescribeSubnets calls, in order
+	subnetCalls int
+	nilSubnets  bool // DescribeSubnets answers (nil, nil)
 }
 
 func (f *fakeOfferingsAPI) DescribeSubnets(_ context.Context, in *ec2.DescribeSubnetsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
+	f.subnetCalls++
+	if len(f.subnetErrs) > 0 {
+		err := f.subnetErrs[0]
+		f.subnetErrs = f.subnetErrs[1:]
+		return nil, err
+	}
+	if f.nilSubnets {
+		return nil, nil
+	}
 	out := &ec2.DescribeSubnetsOutput{}
 	for _, id := range in.SubnetIds {
 		if az, ok := f.subnetAZ[id]; ok {
@@ -86,5 +101,31 @@ func TestCheckInstanceTypeAvailability_NoInstanceTypes(t *testing.T) {
 	got, err := checkInstanceTypeAvailability(context.Background(), api, nil, []string{"subnet-a"})
 	if err != nil || got != nil {
 		t.Errorf("custom-LT nodegroup should be a no-op, got %v / %v", got, err)
+	}
+}
+
+// A throttled DescribeSubnets is retried, not reported as a failed check
+// (REF-173).
+func TestCheckInstanceTypeAvailability_RetriesThrottledSubnets(t *testing.T) {
+	api := &fakeOfferingsAPI{
+		subnetAZ:   map[string]string{"subnet-a": "us-east-1a"},
+		offered:    map[string][]string{"m6i.large": {"us-east-1a"}},
+		subnetErrs: []error{mocks.Throttling()},
+	}
+	got, err := checkInstanceTypeAvailability(context.Background(), api, []string{"m6i.large"}, []string{"subnet-a"})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("checkInstanceTypeAvailability() = %+v, %v; want no unavailable offerings after one retry", got, err)
+	}
+	if api.subnetCalls != 2 {
+		t.Errorf("DescribeSubnets calls = %d, want 2", api.subnetCalls)
+	}
+}
+
+// An empty DescribeSubnets response is no check, not a panic.
+func TestCheckInstanceTypeAvailability_NilSubnetsResponse(t *testing.T) {
+	api := &fakeOfferingsAPI{nilSubnets: true}
+	got, err := checkInstanceTypeAvailability(context.Background(), api, []string{"m6i.large"}, []string{"subnet-a"})
+	if err != nil || got != nil {
+		t.Errorf("checkInstanceTypeAvailability() = %v, %v; want nil, nil", got, err)
 	}
 }
