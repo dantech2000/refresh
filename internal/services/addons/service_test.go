@@ -368,7 +368,7 @@ func TestAddonUpdateResult(t *testing.T) {
 		NewVersion:      "v1.15.0",
 		UpdateID:        "update-123",
 		Status:          StatusInProgress,
-		StartedAt:       time.Now(),
+		StartedAt:       new(time.Now()),
 	}
 
 	if result.AddonName != "vpc-cni" {

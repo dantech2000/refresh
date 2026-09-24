@@ -315,11 +315,12 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	}
 	previousVersion := aws.ToString(currentDesc.Addon.AddonVersion)
 
+	startedAt := time.Now()
 	result := &AddonUpdateResult{
 		AddonName:       addonName,
 		PreviousVersion: previousVersion,
 		NewVersion:      targetVersion,
-		StartedAt:       time.Now(),
+		StartedAt:       &startedAt,
 	}
 
 	// Already-current and downgrade guard. A configuration change is a real
@@ -587,7 +588,14 @@ func (s *ServiceImpl) UpdateAll(ctx context.Context, clusterName string, options
 			results[i] = notAttempted(ctx, clusterName, toUpdate[i])
 		}
 	} else {
+		// As in the parallel branch: once the deadline or Ctrl+C ends the
+		// run, the add-ons not yet started are NotAttempted, not failed
+		// attempts that each report the cancelled context.
 		for i, addon := range toUpdate {
+			if ctx.Err() != nil {
+				results[i] = notAttempted(ctx, clusterName, addon)
+				continue
+			}
 			results[i] = updateOne(addon)
 		}
 	}

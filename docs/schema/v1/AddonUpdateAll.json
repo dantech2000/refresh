@@ -11,7 +11,8 @@
           "type": "string"
         },
         "newVersion": {
-          "type": "string"
+          "type": "string",
+          "description": "newVersion, UpdateID, and StartedAt are left out when the update was never resolved or sent (a Failed or NotAttempted add-on)."
         },
         "updateId": {
           "type": "string"
@@ -39,10 +40,7 @@
       "required": [
         "addonName",
         "previousVersion",
-        "newVersion",
-        "updateId",
-        "status",
-        "startedAt"
+        "status"
       ],
       "description": "AddonUpdateResult contains the result of an addon update"
     },

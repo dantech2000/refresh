@@ -145,19 +145,21 @@ func (UpdateStatus) EnumValues() []string {
 
 // AddonUpdateResult contains the result of an addon update
 type AddonUpdateResult struct {
-	AddonName       string       `json:"addonName" yaml:"addonName"`
-	PreviousVersion string       `json:"previousVersion" yaml:"previousVersion"`
-	NewVersion      string       `json:"newVersion" yaml:"newVersion"`
-	UpdateID        string       `json:"updateId" yaml:"updateId"`
-	Status          UpdateStatus `json:"status" yaml:"status"`
-	HealthIssues    string       `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
+	AddonName       string `json:"addonName" yaml:"addonName"`
+	PreviousVersion string `json:"previousVersion" yaml:"previousVersion"`
+	// NewVersion, UpdateID, and StartedAt are left out when the update was
+	// never resolved or sent (a Failed or NotAttempted add-on).
+	NewVersion   string       `json:"newVersion,omitempty" yaml:"newVersion,omitempty"`
+	UpdateID     string       `json:"updateId,omitempty" yaml:"updateId,omitempty"`
+	Status       UpdateStatus `json:"status" yaml:"status"`
+	HealthIssues string       `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
 	// Warning is set when the update needs the user's attention but still
 	// proceeds, e.g. a pinned version older than the installed one.
 	Warning string `json:"warning,omitempty" yaml:"warning,omitempty"`
 	// Failure is set for the statuses Unverified, WaitFailed, Failed, and
 	// NotAttempted.
 	Failure   *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
-	StartedAt time.Time     `json:"startedAt" yaml:"startedAt"`
+	StartedAt *time.Time    `json:"startedAt,omitempty" yaml:"startedAt,omitempty"`
 }
 
 // Failed reports whether the result has a failure: the update could not be
