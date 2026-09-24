@@ -66,19 +66,31 @@ func (m *Memo[K, V]) Get(ctx context.Context, key K, lookup func(context.Context
 }
 
 // run performs the lookup for an entry the caller just registered. A failed
-// entry is removed before done is closed, so the next Get starts afresh.
+// entry is removed before done is closed, so the next Get starts afresh. A
+// lookup that panics counts as failed: its waiters get errLookupPanicked and
+// the panic continues up the owner's stack, never leaving a cached zero value.
 func (m *Memo[K, V]) run(ctx context.Context, key K, e *memoEntry[V], lookup func(context.Context) (V, error)) (V, error) {
-	defer close(e.done)
-	e.value, e.err = lookup(ctx)
-	if e.err != nil {
-		m.mu.Lock()
-		if m.entries[key] == e {
-			delete(m.entries, key)
+	finished := false
+	defer func() {
+		if !finished {
+			var zero V
+			e.value, e.err = zero, errLookupPanicked
 		}
-		m.mu.Unlock()
-	}
+		if e.err != nil {
+			m.mu.Lock()
+			if m.entries[key] == e {
+				delete(m.entries, key)
+			}
+			m.mu.Unlock()
+		}
+		close(e.done)
+	}()
+	e.value, e.err = lookup(ctx)
+	finished = true
 	return e.value, e.err
 }
+
+var errLookupPanicked = errors.New("memoized lookup panicked")
 
 func isContextErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)

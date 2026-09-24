@@ -62,11 +62,28 @@ type Service struct {
 	// now is injectable for tests; nil means time.Now.
 	now func() time.Time
 
-	// Sweep-wide lookups shared by every cluster. The zero values work, so
-	// tests can build a Service without them.
-	support       common.Memo[string, SupportPosture]
+	// support memoizes version support posture for the Service's lifetime;
+	// EKS support dates don't move within a run.
+	support common.Memo[string, SupportPosture]
+	// newLatestAMI builds the latest-AMI cache for one sweep. Nil means each
+	// cluster's nodegroup listing uses its own.
+	newLatestAMI func() *awsinternal.LatestAMICache
+}
+
+// sweep holds the lookups one ListClusterStatuses call shares across its
+// clusters. It is built per call, so a reused Service never serves an addon
+// version or AMI from an earlier sweep.
+type sweep struct {
 	addonVersions common.Memo[addonVersionsKey, addonVersions]
 	latestAMI     *awsinternal.LatestAMICache // nil: one cache per cluster
+}
+
+func (s *Service) newSweep() *sweep {
+	sw := &sweep{}
+	if s.newLatestAMI != nil {
+		sw.latestAMI = s.newLatestAMI()
+	}
+	return sw
 }
 
 type addonVersionsKey struct {
@@ -106,7 +123,8 @@ func NewService(awsCfg aws.Config, logger *slog.Logger) *Service {
 		nodegroups: ngSvc,
 		addons:     addons.NewService(eksClient, logger),
 		ec2:        ec2.NewFromConfig(awsCfg),
-		latestAMI:  ngSvc.NewLatestAMICache(),
+		// The sweep calls it; a method value keeps the service's SSM client.
+		newLatestAMI: ngSvc.NewLatestAMICache,
 	}
 }
 
@@ -144,9 +162,10 @@ func (s *Service) ListClusterStatuses(ctx context.Context, opts ListOptions) ([]
 	if conc <= 0 {
 		conc = common.DefaultItemConcurrency
 	}
+	sw := s.newSweep()
 	results := common.ForEachParallel(ctx, names, conc,
 		func(fctx context.Context, name string) ClusterStatus {
-			return s.assembleCluster(fctx, name)
+			return s.assembleCluster(fctx, sw, name)
 		})
 	// ForEachParallel leaves undispatched items zero-valued when ctx is done.
 	// Mark them explicitly so they never render as a healthy "unknown" row.
@@ -231,7 +250,7 @@ func (s *Service) listClusterNames(ctx context.Context) ([]string, error) {
 // assembleCluster builds one cluster's status row. Each data source is
 // best-effort: a failure is recorded on the row (see fail) and leaves that
 // field zero-valued.
-func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatus {
+func (s *Service) assembleCluster(ctx context.Context, sw *sweep, name string) ClusterStatus {
 	cs := ClusterStatus{Name: name, Region: s.region}
 
 	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
@@ -267,9 +286,9 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 		wg sync.WaitGroup
 	)
 	wg.Go(func() {
-		addonSide.behind, addonSide.failures, addonSide.err = s.addonsBehind(ctx, name, cs.Version)
+		addonSide.behind, addonSide.failures, addonSide.err = s.addonsBehind(ctx, sw, name, cs.Version)
 	})
-	s.assembleNodegroups(ctx, &ngSide, name, cluster, cs.Version)
+	s.assembleNodegroups(ctx, sw, &ngSide, name, cluster, cs.Version)
 	wg.Wait()
 
 	cs.NodegroupCount = ngSide.NodegroupCount
@@ -293,10 +312,10 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 
 // assembleNodegroups fills the nodegroup fields and compute type of cs (a
 // scratch row owned by the caller's goroutine) for one described cluster.
-func (s *Service) assembleNodegroups(ctx context.Context, cs *ClusterStatus, name string, cluster *ekstypes.Cluster, version string) {
+func (s *Service) assembleNodegroups(ctx context.Context, sw *sweep, cs *ClusterStatus, name string, cluster *ekstypes.Cluster, version string) {
 	ngs, ngErr := s.nodegroups.ListDetailed(ctx, name, nodegroup.ListOptions{
 		ClusterVersion: version,
-		LatestAMI:      s.latestAMI,
+		LatestAMI:      sw.latestAMI,
 	})
 	if ngErr != nil {
 		// The nodegroup service tags the error with the call that failed.
@@ -381,7 +400,7 @@ func (s *Service) amiOldestDays(ctx context.Context, amiIDs []string) *int {
 // installed or latest version can't be read is never counted as behind; it is
 // returned as a failure alongside the partial summary. The error is set only
 // when the add-ons could not be listed at all.
-func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) (AddonsBehindSummary, []diag.Failure, error) {
+func (s *Service) addonsBehind(ctx context.Context, sw *sweep, cluster, k8sVersion string) (AddonsBehindSummary, []diag.Failure, error) {
 	res, err := s.addons.ListDetailed(ctx, cluster, addons.ListOptions{})
 	if err != nil {
 		return AddonsBehindSummary{}, nil, err
@@ -404,7 +423,7 @@ func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) 
 				f.Operation = diag.OpDescribeAddon
 				return check{done: true, failure: &f}
 			}
-			avail, verr := s.latestAddonVersion(fctx, a.Name, k8sVersion)
+			avail, verr := s.latestAddonVersion(fctx, sw, a.Name, k8sVersion)
 			if verr != nil {
 				f := diag.FromError(diag.KindAddon, a.Name, diag.OpDescribeAddonVersions, verr)
 				return check{done: true, failure: &f}
@@ -437,8 +456,8 @@ func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) 
 
 // latestAddonVersion returns the newest version of addon compatible with
 // k8sVersion, memoized for the sweep.
-func (s *Service) latestAddonVersion(ctx context.Context, addon, k8sVersion string) (addonVersions, error) {
-	return s.addonVersions.Get(ctx, addonVersionsKey{addon: addon, k8sVersion: k8sVersion},
+func (s *Service) latestAddonVersion(ctx context.Context, sw *sweep, addon, k8sVersion string) (addonVersions, error) {
+	return sw.addonVersions.Get(ctx, addonVersionsKey{addon: addon, k8sVersion: k8sVersion},
 		func(ctx context.Context) (addonVersions, error) {
 			avail, err := s.addons.GetAvailableVersions(ctx, addon, k8sVersion)
 			if errors.Is(err, addons.ErrNoVersionsFound) {

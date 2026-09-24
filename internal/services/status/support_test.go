@@ -273,11 +273,11 @@ func TestAssembleCluster_UpgradePolicy(t *testing.T) {
 	svc := newTestService(api, &fakeNodegroups{}, &fakeAddons{})
 	ctx := context.Background()
 
-	ext := svc.assembleCluster(ctx, "ext")
+	ext := svc.assembleCluster(ctx, svc.newSweep(), "ext")
 	if ext.Support.ExtraCostUSDPerHour != extendedSupportPremiumUSDPerHour || ext.Support.AutoUpgradeAtStandardEnd {
 		t.Errorf("EXTENDED cluster support = %+v, want the premium", ext.Support)
 	}
-	std := svc.assembleCluster(ctx, "std")
+	std := svc.assembleCluster(ctx, svc.newSweep(), "std")
 	if std.Support.ExtraCostUSDPerHour != 0 || !std.Support.AutoUpgradeAtStandardEnd {
 		t.Errorf("STANDARD cluster support = %+v, want auto-upgrade and no premium", std.Support)
 	}

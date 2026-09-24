@@ -275,7 +275,7 @@ func TestAssembleCluster_NodegroupBehindControlPlane(t *testing.T) {
 	}}
 	ng.failures = map[string][]diag.Failure{"prod": {diag.New(diag.KindNodegroup, "ng-broken", diag.ReasonUnknown, "boom")}}
 	svc := newTestService(api, ng, &fakeAddons{})
-	cs := svc.assembleCluster(context.Background(), "prod")
+	cs := svc.assembleCluster(context.Background(), svc.newSweep(), "prod")
 
 	// A failed nodegroup makes the row incomplete, but the behind count from
 	// the nodegroups that did resolve still stands.

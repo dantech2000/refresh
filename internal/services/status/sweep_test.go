@@ -9,12 +9,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
+	"github.com/dantech2000/refresh/internal/types"
 )
 
-// fleetFixture builds n clusters on one Kubernetes version, each running the
-// same addons, with one of them behind.
+// fleetFixture builds n clusters on one Kubernetes version, each running two
+// up-to-date nodegroups and the same addons, with one addon behind.
 func fleetFixture(n int, addonNames []string) (*fakeClusterAPI, *fakeNodegroups, *fakeAddons) {
 	api := &fakeClusterAPI{describe: map[string]*ekstypes.Cluster{}}
 	ng := &fakeNodegroups{byCluster: map[string][]nodegroup.NodegroupSummary{}}
@@ -26,6 +29,10 @@ func fleetFixture(n int, addonNames []string) (*fakeClusterAPI, *fakeNodegroups,
 		name := fmt.Sprintf("c%02d", i)
 		api.clusters = append(api.clusters, name)
 		api.describe[name] = &ekstypes.Cluster{Name: aws.String(name), Version: aws.String("1.32")}
+		ng.byCluster[name] = []nodegroup.NodegroupSummary{
+			{Name: "ng-a", AMIStatus: types.AMILatest, K8sVersion: "1.32"},
+			{Name: "ng-b", AMIStatus: types.AMILatest, K8sVersion: "1.32"},
+		}
 		for j, a := range addonNames {
 			v := "v1.1.0"
 			if j == 0 {
@@ -92,13 +99,13 @@ func TestListClusterStatuses_MemoizesNoVersionsFound(t *testing.T) {
 // not memoized, so a later cluster can still succeed.
 func TestListClusterStatuses_VersionLookupFailureNotMemoized(t *testing.T) {
 	api, ng, ad := fleetFixture(3, []string{"vpc-cni"})
-	ad.versionErr = map[string]error{"vpc-cni": fmt.Errorf("throttled")}
+	ad.versionErr = map[string]error{"vpc-cni": mocks.Throttling()}
 	svc := newTestService(api, ng, ad)
 
 	statuses, _ := svc.ListClusterStatuses(context.Background(), ListOptions{MaxConcurrency: 1})
 	for _, cs := range statuses {
-		if !cs.Incomplete {
-			t.Errorf("%s: want incomplete after a failed version lookup", cs.Name)
+		if !cs.Incomplete || len(cs.Failures) != 1 || cs.Failures[0].Reason != diag.ReasonThrottled {
+			t.Errorf("%s: incomplete = %v, failures = %s; want one throttled failure", cs.Name, cs.Incomplete, failureText(cs.Failures))
 		}
 	}
 	if n := ad.versionCalls.Load(); n != 3 {
@@ -129,10 +136,15 @@ type slowNodegroups struct {
 }
 
 func (s slowNodegroups) ListDetailed(ctx context.Context, cluster string, o nodegroup.ListOptions) (nodegroup.ListResult, error) {
-	// ListDetailed makes ListNodegroups, then DescribeNodegroup in parallel,
-	// then the SSM lookup: three round trips, plus DescribeCluster when the
-	// caller did not pass the version.
+	// With nodegroups, ListDetailed makes ListNodegroups, then
+	// DescribeNodegroup in parallel, then the SSM lookup: three round trips,
+	// plus DescribeCluster when the caller did not pass the version. (The
+	// SSM trip is charged even when a shared cache would skip it, so this
+	// understates the gain.)
 	trips := 3
+	if len(s.byCluster[cluster]) == 0 {
+		trips = 1 // ListNodegroups only
+	}
 	if o.ClusterVersion == "" {
 		trips++
 	}
@@ -140,8 +152,8 @@ func (s slowNodegroups) ListDetailed(ctx context.Context, cluster string, o node
 	return s.fakeNodegroups.ListDetailed(ctx, cluster, o)
 }
 
-// BenchmarkListClusterStatuses sweeps 20 clusters with 6 addons each, with
-// 5ms per simulated AWS round trip.
+// BenchmarkListClusterStatuses sweeps 20 clusters with 2 nodegroups and 6
+// addons each, with 5ms per simulated AWS round trip.
 func BenchmarkListClusterStatuses(b *testing.B) {
 	const delay = 5 * time.Millisecond
 	api, ng, ad := fleetFixture(20, []string{"vpc-cni", "coredns", "kube-proxy", "ebs-csi", "pod-identity", "metrics-server"})
@@ -152,5 +164,21 @@ func BenchmarkListClusterStatuses(b *testing.B) {
 		if _, err := svc.ListClusterStatuses(context.Background(), ListOptions{}); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// Addon versions are memoized per sweep, not for the Service's lifetime, so
+// a reused Service sees versions AWS published after its first sweep.
+func TestListClusterStatuses_LookupsDoNotOutliveTheSweep(t *testing.T) {
+	api, ng, ad := fleetFixture(3, []string{"vpc-cni"})
+	svc := newTestService(api, ng, ad)
+
+	for range 2 {
+		if _, err := svc.ListClusterStatuses(context.Background(), ListOptions{}); err != nil {
+			t.Fatalf("ListClusterStatuses: %v", err)
+		}
+	}
+	if n := ad.versionCalls.Load(); n != 2 {
+		t.Errorf("GetAvailableVersions calls = %d, want 2 (one per sweep)", n)
 	}
 }

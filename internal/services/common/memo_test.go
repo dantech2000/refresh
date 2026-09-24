@@ -91,3 +91,21 @@ func TestMemo_WaiterCancellationReturnsCtxErr(t *testing.T) {
 	close(release)
 	<-done
 }
+
+// A lookup that panics must not leave its zero value cached as a success.
+func TestMemo_PanicIsNotCached(t *testing.T) {
+	var m Memo[string, int]
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected the lookup's panic to propagate")
+			}
+		}()
+		_, _ = m.Get(context.Background(), "k", func(context.Context) (int, error) { panic("boom") })
+	}()
+
+	v, err := m.Get(context.Background(), "k", func(context.Context) (int, error) { return 5, nil })
+	if err != nil || v != 5 {
+		t.Fatalf("Get after panic = %d, %v; want 5, nil from a fresh lookup", v, err)
+	}
+}
