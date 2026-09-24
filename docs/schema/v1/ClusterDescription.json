@@ -230,17 +230,10 @@
     "HealthSummary": {
       "properties": {
         "results": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/HealthResult"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/HealthResult"
+          },
+          "type": "array"
         },
         "overallScore": {
           "type": "integer"
@@ -283,30 +276,16 @@
           "type": "string"
         },
         "subnetIds": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "securityGroupIds": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "endpointAccess": {
           "$ref": "#/$defs/EndpointAccessInfo"
@@ -366,17 +345,10 @@
           "type": "string"
         },
         "loggingEnabled": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "deletionProtection": {
           "type": "boolean"
@@ -499,45 +471,24 @@
       "description": "security is the cluster's encryption, IAM role, logging, and deletion protection."
     },
     "addons": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/AddonInfo"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "addons are the installed add-ons. Failures says when it is null."
+      "items": {
+        "$ref": "#/$defs/AddonInfo"
+      },
+      "type": "array",
+      "description": "addons are the installed add-ons. The key is left out when the add-ons were not read (--no-addons, or a failed listing in Failures)."
     },
     "nodegroups": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/NodegroupSummary"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "nodegroups are the managed nodegroups. Failures says when it is null."
+      "items": {
+        "$ref": "#/$defs/NodegroupSummary"
+      },
+      "type": "array",
+      "description": "nodegroups are the managed nodegroups, with --detailed. The key is left out when the nodegroups were not read (no --detailed, or a failed listing in Failures)."
     },
     "tags": {
-      "anyOf": [
-        {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object",
       "description": "tags are the cluster's AWS tags."
     },
     "failures": {
@@ -558,8 +509,6 @@
     "region",
     "networking",
     "security",
-    "addons",
-    "nodegroups",
     "tags",
     "failures"
   ],

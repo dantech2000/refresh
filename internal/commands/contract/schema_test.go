@@ -73,6 +73,28 @@ var schemaCases = []schemaCase{
 	{name: "addon update --all", kind: apidoc.KindAddonUpdateAll, args: []string{"addon", "update", "prod", "--all", "--yes"}},
 }
 
+// emptyCluster has no nodegroups, add-ons, tags, or VPC details, so every
+// list a command reads from it is empty.
+func emptyCluster() *fakeaws.Cluster { return &fakeaws.Cluster{Name: "prod", Version: "1.31"} }
+
+// emptyCases read nothing, or empty lists. The schemas reject null, so these
+// runs check that an empty list prints [] and that data a command did not
+// collect is left out.
+var emptyCases = []schemaCase{
+	{name: "status with no clusters", kind: apidoc.KindFleetStatus, world: []*fakeaws.Cluster{}, args: []string{"status", "-r", "us-east-1"}},
+	{name: "cluster list with no clusters", kind: apidoc.KindClusterList, world: []*fakeaws.Cluster{}, args: []string{"cluster", "list", "-r", "us-east-1"}},
+	{name: "fleet update with no clusters", kind: apidoc.KindFleetUpdate, world: []*fakeaws.Cluster{}, args: []string{"nodegroup", "update", "--all-clusters", "-r", "us-east-1", "--skip-health-check", "--yes"}},
+	{name: "fleet dry run with no clusters", kind: apidoc.KindFleetUpdatePlan, world: []*fakeaws.Cluster{}, args: []string{"nodegroup", "update", "--all-clusters", "-r", "us-east-1", "--dry-run"}},
+	{name: "cluster describe --detailed of an empty cluster", kind: apidoc.KindClusterDescription, world: []*fakeaws.Cluster{emptyCluster()}, args: []string{"cluster", "describe", "prod", "--detailed"}},
+	{name: "cluster describe --no-addons", kind: apidoc.KindClusterDescription, world: []*fakeaws.Cluster{emptyCluster()}, args: []string{"cluster", "describe", "prod", "--no-addons", "--no-health"}},
+	{name: "cluster upgrade-check of an empty cluster", kind: apidoc.KindUpgradeCheck, world: []*fakeaws.Cluster{emptyCluster()}, args: []string{"cluster", "upgrade-check", "prod", "--exit-zero"}},
+	{name: "cluster upgrade --dry-run to the current version", kind: apidoc.KindUpgradePlan, world: []*fakeaws.Cluster{emptyCluster()}, args: []string{"cluster", "upgrade", "prod", "--to", "1.31", "--dry-run"}},
+	{name: "nodegroup describe --show-instances", kind: apidoc.KindNodegroupDescription, args: []string{"nodegroup", "describe", "prod", "-n", "web", "--show-instances"}},
+	{name: "nodegroup list of an empty cluster", kind: apidoc.KindNodegroupList, world: []*fakeaws.Cluster{emptyCluster()}, args: []string{"nodegroup", "list", "prod"}},
+	{name: "addon list of an empty cluster", kind: apidoc.KindAddonList, world: []*fakeaws.Cluster{emptyCluster()}, args: []string{"addon", "list", "prod"}},
+	{name: "addon update --all of an empty cluster", kind: apidoc.KindAddonUpdateAll, world: []*fakeaws.Cluster{emptyCluster()}, args: []string{"addon", "update", "prod", "--all", "--yes"}},
+}
+
 // failureKinds maps each failure contract case (by the command it runs) to
 // the kind of its document.
 func failureKind(args []string) (apidoc.Kind, bool) {
@@ -147,7 +169,7 @@ var readFailureCases = []schemaCase{
 // one. Every kind must be covered.
 func TestDocumentsMatchSchemas(t *testing.T) {
 	schemas := compileSchemas(t)
-	all := slices.Concat(schemaCases, readFailureCases)
+	all := slices.Concat(schemaCases, emptyCases, readFailureCases)
 	for _, tc := range cases {
 		if kind, ok := failureKind(tc.args); ok && slices.Contains(tc.formats, "json") {
 			all = append(all, schemaCase{name: "failure: " + tc.name, kind: kind, world: tc.world, setup: tc.setup, args: tc.args})

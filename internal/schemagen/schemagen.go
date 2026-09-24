@@ -6,15 +6,17 @@
 //   - apiVersion and kind are required constants and come first.
 //   - A field without omitempty is required; a field with omitempty is
 //     optional.
-//   - A field Go can encode as null (a slice, map, or pointer without
-//     omitempty) allows null. diag.List always encodes as a list.
+//   - No field allows null. A document prints [] for a list it read and
+//     found empty, and leaves out (omitempty) what it did not collect.
 //   - A type that implements apidoc.Enum is a string with an enum list.
 //   - Objects allow unknown properties, because a later v1 release may add
 //     fields.
 //   - Descriptions come from the Go doc comments of the types and fields.
 //
-// The hidden gen-docs command writes the schemas to docs/schema/v1, and a
-// CI step fails when the committed files are stale.
+// The genschema tool (internal/tools/genschema, run by `task docs:gen`)
+// writes the schemas to docs/schema/v1, and a CI step fails when the
+// committed files are stale. The refresh binary does not import this
+// package.
 package schemagen
 
 import (
@@ -22,7 +24,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -47,8 +48,7 @@ var typeNames = map[reflect.Type]string{
 }
 
 var (
-	enumType      = reflect.TypeFor[apidoc.Enum]()
-	marshalerType = reflect.TypeFor[json.Marshaler]()
+	enumType = reflect.TypeFor[apidoc.Enum]()
 )
 
 // Generate returns the schema of doc, indented, with a trailing newline.
@@ -110,10 +110,6 @@ func (g *generator) schema(doc apidoc.Document) (*jsonschema.Schema, error) {
 			enum[i] = v
 		}
 		s.Definitions[name] = &jsonschema.Schema{Type: "string", Enum: enum, Description: g.comment(t, "")}
-	}
-	g.allowNull(s, root)
-	for name, def := range s.Definitions {
-		g.allowNull(def, g.names[name])
 	}
 	if len(s.Definitions) == 0 {
 		s.Definitions = nil
@@ -196,76 +192,4 @@ func (g *generator) comment(t reflect.Type, field string) string {
 		text = g.name(t) + strings.TrimPrefix(text, t.Name())
 	}
 	return text
-}
-
-// allowNull lets each property of struct schema s that Go can encode as
-// null be null: a slice, map, pointer, or interface field without
-// omitempty, unless its type encodes itself (diag.List is always a list).
-func (g *generator) allowNull(s *jsonschema.Schema, t reflect.Type) {
-	if t == nil || t.Kind() != reflect.Struct || s.Properties == nil {
-		return
-	}
-	for _, f := range jsonFields(t) {
-		if f.omitempty || !nullable(f.typ) {
-			continue
-		}
-		prop, ok := s.Properties.Get(f.name)
-		if !ok {
-			continue
-		}
-		desc := prop.Description
-		prop.Description = ""
-		s.Properties.Set(f.name, &jsonschema.Schema{
-			AnyOf:       []*jsonschema.Schema{prop, {Type: "null"}},
-			Description: desc,
-		})
-	}
-}
-
-// nullable reports whether encoding/json can encode a value of t as null.
-func nullable(t reflect.Type) bool {
-	switch t.Kind() {
-	case reflect.Slice, reflect.Map, reflect.Pointer, reflect.Interface:
-		return !t.Implements(marshalerType)
-	}
-	return false
-}
-
-// jsonField is one field of a struct as encoding/json sees it.
-type jsonField struct {
-	name      string
-	typ       reflect.Type
-	omitempty bool
-}
-
-// jsonFields lists the fields encoding/json encodes for struct t, with the
-// fields of embedded structs promoted.
-func jsonFields(t reflect.Type) []jsonField {
-	var out []jsonField
-	for i := range t.NumField() {
-		f := t.Field(i)
-		tag := f.Tag.Get("json")
-		if tag == "-" {
-			continue
-		}
-		name, opts, _ := strings.Cut(tag, ",")
-		if f.Anonymous && name == "" {
-			ft := f.Type
-			if ft.Kind() == reflect.Pointer {
-				ft = ft.Elem()
-			}
-			if ft.Kind() == reflect.Struct {
-				out = append(out, jsonFields(ft)...)
-				continue
-			}
-		}
-		if !f.IsExported() {
-			continue
-		}
-		if name == "" {
-			name = f.Name
-		}
-		out = append(out, jsonField{name: name, typ: f.Type, omitempty: slices.Contains(strings.Split(opts, ","), "omitempty")})
-	}
-	return out
 }

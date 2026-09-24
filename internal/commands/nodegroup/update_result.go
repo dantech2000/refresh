@@ -267,7 +267,7 @@ func (updateDocument) DocumentKind() apidoc.Kind { return apidoc.KindNodegroupUp
 func newUpdateDocument(run updateRun, summary *health.HealthSummary) updateDocument {
 	return updateDocument{
 		Cluster:      run.cluster,
-		Nodegroups:   run.nodegroups,
+		Nodegroups:   apidoc.List(run.nodegroups),
 		Verification: run.verification,
 		Health:       summary,
 		Failures:     runFailures(run, summary),

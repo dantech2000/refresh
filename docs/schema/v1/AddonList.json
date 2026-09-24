@@ -142,17 +142,10 @@
       "type": "string"
     },
     "addons": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/AddonSummary"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/AddonSummary"
+      },
+      "type": "array"
     },
     "count": {
       "type": "integer"

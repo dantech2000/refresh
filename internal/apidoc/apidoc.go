@@ -102,6 +102,16 @@ type Document interface {
 	DocumentKind() Kind
 }
 
+// List returns s, or an empty list when s is nil. A document prints [] for
+// a list it read and found empty, never null; it leaves out a key whose
+// data it did not collect.
+func List[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
 // Enum is a string type with a closed set of values, such as a status. The
 // JSON Schema lists EnumValues as the type's enum. A later v1 release may
 // add values; consumers must accept a value they do not know.

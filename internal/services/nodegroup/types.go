@@ -141,8 +141,10 @@ type NodegroupDetails struct {
 
 	Scaling ScalingConfig `json:"scaling" yaml:"scaling"`
 
-	Instances []InstanceDetails `json:"instances" yaml:"instances"`
-	Workloads WorkloadInfo      `json:"workloads" yaml:"workloads"`
+	// Instances are the EC2 instances behind the nodegroup, with
+	// --show-instances. The key is left out when they were not read.
+	Instances *[]InstanceDetails `json:"instances,omitempty" yaml:"instances,omitempty"`
+	Workloads WorkloadInfo       `json:"workloads" yaml:"workloads"`
 
 	// Failures is always [] today: describe either reads the nodegroup or
 	// fails. It is here so every document carries the same key.

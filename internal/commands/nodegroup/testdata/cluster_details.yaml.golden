@@ -64,11 +64,11 @@ networking:
   vpcCidr: s-vpccidr
   vpcId: s-vpcid
 nodegroups:
-  - desiredSize: 4
+  - desiredSize: 5
     instanceType: s-instancetype
     name: s-name
     readyKnown: true
-    readyNodes: 4
+    readyNodes: 5
     status: s-status
 platformVersion: s-platformversion
 region: s-region

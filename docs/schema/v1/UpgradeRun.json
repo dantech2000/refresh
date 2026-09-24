@@ -101,17 +101,10 @@
           "type": "string"
         },
         "steps": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/Step"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "type": "array"
         }
       },
       "type": "object",
@@ -134,17 +127,10 @@
           "type": "string"
         },
         "hops": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/Hop"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/Hop"
+          },
+          "type": "array"
         },
         "notices": {
           "items": {
@@ -174,34 +160,20 @@
           "$ref": "#/$defs/RunStatus"
         },
         "completed": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "stoppedAt": {
           "type": "string",
           "description": "stoppedAt is the phase the run stopped in or before, when it stopped."
         },
         "remaining": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "failure": {
           "$ref": "#/$defs/Failure",
@@ -290,24 +262,10 @@
       "description": "The type of the document."
     },
     "plan": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Plan"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "$ref": "#/$defs/Plan"
     },
     "report": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Report"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "$ref": "#/$defs/Report"
     },
     "failures": {
       "$ref": "#/$defs/FailureList",

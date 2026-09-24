@@ -175,17 +175,10 @@
       "type": "string"
     },
     "nodegroups": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/NodegroupSummary"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/NodegroupSummary"
+      },
+      "type": "array"
     },
     "count": {
       "type": "integer"

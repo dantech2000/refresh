@@ -171,6 +171,9 @@ func newFleetUpdateDocument(results []clusterUpdateResult, disc fleetDiscovery) 
 	if results == nil {
 		results = []clusterUpdateResult{}
 	}
+	for i := range results {
+		results[i].Nodegroups = apidoc.List(results[i].Nodegroups)
+	}
 	return fleetUpdateDocument{Clusters: results, SkippedRegions: disc.skipped, Failures: fs}
 }
 

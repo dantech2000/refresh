@@ -235,30 +235,16 @@
           "type": "string"
         },
         "nodegroups": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/NodegroupSkew"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/NodegroupSkew"
+          },
+          "type": "array"
         },
         "addons": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/AddonSkew"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/AddonSkew"
+          },
+          "type": "array"
         },
         "findings": {
           "items": {
@@ -347,17 +333,10 @@
       "$ref": "#/$defs/HealthResult"
     },
     "insights": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/InsightSummary"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/InsightSummary"
+      },
+      "type": "array"
     },
     "skew": {
       "$ref": "#/$defs/SkewReport"

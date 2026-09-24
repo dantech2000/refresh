@@ -40,12 +40,10 @@ meant for a person goes to stderr or is not printed:
   usually `--yes`. A partial cluster name resolves as it does without a
   terminal: a mutating command fails and names the candidate. Pass the exact
   name in scripts.
-- The item list of a list command (`clusters`, `nodegroups`, `addons`,
-  `results`) and every `failures` list print `[]` when empty, never `null`.
-  Other lists and objects can be `null` where the
-  [schema](#document-versions-and-schemas) allows it. For example,
-  `cluster describe` prints `"nodegroups": null` when it did not read the
-  nodegroups.
+- A list is `[]` when empty, and a map is `{}`. A document never prints
+  `null`. A key is left out when that data was not collected. For example,
+  `cluster describe` leaves out `nodegroups` without `--detailed`, and
+  prints `"nodegroups": []` with `--detailed` for a cluster that has none.
 
 The exit code is the same as in the human view, and it applies after the
 document is printed (see [Exit codes](exit-codes.md)). When a command fails before
@@ -127,7 +125,7 @@ Each kind has a JSON Schema (draft 2020-12) at
 [JSON schemas](../reference/schemas.md) page lists them. `refresh`
 generates the schemas from its Go types, and CI fails when a committed
 schema no longer matches the code. The schemas list required keys, the
-values of every enum, and the fields that can be `null`. They allow keys
+values of every enum, and no field allows `null`. They allow keys
 they do not list, so a consumer on an older schema keeps working when a
 newer release adds a field.
 

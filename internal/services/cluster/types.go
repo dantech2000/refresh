@@ -43,24 +43,44 @@ type ClusterDetails struct {
 	// protection.
 	Security SecurityInfo `json:"security" yaml:"security"`
 
-	// Addons are the installed add-ons. Failures says when it is null.
-	Addons []AddonInfo `json:"addons" yaml:"addons"`
-	// Nodegroups are the managed nodegroups. Failures says when it is null.
-	Nodegroups []NodegroupSummary `json:"nodegroups" yaml:"nodegroups"`
+	// Addons are the installed add-ons. The key is left out when the
+	// add-ons were not read (--no-addons, or a failed listing in Failures).
+	Addons *[]AddonInfo `json:"addons,omitempty" yaml:"addons,omitempty"`
+	// Nodegroups are the managed nodegroups, with --detailed. The key is left
+	// out when the nodegroups were not read (no --detailed, or a failed
+	// listing in Failures).
+	Nodegroups *[]NodegroupSummary `json:"nodegroups,omitempty" yaml:"nodegroups,omitempty"`
 
 	// Tags are the cluster's AWS tags.
 	Tags map[string]string `json:"tags" yaml:"tags"`
 
 	// Failures are the parts of the cluster that could not be read: the
 	// add-on or nodegroup list, or one add-on or nodegroup. Addons and
-	// Nodegroups are null when not requested or not collected, and [] when
-	// collected and empty, so a failure never reads as "none". [] when
+	// Nodegroups are left out when not requested or not collected, and []
+	// when collected and empty, so a failure never reads as "none". [] when
 	// everything was read.
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // DocumentKind is ClusterDescription.
 func (ClusterDetails) DocumentKind() apidoc.Kind { return apidoc.KindClusterDescription }
+
+// AddonList returns the add-ons that were read (nil when they were not).
+func (d ClusterDetails) AddonList() []AddonInfo {
+	if d.Addons == nil {
+		return nil
+	}
+	return *d.Addons
+}
+
+// NodegroupList returns the nodegroups that were read (nil when they were
+// not).
+func (d ClusterDetails) NodegroupList() []NodegroupSummary {
+	if d.Nodegroups == nil {
+		return nil
+	}
+	return *d.Nodegroups
+}
 
 // ClusterSummary is used for list operations
 type ClusterSummary struct {

@@ -160,17 +160,10 @@
       "type": "boolean"
     },
     "nodegroups": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/DryRunNodegroup"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/DryRunNodegroup"
+      },
+      "type": "array"
     },
     "failures": {
       "$ref": "#/$defs/FailureList",

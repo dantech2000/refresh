@@ -100,8 +100,8 @@ func TestClusterDetailPlain(t *testing.T) {
 			VpcID: "vpc-1", SubnetIDs: []string{"subnet-1", "subnet-2"}, SecurityGroupIDs: []string{"sg-1"},
 		},
 		Security:   clustersvc.SecurityInfo{DeletionProtection: true},
-		Nodegroups: []clustersvc.NodegroupSummary{{Name: "ng-a", Status: "ACTIVE", InstanceType: "m5.large", DesiredSize: 3}},
-		Addons:     []clustersvc.AddonInfo{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "Healthy"}},
+		Nodegroups: &[]clustersvc.NodegroupSummary{{Name: "ng-a", Status: "ACTIVE", InstanceType: "m5.large", DesiredSize: 3}},
+		Addons:     &[]clustersvc.AddonInfo{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "Healthy"}},
 		HealthIssues: []clustersvc.HealthIssue{
 			{Code: "AccessDenied", Message: "role\tmissing\npermission", ResourceIDs: []string{"arn:1"}},
 		},

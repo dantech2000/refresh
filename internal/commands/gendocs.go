@@ -9,8 +9,6 @@ import (
 	"strings"
 
 	"github.com/urfave/cli/v3"
-
-	"github.com/dantech2000/refresh/internal/apidoc"
 )
 
 // GenDocsCommand returns a hidden command that generates the Markdown command
@@ -27,11 +25,6 @@ func GenDocsCommand() *cli.Command {
 				Name:  "out",
 				Usage: "Output directory for the generated reference",
 				Value: "docs/reference",
-			},
-			&cli.StringFlag{
-				Name:  "schema-out",
-				Usage: "Output directory for the generated JSON schemas",
-				Value: "docs/schema/v1",
 			},
 		},
 		Action: runGenDocs,
@@ -64,12 +57,7 @@ func runGenDocs(_ context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	schemaDir := cmd.String("schema-out")
-	if err := writeSchemas(outDir, schemaDir); err != nil {
-		return err
-	}
-
-	fmt.Printf("Generated %d reference pages in %s and %d JSON schemas in %s\n", len(top)+2, outDir, len(apidoc.Kinds()), schemaDir)
+	fmt.Printf("Generated %d reference pages in %s\n", len(top)+1, outDir)
 	return nil
 }
 

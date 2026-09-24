@@ -153,7 +153,7 @@ If some add-ons or nodegroups can't be read, `describe` prints the rest,
 lists each one under the top-level `failures` (`-o json`/`-o yaml`), names it
 on stderr (or under `INCOMPLETE DATA` in the table), and exits `4`
 (incomplete data). An add-on or nodegroup list that was not collected is
-`null`; one that was collected and is empty is `[]`.
+left out of the document; one that was collected and is empty is `[]`.
 
 ### Examples
 

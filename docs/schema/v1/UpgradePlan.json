@@ -101,17 +101,10 @@
           "type": "string"
         },
         "steps": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/Step"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "type": "array"
         }
       },
       "type": "object",
@@ -193,17 +186,10 @@
       "type": "string"
     },
     "hops": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/Hop"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/Hop"
+      },
+      "type": "array"
     },
     "notices": {
       "items": {

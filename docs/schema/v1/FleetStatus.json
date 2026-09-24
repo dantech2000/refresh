@@ -256,17 +256,10 @@
       "description": "The type of the document."
     },
     "clusters": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/ClusterStatus"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/ClusterStatus"
+      },
+      "type": "array"
     },
     "failures": {
       "$ref": "#/$defs/FailureList",

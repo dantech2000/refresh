@@ -103,8 +103,8 @@
       "name": "s-name",
       "status": "s-status",
       "instanceType": "s-instancetype",
-      "desiredSize": 4,
-      "readyNodes": 4,
+      "desiredSize": 5,
+      "readyNodes": 5,
       "readyKnown": true
     }
   ],

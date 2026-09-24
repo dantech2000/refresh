@@ -76,17 +76,10 @@
           "type": "boolean"
         },
         "nodegroups": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/DryRunNodegroup"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/DryRunNodegroup"
+          },
+          "type": "array"
         },
         "failures": {
           "$ref": "#/$defs/FailureList"
@@ -233,17 +226,10 @@
       "description": "The type of the document."
     },
     "clusters": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/FleetDryRunResult"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/FleetDryRunResult"
+      },
+      "type": "array"
     },
     "skippedRegions": {
       "items": {

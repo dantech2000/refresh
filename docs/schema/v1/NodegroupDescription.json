@@ -230,17 +230,11 @@
       "$ref": "#/$defs/ScalingConfig"
     },
     "instances": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/InstanceDetails"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/InstanceDetails"
+      },
+      "type": "array",
+      "description": "instances are the EC2 instances behind the nodegroup, with --show-instances. The key is left out when they were not read."
     },
     "workloads": {
       "$ref": "#/$defs/WorkloadInfo"
@@ -263,7 +257,6 @@
     "latestAmi",
     "amiStatus",
     "scaling",
-    "instances",
     "workloads",
     "failures"
   ],

@@ -162,17 +162,10 @@
       "description": "The type of the document."
     },
     "results": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/HealthResult"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/HealthResult"
+      },
+      "type": "array"
     },
     "overallScore": {
       "type": "integer"

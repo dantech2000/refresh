@@ -326,7 +326,7 @@ func (s *ServiceImpl) UpgradeCheck(ctx context.Context, clusterName string, opts
 		return nil, err
 	}
 
-	return &UpgradeReport{Cluster: clusterName, SupportType: supportType, Insights: insights, Skew: skew, Failures: failures}, nil
+	return &UpgradeReport{Cluster: clusterName, SupportType: supportType, Insights: apidoc.List(insights), Skew: skew, Failures: failures}, nil
 }
 
 // computeSkew builds the local version-skew report and ordered findings. It
@@ -334,7 +334,7 @@ func (s *ServiceImpl) UpgradeCheck(ctx context.Context, clusterName string, opts
 // failed describe never reads as "current".
 func (s *ServiceImpl) computeSkew(ctx context.Context, clusterName, cpVersion string) (SkewReport, []diag.Failure, error) {
 	var failures []diag.Failure
-	report := SkewReport{ControlPlaneVersion: cpVersion}
+	report := SkewReport{ControlPlaneVersion: cpVersion, Nodegroups: []NodegroupSkew{}, Addons: []AddonSkew{}}
 	cpMinor, cpOK := minorVersion(cpVersion)
 
 	// Nodegroups.

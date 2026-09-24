@@ -135,7 +135,7 @@ or `--nodegroup/-n`.
 |---|---|
 | `--cluster, -c` | EKS cluster name |
 | `--nodegroup, -n` | Nodegroup name (or pass as second positional) |
-| `--show-instances, -I` | Include EC2 instance details |
+| `--show-instances, -I` | Include EC2 instance details (`instances` with `-o json`; left out without this flag) |
 | `--show-workloads, -W` | Include workload/pod placement info |
 | `--kubeconfig` | Path to the kubeconfig for `--show-workloads` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |

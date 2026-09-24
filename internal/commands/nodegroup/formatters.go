@@ -119,7 +119,7 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 		workloadTable.RenderSection("Workloads")
 	}
 
-	if len(details.Instances) > 0 {
+	if details.Instances != nil && len(*details.Instances) > 0 {
 		ui.Outln()
 		ui.Outln("Instances:")
 		columns := []ui.Column{
@@ -130,7 +130,7 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 			{Title: "STATE", Min: 8, Max: 0, Align: ui.AlignLeft},
 		}
 		instTable := ui.NewPTable(columns, ui.CyanHeaders())
-		for _, inst := range details.Instances {
+		for _, inst := range *details.Instances {
 			instTable.AddRow(
 				ui.TruncateANSI(inst.InstanceID, 22),
 				inst.InstanceType,
@@ -171,7 +171,7 @@ func nodegroupDetailPlain(d *nodegroupsvc.NodegroupDetails) *ui.PlainTable {
 			Add("critical pods", fmt.Sprintf("%d", d.Workloads.CriticalPods)).
 			Add("pdbs", d.Workloads.PodDisruption)
 	}
-	for _, inst := range d.Instances {
+	for _, inst := range instanceList(d) {
 		launched := ""
 		if !inst.LaunchTime.IsZero() {
 			launched = inst.LaunchTime.Format("2006-01-02")
@@ -209,4 +209,13 @@ func sortNodegroupSummaries(items []nodegroupsvc.NodegroupSummary, key string, d
 		return less(i, j)
 	})
 	return items
+}
+
+// instanceList returns the instances that were read (nil when they were
+// not).
+func instanceList(d *nodegroupsvc.NodegroupDetails) []nodegroupsvc.InstanceDetails {
+	if d.Instances == nil {
+		return nil
+	}
+	return *d.Instances
 }

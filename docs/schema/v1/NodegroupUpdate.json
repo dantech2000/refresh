@@ -152,17 +152,10 @@
     "HealthSummary": {
       "properties": {
         "results": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/HealthResult"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/HealthResult"
+          },
+          "type": "array"
         },
         "overallScore": {
           "type": "integer"
@@ -279,17 +272,10 @@
       "type": "string"
     },
     "nodegroups": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/NodegroupResult"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/NodegroupResult"
+      },
+      "type": "array"
     },
     "verification": {
       "$ref": "#/$defs/PostRollVerification"

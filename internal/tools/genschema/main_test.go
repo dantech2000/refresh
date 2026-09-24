@@ -1,4 +1,4 @@
-package commands
+package main
 
 import (
 	"strings"
@@ -15,12 +15,12 @@ func TestRenderSchemaIndex(t *testing.T) {
 		t.Error("the page has no generated-file note")
 	}
 	for _, k := range apidoc.Kinds() {
+		if k.Command() == "" {
+			t.Errorf("kind %s has no command", k)
+		}
 		row := "| `" + string(k) + "` | `refresh " + k.Command() + "` | [" + string(k) + ".json](../schema/v1/" + string(k) + ".json) |"
 		if !strings.Contains(page, row) {
 			t.Errorf("page missing the row\n%s\n---\n%s", row, page)
-		}
-		if k.Command() == "" {
-			t.Errorf("kind %s has no command", k)
 		}
 	}
 }

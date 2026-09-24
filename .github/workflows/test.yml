@@ -53,7 +53,8 @@ jobs:
         # `-race` so this shares one race compile of the dependency tree with the
         # Test step's cache, instead of adding a separate non-race compile pass.
         run: |
-          go run -race . gen-docs --out docs/reference --schema-out docs/schema/v1
+          go run -race . gen-docs --out docs/reference
+          go run -race ./internal/tools/genschema --out docs/schema/v1 --ref docs/reference
           # `git status`, not `git diff`, so a new, untracked page also fails.
           if [ -n "$(git status --porcelain -- docs/reference docs/schema)" ]; then
             echo "::error::docs/reference or docs/schema is stale vs the CLI tree and the Go types. Run 'task docs:gen' and commit."

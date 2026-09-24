@@ -81,17 +81,12 @@ func TestGenerate(t *testing.T) {
 	if _, ok := p["Hidden"]; ok {
 		t.Error(`a json:"-" field is in the schema`)
 	}
-	// A slice or map without omitempty can be null; diag.List cannot.
-	for _, name := range []string{"items", "tags"} {
-		if _, ok := p[name].(map[string]any)["anyOf"]; !ok {
-			t.Errorf("%s does not allow null: %v", name, p[name])
-		}
+	// No field allows null: documents print [] or leave the key out.
+	if strings.Contains(string(data), `"null"`) {
+		t.Errorf("the schema allows null:\n%s", data)
 	}
-	if _, ok := p["failures"].(map[string]any)["anyOf"]; ok {
-		t.Errorf("failures allows null: %v", p["failures"])
-	}
-	if _, ok := p["note"].(map[string]any)["anyOf"]; ok {
-		t.Errorf("an omitempty pointer allows null: %v", p["note"])
+	if p["items"].(map[string]any)["type"] != "array" || p["tags"].(map[string]any)["type"] != "object" {
+		t.Errorf("items, tags = %v, %v; want an array and an object", p["items"], p["tags"])
 	}
 	defs := s["$defs"].(map[string]any)
 	if got := defs["Color"].(map[string]any)["enum"]; !reflect.DeepEqual(got, []any{"Red", "Blue"}) {

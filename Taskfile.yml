@@ -151,7 +151,8 @@ tasks:
   docs:gen:
     desc: Regenerate the Markdown command reference and the JSON schemas
     cmds:
-      - go run . gen-docs --out docs/reference --schema-out docs/schema/v1
+      - go run . gen-docs --out docs/reference
+      - go run ./internal/tools/genschema --out docs/schema/v1 --ref docs/reference
 
   docs:check:
     desc: Fail if the committed command reference or JSON schemas are stale (mirrors CI)

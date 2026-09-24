@@ -171,17 +171,10 @@
       "type": "boolean"
     },
     "results": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/AddonUpdateResult"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/AddonUpdateResult"
+      },
+      "type": "array"
     },
     "failures": {
       "$ref": "#/$defs/FailureList",

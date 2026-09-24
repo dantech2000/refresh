@@ -142,7 +142,7 @@ func TestOutputNodegroupDetailsTable_Plain(t *testing.T) {
 		AMIStatus:    types.AMIOutdated,
 		Scaling:      nodegroupsvc.ScalingConfig{DesiredSize: 3, MinSize: 1, MaxSize: 5},
 		Workloads:    nodegroupsvc.WorkloadInfo{TotalPods: 10, CriticalPods: 2, PodDisruption: "2 PDBs"},
-		Instances: []nodegroupsvc.InstanceDetails{{
+		Instances: &[]nodegroupsvc.InstanceDetails{{
 			InstanceID: "i-0123456789abcdef0123", InstanceType: "m5.large",
 			LaunchTime: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Lifecycle: "on-demand", State: "running", AZ: "us-east-1a",
 		}},

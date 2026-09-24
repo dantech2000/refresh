@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/diag"
 )
@@ -67,7 +68,7 @@ func NewReport() *Report {
 func (r *Report) stop(ctx context.Context, cluster, label string, remaining []string, err error, gate bool) {
 	r.StoppedAt = label
 	if remaining != nil {
-		r.Remaining = remaining
+		r.Remaining = apidoc.List(remaining)
 	}
 	r.Status, r.Failure = stopState(ctx, cluster, err, gate)
 }

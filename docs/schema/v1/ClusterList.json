@@ -198,17 +198,10 @@
     "HealthSummary": {
       "properties": {
         "results": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/HealthResult"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/HealthResult"
+          },
+          "type": "array"
         },
         "overallScore": {
           "type": "integer"
@@ -275,17 +268,10 @@
       "description": "The type of the document."
     },
     "clusters": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/ClusterSummary"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "items": {
+        "$ref": "#/$defs/ClusterSummary"
+      },
+      "type": "array"
     },
     "count": {
       "type": "integer"

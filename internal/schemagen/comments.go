@@ -71,7 +71,7 @@ func FindModuleRoot(dir, modulePath string) (string, error) {
 			return d, nil
 		}
 		if filepath.Dir(d) == d {
-			return "", fmt.Errorf("no go.mod for %s at or above %s; run gen-docs from the repository", modulePath, dir)
+			return "", fmt.Errorf("no go.mod for %s at or above %s; run genschema from the repository", modulePath, dir)
 		}
 	}
 }

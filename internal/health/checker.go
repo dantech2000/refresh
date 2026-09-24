@@ -220,7 +220,7 @@ func aggregateResults(results []HealthResult) HealthSummary {
 	}
 
 	return HealthSummary{
-		Results:      results,
+		Results:      apidoc.List(results),
 		OverallScore: overallScore,
 		Decision:     decision,
 		Warnings:     warnings,

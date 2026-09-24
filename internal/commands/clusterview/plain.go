@@ -99,16 +99,16 @@ func clusterDetailPlain(d *clustersvc.ClusterDetails) *ui.PlainTable {
 		t.Add("age", formatAge(time.Since(d.CreatedAt)))
 	}
 
-	if len(d.Nodegroups) > 0 {
+	if len(d.NodegroupList()) > 0 {
 		active, nodes := 0, int32(0)
-		for _, ng := range d.Nodegroups {
+		for _, ng := range d.NodegroupList() {
 			nodes += ng.DesiredSize
 			if ng.Status == "ACTIVE" {
 				active++
 			}
 		}
 		t.Add("nodegroups", fmt.Sprintf("%d active, %d nodes", active, nodes))
-		for _, ng := range d.Nodegroups {
+		for _, ng := range d.NodegroupList() {
 			t.Add("nodegroup/"+ng.Name, ui.PlainPairs(
 				"instance", ng.InstanceType,
 				"nodes", nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize),
@@ -117,9 +117,9 @@ func clusterDetailPlain(d *clustersvc.ClusterDetails) *ui.PlainTable {
 		}
 	}
 
-	if len(d.Addons) > 0 {
-		t.Add("addons", fmt.Sprintf("%d installed", len(d.Addons)))
-		for _, a := range d.Addons {
+	if len(d.AddonList()) > 0 {
+		t.Add("addons", fmt.Sprintf("%d installed", len(d.AddonList())))
+		for _, a := range d.AddonList() {
 			h := string(a.Health)
 			if h == "" {
 				h = "Unknown"

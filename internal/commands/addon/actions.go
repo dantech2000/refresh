@@ -12,6 +12,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
@@ -82,7 +83,7 @@ func listFailures(fs []diag.Failure, region string) diag.List {
 // the table's INCOMPLETE DATA section), so "count" is never mistaken for the
 // full add-on count.
 func writeAddonList(format, clusterName string, rows []addons.AddonSummary, failures diag.List, elapsed time.Duration) error {
-	doc := addons.AddonList{Cluster: clusterName, Addons: rows, Count: len(rows), Failures: failures}
+	doc := addons.AddonList{Cluster: clusterName, Addons: apidoc.List(rows), Count: len(rows), Failures: failures}
 	if handled, err := runner.EncodeStdout(format, doc); handled {
 		return err
 	}
