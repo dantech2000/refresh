@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/smithy-go"
 	awsClient "github.com/dantech2000/refresh/internal/aws"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
@@ -390,17 +392,75 @@ func TestDescribeNodegroupFallbackWithFakeEKS(t *testing.T) {
 		t.Fatalf("nodegroup = %+v", ng)
 	}
 
-	errClient := eks.New(eks.Options{
-		Region:      "us-east-1",
-		Credentials: aws.AnonymousCredentials{},
-		HTTPClient: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			return nil, errors.New("network")
+	dr.eksClient = scriptedEKSClient(apiErrorResponse(http.StatusForbidden, "AccessDeniedException"))
+	_, err = dr.describeNodegroup(context.Background(), "ng")
+	var ae smithy.APIError
+	if !errors.As(err, &ae) || ae.ErrorCode() != "AccessDeniedException" {
+		t.Fatalf("describeNodegroup() error = %v, want a formatted error that wraps AccessDeniedException", err)
+	}
+}
+
+// A throttled describe is retried (REF-173): the SDK's own retryer is off
+// here, so only common.WithRetry can turn the throttle into a success.
+func TestDescribeNodegroupRetriesThrottling(t *testing.T) {
+	dr := &DryRunner{clusterName: "cluster", eksClient: scriptedEKSClient(
+		apiErrorResponse(http.StatusBadRequest, "ThrottlingException"),
+		jsonResponse(`{"nodegroup":{"nodegroupName":"ng","status":"ACTIVE"}}`),
+	)}
+	ng, err := dr.describeNodegroup(context.Background(), "ng")
+	if err != nil || aws.ToString(ng.NodegroupName) != "ng" {
+		t.Fatalf("describeNodegroup() = %+v, %v; want the nodegroup after one retry", ng, err)
+	}
+}
+
+func TestDefaultDescribeClusterRetriesThrottling(t *testing.T) {
+	client := scriptedEKSClient(
+		apiErrorResponse(http.StatusBadRequest, "ThrottlingException"),
+		jsonResponse(`{"cluster":{"name":"cluster","version":"1.30"}}`),
+	)
+	if version, err := dryrunDescribeCluster(context.Background(), client, "cluster"); err != nil || version != "1.30" {
+		t.Fatalf("dryrunDescribeCluster() = %q, %v; want 1.30 after one retry", version, err)
+	}
+}
+
+// scriptedResponse is one scripted EKS answer: a JSON body, or an API error
+// when errorCode is set.
+type scriptedResponse struct {
+	status    int
+	errorCode string
+	body      string
+}
+
+func jsonResponse(body string) scriptedResponse {
+	return scriptedResponse{status: http.StatusOK, body: body}
+}
+
+func apiErrorResponse(status int, code string) scriptedResponse {
+	return scriptedResponse{status: status, errorCode: code, body: `{"message":"scripted ` + code + `"}`}
+}
+
+// scriptedEKSClient answers each request with the next response, and with
+// the last one after that. The SDK retryer makes one attempt, so a retry
+// the test sees comes from common.WithRetry.
+func scriptedEKSClient(responses ...scriptedResponse) *eks.Client {
+	var n int
+	var mu sync.Mutex
+	return eks.New(eks.Options{
+		Region:           "us-east-1",
+		Credentials:      aws.AnonymousCredentials{},
+		RetryMaxAttempts: 1,
+		HTTPClient: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			r := responses[min(n, len(responses)-1)]
+			n++
+			header := http.Header{"Content-Type": []string{"application/json"}}
+			if r.errorCode != "" {
+				header.Set("X-Amzn-Errortype", r.errorCode)
+			}
+			return &http.Response{StatusCode: r.status, Header: header, Body: io.NopCloser(strings.NewReader(r.body))}, nil
 		}),
 	})
-	dr.eksClient = errClient
-	if _, err := dr.describeNodegroup(context.Background(), "ng"); err == nil {
-		t.Fatal("expected error")
-	}
 }
 
 func TestDefaultDescribeClusterWithFakeEKS(t *testing.T) {
@@ -420,13 +480,7 @@ func TestDefaultDescribeClusterWithFakeEKS(t *testing.T) {
 		t.Fatalf("dryrunDescribeCluster() = %q, %v", version, err)
 	}
 
-	errClient := eks.New(eks.Options{
-		Region:      "us-east-1",
-		Credentials: aws.AnonymousCredentials{},
-		HTTPClient: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			return nil, errors.New("network")
-		}),
-	})
+	errClient := scriptedEKSClient(apiErrorResponse(http.StatusNotFound, "ResourceNotFoundException"))
 	if _, err := dryrunDescribeCluster(context.Background(), errClient, "cluster"); err == nil {
 		t.Fatal("expected describe cluster error")
 	}

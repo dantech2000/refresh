@@ -17,6 +17,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 const changelogHTTPLimit = 4 * time.Second
@@ -167,19 +168,23 @@ func fetchEKSAMIReleases(ctx context.Context, httpClient *http.Client) ([]ghRele
 // selected nodegroup (used in dry-run). Custom-AMI nodegroups are skipped. full
 // prints all notes; otherwise the first few with a "+N more" hint.
 func printChangelogsForNodegroups(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, nodegroups []string, full bool) {
-	clusterOut, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
-	if err != nil || clusterOut.Cluster == nil || clusterOut.Cluster.Version == nil {
+	clusterOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+		return eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
+	})
+	if err != nil || clusterOut == nil || clusterOut.Cluster == nil || clusterOut.Cluster.Version == nil {
 		return
 	}
 	k8sVersion := *clusterOut.Cluster.Version
 	ssmClient := factory.NewSSMClient(awsCfg)
 
 	for _, ng := range nodegroups {
-		desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(ng),
+		desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+			return eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+				ClusterName:   aws.String(clusterName),
+				NodegroupName: aws.String(ng),
+			})
 		})
-		if err != nil || desc.Nodegroup == nil {
+		if err != nil || desc == nil || desc.Nodegroup == nil {
 			continue
 		}
 		if desc.Nodegroup.AmiType == ekstypes.AMITypesCustom {

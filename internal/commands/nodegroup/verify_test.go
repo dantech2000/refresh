@@ -77,7 +77,7 @@ func TestVerifyPostRoll_DegradedNodegroupIsIssue(t *testing.T) {
 func TestVerifyPostRoll_DescribeFailureIsAFailureNotAnIssue(t *testing.T) {
 	eksMock := &mocks.EKSAPI{
 		DescribeNodegroupFn: func(_ context.Context, _ *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
-			return nil, mocks.Throttling()
+			return nil, mocks.AccessDenied()
 		},
 	}
 	v, failures := verifyPostRoll(context.Background(), eksMock, nil, "c", []string{"ng-a"}, nil, false)
@@ -88,8 +88,29 @@ func TestVerifyPostRoll_DescribeFailureIsAFailureNotAnIssue(t *testing.T) {
 		t.Fatalf("failures = %+v, want one", failures)
 	}
 	f := failures[0]
-	if f.Kind != diag.KindNodegroup || f.Name != "ng-a" || f.Operation != diag.OpDescribeNodegroup || f.Reason != diag.ReasonThrottled || !f.Retryable {
+	if f.Kind != diag.KindNodegroup || f.Name != "ng-a" || f.Operation != diag.OpDescribeNodegroup || f.Reason != diag.ReasonAccessDenied || f.Retryable {
 		t.Errorf("failure = %+v", f)
+	}
+}
+
+// One throttled describe is retried, not reported as a failure (REF-173).
+func TestVerifyPostRoll_RetriesThrottledDescribe(t *testing.T) {
+	calls := 0
+	eksMock := &mocks.EKSAPI{
+		DescribeNodegroupFn: func(_ context.Context, _ *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+			calls++
+			if calls == 1 {
+				return nil, mocks.Throttling()
+			}
+			return &eks.DescribeNodegroupOutput{Nodegroup: &ekstypes.Nodegroup{Status: ekstypes.NodegroupStatusActive}}, nil
+		},
+	}
+	v, failures := verifyPostRoll(context.Background(), eksMock, nil, "c", []string{"ng-a"}, nil, false)
+	if len(failures) != 0 || !v.OK() {
+		t.Errorf("failures = %+v, issues = %v; want neither after one retry", failures, v.Issues)
+	}
+	if calls != 2 {
+		t.Errorf("DescribeNodegroup calls = %d, want 2", calls)
 	}
 }
 

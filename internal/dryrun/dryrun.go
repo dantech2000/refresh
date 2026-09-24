@@ -16,6 +16,7 @@ import (
 	"github.com/fatih/color"
 
 	awsClient "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/common"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -64,13 +65,15 @@ type DryRunner struct {
 
 var (
 	dryrunDescribeCluster = func(ctx context.Context, eksClient *eks.Client, clusterName string) (string, error) {
-		clusterOut, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{
-			Name: aws.String(clusterName),
+		clusterOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
+			return eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{
+				Name: aws.String(clusterName),
+			})
 		})
 		if err != nil {
-			return "", err
+			return "", awsClient.FormatAWSError(err, fmt.Sprintf("describing cluster %s", clusterName))
 		}
-		if clusterOut.Cluster == nil {
+		if clusterOut == nil || clusterOut.Cluster == nil {
 			return "", fmt.Errorf("empty DescribeCluster response for %s", clusterName)
 		}
 		return aws.ToString(clusterOut.Cluster.Version), nil
@@ -89,7 +92,7 @@ func NewDryRunner(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client,
 
 	k8sVersion, err := dryrunDescribeCluster(ctx, eksClient, clusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster: %w", err)
+		return nil, err
 	}
 
 	return &DryRunner{
@@ -244,12 +247,14 @@ func (dr *DryRunner) describeNodegroup(ctx context.Context, ngName string) (*typ
 	if dr.describeNodegroupFn != nil {
 		return dr.describeNodegroupFn(ctx, ngName)
 	}
-	ngDesc, err := dr.eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-		ClusterName:   aws.String(dr.clusterName),
-		NodegroupName: aws.String(ngName),
+	ngDesc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+		return dr.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(dr.clusterName),
+			NodegroupName: aws.String(ngName),
+		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, awsClient.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", dr.clusterName, ngName))
 	}
 	if ngDesc == nil {
 		return nil, nil

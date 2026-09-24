@@ -34,11 +34,13 @@ func resolveFromLaunchTemplate(ctx context.Context, ng *types.Nodegroup, ec2Clie
 		return ""
 	}
 
-	ltOut, err := ec2Client.DescribeLaunchTemplateVersions(ctx, &ec2.DescribeLaunchTemplateVersionsInput{
-		LaunchTemplateId: ng.LaunchTemplate.Id,
-		Versions:         []string{*ng.LaunchTemplate.Version},
+	ltOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeLaunchTemplateVersionsOutput, error) {
+		return ec2Client.DescribeLaunchTemplateVersions(rc, &ec2.DescribeLaunchTemplateVersionsInput{
+			LaunchTemplateId: ng.LaunchTemplate.Id,
+			Versions:         []string{*ng.LaunchTemplate.Version},
+		})
 	})
-	if err != nil {
+	if err != nil || ltOut == nil {
 		return ""
 	}
 
@@ -59,10 +61,12 @@ func resolveFromASG(ctx context.Context, ng *types.Nodegroup, autoscalingClient 
 
 	asgName := *ng.Resources.AutoScalingGroups[0].Name
 
-	describeAsgOut, err := autoscalingClient.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
-		AutoScalingGroupNames: []string{asgName},
+	describeAsgOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*autoscaling.DescribeAutoScalingGroupsOutput, error) {
+		return autoscalingClient.DescribeAutoScalingGroups(rc, &autoscaling.DescribeAutoScalingGroupsInput{
+			AutoScalingGroupNames: []string{asgName},
+		})
 	})
-	if err != nil || len(describeAsgOut.AutoScalingGroups) == 0 || len(describeAsgOut.AutoScalingGroups[0].Instances) == 0 {
+	if err != nil || describeAsgOut == nil || len(describeAsgOut.AutoScalingGroups) == 0 || len(describeAsgOut.AutoScalingGroups[0].Instances) == 0 {
 		return ""
 	}
 
@@ -71,10 +75,12 @@ func resolveFromASG(ctx context.Context, ng *types.Nodegroup, autoscalingClient 
 		return ""
 	}
 
-	descInstOut, err := ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-		InstanceIds: []string{*instanceID},
+	descInstOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeInstancesOutput, error) {
+		return ec2Client.DescribeInstances(rc, &ec2.DescribeInstancesInput{
+			InstanceIds: []string{*instanceID},
+		})
 	})
-	if err != nil {
+	if err != nil || descInstOut == nil {
 		return ""
 	}
 
@@ -101,8 +107,10 @@ func LatestAmiIDForType(ctx context.Context, ssmClient *ssm.Client, k8sVersion s
 		return "", nil
 	}
 
-	ssmOut, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
-		Name: aws.String(ssmParam),
+	ssmOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ssm.GetParameterOutput, error) {
+		return ssmClient.GetParameter(rc, &ssm.GetParameterInput{
+			Name: aws.String(ssmParam),
+		})
 	})
 	if err != nil {
 		return "", fmt.Errorf("reading SSM parameter %s: %w", ssmParam, err)
@@ -127,8 +135,10 @@ func LatestReleaseVersionForType(ctx context.Context, ssmClient *ssm.Client, k8s
 		return ""
 	}
 
-	out, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(relPath)})
-	if err != nil || out.Parameter == nil || out.Parameter.Value == nil {
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ssm.GetParameterOutput, error) {
+		return ssmClient.GetParameter(rc, &ssm.GetParameterInput{Name: aws.String(relPath)})
+	})
+	if err != nil || out == nil || out.Parameter == nil || out.Parameter.Value == nil {
 		return ""
 	}
 	return *out.Parameter.Value
