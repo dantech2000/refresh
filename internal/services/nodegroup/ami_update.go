@@ -95,10 +95,12 @@ func (s *ServiceImpl) AMIUpdateDecider(clusterName string, opts AMIUpdateOptions
 			if cerr := ctx.Err(); cerr != nil {
 				return "", cerr
 			}
-			if err != nil || out.Cluster == nil {
-				return "", nil
+			if err == nil && out.Cluster != nil {
+				return aws.ToString(out.Cluster.Version), nil
 			}
-			return aws.ToString(out.Cluster.Version), nil
+			// Remember "unknown" (a success for the memo), so a cluster that
+			// can't be described is not described again per nodegroup.
+			return "", nil
 		})
 		if err != nil {
 			return ""
