@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -245,7 +246,11 @@ func buildUpgradePlan(ctx context.Context, cmd *cli.Command, svc *upgrade.Servic
 	plan, err := svc.BuildPlan(ctx, clusterName, cmd.String("to"), opts)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, cli.Exit(fmt.Sprintf("upgrade interrupted before it started; nothing was changed: %v", err), 1)
+			how := "interrupted"
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				how = "timed out"
+			}
+			return nil, cli.Exit(fmt.Sprintf("upgrade %s before it started; nothing was changed: %v", how, err), runner.ExitError)
 		}
 		return nil, err
 	}

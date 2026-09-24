@@ -137,8 +137,9 @@ esac
 | `1` | A phase failed, the run was interrupted, or it timed out |
 | `3` | The plan has a blocker, also with `--dry-run`. Nothing changed |
 
-After a failure or an interrupt, `refresh` prints the command that resumes
-the upgrade, with the `--wait-timeout`, `--yes`, and other flags you gave. See
+A `--wait-timeout` that runs out is a timeout, not an interrupt: the error
+says `timed out` and names `--wait-timeout`. After a failure, an interrupt,
+or a timeout, `refresh` prints the command that resumes the upgrade, with the `--wait-timeout`, `--yes`, and other flags you gave. See
 [`cluster upgrade`](../commands/cluster.md#upgrade).
 
 ## `nodegroup scale`

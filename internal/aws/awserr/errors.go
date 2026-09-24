@@ -225,6 +225,14 @@ func deadlineHint(flag string) string {
 	return fmt.Sprintf("(increase %s to allow more time)", flag)
 }
 
+// TimeoutHint returns the remediation text FormatAWSError adds to a
+// timed-out operation, "(increase --timeout to allow more time)". Code that
+// reports a deadline itself uses it, so RetargetDeadlineHint can name the
+// flag that set the deadline.
+func TimeoutHint() string {
+	return deadlineHint(DefaultTimeoutFlag)
+}
+
 // retargetedError is err with its timeout hint naming another flag.
 type retargetedError struct {
 	msg string
