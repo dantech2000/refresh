@@ -21,6 +21,7 @@ import (
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/services/common"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
+	"github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -71,8 +72,14 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	sortStatuses(statuses, cmd.String("sort"), cmd.Bool("desc"))
+	// The human table lists incomplete rows in its INCOMPLETE DATA section;
+	// the other formats name them on stderr.
+	if !strings.EqualFold(strings.TrimSpace(cmd.String("format")), "table") {
+		warnIncompleteRows(ui.Stderr, statuses)
+	}
 
-	if handled, err := runner.EncodeStdout(cmd.String("format"), statussvc.FleetStatus{Clusters: statuses}); handled {
+	doc := statussvc.FleetStatus{Clusters: statuses, Failures: regionFailures(regionErrs)}
+	if handled, err := runner.EncodeStdout(cmd.String("format"), doc); handled {
 		if err != nil {
 			return err
 		}
@@ -155,6 +162,36 @@ func reportSweep(w io.Writer, regions int, s fleetSweep) error {
 			regions, regionScopeHint)
 	}
 	return nil
+}
+
+// regionFailures converts the sweep's failed regions to the "failures"
+// entries of the -o json/yaml document, each with a one-line reason.
+func regionFailures(errs []error) []types.RegionFailure {
+	if len(errs) == 0 {
+		return nil
+	}
+	out := make([]types.RegionFailure, 0, len(errs))
+	for _, e := range errs {
+		f := types.RegionFailure{Error: awserr.Summary(e)}
+		var re *regionError
+		if errors.As(e, &re) {
+			f = types.RegionFailure{Region: re.Region, Error: awserr.Summary(re.Err)}
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// warnIncompleteRows names on w each cluster whose row has errors, one
+// warning per error, cut to its first line. The row's "errors" field keeps
+// the full text for -o json/yaml.
+func warnIncompleteRows(w io.Writer, statuses []statussvc.ClusterStatus) {
+	for _, c := range statuses {
+		for _, msg := range c.Errors {
+			line, _, _ := strings.Cut(msg, "\n")
+			_, _ = fmt.Fprintln(w, ui.StderrColor(color.FgYellow).Sprintf("warning: cluster %s (%s): %s", c.Name, c.Region, strings.TrimSpace(line)))
+		}
+	}
 }
 
 // regionLister is the per-region status sweep gatherFleet fans out over.

@@ -21,6 +21,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/status"
+	"github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -87,9 +88,9 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 
 	startTime := time.Now()
 	var summaries []clustersvc.ClusterSummary
-	failedRegions := 0
+	var failures []types.RegionFailure
 	if allRegions || len(regions) > 0 {
-		summaries, failedRegions, err = runMultiRegionListWithProgress(ctx, clusterService, options)
+		summaries, failures, err = runMultiRegionListWithProgress(ctx, clusterService, options)
 	} else {
 		err = runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
 			var lerr error
@@ -109,22 +110,25 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 		if err := clusterview.OutputClustersTree(summaries, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
 			return err
 		}
-		return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, failedRegions))
+		return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, len(failures)))
 	}
 	if summaries == nil {
 		summaries = []clustersvc.ClusterSummary{} // -o json|yaml: [], not null
 	}
 	payload := map[string]any{"clusters": summaries, "count": len(summaries)}
+	if len(failures) > 0 {
+		payload["failures"] = failures
+	}
 	if handled, err := runner.EncodeStdout(format, payload); handled {
 		if err != nil {
 			return err
 		}
-		return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, failedRegions))
+		return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, len(failures)))
 	}
 	if err := clusterview.OutputClustersTable(summaries, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
 		return err
 	}
-	return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, failedRegions))
+	return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, len(failures)))
 }
 
 // listIncompleteExit returns exit 4 (incomplete data) after a list printed a
@@ -269,12 +273,13 @@ func describeIncompleteExit(details *clustersvc.ClusterDetails) error {
 	return cli.Exit(fmt.Sprintf("incomplete data: %d part(s) of cluster %s could not be read", len(details.Warnings), details.Name), runner.ExitIncomplete)
 }
 
-// runMultiRegionListWithProgress returns the gathered clusters and the number
-// of regions that failed. It fails only when no region answered.
-func runMultiRegionListWithProgress(ctx context.Context, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, int, error) {
+// runMultiRegionListWithProgress returns the gathered clusters and the
+// regions that failed, each with a one-line reason. It fails only when no
+// region answered.
+func runMultiRegionListWithProgress(ctx context.Context, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, []types.RegionFailure, error) {
 	spinner := ui.NewFunSpinnerForCategory("cluster")
 	if err := spinner.Start(); err != nil {
-		return nil, 0, fmt.Errorf("failed to start spinner: %w", err)
+		return nil, nil, fmt.Errorf("failed to start spinner: %w", err)
 	}
 	defer spinner.Stop()
 
@@ -282,7 +287,7 @@ func runMultiRegionListWithProgress(ctx context.Context, clusterService *cluster
 	if err != nil {
 		spinner.Stop()
 		reportRegionSweep(ui.Stderr, clustersvc.RegionListResult{Skipped: res.Skipped})
-		return nil, 0, err
+		return nil, nil, err
 	}
 
 	if len(res.Summaries) > 0 {
@@ -291,7 +296,20 @@ func runMultiRegionListWithProgress(ctx context.Context, clusterService *cluster
 		spinner.Success("Search complete - no clusters found")
 	}
 	reportRegionSweep(ui.Stderr, res)
-	return res.Summaries, len(res.Failed), nil
+	return res.Summaries, regionFailures(res.Failed), nil
+}
+
+// regionFailures converts the sweep's failed regions to the "failures"
+// entries of the -o json/yaml document, in sweep order.
+func regionFailures(failed []clustersvc.RegionFailure) []types.RegionFailure {
+	if len(failed) == 0 {
+		return nil
+	}
+	out := make([]types.RegionFailure, 0, len(failed))
+	for _, f := range failed {
+		out = append(out, types.RegionFailure{Region: f.Region, Error: awserr.Summary(f.Err)})
+	}
+	return out
 }
 
 // describeSections returns whether cluster describe shows the health and
