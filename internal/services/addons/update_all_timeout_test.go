@@ -2,6 +2,8 @@ package addons
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,6 +148,55 @@ func TestUpdateAll_WaitDeadlineScalesWithAddonCount(t *testing.T) {
 		}
 		if !dl.Equal(deadlines[0]) {
 			t.Errorf("call %d: deadline differs from call 0; the budget must be one deadline for the whole run", i)
+		}
+	}
+}
+
+// Sequential runs: once Ctrl+C (or the deadline) ends the run, the add-ons
+// not yet started are NotAttempted, like in the parallel branch, not failed
+// attempts that each report the cancelled context.
+func TestUpdateAll_SequentialCancelMarksRestNotAttempted(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	names := []string{"a1", "a2", "a3"}
+	b := mocks.NewEKSAPI().WithCluster("prod", "1.32")
+	for _, n := range names {
+		b = b.WithAddon(n, "v1.0.0", ekstypes.AddonStatusActive).
+			WithAddonVersions(n, []string{"v1.1.0"}, "1.32")
+	}
+	m := b.Build()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The user presses Ctrl+C while the first update is being sent.
+	m.UpdateAddonFn = func(ctx context.Context, _ *eks.UpdateAddonInput, _ ...func(*eks.Options)) (*eks.UpdateAddonOutput, error) {
+		cancel()
+		return nil, ctx.Err()
+	}
+
+	results, err := NewService(m, logger()).UpdateAll(ctx, "prod", UpdateAllOptions{})
+	if err != nil {
+		t.Fatalf("UpdateAll = %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3", len(results))
+	}
+	for _, r := range results[1:] {
+		if r.Status != StatusNotAttempted || r.Failure == nil {
+			t.Errorf("%s: status = %s (failure %+v), want NotAttempted", r.AddonName, r.Status, r.Failure)
+		}
+	}
+}
+
+// An add-on that was never resolved or sent leaves out the data it has no
+// value for, instead of printing "" and the zero time.
+func TestAddonUpdateResult_NotAttemptedOmitsUncollected(t *testing.T) {
+	r := notAttempted(context.Background(), "prod", AddonSummary{Name: "coredns", Version: "v1.11.1"})
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"startedAt"`, `"updateId"`, `"newVersion"`} {
+		if strings.Contains(string(raw), key) {
+			t.Errorf("%s present in %s", key, raw)
 		}
 	}
 }
