@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.11.1](https://github.com/dantech2000/refresh/compare/v0.11.0...v0.11.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **addon:** --wait-timeout 0 means no limit on addon update ([#363](https://github.com/dantech2000/refresh/issues/363)) ([fd181dd](https://github.com/dantech2000/refresh/commit/fd181ddaa236b59c56487ed0492b8d85574f9011))
+* **addon:** fail closed when the update --all preview can't read an add-on ([#362](https://github.com/dantech2000/refresh/issues/362)) ([5e21969](https://github.com/dantech2000/refresh/commit/5e21969ac0bd0e51c1a78efd63702c5f6cb3a06f))
+* **cli:** treat h and help as positionals on leaf commands ([#375](https://github.com/dantech2000/refresh/issues/375)) ([f20dc38](https://github.com/dantech2000/refresh/commit/f20dc383c16f0342f308fd7ea5ebb14f9f244bf2))
+* **flagcanon:** reject a deprecated wait alias together with --wait-timeout ([#364](https://github.com/dantech2000/refresh/issues/364)) ([479a426](https://github.com/dantech2000/refresh/commit/479a42676056e02f52d70132972a87ba281208d5))
+* **nodegroup:** report Ctrl+C during scale --wait as interrupted, not timed out ([#372](https://github.com/dantech2000/refresh/issues/372)) ([6f23c44](https://github.com/dantech2000/refresh/commit/6f23c446407a9a010e44e934ea964cfd9a566697))
+* **nodegroup:** scale --dry-run --check-pdbs exits with the gate's code ([#365](https://github.com/dantech2000/refresh/issues/365)) ([1e80040](https://github.com/dantech2000/refresh/commit/1e800409bc3bf615f7ebccbc2a81caeb580db0db))
+* **nodegroup:** update -o json encodes empty lists as [] and reports roll failures ([#370](https://github.com/dantech2000/refresh/issues/370)) ([e6ed3d9](https://github.com/dantech2000/refresh/commit/e6ed3d984607d8cec70451740f4e89ea9439958f))
+* **output:** report partial failures in the document and on stderr ([#373](https://github.com/dantech2000/refresh/issues/373)) ([5e7379d](https://github.com/dantech2000/refresh/commit/5e7379dd0cfdd61f6e96a32e052047e170afafa5))
+* **upgrade:** report a --wait-timeout expiry as a timeout, not an interrupt ([#371](https://github.com/dantech2000/refresh/issues/371)) ([df5f79b](https://github.com/dantech2000/refresh/commit/df5f79b26207bff3aae6b9d3b72cc6748ca1851d))
+
 ## [0.11.0](https://github.com/dantech2000/refresh/compare/v0.10.4...v0.11.0) (2026-09-23)
 
 
