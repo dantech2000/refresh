@@ -2,7 +2,6 @@ package nodegroup
 
 import (
 	"context"
-	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -81,27 +80,37 @@ func DecideAMIUpdate(ctx context.Context, ng *ekstypes.Nodegroup, opts AMIUpdate
 // update keeps the nodegroup on its minor), memoized across nodegroups; the
 // cluster version, needed only as a fallback, is described once, on first
 // use. If it can't be described, the AMI status is unknown, so the nodegroup
-// is rolled rather than skipped.
+// is rolled rather than skipped. A describe cut short by its caller's ctx is
+// not remembered: the next caller describes the cluster again.
 func (s *ServiceImpl) AMIUpdateDecider(clusterName string, opts AMIUpdateOptions) func(context.Context, *ekstypes.Nodegroup) AMIUpdateDecision {
 	latest := s.NewLatestAMICache()
-	var (
-		once           sync.Once
-		clusterVersion string
-		versionOK      bool
-	)
-	amis := func(ctx context.Context, ng *ekstypes.Nodegroup) (string, string) {
-		once.Do(func() {
+	// The one key is the cluster; "" records a cluster that could not be
+	// described, so a persistent failure is not retried per nodegroup.
+	var versions common.Memo[struct{}, string]
+	clusterVersion := func(ctx context.Context) string {
+		v, err := versions.Get(ctx, struct{}{}, func(ctx context.Context) (string, error) {
 			out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterOutput, error) {
 				return s.eksClient.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
 			})
-			if err == nil && out.Cluster != nil && out.Cluster.Version != nil {
-				clusterVersion, versionOK = *out.Cluster.Version, true
+			if cerr := ctx.Err(); cerr != nil {
+				return "", cerr
 			}
+			if err != nil || out.Cluster == nil {
+				return "", nil
+			}
+			return aws.ToString(out.Cluster.Version), nil
 		})
-		if !versionOK {
+		if err != nil {
+			return ""
+		}
+		return v
+	}
+	amis := func(ctx context.Context, ng *ekstypes.Nodegroup) (string, string) {
+		v := clusterVersion(ctx)
+		if v == "" {
 			return "", ""
 		}
-		l, err := latest.ForNodegroup(ctx, ng, clusterVersion)
+		l, err := latest.ForNodegroup(ctx, ng, v)
 		if err != nil || l == "" {
 			return "", ""
 		}
