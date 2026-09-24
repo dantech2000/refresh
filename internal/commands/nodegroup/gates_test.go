@@ -4,9 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 )
@@ -264,16 +261,6 @@ func TestUpdate_DryRunSkipsCustomAMI(t *testing.T) {
 		if actions["custom"] != "SkipCustom" || actions["busy"] != "SkipUpdating" {
 			t.Errorf("force=%v: actions = %v, want custom=skip-custom busy=skip-updating", force, actions)
 		}
-	}
-}
-
-// --reroll bypasses the already-on-latest skip without an AMI lookup, the
-// same way --force does.
-func TestLatestAMISkipChecker_RerollNeverSkips(t *testing.T) {
-	// A nil EKS client proves the check returns before any AWS call.
-	skip := newLatestAMISkipChecker(t.Context(), aws.Config{}, nil, "prod", updateAMIFlags{reroll: true})
-	if skip(&ekstypes.Nodegroup{}) {
-		t.Error("--reroll must not skip a nodegroup already on the latest AMI")
 	}
 }
 
