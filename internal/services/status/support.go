@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
-	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // Extended support roughly doubles the control-plane price: ~$0.60/hr vs the

@@ -3,7 +3,7 @@ package awserr
 import (
 	"context"
 
-	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // ListAllPages pages through an AWS list API, retrying each page call with

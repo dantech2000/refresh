@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // monitorFunc runs the EKS update monitor, printing progress unless quiet,

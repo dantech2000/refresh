@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 
 	"github.com/dantech2000/refresh/internal/aws/awserr"
-	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // CPU headroom thresholds for safe rolling updates: at least

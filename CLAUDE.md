@@ -102,7 +102,9 @@ command (CLI wiring)  internal/commands/{statuscmd,cluster,nodegroup,addon,ctxcm
 
 Supporting packages: `internal/aws` (SDK abstractions, AMI lookup, cluster name
 resolution), `internal/aws/awserr` (see below), `internal/awsconfig` (unified
-config loading), `internal/cliconfig` (YAML context store), `internal/config`
+config loading), `internal/cliconfig` (YAML context store), `internal/common`
+(retry, bounded fan-out, paging, memo; imports no other refresh package, so any
+layer can use it), `internal/config`
 (defaults, env var names), `internal/health` (pre-flight checks, PDB gates,
 kube target matching), `internal/monitoring` (update progress),
 `internal/dryrun`, `internal/types`, `internal/mocks`,
@@ -256,7 +258,7 @@ if err != nil {
 }
 ```
 
-`WithRetry[T]` (`internal/services/common/retry.go`) is generic and retries
+`WithRetry[T]` (`internal/common/retry.go`) is generic and retries
 throttling/5xx/transient errors with full jitter while honoring `ctx`; it does
 not retry permanent errors such as AccessDenied. `FormatAWSError(err, op)`
 (`internal/aws/awserr/errors.go`, re-exported by `internal/aws`) turns SDK

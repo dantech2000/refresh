@@ -11,9 +11,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
-	"github.com/dantech2000/refresh/internal/services/common"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 )
