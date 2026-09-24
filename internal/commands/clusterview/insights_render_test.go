@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
@@ -105,7 +106,7 @@ func TestUpgradeCheckLines_ControlPlaneGate(t *testing.T) {
 		},
 		Skew: clustersvc.SkewReport{ControlPlaneVersion: "1.32"},
 	}
-	joined := strings.Join(upgradeCheckLines(th, rpt), "\n")
+	joined := strings.Join(upgradeCheckLines(th, rpt, ""), "\n")
 	for _, want := range []string{
 		"✗ NOT READY",
 		"▸ CONTROL PLANE",
@@ -124,7 +125,7 @@ func TestUpgradeCheckLines_ControlPlaneGate(t *testing.T) {
 		ControlPlane: &health.HealthResult{Name: "Control Plane", Status: health.StatusPass, Skipped: true, Message: "control-plane metrics unavailable (requires EKS 1.28+ on a supported platform version)"},
 		Skew:         clustersvc.SkewReport{ControlPlaneVersion: "1.27"},
 	}
-	got := strings.Join(upgradeCheckLines(th, skipped), "\n")
+	got := strings.Join(upgradeCheckLines(th, skipped, ""), "\n")
 	if !strings.Contains(got, "● READY") || !strings.Contains(got, "metrics unavailable") {
 		t.Errorf("skipped gate should be READY + unavailable note:\n%s", got)
 	}
@@ -142,7 +143,7 @@ func TestUpgradeCheckLines_Verdicts(t *testing.T) {
 		},
 		Skew: clustersvc.SkewReport{ControlPlaneVersion: "1.29", Findings: []string{"nodegroup ng-a is 2 minors behind"}},
 	}
-	joined := strings.Join(upgradeCheckLines(th, rptErr), "\n")
+	joined := strings.Join(upgradeCheckLines(th, rptErr, ""), "\n")
 	if strings.Contains(joined, "\x1b") {
 		t.Fatalf("ColorNone output contains ANSI:\n%s", joined)
 	}
@@ -162,7 +163,7 @@ func TestUpgradeCheckLines_Verdicts(t *testing.T) {
 
 	// No insights, no skew → READY.
 	rptReady := &clustersvc.UpgradeReport{Cluster: "prod", Skew: clustersvc.SkewReport{ControlPlaneVersion: "1.33"}}
-	ready := strings.Join(upgradeCheckLines(th, rptReady), "\n")
+	ready := strings.Join(upgradeCheckLines(th, rptReady, ""), "\n")
 	for _, want := range []string{
 		"● READY",
 		"● no upgrade insights to address",
@@ -178,7 +179,94 @@ func TestUpgradeCheckLines_Verdicts(t *testing.T) {
 		Cluster:  "stage",
 		Insights: []clustersvc.InsightSummary{{Name: "x", Status: clustersvc.InsightStatusWarning}},
 	}
-	if got := strings.Join(upgradeCheckLines(th, rptWarn), "\n"); !strings.Contains(got, "▲ REVIEW") {
+	if got := strings.Join(upgradeCheckLines(th, rptWarn, ""), "\n"); !strings.Contains(got, "▲ REVIEW") {
 		t.Errorf("warning-only verdict should be REVIEW:\n%s", got)
+	}
+}
+
+// A nodegroup at the kubelet skew limit blocks the upgrade, so its finding
+// is a failure, as in the verdict and in `cluster upgrade` (REF-168).
+func TestUpgradeCheckLines_BlockingSkewIsFail(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	rpt := &clustersvc.UpgradeReport{
+		Cluster: "prod",
+		Skew: clustersvc.SkewReport{
+			ControlPlaneVersion: "1.32",
+			Nodegroups: []clustersvc.NodegroupSkew{
+				{Name: "old", Version: "1.29", MinorsBehind: 3, Blocking: true},
+				{Name: "web", Version: "1.31", MinorsBehind: 1},
+			},
+			Findings: []string{
+				"nodegroup old (1.29) is 3 minor versions behind",
+				"nodegroup web (1.31) is 1 minor version(s) behind",
+			},
+		},
+	}
+	joined := strings.Join(upgradeCheckLines(th, rpt, ""), "\n")
+	for _, want := range []string{
+		"✗ NOT READY",
+		"✗ nodegroup old (1.29)",
+		"▲ nodegroup web (1.31)",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
+// With unread nodegroups or add-ons, "no finding" covers only what was read
+// (REF-168).
+func TestUpgradeCheckLines_NoSkewWithFailures(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	rpt := &clustersvc.UpgradeReport{
+		Cluster:  "prod",
+		Skew:     clustersvc.SkewReport{ControlPlaneVersion: "1.32"},
+		Failures: diag.List{diag.New(diag.KindNodegroup, "web", diag.ReasonAccessDenied, "denied")},
+	}
+	joined := strings.Join(upgradeCheckLines(th, rpt, ""), "\n")
+	if strings.Contains(joined, "nodegroups and addons are current") {
+		t.Errorf("an unread nodegroup still reads as current:\n%s", joined)
+	}
+	if !strings.Contains(joined, "no skew in the nodegroups and addons that could be read") {
+		t.Errorf("missing the partial no-skew line:\n%s", joined)
+	}
+}
+
+// The title, the empty state, and the drill-in hint follow --category; the
+// hint is a runnable command; and there is no "0 passing" chip while PASSING
+// insights are hidden (REF-168).
+func TestUpgradeCheckLines_CategoryAndChips(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	rpt := &clustersvc.UpgradeReport{
+		Cluster:  "prod",
+		Insights: []clustersvc.InsightSummary{{ID: "mis12345-eeee", Name: "Security group rules", Category: "MISCONFIGURATION", Status: clustersvc.InsightStatusWarning}},
+		Skew:     clustersvc.SkewReport{ControlPlaneVersion: "1.32"},
+	}
+	joined := strings.Join(upgradeCheckLines(th, rpt, "MISCONFIGURATION"), "\n")
+	for _, want := range []string{
+		"MISCONFIGURATION INSIGHTS  prod",
+		"drill into one: refresh cluster upgrade-check -c prod --id <id|name> --category MISCONFIGURATION",
+		"▲ 1 warning",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in:\n%s", want, joined)
+		}
+	}
+	for _, bad := range []string{"UPGRADE READINESS", "0 passing"} {
+		if strings.Contains(joined, bad) {
+			t.Errorf("unexpected %q in:\n%s", bad, joined)
+		}
+	}
+
+	empty := &clustersvc.UpgradeReport{Cluster: "prod", Skew: clustersvc.SkewReport{ControlPlaneVersion: "1.32"}}
+	if got := strings.Join(upgradeCheckLines(th, empty, "MISCONFIGURATION"), "\n"); !strings.Contains(got, "no misconfiguration insights to address") {
+		t.Errorf("empty MISCONFIGURATION report:\n%s", got)
+	}
+
+	def := strings.Join(upgradeCheckLines(th, rpt, "UPGRADE_READINESS"), "\n")
+	if !strings.Contains(def, "UPGRADE READINESS  prod") ||
+		!strings.Contains(def, "drill into one: refresh cluster upgrade-check -c prod --id <id|name>") ||
+		strings.Contains(def, "--category") {
+		t.Errorf("default category title or hint wrong:\n%s", def)
 	}
 }

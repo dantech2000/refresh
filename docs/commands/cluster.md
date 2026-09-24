@@ -129,9 +129,9 @@ refresh cluster describe [cluster] [flags]
 | `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
 | `--detailed` | Show comprehensive networking and security information |
 | `--no-health` | Skip the health checks (health is shown by default) |
-| `--show-security` | Include security configuration analysis |
+| `--show-security` | Add the `SECURITY` section: service role, KMS key, deletion protection, endpoint access. `-o json`/`-o yaml` always carry these fields |
 | `--no-addons` | Skip the EKS add-on section (add-ons are shown by default) |
-| `--check-readiness, -R` | Measure real Kubernetes node readiness (`Ready/desired`) via the cluster API; without it the `NODES` column shows the desired count only |
+| `--check-readiness, -R` | Measure real Kubernetes node readiness (`Ready/desired`) via the cluster API, and list the nodegroups (no `--detailed` needed); without it the `NODES` column shows the desired count only |
 | `--kubeconfig` | Path to the kubeconfig for `--check-readiness` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--kube-context` | Kubeconfig context for `--check-readiness`, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
@@ -219,9 +219,9 @@ refresh cluster upgrade-check -c prod-east --id bc8b2f86       # by short ID
 |---|---|
 | `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
 | `--category` | Insight category: `UPGRADE_READINESS` (default), `MISCONFIGURATION` |
-| `--status` | Filter by insight status: `PASSING`, `WARNING`, `ERROR`, `UNKNOWN` |
+| `--status` | Filter by insight status: `PASSING`, `WARNING`, `ERROR`, `UNKNOWN`. `PASSING` needs no `--show-passing` |
 | `--show-passing` | Include `PASSING` insights (hidden by default) |
-| `--id` | Show the detail view for one insight — accepts its short ID (from the table), full ID, or a case-insensitive name substring |
+| `--id` | Show the detail view for one insight of `--category` — accepts its short ID (from the table), full ID, or a case-insensitive name substring |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
 | `--exit-zero` | Exit `0` even when the check finds warnings, blockers, or unreadable items (report mode) |
 | `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
@@ -444,6 +444,11 @@ Each plan step has a `type` (`Readiness`, `ControlPlane`, `Addon`, or
 `Nodegroup`) and a `status` (`Pending`, `Completed`, `Blocked`, or
 `Manual`). The `-o plain` columns keep the lower-case words
 (`control-plane`, `pending`).
+
+A `Manual` step is one refresh leaves to you: a custom-AMI nodegroup, or
+an add-on or nodegroup skipped with `--skip` / `--skip-nodegroup`. When a run
+ends with manual steps, the table view says the upgrade is not complete and
+lists them, instead of "Upgrade complete". The exit code does not change.
 
 `plan.notices` are advisory and never change the exit code. `plan.failures`
 are the reads the planner could not make. `report.status` says how the run

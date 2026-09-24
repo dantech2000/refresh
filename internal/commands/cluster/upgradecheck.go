@@ -61,9 +61,9 @@ Examples:
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "category", Usage: "Insight category (UPGRADE_READINESS, MISCONFIGURATION)", Value: "UPGRADE_READINESS"},
-			&cli.StringSliceFlag{Name: "status", Usage: "Filter by insight status (PASSING, WARNING, ERROR, UNKNOWN)"},
+			&cli.StringSliceFlag{Name: "status", Usage: "Filter by insight status (PASSING, WARNING, ERROR, UNKNOWN); PASSING needs no --show-passing"},
 			&cli.BoolFlag{Name: "show-passing", Usage: "Include PASSING insights (hidden by default)"},
-			&cli.StringFlag{Name: "id", Usage: "Show the detail view for one insight — accepts its ID, a short ID prefix (as shown in the table), or a name substring"},
+			&cli.StringFlag{Name: "id", Usage: "Show the detail view for one insight of --category — accepts its ID, a short ID prefix (as shown in the table), or a name substring"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
 			&cli.BoolFlag{Name: "exit-zero", Usage: "Exit 0 even when the check finds warnings (2), blockers (3), or unreadable items (4): report mode"},
 		},
@@ -94,7 +94,7 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 	if q := cmd.String("id"); q != "" {
 		var detail *clustersvc.InsightDetail
 		if werr := runner.WithSpinner("cluster", "Insight detail loaded!", func() error {
-			id, rerr := service.ResolveInsightID(ctx, clusterName, q)
+			id, rerr := service.ResolveInsightID(ctx, clusterName, cmd.String("category"), q)
 			if rerr != nil {
 				return rerr
 			}
@@ -151,7 +151,7 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 		if encErr != nil {
 			return encErr
 		}
-	} else if err := clusterview.OutputUpgradeCheck(report); err != nil {
+	} else if err := clusterview.OutputUpgradeCheck(report, opts.Category); err != nil {
 		return err
 	}
 	if !runner.TableListsFailures(format) {

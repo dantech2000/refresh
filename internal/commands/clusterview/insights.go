@@ -16,15 +16,16 @@ const insightTimeLayout = "2006-01-02 15:04"
 // render design system (a readiness verdict + tokenized insights + skew +
 // failures). `-o plain` writes the insights as TSV on stdout and the rest of
 // the report (verdict, support, control plane, version skew) as text on
-// stderr; the caller reports the failures on stderr.
-func OutputUpgradeCheck(report *clustersvc.UpgradeReport) error {
+// stderr; the caller reports the failures on stderr. category is the
+// --category the insights were read for.
+func OutputUpgradeCheck(report *clustersvc.UpgradeReport, category string) error {
 	if ui.PlainOutput() {
-		writeUpgradeCheckInfo(ui.Stderr, report)
+		writeUpgradeCheckInfo(ui.Stderr, report, category)
 		upgradeCheckPlain(report).Render()
 		return nil
 	}
 	th := render.Default(os.Stdout)
-	for _, line := range upgradeCheckLines(th, report) {
+	for _, line := range upgradeCheckLines(th, report, category) {
 		fmt.Println(line)
 	}
 	return nil

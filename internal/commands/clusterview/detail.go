@@ -13,14 +13,15 @@ import (
 // human path uses the render design system (sections, status tokens, a health
 // card, and the INCOMPLETE DATA section for details.Failures); `-o plain`
 // writes a FIELD/VALUE TSV (see clusterDetailPlain), and the caller reports
-// the failures on stderr.
-func OutputClusterDetailsTable(details *clustersvc.ClusterDetails) error {
+// the failures on stderr. showSecurity adds the security fields
+// (--show-security or --detailed).
+func OutputClusterDetailsTable(details *clustersvc.ClusterDetails, showSecurity bool) error {
 	if ui.PlainOutput() {
-		clusterDetailPlain(details).Render()
+		clusterDetailPlain(details, showSecurity).Render()
 		return nil
 	}
 	th := render.Default(os.Stdout)
-	for _, line := range clusterDetailLines(th, details) {
+	for _, line := range clusterDetailLines(th, details, showSecurity) {
 		fmt.Println(line)
 	}
 	return nil

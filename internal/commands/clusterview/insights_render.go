@@ -68,14 +68,66 @@ func insightColumns() []ui.Column {
 	}
 }
 
+// defaultInsightCategory is the --category that upgrade-check reads when none
+// is given.
+const defaultInsightCategory = "UPGRADE_READINESS"
+
+// isDefaultCategory reports whether category is the upgrade-readiness one
+// ("" counts as the default).
+func isDefaultCategory(category string) bool {
+	c := strings.ToUpper(strings.TrimSpace(category))
+	return c == "" || c == defaultInsightCategory
+}
+
+// insightsTitle is the upgrade-check title for the insight category the
+// report holds: "UPGRADE READINESS" for the default one, else the category
+// ("MISCONFIGURATION INSIGHTS").
+func insightsTitle(category string) string {
+	if isDefaultCategory(category) {
+		return "UPGRADE READINESS"
+	}
+	return strings.ReplaceAll(strings.ToUpper(strings.TrimSpace(category)), "_", " ") + " INSIGHTS"
+}
+
+// drillHint is the command that opens one insight of the report's category.
+func drillHint(cluster, category string) string {
+	hint := "refresh cluster upgrade-check -c " + cluster + " --id <id|name>"
+	if !isDefaultCategory(category) {
+		hint += " --category " + strings.ToUpper(strings.TrimSpace(category))
+	}
+	return hint
+}
+
+// blockingFindings is how many of the report's skew findings block the
+// upgrade: skewFindings lists the nodegroups at the kubelet skew limit first.
+func blockingFindings(skew clustersvc.SkewReport) int {
+	n := 0
+	for _, ng := range skew.Nodegroups {
+		if ng.Blocking {
+			n++
+		}
+	}
+	return min(n, len(skew.Findings))
+}
+
+// noSkewText is the version-skew line when there is no finding. With read
+// failures it covers only what was read.
+func noSkewText(report *clustersvc.UpgradeReport) string {
+	if len(report.Failures) > 0 {
+		return "no skew in the nodegroups and addons that could be read"
+	}
+	return "nodegroups and addons are current"
+}
+
 // upgradeCheckLines builds the human `cluster upgrade-check` view (pure,
-// golden-testable): a readiness verdict, the AWS Cluster Insights table, the
-// local version-skew section, and the INCOMPLETE DATA section for failures.
-func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []string {
+// golden-testable): a readiness verdict, the AWS Cluster Insights table for
+// category (--category), the local version-skew section, and the INCOMPLETE
+// DATA section for failures.
+func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport, category string) []string {
 	pal := th.Pal
 	st, verdict := upgradeVerdict(report)
 	out := []string{
-		th.Bold(pal.White, "UPGRADE READINESS") + th.Paint(pal.Dim, "  "+report.Cluster) + "   " + th.Tokenf(st, verdict),
+		th.Bold(pal.White, insightsTitle(category)) + th.Paint(pal.Dim, "  "+report.Cluster) + "   " + th.Tokenf(st, verdict),
 	}
 	if report.Support != nil {
 		out = append(out, th.Paint(pal.Dim, "support  ")+supportToken(th, report.Support))
@@ -86,10 +138,14 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 	)
 
 	if len(report.Insights) == 0 {
-		out = append(out, "  "+th.Token(render.Healthy, "no upgrade insights to address"))
+		kind := "upgrade"
+		if !isDefaultCategory(category) {
+			kind = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(category), "_", " "))
+		}
+		out = append(out, "  "+th.Token(render.Healthy, "no "+kind+" insights to address"))
 	} else {
 		tbl := th.NewTable(insightColumns()...)
-		var errc, warnc, passc int
+		var errc, warnc, passc, unknownc int
 		for _, in := range report.Insights {
 			switch strings.ToUpper(in.Status) {
 			case clustersvc.InsightStatusError:
@@ -98,6 +154,8 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 				warnc++
 			case clustersvc.InsightStatusPassing:
 				passc++
+			default:
+				unknownc++
 			}
 			refresh := "-"
 			if in.LastRefreshTime != nil {
@@ -115,10 +173,10 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 		for _, l := range tbl.Render() {
 			out = append(out, "  "+l)
 		}
-		out = append(out, "  "+insightCountChips(th, errc, warnc, passc))
+		out = append(out, "  "+insightCountChips(th, errc, warnc, passc, unknownc))
 		// Tell the user how to drill in — the detail view accepts the short ID
 		// above or a name substring, so they never need to copy a raw UUID.
-		out = append(out, "  "+th.Paint(pal.Dim, "drill into one: cluster upgrade-check -c "+report.Cluster+" --id <id|name>"))
+		out = append(out, "  "+th.Paint(pal.Dim, "drill into one: "+drillHint(report.Cluster, category)))
 	}
 
 	if cp := report.ControlPlane; cp != nil {
@@ -134,12 +192,22 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 	}
 
 	out = append(out, "", th.Section("VERSION SKEW")+th.Paint(pal.Dim, "  control plane "+valueOrDash(report.Skew.ControlPlaneVersion)))
-	if len(report.Skew.Findings) == 0 {
-		out = append(out, "  "+th.Token(render.Healthy, "nodegroups and addons are current"))
-	} else {
-		for _, f := range report.Skew.Findings {
-			out = append(out, "  "+th.Token(render.Warn, f))
+	switch {
+	case len(report.Skew.Findings) > 0:
+		// A nodegroup at the kubelet skew limit blocks the upgrade, as in
+		// the verdict and in `cluster upgrade`; the rest are warnings.
+		blocking := blockingFindings(report.Skew)
+		for i, f := range report.Skew.Findings {
+			st := render.Warn
+			if i < blocking {
+				st = render.Fail
+			}
+			out = append(out, "  "+th.Token(st, f))
 		}
+	case len(report.Failures) > 0:
+		out = append(out, "  "+th.Token(render.Unknown, noSkewText(report)))
+	default:
+		out = append(out, "  "+th.Token(render.Healthy, noSkewText(report)))
 	}
 	return append(out, th.FailureSection(report.Failures)...)
 }
@@ -269,14 +337,22 @@ func insightDeprecationLines(th *render.Theme, deps []clustersvc.DeprecationDeta
 	return append(out, "  "+th.Paint(pal.Dim, "note: EKS reads audit logs on a 30-day window — a check stays ERROR until the last call ages out."))
 }
 
-func insightCountChips(th *render.Theme, errc, warnc, passc int) string {
+// insightCountChips is the count line under the insights table, one chip per
+// status that is present. PASSING insights are hidden unless asked for, so
+// a "0 passing" chip would read as "none passed".
+func insightCountChips(th *render.Theme, errc, warnc, passc, unknownc int) string {
 	var parts []string
 	if errc > 0 {
 		parts = append(parts, th.Token(render.Fail, fmt.Sprintf("%d error", errc)))
 	}
+	if unknownc > 0 {
+		parts = append(parts, th.Token(render.Unknown, fmt.Sprintf("%d unknown", unknownc)))
+	}
 	if warnc > 0 {
 		parts = append(parts, th.Token(render.Warn, fmt.Sprintf("%d warning", warnc)))
 	}
-	parts = append(parts, th.Token(render.Healthy, fmt.Sprintf("%d passing", passc)))
+	if passc > 0 {
+		parts = append(parts, th.Token(render.Healthy, fmt.Sprintf("%d passing", passc)))
+	}
 	return joinSpaced(parts)
 }

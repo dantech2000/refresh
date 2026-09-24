@@ -145,15 +145,20 @@ type UpgradeReport struct {
 func (UpgradeReport) DocumentKind() apidoc.Kind { return apidoc.KindUpgradeCheck }
 
 // ListInsights returns the cluster's EKS Cluster Insights filtered per opts.
-// PASSING insights are dropped unless opts.ShowPassing.
+// PASSING insights are dropped unless opts.ShowPassing or opts.Statuses asks
+// for PASSING.
 func (s *ServiceImpl) ListInsights(ctx context.Context, clusterName string, opts UpgradeCheckOptions) ([]InsightSummary, error) {
 	category := opts.Category
 	if category == "" {
 		category = string(ekstypes.CategoryUpgradeReadiness)
 	}
 	filter := &ekstypes.InsightsFilter{Categories: []ekstypes.Category{ekstypes.Category(category)}}
+	showPassing := opts.ShowPassing
 	for _, st := range opts.Statuses {
-		filter.Statuses = append(filter.Statuses, ekstypes.InsightStatusValue(strings.ToUpper(strings.TrimSpace(st))))
+		v := strings.ToUpper(strings.TrimSpace(st))
+		filter.Statuses = append(filter.Statuses, ekstypes.InsightStatusValue(v))
+		// --status PASSING asks for them, so --show-passing is implied.
+		showPassing = showPassing || v == InsightStatusPassing
 	}
 
 	raw, err := awsinternal.ListAllPages(ctx, "listing cluster insights",
@@ -187,7 +192,7 @@ func (s *ServiceImpl) ListInsights(ctx context.Context, clusterName string, opts
 			is.Status = string(in.InsightStatus.Status)
 			is.StatusReason = aws.ToString(in.InsightStatus.Reason)
 		}
-		if !opts.ShowPassing && is.Status == InsightStatusPassing {
+		if !showPassing && is.Status == InsightStatusPassing {
 			continue
 		}
 		result = append(result, is)
@@ -197,12 +202,13 @@ func (s *ServiceImpl) ListInsights(ctx context.Context, clusterName string, opts
 
 // ResolveInsightID turns a user-supplied reference — a full insight ID, a short
 // ID prefix (as shown in the upgrade-check table), or a case-insensitive name
-// substring — into a canonical insight ID. It lists all insights (including
-// PASSING) so anything visible in the table can be drilled into. An exact ID
-// wins outright; a single prefix/name match resolves; an ambiguous query errors
-// with the candidates so the user can narrow it down.
-func (s *ServiceImpl) ResolveInsightID(ctx context.Context, clusterName, query string) (string, error) {
-	all, err := s.ListInsights(ctx, clusterName, UpgradeCheckOptions{ShowPassing: true})
+// substring — into a canonical insight ID. It lists all insights of category
+// (UPGRADE_READINESS when empty), including PASSING, so anything visible in
+// the table can be drilled into. An exact ID wins outright; a single
+// prefix/name match resolves; an ambiguous query errors with the candidates
+// so the user can narrow it down.
+func (s *ServiceImpl) ResolveInsightID(ctx context.Context, clusterName, category, query string) (string, error) {
+	all, err := s.ListInsights(ctx, clusterName, UpgradeCheckOptions{Category: category, ShowPassing: true})
 	if err != nil {
 		return "", err
 	}

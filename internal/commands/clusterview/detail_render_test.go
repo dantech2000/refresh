@@ -8,6 +8,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 func sampleDetails() *clustersvc.ClusterDetails {
@@ -43,7 +44,7 @@ func TestClusterDetailLines_HealthIssues(t *testing.T) {
 		Message:     "control plane could not assume the cluster IAM role",
 		ResourceIDs: []string{"arn:aws:iam::123456789012:role/eksClusterRole"},
 	}}
-	joined := strings.Join(clusterDetailLines(th, d), "\n")
+	joined := strings.Join(clusterDetailLines(th, d, false), "\n")
 	for _, want := range []string{
 		"▸ HEALTH ISSUES  1",
 		"InternalFailure: control plane could not assume the cluster IAM role",
@@ -55,7 +56,7 @@ func TestClusterDetailLines_HealthIssues(t *testing.T) {
 	}
 
 	// No issues → no HEALTH ISSUES section.
-	clean := strings.Join(clusterDetailLines(th, sampleDetails()), "\n")
+	clean := strings.Join(clusterDetailLines(th, sampleDetails(), false), "\n")
 	if strings.Contains(clean, "HEALTH ISSUES") {
 		t.Errorf("clean cluster should not render a HEALTH ISSUES section:\n%s", clean)
 	}
@@ -73,7 +74,7 @@ func TestClusterDetailLines_HealthChecksItemized(t *testing.T) {
 			{Name: "Service Quotas", Status: health.StatusPass, Skipped: true, Message: "headroom unavailable (clients not configured)"},
 		},
 	}
-	joined := strings.Join(clusterDetailLines(th, d), "\n")
+	joined := strings.Join(clusterDetailLines(th, d, false), "\n")
 	if strings.Contains(joined, "\x1b") {
 		t.Fatalf("ColorNone health card contains ANSI escapes:\n%s", joined)
 	}
@@ -91,7 +92,7 @@ func TestClusterDetailLines_HealthChecksItemized(t *testing.T) {
 
 func TestClusterDetailLines_Pretty(t *testing.T) {
 	th := render.New(render.ColorNone, true)
-	joined := strings.Join(clusterDetailLines(th, sampleDetails()), "\n")
+	joined := strings.Join(clusterDetailLines(th, sampleDetails(), false), "\n")
 
 	if strings.Contains(joined, "\x1b") {
 		t.Fatalf("ColorNone detail output contains ANSI escapes:\n%s", joined)
@@ -124,7 +125,7 @@ func TestClusterDetailLines_ReadinessUnknown(t *testing.T) {
 		(*d.Nodegroups)[i].ReadyKnown = false
 		(*d.Nodegroups)[i].ReadyNodes = 0
 	}
-	joined := strings.Join(clusterDetailLines(th, d), "\n")
+	joined := strings.Join(clusterDetailLines(th, d, false), "\n")
 
 	if !strings.Contains(joined, "1 active · 8 nodes") {
 		t.Errorf("header should report desired capacity (8):\n%s", joined)
@@ -138,7 +139,7 @@ func TestClusterDetailLines_ASCIIAndMinimal(t *testing.T) {
 	th := render.New(render.ColorNone, false)
 	// Minimal cluster: no addons, no nodegroups, no health, zero CreatedAt.
 	d := &clustersvc.ClusterDetails{Name: "bare", Status: "ACTIVE", Version: "1.30"}
-	joined := strings.Join(clusterDetailLines(th, d), "\n")
+	joined := strings.Join(clusterDetailLines(th, d, false), "\n")
 	if strings.Contains(joined, "NODEGROUPS") || strings.Contains(joined, "ADD-ONS") || strings.Contains(joined, "HEALTH") {
 		t.Errorf("minimal cluster should omit empty sections:\n%s", joined)
 	}
@@ -154,8 +155,53 @@ func TestClusterDetailLines_CreatedAge(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 	d := sampleDetails()
 	d.CreatedAt = time.Now().Add(-48 * time.Hour)
-	joined := strings.Join(clusterDetailLines(th, d), "\n")
+	joined := strings.Join(clusterDetailLines(th, d, false), "\n")
 	if !strings.Contains(joined, "created") {
 		t.Errorf("created row missing:\n%s", joined)
+	}
+}
+
+// --show-security (or --detailed) adds the SECURITY section; without it the
+// view has none (REF-168).
+func TestClusterDetailLines_SecuritySection(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	d := sampleDetails()
+	d.Security.ServiceRoleArn = "arn:aws:iam::123456789012:role/eks"
+	d.Security.KmsKeyArn = "arn:aws:kms:us-west-2:123456789012:key/abc"
+	d.Networking.EndpointAccess = clustersvc.EndpointAccessInfo{PublicAccess: true, PrivateAccess: true, PublicCidrs: []string{"0.0.0.0/0"}}
+	d.Networking.SecurityGroupIDs = []string{"sg-1"}
+
+	if got := strings.Join(clusterDetailLines(th, d, false), "\n"); strings.Contains(got, "SECURITY") {
+		t.Errorf("SECURITY section without --show-security:\n%s", got)
+	}
+	joined := strings.Join(clusterDetailLines(th, d, true), "\n")
+	for _, want := range []string{
+		"▸ SECURITY",
+		"arn:aws:iam::123456789012:role/eks",
+		"arn:aws:kms:us-west-2:123456789012:key/abc",
+		"▲ disabled",
+		"public and private",
+		"▲ 0.0.0.0/0 (open to all)",
+		"sg-1",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("security section missing %q in:\n%s", want, joined)
+		}
+	}
+
+	rows := plaintest.Check(t, plainOut(clusterDetailPlain(d, true)), "FIELD", "VALUE")
+	for f, v := range map[string]string{
+		"service role":    "arn:aws:iam::123456789012:role/eks",
+		"kms key":         "arn:aws:kms:us-west-2:123456789012:key/abc",
+		"endpoint access": "public and private",
+		"public cidrs":    "0.0.0.0/0",
+	} {
+		if got, ok := plaintest.Field(rows, f); !ok || got != v {
+			t.Errorf("plain field %q = %q (found=%v), want %q", f, got, ok, v)
+		}
+	}
+	rows = plaintest.Check(t, plainOut(clusterDetailPlain(d, false)), "FIELD", "VALUE")
+	if _, ok := plaintest.Field(rows, "service role"); ok {
+		t.Error("plain has the service role without --show-security")
 	}
 }
