@@ -92,6 +92,9 @@ type HealthChecker struct {
 	// reads the target nodegroups' desired size when none of their nodes are
 	// found; nil when there is no EKS client
 	ngDescriber nodegroupDescriber
+	// region is set on every failure the checks report, so the verdict's
+	// failures match the command's top-level list and stderr lines
+	region string
 }
 
 // NewChecker creates a new health checker instance
@@ -123,6 +126,7 @@ func NewCheckerForConfig(awsCfg aws.Config, k8sClient kubernetes.Interface, metr
 		autoscaling.NewFromConfig(awsCfg),
 	)
 	hc.SetServiceQuotas(servicequotas.NewFromConfig(awsCfg))
+	hc.region = awsCfg.Region
 	if metrics != nil {
 		hc.SetNodeMetrics(metrics)
 	}
@@ -167,7 +171,13 @@ func (hc *HealthChecker) RunAllChecks(ctx context.Context, clusterName string) H
 	}
 	wg.Wait()
 
-	return aggregateResults(results)
+	summary := aggregateResults(results)
+	for i := range summary.Failures {
+		if summary.Failures[i].Region == "" {
+			summary.Failures[i].Region = hc.region
+		}
+	}
+	return summary
 }
 
 // aggregateResults folds the individual check results into a HealthSummary:
