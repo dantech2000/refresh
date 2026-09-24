@@ -387,6 +387,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 			DesiredSize: aws.ToInt32(sc.DesiredSize),
 			MinSize:     aws.ToInt32(sc.MinSize),
 			MaxSize:     aws.ToInt32(sc.MaxSize),
+			// A managed nodegroup always has an Auto Scaling group.
 			AutoScaling: true,
 		}
 	}
