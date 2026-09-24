@@ -71,6 +71,15 @@ func TestFleetExit_WorstOutcome(t *testing.T) {
 			4,
 		},
 		{
+			"a roll that ended Failed is a partial result in a fleet (4, not 1)",
+			[]clusterUpdateResult{
+				{Error: "one or more nodegroup updates failed: ng-2: Failed", Outcomes: updateOutcomes{Started: []string{"ng-2"}}},
+				{Outcomes: updateOutcomes{Started: []string{"ng-1"}}},
+			},
+			nil,
+			4,
+		},
+		{
 			"a region that could not be listed fails an otherwise clean run",
 			[]clusterUpdateResult{{Outcomes: updateOutcomes{Started: []string{"a"}}}},
 			[]regionDiscoveryError{{Region: "eu-west-1", Error: "denied"}},
