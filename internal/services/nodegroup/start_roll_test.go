@@ -47,14 +47,40 @@ func TestStartNodegroupRoll_RetriesKeepOneToken(t *testing.T) {
 	}
 }
 
-// An empty version leaves Version out of the request.
-func TestStartNodegroupRoll_EmptyVersionOmitted(t *testing.T) {
+// Without a version to pin, no request is sent: EKS would read an omitted
+// Version as the cluster's version and could upgrade the nodegroup's minor.
+func TestStartNodegroupRoll_RefusesEmptyVersion(t *testing.T) {
 	api := &recordingUpdater{}
-	if _, err := StartNodegroupRoll(context.Background(), api, "prod", "ng-a", "", false); err != nil {
-		t.Fatalf("StartNodegroupRoll: %v", err)
+	if _, err := StartNodegroupRoll(context.Background(), api, "prod", "ng-a", "", false); err == nil {
+		t.Fatal("StartNodegroupRoll with no version: want an error")
 	}
-	if v := api.inputs[len(api.inputs)-1].Version; v != nil {
-		t.Errorf("Version = %q, want nil", *v)
+	if len(api.inputs) != 0 {
+		t.Errorf("requests sent = %d, want 0", len(api.inputs))
+	}
+}
+
+// nodegroup update pins the nodegroup's own version. A nodegroup that
+// reports none (nil or "") is not rolled at all.
+func TestStartVersionUpdate_NoNodegroupVersionStartsNothing(t *testing.T) {
+	for _, v := range []*string{nil, aws.String("")} {
+		api := mocks.NewEKSAPI().WithCluster("prod", "1.32").WithNodegroup("ng-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).Build()
+		describe := api.DescribeNodegroupFn
+		api.DescribeNodegroupFn = func(ctx context.Context, in *eks.DescribeNodegroupInput, o ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+			out, err := describe(ctx, in, o...)
+			if err == nil {
+				ng := *out.Nodegroup
+				ng.Version = v
+				out = &eks.DescribeNodegroupOutput{Nodegroup: &ng}
+			}
+			return out, err
+		}
+		svc := newTestService(api)
+		if _, err := svc.StartVersionUpdate(context.Background(), "prod", "ng-a", VersionUpdateOptions{}); err == nil {
+			t.Errorf("version %v: want an error", v)
+		}
+		if n := api.Calls.UpdateNodegroupVersion; n != 0 {
+			t.Errorf("version %v: UpdateNodegroupVersion calls = %d, want 0", v, n)
+		}
 	}
 }
 

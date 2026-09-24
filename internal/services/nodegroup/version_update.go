@@ -69,22 +69,26 @@ type VersionUpdater interface {
 
 // StartNodegroupRoll starts one UpdateNodegroupVersion roll: `nodegroup
 // update` (an AMI patch at the nodegroup's own version) and `cluster upgrade`
-// (a roll to the target version) both start rolls here. version "" omits
-// Version from the request.
+// (a roll to the target version) both start rolls here.
+//
+// version is required. EKS reads an omitted Version as "the cluster's
+// version", so an AMI patch sent without one could turn into a minor-version
+// upgrade; an empty version is refused before any request is sent.
 //
 // One idempotency token is computed per call, outside the retry, so a retried
 // request is the SAME request and can't start a second roll. The token does
 // not span separate calls: a later run gets a new token. The error is the raw
 // SDK error; the caller formats it for its own operation.
 func StartNodegroupRoll(ctx context.Context, api VersionUpdater, clusterName, nodegroupName, version string, force bool) (*ekstypes.Update, error) {
+	if version == "" {
+		return nil, fmt.Errorf("nodegroup %s/%s: no Kubernetes version to pin the roll to; refusing to start a roll EKS could turn into a version upgrade", clusterName, nodegroupName)
+	}
 	input := &eks.UpdateNodegroupVersionInput{
 		ClusterName:        aws.String(clusterName),
 		NodegroupName:      aws.String(nodegroupName),
+		Version:            aws.String(version),
 		Force:              force,
 		ClientRequestToken: aws.String(common.IdempotencyToken()), // stable across retries of this call
-	}
-	if version != "" {
-		input.Version = aws.String(version)
 	}
 	out, err := common.WithRetry(ctx, common.DefaultRetryConfig,
 		func(rc context.Context) (*eks.UpdateNodegroupVersionOutput, error) {
