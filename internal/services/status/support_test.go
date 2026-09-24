@@ -367,3 +367,51 @@ func TestResolveSupport_CancelledLookupIsNotShared(t *testing.T) {
 		t.Errorf("live caller after a cancelled lookup: tier = %s, fallback = %v; want standard from the API", p.Tier, p.Fallback)
 	}
 }
+
+// A support window with less than a day left counts as 1 day remaining, not
+// 0: DaysRemaining rounds a partial day up, from the API and the fallback.
+func TestDaysRemaining_PartialDayRoundsUp(t *testing.T) {
+	stdEnd := date(2026, 12, 2)
+	extEnd := date(2027, 12, 2)
+	api := mocks.NewEKSAPI().Build()
+	api.DescribeClusterVersionsFn = func(context.Context, *eks.DescribeClusterVersionsInput, ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error) {
+		return &eks.DescribeClusterVersionsOutput{ClusterVersions: []ekstypes.ClusterVersionInformation{{
+			ClusterVersion:           aws.String("1.34"),
+			EndOfStandardSupportDate: aws.Time(stdEnd),
+			EndOfExtendedSupportDate: aws.Time(extEnd),
+		}}}, nil
+	}
+	cases := []struct {
+		now  time.Time
+		tier SupportTier
+		want int
+	}{
+		{stdEnd.Add(-23 * time.Hour), SupportStandard, 1},
+		{stdEnd.Add(-24 * time.Hour), SupportStandard, 1},
+		{stdEnd.Add(-25 * time.Hour), SupportStandard, 2},
+		{extEnd.Add(-time.Minute), SupportExtended, 1},
+	}
+	for _, tc := range cases {
+		r := NewSupportResolver(api)
+		r.now = func() time.Time { return tc.now }
+		p := r.Resolve(t.Context(), "1.34")
+		if p.Tier != tc.tier || p.DaysRemaining == nil || *p.DaysRemaining != tc.want {
+			t.Errorf("now=%v: tier=%s days=%v, want %s %dd", tc.now, p.Tier, derefInt(p.DaysRemaining), tc.tier, tc.want)
+		}
+		if p := fallbackPosture("1.34", tc.now); p.DaysRemaining == nil || *p.DaysRemaining != tc.want {
+			t.Errorf("fallback now=%v: days=%v, want %d", tc.now, derefInt(p.DaysRemaining), tc.want)
+		}
+	}
+
+	// An AMI age still counts whole days elapsed.
+	if d := daysBetween(stdEnd, stdEnd.Add(23*time.Hour)); *d != 0 {
+		t.Errorf("age of 23h = %dd, want 0d", *d)
+	}
+}
+
+func derefInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
