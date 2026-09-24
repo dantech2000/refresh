@@ -13,10 +13,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/fatih/color"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/commands/factory"
 )
 
 const changelogHTTPLimit = 4 * time.Second
@@ -172,7 +172,7 @@ func printChangelogsForNodegroups(ctx context.Context, awsCfg aws.Config, eksCli
 		return
 	}
 	k8sVersion := *clusterOut.Cluster.Version
-	ssmClient := ssm.NewFromConfig(awsCfg)
+	ssmClient := factory.NewSSMClient(awsCfg)
 
 	for _, ng := range nodegroups {
 		desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{

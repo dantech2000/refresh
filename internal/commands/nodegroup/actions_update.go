@@ -165,7 +165,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 	if err != nil {
 		return err
 	}
-	eksClient := eks.NewFromConfig(awsCfg)
+	eksClient := factory.NewEKSClient(awsCfg)
 
 	summary, done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, nodegroupPattern, flags)
 	if err != nil || done {

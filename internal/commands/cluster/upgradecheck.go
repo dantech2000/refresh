@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/urfave/cli/v3"
 
@@ -134,7 +133,7 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 	// Support posture for the control-plane version, via the same resolver
 	// behind `refresh status` (REF-145).
 	if report != nil && report.Skew.ControlPlaneVersion != "" {
-		posture := status.NewSupportResolver(eks.NewFromConfig(awsCfg)).Resolve(ctx, report.Skew.ControlPlaneVersion)
+		posture := status.NewSupportResolver(factory.NewEKSClient(awsCfg)).Resolve(ctx, report.Skew.ControlPlaneVersion)
 		posture = status.ApplySupportType(posture, ekstypes.SupportType(report.SupportType))
 		report.Support = &posture
 	}

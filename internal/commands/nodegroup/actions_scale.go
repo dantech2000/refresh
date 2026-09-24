@@ -55,7 +55,7 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	if withHealth {
 		// Wire a Kubernetes client so workload/PDB checks run against the right
 		// cluster (--kubeconfig), with an actionable diagnostic when unreachable.
-		k8sClient, _ := resolveHealthKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), true)
+		k8sClient, _ := resolveHealthKubeClient(ctx, factory.NewEKSClient(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), true)
 		svc = factory.NewNodegroupServiceWithHealth(awsCfg, k8sClient, logger)
 	} else {
 		svc = factory.NewNodegroupService(awsCfg, false, logger)
@@ -113,7 +113,7 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	runner.WriteFailures("", os.Stdout, ui.Stderr, fs)
 
 	if opts.DryRun {
-		if err := printScaleDryRun(ctx, eks.NewFromConfig(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
+		if err := printScaleDryRun(ctx, factory.NewEKSClient(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
 			return err
 		}
 		if opts.CheckPDBs {
@@ -134,7 +134,7 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 
 	if !cmd.Bool("yes") {
-		question, qerr := scaleQuestion(ctx, eks.NewFromConfig(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize)
+		question, qerr := scaleQuestion(ctx, factory.NewEKSClient(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize)
 		if qerr != nil {
 			return qerr
 		}
