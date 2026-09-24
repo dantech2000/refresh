@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.12.0](https://github.com/dantech2000/refresh/compare/v0.11.1...v0.12.0) (2026-09-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* AddonUpdate results leave out newVersion, updateId, and startedAt when the update was not resolved or sent.
+* **output:** every -o json/yaml document has two new leading keys, apiVersion and kind. Consumers that compare whole documents or reject unknown keys must accept them.
+* **diag:** nodegroup update -o json/yaml replaces started, skipped, customUnmanaged, failed, and rollFailures with nodegroups[] ({name, status, updateId, reason, failure}) and failures. The dry-run plan gains failures and the action unknown. nodegroup update --all-clusters -o json/yaml: each cluster has status and nodegroups instead of outcomes, healthBlocked, healthWarned, verifyFailed, interrupted, timedOut, and error; the document drops discoveryErrors for failures (Kind Region). A fleet dry-run entry has status and failure instead of error. Clusters the run never reached are listed as NotAttempted. addon update statuses are PascalCase (UpToDate, InProgress, Started, Completed, CompletedWithIssues, WaitFailed, ...) instead of UP_TO_DATE/IN_PROGRESS/COMPLETED/... and the raw EKS InProgress; FAILED: ... becomes Failed or NotAttempted with a failure; the error field is removed. The single-add-on document adds failures; --all is {cluster, dryRun, results, failures}. cluster upgrade plan warnings is renamed notices and the plan gains failures; the report replaces failedAt with stoppedAt and adds status and failure; completed and remaining are always lists; the run document is {plan, report, failures}. exit codes: nodegroup update --dry-run and fleet dry run with a read failure 0 -> 4; post-roll describe failure 5 -> 4; addon post-update read failure 5 -> 4; cluster upgrade --dry-run with a plan read failure 0 -> 4, and a finished run with one 0 -> 4; nodegroup scale --check-pdbs --force with unreadable PDBs 0 -> 4; nodegroup update --health-only that passes but could not read everything 0 -> 4.
+* **diag:** JSON/YAML output of the read commands changed. status: the row "errors" list is gone (rows get "incomplete": true); "failures" is always present and holds diag.Failure objects for regions and cluster rows instead of {"region","error"}. cluster list: the row "warnings" list is gone (rows get "incomplete": true); "failures" is always present and holds diag.Failure objects instead of {"region","error"}. cluster describe: "warnings" is replaced by "failures". cluster upgrade-check: "incomplete" is replaced by "failures"; a skew addon whose latest version could not be read has "incomplete": true. nodegroup list and addon list: "failures" is always present and holds diag.Failure objects instead of "name: reason" strings. nodegroup list and describe: "amiLookupError" (string) is replaced by "amiLookupFailure" (object). nodegroup describe, addon describe, and upgrade-check --id carry an empty "failures". status -o plain has no ERRORS column. The types.RegionFailure type is removed.
+
+### Features
+
+* **diag:** add the failure type, classifier, and stderr/exit helpers ([#377](https://github.com/dantech2000/refresh/issues/377)) ([e0838a0](https://github.com/dantech2000/refresh/commit/e0838a03535dfb9d903f9f70d4912ef99a647968))
+* **diag:** report mutating-command failures as diag.Failure (REF-179) ([#380](https://github.com/dantech2000/refresh/issues/380)) ([09c69b8](https://github.com/dantech2000/refresh/commit/09c69b81eb9fd4938f8467053d0e2820b8baac2b))
+* **diag:** report read-command failures as diag.Failure (REF-178) ([#379](https://github.com/dantech2000/refresh/issues/379)) ([bc86cca](https://github.com/dantech2000/refresh/commit/bc86ccae2c92e02bddfbdbbc1267bb06d2bc96d6))
+* **output:** version every document and publish JSON schemas (REF-180) ([#381](https://github.com/dantech2000/refresh/issues/381)) ([8bd7ba7](https://github.com/dantech2000/refresh/commit/8bd7ba7b710cb82d456f63adc364300db3409308))
+
+
+### Bug Fixes
+
+* close three v1 contract gaps found by the E2E harness ([#382](https://github.com/dantech2000/refresh/issues/382)) ([a1a2b15](https://github.com/dantech2000/refresh/commit/a1a2b1509d2dbe3f444e7a05d87675ea7fdfebb7))
+* **health:** build every checker with its region ([#383](https://github.com/dantech2000/refresh/issues/383)) ([bfb0090](https://github.com/dantech2000/refresh/commit/bfb009040e5d5006d0de654489a5f3bf5dc2cda9))
+
 ## [0.11.1](https://github.com/dantech2000/refresh/compare/v0.11.0...v0.11.1) (2026-09-24)
 
 
