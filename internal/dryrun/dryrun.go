@@ -16,6 +16,7 @@ import (
 	"github.com/fatih/color"
 
 	awsClient "github.com/dantech2000/refresh/internal/aws"
+	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -228,55 +229,14 @@ func (dr *DryRunner) analyzeNodegroup(ctx context.Context, ngName string) Nodegr
 		return update
 	}
 
-	// The checks below run in the same order as the real update
-	// (startNodegroupUpdates), so the preview names the action it will take.
-	//
-	// Custom-AMI nodegroups are skipped even with --force: the AMI lives in
-	// the launch template, so EKS can't select a recommended AMI.
-	if ng.AmiType == types.AMITypesCustom {
-		update.Action = refreshTypes.ActionSkipCustom
-		update.Reason = "custom AMI (AmiType=CUSTOM); roll it by publishing a new launch template version"
-		return update
-	}
-
-	// Check if already updating
-	if ng.Status == types.NodegroupStatusUpdating {
-		update.Action = refreshTypes.ActionSkipUpdating
-		update.Reason = "already updating"
-		return update
-	}
-
-	// Get AMI information
-	update.CurrentAMI = dr.currentAmi(ctx, ng)
-	update.LatestAMI = dr.latestAmi(ctx, ng)
-
-	// Determine action
-	if dr.force {
-		update.Action = refreshTypes.ActionForceUpdate
-		update.Reason = "force flag specified"
-		return update
-	}
-
-	if update.CurrentAMI == "" || update.LatestAMI == "" {
-		update.Action = refreshTypes.ActionUpdate
-		update.Reason = "AMI status unknown, update recommended"
-		return update
-	}
-
-	if update.CurrentAMI == update.LatestAMI && dr.reroll {
-		update.Action = refreshTypes.ActionUpdate
-		update.Reason = "already on latest AMI; --reroll rolls it anyway"
-		return update
-	}
-
-	if update.CurrentAMI == update.LatestAMI {
-		update.Action = refreshTypes.ActionSkipLatest
-		update.Reason = "already on latest AMI"
-		return update
-	}
-
-	update.Action = refreshTypes.ActionUpdate
-	update.Reason = "AMI is outdated"
+	// The real update (startNodegroupUpdates) decides with the same table,
+	// so the preview names the action it will take.
+	d := nodegroupsvc.DecideAMIUpdate(ctx, ng, nodegroupsvc.AMIUpdateOptions{Force: dr.force, Reroll: dr.reroll, Preview: true},
+		func(ctx context.Context, ng *types.Nodegroup) (string, string) {
+			return dr.currentAmi(ctx, ng), dr.latestAmi(ctx, ng)
+		})
+	update.Action, update.Reason = d.Action, d.Reason
+	update.CurrentAMI, update.LatestAMI = d.CurrentAMI, d.LatestAMI
 	return update
 }
 
