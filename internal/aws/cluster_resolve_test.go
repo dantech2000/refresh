@@ -231,6 +231,39 @@ func TestResolveClusterPattern_NothingResolvesWrapsSentinel(t *testing.T) {
 	}
 }
 
+// A context file that exists but cannot be parsed is an error for read-only
+// and mutating commands alike. Treating it as "no context" would fall back to
+// the kubeconfig current cluster and retarget the command without a word.
+func TestResolveClusterPattern_CorruptContextFileFails(t *testing.T) {
+	dir := isolateConfig(t)
+	path := filepath.Join(dir, "context.yaml")
+	writeFile(t, path, "current: [unclosed")
+	kc := filepath.Join(dir, "kubeconfig")
+	writeFile(t, kc, kubeconfigFor("from-kubeconfig"))
+	t.Setenv("KUBECONFIG", kc)
+
+	for _, readOnly := range []bool{true, false} {
+		got, _, err := resolveClusterPattern("", readOnly)
+		if err == nil || !strings.Contains(err.Error(), path) {
+			t.Errorf("readOnly=%v: got %q, %v; want an error naming %s", readOnly, got, err, path)
+		}
+	}
+}
+
+// KUBECONFIG may list several files, like PATH. The current context can live
+// in any of them, and a missing entry is skipped, as kubectl does.
+func TestResolveClusterPattern_KubeconfigList(t *testing.T) {
+	dir := isolateConfig(t)
+	kc := filepath.Join(dir, "kubeconfig")
+	writeFile(t, kc, kubeconfigFor("from-second-file"))
+	t.Setenv("KUBECONFIG", filepath.Join(dir, "missing")+string(os.PathListSeparator)+kc)
+
+	got, _, err := resolveClusterPattern("", true)
+	if err != nil || got != "from-second-file" {
+		t.Errorf("got %q, %v; want from-second-file", got, err)
+	}
+}
+
 // A kubeconfig that fails to load keeps both the sentinel and the load error
 // in the chain (%w, not %v).
 func TestResolveClusterPattern_BrokenKubeconfigWrapsCause(t *testing.T) {

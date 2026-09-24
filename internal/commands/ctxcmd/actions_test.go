@@ -135,6 +135,98 @@ func TestContextHintsAndUnknownEnvContext(t *testing.T) {
 	}
 }
 
+// captureStderr is captureStdout for os.Stderr (ui.Stderr writes to it).
+func captureStderr(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	original := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = original })
+
+	callErr := fn()
+	_ = w.Close()
+	os.Stderr = original
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String(), callErr
+}
+
+// `refresh use` saves the new current context, but REFRESH_CONTEXT still
+// wins in this shell. The command must say so instead of only "Switched".
+func TestUseWarnsWhenRefreshContextOverrides(t *testing.T) {
+	t.Setenv("REFRESH_CONFIG_HOME", t.TempDir())
+	f := &cliconfig.File{Current: "staging", Contexts: map[string]cliconfig.Context{
+		"prod":    {Cluster: "prod-eks"},
+		"staging": {Cluster: "staging-eks"},
+	}}
+	if err := cliconfig.Save(f); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("REFRESH_CONTEXT", "staging")
+	stderr, err := captureStderr(t, func() error {
+		_, err := captureStdout(t, func() error { return runAction(runUse, "prod") })
+		return err
+	})
+	if err != nil {
+		t.Fatalf("use prod: %v", err)
+	}
+	if !strings.Contains(stderr, `REFRESH_CONTEXT=staging`) || !strings.Contains(stderr, `unset REFRESH_CONTEXT`) {
+		t.Errorf("stderr = %q, want a note that REFRESH_CONTEXT=staging still wins", stderr)
+	}
+	if saved, _ := cliconfig.Load(); saved.Current != "prod" {
+		t.Errorf("saved current = %q, want prod", saved.Current)
+	}
+
+	t.Setenv("REFRESH_CONTEXT", "prod")
+	stderr, err = captureStderr(t, func() error {
+		_, err := captureStdout(t, func() error { return runAction(runUse, "prod") })
+		return err
+	})
+	if err != nil || strings.Contains(stderr, "REFRESH_CONTEXT") {
+		t.Errorf("use prod with REFRESH_CONTEXT=prod: stderr %q, err %v; want no note", stderr, err)
+	}
+}
+
+// The picker marks the context that commands use now (Active), the same
+// one `context list` marks, not the saved current pointer.
+func TestPickerMarksActiveContext(t *testing.T) {
+	t.Setenv("REFRESH_CONTEXT", "a")
+	f := &cliconfig.File{Current: "b", Contexts: map[string]cliconfig.Context{
+		"a": {Cluster: "ca"},
+		"b": {Cluster: "cb"},
+	}}
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = oldStdin })
+	_, _ = w.WriteString("a\n")
+	_ = w.Close()
+
+	out, err := captureStdout(t, func() error {
+		_, perr := pickContext(t.Context(), f)
+		return perr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		marked := strings.Contains(line, "* ")
+		switch {
+		case strings.Contains(line, "1) a") && !marked:
+			t.Errorf("line %q: want the active context a marked", line)
+		case strings.Contains(line, "2) b") && marked:
+			t.Errorf("line %q: want the saved current b unmarked while REFRESH_CONTEXT=a", line)
+		}
+	}
+}
+
 func TestContextActionErrorsAndPicker(t *testing.T) {
 	t.Setenv("REFRESH_CONFIG_HOME", t.TempDir())
 	t.Setenv("REFRESH_CONTEXT", "")

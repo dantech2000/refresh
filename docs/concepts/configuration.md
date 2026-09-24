@@ -11,8 +11,9 @@ wins):
 
 1. **Explicit CLI flags** — `--profile` / `--region` (global; work on every
    command).
-2. **Standard AWS environment variables** — `AWS_PROFILE`, `AWS_REGION` /
-   `AWS_DEFAULT_REGION` (resolved by the AWS SDK).
+2. **Standard AWS environment variables** — `AWS_PROFILE` /
+   `AWS_DEFAULT_PROFILE` and `AWS_REGION` / `AWS_DEFAULT_REGION` (resolved by
+   the AWS SDK).
 3. **The active `refresh` context** — see [Contexts](contexts.md).
 4. **AWS SDK defaults** — `~/.aws/config`, `~/.aws/credentials`, SSO, IMDS, etc.
 
@@ -22,6 +23,30 @@ invocation:
 ```bash
 refresh status --profile prod --region us-east-1
 ```
+
+The active context applies as a unit. Its cluster, profile, and region belong
+together, so an environment variable never replaces only one of them:
+
+- If an environment variable sets a value that the context leaves empty, the
+  environment variable applies. For example, `AWS_PROFILE` applies to a
+  context that has no profile.
+- If an environment variable has the same value as the context, nothing
+  changes.
+- If an environment variable has a different value than the context, the
+  command fails before any AWS call. For example, `AWS_PROFILE=staging` with a
+  context whose profile is `prod` is an error. Without this rule, the command
+  would use the staging credentials with the region and cluster of the prod
+  context.
+
+To fix a conflict, do one of these steps:
+
+1. Pass `--profile` or `--region` to choose the value for one command.
+2. Unset the environment variable that the error names.
+3. Switch to a context that matches, or set `REFRESH_CONTEXT`.
+
+A context file that exists but cannot be read or parsed is also an error. Every
+command that reads the context fails, and the error names the file. Only a
+missing file means "no context".
 
 Credentials themselves come from the standard SDK chain — `refresh` never stores
 them.
@@ -41,7 +66,14 @@ wins):
 2. The first positional argument.
 3. The cluster of the active `refresh` context (`refresh use <name>`).
 4. The cluster of the current kubeconfig context. Only read-only commands use
-   this step.
+   this step. `KUBECONFIG` can list several files, separated by `:` (`;` on
+   Windows). refresh merges them as `kubectl` does.
+
+`addon describe` and `nodegroup describe` take `[cluster] [name]`. If a context
+is active and you pass one positional argument without `--cluster` or the name
+flag, that argument is the name, and the cluster comes from the context. So
+`refresh addon describe vpc-cni` describes `vpc-cni` in the cluster of the
+active context. Two positional arguments are always the cluster and the name.
 
 `nodegroup update` also reads the `EKS_CLUSTER_NAME` environment variable.
 No other command reads it. The variable never overrides a cluster that is
@@ -187,7 +219,9 @@ terminal, a run that would ask fails with an error that names `--yes`.
 ## Regions
 
 A single-cluster command uses one region: `--region`, then `AWS_REGION` /
-`AWS_DEFAULT_REGION`, then the active context, then the AWS config.
+`AWS_DEFAULT_REGION`, then the active context, then the AWS config. An
+environment variable that disagrees with the region of the active context is an
+error (see [AWS credential & region resolution](#aws-credential-region-resolution)).
 
 `status`, `cluster list`, and `nodegroup update --all-clusters` can scan
 several regions. They pick the regions in this order:
@@ -252,7 +286,7 @@ than `0`. A zero or negative value fails before any AWS call.
 
 | Variable | Equivalent / effect |
 |---|---|
-| `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION` | Standard AWS SDK resolution |
+| `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION` | Standard AWS SDK resolution. A value that differs from the active context is an error (see [AWS credential & region resolution](#aws-credential-region-resolution)) |
 | `REFRESH_TIMEOUT` | Default for the global `--timeout` (list, describe, and check commands). Not applied to `--wait-timeout` or to the `--timeout` of `addon update`, which bound long-running work |
 | `REFRESH_MAX_CONCURRENCY` | Default for `--max-concurrency` |
 | `REFRESH_LOG_LEVEL` | Default for `--log-level` |

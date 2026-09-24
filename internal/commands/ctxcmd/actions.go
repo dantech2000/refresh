@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -42,6 +43,13 @@ func runUse(ctx context.Context, cmd *cli.Command) error {
 	active := f.Contexts[f.Current]
 	color.Green("Switched to context %q (cluster=%s region=%s profile=%s)",
 		f.Current, active.Cluster, orDash(active.Region), orDash(active.Profile))
+	// REFRESH_CONTEXT beats the saved current context, so in this shell
+	// commands still use the env context. Say so rather than let "Switched"
+	// stand alone.
+	if env := os.Getenv("REFRESH_CONTEXT"); env != "" && env != f.Current {
+		_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr,
+			"warning: REFRESH_CONTEXT=%s overrides the saved context in this shell; unset REFRESH_CONTEXT to use %q here\n", env, f.Current)
+	}
 	return nil
 }
 
@@ -178,10 +186,14 @@ func contextRemoveCommand() *cli.Command {
 
 func pickContext(ctx context.Context, f *cliconfig.File) (string, error) {
 	names := f.Names()
+	// Mark the context commands use now, as `context list` does: with
+	// REFRESH_CONTEXT set, that is not the saved current one. An unknown
+	// REFRESH_CONTEXT marks none; `use` reports it after the switch.
+	activeName, _, _, _ := f.Active() //nolint:dogsled // only the name matters for the marker
 	color.Cyan("Available contexts:")
 	for i, n := range names {
 		marker := " "
-		if n == f.Current {
+		if n == activeName {
 			marker = color.GreenString("*")
 		}
 		ctx := f.Contexts[n]

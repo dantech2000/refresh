@@ -127,7 +127,9 @@ refresh nodegroup describe [cluster] [nodegroup] [flags]
 ```
 
 `describe` has the alias `get`. The nodegroup name may be the second positional
-or `--nodegroup/-n`.
+or `--nodegroup/-n`. If a `refresh` context is active and you pass one
+positional argument without `--cluster` or `--nodegroup`, that argument is the
+nodegroup name, and the cluster comes from the context.
 
 ### Flags
 
@@ -151,6 +153,7 @@ server matches the cluster endpoint, or through the context that you name with
 ```bash
 refresh nodegroup describe my-cluster ng-default
 refresh nodegroup describe my-cluster ng-default --show-instances --show-workloads
+refresh nodegroup describe ng-default   # in the active context's cluster
 ```
 
 ---

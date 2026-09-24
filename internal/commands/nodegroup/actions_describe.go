@@ -20,8 +20,12 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	// Validate the nodegroup name before any AWS work: PositionalSlot reads only
 	// flags/positionals, so a missing name should fail fast — not after loading
 	// AWS config, resolving the cluster, and printing a misleading "Cluster name
-	// resolved!" success message. (REF-131)
-	ngName := runner.PositionalSlot(cmd, "nodegroup", "cluster")
+	// resolved!" success message. (REF-131) With an active context, a lone
+	// positional is the nodegroup.
+	requested, ngName, err := runner.DescribeTarget(cmd, "nodegroup")
+	if err != nil {
+		return err
+	}
 	if ngName == "" {
 		return fmt.Errorf("missing nodegroup name; pass as second argument or --nodegroup <name>")
 	}
@@ -32,7 +36,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer cancel()
 
-	clusterName, listed, err := runner.ResolveClusterOrList(ctx, awsCfg, cmd)
+	clusterName, listed, err := runner.ResolveClusterNameOrList(ctx, awsCfg, cmd, requested)
 	if err != nil || listed {
 		return err
 	}
