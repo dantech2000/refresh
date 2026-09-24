@@ -227,6 +227,7 @@ task build          # build ./dist/refresh (CGO_ENABLED=0)
 task test           # go test ./...
 task lint           # golangci-lint run ./...
 task dev:full       # fmt + vet + lint + test + build (run before pushing)
+task fuzz           # run every fuzz target for 30s (FUZZTIME=2m to change)
 task docs:gen       # regenerate docs/reference from the CLI tree
 ```
 

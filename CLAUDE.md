@@ -35,6 +35,7 @@ task vuln           # govulncheck ./...  (pinned)
 task deadcode       # fail on code unreachable even from tests (pinned)
 task tidy:check     # go mod tidy -diff
 task docs:check     # regenerate docs/reference, fail if it changed
+task fuzz           # run every FuzzXxx target for FUZZTIME (default 30s); failing inputs land in testdata/fuzz/
 task dev:full       # fmt, vet, lint, tidy:check, deadcode, docs:check, test:race, build (run before pushing)
 ```
 
@@ -42,7 +43,8 @@ CI mirrors `dev:full` on every PR: tidy check, docs reference check,
 `go test -race` (+ coverage to Codecov), a shuffled `-race -count=5` stress
 job, `golangci-lint` (includes govet and gofmt), `govulncheck`, and
 `deadcode`. A push to main runs only the coverage job (Codecov's base). A
-nightly workflow runs `-race -count=20` and `govulncheck` on main.
+nightly workflow runs `-race -count=20`, every fuzz target for 60s, and
+`govulncheck` on main.
 
 **Toolchain pinning.** The Taskfile sets `GOTOOLCHAIN` to the `toolchain`
 line in `go.mod`, which is the Go that CI uses. A newer local Go formats
