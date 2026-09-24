@@ -161,11 +161,21 @@ func HandleUsageError(_ context.Context, cmd *cli.Command, err error, isSubcomma
 	return err
 }
 
-// Install sets HandleUsageError on root and every command below it.
-// urfave/cli does not inherit OnUsageError, so each command needs it.
+// Install applies the CLI-wide parsing rules to root and every command
+// below it:
+//   - HandleUsageError on each command (urfave/cli does not inherit
+//     OnUsageError).
+//   - No help subcommand on a leaf command. urfave/cli gives every command a
+//     hidden "help" subcommand (alias "h"), so on a leaf a first positional of
+//     "h" or "help" printed help and exited 0 instead of running: a cluster
+//     named "h" passed `cluster upgrade-check h` without a check. --help and
+//     -h still work; group commands keep "help".
 func Install(root *cli.Command) {
 	_ = root.Walk(func(c *cli.Command) error {
 		c.OnUsageError = HandleUsageError
+		if len(c.Commands) == 0 && c != root {
+			c.HideHelpCommand = true
+		}
 		return nil
 	})
 }
