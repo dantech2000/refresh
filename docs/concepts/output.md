@@ -40,7 +40,12 @@ meant for a person goes to stderr or is not printed:
   usually `--yes`. A partial cluster name resolves as it does without a
   terminal: a mutating command fails and names the candidate. Pass the exact
   name in scripts.
-- An empty list prints `[]`, never `null`.
+- The item list of a list command (`clusters`, `nodegroups`, `addons`,
+  `results`) and every `failures` list print `[]` when empty, never `null`.
+  Other lists and objects can be `null` where the
+  [schema](#document-versions-and-schemas) allows it. For example,
+  `cluster describe` prints `"nodegroups": null` when it did not read the
+  nodegroups.
 
 The exit code is the same as in the human view, and it applies after the
 document is printed (see [Exit codes](exit-codes.md)). When a command fails before
@@ -58,7 +63,7 @@ top-level list.
 | Command | Document on stdout |
 |---|---|
 | `nodegroup update` | `cluster`, `nodegroups` (one entry per selected nodegroup: `name`, `status`, `updateId` once the update started, `reason` for a skip, `failure`), `verification`, `health` (the pre-flight verdict, when a check ran), and `failures` |
-| `nodegroup update --dry-run` | `cluster`, `dryRun`, `force`, `reroll`, one `nodegroups` entry per nodegroup with its `action` (`update`, `force-update`, `skip-updating`, `skip-latest`, `skip-custom`, or `unknown` with a `failure` when the nodegroup could not be read), and `failures` |
+| `nodegroup update --dry-run` | `cluster`, `dryRun`, `force`, `reroll`, one `nodegroups` entry per nodegroup with its `action` (`Update`, `ForceUpdate`, `SkipUpdating`, `SkipLatest`, `SkipCustom`, or `Unknown` with a `failure` when the nodegroup could not be read), and `failures` |
 | `nodegroup update --health-only` | The health verdict, with its own `failures` (the reads the checks could not make). The exit code is `0`, `2`, `3`, or `4` for a pass whose checks could not read everything |
 | `nodegroup update --all-clusters` | `clusters` (one entry per cluster: `cluster`, `region`, `status`, `nodegroups`, `verification`, `health`, and `failure` when the cluster itself failed; with `--dry-run`, `status` and a `plan` instead), `skippedRegions` (a notice: default-sweep regions these credentials can't use), and `failures` (every cluster's failures, and a `Region` failure for each region that could not be listed). With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
 | `addon update` | The result (`addonName`, `previousVersion`, `newVersion`, `updateId`, `status`, `healthIssues`, `warning`, `failure`, `startedAt`) and `failures` |
@@ -94,6 +99,88 @@ loop.
 refresh cluster upgrade -c prod --to 1.33 --yes -o json 2>upgrade.log | jq '.report'
 ```
 
+## Document versions and schemas
+
+Every `-o json` and `-o yaml` document starts with two keys:
+
+```json
+{
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "NodegroupList",
+  "cluster": "prod",
+  "...": "..."
+}
+```
+
+`apiVersion` is the version of the contract on this page. `kind` names the
+document type, in PascalCase: `FleetStatus`, `ClusterList`,
+`ClusterDescription`, `UpgradeCheck`, `InsightDescription`, `UpgradePlan`,
+`UpgradeRun`, `NodegroupList`, `NodegroupDescription`, `NodegroupUpdate`,
+`NodegroupUpdatePlan`, `FleetUpdate`, `FleetUpdatePlan`, `HealthSummary`,
+`AddonList`, `AddonDescription`, `AddonUpdate`, or `AddonUpdateAll`. A
+document nested in another one, such as the plan inside an `UpgradeRun` or
+the health verdict inside a `NodegroupUpdate`, has no `apiVersion` or `kind`
+of its own.
+
+Each kind has a JSON Schema (draft 2020-12) at
+`https://drod.dev/refresh/schema/v1/<kind>.json`. The
+[JSON schemas](../reference/schemas.md) page lists them. `refresh`
+generates the schemas from its Go types, and CI fails when a committed
+schema no longer matches the code. The schemas list required keys, the
+values of every enum, and the fields that can be `null`. They allow keys
+they do not list, so a consumer on an older schema keeps working when a
+newer release adds a field.
+
+```bash
+refresh cluster list -o json > clusters.json
+check-jsonschema --schemafile https://drod.dev/refresh/schema/v1/ClusterList.json clusters.json
+```
+
+### Enum values
+
+`refresh`'s own enums are PascalCase: every `status`, `reason`, `kind`,
+`decision`, `action`, `type`, `tier`, `compute`, and `health` value that
+`refresh` defines, such as `Succeeded`, `SkipLatest`, `ControlPlane`, or
+`Proceed`. The schema of each kind lists them.
+
+AWS values pass through unchanged, in AWS's own casing. Examples are EKS
+statuses (`ACTIVE`, `UPDATING`), AMI and capacity types (`AL2_x86_64`,
+`ON_DEMAND`), the upgrade policy (`supportType`: `STANDARD`), insight
+statuses and categories (`PASSING`, `UPGRADE_READINESS`), and the EC2
+instance `lifecycle` (`on-demand`, `spot`). The schemas describe these as
+plain strings, because AWS can add values at any time.
+
+The table view and `-o plain` keep their own words. For example, the health
+decision prints as `PROCEED` there, and the plan step type as
+`control-plane`. Scripts that parse `-o plain` see the same text as
+before.
+
+### Compatibility
+
+Within `apiVersion: refresh.drod.dev/v1`, changes are additive only. A
+release can:
+
+- add a key to any object,
+- add a value to any enum,
+- add a new `kind`.
+
+A consumer must ignore keys it does not know and handle an enum value it
+does not know. For a failure, treat an unknown `reason` like `Unknown`.
+Removing or renaming a key, changing its type, or changing what a value
+means needs a new `apiVersion` (`v2`). Check `apiVersion` before you
+parse, and fail loudly on a version you do not support.
+
+Some rules hold for every document:
+
+- `-o yaml` has the same keys, values, and structure as `-o json`.
+- Key order carries no meaning. `refresh` prints `apiVersion` and `kind`
+  first, then the keys in a stable order: JSON in field order, YAML
+  sorted.
+- The top-level `failures` is the complete list of the run's failures. A
+  nested `failure` or `failures` is a subset of it. The list is sorted by
+  `kind`, `region`, `cluster`, `name`, and `operation` (see
+  [Failures](#failures)).
+
 ## JSON envelopes
 
 List commands wrap their rows in an object, so a jq filter starts from the
@@ -101,7 +188,7 @@ array key, not from `.[]`:
 
 | Command | Top-level shape |
 |---|---|
-| `cluster list` | `{"clusters": [...], "count": N, "failures": [...]}`. `failures` has the regions that could not be listed (`Region`) and the clusters and nodegroups that could not be read. A row that could not be fully read has `"incomplete": true` |
+| `cluster list` | `{"clusters": [...], "count": N, "failures": [...]}`. `failures` has the regions that could not be listed (`Region`), the clusters and nodegroups that could not be read, and with `--show-health`, the reads the health checks could not make. A row that could not be fully read has `"incomplete": true` |
 | `nodegroup list` | `{"cluster": "...", "nodegroups": [...], "count": N, "failures": [...]}`. `failures` has the nodegroups that could not be described; the list leaves them out. A row whose latest-AMI lookup failed has an advisory `amiLookupFailure` (see [Advisory AMI lookup](#advisory-ami-lookup)) |
 | `addon list` | `{"cluster": "...", "addons": [...], "count": N, "failures": [...]}`. `failures` has the add-ons that could not be described; the list leaves them out |
 | `status` | `{"clusters": [...], "failures": [...]}`. `failures` has the regions that could not be listed and every part of a cluster row that could not be read. A row that could not be fully read has `"incomplete": true` |
@@ -109,8 +196,9 @@ array key, not from `.[]`:
 Describe commands (`cluster describe`, `nodegroup describe`, `addon describe`)
 and `cluster upgrade-check` print one object with no envelope. The object
 also has a top-level `failures` list: the parts of a `cluster describe` that
-could not be read (the add-on or nodegroup list, or one add-on or
-nodegroup), and the nodegroups and add-ons whose version skew
+could not be read (the add-on or nodegroup list, one add-on or
+nodegroup, and with `--show-health`, the reads the health checks could
+not make), and the nodegroups and add-ons whose version skew
 `cluster upgrade-check` could not read. `nodegroup describe`, `addon
 describe`, and `upgrade-check --id` read one item or fail with exit `1`, so
 their `failures` is always `[]`.
@@ -185,6 +273,11 @@ them out of `failures`:
 Skipped 2 region(s) not accessible to these credentials: ap-east-1, me-south-1 (scope with -r or REFRESH_EKS_REGIONS)
 ```
 
+`nodegroup update --all-clusters` also lists them in its document, under
+`skippedRegions`: a list of region names, left out when no region was
+skipped. It is a notice, like the stderr line, so it never changes the exit
+code. `status` and `cluster list` print only the stderr line.
+
 When every region is skipped, the command exits `1`: nothing could be read.
 A region you name with `-r` or `REFRESH_EKS_REGIONS` is never skipped; if it
 cannot be listed, it is a `Region` failure.
@@ -249,6 +342,56 @@ refresh status -o json | jq -r '.failures[] | select(.retryable) | "\(.kind) \(.
 
 New versions can add keys, kinds, and reasons. A consumer must ignore keys
 it does not know and treat an unknown `reason` like `Unknown`.
+
+## jq cookbook
+
+The regions that could not be listed:
+
+```bash
+refresh status -o json | jq -r '.failures[] | select(.kind == "Region") | "\(.name) \(.reason)"'
+```
+
+The failures that a second run may fix:
+
+```bash
+refresh cluster list -o json | jq -r '.failures[] | select(.retryable) | "\(.kind) \(.cluster // "-")/\(.name): \(.reason)"'
+```
+
+Failures counted by reason:
+
+```bash
+refresh status -o json | jq '.failures | group_by(.reason) | map({reason: .[0].reason, count: length})'
+```
+
+The nodegroups a `nodegroup update` did not roll, with the reason:
+
+```bash
+refresh nodegroup update prod --yes -o json |
+  jq -r '.nodegroups[] | select(.status != "Succeeded") | "\(.name) \(.status) \(.reason // .failure.reason // "")"'
+```
+
+Refuse a document from a contract version the script does not know:
+
+```bash
+refresh addon list -c prod -o json |
+  jq -e '.apiVersion == "refresh.drod.dev/v1"' > /dev/null || { echo "unsupported refresh output" >&2; exit 1; }
+```
+
+A CI step that branches on the exit code and keeps the document:
+
+```bash
+set +e
+refresh cluster upgrade-check -c prod -o json > readiness.json 2> readiness.log
+code=$?
+set -e
+case "$code" in
+  0) echo "ready" ;;
+  2) echo "ready, with findings to review" ;;
+  3) echo "blocked:"; jq -r '.insights[] | select(.status == "ERROR") | .name' readiness.json; exit 1 ;;
+  4) echo "incomplete data:"; jq -r '.failures[] | "\(.kind) \(.name): \(.reason)"' readiness.json; exit 1 ;;
+  *) cat readiness.log; exit 1 ;;
+esac
+```
 
 ## Key consistency
 

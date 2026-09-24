@@ -25,7 +25,9 @@ The same checks run in these places:
 | Service Quotas | Service Quotas, CloudWatch usage metrics | Warning | On-Demand EC2 vCPU quota close to its limit |
 | Resource Balance | CloudWatch EC2 CPU metrics | Warning | Uneven CPU load across nodes |
 
-The checks give one decision:
+The checks give one decision. The human view shows it in capitals; the
+`decision` field of `-o json` has the PascalCase value (`Block`, `Warn`, or
+`Proceed`), and each check's `status` is `Pass`, `Warn`, or `Fail`.
 
 - `BLOCK`: a blocking check failed. `nodegroup update` exits `3` and rolls
   nothing. `cluster upgrade` stops the nodegroup phase.

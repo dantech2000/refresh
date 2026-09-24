@@ -46,6 +46,8 @@ running after a partial result.
 
 ```json
 {
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "ClusterList",
   "clusters": [
     {"name": "prod", "status": "ACTIVE", "region": "us-east-1", "incomplete": true, "...": "..."}
   ],
@@ -411,6 +413,8 @@ An executed run prints `{plan, report, failures}`:
 
 ```json
 {
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "UpgradeRun",
   "plan": {
     "clusterName": "prod", "currentVersion": "1.31", "targetVersion": "1.32",
     "hops": [{"from": "1.31", "to": "1.32", "steps": ["..."]}],
@@ -435,6 +439,11 @@ An executed run prints `{plan, report, failures}`:
   ]
 }
 ```
+
+Each plan step has a `type` (`Readiness`, `ControlPlane`, `Addon`, or
+`Nodegroup`) and a `status` (`Pending`, `Completed`, `Blocked`, or
+`Manual`). The `-o plain` columns keep the lower-case words
+(`control-plane`, `pending`).
 
 `plan.notices` are advisory and never change the exit code. `plan.failures`
 are the reads the planner could not make. `report.status` says how the run

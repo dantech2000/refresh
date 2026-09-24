@@ -43,6 +43,8 @@ under `INCOMPLETE DATA` in the table), and exits `4` (incomplete data):
 
 ```json
 {
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "NodegroupList",
   "cluster": "prod",
   "nodegroups": [
     {
@@ -265,7 +267,7 @@ nodegroups that match. `--quiet` does not skip them.
     are detected and **skipped** with guidance: their AMI rolls when you publish
     a new launch-template version and point the nodegroup at it, not via this
     command. `--force` and `--reroll` do not change this. `--dry-run` shows
-    them with the action `skip-custom`.
+    them with the action `SkipCustom`.
 
 !!! note "Re-roll a nodegroup that is already on the latest AMI"
     A nodegroup already on the latest AMI is skipped. To roll it anyway, pass
@@ -361,6 +363,8 @@ See [Failures](../concepts/output.md#failures) for the failure object.
 
 ```json
 {
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "NodegroupUpdate",
   "cluster": "prod",
   "nodegroups": [
     {"name": "ng-1", "status": "Succeeded", "updateId": "5e6f7a8b-..."},
@@ -392,7 +396,8 @@ The document also has `verification` (the post-roll checks and issues) and
 `health` (the pre-flight verdict), when they ran. A nodegroup that
 post-roll verification can't describe is a failure (exit `4`), not a
 verification issue. The `--dry-run` preview has an `action` per nodegroup
-instead of a status. A nodegroup it can't describe has the action `unknown`
+instead of a status: `Update`, `ForceUpdate`, `SkipUpdating`, `SkipLatest`,
+or `SkipCustom`. A nodegroup it can't describe has the action `Unknown`
 and a `failure` (exit `4`).
 
 With `--all-clusters`, `clusters` has one entry per cluster: `cluster`,
