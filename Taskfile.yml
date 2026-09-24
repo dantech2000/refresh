@@ -234,13 +234,14 @@ tasks:
       - echo "✅ Quick check passed!"
 
   dev:full:
-    desc: Full pre-push check that mirrors CI (fmt, vet, lint, tidy, deadcode, docs, race tests, build)
+    desc: Full pre-push check that mirrors CI (fmt, vet, lint, tidy, deadcode, govulncheck, docs, race tests, build)
     cmds:
       - task: fmt
       - task: vet
       - task: lint
       - task: tidy:check
       - task: deadcode
+      - task: vuln
       - task: docs:check
       - task: test:race
       - task: build

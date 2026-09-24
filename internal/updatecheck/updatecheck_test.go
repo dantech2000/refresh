@@ -147,3 +147,73 @@ func TestLatestTagFailSilentOnHTTPError(t *testing.T) {
 	// The caller (maybePrintUpdateHint) treats any error as "no hint", so the
 	// returned error never reaches the user — this just documents the contract.
 }
+
+// TestLatestTagRecordsFailedAttempt: offline, a failed fetch still starts a
+// new check interval, so the next run within it does not wait on the network
+// again. The previously cached tag survives the failed attempt.
+func TestLatestTagRecordsFailedAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		seedTag string // "" = no cache file before the failed fetch
+	}{
+		{name: "no cache", seedTag: ""},
+		{name: "stale cache", seedTag: "v1.2.3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&hits, 1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			t.Cleanup(srv.Close)
+			cachePath := filepath.Join(t.TempDir(), "update-check.json")
+			now := time.Unix(1_000_000, 0)
+			if tc.seedTag != "" {
+				New(WithCachePath(cachePath)).writeCache(cache{LastCheck: now.Add(-48 * time.Hour), LatestTag: tc.seedTag})
+			}
+			newChecker := func() *Checker {
+				return New(
+					WithBaseURL(srv.URL),
+					WithHTTPClient(srv.Client()),
+					WithCachePath(cachePath),
+					WithNow(func() time.Time { return now }),
+				)
+			}
+
+			_, _ = newChecker().LatestTag(context.Background())
+			if got := atomic.LoadInt32(&hits); got != 1 {
+				t.Fatalf("hits = %d after first call, want 1", got)
+			}
+
+			now = now.Add(time.Hour)
+			tag, err := newChecker().LatestTag(context.Background())
+			if err != nil {
+				t.Fatalf("second LatestTag: %v", err)
+			}
+			if tag != tc.seedTag {
+				t.Fatalf("tag = %q, want the cached %q", tag, tc.seedTag)
+			}
+			if got := atomic.LoadInt32(&hits); got != 1 {
+				t.Fatalf("hits = %d within the interval after a failure, want 1 (no re-fetch)", got)
+			}
+		})
+	}
+}
+
+// TestLatestTagCanceledRunNotRecorded: an interrupted run is not an attempt,
+// so the next run checks again.
+func TestLatestTagCanceledRunNotRecorded(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c := New(
+		WithBaseURL("http://127.0.0.1:0"),
+		WithCachePath(filepath.Join(t.TempDir(), "update-check.json")),
+		WithNow(func() time.Time { return time.Unix(1_000_000, 0) }),
+	)
+	if _, err := c.LatestTag(ctx); err == nil {
+		t.Fatal("expected an error with a canceled context")
+	}
+	if _, ok := c.readCache(); ok {
+		t.Fatal("a canceled run wrote the cache; want no record")
+	}
+}

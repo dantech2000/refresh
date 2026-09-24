@@ -106,8 +106,13 @@ func (c *Checker) LatestTag(ctx context.Context) (string, error) {
 
 	tag, err := c.fetchLatest(ctx)
 	if err != nil {
-		// Offline/error: fall back to whatever (possibly empty) tag we cached
-		// so we still don't re-hit the network repeatedly.
+		// Offline/error: record the attempt, keeping whatever (possibly empty)
+		// tag we cached, so an offline machine waits on the fetch timeout at
+		// most once per checkInterval. A canceled run (Ctrl-C) is not an
+		// attempt and is not recorded.
+		if ctx.Err() == nil {
+			c.writeCache(cache{LastCheck: c.now(), LatestTag: cached.LatestTag})
+		}
 		if ok {
 			return cached.LatestTag, nil
 		}

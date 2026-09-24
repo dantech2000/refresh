@@ -47,6 +47,7 @@ func runGenDocs(_ context.Context, cmd *cli.Command) error {
 	top := visibleSubcommands(root)
 
 	// One page per top-level command, plus an index with the global flags.
+	written := map[string]bool{"index.md": true}
 	if err := writeFile(filepath.Join(outDir, "index.md"), renderIndex(root, top)); err != nil {
 		return err
 	}
@@ -55,9 +56,40 @@ func runGenDocs(_ context.Context, cmd *cli.Command) error {
 		if err := writeFile(filepath.Join(outDir, c.Name+".md"), page); err != nil {
 			return err
 		}
+		written[c.Name+".md"] = true
+	}
+	if err := removeStalePages(outDir, written); err != nil {
+		return err
 	}
 
 	fmt.Printf("Generated %d reference pages in %s\n", len(top)+1, outDir)
+	return nil
+}
+
+// removeStalePages deletes the pages in outDir that an earlier gen-docs run
+// wrote for a command that no longer exists, so the drift check sees the
+// deletion. It only removes files that start with generatedNote: hand-written
+// pages and files other generators own (schemas.md) stay.
+func removeStalePages(outDir string, written map[string]bool) error {
+	pages, err := filepath.Glob(filepath.Join(outDir, "*.md"))
+	if err != nil {
+		return fmt.Errorf("listing %s: %w", outDir, err)
+	}
+	for _, p := range pages {
+		if written[filepath.Base(p)] {
+			continue
+		}
+		data, err := os.ReadFile(p) //nolint:gosec // G304: a page in the directory we generate into
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", p, err)
+		}
+		if !strings.HasPrefix(string(data), generatedNote) {
+			continue
+		}
+		if err := os.Remove(p); err != nil {
+			return fmt.Errorf("removing stale %s: %w", p, err)
+		}
+	}
 	return nil
 }
 
