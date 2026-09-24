@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/urfave/cli/v3"
@@ -143,7 +142,7 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 	// Control-plane health gate from the free AWS/EKS CloudWatch metrics — etcd
 	// usage vs the 8 GiB read-only limit + API-server error rate (REF-140).
 	if report != nil {
-		checker := health.NewChecker(eks.NewFromConfig(awsCfg), nil, cloudwatch.NewFromConfig(awsCfg), nil)
+		checker := health.NewCheckerForConfig(awsCfg, nil, nil)
 		cp := checker.CheckControlPlaneMetrics(ctx, clusterName)
 		report.ControlPlane = &cp
 	}
