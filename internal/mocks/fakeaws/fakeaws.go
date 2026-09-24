@@ -86,6 +86,10 @@ type Cluster struct {
 	// one PASSING insight for the next minor, as EKS does for a healthy
 	// cluster.
 	Insights []*Insight
+	// UpdateStatus is the DescribeUpdate status of an UpdateClusterVersion
+	// update: "" or "Successful" applies the new version; "Failed" or
+	// "Cancelled" leaves the cluster as it is; "InProgress" never finishes.
+	UpdateStatus string
 }
 
 // Insight is an EKS Cluster Insight in the fake world.
@@ -380,7 +384,11 @@ func (s *Server) serveClusterUpdates(w http.ResponseWriter, r *http.Request, c *
 			Version string `json:"version"`
 		}
 		_ = json.Unmarshal(body, &in)
-		writeJSON(w, map[string]any{"update": s.startUpdate("VersionUpdate", func() { c.Version = in.Version })})
+		update := s.startUpdate("VersionUpdate", func() { c.Version = in.Version })
+		if id, ok := update["id"].(string); ok && c.UpdateStatus != "" {
+			s.updateStatus[id] = c.UpdateStatus
+		}
+		writeJSON(w, map[string]any{"update": update})
 	case r.Method == http.MethodGet && len(rest) == 1:
 		apply, ok := s.updates[rest[0]]
 		if !ok {
@@ -392,6 +400,10 @@ func (s *Server) serveClusterUpdates(w http.ResponseWriter, r *http.Request, c *
 			status = "Successful"
 		}
 		update := map[string]any{"id": rest[0], "status": status, "type": "VersionUpdate"}
+		if status == "InProgress" {
+			writeJSON(w, map[string]any{"update": update})
+			return
+		}
 		if status != "Successful" {
 			update["errors"] = []any{map[string]any{"errorCode": "AdmissionRequestDenied", "errorMessage": "fake update failure"}}
 			writeJSON(w, map[string]any{"update": update})
