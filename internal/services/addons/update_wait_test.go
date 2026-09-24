@@ -13,6 +13,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/smithy-go"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
@@ -327,8 +328,15 @@ func TestListDetailed_DescribeFailures(t *testing.T) {
 	if len(res.Summaries) != 1 || res.Summaries[0].Name != "coredns" || res.Summaries[0].Health != "" {
 		t.Errorf("summaries = %+v, want only coredns with no health", res.Summaries)
 	}
-	if len(res.Failures) != 2 || !strings.HasPrefix(res.Failures[0], "kube-proxy: AccessDeniedException") {
-		t.Errorf("failures = %q, want kube-proxy and vpc-cni with the reason", res.Failures)
+	if len(res.Failures) != 2 {
+		t.Fatalf("failures = %+v, want kube-proxy and vpc-cni", res.Failures)
+	}
+	want := diag.Failure{
+		Kind: diag.KindAddon, Name: "kube-proxy", Cluster: "prod", Operation: diag.OpDescribeAddon,
+		Reason: diag.ReasonAccessDenied, Error: "AccessDeniedException: denied", AWSErrorCode: "AccessDeniedException",
+	}
+	if res.Failures[0] != want || res.Failures[1].Name != "vpc-cni" {
+		t.Errorf("failures = %+v, want %+v first, then vpc-cni", res.Failures, want)
 	}
 
 	rows, err := svc.List(t.Context(), "prod", ListOptions{})
@@ -367,14 +375,14 @@ func TestListDetailed_UndispatchedAreNamedFailures(t *testing.T) {
 	}
 	notDescribed := 0
 	for i, f := range res.Failures {
-		if !strings.HasPrefix(f, names[i]+": ") {
-			t.Errorf("failure %d = %q, want it named %s", i, f, names[i])
+		if f.Name != names[i] || f.Kind != diag.KindAddon || f.Cluster != "prod" {
+			t.Errorf("failure %d = %+v, want add-on %s of prod", i, f, names[i])
 		}
-		if strings.Contains(f, "not described: context canceled") {
+		if f.Reason == diag.ReasonNotAttempted && f.Error == "not described: context canceled" {
 			notDescribed++
 		}
 	}
 	if notDescribed == 0 {
-		t.Errorf("failures = %q, want undispatched add-ons reported with the context cause", res.Failures)
+		t.Errorf("failures = %+v, want undispatched add-ons reported as NotAttempted with the context cause", res.Failures)
 	}
 }

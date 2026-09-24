@@ -7,7 +7,18 @@
   "currentAmi": "s-currentami",
   "latestAmi": "s-latestami",
   "amiStatus": "Updating",
-  "amiLookupError": "s-amilookuperror",
+  "amiLookupFailure": {
+    "kind": "s-kind",
+    "name": "s-name",
+    "cluster": "s-cluster",
+    "region": "s-region",
+    "operation": "s-operation",
+    "reason": "s-reason",
+    "retryable": true,
+    "error": "s-error",
+    "awsErrorCode": "s-awserrorcode",
+    "updateId": "s-updateid"
+  },
   "scaling": {
     "desiredSize": 3,
     "minSize": 3,
@@ -28,5 +39,19 @@
     "totalPods": 3,
     "criticalPods": 3,
     "podDisruption": "s-poddisruption"
-  }
+  },
+  "failures": [
+    {
+      "kind": "s-kind",
+      "name": "s-name",
+      "cluster": "s-cluster",
+      "region": "s-region",
+      "operation": "s-operation",
+      "reason": "s-reason",
+      "retryable": true,
+      "error": "s-error",
+      "awsErrorCode": "s-awserrorcode",
+      "updateId": "s-updateid"
+    }
+  ]
 }

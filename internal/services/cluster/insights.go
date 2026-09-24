@@ -14,7 +14,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
-	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/common"
@@ -55,6 +55,9 @@ type InsightDetail struct {
 	Resources      []string            `json:"resources,omitempty" yaml:"resources,omitempty"`
 	AdditionalInfo map[string]string   `json:"additionalInfo,omitempty" yaml:"additionalInfo,omitempty"`
 	Deprecations   []DeprecationDetail `json:"deprecations,omitempty" yaml:"deprecations,omitempty"`
+	// Failures is always [] today: the detail view either reads the insight
+	// or fails. It is here so every document carries the same key.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // DeprecationDetail describes one deprecated Kubernetes API surfaced by an
@@ -103,6 +106,10 @@ type AddonSkew struct {
 	Installed string `json:"installed" yaml:"installed"`
 	Latest    string `json:"latest" yaml:"latest"`
 	Behind    bool   `json:"behind" yaml:"behind"`
+	// Incomplete is true when the latest compatible version could not be
+	// read, so Behind is not known. The failure is in the report's
+	// "failures".
+	Incomplete bool `json:"incomplete,omitempty" yaml:"incomplete,omitempty"`
 }
 
 // SkewReport is the local version-skew picture: control plane vs nodegroups vs
@@ -124,10 +131,10 @@ type UpgradeReport struct {
 	ControlPlane *health.HealthResult `json:"controlPlane,omitempty" yaml:"controlPlane,omitempty"`
 	Insights     []InsightSummary     `json:"insights" yaml:"insights"`
 	Skew         SkewReport           `json:"skew" yaml:"skew"`
-	// Incomplete names the nodegroups and add-ons whose version skew could
-	// not be read ("nodegroup web: ThrottlingException"). The skew verdict
-	// does not cover them, so the check is incomplete (exit 4).
-	Incomplete []string `json:"incomplete,omitempty" yaml:"incomplete,omitempty"`
+	// Failures are the nodegroups and add-ons whose version skew could not
+	// be read. The skew verdict does not cover them, so the check is
+	// incomplete (exit 4). [] when everything was read.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // ListInsights returns the cluster's EKS Cluster Insights filtered per opts.
@@ -307,20 +314,19 @@ func (s *ServiceImpl) UpgradeCheck(ctx context.Context, clusterName string, opts
 		return nil, err
 	}
 
-	skew, incomplete, err := s.computeSkew(ctx, clusterName, cpVersion)
+	skew, failures, err := s.computeSkew(ctx, clusterName, cpVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	return &UpgradeReport{Cluster: clusterName, SupportType: supportType, Insights: insights, Skew: skew, Incomplete: incomplete}, nil
+	return &UpgradeReport{Cluster: clusterName, SupportType: supportType, Insights: insights, Skew: skew, Failures: failures}, nil
 }
 
 // computeSkew builds the local version-skew report and ordered findings. It
-// also returns the nodegroups and add-ons it could not read, one
-// "kind name: reason" entry each, so a failed describe never reads as
-// "current".
-func (s *ServiceImpl) computeSkew(ctx context.Context, clusterName, cpVersion string) (SkewReport, []string, error) {
-	var incomplete []string
+// also returns one failure per nodegroup or add-on it could not read, so a
+// failed describe never reads as "current".
+func (s *ServiceImpl) computeSkew(ctx context.Context, clusterName, cpVersion string) (SkewReport, []diag.Failure, error) {
+	var failures []diag.Failure
 	report := SkewReport{ControlPlaneVersion: cpVersion}
 	cpMinor, cpOK := minorVersion(cpVersion)
 
@@ -332,14 +338,14 @@ func (s *ServiceImpl) computeSkew(ctx context.Context, clusterName, cpVersion st
 		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken },
 	)
 	if err != nil {
-		return report, incomplete, err
+		return report, failures, err
 	}
 	for _, name := range ngNames {
 		ngDesc, derr := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
 			return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{ClusterName: aws.String(clusterName), NodegroupName: aws.String(name)})
 		})
 		if derr != nil || ngDesc == nil || ngDesc.Nodegroup == nil {
-			incomplete = append(incomplete, "nodegroup "+name+": "+unreadableReason(derr))
+			failures = append(failures, s.failure(diag.KindNodegroup, clusterName, name, diag.OpDescribeNodegroup, orEmptyResponse(derr)))
 			continue
 		}
 		ngVersion := aws.ToString(ngDesc.Nodegroup.Version)
@@ -364,21 +370,22 @@ func (s *ServiceImpl) computeSkew(ctx context.Context, clusterName, cpVersion st
 		func(out *eks.ListAddonsOutput) ([]string, *string) { return out.Addons, out.NextToken },
 	)
 	if err != nil {
-		return report, incomplete, err
+		return report, failures, err
 	}
 	for _, name := range addonNames {
 		adDesc, derr := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
 			return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{ClusterName: aws.String(clusterName), AddonName: aws.String(name)})
 		})
 		if derr != nil || adDesc == nil || adDesc.Addon == nil {
-			incomplete = append(incomplete, "addon "+name+": "+unreadableReason(derr))
+			failures = append(failures, s.failure(diag.KindAddon, clusterName, name, diag.OpDescribeAddon, orEmptyResponse(derr)))
 			continue
 		}
 		installed := aws.ToString(adDesc.Addon.AddonVersion)
 		latest, lerr := s.latestAddonVersion(ctx, name, cpVersion)
 		skew := AddonSkew{Name: name, Installed: installed, Latest: latest}
 		if lerr != nil {
-			incomplete = append(incomplete, "addon "+name+" latest version: "+unreadableReason(lerr))
+			failures = append(failures, s.failure(diag.KindAddon, clusterName, name, diag.OpDescribeAddonVersions, lerr))
+			skew.Incomplete = true
 		}
 		if lerr == nil && latest != "" && installed != "" && addons.CompareVersions(installed, latest) < 0 {
 			skew.Behind = true
@@ -387,15 +394,16 @@ func (s *ServiceImpl) computeSkew(ctx context.Context, clusterName, cpVersion st
 	}
 
 	report.Findings = skewFindings(report)
-	return report, incomplete, nil
+	return report, failures, nil
 }
 
-// unreadableReason is the one-line reason a skew item could not be read.
-func unreadableReason(err error) string {
+// orEmptyResponse returns err, or errEmptyResponse for a describe call that
+// returned no error and no item.
+func orEmptyResponse(err error) error {
 	if err == nil {
-		return "empty response"
+		return errEmptyResponse
 	}
-	return awserr.Summary(err)
+	return err
 }
 
 // latestAddonVersion returns the newest addon version compatible with the given

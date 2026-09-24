@@ -2,16 +2,14 @@ package statuscmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/aws/awserr"
@@ -19,9 +17,9 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/commands/statusview"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
-	"github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -61,34 +59,33 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	elapsed := time.Since(start)
-	statuses, regionErrs := sweep.statuses, sweep.errs
+	statuses := sweep.statuses
 	if statuses == nil {
 		// A complete sweep with no clusters: -o json|yaml print [], not null.
 		statuses = []statussvc.ClusterStatus{}
 	}
 
-	if err := reportSweep(ui.Stderr, len(regions), sweep); err != nil {
+	runner.ReportSkippedRegions(ui.Stderr, sweep.skipped)
+	if err := allRegionsSkipped(len(regions), sweep.skipped); err != nil {
 		return err
 	}
 
 	sortStatuses(statuses, cmd.String("sort"), cmd.Bool("desc"))
-	// The human table lists incomplete rows in its INCOMPLETE DATA section;
-	// the other formats name them on stderr.
-	if !strings.EqualFold(strings.TrimSpace(cmd.String("format")), "table") {
-		warnIncompleteRows(ui.Stderr, statuses)
-	}
+	failures := fleetFailures(sweep)
+	format := cmd.String("format")
 
-	doc := statussvc.FleetStatus{Clusters: statuses, Failures: regionFailures(regionErrs)}
-	if handled, err := runner.EncodeStdout(cmd.String("format"), doc); handled {
+	doc := statussvc.FleetStatus{Clusters: statuses, Failures: failures}
+	if handled, err := runner.EncodeStdout(format, doc); handled {
 		if err != nil {
 			return err
 		}
-		return runner.UnlessInterrupted(ctx, exitForStatuses(statuses, len(regionErrs)))
-	}
-	if err := statusview.OutputFleetTable(statuses, elapsed); err != nil {
+	} else if err := statusview.OutputFleetTable(statuses, failures, elapsed); err != nil {
 		return err
 	}
-	return runner.UnlessInterrupted(ctx, exitForStatuses(statuses, len(regionErrs)))
+	if !runner.TableListsFailures(format) {
+		runner.ReportFailures(ui.Stderr, failures)
+	}
+	return runner.UnlessInterrupted(ctx, exitForStatuses(statuses, failures))
 }
 
 // resolveRegions picks the region set: explicit --region wins, then
@@ -114,9 +111,6 @@ func resolveRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string, defa
 	return appconfig.GetRegionsForPartition(awsCfg.Region), true
 }
 
-// regionScopeHint tells the user how to narrow the region sweep.
-const regionScopeHint = "scope with -r or REFRESH_EKS_REGIONS"
-
 // regionError is a failed region sweep. It unwraps to the service error, so
 // callers can still classify it.
 type regionError struct {
@@ -130,8 +124,11 @@ func (e *regionError) Unwrap() error { return e.Err }
 // fleetSweep is the outcome of gatherFleet.
 type fleetSweep struct {
 	statuses []statussvc.ClusterStatus
-	// errs holds one *regionError per failed region.
+	// errs holds one *regionError per region that could not list its
+	// clusters.
 	errs []error
+	// regionFailures has one failure per entry of errs.
+	regionFailures []diag.Failure
 	// skipped regions were closed to these credentials in a default sweep.
 	// They are not failures.
 	skipped []string
@@ -139,59 +136,26 @@ type fleetSweep struct {
 	answered int
 }
 
-// reportSweep writes the sweep's problems to w: one line naming the skipped
-// regions, and one single-line warning per failed region (the full formatted
-// AWS error runs to 15+ lines, once per region). It fails (exit 1) when every
-// region was skipped: nothing could be gathered, so an empty table is never a
+// allRegionsSkipped fails (exit 1) when every region of the sweep was skipped
+// as not accessible: nothing could be gathered, so an empty table is never a
 // false pass.
-func reportSweep(w io.Writer, regions int, s fleetSweep) error {
-	if len(s.skipped) > 0 {
-		_, _ = fmt.Fprintln(w, ui.ColorFor(w, color.FgYellow).Sprintf("Skipped %d region(s) not accessible to these credentials: %s (%s)",
-			len(s.skipped), strings.Join(s.skipped, ", "), regionScopeHint))
-	}
-	for _, e := range s.errs {
-		msg := awserr.Summary(e)
-		var re *regionError
-		if errors.As(e, &re) {
-			msg = fmt.Sprintf("region %s: %s", re.Region, awserr.Summary(re.Err))
-		}
-		_, _ = fmt.Fprintln(w, ui.ColorFor(w, color.FgYellow).Sprintf("warning: %s", msg))
-	}
-	if regions > 0 && len(s.skipped) == regions {
-		return fmt.Errorf("could not list clusters in any of %d region(s): none is accessible to these credentials; %s",
-			regions, regionScopeHint)
-	}
-	return nil
-}
-
-// regionFailures converts the sweep's failed regions to the "failures"
-// entries of the -o json/yaml document, each with a one-line reason.
-func regionFailures(errs []error) []types.RegionFailure {
-	if len(errs) == 0 {
+func allRegionsSkipped(regions int, skipped []string) error {
+	if regions == 0 || len(skipped) != regions {
 		return nil
 	}
-	out := make([]types.RegionFailure, 0, len(errs))
-	for _, e := range errs {
-		f := types.RegionFailure{Error: awserr.Summary(e)}
-		var re *regionError
-		if errors.As(e, &re) {
-			f = types.RegionFailure{Region: re.Region, Error: awserr.Summary(re.Err)}
-		}
-		out = append(out, f)
-	}
-	return out
+	return fmt.Errorf("could not list clusters in any of %d region(s): none is accessible to these credentials; %s",
+		regions, runner.RegionScopeHint)
 }
 
-// warnIncompleteRows names on w each cluster whose row has errors, one
-// warning per error, cut to its first line. The row's "errors" field keeps
-// the full text for -o json/yaml.
-func warnIncompleteRows(w io.Writer, statuses []statussvc.ClusterStatus) {
-	for _, c := range statuses {
-		for _, msg := range c.Errors {
-			line, _, _ := strings.Cut(msg, "\n")
-			_, _ = fmt.Fprintln(w, ui.StderrColor(color.FgYellow).Sprintf("warning: cluster %s (%s): %s", c.Name, c.Region, strings.TrimSpace(line)))
-		}
+// fleetFailures is the sweep's one failure list: the failed regions, then
+// the failures of each cluster row, in diag.Sort order.
+func fleetFailures(s fleetSweep) diag.List {
+	out := slices.Clone(s.regionFailures)
+	for _, c := range s.statuses {
+		out = append(out, c.Failures...)
 	}
+	diag.Sort(out)
+	return out
 }
 
 // regionLister is the per-region status sweep gatherFleet fans out over.
@@ -257,10 +221,21 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 		switch {
 		case res.err == nil:
 			sweep.answered++
+		case len(res.statuses) > 0:
+			// The region listed its clusters, but the sweep stopped before
+			// it evaluated them all. The "not evaluated" rows carry those
+			// failures; the region itself answered.
+			sweep.answered++
 		case skipInaccessible && awserr.IsRegionInaccessible(res.err):
 			sweep.skipped = append(sweep.skipped, r)
 		default:
 			sweep.errs = append(sweep.errs, &regionError{Region: r, Err: res.err})
+			f := diag.FromError(diag.KindRegion, r, diag.OpListClusters, res.err)
+			if !res.ran {
+				f = diag.New(diag.KindRegion, r, diag.ReasonNotAttempted, res.err.Error())
+				f.Region = r
+			}
+			sweep.regionFailures = append(sweep.regionFailures, f)
 		}
 	}
 	sort.Strings(sweep.skipped)
@@ -271,16 +246,15 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 const (
 	exitStale       = runner.ExitNeedsAttention
 	exitSupportRisk = runner.ExitBlocked
-	exitIncomplete  = runner.ExitIncomplete
 )
 
 // exitForStatuses maps the fleet posture to the documented exit-code contract:
 // 3 when any cluster is on extended/unsupported EKS, else 2 when something is
-// stale, else 4 when any cluster row has errors or any region failed, else 0.
-// A confirmed finding outranks incomplete data, but incomplete data never
-// exits 0.
-func exitForStatuses(statuses []statussvc.ClusterStatus, failedRegions int) error {
-	supportRisk, stale, incompleteRows := false, false, 0
+// stale, else 4 when there are failures (a region that could not be listed,
+// or part of a cluster row that could not be read), else 0. A confirmed
+// finding outranks incomplete data, but incomplete data never exits 0.
+func exitForStatuses(statuses []statussvc.ClusterStatus, failures []diag.Failure) error {
+	supportRisk, stale := false, false
 	for _, c := range statuses {
 		if c.SupportRisk() {
 			supportRisk = true
@@ -288,20 +262,14 @@ func exitForStatuses(statuses []statussvc.ClusterStatus, failedRegions int) erro
 		if c.NeedsAttention() {
 			stale = true
 		}
-		if c.Incomplete() {
-			incompleteRows++
-		}
 	}
 	switch {
 	case supportRisk:
 		return cli.Exit("", exitSupportRisk)
 	case stale:
 		return cli.Exit("", exitStale)
-	case incompleteRows > 0 || failedRegions > 0:
-		return cli.Exit(fmt.Sprintf("incomplete data: %d cluster(s) with errors, %d region(s) failed",
-			incompleteRows, failedRegions), exitIncomplete)
 	default:
-		return nil
+		return runner.IncompleteExit(failures)
 	}
 }
 

@@ -9,16 +9,18 @@ import (
 
 	"github.com/fatih/color"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // outputNodegroupsTable renders the nodegroup list. The human path uses the
-// render design system (tokenized STATUS/AMI cells); `-o plain` writes pure
-// TSV (header + one row per nodegroup) and sends the empty-list notice to
-// stderr.
-func outputNodegroupsTable(clusterName string, items []nodegroupsvc.NodegroupSummary) error {
+// render design system (tokenized STATUS/AMI cells, and the INCOMPLETE DATA
+// section for failures); `-o plain` writes pure TSV (header + one row per
+// nodegroup) and sends the empty-list notice to stderr. The caller reports
+// failures on stderr for -o plain.
+func outputNodegroupsTable(clusterName string, items []nodegroupsvc.NodegroupSummary, failures []diag.Failure) error {
 	if ui.PlainOutput() {
 		if len(items) == 0 {
 			_, _ = fmt.Fprintf(ui.Stderr, "No nodegroups found for cluster: %s\n", clusterName)
@@ -26,12 +28,14 @@ func outputNodegroupsTable(clusterName string, items []nodegroupsvc.NodegroupSum
 		nodegroupListPlain(items).Render()
 		return nil
 	}
+	th := render.Default(os.Stdout)
+	lines := th.FailureSection(failures)
 	if len(items) == 0 {
 		color.Yellow("No nodegroups found for cluster: %s", clusterName)
-		return nil
+	} else {
+		lines = append(nodegroupListLines(th, clusterName, items), lines...)
 	}
-	th := render.Default(os.Stdout)
-	for _, line := range nodegroupListLines(th, clusterName, items) {
+	for _, line := range lines {
 		fmt.Println(line)
 	}
 	return nil
@@ -71,7 +75,7 @@ func plainVersionCell(ng nodegroupsvc.NodegroupSummary) string {
 
 // plainAMICell is the `-o plain` AMI cell, in the human table's vocabulary.
 func plainAMICell(ng nodegroupsvc.NodegroupSummary) string {
-	if ng.AMILookupError != "" {
+	if ng.AMILookupFailure != nil {
 		return amiLookupFailedText
 	}
 	return ng.AMIStatus.String()
@@ -90,7 +94,7 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 	latestAMI := details.LatestAMI
 	amiStatus := details.AMIStatus.PlainString()
 	amiStatusColor := func(string) string { return details.AMIStatus.ColorString() }
-	if details.AMILookupError != "" {
+	if details.AMILookupFailure != nil {
 		latestAMI = amiLookupFailedText
 		amiStatus = amiLookupFailedText
 		amiStatusColor = func(s string) string { return color.YellowString("%s", s) }
@@ -149,7 +153,7 @@ func scalingText(s nodegroupsvc.ScalingConfig) string {
 // "instance/<id>" row per instance with space-separated key=value pairs.
 func nodegroupDetailPlain(d *nodegroupsvc.NodegroupDetails) *ui.PlainTable {
 	latestAMI, amiStatus := d.LatestAMI, d.AMIStatus.String()
-	if d.AMILookupError != "" {
+	if d.AMILookupFailure != nil {
 		latestAMI, amiStatus = amiLookupFailedText, amiLookupFailedText
 	}
 	t := ui.NewPlainKV()

@@ -17,6 +17,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/common"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
@@ -31,16 +32,16 @@ type ClusterAPI interface {
 }
 
 // NodegroupLister provides per-cluster nodegroup summaries (with AMI status),
-// plus a "name: reason" entry for each nodegroup that could not be described.
-// Satisfied by *nodegroup.ServiceImpl.
+// plus a failure for each nodegroup that could not be described. Satisfied
+// by *nodegroup.ServiceImpl.
 type NodegroupLister interface {
-	ListWithFailures(ctx context.Context, clusterName string, options nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error)
+	ListDetailed(ctx context.Context, clusterName string, options nodegroup.ListOptions) (nodegroup.ListResult, error)
 }
 
 // AddonAnalyzer provides installed addons and their available versions.
 // Satisfied by *addons.ServiceImpl.
 type AddonAnalyzer interface {
-	List(ctx context.Context, clusterName string, options addons.ListOptions) ([]addons.AddonSummary, error)
+	ListDetailed(ctx context.Context, clusterName string, options addons.ListOptions) (addons.ListResult, error)
 	GetAvailableVersions(ctx context.Context, addonName, k8sVersion string) ([]addons.AddonVersionInfo, error)
 }
 
@@ -101,7 +102,8 @@ func (s *Service) clock() time.Time {
 
 // ListClusterStatuses returns the patch posture of every cluster in the
 // service's region (optionally filtered by NamePattern). Per-cluster failures
-// are recorded on the row rather than failing the whole sweep.
+// are recorded on the row (ClusterStatus.Failures) rather than failing the
+// whole sweep.
 //
 // If ctx is cancelled or times out mid-sweep, clusters the sweep never reached
 // come back as rows marked "not evaluated" (never as zero-value rows), and the
@@ -152,17 +154,48 @@ func (s *Service) ListClusterStatuses(ctx context.Context, opts ListOptions) ([]
 
 // notEvaluated builds the row for a cluster the sweep never reached.
 func (s *Service) notEvaluated(ctx context.Context, name string) ClusterStatus {
-	reason := "sweep stopped early"
-	if err := ctx.Err(); err != nil {
+	reason := "the sweep stopped early"
+	if err := context.Cause(ctx); err != nil {
 		reason = err.Error()
 	}
-	return ClusterStatus{
+	cs := ClusterStatus{
 		Name:    name,
 		Region:  s.region,
 		Support: SupportPosture{Tier: SupportUnknown},
 		Compute: ComputeNone,
-		Errors:  []string{"not evaluated: " + reason},
 	}
+	f := diag.New(diag.KindCluster, name, diag.ReasonNotAttempted, "not evaluated: "+reason)
+	f.Region = s.region
+	cs.addFailure(f)
+	return cs
+}
+
+// errEmptyResponse stands for a describe call that returned no item.
+var errEmptyResponse = errors.New("empty response")
+
+// fail records a failure to read part of cluster cs: the cluster itself
+// (kind KindCluster, item cs.Name) or one of its nodegroups or add-ons. op
+// is the IAM action that failed, or "" to take it from err's
+// diag.WithOperation tag.
+func (s *Service) fail(cs *ClusterStatus, kind diag.Kind, item, op string, err error) {
+	f := diag.FromError(kind, item, op, err)
+	if kind != diag.KindCluster {
+		f.Cluster = cs.Name
+	}
+	f.Region = s.region
+	cs.addFailure(f)
+}
+
+// addFailure records a failure a nodegroup or add-on service built, in the
+// service's region when it has none.
+func (s *Service) addFailure(cs *ClusterStatus, f diag.Failure) {
+	if f.Region == "" {
+		f.Region = s.region
+	}
+	if f.Cluster == "" && f.Kind != diag.KindCluster {
+		f.Cluster = cs.Name
+	}
+	cs.addFailure(f)
 }
 
 func (s *Service) listClusterNames(ctx context.Context) ([]string, error) {
@@ -179,7 +212,8 @@ func (s *Service) listClusterNames(ctx context.Context) ([]string, error) {
 }
 
 // assembleCluster builds one cluster's status row. Each data source is
-// best-effort: a failure appends to Errors and leaves that field zero-valued.
+// best-effort: a failure is recorded on the row (see fail) and leaves that
+// field zero-valued.
 func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatus {
 	cs := ClusterStatus{Name: name, Region: s.region}
 
@@ -187,7 +221,10 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 		return s.clusterAPI.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(name)})
 	})
 	if err != nil || desc == nil || desc.Cluster == nil {
-		cs.Errors = append(cs.Errors, fmt.Sprintf("describe cluster: %v", err))
+		if err == nil {
+			err = errEmptyResponse
+		}
+		s.fail(&cs, diag.KindCluster, name, diag.OpDescribeCluster, err)
 		cs.Support = SupportPosture{Tier: SupportUnknown}
 		cs.Compute = ComputeNone
 		return cs
@@ -199,34 +236,38 @@ func (s *Service) assembleCluster(ctx context.Context, name string) ClusterStatu
 		cs.HealthIssues = len(cluster.Health.Issues)
 	}
 
-	ngs, ngFailures, ngErr := s.nodegroups.ListWithFailures(ctx, name, nodegroup.ListOptions{})
+	ngs, ngErr := s.nodegroups.ListDetailed(ctx, name, nodegroup.ListOptions{})
 	if ngErr != nil {
-		cs.Errors = append(cs.Errors, fmt.Sprintf("list nodegroups: %v", ngErr))
+		// The nodegroup service tags the error with the call that failed.
+		s.fail(&cs, diag.KindCluster, name, "", ngErr)
 	} else {
 		// Failed nodegroups still exist: count them so compute detection
 		// isn't fooled, but their AMI posture is unknown, so flag the row.
-		// A nodegroup whose latest-AMI lookup failed is both summarized and
-		// reported as a failure; count it once.
-		cs.NodegroupCount = len(ngs) + len(ngFailures)
-		cs.StaleAMI = s.staleAMISummary(ctx, ngs)
-		for _, ng := range ngs {
+		cs.NodegroupCount = len(ngs.Summaries) + len(ngs.Failures)
+		cs.StaleAMI = s.staleAMISummary(ctx, ngs.Summaries)
+		for _, ng := range ngs.Summaries {
 			if ng.VersionBehind {
 				cs.NodegroupsBehindControlPlane++
 			}
-			if ng.AMILookupError != "" {
-				cs.NodegroupCount--
+			// Advisory in `nodegroup list`, but here an unknown AMI status
+			// makes the STALE AMI count incomplete.
+			if ng.AMILookupFailure != nil {
+				s.addFailure(&cs, *ng.AMILookupFailure)
 			}
 		}
-		if len(ngFailures) > 0 {
-			cs.Errors = append(cs.Errors, fmt.Sprintf("nodegroup(s): %s", strings.Join(ngFailures, "; ")))
+		for _, f := range ngs.Failures {
+			s.addFailure(&cs, f)
 		}
 	}
 
 	cs.Compute = s.detectCompute(ctx, name, cluster, cs.NodegroupCount)
 
-	behind, addErr := s.addonsBehind(ctx, name, cs.Version)
+	behind, addonFailures, addErr := s.addonsBehind(ctx, name, cs.Version)
 	if addErr != nil {
-		cs.Errors = append(cs.Errors, fmt.Sprintf("analyze addons: %v", addErr))
+		s.fail(&cs, diag.KindCluster, name, "", addErr)
+	}
+	for _, f := range addonFailures {
+		s.addFailure(&cs, f)
 	}
 	cs.AddonsBehind = behind
 
@@ -289,19 +330,21 @@ func (s *Service) amiOldestDays(ctx context.Context, amiIDs []string) *int {
 // addonsBehind counts cluster addons whose installed version trails the latest
 // version compatible with the cluster's Kubernetes version. An addon whose
 // installed or latest version can't be read is never counted as behind; it is
-// reported through the returned error alongside the partial summary.
-func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) (AddonsBehindSummary, error) {
-	installed, err := s.addons.List(ctx, cluster, addons.ListOptions{})
+// returned as a failure alongside the partial summary. The error is set only
+// when the add-ons could not be listed at all.
+func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) (AddonsBehindSummary, []diag.Failure, error) {
+	res, err := s.addons.ListDetailed(ctx, cluster, addons.ListOptions{})
 	if err != nil {
-		return AddonsBehindSummary{}, err
+		return AddonsBehindSummary{}, nil, err
 	}
-	summary := AddonsBehindSummary{Total: len(installed)}
-	var unreadable []string
-	for _, a := range installed {
-		// addons.List reports a failed DescribeAddon as Status UNKNOWN with an
-		// empty version; comparing "" would count the addon as behind.
-		if a.Version == "" || strings.EqualFold(a.Status, "UNKNOWN") {
-			unreadable = append(unreadable, a.Name+" (installed version unknown)")
+	summary := AddonsBehindSummary{Total: len(res.Summaries) + len(res.Failures)}
+	failures := res.Failures
+	for _, a := range res.Summaries {
+		// Comparing "" would count the addon as behind.
+		if a.Version == "" {
+			f := diag.New(diag.KindAddon, a.Name, diag.ReasonUnknown, "DescribeAddon returned no installed version")
+			f.Operation = diag.OpDescribeAddon
+			failures = append(failures, f)
 			continue
 		}
 		avail, verr := s.addons.GetAvailableVersions(ctx, a.Name, k8sVersion)
@@ -309,7 +352,7 @@ func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) 
 			continue // no compatible version published — nothing to compare
 		}
 		if verr != nil {
-			unreadable = append(unreadable, a.Name+" (latest version unknown)")
+			failures = append(failures, diag.FromError(diag.KindAddon, a.Name, diag.OpDescribeAddonVersions, verr))
 			continue
 		}
 		if len(avail) == 0 {
@@ -321,10 +364,7 @@ func (s *Service) addonsBehind(ctx context.Context, cluster, k8sVersion string) 
 			summary.Names = append(summary.Names, a.Name)
 		}
 	}
-	if len(unreadable) > 0 {
-		return summary, fmt.Errorf("could not read version for %s", strings.Join(unreadable, ", "))
-	}
-	return summary, nil
+	return summary, failures, nil
 }
 
 // karpenterTagKeys are the EC2 instance tags Karpenter sets on the nodes it

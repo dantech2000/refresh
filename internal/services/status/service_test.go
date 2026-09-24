@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/types"
@@ -18,11 +20,20 @@ import (
 // fakeNodegroups implements NodegroupLister.
 type fakeNodegroups struct {
 	byCluster map[string][]nodegroup.NodegroupSummary
-	failures  map[string][]string
+	failures  map[string][]diag.Failure
 }
 
-func (f *fakeNodegroups) ListWithFailures(_ context.Context, cluster string, _ nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
-	return f.byCluster[cluster], f.failures[cluster], nil
+func (f *fakeNodegroups) ListDetailed(_ context.Context, cluster string, _ nodegroup.ListOptions) (nodegroup.ListResult, error) {
+	return nodegroup.ListResult{Summaries: f.byCluster[cluster], Failures: f.failures[cluster]}, nil
+}
+
+// failureText joins the rows' failures as their one-line text, for asserts.
+func failureText(fs []diag.Failure) string {
+	lines := make([]string, len(fs))
+	for i, f := range fs {
+		lines[i] = fmt.Sprintf("%s %s/%s %s %s: %s", f.Kind, f.Cluster, f.Name, f.Operation, f.Reason, f.Error)
+	}
+	return strings.Join(lines, "; ")
 }
 
 // fakeAddons implements AddonAnalyzer.
@@ -35,8 +46,8 @@ type fakeAddons struct {
 	versionErr map[string]error
 }
 
-func (f *fakeAddons) List(_ context.Context, cluster string, _ addons.ListOptions) ([]addons.AddonSummary, error) {
-	return f.installed[cluster], nil
+func (f *fakeAddons) ListDetailed(_ context.Context, cluster string, _ addons.ListOptions) (addons.ListResult, error) {
+	return addons.ListResult{Summaries: f.installed[cluster]}, nil
 }
 
 // GetAvailableVersions mirrors the real service: an API failure is returned
@@ -165,8 +176,9 @@ func TestAssembleCluster_DescribeErrorIsNonFatal(t *testing.T) {
 	if len(statuses) != 1 {
 		t.Fatalf("got %d, want 1 partial row", len(statuses))
 	}
-	if len(statuses[0].Errors) == 0 {
-		t.Error("expected the describe failure recorded on the row")
+	fs := statuses[0].Failures
+	if len(fs) != 1 || fs[0].Kind != diag.KindCluster || fs[0].Name != "ghost" || fs[0].Operation != diag.OpDescribeCluster || fs[0].Region != "us-east-1" {
+		t.Errorf("failures = %s, want the DescribeCluster failure of ghost", failureText(fs))
 	}
 	if statuses[0].Support.Tier != SupportUnknown {
 		t.Errorf("support = %s, want unknown for undescribable cluster", statuses[0].Support.Tier)
@@ -251,13 +263,13 @@ func TestAssembleCluster_NodegroupBehindControlPlane(t *testing.T) {
 			{Name: "ng-cur", AMIStatus: types.AMILatest, K8sVersion: "1.32"},
 		},
 	}}
-	ng.failures = map[string][]string{"prod": {"ng-broken: boom"}}
+	ng.failures = map[string][]diag.Failure{"prod": {diag.New(diag.KindNodegroup, "ng-broken", diag.ReasonUnknown, "boom")}}
 	svc := newTestService(api, ng, &fakeAddons{})
 	cs := svc.assembleCluster(context.Background(), "prod")
 
 	// A failed nodegroup makes the row incomplete, but the behind count from
 	// the nodegroups that did resolve still stands.
-	if !cs.Incomplete() {
+	if !cs.Incomplete {
 		t.Error("row with a failed nodegroup should be incomplete")
 	}
 	if cs.StaleAMI.Behind != 0 {

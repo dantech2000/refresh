@@ -81,18 +81,25 @@ array key, not from `.[]`:
 
 | Command | Top-level shape |
 |---|---|
-| `cluster list` | `{"clusters": [...], "count": N}`, plus `"failures"` when some regions could not be listed. Each entry is `{"region": "...", "error": "..."}` with a one-line reason. A cluster row that could not be fully read has a `warnings` list |
-| `nodegroup list` | `{"cluster": "...", "nodegroups": [...], "count": N}`, plus `"failures"` when some nodegroups could not be described. A nodegroup whose latest-AMI lookup failed has an `amiLookupError` field |
-| `addon list` | `{"cluster": "...", "addons": [...], "count": N}`, plus `"failures"` when some add-ons could not be described |
-| `status` | `{"clusters": [...]}`, plus `"failures"` (`{"region", "error"}` entries, as for `cluster list`) when some regions could not be listed. A row with incomplete data has an `errors` list |
+| `cluster list` | `{"clusters": [...], "count": N, "failures": [...]}`. `failures` has the regions that could not be listed (`Region`) and the clusters and nodegroups that could not be read. A row that could not be fully read has `"incomplete": true` |
+| `nodegroup list` | `{"cluster": "...", "nodegroups": [...], "count": N, "failures": [...]}`. `failures` has the nodegroups that could not be described; the list leaves them out. A row whose latest-AMI lookup failed has an advisory `amiLookupFailure` (see [Advisory AMI lookup](#advisory-ami-lookup)) |
+| `addon list` | `{"cluster": "...", "addons": [...], "count": N, "failures": [...]}`. `failures` has the add-ons that could not be described; the list leaves them out |
+| `status` | `{"clusters": [...], "failures": [...]}`. `failures` has the regions that could not be listed and every part of a cluster row that could not be read. A row that could not be fully read has `"incomplete": true` |
 
 Describe commands (`cluster describe`, `nodegroup describe`, `addon describe`)
-print the object itself, with no envelope.
+and `cluster upgrade-check` print one object with no envelope. The object
+also has a top-level `failures` list: the parts of a `cluster describe` that
+could not be read (the add-on or nodegroup list, or one add-on or
+nodegroup), and the nodegroups and add-ons whose version skew
+`cluster upgrade-check` could not read. `nodegroup describe`, `addon
+describe`, and `upgrade-check --id` read one item or fail with exit `1`, so
+their `failures` is always `[]`.
 
 ```bash
 refresh nodegroup list -c prod -o json | jq -r '.nodegroups[] | select(.amiStatus == "Outdated") | .name'
 refresh addon list prod -o json | jq -r '.addons[] | "\(.name) \(.version)"'
 refresh status -o json | jq -r '.clusters[] | select(.staleAmi.behind > 0) | .name'
+refresh status -o json | jq -r '.clusters[] | select(.incomplete) | .name'
 ```
 
 ## Failures
@@ -113,7 +120,10 @@ three come from the same list, so they always agree:
 
     The line is `warning: <kind> <cluster>/<name> (<region>): <reason>: <error>`.
     Empty parts are left out. `-o plain` keeps stdout pure TSV, so failures
-    appear only on stderr.
+    appear only on stderr. The table view of a read command (`status`,
+    `cluster list`, `cluster describe`, `cluster upgrade-check`, `nodegroup
+    list`, `addon list`) lists the same lines at the end of its output,
+    under `INCOMPLETE DATA`, and does not repeat them on stderr.
 - **The exit code.** A run with failures exits `4` (incomplete data), unless
   a code that wins over `4` also applies. Each command's order is in
   [Exit codes](exit-codes.md). The error message counts the failures by kind, for
@@ -123,6 +133,39 @@ Failures are not findings. A stale AMI, a blocked upgrade, a health warning,
 or version skew is a finding: it stays in its own field and drives exit `2`,
 `3`, or `5`. The `warnings` and `errors` of a health verdict are health
 findings, not failures.
+
+A row that was only partly read keeps what was read and gets
+`"incomplete": true`, so a script can filter rows. The row carries no error
+text of its own: its failures are in the top-level `failures`, where
+`cluster` (or, for the cluster itself, `name`) identifies the row. A skipped
+region of a default sweep (see [Skipped regions](#skipped-regions)) is not a
+failure.
+
+### Advisory AMI lookup
+
+`nodegroup list` and `nodegroup describe` look up the latest recommended AMI
+in SSM (`ssm:GetParameter`). When that lookup fails, the nodegroup's
+`amiStatus` is `Unknown` and the row (or the describe object) has an
+`amiLookupFailure` object with the same keys as a failure. It is advisory:
+the nodegroup itself was read, so it is not in `failures` and does not change
+the exit code. One `warning:` line on stderr names the reason and the
+action. `status` counts the same lookup as a failure (exit `4`), because an
+unknown AMI status makes its STALE AMI count incomplete.
+
+### Skipped regions
+
+A default region sweep (`-A` with no `-r` and no `REFRESH_EKS_REGIONS`)
+skips the regions these credentials cannot use, such as an SCP denial or a
+region that is not enabled. It writes one notice line to stderr and leaves
+them out of `failures`:
+
+```text
+Skipped 2 region(s) not accessible to these credentials: ap-east-1, me-south-1 (scope with -r or REFRESH_EKS_REGIONS)
+```
+
+When every region is skipped, the command exits `1`: nothing could be read.
+A region you name with `-r` or `REFRESH_EKS_REGIONS` is never skipped; if it
+cannot be listed, it is a `Region` failure.
 
 ### The failure object
 

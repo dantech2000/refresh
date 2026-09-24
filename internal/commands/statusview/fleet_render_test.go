@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -49,7 +50,7 @@ func TestFleetLines_HealthIssueHint(t *testing.T) {
 		Compute:      statussvc.ComputeManaged,
 		HealthIssues: 2,
 	}}
-	joined := strings.Join(fleetLines(th, fleet, 0), "\n")
+	joined := strings.Join(fleetLines(th, fleet, nil, 0), "\n")
 	// A health-issue cluster is flagged "need attention" and the hint names the cause.
 	mustContain(t, joined, "▲  prod-east")
 	mustContain(t, joined, "has 2 control-plane health issue(s)")
@@ -66,7 +67,7 @@ func TestFleetLines_HealthIssueHint(t *testing.T) {
 
 func TestFleetLines_Pretty(t *testing.T) {
 	th := render.New(render.ColorNone, true) // deterministic: glyphs, no ANSI
-	lines := fleetLines(th, sampleFleet(), 0)
+	lines := fleetLines(th, sampleFleet(), nil, 0)
 	joined := strings.Join(lines, "\n")
 
 	// No color escapes leak under ColorNone (additive-color contract).
@@ -98,7 +99,7 @@ func TestFleetLines_Pretty(t *testing.T) {
 
 func TestFleetLines_ASCIIFallback(t *testing.T) {
 	th := render.New(render.ColorNone, false) // non-UTF-8 terminal
-	joined := strings.Join(fleetLines(th, sampleFleet(), 0), "\n")
+	joined := strings.Join(fleetLines(th, sampleFleet(), nil, 0), "\n")
 	// Glyphs degrade to ASCII tokens; meaning preserved without color or Unicode.
 	mustContain(t, joined, "[X] data-eu")
 	mustContain(t, joined, "[OK] 1 current")
@@ -114,7 +115,7 @@ func TestFleetLines_AllHealthy(t *testing.T) {
 		Support: statussvc.SupportPosture{Tier: statussvc.SupportStandard, DaysRemaining: iptr(300)},
 		Compute: statussvc.ComputeManaged, NodegroupCount: 1,
 	}}
-	lines := fleetLines(th, healthy, 0)
+	lines := fleetLines(th, healthy, nil, 0)
 	joined := strings.Join(lines, "\n")
 	// Chips show only the "current" count; no warn/fail chips.
 	if lines[2] != "● 1 current" {
@@ -126,9 +127,9 @@ func TestFleetLines_AllHealthy(t *testing.T) {
 	}
 }
 
-// A row with errors (failed DescribeCluster, or a cluster the sweep never
+// An incomplete row (failed DescribeCluster, or a cluster the sweep never
 // reached) must not render as current: it gets the unknown glyph, its own chip,
-// a footer count, and its error text.
+// a footer count, and its failure in the INCOMPLETE DATA section.
 func TestFleetLines_IncompleteRow(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 	fleet := []statussvc.ClusterStatus{
@@ -139,36 +140,34 @@ func TestFleetLines_IncompleteRow(t *testing.T) {
 		},
 		{
 			Name: "ghost", Region: "us-west-2",
-			Support: statussvc.SupportPosture{Tier: statussvc.SupportUnknown},
-			Compute: statussvc.ComputeNone,
-			Errors:  []string{"describe cluster: AccessDeniedException"},
+			Support:    statussvc.SupportPosture{Tier: statussvc.SupportUnknown},
+			Compute:    statussvc.ComputeNone,
+			Incomplete: true,
 		},
 	}
-	lines := fleetLines(th, fleet, 0)
+	failures := []diag.Failure{{
+		Kind: diag.KindCluster, Name: "ghost", Region: "us-west-2", Operation: diag.OpDescribeCluster,
+		Reason: diag.ReasonAccessDenied, Error: "AccessDeniedException: denied",
+	}}
+	lines := fleetLines(th, fleet, failures, 0)
 	joined := strings.Join(lines, "\n")
 	if lines[2] != "● 1 current   ○ 1 incomplete" {
 		t.Errorf("chips = %q", lines[2])
 	}
 	mustContain(t, joined, "○  ghost")
 	mustContain(t, joined, "INCOMPLETE DATA")
-	mustContain(t, joined, "ghost (us-west-2): describe cluster: AccessDeniedException")
+	mustContain(t, joined, "○ cluster ghost (us-west-2): AccessDenied: AccessDeniedException: denied")
 	mustContain(t, joined, "· 1 incomplete")
 }
 
-func TestOverall_ErroredRowIsNotHealthy(t *testing.T) {
+func TestOverall_IncompleteRowIsNotHealthy(t *testing.T) {
 	c := statussvc.ClusterStatus{
-		Name:    "ghost",
-		Support: statussvc.SupportPosture{Tier: statussvc.SupportUnknown},
-		Errors:  []string{"not evaluated: context deadline exceeded"},
+		Name:       "ghost",
+		Support:    statussvc.SupportPosture{Tier: statussvc.SupportUnknown},
+		Incomplete: true,
 	}
 	if got := overall(c); got != render.Unknown {
 		t.Errorf("overall = %v, want render.Unknown", got)
-	}
-	if got := errorsCell(c); got != "not evaluated: context deadline exceeded" {
-		t.Errorf("plain errors cell = %q", got)
-	}
-	if got := errorsCell(statussvc.ClusterStatus{}); got != "-" {
-		t.Errorf("plain errors cell for a clean row = %q, want -", got)
 	}
 }
 
@@ -188,7 +187,7 @@ func TestFleetLines_NodegroupsBehindControlPlane(t *testing.T) {
 		NodegroupCount:               2,
 		NodegroupsBehindControlPlane: 1,
 	}}
-	joined := strings.Join(fleetLines(th, fleet, 0), "\n")
+	joined := strings.Join(fleetLines(th, fleet, nil, 0), "\n")
 	mustContain(t, joined, "▲  prod-east")
 	mustContain(t, joined, "1 nodegroups behind control plane")
 	mustContain(t, joined, "has 1 nodegroup(s) behind the control plane")
@@ -227,7 +226,7 @@ func TestOutputFleetPlain_BehindCPKeepsColumnCount(t *testing.T) {
 	}
 }
 
-var fleetPlainHeaders = []string{"CLUSTER", "REGION", "VERSION", "SUPPORT", "COMPUTE", "STALE AMI", "ADDONS", "HEALTH", "ERRORS"}
+var fleetPlainHeaders = []string{"CLUSTER", "REGION", "VERSION", "SUPPORT", "COMPUTE", "STALE AMI", "ADDONS", "HEALTH"}
 
 // fleetPlainOut runs OutputFleetTable under -o plain and returns stdout.
 func fleetPlainOut(t *testing.T, fleet []statussvc.ClusterStatus) string {
@@ -240,7 +239,7 @@ func fleetPlainOut(t *testing.T, fleet []statussvc.ClusterStatus) string {
 	}
 	orig := os.Stdout
 	os.Stdout = w
-	perr := OutputFleetTable(fleet, time.Second)
+	perr := OutputFleetTable(fleet, nil, time.Second)
 	os.Stdout = orig
 	_ = w.Close()
 	out, _ := io.ReadAll(r)
@@ -262,7 +261,7 @@ func TestOutputFleetPlain_Contract(t *testing.T) {
 			AddonsBehind: statussvc.AddonsBehindSummary{Total: 5, Behind: 3, Names: []string{"a", "b", "c"}},
 		},
 		statussvc.ClusterStatus{Name: "karp", Region: "us-east-1", Version: "1.32", Compute: statussvc.ComputeKarpenter},
-		statussvc.ClusterStatus{Name: "bare", Region: "us-east-1", Version: "1.32", Errors: []string{"addons: AccessDenied\nline two"}},
+		statussvc.ClusterStatus{Name: "bare", Region: "us-east-1", Version: "1.32", Incomplete: true},
 	)
 	out := fleetPlainOut(t, fleet)
 	rows := plaintest.Check(t, out, fleetPlainHeaders...)
@@ -288,12 +287,10 @@ func TestOutputFleetPlain_Contract(t *testing.T) {
 			t.Errorf("%s SUPPORT..ADDONS = %q, want %q", name, got, want)
 		}
 	}
-	if got := byName["bare"][8]; got != "addons: AccessDenied line two" {
-		t.Errorf("ERRORS cell = %q", got)
-	}
 
-	// Every header but ERRORS is a human table column, in the same order.
-	human := fleetLines(render.New(render.ColorNone, true), fleet, 0)
+	// Every header is a human table column, in the same order. Failures go
+	// to stderr, not into a column.
+	human := fleetLines(render.New(render.ColorNone, true), fleet, nil, 0)
 	var headerLine string
 	for _, l := range human {
 		if strings.Contains(l, "CLUSTER") && strings.Contains(l, "STALE AMI") {
@@ -301,7 +298,7 @@ func TestOutputFleetPlain_Contract(t *testing.T) {
 		}
 	}
 	rest := headerLine
-	for _, h := range fleetPlainHeaders[:len(fleetPlainHeaders)-1] {
+	for _, h := range fleetPlainHeaders {
 		i := strings.Index(rest, h)
 		if i < 0 {
 			t.Fatalf("human header %q lacks %q (in order)", headerLine, h)

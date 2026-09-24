@@ -5,21 +5,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // overall collapses a cluster's posture into one status token: unsupported EKS
-// is a failure, extended support or stale AMIs/addons is a warning, a row with
-// errors (a data source failed) is unknown, otherwise it's current.
+// is a failure, extended support or stale AMIs/addons is a warning, an
+// incomplete row (a data source failed) is unknown, otherwise it's current.
 func overall(c statussvc.ClusterStatus) render.Status {
 	switch {
 	case c.Support.Tier == statussvc.SupportUnsupported:
 		return render.Fail
 	case c.SupportRisk() || c.NeedsAttention():
 		return render.Warn
-	case c.Incomplete():
+	case c.Incomplete:
 		return render.Unknown
 	default:
 		return render.Healthy
@@ -29,29 +30,11 @@ func overall(c statussvc.ClusterStatus) render.Status {
 func countIncomplete(statuses []statussvc.ClusterStatus) int {
 	n := 0
 	for _, c := range statuses {
-		if c.Incomplete() {
+		if c.Incomplete {
 			n++
 		}
 	}
 	return n
-}
-
-// errorLines lists each cluster whose row has errors, so a partial row is
-// never mistaken for a clean one.
-func errorLines(th *render.Theme, statuses []statussvc.ClusterStatus) []string {
-	var out []string
-	for _, c := range statuses {
-		if !c.Incomplete() {
-			continue
-		}
-		out = append(out, th.Glyph(render.Unknown)+" "+th.Paint(th.Pal.White, nameOr(c))+
-			th.Paint(th.Pal.Dim, " ("+c.Region+"): ")+
-			th.Paint(th.Pal.Peach, strings.Join(c.Errors, "; ")))
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return append([]string{"", th.Bold(th.Pal.Peach, "INCOMPLETE DATA")}, out...)
 }
 
 func distinctRegions(statuses []statussvc.ClusterStatus) int {
@@ -86,7 +69,8 @@ func fleetDataColumns() []ui.Column {
 
 // fleetLines builds the human fleet dashboard as a slice of lines (pure, so it
 // is golden-testable). th carries the color level / unicode capability.
-func fleetLines(th *render.Theme, statuses []statussvc.ClusterStatus, elapsed time.Duration) []string {
+// failures are the run's failures, listed in the INCOMPLETE DATA section.
+func fleetLines(th *render.Theme, statuses []statussvc.ClusterStatus, failures []diag.Failure, elapsed time.Duration) []string {
 	pal := th.Pal
 	out := []string{
 		th.Bold(pal.Mauve, "FLEET") + "  " +
@@ -116,7 +100,7 @@ func fleetLines(th *render.Theme, statuses []statussvc.ClusterStatus, elapsed ti
 		)
 	}
 	out = append(out, tbl.Render()...)
-	out = append(out, errorLines(th, statuses)...)
+	out = append(out, th.FailureSection(failures)...)
 	out = append(out, "", footerPretty(th, statuses, elapsed))
 	if h := hintLine(th, statuses); h != "" {
 		out = append(out, "", h)

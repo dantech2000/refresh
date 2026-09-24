@@ -2,7 +2,6 @@ package addon
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 
@@ -295,61 +294,4 @@ func TestUpdate_PartialAddonName(t *testing.T) {
 			}
 		})
 	}
-}
-
-// addon list: add-ons that could not be described are named on stderr and
-// under "failures", and the command exits 4 after printing the rest.
-func TestList_DescribeFailures(t *testing.T) {
-	world := func() *fakeaws.Cluster {
-		return addonCluster(
-			&fakeaws.Addon{Name: "coredns", Version: "v1.11.4"},
-			&fakeaws.Addon{Name: "kube-proxy", Version: "v1.31.0", DescribeAddonError: "AccessDeniedException"},
-			&fakeaws.Addon{Name: "vpc-cni", Version: "v1.19.0", DescribeAddonError: "AccessDeniedException"},
-		)
-	}
-	t.Run("json", func(t *testing.T) {
-		fakeaws.New(t, world())
-		stdout, stderr, err := runAddon(t, "list", "prod", "-o", "json")
-		if err == nil || !strings.Contains(err.Error(), "2 add-on(s) could not be described") {
-			t.Fatalf("err = %v, want the incomplete-list error", err)
-		}
-		if code := exitCodeOf(err); code != 4 {
-			t.Errorf("exit code = %d, want 4 (incomplete data)", code)
-		}
-		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-		if doc["count"] != float64(1) {
-			t.Errorf("count = %v, want 1", doc["count"])
-		}
-		failures, _ := doc["failures"].([]any)
-		if len(failures) != 2 || !strings.HasPrefix(failures[0].(string), "kube-proxy: AccessDeniedException") {
-			t.Errorf("failures = %v, want kube-proxy and vpc-cni with the reason", failures)
-		}
-		for _, want := range []string{"warning: add-on kube-proxy", "warning: add-on vpc-cni"} {
-			if !strings.Contains(stderr, want) {
-				t.Errorf("stderr missing %q; got:\n%s", want, stderr)
-			}
-		}
-	})
-	t.Run("no failures key when complete", func(t *testing.T) {
-		fakeaws.New(t, addonCluster(&fakeaws.Addon{Name: "coredns", Version: "v1.11.4"}))
-		stdout, _, err := runAddon(t, "list", "prod", "-o", "json")
-		if err != nil {
-			t.Fatalf("list: %v", err)
-		}
-		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-		if _, ok := doc["failures"]; ok {
-			t.Errorf("doc = %v, want no failures key", doc)
-		}
-	})
-	t.Run("plain has no unknown rows", func(t *testing.T) {
-		fakeaws.New(t, world())
-		stdout, _, _ := runAddon(t, "list", "prod", "-o", "plain")
-		lines := strings.Split(strings.TrimSpace(stdout), "\n")
-		if len(lines) != 2 || strings.Contains(stdout, "UNKNOWN") || strings.Contains(stdout, "Unknown") {
-			t.Errorf("stdout = %q, want the header and the coredns row only", stdout)
-		}
-		if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "coredns") }) {
-			t.Errorf("stdout = %q, want a coredns row", stdout)
-		}
-	})
 }

@@ -7,7 +7,7 @@ package status
 import (
 	"time"
 
-	"github.com/dantech2000/refresh/internal/types"
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 // ComputeType describes how a cluster provisions its worker nodes. It exists so
@@ -88,9 +88,20 @@ type ClusterStatus struct {
 	// HealthIssues is the count of AWS-reported control-plane health issues
 	// (DescribeCluster Health.Issues) — degraded resources, IAM failures, etc.
 	HealthIssues int `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
-	// Errors holds non-fatal, per-cluster failures so a partial row still
-	// renders instead of dropping the cluster entirely.
-	Errors []string `json:"errors,omitempty" yaml:"errors,omitempty"`
+	// Incomplete is true when some of the row's data could not be read (a
+	// failed AWS call, or a sweep that stopped first). The row still renders
+	// with what was read; its failures are in the document's top-level
+	// "failures", identified by cluster (or, for the cluster itself, name).
+	Incomplete bool `json:"incomplete,omitempty" yaml:"incomplete,omitempty"`
+	// Failures are the row's failures. The command lists them in the
+	// FleetStatus document, not on the row.
+	Failures []diag.Failure `json:"-" yaml:"-"`
+}
+
+// addFailure records f against the row and marks it incomplete.
+func (c *ClusterStatus) addFailure(f diag.Failure) {
+	c.Failures = append(c.Failures, f)
+	c.Incomplete = true
 }
 
 // NeedsAttention reports whether the cluster has any stale AMIs, nodegroups
@@ -98,13 +109,6 @@ type ClusterStatus struct {
 // control-plane health issues (drives the exit-code "something stale" signal).
 func (c ClusterStatus) NeedsAttention() bool {
 	return c.StaleAMI.Behind > 0 || c.NodegroupsBehindControlPlane > 0 || c.AddonsBehind.Behind > 0 || c.HealthIssues > 0
-}
-
-// Incomplete reports whether any data source for the cluster failed, so the
-// row cannot be trusted as current (drives the exit-code "incomplete data"
-// signal).
-func (c ClusterStatus) Incomplete() bool {
-	return len(c.Errors) > 0
 }
 
 // SupportRisk reports whether the cluster is on extended or unsupported EKS
@@ -117,8 +121,8 @@ func (c ClusterStatus) SupportRisk() bool {
 // payload serialized for json/yaml output.
 type FleetStatus struct {
 	Clusters []ClusterStatus `json:"clusters" yaml:"clusters"`
-	// Failures lists the regions whose clusters could not be listed, so a
-	// partial fleet is never mistaken for the whole one. Omitted when every
-	// region answered.
-	Failures []types.RegionFailure `json:"failures,omitempty" yaml:"failures,omitempty"`
+	// Failures are the regions whose clusters could not be listed and the
+	// parts of cluster rows that could not be read, so a partial fleet is
+	// never mistaken for the whole one. [] when everything was read.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }

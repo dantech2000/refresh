@@ -20,8 +20,8 @@ Rules that apply to every command:
   exit code applies. A non-zero code never means the document is missing,
   unless the code is `1`.
 - A partial result is never a success. The command names what it could not
-  read on stderr, adds a `failures` or `errors` key to the JSON/YAML
-  document, and exits `4`.
+  read on stderr, lists it under `failures` in the JSON/YAML document (see
+  [Failures](output.md#failures)), and exits `4`.
 - An interrupt exits `1`. A second Ctrl+C ends the process at once. Data
   cut short by Ctrl+C is an interrupted run, so it exits `1`, not `4`. Data
   cut short by the `--timeout` deadline is a partial result and exits `4`.
@@ -51,8 +51,9 @@ Rules that apply to every command:
 | `version`, `install-man`, `completion` | `0`, `1` |
 
 A failed latest-AMI lookup (for example, a missing `ssm:GetParameter`
-permission) is a warning in `nodegroup list` and `nodegroup describe`. The
-AMI column shows `unknown (lookup failed)` and the exit code does not change.
+permission) is advisory in `nodegroup list` and `nodegroup describe`. The
+AMI column shows `unknown (lookup failed)`, the row has an
+`amiLookupFailure` object, and the exit code does not change.
 `status` counts the same failure as incomplete data (`4`), because AMI
 staleness is part of its verdict.
 
@@ -63,13 +64,14 @@ staleness is part of its verdict.
 | `0` | Every cluster is current and in standard support |
 | `2` | Something needs attention: a stale nodegroup AMI, an addon behind latest, a nodegroup behind the control-plane version, or an AWS-reported control-plane health issue (the `HEALTH` column) |
 | `3` | A cluster is on extended support or unsupported |
-| `4` | Incomplete data: a cluster row has errors (a failed AWS call, or a sweep that timed out before it reached the cluster), or a region could not be listed |
+| `4` | Incomplete data: part of a cluster row could not be read (a failed AWS call, or a sweep that timed out before it reached the cluster), or a region could not be listed |
 | `1` | An error, or nothing could be gathered: every region failed or was skipped |
 
 When more than one applies, the highest-priority code wins: `3`, then `2`,
-then `4`. Incomplete data never exits `0`. Rows with errors show an unknown
-marker and their error text in the table, an `ERRORS` column in `-o plain`,
-and an `errors` field in `-o json`/`-o yaml`.
+then `4`. Incomplete data never exits `0`. An incomplete row shows an unknown
+marker in the table, and the table lists each failure under `INCOMPLETE
+DATA`. With `-o json`/`-o yaml`, the row has `"incomplete": true` and the
+failures are in the top-level `failures`; `-o plain` names them on stderr.
 
 ## Region sweeps
 
@@ -100,7 +102,7 @@ insights in the report, the version skew, and the control-plane health check:
 | `0` | Ready: no finding |
 | `2` | Needs attention (`REVIEW`): a `WARNING` insight, a nodegroup behind the control plane but inside the kubelet skew limit, an addon behind its latest compatible version, or a control-plane health warning |
 | `3` | Blocked (`NOT READY`): an `ERROR` or `UNKNOWN` insight, a nodegroup at the kubelet skew limit (3 minors behind), or a failed control-plane health check (for example, etcd near its size limit) |
-| `4` | Incomplete (`INCOMPLETE`): nothing blocks, but a nodegroup or add-on could not be read. The document lists them under `incomplete` |
+| `4` | Incomplete (`INCOMPLETE`): nothing blocks, but a nodegroup or add-on could not be read. The document lists them under `failures` |
 | `1` | An error, such as an AWS error, a cluster that does not exist, or an interrupt |
 
 `UNKNOWN` blocks because `cluster upgrade` refuses a hop on an `UNKNOWN`
@@ -125,7 +127,7 @@ case $? in
   0) echo "ready to upgrade" ;;
   2) echo "warnings: review readiness.json" ;;
   3) echo "blocked: do not upgrade" ;;
-  4) echo "incomplete: see .incomplete in readiness.json" ;;
+  4) echo "incomplete: see .failures in readiness.json" ;;
   *) echo "check failed" ;;
 esac
 ```

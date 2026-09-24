@@ -30,15 +30,41 @@ in-process, then render as a table, structured output, or a region/cluster
 tree. See [Regions](../concepts/configuration.md#regions) for how `-r`, the
 global `--region`, and `REFRESH_EKS_REGIONS` combine.
 
-With several regions, a region that fails prints one warning on stderr, and
-`-o json`/`-o yaml` list it under `failures` as `{"region", "error"}`. The
-command prints the clusters it gathered, then exits `4` (incomplete data). If
-no region answers (for example, the timeout ends first), the command fails
-with exit `1` instead of printing an empty list. The default `-A` sweep skips
-regions these credentials can't use, the same way `status -A` does, and a
-skipped region does not count as a failure. A cluster that could not be read
-is a stderr warning and also makes the command exit `4`. With `--watch`, the
-watch keeps running after a partial result.
+With several regions, a region that fails is a `Region` failure: `-o
+json`/`-o yaml` list it under `failures`, and stderr names it on one line.
+The command prints the clusters it gathered, then exits `4` (incomplete
+data). If no region answers (for example, the timeout ends first), the
+command fails with exit `1` instead of printing an empty list. The default
+`-A` sweep skips regions these credentials can't use, the same way `status
+-A` does, and a skipped region does not count as a failure.
+
+A cluster or nodegroup that could not be read also makes the command exit
+`4`. Its row keeps what was read and has `"incomplete": true`; the table
+marks its `NODES` cell with `○` (`unknown` when nothing was counted) and
+lists the failure under `INCOMPLETE DATA`. With `--watch`, the watch keeps
+running after a partial result.
+
+```json
+{
+  "clusters": [
+    {"name": "prod", "status": "ACTIVE", "region": "us-east-1", "incomplete": true, "...": "..."}
+  ],
+  "count": 1,
+  "failures": [
+    {
+      "kind": "Nodegroup",
+      "name": "web",
+      "cluster": "prod",
+      "region": "us-east-1",
+      "operation": "eks:DescribeNodegroup",
+      "reason": "Throttled",
+      "retryable": true,
+      "error": "ThrottlingException: Rate exceeded",
+      "awsErrorCode": "ThrottlingException"
+    }
+  ]
+}
+```
 
 ### Flags
 
@@ -121,8 +147,11 @@ The support window uses the cluster's upgrade policy. `-o json`/`-o yaml`
 include it as `supportType` (`STANDARD` clusters are auto-upgraded at the end
 of standard support). `cluster upgrade-check` reports it the same way.
 
-If some add-ons or nodegroups can't be read, `describe` names them on stderr,
-prints the rest, and exits `4` (incomplete data).
+If some add-ons or nodegroups can't be read, `describe` prints the rest,
+lists each one under the top-level `failures` (`-o json`/`-o yaml`), names it
+on stderr (or under `INCOMPLETE DATA` in the table), and exits `4`
+(incomplete data). An add-on or nodegroup list that was not collected is
+`null`; one that was collected and is empty is `[]`.
 
 ### Examples
 
@@ -204,7 +233,7 @@ The exit code follows the readiness verdict:
 | `0` | `READY` | No finding |
 | `2` | `REVIEW` | A `WARNING` insight, a nodegroup behind the control plane, an addon behind latest, or a control-plane health warning |
 | `3` | `NOT READY` | An `ERROR` or `UNKNOWN` insight, a nodegroup at the kubelet skew limit, or a failed control-plane health check |
-| `4` | `INCOMPLETE` | Nothing blocks, but a nodegroup or add-on could not be read (listed under `incomplete` in `-o json`) |
+| `4` | `INCOMPLETE` | Nothing blocks, but a nodegroup or add-on could not be read (listed under `failures` in `-o json`) |
 | `1` | | An error (AWS error, cluster not found, interrupt) |
 
 Precedence is `3`, then `4`, then `2`: the item that could not be read could

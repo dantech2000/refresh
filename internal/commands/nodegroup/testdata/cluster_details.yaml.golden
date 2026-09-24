@@ -5,6 +5,17 @@ addons:
     version: s-version
 createdAt: "2026-01-02T03:04:05Z"
 endpoint: s-endpoint
+failures:
+  - awsErrorCode: s-awserrorcode
+    cluster: s-cluster
+    error: s-error
+    kind: s-kind
+    name: s-name
+    operation: s-operation
+    reason: s-reason
+    region: s-region
+    retryable: true
+    updateId: s-updateid
 health:
   decision: s-decision
   errors:
@@ -68,5 +79,3 @@ supportType: s-supporttype
 tags:
   s-string: s-string
 version: s-version
-warnings:
-  - s-string

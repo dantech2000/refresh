@@ -127,7 +127,7 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails) []string
 		out = append(out, "")
 		out = append(out, healthCardLines(th, d.Health)...)
 	}
-	return out
+	return append(out, th.FailureSection(d.Failures)...)
 }
 
 // healthIssueLines renders the HEALTH ISSUES section: AWS-reported control-plane

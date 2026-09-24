@@ -15,15 +15,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// An add-on or nodegroup that cannot be described is a warning on the
+// An add-on or nodegroup that cannot be described is a failure on the
 // details, for the command layer to report. It used to be a Warn log line
 // only, so the add-on was just missing from the output.
-func TestDescribe_PartialFailuresBecomeWarnings(t *testing.T) {
+func TestDescribe_PartialFailuresBecomeFailures(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: func(_ context.Context, in *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
 			return &eks.DescribeClusterOutput{Cluster: &ekstypes.Cluster{Name: in.Name, Version: aws.String("1.32")}}, nil
@@ -41,7 +42,7 @@ func TestDescribe_PartialFailuresBecomeWarnings(t *testing.T) {
 			return nil, mocks.AccessDenied()
 		},
 	}
-	svc := &ServiceImpl{eksClient: mock, cache: NewCache(time.Minute), logger: quietLogger()}
+	svc := &ServiceImpl{eksClient: mock, cache: NewCache(time.Minute), logger: quietLogger(), awsConfig: aws.Config{Region: "us-east-1"}}
 
 	details, err := svc.Describe(context.Background(), "prod", DescribeOptions{IncludeAddons: true, Detailed: true})
 	if err != nil {
@@ -50,26 +51,36 @@ func TestDescribe_PartialFailuresBecomeWarnings(t *testing.T) {
 	if len(details.Addons) != 1 || details.Addons[0].Name != "coredns" {
 		t.Errorf("addons = %+v, want coredns only", details.Addons)
 	}
-	joined := strings.Join(details.Warnings, "\n")
-	for _, want := range []string{"add-on vpc-cni: AccessDeniedException", "could not list nodegroups: AccessDeniedException"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("warnings lack %q:\n%s", want, joined)
-		}
+	want := []struct {
+		kind       diag.Kind
+		name, op   string
+		clusterKey string
+	}{
+		{diag.KindAddon, "vpc-cni", diag.OpDescribeAddon, "prod"},
+		{diag.KindCluster, "prod", diag.OpListNodegroups, ""},
 	}
-	for _, w := range details.Warnings {
-		if strings.Contains(w, "\n") {
-			t.Errorf("warning is not one line: %q", w)
+	if len(details.Failures) != len(want) {
+		t.Fatalf("failures = %+v, want %d", details.Failures, len(want))
+	}
+	for i, w := range want {
+		f := details.Failures[i]
+		if f.Kind != w.kind || f.Name != w.name || f.Operation != w.op || f.Cluster != w.clusterKey ||
+			f.Region != "us-east-1" || f.Reason != diag.ReasonAccessDenied || f.AWSErrorCode != "AccessDeniedException" {
+			t.Errorf("failure %d = %+v, want %s %s (%s) AccessDenied", i, f, w.kind, w.name, w.op)
+		}
+		if strings.Contains(f.Error, "\n") {
+			t.Errorf("failure error is not one line: %q", f.Error)
 		}
 	}
 
 	// The machine document keeps a failed collection as null (never [],
-	// which would claim "no nodegroups") and carries the failure in warnings.
+	// which would claim "no nodegroups") and carries the failure in failures.
 	b, err := json.Marshal(details)
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := string(b)
-	for _, want := range []string{`"nodegroups":null`, `"warnings":[`, `could not list nodegroups: AccessDeniedException`} {
+	for _, want := range []string{`"nodegroups":null`, `"failures":[{`, `"operation":"eks:ListNodegroups"`} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("JSON lacks %s:\n%s", want, doc)
 		}
@@ -101,18 +112,16 @@ func TestDescribe_NotCollectedIsNullCollectedEmptyIsEmptyList(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := string(b)
-	for _, want := range []string{`"nodegroups":null`, `"addons":[]`} {
+	for _, want := range []string{`"nodegroups":null`, `"addons":[]`, `"failures":[]`} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("JSON lacks %s:\n%s", want, doc)
 		}
 	}
-	if strings.Contains(doc, `"warnings"`) {
-		t.Errorf("no failures, but JSON has warnings:\n%s", doc)
-	}
 }
 
-// A cluster whose DescribeCluster fails still gets a row, with a warning.
-func TestList_DescribeFailureRowHasWarning(t *testing.T) {
+// A cluster whose DescribeCluster fails still gets a row, marked incomplete
+// and carrying the failure.
+func TestList_DescribeFailureRowIsIncomplete(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		ListClustersFn: func(context.Context, *eks.ListClustersInput, ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
 			return &eks.ListClustersOutput{Clusters: []string{"prod"}}, nil
@@ -126,9 +135,11 @@ func TestList_DescribeFailureRowHasWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(rows) != 1 || rows[0].Status != "UNKNOWN" || len(rows[0].Warnings) != 1 ||
-		!strings.Contains(rows[0].Warnings[0], "could not describe cluster") {
-		t.Errorf("rows = %+v, want one UNKNOWN row with a describe warning", rows)
+	if len(rows) != 1 || rows[0].Status != "UNKNOWN" || !rows[0].Incomplete || len(rows[0].Failures) != 1 {
+		t.Fatalf("rows = %+v, want one incomplete UNKNOWN row with one failure", rows)
+	}
+	if f := rows[0].Failures[0]; f.Kind != diag.KindCluster || f.Name != "prod" || f.Operation != diag.OpDescribeCluster || f.Reason != diag.ReasonAccessDenied {
+		t.Errorf("failure = %+v, want the DescribeCluster AccessDenied of prod", f)
 	}
 }
 
@@ -158,9 +169,12 @@ func TestListAllRegions_UndispatchedRegionsFail(t *testing.T) {
 	if len(res.Failed) != 3 || res.Queried != 0 {
 		t.Fatalf("failed = %d, queried = %d; want 3 failed, 0 queried", len(res.Failed), res.Queried)
 	}
+	if !errors.Is(err, cause) {
+		t.Errorf("err = %v, want it to wrap %v", err, cause)
+	}
 	for _, f := range res.Failed[1:] {
-		if !errors.Is(f.Err, cause) || !strings.Contains(f.Err.Error(), "not queried") {
-			t.Errorf("region %s err = %v, want not queried: %v", f.Region, f.Err, cause)
+		if f.Kind != diag.KindRegion || f.Reason != diag.ReasonNotAttempted || f.Error != "not queried: "+cause.Error() || f.Region != f.Name {
+			t.Errorf("region failure = %+v, want NotAttempted, not queried: %v", f, cause)
 		}
 	}
 }
@@ -184,6 +198,9 @@ func TestListAllRegions_PartialAndSkipped(t *testing.T) {
 	}
 	if res.Queried != 1 || len(res.Failed) != 1 || res.Failed[0].Region != "eu-west-1" || len(res.Skipped) != 0 {
 		t.Errorf("named sweep = %+v, want eu-west-1 failed", res)
+	}
+	if f := res.Failed[0]; f.Kind != diag.KindRegion || f.Name != "eu-west-1" || f.Operation != diag.OpListClusters || f.Reason != diag.ReasonAccessDenied {
+		t.Errorf("region failure = %+v, want an AccessDenied eks:ListClusters failure of eu-west-1", f)
 	}
 	if len(res.Summaries) != 1 || res.Summaries[0].Region != "us-east-1" {
 		t.Errorf("summaries = %+v, want prod stamped us-east-1", res.Summaries)

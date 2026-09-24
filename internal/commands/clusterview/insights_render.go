@@ -69,8 +69,8 @@ func insightColumns() []ui.Column {
 }
 
 // upgradeCheckLines builds the human `cluster upgrade-check` view (pure,
-// golden-testable): a readiness verdict, the AWS Cluster Insights table, and the
-// local version-skew section.
+// golden-testable): a readiness verdict, the AWS Cluster Insights table, the
+// local version-skew section, and the INCOMPLETE DATA section for failures.
 func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []string {
 	pal := th.Pal
 	st, verdict := upgradeVerdict(report)
@@ -141,10 +141,7 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport) []str
 			out = append(out, "  "+th.Token(render.Warn, f))
 		}
 	}
-	for _, m := range report.Incomplete {
-		out = append(out, "  "+th.Token(render.Unknown, "could not read "+m))
-	}
-	return out
+	return append(out, th.FailureSection(report.Failures)...)
 }
 
 // shortID trims an insight UUID to a copy-pasteable prefix for the table; the
