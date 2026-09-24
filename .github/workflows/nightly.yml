@@ -1,8 +1,9 @@
 name: Nightly
 
 # Slow checks that are too expensive for every PR: a deep shuffled race run
-# to catch rare flakes, and govulncheck against main so a newly published
-# advisory for an existing dependency surfaces without waiting for a PR.
+# to catch rare flakes, a fuzz run of every Go fuzz target, and govulncheck
+# against main so a newly published advisory for an existing dependency
+# surfaces without waiting for a PR.
 on:
   schedule:
     - cron: "17 6 * * *" # daily, off the top of the hour
@@ -30,6 +31,42 @@ jobs:
       # `go test -race -shuffle=<seed> -run <Test> ./<pkg>`.
       - name: Test (race, shuffled, x20)
         run: go test -race -count=20 -shuffle=on -timeout=60m ./...
+
+  fuzz:
+    name: Fuzz (60s per target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Same loop as `task fuzz`. A failing input is written under
+      # testdata/fuzz/<Target>/; reproduce it with the printed
+      # `go test -run=<Target>/<id>` after downloading the artifact.
+      - name: Fuzz every target
+        run: |
+          set -euo pipefail
+          for dir in $(grep -rl --include='*_test.go' '^func Fuzz' . | xargs -n1 dirname | sort -u); do
+            for target in $(go test -list '^Fuzz' "$dir" | grep '^Fuzz'); do
+              echo "::group::$dir $target"
+              go test "$dir" -run '^$' -fuzz "^${target}\$" -fuzztime 60s
+              echo "::endgroup::"
+            done
+          done
+
+      - name: Upload failing inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-failures
+          path: "**/testdata/fuzz/**"
+          if-no-files-found: ignore
 
   govulncheck:
     name: Run govulncheck

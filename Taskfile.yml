@@ -119,6 +119,19 @@ tasks:
       - go tool cover -html=coverage.out -o coverage.html
       - echo "Coverage report generated at coverage.html"
 
+  fuzz:
+    desc: Run every Go fuzz target for FUZZTIME each (default 30s; the nightly workflow runs 60s)
+    cmds:
+      # Targets are found, not listed, so a new FuzzXxx joins automatically.
+      # A failing input is saved under the package's testdata/fuzz/<Target>/.
+      - |
+        for dir in $(grep -rl --include='*_test.go' '^func Fuzz' . | xargs -n1 dirname | sort -u); do
+          for target in $(go test -list '^Fuzz' "$dir" | grep '^Fuzz'); do
+            echo "== $dir $target"
+            go test "$dir" -run '^$' -fuzz "^${target}\$" -fuzztime {{.FUZZTIME | default "30s"}} || exit 1
+          done
+        done
+
   test:integration:
     desc: Run opt-in integration tests (needs REFRESH_INTEGRATION=1 + AWS creds)
     cmds:

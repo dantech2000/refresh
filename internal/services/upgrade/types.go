@@ -113,12 +113,23 @@ func minorVersion(v string) (int, error) {
 	if len(parts) < 2 || parts[0] != "1" {
 		return 0, fmt.Errorf("unrecognized Kubernetes version %q (expected \"1.<minor>\")", v)
 	}
+	// Atoi alone would accept a sign ("1.-3", "1.+33").
+	if strings.TrimLeft(parts[1], "0123456789") != "" {
+		return 0, fmt.Errorf("unrecognized Kubernetes version %q (expected \"1.<minor>\")", v)
+	}
 	minor, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return 0, fmt.Errorf("unrecognized Kubernetes version %q: %w", v, err)
 	}
 	return minor, nil
 }
+
+// maxHops caps how many minor versions one plan may cross. It is far above
+// any span EKS supports, so a real target never reaches it and a nearby typo
+// still gets EKS's "not offered" answer. It exists so that a target such as
+// "1.2000000000" fails fast instead of allocating one hop per minor before
+// EKS is asked whether the target exists.
+const maxHops = 100
 
 // expandHops lists the sequential minor-version targets between from and to,
 // exclusive of from, inclusive of to ("1.31"→"1.33" yields ["1.32","1.33"]).
@@ -136,9 +147,14 @@ func expandHops(from, to string) ([]string, error) {
 	if toMinor < fromMinor {
 		return nil, fmt.Errorf("target version %s is older than current version %s", to, from)
 	}
+	if toMinor-fromMinor > maxHops {
+		return nil, fmt.Errorf("target version %s is %d minor versions ahead of %s; one plan crosses at most %d", to, toMinor-fromMinor, from, maxHops)
+	}
+	// Count up by offset: `m <= toMinor; m++` never ends when toMinor is
+	// the largest int.
 	var hops []string
-	for m := fromMinor + 1; m <= toMinor; m++ {
-		hops = append(hops, fmt.Sprintf("1.%d", m))
+	for i := 1; i <= toMinor-fromMinor; i++ {
+		hops = append(hops, fmt.Sprintf("1.%d", fromMinor+i))
 	}
 	return hops, nil
 }

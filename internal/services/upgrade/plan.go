@@ -133,7 +133,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 
 		ready, err := s.readinessStep(ctx, clusterName, currentVersion, hopTo, nodegroups, simNodegroups, plan, opts.mode(), opts.Progress)
 		if err != nil {
-			return nil, fmt.Errorf("interrupted while building the upgrade plan: %w", err)
+			return nil, stopped(ctx, "while building the upgrade plan", "", err)
 		}
 		hop.Steps = append(hop.Steps, ready)
 		hop.Steps = append(hop.Steps, controlPlaneStep(currentVersion, aws.ToString(cluster.Version), hopTo, cluster.Status))
@@ -150,7 +150,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	// Lookups that fail on a cancelled ctx surface as blocked steps; an
 	// interrupted plan is an error, not a blocked upgrade.
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("interrupted while building the upgrade plan: %w", err)
+		return nil, stopped(ctx, "while building the upgrade plan", "", err)
 	}
 	return plan, nil
 }

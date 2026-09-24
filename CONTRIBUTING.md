@@ -18,8 +18,14 @@ task test           # go test ./...
 task lint           # golangci-lint run ./...
 task vet            # go vet ./...
 task vuln           # govulncheck ./...
+task fuzz           # run every fuzz target for 30s (FUZZTIME=2m to change)
 task dev:full       # fmt + vet + lint + test + build — run before pushing
 ```
+
+`go test` runs each fuzz target's seed corpus as a normal test. `task fuzz`
+also mutates the inputs. When it finds a failing input, it saves it under
+the package's `testdata/fuzz/<Target>/`. Commit that file with the fix, so
+the input stays a regression test.
 
 Run the race detector on anything touching concurrency:
 

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 )
 
 // ErrAborted is returned by Execute when the user declines a phase
@@ -87,7 +90,7 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 				report.FailedAt = ph.label
 				report.Remaining = pendingLabels(phases[i+1:])
 				if ctx.Err() != nil {
-					return report, fmt.Errorf("interrupted before %s (rerun the same command to resume): %w", ph.label, err)
+					return report, stopped(ctx, "before "+ph.label, "rerun the same command to resume", err)
 				}
 				return report, fmt.Errorf("%s not started: %w", ph.label, err)
 			}
@@ -110,7 +113,7 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 			if ctx.Err() != nil {
 				// SIGINT / timeout: anything started keeps running
 				// server-side; a rerun re-attaches and resumes.
-				return report, fmt.Errorf("interrupted during %s (in-flight EKS updates continue server-side; rerun the same command to resume): %w", ph.label, err)
+				return report, stopped(ctx, "during "+ph.label, "in-flight EKS updates continue server-side; rerun the same command to resume", err)
 			}
 			return report, fmt.Errorf("%s failed: %w", ph.label, err)
 		}
@@ -118,6 +121,30 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 	}
 
 	return report, nil
+}
+
+// stopped wraps err, returned after ctx ended, as a timeout when the run
+// deadline passed and as an interrupt otherwise (Ctrl+C, SIGTERM). where
+// says when the run stopped ("during <phase>"). next, when not empty, says
+// what to do now. The timeout text carries awserr's "increase --timeout"
+// hint, which the command retargets to the flag that sets its deadline
+// (runner.WaitDeadlineHint names --wait-timeout).
+func stopped(ctx context.Context, where, next string, err error) error {
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if next == "" {
+			return fmt.Errorf("interrupted %s: %w", where, err)
+		}
+		return fmt.Errorf("interrupted %s (%s): %w", where, next, err)
+	}
+	msg := "timed out " + where
+	// An AWS error formatted after the deadline already has the hint.
+	if hint := awserr.TimeoutHint(); !strings.Contains(err.Error(), hint) {
+		msg += " " + hint
+	}
+	if next != "" {
+		msg += "; " + next
+	}
+	return fmt.Errorf("%s: %w", msg, err)
 }
 
 // phases flattens the plan into the ordered list of executable phases.

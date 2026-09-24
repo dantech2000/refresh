@@ -54,10 +54,10 @@ The documents for the mutating commands:
 
 | Command | Document on stdout |
 |---|---|
-| `nodegroup update` | The run summary: `cluster`, `started`, `skipped`, `customUnmanaged`, `failed`, `verification`, and `health` (the pre-flight verdict, when a check ran) |
+| `nodegroup update` | The run summary: `cluster`, `started`, `skipped`, `customUnmanaged`, `failed` (updates that did not start), `rollFailures`, `verification`, and `health` (the pre-flight verdict, when a check ran). Each `rollFailures` entry is a started update that did not succeed: `nodegroup`, `updateId`, `status` (`Failed`, `Cancelled`, or `Unmonitored` when refresh could not poll it), and `error`. Every list is `[]` when empty |
 | `nodegroup update --dry-run` | The preview: `cluster`, `dryRun`, `force`, and one `nodegroups` entry per nodegroup with its `action` (`update`, `force-update`, `skip-updating`, `skip-latest`, `skip-custom`) |
 | `nodegroup update --health-only` | The health verdict. The exit code is `0`, `2`, or `3` |
-| `nodegroup update --all-clusters` | `clusters` (one result per cluster, with its `health` verdict when a check ran, or one preview with `--dry-run`), plus `discoveryErrors` and `skippedRegions`. With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
+| `nodegroup update --all-clusters` | `clusters` (one result per cluster, with its run summary under `outcomes` and its `health` verdict when a check ran, or one preview with `--dry-run`), plus `discoveryErrors` and `skippedRegions`. With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
 | `cluster upgrade --dry-run` | The plan |
 | `cluster upgrade --yes` | `{plan, report}`: the plan the run started from and what it did (`completed`, `failedAt`, `remaining`). A blocked plan prints the plan alone and exits `3` |
 

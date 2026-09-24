@@ -177,7 +177,7 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 		// gate stopped prints the (empty) run summary with the verdict, so
 		// a CI consumer can see which checks stopped it.
 		if flags.machine() && summary != nil {
-			var doc any = updateDocument{updateOutcomes: updateOutcomes{Cluster: clusterName}, Health: summary}
+			var doc any = updateDocument{updateOutcomes: newUpdateOutcomes(clusterName), Health: summary}
 			if flags.healthOnly {
 				doc = summary
 			}
@@ -323,6 +323,7 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 			monitoring.DisplayStopped(monitor, config, monErr)
 		}
 	}
+	outcomes.RollFailures = rollFailures(monitor.Updates)
 
 	verifyFailed := false
 	// Verification is cluster-wide (new stuck pods), so it can't be scoped to
@@ -662,7 +663,54 @@ type updateOutcomes struct {
 	Skipped      []string              `json:"skipped" yaml:"skipped"`                 // already on latest, or already updating
 	Custom       []string              `json:"customUnmanaged" yaml:"customUnmanaged"` // custom-AMI nodegroups (managed via LT)
 	Failed       []string              `json:"failed" yaml:"failed"`                   // describe or UpdateNodegroupVersion failed
+	RollFailures []rollFailure         `json:"rollFailures" yaml:"rollFailures"`       // started, then ended Failed/Cancelled or unmonitored
 	Verification *PostRollVerification `json:"verification,omitempty" yaml:"verification,omitempty"`
+}
+
+// newUpdateOutcomes returns empty outcomes for cluster. Every list is
+// non-nil, so -o json/yaml encodes an empty list as [] and never as null.
+func newUpdateOutcomes(cluster string) updateOutcomes {
+	return updateOutcomes{
+		Cluster:      cluster,
+		Started:      []string{},
+		Skipped:      []string{},
+		Custom:       []string{},
+		Failed:       []string{},
+		RollFailures: []rollFailure{},
+	}
+}
+
+// rollFailureUnmonitored is the status of a roll whose EKS status could not be
+// polled. Its outcome is unknown; the EKS update may still be running.
+const rollFailureUnmonitored = "Unmonitored"
+
+// rollFailure is a started nodegroup update that did not succeed.
+type rollFailure struct {
+	Nodegroup string `json:"nodegroup" yaml:"nodegroup"`
+	UpdateID  string `json:"updateId" yaml:"updateId"`
+	// Status is the EKS update status (Failed or Cancelled), or Unmonitored
+	// when refresh could not poll it.
+	Status string `json:"status" yaml:"status"`
+	Error  string `json:"error,omitempty" yaml:"error,omitempty"`
+}
+
+// rollFailures lists the monitored updates that ended Failed or Cancelled or
+// could not be monitored, in start order. It is never nil.
+func rollFailures(updates []refreshTypes.UpdateProgress) []rollFailure {
+	out := []rollFailure{}
+	for _, u := range updates {
+		f := rollFailure{Nodegroup: u.NodegroupName, UpdateID: u.UpdateID}
+		switch {
+		case u.MonitorErr != nil:
+			f.Status, f.Error = rollFailureUnmonitored, u.MonitorErr.Error()
+		case u.Status == ekstypes.UpdateStatusFailed || u.Status == ekstypes.UpdateStatusCancelled:
+			f.Status, f.Error = string(u.Status), u.ErrorMessage
+		default:
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // updateDocument is the -o json/yaml document of a single-cluster update: the
@@ -729,7 +777,7 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 	human := !flags.quiet && !flags.machine()
 
 	ngSvc := factory.NewNodegroupService(awsCfg, false, nil)
-	outcomes := updateOutcomes{Cluster: clusterName}
+	outcomes := newUpdateOutcomes(clusterName)
 	updates := make([]refreshTypes.UpdateProgress, 0, len(nodegroups))
 	for _, ng := range nodegroups {
 		nodegroup, err := ngSvc.DescribeNodegroup(ctx, clusterName, ng)
