@@ -2,13 +2,17 @@ package runner
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/smithy-go"
 
-	"github.com/dantech2000/refresh/internal/diag"
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -37,26 +41,81 @@ func TestTableListsFailures(t *testing.T) {
 	}
 }
 
+// A credential error with no API code (a SigV4 signing failure, a credential
+// source failure) comes back as the original error: errors.As still finds its
+// type, and the setup help appears once. The sweeps hand over the raw error
+// (fleet discovery) or one FormatAWSError already formatted (status, cluster
+// list); both must work.
+func TestNoRegionAnswered_KeepsOriginalCredentialError(t *testing.T) {
+	const help = "AWS credentials not configured or invalid"
+	signing := func() error {
+		return fmt.Errorf("operation error EKS: ListClusters, %w", &v4.SigningError{Err: errors.New("failed to sign request: bad key")})
+	}
+	source := func() error {
+		return fmt.Errorf("operation error EKS: ListClusters, get identity: get credentials: failed to refresh cached credentials, %w",
+			&ssocreds.InvalidTokenError{Err: errors.New("the SSO session has expired")})
+	}
+	for name, tc := range map[string]struct {
+		err    func() error
+		target func(error) bool
+	}{
+		"signing error": {signing, func(err error) bool { var e *v4.SigningError; return errors.As(err, &e) }},
+		"credential source error": {source, func(err error) bool {
+			var e *ssocreds.InvalidTokenError
+			return errors.As(err, &e)
+		}},
+	} {
+		for form, wrap := range map[string]func(error) error{
+			"raw":       func(err error) error { return err },
+			"formatted": func(err error) error { return awsinternal.FormatAWSError(err, "listing clusters in us-west-2") },
+		} {
+			t.Run(name+"/"+form, func(t *testing.T) {
+				fakeaws.New(t)
+				cfg, err := config.LoadDefaultConfig(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				throttled := &smithy.GenericAPIError{Code: "ThrottlingException", Message: "Rate exceeded"}
+				for layout, regionErrs := range map[string][]error{
+					"every region":          {wrap(tc.err()), wrap(tc.err())},
+					"after another failure": {throttled, wrap(tc.err())},
+				} {
+					got := NoRegionAnswered(t.Context(), cfg, nil, regionErrs)
+					if got == nil {
+						t.Fatalf("%s: NoRegionAnswered = nil, want the credential error", layout)
+					}
+					if !tc.target(got) {
+						t.Errorf("%s: errors.As does not find the original error type in %v", layout, got)
+					}
+					if n := strings.Count(got.Error(), help); n != 1 {
+						t.Errorf("%s: setup help appears %d times, want 1:\n%v", layout, n, got)
+					}
+				}
+			})
+		}
+	}
+}
+
 // NoRegionAnswered asks STS only when a region looked closed, and returns
 // the credential error only when STS rejects the credentials.
 func TestNoRegionAnswered(t *testing.T) {
-	// Build the failures the way the sweeps do, from typed API errors.
-	region := func(name, code string) diag.Failure {
-		return diag.FromError(diag.KindRegion, name, diag.OpListClusters, &smithy.GenericAPIError{Code: code, Message: "fake " + code})
+	// Typed API errors, as a region's ListClusters returns them.
+	apiErr := func(code string) error {
+		return &smithy.GenericAPIError{Code: code, Message: "fake " + code}
 	}
-	unavailable := []diag.Failure{region("us-east-1", "UnrecognizedClientException")}
-	throttled := []diag.Failure{region("us-east-1", "ThrottlingException")}
+	unavailable := []error{apiErr("UnrecognizedClientException")}
+	throttled := []error{apiErr("ThrottlingException")}
 	for _, tc := range []struct {
 		name     string
 		badCreds bool
 		skipped  []string
-		failed   []diag.Failure
+		failed   []error
 		wantErr  bool
 		stsCalls int
 	}{
-		{name: "expired token needs no STS call", failed: []diag.Failure{region("us-east-1", "ExpiredTokenException")}, wantErr: true},
-		{name: "expired token after another failure", failed: []diag.Failure{
-			region("us-east-1", "ThrottlingException"), region("us-west-2", "ExpiredTokenException"),
+		{name: "expired token needs no STS call", failed: []error{apiErr("ExpiredTokenException")}, wantErr: true},
+		{name: "expired token after another failure", failed: []error{
+			apiErr("ThrottlingException"), apiErr("ExpiredTokenException"),
 		}, wantErr: true},
 		{name: "region-closed code, valid credentials", failed: unavailable, stsCalls: 1},
 		{name: "skipped, bad credentials", badCreds: true, skipped: []string{"us-east-1"}, wantErr: true, stsCalls: 1},

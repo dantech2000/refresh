@@ -51,7 +51,7 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 		// answered. The one error gets the full formatted text. When some
 		// data came back, the missing regions make it incomplete (exit 4).
 		if len(sweep.statuses) == 0 && sweep.answered == 0 && len(sweep.errs) > 0 {
-			if cerr := runner.NoRegionAnswered(ctx, awsCfg, sweep.skipped, sweep.regionFailures); cerr != nil {
+			if cerr := runner.NoRegionAnswered(ctx, awsCfg, sweep.skipped, sweep.errs); cerr != nil {
 				return cerr
 			}
 			return sweep.errs[0]

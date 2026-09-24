@@ -362,6 +362,10 @@ type RegionListResult struct {
 	// region, in sweep order. A region that never started because the
 	// context ended is ReasonNotAttempted.
 	Failed []diag.Failure
+	// Errors holds the error behind each failure, in the same order. A
+	// failure is a one-line summary; callers that must classify or report
+	// the cause (runner.NoRegionAnswered) need the error itself.
+	Errors []error
 	// Skipped lists (sorted) the regions of a default sweep that are closed
 	// to these credentials. They are not failures.
 	Skipped []string
@@ -437,6 +441,7 @@ func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (
 				f.Region = r
 			}
 			out.Failed = append(out.Failed, f)
+			out.Errors = append(out.Errors, res.err)
 			if firstErr == nil {
 				firstRegion, firstErr = r, res.err
 			}
