@@ -173,6 +173,11 @@ health warnings (`--health-only` or `--require-healthy`) counts as `2`, and
 an interrupted or timed-out cluster counts as `1`. A region whose clusters
 could not be listed counts as `4`; see [Region sweeps](#region-sweeps).
 
+A cluster with any other error counts as `4`, including a roll that ended
+`Failed` or `Cancelled`. The same failure exits `1` in a single-cluster run.
+In a fleet, one cluster's failure while the others finish is a partial
+result, so it is `4`.
+
 ```bash
 refresh nodegroup update -c prod --yes --require-healthy -o json
 case $? in
