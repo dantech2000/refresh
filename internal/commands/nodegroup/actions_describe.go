@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/factory"
@@ -47,7 +46,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	}
 	if opts.ShowWorkloads {
 		opts.KubeClient, _ = runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
-			API:         eks.NewFromConfig(awsCfg),
+			API:         factory.NewEKSClient(awsCfg),
 			Cluster:     clusterName,
 			Region:      awsCfg.Region,
 			Kubeconfig:  cmd.String("kubeconfig"),

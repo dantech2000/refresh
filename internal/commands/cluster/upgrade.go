@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
@@ -179,7 +178,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		return err
 	}
 
-	svc := upgrade.NewService(eks.NewFromConfig(awsCfg), factory.NewDefaultLogger(nil))
+	svc := upgrade.NewService(factory.NewEKSClient(awsCfg), factory.NewDefaultLogger(nil))
 	svc.PollInterval = pollInterval
 
 	planOpts := upgrade.PlanOptions{
@@ -243,7 +242,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	// the progress lines.
 	var ngObserver upgrade.RollObserver
 	if !cmd.Bool("quiet") && !ui.PlainOutput() && rollview.Interactive(os.Stdout) {
-		if kube, _ := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), false); kube != nil {
+		if kube, _ := resolveReadinessKubeClient(ctx, factory.NewEKSClient(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), false); kube != nil {
 			poll := cmd.Duration("poll-interval")
 			ngObserver = func(octx context.Context, ng string) {
 				rollview.LiveRollForUpdate(octx, kube, ng, waitTimeout, poll)

@@ -305,9 +305,10 @@ Follow the layered flow (model it on the `cluster` command):
    `runner.WithSpinner`. Don't add a local flag that shadows a global one
    (`--timeout`, `--region`, `--max-concurrency`, …) unless it means something
    different; `main_flags_test.go` fails otherwise.
-3. **Service** — construct it through `internal/commands/factory` (don't
-   `eks.NewFromConfig` in the action); put business logic + AWS calls in
-   `internal/services/<group>`.
+3. **Service** — construct it through `internal/commands/factory`; put
+   business logic + AWS calls in `internal/services/<group>`. A command that
+   needs a raw client uses `factory.NewEKSClient` / `factory.NewSSMClient`,
+   never an SDK `NewFromConfig` (`TestCommandsBuildClientsThroughFactory`).
 4. **Output** — `runner.EncodeStdout(cmd.String("format"), payload)`; if it
    returns `handled==false`, fall through to a `clusterview`/`ui` table renderer.
 5. **Tests** — drive the service with `internal/mocks` and the command with

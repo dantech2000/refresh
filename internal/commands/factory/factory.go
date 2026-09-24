@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/internal/health"
@@ -50,6 +51,20 @@ func NewDefaultLogger(logger *slog.Logger) *slog.Logger {
 		return logger
 	}
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: defaultLogLevel}))
+}
+
+// NewEKSClient is the one place the command layer gets an EKS client, for
+// the calls it makes itself (update monitoring, kube-client endpoint
+// matching, dry-run previews). Services build their own clients; commands
+// use this instead of eks.NewFromConfig (TestCommandsBuildClientsThroughFactory).
+func NewEKSClient(awsCfg aws.Config) *eks.Client {
+	return eks.NewFromConfig(awsCfg)
+}
+
+// NewSSMClient is the command layer's SSM client, for the AMI release-notes
+// lookup (`nodegroup update --changelog`).
+func NewSSMClient(awsCfg aws.Config) *ssm.Client {
+	return ssm.NewFromConfig(awsCfg)
 }
 
 // NewClusterService initializes a cluster service with optional health checking.

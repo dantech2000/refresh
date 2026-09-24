@@ -15,6 +15,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/common"
 	appconfig "github.com/dantech2000/refresh/internal/config"
@@ -418,7 +419,7 @@ func checkDiscovery(regions int, d fleetDiscovery) error {
 // can aggregate.
 func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) clusterUpdateResult {
 	res := clusterUpdateResult{Cluster: tgt.cluster, Region: tgt.region, Nodegroups: []nodegroupResult{}, run: newUpdateRun(tgt.cluster, tgt.region)}
-	eksClient := eks.NewFromConfig(tgt.awsCfg)
+	eksClient := factory.NewEKSClient(tgt.awsCfg)
 
 	ctx, cancel := fleetClusterContext(parent, flags.timeout)
 	defer cancel()
@@ -580,7 +581,7 @@ func discoverFleetTargets(ctx context.Context, baseCfg aws.Config, regions []str
 // raw SDK error so discovery can classify it by API error code before
 // formatting it.
 func listRegionClusters(ctx context.Context, cfg aws.Config) ([]string, error) {
-	eksClient := eks.NewFromConfig(cfg)
+	eksClient := factory.NewEKSClient(cfg)
 	return common.Paginate(ctx, func(rc context.Context, token *string) ([]string, *string, error) {
 		out, err := common.WithRetry(rc, common.DefaultRetryConfig, func(rrc context.Context) (*eks.ListClustersOutput, error) {
 			return eksClient.ListClusters(rrc, &eks.ListClustersInput{NextToken: token})
@@ -612,7 +613,7 @@ func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern 
 func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) []diag.Failure {
 	ctx, cancel := fleetClusterContext(ctx, flags.timeout)
 	defer cancel()
-	eksClient := eks.NewFromConfig(tgt.awsCfg)
+	eksClient := factory.NewEKSClient(tgt.awsCfg)
 	flags.yes = true // a preview selects every match without asking
 	selected, err := selectNodegroupsForUpdate(ctx, eksClient, tgt.cluster, nodegroupPattern, flags)
 	if err != nil {
@@ -652,7 +653,7 @@ func fleetDryRunOne(ctx context.Context, tgt clusterTarget, nodegroupPattern str
 	res := fleetDryRunResult{Cluster: tgt.cluster, Region: tgt.region}
 	cctx, cancel := fleetClusterContext(ctx, flags.timeout)
 	defer cancel()
-	eksClient := eks.NewFromConfig(tgt.awsCfg)
+	eksClient := factory.NewEKSClient(tgt.awsCfg)
 	selected, err := selectNodegroupsForUpdate(cctx, eksClient, tgt.cluster, nodegroupPattern, flags)
 	if err != nil {
 		f := selectionFailure(tgt.cluster, tgt.region, err)
