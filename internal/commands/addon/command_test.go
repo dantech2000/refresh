@@ -1,6 +1,7 @@
 package addon
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/urfave/cli/v3"
@@ -104,5 +105,22 @@ func TestUpdateAllHiddenAlias(t *testing.T) {
 	}
 	if sc.Action == nil {
 		t.Errorf("addon update-all: nil Action")
+	}
+}
+
+// A pinned version in the update help must be a real EKS add-on version,
+// which always carries an -eksbuild.N suffix: a bare "v1.11.1" is never in
+// the catalog, so the example would always fail.
+func TestUpdateHelp_PinnedVersionExampleIsRealistic(t *testing.T) {
+	pinned := regexp.MustCompile(`refresh addon update \S+ \S+ (v\S+)`)
+	build := regexp.MustCompile(`-eksbuild\.\d+$`)
+	matches := pinned.FindAllStringSubmatch(updateCommand().Description, -1)
+	if len(matches) == 0 {
+		t.Fatal("update help has no pinned-version example")
+	}
+	for _, m := range matches {
+		if !build.MatchString(m[1]) {
+			t.Errorf("pinned version example %q has no -eksbuild.N suffix", m[1])
+		}
 	}
 }
