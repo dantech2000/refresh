@@ -185,20 +185,34 @@ func TestUpgrade_RejectsNonPositivePollInterval(t *testing.T) {
 // call, so the keys fail on the first EKS call. In a region sweep, every
 // region then looks closed, so the command asks STS once to name the cause.
 func TestListMachineOutput_CredentialFailure(t *testing.T) {
+	expire := func(s *fakeaws.Server) {
+		s.FailRegions(func(string) string { return "ExpiredTokenException" })
+	}
 	for _, tc := range []struct {
 		name     string
 		regions  string // REFRESH_EKS_REGIONS
 		args     []string
+		expired  bool // every region answers ExpiredTokenException, not rejected keys
 		stsCalls int
 	}{
 		{name: "home region", args: []string{"list", "-o", "json"}},
 		{name: "default sweep", args: []string{"list", "-A", "-o", "json"}, stsCalls: 1},
 		{name: "named regions", regions: "us-east-1,eu-west-1", args: []string{"list", "-A", "-o", "json"}, stsCalls: 1},
+		// An expired token names itself: no STS call needed.
+		{name: "expired, home region", args: []string{"list", "-o", "json"}, expired: true},
+		{name: "expired, default sweep", args: []string{"list", "-A", "-o", "json"}, expired: true},
+		{name: "expired, named regions", regions: "us-east-1,eu-west-1", args: []string{"list", "-A", "-o", "json"}, expired: true},
+		{name: "expired, describe", args: []string{"describe", "prod", "-o", "json"}, expired: true},
+		{name: "expired, upgrade-check", args: []string{"upgrade-check", "prod", "-o", "json"}, expired: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := fakeaws.New(t, upgradeWorld())
 			t.Setenv("REFRESH_EKS_REGIONS", tc.regions)
-			srv.FailCredentials("InvalidClientTokenId")
+			if tc.expired {
+				expire(srv)
+			} else {
+				srv.FailCredentials("InvalidClientTokenId")
+			}
 			stdout, stderr, err := runCluster(t, tc.args...)
 			if err == nil {
 				t.Fatal("cluster list succeeded with bad credentials")

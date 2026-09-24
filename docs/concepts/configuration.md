@@ -218,10 +218,11 @@ What a failed region does depends on the command:
   clusters it gathered, and exits `4`.
 
 In all three, if no region answers, nothing was gathered and the command
-fails with exit `1`. See [Exit codes](exit-codes.md#region-sweeps). Invalid
-credentials make every region look closed. So when no region answers and a
-region was skipped or unavailable, `refresh` calls `sts:GetCallerIdentity`
-once. If STS rejects the credentials, the error is the credential setup help.
+fails with exit `1`. See [Exit codes](exit-codes.md#region-sweeps). When no
+region answers because of the credentials, the error is the credential setup
+help. An expired token names itself. Invalid keys make every region look
+closed, so when a region was skipped or unavailable, `refresh` calls
+`sts:GetCallerIdentity` once to tell the two apart.
 
 ## Timeouts
 

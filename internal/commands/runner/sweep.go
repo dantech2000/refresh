@@ -38,16 +38,27 @@ func ReportSkippedRegions(w io.Writer, skipped []string) {
 
 // NoRegionAnswered explains a region sweep in which no region answered.
 // Command setup only resolves credentials and makes no STS call, so keys that
-// resolve but are invalid or expired reach the sweep, and each region rejects
-// them with the same codes as a region closed to the account
-// (UnrecognizedClientException, InvalidClientTokenId). skipped holds the
-// regions the sweep skipped as closed, and failed the regions that failed.
+// resolve but are invalid or expired reach the sweep. skipped holds the
+// regions the sweep skipped as closed, failed the regions that failed, and
+// errs their errors.
 //
-// When a region was skipped or failed as unavailable, it asks STS once and
-// returns the credential error (with the setup help) if STS reports one. It
-// returns nil otherwise (valid credentials, another failure, ctx done), and
-// the caller reports its own error.
-func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, failed []diag.Failure) error {
+// It returns the credential error, with the setup help once, in two cases:
+//   - a region error is a credential error that no closed region returns
+//     (ExpiredTokenException, a signature error, a credential source
+//     failure). No STS call is needed.
+//   - a region was skipped or failed as unavailable. Invalid keys get the
+//     same codes as a region closed to the account
+//     (UnrecognizedClientException, InvalidClientTokenId), so it asks STS
+//     once.
+//
+// It returns nil otherwise (valid credentials, another failure, ctx done),
+// and the caller reports its own error.
+func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, failed []diag.Failure, errs []error) error {
+	for _, err := range errs {
+		if awserr.IsCredentialError(err) && !awserr.IsRegionInaccessible(err) {
+			return fmt.Errorf("AWS credential validation failed: %w", awsinternal.FormatAWSError(err, "listing clusters"))
+		}
+	}
 	lookalike := len(skipped) > 0 || slices.ContainsFunc(failed, func(f diag.Failure) bool {
 		return f.Reason == diag.ReasonRegionUnavailable
 	})
