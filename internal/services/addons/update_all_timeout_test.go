@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"go.uber.org/goleak"
 
 	"github.com/dantech2000/refresh/internal/mocks"
 )
@@ -39,6 +40,7 @@ func TestUpdateAllBudget(t *testing.T) {
 // add-on was dispatched, the undispatched add-ons must still come back as
 // named FAILED rows (never zero-valued blank rows).
 func TestUpdateAll_ParallelDeadlineFillsUndispatched(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	names := []string{"a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"}
 	b := mocks.NewEKSAPI().WithCluster("prod", "1.32")
 	for _, n := range names {

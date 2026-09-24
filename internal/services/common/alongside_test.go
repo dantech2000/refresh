@@ -6,12 +6,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 )
 
 // The observer must be cancelled and joined as soon as wait returns, and
 // wait's error must come back unchanged — even when the observer would
 // otherwise block forever (a failed roll that never converges).
 func TestRunAlongside_WaitEndsObserver(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	wantErr := errors.New("update failed: PodEvictionFailure")
 	var observerDone atomic.Bool
 

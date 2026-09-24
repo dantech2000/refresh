@@ -16,6 +16,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/smithy-go"
 	"github.com/fatih/color"
+	"go.uber.org/goleak"
 
 	"github.com/dantech2000/refresh/internal/mocks"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
@@ -422,6 +423,7 @@ func TestCheckAllUpdates_TransportErrorIsPolledThrough(t *testing.T) {
 // Cancelling ctx while the monitor waits (main does this on Ctrl+C) returns
 // ErrCancelled. The monitor has no signal handler of its own.
 func TestMonitorUpdates_CancelDuringWaitReturnsErrCancelled(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	cfg := refreshTypes.MonitorConfig{Quiet: true, PollInterval: time.Hour, Timeout: time.Hour}
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(10*time.Millisecond, cancel)

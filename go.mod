@@ -22,6 +22,7 @@ require (
 	github.com/pterm/pterm v0.12.83
 	github.com/urfave/cli-docs/v3 v3.1.0
 	github.com/urfave/cli/v3 v3.12.0
+	go.uber.org/goleak v1.3.0
 	golang.org/x/term v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.37.0

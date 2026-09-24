@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 )
 
 func TestFunMessages(t *testing.T) {
@@ -32,6 +34,7 @@ func TestFunMessages(t *testing.T) {
 }
 
 func TestFunSpinnerLifecycle(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	oldInterval := funSpinnerInterval
 	funSpinnerInterval = time.Millisecond
 	t.Cleanup(func() { funSpinnerInterval = oldInterval })
