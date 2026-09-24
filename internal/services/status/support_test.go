@@ -273,11 +273,11 @@ func TestAssembleCluster_UpgradePolicy(t *testing.T) {
 	svc := newTestService(api, &fakeNodegroups{}, &fakeAddons{})
 	ctx := context.Background()
 
-	ext := svc.assembleCluster(ctx, "ext")
+	ext := svc.assembleCluster(ctx, svc.newSweep(), "ext")
 	if ext.Support.ExtraCostUSDPerHour != extendedSupportPremiumUSDPerHour || ext.Support.AutoUpgradeAtStandardEnd {
 		t.Errorf("EXTENDED cluster support = %+v, want the premium", ext.Support)
 	}
-	std := svc.assembleCluster(ctx, "std")
+	std := svc.assembleCluster(ctx, svc.newSweep(), "std")
 	if std.Support.ExtraCostUSDPerHour != 0 || !std.Support.AutoUpgradeAtStandardEnd {
 		t.Errorf("STANDARD cluster support = %+v, want auto-upgrade and no premium", std.Support)
 	}
@@ -319,4 +319,51 @@ func (f *fakeClusterAPI) DescribeClusterVersions(_ context.Context, in *eks.Desc
 		}
 	}
 	return out, nil
+}
+
+// blockingVersionsAPI holds its first DescribeClusterVersions call until the
+// caller's ctx ends, then answers later calls from the embedded fake.
+type blockingVersionsAPI struct {
+	*fakeClusterAPI
+	started chan struct{}
+	first   atomic.Bool
+}
+
+func (b *blockingVersionsAPI) DescribeClusterVersions(ctx context.Context, in *eks.DescribeClusterVersionsInput, opts ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error) {
+	if b.first.CompareAndSwap(false, true) {
+		close(b.started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return b.fakeClusterAPI.DescribeClusterVersions(ctx, in, opts...)
+}
+
+// A lookup cut short by its caller's cancellation falls back to the built-in
+// table for that caller only; the fallback is not memoized for later callers.
+func TestResolveSupport_CancelledLookupIsNotShared(t *testing.T) {
+	api := &blockingVersionsAPI{
+		fakeClusterAPI: &fakeClusterAPI{versions: map[string]ekstypes.ClusterVersionInformation{
+			"1.32": {
+				ClusterVersion:           aws.String("1.32"),
+				EndOfStandardSupportDate: timePtr(date(2027, 3, 23)),
+				EndOfExtendedSupportDate: timePtr(date(2028, 3, 23)),
+			},
+		}},
+		started: make(chan struct{}),
+	}
+	svc := &Service{clusterAPI: api, now: func() time.Time { return date(2026, 6, 11) }}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan SupportPosture, 1)
+	go func() { done <- svc.resolveSupport(ctx, "1.32") }()
+	<-api.started
+	cancel()
+	if p := <-done; !p.Fallback {
+		t.Errorf("cancelled caller: Fallback = false, want the built-in fallback")
+	}
+
+	p := svc.resolveSupport(context.Background(), "1.32")
+	if p.Fallback || p.Tier != SupportStandard {
+		t.Errorf("live caller after a cancelled lookup: tier = %s, fallback = %v; want standard from the API", p.Tier, p.Fallback)
+	}
 }
