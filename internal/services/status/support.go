@@ -63,10 +63,11 @@ func fallbackPosture(version string, now time.Time) SupportPosture {
 	return SupportPosture{Tier: SupportUnknown}
 }
 
-// parseMinor splits a "major.minor" Kubernetes version.
+// parseMinor splits a "major.minor" Kubernetes version. Both parts must be
+// plain digits: strconv.Atoi alone would read "1.-5" as minor -5.
 func parseMinor(version string) (maj, minor int, ok bool) {
 	a, b, found := strings.Cut(version, ".")
-	if !found {
+	if !found || strings.TrimLeft(a, "0123456789") != "" || strings.TrimLeft(b, "0123456789") != "" {
 		return 0, 0, false
 	}
 	maj, err1 := strconv.Atoi(a)

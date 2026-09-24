@@ -241,6 +241,11 @@ func parseSemver(v string) ([3]int, bool) {
 		return out, false
 	}
 	for i, p := range parts {
+		// Atoi alone would accept a sign ("+1"); a release component is
+		// digits only.
+		if strings.TrimLeft(p, "0123456789") != "" {
+			return out, false
+		}
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 0 {
 			return out, false
