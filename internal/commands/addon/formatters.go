@@ -159,8 +159,14 @@ func addonUpdatePlain(results []addons.AddonUpdateResult) *ui.PlainTable {
 
 // writeUpdateIssues writes post-update health issues and wait failures to w
 // (stderr); the STATUS column only says COMPLETED_WITH_ISSUES or WAIT_FAILED.
-func writeUpdateIssues(w io.Writer, results []addons.AddonUpdateResult) {
+// With failed set, it also names each add-on whose update failed or was not
+// attempted, with its "FAILED: <reason>" status. The table and plain views
+// show that status on stdout, so only -o json/yaml runs set it.
+func writeUpdateIssues(w io.Writer, results []addons.AddonUpdateResult, failed bool) {
 	for _, r := range results {
+		if failed && strings.HasPrefix(r.Status, "FAILED") {
+			_, _ = fmt.Fprintf(w, "%s: %s\n", r.AddonName, r.Status)
+		}
 		if r.HealthIssues != "" {
 			_, _ = fmt.Fprintf(w, "%s: post-update health check found issues: %s\n", r.AddonName, r.HealthIssues)
 		}
@@ -175,7 +181,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 		if len(results) == 0 {
 			_, _ = fmt.Fprintf(ui.Stderr, "No addons to update for cluster: %s\n", cluster)
 		}
-		writeUpdateIssues(ui.Stderr, results)
+		writeUpdateIssues(ui.Stderr, results, false)
 		addonUpdatePlain(results).Render()
 		return nil
 	}
@@ -236,7 +242,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 		summary += fmt.Sprintf(", %s failed", color.RedString("%d", failCount))
 		ui.Outf("%s\n", summary)
 	}
-	writeUpdateIssues(ui.Stderr, results)
+	writeUpdateIssues(ui.Stderr, results, false)
 
 	return nil
 }

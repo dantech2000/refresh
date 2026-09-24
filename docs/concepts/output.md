@@ -81,10 +81,10 @@ array key, not from `.[]`:
 
 | Command | Top-level shape |
 |---|---|
-| `cluster list` | `{"clusters": [...], "count": N}` |
+| `cluster list` | `{"clusters": [...], "count": N}`, plus `"failures"` when some regions could not be listed. Each entry is `{"region": "...", "error": "..."}` with a one-line reason. A cluster row that could not be fully read has a `warnings` list |
 | `nodegroup list` | `{"cluster": "...", "nodegroups": [...], "count": N}`, plus `"failures"` when some nodegroups could not be described. A nodegroup whose latest-AMI lookup failed has an `amiLookupError` field |
 | `addon list` | `{"cluster": "...", "addons": [...], "count": N}`, plus `"failures"` when some add-ons could not be described |
-| `status` | `{"clusters": [...]}`. A row with incomplete data has an `errors` list |
+| `status` | `{"clusters": [...]}`, plus `"failures"` (`{"region", "error"}` entries, as for `cluster list`) when some regions could not be listed. A row with incomplete data has an `errors` list |
 
 Describe commands (`cluster describe`, `nodegroup describe`, `addon describe`)
 print the object itself, with no envelope.

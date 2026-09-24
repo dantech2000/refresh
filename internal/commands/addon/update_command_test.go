@@ -167,6 +167,44 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 	})
 }
 
+// With -o json, `update --all` names each failed add-on and its status on
+// stderr, not only a count. The table view shows the status in its STATUS
+// column, so it does not name FAILED rows on stderr a second time.
+func TestUpdateAll_MachineRunNamesFailures(t *testing.T) {
+	fakeaws.New(t, addonCluster(
+		&fakeaws.Addon{Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0"}, UpdateStatus: "Cancelled"},
+		&fakeaws.Addon{Name: "kube-proxy", Version: "v1.31.0"},
+		&fakeaws.Addon{Name: "coredns", Version: "v1.11.3", Available: []string{"v1.11.4"}},
+	))
+	for _, format := range []string{"json", "yaml"} {
+		stdout, stderr, err := runAddon(t, "update", "prod", "--all", "--wait", "-o", format, "--yes")
+		if code := exitCodeOf(err); code != 4 {
+			t.Fatalf("-o %s: exit code = %d (err %v), want 4\nstderr:\n%s", format, code, err, stderr)
+		}
+		fakeaws.RequireOneDocument(t, format, stdout)
+		for _, want := range []string{
+			"vpc-cni: update update-",
+			"Cancelled: AdmissionRequestDenied",
+			"kube-proxy: FAILED: resolving latest version: no versions found for addon kube-proxy",
+		} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("-o %s: stderr lacks %q:\n%s", format, want, stderr)
+			}
+		}
+		if strings.Contains(stderr, "coredns") {
+			t.Errorf("-o %s: stderr names the add-on that updated:\n%s", format, stderr)
+		}
+	}
+
+	stdout, stderr, _ := runAddon(t, "update", "prod", "--all", "--wait", "--yes")
+	if !strings.Contains(stdout, "FAILED: resolving latest version") {
+		t.Errorf("table lacks the FAILED status:\n%s", stdout)
+	}
+	if strings.Contains(stderr, "kube-proxy") {
+		t.Errorf("table run repeats the FAILED row on stderr:\n%s", stderr)
+	}
+}
+
 // An add-on already at the target is UP_TO_DATE with no UpdateAddon call; a
 // pinned older version proceeds with a warning.
 func TestUpdate_VersionGuard(t *testing.T) {

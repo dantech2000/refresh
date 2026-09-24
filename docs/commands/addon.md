@@ -101,7 +101,10 @@ positional or `--version`, defaulting to `latest`). A failed single-add-on
 update exits `1`. With `--all`, a failed add-on update exits `4`. With
 `--all --parallel`, an add-on that was not started before the deadline or
 Ctrl+C is reported as `FAILED: not attempted: <reason>`. The command exits
-`4` after a deadline and `1` after Ctrl+C.
+`4` after a deadline and `1` after Ctrl+C. With `--all -o json|yaml`, stderr
+names each add-on that failed, was not attempted, or has health issues, with
+its status or reason. The table and `-o plain` show the status in the
+`STATUS` column.
 
 `--all` can't be combined with an add-on name or version. The command rejects
 that combination before it makes any AWS call.

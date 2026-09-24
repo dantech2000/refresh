@@ -33,7 +33,8 @@ With `--all-regions` and no `-r` or `REFRESH_EKS_REGIONS`, regions these
 credentials can't use (an SCP denial, a region not enabled for the account)
 are skipped with one note on stderr and don't count as failed regions. A
 region you name with `-r` still fails if it's denied. Other region failures
-print one warning line each.
+print one warning line each, and `-o json`/`-o yaml` list them under
+`failures` as `{"region", "error"}`.
 
 ## Columns
 
@@ -63,8 +64,10 @@ are a failed `DescribeCluster`, a nodegroup or add-on that could not be read,
 a failed latest-AMI lookup (for example, a missing `ssm:GetParameter`), and a
 cluster that a timed-out sweep never reached. Such a row gets the unknown
 marker (`○`), an "N incomplete" count, and an `INCOMPLETE DATA` block that
-lists its errors. `-o json` puts them in the row's `errors` list. The command
-then exits `4`, unless a higher-priority code applies.
+lists its errors. `-o json` puts them in the row's `errors` list. With
+`-o json`, `-o yaml`, or `-o plain`, stderr also names each such cluster with
+a one-line reason. The command then exits `4`, unless a higher-priority code
+applies.
 
 ## Exit codes
 

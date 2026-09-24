@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -181,5 +182,58 @@ func TestListGlobalRegionWithAndWithoutSweep(t *testing.T) {
 		if doc["count"] != tc.want {
 			t.Errorf("%v: count = %v, want %v (one row per scanned region)", tc.args, doc["count"], tc.want)
 		}
+	}
+}
+
+// A region that fails an explicit -r sweep is listed under "failures" in the
+// JSON/YAML document, not only named on stderr. -o plain stays pure TSV: the
+// failure is on stderr only.
+func TestListRegions_FailuresInDocument(t *testing.T) {
+	srv := fakeaws.New(t, listWorld())
+	srv.FailRegions(func(region string) string {
+		if region == "us-west-2" {
+			return "ExpiredTokenException"
+		}
+		return ""
+	})
+	want := []any{map[string]any{
+		"region": "us-west-2",
+		"error":  "ExpiredTokenException: fakeaws: region us-west-2 answers ExpiredTokenException",
+	}}
+
+	for _, format := range []string{"json", "yaml"} {
+		stdout, stderr, err := runCluster(t, "list", "-r", "us-east-1", "-r", "us-west-2", "-o", format)
+		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+			t.Fatalf("-o %s: exit code = %d (err %v), want 4\nstderr:\n%s", format, code, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, format, stdout).(map[string]any)
+		if !reflect.DeepEqual(doc["failures"], want) {
+			t.Errorf("-o %s: failures = %#v, want %#v", format, doc["failures"], want)
+		}
+		if !strings.Contains(stderr, "warning: region us-west-2: ExpiredTokenException") {
+			t.Errorf("-o %s: stderr does not name the failed region:\n%s", format, stderr)
+		}
+	}
+
+	stdout, stderr, err := runCluster(t, "list", "-r", "us-east-1", "-r", "us-west-2", "-o", "plain")
+	if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
+		t.Fatalf("-o plain: exit code = %d (err %v), want 4", code, err)
+	}
+	if strings.Contains(stdout, "us-west-2") || strings.Contains(stdout, "failures") {
+		t.Errorf("-o plain stdout carries the failure; it belongs on stderr:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "warning: region us-west-2") {
+		t.Errorf("-o plain: stderr does not name the failed region:\n%s", stderr)
+	}
+
+	// Every region answered: no "failures" key.
+	srv.FailRegions(nil)
+	stdout, _, err = runCluster(t, "list", "-r", "us-east-1", "-r", "us-west-2", "-o", "json")
+	if err != nil {
+		t.Fatalf("complete sweep: %v", err)
+	}
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	if _, ok := doc["failures"]; ok {
+		t.Errorf("failures present with no failed region: %v", doc["failures"])
 	}
 }
