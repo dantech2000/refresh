@@ -19,8 +19,8 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/smithy-go"
 
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/mocks"
-	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 // planShape summarizes a plan as one line per hop: "from→to ng[pending

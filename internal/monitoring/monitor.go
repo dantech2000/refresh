@@ -18,8 +18,8 @@ import (
 	"github.com/fatih/color"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/common"
 	appconfig "github.com/dantech2000/refresh/internal/config"
-	"github.com/dantech2000/refresh/internal/services/common"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 

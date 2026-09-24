@@ -17,7 +17,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
-	"github.com/dantech2000/refresh/internal/services/common"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // InClusterNameEnv names the env var a pod sets to declare which EKS cluster it

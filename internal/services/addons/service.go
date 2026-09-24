@@ -17,8 +17,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
-	"github.com/dantech2000/refresh/internal/services/common"
 )
 
 const (
