@@ -323,8 +323,8 @@ CI, and `NO_COLOR` runs print text progress.
 !!! note "Resumable by design"
     The plan is re-derived from live cluster state on every run — no state
     file. Rerunning after a failure (or Ctrl+C) resumes where it left off, and
-    rerunning after success is a no-op. On failure or an interrupt, `refresh`
-    prints the exact resume command. It repeats `--profile`, `--region`,
+    rerunning after success is a no-op. On a failure, an interrupt, or a
+    timeout, `refresh` prints the exact resume command. It repeats `--profile`, `--region`,
     `--skip`, `--skip-nodegroup`, `--kubeconfig`, `--kube-context`,
     `--wait-timeout`, `--force`, `--skip-insights-check`,
     `--skip-health-check`, and `--yes` when you gave
@@ -335,9 +335,12 @@ CI, and `NO_COLOR` runs print text progress.
     `cluster upgrade` confirms each mutating phase unless you pass `--yes`.
     Without a terminal, a run without `--yes` or `--dry-run` fails before any
     AWS call. A multi-hop upgrade legitimately runs for hours; the default
-    `--wait-timeout` is `4h` (`REFRESH_TIMEOUT` does not change it). Ctrl+C or
-    the timeout while the plan is built exits as an interrupt and changes
-    nothing. Start with `--dry-run`.
+    `--wait-timeout` is `4h` (`REFRESH_TIMEOUT` does not change it). When
+    `--wait-timeout` runs out, the error says `timed out` and tells you to
+    increase `--wait-timeout`. Ctrl+C says `interrupted`. Both exit `1`. If
+    either happens while the plan is built, nothing changes. If it happens
+    during a phase, in-flight EKS updates continue in AWS. Start with
+    `--dry-run`.
 
 ### Flags
 
