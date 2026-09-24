@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // instanceOfferingsAPI is the slice of EC2 the availability pre-flight needs.
@@ -33,9 +34,11 @@ type UnavailableOffering struct {
 // there is spare *capacity* right now — only a launch attempt reveals
 // InsufficientInstanceCapacity.
 func (s *ServiceImpl) CheckInstanceTypeAvailability(ctx context.Context, clusterName, nodegroupName string) ([]UnavailableOffering, error) {
-	desc, err := s.eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-		ClusterName:   aws.String(clusterName),
-		NodegroupName: aws.String(nodegroupName),
+	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+		return s.eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(clusterName),
+			NodegroupName: aws.String(nodegroupName),
+		})
 	})
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, "describing nodegroup")
@@ -53,9 +56,14 @@ func checkInstanceTypeAvailability(ctx context.Context, api instanceOfferingsAPI
 	}
 
 	// Resolve the nodegroup's AZs from its subnets.
-	subs, err := api.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: subnetIDs})
+	subs, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeSubnetsOutput, error) {
+		return api.DescribeSubnets(rc, &ec2.DescribeSubnetsInput{SubnetIds: subnetIDs})
+	})
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, "describing subnets")
+	}
+	if subs == nil {
+		return nil, nil
 	}
 	azSet := make(map[string]bool, len(subs.Subnets))
 	for _, sn := range subs.Subnets {

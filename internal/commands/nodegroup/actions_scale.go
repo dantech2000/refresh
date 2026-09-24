@@ -361,9 +361,11 @@ func formatScaleQuestion(clusterName, nodegroupName string, sc ekstypes.Nodegrou
 // printScaleDryRun shows the current vs requested scaling configuration
 // without executing, honoring the flag's "Preview scaling impact" promise.
 func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, nodegroupName string, desired, minSize, maxSize *int32) error {
-	desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-		ClusterName:   aws.String(clusterName),
-		NodegroupName: aws.String(nodegroupName),
+	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+		return eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+			ClusterName:   aws.String(clusterName),
+			NodegroupName: aws.String(nodegroupName),
+		})
 	})
 	if err != nil {
 		return awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))

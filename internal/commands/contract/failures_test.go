@@ -81,11 +81,11 @@ var cases = []contractCase{
 	},
 	{
 		name:    "nodegroup update --dry-run: a nodegroup that can't be described",
-		world:   []*fakeaws.Cluster{prod(&fakeaws.Nodegroup{Name: "web", Version: "1.31", DescribeNodegroupError: "ThrottlingException"})},
+		world:   []*fakeaws.Cluster{prod(&fakeaws.Nodegroup{Name: "web", Version: "1.31", DescribeNodegroupError: "AccessDeniedException"})},
 		args:    []string{"nodegroup", "update", "prod", "--dry-run"},
 		code:    runner.ExitIncomplete,
-		failure: map[string]any{"kind": "Nodegroup", "name": "web", "cluster": "prod", "reason": "Throttled", "operation": "eks:DescribeNodegroup", "retryable": true},
-		stderr:  "warning: nodegroup prod/web (us-east-1): Throttled: ThrottlingException: fake DescribeNodegroup failure for web",
+		failure: map[string]any{"kind": "Nodegroup", "name": "web", "cluster": "prod", "reason": "AccessDenied", "operation": "eks:DescribeNodegroup", "retryable": false},
+		stderr:  "warning: nodegroup prod/web (us-east-1): AccessDenied: AccessDeniedException: fake DescribeNodegroup failure for web",
 		formats: []string{"", "json", "yaml"},
 	},
 	{

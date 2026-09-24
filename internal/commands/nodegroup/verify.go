@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
 )
 
@@ -68,9 +69,11 @@ func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient
 	var failures []diag.Failure
 
 	for _, ng := range nodegroups {
-		desc, err := eksClient.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(ng),
+		desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
+			return eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
+				ClusterName:   aws.String(clusterName),
+				NodegroupName: aws.String(ng),
+			})
 		})
 		if err == nil && (desc == nil || desc.Nodegroup == nil) {
 			err = errors.New("empty DescribeNodegroup response")
