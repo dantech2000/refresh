@@ -146,7 +146,7 @@ type fleetSweep struct {
 // false pass.
 func reportSweep(w io.Writer, regions int, s fleetSweep) error {
 	if len(s.skipped) > 0 {
-		_, _ = fmt.Fprintln(w, color.YellowString("Skipped %d region(s) not accessible to these credentials: %s (%s)",
+		_, _ = fmt.Fprintln(w, ui.ColorFor(w, color.FgYellow).Sprintf("Skipped %d region(s) not accessible to these credentials: %s (%s)",
 			len(s.skipped), strings.Join(s.skipped, ", "), regionScopeHint))
 	}
 	for _, e := range s.errs {
@@ -155,7 +155,7 @@ func reportSweep(w io.Writer, regions int, s fleetSweep) error {
 		if errors.As(e, &re) {
 			msg = fmt.Sprintf("region %s: %s", re.Region, awserr.Summary(re.Err))
 		}
-		_, _ = fmt.Fprintln(w, color.YellowString("warning: %s", msg))
+		_, _ = fmt.Fprintln(w, ui.ColorFor(w, color.FgYellow).Sprintf("warning: %s", msg))
 	}
 	if regions > 0 && len(s.skipped) == regions {
 		return fmt.Errorf("could not list clusters in any of %d region(s): none is accessible to these credentials; %s",
