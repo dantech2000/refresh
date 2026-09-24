@@ -32,6 +32,7 @@ var outputRootTypes = []reflect.Type{
 	reflect.TypeFor[clustersvc.UpgradeReport](),
 	reflect.TypeFor[clustersvc.InsightDetail](),
 	reflect.TypeFor[upgrade.Plan](),
+	reflect.TypeFor[upgrade.Report](),
 	reflect.TypeFor[nodegroupsvc.NodegroupSummary](),
 	reflect.TypeFor[nodegroupsvc.NodegroupDetails](),
 	reflect.TypeFor[health.HealthSummary](),
@@ -40,7 +41,10 @@ var outputRootTypes = []reflect.Type{
 	reflect.TypeFor[addons.AddonUpdateResult](),
 	reflect.TypeFor[status.FleetStatus](),
 	reflect.TypeFor[updateOutcomes](),
+	reflect.TypeFor[updateDocument](),
+	reflect.TypeFor[dryRunPlan](),
 	reflect.TypeFor[clusterUpdateResult](),
+	reflect.TypeFor[fleetDryRunResult](),
 	reflect.TypeFor[regionDiscoveryError](),
 }
 

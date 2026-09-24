@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"syscall"
@@ -65,16 +66,6 @@ var (
 	}
 )
 
-// apiErrorCode returns the typed AWS API error code, or "" when err did not
-// come back from the API.
-func apiErrorCode(err error) string {
-	var ae smithy.APIError
-	if errors.As(err, &ae) {
-		return ae.ErrorCode()
-	}
-	return ""
-}
-
 // IsCredentialError reports whether err is an AWS credentials problem: a
 // credential-class API error code, a SigV4 signing failure, an expired SSO
 // session, empty static credentials, or (fallback) an SDK credential-chain
@@ -83,7 +74,7 @@ func IsCredentialError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if code := apiErrorCode(err); code != "" {
+	if code := ErrorCode(err); code != "" {
 		return credentialErrorCodes[code]
 	}
 	var signErr *v4.SigningError
@@ -101,11 +92,10 @@ func IsPermissionError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if permissionErrorCodes[apiErrorCode(err)] {
+	if permissionErrorCodes[ErrorCode(err)] {
 		return true
 	}
-	var status interface{ HTTPStatusCode() int }
-	return errors.As(err, &status) && status.HTTPStatusCode() == 403
+	return httpStatus(err) == http.StatusForbidden
 }
 
 // IsRegionError reports whether err points at AWS region misconfiguration: a
@@ -183,7 +173,7 @@ var inaccessibleRegionCodes = map[string]bool{
 // 5xx, timeouts) that must still fail a run. Multi-region sweeps use it to
 // skip such regions when the user did not ask for them by name.
 func IsRegionInaccessible(err error) bool {
-	return inaccessibleRegionCodes[apiErrorCode(err)]
+	return inaccessibleRegionCodes[ErrorCode(err)]
 }
 
 // containsAny reports whether s contains any pattern, case-insensitively.
@@ -325,10 +315,19 @@ func Summary(err error) string {
 	}
 	var ae smithy.APIError
 	if errors.As(err, &ae) {
-		return fmt.Sprintf("%s: %s", ae.ErrorCode(), ae.ErrorMessage())
+		return oneLine(fmt.Sprintf("%s: %s", ae.ErrorCode(), ae.ErrorMessage()))
 	}
-	msg, _, _ := strings.Cut(err.Error(), "\n")
+	msg := err.Error()
+	if i := strings.IndexAny(msg, "\r\n"); i >= 0 {
+		msg = msg[:i]
+	}
 	return strings.TrimSpace(msg)
+}
+
+// oneLine collapses each run of white space in s, line breaks included, to
+// one space. An AWS error message can span lines; a summary must not.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func formatRegionError(err error, operation string) error {
