@@ -12,13 +12,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v3"
 
-	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/commands/statusview"
-	"github.com/dantech2000/refresh/internal/common"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/regionsweep"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -191,13 +190,6 @@ func regionFanout(maxConcurrency int) int {
 	return regionConcurrency
 }
 
-// regionSweep is one region's result inside gatherFleet.
-type regionSweep struct {
-	ran      bool
-	statuses []statussvc.ClusterStatus
-	err      error
-}
-
 // gatherFleet sweeps regions, at most regionFanout(opts.MaxConcurrency) at a
 // time, and merges
 // the cluster statuses (in region order) and per-region errors. If ctx ends
@@ -208,43 +200,31 @@ func gatherFleet(ctx context.Context, baseCfg aws.Config, regions []string, opts
 	// global --log-level/--verbose (quiet by default) instead of leaking at
 	// Info level into the TUI. (REF-129)
 	logger := factory.NewDefaultLogger(nil)
-	results := common.ForEachParallel(ctx, regions, regionFanout(opts.MaxConcurrency), func(rctx context.Context, r string) regionSweep {
-		cfg := baseCfg.Copy()
-		cfg.Region = r
-		statuses, err := newRegionService(cfg, logger).ListClusterStatuses(rctx, opts)
-		return regionSweep{ran: true, statuses: statuses, err: err}
-	})
-
-	var sweep fleetSweep
-	for i, r := range regions {
-		res := results[i]
-		if !res.ran {
-			res.err = fmt.Errorf("not queried: %w", context.Cause(ctx))
-		}
-		// Keep partial rows even on error: a cancelled sweep returns the
-		// clusters it reached plus "not evaluated" rows for the rest.
-		sweep.statuses = append(sweep.statuses, res.statuses...)
-		switch {
-		case res.err == nil:
-			sweep.answered++
-		case len(res.statuses) > 0:
-			// The region listed its clusters, but the sweep stopped before
-			// it evaluated them all. The "not evaluated" rows carry those
-			// failures; the region itself answered.
-			sweep.answered++
-		case skipInaccessible && awserr.IsRegionInaccessible(res.err):
-			sweep.skipped = append(sweep.skipped, r)
-		default:
-			sweep.errs = append(sweep.errs, &regionError{Region: r, Err: res.err})
-			f := diag.FromError(diag.KindRegion, r, diag.OpListClusters, res.err)
-			if !res.ran {
-				f = diag.New(diag.KindRegion, r, diag.ReasonNotAttempted, res.err.Error())
-				f.Region = r
+	res := regionsweep.Run(ctx, regions, regionsweep.Options{Concurrency: regionFanout(opts.MaxConcurrency), SkipInaccessible: skipInaccessible},
+		func(rctx context.Context, r string) ([]statussvc.ClusterStatus, error) {
+			cfg := baseCfg.Copy()
+			cfg.Region = r
+			statuses, err := newRegionService(cfg, logger).ListClusterStatuses(rctx, opts)
+			if err != nil && len(statuses) > 0 {
+				// The region listed its clusters, but the sweep stopped
+				// before it evaluated them all. The "not evaluated" rows
+				// carry those failures; the region itself answered.
+				return statuses, nil
 			}
-			sweep.regionFailures = append(sweep.regionFailures, f)
-		}
+			return statuses, err
+		})
+
+	sweep := fleetSweep{
+		answered:       len(res.Answered),
+		regionFailures: res.Failed,
+		skipped:        res.Skipped,
 	}
-	sort.Strings(sweep.skipped)
+	for _, a := range res.Answered {
+		sweep.statuses = append(sweep.statuses, a.Value...)
+	}
+	for i, f := range res.Failed {
+		sweep.errs = append(sweep.errs, &regionError{Region: f.Name, Err: res.Errors[i]})
+	}
 	return sweep
 }
 
