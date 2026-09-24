@@ -55,8 +55,9 @@ func clusterListPlain(summaries []clustersvc.ClusterSummary, multiRegion, showHe
 // table. It carries every value the human view shows, untruncated, plus the
 // data the human view only summarizes (subnet and security group IDs, deletion
 // protection). Repeated items use "<kind>/<name>" fields, and their values are
-// space-separated key=value pairs.
-func clusterDetailPlain(d *clustersvc.ClusterDetails) *ui.PlainTable {
+// space-separated key=value pairs. showSecurity adds the SECURITY section's
+// fields (service role, KMS key, endpoint access, public CIDRs).
+func clusterDetailPlain(d *clustersvc.ClusterDetails, showSecurity bool) *ui.PlainTable {
 	t := ui.NewPlainKV()
 	t.Add("name", d.Name)
 	t.Add("region", d.Region)
@@ -90,6 +91,17 @@ func clusterDetailPlain(d *clustersvc.ClusterDetails) *ui.PlainTable {
 		t.Add("deletion protection", "enabled")
 	} else {
 		t.Add("deletion protection", "disabled")
+	}
+	if showSecurity {
+		t.Add("service role", d.Security.ServiceRoleArn)
+		if d.Security.EncryptionEnabled {
+			t.Add("kms key", d.Security.KmsKeyArn)
+		}
+		access := d.Networking.EndpointAccess
+		t.Add("endpoint access", endpointAccessText(access))
+		if access.PublicAccess {
+			t.Add("public cidrs", strings.Join(access.PublicCidrs, ","))
+		}
 	}
 	if d.CreatedAt.IsZero() {
 		t.Add("created", "unknown")
@@ -177,9 +189,9 @@ func upgradeCheckPlain(report *clustersvc.UpgradeReport) *ui.PlainTable {
 // writeUpgradeCheckInfo writes the parts of the upgrade-check report that are
 // not insight rows (verdict, support, control plane, version skew) to w —
 // stderr under `-o plain`, so stdout stays pure TSV.
-func writeUpgradeCheckInfo(w io.Writer, report *clustersvc.UpgradeReport) {
+func writeUpgradeCheckInfo(w io.Writer, report *clustersvc.UpgradeReport, category string) {
 	_, verdict := upgradeVerdict(report)
-	_, _ = fmt.Fprintf(w, "upgrade readiness for %s: %s\n", report.Cluster, verdict)
+	_, _ = fmt.Fprintf(w, "%s for %s: %s\n", strings.ToLower(insightsTitle(category)), report.Cluster, verdict)
 	if report.Support != nil {
 		_, _ = fmt.Fprintf(w, "support: %s\n", supportPlain(report.Support))
 	}
@@ -195,7 +207,7 @@ func writeUpgradeCheckInfo(w io.Writer, report *clustersvc.UpgradeReport) {
 	}
 	_, _ = fmt.Fprintf(w, "version skew (control plane %s): ", valueOrDash(report.Skew.ControlPlaneVersion))
 	if len(report.Skew.Findings) == 0 {
-		_, _ = fmt.Fprintln(w, "nodegroups and addons are current")
+		_, _ = fmt.Fprintln(w, noSkewText(report))
 	} else {
 		_, _ = fmt.Fprintf(w, "%d finding(s)\n", len(report.Skew.Findings))
 		for _, f := range report.Skew.Findings {

@@ -216,6 +216,9 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		ShowSecurity:  cmd.Bool("show-security") || cmd.Bool("detailed"),
 		IncludeAddons: includeAddons,
 		Detailed:      cmd.Bool("detailed"),
+		// The measured Ready counts are per nodegroup, so --check-readiness
+		// reads the nodegroups too.
+		IncludeNodegroups: cmd.Bool("check-readiness"),
 	}
 
 	var details *clustersvc.ClusterDetails
@@ -243,7 +246,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return err
 		}
-	} else if err := clusterview.OutputClusterDetailsTable(details); err != nil {
+	} else if err := clusterview.OutputClusterDetailsTable(details, options.ShowSecurity); err != nil {
 		return err
 	}
 	// Add-ons or nodegroups that could not be read would otherwise just be

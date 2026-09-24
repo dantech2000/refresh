@@ -80,7 +80,9 @@ provide fast, comprehensive results without CloudFormation dependency.
 
 Health status and add-ons are shown by default; --no-health and --no-addons
 skip them. --detailed adds networking and security, --show-security adds the
-security analysis alone.
+SECURITY section alone (service role, KMS key, deletion protection, endpoint
+access). -o json and -o yaml always carry these fields. --check-readiness
+also lists the nodegroups whose Ready counts it measures.
 
 Exit codes: 0 ok; 1 error; 4 incomplete: some add-ons or nodegroups could not be read. See https://drod.dev/refresh/concepts/exit-codes/
 
@@ -91,7 +93,7 @@ Exit codes: 0 ok; 1 error; 4 incomplete: some add-ons or nodegroups could not be
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
 | `--detailed` | — | — | Show comprehensive information including networking and security |
 | `--no-health` | — | — | Skip the health checks (shown by default) |
-| `--show-security` | — | — | Include security configuration analysis |
+| `--show-security` | — | — | Add the SECURITY section: service role, KMS key, deletion protection, endpoint access (-o json/yaml always has these fields) |
 | `--no-addons` | — | — | Skip the EKS add-on section (shown by default) |
 | `--check-readiness, -R` | — | — | Measure real Kubernetes node readiness (Ready/desired) via the cluster API; without it NODES shows desired count only |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for --check-readiness (defaults to $KUBECONFIG, then ~/.kube/config) |
@@ -151,9 +153,9 @@ Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
 |---|---|---|---|
 | `--cluster, -c string` | — | — | EKS cluster name or pattern |
 | `--category string` | — | `UPGRADE_READINESS` | Insight category (UPGRADE_READINESS, MISCONFIGURATION) |
-| `--status string` | — | — | Filter by insight status (PASSING, WARNING, ERROR, UNKNOWN) |
+| `--status string` | — | — | Filter by insight status (PASSING, WARNING, ERROR, UNKNOWN); PASSING needs no --show-passing |
 | `--show-passing` | — | — | Include PASSING insights (hidden by default) |
-| `--id string` | — | — | Show the detail view for one insight — accepts its ID, a short ID prefix (as shown in the table), or a name substring |
+| `--id string` | — | — | Show the detail view for one insight of --category — accepts its ID, a short ID prefix (as shown in the table), or a name substring |
 | `--format, -o string` | — | `table` | Output format (table, json, yaml, plain) |
 | `--exit-zero` | — | — | Exit 0 even when the check finds warnings (2), blockers (3), or unreadable items (4): report mode |
 | `--help, -h` | — | — | show help |

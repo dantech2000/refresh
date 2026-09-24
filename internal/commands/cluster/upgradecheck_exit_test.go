@@ -230,3 +230,53 @@ func TestUpgradeCheckExitCode_Incomplete(t *testing.T) {
 		}
 	})
 }
+
+// insightNames returns the names in an upgrade-check document's insights.
+func insightNames(t *testing.T, stdout string) []string {
+	t.Helper()
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	var names []string
+	for _, in := range doc["insights"].([]any) {
+		names = append(names, in.(map[string]any)["name"].(string))
+	}
+	return names
+}
+
+// --status PASSING lists the PASSING insights without --show-passing
+// (REF-168).
+func TestUpgradeCheck_StatusPassing(t *testing.T) {
+	fakeaws.New(t, checkWorld("1.32", nil,
+		&fakeaws.Insight{ID: "ins-pass", Name: "Cluster health", Status: "PASSING"},
+		&fakeaws.Insight{ID: "ins-warn", Name: "Kube-proxy skew", Status: "WARNING"},
+	))
+	stdout, stderr, err := runCluster(t, "upgrade-check", "prod", "--status", "PASSING", "-o", "json")
+	if err != nil {
+		t.Fatalf("upgrade-check --status PASSING: %v\nstderr:\n%s", err, stderr)
+	}
+	if got := insightNames(t, stdout); len(got) != 1 || got[0] != "Cluster health" {
+		t.Errorf("insights = %v, want [Cluster health]", got)
+	}
+}
+
+// --id looks the insight up in --category, so a MISCONFIGURATION insight
+// shown by `--category MISCONFIGURATION` can be opened (REF-168).
+func TestUpgradeCheck_IDUsesCategory(t *testing.T) {
+	world := checkWorld("1.32", nil,
+		&fakeaws.Insight{ID: "ins-sg", Name: "Security group rules", Status: "WARNING", Category: "MISCONFIGURATION"},
+	)
+	fakeaws.New(t, world)
+	stdout, stderr, err := runCluster(t, "upgrade-check", "prod", "--category", "MISCONFIGURATION", "--id", "security group", "-o", "json")
+	if code := runner.ExitCodeOf(err); code != runner.ExitNeedsAttention {
+		t.Fatalf("exit code = %d (err %v), want 2\nstderr:\n%s", code, err, stderr)
+	}
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	if doc["id"] != "ins-sg" {
+		t.Errorf("id = %v, want ins-sg", doc["id"])
+	}
+
+	// The default category does not see it.
+	fakeaws.New(t, world)
+	if _, _, err := runCluster(t, "upgrade-check", "prod", "--id", "security group", "-o", "json"); err == nil || !strings.Contains(err.Error(), "no insight matches") {
+		t.Errorf("err = %v, want no match in UPGRADE_READINESS", err)
+	}
+}

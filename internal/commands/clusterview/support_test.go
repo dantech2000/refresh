@@ -58,14 +58,14 @@ func TestUpgradeCheckLines_Support(t *testing.T) {
 		Support: &status.SupportPosture{Tier: status.SupportStandard, DaysRemaining: intp(200)},
 		Skew:    clustersvc.SkewReport{ControlPlaneVersion: "1.32"},
 	}
-	joined := strings.Join(upgradeCheckLines(th, rpt), "\n")
+	joined := strings.Join(upgradeCheckLines(th, rpt, ""), "\n")
 	if !strings.Contains(joined, "support  standard (200d)") {
 		t.Errorf("upgrade-check missing support line in:\n%s", joined)
 	}
 
 	// Nil support → no support line (back-compat with existing reports).
 	noSup := &clustersvc.UpgradeReport{Cluster: "prod", Skew: clustersvc.SkewReport{ControlPlaneVersion: "1.32"}}
-	if got := strings.Join(upgradeCheckLines(th, noSup), "\n"); strings.Contains(got, "support  ") {
+	if got := strings.Join(upgradeCheckLines(th, noSup, ""), "\n"); strings.Contains(got, "support  ") {
 		t.Errorf("nil support should render no support line:\n%s", got)
 	}
 }
@@ -74,7 +74,7 @@ func TestClusterDetailLines_Support(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 	d := sampleDetails()
 	d.Support = &status.SupportPosture{Tier: status.SupportExtended, DaysRemaining: intp(45), ExtraCostUSDPerHour: 0.50}
-	joined := strings.Join(clusterDetailLines(th, d), "\n")
+	joined := strings.Join(clusterDetailLines(th, d, false), "\n")
 	if !strings.Contains(joined, "support") || !strings.Contains(joined, "extended (45d)") {
 		t.Errorf("describe missing support KV in:\n%s", joined)
 	}

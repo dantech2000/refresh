@@ -211,6 +211,9 @@ type DescribeOptions struct {
 	ShowSecurity  bool `json:"showSecurity"`
 	IncludeAddons bool `json:"includeAddons"`
 	Detailed      bool `json:"detailed"`
+	// IncludeNodegroups reads the nodegroups without the rest of Detailed,
+	// for --check-readiness, whose per-nodegroup Ready counts need them.
+	IncludeNodegroups bool `json:"includeNodegroups"`
 }
 
 // ListOptions controls cluster listing behavior

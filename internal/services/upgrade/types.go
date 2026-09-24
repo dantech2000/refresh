@@ -107,6 +107,21 @@ func (p *Plan) Blockers() []string {
 	return out
 }
 
+// ManualSteps returns the descriptions of the steps the orchestrator leaves
+// to the operator (custom-AMI nodegroups, --skip, --skip-nodegroup), across
+// hops. A run that ends with these is not a complete upgrade.
+func (p *Plan) ManualSteps() []string {
+	var out []string
+	for _, hop := range p.Hops {
+		for _, s := range hop.Steps {
+			if s.Status == StatusManual {
+				out = append(out, fmt.Sprintf("%s → %s: %s: %s", hop.From, hop.To, s.Description, s.Reason))
+			}
+		}
+	}
+	return out
+}
+
 // Blocked reports whether any step in the plan is blocked.
 func (p *Plan) Blocked() bool { return len(p.Blockers()) > 0 }
 

@@ -147,6 +147,46 @@ func TestUpgradePlainOutput(t *testing.T) {
 	}
 }
 
+// A run that leaves manual steps (a custom-AMI or --skip-nodegroup
+// nodegroup) does not say "Upgrade complete": it names the steps left to the
+// operator (REF-168).
+func TestUpgrade_ManualStepsAreNotComplete(t *testing.T) {
+	t.Cleanup(func() { ui.SetPlainOutput(false); pterm.EnableColor() })
+	world := func() *fakeaws.Cluster {
+		return &fakeaws.Cluster{Name: "prod", Version: "1.31", Nodegroups: []*fakeaws.Nodegroup{
+			{Name: "web", Version: "1.31"},
+			{Name: "gpu", Version: "1.31", AmiType: "CUSTOM"},
+			{Name: "batch", Version: "1.31"},
+		}}
+	}
+	fakeaws.New(t, world())
+	_, stderr, err := runCluster(t, "upgrade", "prod", "--to", "1.32", "--yes", "--poll-interval", "5ms", "--skip-nodegroup", "batch", "-o", "plain")
+	if err != nil {
+		t.Fatalf("upgrade: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stderr, "Upgrade complete") {
+		t.Errorf("a run with manual steps says it is complete:\n%s", stderr)
+	}
+	for _, want := range []string{
+		"Upgrade not complete: 2 manual step(s) remain before prod is fully at 1.32.",
+		"manual: 1.31 → 1.32: nodegroup gpu → 1.32: custom AMI nodegroup",
+		"manual: 1.31 → 1.32: nodegroup batch → 1.32: skipped via --skip-nodegroup",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+
+	// A rerun has nothing left for refresh to do, but still names them.
+	_, stderr, err = runCluster(t, "upgrade", "prod", "--to", "1.32", "--yes", "--poll-interval", "5ms", "--skip-nodegroup", "batch", "-o", "plain")
+	if err != nil {
+		t.Fatalf("rerun: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stderr, "Nothing to do:") || !strings.Contains(stderr, "Nothing left for refresh to do, but 2 manual step(s) remain") {
+		t.Errorf("rerun does not name the manual steps:\n%s", stderr)
+	}
+}
+
 // -o json/yaml can't prompt, so executing without --yes fails before any AWS
 // call, with nothing on stdout.
 func TestUpgradeMachineOutput_RequiresYes(t *testing.T) {
