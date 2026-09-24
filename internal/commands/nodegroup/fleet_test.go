@@ -364,3 +364,40 @@ func TestPromptYesNo_WritesToStderr(t *testing.T) {
 		t.Errorf("stderr = %q, want the prompt", out)
 	}
 }
+
+// A cluster stopped at the health gate gets the status, and so the fleet exit
+// code, that the same error gives a single-cluster run: 2 warnings, 3 a
+// block, 4 a --health-only pass whose checks could not read everything. An
+// error that is no verdict is a Failed cluster with a failure (exit 4), not a
+// block (exit 3).
+func TestHealthStopStatus(t *testing.T) {
+	tgt := clusterTarget{cluster: "prod", region: "us-east-1"}
+	for _, tc := range []struct {
+		name        string
+		err         error
+		want        clusterStatus
+		wantFailure bool
+		wantExit    int
+	}{
+		{"warnings", cli.Exit("warn", runner.ExitNeedsAttention), clusterHealthWarned, false, runner.ExitNeedsAttention},
+		{"blocked", cli.Exit("block", runner.ExitBlocked), clusterHealthBlocked, false, runner.ExitBlocked},
+		{"health-only pass with unreadable checks", cli.Exit("incomplete", runner.ExitIncomplete), clusterIncomplete, false, runner.ExitIncomplete},
+		{"no verdict", errors.New("failed to start spinner"), clusterFailed, true, runner.ExitIncomplete},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, f := healthStopStatus(tgt, tc.err)
+			if status != tc.want {
+				t.Errorf("status = %s, want %s", status, tc.want)
+			}
+			if (f != nil) != tc.wantFailure {
+				t.Fatalf("failure = %+v, want one: %v", f, tc.wantFailure)
+			}
+			if f != nil && (f.Name != "prod" || f.Region != "us-east-1" || f.Kind != diag.KindCluster) {
+				t.Errorf("failure = %+v, want the cluster prod in us-east-1", f)
+			}
+			if got := exitCodeOf(fleetExit([]clusterUpdateResult{{Status: status, Failure: f}}, nil)); got != tc.wantExit {
+				t.Errorf("fleet exit = %d, want %d", got, tc.wantExit)
+			}
+		})
+	}
+}

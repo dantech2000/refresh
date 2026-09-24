@@ -1,6 +1,7 @@
 package nodegroup
 
 import (
+	"strings"
 	"testing"
 
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
@@ -39,10 +40,24 @@ func TestSortNodegroupSummaries_ByInstance(t *testing.T) {
 }
 
 func TestSortNodegroupSummaries_ByNodes(t *testing.T) {
-	items := []nodegroupsvc.NodegroupSummary{{Name: "b", ReadyNodes: 5}, {Name: "a", ReadyNodes: 1}}
+	items := []nodegroupsvc.NodegroupSummary{{Name: "b", ReadyNodes: 5, ReadyKnown: true}, {Name: "a", ReadyNodes: 1, ReadyKnown: true}}
 	got := sortNodegroupSummaries(items, "nodes", false)
 	if got[0].ReadyNodes != 1 {
 		t.Errorf("nodes asc: first ReadyNodes = %d, want 1", got[0].ReadyNodes)
+	}
+}
+
+// Without -R the NODES column shows the desired size and ReadyNodes is 0 for
+// every row, so --sort nodes sorts by the desired size.
+func TestSortNodegroupSummaries_ByNodesWithoutReadiness(t *testing.T) {
+	items := []nodegroupsvc.NodegroupSummary{{Name: "a", DesiredSize: 5}, {Name: "b", DesiredSize: 1}, {Name: "c", DesiredSize: 3}}
+	got := sortNodegroupSummaries(items, "nodes", false)
+	var order []string
+	for _, ng := range got {
+		order = append(order, ng.Name)
+	}
+	if strings.Join(order, ",") != "b,c,a" {
+		t.Errorf("nodes asc without readiness = %v, want [b c a]", order)
 	}
 }
 

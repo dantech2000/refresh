@@ -44,10 +44,12 @@ const (
 	// clusterSucceeded: the cluster did what the run asked, with no failure.
 	clusterSucceeded clusterStatus = "Succeeded"
 	// clusterIncomplete: the run finished in the cluster, but some data could
-	// not be read (see the failures). Exit 4.
+	// not be read (see the failures), also a --health-only pass whose checks
+	// could not read everything. Exit 4.
 	clusterIncomplete clusterStatus = "Incomplete"
 	// clusterFailed: a nodegroup update could not start or did not succeed,
-	// or the nodegroups could not be selected. Exit 4.
+	// the nodegroups could not be selected, or the health check could not
+	// run. Exit 4.
 	clusterFailed clusterStatus = "Failed"
 	// clusterHealthBlocked: the pre-flight health check blocked the cluster.
 	// Nothing was rolled. Exit 3.
@@ -442,14 +444,7 @@ func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegrou
 		if ctx.Err() != nil {
 			return stopped("stopped during the health check")
 		}
-		// A warn-level stop (exit 2: --health-only or --require-healthy)
-		// is not a block (exit 3), so the fleet exit code matches what the
-		// same cluster gives on its own.
-		if healthExitCode(err) == runner.ExitNeedsAttention {
-			res.Status = clusterHealthWarned
-		} else {
-			res.Status = clusterHealthBlocked
-		}
+		res.Status, res.Failure = healthStopStatus(tgt, err)
 		return res
 	}
 	if done {
@@ -484,6 +479,26 @@ func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegrou
 		res.Status = finishedStatus(res)
 	}
 	return res
+}
+
+// healthStopStatus maps the error that stopped a cluster at the health gate
+// to its status, by the exit code the same cluster gives on its own: 2 (a
+// warning with --health-only or --require-healthy) is HealthWarned, 3 is
+// HealthBlocked, and 4 (a --health-only pass whose checks could not read
+// everything) is Incomplete, with the reads in the health failures. Any other
+// error is no verdict: the cluster Failed, with the error as its failure.
+func healthStopStatus(tgt clusterTarget, err error) (clusterStatus, *diag.Failure) {
+	switch healthExitCode(err) {
+	case runner.ExitNeedsAttention:
+		return clusterHealthWarned, nil
+	case runner.ExitBlocked:
+		return clusterHealthBlocked, nil
+	case runner.ExitIncomplete:
+		return clusterIncomplete, nil
+	}
+	f := diag.FromError(diag.KindCluster, tgt.cluster, "", err)
+	f.Region = tgt.region
+	return clusterFailed, &f
 }
 
 // finishedStatus is the status of a cluster whose run finished: Incomplete

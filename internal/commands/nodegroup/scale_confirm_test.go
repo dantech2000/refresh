@@ -193,3 +193,60 @@ func TestScale_DryRunPDBGateExit(t *testing.T) {
 		})
 	}
 }
+
+// A scale with no --desired, --min, or --max is a usage error before any AWS
+// call: UpdateNodegroupConfig would otherwise start an update that changes
+// nothing.
+func TestScale_NoSizeIsAUsageError(t *testing.T) {
+	for _, extra := range [][]string{{"--yes"}, {"--dry-run"}, nil} {
+		withScalePrompt(t, false, "")
+		srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5}))
+		_, _, err := runNodegroup(t, append([]string{"scale", "prod", "-n", "ng-a"}, extra...)...)
+		if err == nil || !strings.Contains(err.Error(), "needs at least one of --desired, --min, or --max") {
+			t.Errorf("%v: err = %v, want the missing-size error", extra, err)
+		}
+		if calls := srv.Calls(); len(calls) != 0 {
+			t.Errorf("%v: AWS called: %v", extra, calls)
+		}
+	}
+}
+
+// --wait polls EKS only. Without --health-check or --check-pdbs it needs no
+// Kubernetes client, so an unreachable cluster API prints no "checks will be
+// skipped" note.
+func TestScale_WaitAloneNeedsNoKubeClient(t *testing.T) {
+	t.Setenv("KUBECONFIG", t.TempDir()+"/none")
+	withScalePrompt(t, false, "")
+	srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5}))
+	_, stderr, err := runNodegroup(t, "scale", "prod", "-n", "ng-a", "--desired", "4", "--yes", "--wait")
+	if err != nil {
+		t.Fatalf("scale --wait: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stderr, "will be skipped") {
+		t.Errorf("stderr has a misleading skip note:\n%s", stderr)
+	}
+	if !calledPath(srv, "/update-config") {
+		t.Error("UpdateNodegroupConfig not called")
+	}
+}
+
+// Health-check warnings are printed on stderr after the spinner, one block
+// per stage, not as log lines under it.
+func TestScaleHealthWarnings_Print(t *testing.T) {
+	var h scaleHealthWarnings
+	h.add("pre-scaling", []string{"node a: DiskPressure"})
+	h.add("post-scaling", []string{"pod b pending"})
+	var buf strings.Builder
+	h.print(&buf)
+	want := "Warning: the pre-scaling health check reported warnings:\n  - node a: DiskPressure\n" +
+		"Warning: the post-scaling health check reported warnings:\n  - pod b pending\n"
+	if buf.String() != want {
+		t.Errorf("printed:\n%q\nwant:\n%q", buf.String(), want)
+	}
+	var empty scaleHealthWarnings
+	buf.Reset()
+	empty.print(&buf)
+	if buf.Len() != 0 {
+		t.Errorf("no warnings printed %q", buf.String())
+	}
+}
