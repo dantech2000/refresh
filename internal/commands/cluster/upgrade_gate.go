@@ -8,10 +8,10 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -69,7 +69,7 @@ func newNodegroupHealthGate(cmd *cli.Command, awsCfg aws.Config, clusterName str
 		warn:    ui.Stderr,
 		connect: func(ctx context.Context) (healthGateChecker, bool) {
 			kube, sel := runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
-				API:         eks.NewFromConfig(awsCfg),
+				API:         factory.NewEKSClient(awsCfg),
 				Cluster:     clusterName,
 				Region:      awsCfg.Region,
 				Kubeconfig:  cmd.String("kubeconfig"),

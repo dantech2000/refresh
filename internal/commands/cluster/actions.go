@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/urfave/cli/v3"
 
@@ -199,7 +198,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	var clusterService *clustersvc.ServiceImpl
 	if cmd.Bool("check-readiness") {
 		humanOutput := strings.EqualFold(cmd.String("format"), "table")
-		k8sClient, kubeSel := resolveReadinessKubeClient(ctx, eks.NewFromConfig(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), humanOutput)
+		k8sClient, kubeSel := resolveReadinessKubeClient(ctx, factory.NewEKSClient(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), humanOutput)
 		// With cluster access, also wire metrics-server (best-effort) so the
 		// health card's live-utilization check measures instead of skipping. (REF-146)
 		var metricsClient health.NodeMetricsLister
@@ -231,7 +230,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	// Support posture for the cluster's version, via the same resolver behind
 	// `refresh status` (REF-145).
 	if details != nil && details.Version != "" {
-		posture := status.NewSupportResolver(eks.NewFromConfig(awsCfg)).Resolve(ctx, details.Version)
+		posture := status.NewSupportResolver(factory.NewEKSClient(awsCfg)).Resolve(ctx, details.Version)
 		posture = status.ApplySupportType(posture, ekstypes.SupportType(details.SupportType))
 		details.Support = &posture
 	}
