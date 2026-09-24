@@ -337,13 +337,16 @@ Follow the layered flow (model it on the `cluster` command):
 
 ## Where work is tracked
 
-All issues, bugs, and roadmap live in **Linear, team `REF`** (project "Refresh — EKS CLI"),
-sequenced into phased milestones (Phase 1 quick wins & CI hardening, Phase 2
-surface trim & refocus, … through Phase 9 tests/docs). There is intentionally no
-in-repo TODO file.
+Issues and bugs live in **Linear, team `REF`** (project "Refresh — EKS CLI").
+The upgrade-companion roadmap has shipped: `status`, `cluster upgrade-check`,
+the fleet-wide `nodegroup update`, `cluster upgrade`, and the docs site. Open
+work is a backlog of review follow-ups (correctness leftovers, health-check
+scoring, view migration to `internal/render`). There is no in-repo TODO file.
 
 ## Release
 
-Tag-driven via GoReleaser + GitHub Actions; version is stamped into
-`internal/commands/version.go` by ldflags. Distributed via Homebrew cask + release binaries.
-See README "Release Process".
+release-please keeps a release PR up to date from the Conventional Commit
+messages on `main`. Merging it tags the release, and GoReleaser builds the
+binaries, signs the checksums, and updates the Homebrew cask. The version is
+stamped into `internal/commands/version.go` by ldflags. See README "Release
+process".
