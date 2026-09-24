@@ -21,6 +21,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
@@ -219,7 +220,7 @@ func finishAtHealthGate(run updateRun, summary *health.HealthSummary, flags upda
 		return gateErr
 	}
 	if flags.machine() {
-		var doc any = newUpdateDocument(run, summary)
+		var doc apidoc.Document = newUpdateDocument(run, summary)
 		if flags.healthOnly {
 			doc = summary
 		}
@@ -697,13 +698,13 @@ func nodegroupPatternError(clusterName, pattern string, matches []string, reason
 // dry-run document.
 type dryRunNodegroup struct {
 	Name string `json:"name" yaml:"name"`
-	// Action is update, force-update, skip-updating, skip-latest,
-	// skip-custom, or unknown (the nodegroup could not be read; see
+	// Action is Update, ForceUpdate, SkipUpdating, SkipLatest,
+	// SkipCustom, or Unknown (the nodegroup could not be read; see
 	// Failure).
-	Action     string `json:"action" yaml:"action"`
-	CurrentAMI string `json:"currentAmi,omitempty" yaml:"currentAmi,omitempty"`
-	LatestAMI  string `json:"latestAmi,omitempty" yaml:"latestAmi,omitempty"`
-	Reason     string `json:"reason" yaml:"reason"`
+	Action     dryrun.Action `json:"action" yaml:"action"`
+	CurrentAMI string        `json:"currentAmi,omitempty" yaml:"currentAmi,omitempty"`
+	LatestAMI  string        `json:"latestAmi,omitempty" yaml:"latestAmi,omitempty"`
+	Reason     string        `json:"reason" yaml:"reason"`
 	// Failure is set when the action is unknown. The same failure is in the
 	// document's failures.
 	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
@@ -718,6 +719,9 @@ type dryRunPlan struct {
 	Nodegroups []dryRunNodegroup `json:"nodegroups" yaml:"nodegroups"`
 	Failures   diag.List         `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is NodegroupUpdatePlan.
+func (dryRunPlan) DocumentKind() apidoc.Kind { return apidoc.KindNodegroupUpdatePlan }
 
 // dryRunFailure is the failure of a nodegroup the preview could not
 // describe.

@@ -13,7 +13,7 @@ func TestOutputAddonDetailsTable_FullDetails(t *testing.T) {
 		Name:               "vpc-cni",
 		Version:            "v1.18.3",
 		Status:             "ACTIVE",
-		Health:             "PASS",
+		Health:             addons.HealthPass,
 		ARN:                "arn:aws:eks:us-east-1:123:addon/x",
 		ServiceAccountRole: "arn:aws:iam::123:role/cni",
 		Issues: []addons.AddonIssue{

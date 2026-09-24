@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
@@ -59,6 +60,9 @@ type InsightDetail struct {
 	// or fails. It is here so every document carries the same key.
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is InsightDescription.
+func (InsightDetail) DocumentKind() apidoc.Kind { return apidoc.KindInsightDescription }
 
 // DeprecationDetail describes one deprecated Kubernetes API surfaced by an
 // UPGRADE_READINESS insight, plus the clients still calling it. EKS derives this
@@ -136,6 +140,9 @@ type UpgradeReport struct {
 	// incomplete (exit 4). [] when everything was read.
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is UpgradeCheck.
+func (UpgradeReport) DocumentKind() apidoc.Kind { return apidoc.KindUpgradeCheck }
 
 // ListInsights returns the cluster's EKS Cluster Insights filtered per opts.
 // PASSING insights are dropped unless opts.ShowPassing.
@@ -319,7 +326,7 @@ func (s *ServiceImpl) UpgradeCheck(ctx context.Context, clusterName string, opts
 		return nil, err
 	}
 
-	return &UpgradeReport{Cluster: clusterName, SupportType: supportType, Insights: insights, Skew: skew, Failures: failures}, nil
+	return &UpgradeReport{Cluster: clusterName, SupportType: supportType, Insights: apidoc.List(insights), Skew: skew, Failures: failures}, nil
 }
 
 // computeSkew builds the local version-skew report and ordered findings. It
@@ -327,7 +334,7 @@ func (s *ServiceImpl) UpgradeCheck(ctx context.Context, clusterName string, opts
 // failed describe never reads as "current".
 func (s *ServiceImpl) computeSkew(ctx context.Context, clusterName, cpVersion string) (SkewReport, []diag.Failure, error) {
 	var failures []diag.Failure
-	report := SkewReport{ControlPlaneVersion: cpVersion}
+	report := SkewReport{ControlPlaneVersion: cpVersion, Nodegroups: []NodegroupSkew{}, Addons: []AddonSkew{}}
 	cpMinor, cpOK := minorVersion(cpVersion)
 
 	// Nodegroups.

@@ -124,25 +124,25 @@ func TestAggregate_AllSkippedNoPanic(t *testing.T) {
 // ---- HealthStatus / Decision string values ----
 
 func TestHealthStatusValues(t *testing.T) {
-	if StatusPass != "PASS" {
-		t.Errorf("StatusPass = %q, want PASS", StatusPass)
+	if StatusPass != "Pass" {
+		t.Errorf("StatusPass = %q, want Pass", StatusPass)
 	}
-	if StatusWarn != "WARN" {
-		t.Errorf("StatusWarn = %q, want WARN", StatusWarn)
+	if StatusWarn != "Warn" {
+		t.Errorf("StatusWarn = %q, want Warn", StatusWarn)
 	}
-	if StatusFail != "FAIL" {
-		t.Errorf("StatusFail = %q, want FAIL", StatusFail)
+	if StatusFail != "Fail" {
+		t.Errorf("StatusFail = %q, want Fail", StatusFail)
 	}
 }
 
 func TestDecisionValues(t *testing.T) {
-	if DecisionProceed != "PROCEED" {
+	if DecisionProceed != "Proceed" {
 		t.Errorf("DecisionProceed = %q", DecisionProceed)
 	}
-	if DecisionBlock != "BLOCK" {
+	if DecisionBlock != "Block" {
 		t.Errorf("DecisionBlock = %q", DecisionBlock)
 	}
-	if DecisionWarn != "WARN" {
+	if DecisionWarn != "Warn" {
 		t.Errorf("DecisionWarn = %q", DecisionWarn)
 	}
 }

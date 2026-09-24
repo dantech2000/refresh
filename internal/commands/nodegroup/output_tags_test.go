@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/addons"
@@ -113,9 +114,9 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata golden fi
 // populated NodegroupDetails and ClusterDetails, so tag changes can't alter
 // the machine output.
 func TestEncodeStdoutGolden(t *testing.T) {
-	payloads := map[string]any{
-		"nodegroup_details": fillValue(reflect.TypeFor[nodegroupsvc.NodegroupDetails](), 0).Interface(),
-		"cluster_details":   fillValue(reflect.TypeFor[clustersvc.ClusterDetails](), 0).Interface(),
+	payloads := map[string]apidoc.Document{
+		"nodegroup_details": fillValue(reflect.TypeFor[nodegroupsvc.NodegroupDetails](), 0).Interface().(apidoc.Document),
+		"cluster_details":   fillValue(reflect.TypeFor[clustersvc.ClusterDetails](), 0).Interface().(apidoc.Document),
 	}
 	for name, payload := range payloads {
 		for _, format := range []string{"json", "yaml"} {
@@ -142,7 +143,7 @@ func TestEncodeStdoutGolden(t *testing.T) {
 	}
 }
 
-func encodeToString(t *testing.T, format string, payload any) string {
+func encodeToString(t *testing.T, format string, payload apidoc.Document) string {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {

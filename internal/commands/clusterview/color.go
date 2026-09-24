@@ -2,6 +2,7 @@ package clusterview
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dantech2000/refresh/internal/health"
@@ -24,6 +25,14 @@ func knownHealthTreeLabel(d health.Decision) (string, bool) {
 		return "", false
 	}
 }
+
+// decisionLabel is the upper-case word the human and plain views show for
+// a health decision (PROCEED, WARN, BLOCK). The JSON value is PascalCase.
+func decisionLabel(d health.Decision) string { return strings.ToUpper(string(d)) }
+
+// healthStatusLabel is the upper-case word the human and plain views show
+// for a health check status (PASS, WARN, FAIL).
+func healthStatusLabel(s health.HealthStatus) string { return strings.ToUpper(string(s)) }
 
 // treeStatusWithHealth produces the status cell shown in the tree view.
 // Known decisions replace the status with the health label; unknown decisions

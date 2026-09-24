@@ -246,7 +246,7 @@ func TestUpdate_VersionGuard(t *testing.T) {
 	cases := []struct {
 		name, installed, version string
 		available                []string
-		wantStatus               string
+		wantStatus               UpdateStatus
 		wantUpdate               bool
 		wantWarning              string
 	}{

@@ -39,8 +39,9 @@ bump. It's read-only.
 refresh nodegroup update -c prod --dry-run --changelog
 ```
 
-Dry-run shows the planned action per nodegroup (`update`, `skip-latest`,
-`skip-updating`, `skip-custom`) without touching anything.
+Dry-run shows the planned action per nodegroup without touching anything.
+With `-o json`, the `action` is `Update`, `ForceUpdate`, `SkipUpdating`,
+`SkipLatest`, or `SkipCustom`.
 
 ## 4. Patch with health gates
 

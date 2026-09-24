@@ -48,8 +48,8 @@ func TestDescribe_PartialFailuresBecomeFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Describe: %v", err)
 	}
-	if len(details.Addons) != 1 || details.Addons[0].Name != "coredns" {
-		t.Errorf("addons = %+v, want coredns only", details.Addons)
+	if len(details.AddonList()) != 1 || details.AddonList()[0].Name != "coredns" {
+		t.Errorf("addons = %+v, want coredns only", details.AddonList())
 	}
 	want := []struct {
 		kind       diag.Kind
@@ -73,22 +73,26 @@ func TestDescribe_PartialFailuresBecomeFailures(t *testing.T) {
 		}
 	}
 
-	// The machine document keeps a failed collection as null (never [],
-	// which would claim "no nodegroups") and carries the failure in failures.
+	// The machine document leaves out a failed collection (never [], which
+	// would claim "no nodegroups") and carries the failure in failures.
 	b, err := json.Marshal(details)
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := string(b)
-	for _, want := range []string{`"nodegroups":null`, `"failures":[{`, `"operation":"eks:ListNodegroups"`} {
+	for _, want := range []string{`"failures":[{`, `"operation":"eks:ListNodegroups"`} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("JSON lacks %s:\n%s", want, doc)
 		}
 	}
+	if strings.Contains(doc, `"nodegroups"`) {
+		t.Errorf("JSON has nodegroups, which were not read:\n%s", doc)
+	}
 }
 
-// Without --detailed, nodegroups were not collected: null, not []. Add-ons
-// that were collected and are none are [].
+// Without --detailed, nodegroups were not collected: the key is left out,
+// not []. Add-ons that were collected and are none are []. Lists and maps
+// that were read and are empty are [] and {}, never null.
 func TestDescribe_NotCollectedIsNullCollectedEmptyIsEmptyList(t *testing.T) {
 	mock := &mocks.EKSAPI{
 		DescribeClusterFn: func(_ context.Context, in *eks.DescribeClusterInput, _ ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
@@ -112,9 +116,14 @@ func TestDescribe_NotCollectedIsNullCollectedEmptyIsEmptyList(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := string(b)
-	for _, want := range []string{`"nodegroups":null`, `"addons":[]`, `"failures":[]`} {
+	for _, want := range []string{`"addons":[]`, `"failures":[]`, `"tags":{}`, `"subnetIds":[]`, `"securityGroupIds":[]`, `"loggingEnabled":[]`} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("JSON lacks %s:\n%s", want, doc)
+		}
+	}
+	for _, absent := range []string{`"nodegroups"`, `null`} {
+		if strings.Contains(doc, absent) {
+			t.Errorf("JSON has %s:\n%s", absent, doc)
 		}
 	}
 }

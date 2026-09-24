@@ -228,8 +228,8 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 			LoggingEnabled:     []string{"api"},
 			DeletionProtection: true,
 		},
-		Addons:     []clustersvc.AddonInfo{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE"}},
-		Nodegroups: []clustersvc.NodegroupSummary{{Name: "ng-workers", Status: "ACTIVE", ReadyNodes: 2}},
+		Addons:     &[]clustersvc.AddonInfo{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE"}},
+		Nodegroups: &[]clustersvc.NodegroupSummary{{Name: "ng-workers", Status: "ACTIVE", ReadyNodes: 2}},
 	}
 
 	// Human path (render design system): sectioned detail, no "Cluster

@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v1/NodegroupUpdatePlan.json",
+  "$defs": {
+    "Action": {
+      "type": "string",
+      "enum": [
+        "Update",
+        "ForceUpdate",
+        "SkipUpdating",
+        "SkipLatest",
+        "SkipCustom",
+        "Unknown"
+      ],
+      "description": "Action is the machine-readable name of a dry-run action, the `action` of a nodegroup in the NodegroupUpdatePlan document."
+    },
+    "DryRunNodegroup": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/Action",
+          "description": "action is Update, ForceUpdate, SkipUpdating, SkipLatest, SkipCustom, or Unknown (the nodegroup could not be read; see Failure)."
+        },
+        "currentAmi": {
+          "type": "string"
+        },
+        "latestAmi": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "failure": {
+          "$ref": "#/$defs/Failure",
+          "description": "failure is set when the action is unknown. The same failure is in the document's failures."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "action",
+        "reason"
+      ],
+      "description": "DryRunNodegroup is one nodegroup's previewed action in a -o json/yaml dry-run document."
+    },
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For KindRegion it is the region name."
+        },
+        "cluster": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "$ref": "#/$defs/FailureReason"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether running the same command again, with no other change, may succeed. It is always encoded."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of human text. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the raw AWS API error code, such as AccessDeniedException, when the failure came from an API response."
+        },
+        "updateId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item refresh could not read, or one action it attempted that did not complete. The JSON and YAML keys are a public contract (docs/concepts/output.md): later versions only add fields."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "FailureList": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "A list of failures. It is [] when there are none, never null."
+    },
+    "FailureReason": {
+      "type": "string",
+      "enum": [
+        "AccessDenied",
+        "CredentialError",
+        "Throttled",
+        "NotFound",
+        "RegionUnavailable",
+        "InvalidRequest",
+        "ServiceError",
+        "NetworkError",
+        "Timeout",
+        "Interrupted",
+        "UpdateFailed",
+        "UpdateCancelled",
+        "NotMonitored",
+        "NotAttempted",
+        "Unknown"
+      ],
+      "description": "FailureReason is why a Failure happened, from a closed set. Scripts branch on it. Later versions may add reasons; consumers must accept unknown values."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v1",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "NodegroupUpdatePlan",
+      "description": "The type of the document."
+    },
+    "cluster": {
+      "type": "string"
+    },
+    "dryRun": {
+      "type": "boolean"
+    },
+    "force": {
+      "type": "boolean"
+    },
+    "reroll": {
+      "type": "boolean"
+    },
+    "nodegroups": {
+      "items": {
+        "$ref": "#/$defs/DryRunNodegroup"
+      },
+      "type": "array"
+    },
+    "failures": {
+      "$ref": "#/$defs/FailureList",
+      "description": "Every failure of the run: the items refresh could not read and the actions that did not complete. This top-level list is complete; a nested failure or failures field repeats a subset of it. The list is sorted by kind, region, cluster, name, and operation. [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "cluster",
+    "dryRun",
+    "force",
+    "nodegroups",
+    "failures"
+  ],
+  "title": "NodegroupUpdatePlan",
+  "description": "The document that `refresh nodegroup update --dry-run -o json` prints. -o yaml prints the same structure."
+}

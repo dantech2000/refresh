@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/diag"
 )
 
@@ -25,28 +26,38 @@ import (
 type StepType string
 
 const (
-	StepReadiness    StepType = "readiness"
-	StepControlPlane StepType = "control-plane"
-	StepAddon        StepType = "addon"
-	StepNodegroup    StepType = "nodegroup"
+	StepReadiness    StepType = "Readiness"
+	StepControlPlane StepType = "ControlPlane"
+	StepAddon        StepType = "Addon"
+	StepNodegroup    StepType = "Nodegroup"
 )
+
+// EnumValues lists every StepType.
+func (StepType) EnumValues() []string {
+	return []string{string(StepReadiness), string(StepControlPlane), string(StepAddon), string(StepNodegroup)}
+}
 
 // StepStatus is the planned/derived state of a step.
 type StepStatus string
 
 const (
 	// StatusPending means the step still needs to run.
-	StatusPending StepStatus = "pending"
+	StatusPending StepStatus = "Pending"
 	// StatusCompleted means live cluster state already satisfies the step,
 	// so the engine skips it (this is what makes reruns resumable/no-ops).
-	StatusCompleted StepStatus = "completed"
+	StatusCompleted StepStatus = "Completed"
 	// StatusBlocked means the step cannot run until the blocker is resolved;
 	// a plan containing blocked steps refuses to execute.
-	StatusBlocked StepStatus = "blocked"
+	StatusBlocked StepStatus = "Blocked"
 	// StatusManual means the orchestrator will not perform this step (e.g.
 	// custom-AMI nodegroups); it is surfaced for the operator instead.
-	StatusManual StepStatus = "manual"
+	StatusManual StepStatus = "Manual"
 )
+
+// EnumValues lists every StepStatus.
+func (StepStatus) EnumValues() []string {
+	return []string{string(StatusPending), string(StatusCompleted), string(StatusBlocked), string(StatusManual)}
+}
 
 // Step is one entry in the ordered upgrade plan.
 type Step struct {
@@ -79,6 +90,9 @@ type Plan struct {
 	// read in a readiness gate also blocks its step. [] when empty.
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is UpgradePlan.
+func (Plan) DocumentKind() apidoc.Kind { return apidoc.KindUpgradePlan }
 
 // Blockers returns the descriptions of all blocked steps across hops.
 func (p *Plan) Blockers() []string {

@@ -36,6 +36,14 @@ const (
 	RunAborted RunStatus = "Aborted"
 )
 
+// EnumValues lists every RunStatus.
+func (RunStatus) EnumValues() []string {
+	return []string{
+		string(RunSucceeded), string(RunFailed), string(RunBlocked),
+		string(RunInterrupted), string(RunTimedOut), string(RunAborted),
+	}
+}
+
 // addFailure appends f to the plan's failures unless the same failure is
 // there already (a lookup repeated for each hop fails the same way).
 func (p *Plan) addFailure(f diag.Failure) {

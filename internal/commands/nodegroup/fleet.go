@@ -14,6 +14,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
@@ -68,6 +69,16 @@ const (
 	// clusterPlanned: a dry run previewed every selected nodegroup.
 	clusterPlanned clusterStatus = "Planned"
 )
+
+// EnumValues lists every clusterStatus.
+func (clusterStatus) EnumValues() []string {
+	return []string{
+		string(clusterSucceeded), string(clusterIncomplete), string(clusterFailed),
+		string(clusterHealthBlocked), string(clusterHealthWarned), string(clusterVerifyFailed),
+		string(clusterInterrupted), string(clusterTimedOut), string(clusterNotAttempted),
+		string(clusterPlanned),
+	}
+}
 
 // clusterUpdateResult is one cluster's outcome within a fleet run.
 type clusterUpdateResult struct {
@@ -135,12 +146,18 @@ type fleetUpdateDocument struct {
 	Failures       diag.List `json:"failures" yaml:"failures"`
 }
 
+// DocumentKind is FleetUpdate.
+func (fleetUpdateDocument) DocumentKind() apidoc.Kind { return apidoc.KindFleetUpdate }
+
 // fleetDryRunDocument is the -o json/yaml document of a fleet dry run.
 type fleetDryRunDocument struct {
 	Clusters       []fleetDryRunResult `json:"clusters" yaml:"clusters"`
 	SkippedRegions []string            `json:"skippedRegions,omitempty" yaml:"skippedRegions,omitempty"`
 	Failures       diag.List           `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is FleetUpdatePlan.
+func (fleetDryRunDocument) DocumentKind() apidoc.Kind { return apidoc.KindFleetUpdatePlan }
 
 // newFleetUpdateDocument builds the fleet document from the per-cluster
 // results and discovery. Failures are the regions discovery could not list
@@ -153,6 +170,9 @@ func newFleetUpdateDocument(results []clusterUpdateResult, disc fleetDiscovery) 
 	diag.Sort(fs)
 	if results == nil {
 		results = []clusterUpdateResult{}
+	}
+	for i := range results {
+		results[i].Nodegroups = apidoc.List(results[i].Nodegroups)
 	}
 	return fleetUpdateDocument{Clusters: results, SkippedRegions: disc.skipped, Failures: fs}
 }
@@ -310,7 +330,7 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 // (exit 4), not a pass.
 func finishEmptyFleet(ctx context.Context, disc fleetDiscovery, regions int, flags updateAMIFlags) error {
 	if flags.machine() {
-		var doc any = newFleetUpdateDocument(nil, disc)
+		var doc apidoc.Document = newFleetUpdateDocument(nil, disc)
 		if flags.dryRun {
 			doc = newFleetDryRunDocument(nil, disc)
 		}
