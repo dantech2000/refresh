@@ -7,6 +7,7 @@ import (
 
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
@@ -39,12 +40,28 @@ const (
 	ngNotAttempted nodegroupStatus = "NotAttempted"
 )
 
+// EnumValues lists every nodegroupStatus.
+func (nodegroupStatus) EnumValues() []string {
+	return []string{
+		string(ngStarted), string(ngSucceeded), string(ngSkipped), string(ngFailed),
+		string(ngCancelled), string(ngInProgress), string(ngNotAttempted),
+	}
+}
+
+// skipReason is why a Skipped nodegroup was skipped.
+type skipReason string
+
 // The reasons of a Skipped nodegroup.
 const (
-	skipAlreadyUpdating = "AlreadyUpdating"
-	skipAlreadyLatest   = "AlreadyLatest"
-	skipCustomAMI       = "CustomAMI"
+	skipAlreadyUpdating skipReason = "AlreadyUpdating"
+	skipAlreadyLatest   skipReason = "AlreadyLatest"
+	skipCustomAMI       skipReason = "CustomAMI"
 )
+
+// EnumValues lists every skipReason.
+func (skipReason) EnumValues() []string {
+	return []string{string(skipAlreadyUpdating), string(skipAlreadyLatest), string(skipCustomAMI)}
+}
 
 // nodegroupResult is one nodegroup's entry in the run document.
 type nodegroupResult struct {
@@ -53,7 +70,7 @@ type nodegroupResult struct {
 	UpdateID string          `json:"updateId,omitempty" yaml:"updateId,omitempty"`
 	// Reason says why a Skipped nodegroup was skipped: AlreadyUpdating,
 	// AlreadyLatest, or CustomAMI.
-	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Reason skipReason `json:"reason,omitempty" yaml:"reason,omitempty"`
 	// Failure is set when the status is Failed, Cancelled, InProgress, or
 	// NotAttempted. The same failure is in the document's failures.
 	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
@@ -165,7 +182,7 @@ func (r *updateRun) fail(ng, op string, err error) {
 }
 
 // skip records nodegroup ng as Skipped for reason.
-func (r *updateRun) skip(ng, reason string) {
+func (r *updateRun) skip(ng string, reason skipReason) {
 	r.nodegroups = append(r.nodegroups, nodegroupResult{Name: ng, Status: ngSkipped, Reason: reason})
 }
 
@@ -240,6 +257,9 @@ type updateDocument struct {
 	Health   *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`
 	Failures diag.List             `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is NodegroupUpdate.
+func (updateDocument) DocumentKind() apidoc.Kind { return apidoc.KindNodegroupUpdate }
 
 // newUpdateDocument builds the document of run, with the health verdict
 // when a check ran. The document's failures are the run's plus the health

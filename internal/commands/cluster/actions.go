@@ -136,9 +136,36 @@ func listFailures(regionFailures []diag.Failure, summaries []clustersvc.ClusterS
 	out := slices.Clone(regionFailures)
 	for _, s := range summaries {
 		out = append(out, s.Failures...)
+		out = append(out, healthFailures(s.Health, s.Name, s.Region)...)
 	}
-	diag.Sort(out)
+	return sortedUnique(out)
+}
+
+// healthFailures returns the failures of a --show-health verdict (nil when
+// there is none), with the cluster and region set, so the document's
+// top-level failures lists them too.
+func healthFailures(h *health.HealthSummary, cluster, region string) []diag.Failure {
+	if h == nil {
+		return nil
+	}
+	out := make([]diag.Failure, 0, len(h.Failures))
+	for _, f := range h.Failures {
+		if f.Cluster == "" && f.Kind != diag.KindCluster {
+			f.Cluster = cluster
+		}
+		if f.Region == "" {
+			f.Region = region
+		}
+		out = append(out, f)
+	}
 	return out
+}
+
+// sortedUnique sorts fs and drops exact duplicates: a nodegroup the listing
+// and the health check both failed to read is one failure.
+func sortedUnique(fs []diag.Failure) diag.List {
+	diag.Sort(fs)
+	return slices.Compact(fs)
 }
 
 // wantsTree reports whether cluster list renders the region tree: -o tree,
@@ -207,6 +234,9 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		posture = status.ApplySupportType(posture, ekstypes.SupportType(details.SupportType))
 		details.Support = &posture
 	}
+
+	// The health verdict's failures belong in the document's failures.
+	details.Failures = sortedUnique(append(slices.Clone(details.Failures), healthFailures(details.Health, details.Name, details.Region)...))
 
 	format := cmd.String("format")
 	if handled, err := runner.EncodeStdout(format, details); handled {

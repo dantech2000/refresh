@@ -103,7 +103,7 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails) []string
 			ui.Column{Title: "HEALTH", Min: 8},
 		)
 		for _, a := range d.Addons {
-			h := a.Health
+			h := string(a.Health)
 			if h == "" {
 				h = "Unknown"
 			}
@@ -162,7 +162,7 @@ func healthCardLines(th *render.Theme, h *health.HealthSummary) []string {
 	st, col := decisionStatusColor(th, h.Decision)
 	head := th.Section("HEALTH") +
 		th.Paint(th.Pal.Dim, fmt.Sprintf("  %d/100 · ", h.OverallScore)) +
-		th.Tokenf(st, string(h.Decision))
+		th.Tokenf(st, decisionLabel(h.Decision))
 	bar := th.Bar(h.OverallScore, 100, 24, col)
 	out := []string{head, "  " + bar + "  " + th.Paint(th.Pal.Dim, healthSummaryMsg(h))}
 	return append(out, healthCheckRows(th, h.Results)...)

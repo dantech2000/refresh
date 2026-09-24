@@ -146,23 +146,50 @@ func Preview(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clus
 	return out, nil
 }
 
+// Action is the machine-readable name of a dry-run action, the `action` of
+// a nodegroup in the NodegroupUpdatePlan document.
+type Action string
+
+// The dry-run actions.
+const (
+	// ActionUpdate: the update rolls the nodegroup to the latest AMI.
+	ActionUpdate Action = "Update"
+	// ActionForceUpdate: --force rolls the nodegroup.
+	ActionForceUpdate Action = "ForceUpdate"
+	// ActionSkipUpdating: the nodegroup is already updating.
+	ActionSkipUpdating Action = "SkipUpdating"
+	// ActionSkipLatest: the nodegroup already runs the latest AMI.
+	ActionSkipLatest Action = "SkipLatest"
+	// ActionSkipCustom: the nodegroup runs a custom AMI, which the update
+	// never rolls.
+	ActionSkipCustom Action = "SkipCustom"
+	// ActionUnknown: the nodegroup could not be read.
+	ActionUnknown Action = "Unknown"
+)
+
+// EnumValues lists every Action.
+func (Action) EnumValues() []string {
+	return []string{
+		string(ActionUpdate), string(ActionForceUpdate), string(ActionSkipUpdating),
+		string(ActionSkipLatest), string(ActionSkipCustom), string(ActionUnknown),
+	}
+}
+
 // ActionName is the stable machine-readable name of a dry-run action.
-func ActionName(a refreshTypes.DryRunAction) string {
+func ActionName(a refreshTypes.DryRunAction) Action {
 	switch a {
 	case refreshTypes.ActionUpdate:
-		return "update"
+		return ActionUpdate
 	case refreshTypes.ActionForceUpdate:
-		return "force-update"
+		return ActionForceUpdate
 	case refreshTypes.ActionSkipUpdating:
-		return "skip-updating"
+		return ActionSkipUpdating
 	case refreshTypes.ActionSkipLatest:
-		return "skip-latest"
+		return ActionSkipLatest
 	case refreshTypes.ActionSkipCustom:
-		return "skip-custom"
-	case refreshTypes.ActionUnknown:
-		return "unknown"
+		return ActionSkipCustom
 	default:
-		return "unknown"
+		return ActionUnknown
 	}
 }
 

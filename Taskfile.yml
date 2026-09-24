@@ -149,22 +149,23 @@ tasks:
       - uv run --frozen mkdocs serve
 
   docs:gen:
-    desc: Regenerate the Markdown command reference from the CLI tree
+    desc: Regenerate the Markdown command reference and the JSON schemas
     cmds:
-      - go run . gen-docs --out docs/reference
+      - go run . gen-docs --out docs/reference --schema-out docs/schema/v1
 
   docs:check:
-    desc: Fail if the committed command reference is stale (mirrors CI)
+    desc: Fail if the committed command reference or JSON schemas are stale (mirrors CI)
     deps: [docs:gen]
     cmds:
-      # `git status --porcelain` also catches new, untracked reference pages.
+      # `git status --porcelain` also catches new, untracked reference pages
+      # and schemas.
       - |
-        if [ -n "$(git status --porcelain -- docs/reference)" ]; then
-          echo "docs/reference is stale vs the CLI tree. Commit the regenerated files:"
-          git status --short -- docs/reference
+        if [ -n "$(git status --porcelain -- docs/reference docs/schema)" ]; then
+          echo "docs/reference or docs/schema is stale vs the CLI tree and the Go types. Commit the regenerated files:"
+          git status --short -- docs/reference docs/schema
           exit 1
         fi
-        echo "docs/reference is up to date."
+        echo "docs/reference and docs/schema are up to date."
 
   docs:build:
     desc: Build the documentation site (strict — fails on broken links/nav)

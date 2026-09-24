@@ -75,7 +75,7 @@ func (s *ServiceImpl) List(ctx context.Context, clusterName string, options List
 		}
 		unknown := AddonSummary{Name: r.name, Status: "UNKNOWN"}
 		if options.ShowHealth {
-			unknown.Health = "UNKNOWN"
+			unknown.Health = HealthUnknown
 		}
 		summaries = append(summaries, unknown)
 	}
@@ -144,7 +144,7 @@ func (s *ServiceImpl) listAddons(ctx context.Context, clusterName string, option
 				return outcome{done: true, addonResult: addonResult{name: name, failure: diag.FromError(diag.KindAddon, name, diag.OpDescribeAddon, errEmptyResponse)}}
 			}
 
-			health := ""
+			var health Health
 			if options.ShowHealth {
 				health = mapAddonHealth(desc.Addon.Status)
 			}

@@ -162,8 +162,8 @@ func TestDescribe(t *testing.T) {
 	if details.Version != "v1.14.0" {
 		t.Errorf("Version = %s, want v1.14.0", details.Version)
 	}
-	if details.Health != "PASS" {
-		t.Errorf("Health = %s, want PASS", details.Health)
+	if details.Health != HealthPass {
+		t.Errorf("Health = %s, want Pass", details.Health)
 	}
 }
 
@@ -281,14 +281,14 @@ func TestGetAvailableVersions(t *testing.T) {
 func TestMapAddonHealth(t *testing.T) {
 	tests := []struct {
 		status   ekstypes.AddonStatus
-		expected string
+		expected Health
 	}{
-		{ekstypes.AddonStatusActive, "PASS"},
-		{ekstypes.AddonStatusDegraded, "FAIL"},
-		{ekstypes.AddonStatusCreateFailed, "FAIL"},
-		{ekstypes.AddonStatusCreating, "IN_PROGRESS"},
-		{ekstypes.AddonStatusUpdating, "IN_PROGRESS"},
-		{ekstypes.AddonStatus("UNKNOWN"), "UNKNOWN"},
+		{ekstypes.AddonStatusActive, HealthPass},
+		{ekstypes.AddonStatusDegraded, HealthFail},
+		{ekstypes.AddonStatusCreateFailed, HealthFail},
+		{ekstypes.AddonStatusCreating, HealthInProgress},
+		{ekstypes.AddonStatusUpdating, HealthInProgress},
+		{ekstypes.AddonStatus("UNKNOWN"), HealthUnknown},
 	}
 
 	for _, tt := range tests {
@@ -339,7 +339,7 @@ func TestAddonSummary(t *testing.T) {
 		Name:    "vpc-cni",
 		Version: "v1.14.0",
 		Status:  "ACTIVE",
-		Health:  "PASS",
+		Health:  HealthPass,
 	}
 
 	if summary.Name != "vpc-cni" {
@@ -352,7 +352,7 @@ func TestAddonDetails(t *testing.T) {
 		Name:    "vpc-cni",
 		Version: "v1.14.0",
 		Status:  "ACTIVE",
-		Health:  "PASS",
+		Health:  HealthPass,
 		ARN:     "arn:aws:eks:us-east-1:123456789:addon/cluster/vpc-cni/xxx",
 	}
 

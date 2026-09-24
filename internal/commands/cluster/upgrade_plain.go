@@ -3,6 +3,8 @@ package cluster
 import (
 	"fmt"
 	"io"
+	"strings"
+	"unicode"
 
 	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -23,16 +25,33 @@ func upgradePlanPlain(plan *upgrade.Plan) *ui.PlainTable {
 			t.Row(
 				hop.From+"->"+hop.To,
 				fmt.Sprintf("%d", i+1),
-				string(s.Type),
+				kebabCase(string(s.Type)),
 				s.Target,
 				s.Version,
-				string(s.Status),
+				kebabCase(string(s.Status)),
 				s.Description,
 				s.Reason,
 			)
 		}
 	}
 	return t
+}
+
+// kebabCase turns a PascalCase enum value into the lower-case words the
+// -o plain columns have always shown: ControlPlane is control-plane, and
+// Pending is pending. The JSON value stays PascalCase.
+func kebabCase(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if unicode.IsUpper(r) {
+			if i > 0 {
+				b.WriteByte('-')
+			}
+			r = unicode.ToLower(r)
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // writeUpgradePlanPlain writes the plan as TSV to out and the plan's summary

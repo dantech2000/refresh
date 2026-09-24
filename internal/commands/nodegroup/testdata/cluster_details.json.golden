@@ -1,4 +1,6 @@
 {
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "ClusterDescription",
   "name": "s-name",
   "status": "s-status",
   "version": "s-version",

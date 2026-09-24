@@ -3,15 +3,38 @@ package addons
 import (
 	"time"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/diag"
 )
+
+// Health is an add-on's health, derived from its EKS status.
+type Health string
+
+// The add-on health values.
+const (
+	// HealthPass: the add-on is ACTIVE.
+	HealthPass Health = "Pass"
+	// HealthFail: the add-on is DEGRADED, or a create, update, or delete
+	// failed.
+	HealthFail Health = "Fail"
+	// HealthInProgress: the add-on is CREATING, UPDATING, or DELETING.
+	HealthInProgress Health = "InProgress"
+	// HealthUnknown: any other status, or the add-on could not be read.
+	HealthUnknown Health = "Unknown"
+)
+
+// EnumValues lists every Health.
+func (Health) EnumValues() []string {
+	return []string{string(HealthPass), string(HealthFail), string(HealthInProgress), string(HealthUnknown)}
+}
 
 // AddonSummary contains basic addon info for listings
 type AddonSummary struct {
 	Name    string `json:"name" yaml:"name"`
 	Version string `json:"version" yaml:"version"`
 	Status  string `json:"status" yaml:"status"`
-	Health  string `json:"health" yaml:"health"`
+	// Health is set with --show-health.
+	Health Health `json:"health,omitempty" yaml:"health,omitempty"`
 }
 
 // ListResult is the full outcome of an add-on listing.
@@ -34,12 +57,15 @@ type AddonList struct {
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
+// DocumentKind is AddonList.
+func (AddonList) DocumentKind() apidoc.Kind { return apidoc.KindAddonList }
+
 // AddonDetails contains expanded addon information
 type AddonDetails struct {
 	Name               string         `json:"name" yaml:"name"`
 	Version            string         `json:"version" yaml:"version"`
 	Status             string         `json:"status" yaml:"status"`
-	Health             string         `json:"health" yaml:"health"`
+	Health             Health         `json:"health" yaml:"health"`
 	ARN                string         `json:"arn" yaml:"arn"`
 	ServiceAccountRole string         `json:"serviceAccountRole,omitempty" yaml:"serviceAccountRole,omitempty"`
 	CreatedAt          *time.Time     `json:"createdAt,omitempty" yaml:"createdAt,omitempty"`
@@ -51,6 +77,9 @@ type AddonDetails struct {
 	// fails. It is here so every document carries the same key.
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is AddonDescription.
+func (AddonDetails) DocumentKind() apidoc.Kind { return apidoc.KindAddonDescription }
 
 // AddonIssue represents an issue reported by an addon
 type AddonIssue struct {
@@ -68,48 +97,60 @@ type AddonVersionInfo struct {
 	RequiresIAMPolicy bool     `json:"requiresIamPolicy"`
 }
 
+// UpdateStatus is the outcome of one add-on update.
+type UpdateStatus string
+
 // The statuses of an add-on update result. docs/concepts/output.md
 // documents them; later versions may add values.
 const (
 	// StatusDryRun: --dry-run; nothing was sent.
-	StatusDryRun = "DryRun"
+	StatusDryRun UpdateStatus = "DryRun"
 	// StatusUpToDate: the add-on is already at (or, for "latest", above) the
 	// target version; no UpdateAddon call was made.
-	StatusUpToDate = "UpToDate"
+	StatusUpToDate UpdateStatus = "UpToDate"
 	// StatusInProgress: the add-on is already CREATING/UPDATING at the
 	// target version; no new update was submitted (without Wait).
-	StatusInProgress = "InProgress"
+	StatusInProgress UpdateStatus = "InProgress"
 	// StatusStarted: the update was submitted, and the run did not wait for
 	// it (no Wait).
-	StatusStarted = "Started"
+	StatusStarted UpdateStatus = "Started"
 	// StatusCompleted: the EKS update succeeded, the add-on reports the
 	// target version, and the post-update health check passed.
-	StatusCompleted = "Completed"
+	StatusCompleted UpdateStatus = "Completed"
 	// StatusCompletedWithIssues: the update landed but the post-update health
 	// check found problems (see HealthIssues).
-	StatusCompletedWithIssues = "CompletedWithIssues"
+	StatusCompletedWithIssues UpdateStatus = "CompletedWithIssues"
 	// StatusUnverified: the update landed, but the post-update health check
 	// could not read the add-on (see Failure).
-	StatusUnverified = "Unverified"
+	StatusUnverified UpdateStatus = "Unverified"
 	// StatusWaitFailed: the update was submitted but did not complete: it
 	// failed or was cancelled in EKS, the add-on ended at another version, or
 	// the wait timed out (see Failure).
-	StatusWaitFailed = "WaitFailed"
+	StatusWaitFailed UpdateStatus = "WaitFailed"
 	// StatusFailed: the update could not be submitted (see Failure).
-	StatusFailed = "Failed"
+	StatusFailed UpdateStatus = "Failed"
 	// StatusNotAttempted: an UpdateAll run stopped before this add-on (see
 	// Failure).
-	StatusNotAttempted = "NotAttempted"
+	StatusNotAttempted UpdateStatus = "NotAttempted"
 )
+
+// EnumValues lists every UpdateStatus.
+func (UpdateStatus) EnumValues() []string {
+	return []string{
+		string(StatusDryRun), string(StatusUpToDate), string(StatusInProgress), string(StatusStarted),
+		string(StatusCompleted), string(StatusCompletedWithIssues), string(StatusUnverified),
+		string(StatusWaitFailed), string(StatusFailed), string(StatusNotAttempted),
+	}
+}
 
 // AddonUpdateResult contains the result of an addon update
 type AddonUpdateResult struct {
-	AddonName       string `json:"addonName" yaml:"addonName"`
-	PreviousVersion string `json:"previousVersion" yaml:"previousVersion"`
-	NewVersion      string `json:"newVersion" yaml:"newVersion"`
-	UpdateID        string `json:"updateId" yaml:"updateId"`
-	Status          string `json:"status" yaml:"status"`
-	HealthIssues    string `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
+	AddonName       string       `json:"addonName" yaml:"addonName"`
+	PreviousVersion string       `json:"previousVersion" yaml:"previousVersion"`
+	NewVersion      string       `json:"newVersion" yaml:"newVersion"`
+	UpdateID        string       `json:"updateId" yaml:"updateId"`
+	Status          UpdateStatus `json:"status" yaml:"status"`
+	HealthIssues    string       `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
 	// Warning is set when the update needs the user's attention but still
 	// proceeds, e.g. a pinned version older than the installed one.
 	Warning string `json:"warning,omitempty" yaml:"warning,omitempty"`

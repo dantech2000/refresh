@@ -225,7 +225,7 @@ func ClassifyStatus(status string) StatusCategory {
 	case "FAIL", "FAILED", "ERROR", "CRITICAL", "DISABLED", "DEGRADED", "CANCELLED",
 		"CREATE_FAILED", "UPDATE_FAILED", "DELETE_FAILED":
 		return StatusBad
-	case "IN PROGRESS", "IN_PROGRESS":
+	case "IN PROGRESS", "IN_PROGRESS", "INPROGRESS":
 		return StatusInProgress
 	case "UNKNOWN", "N/A":
 		return StatusUnknown

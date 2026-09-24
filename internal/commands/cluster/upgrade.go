@@ -14,6 +14,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
@@ -106,6 +107,9 @@ type upgradeResult struct {
 	Report   *upgrade.Report `json:"report" yaml:"report"`
 	Failures diag.List       `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is UpgradeRun.
+func (upgradeResult) DocumentKind() apidoc.Kind { return apidoc.KindUpgradeRun }
 
 // runFailures is the plan's failures plus the one that stopped the run,
 // sorted.

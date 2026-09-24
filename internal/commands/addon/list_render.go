@@ -41,9 +41,10 @@ func addonListColumns() []ui.Column {
 	}
 }
 
-func addonHealthToken(th *render.Theme, health string) string {
+func addonHealthToken(th *render.Theme, health addons.Health) string {
 	if health == "" {
 		return th.Paint(th.Pal.Dim, "—")
 	}
-	return th.Token(render.StatusFromString(health), health)
+	label := healthLabel(health)
+	return th.Token(render.StatusFromString(label), label)
 }

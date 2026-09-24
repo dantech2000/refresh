@@ -1,3 +1,5 @@
+apiVersion: refresh.drod.dev/v1
+kind: ClusterDescription
 addons:
   - health: s-health
     name: s-name

@@ -1,4 +1,6 @@
 {
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "NodegroupDescription",
   "name": "s-name",
   "status": "s-status",
   "instanceType": "s-instancetype",

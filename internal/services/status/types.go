@@ -7,6 +7,7 @@ package status
 import (
 	"time"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/diag"
 )
 
@@ -16,25 +17,35 @@ type ComputeType string
 
 const (
 	// ComputeManaged is the normal case: one or more managed nodegroups.
-	ComputeManaged ComputeType = "managed-nodegroups"
+	ComputeManaged ComputeType = "ManagedNodegroups"
 	// ComputeAutoMode is EKS Auto Mode (AWS manages compute and AMIs).
-	ComputeAutoMode ComputeType = "auto-mode"
+	ComputeAutoMode ComputeType = "AutoMode"
 	// ComputeKarpenter is a nodegroup-less cluster with Karpenter signals.
-	ComputeKarpenter ComputeType = "karpenter"
+	ComputeKarpenter ComputeType = "Karpenter"
 	// ComputeNone is a cluster with no managed nodegroups and no detected
 	// alternative compute provider.
-	ComputeNone ComputeType = "none"
+	ComputeNone ComputeType = "None"
 )
+
+// EnumValues lists every ComputeType.
+func (ComputeType) EnumValues() []string {
+	return []string{string(ComputeManaged), string(ComputeAutoMode), string(ComputeKarpenter), string(ComputeNone)}
+}
 
 // SupportTier is the EKS support posture for a cluster's Kubernetes version.
 type SupportTier string
 
 const (
-	SupportStandard    SupportTier = "standard"
-	SupportExtended    SupportTier = "extended"
-	SupportUnsupported SupportTier = "unsupported"
-	SupportUnknown     SupportTier = "unknown"
+	SupportStandard    SupportTier = "Standard"
+	SupportExtended    SupportTier = "Extended"
+	SupportUnsupported SupportTier = "Unsupported"
+	SupportUnknown     SupportTier = "Unknown"
 )
+
+// EnumValues lists every SupportTier.
+func (SupportTier) EnumValues() []string {
+	return []string{string(SupportStandard), string(SupportExtended), string(SupportUnsupported), string(SupportUnknown)}
+}
 
 // SupportPosture is the resolved support window for a cluster's version.
 type SupportPosture struct {
@@ -126,3 +137,6 @@ type FleetStatus struct {
 	// never mistaken for the whole one. [] when everything was read.
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is FleetStatus.
+func (FleetStatus) DocumentKind() apidoc.Kind { return apidoc.KindFleetStatus }

@@ -22,7 +22,7 @@ func TestUpdate_VersionGuardHonorsStatus(t *testing.T) {
 		status     ekstypes.AddonStatus
 		installed  string
 		version    string
-		wantStatus string
+		wantStatus UpdateStatus
 		wantUpdate bool
 	}{
 		{name: "active at target", status: ekstypes.AddonStatusActive, installed: "v1.19.0", version: "v1.19.0", wantStatus: StatusUpToDate},

@@ -113,18 +113,18 @@ func (s *ServiceImpl) getClusterAddons(ctx context.Context, clusterName string) 
 			}
 
 			addon := describeOutput.Addon
-			health := "Unknown"
+			health := AddonHealthUnknown
 
 			// Determine health status based on add-on status
 			switch addon.Status {
 			case ekstypes.AddonStatusActive:
-				health = "Healthy"
+				health = AddonHealthy
 			case ekstypes.AddonStatusDegraded:
-				health = "Issues"
+				health = AddonIssues
 			case ekstypes.AddonStatusCreateFailed, ekstypes.AddonStatusDeleteFailed, ekstypes.AddonStatusUpdateFailed:
-				health = "Failed"
+				health = AddonFailed
 			case ekstypes.AddonStatusCreating, ekstypes.AddonStatusDeleting, ekstypes.AddonStatusUpdating:
-				health = "Updating"
+				health = AddonUpdating
 			}
 
 			return itemResult[AddonInfo]{ran: true, value: &AddonInfo{

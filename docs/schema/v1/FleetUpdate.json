@@ -1,0 +1,374 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v1/FleetUpdate.json",
+  "$defs": {
+    "ClusterStatus": {
+      "type": "string",
+      "enum": [
+        "Succeeded",
+        "Incomplete",
+        "Failed",
+        "HealthBlocked",
+        "HealthWarned",
+        "VerifyFailed",
+        "Interrupted",
+        "TimedOut",
+        "NotAttempted",
+        "Planned"
+      ],
+      "description": "ClusterStatus is the outcome of one cluster in a fleet run. docs/concepts/output.md documents the values; later versions may add values."
+    },
+    "ClusterUpdateResult": {
+      "properties": {
+        "cluster": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ClusterStatus"
+        },
+        "nodegroups": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/NodegroupResult"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verification": {
+          "$ref": "#/$defs/PostRollVerification",
+          "description": "verification is the post-roll verification, when it ran."
+        },
+        "health": {
+          "$ref": "#/$defs/HealthSummary",
+          "description": "health is the pre-flight verdict whenever a check ran (nil when skipped)."
+        },
+        "failure": {
+          "$ref": "#/$defs/Failure",
+          "description": "failure is a failure of the cluster itself: its nodegroups could not be selected, or the run stopped (Interrupted, TimedOut, NotAttempted) before any update started. A nodegroup's failure is on the nodegroup."
+        }
+      },
+      "type": "object",
+      "required": [
+        "cluster",
+        "region",
+        "status",
+        "nodegroups"
+      ],
+      "description": "ClusterUpdateResult is one cluster's outcome within a fleet run."
+    },
+    "Decision": {
+      "type": "string",
+      "enum": [
+        "Proceed",
+        "Warn",
+        "Block"
+      ],
+      "description": "Decision represents the overall decision for proceeding with update"
+    },
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For KindRegion it is the region name."
+        },
+        "cluster": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "$ref": "#/$defs/FailureReason"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether running the same command again, with no other change, may succeed. It is always encoded."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of human text. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the raw AWS API error code, such as AccessDeniedException, when the failure came from an API response."
+        },
+        "updateId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item refresh could not read, or one action it attempted that did not complete. The JSON and YAML keys are a public contract (docs/concepts/output.md): later versions only add fields."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "FailureList": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "A list of failures. It is [] when there are none, never null."
+    },
+    "FailureReason": {
+      "type": "string",
+      "enum": [
+        "AccessDenied",
+        "CredentialError",
+        "Throttled",
+        "NotFound",
+        "RegionUnavailable",
+        "InvalidRequest",
+        "ServiceError",
+        "NetworkError",
+        "Timeout",
+        "Interrupted",
+        "UpdateFailed",
+        "UpdateCancelled",
+        "NotMonitored",
+        "NotAttempted",
+        "Unknown"
+      ],
+      "description": "FailureReason is why a Failure happened, from a closed set. Scripts branch on it. Later versions may add reasons; consumers must accept unknown values."
+    },
+    "HealthResult": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/HealthStatus"
+        },
+        "score": {
+          "type": "integer",
+          "description": "0-100"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "isBlocking": {
+          "type": "boolean"
+        },
+        "skipped": {
+          "type": "boolean",
+          "description": "skipped marks a check that could not be evaluated (e.g. no Kubernetes client) rather than measured. Skipped checks are excluded from the OverallScore so a missing prerequisite doesn't silently drag the score."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "status",
+        "score",
+        "message",
+        "isBlocking"
+      ],
+      "description": "HealthResult represents the result of a single health check"
+    },
+    "HealthStatus": {
+      "type": "string",
+      "enum": [
+        "Pass",
+        "Warn",
+        "Fail"
+      ],
+      "description": "HealthStatus represents the status of a health check"
+    },
+    "HealthSummary": {
+      "properties": {
+        "results": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/HealthResult"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "overallScore": {
+          "type": "integer"
+        },
+        "decision": {
+          "$ref": "#/$defs/Decision"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "failures": {
+          "$ref": "#/$defs/FailureList",
+          "description": "failures are the EKS and Kubernetes reads the node and PDB checks could not make. The check that needed the data warns or fails instead of passing, so the Decision already accounts for them. [] when empty."
+        }
+      },
+      "type": "object",
+      "required": [
+        "results",
+        "overallScore",
+        "decision",
+        "failures"
+      ],
+      "description": "HealthSummary represents the overall health check results"
+    },
+    "NodegroupResult": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/NodegroupStatus"
+        },
+        "updateId": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/SkipReason",
+          "description": "reason says why a Skipped nodegroup was skipped: AlreadyUpdating, AlreadyLatest, or CustomAMI."
+        },
+        "failure": {
+          "$ref": "#/$defs/Failure",
+          "description": "failure is set when the status is Failed, Cancelled, InProgress, or NotAttempted. The same failure is in the document's failures."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "status"
+      ],
+      "description": "NodegroupResult is one nodegroup's entry in the run document."
+    },
+    "NodegroupStatus": {
+      "type": "string",
+      "enum": [
+        "Started",
+        "Succeeded",
+        "Skipped",
+        "Failed",
+        "Cancelled",
+        "InProgress",
+        "NotAttempted"
+      ],
+      "description": "NodegroupStatus is the outcome of one nodegroup in a `nodegroup update` run. docs/concepts/output.md documents the values; later versions may add values."
+    },
+    "PostRollVerification": {
+      "properties": {
+        "checks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "description": "PostRollVerification is the result of verifying a completed AMI roll."
+    },
+    "SkipReason": {
+      "type": "string",
+      "enum": [
+        "AlreadyUpdating",
+        "AlreadyLatest",
+        "CustomAMI"
+      ],
+      "description": "SkipReason is why a Skipped nodegroup was skipped."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v1",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "FleetUpdate",
+      "description": "The type of the document."
+    },
+    "clusters": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/ClusterUpdateResult"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "skippedRegions": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "skippedRegions are default-sweep regions these credentials can't use. They are a notice, not a failure."
+    },
+    "failures": {
+      "$ref": "#/$defs/FailureList",
+      "description": "Every failure of the run: the items refresh could not read and the actions that did not complete. This top-level list is complete; a nested failure or failures field repeats a subset of it. The list is sorted by kind, region, cluster, name, and operation. [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "clusters",
+    "failures"
+  ],
+  "title": "FleetUpdate",
+  "description": "The document that `refresh nodegroup update --all-clusters -o json` prints. -o yaml prints the same structure."
+}

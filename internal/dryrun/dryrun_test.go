@@ -18,7 +18,7 @@ import (
 )
 
 func TestActionNameSkipCustom(t *testing.T) {
-	if got := ActionName(refreshTypes.ActionSkipCustom); got != "skip-custom" {
+	if got := ActionName(refreshTypes.ActionSkipCustom); got != ActionSkipCustom {
 		t.Errorf("ActionName(ActionSkipCustom) = %q, want skip-custom", got)
 	}
 }

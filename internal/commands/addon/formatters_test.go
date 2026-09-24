@@ -31,11 +31,11 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 }
 
 func TestHealthBadge(t *testing.T) {
-	cases := map[string]string{
-		"PASS":        "PASS",
-		"FAIL":        "FAIL",
-		"IN_PROGRESS": "IN PROGRESS",
-		"SOMETHING":   "UNKNOWN",
+	cases := map[addons.Health]string{
+		addons.HealthPass:       "PASS",
+		addons.HealthFail:       "FAIL",
+		addons.HealthInProgress: "IN PROGRESS",
+		"Something":             "UNKNOWN",
 	}
 	for in, want := range cases {
 		if got := healthBadge(in); !strings.Contains(got, want) {
@@ -58,7 +58,7 @@ func TestOutputAddonsTable_Empty(t *testing.T) {
 }
 
 func TestOutputAddonsTable_WithRows(t *testing.T) {
-	rows := []addons.AddonSummary{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "PASS"}}
+	rows := []addons.AddonSummary{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: addons.HealthPass}}
 
 	// Human path (render design system): ADD-ONS header + tokenized rows.
 	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, nil, time.Second) })

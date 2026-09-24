@@ -39,6 +39,14 @@ const (
 	KindNode                Kind = "Node"
 )
 
+// EnumValues lists every Kind, for the JSON Schema.
+func (Kind) EnumValues() []string {
+	return []string{
+		string(KindRegion), string(KindCluster), string(KindNodegroup), string(KindAddon),
+		string(KindInsight), string(KindUpdate), string(KindPodDisruptionBudget), string(KindNode),
+	}
+}
+
 // Noun returns the lower-case word for k in human text, such as "nodegroup"
 // or "pdb". An unknown kind returns its value in lower case.
 func (k Kind) Noun() string {

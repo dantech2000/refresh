@@ -92,7 +92,7 @@ func decisionToken(th *render.Theme, h *health.HealthSummary) string {
 		return th.Paint(th.Pal.Dim, "—")
 	}
 	st, _ := decisionStatusColor(th, h.Decision)
-	return th.Tokenf(st, string(h.Decision))
+	return th.Tokenf(st, decisionLabel(h.Decision))
 }
 
 func clusterHealthChips(th *render.Theme, summaries []clustersvc.ClusterSummary) string {
