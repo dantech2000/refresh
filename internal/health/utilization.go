@@ -33,23 +33,13 @@ func (hc *HealthChecker) SetNodeMetrics(m NodeMetricsLister) { hc.nodeMetrics = 
 // gate. Skips cleanly (not fails) when metrics-server isn't installed.
 func (hc *HealthChecker) CheckNodeUtilization(ctx context.Context, _ string) HealthResult {
 	if hc.nodeMetrics == nil || hc.k8sClient == nil {
-		return HealthResult{
-			Name:    "Node Utilization",
-			Status:  StatusPass,
-			Skipped: true,
-			Message: "live utilization unavailable (no metrics client wired for this command)",
-		}
+		return skippedResult("Node Utilization", "live utilization unavailable (no metrics client wired for this command)")
 	}
 
 	cpuPct, memPct, nodes, err := hc.nodeUtilization(ctx)
 	if err != nil {
 		// metrics-server not installed / API not registered → skip, never fail.
-		return HealthResult{
-			Name:    "Node Utilization",
-			Status:  StatusPass,
-			Skipped: true,
-			Message: fmt.Sprintf("live utilization unavailable: %v", err),
-		}
+		return skippedResult("Node Utilization", fmt.Sprintf("live utilization unavailable: %v", err))
 	}
 	return evaluateNodeUtilization(cpuPct, memPct, nodes)
 }
