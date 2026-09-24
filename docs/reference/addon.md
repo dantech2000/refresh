@@ -69,9 +69,11 @@ refresh addon describe [options] [cluster] [addon]
 Show detailed information for one add-on: its version, status, and
 configuration. The add-on name may be the second positional or --addon, and a
 unique case-insensitive substring is resolved against the installed add-ons.
+With an active context ('refresh use'), one positional is the add-on name.
 
   refresh addon describe my-cluster vpc-cni
   refresh addon describe my-cluster coredns -o json
+  refresh addon describe vpc-cni        # in the active context's cluster
 
 Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
 

@@ -64,9 +64,11 @@ func describeCommand() *cli.Command {
 		Description: `Show detailed information for one add-on: its version, status, and
 configuration. The add-on name may be the second positional or --addon, and a
 unique case-insensitive substring is resolved against the installed add-ons.
+With an active context ('refresh use'), one positional is the add-on name.
 
   refresh addon describe my-cluster vpc-cni
-  refresh addon describe my-cluster coredns -o json`,
+  refresh addon describe my-cluster coredns -o json
+  refresh addon describe vpc-cni        # in the active context's cluster`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.StringFlag{Name: "addon", Aliases: []string{"a"}, Usage: "Add-on name (e.g., vpc-cni)"},

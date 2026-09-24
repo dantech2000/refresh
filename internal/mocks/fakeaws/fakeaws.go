@@ -193,6 +193,7 @@ func New(tb testing.TB, clusters ...*Cluster) *Server {
 		"AWS_REGION":                  "us-east-1",
 		"AWS_DEFAULT_REGION":          "",
 		"AWS_PROFILE":                 "",
+		"AWS_DEFAULT_PROFILE":         "",
 		"AWS_CONFIG_FILE":             empty,
 		"AWS_SHARED_CREDENTIALS_FILE": empty,
 		"AWS_EC2_METADATA_DISABLED":   "true",

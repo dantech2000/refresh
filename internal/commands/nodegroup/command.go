@@ -72,10 +72,12 @@ func describeCommand() *cli.Command {
 		Description: `Show detailed information for one nodegroup: scaling config, instance
 type(s), AMI/release version and freshness, and (optionally) per-instance and
 workload placement details. The nodegroup name may be the second positional or
---nodegroup.
+--nodegroup. With an active context ('refresh use'), one positional is the
+nodegroup name.
 
   refresh nodegroup describe my-cluster ng-default
-  refresh nodegroup describe my-cluster ng-default --show-instances --show-workloads`,
+  refresh nodegroup describe my-cluster ng-default --show-instances --show-workloads
+  refresh nodegroup describe ng-default   # in the active context's cluster`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name (can be provided as second positional)"},

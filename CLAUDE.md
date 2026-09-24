@@ -84,6 +84,9 @@ command (CLI wiring)  internal/commands/{statuscmd,cluster,nodegroup,addon,ctxcm
   cluster list hint to stderr and returns an error when nothing resolves);
   `ResolveCluster` for mutating commands (no kubeconfig fallback, never lists);
   `ResolveClusterName` when the caller parsed the requested cluster itself.
+  A read-only `[cluster] [item]` command parses with `DescribeTarget` (a lone
+  positional is the item when a context is active) and resolves with
+  `ResolveClusterNameOrList`.
   All of them read `--format` and never prompt for `-o json/yaml`, even on a
   TTY. Exact names beat substring matches.
   `nodegroup update` reads `EKS_CLUSTER_NAME` in code; never give a
