@@ -118,7 +118,7 @@ func computeCell(c statussvc.ClusterStatus) string {
 	case statussvc.ComputeManaged:
 		return fmt.Sprintf("%d nodegroups", c.NodegroupCount)
 	case statussvc.ComputeAutoMode:
-		return "Auto Mode"
+		return autoModeText(c)
 	case statussvc.ComputeKarpenter:
 		return "Karpenter"
 	default:
@@ -128,12 +128,27 @@ func computeCell(c statussvc.ClusterStatus) string {
 
 // staleAMICell is the `-o plain` STALE AMI cell, in the human table's words.
 func staleAMICell(c statussvc.ClusterStatus) string {
-	// AMI staleness only applies to managed nodegroups; AWS owns AMIs for Auto
-	// Mode and Karpenter manages them out-of-band.
-	if c.Compute != statussvc.ComputeManaged {
+	if !hasNodegroupAMIs(c) {
 		return "n/a"
 	}
 	return staleAMIText(c)
+}
+
+// hasNodegroupAMIs reports whether the STALE AMI cell applies: the cluster
+// has managed nodegroups. AWS owns the AMIs of Auto Mode nodes and Karpenter
+// manages its own, but an Auto Mode cluster can still run managed
+// nodegroups, and their stale AMIs count toward the footer and exit code 2.
+func hasNodegroupAMIs(c statussvc.ClusterStatus) bool {
+	return c.Compute == statussvc.ComputeManaged || c.NodegroupCount > 0
+}
+
+// autoModeText is the COMPUTE text for an Auto Mode cluster, with the count
+// of any managed nodegroups it also runs.
+func autoModeText(c statussvc.ClusterStatus) string {
+	if c.NodegroupCount > 0 {
+		return fmt.Sprintf("Auto Mode + %d nodegroups", c.NodegroupCount)
+	}
+	return "Auto Mode"
 }
 
 // addonsCell is the `-o plain` ADDONS cell: the count plus every name behind

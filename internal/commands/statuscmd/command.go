@@ -3,6 +3,8 @@
 package statuscmd
 
 import (
+	"strings"
+
 	"github.com/urfave/cli/v3"
 )
 
@@ -50,7 +52,7 @@ at once in each region. It sweeps min(4, --max-concurrency) regions at once.`,
 			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Query all EKS-supported regions"},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Specific region(s) to query (repeatable)"},
 			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml, plain)", Value: "table"},
-			&cli.StringFlag{Name: "sort", Usage: "Sort by field: cluster,region,version,support,stale", Value: "cluster"},
+			&cli.StringFlag{Name: "sort", Usage: "Sort by field: " + strings.Join(sortKeys, ","), Value: "cluster"},
 			&cli.BoolFlag{Name: "desc", Usage: "Sort descending"},
 		},
 		Action: runStatus,

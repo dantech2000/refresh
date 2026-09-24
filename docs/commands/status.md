@@ -17,7 +17,7 @@ attention, so it doubles as a CI gate.
 |---|---|
 | `--all-regions, -A` | Query all EKS-supported regions (or the `REFRESH_EKS_REGIONS` list) |
 | `--region, -r` | Specific region(s) to query (repeatable) |
-| `--sort` | Sort by field: `cluster` (default), `region`, `version`, `support`, `stale` |
+| `--sort` | Sort by field: `cluster` (default), `region`, `version`, `support`, `stale`. Any other value is an error |
 | `--desc` | Sort descending |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
 
@@ -40,9 +40,9 @@ are `Region` failures in `failures` (see [Incomplete data](#incomplete-data)).
 | Column | Shows |
 |---|---|
 | `CLUSTER`, `REGION`, `VERSION` | The cluster and its control-plane version |
-| `SUPPORT` | `standard`, `extended`, or `unsupported`, with the end date. An extended cluster shows the extra cost per hour. A cluster whose upgrade policy is `STANDARD` shows "auto-upgrades at end of standard support" instead: EKS upgrades it and it never pays for extended support |
-| `COMPUTE` | Managed nodegroups (with a count), `Auto Mode`, `Karpenter`, or `none` |
-| `STALE AMI` | Nodegroups not on the latest AMI for their own Kubernetes version. `· N behind CP` counts nodegroups on an older minor than the control plane. `n/a` for Auto Mode and Karpenter |
+| `SUPPORT` | `standard`, `extended`, or `unsupported`, with the end date and the days left (a partial day counts as a whole day). An extended cluster shows the extra cost per hour. A cluster whose upgrade policy is `STANDARD` shows "auto-upgrades at end of standard support" instead: EKS upgrades it and it never pays for extended support |
+| `COMPUTE` | Managed nodegroups (with a count), `Auto Mode` (with a count of any managed nodegroups it also runs), `Karpenter`, or `none` |
+| `STALE AMI` | Nodegroups not on the latest AMI for their own Kubernetes version. `· N behind CP` counts nodegroups on an older minor than the control plane. `n/a` for a cluster with no managed nodegroups (Auto Mode without nodegroups, Karpenter, or none) |
 | `ADDONS` | Add-ons behind their latest compatible version |
 | `HEALTH` | Control-plane health issues that AWS reports for the cluster |
 
