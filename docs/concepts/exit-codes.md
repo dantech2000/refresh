@@ -160,8 +160,8 @@ or a timeout, `refresh` prints the command that resumes the upgrade, with the `-
 | `4` | With `--check-pdbs --force`: the PDBs could not be checked, and the scale went ahead without the check (a `--dry-run` exits `4` too) |
 | `5` | The scale was applied, but the post-scaling health check found blocking issues |
 
-A PDB check that could not read what it needs is named on stderr as one
-[failure](output.md#failures) line.
+A PDB check that could not read what it needs is a
+[failure](output.md#failures), listed under `INCOMPLETE DATA`.
 
 See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
 

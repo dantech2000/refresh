@@ -143,7 +143,9 @@ three come from the same list, so they always agree:
     appear only on stderr. The table view of a read command (`status`,
     `cluster list`, `cluster describe`, `cluster upgrade-check`, `nodegroup
     list`, `addon list`) lists the same lines at the end of its output,
-    under `INCOMPLETE DATA`, and does not repeat them on stderr.
+    under `INCOMPLETE DATA`, and does not repeat them on stderr. The table
+    view of a mutating command (`nodegroup update`, `nodegroup scale`,
+    `addon update`, `cluster upgrade`) does the same.
 - **The exit code.** A run with failures exits `4` (incomplete data), unless
   a code that wins over `4` also applies. Each command's order is in
   [Exit codes](exit-codes.md). The error message counts the failures by kind, for

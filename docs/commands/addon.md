@@ -125,10 +125,11 @@ positional or `--version`, defaulting to `latest`). A failed single-add-on
 update exits `1`. With `--all`, a failed add-on update exits `4`. With
 `--all --parallel`, an add-on that was not started before the deadline or
 Ctrl+C has the status `NotAttempted`. The command exits `4` after a deadline
-and `1` after Ctrl+C. Every add-on with a failure is named once on stderr,
-on a `warning:` line (see [Failures](../concepts/output.md#failures)), in
-every output format. Health issues are named on stderr too. The table and
-`-o plain` show the status in the `STATUS` column.
+and `1` after Ctrl+C. Every add-on with a failure is named once (see
+[Failures](../concepts/output.md#failures)): under `INCOMPLETE DATA` in the
+table view, or on a `warning:` line on stderr with `-o json`, `yaml`, or
+`plain`. Health issues are named on stderr. The table and `-o plain` show
+the status in the `STATUS` column.
 
 `--all` can't be combined with an add-on name or version. The command rejects
 that combination before it makes any AWS call.
@@ -155,8 +156,8 @@ for example `Update coredns v1.11.1 → v1.11.4 on prod? [y/N]`. Only `y` or
 `yes` continues. With `--all`, the command lists every add-on that would
 change and asks once. An add-on that is already at the target, or already
 updating to it, is not asked about. If the `--all` preview cannot read an
-add-on, the command changes nothing and names that add-on on a `warning:`
-line. Re-run, skip it with `--skip`, or add `--yes`.
+add-on, the command changes nothing and names that add-on under
+`INCOMPLETE DATA`. Re-run, skip it with `--skip`, or add `--yes`.
 
 - `--yes` skips the prompt.
 - `--dry-run` never prompts.

@@ -205,9 +205,9 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     blocking PDBs before you touch anything. The preview exits with the code
     the real run would: `3` if the gate refuses, `1` if it can't read the
     PDBs. A PDB check that can't read what it needs is a
-    [failure](../concepts/output.md#failures): stderr names it on one
-    `warning:` line. With `--force`, the scale goes ahead without the check,
-    and the command exits `4`. See
+    [failure](../concepts/output.md#failures), listed under
+    `INCOMPLETE DATA`. With `--force`, the scale goes ahead without the
+    check, and the command exits `4`. See
     [Scale-down PDB gate](../concepts/health-checks.md#scale-down-pdb-gate).
 
 With `--wait`, `refresh` follows the EKS update that the scaling request
@@ -299,8 +299,9 @@ credentials can't use are skipped with one stderr note. Examples are regions
 an SCP denies and opt-in regions that are not enabled. Skipped regions don't
 change the exit code; `-o json` lists them under `skippedRegions`. Any other
 listing failure (throttling, a server error, a timeout), or any failure in a
-region you named, is a `Region` failure: one `warning:` line on stderr, an
-entry in `failures`, and exit `4`. If no region can be listed, or discovery
+region you named, is a `Region` failure: listed under `INCOMPLETE DATA` (a
+`warning:` line on stderr with `-o json|yaml`), an entry in `failures`, and
+exit `4`. If no region can be listed, or discovery
 does not finish within `--wait-timeout`, the run fails at once with exit `1`:
 nothing was gathered.
 
