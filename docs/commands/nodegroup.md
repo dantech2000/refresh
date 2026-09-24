@@ -305,6 +305,30 @@ run fails at once with exit `1`: nothing was gathered.
     the panel there too, as a snapshot at most every 15s and only when
     something changed.
 
+### JSON summary
+
+With `-o json` or `-o yaml`, a run prints one summary. `failed` lists the
+updates that did not start (exit `4`). `rollFailures` lists the started
+updates that did not succeed: EKS ended them `Failed` or `Cancelled`, or
+refresh could not poll their status (`Unmonitored`; the update can still be
+running). Every list is `[]` when it is empty.
+
+```json
+{
+  "cluster": "prod",
+  "started": ["ng-1", "ng-2", "ng-3"],
+  "skipped": [],
+  "customUnmanaged": [],
+  "failed": [],
+  "rollFailures": [
+    {"nodegroup": "ng-2", "updateId": "0a1b2c3d-...", "status": "Failed", "error": "..."}
+  ]
+}
+```
+
+With `--all-clusters`, each entry in `clusters` has the same summary under
+`outcomes`.
+
 ### Exit-code contract
 
 `nodegroup update` returns a meaningful exit code so unattended runs can branch:
