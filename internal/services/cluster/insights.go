@@ -459,7 +459,8 @@ func skewFindings(r SkewReport) []string {
 // version string such as "1.31" or "v1.31.2".
 func minorVersion(v string) (int, bool) {
 	parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(v), "v"), ".", 3)
-	if len(parts) < 2 {
+	// Atoi alone would accept a sign ("1.-2").
+	if len(parts) < 2 || strings.TrimLeft(parts[1], "0123456789") != "" {
 		return 0, false
 	}
 	n, err := strconv.Atoi(parts[1])

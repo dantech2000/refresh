@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -98,16 +97,15 @@ func compareAddonVersions(a, b string) int {
 	}
 	as, bs := segs(a), segs(b)
 	for i := 0; i < len(as) && i < len(bs); i++ {
-		ai, aerr := strconv.Atoi(as[i])
-		bi, berr := strconv.Atoi(bs[i])
+		an, bn := isDigits(as[i]), isDigits(bs[i])
 		switch {
-		case aerr == nil && berr == nil:
-			if ai != bi {
-				return ai - bi
+		case an && bn:
+			if c := compareDigits(as[i], bs[i]); c != 0 {
+				return c
 			}
-		case aerr == nil:
+		case an:
 			return 1 // numeric beats non-numeric ("1" > "eksbuild")
-		case berr == nil:
+		case bn:
 			return -1
 		default:
 			if c := strings.Compare(as[i], bs[i]); c != 0 {
@@ -116,6 +114,21 @@ func compareAddonVersions(a, b string) int {
 		}
 	}
 	return len(as) - len(bs)
+}
+
+// isDigits reports whether s is a non-empty run of ASCII digits.
+func isDigits(s string) bool {
+	return s != "" && strings.TrimLeft(s, "0123456789") == ""
+}
+
+// compareDigits compares two ASCII digit strings by numeric value, with no
+// size limit: a segment too large for an int still orders as a number.
+func compareDigits(a, b string) int {
+	a, b = strings.TrimLeft(a, "0"), strings.TrimLeft(b, "0")
+	if len(a) != len(b) {
+		return len(a) - len(b)
+	}
+	return strings.Compare(a, b)
 }
 
 // WaitUntilActive blocks until the addon reaches ACTIVE — attaching to an
