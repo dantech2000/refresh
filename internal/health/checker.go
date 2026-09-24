@@ -63,6 +63,20 @@ type HealthResult struct {
 	failures []diag.Failure
 }
 
+// skippedResult is the result of a check that could not run. Every skipped
+// check has the same shape: status Pass and score 0, never blocking. The
+// aggregate leaves it out of the score and the decision, so its status must
+// not read as a warning the decision ignores.
+func skippedResult(name, message string, details ...string) HealthResult {
+	return HealthResult{
+		Name:    name,
+		Status:  StatusPass,
+		Message: message,
+		Details: details,
+		Skipped: true,
+	}
+}
+
 // HealthSummary represents the overall health check results
 type HealthSummary struct {
 	Results      []HealthResult `json:"results" yaml:"results"`

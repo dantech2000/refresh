@@ -39,8 +39,10 @@ The checks give one decision. The human view shows it in capitals; the
 - `PROCEED`: nothing to report.
 
 A check that cannot run (no Kubernetes access, no metrics) is marked as
-skipped. A skipped check does not change the score or the decision. The
-error for `BLOCK` or `WARN` names the checks that caused it.
+skipped. A skipped check does not change the score or the decision. It shows
+as `SKIP` in the human view, and in `-o json` it has `skipped: true`, status
+`Pass`, and score `0`. The error for `BLOCK` or `WARN` names the checks that
+caused it.
 
 ## Node Health
 
@@ -54,8 +56,20 @@ When `refresh` can read the cluster's Kubernetes API, it counts Ready nodes:
   before the new nodes report Ready.
 
 Without Kubernetes access, `refresh` estimates readiness from the desired
-size of the `ACTIVE` nodegroups. The estimate is a warning at most. It fails
+size of the managed nodegroups. The estimate is a warning at most. It fails
 only when no node is Ready.
+
+- A `CREATING` or `UPDATING` nodegroup is left out of the estimate. Its
+  desired size does not tell how many of its nodes are Ready.
+- If the cluster has no managed nodegroup capacity (Fargate, Karpenter, or
+  self-managed nodes only), the check is skipped. Only the Kubernetes API can
+  see those nodes.
+
+If the EKS reads for the check fail after the retries, the check does not
+report "no nodes". A failure from throttling or another transient fault makes
+the check a warning that does not block, and the failed reads are listed in
+`failures`. A permanent error, such as a denied permission or an unknown
+cluster, still fails the check.
 
 ## Critical Workloads
 

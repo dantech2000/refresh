@@ -27,10 +27,9 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	// Get all nodegroups in the cluster (with pagination)
 	nodegroupNames, err := hc.listNodegroupNames(ctx, clusterName)
 	if err != nil {
-		result.Status = StatusFail
-		result.Score = 0
 		result.Message = fmt.Sprintf("Failed to list nodegroups: %s", awserr.Summary(err))
 		result.failures = append(result.failures, clusterFailure(clusterName, diag.OpListNodegroups, err))
+		unreadNodeHealth(&result, []error{err})
 		return result
 	}
 
@@ -38,6 +37,7 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	readyNodes := 0
 	var problemNodes []string
 	var inProgress []string
+	var describeErrs []error
 
 	// Prefer real node readiness from the Kubernetes API when available;
 	// DesiredSize is only a proxy (an ACTIVE nodegroup can still have
@@ -63,6 +63,7 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 			f := diag.FromError(diag.KindNodegroup, ngName, diag.OpDescribeNodegroup, ngDesc.err)
 			f.Cluster = clusterName
 			result.failures = append(result.failures, f)
+			describeErrs = append(describeErrs, ngDesc.err)
 			continue
 		}
 		if ctx.Err() != nil && ngDesc.ng == nil {
@@ -77,24 +78,28 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 			continue
 		}
 
-		// Count total desired nodes
+		desired := 0
 		if nodegroup.ScalingConfig != nil && nodegroup.ScalingConfig.DesiredSize != nil {
-			totalNodes += int(*nodegroup.ScalingConfig.DesiredSize)
+			desired = int(*nodegroup.ScalingConfig.DesiredSize)
 		}
 
 		// Classify by nodegroup status. CREATING/UPDATING are benign,
 		// in-progress states (scaling, rolling) — they are tracked separately
-		// and must not be reported as readiness failures.
+		// and must not be reported as readiness failures. Their desired size
+		// says nothing about how many of their nodes are Ready, so the
+		// estimate leaves them out of both counts: counting them in the total
+		// only would score a healthy cluster mid-roll as half ready.
 		switch nodegroup.Status {
 		case types.NodegroupStatusActive:
-			if nodegroup.ScalingConfig != nil && nodegroup.ScalingConfig.DesiredSize != nil {
-				readyNodes += int(*nodegroup.ScalingConfig.DesiredSize)
-			}
+			totalNodes += desired
+			readyNodes += desired
 		case types.NodegroupStatusCreating, types.NodegroupStatusUpdating:
 			inProgress = append(inProgress, fmt.Sprintf("%s (%s)", ngName, string(nodegroup.Status)))
 		case types.NodegroupStatusDegraded:
+			totalNodes += desired
 			problemNodes = append(problemNodes, fmt.Sprintf("%s (DEGRADED)", ngName))
 		default:
+			totalNodes += desired
 			problemNodes = append(problemNodes, fmt.Sprintf("%s (%s)", ngName, string(nodegroup.Status)))
 		}
 
@@ -118,14 +123,36 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 	}
 
 	// Calculate score and status
-	if totalNodes == 0 {
-		result.Status = StatusFail
-		result.Score = 0
-		result.Message = "No nodes found in cluster"
+	if totalNodes == 0 && len(inProgress) == 0 {
+		switch {
+		case haveRealCounts:
+			result.Status = StatusFail
+			result.Score = 0
+			result.Message = "No nodes found in cluster"
+		case len(describeErrs) > 0:
+			result.Message = fmt.Sprintf("Could not describe %d of %d nodegroups", len(describeErrs), len(nodegroupNames))
+			unreadNodeHealth(&result, describeErrs)
+		case len(problemNodes) == 0:
+			// No managed nodegroup capacity to estimate from. The nodes may
+			// be Fargate, Karpenter, or self-managed, which only the
+			// Kubernetes API can see.
+			skipped := skippedResult(result.Name,
+				"No managed nodegroup capacity; node readiness needs Kubernetes API access",
+				append(result.Details, "Fargate, Karpenter, and self-managed nodes are visible only through the Kubernetes API")...)
+			skipped.failures = result.failures
+			return skipped
+		default:
+			result.Status = StatusFail
+			result.Score = 0
+			result.Message = fmt.Sprintf("No nodes found in cluster, issues: %v", problemNodes)
+		}
 		return result
 	}
 
-	scorePercentage := (readyNodes * 100) / totalNodes
+	scorePercentage := 0
+	if totalNodes > 0 {
+		scorePercentage = (readyNodes * 100) / totalNodes
+	}
 
 	// Without real Kubernetes counts the score is an estimate derived from
 	// nodegroup desired capacity: an ACTIVE nodegroup can still hold
@@ -142,6 +169,24 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 
 	result.Status, result.Message = nodeHealthVerdict(readyNodes, totalNodes, len(joiningNodes), haveRealCounts, problemNodes, inProgress)
 	return result
+}
+
+// unreadNodeHealth sets result for a Node Health check whose EKS reads failed,
+// after the retries, with errs. The message is left to the caller. A read that
+// only failed on throttling or another transient fault says nothing about the
+// nodes, so it warns and does not block; the failures report the missing data.
+// A permanent error (the cluster does not exist, access is denied) still fails
+// and blocks.
+func unreadNodeHealth(result *HealthResult, errs []error) {
+	result.Score = 0
+	for _, err := range errs {
+		if common.IsPermanentAPIError(err) {
+			result.Status = StatusFail
+			return
+		}
+	}
+	result.Status = StatusWarn
+	result.IsBlocking = false
 }
 
 // nodeHealthVerdict returns the Node Health status and message. measured is

@@ -41,8 +41,7 @@ func (hc *HealthChecker) SetServiceQuotas(sq serviceQuotaAPI) { hc.sqClient = sq
 // when either client is missing or the limit/usage can't be read.
 func (hc *HealthChecker) CheckServiceQuotas(ctx context.Context, _ string) HealthResult {
 	if hc.sqClient == nil || hc.cwClient == nil {
-		return HealthResult{Name: "Service Quotas", Status: StatusPass, Skipped: true,
-			Message: "service-quota headroom unavailable (clients not configured)"}
+		return skippedResult("Service Quotas", "service-quota headroom unavailable (clients not configured)")
 	}
 	return checkServiceQuotas(ctx, hc.sqClient, hc.cwClient)
 }
@@ -51,13 +50,11 @@ func (hc *HealthChecker) CheckServiceQuotas(ctx context.Context, _ string) Healt
 func checkServiceQuotas(ctx context.Context, sq serviceQuotaAPI, md metricDataAPI) HealthResult {
 	limit, err := onDemandVCPULimit(ctx, sq)
 	if err != nil {
-		return HealthResult{Name: "Service Quotas", Status: StatusPass, Skipped: true,
-			Message: fmt.Sprintf("service-quota headroom unavailable: %s", awserr.Summary(err))}
+		return skippedResult("Service Quotas", fmt.Sprintf("service-quota headroom unavailable: %s", awserr.Summary(err)))
 	}
 	usage, ok, err := onDemandVCPUUsage(ctx, md)
 	if err != nil || !ok {
-		return HealthResult{Name: "Service Quotas", Status: StatusPass, Skipped: true,
-			Message: "service-quota usage unavailable (AWS/Usage metric not reported)"}
+		return skippedResult("Service Quotas", "service-quota usage unavailable (AWS/Usage metric not reported)")
 	}
 	return evaluateQuota(usage, limit)
 }
@@ -119,9 +116,7 @@ func onDemandVCPUUsage(ctx context.Context, md metricDataAPI) (usage float64, ok
 func evaluateQuota(usage, limit float64) HealthResult {
 	r := HealthResult{Name: "Service Quotas", IsBlocking: false, Status: StatusPass, Score: 100}
 	if limit <= 0 {
-		r.Skipped = true
-		r.Message = "service-quota limit unavailable"
-		return r
+		return skippedResult(r.Name, "service-quota limit unavailable")
 	}
 	pct := usage / limit * 100
 	r.Details = append(r.Details, fmt.Sprintf("EC2 On-Demand Standard vCPUs: %.0f of %.0f used (%.1f%%, %.0f free)", usage, limit, pct, limit-usage))

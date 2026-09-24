@@ -63,12 +63,7 @@ type controlPlaneMetrics struct {
 // failed. This is a readiness GATE, not a utilization-browse surface (REF-78).
 func (hc *HealthChecker) CheckControlPlaneMetrics(ctx context.Context, clusterName string) HealthResult {
 	if hc.cwClient == nil {
-		return HealthResult{
-			Name:    "Control Plane",
-			Status:  StatusPass,
-			Skipped: true,
-			Message: "control-plane metrics unavailable (no CloudWatch client)",
-		}
+		return skippedResult("Control Plane", "control-plane metrics unavailable (no CloudWatch client)")
 	}
 	return checkControlPlaneMetrics(ctx, hc.cwClient, clusterName)
 }
@@ -78,13 +73,7 @@ func (hc *HealthChecker) CheckControlPlaneMetrics(ctx context.Context, clusterNa
 func checkControlPlaneMetrics(ctx context.Context, api metricDataAPI, clusterName string) HealthResult {
 	m, err := fetchControlPlaneMetrics(ctx, api, clusterName)
 	if err != nil {
-		return HealthResult{
-			Name:    "Control Plane",
-			Status:  StatusWarn,
-			Score:   70,
-			Message: fmt.Sprintf("Unable to fetch control-plane metrics: %s", awserr.Summary(err)),
-			Skipped: true,
-		}
+		return skippedResult("Control Plane", fmt.Sprintf("Unable to fetch control-plane metrics: %s", awserr.Summary(err)))
 	}
 	return evaluateControlPlane(m)
 }
@@ -178,14 +167,10 @@ func aggregateValues(id string, values []float64) float64 {
 // table-testable). etcd usage drives Warn/Fail; the API-server error rate is
 // advisory; the scheduler backlog is informational.
 func evaluateControlPlane(m controlPlaneMetrics) HealthResult {
-	result := HealthResult{Name: "Control Plane", IsBlocking: true}
-
 	if !m.hasData {
-		result.Status = StatusPass
-		result.Skipped = true
-		result.Message = "control-plane metrics unavailable (requires EKS 1.28+ on a supported platform version)"
-		return result
+		return skippedResult("Control Plane", "control-plane metrics unavailable (requires EKS 1.28+ on a supported platform version)")
 	}
+	result := HealthResult{Name: "Control Plane", IsBlocking: true}
 
 	result.Status = StatusPass
 	result.Score = 100
