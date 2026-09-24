@@ -8,6 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -22,7 +24,7 @@ func (s *ServiceImpl) preUpdateHealthCheck(ctx context.Context, clusterName, add
 		})
 	})
 	if err != nil {
-		return fmt.Errorf("pre-update health check: %w", err)
+		return diag.WithOperation(diag.OpDescribeAddon, fmt.Errorf("pre-update health check: %w", err))
 	}
 	if desc == nil || desc.Addon == nil {
 		return fmt.Errorf("pre-update health check: empty DescribeAddon response for %s", addonName)
@@ -41,26 +43,28 @@ func (s *ServiceImpl) preUpdateHealthCheck(ctx context.Context, clusterName, add
 	}
 }
 
-// postUpdateHealthCheck verifies the addon reached a healthy state after an update
-// completes. It is called only when the caller waited for the update to finish.
-func (s *ServiceImpl) postUpdateHealthCheck(ctx context.Context, clusterName, addonName string) error {
+// postUpdateHealthCheck verifies the addon reached a healthy state after an
+// update completes. It is called only when the caller waited for the update
+// to finish. issues describes what the check found ("" when healthy); err is
+// set when the add-on could not be read, so its health is unknown.
+func (s *ServiceImpl) postUpdateHealthCheck(ctx context.Context, clusterName, addonName string) (issues string, err error) {
 	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
 		return s.eksClient.DescribeAddon(rc, &eks.DescribeAddonInput{
 			ClusterName: aws.String(clusterName),
 			AddonName:   aws.String(addonName),
 		})
 	})
-	if err != nil {
-		return fmt.Errorf("post-update health check: %w", err)
+	if err == nil && (desc == nil || desc.Addon == nil) {
+		err = fmt.Errorf("empty DescribeAddon response for %s", addonName)
 	}
-	if desc == nil || desc.Addon == nil {
-		return fmt.Errorf("post-update health check: empty DescribeAddon response for %s", addonName)
+	if err != nil {
+		return "", diag.WithOperation(diag.OpDescribeAddon, fmt.Errorf("post-update health check: %w", err))
 	}
 
 	addon := desc.Addon
 	if addon.Status != ekstypes.AddonStatusActive {
-		return fmt.Errorf("post-update health check failed: addon %s ended in status %s (expected ACTIVE)",
-			addonName, addon.Status)
+		return fmt.Sprintf("post-update health check failed: addon %s ended in status %s (expected ACTIVE)",
+			addonName, addon.Status), nil
 	}
 
 	if addon.Health != nil && len(addon.Health.Issues) > 0 {
@@ -68,12 +72,31 @@ func (s *ServiceImpl) postUpdateHealthCheck(ctx context.Context, clusterName, ad
 		for _, issue := range addon.Health.Issues {
 			msgs = append(msgs, fmt.Sprintf("%s: %s", issue.Code, aws.ToString(issue.Message)))
 		}
-		return fmt.Errorf("post-update health check: addon %s is ACTIVE but has %d health issue(s): %s",
-			addonName, len(msgs), strings.Join(msgs, "; "))
+		return fmt.Sprintf("post-update health check: addon %s is ACTIVE but has %d health issue(s): %s",
+			addonName, len(msgs), strings.Join(msgs, "; ")), nil
 	}
 
 	s.logger.Info("post-update health check passed", "addon", addonName, "status", addon.Status)
-	return nil
+	return "", nil
+}
+
+// applyPostUpdateCheck runs the post-update health check and sets result's
+// status: Completed, CompletedWithIssues (the check found problems), or
+// Unverified (the add-on could not be read; result.Failure says why).
+func (s *ServiceImpl) applyPostUpdateCheck(ctx context.Context, clusterName string, result *AddonUpdateResult) {
+	issues, err := s.postUpdateHealthCheck(ctx, clusterName, result.AddonName)
+	switch {
+	case err != nil:
+		result.Status = StatusUnverified
+		result.Failure = updateFailure(diag.KindAddon, clusterName, result.AddonName, result.UpdateID, err)
+		s.logger.Warn("post-update health check could not read the addon", "addon", result.AddonName, "error", err)
+	case issues != "":
+		result.Status = StatusCompletedWithIssues
+		result.HealthIssues = issues
+		s.logger.Warn("post-update health check found issues", "addon", result.AddonName, "issues", issues)
+	default:
+		result.Status = StatusCompleted
+	}
 }
 
 // clusterK8sVersion returns the cluster's Kubernetes version, memoized per

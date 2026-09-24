@@ -44,8 +44,8 @@ func TestExecute_DeadlineSaysTimedOut(t *testing.T) {
 	if got := awserr.RetargetDeadlineHint(err, "--wait-timeout").Error(); !strings.Contains(got, "(increase --wait-timeout to allow more time)") {
 		t.Errorf("retargeted err = %q, want it to name --wait-timeout", got)
 	}
-	if !strings.Contains(report.FailedAt, "control plane") {
-		t.Fatalf("failedAt = %q, want the control-plane phase", report.FailedAt)
+	if !strings.Contains(report.StoppedAt, "control plane") {
+		t.Fatalf("stoppedAt = %q, want the control-plane phase", report.StoppedAt)
 	}
 }
 

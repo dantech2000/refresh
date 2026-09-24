@@ -8,8 +8,18 @@ import (
 
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/addons"
 )
+
+// addonFailure is the failure of an addon update that returned err: the
+// result's own failure when it has one, else one built from err.
+func addonFailure(clusterName, addon, updateID string, result *addons.AddonUpdateResult, err error) *diag.Failure {
+	if result != nil && result.Failure != nil {
+		return result.Failure
+	}
+	return addons.UpdateFailure(diag.KindAddon, clusterName, addon, updateID, err)
+}
 
 // addonWaitTimeout bounds how long a single addon update may take before the
 // phase is considered failed.
@@ -31,7 +41,7 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 
 	addonList, err := svc.List(ctx, clusterName, addons.ListOptions{})
 	if err != nil {
-		return err
+		return onItem(diag.KindCluster, clusterName, diag.OpListAddons, err)
 	}
 	addonList = addons.SortByDependency(addonList)
 
@@ -41,12 +51,13 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 			continue
 		}
 
+		onAddon := func(op string, err error) error { return onItem(diag.KindAddon, a.Name, op, err) }
 		versions, err := svc.GetAvailableVersions(ctx, a.Name, targetVersion)
 		if err != nil {
 			if errors.Is(err, addons.ErrNoVersionsFound) {
-				return fmt.Errorf("addon %s: no version compatible with %s: %w", a.Name, targetVersion, err)
+				return onAddon(diag.OpDescribeAddonVersions, fmt.Errorf("addon %s: no version compatible with %s: %w", a.Name, targetVersion, err))
 			}
-			return fmt.Errorf("addon %s: looking up versions compatible with %s: %w", a.Name, targetVersion, err)
+			return onAddon(diag.OpDescribeAddonVersions, fmt.Errorf("addon %s: looking up versions compatible with %s: %w", a.Name, targetVersion, err))
 		}
 		chosen := versions[0].Version
 
@@ -58,15 +69,15 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 		// version and let the normal skip/converge logic below decide.
 		current, status, err := svc.AddonStatus(ctx, clusterName, a.Name)
 		if err != nil {
-			return fmt.Errorf("addon %s: reading status: %w", a.Name, err)
+			return onAddon(diag.OpDescribeAddon, fmt.Errorf("addon %s: reading status: %w", a.Name, err))
 		}
 		if status == ekstypes.AddonStatusCreating || status == ekstypes.AddonStatusUpdating {
 			progress("addon %s is %s (in-flight update from a previous run); attaching and waiting for it to settle", a.Name, status)
 			if err := svc.WaitUntilActive(ctx, clusterName, a.Name, addonWaitTimeout, s.PollInterval); err != nil {
-				return fmt.Errorf("addon %s: waiting for in-flight update to finish: %w", a.Name, err)
+				return onAddon(diag.OpDescribeAddon, fmt.Errorf("addon %s: waiting for in-flight update to finish: %w", a.Name, err))
 			}
 			if current, _, err = svc.AddonStatus(ctx, clusterName, a.Name); err != nil {
-				return fmt.Errorf("addon %s: reading status after attach: %w", a.Name, err)
+				return onAddon(diag.OpDescribeAddon, fmt.Errorf("addon %s: reading status after attach: %w", a.Name, err))
 			}
 		}
 
@@ -84,10 +95,25 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 			PollInterval: s.PollInterval,
 		})
 		if err != nil {
-			return fmt.Errorf("addon %s update to %s failed: %w", a.Name, chosen, err)
+			updateID := ""
+			if result != nil {
+				updateID = result.UpdateID
+			}
+			return &itemError{
+				failure: addonFailure(clusterName, a.Name, updateID, result, err),
+				err:     fmt.Errorf("addon %s update to %s failed: %w", a.Name, chosen, err),
+			}
 		}
 		if result.HealthIssues != "" {
-			return fmt.Errorf("addon %s updated to %s but failed its health gate: %s", a.Name, chosen, result.HealthIssues)
+			return &gateError{err: fmt.Errorf("addon %s updated to %s but failed its health gate: %s", a.Name, chosen, result.HealthIssues)}
+		}
+		if result.Failure != nil {
+			// The update landed, but its health could not be read: the gate
+			// can't pass, and the read is the failure.
+			return &gateError{
+				err:      fmt.Errorf("addon %s updated to %s but its health gate could not read it: %s", a.Name, chosen, result.Failure.Error),
+				failures: []diag.Failure{*result.Failure},
+			}
 		}
 		progress("addon %s is ACTIVE at %s", a.Name, chosen)
 	}

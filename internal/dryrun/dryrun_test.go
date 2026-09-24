@@ -246,7 +246,7 @@ func TestAnalyzeNodegroupBranchesWithInjectedLookups(t *testing.T) {
 		{name: "custom with force", force: true, status: types.NodegroupStatusActive, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
 		{name: "custom updating", status: types.NodegroupStatusUpdating, amiType: types.AMITypesCustom, want: refreshTypes.ActionSkipCustom},
 		{name: "updating with force", force: true, status: types.NodegroupStatusUpdating, want: refreshTypes.ActionSkipUpdating},
-		{name: "describe error", describeErr: errors.New("boom"), want: refreshTypes.ActionSkipUpdating},
+		{name: "describe error", describeErr: errors.New("boom"), want: refreshTypes.ActionUnknown},
 		{name: "updating", status: types.NodegroupStatusUpdating, want: refreshTypes.ActionSkipUpdating},
 		{name: "force", force: true, status: types.NodegroupStatusActive, want: refreshTypes.ActionForceUpdate},
 		{name: "unknown", status: types.NodegroupStatusActive, currentAMI: "", latestAMI: "ami-new", want: refreshTypes.ActionUpdate},
@@ -291,7 +291,7 @@ func TestNewDryRunnerAndPerformDryRunErrorPaths(t *testing.T) {
 	if _, err := NewDryRunner(context.Background(), aws.Config{}, nil, "cluster", false, true); err == nil {
 		t.Fatal("expected error for nil EKS client")
 	}
-	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, Options{Quiet: true}); err == nil {
+	if _, err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, Options{Quiet: true}); err == nil {
 		t.Fatal("expected error for nil EKS client")
 	}
 }
@@ -337,7 +337,7 @@ func TestPerformDryRunSuccessWithInjectedRunner(t *testing.T) {
 		}, nil
 	}
 
-	if err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, Options{Quiet: true}); err != nil {
+	if _, err := PerformDryRun(context.Background(), aws.Config{}, nil, "cluster", []string{"ng"}, Options{Quiet: true}); err != nil {
 		t.Fatalf("PerformDryRun() = %v", err)
 	}
 }
@@ -489,8 +489,8 @@ func TestAnalyzeUsesNodegroupVersionForLatestAMI(t *testing.T) {
 	}
 }
 
-// An empty describe response (nil nodegroup, nil error) is reported as a
-// failed describe instead of dereferencing nil.
+// An empty describe response (nil nodegroup, nil error) is reported as an
+// unreadable nodegroup instead of dereferencing nil.
 func TestAnalyzeNodegroup_EmptyDescribe(t *testing.T) {
 	dr := &DryRunner{
 		clusterName: "cluster",
@@ -499,7 +499,7 @@ func TestAnalyzeNodegroup_EmptyDescribe(t *testing.T) {
 		},
 	}
 	got := dr.analyzeNodegroup(context.Background(), "ng")
-	if got.Action != refreshTypes.ActionSkipUpdating || !strings.Contains(got.Reason, "empty") {
-		t.Errorf("analyzeNodegroup = %+v, want a skipped empty-describe result", got)
+	if got.Action != refreshTypes.ActionUnknown || got.Err == nil || !strings.Contains(got.Err.Error(), "empty") {
+		t.Errorf("analyzeNodegroup = %+v, want an unreadable empty-describe result", got)
 	}
 }

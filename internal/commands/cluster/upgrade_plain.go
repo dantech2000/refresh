@@ -36,7 +36,7 @@ func upgradePlanPlain(plan *upgrade.Plan) *ui.PlainTable {
 }
 
 // writeUpgradePlanPlain writes the plan as TSV to out and the plan's summary
-// line and warnings to info (stderr), keeping out pure TSV. runUpgrade calls
+// line and notices to info (stderr), keeping out pure TSV. runUpgrade calls
 // it in place of renderPlan when ui.PlainOutput() is true.
 func writeUpgradePlanPlain(out, info io.Writer, plan *upgrade.Plan) {
 	path := plan.CurrentVersion
@@ -44,8 +44,8 @@ func writeUpgradePlanPlain(out, info io.Writer, plan *upgrade.Plan) {
 		path += " -> " + hop.To
 	}
 	_, _ = fmt.Fprintf(info, "upgrade plan: %s %s\n", plan.ClusterName, path)
-	for _, w := range plan.Warnings {
-		_, _ = fmt.Fprintf(info, "warning: %s\n", w)
+	for _, n := range plan.Notices {
+		_, _ = fmt.Fprintf(info, "notice: %s\n", n)
 	}
 	upgradePlanPlain(plan).Write(out)
 }

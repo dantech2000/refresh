@@ -39,14 +39,14 @@ Rules that apply to every command:
 | `cluster list` | `0`, `1` (also when no region answered), `4` a region failed, or a cluster could not be fully read |
 | `cluster describe` | `0`, `1`, `4` some add-ons or nodegroups could not be read |
 | [`cluster upgrade-check`](#cluster-upgrade-check) | `0` ready, `1`, `2` warnings only, `3` blocked, `4` a nodegroup or add-on could not be read |
-| [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker |
+| [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker, `4` the planner could not read something |
 | `nodegroup list` | `0`, `1`, `4` a nodegroup could not be described |
 | `nodegroup describe` | `0`, `1` |
-| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs` or the pre-scaling health check, `5` post-scaling health check failed |
+| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs` or the pre-scaling health check, `4` `--force` scaled without being able to check the PDBs, `5` post-scaling health check failed |
 | [`nodegroup update`](#nodegroup-update) | `0`, `1`, `2`, `3`, `4`, `5` |
 | `addon list` | `0`, `1`, `4` an add-on could not be described |
 | `addon describe` | `0`, `1` |
-| [`addon update`](#addon-update) | `0`, `1`, `4` (with `--all`), `5` |
+| [`addon update`](#addon-update) | `0`, `1`, `4`, `5` |
 | `use`, `current`, `context list/add/remove` | `0`, `1` |
 | `version`, `install-man`, `completion` | `0`, `1` |
 
@@ -139,6 +139,11 @@ esac
 | `0` | The plan finished, or there was nothing to do. A `--dry-run` with no blocker |
 | `1` | A phase failed, the run was interrupted, or it timed out |
 | `3` | The plan has a blocker, also with `--dry-run`. Nothing changed |
+| `4` | The planner could not read something: the check that EKS offers the target version, the Cluster Insights, or an add-on's version catalog. A `--dry-run` exits `4`. A real run goes ahead as before and exits `4` when it finishes |
+
+Precedence is `1`, then `3`, then `4`. A failed read in a readiness gate
+also blocks the plan, so it exits `3`, and the document lists the read under
+`failures`.
 
 A `--wait-timeout` that runs out is a timeout, not an interrupt: the error
 says `timed out` and names `--wait-timeout`. After a failure, an interrupt,
@@ -152,7 +157,11 @@ or a timeout, `refresh` prints the command that resumes the upgrade, with the `-
 | `0` | The scaling request was accepted (and, with `--wait`, it settled) |
 | `1` | An error, including a `--check-pdbs` check that could not read the PDBs, a declined confirmation, or a missing `--yes` without a terminal |
 | `3` | Blocked: `--check-pdbs` refused a scale-down, or the pre-scaling health check (`--health-check`) blocked it. Nothing changed. A `--dry-run` with `--check-pdbs` exits `3` or `1` where the real run would |
+| `4` | With `--check-pdbs --force`: the PDBs could not be checked, and the scale went ahead without the check (a `--dry-run` exits `4` too) |
 | `5` | The scale was applied, but the post-scaling health check found blocking issues |
+
+A PDB check that could not read what it needs is named on stderr as one
+[failure](output.md#failures) line.
 
 See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
 
@@ -161,11 +170,15 @@ See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
 | Code | Meaning |
 |---|---|
 | `0` | Success: updates started or completed as expected |
-| `1` | An error, an interrupt (Ctrl+C), a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` |
+| `1` | An error, an interrupt (Ctrl+C), a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health warnings (with `--health-only` or `--require-healthy`) |
 | `3` | Health blocked: a pre-flight check failed, and nothing was rolled |
-| `4` | One or more nodegroup updates failed to start |
+| `4` | A failure: a nodegroup could not be read (also in a `--dry-run` preview or after the roll), or its update could not start. With `--health-only`, a pass whose checks could not read everything |
 | `5` | Post-roll verification found issues (nodes not Ready, or newly stuck pods) |
+
+Precedence is `1`, then `4`, then `5`. A health gate that stops the run keeps
+its code (`2` or `3`), also when a read it could not make caused the verdict;
+the document lists that read under `failures`.
 
 After an interrupt or a monitoring timeout, the EKS update keeps running in
 AWS. Check it with `refresh nodegroup list <cluster>`.
@@ -187,7 +200,7 @@ case $? in
   0) echo "patched cleanly" ;;
   2) echo "health warnings: review" ;;
   3) echo "blocked by health: do not proceed" ;;
-  4) echo "some updates failed to start" ;;
+  4) echo "something could not be read or started: see .failures" ;;
   5) echo "rolled, but verification flagged issues" ;;
 esac
 ```
@@ -199,10 +212,10 @@ drive these (`--health-only`, `--require-healthy`, `--skip-verify`).
 
 | Code | Meaning |
 |---|---|
-| `0` | Success: updates started, completed, were already `UP_TO_DATE`, or were already `IN_PROGRESS` |
-| `1` | An error or an interrupt. For a single add-on, also a failed update: the API call failed, or with `--wait` the EKS update was `Failed`/`Cancelled`, the add-on ended at another version, or the wait timed out (`WAIT_FAILED`) |
-| `4` | With `--all`: at least one add-on update failed, or was not attempted because the run hit its deadline |
-| `5` | The update landed, but a post-update health check found issues (`COMPLETED_WITH_ISSUES`) |
+| `0` | Success: updates started, completed, were already `UpToDate`, or were already `InProgress` |
+| `1` | An error or an interrupt. For a single add-on, also a failed update: the API call failed, or with `--wait` the EKS update was `Failed`/`Cancelled`, the add-on ended at another version, or the wait timed out (`WaitFailed`) |
+| `4` | A failure: with `--all`, an add-on update failed, did not complete, or was not attempted because the run hit its deadline. For any run, an add-on that could not be read after its update (`Unverified`) |
+| `5` | The update landed, but a post-update health check found issues (`CompletedWithIssues`) |
 
 With `--all`, a failure (`4`) wins over health issues (`5`). An `--all` run
 stopped by Ctrl+C exits `1`. The command prints the result before it exits,
@@ -216,6 +229,22 @@ case $? in
   *) echo "update failed" ;;
 esac
 ```
+
+## Changes in 0.12.0 (mutating commands)
+
+The failure-reporting redesign (REF-179) moved these cases from a finding or
+a pass to a failure:
+
+| Command | Before | Now |
+|---|---|---|
+| `nodegroup update --dry-run` (a nodegroup could not be described) | `0`, shown as `skip-updating` | `4`, action `unknown` with a `failure` |
+| `nodegroup update --all-clusters --dry-run` (a cluster could not be previewed) | `0` | `4` |
+| `nodegroup update` (post-roll verification could not describe a nodegroup) | `5` | `4` |
+| `nodegroup update --all-clusters` (no clusters found, and a region could not be listed) | `4` with no document | `4` with the document |
+| `addon update --wait` (the post-update health check could not read the add-on) | `5` (`COMPLETED_WITH_ISSUES`) | `4` (`Unverified`) |
+| `cluster upgrade --dry-run` (could not check that EKS offers the target, or could not read the insights) | `0` | `4` |
+| `cluster upgrade` (the same reads failed, and the run finished) | `0` | `4` |
+| `nodegroup scale --check-pdbs --force` (the PDBs could not be checked) | `0` | `4` |
 
 ## Changes in 0.11.0
 

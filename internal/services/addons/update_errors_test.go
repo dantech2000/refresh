@@ -11,6 +11,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/smithy-go"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
@@ -55,8 +56,9 @@ func TestUpdate_RetriesDescribeAndFormatsUpdateError(t *testing.T) {
 	}
 }
 
-// UpdateAll reports a failed add-on on one line: the status is a table cell.
-func TestUpdateAll_FailedStatusIsOneLine(t *testing.T) {
+// UpdateAll reports a failed add-on with the Failed status and a failure
+// that names the reason and the IAM action, with one line of error text.
+func TestUpdateAll_FailedAddonHasAFailure(t *testing.T) {
 	m, _ := updateMock()
 	svc := NewService(m, logger())
 
@@ -67,8 +69,13 @@ func TestUpdateAll_FailedStatusIsOneLine(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("results = %+v, want one", results)
 	}
-	status := results[0].Status
-	if !strings.HasPrefix(status, "FAILED: AccessDeniedException") || strings.Contains(status, "\n") {
-		t.Errorf("status = %q, want a one-line FAILED: AccessDeniedException summary", status)
+	r := results[0]
+	if r.Status != StatusFailed || !r.Failed() {
+		t.Fatalf("result = %+v, want Failed with a failure", r)
+	}
+	f := r.Failure
+	if f.Kind != diag.KindAddon || f.Cluster != "prod" || f.Reason != diag.ReasonAccessDenied || f.Retryable ||
+		!strings.HasPrefix(f.Error, "AccessDeniedException") || strings.Contains(f.Error, "\n") {
+		t.Errorf("failure = %+v, want a one-line AccessDenied failure", f)
 	}
 }

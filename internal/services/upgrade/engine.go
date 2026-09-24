@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 // ErrAborted is returned by Execute when the user declines a phase
@@ -41,12 +42,34 @@ type ExecuteOptions struct {
 	NodegroupObserver RollObserver
 }
 
-// Report describes how far an execution got: what ran, where it stopped, and
-// what remains. Rerunning the same command resumes from live cluster state.
+// Report describes how far an execution got: how it ended, what ran, where
+// it stopped, and what remains. Rerunning the same command resumes from
+// live cluster state.
 type Report struct {
-	Completed []string `json:"completed,omitempty" yaml:"completed,omitempty"`
-	FailedAt  string   `json:"failedAt,omitempty" yaml:"failedAt,omitempty"`
-	Remaining []string `json:"remaining,omitempty" yaml:"remaining,omitempty"`
+	Status    RunStatus `json:"status" yaml:"status"`
+	Completed []string  `json:"completed" yaml:"completed"`
+	// StoppedAt is the phase the run stopped in or before, when it stopped.
+	StoppedAt string   `json:"stoppedAt,omitempty" yaml:"stoppedAt,omitempty"`
+	Remaining []string `json:"remaining" yaml:"remaining"`
+	// Failure is why the run stopped, for Failed, Interrupted, and TimedOut
+	// runs, and for a Blocked run whose gate could not read what it needed.
+	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
+}
+
+// NewReport returns the report of a run that has not started: status
+// Succeeded, and empty lists.
+func NewReport() *Report {
+	return &Report{Status: RunSucceeded, Completed: []string{}, Remaining: []string{}}
+}
+
+// stop records that the run stopped at label with err, leaving remaining
+// phases to do. gate is set when err came from the phase's precheck.
+func (r *Report) stop(ctx context.Context, cluster, label string, remaining []string, err error, gate bool) {
+	r.StoppedAt = label
+	if remaining != nil {
+		r.Remaining = remaining
+	}
+	r.Status, r.Failure = stopState(ctx, cluster, err, gate)
 }
 
 // phase is one confirm-gate-execute unit within a hop.
@@ -71,9 +94,10 @@ type phase struct {
 // complete success) is safe and only performs the remaining work.
 func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) (*Report, error) {
 	progress := ensureProgress(opts.Progress)
-	report := &Report{}
+	report := NewReport()
 
 	if plan.Blocked() {
+		report.Status = RunBlocked
 		return report, fmt.Errorf("plan has unresolved blockers; refusing to execute:\n  %s",
 			joinLines(plan.Blockers()))
 	}
@@ -87,8 +111,7 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 
 		if ph.precheck != nil {
 			if err := ph.precheck(ctx); err != nil {
-				report.FailedAt = ph.label
-				report.Remaining = pendingLabels(phases[i+1:])
+				report.stop(ctx, plan.ClusterName, ph.label, pendingLabels(phases[i+1:]), err, true)
 				if ctx.Err() != nil {
 					return report, stopped(ctx, "before "+ph.label, "rerun the same command to resume", err)
 				}
@@ -98,18 +121,18 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 
 		if !opts.Yes {
 			if opts.Confirm == nil {
+				report.Status = RunFailed
 				return report, fmt.Errorf("confirmation required for %q but no prompt available (use --yes for non-interactive runs)", ph.label)
 			}
 			if !opts.Confirm(ph.label) {
-				report.Remaining = pendingLabels(phases[i:])
+				report.stop(ctx, plan.ClusterName, ph.label, pendingLabels(phases[i:]), ErrAborted, false)
 				return report, ErrAborted
 			}
 		}
 
 		progress("▸ %s", ph.label)
 		if err := ph.run(ctx); err != nil {
-			report.FailedAt = ph.label
-			report.Remaining = pendingLabels(phases[i+1:])
+			report.stop(ctx, plan.ClusterName, ph.label, pendingLabels(phases[i+1:]), err, false)
 			if ctx.Err() != nil {
 				// SIGINT / timeout: anything started keeps running
 				// server-side; a rerun re-attaches and resumes.
@@ -207,8 +230,9 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 }
 
 // pendingLabels lists the labels of phases that still have pending steps.
+// It is never nil.
 func pendingLabels(phases []phase) []string {
-	var out []string
+	out := []string{}
 	for _, ph := range phases {
 		if len(ph.steps) > 0 {
 			out = append(out, ph.label)

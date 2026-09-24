@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -29,6 +30,7 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 		result.Status = StatusFail
 		result.Score = 0
 		result.Message = fmt.Sprintf("Failed to list nodegroups: %s", awserr.Summary(err))
+		result.failures = append(result.failures, clusterFailure(clusterName, diag.OpListNodegroups, err))
 		return result
 	}
 
@@ -58,6 +60,9 @@ func (hc *HealthChecker) CheckNodeHealth(ctx context.Context, clusterName string
 		ngDesc := described[i]
 		if ngDesc.err != nil {
 			result.Details = append(result.Details, fmt.Sprintf("Failed to describe nodegroup %s: %s", ngName, awserr.Summary(ngDesc.err)))
+			f := diag.FromError(diag.KindNodegroup, ngName, diag.OpDescribeNodegroup, ngDesc.err)
+			f.Cluster = clusterName
+			result.failures = append(result.failures, f)
 			continue
 		}
 		if ctx.Err() != nil && ngDesc.ng == nil {
@@ -316,4 +321,11 @@ func (hc *HealthChecker) NodegroupReadyCounts(ctx context.Context) (map[string]i
 		}
 	}
 	return counts, true
+}
+
+// clusterFailure is the failure of a cluster-wide read made for a check, such
+// as listing the cluster's nodegroups or PodDisruptionBudgets. op is the IAM
+// action, or "" for a Kubernetes API call.
+func clusterFailure(clusterName, op string, err error) diag.Failure {
+	return diag.FromError(diag.KindCluster, clusterName, op, err)
 }

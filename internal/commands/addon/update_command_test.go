@@ -95,11 +95,49 @@ func TestUpdate_WaitFailedEncodesResult(t *testing.T) {
 		t.Fatalf("exit code = %d (err %v), want 1\nstderr:\n%s", code, err, stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	if doc["status"] != "WAIT_FAILED" || doc["updateId"] == "" || doc["updateId"] == nil {
-		t.Errorf("result = %v, want WAIT_FAILED with the update ID", doc)
+	id, _ := doc["updateId"].(string)
+	if doc["status"] != "WaitFailed" || id == "" {
+		t.Errorf("result = %v, want WaitFailed with the update ID", doc)
 	}
-	if e, _ := doc["error"].(string); !strings.Contains(e, "Failed") || !strings.Contains(e, "AdmissionRequestDenied") {
-		t.Errorf("error = %q, want the EKS failure details", e)
+	f, _ := doc["failure"].(map[string]any)
+	if f["kind"] != "Update" || f["reason"] != "UpdateFailed" || f["updateId"] != id || f["cluster"] != "prod" ||
+		!strings.Contains(f["error"].(string), "AdmissionRequestDenied") {
+		t.Errorf("failure = %v, want an UpdateFailed failure with the EKS details", f)
+	}
+	fs, _ := doc["failures"].([]any)
+	if len(fs) != 1 || fs[0].(map[string]any)["updateId"] != id {
+		t.Errorf("failures = %v, want the one failure", doc["failures"])
+	}
+	if n := strings.Count(stderr, "warning: update prod/vpc-cni (us-east-1): UpdateFailed: "); n != 1 {
+		t.Errorf("stderr names the failure %d time(s), want once:\n%s", n, stderr)
+	}
+}
+
+// Misclassification fix: a post-update DescribeAddon that fails was a
+// health issue (COMPLETED_WITH_ISSUES, exit 5). The add-on's health is
+// unknown, so it is a failure now: status Unverified, exit 4.
+func TestUpdate_PostUpdateReadFailureExitsFour(t *testing.T) {
+	fakeaws.New(t, addonCluster(&fakeaws.Addon{
+		Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}, DescribeErrorAfterUpdate: "AccessDeniedException",
+	}))
+	stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--wait", "-o", "json", "--yes")
+	if code := exitCodeOf(err); code != 4 {
+		t.Fatalf("exit code = %d (err %v), want 4\nstderr:\n%s", code, err, stderr)
+	}
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	if doc["status"] != "Unverified" || doc["healthIssues"] != nil {
+		t.Errorf("result = %v, want Unverified with no health issues", doc)
+	}
+	fs, _ := doc["failures"].([]any)
+	if len(fs) != 1 {
+		t.Fatalf("failures = %v, want one", doc["failures"])
+	}
+	f := fs[0].(map[string]any)
+	if f["kind"] != "Addon" || f["name"] != "vpc-cni" || f["reason"] != "AccessDenied" || f["operation"] != "eks:DescribeAddon" || f["updateId"] == nil {
+		t.Errorf("failure = %v, want an AccessDenied eks:DescribeAddon failure", f)
+	}
+	if !strings.Contains(stderr, "warning: addon prod/vpc-cni (us-east-1): AccessDenied: ") {
+		t.Errorf("stderr does not name the failure:\n%s", stderr)
 	}
 }
 
@@ -113,8 +151,11 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 			t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
 		}
 		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-		if doc["status"] != "COMPLETED" || doc["newVersion"] != "v1.19.0" {
-			t.Errorf("result = %v, want COMPLETED at v1.19.0", doc)
+		if doc["status"] != "Completed" || doc["newVersion"] != "v1.19.0" {
+			t.Errorf("result = %v, want Completed at v1.19.0", doc)
+		}
+		if fs, ok := doc["failures"].([]any); !ok || len(fs) != 0 {
+			t.Errorf("failures = %#v, want []", doc["failures"])
 		}
 		if got := srv.Cluster("prod").Addons[0].Version; got != "v1.19.0" {
 			t.Errorf("installed = %s, want v1.19.0", got)
@@ -129,8 +170,8 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 			t.Fatalf("exit code = %d (err %v), want 5\nstderr:\n%s", code, err, stderr)
 		}
 		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-		if doc["status"] != "COMPLETED_WITH_ISSUES" {
-			t.Errorf("status = %v, want COMPLETED_WITH_ISSUES", doc["status"])
+		if doc["status"] != "CompletedWithIssues" {
+			t.Errorf("status = %v, want CompletedWithIssues", doc["status"])
 		}
 	})
 	t.Run("all with issues", func(t *testing.T) {
@@ -157,18 +198,20 @@ func TestUpdate_WaitOutcomeExitCodes(t *testing.T) {
 			row := r.(map[string]any)
 			statuses[row["addonName"].(string)] = row
 		}
-		if r := statuses["vpc-cni"]; r["status"] != "WAIT_FAILED" || r["updateId"] == "" {
-			t.Errorf("vpc-cni = %v, want WAIT_FAILED with its update ID", r)
+		if r := statuses["vpc-cni"]; r["status"] != "WaitFailed" || r["updateId"] == "" || r["failure"] == nil {
+			t.Errorf("vpc-cni = %v, want WaitFailed with its update ID and failure", r)
 		}
-		if r := statuses["coredns"]; r["status"] != "UP_TO_DATE" {
-			t.Errorf("coredns = %v, want UP_TO_DATE (latest never downgrades)", r)
+		if r := statuses["coredns"]; r["status"] != "UpToDate" {
+			t.Errorf("coredns = %v, want UpToDate (latest never downgrades)", r)
+		}
+		if fs, _ := doc["failures"].([]any); len(fs) != 1 || fs[0].(map[string]any)["reason"] != "UpdateCancelled" {
+			t.Errorf("failures = %v, want the vpc-cni UpdateCancelled failure", doc["failures"])
 		}
 	})
 }
 
-// With -o json, `update --all` names each failed add-on and its status on
-// stderr, not only a count. The table view shows the status in its STATUS
-// column, so it does not name FAILED rows on stderr a second time.
+// Every run of `update --all`, whatever the format, names each failed
+// add-on once on stderr, as one failure line.
 func TestUpdateAll_MachineRunNamesFailures(t *testing.T) {
 	fakeaws.New(t, addonCluster(
 		&fakeaws.Addon{Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0"}, UpdateStatus: "Cancelled"},
@@ -182,12 +225,11 @@ func TestUpdateAll_MachineRunNamesFailures(t *testing.T) {
 		}
 		fakeaws.RequireOneDocument(t, format, stdout)
 		for _, want := range []string{
-			"vpc-cni: update update-",
-			"Cancelled: AdmissionRequestDenied",
-			"kube-proxy: FAILED: resolving latest version: no versions found for addon kube-proxy",
+			"warning: update prod/vpc-cni (us-east-1): UpdateCancelled: addon vpc-cni update update-",
+			"warning: addon prod/kube-proxy (us-east-1): NotFound: resolving latest version: no versions found for addon kube-proxy",
 		} {
-			if !strings.Contains(stderr, want) {
-				t.Errorf("-o %s: stderr lacks %q:\n%s", format, want, stderr)
+			if n := strings.Count(stderr, want); n != 1 {
+				t.Errorf("-o %s: stderr has %q %d time(s), want once:\n%s", format, want, n, stderr)
 			}
 		}
 		if strings.Contains(stderr, "coredns") {
@@ -195,12 +237,18 @@ func TestUpdateAll_MachineRunNamesFailures(t *testing.T) {
 		}
 	}
 
+	// The table view lists the failures in its INCOMPLETE DATA section, not
+	// on stderr.
 	stdout, stderr, _ := runAddon(t, "update", "prod", "--all", "--wait", "--yes")
-	if !strings.Contains(stdout, "FAILED: resolving latest version") {
-		t.Errorf("table lacks the FAILED status:\n%s", stdout)
+	out := ui.StripANSI(stdout)
+	if !strings.Contains(out, "Failed") {
+		t.Errorf("table lacks the Failed status:\n%s", out)
 	}
-	if strings.Contains(stderr, "kube-proxy") {
-		t.Errorf("table run repeats the FAILED row on stderr:\n%s", stderr)
+	if !strings.Contains(out, "INCOMPLETE DATA") || strings.Count(out, "addon prod/kube-proxy (us-east-1): NotFound: ") != 1 {
+		t.Errorf("table does not list kube-proxy once under INCOMPLETE DATA:\n%s", out)
+	}
+	if strings.Contains(stderr, "warning: addon prod/kube-proxy") {
+		t.Errorf("table run repeats the failure on stderr:\n%s", stderr)
 	}
 }
 
@@ -214,8 +262,8 @@ func TestUpdate_VersionGuard(t *testing.T) {
 			t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
 		}
 		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-		if doc["status"] != "UP_TO_DATE" {
-			t.Errorf("status = %v, want UP_TO_DATE", doc["status"])
+		if doc["status"] != "UpToDate" {
+			t.Errorf("status = %v, want UpToDate", doc["status"])
 		}
 		if n := updateCalls(srv); n != 0 {
 			t.Errorf("UpdateAddon calls = %d, want 0", n)
@@ -224,8 +272,8 @@ func TestUpdate_VersionGuard(t *testing.T) {
 	t.Run("up to date plain", func(t *testing.T) {
 		fakeaws.New(t, addonCluster(&fakeaws.Addon{Name: "coredns", Version: "v1.11.3", Available: []string{"v1.11.3"}}))
 		stdout, _, err := runAddon(t, "update", "prod", "coredns", "-o", "plain", "--yes")
-		if err != nil || !strings.Contains(stdout, "UP_TO_DATE") {
-			t.Fatalf("stdout = %q, err = %v; want an UP_TO_DATE row", stdout, err)
+		if err != nil || !strings.Contains(stdout, "UpToDate") {
+			t.Fatalf("stdout = %q, err = %v; want an UpToDate row", stdout, err)
 		}
 	})
 	t.Run("pinned downgrade", func(t *testing.T) {

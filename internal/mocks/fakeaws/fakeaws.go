@@ -54,6 +54,12 @@ type Nodegroup struct {
 	// nodegroup fail with that API error code (HTTP 403 for AccessDenied*,
 	// else 400).
 	DescribeNodegroupError string
+	// DescribeErrorAfterUpdate is like DescribeNodegroupError, but only
+	// once an UpdateNodegroupVersion update has been applied, as for a read
+	// that fails after a roll.
+	DescribeErrorAfterUpdate string
+
+	rolled bool
 }
 
 // Addon is an installed EKS addon in the fake world.
@@ -74,6 +80,13 @@ type Addon struct {
 	// DescribeAddonError, when set, makes DescribeAddon for this add-on fail
 	// with that API error code (HTTP 403 for AccessDenied*, else 400).
 	DescribeAddonError string
+	// DescribeErrorAfterUpdate is like DescribeAddonError, but only for the
+	// post-update health check: every DescribeAddon after the one that
+	// confirms the updated version fails.
+	DescribeErrorAfterUpdate string
+
+	rolled             bool
+	describesAfterRoll int
 }
 
 // Cluster is an EKS cluster in the fake world.
@@ -90,6 +103,12 @@ type Cluster struct {
 	// update: "" or "Successful" applies the new version; "Failed" or
 	// "Cancelled" leaves the cluster as it is; "InProgress" never finishes.
 	UpdateStatus string
+	// ListNodegroupsError, when set, makes ListNodegroups fail with that
+	// API error code (HTTP 403 for AccessDenied*, else 400).
+	ListNodegroupsError string
+	// ListInsightsError, when set, makes ListInsights fail with that API
+	// error code.
+	ListInsightsError string
 }
 
 // Insight is an EKS Cluster Insight in the fake world.
@@ -117,6 +136,17 @@ type Server struct {
 	regionError func(region string) string
 	// hangEKS makes every EKS call block until the client gives up.
 	hangEKS bool
+	// clusterVersionsError is the error code DescribeClusterVersions
+	// answers, or "".
+	clusterVersionsError string
+}
+
+// FailClusterVersions makes DescribeClusterVersions fail with the API error
+// code, as when the credentials lack eks:DescribeClusterVersions.
+func (s *Server) FailClusterVersions(code string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clusterVersionsError = code
 }
 
 // FailRegions makes every EKS call signed for a region fail with the API
@@ -274,6 +304,16 @@ func unsupported(w http.ResponseWriter, r *http.Request, service string) {
 	writeError(w, http.StatusBadRequest, "UnsupportedOperation", msg)
 }
 
+// writeCodeError writes the API error code with HTTP 403 for AccessDenied*
+// codes and 400 for the others.
+func writeCodeError(w http.ResponseWriter, code, msg string) {
+	status := http.StatusBadRequest
+	if strings.HasPrefix(code, "AccessDenied") {
+		status = http.StatusForbidden
+	}
+	writeError(w, status, code, msg)
+}
+
 // writeError writes a JSON-protocol (restJson1 / awsJson) API error.
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -300,6 +340,10 @@ func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, map[string]any{"clusters": names})
 		return
 	case get && len(parts) == 1 && parts[0] == "cluster-versions":
+		if s.clusterVersionsError != "" {
+			writeCodeError(w, s.clusterVersionsError, "fake DescribeClusterVersions failure")
+			return
+		}
 		versions := []map[string]any{}
 		for _, v := range r.URL.Query()["clusterVersions"] {
 			versions = append(versions, map[string]any{"clusterVersion": v, "versionStatus": "STANDARD_SUPPORT"})
@@ -340,6 +384,10 @@ func (s *Server) serveEKSCluster(w http.ResponseWriter, r *http.Request, c *Clus
 	case "updates":
 		s.serveClusterUpdates(w, r, c, rest[1:], body)
 	case "insights":
+		if c.ListInsightsError != "" && post && len(rest) == 1 {
+			writeCodeError(w, c.ListInsightsError, "fake ListInsights failure for "+c.Name)
+			return
+		}
 		if post && len(rest) == 1 {
 			writeJSON(w, map[string]any{"insights": insightsJSON(c, body)})
 			return
@@ -425,6 +473,10 @@ func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Clus
 	get, post := r.Method == http.MethodGet, r.Method == http.MethodPost
 	switch {
 	case get && len(rest) == 0:
+		if c.ListNodegroupsError != "" {
+			writeCodeError(w, c.ListNodegroupsError, "fake ListNodegroups failure for "+c.Name)
+			return
+		}
 		names := []string{}
 		for _, ng := range c.Nodegroups {
 			names = append(names, ng.Name)
@@ -436,12 +488,11 @@ func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Clus
 			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No node group found for name: "+rest[0]+".")
 			return
 		}
-		if ng.DescribeNodegroupError != "" {
-			status := http.StatusBadRequest
-			if strings.HasPrefix(ng.DescribeNodegroupError, "AccessDenied") {
-				status = http.StatusForbidden
+		if code := ng.DescribeNodegroupError; code != "" || (ng.rolled && ng.DescribeErrorAfterUpdate != "") {
+			if code == "" {
+				code = ng.DescribeErrorAfterUpdate
 			}
-			writeError(w, status, ng.DescribeNodegroupError, "fake DescribeNodegroup failure for "+ng.Name)
+			writeCodeError(w, code, "fake DescribeNodegroup failure for "+ng.Name)
 			return
 		}
 		writeJSON(w, map[string]any{"nodegroup": nodegroupJSON(c, ng)})
@@ -465,7 +516,7 @@ func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Clus
 		if target == "" {
 			target = ng.Version
 		}
-		update := s.startUpdate("VersionUpdate", func() { ng.Version = target })
+		update := s.startUpdate("VersionUpdate", func() { ng.Version, ng.rolled = target, true })
 		if id, ok := update["id"].(string); ok && ng.UpdateStatus != "" {
 			s.updateStatus[id] = ng.UpdateStatus
 		}
@@ -523,12 +574,14 @@ func (s *Server) serveAddons(w http.ResponseWriter, r *http.Request, c *Cluster,
 			return
 		}
 		if a.DescribeAddonError != "" {
-			status := http.StatusBadRequest
-			if strings.HasPrefix(a.DescribeAddonError, "AccessDenied") {
-				status = http.StatusForbidden
-			}
-			writeError(w, status, a.DescribeAddonError, "fake DescribeAddon failure for "+a.Name)
+			writeCodeError(w, a.DescribeAddonError, "fake DescribeAddon failure for "+a.Name)
 			return
+		}
+		if a.rolled && a.DescribeErrorAfterUpdate != "" {
+			if a.describesAfterRoll++; a.describesAfterRoll > 1 {
+				writeCodeError(w, a.DescribeErrorAfterUpdate, "fake DescribeAddon failure for "+a.Name)
+				return
+			}
 		}
 		writeJSON(w, map[string]any{"addon": addonJSON(c, a)})
 	case post && len(rest) == 2 && rest[1] == "update":
@@ -545,7 +598,7 @@ func (s *Server) serveAddons(w http.ResponseWriter, r *http.Request, c *Cluster,
 		if target == "" {
 			target = a.Version
 		}
-		update := s.startUpdate("AddonUpdate", func() { a.Version = target })
+		update := s.startUpdate("AddonUpdate", func() { a.Version, a.rolled = target, true })
 		if id, ok := update["id"].(string); ok && a.UpdateStatus != "" {
 			s.updateStatus[id] = a.UpdateStatus
 		}

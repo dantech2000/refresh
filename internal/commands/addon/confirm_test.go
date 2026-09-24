@@ -7,6 +7,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
+	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // withPrompt is withTTY that also counts the prompts asked.
@@ -157,9 +158,13 @@ func TestUpdateAll_Confirmation(t *testing.T) {
 		w.Addons[1].Version = "v1.18.0"
 		w.Addons[1].DescribeAddonError = "AccessDeniedException"
 		srv := fakeaws.New(t, w)
-		_, stderr, err := runAddon(t, "update", "prod", "--all")
-		if err == nil || !strings.Contains(err.Error(), "could not preview every add-on") || !strings.Contains(err.Error(), "vpc-cni") {
-			t.Fatalf("err = %v, want the preview failure naming vpc-cni\nstderr:\n%s", err, stderr)
+		stdout, stderr, err := runAddon(t, "update", "prod", "--all")
+		if err == nil || !strings.Contains(err.Error(), "could not preview 1 add-on(s)") {
+			t.Fatalf("err = %v, want the preview failure\nstderr:\n%s", err, stderr)
+		}
+		// The table view lists the failure in its INCOMPLETE DATA section.
+		if out := ui.StripANSI(stdout); !strings.Contains(out, "INCOMPLETE DATA") || !strings.Contains(out, "addon prod/vpc-cni (us-east-1): AccessDenied: ") {
+			t.Errorf("stdout does not name the preview failure:\n%s", out)
 		}
 		if *asked != 0 {
 			t.Errorf("prompts = %d, want 0", *asked)

@@ -14,7 +14,7 @@ func TestWriteUpgradePlanPlain(t *testing.T) {
 		ClusterName:    "prod",
 		CurrentVersion: "1.30",
 		TargetVersion:  "1.31",
-		Warnings:       []string{"custom AMI nodegroup"},
+		Notices:        []string{"custom AMI nodegroup"},
 		Hops: []upgrade.Hop{{
 			From: "1.30", To: "1.31",
 			Steps: []upgrade.Step{
@@ -33,7 +33,7 @@ func TestWriteUpgradePlanPlain(t *testing.T) {
 	if got := strings.Join(rows[1], "|"); got != "1.30->1.31|2|nodegroup|ng-a|-|blocked|Roll ng-a|PDB blocks drain" {
 		t.Errorf("row = %q", got)
 	}
-	for _, want := range []string{"upgrade plan: prod 1.30 -> 1.31", "warning: custom AMI nodegroup"} {
+	for _, want := range []string{"upgrade plan: prod 1.30 -> 1.31", "notice: custom AMI nodegroup"} {
 		if !strings.Contains(info.String(), want) {
 			t.Errorf("info missing %q:\n%s", want, info.String())
 		}

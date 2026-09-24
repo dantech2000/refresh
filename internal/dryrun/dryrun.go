@@ -27,8 +27,10 @@ type DryRunResult struct {
 	UpdatesSkipped []NodegroupUpdate
 	AlreadyLatest  []NodegroupUpdate
 	// CustomAMI holds custom-AMI nodegroups, which the real run skips (its
-	// customUnmanaged outcome).
+	// Skipped status with reason CustomAMI).
 	CustomAMI []NodegroupUpdate
+	// Unreadable holds nodegroups that could not be described (ActionUnknown).
+	Unreadable []NodegroupUpdate
 }
 
 // NodegroupUpdate contains information about a nodegroup update action.
@@ -38,6 +40,8 @@ type NodegroupUpdate struct {
 	CurrentAMI string
 	LatestAMI  string
 	Reason     string
+	// Err is why the nodegroup could not be described (ActionUnknown).
+	Err error
 }
 
 // DryRunner handles dry-run operations for AMI updates.
@@ -111,18 +115,20 @@ type Options struct {
 	Quiet bool
 }
 
-// PerformDryRun shows what would be updated without making changes.
-func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, opts Options) error {
+// PerformDryRun shows what would be updated without making changes. It
+// returns the nodegroups that could not be described (ActionUnknown), so the
+// caller can report them as failures.
+func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, opts Options) ([]NodegroupUpdate, error) {
 	runner, err := newDryRunner(ctx, awsCfg, eksClient, clusterName, opts.Force, opts.Quiet)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	runner.reroll = opts.Reroll
 
 	result := runner.Analyze(ctx, selectedNodegroups)
 	runner.DisplayResults(result)
 
-	return nil
+	return result.Unreadable, nil
 }
 
 // Preview analyzes the selected nodegroups, in order, without printing
@@ -153,6 +159,8 @@ func ActionName(a refreshTypes.DryRunAction) string {
 		return "skip-latest"
 	case refreshTypes.ActionSkipCustom:
 		return "skip-custom"
+	case refreshTypes.ActionUnknown:
+		return "unknown"
 	default:
 		return "unknown"
 	}
@@ -165,6 +173,7 @@ func (dr *DryRunner) Analyze(ctx context.Context, nodegroups []string) *DryRunRe
 		UpdatesSkipped: make([]NodegroupUpdate, 0),
 		AlreadyLatest:  make([]NodegroupUpdate, 0),
 		CustomAMI:      make([]NodegroupUpdate, 0),
+		Unreadable:     make([]NodegroupUpdate, 0),
 	}
 
 	for _, ng := range nodegroups {
@@ -186,8 +195,9 @@ func (dr *DryRunner) analyzeNodegroup(ctx context.Context, ngName string) Nodegr
 		err = fmt.Errorf("empty DescribeNodegroup response")
 	}
 	if err != nil {
-		update.Action = refreshTypes.ActionSkipUpdating
-		update.Reason = fmt.Sprintf("failed to describe: %v", err)
+		update.Action = refreshTypes.ActionUnknown
+		update.Reason = "could not describe the nodegroup"
+		update.Err = err
 		return update
 	}
 
@@ -300,6 +310,8 @@ func (dr *DryRunner) categorizeUpdate(result *DryRunResult, update NodegroupUpda
 		result.AlreadyLatest = append(result.AlreadyLatest, update)
 	case refreshTypes.ActionSkipCustom:
 		result.CustomAMI = append(result.CustomAMI, update)
+	case refreshTypes.ActionUnknown:
+		result.Unreadable = append(result.Unreadable, update)
 	}
 
 	// Print individual result if not quiet
@@ -337,12 +349,16 @@ func (dr *DryRunner) DisplayResults(result *DryRunResult) {
 	if len(result.CustomAMI) > 0 {
 		ui.Outf("- Nodegroups that would be skipped (custom AMI): %d\n", len(result.CustomAMI))
 	}
+	if len(result.Unreadable) > 0 {
+		ui.Outf("- Nodegroups that could not be read: %d\n", len(result.Unreadable))
+	}
 
 	// Detailed lists
 	dr.printNodegroupList("Would update:", result.UpdatesNeeded, color.GreenString)
 	dr.printNodegroupList("Would skip (already updating):", result.UpdatesSkipped, color.YellowString)
 	dr.printNodegroupList("Already on latest AMI:", result.AlreadyLatest, color.CyanString)
 	dr.printNodegroupList("Would skip (custom AMI, managed by the launch template):", result.CustomAMI, color.YellowString)
+	dr.printNodegroupList("Could not read (see the warnings on stderr):", result.Unreadable, color.RedString)
 
 	ui.Outln("\nTo execute these updates, run the same command without --dry-run")
 }

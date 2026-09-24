@@ -124,26 +124,26 @@ For a single add-on, pass the add-on name and an optional version (the third
 positional or `--version`, defaulting to `latest`). A failed single-add-on
 update exits `1`. With `--all`, a failed add-on update exits `4`. With
 `--all --parallel`, an add-on that was not started before the deadline or
-Ctrl+C is reported as `FAILED: not attempted: <reason>`. The command exits
-`4` after a deadline and `1` after Ctrl+C. With `--all -o json|yaml`, stderr
-names each add-on that failed, was not attempted, or has health issues, with
-its status or reason. The table and `-o plain` show the status in the
-`STATUS` column.
+Ctrl+C has the status `NotAttempted`. The command exits `4` after a deadline
+and `1` after Ctrl+C. Every add-on with a failure is named once on stderr,
+on a `warning:` line (see [Failures](../concepts/output.md#failures)), in
+every output format. Health issues are named on stderr too. The table and
+`-o plain` show the status in the `STATUS` column.
 
 `--all` can't be combined with an add-on name or version. The command rejects
 that combination before it makes any AWS call.
 
 ### Version guard
 
-- If the add-on is `ACTIVE` at the target version, the result is `UP_TO_DATE`
-  and no update is sent. `UP_TO_DATE` doesn't count as a failure.
+- If the add-on is `ACTIVE` at the target version, the result is `UpToDate`
+  and no update is sent. `UpToDate` doesn't count as a failure.
 - If the add-on is at the target version but `DEGRADED` or `*_FAILED`, the
   update is sent again to repair it.
 - If the add-on is already `UPDATING` or `CREATING` at the target version, no
-  new update is sent. The result is `IN_PROGRESS`, which is not a failure.
+  new update is sent. The result is `InProgress`, which is not a failure.
   With `--wait`, the command waits for that operation to finish.
 - `latest` never downgrades. If the installed version is newer than every
-  compatible version in the catalog, the result is `UP_TO_DATE`.
+  compatible version in the catalog, the result is `UpToDate`.
 - If you pin a version older than the installed one, the update goes ahead
   and prints `warning: downgrading <addon> from <installed> to <target>` on
   stderr. The result also carries the text in its `warning` field.
@@ -155,8 +155,8 @@ for example `Update coredns v1.11.1 → v1.11.4 on prod? [y/N]`. Only `y` or
 `yes` continues. With `--all`, the command lists every add-on that would
 change and asks once. An add-on that is already at the target, or already
 updating to it, is not asked about. If the `--all` preview cannot read an
-add-on, the command changes nothing and names that add-on. Re-run, skip it
-with `--skip`, or add `--yes`.
+add-on, the command changes nothing and names that add-on on a `warning:`
+line. Re-run, skip it with `--skip`, or add `--yes`.
 
 - `--yes` skips the prompt.
 - `--dry-run` never prompts.
@@ -182,25 +182,66 @@ update is `Successful`, `Failed`, or `Cancelled`. Then it checks that the
 add-on reports the target version.
 
 - A `Failed` or `Cancelled` update, or an add-on at a different version,
-  gives `WAIT_FAILED` and exit code `1` (`4` with `--all`). The result keeps the update ID and
-  puts the reason in its `error` field.
+  gives `WaitFailed` and exit code `1` (`4` with `--all`). The result keeps
+  the update ID and has a `failure` with the reason (`UpdateFailed`,
+  `UpdateCancelled`, or `Timeout`).
 - A throttling, server, or network error while polling is retried until
   `--wait-timeout`. A timeout error names the last poll error.
 - A permanent API error while polling (for example, a missing
   `eks:DescribeUpdate` permission) fails at once.
 - If the update lands but the post-update health check finds issues, the
-  result is `COMPLETED_WITH_ISSUES` and the command exits `5` (post-action
+  result is `CompletedWithIssues` and the command exits `5` (post-action
   verification failed).
+- If the update lands but the post-update health check can't read the
+  add-on, the result is `Unverified`, with a `failure`, and the command
+  exits `4`: the add-on's health is unknown.
 
 The result is printed in every output format, also when the wait fails. See
 [exit codes](../concepts/exit-codes.md#addon-update).
 
+| `status` | Meaning |
+|---|---|
+| `DryRun` | `--dry-run`: nothing was sent |
+| `UpToDate` | The add-on is already at the target; no update was sent |
+| `InProgress` | The add-on is already updating to the target; no new update was sent |
+| `Started` | The update was sent, and the command did not wait (no `--wait`) |
+| `Completed` | The update succeeded, and the post-update health check passed |
+| `CompletedWithIssues` | The update landed, but the post-update health check found issues (`healthIssues`) |
+| `Unverified` | The update landed, but the post-update health check could not read the add-on (`failure`) |
+| `WaitFailed` | The update was sent but did not complete (`failure`) |
+| `Failed` | The update could not be sent (`failure`) |
+| `NotAttempted` | With `--all`: the run stopped before this add-on (`failure`) |
+
+```json
+{
+  "addonName": "vpc-cni",
+  "previousVersion": "v1.18.0-eksbuild.1",
+  "newVersion": "v1.19.0-eksbuild.1",
+  "updateId": "5e6f7a8b-...",
+  "status": "WaitFailed",
+  "failure": {"kind": "Update", "name": "vpc-cni", "cluster": "prod", "region": "us-east-1",
+              "reason": "UpdateFailed", "retryable": false,
+              "error": "addon vpc-cni update 5e6f7a8b-... Failed: ConfigurationConflict: conflicts found",
+              "updateId": "5e6f7a8b-..."},
+  "startedAt": "2026-09-24T10:00:00Z",
+  "failures": [
+    {"kind": "Update", "name": "vpc-cni", "cluster": "prod", "region": "us-east-1",
+     "reason": "UpdateFailed", "retryable": false,
+     "error": "addon vpc-cni update 5e6f7a8b-... Failed: ConfigurationConflict: conflicts found",
+     "updateId": "5e6f7a8b-..."}
+  ]
+}
+```
+
+With `--all`, the document is `{"cluster", "dryRun", "results", "failures"}`:
+one result per add-on, and every add-on's failure in `failures`.
+
 | Code | Meaning |
 |---|---|
-| `0` | Success, including `UP_TO_DATE` and `IN_PROGRESS` |
-| `1` | An error or an interrupt. For a single add-on, also an update that failed, was not started, or whose wait failed |
-| `4` | With `--all`: at least one add-on update failed or was not attempted |
-| `5` | `COMPLETED_WITH_ISSUES`: the update landed, but the post-update health check found issues |
+| `0` | Success, including `UpToDate` and `InProgress` |
+| `1` | An error or an interrupt. For a single add-on, also an update that could not be sent or whose wait failed (`WaitFailed`) |
+| `4` | A failure: with `--all`, an add-on update failed, did not complete, or was not attempted; for any run, an add-on that could not be read after its update (`Unverified`) |
+| `5` | `CompletedWithIssues`: the update landed, but the post-update health check found issues |
 
 ### Flags
 

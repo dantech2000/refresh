@@ -37,6 +37,20 @@
     ],
     "errors": [
       "s-string"
+    ],
+    "failures": [
+      {
+        "kind": "s-kind",
+        "name": "s-name",
+        "cluster": "s-cluster",
+        "region": "s-region",
+        "operation": "s-operation",
+        "reason": "s-reason",
+        "retryable": true,
+        "error": "s-error",
+        "awsErrorCode": "s-awserrorcode",
+        "updateId": "s-updateid"
+      }
     ]
   },
   "healthIssues": [

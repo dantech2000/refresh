@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/smithy-go"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/services/addons"
 )
@@ -96,17 +97,24 @@ func TestResolveAddonName_AmbiguousListsCandidates(t *testing.T) {
 	}
 }
 
+// failed returns an add-on result with status and a failure for reason.
+func failed(name, status string, reason diag.Reason) addons.AddonUpdateResult {
+	f := diag.New(diag.KindAddon, name, reason, "x")
+	return addons.AddonUpdateResult{AddonName: name, Status: status, Failure: &f}
+}
+
 // Add-ons a parallel --all run never started (a deadline) count as failures,
 // so the command exits 4. After Ctrl+C the run exits 1 (interrupted).
 func TestUpdateAllFailureError_CountsNotAttempted(t *testing.T) {
 	results := []addons.AddonUpdateResult{
-		{AddonName: "vpc-cni", Status: "FAILED: context deadline exceeded"},
-		{AddonName: "coredns", Status: "FAILED: not attempted: context deadline exceeded"},
-		{AddonName: "kube-proxy", Status: "FAILED: not attempted: context deadline exceeded"},
+		failed("vpc-cni", addons.StatusFailed, diag.ReasonTimeout),
+		failed("coredns", addons.StatusNotAttempted, diag.ReasonNotAttempted),
+		failed("kube-proxy", addons.StatusNotAttempted, diag.ReasonNotAttempted),
 	}
-	err := updateAllFailureError(t.Context(), results)
-	if err == nil || !strings.Contains(err.Error(), "3 of 3") {
-		t.Fatalf("err = %v, want 3 of 3 failed", err)
+	fs := resultFailures(results, "us-east-1")
+	err := updateAllFailureError(t.Context(), results, fs)
+	if err == nil || !strings.Contains(err.Error(), "3 failure(s) (3 addon)") {
+		t.Fatalf("err = %v, want 3 addon failures", err)
 	}
 	if code := exitCodeOf(err); code != 4 {
 		t.Errorf("exit code = %d, want 4", code)
@@ -114,7 +122,7 @@ func TestUpdateAllFailureError_CountsNotAttempted(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if code := exitCodeOf(updateAllFailureError(ctx, results)); code != 1 {
+	if code := exitCodeOf(updateAllFailureError(ctx, results, fs)); code != 1 {
 		t.Errorf("interrupted: exit code = %d, want 1", code)
 	}
 }
@@ -123,12 +131,28 @@ func TestUpdateAllFailureError_CountsNotAttempted(t *testing.T) {
 func TestUpdateAllFailureError_FailureOutranksIssues(t *testing.T) {
 	results := []addons.AddonUpdateResult{
 		{AddonName: "vpc-cni", Status: addons.StatusCompletedWithIssues},
-		{AddonName: "coredns", Status: addons.StatusWaitFailed},
+		failed("coredns", addons.StatusWaitFailed, diag.ReasonUpdateFailed),
 	}
-	if code := exitCodeOf(updateAllFailureError(t.Context(), results)); code != 4 {
+	if code := exitCodeOf(updateAllFailureError(t.Context(), results, resultFailures(results, ""))); code != 4 {
 		t.Errorf("exit code = %d, want 4", code)
 	}
-	if code := exitCodeOf(updateAllFailureError(t.Context(), results[:1])); code != 5 {
+	if code := exitCodeOf(updateAllFailureError(t.Context(), results[:1], nil)); code != 5 {
 		t.Errorf("issues only: exit code = %d, want 5", code)
+	}
+}
+
+// resultFailures fills in the region the service does not know, and sorts.
+func TestResultFailures(t *testing.T) {
+	results := []addons.AddonUpdateResult{
+		failed("vpc-cni", addons.StatusFailed, diag.ReasonThrottled),
+		{AddonName: "kube-proxy", Status: addons.StatusCompleted},
+		failed("coredns", addons.StatusWaitFailed, diag.ReasonUpdateFailed),
+	}
+	fs := resultFailures(results, "eu-west-1")
+	if len(fs) != 2 || fs[0].Name != "coredns" || fs[1].Name != "vpc-cni" || fs[0].Region != "eu-west-1" {
+		t.Errorf("failures = %+v, want coredns then vpc-cni in eu-west-1", fs)
+	}
+	if results[0].Failure.Region != "eu-west-1" {
+		t.Error("the result's own failure must carry the region too")
 	}
 }

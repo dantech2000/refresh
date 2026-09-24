@@ -12,6 +12,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -58,6 +59,8 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 	_, startErr := common.WithRetry(wctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.StartInsightsRefreshOutput, error) {
 		return s.eksClient.StartInsightsRefresh(rc, &eks.StartInsightsRefreshInput{ClusterName: aws.String(clusterName)})
 	})
+	// Every error below is about the refresh, from the call that failed.
+	onRefresh := func(op string, err error) error { return onItem(diag.KindCluster, clusterName, op, err) }
 	// A start error can mean a refresh is already running (another tool or
 	// an earlier run). Check once before giving up: if a refresh is in
 	// flight, wait on it instead.
@@ -77,16 +80,16 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		case ctx.Err() != nil:
 			return ctx.Err()
 		case wctx.Err() != nil:
-			return fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout)
+			return onRefresh(diag.OpDescribeInsightsRefresh, fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout))
 		case startErr != nil:
 			if err != nil || out.Status != ekstypes.InsightsRefreshStatusInProgress {
-				return awsinternal.FormatAWSError(startErr, fmt.Sprintf("starting an insights refresh for cluster %s", clusterName))
+				return onRefresh(diag.OpStartInsightsRefresh, awsinternal.FormatAWSError(startErr, fmt.Sprintf("starting an insights refresh for cluster %s", clusterName)))
 			}
 			startErr = nil // another refresh is running; wait on it
 			progress("an insights refresh is already running for %s; waiting on it", clusterName)
 		case err != nil:
 			if isPermanentAPIError(err) {
-				return awsinternal.FormatAWSError(err, fmt.Sprintf("checking the insights refresh for cluster %s", clusterName))
+				return onRefresh(diag.OpDescribeInsightsRefresh, awsinternal.FormatAWSError(err, fmt.Sprintf("checking the insights refresh for cluster %s", clusterName)))
 			}
 			progress("warning: checking the insights refresh for %s: %v", clusterName, err)
 		case out.Status == ekstypes.InsightsRefreshStatusCompleted:
@@ -102,7 +105,7 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 			if msg == "" {
 				msg = "no details reported"
 			}
-			return fmt.Errorf("insights refresh failed: %s", msg)
+			return onRefresh(diag.OpDescribeInsightsRefresh, fmt.Errorf("insights refresh failed: %s", msg))
 		default:
 			progress("insights refresh in progress (%s elapsed)", time.Since(started).Round(time.Second))
 		}
@@ -111,7 +114,7 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-wctx.Done():
-			return fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout)
+			return onRefresh(diag.OpDescribeInsightsRefresh, fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout))
 		case <-ticker.C:
 		}
 	}
@@ -175,12 +178,12 @@ func (s *Service) previewInsights(ctx context.Context, clusterName, hopTo string
 			return step, ctx.Err()
 		}
 		step.Reason = fmt.Sprintf("could not read cluster insights for %s (%v); %s", hopTo, err, realRun)
-		plan.Warnings = append(plan.Warnings, step.Reason)
+		plan.addFailure(diag.FromError(diag.KindCluster, clusterName, diag.OpListInsights, err))
 		return step, nil
 	}
 	status, reason, warnings := insightsVerdict(hopTo, insights)
 	if len(warnings) > 0 {
-		plan.Warnings = append(plan.Warnings,
+		plan.Notices = append(plan.Notices,
 			fmt.Sprintf("insight warnings for %s: %s", hopTo, strings.Join(warnings, ", ")))
 	}
 	if status != StatusBlocked {
@@ -204,6 +207,6 @@ func (s *Service) previewInsights(ctx context.Context, clusterName, hopTo string
 	} else {
 		step.Reason = fmt.Sprintf("%s; %s", strings.TrimSuffix(reason, "; "+skipInsightsHint), realRun)
 	}
-	plan.Warnings = append(plan.Warnings, step.Reason)
+	plan.Notices = append(plan.Notices, step.Reason)
 	return step, nil
 }

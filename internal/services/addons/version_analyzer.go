@@ -14,6 +14,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -154,7 +155,7 @@ func (s *ServiceImpl) WaitUntilActive(ctx context.Context, clusterName, addonNam
 		})
 		if err != nil {
 			lastErr = err
-			return false, pollError(ctx, err, op)
+			return false, diag.WithOperation(diag.OpDescribeAddon, pollError(ctx, err, op))
 		}
 		if desc == nil || desc.Addon == nil {
 			return false, nil
@@ -195,7 +196,7 @@ func (s *ServiceImpl) waitForAddonUpdate(ctx context.Context, clusterName, addon
 		})
 		if err != nil {
 			lastErr = err
-			return false, pollError(ctx, err, op)
+			return false, diag.WithOperation(diag.OpDescribeUpdate, pollError(ctx, err, op))
 		}
 		if out == nil || out.Update == nil {
 			return false, nil
@@ -205,7 +206,7 @@ func (s *ServiceImpl) waitForAddonUpdate(ctx context.Context, clusterName, addon
 		case ekstypes.UpdateStatusSuccessful:
 			return true, nil
 		case ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusCancelled:
-			return false, fmt.Errorf("addon %s update %s %s%s", addonName, updateID, out.Update.Status, updateErrorDetails(out.Update.Errors))
+			return false, &updateEndedError{addon: addonName, updateID: updateID, status: out.Update.Status, details: updateErrorDetails(out.Update.Errors)}
 		}
 		return false, nil
 	}, func(err error) error {
@@ -227,7 +228,7 @@ func (s *ServiceImpl) waitForAddonUpdate(ctx context.Context, clusterName, addon
 		})
 	})
 	if err != nil {
-		return awsinternal.FormatAWSError(err, fmt.Sprintf("confirming the version of addon %s", addonName))
+		return diag.WithOperation(diag.OpDescribeAddon, awsinternal.FormatAWSError(err, fmt.Sprintf("confirming the version of addon %s", addonName)))
 	}
 	if desc == nil || desc.Addon == nil {
 		return fmt.Errorf("confirming the version of addon %s: empty DescribeAddon response", addonName)

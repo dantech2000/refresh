@@ -131,7 +131,7 @@ Before it changes anything, update asks for confirmation
 for every add-on that would change). --yes skips the prompt. With -o json|yaml
 or without a terminal, --yes is required. --dry-run never prompts.
 
-Exit codes: 0 ok; 1 error, interrupt, or a failed single-add-on update; 4 with --all, an add-on update failed or was not attempted; 5 updated, but the post-update health check found issues. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 ok; 1 error, interrupt, or a failed single-add-on update; 4 with --all, an add-on update failed or was not attempted, or an add-on could not be read after its update; 5 updated, but the post-update health check found issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 

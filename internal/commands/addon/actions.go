@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -323,23 +324,27 @@ func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	if result.Warning != "" && result.Warning != warned {
 		_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "warning: %s\n", result.Warning)
 	}
+	results := []addons.AddonUpdateResult{*result}
+	fs := resultFailures(results, cfg.Region)
+	*result = results[0]
 
 	// The result is printed even when the wait failed, so the update ID and
-	// the reason reach every output format; updateExitError then sets the
+	// the failure reach every output format; updateExitError then sets the
 	// exit code. Honor -o json|yaml for the single-addon result (REF-55);
 	// -o plain gets the same one-row TSV as `update --all`, and table falls
 	// through to the human-readable summary below.
-	if handled, encErr := runner.EncodeStdout(cmd.String("format"), result); handled {
+	if handled, encErr := runner.EncodeStdout(cmd.String("format"), addonUpdateDocument{AddonUpdateResult: *result, Failures: fs}); handled {
 		if encErr != nil {
 			return encErr
 		}
-		return updateExitError(result, updateErr)
+		runner.WriteFailures(cmd.String("format"), os.Stdout, ui.Stderr, fs)
+		return updateExitError(result, fs, updateErr)
 	}
 	if ui.PlainOutput() {
-		results := []addons.AddonUpdateResult{*result}
-		writeUpdateIssues(ui.Stderr, results, false)
+		writeHealthIssues(ui.Stderr, results)
 		addonUpdatePlain(results).Render()
-		return updateExitError(result, updateErr)
+		runner.WriteFailures(cmd.String("format"), os.Stdout, ui.Stderr, fs)
+		return updateExitError(result, fs, updateErr)
 	}
 
 	switch result.Status {
@@ -355,13 +360,16 @@ func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	case addons.StatusCompletedWithIssues:
 		color.Yellow("Add-on %s updated to %s, but the post-update health check found issues: %s",
 			addonName, result.NewVersion, result.HealthIssues)
+	case addons.StatusUnverified:
+		color.Yellow("Add-on %s updated to %s, but the post-update health check could not read it", addonName, result.NewVersion)
 	case addons.StatusWaitFailed:
 		color.Red("Update %s for add-on %s did not complete", result.UpdateID, addonName)
 	default:
 		color.Green("Update started for add-on %s (ID: %s)", addonName, result.UpdateID)
 		color.White("Use AWS Console or 'refresh addon describe %s --addon %s' to check status.", clusterName, addonName)
 	}
-	return updateExitError(result, updateErr)
+	runner.WriteFailures(cmd.String("format"), os.Stdout, ui.Stderr, fs)
+	return updateExitError(result, fs, updateErr)
 }
 
 // addonUpdater is the part of the addons service the confirmation preview
@@ -405,7 +413,7 @@ type addonBulkUpdater interface {
 // confirmUpdateAll asks once before `addon update --all` changes anything,
 // listing each add-on that would change. It previews the run (a dry run);
 // when nothing would change, it does not ask.
-func confirmUpdateAll(ctx context.Context, cmd *cli.Command, svc addonBulkUpdater, clusterName string, options addons.UpdateAllOptions) error {
+func confirmUpdateAll(ctx context.Context, cmd *cli.Command, svc addonBulkUpdater, clusterName, region string, options addons.UpdateAllOptions) error {
 	if cmd.Bool("yes") || options.DryRun {
 		return nil
 	}
@@ -419,21 +427,17 @@ func confirmUpdateAll(ctx context.Context, cmd *cli.Command, svc addonBulkUpdate
 	}); err != nil {
 		return err
 	}
-	var changes, failed []string
+	var changes []string
 	for _, r := range preview {
-		switch r.Status {
-		case addons.StatusDryRun:
+		if r.Status == addons.StatusDryRun {
 			changes = append(changes, fmt.Sprintf("  %s %s → %s", r.AddonName, r.PreviousVersion, r.NewVersion))
-		case addons.StatusUpToDate, addons.StatusInProgress:
-		default:
-			// Fail closed: an add-on the preview could not read may still
-			// be updated by the real run, and the user never saw it.
-			failed = append(failed, fmt.Sprintf("  %s: %s", r.AddonName, r.Status))
 		}
 	}
-	if len(failed) > 0 {
-		return fmt.Errorf("could not preview every add-on, so nothing was changed:\n%s\nre-run, skip them with --skip, or add --yes to update without confirmation",
-			strings.Join(failed, "\n"))
+	// Fail closed: an add-on the preview could not read may still be
+	// updated by the real run, and the user never saw it.
+	if fs := resultFailures(preview, region); len(fs) > 0 {
+		runner.WriteFailures(cmd.String("format"), os.Stdout, ui.Stderr, fs)
+		return fmt.Errorf("could not preview %d add-on(s), so nothing was changed; re-run, skip them with --skip, or add --yes to update without confirmation", len(fs))
 	}
 	if len(changes) == 0 {
 		return nil
@@ -442,14 +446,25 @@ func confirmUpdateAll(ctx context.Context, cmd *cli.Command, svc addonBulkUpdate
 	return runner.ConfirmMutation(ctx, fmt.Sprintf("Update %d add-on(s) on %s?", len(changes), clusterName))
 }
 
-// updateExitError maps a single add-on update to the command's error: the
-// update's own error (exit 1), exit 5 for COMPLETED_WITH_ISSUES (the update
-// landed but the post-update health check found issues), or nil.
-func updateExitError(result *addons.AddonUpdateResult, err error) error {
-	if err != nil {
+// updateExitError maps a single add-on update to the command's error: exit 1
+// when the update did not complete (WaitFailed), exit 4 when the add-on
+// could not be read after the update (Unverified), exit 5 for
+// CompletedWithIssues (the update landed but the post-update health check
+// found issues), or nil. fs is on stderr already, so the messages don't
+// repeat it.
+func updateExitError(result *addons.AddonUpdateResult, fs []diag.Failure, err error) error {
+	switch {
+	case result.Status == addons.StatusWaitFailed:
+		msg := fmt.Sprintf("add-on %s update %s did not complete", result.AddonName, result.UpdateID)
+		if result.Failure != nil && result.Failure.Reason == diag.ReasonTimeout {
+			msg += " before --wait-timeout"
+		}
+		return cli.Exit(msg, runner.ExitError)
+	case err != nil:
 		return err
-	}
-	if result.Status == addons.StatusCompletedWithIssues {
+	case len(fs) > 0:
+		return runner.IncompleteExit(fs)
+	case result.Status == addons.StatusCompletedWithIssues:
 		return cli.Exit(fmt.Sprintf("add-on %s was updated, but the post-update health check found issues", result.AddonName), runner.ExitVerifyFailed)
 	}
 	return nil
@@ -508,7 +523,7 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) (err error) {
 		Timeout:         timeout,
 	}
 
-	if err := confirmUpdateAll(ctx, cmd, addonSvc, clusterName, options); err != nil {
+	if err := confirmUpdateAll(ctx, cmd, addonSvc, clusterName, cfg.Region, options); err != nil {
 		return err
 	}
 
@@ -521,47 +536,46 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) (err error) {
 		return err
 	}
 
-	payload := map[string]any{
-		"cluster": clusterName,
-		"dryRun":  options.DryRun,
-		"results": results,
+	if results == nil {
+		results = []addons.AddonUpdateResult{}
 	}
-	if handled, err := runner.EncodeStdout(cmd.String("format"), payload); handled {
+	fs := resultFailures(results, cfg.Region)
+	doc := addonUpdateAllDocument{Cluster: clusterName, DryRun: options.DryRun, Results: results, Failures: fs}
+	if handled, err := runner.EncodeStdout(cmd.String("format"), doc); handled {
 		if err != nil {
 			return err
 		}
-		// The table and plain views show each status on stdout; with
-		// -o json/yaml, stderr names every add-on that needs a look.
-		writeUpdateIssues(ui.Stderr, results, true)
-		return updateAllFailureError(ctx, results)
+		// The table and plain views show the health issues next to each
+		// status; with -o json/yaml, stderr names them too.
+		writeHealthIssues(ui.Stderr, results)
+		runner.WriteFailures(cmd.String("format"), os.Stdout, ui.Stderr, fs)
+		return updateAllFailureError(ctx, results, fs)
 	}
 	if err := outputUpdateAllResults(clusterName, results, options.DryRun); err != nil {
 		return err
 	}
-	return updateAllFailureError(ctx, results)
+	runner.WriteFailures(cmd.String("format"), os.Stdout, ui.Stderr, fs)
+	return updateAllFailureError(ctx, results, fs)
 }
 
 // updateAllFailureError maps an `addon update --all` run to the exit-code
 // contract: exit 1 when the run was interrupted (Ctrl+C / SIGTERM), exit 4
-// when any add-on update failed or was not attempted, exit 5 when every
-// update landed but at least one post-update health check found issues,
-// else nil. A failure outranks health issues.
-func updateAllFailureError(ctx context.Context, results []addons.AddonUpdateResult) error {
-	failed, issues := 0, 0
+// when any add-on has a failure (an update that failed, did not complete,
+// could not be verified, or was not attempted), exit 5 when every update
+// landed but at least one post-update health check found issues, else nil.
+// A failure outranks health issues. fs is on stderr already.
+func updateAllFailureError(ctx context.Context, results []addons.AddonUpdateResult, fs []diag.Failure) error {
+	if len(fs) > 0 {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return fmt.Errorf("interrupted: %d of %d add-on update(s) failed or were not attempted", len(fs), len(results))
+		}
+		return runner.IncompleteExit(fs)
+	}
+	issues := 0
 	for _, r := range results {
-		switch {
-		case strings.HasPrefix(r.Status, "FAILED"), r.Status == addons.StatusWaitFailed:
-			failed++
-		case r.Status == addons.StatusCompletedWithIssues:
+		if r.Status == addons.StatusCompletedWithIssues {
 			issues++
 		}
-	}
-	if failed > 0 {
-		msg := fmt.Sprintf("%d of %d addon update(s) failed or were not attempted", failed, len(results))
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return fmt.Errorf("interrupted: %s", msg)
-		}
-		return cli.Exit(msg, runner.ExitIncomplete)
 	}
 	if issues > 0 {
 		return cli.Exit(fmt.Sprintf("%d of %d add-on(s) were updated, but their post-update health check found issues", issues, len(results)), runner.ExitVerifyFailed)

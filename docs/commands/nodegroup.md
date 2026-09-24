@@ -204,7 +204,10 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     anyway. Combine `--dry-run --check-pdbs` to see the verdict and the
     blocking PDBs before you touch anything. The preview exits with the code
     the real run would: `3` if the gate refuses, `1` if it can't read the
-    PDBs. See
+    PDBs. A PDB check that can't read what it needs is a
+    [failure](../concepts/output.md#failures): stderr names it on one
+    `warning:` line. With `--force`, the scale goes ahead without the check,
+    and the command exits `4`. See
     [Scale-down PDB gate](../concepts/health-checks.md#scale-down-pdb-gate).
 
 With `--wait`, `refresh` follows the EKS update that the scaling request
@@ -294,11 +297,12 @@ Discovery uses the same region rules as `status -A`: `-r`, then
 In the default region sweep (no `-r`, no `REFRESH_EKS_REGIONS`), regions your
 credentials can't use are skipped with one stderr note. Examples are regions
 an SCP denies and opt-in regions that are not enabled. Skipped regions don't
-change the exit code. Any other listing failure (throttling, a server error, a
-timeout), or any failure in a region you named, is reported on stderr and in
-the summary (`discoveryErrors` in `-o json`), and the run exits `4`. If no
-region can be listed, or discovery does not finish within `--wait-timeout`, the
-run fails at once with exit `1`: nothing was gathered.
+change the exit code; `-o json` lists them under `skippedRegions`. Any other
+listing failure (throttling, a server error, a timeout), or any failure in a
+region you named, is a `Region` failure: one `warning:` line on stderr, an
+entry in `failures`, and exit `4`. If no region can be listed, or discovery
+does not finish within `--wait-timeout`, the run fails at once with exit `1`:
+nothing was gathered.
 
 ### Flags
 
@@ -347,29 +351,68 @@ run fails at once with exit `1`: nothing was gathered.
     the panel there too, as a snapshot at most every 15s and only when
     something changed.
 
-### JSON summary
+### JSON document
 
-With `-o json` or `-o yaml`, a run prints one summary. `failed` lists the
-updates that did not start (exit `4`). `rollFailures` lists the started
-updates that did not succeed: EKS ended them `Failed` or `Cancelled`, or
-refresh could not poll their status (`Unmonitored`; the update can still be
-running). Every list is `[]` when it is empty.
+With `-o json` or `-o yaml`, a run prints one document. `nodegroups` has one
+entry per selected nodegroup, with its `status`. A nodegroup that failed also
+has a `failure`, and the top-level `failures` lists every failure of the run.
+See [Failures](../concepts/output.md#failures) for the failure object.
 
 ```json
 {
   "cluster": "prod",
-  "started": ["ng-1", "ng-2", "ng-3"],
-  "skipped": [],
-  "customUnmanaged": [],
-  "failed": [],
-  "rollFailures": [
-    {"nodegroup": "ng-2", "updateId": "0a1b2c3d-...", "status": "Failed", "error": "..."}
+  "nodegroups": [
+    {"name": "ng-1", "status": "Succeeded", "updateId": "5e6f7a8b-..."},
+    {"name": "ng-2", "status": "Failed", "updateId": "0a1b2c3d-...",
+     "failure": {"kind": "Update", "name": "ng-2", "cluster": "prod", "region": "us-east-1",
+                 "reason": "UpdateFailed", "retryable": false,
+                 "error": "NodeCreationFailure: instances failed to join", "updateId": "0a1b2c3d-..."}},
+    {"name": "ng-3", "status": "Skipped", "reason": "AlreadyLatest"}
+  ],
+  "failures": [
+    {"kind": "Update", "name": "ng-2", "cluster": "prod", "region": "us-east-1",
+     "reason": "UpdateFailed", "retryable": false,
+     "error": "NodeCreationFailure: instances failed to join", "updateId": "0a1b2c3d-..."}
   ]
 }
 ```
 
-With `--all-clusters`, each entry in `clusters` has the same summary under
-`outcomes`.
+| `status` | Meaning |
+|---|---|
+| `Started` | The update started, and the run did not wait for it (`--no-wait`) |
+| `Succeeded` | The EKS update ended `Successful` |
+| `Skipped` | The run did not roll the nodegroup. `reason` is `AlreadyUpdating`, `AlreadyLatest`, or `CustomAMI` |
+| `Failed` | The nodegroup could not be read, its update could not start, or EKS ended the update `Failed` |
+| `Cancelled` | EKS ended the update `Cancelled` |
+| `InProgress` | The update started, but the run stopped watching it: `--wait-timeout` passed (`Timeout`), Ctrl+C (`Interrupted`), or its status could not be polled (`NotMonitored`). The EKS update may still be running |
+| `NotAttempted` | The run stopped before it reached this nodegroup |
+
+The document also has `verification` (the post-roll checks and issues) and
+`health` (the pre-flight verdict), when they ran. A nodegroup that
+post-roll verification can't describe is a failure (exit `4`), not a
+verification issue. The `--dry-run` preview has an `action` per nodegroup
+instead of a status. A nodegroup it can't describe has the action `unknown`
+and a `failure` (exit `4`).
+
+With `--all-clusters`, `clusters` has one entry per cluster: `cluster`,
+`region`, `status`, and the cluster's `nodegroups`, `verification`, and
+`health`. A cluster that could not be processed has a `failure` of its own.
+The top-level `failures` lists every failure of the fleet, including the
+regions discovery could not list.
+
+| Cluster `status` | Meaning | Exit |
+|---|---|---|
+| `Succeeded` | The cluster did what the run asked, with no failure | `0` |
+| `Incomplete` | The run finished, but some data could not be read | `4` |
+| `Failed` | An update could not start or did not succeed, or the nodegroups could not be selected | `4` |
+| `HealthBlocked` | The pre-flight health check blocked the cluster | `3` |
+| `HealthWarned` | Health warnings stopped the cluster (`--health-only`, `--require-healthy`) | `2` |
+| `VerifyFailed` | The updates succeeded, but post-roll verification found issues | `5` |
+| `Interrupted`, `TimedOut` | Ctrl+C, or the cluster's `--wait-timeout`. Started updates keep running | `1` |
+| `NotAttempted` | The run stopped before it reached the cluster | `1` |
+
+A fleet `--dry-run` entry has `status` `Planned`, `Incomplete` (the `plan`
+has nodegroups it could not read), or `Failed` (no `plan`; see `failure`).
 
 ### Exit-code contract
 
@@ -378,10 +421,10 @@ With `--all-clusters`, each entry in `clusters` has the same summary under
 | Code | Meaning |
 |---|---|
 | `0` | Success — updates started/completed as expected |
-| `1` | An error, an interrupt, a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` |
+| `1` | An error, an interrupt, a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health **warnings** (with `--health-only` or `--require-healthy`) |
 | `3` | Health **blocked** — a pre-flight check failed; nothing was rolled |
-| `4` | One or more nodegroup updates **failed to start** |
+| `4` | A **failure**: a nodegroup that could not be read, an update that could not start, or a `--dry-run` preview with a nodegroup it could not read |
 | `5` | Post-roll **verification** found issues (nodes not Ready / newly-stuck pods) |
 
 See [Exit codes](../concepts/exit-codes.md) for the full reference and a CI
