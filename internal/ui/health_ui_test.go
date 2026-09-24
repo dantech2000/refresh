@@ -116,6 +116,26 @@ func TestRenderProgressBar_FullScore(t *testing.T) {
 	}
 }
 
+// A skipped check reads SKIP, not the Pass status it carries.
+func TestWriteHealthResults_SkippedCheck(t *testing.T) {
+	var buf bytes.Buffer
+	WriteHealthResults(&buf, health.HealthSummary{
+		Decision: health.DecisionProceed,
+		Results: []health.HealthResult{
+			{Name: "Critical Workloads", Status: health.StatusPass, Skipped: true, Message: "Kubernetes client not available"},
+		},
+	})
+	var line string
+	for l := range strings.SplitSeq(buf.String(), "\n") {
+		if strings.Contains(l, "Critical Workloads") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, "SKIP") || strings.Contains(line, "PASS") {
+		t.Errorf("skipped check line = %q, want SKIP and no PASS", line)
+	}
+}
+
 func TestRenderProgressBar_ZeroScore(t *testing.T) {
 	bar := RenderProgressBar(0, health.StatusFail)
 	if strings.Contains(bar, "█") {

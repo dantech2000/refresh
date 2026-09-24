@@ -110,11 +110,11 @@ func TestAnalyzeResourceDistribution_HighVarianceDetected(t *testing.T) {
 // CheckCriticalWorkloads — nil k8sClient
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestCheckCriticalWorkloads_NilClientReturnsWarn(t *testing.T) {
+func TestCheckCriticalWorkloads_NilClientIsSkipped(t *testing.T) {
 	hc := NewChecker(nil, nil, nil, nil)
 	result := hc.CheckCriticalWorkloads(context.Background())
-	if result.Status != StatusWarn {
-		t.Errorf("nil k8sClient: status = %s, want WARN", result.Status)
+	if !result.Skipped || result.Status != StatusPass || result.Score != 0 {
+		t.Errorf("nil k8sClient: got %+v, want a skipped result (Pass, score 0)", result)
 	}
 	if result.IsBlocking {
 		t.Error("nil k8sClient result should not be blocking")
@@ -198,11 +198,11 @@ func TestCheckCriticalWorkloads_SucceededPodsSkipped(t *testing.T) {
 // CheckPodDisruptionBudgets — nil k8sClient
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestCheckPodDisruptionBudgets_NilClientReturnsWarn(t *testing.T) {
+func TestCheckPodDisruptionBudgets_NilClientIsSkipped(t *testing.T) {
 	hc := NewChecker(nil, nil, nil, nil)
 	result := hc.CheckPodDisruptionBudgets(context.Background())
-	if result.Status != StatusWarn {
-		t.Errorf("nil k8sClient: status = %s, want WARN", result.Status)
+	if !result.Skipped || result.Status != StatusPass || result.Score != 0 {
+		t.Errorf("nil k8sClient: got %+v, want a skipped result (Pass, score 0)", result)
 	}
 	if result.IsBlocking {
 		t.Error("PDB check should never be blocking")

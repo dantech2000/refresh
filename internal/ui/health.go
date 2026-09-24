@@ -35,6 +35,11 @@ func WriteHealthResults(w io.Writer, summary health.HealthSummary) {
 		}
 	}
 	for _, result := range summary.Results {
+		if result.Skipped {
+			// A skipped check was not measured: an empty, uncolored bar.
+			Outf("%s %-*s %s\n", RenderProgressBar(0, ""), nameWidth, result.Name, color.WhiteString("SKIP"))
+			continue
+		}
 		progressBar := RenderProgressBar(result.Score, result.Status)
 		statusText := GetHealthStatusText(result.Status)
 		Outf("%s %-*s %s\n", progressBar, nameWidth, result.Name, statusText)
