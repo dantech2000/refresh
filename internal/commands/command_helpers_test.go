@@ -74,7 +74,7 @@ func TestManPageHelpersAndInstall(t *testing.T) {
 	if isInManPath(t.Context(), dir) {
 		t.Fatal("temp dir should not be in MANPATH")
 	}
-	updateManDB(t.Context())
+	updateManDB(t.Context(), filepath.Dir(dir))
 
 	app := &cli.Command{Name: "refresh", Usage: "test app"}
 

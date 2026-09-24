@@ -176,3 +176,25 @@ func BenchmarkIsWritableDir(b *testing.B) {
 		isWritableDir(tempDir)
 	}
 }
+
+// TestManDBCommandIndexesInstallDir: the man index rebuild targets the
+// directory install-man wrote to, not a fixed system path.
+func TestManDBCommandIndexesInstallDir(t *testing.T) {
+	dir := filepath.Join("home", "u", ".local", "share", "man")
+	for _, tc := range []struct {
+		goos     string
+		wantName string
+		wantArgs []string
+	}{
+		{"darwin", "makewhatis", []string{dir}},
+		{"linux", "mandb", []string{"-q", dir}},
+		{"windows", "", nil},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			name, args := manDBCommand(tc.goos, dir)
+			if name != tc.wantName || strings.Join(args, " ") != strings.Join(tc.wantArgs, " ") {
+				t.Fatalf("manDBCommand(%q) = %q %q, want %q %q", tc.goos, name, args, tc.wantName, tc.wantArgs)
+			}
+		})
+	}
+}

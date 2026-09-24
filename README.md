@@ -237,7 +237,7 @@ kubeconfig and context that were tried. See
 task build       # build ./dist/refresh (CGO_ENABLED=0)
 task test        # go test ./...
 task lint        # golangci-lint at the CI-pinned version
-task dev:full    # fmt, vet, lint, tidy, deadcode, docs, race tests, build (run before pushing)
+task dev:full    # fmt, vet, lint, tidy, deadcode, govulncheck, docs, race tests, build (run before pushing)
 task fuzz        # run every fuzz target for 30s (FUZZTIME=2m to change)
 task docs:gen    # regenerate docs/reference and docs/schema from the CLI
 ```
