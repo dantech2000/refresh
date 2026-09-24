@@ -55,6 +55,10 @@ type ScalingConfig struct {
 	DesiredSize int32 `json:"desiredSize" yaml:"desiredSize"`
 	MinSize     int32 `json:"minSize" yaml:"minSize"`
 	MaxSize     int32 `json:"maxSize" yaml:"maxSize"`
+	// AutoScaling is always true: EKS backs every managed nodegroup with an
+	// Auto Scaling group, which keeps the node count within MinSize and
+	// MaxSize. It does not mean a cluster autoscaler is installed.
+	AutoScaling bool `json:"autoScaling" yaml:"autoScaling"`
 }
 
 // InstanceDetails describes an EC2 instance backing a nodegroup.
