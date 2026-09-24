@@ -4,7 +4,11 @@
 // is single-region; multi-region fan-out lives in the command layer.
 package status
 
-import "time"
+import (
+	"time"
+
+	"github.com/dantech2000/refresh/internal/types"
+)
 
 // ComputeType describes how a cluster provisions its worker nodes. It exists so
 // `refresh status` never renders a nodegroup-less cluster as an empty row.
@@ -113,4 +117,8 @@ func (c ClusterStatus) SupportRisk() bool {
 // payload serialized for json/yaml output.
 type FleetStatus struct {
 	Clusters []ClusterStatus `json:"clusters" yaml:"clusters"`
+	// Failures lists the regions whose clusters could not be listed, so a
+	// partial fleet is never mistaken for the whole one. Omitted when every
+	// region answered.
+	Failures []types.RegionFailure `json:"failures,omitempty" yaml:"failures,omitempty"`
 }

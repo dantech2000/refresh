@@ -177,7 +177,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 
 	// A plan with blockers prints and exits 3 (blocked) without mutating.
 	if plan.Blocked() {
-		return cli.Exit(color.RedString("Upgrade blocked — resolve the blockers above and re-run."), runner.ExitBlocked)
+		return cli.Exit(ui.StderrColor(color.FgRed).Sprint("Upgrade blocked — resolve the blockers above and re-run."), runner.ExitBlocked)
 	}
 	if cmd.Bool("dry-run") {
 		return nil
@@ -219,11 +219,11 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 
 	renderReport(out, report)
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", color.CyanString(resumeCommand(cmd, clusterName, plan)))
+		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", ui.ColorFor(out, color.FgCyan).Sprint(resumeCommand(cmd, clusterName, plan)))
 		return err
 	}
 
-	_, _ = fmt.Fprintf(out, "\n%s\n", color.GreenString("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
+	_, _ = fmt.Fprintf(out, "\n%s\n", ui.ColorFor(out, color.FgGreen).Sprintf("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
 	return nil
 }
 
@@ -443,12 +443,12 @@ func renderReport(w io.Writer, report *upgrade.Report) {
 	}
 	_, _ = fmt.Fprintln(w)
 	for _, c := range report.Completed {
-		_, _ = fmt.Fprintf(w, "%s %s\n", color.GreenString("completed:"), c)
+		_, _ = fmt.Fprintf(w, "%s %s\n", ui.ColorFor(w, color.FgGreen).Sprint("completed:"), c)
 	}
 	if report.FailedAt != "" {
-		_, _ = fmt.Fprintf(w, "%s %s\n", color.RedString("failed at:"), report.FailedAt)
+		_, _ = fmt.Fprintf(w, "%s %s\n", ui.ColorFor(w, color.FgRed).Sprint("failed at:"), report.FailedAt)
 	}
 	for _, r := range report.Remaining {
-		_, _ = fmt.Fprintf(w, "%s %s\n", color.YellowString("remaining:"), r)
+		_, _ = fmt.Fprintf(w, "%s %s\n", ui.ColorFor(w, color.FgYellow).Sprint("remaining:"), r)
 	}
 }

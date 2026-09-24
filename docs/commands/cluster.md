@@ -30,7 +30,8 @@ in-process, then render as a table, structured output, or a region/cluster
 tree. See [Regions](../concepts/configuration.md#regions) for how `-r`, the
 global `--region`, and `REFRESH_EKS_REGIONS` combine.
 
-With several regions, a region that fails prints one warning on stderr. The
+With several regions, a region that fails prints one warning on stderr, and
+`-o json`/`-o yaml` list it under `failures` as `{"region", "error"}`. The
 command prints the clusters it gathered, then exits `4` (incomplete data). If
 no region answers (for example, the timeout ends first), the command fails
 with exit `1` instead of printing an empty list. The default `-A` sweep skips
