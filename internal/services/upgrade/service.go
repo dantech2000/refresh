@@ -2,7 +2,6 @@ package upgrade
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/aws/smithy-go"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/common"
@@ -192,7 +190,7 @@ func (s *Service) waitForUpdate(ctx context.Context, in *eks.DescribeUpdateInput
 				// long-running upgrade watch; report and keep polling.
 				// Permanent API errors (e.g. AccessDenied) never heal, so
 				// fail fast instead of warning for hours.
-				if isPermanentAPIError(err) {
+				if common.IsPermanentAPIError(err) {
 					return awsinternal.FormatAWSError(err, fmt.Sprintf("checking %s", what))
 				}
 				progress("warning: checking %s: %v", what, err)
@@ -209,19 +207,6 @@ func (s *Service) waitForUpdate(ctx context.Context, in *eks.DescribeUpdateInput
 			}
 		}
 	}
-}
-
-// isPermanentAPIError reports whether err is an AWS API error that retrying
-// will not fix (AccessDenied, ResourceNotFound, validation, ...). Anything
-// that never produced an API response (DNS failures, refused/reset
-// connections, EOF, timeouts) and retryable API errors (throttling, 5xx)
-// are not permanent: the watch keeps polling through them.
-func isPermanentAPIError(err error) bool {
-	var ae smithy.APIError
-	if !errors.As(err, &ae) {
-		return false
-	}
-	return !common.IsRetryable(err)
 }
 
 // updateErrors flattens an update's error details for display.

@@ -125,6 +125,16 @@ func shouldRetry(err error) bool {
 // return false, as do context cancellations.
 func IsRetryable(err error) bool { return shouldRetry(err) }
 
+// IsPermanentAPIError reports whether err is an AWS API error that retrying
+// or polling again will not fix (AccessDenied, ResourceNotFound, validation).
+// Errors that never produced an API response (DNS failures, refused or reset
+// connections, EOF, timeouts) and retryable API errors (throttling, 5xx) are
+// not permanent: a long wait keeps polling through them.
+func IsPermanentAPIError(err error) bool {
+	var ae smithy.APIError
+	return errors.As(err, &ae) && !IsRetryable(err)
+}
+
 // IdempotencyToken returns a random token for AWS APIs that accept a
 // ClientRequestToken. Setting it explicitly ONCE per logical operation lets
 // retry wrappers re-issue the request without risking a double-apply (the SDK

@@ -260,9 +260,15 @@ if err != nil {
 }
 ```
 
+A nodegroup roll already has this in one place: call
+`nodegroup.StartNodegroupRoll` (`internal/services/nodegroup/version_update.go`),
+which `nodegroup update` and `cluster upgrade` both use.
+
 `WithRetry[T]` (`internal/common/retry.go`) is generic and retries
 throttling/5xx/transient errors with full jitter while honoring `ctx`; it does
-not retry permanent errors such as AccessDenied. `FormatAWSError(err, op)`
+not retry permanent errors such as AccessDenied. A long poll (an update
+wait) keeps going through transient errors and stops on
+`common.IsPermanentAPIError`. `FormatAWSError(err, op)`
 (`internal/aws/awserr/errors.go`, re-exported by `internal/aws`) turns SDK
 errors into actionable messages (e.g. a missing IAM permission lists the
 actions) and wraps the original, so `errors.Is`/`errors.As` still work —
