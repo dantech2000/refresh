@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -15,35 +16,32 @@ import (
 const dateLayout = "2006-01-02"
 
 // OutputFleetTable renders the fleet status. The human path uses the render
-// design system (status tokens, summary chips, a next-step hint); `-o plain`
-// writes pure TSV for grep/awk: a header and one row per cluster, with no
-// footer, glyphs, or color.
-func OutputFleetTable(statuses []statussvc.ClusterStatus, elapsed time.Duration) error {
+// design system (status tokens, summary chips, the INCOMPLETE DATA section
+// for failures, a next-step hint); `-o plain` writes pure TSV for grep/awk: a
+// header and one row per cluster, with no footer, glyphs, or color. The
+// caller reports failures on stderr for -o plain.
+func OutputFleetTable(statuses []statussvc.ClusterStatus, failures []diag.Failure, elapsed time.Duration) error {
 	if ui.PlainOutput() {
 		fleetPlain(statuses).Render()
 		return nil
 	}
 	th := render.Default(os.Stdout)
-	for _, line := range fleetLines(th, statuses, elapsed) {
+	for _, line := range fleetLines(th, statuses, failures, elapsed) {
 		fmt.Println(line)
 	}
 	return nil
 }
 
-// plainErrorsColumn is the one `-o plain` column the human table lacks: the
-// human view lists incomplete rows in a separate INCOMPLETE DATA section.
-const plainErrorsColumn = "ERRORS"
-
 // fleetPlain builds the `status -o plain` table: the human table's named
-// columns (without the leading glyph column) plus ERRORS. Values use the human
-// vocabulary, never truncated.
+// columns (without the leading glyph column). Values use the human
+// vocabulary, never truncated. Failures go to stderr, not into a column.
 func fleetPlain(statuses []statussvc.ClusterStatus) *ui.PlainTable {
 	cols := fleetDataColumns()
-	headers := make([]string, 0, len(cols)+1)
+	headers := make([]string, 0, len(cols))
 	for _, c := range cols {
 		headers = append(headers, c.Title)
 	}
-	t := ui.NewPlainTable(append(headers, plainErrorsColumn)...)
+	t := ui.NewPlainTable(headers...)
 	for _, c := range statuses {
 		t.Row(
 			nameOr(c),
@@ -54,7 +52,6 @@ func fleetPlain(statuses []statussvc.ClusterStatus) *ui.PlainTable {
 			staleAMICell(c),
 			addonsCell(c.AddonsBehind),
 			healthCell(c.HealthIssues),
-			errorsCell(c),
 		)
 	}
 	return t
@@ -155,13 +152,4 @@ func healthCell(issues int) string {
 		return "0"
 	}
 	return fmt.Sprintf("%d issue(s)", issues)
-}
-
-// errorsCell marks a row whose data is incomplete; "-" keeps the TSV column
-// non-empty for awk.
-func errorsCell(c statussvc.ClusterStatus) string {
-	if !c.Incomplete() {
-		return "-"
-	}
-	return strings.Join(c.Errors, "; ")
 }

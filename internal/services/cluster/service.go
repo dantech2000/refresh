@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/common"
 	"github.com/dantech2000/refresh/internal/services/status"
@@ -205,26 +207,26 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 
 	// Add add-ons information if requested
 	if options.IncludeAddons {
-		addons, warnings, err := s.getClusterAddons(ctx, name)
+		addons, failures, err := s.getClusterAddons(ctx, name)
 		if err != nil {
 			s.logger.Debug("failed to get cluster add-ons", "cluster", name, "error", err)
-			details.Warnings = append(details.Warnings, "could not list add-ons: "+awserr.Summary(err))
+			details.Failures = append(details.Failures, s.failure(diag.KindCluster, name, name, diag.OpListAddons, err))
 		} else {
 			// Collected: [] when there are none, unlike nil (not collected).
 			details.Addons = append([]AddonInfo{}, addons...)
-			details.Warnings = append(details.Warnings, warnings...)
+			details.Failures = append(details.Failures, failures...)
 		}
 	}
 
 	// Add nodegroups information if detailed
 	if options.Detailed {
-		nodegroups, warnings, err := s.getClusterNodegroups(ctx, name)
+		nodegroups, failures, err := s.getClusterNodegroups(ctx, name)
 		if err != nil {
 			s.logger.Debug("failed to get cluster nodegroups", "cluster", name, "error", err)
-			details.Warnings = append(details.Warnings, "could not list nodegroups: "+awserr.Summary(err))
+			details.Failures = append(details.Failures, s.failure(diag.KindCluster, name, name, diag.OpListNodegroups, err))
 		} else {
 			details.Nodegroups = append([]NodegroupSummary{}, nodegroups...)
-			details.Warnings = append(details.Warnings, warnings...)
+			details.Failures = append(details.Failures, failures...)
 		}
 	}
 
@@ -338,12 +340,6 @@ func regionOptionsFor(options ListOptions, region string) ListOptions {
 	return out
 }
 
-// RegionFailure is a region whose cluster list failed or never ran.
-type RegionFailure struct {
-	Region string
-	Err    error
-}
-
 // RegionListResult is the outcome of a multi-region cluster list.
 type RegionListResult struct {
 	Summaries []ClusterSummary
@@ -351,15 +347,17 @@ type RegionListResult struct {
 	Regions int
 	// Queried is the number of regions that answered.
 	Queried int
-	// Failed lists the failed regions in sweep order. A region that never
-	// started because the context ended fails with the context's cause.
-	Failed []RegionFailure
+	// Failed has one failure (kind Region, eks:ListClusters) per failed
+	// region, in sweep order. A region that never started because the
+	// context ended is ReasonNotAttempted.
+	Failed []diag.Failure
 	// Skipped lists (sorted) the regions of a default sweep that are closed
 	// to these credentials. They are not failures.
 	Skipped []string
 }
 
 // RegionScopeHint tells the user how to narrow a region sweep.
+// runner.RegionScopeHint is the same text for the command layer.
 const RegionScopeHint = "scope with -r or REFRESH_EKS_REGIONS"
 
 // listRegion lists the clusters of one region.
@@ -395,11 +393,17 @@ func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (
 		copy(stamped, summaries)
 		for i := range stamped {
 			stamped[i].Region = r
+			stamped[i].Failures = slices.Clone(stamped[i].Failures)
+			for j := range stamped[i].Failures {
+				stamped[i].Failures[j].Region = r
+			}
 		}
 		return regionResult{ran: true, summaries: stamped, err: err}
 	})
 
 	out := RegionListResult{Summaries: make([]ClusterSummary, 0), Regions: len(regions)}
+	var firstRegion string
+	var firstErr error
 	for i, r := range regions {
 		res := results[i]
 		if !res.ran {
@@ -416,7 +420,15 @@ func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (
 			out.Skipped = append(out.Skipped, r)
 		default:
 			s.logger.Debug("failed to list clusters in region", "region", r, "error", res.err)
-			out.Failed = append(out.Failed, RegionFailure{Region: r, Err: res.err})
+			f := diag.FromError(diag.KindRegion, r, diag.OpListClusters, res.err)
+			if !res.ran {
+				f = diag.New(diag.KindRegion, r, diag.ReasonNotAttempted, res.err.Error())
+				f.Region = r
+			}
+			out.Failed = append(out.Failed, f)
+			if firstErr == nil {
+				firstRegion, firstErr = r, res.err
+			}
 		}
 	}
 	sort.Strings(out.Skipped)
@@ -428,12 +440,11 @@ func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (
 			return out, fmt.Errorf("could not list clusters in any of %d region(s): none is accessible to these credentials; %s",
 				len(regions), RegionScopeHint)
 		}
-		first := out.Failed[0]
 		if len(out.Failed) == len(regions) {
-			return out, fmt.Errorf("listing clusters failed in all %d regions (e.g. %s): %w", len(regions), first.Region, first.Err)
+			return out, fmt.Errorf("listing clusters failed in all %d regions (e.g. %s): %w", len(regions), firstRegion, firstErr)
 		}
 		return out, fmt.Errorf("listing clusters failed in %d region(s) (e.g. %s) and %d region(s) are not accessible: %w",
-			len(out.Failed), first.Region, len(out.Skipped), first.Err)
+			len(out.Failed), firstRegion, len(out.Skipped), firstErr)
 	}
 	return out, nil
 }

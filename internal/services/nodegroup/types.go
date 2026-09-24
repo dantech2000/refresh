@@ -5,6 +5,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/types"
 )
 
@@ -80,25 +81,33 @@ type NodegroupSummary struct {
 	// need a version upgrade; VersionBehind carries that signal.
 	K8sVersion    string `json:"k8sVersion" yaml:"k8sVersion"`
 	VersionBehind bool   `json:"versionBehind" yaml:"versionBehind"`
-	// AMILookupError is set when the latest recommended AMI could not be
-	// resolved (e.g. no ssm:GetParameter permission or throttling). AMIStatus
-	// is then Unknown because of the failure, not because nothing is stale.
-	AMILookupError string `json:"amiLookupError,omitempty" yaml:"amiLookupError,omitempty"`
+	// AMILookupFailure is set when the latest recommended AMI could not be
+	// resolved (for example, no ssm:GetParameter permission, or throttling).
+	// AMIStatus is then Unknown because of the failure, not because nothing
+	// is stale. It is advisory: `nodegroup list` does not count it as
+	// incomplete data, while `status` does (see docs/concepts/output.md).
+	AMILookupFailure *diag.Failure `json:"amiLookupFailure,omitempty" yaml:"amiLookupFailure,omitempty"`
 }
 
 // ListResult is the full outcome of a nodegroup listing.
 type ListResult struct {
-	// Summaries are the nodegroups that were described (and matched the filters).
+	// Summaries are the nodegroups that were described (and matched the
+	// filters). A summary whose latest-AMI lookup failed carries the failure
+	// in AMILookupFailure.
 	Summaries []NodegroupSummary
-	// Failures has a "name: reason" entry for every listed nodegroup left out
-	// of Summaries because it could not be described.
-	Failures []string
-	// AMILookupFailures has a "name: reason" entry for every nodegroup in
-	// Summaries whose latest recommended AMI could not be resolved.
-	AMILookupFailures []string
-	// AMILookupErr is the first latest-AMI lookup error, kept unflattened so
-	// the command layer can format it (e.g. name the missing IAM permission).
-	AMILookupErr error
+	// Failures has one entry per listed nodegroup left out of Summaries: it
+	// could not be described, or the listing stopped before it was reached.
+	Failures []diag.Failure
+}
+
+// NodegroupList is the `nodegroup list -o json|yaml` document.
+type NodegroupList struct {
+	Cluster    string             `json:"cluster" yaml:"cluster"`
+	Nodegroups []NodegroupSummary `json:"nodegroups" yaml:"nodegroups"`
+	Count      int                `json:"count" yaml:"count"`
+	// Failures are the nodegroups that could not be described; the list
+	// leaves them out. [] when every nodegroup was read.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // NodegroupDetails is the `nodegroup describe` result: AMI status, scaling, and
@@ -114,20 +123,16 @@ type NodegroupDetails struct {
 	CurrentAMI string          `json:"currentAmi" yaml:"currentAmi"`
 	LatestAMI  string          `json:"latestAmi" yaml:"latestAmi"`
 	AMIStatus  types.AMIStatus `json:"amiStatus" yaml:"amiStatus"`
-	// AMILookupError is set when the latest recommended AMI could not be
-	// resolved; see NodegroupSummary.AMILookupError.
-	AMILookupError string `json:"amiLookupError,omitempty" yaml:"amiLookupError,omitempty"`
-	// amiLookupErr is the unflattened lookup error, for LatestAMILookupErr.
-	amiLookupErr error
+	// AMILookupFailure is set when the latest recommended AMI could not be
+	// resolved; see NodegroupSummary.AMILookupFailure.
+	AMILookupFailure *diag.Failure `json:"amiLookupFailure,omitempty" yaml:"amiLookupFailure,omitempty"`
 
 	Scaling ScalingConfig `json:"scaling" yaml:"scaling"`
 
 	Instances []InstanceDetails `json:"instances" yaml:"instances"`
 	Workloads WorkloadInfo      `json:"workloads" yaml:"workloads"`
-}
 
-// LatestAMILookupErr returns the error from resolving the latest recommended
-// AMI, or nil when the lookup succeeded or was not needed.
-func (d *NodegroupDetails) LatestAMILookupErr() error {
-	return d.amiLookupErr
+	// Failures is always [] today: describe either reads the nodegroup or
+	// fails. It is here so every document carries the same key.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }

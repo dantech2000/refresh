@@ -74,8 +74,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	} else if err := outputNodegroupDetailsTable(details, time.Since(start)); err != nil {
 		return err
 	}
-	if lerr := details.LatestAMILookupErr(); lerr != nil {
-		warnAMILookup(warnOut, 1, lerr)
-	}
+	// Advisory: the AMI lookup does not change the exit code.
+	warnAMILookup(warnOut, []nodegroupsvc.NodegroupSummary{{AMILookupFailure: details.AMILookupFailure}})
 	return nil
 }

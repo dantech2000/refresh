@@ -26,7 +26,7 @@ import (
 
 func TestOutputNodegroupsTable_Empty(t *testing.T) {
 	out := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", nil); err != nil {
+		if err := outputNodegroupsTable("my-cluster", nil, nil); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
@@ -42,7 +42,7 @@ func TestOutputNodegroupsTable_WithRows(t *testing.T) {
 	}
 	// Human path (render design system): captured in full via fmt.Println.
 	out := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", items); err != nil {
+		if err := outputNodegroupsTable("my-cluster", items, nil); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
@@ -57,7 +57,7 @@ func TestOutputNodegroupsTable_WithRows(t *testing.T) {
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
 	plain := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", items); err != nil {
+		if err := outputNodegroupsTable("my-cluster", items, nil); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
@@ -80,7 +80,7 @@ func TestOutputNodegroupsTable_PlainEmptyIsHeaderOnly(t *testing.T) {
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
 	out := captureStdout(t, func() {
-		if err := outputNodegroupsTable("my-cluster", nil); err != nil {
+		if err := outputNodegroupsTable("my-cluster", nil, nil); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
@@ -91,7 +91,7 @@ func TestOutputNodegroupsTable_PlainEmptyIsHeaderOnly(t *testing.T) {
 
 func TestNodegroupListPlain_BehindAndLookupFailure(t *testing.T) {
 	items := []nodegroupsvc.NodegroupSummary{
-		{Name: "old\tname", Status: "ACTIVE", K8sVersion: "1.29", VersionBehind: true, AMILookupError: "denied", DesiredSize: 2, ReadyNodes: 1, ReadyKnown: true},
+		{Name: "old\tname", Status: "ACTIVE", K8sVersion: "1.29", VersionBehind: true, AMILookupFailure: amiLookupFailure("old\tname"), DesiredSize: 2, ReadyNodes: 1, ReadyKnown: true},
 	}
 	var buf bytes.Buffer
 	nodegroupListPlain(items).Write(&buf)

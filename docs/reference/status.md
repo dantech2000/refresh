@@ -18,13 +18,15 @@ Exit codes (for CI/cron):
      latest, a nodegroup behind the control-plane version, or an
      AWS-reported control-plane health issue (HEALTH column)
   3  a cluster is on extended support or unsupported
-  4  incomplete data: a cluster row has errors (a failed AWS call or a
-     sweep that timed out) or a region could not be listed
+  4  incomplete data: part of a cluster row could not be read (a failed
+     AWS call or a sweep that timed out) or a region could not be listed
   1  an error, or nothing could be gathered: every region failed or was
      skipped
 
 When several apply, the highest-priority code wins: 3, then 2, then 4.
-Incomplete data never exits 0; rows with errors are marked in the output.
+Incomplete data never exits 0. With -o json or -o yaml, the document lists
+each failure under "failures" and marks incomplete rows "incomplete": true;
+the table lists them under INCOMPLETE DATA; -o plain names them on stderr.
 
 With --all-regions (not -r or REFRESH_EKS_REGIONS), regions these credentials
 cannot use (an SCP denial, a region not enabled) are skipped with one note and

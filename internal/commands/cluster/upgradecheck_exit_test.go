@@ -6,6 +6,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 // `cluster upgrade-check` is a CI gate (REF-165): 0 ready, 2 warnings only,
@@ -153,10 +154,25 @@ func TestUpgradeCheckExitCode_Incomplete(t *testing.T) {
 		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
 			t.Fatalf("exit code = %d (err %v), want 4\nstderr:\n%s", code, err, stderr)
 		}
-		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-		inc, _ := doc["incomplete"].([]any)
-		if len(inc) != 1 || !strings.HasPrefix(inc[0].(string), "nodegroup old: AccessDeniedException") {
-			t.Errorf("incomplete = %v, want the unreadable nodegroup", doc["incomplete"])
+		doc := fakeaws.RequireOneDocument(t, "json", stdout)
+		fakeaws.RequireFailures(t, doc, map[string]any{
+			"kind":         "Nodegroup",
+			"name":         "old",
+			"cluster":      "prod",
+			"region":       "us-east-1",
+			"operation":    "eks:DescribeNodegroup",
+			"reason":       "AccessDenied",
+			"retryable":    false,
+			"awsErrorCode": "AccessDeniedException",
+		})
+		if _, ok := doc.(map[string]any)["incomplete"]; ok {
+			t.Errorf("document still has the removed incomplete key")
+		}
+		if strings.Count(stderr, "warning: nodegroup prod/old (us-east-1): AccessDenied: AccessDeniedException") != 1 {
+			t.Errorf("stderr does not name the unreadable nodegroup once:\n%s", stderr)
+		}
+		if want := "incomplete data: 1 failure(s) (1 nodegroup)"; err.Error() != want {
+			t.Errorf("err = %q, want %q", err, want)
 		}
 		if _, _, err := runCluster(t, "upgrade-check", "prod", "-o", "json", "--exit-zero"); err != nil {
 			t.Errorf("--exit-zero: %v", err)
@@ -164,23 +180,27 @@ func TestUpgradeCheckExitCode_Incomplete(t *testing.T) {
 	})
 	t.Run("table shows it", func(t *testing.T) {
 		fakeaws.New(t, denied("1.29"))
-		stdout, _, err := runCluster(t, "upgrade-check", "prod")
+		stdout, stderr, err := runCluster(t, "upgrade-check", "prod")
 		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
 			t.Fatalf("exit code = %d, want 4", code)
 		}
-		for _, want := range []string{"INCOMPLETE", "could not read nodegroup old"} {
+		for _, want := range []string{"○ INCOMPLETE", "INCOMPLETE DATA", "nodegroup prod/old (us-east-1): AccessDenied"} {
 			if !strings.Contains(stdout, want) {
 				t.Errorf("table lacks %q:\n%s", want, stdout)
 			}
 		}
+		if strings.Contains(stderr, "warning: nodegroup") {
+			t.Errorf("the table run repeats the failure on stderr:\n%s", stderr)
+		}
 	})
 	t.Run("plain names it on stderr", func(t *testing.T) {
 		fakeaws.New(t, denied("1.29"))
-		_, stderr, err := runCluster(t, "upgrade-check", "prod", "-o", "plain")
+		stdout, stderr, err := runCluster(t, "upgrade-check", "prod", "-o", "plain")
 		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
 			t.Fatalf("exit code = %d, want 4", code)
 		}
-		if !strings.Contains(stderr, "could not read nodegroup old") {
+		plaintest.Check(t, stdout, "ID", "NAME", "CATEGORY", "STATUS", "K8S", "LAST REFRESH")
+		if !strings.Contains(stderr, "warning: nodegroup prod/old (us-east-1): AccessDenied") {
 			t.Errorf("stderr lacks the unreadable nodegroup:\n%s", stderr)
 		}
 	})

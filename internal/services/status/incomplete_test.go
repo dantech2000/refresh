@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/nodegroup"
@@ -42,7 +43,7 @@ func TestListClusterStatuses_DescribeErrorMarksIncomplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a single bad cluster must not fail the sweep: %v", err)
 	}
-	if len(statuses) != 1 || !statuses[0].Incomplete() {
+	if len(statuses) != 1 || !statuses[0].Incomplete {
 		t.Fatalf("want one incomplete row, got %+v", statuses)
 	}
 	if statuses[0].NeedsAttention() {
@@ -86,11 +87,11 @@ func TestListClusterStatuses_CancelledSweep(t *testing.T) {
 		if c.Name != names[i] || c.Region != "us-east-1" {
 			t.Errorf("row %d = %q/%q, want %q/us-east-1", i, c.Name, c.Region, names[i])
 		}
-		if !c.Incomplete() {
-			t.Errorf("row %s has no error after cancellation", c.Name)
+		if !c.Incomplete {
+			t.Errorf("row %s has no failure after cancellation", c.Name)
 		}
-		for _, e := range c.Errors {
-			if strings.HasPrefix(e, "not evaluated: ") {
+		for _, f := range c.Failures {
+			if f.Reason == diag.ReasonNotAttempted && strings.HasPrefix(f.Error, "not evaluated: ") && f.Name == c.Name && f.Region == "us-east-1" {
 				notEvaluated++
 			}
 		}
@@ -121,20 +122,20 @@ func TestAssembleCluster_AddonWithNoCompatibleVersion(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	c := statuses[0]
-	if c.Incomplete() {
-		t.Errorf("row flagged incomplete for an addon with no compatible version: %v", c.Errors)
+	if c.Incomplete {
+		t.Errorf("row flagged incomplete for an addon with no compatible version: %s", failureText(c.Failures))
 	}
 	if c.AddonsBehind.Behind != 0 || c.AddonsBehind.Total != 1 {
 		t.Errorf("addons = %+v, want 0 behind of 1", c.AddonsBehind)
 	}
 }
 
-// failingNodegroups mimics nodegroup.ListWithFailures when some nodegroups
+// failingNodegroups mimics nodegroup.ListDetailed when some nodegroups
 // could not be described.
-type failingNodegroups struct{ failures []string }
+type failingNodegroups struct{ failures []diag.Failure }
 
-func (f failingNodegroups) ListWithFailures(context.Context, string, nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
-	return []nodegroup.NodegroupSummary{{Name: "ng-ok", AMIStatus: types.AMILatest}}, f.failures, nil
+func (f failingNodegroups) ListDetailed(context.Context, string, nodegroup.ListOptions) (nodegroup.ListResult, error) {
+	return nodegroup.ListResult{Summaries: []nodegroup.NodegroupSummary{{Name: "ng-ok", AMIStatus: types.AMILatest}}, Failures: f.failures}, nil
 }
 
 // A nodegroup that could not be described must make the row incomplete rather
@@ -144,15 +145,17 @@ func TestAssembleCluster_DroppedNodegroup(t *testing.T) {
 	api.ListClustersFn = listClusters("prod")
 	svc := newTestService(nil, nil, &fakeAddons{})
 	svc.clusterAPI = api
-	svc.nodegroups = failingNodegroups{failures: []string{"ng-bad: InvalidRequestException: not authorized"}}
+	bad := diag.FromError(diag.KindNodegroup, "ng-bad", diag.OpDescribeNodegroup, &ekstypes.InvalidRequestException{Message: aws.String("not authorized")})
+	bad.Cluster = "prod" // the region is filled in by the status service
+	svc.nodegroups = failingNodegroups{failures: []diag.Failure{bad}}
 
 	statuses, err := svc.ListClusterStatuses(context.Background(), ListOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	c := statuses[0]
-	if !c.Incomplete() || !strings.Contains(strings.Join(c.Errors, ";"), "ng-bad") {
-		t.Errorf("want an error naming ng-bad, got %v", c.Errors)
+	if !c.Incomplete || len(c.Failures) != 1 || c.Failures[0].Name != "ng-bad" || c.Failures[0].Region != "us-east-1" {
+		t.Errorf("want one failure naming ng-bad in us-east-1, got %s", failureText(c.Failures))
 	}
 	if c.NodegroupCount != 2 || c.Compute != ComputeManaged {
 		t.Errorf("nodegroups = %d (%s), want 2 managed", c.NodegroupCount, c.Compute)
@@ -163,9 +166,9 @@ func TestAssembleCluster_DroppedNodegroup(t *testing.T) {
 // after that cluster was already dispatched.
 type cancelOnList struct{ cancel context.CancelFunc }
 
-func (c cancelOnList) ListWithFailures(context.Context, string, nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
+func (c cancelOnList) ListDetailed(context.Context, string, nodegroup.ListOptions) (nodegroup.ListResult, error) {
 	c.cancel()
-	return nil, nil, nil
+	return nodegroup.ListResult{}, nil
 }
 
 // A deadline that fires after every cluster was dispatched is not a partial
@@ -188,8 +191,8 @@ func TestListClusterStatuses_LateCancelIsNotPartial(t *testing.T) {
 	}
 }
 
-// A failing DescribeAddon makes addons.List return an UNKNOWN addon with no
-// version. It must not be counted as behind; it must be recorded as an error.
+// A failing DescribeAddon leaves the addon out of the summaries. It must not
+// be counted as behind; it must be recorded as a failure.
 func TestAssembleCluster_DescribeAddonFailure(t *testing.T) {
 	api := mocks.NewEKSAPI().
 		WithCluster("prod", "1.32").
@@ -230,28 +233,30 @@ func TestAssembleCluster_DescribeAddonFailure(t *testing.T) {
 	if c.AddonsBehind.Total != 2 {
 		t.Errorf("addons total = %d, want 2", c.AddonsBehind.Total)
 	}
-	if !c.Incomplete() || !strings.Contains(strings.Join(c.Errors, ";"), "vpc-cni") {
-		t.Errorf("want an error naming vpc-cni, got %v", c.Errors)
+	if !c.Incomplete || len(c.Failures) != 1 || c.Failures[0].Name != "vpc-cni" || c.Failures[0].Operation != diag.OpDescribeAddon ||
+		c.Failures[0].Cluster != "prod" || c.Failures[0].Region != "us-east-1" {
+		t.Errorf("want a DescribeAddon failure naming prod/vpc-cni, got %s", failureText(c.Failures))
 	}
 	if c.NeedsAttention() {
 		t.Error("a failed DescribeAddon must not flag the cluster as stale")
 	}
 }
 
-// amiLookupFailingNodegroups mimics nodegroup.ListWithFailures when the
+// amiLookupFailingNodegroups mimics nodegroup.ListDetailed when the
 // latest-AMI SSM lookup is denied: every nodegroup is summarized with an
-// Unknown AMI status and also reported as a failure.
+// Unknown AMI status and an AMILookupFailure.
 type amiLookupFailingNodegroups struct{}
 
-func (amiLookupFailingNodegroups) ListWithFailures(context.Context, string, nodegroup.ListOptions) ([]nodegroup.NodegroupSummary, []string, error) {
-	const reason = "reading SSM parameter /aws/service/eks/optimized-ami/1.32/...: AccessDeniedException"
-	return []nodegroup.NodegroupSummary{
-			{Name: "ng-a", AMIStatus: types.AMIUnknown, AMILookupError: reason},
-			{Name: "ng-b", AMIStatus: types.AMIUnknown, AMILookupError: reason},
-		}, []string{
-			"ng-a: latest AMI lookup failed: " + reason,
-			"ng-b: latest AMI lookup failed: " + reason,
-		}, nil
+func (amiLookupFailingNodegroups) ListDetailed(context.Context, string, nodegroup.ListOptions) (nodegroup.ListResult, error) {
+	lookup := func(name string) *diag.Failure {
+		f := diag.FromError(diag.KindNodegroup, name, diag.OpGetParameter, mocks.AccessDenied())
+		f.Cluster = "prod"
+		return &f
+	}
+	return nodegroup.ListResult{Summaries: []nodegroup.NodegroupSummary{
+		{Name: "ng-a", AMIStatus: types.AMIUnknown, AMILookupFailure: lookup("ng-a")},
+		{Name: "ng-b", AMIStatus: types.AMIUnknown, AMILookupFailure: lookup("ng-b")},
+	}}, nil
 }
 
 // A failed latest-AMI lookup must make the row incomplete (exit 4) instead of
@@ -268,8 +273,13 @@ func TestAssembleCluster_LatestAMILookupFailureMarksIncomplete(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	c := statuses[0]
-	if !c.Incomplete() || !strings.Contains(strings.Join(c.Errors, ";"), "latest AMI lookup failed") {
-		t.Errorf("want an incomplete row naming the AMI lookup, got %v", c.Errors)
+	if !c.Incomplete || len(c.Failures) != 2 {
+		t.Fatalf("want an incomplete row with both AMI lookups, got %s", failureText(c.Failures))
+	}
+	for _, f := range c.Failures {
+		if f.Operation != diag.OpGetParameter || f.Reason != diag.ReasonAccessDenied || f.Region != "us-east-1" {
+			t.Errorf("failure = %+v, want an AccessDenied ssm:GetParameter failure in us-east-1", f)
+		}
 	}
 	if c.NodegroupCount != 2 {
 		t.Errorf("NodegroupCount = %d, want 2 (no double count)", c.NodegroupCount)

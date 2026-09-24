@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
@@ -20,8 +21,8 @@ func listNodegroupsFn(names ...string) func(context.Context, *eks.ListNodegroups
 }
 
 // A nodegroup whose DescribeNodegroup fails is dropped from List (unchanged
-// behavior) but reported by ListWithFailures.
-func TestListWithFailures_DescribeError(t *testing.T) {
+// behavior) but reported by ListDetailed as a structured failure.
+func TestListDetailed_DescribeError(t *testing.T) {
 	m := &mocks.EKSAPI{
 		DescribeClusterFn: clusterFn("1.32"),
 		ListNodegroupsFn:  listNodegroupsFn("ng-ok", "ng-bad"),
@@ -33,16 +34,22 @@ func TestListWithFailures_DescribeError(t *testing.T) {
 		},
 	}
 	svc := newTestService(m)
+	svc.awsConfig.Region = "us-east-1"
 
-	summaries, failures, err := svc.ListWithFailures(context.Background(), "prod", ListOptions{})
+	res, err := svc.ListDetailed(context.Background(), "prod", ListOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(summaries) != 1 || summaries[0].Name != "ng-ok" {
-		t.Errorf("summaries = %+v, want only ng-ok", summaries)
+	if len(res.Summaries) != 1 || res.Summaries[0].Name != "ng-ok" {
+		t.Errorf("summaries = %+v, want only ng-ok", res.Summaries)
 	}
-	if len(failures) != 1 || !strings.HasPrefix(failures[0], "ng-bad: ") {
-		t.Errorf("failures = %v, want one entry for ng-bad", failures)
+	want := diag.Failure{
+		Kind: diag.KindNodegroup, Name: "ng-bad", Cluster: "prod", Region: "us-east-1",
+		Operation: diag.OpDescribeNodegroup, Reason: diag.ReasonInvalidRequest,
+		Error: "InvalidRequestException: not authorized", AWSErrorCode: "InvalidRequestException",
+	}
+	if len(res.Failures) != 1 || res.Failures[0] != want {
+		t.Errorf("failures = %+v, want [%+v]", res.Failures, want)
 	}
 
 	legacy, err := svc.List(context.Background(), "prod", ListOptions{})
@@ -52,7 +59,7 @@ func TestListWithFailures_DescribeError(t *testing.T) {
 }
 
 // Filtered-out nodegroups are not failures.
-func TestListWithFailures_FilterIsNotFailure(t *testing.T) {
+func TestListDetailed_FilterIsNotFailure(t *testing.T) {
 	m := &mocks.EKSAPI{
 		DescribeClusterFn: clusterFn("1.32"),
 		ListNodegroupsFn:  listNodegroupsFn("ng-a"),
@@ -60,19 +67,19 @@ func TestListWithFailures_FilterIsNotFailure(t *testing.T) {
 			return &eks.DescribeNodegroupOutput{Nodegroup: stubNodegroup("ng-a", ekstypes.NodegroupStatusActive)}, nil
 		},
 	}
-	summaries, failures, err := newTestService(m).ListWithFailures(context.Background(), "prod",
+	res, err := newTestService(m).ListDetailed(context.Background(), "prod",
 		ListOptions{Filters: map[string]string{"status": "DEGRADED"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(summaries) != 0 || len(failures) != 0 {
-		t.Errorf("summaries=%v failures=%v, want both empty", summaries, failures)
+	if len(res.Summaries) != 0 || len(res.Failures) != 0 {
+		t.Errorf("summaries=%v failures=%v, want both empty", res.Summaries, res.Failures)
 	}
 }
 
 // When ctx ends mid-list, every listed nodegroup is either summarized or
 // reported; none silently vanishes.
-func TestListWithFailures_CancelledContext(t *testing.T) {
+func TestListDetailed_CancelledContext(t *testing.T) {
 	const n = 40
 	names := make([]string, n)
 	for i := range names {
@@ -90,14 +97,22 @@ func TestListWithFailures_CancelledContext(t *testing.T) {
 			return &eks.DescribeNodegroupOutput{Nodegroup: stubNodegroup(aws.ToString(in.NodegroupName), ekstypes.NodegroupStatusActive)}, nil
 		},
 	}
-	summaries, failures, err := newTestService(m).ListWithFailures(ctx, "prod", ListOptions{})
+	res, err := newTestService(m).ListDetailed(ctx, "prod", ListOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := len(summaries) + len(failures); got != n {
+	if got := len(res.Summaries) + len(res.Failures); got != n {
 		t.Errorf("summaries+failures = %d, want %d (no silent drops)", got, n)
 	}
-	if len(failures) == 0 {
-		t.Error("expected failures after cancellation")
+	if len(res.Failures) == 0 {
+		t.Fatal("expected failures after cancellation")
+	}
+	for _, f := range res.Failures {
+		if f.Kind != diag.KindNodegroup || f.Cluster != "prod" || !strings.HasPrefix(f.Name, "ng-") {
+			t.Errorf("failure %+v does not name a nodegroup of prod", f)
+		}
+		if f.Reason != diag.ReasonNotAttempted && f.Reason != diag.ReasonInterrupted {
+			t.Errorf("failure %+v: reason = %s, want NotAttempted or Interrupted", f, f.Reason)
+		}
 	}
 }

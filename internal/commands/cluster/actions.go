@@ -3,25 +3,23 @@ package cluster
 import (
 	"context"
 	"fmt"
-	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
-	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/status"
-	"github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -88,9 +86,9 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 
 	startTime := time.Now()
 	var summaries []clustersvc.ClusterSummary
-	var failures []types.RegionFailure
+	var regionFailures []diag.Failure
 	if allRegions || len(regions) > 0 {
-		summaries, failures, err = runMultiRegionListWithProgress(ctx, clusterService, options)
+		summaries, regionFailures, err = runMultiRegionListWithProgress(ctx, clusterService, options)
 	} else {
 		err = runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
 			var lerr error
@@ -104,48 +102,43 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 	elapsed := time.Since(startTime)
 
 	summaries = clusterview.SortClusterSummaries(summaries, cmd.String("sort"), cmd.Bool("desc"))
-	warnClusterRows(ui.Stderr, summaries)
+	failures := listFailures(regionFailures, summaries)
 
-	if tree {
-		if err := clusterview.OutputClustersTree(summaries, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
+	switch {
+	case tree:
+		if err := clusterview.OutputClustersTree(summaries, failures, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
 			return err
 		}
-		return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, len(failures)))
-	}
-	if summaries == nil {
-		summaries = []clustersvc.ClusterSummary{} // -o json|yaml: [], not null
-	}
-	payload := map[string]any{"clusters": summaries, "count": len(summaries)}
-	if len(failures) > 0 {
-		payload["failures"] = failures
-	}
-	if handled, err := runner.EncodeStdout(format, payload); handled {
-		if err != nil {
+	default:
+		if summaries == nil {
+			summaries = []clustersvc.ClusterSummary{} // -o json|yaml: [], not null
+		}
+		doc := clustersvc.ClusterList{Clusters: summaries, Count: len(summaries), Failures: failures}
+		if handled, err := runner.EncodeStdout(format, doc); handled {
+			if err != nil {
+				return err
+			}
+		} else if err := clusterview.OutputClustersTable(summaries, failures, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
 			return err
 		}
-		return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, len(failures)))
 	}
-	if err := clusterview.OutputClustersTable(summaries, elapsed, allRegions, cmd.Bool("show-health")); err != nil {
-		return err
+	// Regions skipped by the default sweep are not failures. The caller
+	// turns the exit 4 into exit 1 after an interrupt.
+	if !runner.TableListsFailures(format) {
+		runner.ReportFailures(ui.Stderr, failures)
 	}
-	return runner.UnlessInterrupted(ctx, listIncompleteExit(summaries, len(failures)))
+	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(failures))
 }
 
-// listIncompleteExit returns exit 4 (incomplete data) after a list printed a
-// partial result: some regions failed, or some cluster rows could not be
-// fully read. Regions skipped by the default sweep are not failures. The
-// caller turns it into exit 1 after an interrupt.
-func listIncompleteExit(summaries []clustersvc.ClusterSummary, failedRegions int) error {
-	rows := 0
+// listFailures is the list's one failure list: the regions that could not
+// be listed and the failures of each cluster row, in diag.Sort order.
+func listFailures(regionFailures []diag.Failure, summaries []clustersvc.ClusterSummary) diag.List {
+	out := slices.Clone(regionFailures)
 	for _, s := range summaries {
-		if len(s.Warnings) > 0 {
-			rows++
-		}
+		out = append(out, s.Failures...)
 	}
-	if failedRegions == 0 && rows == 0 {
-		return nil
-	}
-	return cli.Exit(fmt.Sprintf("incomplete data: %d region(s) failed, %d cluster(s) could not be fully read", failedRegions, rows), runner.ExitIncomplete)
+	diag.Sort(out)
+	return out
 }
 
 // wantsTree reports whether cluster list renders the region tree: -o tree,
@@ -153,34 +146,6 @@ func listIncompleteExit(summaries []clustersvc.ClusterSummary, failedRegions int
 // explicit -o json|yaml|plain wins over --tree).
 func wantsTree(format string, treeFlag, formatSet bool) bool {
 	return format == "tree" || (treeFlag && !formatSet)
-}
-
-// warnClusterRows writes one stderr warning per partial failure in the rows
-// (a cluster or nodegroup that could not be read), so a row with missing data
-// is never mistaken for a complete one.
-func warnClusterRows(w io.Writer, summaries []clustersvc.ClusterSummary) {
-	for _, s := range summaries {
-		for _, msg := range s.Warnings {
-			_, _ = fmt.Fprintln(w, ui.StderrColor(color.FgYellow).Sprintf("warning: cluster %s (%s): %s", s.Name, s.Region, msg))
-		}
-	}
-}
-
-// reportRegionSweep writes the multi-region sweep's partial problems to w:
-// one line naming the skipped regions and one single-line warning per failed
-// region. The caller exits 4 after printing a partial result.
-func reportRegionSweep(w io.Writer, res clustersvc.RegionListResult) {
-	yellow := ui.StderrColor(color.FgYellow)
-	if len(res.Skipped) > 0 {
-		_, _ = fmt.Fprintln(w, yellow.Sprintf("Skipped %d region(s) not accessible to these credentials: %s (%s)",
-			len(res.Skipped), strings.Join(res.Skipped, ", "), clustersvc.RegionScopeHint))
-	}
-	for _, f := range res.Failed {
-		_, _ = fmt.Fprintln(w, yellow.Sprintf("warning: region %s: %s", f.Region, awserr.Summary(f.Err)))
-	}
-	if len(res.Failed) > 0 {
-		_, _ = fmt.Fprintln(w, yellow.Sprintf("warning: the list is incomplete: %d of %d region(s) failed", len(res.Failed), res.Regions))
-	}
 }
 
 func runDescribe(ctx context.Context, cmd *cli.Command) error {
@@ -243,40 +208,26 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		details.Support = &posture
 	}
 
-	if details != nil {
-		// Add-ons or nodegroups that could not be read would otherwise just be
-		// missing from the output.
-		for _, msg := range details.Warnings {
-			_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgYellow).Sprintf("warning: %s", msg))
-		}
-	}
-
-	if handled, err := runner.EncodeStdout(cmd.String("format"), details); handled {
+	format := cmd.String("format")
+	if handled, err := runner.EncodeStdout(format, details); handled {
 		if err != nil {
 			return err
 		}
-		return runner.UnlessInterrupted(ctx, describeIncompleteExit(details))
-	}
-	if err := clusterview.OutputClusterDetailsTable(details); err != nil {
+	} else if err := clusterview.OutputClusterDetailsTable(details); err != nil {
 		return err
 	}
-	return runner.UnlessInterrupted(ctx, describeIncompleteExit(details))
-}
-
-// describeIncompleteExit returns exit 4 (incomplete data) when some of the
-// cluster's add-ons or nodegroups could not be read. The warnings are
-// already on stderr.
-func describeIncompleteExit(details *clustersvc.ClusterDetails) error {
-	if details == nil || len(details.Warnings) == 0 {
-		return nil
+	// Add-ons or nodegroups that could not be read would otherwise just be
+	// missing from the output.
+	if !runner.TableListsFailures(format) {
+		runner.ReportFailures(ui.Stderr, details.Failures)
 	}
-	return cli.Exit(fmt.Sprintf("incomplete data: %d part(s) of cluster %s could not be read", len(details.Warnings), details.Name), runner.ExitIncomplete)
+	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(details.Failures))
 }
 
-// runMultiRegionListWithProgress returns the gathered clusters and the
-// regions that failed, each with a one-line reason. It fails only when no
-// region answered.
-func runMultiRegionListWithProgress(ctx context.Context, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, []types.RegionFailure, error) {
+// runMultiRegionListWithProgress returns the gathered clusters and one
+// failure per region that could not be listed, and writes the skipped-region
+// notice. It fails only when no region answered.
+func runMultiRegionListWithProgress(ctx context.Context, clusterService *clustersvc.ServiceImpl, options clustersvc.ListOptions) ([]clustersvc.ClusterSummary, []diag.Failure, error) {
 	spinner := ui.NewFunSpinnerForCategory("cluster")
 	if err := spinner.Start(); err != nil {
 		return nil, nil, fmt.Errorf("failed to start spinner: %w", err)
@@ -286,7 +237,7 @@ func runMultiRegionListWithProgress(ctx context.Context, clusterService *cluster
 	res, err := clusterService.ListAllRegions(ctx, options)
 	if err != nil {
 		spinner.Stop()
-		reportRegionSweep(ui.Stderr, clustersvc.RegionListResult{Skipped: res.Skipped})
+		runner.ReportSkippedRegions(ui.Stderr, res.Skipped)
 		return nil, nil, err
 	}
 
@@ -295,21 +246,8 @@ func runMultiRegionListWithProgress(ctx context.Context, clusterService *cluster
 	} else {
 		spinner.Success("Search complete - no clusters found")
 	}
-	reportRegionSweep(ui.Stderr, res)
-	return res.Summaries, regionFailures(res.Failed), nil
-}
-
-// regionFailures converts the sweep's failed regions to the "failures"
-// entries of the -o json/yaml document, in sweep order.
-func regionFailures(failed []clustersvc.RegionFailure) []types.RegionFailure {
-	if len(failed) == 0 {
-		return nil
-	}
-	out := make([]types.RegionFailure, 0, len(failed))
-	for _, f := range failed {
-		out = append(out, types.RegionFailure{Region: f.Region, Error: awserr.Summary(f.Err)})
-	}
-	return out
+	runner.ReportSkippedRegions(ui.Stderr, res.Skipped)
+	return res.Summaries, res.Failed, nil
 }
 
 // describeSections returns whether cluster describe shows the health and

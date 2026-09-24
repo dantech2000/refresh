@@ -3,6 +3,7 @@ package cluster
 import (
 	"time"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/status"
 )
@@ -47,11 +48,12 @@ type ClusterDetails struct {
 	// Operational metadata
 	Tags map[string]string `json:"tags" yaml:"tags"`
 
-	// Warnings are partial failures (an add-on or nodegroup that could not be
-	// read). The command layer also prints them on stderr. Addons and
+	// Failures are the parts of the cluster that could not be read: the
+	// add-on or nodegroup list, or one add-on or nodegroup. Addons and
 	// Nodegroups are null when not requested or not collected, and [] when
-	// collected and empty, so a failure never reads as "none".
-	Warnings []string `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	// collected and empty, so a failure never reads as "none". [] when
+	// everything was read.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // ClusterSummary is used for list operations
@@ -64,10 +66,29 @@ type ClusterSummary struct {
 	NodeCount NodeCountInfo         `json:"nodeCount" yaml:"nodeCount"`
 	CreatedAt time.Time             `json:"createdAt" yaml:"createdAt"`
 	Tags      map[string]string     `json:"tags,omitempty" yaml:"tags,omitempty"`
-	// Warnings are partial failures for this row (the cluster or its
-	// nodegroups could not be read). The command layer also prints them on
-	// stderr.
-	Warnings []string `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	// Incomplete is true when some of the row's data could not be read (the
+	// cluster, its nodegroup list, or a nodegroup). Its failures are in the
+	// ClusterList document's "failures", identified by cluster (or, for the
+	// cluster itself, name).
+	Incomplete bool `json:"incomplete,omitempty" yaml:"incomplete,omitempty"`
+	// Failures are the row's failures. The command lists them in the
+	// ClusterList document, not on the row.
+	Failures []diag.Failure `json:"-" yaml:"-"`
+}
+
+// addFailure records f against the row and marks it incomplete.
+func (s *ClusterSummary) addFailure(f diag.Failure) {
+	s.Failures = append(s.Failures, f)
+	s.Incomplete = true
+}
+
+// ClusterList is the `cluster list -o json|yaml` document.
+type ClusterList struct {
+	Clusters []ClusterSummary `json:"clusters" yaml:"clusters"`
+	Count    int              `json:"count" yaml:"count"`
+	// Failures are the regions that could not be listed and the parts of
+	// cluster rows that could not be read. [] when everything was read.
+	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
 // HealthIssue is one AWS-reported health issue on a cluster/nodegroup/addon —

@@ -130,7 +130,7 @@ nodegroup/addon skew, and the control-plane health check:
       both), a nodegroup at the kubelet skew limit, or a failed
       control-plane health check
    4  incomplete: nothing blocks, but a nodegroup or addon could not be
-      read (listed under "incomplete")
+      read (listed under "failures")
    1  error (AWS error, not found, interrupt)
 Precedence: 3, then 4, then 2.
 With --id, the exit code reflects that one insight's status. With -o json or

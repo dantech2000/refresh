@@ -1,12 +1,12 @@
 package cluster
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
+	"github.com/dantech2000/refresh/internal/ui/plaintest"
 )
 
 func listWorld() *fakeaws.Cluster {
@@ -36,8 +36,8 @@ func TestListAllRegions_HangingEKSFails(t *testing.T) {
 	}
 }
 
-// A partial failure prints what was gathered, warns once per failed region
-// with an incomplete-list line, and exits 4 (REF-165).
+// A partial failure prints what was gathered, warns once per failed region,
+// and exits 4 (REF-165).
 func TestListAllRegions_PartialFailureWarns(t *testing.T) {
 	srv := fakeaws.New(t, listWorld())
 	t.Setenv("REFRESH_EKS_REGIONS", "us-east-1,eu-west-1")
@@ -58,23 +58,30 @@ func TestListAllRegions_PartialFailureWarns(t *testing.T) {
 	}
 	// REFRESH_EKS_REGIONS scopes the sweep, so a denied region is a failure,
 	// not a skip.
-	for _, want := range []string{"warning: region eu-west-1: AccessDeniedException", "1 of 2 region(s) failed"} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("stderr lacks %q:\n%s", want, stderr)
-		}
+	if want := "warning: region eu-west-1: AccessDenied: AccessDeniedException"; strings.Count(stderr, want) != 1 {
+		t.Errorf("stderr does not name eu-west-1 once (%q):\n%s", want, stderr)
+	}
+	if want := "incomplete data: 1 failure(s) (1 region)"; err.Error() != want {
+		t.Errorf("err = %q, want %q", err, want)
 	}
 	if strings.Contains(stderr, "level=WARN") {
 		t.Errorf("stderr still has a raw slog line:\n%s", stderr)
 	}
 
-	// The table and tree views print the gathered rows, then exit 4 too.
+	// The table and tree views print the gathered rows and list the failure
+	// in their INCOMPLETE DATA section (not again on stderr), then exit 4 too.
 	for _, args := range [][]string{{"list", "-A"}, {"list", "--tree"}} {
-		stdout, _, err := runCluster(t, args...)
+		stdout, stderr, err := runCluster(t, args...)
 		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
 			t.Errorf("%v: exit code = %d (err %v), want 4", args, code, err)
 		}
-		if !strings.Contains(stdout, "prod") {
-			t.Errorf("%v: stdout lacks the gathered cluster:\n%s", args, stdout)
+		for _, want := range []string{"prod", "INCOMPLETE DATA", "region eu-west-1: AccessDenied"} {
+			if !strings.Contains(stdout, want) {
+				t.Errorf("%v: stdout lacks %q:\n%s", args, want, stdout)
+			}
+		}
+		if strings.Contains(stderr, "warning: region") {
+			t.Errorf("%v: the table run repeats the failure on stderr:\n%s", args, stderr)
 		}
 	}
 }
@@ -185,9 +192,9 @@ func TestListGlobalRegionWithAndWithoutSweep(t *testing.T) {
 	}
 }
 
-// A region that fails an explicit -r sweep is listed under "failures" in the
-// JSON/YAML document, not only named on stderr. -o plain stays pure TSV: the
-// failure is on stderr only.
+// A region that fails an explicit -r sweep is a Region failure
+// (eks:ListClusters) in the JSON/YAML document, not only named on stderr.
+// -o plain stays pure TSV: the failure is on stderr only.
 func TestListRegions_FailuresInDocument(t *testing.T) {
 	srv := fakeaws.New(t, listWorld())
 	srv.FailRegions(func(region string) string {
@@ -196,21 +203,24 @@ func TestListRegions_FailuresInDocument(t *testing.T) {
 		}
 		return ""
 	})
-	want := []any{map[string]any{
-		"region": "us-west-2",
-		"error":  "ExpiredTokenException: fakeaws: region us-west-2 answers ExpiredTokenException",
-	}}
+	want := map[string]any{
+		"kind":         "Region",
+		"name":         "us-west-2",
+		"region":       "us-west-2",
+		"operation":    "eks:ListClusters",
+		"reason":       "CredentialError",
+		"retryable":    false,
+		"awsErrorCode": "ExpiredTokenException",
+		"error":        "ExpiredTokenException: fakeaws: region us-west-2 answers ExpiredTokenException",
+	}
 
 	for _, format := range []string{"json", "yaml"} {
 		stdout, stderr, err := runCluster(t, "list", "-r", "us-east-1", "-r", "us-west-2", "-o", format)
 		if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
 			t.Fatalf("-o %s: exit code = %d (err %v), want 4\nstderr:\n%s", format, code, err, stderr)
 		}
-		doc := fakeaws.RequireOneDocument(t, format, stdout).(map[string]any)
-		if !reflect.DeepEqual(doc["failures"], want) {
-			t.Errorf("-o %s: failures = %#v, want %#v", format, doc["failures"], want)
-		}
-		if !strings.Contains(stderr, "warning: region us-west-2: ExpiredTokenException") {
+		fakeaws.RequireFailures(t, fakeaws.RequireOneDocument(t, format, stdout), want)
+		if !strings.Contains(stderr, "warning: region us-west-2: CredentialError: ExpiredTokenException") {
 			t.Errorf("-o %s: stderr does not name the failed region:\n%s", format, stderr)
 		}
 	}
@@ -219,6 +229,7 @@ func TestListRegions_FailuresInDocument(t *testing.T) {
 	if code := runner.ExitCodeOf(err); code != runner.ExitIncomplete {
 		t.Fatalf("-o plain: exit code = %d (err %v), want 4", code, err)
 	}
+	plaintest.Check(t, stdout, "CLUSTER", "STATUS", "VERSION", "NODES")
 	if strings.Contains(stdout, "us-west-2") || strings.Contains(stdout, "failures") {
 		t.Errorf("-o plain stdout carries the failure; it belongs on stderr:\n%s", stdout)
 	}
@@ -226,14 +237,11 @@ func TestListRegions_FailuresInDocument(t *testing.T) {
 		t.Errorf("-o plain: stderr does not name the failed region:\n%s", stderr)
 	}
 
-	// Every region answered: no "failures" key.
+	// Every region answered: failures is [].
 	srv.FailRegions(nil)
 	stdout, _, err = runCluster(t, "list", "-r", "us-east-1", "-r", "us-west-2", "-o", "json")
 	if err != nil {
 		t.Fatalf("complete sweep: %v", err)
 	}
-	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	if _, ok := doc["failures"]; ok {
-		t.Errorf("failures present with no failed region: %v", doc["failures"])
-	}
+	fakeaws.RequireFailures(t, fakeaws.RequireOneDocument(t, "json", stdout))
 }

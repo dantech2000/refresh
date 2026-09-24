@@ -12,6 +12,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/smithy-go"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/types"
 )
@@ -36,9 +37,9 @@ func newDeniedLookupService(api EKSAPI, lookups *atomic.Int32) *ServiceImpl {
 }
 
 // With no ssm:GetParameter permission every managed nodegroup's AMI status is
-// Unknown. That must be reported as a failure (so `refresh status` marks the
+// Unknown. That must be reported on the summary (so `refresh status` marks the
 // row incomplete), not read as "nothing stale".
-func TestListWithFailures_LatestAMILookupFailureIsReported(t *testing.T) {
+func TestListDetailed_LatestAMILookupFailureIsReported(t *testing.T) {
 	api := mocks.NewEKSAPI().
 		WithCluster("prod", "1.32").
 		WithNodegroup("ng-a", "1.32", ekstypes.AMITypesAl2023X8664Standard).
@@ -47,50 +48,43 @@ func TestListWithFailures_LatestAMILookupFailureIsReported(t *testing.T) {
 	var lookups atomic.Int32
 	svc := newDeniedLookupService(api, &lookups)
 
-	summaries, failures, err := svc.ListWithFailures(context.Background(), "prod", ListOptions{})
+	res, err := svc.ListDetailed(context.Background(), "prod", ListOptions{})
 	if err != nil {
-		t.Fatalf("ListWithFailures: %v", err)
+		t.Fatalf("ListDetailed: %v", err)
 	}
-	if len(summaries) != 2 {
-		t.Fatalf("summaries = %d, want 2 (the rows still render)", len(summaries))
+	if len(res.Summaries) != 2 {
+		t.Fatalf("summaries = %d, want 2 (the rows still render)", len(res.Summaries))
 	}
-	for _, s := range summaries {
+	// The lookup is on the summary, not a listing failure: the nodegroup was
+	// described.
+	if len(res.Failures) != 0 {
+		t.Errorf("failures = %+v, want none", res.Failures)
+	}
+	for _, s := range res.Summaries {
 		if s.AMIStatus != types.AMIUnknown {
 			t.Errorf("%s: AMIStatus = %v, want Unknown", s.Name, s.AMIStatus)
 		}
-		if !strings.Contains(s.AMILookupError, "AccessDeniedException") {
-			t.Errorf("%s: AMILookupError = %q, want the lookup error", s.Name, s.AMILookupError)
+		f := s.AMILookupFailure
+		if f == nil {
+			t.Fatalf("%s: AMILookupFailure = nil, want the lookup failure", s.Name)
 		}
-	}
-	if len(failures) != 2 {
-		t.Fatalf("failures = %v, want one per nodegroup", failures)
-	}
-	for _, f := range failures {
-		if !strings.Contains(f, "latest AMI lookup failed") {
-			t.Errorf("failure %q does not name the AMI lookup", f)
+		if f.Kind != diag.KindNodegroup || f.Name != s.Name || f.Cluster != "prod" ||
+			f.Operation != diag.OpGetParameter || f.Reason != diag.ReasonAccessDenied || f.AWSErrorCode != "AccessDeniedException" {
+			t.Errorf("%s: AMILookupFailure = %+v, want an AccessDenied ssm:GetParameter failure of prod/%s", s.Name, *f, s.Name)
+		}
+		if strings.ContainsAny(f.Error, "\n") {
+			t.Errorf("%s: Error is not one line: %q", s.Name, f.Error)
 		}
 	}
 	// Failures are not memoized, so each nodegroup retries the lookup.
 	if n := lookups.Load(); n < 1 {
 		t.Errorf("lookups = %d, want at least 1", n)
 	}
-
-	res, err := svc.ListDetailed(context.Background(), "prod", ListOptions{})
-	if err != nil {
-		t.Fatalf("ListDetailed: %v", err)
-	}
-	if len(res.Failures) != 0 || len(res.AMILookupFailures) != 2 {
-		t.Errorf("ListDetailed Failures=%v AMILookupFailures=%v; want 0 and 2", res.Failures, res.AMILookupFailures)
-	}
-	var ae smithy.APIError
-	if !errors.As(res.AMILookupErr, &ae) || ae.ErrorCode() != "AccessDeniedException" {
-		t.Errorf("AMILookupErr = %v, want the unflattened AccessDeniedException", res.AMILookupErr)
-	}
 }
 
 // Custom-AMI and updating nodegroups don't depend on the recommended AMI, so
 // a failed lookup is not a failure for them.
-func TestListWithFailures_LatestAMILookupFailureIgnoredWhenIrrelevant(t *testing.T) {
+func TestListDetailed_LatestAMILookupFailureIgnoredWhenIrrelevant(t *testing.T) {
 	api := &mocks.EKSAPI{
 		DescribeClusterFn: clusterFn("1.32"),
 		ListNodegroupsFn:  listNodegroupsFn("ng-custom", "ng-updating"),
@@ -107,16 +101,16 @@ func TestListWithFailures_LatestAMILookupFailureIgnoredWhenIrrelevant(t *testing
 	var lookups atomic.Int32
 	svc := newDeniedLookupService(api, &lookups)
 
-	summaries, failures, err := svc.ListWithFailures(context.Background(), "prod", ListOptions{})
+	res, err := svc.ListDetailed(context.Background(), "prod", ListOptions{})
 	if err != nil {
-		t.Fatalf("ListWithFailures: %v", err)
+		t.Fatalf("ListDetailed: %v", err)
 	}
-	if len(summaries) != 2 || len(failures) != 0 {
-		t.Errorf("summaries=%d failures=%v; want 2 and none", len(summaries), failures)
+	if len(res.Summaries) != 2 || len(res.Failures) != 0 {
+		t.Errorf("summaries=%d failures=%v; want 2 and none", len(res.Summaries), res.Failures)
 	}
-	for _, s := range summaries {
-		if s.AMILookupError != "" {
-			t.Errorf("%s: AMILookupError = %q, want empty", s.Name, s.AMILookupError)
+	for _, s := range res.Summaries {
+		if s.AMILookupFailure != nil {
+			t.Errorf("%s: AMILookupFailure = %+v, want nil", s.Name, *s.AMILookupFailure)
 		}
 	}
 }
@@ -136,7 +130,7 @@ func TestDescribe_LatestAMILookupFailureIsReported(t *testing.T) {
 	if d.AMIStatus != types.AMIUnknown || d.LatestAMI != "" {
 		t.Errorf("AMIStatus=%v LatestAMI=%q; want Unknown and empty", d.AMIStatus, d.LatestAMI)
 	}
-	if d.AMILookupError == "" || d.LatestAMILookupErr() == nil {
-		t.Errorf("lookup failure not reported: AMILookupError=%q err=%v", d.AMILookupError, d.LatestAMILookupErr())
+	if f := d.AMILookupFailure; f == nil || f.Operation != diag.OpGetParameter || f.Reason != diag.ReasonAccessDenied {
+		t.Errorf("lookup failure not reported: AMILookupFailure = %+v", f)
 	}
 }

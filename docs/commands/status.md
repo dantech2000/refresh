@@ -33,8 +33,7 @@ With `--all-regions` and no `-r` or `REFRESH_EKS_REGIONS`, regions these
 credentials can't use (an SCP denial, a region not enabled for the account)
 are skipped with one note on stderr and don't count as failed regions. A
 region you name with `-r` still fails if it's denied. Other region failures
-print one warning line each, and `-o json`/`-o yaml` list them under
-`failures` as `{"region", "error"}`.
+are `Region` failures in `failures` (see [Incomplete data](#incomplete-data)).
 
 ## Columns
 
@@ -47,9 +46,8 @@ print one warning line each, and `-o json`/`-o yaml` list them under
 | `ADDONS` | Add-ons behind their latest compatible version |
 | `HEALTH` | Control-plane health issues that AWS reports for the cluster |
 
-`-o plain` has the same columns plus a trailing `ERRORS` column (`-` when the
-row is complete). The `--sort stale` key counts both stale AMIs and
-nodegroups behind the control plane.
+`-o plain` has the same columns. The `--sort stale` key counts both stale
+AMIs and nodegroups behind the control plane.
 
 The support dates come from `DescribeClusterVersions`. If that call fails,
 `status` uses a built-in calendar, and `-o plain` marks the `SUPPORT` cell
@@ -63,11 +61,39 @@ A row whose data `refresh` could not read is never shown as current. Examples
 are a failed `DescribeCluster`, a nodegroup or add-on that could not be read,
 a failed latest-AMI lookup (for example, a missing `ssm:GetParameter`), and a
 cluster that a timed-out sweep never reached. Such a row gets the unknown
-marker (`○`), an "N incomplete" count, and an `INCOMPLETE DATA` block that
-lists its errors. `-o json` puts them in the row's `errors` list. With
-`-o json`, `-o yaml`, or `-o plain`, stderr also names each such cluster with
-a one-line reason. The command then exits `4`, unless a higher-priority code
-applies.
+marker (`○`) and an "N incomplete" count, and the table lists each failure
+under `INCOMPLETE DATA`. The command then exits `4`, unless a higher-priority
+code applies.
+
+With `-o json` or `-o yaml`, the row has `"incomplete": true` and each
+failure is an entry of the top-level `failures` (see
+[Failures](../concepts/output.md#failures)). With `-o json`, `-o yaml`, or
+`-o plain`, stderr names each failure on one line:
+
+```json
+{
+  "clusters": [
+    {"name": "prod", "region": "us-east-1", "version": "1.33", "incomplete": true, "...": "..."}
+  ],
+  "failures": [
+    {
+      "kind": "Nodegroup",
+      "name": "web",
+      "cluster": "prod",
+      "region": "us-east-1",
+      "operation": "eks:DescribeNodegroup",
+      "reason": "AccessDenied",
+      "retryable": false,
+      "error": "AccessDeniedException: User: arn:aws:iam::123456789012:user/ci is not authorized to perform: eks:DescribeNodegroup",
+      "awsErrorCode": "AccessDeniedException"
+    }
+  ]
+}
+```
+
+```text
+warning: nodegroup prod/web (us-east-1): AccessDenied: AccessDeniedException: User: ... is not authorized to perform: eks:DescribeNodegroup
+```
 
 ## Exit codes
 
