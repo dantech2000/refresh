@@ -15,6 +15,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
+	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 )
 
 // NodegroupGate is a pre-flight check run before each nodegroup roll, after
@@ -129,25 +130,16 @@ func gateFailed(name string, err error) error {
 
 // rollNodegroup starts and watches a single nodegroup version roll.
 func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName, targetVersion string, force bool, observer RollObserver, progress ProgressFunc) error {
-	input := &eks.UpdateNodegroupVersionInput{
-		ClusterName:   aws.String(clusterName),
-		NodegroupName: aws.String(nodegroupName),
-		Version:       aws.String(targetVersion),
-		Force:         force,
-		// Pin the idempotency token so WithRetry re-issues the SAME request
-		// instead of submitting a fresh update per attempt.
-		ClientRequestToken: aws.String(common.IdempotencyToken()),
-	}
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.UpdateNodegroupVersionOutput, error) {
-		return s.eksClient.UpdateNodegroupVersion(rc, input)
-	})
+	// The shared start pins one idempotency token across its retries, so a
+	// retried request can't submit a second update.
+	update, err := nodegroupsvc.StartNodegroupRoll(ctx, s.eksClient, clusterName, nodegroupName, targetVersion, force)
 	if err != nil {
 		return onItem(diag.KindNodegroup, nodegroupName, diag.OpUpdateNodegroupVersion, awsinternal.FormatAWSError(err, fmt.Sprintf("rolling nodegroup %s to %s", nodegroupName, targetVersion)))
 	}
 
 	updateID := ""
-	if out.Update != nil {
-		updateID = aws.ToString(out.Update.Id)
+	if update != nil {
+		updateID = aws.ToString(update.Id)
 	}
 	progress("nodegroup %s roll to %s started (update %s)", nodegroupName, targetVersion, updateID)
 
@@ -278,7 +270,7 @@ func (s *Service) waitForNodegroupSettled(ctx context.Context, clusterName, node
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
-			if isPermanentAPIError(err) {
+			if common.IsPermanentAPIError(err) {
 				return "", awsinternal.FormatAWSError(err, fmt.Sprintf("checking nodegroup %s", nodegroupName))
 			}
 			progress("warning: checking nodegroup %s: %v", nodegroupName, err)

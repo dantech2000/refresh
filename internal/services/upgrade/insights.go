@@ -88,7 +88,7 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 			startErr = nil // another refresh is running; wait on it
 			progress("an insights refresh is already running for %s; waiting on it", clusterName)
 		case err != nil:
-			if isPermanentAPIError(err) {
+			if common.IsPermanentAPIError(err) {
 				return onRefresh(diag.OpDescribeInsightsRefresh, awsinternal.FormatAWSError(err, fmt.Sprintf("checking the insights refresh for cluster %s", clusterName)))
 			}
 			progress("warning: checking the insights refresh for %s: %v", clusterName, err)

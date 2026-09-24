@@ -14,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/aws/smithy-go"
 	"github.com/fatih/color"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -207,7 +206,7 @@ func checkAllUpdatesWithChannels(ctx context.Context, eksClient UpdateDescriber,
 		update := &monitor.Updates[result.index]
 
 		if result.err != nil {
-			if ctx.Err() == nil && isPermanentCheckError(result.err) {
+			if ctx.Err() == nil && common.IsPermanentAPIError(result.err) {
 				// Polling this update again would fail the same way. Stop
 				// polling it; its EKS outcome is unknown, not Failed.
 				update.MonitorErr = awsinternal.FormatAWSError(result.err,
@@ -249,16 +248,6 @@ func firstLine(s string) string {
 		return strings.TrimSpace(s[:i])
 	}
 	return s
-}
-
-// isPermanentCheckError reports whether a failed status check will fail the
-// same way on the next poll: a typed AWS API error that is not retryable
-// (AccessDenied, ResourceNotFound, validation). Transport errors (DNS,
-// connection refused) and throttling stay transient, so the monitor polls
-// through them.
-func isPermanentCheckError(err error) bool {
-	var ae smithy.APIError
-	return errors.As(err, &ae) && !common.IsRetryable(err)
 }
 
 // checkSingleUpdate checks the status of a single update, retrying transient
