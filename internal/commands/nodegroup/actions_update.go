@@ -11,11 +11,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
@@ -471,10 +469,8 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	if humanOutput {
 		ui.DisplayHealthCheckStart(clusterName)
 	}
-	cwClient := cloudwatch.NewFromConfig(awsCfg)
-	asgClient := autoscaling.NewFromConfig(awsCfg)
 	k8sClient, kubeSel := resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, !flags.quiet)
-	checker := health.NewChecker(eksClient, k8sClient, cwClient, asgClient)
+	checker := health.NewCheckerForConfig(awsCfg, k8sClient, nil)
 	// Attach metrics-server (best-effort) for live CPU+memory drain headroom; the
 	// utilization check skips cleanly if it isn't installed. (REF-142)
 	if k8sClient != nil {
@@ -482,9 +478,6 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 			checker.SetNodeMetrics(m)
 		}
 	}
-	// EC2 vCPU quota headroom — a roll surges new nodes against the account
-	// quota; the check skips cleanly if it can't read the limit/usage. (REF-144)
-	checker.SetServiceQuotas(servicequotas.NewFromConfig(awsCfg))
 	// Scope the PDB drain-blocker check to the nodegroups this run may roll, so
 	// a PDB whose pods live only on other nodegroups or Fargate doesn't warn.
 	// Best-effort: if the list fails the check stays cluster-wide.
