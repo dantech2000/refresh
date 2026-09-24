@@ -24,8 +24,7 @@
   "scaling": {
     "desiredSize": 3,
     "minSize": 3,
-    "maxSize": 3,
-    "autoScaling": true
+    "maxSize": 3
   },
   "instances": [
     {

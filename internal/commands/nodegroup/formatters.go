@@ -195,7 +195,7 @@ func sortNodegroupSummaries(items []nodegroupsvc.NodegroupSummary, key string, d
 	case "instance":
 		less = func(i, j int) bool { return items[i].InstanceType < items[j].InstanceType }
 	case "nodes":
-		less = func(i, j int) bool { return items[i].ReadyNodes < items[j].ReadyNodes }
+		less = func(i, j int) bool { return nodeSortKey(items[i]) < nodeSortKey(items[j]) }
 	default:
 		less = func(i, j int) bool { return items[i].Name < items[j].Name }
 	}
@@ -209,6 +209,17 @@ func sortNodegroupSummaries(items []nodegroupsvc.NodegroupSummary, key string, d
 		return less(i, j)
 	})
 	return items
+}
+
+// nodeSortKey is the count the NODES column shows: the measured Ready nodes
+// with -R (--check-readiness), else the desired size. ReadyNodes is 0 when
+// readiness was not measured, so sorting on it alone would leave the list
+// unsorted.
+func nodeSortKey(ng nodegroupsvc.NodegroupSummary) int32 {
+	if ng.ReadyKnown {
+		return ng.ReadyNodes
+	}
+	return ng.DesiredSize
 }
 
 // instanceList returns the instances that were read (nil when they were

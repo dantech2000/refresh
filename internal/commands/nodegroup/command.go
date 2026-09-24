@@ -95,7 +95,8 @@ func scaleCommand() *cli.Command {
 		Usage:     "Scale a nodegroup's desired/min/max size with optional health checks",
 		ArgsUsage: "[cluster]",
 		Description: `Change a managed nodegroup's desired/min/max size. Any subset of
---desired/--min/--max may be set; unspecified bounds are left unchanged.
+--desired/--min/--max may be set, and at least one is required; unspecified
+bounds are left unchanged.
 
 --check-pdbs refuses a scale-down (exit 3, before any change) when it could
 remove more of a Pod Disruption Budget's pods than the PDB allows. EKS does not

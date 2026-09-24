@@ -30,6 +30,9 @@ var ErrScaleHealthBlocked = errors.New("pre-scaling health check blocked operati
 // post-scaling health check found blocking issues.
 var ErrScaleVerifyFailed = errors.New("post-scaling health check found blocking issues")
 
+// ErrNoScaleChange is returned by Scale when no size is requested.
+var ErrNoScaleChange = errors.New("no scaling change requested: set the desired, min, or max size")
+
 // PDBCheckError is returned by CheckScaleDownPDBs (and so by Scale with
 // CheckPDBs) when the check could not read what it needs: the nodegroup's
 // size, or the cluster's PodDisruptionBudgets. Failure describes the read.
@@ -46,6 +49,12 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 	s.logger.Info("scaling nodegroup", "cluster", clusterName, "nodegroup", nodegroupName,
 		"desired", desired, "min", min, "max", max, "options", options)
 
+	// Without a size, UpdateNodegroupConfig would start an EKS update that
+	// changes nothing.
+	if desired == nil && min == nil && max == nil {
+		return ErrNoScaleChange
+	}
+
 	if options.DryRun {
 		return nil
 	}
@@ -55,9 +64,7 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 		if summary.Decision == health.DecisionBlock {
 			return fmt.Errorf("%w: %v", ErrScaleHealthBlocked, summary.Errors)
 		}
-		if summary.Decision == health.DecisionWarn {
-			s.logger.Warn("pre-scaling health warnings", "warnings", summary.Warnings)
-		}
+		s.reportHealthWarnings(options, "pre-scaling", summary)
 	}
 
 	if err := s.CheckScaleBounds(ctx, clusterName, nodegroupName, desired, min, max); err != nil {
@@ -85,12 +92,10 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 		// instead of submitting a fresh update per attempt.
 		ClientRequestToken: aws.String(common.IdempotencyToken()),
 	}
-	if desired != nil || min != nil || max != nil {
-		input.ScalingConfig = &ekstypes.NodegroupScalingConfig{
-			DesiredSize: desired,
-			MinSize:     min,
-			MaxSize:     max,
-		}
+	input.ScalingConfig = &ekstypes.NodegroupScalingConfig{
+		DesiredSize: desired,
+		MinSize:     min,
+		MaxSize:     max,
 	}
 
 	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.UpdateNodegroupConfigOutput, error) {
@@ -115,11 +120,23 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 		if summary.Decision == health.DecisionBlock {
 			return fmt.Errorf("%w: %v", ErrScaleVerifyFailed, summary.Errors)
 		}
-		if summary.Decision == health.DecisionWarn {
-			s.logger.Warn("post-scaling health warnings", "warnings", summary.Warnings)
-		}
+		s.reportHealthWarnings(options, "post-scaling", summary)
 	}
 	return nil
+}
+
+// reportHealthWarnings hands the warnings of a WARN health verdict to
+// options.OnHealthWarnings, or logs them when it is nil. stage is
+// "pre-scaling" or "post-scaling".
+func (s *ServiceImpl) reportHealthWarnings(options ScaleOptions, stage string, summary health.HealthSummary) {
+	if summary.Decision != health.DecisionWarn {
+		return
+	}
+	if options.OnHealthWarnings != nil {
+		options.OnHealthWarnings(stage, summary.Warnings)
+		return
+	}
+	s.logger.Warn(stage+" health warnings", "warnings", summary.Warnings)
 }
 
 // waitForScaleCompletion follows the EKS update updateID until it is

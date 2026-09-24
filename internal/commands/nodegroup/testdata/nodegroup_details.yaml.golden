@@ -37,7 +37,6 @@ instances:
 latestAmi: s-latestami
 name: s-name
 scaling:
-  autoScaling: true
   desiredSize: 3
   maxSize: 3
   minSize: 3

@@ -26,6 +26,11 @@ import (
 )
 
 func runScale(ctx context.Context, cmd *cli.Command) (err error) {
+	// Bad or missing sizes are usage errors, before any AWS call.
+	desired, minSize, maxSize, err := readScaleSizes(cmd)
+	if err != nil {
+		return err
+	}
 	// A scale that can't be confirmed fails before any AWS call.
 	if err := runner.RequireYesUnattended(cmd); err != nil {
 		return err
@@ -50,7 +55,10 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 
 	logger := factory.NewDefaultLogger(nil)
-	withHealth := cmd.Bool("health-check") || cmd.Bool("check-pdbs") || cmd.Bool("wait")
+	// Only the health check and the PDB gate read the cluster API. --wait
+	// polls EKS alone, so it needs no Kubernetes client (and no "checks will
+	// be skipped" note when the cluster can't be reached).
+	withHealth := cmd.Bool("health-check") || cmd.Bool("check-pdbs")
 	var svc *nodegroupsvc.ServiceImpl
 	if withHealth {
 		// Wire a Kubernetes client so workload/PDB checks run against the right
@@ -68,19 +76,6 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		Timeout:     waitTimeout,
 		DryRun:      cmd.Bool("dry-run"),
 		Force:       cmd.Bool("force"),
-	}
-
-	desired, err := int32PtrIfSet(cmd, "desired")
-	if err != nil {
-		return err
-	}
-	minSize, err := int32PtrIfSet(cmd, "min")
-	if err != nil {
-		return err
-	}
-	maxSize, err := int32PtrIfSet(cmd, "max")
-	if err != nil {
-		return err
 	}
 
 	// Pre-flight: warn if the nodegroup's instance type isn't offered in one of
@@ -143,9 +138,14 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		}
 	}
 
+	// Health warnings are held until the spinner stops, then printed on
+	// stderr, so they don't interleave with the spinner line.
+	var healthWarnings scaleHealthWarnings
+	opts.OnHealthWarnings = healthWarnings.add
 	err = runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
 		return svc.Scale(ctx, clusterName, nodegroupName, desired, minSize, maxSize, opts)
 	})
+	healthWarnings.print(ui.Stderr)
 	var pdbErr *nodegroupsvc.PDBCheckError
 	if errors.As(err, &pdbErr) {
 		runner.WriteFailures("", os.Stdout, ui.Stderr, pdbCheckFailures(awsCfg.Region, pdbErr))
@@ -155,6 +155,35 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		return scaleExit(err)
 	}
 	return runner.IncompleteExit(fs)
+}
+
+// scaleHealthWarnings collects the health-check warnings of a scale, per
+// stage, to print once the spinner has stopped.
+type scaleHealthWarnings struct {
+	stages   []string
+	warnings map[string][]string
+}
+
+// add records the warnings of one stage (nodegroupsvc.ScaleOptions.OnHealthWarnings).
+func (h *scaleHealthWarnings) add(stage string, warnings []string) {
+	if h.warnings == nil {
+		h.warnings = map[string][]string{}
+	}
+	if _, seen := h.warnings[stage]; !seen {
+		h.stages = append(h.stages, stage)
+	}
+	h.warnings[stage] = append(h.warnings[stage], warnings...)
+}
+
+// print writes the collected warnings to w, one block per stage.
+func (h *scaleHealthWarnings) print(w io.Writer) {
+	warn := ui.ColorFor(w, color.FgYellow)
+	for _, stage := range h.stages {
+		_, _ = warn.Fprintf(w, "Warning: the %s health check reported warnings:\n", stage)
+		for _, msg := range h.warnings[stage] {
+			_, _ = fmt.Fprintf(w, "  - %s\n", msg)
+		}
+	}
 }
 
 // pdbCheckFailures returns the failure behind a --check-pdbs check that
@@ -361,6 +390,25 @@ func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, n
 	}
 
 	return nil
+}
+
+// readScaleSizes reads --desired, --min, and --max. At least one is required:
+// without a size, UpdateNodegroupConfig would start an EKS update that
+// changes nothing.
+func readScaleSizes(cmd *cli.Command) (desired, minSize, maxSize *int32, err error) {
+	if desired, err = int32PtrIfSet(cmd, "desired"); err != nil {
+		return nil, nil, nil, err
+	}
+	if minSize, err = int32PtrIfSet(cmd, "min"); err != nil {
+		return nil, nil, nil, err
+	}
+	if maxSize, err = int32PtrIfSet(cmd, "max"); err != nil {
+		return nil, nil, nil, err
+	}
+	if desired == nil && minSize == nil && maxSize == nil {
+		return nil, nil, nil, errors.New("nodegroup scale needs at least one of --desired, --min, or --max")
+	}
+	return desired, minSize, maxSize, nil
 }
 
 // int32PtrIfSet returns &v for cmd.Int(name) when the flag was explicitly set,

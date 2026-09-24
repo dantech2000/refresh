@@ -43,6 +43,11 @@ type ScaleOptions struct {
 	// Force skips the CheckPDBs scale-down refusal. The caller is expected
 	// to have run CheckScaleDownPDBs itself to warn about the blockers.
 	Force bool `json:"force"`
+	// OnHealthWarnings receives the warnings of a WARN verdict from the
+	// pre- or post-scaling health check (stage "pre-scaling" or
+	// "post-scaling"), so the caller can print them where its output goes.
+	// Nil logs them.
+	OnHealthWarnings func(stage string, warnings []string) `json:"-" yaml:"-"`
 }
 
 // ScalingConfig models the EKS managed nodegroup scaling configuration
@@ -50,7 +55,6 @@ type ScalingConfig struct {
 	DesiredSize int32 `json:"desiredSize" yaml:"desiredSize"`
 	MinSize     int32 `json:"minSize" yaml:"minSize"`
 	MaxSize     int32 `json:"maxSize" yaml:"maxSize"`
-	AutoScaling bool  `json:"autoScaling" yaml:"autoScaling"`
 }
 
 // InstanceDetails describes an EC2 instance backing a nodegroup.

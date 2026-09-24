@@ -158,7 +158,8 @@ refresh nodegroup describe my-cluster ng-default --show-instances --show-workloa
 ## scale
 
 Change a managed nodegroup's desired/min/max size. Any subset of
-`--desired/--min/--max` may be set; unspecified bounds are left unchanged.
+`--desired/--min/--max` may be set, and at least one is required (exit `1`
+before any AWS call without one). Unspecified bounds are left unchanged.
 Only `--desired` changes the node count. If you omit `--desired`, a `--max`
 below the current desired size, or a `--min` above it, fails before any change
 (exit `1`). Pass `--desired` with the new bounds to scale and change the
@@ -409,8 +410,8 @@ regions discovery could not list.
 | Cluster `status` | Meaning | Exit |
 |---|---|---|
 | `Succeeded` | The cluster did what the run asked, with no failure | `0` |
-| `Incomplete` | The run finished, but some data could not be read | `4` |
-| `Failed` | An update could not start or did not succeed, or the nodegroups could not be selected | `4` |
+| `Incomplete` | The run finished, but some data could not be read (also a `--health-only` pass whose checks could not read everything) | `4` |
+| `Failed` | An update could not start or did not succeed, the nodegroups could not be selected, or the health check could not run | `4` |
 | `HealthBlocked` | The pre-flight health check blocked the cluster | `3` |
 | `HealthWarned` | Health warnings stopped the cluster (`--health-only`, `--require-healthy`) | `2` |
 | `VerifyFailed` | The updates succeeded, but post-roll verification found issues | `5` |

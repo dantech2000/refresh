@@ -147,17 +147,13 @@
         },
         "maxSize": {
           "type": "integer"
-        },
-        "autoScaling": {
-          "type": "boolean"
         }
       },
       "type": "object",
       "required": [
         "desiredSize",
         "minSize",
-        "maxSize",
-        "autoScaling"
+        "maxSize"
       ],
       "description": "ScalingConfig models the EKS managed nodegroup scaling configuration"
     },
