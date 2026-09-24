@@ -106,6 +106,7 @@ func buildDescribeCacheKey(name string, options DescribeOptions) string {
 		fmt.Sprintf("security=%t", options.ShowSecurity),
 		fmt.Sprintf("addons=%t", options.IncludeAddons),
 		fmt.Sprintf("detailed=%t", options.Detailed),
+		fmt.Sprintf("nodegroups=%t", options.IncludeNodegroups),
 	}
 	return fmt.Sprintf("describe-%s-%s", name, strings.Join(flags, ","))
 }
@@ -228,8 +229,8 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 		}
 	}
 
-	// Add nodegroups information if detailed
-	if options.Detailed {
+	// Add nodegroups information if detailed, or when readiness is measured
+	if options.Detailed || options.IncludeNodegroups {
 		nodegroups, failures, err := s.getClusterNodegroups(ctx, name)
 		if err != nil {
 			s.logger.Debug("failed to get cluster nodegroups", "cluster", name, "error", err)

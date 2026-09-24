@@ -223,7 +223,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		return planExit(plan, cli.Exit(ui.StderrColor(color.FgRed).Sprint("Upgrade blocked — resolve the blockers above and re-run."), runner.ExitBlocked))
 	}
 	if plan.PendingSteps() == 0 {
-		_, _ = fmt.Fprintf(out, "\nNothing to do: %s already satisfies %s.\n", clusterName, plan.TargetVersion)
+		writeUpgradeOutcome(out, clusterName, plan, false)
 		return runner.IncompleteExit(plan.Failures)
 	}
 
@@ -270,8 +270,32 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(out, "\n%s\n", ui.ColorFor(out, color.FgGreen).Sprintf("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
+	writeUpgradeOutcome(out, clusterName, plan, true)
 	return runner.IncompleteExit(plan.Failures)
+}
+
+// writeUpgradeOutcome writes the last line of a run that did not fail:
+// "Upgrade complete" (ran is true) or "Nothing to do". When the plan has
+// manual steps (custom-AMI nodegroups, --skip, --skip-nodegroup), the upgrade
+// is not complete: it names them instead.
+func writeUpgradeOutcome(out io.Writer, clusterName string, plan *upgrade.Plan, ran bool) {
+	manual := plan.ManualSteps()
+	if len(manual) == 0 {
+		if ran {
+			_, _ = fmt.Fprintf(out, "\n%s\n", ui.ColorFor(out, color.FgGreen).Sprintf("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
+		} else {
+			_, _ = fmt.Fprintf(out, "\nNothing to do: %s already satisfies %s.\n", clusterName, plan.TargetVersion)
+		}
+		return
+	}
+	head := fmt.Sprintf("Upgrade not complete: %d manual step(s) remain before %s is fully at %s.", len(manual), clusterName, plan.TargetVersion)
+	if !ran {
+		head = fmt.Sprintf("Nothing left for refresh to do, but %d manual step(s) remain before %s is fully at %s.", len(manual), clusterName, plan.TargetVersion)
+	}
+	_, _ = fmt.Fprintf(out, "\n%s\n", ui.ColorFor(out, color.FgYellow).Sprint(head))
+	for _, m := range manual {
+		_, _ = fmt.Fprintf(out, "  %s %s\n", ui.ColorFor(out, color.FgYellow).Sprint("manual:"), m)
+	}
 }
 
 // buildUpgradePlan builds the plan behind a spinner. The insights refresh can

@@ -110,7 +110,7 @@ func TestClusterDetailPlain(t *testing.T) {
 			Results: []health.HealthResult{{Name: "quota", Status: health.StatusWarn, Message: "quota low"}},
 		},
 	}
-	rows := plaintest.Check(t, plainOut(clusterDetailPlain(d)), "FIELD", "VALUE")
+	rows := plaintest.Check(t, plainOut(clusterDetailPlain(d, false)), "FIELD", "VALUE")
 	want := map[string]string{
 		"name":                      "prod",
 		"endpoint":                  d.Endpoint,
@@ -152,11 +152,11 @@ func TestUpgradeCheckPlain(t *testing.T) {
 	if rows[1][4] != "-" || rows[1][5] != "-" {
 		t.Errorf("empty cells should be '-', got %q", rows[1])
 	}
-	assertHumanHeaders(t, upgradeCheckLines(render.New(render.ColorNone, true), report), headers...)
+	assertHumanHeaders(t, upgradeCheckLines(render.New(render.ColorNone, true), report, ""), headers...)
 
 	// The rest of the report goes to the info writer (stderr), not stdout.
 	var info bytes.Buffer
-	writeUpgradeCheckInfo(&info, report)
+	writeUpgradeCheckInfo(&info, report, "")
 	for _, want := range []string{"NOT READY", "ng-a is behind"} {
 		if !strings.Contains(info.String(), want) {
 			t.Errorf("info missing %q:\n%s", want, info.String())

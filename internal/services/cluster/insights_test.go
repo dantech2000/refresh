@@ -166,7 +166,7 @@ func TestResolveInsightID(t *testing.T) {
 		{"AMAZON LINUX", "bc8b2f86-aaaa"},  // case-insensitive name
 	}
 	for _, c := range cases {
-		got, err := svc.ResolveInsightID(ctx, "prod", c.query)
+		got, err := svc.ResolveInsightID(ctx, "prod", "", c.query)
 		if err != nil {
 			t.Errorf("ResolveInsightID(%q): unexpected error: %v", c.query, err)
 			continue
@@ -177,11 +177,11 @@ func TestResolveInsightID(t *testing.T) {
 	}
 
 	// Ambiguous: "skew" matches both version-skew insights → error naming candidates.
-	if _, err := svc.ResolveInsightID(ctx, "prod", "skew"); err == nil || !strings.Contains(err.Error(), "matches 2 insights") {
+	if _, err := svc.ResolveInsightID(ctx, "prod", "", "skew"); err == nil || !strings.Contains(err.Error(), "matches 2 insights") {
 		t.Errorf("ambiguous query should error with candidates, got %v", err)
 	}
 	// No match.
-	if _, err := svc.ResolveInsightID(ctx, "prod", "nonexistent-xyz"); err == nil || !strings.Contains(err.Error(), "no insight matches") {
+	if _, err := svc.ResolveInsightID(ctx, "prod", "", "nonexistent-xyz"); err == nil || !strings.Contains(err.Error(), "no insight matches") {
 		t.Errorf("no-match query should error, got %v", err)
 	}
 }
@@ -240,5 +240,60 @@ func TestUpgradeCheck_Skew(t *testing.T) {
 	// Findings: a lagging nodegroup and a behind addon.
 	if len(report.Skew.Findings) != 2 {
 		t.Errorf("findings = %v, want 2", report.Skew.Findings)
+	}
+}
+
+// --status PASSING asks for PASSING insights, so it must not need
+// --show-passing as well (REF-168).
+func TestListInsights_StatusPassingShowsPassing(t *testing.T) {
+	api := mocks.NewEKSAPI().
+		WithCluster("prod", "1.32").
+		WithInsight("prod", "Kubelet version skew", ekstypes.InsightStatusValuePassing, "1.33").
+		WithInsight("prod", "Deprecated APIs", ekstypes.InsightStatusValueError, "1.33").
+		Build()
+	svc := &ServiceImpl{eksClient: api}
+
+	got, err := svc.ListInsights(context.Background(), "prod", UpgradeCheckOptions{Statuses: []string{"passing"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Status != InsightStatusPassing {
+		t.Fatalf("--status PASSING returned %+v, want the one PASSING insight", got)
+	}
+
+	// Without the status filter, PASSING stays hidden.
+	got, err = svc.ListInsights(context.Background(), "prod", UpgradeCheckOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Status != InsightStatusError {
+		t.Fatalf("default returned %+v, want only the ERROR insight", got)
+	}
+}
+
+// --id resolves within --category: a MISCONFIGURATION insight is found when
+// that category is asked for (REF-168).
+func TestResolveInsightID_UsesCategory(t *testing.T) {
+	mock := &mocks.EKSAPI{
+		ListInsightsFn: func(_ context.Context, in *eks.ListInsightsInput, _ ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+			if in.Filter == nil || len(in.Filter.Categories) != 1 || in.Filter.Categories[0] != ekstypes.CategoryMisconfiguration {
+				return &eks.ListInsightsOutput{}, nil
+			}
+			return &eks.ListInsightsOutput{Insights: []ekstypes.InsightSummary{
+				{Id: aws.String("mis12345-eeee"), Name: aws.String("Cluster security group rules"), Category: ekstypes.CategoryMisconfiguration, InsightStatus: &ekstypes.InsightStatus{Status: ekstypes.InsightStatusValueWarning}},
+			}}, nil
+		},
+	}
+	svc := &ServiceImpl{eksClient: mock}
+
+	got, err := svc.ResolveInsightID(context.Background(), "prod", "MISCONFIGURATION", "security group")
+	if err != nil {
+		t.Fatalf("ResolveInsightID in MISCONFIGURATION: %v", err)
+	}
+	if got != "mis12345-eeee" {
+		t.Errorf("ResolveInsightID = %q, want mis12345-eeee", got)
+	}
+	if _, err := svc.ResolveInsightID(context.Background(), "prod", "", "security group"); err == nil {
+		t.Error("the default category should not find a MISCONFIGURATION insight")
 	}
 }

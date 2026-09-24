@@ -116,6 +116,16 @@ type Insight struct {
 	ID     string
 	Name   string
 	Status string // PASSING, WARNING, ERROR, or UNKNOWN
+	// Category defaults to UPGRADE_READINESS.
+	Category string
+}
+
+// category is the insight's category, UPGRADE_READINESS when unset.
+func (in *Insight) category() string {
+	if in.Category == "" {
+		return "UPGRADE_READINESS"
+	}
+	return in.Category
 }
 
 // Server is the fake AWS endpoint.
@@ -703,13 +713,14 @@ func findNodegroup(c *Cluster, name string) *Nodegroup {
 }
 
 // insightsJSON answers ListInsights. With c.Insights set it returns them,
-// filtered by the request's statuses. Otherwise it answers the way EKS does
+// filtered by the request's categories and statuses. Otherwise it answers the way EKS does
 // for a healthy cluster: one PASSING upgrade-readiness insight for the next
 // minor after the control plane, filtered by the request's
 // kubernetesVersions.
 func insightsJSON(c *Cluster, body []byte) []any {
 	var in struct {
 		Filter struct {
+			Categories         []string `json:"categories"`
 			KubernetesVersions []string `json:"kubernetesVersions"`
 			Statuses           []string `json:"statuses"`
 		} `json:"filter"`
@@ -718,7 +729,8 @@ func insightsJSON(c *Cluster, body []byte) []any {
 	if c.Insights != nil {
 		out := []any{}
 		for _, ins := range c.Insights {
-			if len(in.Filter.Statuses) == 0 || slices.Contains(in.Filter.Statuses, ins.Status) {
+			if (len(in.Filter.Categories) == 0 || slices.Contains(in.Filter.Categories, ins.category())) &&
+				(len(in.Filter.Statuses) == 0 || slices.Contains(in.Filter.Statuses, ins.Status)) {
 				out = append(out, insightJSON(c, ins))
 			}
 		}
@@ -748,7 +760,7 @@ func insightJSON(c *Cluster, in *Insight) map[string]any {
 	return map[string]any{
 		"id":                in.ID,
 		"name":              in.Name,
-		"category":          "UPGRADE_READINESS",
+		"category":          in.category(),
 		"kubernetesVersion": fmt.Sprintf("%d.%d", major, minor+1),
 		"insightStatus":     map[string]any{"status": in.Status},
 	}

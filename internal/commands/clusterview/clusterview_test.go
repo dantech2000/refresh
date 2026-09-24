@@ -234,7 +234,7 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 
 	// Human path (render design system): sectioned detail, no "Cluster
 	// Information" banner.
-	out, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details) })
+	out, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, false) })
 	if err != nil {
 		t.Fatalf("table error: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestOutputClusterDetailsTable(t *testing.T) {
 	// Plain path (-o plain): FIELD/VALUE TSV only, endpoint untruncated.
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
-	plain, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details) })
+	plain, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, false) })
 	if err != nil {
 		t.Fatalf("plain error: %v", err)
 	}

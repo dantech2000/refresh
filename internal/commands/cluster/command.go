@@ -76,12 +76,14 @@ provide fast, comprehensive results without CloudFormation dependency.
 
 Health status and add-ons are shown by default; --no-health and --no-addons
 skip them. --detailed adds networking and security, --show-security adds the
-security analysis alone.`,
+SECURITY section alone (service role, KMS key, deletion protection, endpoint
+access). -o json and -o yaml always carry these fields. --check-readiness
+also lists the nodegroups whose Ready counts it measures.`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name or pattern"},
 			&cli.BoolFlag{Name: "detailed", Usage: "Show comprehensive information including networking and security"},
 			&cli.BoolFlag{Name: "no-health", Usage: "Skip the health checks (shown by default)"},
-			&cli.BoolFlag{Name: "show-security", Usage: "Include security configuration analysis"},
+			&cli.BoolFlag{Name: "show-security", Usage: "Add the SECURITY section: service role, KMS key, deletion protection, endpoint access (-o json/yaml always has these fields)"},
 			&cli.BoolFlag{Name: "no-addons", Usage: "Skip the EKS add-on section (shown by default)"},
 			// Deprecated in 0.11.0: both were on by default, so the switches did
 			// nothing. --show-health=false / --include-addons=false still map to

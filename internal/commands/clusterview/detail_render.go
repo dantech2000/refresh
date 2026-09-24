@@ -2,6 +2,7 @@ package clusterview
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,8 +14,9 @@ import (
 
 // clusterDetailLines builds the human `cluster describe` view as a slice of
 // lines (pure, so it is golden-testable). Sections: a name/status header,
-// OVERVIEW key/values, NODEGROUPS + ADD-ONS tables, and a HEALTH card.
-func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails) []string {
+// OVERVIEW key/values, SECURITY (only with showSecurity), NODEGROUPS +
+// ADD-ONS tables, and a HEALTH card.
+func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails, showSecurity bool) []string {
 	pal := th.Pal
 
 	header := th.Bold(pal.White, d.Name) + "   " + statusToken(th, d.Status)
@@ -63,6 +65,9 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails) []string
 	}
 	for _, line := range th.KV(kv) {
 		out = append(out, "  "+line)
+	}
+	if showSecurity {
+		out = append(out, securityLines(th, d)...)
 	}
 
 	if len(d.NodegroupList()) > 0 {
@@ -128,6 +133,62 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails) []string
 		out = append(out, healthCardLines(th, d.Health)...)
 	}
 	return append(out, th.FailureSection(d.Failures)...)
+}
+
+// securityLines renders the SECURITY section of `cluster describe
+// --show-security` (or --detailed): the service role, the KMS key, deletion
+// protection, and who can reach the API endpoint. A public endpoint open to
+// every address is a warning.
+func securityLines(th *render.Theme, d *clustersvc.ClusterDetails) []string {
+	pal := th.Pal
+	sec := d.Security
+	kv := [][2]string{{"service role", th.Paint(pal.Text, valueOrDash(sec.ServiceRoleArn))}}
+	if sec.EncryptionEnabled {
+		kv = append(kv, [2]string{"kms key", th.Paint(pal.Text, valueOrDash(sec.KmsKeyArn))})
+	}
+	if sec.DeletionProtection {
+		kv = append(kv, [2]string{"deletion protection", th.Token(render.Healthy, "enabled")})
+	} else {
+		kv = append(kv, [2]string{"deletion protection", th.Token(render.Warn, "disabled")})
+	}
+	access := d.Networking.EndpointAccess
+	kv = append(kv, [2]string{"endpoint access", th.Paint(pal.Text, endpointAccessText(access))})
+	if access.PublicAccess {
+		cidrs := strings.Join(access.PublicCidrs, ", ")
+		if openToAll(access.PublicCidrs) {
+			kv = append(kv, [2]string{"public cidrs", th.Token(render.Warn, valueOrDash(cidrs)+" (open to all)")})
+		} else {
+			kv = append(kv, [2]string{"public cidrs", th.Paint(pal.Text, cidrs)})
+		}
+	}
+	if len(d.Networking.SecurityGroupIDs) > 0 {
+		kv = append(kv, [2]string{"security groups", th.Paint(pal.Text, strings.Join(d.Networking.SecurityGroupIDs, ", "))})
+	}
+	out := []string{"", th.Section("SECURITY")}
+	for _, line := range th.KV(kv) {
+		out = append(out, "  "+line)
+	}
+	return out
+}
+
+// endpointAccessText names who can reach the cluster API endpoint.
+func endpointAccessText(a clustersvc.EndpointAccessInfo) string {
+	switch {
+	case a.PublicAccess && a.PrivateAccess:
+		return "public and private"
+	case a.PublicAccess:
+		return "public"
+	case a.PrivateAccess:
+		return "private"
+	default:
+		return "-"
+	}
+}
+
+// openToAll reports whether a public endpoint accepts every address: no
+// CIDR list (EKS then allows 0.0.0.0/0) or a 0.0.0.0/0 entry.
+func openToAll(cidrs []string) bool {
+	return len(cidrs) == 0 || slices.Contains(cidrs, "0.0.0.0/0")
 }
 
 // healthIssueLines renders the HEALTH ISSUES section: AWS-reported control-plane

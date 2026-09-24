@@ -348,3 +348,33 @@ func TestDescribe_WithAddonsIncludesAddonList(t *testing.T) {
 		t.Errorf("expected 2 addons, got %d", len(details.AddonList()))
 	}
 }
+
+// --check-readiness measures Ready counts per nodegroup, so it reads the
+// nodegroups without --detailed (REF-168).
+func TestDescribe_IncludeNodegroupsWithoutDetailed(t *testing.T) {
+	api := mocks.NewEKSAPI().
+		WithCluster("prod", "1.32").
+		WithNodegroup("web", "1.32", ekstypes.AMITypesAl2023X8664Standard).
+		Build()
+	svc := &ServiceImpl{
+		eksClient: api,
+		cache:     NewCache(time.Minute),
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	plain, err := svc.Describe(context.Background(), "prod", DescribeOptions{})
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	if plain.Nodegroups != nil {
+		t.Errorf("nodegroups read without IncludeNodegroups or Detailed: %+v", *plain.Nodegroups)
+	}
+
+	details, err := svc.Describe(context.Background(), "prod", DescribeOptions{IncludeNodegroups: true})
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	if ngs := details.NodegroupList(); len(ngs) != 1 || ngs[0].Name != "web" {
+		t.Fatalf("nodegroups = %+v, want [web]", ngs)
+	}
+}
