@@ -14,9 +14,9 @@ with pre-flight health gates, dry-run, and live monitoring) → `cluster upgrade
 
 Browse-y features that competed with eksctl/k9s/Kubecost (cost estimation,
 CloudWatch utilization tables, `cluster diff`, the standalone `workload pdbs`
-command) were intentionally removed in the Phase 2 surface trim (REF-78) — don't
-re-add them. PDB awareness still lives where it earns its keep: the pre-flight
-health checks and `nodegroup scale --check-pdbs`.
+command) were removed on purpose: they compete with those tools, not with the
+upgrade loop. Don't re-add them. PDB awareness still lives where it earns its
+keep: the pre-flight health checks and `nodegroup scale --check-pdbs`.
 
 Module path: `github.com/dantech2000/refresh`. Entry point: `main.go`.
 
@@ -178,7 +178,7 @@ with no AWS.
 
 ## Conventions (follow these when editing)
 
-- **CLI framework:** urfave/cli **v3** (migrated from v2 in REF-11). Handlers are
+- **CLI framework:** urfave/cli **v3**. Handlers are
   `func(ctx context.Context, cmd *cli.Command) error`; flags may appear before or after
   positional args.
 - **Output:** every list/describe command supports `-o table|json|yaml|plain[|tree]` via
@@ -196,7 +196,7 @@ with no AWS.
   list failures in the table view's `INCOMPLETE DATA` section (`render.FailureSection`) and
   skip the stderr lines there (`runner.TableListsFailures`). Regions a default sweep skips are
   not failures: one `runner.ReportSkippedRegions` notice.
-- **Exit codes** (REF-165, `docs/concepts/exit-codes.md`): one contract for every command.
+- **Exit codes** (`docs/concepts/exit-codes.md`): one contract for every command.
   `0` ok · `1` error or interrupt · `2` needs attention (warnings/stale) · `3` blocked or
   unsupported (a gate stopped it, nothing changed) · `4` incomplete data or partial failure ·
   `5` post-action verification failed. Use the `runner.Exit*` constants with
@@ -318,7 +318,7 @@ Follow the layered flow (model it on the `cluster` command):
 ## Known gotchas
 
 - `gopkg.in/yaml.v3` ignores `json` tags. `runner.EncodeStdout` round-trips YAML
-  through JSON so keys stay camelCase (REF-59), but still add explicit `yaml:`
+  through JSON so keys stay camelCase, but still add explicit `yaml:`
   tags to any struct you might marshal directly.
 - **The docs command reference is generated.** After changing any command or
   flag, run `task docs:gen` — the hidden `gen-docs` command walks the CLI tree
@@ -332,8 +332,8 @@ Follow the layered flow (model it on the `cluster` command):
   `TestDocumentsMatchSchemas`, which validates real command output against it.
 - **Docs live in-repo** under `docs/` (Material for MkDocs, via a `uv`-managed
   hash-locked venv) and publish to <https://drod.dev/refresh/> on merge to `main`.
-  Cost/utilization/`cluster diff`/`workload pdbs` were removed in the Phase 2
-  trim (REF-78) — don't re-add them.
+  Cost/utilization/`cluster diff`/`workload pdbs` were removed on purpose (see
+  "What this is") — don't re-add them.
 
 ## Where work is tracked
 
