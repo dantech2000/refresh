@@ -89,9 +89,9 @@ every add-on in the cluster to its latest compatible version.
 Single add-on: pass the add-on name and an optional version (defaults to
 'latest'). The version may be the third positional or --version:
 
-  refresh addon update my-cluster vpc-cni            # vpc-cni -> latest
-  refresh addon update my-cluster coredns v1.11.1    # pin a version
-  refresh addon update my-cluster vpc-cni --dry-run  # preview only
+  refresh addon update my-cluster vpc-cni                     # vpc-cni -> latest
+  refresh addon update my-cluster coredns v1.11.4-eksbuild.2  # pin a version
+  refresh addon update my-cluster vpc-cni --dry-run           # preview only
 
 All add-ons (--all): updates every add-on, optionally in dependency-safe
 order, in parallel, and/or waiting for each to settle. --parallel and

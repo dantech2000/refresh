@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -307,5 +308,66 @@ func TestDescribeAddonEmptyResponse_NoPanic(t *testing.T) {
 	}
 	if _, err := svc.postUpdateHealthCheck(ctx, "cluster", "vpc-cni"); err == nil {
 		t.Error("postUpdateHealthCheck: want an error for an empty response")
+	}
+}
+
+// A DELETING add-on cannot be updated: the gate blocks it.
+func TestPreUpdateHealthCheck_Deleting_Blocked(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithAddon("vpc-cni", "v1.14.0", ekstypes.AddonStatusDeleting).
+		Build()
+	err := NewService(m, logger()).preUpdateHealthCheck(context.Background(), "cluster", "vpc-cni")
+	if err == nil || !strings.Contains(err.Error(), "DELETING") {
+		t.Fatalf("err = %v, want a block that names DELETING", err)
+	}
+}
+
+// With the health check on, an update of a DELETING add-on never calls
+// UpdateAddon.
+func TestUpdate_HealthCheckBlocks_WhenDeleting(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("cluster", "1.32").
+		WithAddon("vpc-cni", "v1.14.0-eksbuild.1", ekstypes.AddonStatusDeleting).
+		WithAddonVersions("vpc-cni", []string{"v1.15.0-eksbuild.1", "v1.14.0-eksbuild.1"}, "1.32").
+		WithUpdateAddon("u-1").
+		Build()
+	_, err := NewService(m, logger()).Update(context.Background(), "cluster", "vpc-cni", UpdateOptions{Version: "latest", HealthCheck: true})
+	if err == nil {
+		t.Fatal("expected the pre-update health check to block a DELETING add-on")
+	}
+	if n := m.Calls.UpdateAddon; n != 0 {
+		t.Fatalf("UpdateAddon called %d times, want 0", n)
+	}
+}
+
+// The pre-update health check formats an AWS error: a missing permission
+// names the IAM action instead of the raw SDK text.
+func TestPreUpdateHealthCheck_AccessDeniedIsFormatted(t *testing.T) {
+	m := mocks.NewEKSAPI().Build()
+	m.DescribeAddonFn = func(context.Context, *eks.DescribeAddonInput, ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
+		return nil, mocks.AccessDenied()
+	}
+	err := NewService(m, logger()).preUpdateHealthCheck(context.Background(), "cluster", "vpc-cni")
+	if err == nil || !strings.Contains(err.Error(), "eks:DescribeAddon") {
+		t.Fatalf("err = %v, want a formatted permission error that names eks:DescribeAddon", err)
+	}
+}
+
+// An incompatible pinned version names the versions the cluster supports,
+// not a flag that does not exist.
+func TestValidateVersionCompatibility_ListsSupportedVersions(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithAddonVersions("coredns", []string{"v1.11.1-eksbuild.9", "v1.11.4-eksbuild.2"}, "1.32").
+		Build()
+	err := NewService(m, logger()).validateVersionCompatibility(context.Background(), "1.32", "coredns", "v1.11.1")
+	if err == nil {
+		t.Fatal("expected an incompatibility error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "--show-versions") {
+		t.Errorf("error points to the nonexistent --show-versions flag: %s", msg)
+	}
+	if !strings.Contains(msg, "v1.11.4-eksbuild.2, v1.11.1-eksbuild.9") {
+		t.Errorf("error does not list the supported versions newest first: %s", msg)
 	}
 }

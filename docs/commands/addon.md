@@ -283,7 +283,7 @@ refresh addon update my-cluster vpc-cni
 refresh addon update my-cluster vpc-cni --yes -o json
 
 # Pin a version
-refresh addon update my-cluster coredns v1.11.1
+refresh addon update my-cluster coredns v1.11.4-eksbuild.2
 
 # Preview only
 refresh addon update my-cluster vpc-cni --dry-run

@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
 )
@@ -24,7 +25,7 @@ func (s *ServiceImpl) preUpdateHealthCheck(ctx context.Context, clusterName, add
 		})
 	})
 	if err != nil {
-		return diag.WithOperation(diag.OpDescribeAddon, fmt.Errorf("pre-update health check: %w", err))
+		return diag.WithOperation(diag.OpDescribeAddon, awsinternal.FormatAWSError(err, fmt.Sprintf("pre-update health check of addon %s", addonName)))
 	}
 	if desc == nil || desc.Addon == nil {
 		return fmt.Errorf("pre-update health check: empty DescribeAddon response for %s", addonName)
@@ -35,6 +36,8 @@ func (s *ServiceImpl) preUpdateHealthCheck(ctx context.Context, clusterName, add
 		return nil
 	case ekstypes.AddonStatusCreating, ekstypes.AddonStatusUpdating:
 		return fmt.Errorf("pre-update health check failed: addon %s is currently %s — wait for it to reach ACTIVE before updating", addonName, desc.Addon.Status)
+	case ekstypes.AddonStatusDeleting:
+		return fmt.Errorf("pre-update health check failed: addon %s is DELETING and cannot be updated", addonName)
 	default:
 		// DEGRADED / CREATE_FAILED / DELETE_FAILED: allow update so users can fix a broken addon
 		s.logger.Warn("pre-update health check: addon is not ACTIVE, proceeding anyway",
@@ -58,7 +61,7 @@ func (s *ServiceImpl) postUpdateHealthCheck(ctx context.Context, clusterName, ad
 		err = fmt.Errorf("empty DescribeAddon response for %s", addonName)
 	}
 	if err != nil {
-		return "", diag.WithOperation(diag.OpDescribeAddon, fmt.Errorf("post-update health check: %w", err))
+		return "", diag.WithOperation(diag.OpDescribeAddon, awsinternal.FormatAWSError(err, fmt.Sprintf("post-update health check of addon %s", addonName)))
 	}
 
 	addon := desc.Addon
@@ -145,6 +148,24 @@ func (s *ServiceImpl) validateVersionCompatibility(ctx context.Context, k8sVersi
 		}
 	}
 
-	return fmt.Errorf("addon %s version %s is not compatible with Kubernetes %s — run 'refresh addon describe %s --show-versions' to see supported versions",
-		addonName, targetVersion, k8sVersion, addonName)
+	return fmt.Errorf("addon %s version %s is not compatible with Kubernetes %s; supported versions (newest first): %s",
+		addonName, targetVersion, k8sVersion, versionList(versions, maxListedVersions))
+}
+
+// maxListedVersions caps how many supported versions an incompatibility
+// error names.
+const maxListedVersions = 5
+
+// versionList names the first limit versions, comma-separated, and how many
+// more there are.
+func versionList(versions []AddonVersionInfo, limit int) string {
+	names := make([]string, 0, min(len(versions), limit))
+	for _, v := range versions[:min(len(versions), limit)] {
+		names = append(names, v.Version)
+	}
+	s := strings.Join(names, ", ")
+	if extra := len(versions) - len(names); extra > 0 {
+		s += fmt.Sprintf(" (and %d more)", extra)
+	}
+	return s
 }
