@@ -160,7 +160,7 @@ func (s *ServiceImpl) waitForScaleCompletion(ctx context.Context, clusterName, n
 		}
 		return false, nil
 	}, func(ctxErr error) error {
-		what := fmt.Sprintf("timed out waiting for nodegroup %s scaling update %s", ref, updateID)
+		what := fmt.Sprintf("waiting for nodegroup %s scaling update %s", ref, updateID)
 		if lastStatus != "" {
 			what += fmt.Sprintf(" (last status %s)", lastStatus)
 		}
@@ -199,7 +199,7 @@ func (s *ServiceImpl) waitForScaleCompletion(ctx context.Context, clusterName, n
 		}
 		return ng.Status == ekstypes.NodegroupStatusActive, nil
 	}, func(ctxErr error) error {
-		what := fmt.Sprintf("timed out waiting for nodegroup %s to settle at the new scaling config", ref)
+		what := fmt.Sprintf("waiting for nodegroup %s to settle at the new scaling config", ref)
 		if lastNGStatus != "" {
 			what += fmt.Sprintf(" (last status %s)", lastNGStatus)
 		}
@@ -276,9 +276,16 @@ func scaleKeepPolling(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || common.IsRetryable(err) || awserr.IsNetworkError(err)
 }
 
-// scaleWaitTimeoutError reports a wait that ran out of time, with the last
-// poll error when there was one.
+// scaleWaitTimeoutError reports a wait that ended before the update settled:
+// "timed out <what>" when the deadline passed, "interrupted while <what>"
+// when ctx was cancelled (Ctrl+C), with the last poll error when there was
+// one.
 func scaleWaitTimeoutError(ctxErr error, what string, lastErr error) error {
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
+		what = "timed out " + what
+	} else {
+		what = "interrupted while " + what
+	}
 	if lastErr != nil {
 		return fmt.Errorf("%s: %w (last poll error: %s)", what, ctxErr, awserr.Summary(lastErr))
 	}

@@ -300,8 +300,29 @@ func TestScaleWait_TimeoutWhileInProgress(t *testing.T) {
 	f := newScaleWaitFixture(sizes(3, 1, 8), ekstypes.UpdateStatusInProgress)
 
 	err := f.svc.Scale(context.Background(), "prod", "workers", nil, nil, aws.Int32(8), ScaleOptions{Wait: true, Timeout: 50 * time.Millisecond})
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "last status InProgress") {
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "timed out waiting for nodegroup") || !strings.Contains(err.Error(), "last status InProgress") {
 		t.Fatalf("want a timeout naming the last status, got %v", err)
+	}
+}
+
+// Ctrl+C during the wait is an interrupt, not a timeout: the error says
+// "interrupted while waiting", and only a passed deadline says "timed out".
+func TestScaleWait_CancelIsNotATimeout(t *testing.T) {
+	f := newScaleWaitFixture(sizes(3, 1, 8), ekstypes.UpdateStatusInProgress)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scripted := f.api.DescribeUpdateFn
+	f.api.DescribeUpdateFn = func(c context.Context, in *eks.DescribeUpdateInput, opts ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+		cancel() // the user presses Ctrl+C during the first poll
+		return scripted(c, in, opts...)
+	}
+
+	err := f.svc.Scale(ctx, "prod", "workers", nil, nil, aws.Int32(8), ScaleOptions{Wait: true, Timeout: time.Hour})
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "interrupted while waiting for nodegroup") {
+		t.Fatalf("want an interrupt error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "timed out") {
+		t.Errorf("a cancelled wait is reported as a timeout: %v", err)
 	}
 }
 
