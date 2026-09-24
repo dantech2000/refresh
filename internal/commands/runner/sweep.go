@@ -1,12 +1,17 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/fatih/color"
 
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -28,6 +33,54 @@ func ReportSkippedRegions(w io.Writer, skipped []string) {
 	}
 	_, _ = fmt.Fprintln(w, ui.ColorFor(w, color.FgYellow).Sprintf("Skipped %d region(s) not accessible to these credentials: %s (%s)",
 		len(skipped), strings.Join(skipped, ", "), RegionScopeHint))
+}
+
+// NoRegionAnswered explains a region sweep in which no region answered.
+// Command setup only resolves credentials and makes no STS call, so keys that
+// resolve but are invalid or expired reach the sweep. skipped holds the
+// regions the sweep skipped as closed, and errs the original error of every
+// region that failed: all of them, not only the first (one region can fail
+// for another reason before a later one names the credentials), and the
+// errors themselves, not their diag.Failure summaries (a summary keeps one
+// line of text and drops the error chain).
+//
+// It returns the credential error, with the setup help once, in two cases:
+//   - a region failed with a credential error that no closed region returns
+//     (ExpiredTokenException, a signing error, a credential source
+//     failure). It returns that region's error, so errors.Is/As still reach
+//     the cause. No STS call is needed.
+//   - a region was skipped or failed as unavailable. Invalid keys get the
+//     same codes as a region closed to the account
+//     (UnrecognizedClientException, InvalidClientTokenId), so it asks STS
+//     once.
+//
+// It returns nil otherwise (valid credentials, another failure, ctx done),
+// and the caller reports its own error.
+func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, errs []error) error {
+	lookalike := len(skipped) > 0
+	for _, err := range errs {
+		// Classify as the sweeps do, so this agrees with the failure list.
+		switch diag.FromError(diag.KindRegion, "", diag.OpListClusters, err).Reason {
+		case diag.ReasonCredentialError:
+			// FormatAWSError adds the setup help, or returns an error that
+			// already carries it unchanged.
+			return fmt.Errorf("AWS credential validation failed: %w", awsinternal.FormatAWSError(err, "listing clusters"))
+		case diag.ReasonRegionUnavailable:
+			lookalike = true
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return nil // interrupted or out of time: the caller's error says so
+	default:
+	}
+	if !lookalike {
+		return nil
+	}
+	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil && awserr.IsCredentialError(err) {
+		return err
+	}
+	return nil
 }
 
 // TableListsFailures reports whether the output format is a human view

@@ -88,8 +88,10 @@ type Failure struct {
 //
 // For KindRegion, the error codes a region that is not enabled for the
 // account returns (UnrecognizedClientException, InvalidClientTokenId,
-// AuthFailure) are reported as ReasonRegionUnavailable: the credentials
-// already passed the check that every command makes first. An AccessDenied
+// AuthFailure) are reported as ReasonRegionUnavailable. Invalid credentials
+// return the same codes, but they fail every region: when no region answers,
+// the command asks STS (runner.NoRegionAnswered) and reports the credential
+// error instead. An AccessDenied
 // code stays ReasonAccessDenied, because a missing IAM action is the more
 // useful diagnosis.
 func FromError(kind Kind, name, op string, err error) Failure {

@@ -261,6 +261,9 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 		return discoveryStopError(ctx, err, flags.timeout)
 	}
 	if err := checkDiscovery(len(regions), disc); err != nil {
+		if cerr := runner.NoRegionAnswered(ctx, awsCfg, disc.skipped, disc.errs); cerr != nil {
+			return cerr
+		}
 		runner.WriteFailures(flags.format, os.Stdout, fleetStderr, disc.failed)
 		return err
 	}
@@ -530,8 +533,11 @@ func resolveUpdateRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string
 type fleetDiscovery struct {
 	targets []clusterTarget
 	// failed are the regions that could not be listed (KindRegion failures);
-	// their clusters are unknown.
+	// their clusters are unknown. errs holds the error behind each, in the
+	// same order: a failure is a one-line summary, and
+	// runner.NoRegionAnswered needs the error itself.
 	failed []diag.Failure
+	errs   []error
 	// skipped regions are default-sweep regions these credentials can't
 	// reach (see awserr.IsRegionInaccessible). They are not failures.
 	skipped []string
@@ -576,6 +582,7 @@ func discoverFleetTargets(ctx context.Context, baseCfg aws.Config, regions []str
 			d.skipped = append(d.skipped, regions[i])
 		default:
 			d.failed = append(d.failed, diag.FromError(diag.KindRegion, regions[i], diag.OpListClusters, r.err))
+			d.errs = append(d.errs, r.err)
 		}
 	}
 	return d, nil

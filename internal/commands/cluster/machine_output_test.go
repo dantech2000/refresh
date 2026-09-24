@@ -181,25 +181,79 @@ func TestUpgrade_RejectsNonPositivePollInterval(t *testing.T) {
 }
 
 // A credential failure prints nothing on stdout, and the returned error
-// carries the setup help once (main prints it to stderr).
+// carries the setup help once (main prints it to stderr). Setup makes no STS
+// call, so the keys fail on the first EKS call. In a region sweep, every
+// region then looks closed, so the command asks STS once to name the cause.
 func TestListMachineOutput_CredentialFailure(t *testing.T) {
+	expire := func(s *fakeaws.Server) {
+		s.FailRegions(func(string) string { return "ExpiredTokenException" })
+	}
+	for _, tc := range []struct {
+		name     string
+		regions  string // REFRESH_EKS_REGIONS
+		args     []string
+		expired  bool // every region answers ExpiredTokenException, not rejected keys
+		stsCalls int
+	}{
+		{name: "home region", args: []string{"list", "-o", "json"}},
+		{name: "default sweep", args: []string{"list", "-A", "-o", "json"}, stsCalls: 1},
+		{name: "named regions", regions: "us-east-1,eu-west-1", args: []string{"list", "-A", "-o", "json"}, stsCalls: 1},
+		// An expired token names itself: no STS call needed.
+		{name: "expired, home region", args: []string{"list", "-o", "json"}, expired: true},
+		{name: "expired, default sweep", args: []string{"list", "-A", "-o", "json"}, expired: true},
+		{name: "expired, named regions", regions: "us-east-1,eu-west-1", args: []string{"list", "-A", "-o", "json"}, expired: true},
+		{name: "expired, describe", args: []string{"describe", "prod", "-o", "json"}, expired: true},
+		{name: "expired, upgrade-check", args: []string{"upgrade-check", "prod", "-o", "json"}, expired: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeaws.New(t, upgradeWorld())
+			t.Setenv("REFRESH_EKS_REGIONS", tc.regions)
+			if tc.expired {
+				expire(srv)
+			} else {
+				srv.FailCredentials("InvalidClientTokenId")
+			}
+			stdout, stderr, err := runCluster(t, tc.args...)
+			if err == nil {
+				t.Fatal("cluster list succeeded with bad credentials")
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want empty", stdout)
+			}
+			const help = "AWS credentials not configured or invalid"
+			if n := strings.Count(err.Error(), help); n != 1 {
+				t.Errorf("error carries the credential help %d times, want 1:\n%v", n, err)
+			}
+			if strings.Contains(stderr, help) {
+				t.Errorf("credential help was printed as well as returned (main would print it twice):\n%s", stderr)
+			}
+			if _, ok := err.(cli.ExitCoder); ok { //nolint:errorlint // mirrors cli.HandleExitCoder, which only honors an unwrapped ExitCoder
+				t.Errorf("credential failure should exit 1 through main, got an exit coder: %v", err)
+			}
+			if n := countCalls(srv.Calls(), "sts "); n != tc.stsCalls {
+				t.Errorf("STS calls = %d, want %d: %v", n, tc.stsCalls, srv.Calls())
+			}
+		})
+	}
+}
+
+// Command setup resolves credentials without an STS round trip.
+func TestSetupMakesNoSTSCall(t *testing.T) {
 	srv := fakeaws.New(t, upgradeWorld())
-	srv.FailCredentials("InvalidClientTokenId")
-	stdout, stderr, err := runCluster(t, "list", "-o", "json")
-	if err == nil {
-		t.Fatal("cluster list succeeded with bad credentials")
+	if _, _, err := runCluster(t, "list", "-o", "json"); err != nil {
+		t.Fatalf("cluster list: %v", err)
 	}
-	if stdout != "" {
-		t.Errorf("stdout = %q, want empty", stdout)
+	if n := countCalls(srv.Calls(), "sts "); n != 0 {
+		t.Errorf("STS calls = %d, want 0: %v", n, srv.Calls())
 	}
-	const help = "AWS credentials not configured or invalid"
-	if n := strings.Count(err.Error(), help); n != 1 {
-		t.Errorf("error carries the credential help %d times, want 1:\n%v", n, err)
+}
+
+func countCalls(calls []string, prefix string) int {
+	n := 0
+	for _, c := range calls {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
 	}
-	if strings.Contains(stderr, help) {
-		t.Errorf("credential help was printed as well as returned (main would print it twice):\n%s", stderr)
-	}
-	if _, ok := err.(cli.ExitCoder); ok { //nolint:errorlint // mirrors cli.HandleExitCoder, which only honors an unwrapped ExitCoder
-		t.Errorf("credential failure should exit 1 through main, got an exit coder: %v", err)
-	}
+	return n
 }

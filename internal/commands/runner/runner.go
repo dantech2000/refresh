@@ -35,11 +35,13 @@ import (
 // helpers below.
 type credentialCheck func(ctx context.Context, cfg aws.Config) error
 
-// checkCredentials is awsinternal.CheckAWSCredentials. It prints nothing: the
-// returned error carries the setup help (only for a credential problem) and
-// main prints it once, on stderr, so stdout stays clean for -o json/yaml.
+// checkCredentials is awsinternal.ResolveAWSCredentials: it resolves the
+// credentials without an STS round trip, so setup adds no request of its own.
+// It prints nothing: the returned error carries the setup help (only for a
+// credential problem) and main prints it once, on stderr, so stdout stays
+// clean for -o json/yaml.
 func checkCredentials(ctx context.Context, cfg aws.Config) error {
-	return awsinternal.CheckAWSCredentials(ctx, cfg)
+	return awsinternal.ResolveAWSCredentials(ctx, cfg)
 }
 
 // setupAWS is the shared body of the SetupAWS* helpers.
@@ -54,7 +56,7 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 	}
 	ctx, cancel := apiContext(ctx, timeout)
 
-	// Config loading and the credential check (STS, SSO, IMDS) always run
+	// Config loading and credential resolution (SSO, AssumeRole, IMDS) always run
 	// under --timeout, even when the returned context has a longer or no
 	// deadline, so a stalled credential source can't hang the command.
 	checkCtx, cancelCheck := checkContext(ctx, APITimeout(cmd), timeout)
@@ -100,7 +102,7 @@ func checkContext(ctx context.Context, apiTimeout, timeout time.Duration) (conte
 }
 
 // SetupAWS opens a context with the command's timeout, loads the AWS config,
-// and checks credentials. On error, the returned cancel is nil and the
+// and resolves credentials (no STS call). On error, the returned cancel is nil and the
 // internal context has already been cancelled.
 func SetupAWS(ctx context.Context, cmd *cli.Command) (context.Context, context.CancelFunc, aws.Config, error) {
 	return setupAWS(ctx, cmd, APITimeout(cmd), checkCredentials)
