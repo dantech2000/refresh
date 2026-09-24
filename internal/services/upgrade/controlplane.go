@@ -115,7 +115,7 @@ func (s *Service) waitForClusterActive(ctx context.Context, clusterName string, 
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			if isPermanentAPIError(err) {
+			if common.IsPermanentAPIError(err) {
 				return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("describing cluster %s", clusterName))
 			}
 			progress("warning: checking cluster %s: %v", clusterName, err)

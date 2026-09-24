@@ -1,8 +1,10 @@
 package common
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
+	"syscall"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/mocks"
@@ -49,5 +51,26 @@ func TestIdempotencyToken_UniqueHex(t *testing.T) {
 			t.Fatalf("token %q repeated", tok)
 		}
 		seen[tok] = true
+	}
+}
+
+func TestIsPermanentAPIError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"access denied", mocks.AccessDenied(), true},
+		{"not found", mocks.NotFound(), true},
+		{"throttling", mocks.Throttling(), false},
+		{"server fault", mocks.APIError("InternalFailure", "boom"), false},
+		{"connection reset", fmt.Errorf("dial: %w", syscall.ECONNRESET), false},
+		{"deadline", context.DeadlineExceeded, false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		if got := IsPermanentAPIError(tc.err); got != tc.want {
+			t.Errorf("%s: IsPermanentAPIError = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

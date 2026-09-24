@@ -48,27 +48,50 @@ type VersionUpdateOptions struct {
 // says it moves to the cluster's minor), so an AMI patch sends it explicitly
 // and can never turn into a minor-version upgrade.
 //
-// One idempotency token is computed per call, outside the retry, so a retried
-// request is the SAME request and can't start a second roll. The token does
-// not span separate calls: a later run (or a fleet revisit) gets a new token.
+// StartNodegroupRoll pins one idempotency token across the request's
+// retries; a later run (or a fleet revisit) gets a new token.
 func (s *ServiceImpl) StartVersionUpdate(ctx context.Context, clusterName, nodegroupName string, opts VersionUpdateOptions) (*ekstypes.Update, error) {
 	ng, err := s.DescribeNodegroup(ctx, clusterName, nodegroupName)
 	if err != nil {
 		return nil, err
 	}
-	token := common.IdempotencyToken() // stable across retries of this call
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig,
-		func(rc context.Context) (*eks.UpdateNodegroupVersionOutput, error) {
-			return s.eksClient.UpdateNodegroupVersion(rc, &eks.UpdateNodegroupVersionInput{
-				ClusterName:        aws.String(clusterName),
-				NodegroupName:      aws.String(nodegroupName),
-				Version:            ng.Version,
-				Force:              opts.Force,
-				ClientRequestToken: aws.String(token),
-			})
-		})
+	update, err := StartNodegroupRoll(ctx, s.eksClient, clusterName, nodegroupName, aws.ToString(ng.Version), opts.Force)
 	if err != nil {
 		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("starting the version update for nodegroup %s/%s", clusterName, nodegroupName))
+	}
+	return update, nil
+}
+
+// VersionUpdater is the EKS call that starts a nodegroup roll.
+type VersionUpdater interface {
+	UpdateNodegroupVersion(ctx context.Context, params *eks.UpdateNodegroupVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error)
+}
+
+// StartNodegroupRoll starts one UpdateNodegroupVersion roll: `nodegroup
+// update` (an AMI patch at the nodegroup's own version) and `cluster upgrade`
+// (a roll to the target version) both start rolls here. version "" omits
+// Version from the request.
+//
+// One idempotency token is computed per call, outside the retry, so a retried
+// request is the SAME request and can't start a second roll. The token does
+// not span separate calls: a later run gets a new token. The error is the raw
+// SDK error; the caller formats it for its own operation.
+func StartNodegroupRoll(ctx context.Context, api VersionUpdater, clusterName, nodegroupName, version string, force bool) (*ekstypes.Update, error) {
+	input := &eks.UpdateNodegroupVersionInput{
+		ClusterName:        aws.String(clusterName),
+		NodegroupName:      aws.String(nodegroupName),
+		Force:              force,
+		ClientRequestToken: aws.String(common.IdempotencyToken()), // stable across retries of this call
+	}
+	if version != "" {
+		input.Version = aws.String(version)
+	}
+	out, err := common.WithRetry(ctx, common.DefaultRetryConfig,
+		func(rc context.Context) (*eks.UpdateNodegroupVersionOutput, error) {
+			return api.UpdateNodegroupVersion(rc, input)
+		})
+	if err != nil {
+		return nil, err
 	}
 	return out.Update, nil
 }
