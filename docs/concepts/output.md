@@ -145,7 +145,7 @@ findings, not failures.
 | `kind` | yes | The type of item: `Region`, `Cluster`, `Nodegroup`, `Addon`, `Insight`, `Update`, `PodDisruptionBudget`, or `Node` |
 | `name` | yes | The item's name. For a `Region` failure, the region |
 | `cluster` | no | The cluster the item belongs to |
-| `region` | no | The AWS region |
+| `region` | no | The AWS region. A `Region` failure always sets it, so a filter on `region` also finds the region's own failure |
 | `operation` | no | The IAM action that failed, such as `eks:DescribeNodegroup`. Every action is in the [IAM permissions table](configuration.md#required-iam-permissions) |
 | `reason` | yes | Why it failed. One value from the table below |
 | `retryable` | yes | `true` when running the same command again, with no other change, may succeed |

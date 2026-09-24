@@ -74,7 +74,8 @@ type Failure struct {
 // FromError returns the Failure for err: kind and name identify the item, op
 // is the IAM action that failed ("" when there is none), and the reason,
 // retryability, and AWS error code come from Classify. Set Cluster, Region,
-// and UpdateID on the result when they apply.
+// and UpdateID on the result when they apply; for KindRegion, Region is set
+// to name.
 //
 // For KindRegion, the error codes a region that is not enabled for the
 // account returns (UnrecognizedClientException, InvalidClientTokenId,
@@ -91,7 +92,7 @@ func FromError(kind Kind, name, op string, err error) Failure {
 	if msg == "" {
 		msg = "unknown error"
 	}
-	return Failure{
+	f := Failure{
 		Kind:         kind,
 		Name:         name,
 		Operation:    op,
@@ -100,6 +101,10 @@ func FromError(kind Kind, name, op string, err error) Failure {
 		Error:        msg,
 		AWSErrorCode: code,
 	}
+	if kind == KindRegion {
+		f.Region = name // so a filter on region also finds the region's own failure
+	}
+	return f
 }
 
 // New returns a Failure that has no error value behind it, such as an EKS

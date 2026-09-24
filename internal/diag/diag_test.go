@@ -54,8 +54,8 @@ func TestFromError_RegionNotEnabled(t *testing.T) {
 	// credential-class code; for a region failure that is RegionUnavailable.
 	for _, code := range []string{"UnrecognizedClientException", "InvalidClientTokenId", "AuthFailure"} {
 		f := diag.FromError(diag.KindRegion, "ap-east-1", diag.OpListClusters, mocks.APIError(code, "x"))
-		if f.Reason != diag.ReasonRegionUnavailable || f.Retryable || f.AWSErrorCode != code {
-			t.Errorf("%s: got %s retryable=%v code=%q, want RegionUnavailable", code, f.Reason, f.Retryable, f.AWSErrorCode)
+		if f.Reason != diag.ReasonRegionUnavailable || f.Retryable || f.AWSErrorCode != code || f.Region != "ap-east-1" {
+			t.Errorf("%s: got %s retryable=%v code=%q region=%q, want RegionUnavailable in ap-east-1", code, f.Reason, f.Retryable, f.AWSErrorCode, f.Region)
 		}
 	}
 	// Other kinds keep CredentialError; AccessDenied stays AccessDenied.
