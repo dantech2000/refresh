@@ -427,7 +427,7 @@ func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (
 		out.Summaries = append(out.Summaries, a.Value...)
 	}
 	for _, r := range sweep.Skipped {
-		s.logger.Debug("skipping region not accessible to these credentials", "region", r)
+		s.logger.Debug("skipping region not accessible to these credentials", "region", r, "error", sweep.SkipErrors[r])
 	}
 	var firstRegion string
 	var firstErr error

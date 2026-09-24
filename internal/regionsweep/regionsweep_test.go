@@ -43,6 +43,11 @@ func TestRun_DefaultSweepSkipsClosedRegions(t *testing.T) {
 	if !slices.Equal(res.Skipped, []string{"af-south-1", "sa-east-1"}) {
 		t.Errorf("skipped = %v, want sorted closed regions", res.Skipped)
 	}
+	for _, r := range res.Skipped {
+		if res.SkipErrors[r] == nil {
+			t.Errorf("%s: no skip error recorded", r)
+		}
+	}
 	if len(res.Failed) != 1 || len(res.Errors) != 1 {
 		t.Fatalf("failed = %+v, errors = %v; want one of each", res.Failed, res.Errors)
 	}

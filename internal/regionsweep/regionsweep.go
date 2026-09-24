@@ -45,6 +45,9 @@ type Result[T any] struct {
 	// Skipped lists the regions closed to these credentials. They are not
 	// failures.
 	Skipped []string
+	// SkipErrors holds the error that got each skipped region skipped, for
+	// debug logs.
+	SkipErrors map[string]error
 }
 
 // Run calls fn once per region, at most opts.Concurrency at a time, and
@@ -78,6 +81,10 @@ func Run[T any](ctx context.Context, regions []string, opts Options, fn func(ctx
 			res.Answered = append(res.Answered, Answer[T]{Region: region, Value: o.value})
 		case opts.SkipInaccessible && awserr.IsRegionInaccessible(o.err):
 			res.Skipped = append(res.Skipped, region)
+			if res.SkipErrors == nil {
+				res.SkipErrors = make(map[string]error)
+			}
+			res.SkipErrors[region] = o.err
 		default:
 			res.Failed = append(res.Failed, diag.FromError(diag.KindRegion, region, diag.OpListClusters, o.err))
 			res.Errors = append(res.Errors, o.err)
