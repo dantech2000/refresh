@@ -145,7 +145,10 @@ func hasNodegroupAMIs(c statussvc.ClusterStatus) bool {
 // autoModeText is the COMPUTE text for an Auto Mode cluster, with the count
 // of any managed nodegroups it also runs.
 func autoModeText(c statussvc.ClusterStatus) string {
-	if c.NodegroupCount > 0 {
+	switch {
+	case c.NodegroupCount == 1:
+		return "Auto Mode + 1 nodegroup"
+	case c.NodegroupCount > 1:
 		return fmt.Sprintf("Auto Mode + %d nodegroups", c.NodegroupCount)
 	}
 	return "Auto Mode"

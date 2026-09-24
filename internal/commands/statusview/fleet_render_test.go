@@ -329,6 +329,12 @@ func TestFleetLines_AutoModeWithNodegroupsShowsStaleAMI(t *testing.T) {
 		t.Errorf("plain COMPUTE, STALE AMI = %q, want [Auto Mode + 2 nodegroups 1/2 (30d)]", got)
 	}
 
+	// One nodegroup reads in the singular.
+	fleet[0].NodegroupCount = 1
+	if got := computeCell(fleet[0]); got != "Auto Mode + 1 nodegroup" {
+		t.Errorf("Auto Mode with one nodegroup: COMPUTE = %q, want Auto Mode + 1 nodegroup", got)
+	}
+
 	// Without nodegroups, Auto Mode has no AMIs of its own to report.
 	fleet[0].NodegroupCount, fleet[0].StaleAMI = 0, statussvc.StaleAMISummary{}
 	if got := staleAMICell(fleet[0]); got != "n/a" {
