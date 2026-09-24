@@ -26,6 +26,12 @@ refresh status --profile prod --region us-east-1
 Credentials themselves come from the standard SDK chain — `refresh` never stores
 them.
 
+Before its first AWS call, a command resolves the credentials from that chain.
+It makes no extra request to do this. If no source gives credentials, or the
+SSO session has expired, the command stops with the setup help. Keys that
+resolve but are revoked or expired fail on the first AWS call, with the same
+help.
+
 ## Cluster resolution
 
 Every command that targets one cluster resolves it in this order (first match
@@ -212,13 +218,17 @@ What a failed region does depends on the command:
   clusters it gathered, and exits `4`.
 
 In all three, if no region answers, nothing was gathered and the command
-fails with exit `1`. See [Exit codes](exit-codes.md#region-sweeps).
+fails with exit `1`. See [Exit codes](exit-codes.md#region-sweeps). When no
+region answers because of the credentials, the error is the credential setup
+help. An expired token names itself. Invalid keys make every region look
+closed, so when a region was skipped or unavailable, `refresh` calls
+`sts:GetCallerIdentity` once to tell the two apart.
 
 ## Timeouts
 
 The global `--timeout` (default `60s`, or `REFRESH_TIMEOUT`) bounds the AWS
-calls of list, describe, and check commands. Config loading and the
-credential check always run under it.
+calls of list, describe, and check commands. Config loading and credential
+resolution always run under it.
 
 These commands bound long-running work with their own flags. `REFRESH_TIMEOUT`
 does not set them:
@@ -306,7 +316,7 @@ the data incomplete.
 
 | Action | Used by |
 |---|---|
-| `sts:GetCallerIdentity` | Every AWS command (credential check) |
+| `sts:GetCallerIdentity` | Region sweeps in which no region answered (credential check) |
 | `eks:ListClusters` | `status`, `cluster list`, `nodegroup update --all-clusters`, partial cluster names |
 | `eks:DescribeCluster` | Every cluster command |
 | `eks:ListNodegroups`, `eks:DescribeNodegroup` | `status`, `nodegroup *`, `cluster describe`/`upgrade-check`/`upgrade`, health checks |

@@ -11,6 +11,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 )
@@ -81,6 +83,54 @@ func TestCheckAWSCredentials_Valid(t *testing.T) {
 	fakeaws.New(t)
 	if err := CheckAWSCredentials(t.Context(), loadFakeConfig(t)); err != nil {
 		t.Fatalf("CheckAWSCredentials = %v, want nil", err)
+	}
+}
+
+// ResolveAWSCredentials makes no AWS call when the credentials resolve.
+func TestResolveAWSCredentials_ValidMakesNoCall(t *testing.T) {
+	srv := fakeaws.New(t)
+	if err := ResolveAWSCredentials(t.Context(), loadFakeConfig(t)); err != nil {
+		t.Fatalf("ResolveAWSCredentials = %v, want nil", err)
+	}
+	if calls := srv.Calls(); len(calls) != 0 {
+		t.Errorf("ResolveAWSCredentials called AWS: %v", calls)
+	}
+}
+
+// A credential source that fails gets the setup help once, and the error
+// still unwraps to the source's error.
+func TestResolveAWSCredentials_SourceFailureCarriesHelpOnce(t *testing.T) {
+	errSSO := &ssocreds.InvalidTokenError{Err: errors.New("the SSO session has expired")}
+	for name, provider := range map[string]aws.CredentialsProvider{
+		"empty static keys": credentials.NewStaticCredentialsProvider("", "", ""),
+		"expired SSO token": aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{}, errSSO
+		}),
+		"no source in the chain": aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{}, errors.New("no EC2 IMDS role found")
+		}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := aws.Config{Credentials: aws.NewCredentialsCache(provider)}
+			var err error
+			stdout, stderr := captureOutput(t, func() { err = ResolveAWSCredentials(t.Context(), cfg) })
+			if err == nil {
+				t.Fatal("ResolveAWSCredentials passed with no credentials")
+			}
+			if n := strings.Count(err.Error(), credentialHelp); n != 1 {
+				t.Errorf("credential help appears %d times in the error, want 1:\n%v", n, err)
+			}
+			if stdout != "" || stderr != "" {
+				t.Errorf("ResolveAWSCredentials printed output: stdout=%q stderr=%q", stdout, stderr)
+			}
+		})
+	}
+}
+
+// Anonymous config (no provider) has nothing to resolve.
+func TestResolveAWSCredentials_Anonymous(t *testing.T) {
+	if err := ResolveAWSCredentials(t.Context(), aws.Config{}); err != nil {
+		t.Fatalf("ResolveAWSCredentials = %v, want nil", err)
 	}
 }
 

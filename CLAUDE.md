@@ -71,7 +71,9 @@ command (CLI wiring)  internal/commands/{statuscmd,cluster,nodegroup,addon,ctxcm
 **runner** helpers (use these, don't re-implement them):
 
 - `SetupAWS(ctx, cmd)` opens the API context with the global `--timeout`,
-  loads the config, and checks credentials. `SetupAWSWithDeadline(ctx, cmd, d)`
+  loads the config, and resolves credentials locally (no STS round trip; a
+  sweep in which no region answered asks STS through `NoRegionAnswered`).
+  `SetupAWSWithDeadline(ctx, cmd, d)`
   takes an explicit deadline (`d <= 0` = none) for commands that scope their
   own long waits (`nodegroup update`, `nodegroup scale --wait`, `addon update`,
   `cluster upgrade`).
