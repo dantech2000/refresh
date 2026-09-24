@@ -11,6 +11,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/diag"
@@ -92,7 +93,7 @@ var warnOut io.Writer = ui.Stderr
 // (and the table's INCOMPLETE DATA section), so "count" is never mistaken
 // for the full nodegroup count.
 func writeNodegroupList(format, clusterName string, items []nodegroupsvc.NodegroupSummary, failures diag.List) error {
-	doc := nodegroupsvc.NodegroupList{Cluster: clusterName, Nodegroups: items, Count: len(items), Failures: failures}
+	doc := nodegroupsvc.NodegroupList{Cluster: clusterName, Nodegroups: apidoc.List(items), Count: len(items), Failures: failures}
 	if handled, err := runner.EncodeStdout(format, doc); handled {
 		return err
 	}

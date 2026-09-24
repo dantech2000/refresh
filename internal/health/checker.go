@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/diag"
 )
 
@@ -21,19 +22,29 @@ import (
 type HealthStatus string
 
 const (
-	StatusPass HealthStatus = "PASS"
-	StatusWarn HealthStatus = "WARN"
-	StatusFail HealthStatus = "FAIL"
+	StatusPass HealthStatus = "Pass"
+	StatusWarn HealthStatus = "Warn"
+	StatusFail HealthStatus = "Fail"
 )
+
+// EnumValues lists every HealthStatus.
+func (HealthStatus) EnumValues() []string {
+	return []string{string(StatusPass), string(StatusWarn), string(StatusFail)}
+}
 
 // Decision represents the overall decision for proceeding with update
 type Decision string
 
 const (
-	DecisionProceed Decision = "PROCEED"
-	DecisionWarn    Decision = "WARN"
-	DecisionBlock   Decision = "BLOCK"
+	DecisionProceed Decision = "Proceed"
+	DecisionWarn    Decision = "Warn"
+	DecisionBlock   Decision = "Block"
 )
+
+// EnumValues lists every Decision.
+func (Decision) EnumValues() []string {
+	return []string{string(DecisionProceed), string(DecisionWarn), string(DecisionBlock)}
+}
 
 // HealthResult represents the result of a single health check
 type HealthResult struct {
@@ -64,6 +75,9 @@ type HealthSummary struct {
 	// passing, so the Decision already accounts for them. [] when empty.
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is HealthSummary.
+func (HealthSummary) DocumentKind() apidoc.Kind { return apidoc.KindHealthSummary }
 
 // HealthChecker performs various health checks on the EKS cluster
 type HealthChecker struct {
@@ -206,7 +220,7 @@ func aggregateResults(results []HealthResult) HealthSummary {
 	}
 
 	return HealthSummary{
-		Results:      results,
+		Results:      apidoc.List(results),
 		OverallScore: overallScore,
 		Decision:     decision,
 		Warnings:     warnings,

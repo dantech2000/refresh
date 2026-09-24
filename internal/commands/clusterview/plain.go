@@ -41,7 +41,7 @@ func clusterListPlain(summaries []clustersvc.ClusterSummary, multiRegion, showHe
 		if showHealth {
 			h := ""
 			if s.Health != nil {
-				h = string(s.Health.Decision)
+				h = decisionLabel(s.Health.Decision)
 			}
 			row = append(row, h)
 		}
@@ -99,16 +99,16 @@ func clusterDetailPlain(d *clustersvc.ClusterDetails) *ui.PlainTable {
 		t.Add("age", formatAge(time.Since(d.CreatedAt)))
 	}
 
-	if len(d.Nodegroups) > 0 {
+	if len(d.NodegroupList()) > 0 {
 		active, nodes := 0, int32(0)
-		for _, ng := range d.Nodegroups {
+		for _, ng := range d.NodegroupList() {
 			nodes += ng.DesiredSize
 			if ng.Status == "ACTIVE" {
 				active++
 			}
 		}
 		t.Add("nodegroups", fmt.Sprintf("%d active, %d nodes", active, nodes))
-		for _, ng := range d.Nodegroups {
+		for _, ng := range d.NodegroupList() {
 			t.Add("nodegroup/"+ng.Name, ui.PlainPairs(
 				"instance", ng.InstanceType,
 				"nodes", nodeCountText(ng.ReadyKnown, ng.ReadyNodes, ng.DesiredSize),
@@ -117,10 +117,10 @@ func clusterDetailPlain(d *clustersvc.ClusterDetails) *ui.PlainTable {
 		}
 	}
 
-	if len(d.Addons) > 0 {
-		t.Add("addons", fmt.Sprintf("%d installed", len(d.Addons)))
-		for _, a := range d.Addons {
-			h := a.Health
+	if len(d.AddonList()) > 0 {
+		t.Add("addons", fmt.Sprintf("%d installed", len(d.AddonList())))
+		for _, a := range d.AddonList() {
+			h := string(a.Health)
 			if h == "" {
 				h = "Unknown"
 			}
@@ -146,13 +146,13 @@ func clusterDetailPlain(d *clustersvc.ClusterDetails) *ui.PlainTable {
 // healthPlain is the uncolored health card headline: decision, score, and
 // the first error or warning.
 func healthPlain(h *health.HealthSummary) string {
-	return fmt.Sprintf("%s (%d/100): %s", h.Decision, h.OverallScore, healthSummaryMsg(h))
+	return fmt.Sprintf("%s (%d/100): %s", decisionLabel(h.Decision), h.OverallScore, healthSummaryMsg(h))
 }
 
 // addHealthCheckRows adds one "health check/<name>" row per check.
 func addHealthCheckRows(t *ui.PlainTable, results []health.HealthResult) {
 	for _, r := range results {
-		st := string(r.Status)
+		st := healthStatusLabel(r.Status)
 		if r.Skipped {
 			st = "SKIPPED"
 		}
@@ -187,7 +187,7 @@ func writeUpgradeCheckInfo(w io.Writer, report *clustersvc.UpgradeReport) {
 		if cp.Skipped {
 			_, _ = fmt.Fprintf(w, "control plane: %s\n", cp.Message)
 		} else {
-			_, _ = fmt.Fprintf(w, "control plane (%s): %s\n", cp.Status, cp.Message)
+			_, _ = fmt.Fprintf(w, "control plane (%s): %s\n", healthStatusLabel(cp.Status), cp.Message)
 			for _, d := range cp.Details {
 				_, _ = fmt.Fprintf(w, "  %s\n", d)
 			}

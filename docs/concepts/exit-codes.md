@@ -237,7 +237,7 @@ a pass to a failure:
 
 | Command | Before | Now |
 |---|---|---|
-| `nodegroup update --dry-run` (a nodegroup could not be described) | `0`, shown as `skip-updating` | `4`, action `unknown` with a `failure` |
+| `nodegroup update --dry-run` (a nodegroup could not be described) | `0`, shown as `skip-updating` | `4`, action `Unknown` with a `failure` |
 | `nodegroup update --all-clusters --dry-run` (a cluster could not be previewed) | `0` | `4` |
 | `nodegroup update` (post-roll verification could not describe a nodegroup) | `5` | `4` |
 | `nodegroup update --all-clusters` (no clusters found, and a region could not be listed) | `4` with no document | `4` with the document |

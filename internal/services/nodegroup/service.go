@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/dantech2000/refresh/internal/apidoc"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
@@ -412,9 +413,12 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 			details.Workloads.PodDisruption = "unavailable: Kubernetes API not accessible for this cluster (check the kubeconfig context) or no matching nodes"
 		}
 	}
-	if options.ShowInstances && len(instanceIDs) > 0 {
-		if insts, ok := s.getInstanceDetails(ctx, instanceIDs); ok {
-			details.Instances = insts
+	if options.ShowInstances {
+		if len(instanceIDs) == 0 {
+			details.Instances = &[]InstanceDetails{}
+		} else if insts, ok := s.getInstanceDetails(ctx, instanceIDs); ok {
+			list := apidoc.List(insts)
+			details.Instances = &list
 		}
 	}
 	return details, nil

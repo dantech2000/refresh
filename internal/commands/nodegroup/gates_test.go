@@ -228,7 +228,7 @@ func TestUpdate_HealthBlockExitsThree(t *testing.T) {
 			}
 			if format == "json" {
 				doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-				if h, ok := doc["health"].(map[string]any); !ok || h["decision"] != "BLOCK" {
+				if h, ok := doc["health"].(map[string]any); !ok || h["decision"] != "Block" {
 					t.Errorf("health = %v, want the BLOCK verdict", doc["health"])
 				}
 			}
@@ -261,7 +261,7 @@ func TestUpdate_DryRunSkipsCustomAMI(t *testing.T) {
 			m := ng.(map[string]any)
 			actions[m["name"].(string)] = m["action"]
 		}
-		if actions["custom"] != "skip-custom" || actions["busy"] != "skip-updating" {
+		if actions["custom"] != "SkipCustom" || actions["busy"] != "SkipUpdating" {
 			t.Errorf("force=%v: actions = %v, want custom=skip-custom busy=skip-updating", force, actions)
 		}
 	}

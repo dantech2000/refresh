@@ -3,6 +3,7 @@ package cluster
 import (
 	"time"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/status"
@@ -10,7 +11,6 @@ import (
 
 // ClusterDetails contains comprehensive cluster information
 type ClusterDetails struct {
-	// Basic cluster info
 	Name            string    `json:"name" yaml:"name"`
 	Status          string    `json:"status" yaml:"status"`
 	Version         string    `json:"version" yaml:"version"`
@@ -26,7 +26,7 @@ type ClusterDetails struct {
 	// STANDARD, EKS auto-upgrades the cluster at the end of standard support.
 	SupportType string `json:"supportType,omitempty" yaml:"supportType,omitempty"`
 
-	// Health information (integration with existing health framework)
+	// Health is the pre-flight health verdict, with --show-health.
 	Health *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`
 
 	// HealthIssues are AWS-reported control-plane health issues (DescribeCluster's
@@ -35,25 +35,51 @@ type ClusterDetails struct {
 	// without ShowHealth.
 	HealthIssues []HealthIssue `json:"healthIssues,omitempty" yaml:"healthIssues,omitempty"`
 
-	// Networking details
+	// Networking is the cluster's VPC, subnets, security groups, and
+	// endpoint access.
 	Networking NetworkingInfo `json:"networking" yaml:"networking"`
 
-	// Security configuration
+	// Security is the cluster's encryption, IAM role, logging, and deletion
+	// protection.
 	Security SecurityInfo `json:"security" yaml:"security"`
 
-	// Add-ons and nodegroups
-	Addons     []AddonInfo        `json:"addons" yaml:"addons"`
-	Nodegroups []NodegroupSummary `json:"nodegroups" yaml:"nodegroups"`
+	// Addons are the installed add-ons. The key is left out when the
+	// add-ons were not read (--no-addons, or a failed listing in Failures).
+	Addons *[]AddonInfo `json:"addons,omitempty" yaml:"addons,omitempty"`
+	// Nodegroups are the managed nodegroups, with --detailed. The key is left
+	// out when the nodegroups were not read (no --detailed, or a failed
+	// listing in Failures).
+	Nodegroups *[]NodegroupSummary `json:"nodegroups,omitempty" yaml:"nodegroups,omitempty"`
 
-	// Operational metadata
+	// Tags are the cluster's AWS tags.
 	Tags map[string]string `json:"tags" yaml:"tags"`
 
 	// Failures are the parts of the cluster that could not be read: the
 	// add-on or nodegroup list, or one add-on or nodegroup. Addons and
-	// Nodegroups are null when not requested or not collected, and [] when
-	// collected and empty, so a failure never reads as "none". [] when
+	// Nodegroups are left out when not requested or not collected, and []
+	// when collected and empty, so a failure never reads as "none". [] when
 	// everything was read.
 	Failures diag.List `json:"failures" yaml:"failures"`
+}
+
+// DocumentKind is ClusterDescription.
+func (ClusterDetails) DocumentKind() apidoc.Kind { return apidoc.KindClusterDescription }
+
+// AddonList returns the add-ons that were read (nil when they were not).
+func (d ClusterDetails) AddonList() []AddonInfo {
+	if d.Addons == nil {
+		return nil
+	}
+	return *d.Addons
+}
+
+// NodegroupList returns the nodegroups that were read (nil when they were
+// not).
+func (d ClusterDetails) NodegroupList() []NodegroupSummary {
+	if d.Nodegroups == nil {
+		return nil
+	}
+	return *d.Nodegroups
 }
 
 // ClusterSummary is used for list operations
@@ -91,6 +117,9 @@ type ClusterList struct {
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
+// DocumentKind is ClusterList.
+func (ClusterList) DocumentKind() apidoc.Kind { return apidoc.KindClusterList }
+
 // HealthIssue is one AWS-reported health issue on a cluster/nodegroup/addon —
 // the common shape behind EKS's ClusterIssue / NodegroupIssue / AddonIssue.
 type HealthIssue struct {
@@ -124,12 +153,35 @@ type SecurityInfo struct {
 	DeletionProtection bool     `json:"deletionProtection" yaml:"deletionProtection"`
 }
 
+// AddonHealth is an add-on's health in `cluster describe`, derived from its
+// EKS status.
+type AddonHealth string
+
+// The add-on health values of `cluster describe`.
+const (
+	// AddonHealthy: the add-on is ACTIVE.
+	AddonHealthy AddonHealth = "Healthy"
+	// AddonIssues: the add-on is DEGRADED.
+	AddonIssues AddonHealth = "Issues"
+	// AddonFailed: a create, update, or delete of the add-on failed.
+	AddonFailed AddonHealth = "Failed"
+	// AddonUpdating: the add-on is CREATING, UPDATING, or DELETING.
+	AddonUpdating AddonHealth = "Updating"
+	// AddonHealthUnknown: any other status.
+	AddonHealthUnknown AddonHealth = "Unknown"
+)
+
+// EnumValues lists every AddonHealth.
+func (AddonHealth) EnumValues() []string {
+	return []string{string(AddonHealthy), string(AddonIssues), string(AddonFailed), string(AddonUpdating), string(AddonHealthUnknown)}
+}
+
 // AddonInfo contains EKS add-on information
 type AddonInfo struct {
-	Name    string `json:"name" yaml:"name"`
-	Version string `json:"version" yaml:"version"`
-	Status  string `json:"status" yaml:"status"`
-	Health  string `json:"health,omitempty" yaml:"health,omitempty"`
+	Name    string      `json:"name" yaml:"name"`
+	Version string      `json:"version" yaml:"version"`
+	Status  string      `json:"status" yaml:"status"`
+	Health  AddonHealth `json:"health,omitempty" yaml:"health,omitempty"`
 }
 
 // NodegroupSummary contains basic nodegroup information

@@ -89,6 +89,15 @@ func Reasons() []Reason {
 	}
 }
 
+// EnumValues lists every Reason, for the JSON Schema.
+func (Reason) EnumValues() []string {
+	out := make([]string, 0, len(retryable))
+	for _, r := range Reasons() {
+		out = append(out, string(r))
+	}
+	return out
+}
+
 // Retryable reports whether running the same command again, with no other
 // change, may succeed after a failure for reason r. An unknown reason is not
 // retryable.

@@ -63,6 +63,15 @@ func (s AMIStatus) PlainString() string {
 	}
 }
 
+// EnumValues lists the JSON value of every AMIStatus, for the JSON Schema.
+func (AMIStatus) EnumValues() []string {
+	values := make([]string, 0, 5)
+	for _, s := range []AMIStatus{AMILatest, AMIOutdated, AMIUpdating, AMIUnknown, AMICustom} {
+		values = append(values, s.PlainString())
+	}
+	return values
+}
+
 // MarshalJSON emits the plain string ("Latest", "Outdated", ...) instead of a
 // bare enum int, so `-o json` consumers get a meaningful value.
 func (s AMIStatus) MarshalJSON() ([]byte, error) {

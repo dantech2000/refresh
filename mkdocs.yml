@@ -117,6 +117,7 @@ nav:
       - version: reference/version.md
       - install-man: reference/install-man.md
       - completion: reference/completion.md
+      - JSON schemas: reference/schemas.md
   - Usage & examples:
       - Cookbook: usage/cookbook.md
       - Migrating from eksctl / aws CLI: migration.md

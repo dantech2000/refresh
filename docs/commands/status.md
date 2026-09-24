@@ -72,6 +72,8 @@ failure is an entry of the top-level `failures` (see
 
 ```json
 {
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "FleetStatus",
   "clusters": [
     {"name": "prod", "region": "us-east-1", "version": "1.33", "incomplete": true, "...": "..."}
   ],

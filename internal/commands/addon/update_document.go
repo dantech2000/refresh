@@ -1,6 +1,7 @@
 package addon
 
 import (
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/addons"
 )
@@ -12,6 +13,9 @@ type addonUpdateDocument struct {
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
+// DocumentKind is AddonUpdate.
+func (addonUpdateDocument) DocumentKind() apidoc.Kind { return apidoc.KindAddonUpdate }
+
 // addonUpdateAllDocument is the -o json/yaml document of
 // `addon update --all`.
 type addonUpdateAllDocument struct {
@@ -20,6 +24,9 @@ type addonUpdateAllDocument struct {
 	Results  []addons.AddonUpdateResult `json:"results" yaml:"results"`
 	Failures diag.List                  `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is AddonUpdateAll.
+func (addonUpdateAllDocument) DocumentKind() apidoc.Kind { return apidoc.KindAddonUpdateAll }
 
 // resultFailures sets region on each result's failure (the service does not
 // know it) and returns the failures, sorted.

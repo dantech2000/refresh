@@ -238,7 +238,7 @@ func TestUpdateDryRun_DescribeFailureIsAFailure(t *testing.T) {
 			requireStderrLine(t, stderr, "warning: "+text)
 			doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 			ngs := nodegroupEntries(t, doc)
-			if ngs["api"]["action"] != "unknown" || ngs["web"]["action"] != "update" {
+			if ngs["api"]["action"] != "Unknown" || ngs["web"]["action"] != "Update" {
 				t.Errorf("actions: api=%v web=%v, want unknown/update", ngs["api"]["action"], ngs["web"]["action"])
 			}
 			want := failureWant{kind: "Nodegroup", name: "api", cluster: "prod", reason: "Throttled", operation: "eks:DescribeNodegroup", retryable: true, checkRetryable: true}
@@ -316,7 +316,7 @@ func TestUpdate_HealthReadFailureBlocksAndIsListed(t *testing.T) {
 		t.Fatalf("exit code = %d (err %v), want 3\nstderr:\n%s", code, err, stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	if h, _ := doc["health"].(map[string]any); h["decision"] != "BLOCK" {
+	if h, _ := doc["health"].(map[string]any); h["decision"] != "Block" {
 		t.Errorf("health = %v, want BLOCK", doc["health"])
 	}
 	failureWant{kind: "Cluster", name: "prod", reason: "AccessDenied", operation: "eks:ListNodegroups"}.check(t, "failures[0]", onlyFailure(t, doc))

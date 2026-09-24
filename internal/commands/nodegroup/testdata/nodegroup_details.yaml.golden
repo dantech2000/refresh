@@ -1,3 +1,5 @@
+apiVersion: refresh.drod.dev/v1
+kind: NodegroupDescription
 amiLookupFailure:
   awsErrorCode: s-awserrorcode
   cluster: s-cluster

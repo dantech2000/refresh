@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
+
+	"github.com/dantech2000/refresh/internal/apidoc"
 )
 
 // ── setupAWS context propagation ──────────────────────────────────────────────
@@ -336,12 +338,7 @@ func captureStdout(t *testing.T, fn func()) string {
 // EncodeStdout's YAML output must use the same camelCase keys as its JSON output
 // (driven by the `json` tags), not yaml.v3's lowercased Go field names.
 func TestEncodeStdout_YAMLKeysMatchJSON(t *testing.T) {
-	type item struct {
-		InstanceType string `json:"instanceType"`
-		DesiredSize  int    `json:"desiredSize"`
-		ReadyNodes   int    `json:"readyNodes"`
-	}
-	payload := map[string]any{"nodegroups": []item{{"m5.large", 3, 2}}, "count": 1}
+	payload := testDocument{Nodegroups: []testItem{{"m5.large", 3, 2}}, Count: 1}
 
 	yamlOut := captureStdout(t, func() {
 		if handled, err := EncodeStdout("yaml", payload); !handled || err != nil {
@@ -363,13 +360,90 @@ func TestEncodeStdout_YAMLKeysMatchJSON(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(yamlOut), &fromYAML); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	jsonBytes, _ := json.Marshal(payload)
-	if err := json.Unmarshal(jsonBytes, &fromJSON); err != nil {
+	jsonOut := captureStdout(t, func() {
+		if handled, err := EncodeStdout("json", payload); !handled || err != nil {
+			t.Fatalf("EncodeStdout(json) handled=%v err=%v", handled, err)
+		}
+	})
+	if err := json.Unmarshal([]byte(jsonOut), &fromJSON); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 	gotJSON, _ := json.Marshal(fromYAML)
 	wantJSON, _ := json.Marshal(fromJSON)
 	if string(gotJSON) != string(wantJSON) {
 		t.Errorf("YAML structure diverges from JSON:\n got=%s\nwant=%s", gotJSON, wantJSON)
+	}
+}
+
+type testItem struct {
+	InstanceType string `json:"instanceType"`
+	DesiredSize  int    `json:"desiredSize"`
+	ReadyNodes   int    `json:"readyNodes"`
+}
+
+// testDocument is a document for the encoder tests.
+type testDocument struct {
+	Nodegroups []testItem `json:"nodegroups"`
+	Count      int        `json:"count"`
+}
+
+func (testDocument) DocumentKind() apidoc.Kind { return "TestDocument" }
+
+// emptyDocument encodes as {}.
+type emptyDocument struct{}
+
+func (emptyDocument) DocumentKind() apidoc.Kind { return "Empty" }
+
+// listDocument does not encode as an object.
+type listDocument []string
+
+func (listDocument) DocumentKind() apidoc.Kind { return "List" }
+
+// Every document starts with apiVersion and kind, in that order, and the
+// rest of the JSON is what json.Encoder writes for the value.
+func TestEncodeStdout_Header(t *testing.T) {
+	payload := testDocument{Nodegroups: []testItem{{"m5.large", 3, 2}}, Count: 1}
+	got := captureStdout(t, func() {
+		if _, err := EncodeStdout("json", payload); err != nil {
+			t.Fatal(err)
+		}
+	})
+	body, _ := json.MarshalIndent(payload, "", "  ")
+	want := "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"TestDocument\",\n  " + strings.TrimPrefix(string(body), "{\n  ") + "\n"
+	if got != want {
+		t.Errorf("json:\n got=%s\nwant=%s", got, want)
+	}
+
+	gotYAML := captureStdout(t, func() {
+		if _, err := EncodeStdout("yaml", payload); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.HasPrefix(gotYAML, "apiVersion: refresh.drod.dev/v1\nkind: TestDocument\ncount: 1\n") {
+		t.Errorf("yaml does not start with apiVersion, kind, then the sorted keys:\n%s", gotYAML)
+	}
+
+	gotEmpty := captureStdout(t, func() {
+		if _, err := EncodeStdout("json", emptyDocument{}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if want := "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"Empty\"\n}\n"; gotEmpty != want {
+		t.Errorf("empty document:\n got=%s\nwant=%s", gotEmpty, want)
+	}
+}
+
+// A document that is not an object cannot carry apiVersion and kind: the
+// encoder fails instead of writing it.
+func TestEncodeStdout_RejectsNonObject(t *testing.T) {
+	for _, format := range []string{"json", "yaml"} {
+		out := captureStdout(t, func() {
+			if handled, err := EncodeStdout(format, listDocument{"a"}); !handled || err == nil {
+				t.Errorf("%s: handled=%v err=%v, want an error", format, handled, err)
+			}
+		})
+		if out != "" {
+			t.Errorf("%s: wrote %q", format, out)
+		}
 	}
 }

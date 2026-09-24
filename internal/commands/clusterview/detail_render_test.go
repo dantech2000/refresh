@@ -20,11 +20,11 @@ func sampleDetails() *clustersvc.ClusterDetails {
 		Region:          "us-west-2",
 		Networking:      clustersvc.NetworkingInfo{VpcID: "vpc-0a1b", VpcCidr: "10.0.0.0/16"},
 		Security:        clustersvc.SecurityInfo{EncryptionEnabled: true, LoggingEnabled: []string{"api", "audit"}},
-		Nodegroups: []clustersvc.NodegroupSummary{
+		Nodegroups: &[]clustersvc.NodegroupSummary{
 			{Name: "general", Status: "ACTIVE", InstanceType: "m6i.large", DesiredSize: 6, ReadyNodes: 6, ReadyKnown: true},
 			{Name: "spot", Status: "DEGRADED", InstanceType: "m6i.xlarge", DesiredSize: 2, ReadyNodes: 1, ReadyKnown: true},
 		},
-		Addons: []clustersvc.AddonInfo{
+		Addons: &[]clustersvc.AddonInfo{
 			{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: "Healthy"},
 		},
 		Health: &health.HealthSummary{
@@ -120,9 +120,9 @@ func TestClusterDetailLines_Pretty(t *testing.T) {
 func TestClusterDetailLines_ReadinessUnknown(t *testing.T) {
 	th := render.New(render.ColorNone, true)
 	d := sampleDetails()
-	for i := range d.Nodegroups {
-		d.Nodegroups[i].ReadyKnown = false
-		d.Nodegroups[i].ReadyNodes = 0
+	for i := range *d.Nodegroups {
+		(*d.Nodegroups)[i].ReadyKnown = false
+		(*d.Nodegroups)[i].ReadyNodes = 0
 	}
 	joined := strings.Join(clusterDetailLines(th, d), "\n")
 

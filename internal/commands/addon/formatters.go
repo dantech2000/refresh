@@ -61,7 +61,7 @@ func columnTitles(cols []ui.Column) []string {
 func addonListPlain(rows []addons.AddonSummary) *ui.PlainTable {
 	t := ui.NewPlainTable(columnTitles(addonListColumns())...)
 	for _, r := range rows {
-		t.Row(r.Name, r.Version, r.Status, r.Health)
+		t.Row(r.Name, r.Version, r.Status, healthLabel(r.Health))
 	}
 	return t
 }
@@ -114,7 +114,7 @@ func addonDetailPlain(cluster string, d *addons.AddonDetails) *ui.PlainTable {
 		Add("cluster", cluster).
 		Add("version", d.Version).
 		Add("status", d.Status).
-		Add("health", d.Health).
+		Add("health", healthLabel(d.Health)).
 		Add("arn", d.ARN).
 		Add("service account role", d.ServiceAccountRole)
 	if d.CreatedAt != nil {
@@ -158,7 +158,7 @@ func updateResultColumns() []ui.Column {
 func addonUpdatePlain(results []addons.AddonUpdateResult) *ui.PlainTable {
 	t := ui.NewPlainTable(columnTitles(updateResultColumns())...)
 	for _, r := range results {
-		t.Row(r.AddonName, r.PreviousVersion, r.NewVersion, r.Status, r.UpdateID)
+		t.Row(r.AddonName, r.PreviousVersion, r.NewVersion, string(r.Status), r.UpdateID)
 	}
 	return t
 }
@@ -204,18 +204,18 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 		var status string
 		switch {
 		case r.Failed():
-			status = color.RedString(r.Status)
+			status = color.RedString(string(r.Status))
 			failCount++
 		case r.Status == addons.StatusDryRun:
-			status = color.YellowString(r.Status)
+			status = color.YellowString(string(r.Status))
 		case r.Status == addons.StatusCompletedWithIssues:
-			status = color.YellowString(r.Status)
+			status = color.YellowString(string(r.Status))
 			warnCount++
 		case r.Status == addons.StatusUpToDate:
-			status = r.Status
+			status = string(r.Status)
 			upToDateCount++
 		default:
-			status = color.GreenString(r.Status)
+			status = color.GreenString(string(r.Status))
 			successCount++
 		}
 

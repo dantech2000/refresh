@@ -91,6 +91,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		ClusterName:    clusterName,
 		CurrentVersion: currentVersion,
 		TargetVersion:  targetVersion,
+		Hops:           []Hop{},
 	}
 
 	if err := s.checkVersionOffered(ctx, targetVersion, plan); err != nil {
@@ -130,7 +131,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	}
 
 	for _, hopTo := range hops {
-		hop := Hop{From: prevVersion(plan, hopTo), To: hopTo}
+		hop := Hop{From: prevVersion(plan, hopTo), To: hopTo, Steps: []Step{}}
 
 		ready, err := s.readinessStep(ctx, clusterName, currentVersion, hopTo, nodegroups, simNodegroups, plan, opts.mode(), opts.Progress)
 		if err != nil {
@@ -228,7 +229,7 @@ func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImp
 // control-plane step is already satisfied, and no readiness step is needed
 // because the control plane does not move.
 func (s *Service) catchUpHop(ctx context.Context, svc *addons.ServiceImpl, plan *Plan, addonList []addons.AddonSummary, preRoll []nodegroupState, withAddons bool, cluster *ekstypes.Cluster, cpVersion string, opts PlanOptions) Hop {
-	hop := Hop{From: cpVersion, To: cpVersion}
+	hop := Hop{From: cpVersion, To: cpVersion, Steps: []Step{}}
 	hop.Steps = append(hop.Steps, controlPlaneStep(cpVersion, aws.ToString(cluster.Version), cpVersion, cluster.Status))
 	if withAddons {
 		hop.Steps = append(hop.Steps, s.addonSteps(ctx, svc, plan, addonList, cpVersion, opts.SkipAddons)...)

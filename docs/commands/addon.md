@@ -30,7 +30,7 @@ refresh addon list [cluster] [flags]
 | Flag | Description |
 |---|---|
 | `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
-| `--show-health, -H` | Include a health mapping/badge in table output. Without it, `HEALTH` shows `-` |
+| `--show-health, -H` | Include each add-on's health: a badge in the table, and `health` (`Pass`, `Fail`, `InProgress`, or `Unknown`) with `-o json`. Without it, `HEALTH` shows `-` and `health` is left out |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
 | `--watch, -w` | Re-run and redraw every `--watch-interval` until interrupted (not with `-o json`/`-o yaml`) |
 | `--watch-interval` | Refresh interval for `--watch` (default `10s`) |
@@ -45,9 +45,11 @@ list never looks complete.
 
 ```json
 {
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "AddonList",
   "cluster": "prod",
   "addons": [
-    {"name": "coredns", "version": "v1.11.4-eksbuild.2", "status": "ACTIVE", "health": ""}
+    {"name": "coredns", "version": "v1.11.4-eksbuild.2", "status": "ACTIVE", "health": "Pass"}
   ],
   "count": 1,
   "failures": [
@@ -215,6 +217,8 @@ The result is printed in every output format, also when the wait fails. See
 
 ```json
 {
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "AddonUpdate",
   "addonName": "vpc-cni",
   "previousVersion": "v1.18.0-eksbuild.1",
   "newVersion": "v1.19.0-eksbuild.1",

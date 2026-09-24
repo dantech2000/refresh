@@ -110,7 +110,7 @@ func TestUpdateMachineOutput_DryRun(t *testing.T) {
 				m := ng.(map[string]any)
 				actions[m["name"].(string)] = m["action"]
 			}
-			if actions["web"] != "update" || actions["busy"] != "skip-updating" {
+			if actions["web"] != "Update" || actions["busy"] != "SkipUpdating" {
 				t.Errorf("actions = %v, want web=update busy=skip-updating", actions)
 			}
 			if calledPath(srv, "/update-version") {
@@ -152,7 +152,7 @@ func TestUpdateMachineOutput_HealthGateStaysOffStdout(t *testing.T) {
 	if web := nodegroupEntries(t, doc)["web"]; web["status"] != "Skipped" {
 		t.Errorf("web = %v, want Skipped", web)
 	}
-	if h, ok := doc["health"].(map[string]any); !ok || h["decision"] != "WARN" {
+	if h, ok := doc["health"].(map[string]any); !ok || h["decision"] != "Warn" {
 		t.Errorf("health = %v, want the WARN verdict in the run summary", doc["health"])
 	}
 	if !strings.Contains(stderr, "Health check reported warnings; proceeding: Node Health: Nodegroups still scaling") {
@@ -177,7 +177,7 @@ func TestUpdateMachineOutput_HealthWarnNeedsYes(t *testing.T) {
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 	h, ok := doc["health"].(map[string]any)
-	if !ok || h["decision"] != "WARN" {
+	if !ok || h["decision"] != "Warn" {
 		t.Errorf("health = %v, want a WARN verdict", doc["health"])
 	}
 	if ngs, _ := doc["nodegroups"].([]any); len(ngs) != 0 || calledPath(srv, "/update-version") {
@@ -279,7 +279,7 @@ func TestFleetMachineOutput_RollRecordsHealth(t *testing.T) {
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 	entry := doc["clusters"].([]any)[0].(map[string]any)
-	if h, ok := entry["health"].(map[string]any); !ok || h["decision"] != "WARN" {
+	if h, ok := entry["health"].(map[string]any); !ok || h["decision"] != "Warn" {
 		t.Errorf("fleet entry health = %v, want the WARN verdict", entry["health"])
 	}
 }

@@ -34,7 +34,7 @@ task vet            # go vet ./...
 task vuln           # govulncheck ./...  (pinned)
 task deadcode       # fail on code unreachable even from tests (pinned)
 task tidy:check     # go mod tidy -diff
-task docs:check     # regenerate docs/reference, fail if it changed
+task docs:check     # regenerate docs/reference and docs/schema, fail if either changed
 task fuzz           # run every FuzzXxx target for FUZZTIME (default 30s); failing inputs land in testdata/fuzz/
 task dev:full       # fmt, vet, lint, tidy:check, deadcode, docs:check, test:race, build (run before pushing)
 ```
@@ -122,7 +122,16 @@ Classify errors with `errors.As`, never by matching strings.
   Progress, notices, prompts, spinners, and credential help go to stderr or
   are dropped. Check `runner.IsMachineFormat(format)` before printing anything
   human. Machine runs never prompt: fail with an error that names `--yes`.
-  Empty lists encode as `[]`, not `null`.
+- Every document is a type that implements `apidoc.Document`
+  (`DocumentKind()`). `runner.EncodeStdout` accepts only those, and writes
+  `apiVersion: refresh.drod.dev/v1` and `kind` as the first two keys. A new
+  document type goes in its package's `Documents()` list, and its kind in
+  `internal/apidoc`.
+- No document prints `null`. A list is `[]` when empty (`apidoc.List`), a map
+  is `{}`, and a key whose data was not collected is left out.
+- refresh's own enum values are PascalCase; AWS values pass through
+  unchanged. Every named string type in a document implements `EnumValues()`
+  (`TestEnumsAreComplete`).
 - `-o plain`: pure TSV. A header row whose names match the table view, then
   one row per item; `-` for empty cells; no title, footer, or blank lines
   (`internal/ui/plaintest` asserts this). Describe commands use `FIELD`/`VALUE`.
@@ -303,6 +312,11 @@ Follow the layered flow (model it on the `cluster` command):
   into `docs/reference/`, and a CI step fails if the committed reference is stale.
   Behaviour changes also need the hand-written pages (`docs/concepts/`,
   `docs/commands/`); `uv run --frozen mkdocs build --strict` must pass.
+- **The JSON Schemas are generated too.** `task docs:gen` also runs
+  `internal/tools/genschema`, which writes one schema per kind to
+  `docs/schema/v1/`. The tool is not linked into the binary. CI fails when a
+  schema is stale. A new kind needs its schema and a run in
+  `TestDocumentsMatchSchemas`, which validates real command output against it.
 - **Docs live in-repo** under `docs/` (Material for MkDocs, via a `uv`-managed
   hash-locked venv) and publish to <https://drod.dev/refresh/> on merge to `main`.
   Cost/utilization/`cluster diff`/`workload pdbs` were removed in the Phase 2

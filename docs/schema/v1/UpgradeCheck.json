@@ -1,0 +1,360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v1/UpgradeCheck.json",
+  "$defs": {
+    "AddonSkew": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "installed": {
+          "type": "string"
+        },
+        "latest": {
+          "type": "string"
+        },
+        "behind": {
+          "type": "boolean"
+        },
+        "incomplete": {
+          "type": "boolean",
+          "description": "incomplete is true when the latest compatible version could not be read, so Behind is not known. The failure is in the report's \"failures\"."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "installed",
+        "latest",
+        "behind"
+      ],
+      "description": "AddonSkew is an installed addon's version vs the latest compatible with the cluster's Kubernetes version."
+    },
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For KindRegion it is the region name."
+        },
+        "cluster": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "$ref": "#/$defs/FailureReason"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether running the same command again, with no other change, may succeed. It is always encoded."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of human text. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the raw AWS API error code, such as AccessDeniedException, when the failure came from an API response."
+        },
+        "updateId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item refresh could not read, or one action it attempted that did not complete. The JSON and YAML keys are a public contract (docs/concepts/output.md): later versions only add fields."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "FailureList": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "A list of failures. It is [] when there are none, never null."
+    },
+    "FailureReason": {
+      "type": "string",
+      "enum": [
+        "AccessDenied",
+        "CredentialError",
+        "Throttled",
+        "NotFound",
+        "RegionUnavailable",
+        "InvalidRequest",
+        "ServiceError",
+        "NetworkError",
+        "Timeout",
+        "Interrupted",
+        "UpdateFailed",
+        "UpdateCancelled",
+        "NotMonitored",
+        "NotAttempted",
+        "Unknown"
+      ],
+      "description": "FailureReason is why a Failure happened, from a closed set. Scripts branch on it. Later versions may add reasons; consumers must accept unknown values."
+    },
+    "HealthResult": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/HealthStatus"
+        },
+        "score": {
+          "type": "integer",
+          "description": "0-100"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "isBlocking": {
+          "type": "boolean"
+        },
+        "skipped": {
+          "type": "boolean",
+          "description": "skipped marks a check that could not be evaluated (e.g. no Kubernetes client) rather than measured. Skipped checks are excluded from the OverallScore so a missing prerequisite doesn't silently drag the score."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "status",
+        "score",
+        "message",
+        "isBlocking"
+      ],
+      "description": "HealthResult represents the result of a single health check"
+    },
+    "HealthStatus": {
+      "type": "string",
+      "enum": [
+        "Pass",
+        "Warn",
+        "Fail"
+      ],
+      "description": "HealthStatus represents the status of a health check"
+    },
+    "InsightSummary": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "statusReason": {
+          "type": "string"
+        },
+        "kubernetesVersion": {
+          "type": "string"
+        },
+        "lastRefreshTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "category",
+        "status"
+      ],
+      "description": "InsightSummary is a flattened EKS Cluster Insight — the nested InsightStatus.Status/.Reason are pulled up into plain fields."
+    },
+    "NodegroupSkew": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "minorsBehind": {
+          "type": "integer"
+        },
+        "blocking": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "minorsBehind",
+        "blocking"
+      ],
+      "description": "NodegroupSkew is a managed nodegroup's Kubernetes version relative to the control plane."
+    },
+    "SkewReport": {
+      "properties": {
+        "controlPlaneVersion": {
+          "type": "string"
+        },
+        "nodegroups": {
+          "items": {
+            "$ref": "#/$defs/NodegroupSkew"
+          },
+          "type": "array"
+        },
+        "addons": {
+          "items": {
+            "$ref": "#/$defs/AddonSkew"
+          },
+          "type": "array"
+        },
+        "findings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "controlPlaneVersion",
+        "nodegroups",
+        "addons"
+      ],
+      "description": "SkewReport is the local version-skew picture: control plane vs nodegroups vs addons, with ordered, actionable findings."
+    },
+    "SupportPosture": {
+      "properties": {
+        "tier": {
+          "$ref": "#/$defs/SupportTier"
+        },
+        "standardUntil": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "extendedUntil": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "daysRemaining": {
+          "type": "integer",
+          "description": "daysRemaining counts down to the end of the current tier (standard or extended). Negative once the window has closed."
+        },
+        "extraCostUsdPerHour": {
+          "type": "number",
+          "description": "extraCostUsdPerHour is the per-cluster premium of the current tier over standard support (0 unless extended)."
+        },
+        "autoUpgradeAtStandardEnd": {
+          "type": "boolean",
+          "description": "autoUpgradeAtStandardEnd is true when the cluster's upgrade policy is STANDARD: EKS auto-upgrades it at the end of standard support instead of moving it to (paid) extended support."
+        },
+        "fallback": {
+          "type": "boolean",
+          "description": "fallback is true when the posture came from the compiled-in calendar because DescribeClusterVersions was unavailable."
+        }
+      },
+      "type": "object",
+      "required": [
+        "tier"
+      ],
+      "description": "SupportPosture is the resolved support window for a cluster's version."
+    },
+    "SupportTier": {
+      "type": "string",
+      "enum": [
+        "Standard",
+        "Extended",
+        "Unsupported",
+        "Unknown"
+      ],
+      "description": "SupportTier is the EKS support posture for a cluster's Kubernetes version."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v1",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "UpgradeCheck",
+      "description": "The type of the document."
+    },
+    "cluster": {
+      "type": "string"
+    },
+    "support": {
+      "$ref": "#/$defs/SupportPosture"
+    },
+    "supportType": {
+      "type": "string",
+      "description": "supportType is the cluster's upgrade policy (STANDARD or EXTENDED)."
+    },
+    "controlPlane": {
+      "$ref": "#/$defs/HealthResult"
+    },
+    "insights": {
+      "items": {
+        "$ref": "#/$defs/InsightSummary"
+      },
+      "type": "array"
+    },
+    "skew": {
+      "$ref": "#/$defs/SkewReport"
+    },
+    "failures": {
+      "$ref": "#/$defs/FailureList",
+      "description": "Every failure of the run: the items refresh could not read and the actions that did not complete. This top-level list is complete; a nested failure or failures field repeats a subset of it. The list is sorted by kind, region, cluster, name, and operation. [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "cluster",
+    "insights",
+    "skew",
+    "failures"
+  ],
+  "title": "UpgradeCheck",
+  "description": "The document that `refresh cluster upgrade-check -o json` prints. -o yaml prints the same structure."
+}

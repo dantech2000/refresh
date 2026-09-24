@@ -4,6 +4,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
@@ -289,7 +291,9 @@ func PositionalSlot(cmd *cli.Command, flagName string, priorFlags ...string) str
 	return flagDefault(cmd, flagName)
 }
 
-// EncodeStdout writes payload to stdout as JSON or YAML based on format.
+// EncodeStdout writes doc to stdout as JSON or YAML based on format. The
+// document starts with apiVersion and kind (see package apidoc), then doc's
+// own keys: in field order for JSON, sorted for YAML.
 //
 // "plain" is special-cased: it switches the UI layer into uncolored,
 // tab-separated table rendering and returns handled=false, so the caller's
@@ -297,30 +301,24 @@ func PositionalSlot(cmd *cli.Command, flagName string, priorFlags ...string) str
 //
 // For any other format value it returns handled=false so the caller can fall
 // through to its table renderer.
-func EncodeStdout(format string, payload any) (handled bool, err error) {
+func EncodeStdout(format string, doc apidoc.Document) (handled bool, err error) {
 	switch strings.ToLower(format) {
 	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return true, enc.Encode(payload)
-	case "yaml":
-		// yaml.v3 ignores `json` tags and lowercases Go field names, so a struct
-		// tagged only for JSON would serialize to YAML with keys that diverge
-		// from the documented camelCase (e.g. instancetype vs instanceType).
-		// Round-trip through JSON so the `json` tags drive both encoders and the
-		// -o yaml keys always match -o json. (REF-59)
-		data, err := json.Marshal(payload)
+		out, err := encodeJSON(doc)
 		if err != nil {
 			return true, err
 		}
-		var generic any
-		if err := json.Unmarshal(data, &generic); err != nil {
+		_, err = os.Stdout.Write(out)
+		return true, err
+	case "yaml":
+		node, err := yamlNode(doc)
+		if err != nil {
 			return true, err
 		}
 		enc := yaml.NewEncoder(os.Stdout)
 		enc.SetIndent(2)
 		defer func() { _ = enc.Close() }()
-		return true, enc.Encode(generic)
+		return true, enc.Encode(node)
 	case "plain":
 		ui.SetPlainOutput(true)
 		color.NoColor = true
@@ -329,6 +327,80 @@ func EncodeStdout(format string, payload any) (handled bool, err error) {
 	default:
 		return false, nil
 	}
+}
+
+// documentHeader is the apiVersion and kind that start every document.
+type documentHeader struct {
+	APIVersion string      `json:"apiVersion"`
+	Kind       apidoc.Kind `json:"kind"`
+}
+
+// marshalDocument returns doc as compact JSON whose first two keys are
+// apiVersion and kind. doc must encode as a JSON object.
+func marshalDocument(doc apidoc.Document) ([]byte, error) {
+	body, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) < 2 || body[0] != '{' {
+		return nil, fmt.Errorf("the %s document does not encode as a JSON object", doc.DocumentKind())
+	}
+	header, err := json.Marshal(documentHeader{APIVersion: apidoc.APIVersion, Kind: doc.DocumentKind()})
+	if err != nil {
+		return nil, err
+	}
+	out := header[:len(header)-1] // without the closing brace
+	if string(body) != "{}" {
+		out = append(out, ',')
+	}
+	return append(out, body[1:]...), nil
+}
+
+// encodeJSON returns the -o json bytes of doc: apiVersion and kind first,
+// indented by two spaces, with a trailing newline.
+func encodeJSON(doc apidoc.Document) ([]byte, error) {
+	compact, err := marshalDocument(doc)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, compact, "", "  "); err != nil {
+		return nil, err
+	}
+	buf.WriteByte('\n')
+	return buf.Bytes(), nil
+}
+
+// yamlNode is the -o yaml form of doc. yaml.v3 ignores `json` tags and
+// lowercases Go field names, so a struct tagged only for JSON would
+// serialize to YAML with keys that diverge from the documented camelCase
+// (e.g. instancetype vs instanceType). The body round-trips through JSON so
+// the `json` tags drive both encoders and the -o yaml keys always match
+// -o json (REF-59). Map keys are sorted, except apiVersion and kind, which
+// come first as in JSON.
+func yamlNode(doc apidoc.Document) (*yaml.Node, error) {
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	var generic any
+	if err := json.Unmarshal(data, &generic); err != nil {
+		return nil, err
+	}
+	var node yaml.Node
+	if err := node.Encode(generic); err != nil {
+		return nil, err
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("the %s document does not encode as a YAML mapping", doc.DocumentKind())
+	}
+	str := func(v string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
+	header := []*yaml.Node{
+		str("apiVersion"), str(apidoc.APIVersion),
+		str("kind"), str(string(doc.DocumentKind())),
+	}
+	node.Content = append(header, node.Content...)
+	return &node, nil
 }
 
 // IsMachineFormat reports whether format is json or yaml: stdout then carries

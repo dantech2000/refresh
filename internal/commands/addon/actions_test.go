@@ -98,7 +98,7 @@ func TestResolveAddonName_AmbiguousListsCandidates(t *testing.T) {
 }
 
 // failed returns an add-on result with status and a failure for reason.
-func failed(name, status string, reason diag.Reason) addons.AddonUpdateResult {
+func failed(name string, status addons.UpdateStatus, reason diag.Reason) addons.AddonUpdateResult {
 	f := diag.New(diag.KindAddon, name, reason, "x")
 	return addons.AddonUpdateResult{AddonName: name, Status: status, Failure: &f}
 }

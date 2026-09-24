@@ -309,16 +309,16 @@ func updateErrorDetails(details []ekstypes.ErrorDetail) string {
 	return ": " + strings.Join(parts, "; ")
 }
 
-func mapAddonHealth(status ekstypes.AddonStatus) string {
+func mapAddonHealth(status ekstypes.AddonStatus) Health {
 	switch status {
 	case ekstypes.AddonStatusActive:
-		return "PASS"
+		return HealthPass
 	case ekstypes.AddonStatusDegraded, ekstypes.AddonStatusCreateFailed,
 		ekstypes.AddonStatusUpdateFailed, ekstypes.AddonStatusDeleteFailed:
-		return "FAIL"
+		return HealthFail
 	case ekstypes.AddonStatusCreating, ekstypes.AddonStatusDeleting, ekstypes.AddonStatusUpdating:
-		return "IN_PROGRESS"
+		return HealthInProgress
 	default:
-		return "UNKNOWN"
+		return HealthUnknown
 	}
 }

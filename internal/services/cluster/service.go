@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/dantech2000/refresh/internal/apidoc"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	appconfig "github.com/dantech2000/refresh/internal/config"
@@ -205,6 +206,14 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 
 	details.Security.DeletionProtection = aws.ToBool(cluster.DeletionProtection)
 
+	// Lists and maps that were read print [] or {}, never null.
+	details.Networking.SubnetIDs = apidoc.List(details.Networking.SubnetIDs)
+	details.Networking.SecurityGroupIDs = apidoc.List(details.Networking.SecurityGroupIDs)
+	details.Security.LoggingEnabled = apidoc.List(details.Security.LoggingEnabled)
+	if details.Tags == nil {
+		details.Tags = map[string]string{}
+	}
+
 	// Add add-ons information if requested
 	if options.IncludeAddons {
 		addons, failures, err := s.getClusterAddons(ctx, name)
@@ -213,7 +222,8 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 			details.Failures = append(details.Failures, s.failure(diag.KindCluster, name, name, diag.OpListAddons, err))
 		} else {
 			// Collected: [] when there are none, unlike nil (not collected).
-			details.Addons = append([]AddonInfo{}, addons...)
+			list := append([]AddonInfo{}, addons...)
+			details.Addons = &list
 			details.Failures = append(details.Failures, failures...)
 		}
 	}
@@ -225,7 +235,8 @@ func (s *ServiceImpl) Describe(ctx context.Context, name string, options Describ
 			s.logger.Debug("failed to get cluster nodegroups", "cluster", name, "error", err)
 			details.Failures = append(details.Failures, s.failure(diag.KindCluster, name, name, diag.OpListNodegroups, err))
 		} else {
-			details.Nodegroups = append([]NodegroupSummary{}, nodegroups...)
+			list := append([]NodegroupSummary{}, nodegroups...)
+			details.Nodegroups = &list
 			details.Failures = append(details.Failures, failures...)
 		}
 	}

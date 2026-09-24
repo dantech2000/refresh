@@ -344,7 +344,7 @@ func TestDescribe_WithAddonsIncludesAddonList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(details.Addons) != 2 {
-		t.Errorf("expected 2 addons, got %d", len(details.Addons))
+	if len(details.AddonList()) != 2 {
+		t.Errorf("expected 2 addons, got %d", len(details.AddonList()))
 	}
 }

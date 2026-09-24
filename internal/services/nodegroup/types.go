@@ -5,6 +5,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/types"
 )
@@ -48,16 +49,19 @@ type InstanceDetails struct {
 	InstanceID   string    `json:"instanceId" yaml:"instanceId"`
 	InstanceType string    `json:"instanceType" yaml:"instanceType"`
 	LaunchTime   time.Time `json:"launchTime" yaml:"launchTime"`
-	Lifecycle    string    `json:"lifecycle" yaml:"lifecycle"` // on-demand, spot
-	State        string    `json:"state" yaml:"state"`
-	AZ           string    `json:"availabilityZone" yaml:"availabilityZone"`
+	// Lifecycle is on-demand or spot.
+	Lifecycle string `json:"lifecycle" yaml:"lifecycle"`
+	State     string `json:"state" yaml:"state"`
+	AZ        string `json:"availabilityZone" yaml:"availabilityZone"`
 }
 
 // WorkloadInfo summarizes pods/workloads placed on a nodegroup
 type WorkloadInfo struct {
-	TotalPods     int    `json:"totalPods" yaml:"totalPods"`
-	CriticalPods  int    `json:"criticalPods" yaml:"criticalPods"`
-	PodDisruption string `json:"podDisruption" yaml:"podDisruption"` // summarized for now
+	TotalPods    int `json:"totalPods" yaml:"totalPods"`
+	CriticalPods int `json:"criticalPods" yaml:"criticalPods"`
+	// PodDisruption is a one-line summary of the PodDisruptionBudgets that
+	// cover the nodegroup's pods, or why they could not be read.
+	PodDisruption string `json:"podDisruption" yaml:"podDisruption"`
 }
 
 // NodegroupSummary contains basic nodegroup info for listings
@@ -72,9 +76,10 @@ type NodegroupSummary struct {
 	// ReadyNodes must not be read as a real count. (REF-130)
 	ReadyNodes int32 `json:"readyNodes" yaml:"readyNodes"`
 	ReadyKnown bool  `json:"readyKnown" yaml:"readyKnown"`
-	// AMI information - core functionality of refresh tool
-	CurrentAMI string          `json:"currentAmi" yaml:"currentAmi"`
-	AMIStatus  types.AMIStatus `json:"amiStatus" yaml:"amiStatus"`
+	// CurrentAMI is the AMI ID the nodegroup runs.
+	CurrentAMI string `json:"currentAmi" yaml:"currentAmi"`
+	// AMIStatus compares CurrentAMI with the latest recommended AMI.
+	AMIStatus types.AMIStatus `json:"amiStatus" yaml:"amiStatus"`
 	// K8sVersion is the nodegroup's Kubernetes minor. VersionBehind is true
 	// when it trails the control plane. AMIStatus is judged against the
 	// nodegroup's own minor, so a lagging nodegroup can be AMILatest and still
@@ -110,6 +115,9 @@ type NodegroupList struct {
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
+// DocumentKind is NodegroupList.
+func (NodegroupList) DocumentKind() apidoc.Kind { return apidoc.KindNodegroupList }
+
 // NodegroupDetails is the `nodegroup describe` result: AMI status, scaling, and
 // optional instance/workload details.
 type NodegroupDetails struct {
@@ -117,22 +125,31 @@ type NodegroupDetails struct {
 	Status       string `json:"status" yaml:"status"`
 	InstanceType string `json:"instanceType" yaml:"instanceType"`
 	AmiType      string `json:"amiType" yaml:"amiType"`
-	CapacityType string `json:"capacityType" yaml:"capacityType"` // ON_DEMAND, SPOT
+	// CapacityType is the EKS capacity type, such as ON_DEMAND or SPOT.
+	CapacityType string `json:"capacityType" yaml:"capacityType"`
 
-	// AMI information - core functionality of refresh tool
-	CurrentAMI string          `json:"currentAmi" yaml:"currentAmi"`
-	LatestAMI  string          `json:"latestAmi" yaml:"latestAmi"`
-	AMIStatus  types.AMIStatus `json:"amiStatus" yaml:"amiStatus"`
+	// CurrentAMI is the AMI ID the nodegroup runs.
+	CurrentAMI string `json:"currentAmi" yaml:"currentAmi"`
+	// LatestAMI is the latest recommended AMI ID for the nodegroup's AMI
+	// type and Kubernetes version.
+	LatestAMI string `json:"latestAmi" yaml:"latestAmi"`
+	// AMIStatus compares CurrentAMI with LatestAMI.
+	AMIStatus types.AMIStatus `json:"amiStatus" yaml:"amiStatus"`
 	// AMILookupFailure is set when the latest recommended AMI could not be
 	// resolved; see NodegroupSummary.AMILookupFailure.
 	AMILookupFailure *diag.Failure `json:"amiLookupFailure,omitempty" yaml:"amiLookupFailure,omitempty"`
 
 	Scaling ScalingConfig `json:"scaling" yaml:"scaling"`
 
-	Instances []InstanceDetails `json:"instances" yaml:"instances"`
-	Workloads WorkloadInfo      `json:"workloads" yaml:"workloads"`
+	// Instances are the EC2 instances behind the nodegroup, with
+	// --show-instances. The key is left out when they were not read.
+	Instances *[]InstanceDetails `json:"instances,omitempty" yaml:"instances,omitempty"`
+	Workloads WorkloadInfo       `json:"workloads" yaml:"workloads"`
 
 	// Failures is always [] today: describe either reads the nodegroup or
 	// fails. It is here so every document carries the same key.
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
+
+// DocumentKind is NodegroupDescription.
+func (NodegroupDetails) DocumentKind() apidoc.Kind { return apidoc.KindNodegroupDescription }

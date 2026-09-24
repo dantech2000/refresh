@@ -65,11 +65,11 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails) []string
 		out = append(out, "  "+line)
 	}
 
-	if len(d.Nodegroups) > 0 {
+	if len(d.NodegroupList()) > 0 {
 		// The header "N nodes" is desired capacity (always known); per-row NODES
 		// shows measured ready/desired only when readiness was measured. (REF-130)
 		active, nodes := 0, int32(0)
-		for _, ng := range d.Nodegroups {
+		for _, ng := range d.NodegroupList() {
 			nodes += ng.DesiredSize
 			if ng.Status == "ACTIVE" {
 				active++
@@ -82,7 +82,7 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails) []string
 			ui.Column{Title: "NODES", Min: 5},
 			ui.Column{Title: "STATUS", Min: 8},
 		)
-		for _, ng := range d.Nodegroups {
+		for _, ng := range d.NodegroupList() {
 			tbl.Row(
 				th.Paint(pal.White, ng.Name),
 				th.Paint(pal.Text, ng.InstanceType),
@@ -95,15 +95,15 @@ func clusterDetailLines(th *render.Theme, d *clustersvc.ClusterDetails) []string
 		}
 	}
 
-	if len(d.Addons) > 0 {
-		out = append(out, "", th.Section("ADD-ONS")+th.Paint(pal.Dim, fmt.Sprintf("  %d installed", len(d.Addons))))
+	if len(d.AddonList()) > 0 {
+		out = append(out, "", th.Section("ADD-ONS")+th.Paint(pal.Dim, fmt.Sprintf("  %d installed", len(d.AddonList()))))
 		tbl := th.NewTable(
 			ui.Column{Title: "NAME", Min: 8, Max: 24},
 			ui.Column{Title: "VERSION", Min: 8},
 			ui.Column{Title: "HEALTH", Min: 8},
 		)
-		for _, a := range d.Addons {
-			h := a.Health
+		for _, a := range d.AddonList() {
+			h := string(a.Health)
 			if h == "" {
 				h = "Unknown"
 			}
@@ -162,7 +162,7 @@ func healthCardLines(th *render.Theme, h *health.HealthSummary) []string {
 	st, col := decisionStatusColor(th, h.Decision)
 	head := th.Section("HEALTH") +
 		th.Paint(th.Pal.Dim, fmt.Sprintf("  %d/100 · ", h.OverallScore)) +
-		th.Tokenf(st, string(h.Decision))
+		th.Tokenf(st, decisionLabel(h.Decision))
 	bar := th.Bar(h.OverallScore, 100, 24, col)
 	out := []string{head, "  " + bar + "  " + th.Paint(th.Pal.Dim, healthSummaryMsg(h))}
 	return append(out, healthCheckRows(th, h.Results)...)
