@@ -107,7 +107,9 @@ config loading), `internal/cliconfig` (YAML context store), `internal/common`
 layer can use it), `internal/config`
 (defaults, env var names), `internal/health` (pre-flight checks, PDB gates,
 kube target matching), `internal/monitoring` (update progress),
-`internal/dryrun`, `internal/types`, `internal/mocks`,
+`internal/dryrun`, `internal/regionsweep` (one call per region, sorted into
+answered, skipped, and failed; every multi-region command uses it),
+`internal/types`, `internal/mocks`,
 `internal/services/upgrade` (cluster upgrade orchestrator: plan generation +
 control-plane/addon/nodegroup phases + sequencing engine; resumable by
 re-deriving the plan from live cluster state, not state files).

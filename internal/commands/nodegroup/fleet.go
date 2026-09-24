@@ -15,7 +15,6 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/common"
 	appconfig "github.com/dantech2000/refresh/internal/config"
@@ -23,6 +22,7 @@ import (
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
+	"github.com/dantech2000/refresh/internal/regionsweep"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -543,47 +543,35 @@ type fleetDiscovery struct {
 	skipped []string
 }
 
-// discoverFleetTargets lists clusters in each region (bounded concurrency) and
-// returns one target per cluster with a region-scoped config. A region whose
-// listing fails is kept (in region order) instead of being dropped: as
+// discoverFleetTargets lists clusters in each region (regionsweep, bounded
+// concurrency) and returns one target per cluster with a region-scoped
+// config. A region whose listing fails is kept instead of being dropped: as
 // skipped when skipInaccessible is set and the error says the region is
 // closed to these credentials, else as failed. If ctx ends before discovery
 // finishes, it returns ctx.Err(): the target list would be incomplete, and
 // unstarted regions report nothing.
 func discoverFleetTargets(ctx context.Context, baseCfg aws.Config, regions []string, skipInaccessible bool, list listClustersFunc) (fleetDiscovery, error) {
-	type regionResult struct {
-		targets []clusterTarget
-		err     error
-	}
-	perRegion := common.ForEachParallel(ctx, regions, common.DefaultItemConcurrency,
-		func(fctx context.Context, region string) regionResult {
+	res := regionsweep.Run(ctx, regions, regionsweep.Options{SkipInaccessible: skipInaccessible},
+		func(fctx context.Context, region string) ([]clusterTarget, error) {
 			cfg := baseCfg.Copy()
 			cfg.Region = region
 			names, err := list(fctx, cfg)
 			if err != nil {
-				return regionResult{err: err}
+				return nil, err
 			}
 			ts := make([]clusterTarget, 0, len(names))
 			for _, n := range names {
 				ts = append(ts, clusterTarget{cluster: n, region: region, awsCfg: cfg})
 			}
-			return regionResult{targets: ts}
+			return ts, nil
 		})
 	if err := ctx.Err(); err != nil {
 		return fleetDiscovery{}, fmt.Errorf("fleet discovery stopped: %w", err)
 	}
 
-	var d fleetDiscovery
-	for i, r := range perRegion {
-		switch {
-		case r.err == nil:
-			d.targets = append(d.targets, r.targets...)
-		case skipInaccessible && awserr.IsRegionInaccessible(r.err):
-			d.skipped = append(d.skipped, regions[i])
-		default:
-			d.failed = append(d.failed, diag.FromError(diag.KindRegion, regions[i], diag.OpListClusters, r.err))
-			d.errs = append(d.errs, r.err)
-		}
+	d := fleetDiscovery{failed: res.Failed, errs: res.Errors, skipped: res.Skipped}
+	for _, a := range res.Answered {
+		d.targets = append(d.targets, a.Value...)
 	}
 	return d, nil
 }

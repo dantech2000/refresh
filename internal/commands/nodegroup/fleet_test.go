@@ -128,7 +128,8 @@ func TestDiscoverFleetTargets_CollectsRegionErrors(t *testing.T) {
 	}
 }
 
-// Default sweep: regions an SCP denies are skipped with one note, and a run
+// Default sweep: regions an SCP denies are skipped with one note (sorted, like
+// status -A and cluster list -A), and a run
 // whose reachable clusters update cleanly exits 0.
 func TestFleetDiscovery_DefaultSweepSkipsDeniedRegions(t *testing.T) {
 	buf := captureFleetStderr(t)
@@ -141,13 +142,13 @@ func TestFleetDiscovery_DefaultSweepSkipsDeniedRegions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.failed) != 0 || strings.Join(d.skipped, ",") != "sa-east-1,ap-south-1" || len(d.targets) != 1 {
+	if len(d.failed) != 0 || strings.Join(d.skipped, ",") != "ap-south-1,sa-east-1" || len(d.targets) != 1 {
 		t.Fatalf("discovery = %+v", d)
 	}
 	if err := checkDiscovery(len(regions), d); err != nil {
 		t.Fatalf("checkDiscovery: %v", err)
 	}
-	want := "Skipped 2 region(s) not accessible to these credentials: sa-east-1, ap-south-1 (scope with -r or REFRESH_EKS_REGIONS)"
+	want := "Skipped 2 region(s) not accessible to these credentials: ap-south-1, sa-east-1 (scope with -r or REFRESH_EKS_REGIONS)"
 	if !strings.Contains(buf.String(), want) {
 		t.Errorf("stderr = %q, want %q", buf.String(), want)
 	}
