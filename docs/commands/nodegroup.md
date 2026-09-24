@@ -255,7 +255,7 @@ an SCP denies and opt-in regions that are not enabled. Skipped regions don't
 change the exit code. Any other listing failure (throttling, a server error, a
 timeout), or any failure in a region you named, is reported on stderr and in
 the summary (`discoveryErrors` in `-o json`), and the run exits `4`. If no
-region can be listed, or discovery does not finish within `--timeout`, the
+region can be listed, or discovery does not finish within `--wait-timeout`, the
 run fails at once with exit `1`: nothing was gathered.
 
 ### Flags

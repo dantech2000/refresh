@@ -174,8 +174,9 @@ The result is printed in every output format, also when the wait fails. See
 | Code | Meaning |
 |---|---|
 | `0` | Success, including `UP_TO_DATE` and `IN_PROGRESS` |
-| `1` | An update failed, was not started, or its wait failed |
-| `2` | `COMPLETED_WITH_ISSUES`: the update landed, but the post-update health check found issues |
+| `1` | An error or an interrupt. For a single add-on, also an update that failed, was not started, or whose wait failed |
+| `4` | With `--all`: at least one add-on update failed or was not attempted |
+| `5` | `COMPLETED_WITH_ISSUES`: the update landed, but the post-update health check found issues |
 
 ### Flags
 

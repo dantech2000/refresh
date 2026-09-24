@@ -25,8 +25,9 @@ Rules that apply to every command:
 - An interrupt exits `1`. A second Ctrl+C ends the process at once. Data
   cut short by Ctrl+C is an interrupted run, so it exits `1`, not `4`. Data
   cut short by the `--timeout` deadline is a partial result and exits `4`.
-- With `--watch`, a partial result (`4`) prints a warning and the watch
-  continues. Any other error ends the watch.
+- With `--watch`, a partial result (`4`) names what it could not read on
+  stderr, and the watch continues. Any other error ends the watch. Stopping
+  the watch with Ctrl+C exits `0`.
 - `--help` for every command lists the codes that command can return and
   links to this page.
 
