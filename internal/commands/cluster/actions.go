@@ -269,7 +269,7 @@ func runMultiRegionListWithProgress(ctx context.Context, awsCfg aws.Config, clus
 	if err != nil {
 		spinner.Stop()
 		runner.ReportSkippedRegions(ui.Stderr, res.Skipped)
-		if cerr := runner.NoRegionAnswered(ctx, awsCfg, res.Skipped, res.Failed, []error{err}); cerr != nil {
+		if cerr := runner.NoRegionAnswered(ctx, awsCfg, res.Skipped, res.Failed); cerr != nil {
 			return nil, nil, cerr
 		}
 		return nil, nil, err

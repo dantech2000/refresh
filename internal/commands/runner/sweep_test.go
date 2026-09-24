@@ -40,21 +40,25 @@ func TestTableListsFailures(t *testing.T) {
 // NoRegionAnswered asks STS only when a region looked closed, and returns
 // the credential error only when STS rejects the credentials.
 func TestNoRegionAnswered(t *testing.T) {
-	unavailable := []diag.Failure{{Kind: diag.KindRegion, Name: "us-east-1", Reason: diag.ReasonRegionUnavailable}}
-	throttled := []diag.Failure{{Kind: diag.KindRegion, Name: "us-east-1", Reason: diag.ReasonThrottled}}
-	expired := &smithy.GenericAPIError{Code: "ExpiredTokenException", Message: "The security token included in the request is expired"}
-	disabled := &smithy.GenericAPIError{Code: "UnrecognizedClientException", Message: "The security token included in the request is invalid"}
+	// Build the failures the way the sweeps do, from typed API errors.
+	region := func(name, code string) diag.Failure {
+		return diag.FromError(diag.KindRegion, name, diag.OpListClusters, &smithy.GenericAPIError{Code: code, Message: "fake " + code})
+	}
+	unavailable := []diag.Failure{region("us-east-1", "UnrecognizedClientException")}
+	throttled := []diag.Failure{region("us-east-1", "ThrottlingException")}
 	for _, tc := range []struct {
 		name     string
 		badCreds bool
 		skipped  []string
 		failed   []diag.Failure
-		errs     []error
 		wantErr  bool
 		stsCalls int
 	}{
-		{name: "expired token needs no STS call", failed: []diag.Failure{{Kind: diag.KindRegion, Name: "us-east-1", Reason: diag.ReasonCredentialError}}, errs: []error{expired}, wantErr: true},
-		{name: "region-closed code still asks STS", failed: unavailable, errs: []error{disabled}, stsCalls: 1},
+		{name: "expired token needs no STS call", failed: []diag.Failure{region("us-east-1", "ExpiredTokenException")}, wantErr: true},
+		{name: "expired token after another failure", failed: []diag.Failure{
+			region("us-east-1", "ThrottlingException"), region("us-west-2", "ExpiredTokenException"),
+		}, wantErr: true},
+		{name: "region-closed code, valid credentials", failed: unavailable, stsCalls: 1},
 		{name: "skipped, bad credentials", badCreds: true, skipped: []string{"us-east-1"}, wantErr: true, stsCalls: 1},
 		{name: "unavailable, bad credentials", badCreds: true, failed: unavailable, wantErr: true, stsCalls: 1},
 		{name: "skipped, valid credentials", skipped: []string{"us-east-1"}, stsCalls: 1},
@@ -69,7 +73,7 @@ func TestNoRegionAnswered(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = NoRegionAnswered(t.Context(), cfg, tc.skipped, tc.failed, tc.errs)
+			err = NoRegionAnswered(t.Context(), cfg, tc.skipped, tc.failed)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("err = %v, want error %v", err, tc.wantErr)
 			}

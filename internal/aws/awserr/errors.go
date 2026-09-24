@@ -343,6 +343,14 @@ Current error indicates an invalid or unsupported region.
 Current error: %w`, operation, err)
 }
 
+// CredentialSetupError returns err with the credential setup help, as
+// FormatAWSError does for a credential error. Use it when the caller already
+// knows err is a credential problem (for example from a diag.Failure's
+// reason) and the original error value is gone.
+func CredentialSetupError(err error) error {
+	return formatCredentialError(err)
+}
+
 func formatCredentialError(err error) error {
 	return formatted(err, `AWS credentials not configured or invalid.
 

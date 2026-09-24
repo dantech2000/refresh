@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/smithy-go"
 	"github.com/fatih/color"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -39,13 +40,14 @@ func ReportSkippedRegions(w io.Writer, skipped []string) {
 // NoRegionAnswered explains a region sweep in which no region answered.
 // Command setup only resolves credentials and makes no STS call, so keys that
 // resolve but are invalid or expired reach the sweep. skipped holds the
-// regions the sweep skipped as closed, failed the regions that failed, and
-// errs their errors.
+// regions the sweep skipped as closed, and failed the failure of every region
+// that failed (all of them, not only the first: one region can fail for
+// another reason before a later one names the credentials).
 //
 // It returns the credential error, with the setup help once, in two cases:
-//   - a region error is a credential error that no closed region returns
-//     (ExpiredTokenException, a signature error, a credential source
-//     failure). No STS call is needed.
+//   - a region failed as CredentialError: a credential error that no closed
+//     region returns (ExpiredTokenException, a signature error, a credential
+//     source failure). No STS call is needed.
 //   - a region was skipped or failed as unavailable. Invalid keys get the
 //     same codes as a region closed to the account
 //     (UnrecognizedClientException, InvalidClientTokenId), so it asks STS
@@ -53,10 +55,10 @@ func ReportSkippedRegions(w io.Writer, skipped []string) {
 //
 // It returns nil otherwise (valid credentials, another failure, ctx done),
 // and the caller reports its own error.
-func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, failed []diag.Failure, errs []error) error {
-	for _, err := range errs {
-		if awserr.IsCredentialError(err) && !awserr.IsRegionInaccessible(err) {
-			return fmt.Errorf("AWS credential validation failed: %w", awsinternal.FormatAWSError(err, "listing clusters"))
+func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, failed []diag.Failure) error {
+	for _, f := range failed {
+		if f.Reason == diag.ReasonCredentialError {
+			return fmt.Errorf("AWS credential validation failed: %w", awserr.CredentialSetupError(failureError(f)))
 		}
 	}
 	lookalike := len(skipped) > 0 || slices.ContainsFunc(failed, func(f diag.Failure) bool {
@@ -74,6 +76,17 @@ func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, fai
 		return err
 	}
 	return nil
+}
+
+// failureError rebuilds a region failure as an error: an API error with the
+// failure's AWS error code when it has one, so errors.As and ErrorCode keep
+// working on the result.
+func failureError(f diag.Failure) error {
+	if f.AWSErrorCode == "" {
+		return fmt.Errorf("region %s: %s", f.Name, f.Error)
+	}
+	msg := strings.TrimPrefix(f.Error, f.AWSErrorCode+": ")
+	return fmt.Errorf("region %s: %w", f.Name, &smithy.GenericAPIError{Code: f.AWSErrorCode, Message: msg})
 }
 
 // TableListsFailures reports whether the output format is a human view
