@@ -17,11 +17,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/dantech2000/refresh/internal/apidoc"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
-	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/common"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/regionsweep"
 	"github.com/dantech2000/refresh/internal/services/status"
 )
 
@@ -395,59 +395,48 @@ func (s *ServiceImpl) ListAllRegions(ctx context.Context, options ListOptions) (
 		maxConc = defaultRegionListConcurrency
 	}
 
-	type regionResult struct {
-		ran       bool
-		summaries []ClusterSummary
-		err       error
-	}
-	results := common.ForEachParallel(ctx, regions, maxConc, func(rctx context.Context, r string) regionResult {
-		summaries, err := s.listRegion(rctx, r, regionOptionsFor(options, r))
-		// Copy before stamping the region: List may have returned the
-		// cached slice, which must not be mutated in place.
-		stamped := make([]ClusterSummary, len(summaries))
-		copy(stamped, summaries)
-		for i := range stamped {
-			stamped[i].Region = r
-			stamped[i].Failures = slices.Clone(stamped[i].Failures)
-			for j := range stamped[i].Failures {
-				stamped[i].Failures[j].Region = r
+	sweep := regionsweep.Run(ctx, regions, regionsweep.Options{Concurrency: maxConc, SkipInaccessible: defaultSweep},
+		func(rctx context.Context, r string) ([]ClusterSummary, error) {
+			summaries, err := s.listRegion(rctx, r, regionOptionsFor(options, r))
+			if err != nil {
+				return nil, err
 			}
-		}
-		return regionResult{ran: true, summaries: stamped, err: err}
-	})
+			// Copy before stamping the region: List may have returned the
+			// cached slice, which must not be mutated in place.
+			stamped := make([]ClusterSummary, len(summaries))
+			copy(stamped, summaries)
+			for i := range stamped {
+				stamped[i].Region = r
+				stamped[i].Failures = slices.Clone(stamped[i].Failures)
+				for j := range stamped[i].Failures {
+					stamped[i].Failures[j].Region = r
+				}
+			}
+			return stamped, nil
+		})
 
-	out := RegionListResult{Summaries: make([]ClusterSummary, 0), Regions: len(regions)}
+	out := RegionListResult{
+		Summaries: make([]ClusterSummary, 0),
+		Regions:   len(regions),
+		Queried:   len(sweep.Answered),
+		Failed:    sweep.Failed,
+		Errors:    sweep.Errors,
+		Skipped:   sweep.Skipped,
+	}
+	for _, a := range sweep.Answered {
+		out.Summaries = append(out.Summaries, a.Value...)
+	}
+	for _, r := range sweep.Skipped {
+		s.logger.Debug("skipping region not accessible to these credentials", "region", r)
+	}
 	var firstRegion string
 	var firstErr error
-	for i, r := range regions {
-		res := results[i]
-		if !res.ran {
-			// The context ended before this region got a slot. Count it as
-			// failed, so an interrupted sweep never looks complete.
-			res.err = fmt.Errorf("not queried: %w", context.Cause(ctx))
-		}
-		switch {
-		case res.err == nil:
-			out.Queried++
-			out.Summaries = append(out.Summaries, res.summaries...)
-		case defaultSweep && awserr.IsRegionInaccessible(res.err):
-			s.logger.Debug("skipping region not accessible to these credentials", "region", r, "error", res.err)
-			out.Skipped = append(out.Skipped, r)
-		default:
-			s.logger.Debug("failed to list clusters in region", "region", r, "error", res.err)
-			f := diag.FromError(diag.KindRegion, r, diag.OpListClusters, res.err)
-			if !res.ran {
-				f = diag.New(diag.KindRegion, r, diag.ReasonNotAttempted, res.err.Error())
-				f.Region = r
-			}
-			out.Failed = append(out.Failed, f)
-			out.Errors = append(out.Errors, res.err)
-			if firstErr == nil {
-				firstRegion, firstErr = r, res.err
-			}
-		}
+	for i, f := range sweep.Failed {
+		s.logger.Debug("failed to list clusters in region", "region", f.Name, "error", sweep.Errors[i])
 	}
-	sort.Strings(out.Skipped)
+	if len(sweep.Failed) > 0 {
+		firstRegion, firstErr = sweep.Failed[0].Name, sweep.Errors[0]
+	}
 
 	// No region answered. An empty list must not look like "no clusters
 	// found": expired credentials or an outage fail every region at once.
