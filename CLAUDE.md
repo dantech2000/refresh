@@ -170,6 +170,12 @@ with no AWS.
   `runner.EncodeStdout`, and follows the output contract above. A partial result (items that
   could not be read) is never a success: name the failures on stderr, add `failures` to the
   JSON/YAML payload, and exit 4.
+- **Failures:** report a partial failure as a `diag.Failure` (`internal/diag`) in the
+  document's top-level `failures` (`diag.List`, `[]` when empty), never as strings or ad hoc
+  structs. Build it with `diag.FromError(kind, name, diag.Op…, err)` (typed classification) or
+  `diag.New` for a failure with no error value. Print the stderr lines with
+  `runner.ReportFailures` and get the exit error from `runner.IncompleteExit`, both from the same
+  list. `diagtest.CheckFailureFields` enforces this on the output types.
 - **Exit codes** (REF-165, `docs/concepts/exit-codes.md`): one contract for every command.
   `0` ok · `1` error or interrupt · `2` needs attention (warnings/stale) · `3` blocked or
   unsupported (a gate stopped it, nothing changed) · `4` incomplete data or partial failure ·

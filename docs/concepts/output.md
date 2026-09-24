@@ -95,6 +95,96 @@ refresh addon list prod -o json | jq -r '.addons[] | "\(.name) \(.version)"'
 refresh status -o json | jq -r '.clusters[] | select(.staleAmi.behind > 0) | .name'
 ```
 
+## Failures
+
+A failure is an item `refresh` could not read, or an action it tried that
+did not complete. A command reports its failures in three places, and all
+three come from the same list, so they always agree:
+
+- **The document.** With `-o json` or `-o yaml`, the top-level `failures`
+  list has one entry per failure. The list is always present. It is `[]`
+  when there are no failures.
+- **stderr.** One line per failure, in the same order as the document:
+
+    ```text
+    warning: nodegroup prod/web (us-east-1): Throttled: ThrottlingException: Rate exceeded
+    warning: region ap-east-1: RegionUnavailable: OptInRequired: not subscribed
+    ```
+
+    The line is `warning: <kind> <cluster>/<name> (<region>): <reason>: <error>`.
+    Empty parts are left out. `-o plain` keeps stdout pure TSV, so failures
+    appear only on stderr.
+- **The exit code.** A run with failures exits `4` (incomplete data), unless
+  a code that wins over `4` also applies. Each command's order is in
+  [Exit codes](exit-codes.md). The error message counts the failures by kind, for
+  example `incomplete data: 3 failure(s) (1 cluster, 2 nodegroup)`.
+
+Failures are not findings. A stale AMI, a blocked upgrade, a health warning,
+or version skew is a finding: it stays in its own field and drives exit `2`,
+`3`, or `5`. The `warnings` and `errors` of a health verdict are health
+findings, not failures.
+
+### The failure object
+
+```json
+{
+  "kind": "Nodegroup",
+  "name": "web",
+  "cluster": "prod",
+  "region": "us-east-1",
+  "operation": "eks:DescribeNodegroup",
+  "reason": "Throttled",
+  "retryable": true,
+  "error": "ThrottlingException: Rate exceeded",
+  "awsErrorCode": "ThrottlingException"
+}
+```
+
+| Key | Always present | Meaning |
+|---|---|---|
+| `kind` | yes | The type of item: `Region`, `Cluster`, `Nodegroup`, `Addon`, `Insight`, `Update`, `PodDisruptionBudget`, or `Node` |
+| `name` | yes | The item's name. For a `Region` failure, the region |
+| `cluster` | no | The cluster the item belongs to |
+| `region` | no | The AWS region. A `Region` failure always sets it, so a filter on `region` also finds the region's own failure |
+| `operation` | no | The IAM action that failed, such as `eks:DescribeNodegroup`. Every action is in the [IAM permissions table](configuration.md#required-iam-permissions) |
+| `reason` | yes | Why it failed. One value from the table below |
+| `retryable` | yes | `true` when running the same command again, with no other change, may succeed |
+| `error` | yes | One line of text for people. Do not parse it; use `reason` |
+| `awsErrorCode` | no | The raw AWS error code, such as `AccessDeniedException`, when AWS answered |
+| `updateId` | no | The EKS update ID, for a failure of a started update |
+
+Entries are sorted by `kind`, then `region`, `cluster`, `name`, and
+`operation`, so the order is the same on every run.
+
+Branch on `reason`, not on `error`:
+
+```bash
+refresh status -o json | jq -r '.failures[] | select(.retryable) | "\(.kind) \(.name)"'
+```
+
+### Reasons
+
+| Reason | Meaning | Retryable | Typical fix |
+|---|---|---|---|
+| `AccessDenied` | IAM or an SCP denied the call | no | Grant the action in `operation` (see the IAM permissions table) |
+| `CredentialError` | The credentials are missing, expired, or invalid | no | Log in again (`aws sso login`) or fix the profile |
+| `Throttled` | AWS rate-limited the call, and the retries ran out | yes | Run again later, or lower `--max-concurrency` |
+| `NotFound` | The resource does not exist | no | Check the name. It may have been deleted during the run |
+| `RegionUnavailable` | The region is not enabled for the account, or it cannot be reached | no | Enable the region, or leave it out with `-r` |
+| `InvalidRequest` | AWS rejected the request as malformed | no | Check the flag values. If they are correct, report a bug |
+| `ServiceError` | AWS failed on its side (a 5xx response) | yes | Run again later |
+| `NetworkError` | The request got no response from AWS | yes | Check the network, proxy, and VPC endpoints, then run again |
+| `Timeout` | The deadline (`--timeout` or `--wait-timeout`) passed | yes | Run again, or increase the timeout |
+| `Interrupted` | The run was stopped (Ctrl+C or SIGTERM) | yes | Run again |
+| `UpdateFailed` | An EKS update ended with status `Failed` | no | Read the update's errors (`aws eks describe-update`), fix the cause, then run again |
+| `UpdateCancelled` | An EKS update ended with status `Cancelled` | no | Find out why it was cancelled, then run again |
+| `NotMonitored` | Status polling stopped. The EKS update may still be running | yes | Check the update in EKS, or run again to pick up where it is |
+| `NotAttempted` | The run stopped before this item started | yes | Run again |
+| `Unknown` | Any other error | no | Read `error` and `awsErrorCode` |
+
+New versions can add keys, kinds, and reasons. A consumer must ignore keys
+it does not know and treat an unknown `reason` like `Unknown`.
+
 ## Key consistency
 
 `json` and `yaml` emit the **same** camelCase keys (e.g. `instanceType`,
