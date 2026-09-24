@@ -10,11 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 	"k8s.io/client-go/kubernetes"
@@ -287,7 +283,7 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		preroll, prerollOK = snapshotPendingPods(ctx, verifyClient)
 	}
 
-	updates, run := startNodegroupUpdates(ctx, awsCfg, eksClient, clusterName, region, selected, flags)
+	updates, run := startNodegroupUpdates(ctx, awsCfg, clusterName, region, selected, flags)
 	if len(updates) == 0 || flags.noWait {
 		return run, false, nil
 	}
@@ -775,16 +771,16 @@ func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 // can't start is recorded as Failed with its failure (exit 4), and the loop
 // moves on to the next nodegroup. The caller reports the failures.
 //
-// The already-on-latest skip mirrors the dry-run preview (ActionSkipLatest) so
-// the real run matches what `--dry-run` promised; `--reroll` (and `--force`)
-// bypass it.
-func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName, region string, nodegroups []string, flags updateAMIFlags) ([]refreshTypes.UpdateProgress, updateRun) {
-	skipLatest := newLatestAMISkipChecker(ctx, awsCfg, eksClient, clusterName, flags)
+// Each nodegroup's action comes from nodegroupsvc.DecideAMIUpdate, the table
+// the dry-run preview uses too, so the real run does what `--dry-run`
+// promised.
+func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, region string, nodegroups []string, flags updateAMIFlags) ([]refreshTypes.UpdateProgress, updateRun) {
 	// Progress lines are human-only. Skip notices always print: to stderr
 	// with -o json/yaml (see noticeOut).
 	human := !flags.quiet && !flags.machine()
 
 	ngSvc := factory.NewNodegroupService(awsCfg, false, nil)
+	decide := ngSvc.AMIUpdateDecider(clusterName, nodegroupsvc.AMIUpdateOptions{Force: flags.force, Reroll: flags.reroll})
 	run := newUpdateRun(clusterName, region)
 	updates := make([]refreshTypes.UpdateProgress, 0, len(nodegroups))
 	for _, ng := range nodegroups {
@@ -797,21 +793,20 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 			run.fail(ng, diag.OpDescribeNodegroup, err)
 			continue
 		}
-		// Custom-AMI nodegroups: EKS doesn't manage the AMI (it lives in the
-		// user's launch template), so UpdateNodegroupVersion can't pick a
-		// recommended AMI. Skip with clear guidance instead of mis-rolling.
-		if nodegroup.AmiType == ekstypes.AMITypesCustom {
+		switch decide(ctx, nodegroup).Action {
+		case refreshTypes.ActionSkipCustom:
+			// EKS doesn't manage the AMI (it lives in the user's launch
+			// template), so UpdateNodegroupVersion can't pick a recommended
+			// AMI. Skip with clear guidance instead of mis-rolling.
 			flags.notice(color.FgYellow, "Nodegroup %s uses a custom AMI (AmiType=CUSTOM); refresh can't select a recommended AMI.", ng)
 			flags.notice(color.FgYellow, "  Publish a new launch template version with the new AMI, then point the nodegroup at it (e.g. `aws eks update-nodegroup-version --launch-template name=<lt>,version=<n>`).")
 			run.skip(ng, skipCustomAMI)
 			continue
-		}
-		if nodegroup.Status == ekstypes.NodegroupStatusUpdating {
+		case refreshTypes.ActionSkipUpdating:
 			flags.notice(color.FgYellow, "Nodegroup %s is already UPDATING. Skipping update.", ng)
 			run.skip(ng, skipAlreadyUpdating)
 			continue
-		}
-		if skipLatest(nodegroup) {
+		case refreshTypes.ActionSkipLatest:
 			flags.notice(color.FgGreen, "Nodegroup %s is already on the latest AMI. Skipping (use --reroll to roll it anyway).", ng)
 			run.skip(ng, skipAlreadyLatest)
 			continue
@@ -849,48 +844,6 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, eksClient *ek
 		}
 	}
 	return updates, run
-}
-
-// newLatestAMISkipChecker returns a predicate reporting whether a nodegroup is
-// already on the latest recommended AMI for its type and should be skipped.
-// With --reroll or --force it always returns false. AMI resolution is
-// best-effort: when
-// the current or latest AMI can't be determined the nodegroup is NOT skipped
-// (same as the dry-run preview's "AMI status unknown, update recommended").
-func newLatestAMISkipChecker(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, flags updateAMIFlags) func(*ekstypes.Nodegroup) bool {
-	if flags.force || flags.reroll {
-		return func(*ekstypes.Nodegroup) bool { return false }
-	}
-
-	clusterOut, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(clusterName)})
-	if err != nil || clusterOut.Cluster == nil || clusterOut.Cluster.Version == nil {
-		return func(*ekstypes.Nodegroup) bool { return false }
-	}
-	k8sVersion := *clusterOut.Cluster.Version
-
-	ec2Client := ec2.NewFromConfig(awsCfg)
-	asgClient := autoscaling.NewFromConfig(awsCfg)
-	return latestAMISkipPredicate(ctx, k8sVersion,
-		awsinternal.NewLatestAMIIDCache(ssm.NewFromConfig(awsCfg)),
-		func(ctx context.Context, ng *ekstypes.Nodegroup) string {
-			return awsinternal.CurrentAmiID(ctx, ng, ec2Client, asgClient)
-		})
-}
-
-// latestAMISkipPredicate compares each nodegroup's current AMI against the
-// latest AMI for the nodegroup's own Kubernetes version (clusterVersion only
-// as a fallback). UpdateNodegroupVersion pins Version to the nodegroup's
-// current minor, so the roll stays on that minor; comparing against the
-// cluster's minor would never skip a nodegroup that lags the control plane.
-func latestAMISkipPredicate(ctx context.Context, clusterVersion string, latestAMI *awsinternal.LatestAMICache, currentAMI func(context.Context, *ekstypes.Nodegroup) string) func(*ekstypes.Nodegroup) bool {
-	return func(ng *ekstypes.Nodegroup) bool {
-		latest, err := latestAMI.ForNodegroup(ctx, ng, clusterVersion)
-		if err != nil || latest == "" {
-			return false
-		}
-		current := currentAMI(ctx, ng)
-		return current != "" && current == latest
-	}
 }
 
 // clusterEnvVar supplies the cluster for `nodegroup update` when the command
