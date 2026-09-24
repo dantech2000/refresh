@@ -11,6 +11,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
@@ -123,7 +124,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		preRoll := preRollNodegroups(nodegroups, currentVersion, hops[0], opts.SkipNodegroups)
 		addonLag := s.addonsIncompatible(ctx, addonsSvc, addonList, currentVersion, opts.SkipAddons)
 		if addonLag || len(preRoll) > 0 {
-			plan.Hops = append(plan.Hops, s.catchUpHop(ctx, addonsSvc, addonList, preRoll, addonLag, cluster, currentVersion, opts))
+			plan.Hops = append(plan.Hops, s.catchUpHop(ctx, addonsSvc, plan, addonList, preRoll, addonLag, cluster, currentVersion, opts))
 			advanceSimulation(simNodegroups, preRoll, currentVersion, opts.SkipNodegroups)
 		}
 	}
@@ -137,7 +138,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		}
 		hop.Steps = append(hop.Steps, ready)
 		hop.Steps = append(hop.Steps, controlPlaneStep(currentVersion, aws.ToString(cluster.Version), hopTo, cluster.Status))
-		hop.Steps = append(hop.Steps, s.addonSteps(ctx, addonsSvc, addonList, hopTo, opts.SkipAddons)...)
+		hop.Steps = append(hop.Steps, s.addonSteps(ctx, addonsSvc, plan, addonList, hopTo, opts.SkipAddons)...)
 		hop.Steps = append(hop.Steps, nodegroupSteps(nodegroups, hopTo, opts.SkipNodegroups)...)
 
 		plan.Hops = append(plan.Hops, hop)
@@ -226,11 +227,11 @@ func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImp
 // incompatible with it), and rolls only the preRoll nodegroups to it. The
 // control-plane step is already satisfied, and no readiness step is needed
 // because the control plane does not move.
-func (s *Service) catchUpHop(ctx context.Context, svc *addons.ServiceImpl, addonList []addons.AddonSummary, preRoll []nodegroupState, withAddons bool, cluster *ekstypes.Cluster, cpVersion string, opts PlanOptions) Hop {
+func (s *Service) catchUpHop(ctx context.Context, svc *addons.ServiceImpl, plan *Plan, addonList []addons.AddonSummary, preRoll []nodegroupState, withAddons bool, cluster *ekstypes.Cluster, cpVersion string, opts PlanOptions) Hop {
 	hop := Hop{From: cpVersion, To: cpVersion}
 	hop.Steps = append(hop.Steps, controlPlaneStep(cpVersion, aws.ToString(cluster.Version), cpVersion, cluster.Status))
 	if withAddons {
-		hop.Steps = append(hop.Steps, s.addonSteps(ctx, svc, addonList, cpVersion, opts.SkipAddons)...)
+		hop.Steps = append(hop.Steps, s.addonSteps(ctx, svc, plan, addonList, cpVersion, opts.SkipAddons)...)
 	}
 	ngSteps := nodegroupSteps(preRoll, cpVersion, opts.SkipNodegroups)
 	for i := range ngSteps {
@@ -263,8 +264,8 @@ func prevVersion(plan *Plan, _ string) string {
 }
 
 // checkVersionOffered verifies EKS offers the target version. An API error
-// degrades to a plan warning (older SDK endpoints/permissions); an explicit
-// "not offered" answer is a hard error.
+// is a plan failure, and the plan continues (older SDK
+// endpoints/permissions); an explicit "not offered" answer is a hard error.
 func (s *Service) checkVersionOffered(ctx context.Context, targetVersion string, plan *Plan) error {
 	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeClusterVersionsOutput, error) {
 		return s.eksClient.DescribeClusterVersions(rc, &eks.DescribeClusterVersionsInput{
@@ -272,8 +273,7 @@ func (s *Service) checkVersionOffered(ctx context.Context, targetVersion string,
 		})
 	})
 	if err != nil {
-		plan.Warnings = append(plan.Warnings,
-			fmt.Sprintf("could not verify that EKS offers %s (continuing): %v", targetVersion, err))
+		plan.addFailure(diag.FromError(diag.KindCluster, plan.ClusterName, diag.OpDescribeClusterVersions, err))
 		return nil
 	}
 	for _, v := range out.ClusterVersions {
@@ -341,7 +341,7 @@ func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, h
 		return step, nil
 	case mode == insightsSkip:
 		step.Reason = "insights check skipped (--skip-insights-check); skew OK"
-		plan.Warnings = append(plan.Warnings, fmt.Sprintf(
+		plan.Notices = append(plan.Notices, fmt.Sprintf(
 			"cluster insights for %s were not checked (--skip-insights-check): deprecated APIs and kubelet skew of nodes outside managed nodegroups (Fargate, Karpenter, self-managed, hybrid) are unverified", hopTo))
 		return step, nil
 	case mode == insightsPreview:
@@ -352,12 +352,15 @@ func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, h
 	// for a fresh evaluation first; without one, the next minor after a
 	// control-plane hop usually has no insights at all. ERROR, UNKNOWN, and
 	// missing insights block; WARNING is surfaced but does not block.
+	// A gate that can't read what it needs blocks (fail closed), and the
+	// read is a plan failure too.
 	if err := s.refreshInsights(ctx, clusterName, liveVersion, progress); err != nil {
 		if ctx.Err() != nil {
 			return step, ctx.Err()
 		}
 		step.Status = StatusBlocked
 		step.Reason = fmt.Sprintf("could not refresh cluster insights for %s: %v; %s", hopTo, err, skipInsightsHint)
+		plan.addFailure(itemFailure(clusterName, err))
 		return step, nil
 	}
 	insights, err := s.listUpgradeInsights(ctx, clusterName, hopTo)
@@ -367,13 +370,14 @@ func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, h
 		}
 		step.Status = StatusBlocked
 		step.Reason = fmt.Sprintf("could not read cluster insights for %s: %v; %s", hopTo, err, skipInsightsHint)
+		plan.addFailure(diag.FromError(diag.KindCluster, clusterName, diag.OpListInsights, err))
 		return step, nil
 	}
 
 	status, reason, warnings := insightsVerdict(hopTo, insights)
 	step.Status, step.Reason = status, reason
 	if len(warnings) > 0 {
-		plan.Warnings = append(plan.Warnings,
+		plan.Notices = append(plan.Notices,
 			fmt.Sprintf("insight warnings for %s: %s", hopTo, strings.Join(warnings, ", ")))
 	}
 	return step, nil
@@ -388,7 +392,7 @@ func (s *Service) checkHopReadiness(ctx context.Context, clusterName, hopTo stri
 
 	cluster, err := s.describeCluster(ctx, clusterName)
 	if err != nil {
-		return err
+		return onItem(diag.KindCluster, clusterName, diag.OpDescribeCluster, err)
 	}
 	liveVersion := aws.ToString(cluster.Version)
 	if versionAtLeast(liveVersion, hopTo) {
@@ -413,11 +417,14 @@ func (s *Service) checkHopReadiness(ctx context.Context, clusterName, hopTo stri
 	if err != nil {
 		return err
 	}
-	for _, w := range scratch.Warnings {
-		progress("warning: %s", w)
+	for _, w := range scratch.Notices {
+		progress("notice: %s", w)
 	}
 	if step.Status == StatusBlocked {
-		return fmt.Errorf("readiness for %s is blocked against live cluster state: %s", hopTo, step.Reason)
+		return &gateError{
+			err:      fmt.Errorf("readiness for %s is blocked against live cluster state: %s", hopTo, step.Reason),
+			failures: scratch.Failures,
+		}
 	}
 	progress("readiness for %s: %s", hopTo, step.Reason)
 	return nil
@@ -466,7 +473,7 @@ func controlPlaneStep(_, liveVersion, hopTo string, status ekstypes.ClusterStatu
 // addonSteps derives one step per addon for the hop: the latest version
 // compatible with the hop target, completed when the addon already runs it,
 // blocked when no compatible version exists.
-func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, addonList []addons.AddonSummary, hopTo string, skip []string) []Step {
+func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, plan *Plan, addonList []addons.AddonSummary, hopTo string, skip []string) []Step {
 	steps := make([]Step, 0, len(addonList))
 	for _, a := range addonList {
 		step := Step{
@@ -491,6 +498,9 @@ func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, addon
 				step.Reason = fmt.Sprintf("no version of %s is compatible with %s: %v", a.Name, hopTo, err)
 			} else {
 				step.Reason = fmt.Sprintf("could not look up versions of %s compatible with %s (rerun to retry): %v", a.Name, hopTo, err)
+				f := diag.FromError(diag.KindAddon, a.Name, diag.OpDescribeAddonVersions, err)
+				f.Cluster = plan.ClusterName
+				plan.addFailure(f)
 			}
 			steps = append(steps, step)
 			continue

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/addons"
 )
 
@@ -61,7 +62,7 @@ func TestOutputUpdateAllResults_Empty(t *testing.T) {
 
 func TestOutputUpdateAllResults_DryRunMode(t *testing.T) {
 	results := []addons.AddonUpdateResult{
-		{AddonName: "vpc-cni", PreviousVersion: "v1", NewVersion: "v2", Status: "DRY_RUN"},
+		{AddonName: "vpc-cni", PreviousVersion: "v1", NewVersion: "v2", Status: addons.StatusDryRun},
 	}
 	out, err := captureStdout(t, func() error { return outputUpdateAllResults("prod", results, true) })
 	if err != nil {
@@ -78,9 +79,9 @@ func TestOutputUpdateAllResults_DryRunMode(t *testing.T) {
 
 func TestOutputUpdateAllResults_SummaryCounts(t *testing.T) {
 	results := []addons.AddonUpdateResult{
-		{AddonName: "a", PreviousVersion: "v1", NewVersion: "v2", Status: "COMPLETED"},
-		{AddonName: "b", PreviousVersion: "v1", NewVersion: "v1", Status: "UPDATE_FAILED"},
-		{AddonName: "c", PreviousVersion: "v1", NewVersion: "v2", Status: "COMPLETED_WITH_ISSUES"},
+		{AddonName: "a", PreviousVersion: "v1", NewVersion: "v2", Status: addons.StatusCompleted},
+		{AddonName: "b", PreviousVersion: "v1", NewVersion: "v1", Status: addons.StatusFailed, Failure: &diag.Failure{Kind: diag.KindAddon, Name: "b"}},
+		{AddonName: "c", PreviousVersion: "v1", NewVersion: "v2", Status: addons.StatusCompletedWithIssues},
 	}
 	out, err := captureStdout(t, func() error { return outputUpdateAllResults("prod", results, false) })
 	if err != nil {

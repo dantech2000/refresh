@@ -163,21 +163,13 @@ func addonUpdatePlain(results []addons.AddonUpdateResult) *ui.PlainTable {
 	return t
 }
 
-// writeUpdateIssues writes post-update health issues and wait failures to w
-// (stderr); the STATUS column only says COMPLETED_WITH_ISSUES or WAIT_FAILED.
-// With failed set, it also names each add-on whose update failed or was not
-// attempted, with its "FAILED: <reason>" status. The table and plain views
-// show that status on stdout, so only -o json/yaml runs set it.
-func writeUpdateIssues(w io.Writer, results []addons.AddonUpdateResult, failed bool) {
+// writeHealthIssues writes the post-update health issues to w (stderr); the
+// STATUS column only says CompletedWithIssues. Failures are reported
+// separately (runner.ReportFailures).
+func writeHealthIssues(w io.Writer, results []addons.AddonUpdateResult) {
 	for _, r := range results {
-		if failed && strings.HasPrefix(r.Status, "FAILED") {
-			_, _ = fmt.Fprintf(w, "%s: %s\n", r.AddonName, r.Status)
-		}
 		if r.HealthIssues != "" {
 			_, _ = fmt.Fprintf(w, "%s: post-update health check found issues: %s\n", r.AddonName, r.HealthIssues)
-		}
-		if r.Error != "" {
-			_, _ = fmt.Fprintf(w, "%s: update %s did not complete: %s\n", r.AddonName, r.UpdateID, r.Error)
 		}
 	}
 }
@@ -187,7 +179,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 		if len(results) == 0 {
 			_, _ = fmt.Fprintf(ui.Stderr, "No addons to update for cluster: %s\n", cluster)
 		}
-		writeUpdateIssues(ui.Stderr, results, false)
+		writeHealthIssues(ui.Stderr, results)
 		addonUpdatePlain(results).Render()
 		return nil
 	}
@@ -211,7 +203,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 	for _, r := range results {
 		var status string
 		switch {
-		case strings.Contains(r.Status, "FAILED"):
+		case r.Failed():
 			status = color.RedString(r.Status)
 			failCount++
 		case r.Status == addons.StatusDryRun:
@@ -248,7 +240,7 @@ func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, 
 		summary += fmt.Sprintf(", %s failed", color.RedString("%d", failCount))
 		ui.Outf("%s\n", summary)
 	}
-	writeUpdateIssues(ui.Stderr, results, false)
+	writeHealthIssues(ui.Stderr, results)
 
 	return nil
 }

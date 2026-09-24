@@ -205,7 +205,7 @@ func (s *Service) waitForUpdate(ctx context.Context, in *eks.DescribeUpdateInput
 			case ekstypes.UpdateStatusSuccessful:
 				return nil
 			case ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusCancelled:
-				return fmt.Errorf("%s %s: %s", what, strings.ToLower(string(out.Update.Status)), updateErrors(out.Update))
+				return &updateEndedError{what: what, updateID: aws.ToString(in.UpdateId), status: out.Update.Status, details: updateErrors(out.Update)}
 			}
 		}
 	}

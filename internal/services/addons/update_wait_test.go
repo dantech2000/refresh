@@ -113,8 +113,15 @@ func TestUpdateWait_FailedOrCancelledUpdate(t *testing.T) {
 					t.Errorf("err = %v, want it to contain %q", err, want)
 				}
 			}
-			if res == nil || res.Status != StatusWaitFailed || res.UpdateID != "u-1" || res.Error == "" {
-				t.Fatalf("result = %+v, want WAIT_FAILED with update ID and error", res)
+			if res == nil || res.Status != StatusWaitFailed || res.UpdateID != "u-1" || res.Failure == nil {
+				t.Fatalf("result = %+v, want WaitFailed with update ID and a failure", res)
+			}
+			wantReason := diag.ReasonUpdateFailed
+			if st == ekstypes.UpdateStatusCancelled {
+				wantReason = diag.ReasonUpdateCancelled
+			}
+			if f := res.Failure; f.Kind != diag.KindUpdate || f.Reason != wantReason || f.UpdateID != "u-1" || f.Name != "vpc-cni" {
+				t.Errorf("failure = %+v, want %s for update u-1", f, wantReason)
 			}
 		})
 	}
@@ -247,9 +254,9 @@ func TestUpdate_VersionGuard(t *testing.T) {
 		{name: "latest older than installed", installed: "v1.11.4", version: "latest", available: []string{"v1.11.3"}, wantStatus: StatusUpToDate},
 		{name: "pinned equals installed", installed: "v1.18.0", version: "v1.18.0", available: []string{"v1.19.0", "v1.18.0"}, wantStatus: StatusUpToDate},
 		{name: "pinned downgrade proceeds with warning", installed: "v1.19.0", version: "v1.18.0", available: []string{"v1.19.0", "v1.18.0"},
-			wantStatus: string(ekstypes.UpdateStatusInProgress), wantUpdate: true, wantWarning: "downgrading vpc-cni from v1.19.0 to v1.18.0"},
+			wantStatus: StatusStarted, wantUpdate: true, wantWarning: "downgrading vpc-cni from v1.19.0 to v1.18.0"},
 		{name: "upgrade", installed: "v1.18.0", version: "latest", available: []string{"v1.19.0", "v1.18.0"},
-			wantStatus: string(ekstypes.UpdateStatusInProgress), wantUpdate: true},
+			wantStatus: StatusStarted, wantUpdate: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -295,8 +302,8 @@ func TestUpdateAll_UpToDateAndWaitFailure(t *testing.T) {
 	if r := byName["coredns"]; r.Status != StatusUpToDate || r.UpdateID != "" {
 		t.Errorf("coredns = %+v, want UP_TO_DATE with no update", r)
 	}
-	if r := byName["vpc-cni"]; r.Status != StatusWaitFailed || r.UpdateID != "u-vpc" || !strings.Contains(r.Error, "Failed") {
-		t.Errorf("vpc-cni = %+v, want WAIT_FAILED keeping update ID u-vpc and the reason", r)
+	if r := byName["vpc-cni"]; r.Status != StatusWaitFailed || r.UpdateID != "u-vpc" || r.Failure == nil || r.Failure.Reason != diag.ReasonUpdateFailed {
+		t.Errorf("vpc-cni = %+v, want WaitFailed keeping update ID u-vpc and an UpdateFailed failure", r)
 	}
 	if m.Calls.UpdateAddon != 1 {
 		t.Errorf("UpdateAddon calls = %d, want 1 (coredns is current)", m.Calls.UpdateAddon)

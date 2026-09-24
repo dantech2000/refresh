@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -13,10 +14,10 @@ import (
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
-	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
@@ -32,60 +33,149 @@ type clusterTarget struct {
 	awsCfg  aws.Config
 }
 
+// clusterStatus is the outcome of one cluster in a fleet run.
+// docs/concepts/output.md documents the values; later versions may add
+// values.
+type clusterStatus string
+
+const (
+	// clusterSucceeded: the cluster did what the run asked, with no failure.
+	clusterSucceeded clusterStatus = "Succeeded"
+	// clusterIncomplete: the run finished in the cluster, but some data could
+	// not be read (see the failures). Exit 4.
+	clusterIncomplete clusterStatus = "Incomplete"
+	// clusterFailed: a nodegroup update could not start or did not succeed,
+	// or the nodegroups could not be selected. Exit 4.
+	clusterFailed clusterStatus = "Failed"
+	// clusterHealthBlocked: the pre-flight health check blocked the cluster.
+	// Nothing was rolled. Exit 3.
+	clusterHealthBlocked clusterStatus = "HealthBlocked"
+	// clusterHealthWarned: the health check warned and --health-only or
+	// --require-healthy stopped the cluster there. Exit 2.
+	clusterHealthWarned clusterStatus = "HealthWarned"
+	// clusterVerifyFailed: the updates succeeded, but post-roll verification
+	// found issues. Exit 5.
+	clusterVerifyFailed clusterStatus = "VerifyFailed"
+	// clusterInterrupted: the user stopped the run while this cluster was in
+	// progress. Started EKS updates keep running. Exit 1.
+	clusterInterrupted clusterStatus = "Interrupted"
+	// clusterTimedOut: the cluster's --wait-timeout passed. Started EKS
+	// updates may still be running. Exit 1.
+	clusterTimedOut clusterStatus = "TimedOut"
+	// clusterNotAttempted: the run stopped before it reached this cluster.
+	// Exit 1.
+	clusterNotAttempted clusterStatus = "NotAttempted"
+	// clusterPlanned: a dry run previewed every selected nodegroup.
+	clusterPlanned clusterStatus = "Planned"
+)
+
 // clusterUpdateResult is one cluster's outcome within a fleet run.
 type clusterUpdateResult struct {
-	Cluster       string         `json:"cluster" yaml:"cluster"`
-	Region        string         `json:"region" yaml:"region"`
-	Outcomes      updateOutcomes `json:"outcomes" yaml:"outcomes"`
-	HealthBlocked bool           `json:"healthBlocked" yaml:"healthBlocked"`
-	// HealthWarned means the health gate stopped this cluster on warnings
-	// (--health-only or --require-healthy): exit 2, as for a single cluster.
-	HealthWarned bool `json:"healthWarned,omitempty" yaml:"healthWarned,omitempty"`
-	VerifyFailed bool `json:"verifyFailed" yaml:"verifyFailed"`
-	// Interrupted means the user stopped the run (Ctrl+C / SIGTERM) while this
-	// cluster was in progress; any started EKS update keeps running in AWS.
-	Interrupted bool `json:"interrupted,omitempty" yaml:"interrupted,omitempty"`
-	// TimedOut means monitoring hit the per-cluster --wait-timeout before the
-	// updates were terminal; they may still be running in AWS.
-	TimedOut bool   `json:"timedOut,omitempty" yaml:"timedOut,omitempty"`
-	Error    string `json:"error,omitempty" yaml:"error,omitempty"`
+	Cluster    string            `json:"cluster" yaml:"cluster"`
+	Region     string            `json:"region" yaml:"region"`
+	Status     clusterStatus     `json:"status" yaml:"status"`
+	Nodegroups []nodegroupResult `json:"nodegroups" yaml:"nodegroups"`
+	// Verification is the post-roll verification, when it ran.
+	Verification *PostRollVerification `json:"verification,omitempty" yaml:"verification,omitempty"`
 	// Health is the pre-flight verdict whenever a check ran (nil when skipped).
 	Health *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`
+	// Failure is a failure of the cluster itself: its nodegroups could not
+	// be selected, or the run stopped (Interrupted, TimedOut, NotAttempted)
+	// before any update started. A nodegroup's failure is on the nodegroup.
+	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
+
+	// run is what the run did in the cluster, for the failures list.
+	run updateRun
+}
+
+// failures lists the cluster's failures: its own, each nodegroup's, the
+// post-roll read failures, and the health check's.
+func (r clusterUpdateResult) failures() []diag.Failure {
+	var out []diag.Failure
+	if r.Failure != nil {
+		out = append(out, *r.Failure)
+	}
+	out = append(out, r.run.failures()...)
+	if r.Health != nil {
+		out = append(out, healthFailures(r.run, r.Health)...)
+	}
+	return out
 }
 
 // fleetDryRunResult is one cluster's preview in a -o json/yaml fleet dry-run.
 type fleetDryRunResult struct {
-	Cluster string      `json:"cluster" yaml:"cluster"`
-	Region  string      `json:"region" yaml:"region"`
-	Plan    *dryRunPlan `json:"plan,omitempty" yaml:"plan,omitempty"`
-	Error   string      `json:"error,omitempty" yaml:"error,omitempty"`
+	Cluster string `json:"cluster" yaml:"cluster"`
+	Region  string `json:"region" yaml:"region"`
+	// Status is Planned, Incomplete (the plan has nodegroups that could not
+	// be read), or Failed (no plan).
+	Status clusterStatus `json:"status" yaml:"status"`
+	Plan   *dryRunPlan   `json:"plan,omitempty" yaml:"plan,omitempty"`
+	// Failure is set when the cluster has no plan.
+	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
 }
 
-// fleetDocument builds the one -o json/yaml document of a fleet run: the
-// per-cluster entries plus what discovery could not reach.
-func fleetDocument(clusters any, disc fleetDiscovery) map[string]any {
-	payload := map[string]any{"clusters": clusters}
-	if len(disc.failed) > 0 {
-		payload["discoveryErrors"] = disc.failed
+// failures lists the preview's failures: the cluster's own and the plan's.
+func (r fleetDryRunResult) failures() []diag.Failure {
+	var out []diag.Failure
+	if r.Failure != nil {
+		out = append(out, *r.Failure)
 	}
-	if len(disc.skipped) > 0 {
-		payload["skippedRegions"] = disc.skipped
+	if r.Plan != nil {
+		out = append(out, r.Plan.Failures...)
 	}
-	return payload
+	return out
 }
 
-// regionDiscoveryError is a region whose cluster listing failed during fleet
-// discovery. Its clusters are missing from the run, so the run can't pass.
-type regionDiscoveryError struct {
-	Region string `json:"region" yaml:"region"`
-	Error  string `json:"error" yaml:"error"`
+// fleetUpdateDocument is the -o json/yaml document of a fleet run.
+type fleetUpdateDocument struct {
+	Clusters []clusterUpdateResult `json:"clusters" yaml:"clusters"`
+	// SkippedRegions are default-sweep regions these credentials can't use.
+	// They are a notice, not a failure.
+	SkippedRegions []string  `json:"skippedRegions,omitempty" yaml:"skippedRegions,omitempty"`
+	Failures       diag.List `json:"failures" yaml:"failures"`
+}
+
+// fleetDryRunDocument is the -o json/yaml document of a fleet dry run.
+type fleetDryRunDocument struct {
+	Clusters       []fleetDryRunResult `json:"clusters" yaml:"clusters"`
+	SkippedRegions []string            `json:"skippedRegions,omitempty" yaml:"skippedRegions,omitempty"`
+	Failures       diag.List           `json:"failures" yaml:"failures"`
+}
+
+// newFleetUpdateDocument builds the fleet document from the per-cluster
+// results and discovery. Failures are the regions discovery could not list
+// plus every cluster's failures, sorted.
+func newFleetUpdateDocument(results []clusterUpdateResult, disc fleetDiscovery) fleetUpdateDocument {
+	fs := diag.List(append([]diag.Failure(nil), disc.failed...))
+	for _, r := range results {
+		fs = append(fs, r.failures()...)
+	}
+	diag.Sort(fs)
+	if results == nil {
+		results = []clusterUpdateResult{}
+	}
+	return fleetUpdateDocument{Clusters: results, SkippedRegions: disc.skipped, Failures: fs}
+}
+
+// newFleetDryRunDocument builds the fleet dry-run document.
+func newFleetDryRunDocument(results []fleetDryRunResult, disc fleetDiscovery) fleetDryRunDocument {
+	fs := diag.List(append([]diag.Failure(nil), disc.failed...))
+	for _, r := range results {
+		fs = append(fs, r.failures()...)
+	}
+	diag.Sort(fs)
+	if results == nil {
+		results = []fleetDryRunResult{}
+	}
+	return fleetDryRunDocument{Clusters: results, SkippedRegions: disc.skipped, Failures: fs}
 }
 
 // listClustersFunc lists the EKS cluster names reachable with cfg (a
 // region-scoped config). A seam so discovery is testable without AWS.
 type listClustersFunc func(ctx context.Context, cfg aws.Config) ([]string, error)
 
-// fleetStderr receives per-region discovery warnings. A seam for tests.
+// fleetStderr receives the discovery notices and failure lines. A seam for
+// tests.
 var fleetStderr io.Writer = ui.Stderr
 
 // validateFleetFlags rejects flag combinations that fleet mode can't honour.
@@ -151,33 +241,16 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 		return discoveryStopError(ctx, err, flags.timeout)
 	}
 	if err := checkDiscovery(len(regions), disc); err != nil {
+		runner.WriteFailures(flags.format, os.Stdout, fleetStderr, disc.failed)
 		return err
 	}
-	targets, regionErrs := disc.targets, disc.failed
+	targets := disc.targets
 	if len(targets) == 0 {
-		if machine {
-			_, err := runner.EncodeStdout(flags.format, fleetDocument([]clusterUpdateResult{}, disc))
-			return err
-		}
-		color.Yellow("No clusters found across %d region(s)", len(regions))
-		return nil
+		return finishEmptyFleet(ctx, disc, len(regions), flags)
 	}
 
 	if flags.dryRun {
-		if machine {
-			plans, err := fleetDryRunDocument(ctx, targets, nodegroupPattern, flags)
-			if err != nil {
-				return err
-			}
-			if _, err := runner.EncodeStdout(flags.format, fleetDocument(plans, disc)); err != nil {
-				return err
-			}
-			return runner.UnlessInterrupted(ctx, discoveryExit(regionErrs))
-		}
-		if err := fleetDryRun(ctx, targets, nodegroupPattern, flags); err != nil {
-			return err
-		}
-		return runner.UnlessInterrupted(ctx, discoveryExit(regionErrs))
+		return runFleetDryRun(ctx, targets, disc, nodegroupPattern, flags)
 	}
 
 	// One confirmation for the whole batch (or --yes); without a TTY or with
@@ -198,31 +271,100 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	cflags.yes = true
 
 	results := make([]clusterUpdateResult, 0, len(targets))
+	notStarted := 0
 	for _, tgt := range targets {
 		if ctx.Err() != nil {
-			flags.notice(color.FgYellow, "Interrupted: %d of %d cluster(s) not started", len(targets)-len(results), len(targets))
-			break
+			results = append(results, notAttemptedCluster(ctx, tgt))
+			notStarted++
+			continue
 		}
 		if !flags.quiet && !machine {
 			color.Cyan("\n=== %s (%s) ===", tgt.cluster, tgt.region)
 		}
 		results = append(results, updateOneClusterInFleet(ctx, tgt, nodegroupPattern, cflags))
 	}
+	if notStarted > 0 {
+		flags.notice(color.FgYellow, "Interrupted: %d of %d cluster(s) not started", notStarted, len(targets))
+	}
 
+	doc := newFleetUpdateDocument(results, disc)
 	if machine {
-		if _, err := runner.EncodeStdout(flags.format, fleetDocument(results, disc)); err != nil {
+		if _, err := runner.EncodeStdout(flags.format, doc); err != nil {
 			return err
 		}
 	} else {
-		printFleetSummary(results, regionErrs)
+		printFleetSummary(results, len(disc.failed))
 	}
+	runner.WriteFailures(flags.format, os.Stdout, fleetStderr, doc.Failures)
 	// After Ctrl+C the run exits 1, whatever the clusters reported.
-	if err := runner.UnlessInterrupted(ctx, fleetExit(results, regionErrs)); err != nil || len(results) == len(targets) {
+	if err := runner.UnlessInterrupted(ctx, fleetExit(results, disc.failed)); err != nil || notStarted == 0 {
 		return err
 	}
 	// Interrupted between clusters: nothing was in progress, but the fleet
 	// was not fully processed, so the run must not pass.
-	return fmt.Errorf("fleet update interrupted: %d of %d cluster(s) not started", len(targets)-len(results), len(targets))
+	return fmt.Errorf("fleet update interrupted: %d of %d cluster(s) not started", notStarted, len(targets))
+}
+
+// finishEmptyFleet ends a fleet run that found no clusters. The regions that
+// could not be listed may hold clusters, so they make the run incomplete
+// (exit 4), not a pass.
+func finishEmptyFleet(ctx context.Context, disc fleetDiscovery, regions int, flags updateAMIFlags) error {
+	if flags.machine() {
+		var doc any = newFleetUpdateDocument(nil, disc)
+		if flags.dryRun {
+			doc = newFleetDryRunDocument(nil, disc)
+		}
+		if _, err := runner.EncodeStdout(flags.format, doc); err != nil {
+			return err
+		}
+	} else {
+		color.Yellow("No clusters found across %d region(s)", regions-len(disc.failed)-len(disc.skipped))
+	}
+	runner.WriteFailures(flags.format, os.Stdout, fleetStderr, disc.failed)
+	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(disc.failed))
+}
+
+// runFleetDryRun previews every cluster: the fleet dry-run document with
+// -o json/yaml, else the human preview. A cluster or nodegroup that could
+// not be previewed, or a region that could not be listed, is a failure
+// (exit 4).
+func runFleetDryRun(ctx context.Context, targets []clusterTarget, disc fleetDiscovery, nodegroupPattern string, flags updateAMIFlags) error {
+	var fs diag.List
+	if flags.machine() {
+		plans, err := fleetDryRunResults(ctx, targets, nodegroupPattern, flags)
+		if err != nil {
+			return err
+		}
+		doc := newFleetDryRunDocument(plans, disc)
+		if _, err := runner.EncodeStdout(flags.format, doc); err != nil {
+			return err
+		}
+		fs = doc.Failures
+	} else {
+		clusterFailures, err := fleetDryRun(ctx, targets, nodegroupPattern, flags)
+		if err != nil {
+			return err
+		}
+		fs = append(diag.List(append([]diag.Failure(nil), disc.failed...)), clusterFailures...)
+		diag.Sort(fs)
+	}
+	runner.WriteFailures(flags.format, os.Stdout, fleetStderr, fs)
+	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(fs))
+}
+
+// notAttemptedCluster is the result of a cluster the run never reached
+// because ctx ended.
+func notAttemptedCluster(ctx context.Context, tgt clusterTarget) clusterUpdateResult {
+	f := diag.New(diag.KindCluster, tgt.cluster, diag.ReasonNotAttempted, "the run stopped before this cluster: "+context.Cause(ctx).Error())
+	f.Region = tgt.region
+	return clusterUpdateResult{
+		Cluster:    tgt.cluster,
+		Region:     tgt.region,
+		Status:     clusterNotAttempted,
+		Nodegroups: []nodegroupResult{},
+		Failure:    &f,
+		run:        newUpdateRun(tgt.cluster, tgt.region),
+	}
 }
 
 // discoveryStopError maps a discovery that ended with ctx done: a user
@@ -235,90 +377,98 @@ func discoveryStopError(ctx context.Context, err error, timeout time.Duration) e
 	return fmt.Errorf("fleet discovery did not finish within --wait-timeout %s: %w", timeout, err)
 }
 
-// regionScopeHint tells the user how to narrow the region sweep.
-const regionScopeHint = "scope with -r or REFRESH_EKS_REGIONS"
-
-// checkDiscovery reports discovery problems on stderr: one line naming the
-// regions skipped as not accessible, and one warning per region that failed.
-// It fails with exit 1 when no region could be listed (nothing was
-// gathered), and with exit 4 when the reachable regions had no clusters but
-// some regions failed. Nothing is known about the failed regions, so "no
-// clusters found" would be a false pass. Skipped regions alone never fail a
-// run that reached at least one region.
+// checkDiscovery prints one notice naming the regions skipped as not
+// accessible, and fails with exit 1 when no region could be listed: nothing
+// was gathered. The regions that failed are reported by the caller, once,
+// with the run's other failures.
 func checkDiscovery(regions int, d fleetDiscovery) error {
-	if len(d.skipped) > 0 {
-		_, _ = fmt.Fprintln(fleetStderr, color.YellowString("Skipped %d region(s) not accessible to these credentials: %s (%s)",
-			len(d.skipped), strings.Join(d.skipped, ", "), regionScopeHint))
-	}
-	for _, re := range d.failed {
-		_, _ = fmt.Fprintln(fleetStderr, color.YellowString("Warning: skipping region %s: %s", re.Region, re.Error))
-	}
+	runner.ReportSkippedRegions(fleetStderr, d.skipped)
 	if regions > 0 && len(d.failed)+len(d.skipped) == regions {
 		return fmt.Errorf("fleet discovery failed: could not list clusters in any of %d region(s) (%d not accessible, %d failed); %s",
-			regions, len(d.skipped), len(d.failed), regionScopeHint)
-	}
-	if len(d.failed) > 0 && len(d.targets) == 0 {
-		return cli.Exit(fmt.Sprintf("no clusters found in %d reachable region(s); %d region(s) could not be listed; %s",
-			regions-len(d.failed)-len(d.skipped), len(d.failed), regionScopeHint), 4)
+			regions, len(d.skipped), len(d.failed), runner.RegionScopeHint)
 	}
 	return nil
-}
-
-// discoveryExit fails a finished run whose discovery missed regions.
-func discoveryExit(regionErrs []regionDiscoveryError) error {
-	if len(regionErrs) == 0 {
-		return nil
-	}
-	return cli.Exit(fmt.Sprintf("fleet discovery could not list clusters in %d region(s); %s", len(regionErrs), regionScopeHint), 4)
 }
 
 // updateOneClusterInFleet runs the per-cluster pipeline (health gate → select →
 // roll → verify) and captures the outcome instead of exiting, so the fleet loop
 // can aggregate.
 func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) clusterUpdateResult {
-	res := clusterUpdateResult{Cluster: tgt.cluster, Region: tgt.region, Outcomes: newUpdateOutcomes(tgt.cluster)}
+	res := clusterUpdateResult{Cluster: tgt.cluster, Region: tgt.region, Nodegroups: []nodegroupResult{}, run: newUpdateRun(tgt.cluster, tgt.region)}
 	eksClient := eks.NewFromConfig(tgt.awsCfg)
 
 	ctx, cancel := fleetClusterContext(parent, flags.timeout)
 	defer cancel()
 
+	// stopped records a cluster that ctx ended before any update started.
+	stopped := func(what string) clusterUpdateResult {
+		reason, status := diag.ReasonTimeout, clusterTimedOut
+		if parent.Err() != nil {
+			reason, status = diag.ReasonInterrupted, clusterInterrupted
+		}
+		f := diag.New(diag.KindCluster, tgt.cluster, reason, what+": "+context.Cause(ctx).Error())
+		f.Region = tgt.region
+		res.Status, res.Failure = status, &f
+		return res
+	}
+
 	summary, done, err := preflightHealthCheck(ctx, tgt.awsCfg, eksClient, tgt.cluster, nodegroupPattern, flags)
 	res.Health = summary
 	if err != nil {
-		if parent.Err() != nil {
-			res.Interrupted = true
-			return res
+		if ctx.Err() != nil {
+			return stopped("stopped during the health check")
 		}
 		// A warn-level stop (exit 2: --health-only or --require-healthy)
 		// is not a block (exit 3), so the fleet exit code matches what the
 		// same cluster gives on its own.
-		res.Error = err.Error()
-		if healthExitCode(err) == 2 {
-			res.HealthWarned = true
+		if healthExitCode(err) == runner.ExitNeedsAttention {
+			res.Status = clusterHealthWarned
 		} else {
-			res.HealthBlocked = true
+			res.Status = clusterHealthBlocked
 		}
 		return res
 	}
 	if done {
+		res.Status = finishedStatus(res)
 		return res
 	}
 
 	selected, err := selectNodegroupsForUpdate(ctx, eksClient, tgt.cluster, nodegroupPattern, flags)
 	if err != nil {
-		if parent.Err() != nil {
-			res.Interrupted = true
-			return res
+		if ctx.Err() != nil {
+			return stopped("stopped while selecting nodegroups")
 		}
-		res.Error = err.Error()
+		f := selectionFailure(tgt.cluster, tgt.region, err)
+		res.Status, res.Failure = clusterFailed, &f
 		return res
 	}
 
-	outcomes, verifyFailed, monErr := executeUpdates(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags)
-	res.Outcomes = outcomes
-	res.VerifyFailed = verifyFailed
-	recordMonitorError(&res, monErr)
+	run, verifyFailed, monErr := executeUpdates(ctx, tgt.awsCfg, eksClient, tgt.cluster, tgt.region, selected, flags)
+	res.run = run
+	res.Nodegroups = run.nodegroups
+	res.Verification = run.verification
+	switch {
+	case run.rollFailed() || run.startFailed():
+		res.Status = clusterFailed
+	case errors.Is(monErr, monitoring.ErrCancelled) || parent.Err() != nil:
+		res.Status = clusterInterrupted
+	case errors.Is(monErr, monitoring.ErrMonitorTimeout) || ctx.Err() != nil:
+		res.Status = clusterTimedOut
+	case verifyFailed:
+		res.Status = clusterVerifyFailed
+	default:
+		res.Status = finishedStatus(res)
+	}
 	return res
+}
+
+// finishedStatus is the status of a cluster whose run finished: Incomplete
+// when it has failures, else Succeeded.
+func finishedStatus(r clusterUpdateResult) clusterStatus {
+	if len(r.failures()) > 0 {
+		return clusterIncomplete
+	}
+	return clusterSucceeded
 }
 
 // healthExitCode returns the exit code a health-gate error carries, or 0 when
@@ -329,21 +479,6 @@ func healthExitCode(err error) int {
 		return ec.ExitCode()
 	}
 	return 0
-}
-
-// recordMonitorError stores a monitoring error as typed state. An interrupt
-// or a monitor timeout means the EKS update may still be running, not that it
-// failed, so neither is recorded as an Error.
-func recordMonitorError(res *clusterUpdateResult, monErr error) {
-	switch {
-	case monErr == nil:
-	case errors.Is(monErr, monitoring.ErrCancelled):
-		res.Interrupted = true
-	case errors.Is(monErr, monitoring.ErrMonitorTimeout):
-		res.TimedOut = true
-	default:
-		res.Error = monErr.Error()
-	}
 }
 
 // fleetClusterContext scopes --wait-timeout to a single cluster in a fleet run
@@ -374,8 +509,9 @@ func resolveUpdateRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string
 // fleetDiscovery is the outcome of the region sweep.
 type fleetDiscovery struct {
 	targets []clusterTarget
-	// failed regions could not be listed; their clusters are unknown.
-	failed []regionDiscoveryError
+	// failed are the regions that could not be listed (KindRegion failures);
+	// their clusters are unknown.
+	failed []diag.Failure
 	// skipped regions are default-sweep regions these credentials can't
 	// reach (see awserr.IsRegionInaccessible). They are not failures.
 	skipped []string
@@ -419,8 +555,7 @@ func discoverFleetTargets(ctx context.Context, baseCfg aws.Config, regions []str
 		case skipInaccessible && awserr.IsRegionInaccessible(r.err):
 			d.skipped = append(d.skipped, regions[i])
 		default:
-			msg := awsinternal.FormatAWSError(r.err, "listing clusters in "+regions[i]).Error()
-			d.failed = append(d.failed, regionDiscoveryError{Region: regions[i], Error: msg})
+			d.failed = append(d.failed, diag.FromError(diag.KindRegion, regions[i], diag.OpListClusters, r.err))
 		}
 	}
 	return d, nil
@@ -442,139 +577,173 @@ func listRegionClusters(ctx context.Context, cfg aws.Config) ([]string, error) {
 	})
 }
 
-// fleetDryRun prints the per-cluster plan without mutating anything.
-func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) error {
+// fleetDryRun prints the per-cluster plan without mutating anything and
+// returns the failures of the clusters it could not preview fully.
+func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]diag.Failure, error) {
 	color.Cyan("Fleet dry-run: %d cluster(s)", len(targets))
+	var fs []diag.Failure
 	for _, tgt := range targets {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 		color.Cyan("\n=== %s (%s) ===", tgt.cluster, tgt.region)
-		fleetDryRunCluster(ctx, tgt, nodegroupPattern, flags)
+		fs = append(fs, fleetDryRunCluster(ctx, tgt, nodegroupPattern, flags)...)
 	}
-	return nil
+	return fs, nil
 }
 
-// fleetDryRunCluster previews one cluster under a per-cluster --wait-timeout.
-func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) {
+// fleetDryRunCluster previews one cluster under a per-cluster --wait-timeout
+// and returns its failures.
+func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) []diag.Failure {
 	ctx, cancel := fleetClusterContext(ctx, flags.timeout)
 	defer cancel()
 	eksClient := eks.NewFromConfig(tgt.awsCfg)
 	flags.yes = true // a preview selects every match without asking
 	selected, err := selectNodegroupsForUpdate(ctx, eksClient, tgt.cluster, nodegroupPattern, flags)
 	if err != nil {
-		color.Red("  %v", err)
-		return
+		color.Red("  could not select nodegroups (see INCOMPLETE DATA)")
+		return []diag.Failure{selectionFailure(tgt.cluster, tgt.region, err)}
 	}
-	if err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.dryRunOptions()); err != nil {
-		color.Red("  %v", err)
+	unreadable, err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.dryRunOptions())
+	if err != nil {
+		color.Red("  could not preview the cluster (see INCOMPLETE DATA)")
+		f := diag.FromError(diag.KindCluster, tgt.cluster, diag.OpDescribeCluster, err)
+		f.Region = tgt.region
+		return []diag.Failure{f}
 	}
 	if !flags.quiet {
 		printChangelogsForNodegroups(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.changelog)
 	}
+	return dryRunFailures(tgt.cluster, tgt.region, unreadable)
 }
 
-// fleetDryRunDocument previews every cluster without printing, for the
-// -o json/yaml fleet dry-run. A cluster whose preview fails carries its error
-// instead of a plan. It stops early only when ctx is done.
-func fleetDryRunDocument(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]fleetDryRunResult, error) {
+// fleetDryRunResults previews every cluster without printing, for the
+// -o json/yaml fleet dry-run. A cluster whose preview fails carries its
+// failure instead of a plan. It stops early only when ctx is done.
+func fleetDryRunResults(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]fleetDryRunResult, error) {
 	flags.yes = true // a preview selects every match without asking
 	out := make([]fleetDryRunResult, 0, len(targets))
 	for _, tgt := range targets {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		res := fleetDryRunResult{Cluster: tgt.cluster, Region: tgt.region}
-		plan, err := func() (dryRunPlan, error) {
-			cctx, cancel := fleetClusterContext(ctx, flags.timeout)
-			defer cancel()
-			eksClient := eks.NewFromConfig(tgt.awsCfg)
-			selected, err := selectNodegroupsForUpdate(cctx, eksClient, tgt.cluster, nodegroupPattern, flags)
-			if err != nil {
-				return dryRunPlan{}, err
-			}
-			return dryRunDocument(cctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags)
-		}()
-		if err != nil {
-			res.Error = err.Error()
-		} else {
-			res.Plan = &plan
-		}
-		out = append(out, res)
+		out = append(out, fleetDryRunOne(ctx, tgt, nodegroupPattern, flags))
 	}
 	return out, nil
 }
 
-// printFleetSummary renders the end-of-run aggregate, including regions that
-// discovery could not list.
-func printFleetSummary(results []clusterUpdateResult, regionErrs []regionDiscoveryError) {
+// fleetDryRunOne previews one cluster under its --wait-timeout.
+func fleetDryRunOne(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) fleetDryRunResult {
+	res := fleetDryRunResult{Cluster: tgt.cluster, Region: tgt.region}
+	cctx, cancel := fleetClusterContext(ctx, flags.timeout)
+	defer cancel()
+	eksClient := eks.NewFromConfig(tgt.awsCfg)
+	selected, err := selectNodegroupsForUpdate(cctx, eksClient, tgt.cluster, nodegroupPattern, flags)
+	if err != nil {
+		f := selectionFailure(tgt.cluster, tgt.region, err)
+		res.Status, res.Failure = clusterFailed, &f
+		return res
+	}
+	plan, err := dryRunDocument(cctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags)
+	if err != nil {
+		f := diag.FromError(diag.KindCluster, tgt.cluster, diag.OpDescribeCluster, err)
+		f.Region = tgt.region
+		res.Status, res.Failure = clusterFailed, &f
+		return res
+	}
+	res.Plan = &plan
+	res.Status = clusterPlanned
+	if len(plan.Failures) > 0 {
+		res.Status = clusterIncomplete
+	}
+	return res
+}
+
+// printFleetSummary renders the end-of-run aggregate. Failures, including
+// the regions discovery could not list, are on stderr.
+func printFleetSummary(results []clusterUpdateResult, failedRegions int) {
 	color.Cyan("\nFleet summary (%d cluster(s)):", len(results))
 	for _, r := range results {
 		status := summarizeClusterResult(r)
 		fmt.Printf("  %-28s %s\n", r.Cluster+" ("+r.Region+")", status)
 	}
-	if len(regionErrs) > 0 {
-		color.Red("Regions not listed (%d); their clusters were not checked:", len(regionErrs))
-		for _, re := range regionErrs {
-			fmt.Printf("  %-28s %s\n", re.Region, color.RedString("discovery failed: %s", re.Error))
-		}
+	if failedRegions > 0 {
+		color.Red("%d region(s) could not be listed; their clusters were not checked (see INCOMPLETE DATA)", failedRegions)
 	}
 }
 
 func summarizeClusterResult(r clusterUpdateResult) string {
-	switch {
-	case r.HealthBlocked:
-		return color.RedString("health-blocked (%s)", r.Error)
-	case r.HealthWarned:
-		return color.YellowString("health warnings (%s)", r.Error)
-	case r.Error != "":
-		return color.RedString("failed: %s", r.Error)
-	case len(r.Outcomes.Failed) > 0:
-		return color.RedString("%d update(s) failed", len(r.Outcomes.Failed))
-	case r.Interrupted && len(r.Outcomes.Started) > 0:
-		return color.YellowString("interrupted (update continues in AWS; check with refresh nodegroup list %s)", r.Cluster)
-	case r.Interrupted:
+	run := updateRun{nodegroups: r.Nodegroups}
+	started := len(run.started())
+	skipped := run.count(ngSkipped)
+	switch r.Status {
+	case clusterHealthBlocked:
+		return color.RedString("health-blocked (%s)", healthProblemsOf(r.Health))
+	case clusterHealthWarned:
+		return color.YellowString("health warnings (%s)", healthProblemsOf(r.Health))
+	case clusterFailed:
+		n := len(r.run.failures())
+		if r.Failure != nil {
+			n++
+		}
+		return color.RedString("failed: %d failure(s), see INCOMPLETE DATA", n)
+	case clusterInterrupted:
+		if started > 0 {
+			return color.YellowString("interrupted (update continues in AWS; check with refresh nodegroup list %s)", r.Cluster)
+		}
 		return color.YellowString("interrupted before any update started")
-	case r.TimedOut:
-		return color.YellowString("monitoring timed out (update may still be running; check with refresh nodegroup list %s)", r.Cluster)
-	case r.VerifyFailed:
-		return color.YellowString("updated %d, verification issues", len(r.Outcomes.Started))
-	case len(r.Outcomes.Started) > 0:
-		return color.GreenString("updated %d, skipped %d, custom %d",
-			len(r.Outcomes.Started), len(r.Outcomes.Skipped), len(r.Outcomes.Custom))
+	case clusterTimedOut:
+		return color.YellowString("timed out (--wait-timeout; an update may still be running; check with refresh nodegroup list %s)", r.Cluster)
+	case clusterNotAttempted:
+		return color.YellowString("not started (the run was interrupted)")
+	case clusterVerifyFailed:
+		return color.YellowString("updated %d, verification issues", started)
+	case clusterIncomplete:
+		return color.YellowString("updated %d, skipped %d, some data could not be read", started, skipped)
 	default:
-		return color.GreenString("nothing to update (skipped %d, custom %d)",
-			len(r.Outcomes.Skipped), len(r.Outcomes.Custom))
+		if started > 0 {
+			return color.GreenString("updated %d, skipped %d", started, skipped)
+		}
+		return color.GreenString("nothing to update (skipped %d)", skipped)
 	}
 }
 
+// healthProblemsOf names the checks behind a health verdict, or says there
+// is none.
+func healthProblemsOf(summary *health.HealthSummary) string {
+	if summary == nil {
+		return "no verdict"
+	}
+	return healthProblems(*summary)
+}
+
 // fleetExit returns the worst (highest) exit code across the run:
-// 5 verification, 4 update-failed or a region that discovery could not list,
-// 3 health-blocked, 2 health warnings that stopped a cluster (--health-only or
-// --require-healthy), 1 interrupted or monitor timeout (as in the
-// single-cluster updateExit), else 0.
-func fleetExit(results []clusterUpdateResult, regionErrs []regionDiscoveryError) error {
+// 5 verification, 4 a failed or incomplete cluster or a region that
+// discovery could not list, 3 health-blocked, 2 health warnings that stopped
+// a cluster (--health-only or --require-healthy), 1 interrupted, timed out,
+// or not started (as in the single-cluster updateExit), else 0.
+func fleetExit(results []clusterUpdateResult, failedRegions []diag.Failure) error {
 	worst := 0
 	bump := func(code int) {
 		if code > worst {
 			worst = code
 		}
 	}
-	if len(regionErrs) > 0 {
-		bump(4)
+	if len(failedRegions) > 0 {
+		bump(runner.ExitIncomplete)
 	}
 	for _, r := range results {
-		switch {
-		case r.HealthBlocked:
-			bump(3)
-		case r.HealthWarned:
-			bump(2)
-		case r.Error != "" || len(r.Outcomes.Failed) > 0:
-			bump(4)
-		case r.Interrupted || r.TimedOut:
-			bump(1)
-		case r.VerifyFailed:
-			bump(5)
+		switch r.Status {
+		case clusterFailed, clusterIncomplete:
+			bump(runner.ExitIncomplete)
+		case clusterHealthBlocked:
+			bump(runner.ExitBlocked)
+		case clusterHealthWarned:
+			bump(runner.ExitNeedsAttention)
+		case clusterInterrupted, clusterTimedOut, clusterNotAttempted:
+			bump(runner.ExitError)
+		case clusterVerifyFailed:
+			bump(runner.ExitVerifyFailed)
 		}
 	}
 	if worst == 0 {

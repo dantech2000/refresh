@@ -218,13 +218,13 @@ func TestBuildPlan_WarningInsightDoesNotBlock(t *testing.T) {
 		t.Fatalf("WARNING insight must not block: %v", plan.Blockers())
 	}
 	found := false
-	for _, w := range plan.Warnings {
+	for _, w := range plan.Notices {
 		if strings.Contains(w, "Deprecated APIs") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("warnings = %v, want the insight surfaced", plan.Warnings)
+		t.Fatalf("notices = %v, want the insight surfaced", plan.Notices)
 	}
 }
 

@@ -2,7 +2,6 @@ package addons
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"go.uber.org/goleak"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
@@ -74,13 +74,16 @@ func TestUpdateAll_ParallelDeadlineFillsUndispatched(t *testing.T) {
 			continue
 		}
 		seen[r.AddonName] = true
-		if !strings.HasPrefix(r.Status, "FAILED") {
-			t.Errorf("%s: Status = %q, want FAILED", r.AddonName, r.Status)
+		if r.Status != StatusFailed && r.Status != StatusNotAttempted || !r.Failed() {
+			t.Errorf("%s: Status = %q (failure %+v), want Failed or NotAttempted with a failure", r.AddonName, r.Status, r.Failure)
 		}
 		if r.PreviousVersion != "v1.0.0" {
 			t.Errorf("%s: PreviousVersion = %q, want v1.0.0", r.AddonName, r.PreviousVersion)
 		}
-		if strings.Contains(r.Status, "not attempted") {
+		if r.Status == StatusNotAttempted {
+			if r.Failure.Reason != diag.ReasonNotAttempted || r.Failure.Cluster == "" {
+				t.Errorf("%s: failure = %+v, want NotAttempted with the cluster", r.AddonName, r.Failure)
+			}
 			notAttempted++
 		}
 	}

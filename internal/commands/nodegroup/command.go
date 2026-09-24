@@ -162,16 +162,18 @@ Unattended / CI use:
    --yes              skip confirmation prompts (a nodegroup pattern that is
                       not an exact name, warn-level health findings)
    --require-healthy  treat warn-level health findings as a hard stop
-   -o json|yaml       print one document on stdout: the run summary
-                      (started/skipped/custom/failed), the dry-run plan, or
-                      the --health-only verdict; notices go to stderr
+   -o json|yaml       print one document on stdout: the run document (a
+                      status per nodegroup, and the failures), the dry-run
+                      plan, or the --health-only verdict; notices go to stderr
    Without a TTY, with --quiet, or with -o json|yaml, a run that needs a
    prompt fails fast unless --yes is given.
 
 Exit codes:
-   0  success            1  error, interrupt, or monitoring timeout
+   0  success            1  error, interrupt, monitoring timeout, or a roll
+                            that ended Failed/Cancelled
    2  health warnings (--health-only / --require-healthy)
-   3  health blocked     4  one or more nodegroup updates failed to start
+   3  health blocked     4  a failure: a nodegroup that could not be read,
+                            or an update that could not start
    5  post-roll verification found issues
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json`,

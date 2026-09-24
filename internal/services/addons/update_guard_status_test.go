@@ -16,7 +16,7 @@ import (
 // re-applied (the repair path), and one already updating at the target is
 // reported IN_PROGRESS instead of up to date.
 func TestUpdate_VersionGuardHonorsStatus(t *testing.T) {
-	inProgress := string(ekstypes.UpdateStatusInProgress)
+	started := StatusStarted // the update was submitted
 	cases := []struct {
 		name       string
 		status     ekstypes.AddonStatus
@@ -26,9 +26,9 @@ func TestUpdate_VersionGuardHonorsStatus(t *testing.T) {
 		wantUpdate bool
 	}{
 		{name: "active at target", status: ekstypes.AddonStatusActive, installed: "v1.19.0", version: "v1.19.0", wantStatus: StatusUpToDate},
-		{name: "degraded at target", status: ekstypes.AddonStatusDegraded, installed: "v1.19.0", version: "v1.19.0", wantStatus: inProgress, wantUpdate: true},
-		{name: "update failed at latest", status: ekstypes.AddonStatusUpdateFailed, installed: "v1.19.0", version: "latest", wantStatus: inProgress, wantUpdate: true},
-		{name: "create failed at target", status: ekstypes.AddonStatusCreateFailed, installed: "v1.19.0", version: "v1.19.0", wantStatus: inProgress, wantUpdate: true},
+		{name: "degraded at target", status: ekstypes.AddonStatusDegraded, installed: "v1.19.0", version: "v1.19.0", wantStatus: started, wantUpdate: true},
+		{name: "update failed at latest", status: ekstypes.AddonStatusUpdateFailed, installed: "v1.19.0", version: "latest", wantStatus: started, wantUpdate: true},
+		{name: "create failed at target", status: ekstypes.AddonStatusCreateFailed, installed: "v1.19.0", version: "v1.19.0", wantStatus: started, wantUpdate: true},
 		{name: "updating at target", status: ekstypes.AddonStatusUpdating, installed: "v1.19.0", version: "latest", wantStatus: StatusInProgress},
 		{name: "degraded above latest is not downgraded", status: ekstypes.AddonStatusDegraded, installed: "v1.20.0", version: "latest", wantStatus: StatusUpToDate},
 	}
@@ -89,7 +89,7 @@ func TestUpdateAll_ReappliesDegradedAtTarget(t *testing.T) {
 	for _, r := range results {
 		want := StatusUpToDate
 		if r.AddonName == "coredns" {
-			want = string(ekstypes.UpdateStatusInProgress)
+			want = StatusStarted
 		}
 		if r.Status != want {
 			t.Errorf("%s status = %s, want %s", r.AddonName, r.Status, want)

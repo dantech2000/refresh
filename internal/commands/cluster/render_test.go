@@ -104,12 +104,12 @@ func TestStepMarkerAndNote(t *testing.T) {
 
 // ── renderPlan ─────────────────────────────────────────────────────────────
 
-func TestRenderPlan_ShowsPathHopsAndWarnings(t *testing.T) {
+func TestRenderPlan_ShowsPathHopsAndNotices(t *testing.T) {
 	plan := &upgrade.Plan{
 		ClusterName:    "prod",
 		CurrentVersion: "1.30",
 		TargetVersion:  "1.32",
-		Warnings:       []string{"custom AMI nodegroups will be skipped"},
+		Notices:        []string{"custom AMI nodegroups will be skipped"},
 		Hops: []upgrade.Hop{
 			{
 				From: "1.30", To: "1.31",
@@ -127,7 +127,7 @@ func TestRenderPlan_ShowsPathHopsAndWarnings(t *testing.T) {
 		},
 	}
 	out := captureStdout(t, func() { renderPlan(plan) })
-	for _, want := range []string{"prod", "1.30 → 1.31 → 1.32", "warning", "Hop 1.30 → 1.31", "control plane → 1.31", "2 blocking insights"} {
+	for _, want := range []string{"prod", "1.30 → 1.31 → 1.32", "notice", "Hop 1.30 → 1.31", "control plane → 1.31", "2 blocking insights"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderPlan output missing %q; got:\n%s", want, out)
 		}
@@ -146,11 +146,12 @@ func TestRenderReport_Nil(t *testing.T) {
 func TestRenderReport_CompletedFailedRemaining(t *testing.T) {
 	report := &upgrade.Report{
 		Completed: []string{"control plane → 1.31"},
-		FailedAt:  "addon coredns update",
+		Status:    upgrade.RunFailed,
+		StoppedAt: "addon coredns update",
 		Remaining: []string{"nodegroup workers"},
 	}
 	out := captureStdout(t, func() { renderReport(os.Stdout, report) })
-	for _, want := range []string{"completed:", "control plane → 1.31", "failed at:", "addon coredns update", "remaining:", "nodegroup workers"} {
+	for _, want := range []string{"completed:", "control plane → 1.31", "stopped at:", "addon coredns update (Failed)", "remaining:", "nodegroup workers"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderReport output missing %q; got:\n%s", want, out)
 		}

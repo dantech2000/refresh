@@ -138,8 +138,8 @@ func TestUpdate_SingleNonExactPatternWithYes(t *testing.T) {
 		t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	if !containsItem(doc["started"], "payments-web") {
-		t.Errorf("started = %v, want [payments-web]", doc["started"])
+	if ng := nodegroupEntries(t, doc)["payments-web"]; ng["updateId"] == nil {
+		t.Errorf("payments-web = %v, want a started update", ng)
 	}
 	if !strings.Contains(stderr, `using the only partial match "payments-web"`) {
 		t.Errorf("stderr does not name the accepted match; got:\n%s", stderr)
@@ -160,8 +160,8 @@ func TestUpdate_ExactNodegroupNameNeedsNoConfirmation(t *testing.T) {
 		t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	if started, _ := doc["started"].([]any); len(started) != 1 || started[0] != "web" {
-		t.Errorf("started = %v, want [web]", doc["started"])
+	if ngs := nodegroupEntries(t, doc); len(ngs) != 1 || ngs["web"]["updateId"] == nil {
+		t.Errorf("nodegroups = %v, want web started", doc["nodegroups"])
 	}
 	if calledPath(srv, "/node-groups/payments-web/update-version") {
 		t.Error("an exact name must not also roll a substring sibling")
@@ -205,8 +205,8 @@ func TestFleetUpdate_NonExactPatternNeedsYes(t *testing.T) {
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 	entry := doc["clusters"].([]any)[0].(map[string]any)
-	if outcomes, _ := entry["outcomes"].(map[string]any); !containsItem(outcomes["started"], "payments-web") {
-		t.Errorf("fleet outcomes = %v, want payments-web started", entry["outcomes"])
+	if ng := nodegroupEntries(t, entry)["payments-web"]; ng["updateId"] == nil || entry["status"] != "Succeeded" {
+		t.Errorf("fleet entry = %v, want payments-web started and the cluster Succeeded", entry)
 	}
 	if !strings.Contains(stderr, `using the only partial match "payments-web"`) {
 		t.Errorf("stderr does not name the accepted match; got:\n%s", stderr)
@@ -291,8 +291,8 @@ func TestUpdate_RerollDoesNotForce(t *testing.T) {
 				t.Fatalf("update %s: %v\nstderr:\n%s", tc.flag, err, stderr)
 			}
 			doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-			if !containsItem(doc["started"], "web") {
-				t.Fatalf("started = %v, want [web]", doc["started"])
+			if ng := nodegroupEntries(t, doc)["web"]; ng["updateId"] == nil {
+				t.Fatalf("web = %v, want a started update", ng)
 			}
 			if got := srv.Cluster("prod").Nodegroups[0].UpdateForce; got != tc.wantForce {
 				t.Errorf("UpdateNodegroupVersion force = %v, want %v", got, tc.wantForce)
@@ -315,20 +315,19 @@ func TestUpdate_DryRunRecordsReroll(t *testing.T) {
 }
 
 // Fleet mode keeps the single-cluster exit codes for the health gate: a
-// warning stop is 2 (healthWarned), a block is 3 (healthBlocked).
+// warning stop is 2 (HealthWarned), a block is 3 (HealthBlocked).
 func TestFleetUpdate_HealthVerdictExitCodes(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		status      string
-		args        []string
-		wantCode    int
-		wantBlocked bool
-		wantWarned  bool
+		name       string
+		status     string
+		args       []string
+		wantCode   int
+		wantStatus string
 	}{
-		{"health-only warn", "", []string{"--health-only"}, 2, false, true},
-		{"require-healthy warn", "", []string{"--require-healthy", "--yes"}, 2, false, true},
-		{"health-only block", "DEGRADED", []string{"--health-only"}, 3, true, false},
-		{"block", "DEGRADED", []string{"--yes"}, 3, true, false},
+		{"health-only warn", "", []string{"--health-only"}, 2, "HealthWarned"},
+		{"require-healthy warn", "", []string{"--require-healthy", "--yes"}, 2, "HealthWarned"},
+		{"health-only block", "DEGRADED", []string{"--health-only"}, 3, "HealthBlocked"},
+		{"block", "DEGRADED", []string{"--yes"}, 3, "HealthBlocked"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31", Status: tc.status}))
@@ -339,10 +338,10 @@ func TestFleetUpdate_HealthVerdictExitCodes(t *testing.T) {
 			}
 			doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
 			entry := doc["clusters"].([]any)[0].(map[string]any)
-			warned, _ := entry["healthWarned"].(bool)
-			if entry["healthBlocked"] != tc.wantBlocked || warned != tc.wantWarned {
-				t.Errorf("healthBlocked=%v healthWarned=%v, want %v/%v", entry["healthBlocked"], entry["healthWarned"], tc.wantBlocked, tc.wantWarned)
+			if entry["status"] != tc.wantStatus {
+				t.Errorf("status = %v, want %s", entry["status"], tc.wantStatus)
 			}
+			requireNoFailures(t, doc)
 			if calledPath(srv, "/update-version") {
 				t.Error("a cluster stopped by the health gate must not start an update")
 			}

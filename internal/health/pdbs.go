@@ -138,6 +138,7 @@ func (hc *HealthChecker) checkPodDisruptionBudgets(ctx context.Context, clusterN
 		result.Status = StatusWarn
 		result.Score = 60
 		result.Message = fmt.Sprintf("Failed to list PDBs: %v", err)
+		result.failures = append(result.failures, clusterFailure(clusterName, "", fmt.Errorf("listing PodDisruptionBudgets: %w", err)))
 		return result
 	}
 
@@ -151,6 +152,7 @@ func (hc *HealthChecker) checkPodDisruptionBudgets(ctx context.Context, clusterN
 		result.Status = StatusWarn
 		result.Score = 60
 		result.Message = fmt.Sprintf("Failed to list namespaces: %v", err)
+		result.failures = append(result.failures, clusterFailure(clusterName, "", fmt.Errorf("listing namespaces: %w", err)))
 		// applyDrainBlockers replaces Message, so keep the error in Details.
 		result.Details = append(result.Details, result.Message)
 		applyDrainBlockers(&result, report)

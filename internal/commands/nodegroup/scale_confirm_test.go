@@ -121,16 +121,19 @@ func TestScale_PromptThenPDBGate(t *testing.T) {
 		wantErr string
 	}{
 		{"declined", "n", nil, "cancelled"},
-		{"accepted", "y", nil, "PDB validation for prod/ng-a"},
-		{"--yes", "", []string{"--yes"}, "PDB validation for prod/ng-a"},
+		{"accepted", "y", nil, "the PodDisruptionBudgets could not be checked"},
+		{"--yes", "", []string{"--yes"}, "the PodDisruptionBudgets could not be checked"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withScalePrompt(t, true, tc.answer)
 			srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5}))
 			args := append([]string{"scale", "prod", "-n", "ng-a", "--desired", "1", "--check-pdbs"}, tc.args...)
-			_, stderr, err := runNodegroup(t, args...)
+			stdout, stderr, err := runNodegroup(t, args...)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("err = %v, want %q\nstderr:\n%s", err, tc.wantErr, stderr)
+			}
+			if tc.answer != "n" {
+				requireTableFailure(t, stdout, stderr, "cluster prod (us-east-1): Unknown: listing PodDisruptionBudgets: no Kubernetes client configured")
 			}
 			if calledPath(srv, "/update-config") {
 				t.Error("UpdateNodegroupConfig called")
@@ -157,7 +160,8 @@ func TestFormatScaleQuestion(t *testing.T) {
 }
 
 // A --check-pdbs dry run whose PDBs can't be read shows the preview, then
-// fails (exit 1) as the real run would; with --force it exits 0.
+// fails (exit 1) as the real run would; with --force it exits 4: the scale
+// would go ahead, but the PDBs could not be checked.
 func TestScale_DryRunPDBGateExit(t *testing.T) {
 	t.Setenv("KUBECONFIG", t.TempDir()+"/none")
 	for _, tc := range []struct {
@@ -166,7 +170,7 @@ func TestScale_DryRunPDBGateExit(t *testing.T) {
 		wantCode int
 	}{
 		{"unreadable PDBs fail", nil, runner.ExitError},
-		{"--force passes", []string{"--force"}, runner.ExitOK},
+		{"--force is incomplete", []string{"--force"}, runner.ExitIncomplete},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withScalePrompt(t, false, "")
@@ -176,9 +180,10 @@ func TestScale_DryRunPDBGateExit(t *testing.T) {
 			if got := runner.ExitCodeOf(err); got != tc.wantCode {
 				t.Fatalf("exit code = %d (err %v), want %d\nstderr:\n%s", got, err, tc.wantCode, stderr)
 			}
-			if tc.wantCode != runner.ExitOK && !strings.Contains(err.Error(), "PDB validation for prod/ng-a") {
-				t.Errorf("err = %v, want the PDB validation error", err)
+			if tc.wantCode == runner.ExitError && !strings.Contains(err.Error(), "the PodDisruptionBudgets could not be checked") {
+				t.Errorf("err = %v, want the PDB gate error", err)
 			}
+			requireTableFailure(t, stdout, stderr, "cluster prod (us-east-1): Unknown: listing PodDisruptionBudgets: no Kubernetes client configured")
 			if !strings.Contains(stdout, "No changes were made") {
 				t.Errorf("stdout missing the preview:\n%s", stdout)
 			}

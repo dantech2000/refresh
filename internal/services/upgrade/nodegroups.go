@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -61,7 +63,7 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 
 	nodegroups, err := s.listNodegroupStates(ctx, clusterName)
 	if err != nil {
-		return err
+		return onItem(diag.KindCluster, clusterName, "", err)
 	}
 
 	builtin := s.defaultNodegroupGate(clusterName)
@@ -90,7 +92,7 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 			progress("nodegroup %s is UPDATING (in-flight roll from a previous run); attaching and waiting for it to settle", ng.Name)
 			version, err := s.waitForNodegroupSettled(ctx, clusterName, ng.Name, progress)
 			if err != nil {
-				return fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", ng.Name, err)
+				return onItem(diag.KindNodegroup, ng.Name, diag.OpDescribeNodegroup, fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", ng.Name, err))
 			}
 			if versionAtLeast(version, targetVersion) {
 				progress("nodegroup %s reached %s", ng.Name, version)
@@ -99,11 +101,11 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 		}
 
 		if err := builtin(ctx, ng.Name); err != nil {
-			return fmt.Errorf("pre-flight gate failed for nodegroup %s (remaining nodegroups not attempted): %w", ng.Name, err)
+			return gateFailed(ng.Name, err)
 		}
 		if opts.Gate != nil {
 			if err := opts.Gate(ctx, ng.Name); err != nil {
-				return fmt.Errorf("pre-flight gate failed for nodegroup %s (remaining nodegroups not attempted): %w", ng.Name, err)
+				return gateFailed(ng.Name, err)
 			}
 		}
 
@@ -112,6 +114,17 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 		}
 	}
 	return nil
+}
+
+// gateFailed is the error of a pre-roll gate that stopped nodegroup name. A
+// gate that could not read the nodegroup carries the read as its failure.
+func gateFailed(name string, err error) error {
+	ge := &gateError{err: fmt.Errorf("pre-flight gate failed for nodegroup %s (remaining nodegroups not attempted): %w", name, err)}
+	var ie *itemError
+	if errors.As(err, &ie) {
+		ge.failures = []diag.Failure{diag.FromError(ie.kind, ie.name, "", ie.err)}
+	}
+	return ge
 }
 
 // rollNodegroup starts and watches a single nodegroup version roll.
@@ -129,7 +142,7 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 		return s.eksClient.UpdateNodegroupVersion(rc, input)
 	})
 	if err != nil {
-		return awsinternal.FormatAWSError(err, fmt.Sprintf("rolling nodegroup %s to %s", nodegroupName, targetVersion))
+		return onItem(diag.KindNodegroup, nodegroupName, diag.OpUpdateNodegroupVersion, awsinternal.FormatAWSError(err, fmt.Sprintf("rolling nodegroup %s to %s", nodegroupName, targetVersion)))
 	}
 
 	updateID := ""
@@ -169,7 +182,7 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 		}, fmt.Sprintf("nodegroup %s roll to %s", nodegroupName, targetVersion), waitProgress)
 	})
 	if err != nil {
-		return err
+		return &itemError{kind: diag.KindNodegroup, name: nodegroupName, updateID: updateID, err: diag.WithOperation(diag.OpDescribeUpdate, err)}
 	}
 	progress("nodegroup %s is at %s", nodegroupName, targetVersion)
 	return nil
@@ -221,7 +234,7 @@ func (s *Service) defaultNodegroupGate(clusterName string) NodegroupGate {
 			})
 		})
 		if err != nil {
-			return awsinternal.FormatAWSError(err, fmt.Sprintf("checking nodegroup %s", nodegroupName))
+			return onItem(diag.KindNodegroup, nodegroupName, diag.OpDescribeNodegroup, awsinternal.FormatAWSError(err, fmt.Sprintf("checking nodegroup %s", nodegroupName)))
 		}
 		ng := out.Nodegroup
 		if ng == nil {

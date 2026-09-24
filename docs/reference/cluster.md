@@ -178,7 +178,7 @@ Insights (up to 5m) and blocks on ERROR or UNKNOWN insights, or when EKS has
 not evaluated the hop version yet. EKS itself no longer enforces insights on a
 version update, so this is the only deprecated-API check; --skip-insights-check
 turns it off. --dry-run starts no refresh: it reads existing insights, and
-missing ones are a warning instead of a blocker.
+missing ones are a notice instead of a blocker.
 
 Before each nodegroup roll, pre-flight health checks run, including
 PodDisruptionBudgets that would block the drain (they need Kubernetes access
@@ -201,11 +201,11 @@ Examples:
    # Non-interactive (CI) run
    refresh cluster upgrade -c prod-east --to 1.33 --yes
 
-   # Machine-readable run: one JSON document {plan, report} on stdout,
-   # progress on stderr (-o json/yaml never prompts, so it needs --yes)
+   # Machine-readable run: one JSON document {plan, report, failures} on
+   # stdout, progress on stderr (-o json/yaml never prompts, so it needs --yes)
    refresh cluster upgrade -c prod-east --to 1.33 --yes -o json
 
-Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run). See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run); 4 the planner could not read something. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -226,6 +226,6 @@ Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, fail
 | `--wait-timeout duration` | — | `4h0m0s` | How long to wait for the whole upgrade to finish (0 = no limit; not read from REFRESH_TIMEOUT, which only sets API timeouts) |
 | `--timeout, -t duration` | — | — | Deprecated: use --wait-timeout |
 | `--poll-interval duration` | — | `15s` | How often to poll in-flight updates |
-| `--format, -o string` | — | `table` | Output format (table, json, yaml, plain). json/yaml print one document: the plan with --dry-run or when blocked, else {plan, report} after the run (requires --yes) |
+| `--format, -o string` | — | `table` | Output format (table, json, yaml, plain). json/yaml print one document: the plan with --dry-run or when blocked, else {plan, report, failures} after the run (requires --yes) |
 | `--help, -h` | — | — | show help |
 

@@ -10,6 +10,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/common"
 )
 
@@ -22,10 +23,11 @@ import (
 // ctx.Err() — the upgrade keeps running server-side and a rerun re-attaches.
 func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVersion string, progress ProgressFunc) error {
 	progress = ensureProgress(progress)
+	onCluster := func(op string, err error) error { return onItem(diag.KindCluster, clusterName, op, err) }
 
 	cluster, err := s.describeCluster(ctx, clusterName)
 	if err != nil {
-		return err
+		return onCluster(diag.OpDescribeCluster, err)
 	}
 
 	if versionAtLeast(aws.ToString(cluster.Version), targetVersion) {
@@ -39,7 +41,7 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 		progress("cluster is already UPDATING; attaching to the in-flight update")
 		cluster, err = s.waitForClusterActive(ctx, clusterName, progress)
 		if err != nil {
-			return err
+			return onCluster(diag.OpDescribeCluster, err)
 		}
 		if versionAtLeast(aws.ToString(cluster.Version), targetVersion) {
 			progress("control plane reached %s", aws.ToString(cluster.Version))
@@ -60,7 +62,7 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 		return s.eksClient.UpdateClusterVersion(rc, input)
 	})
 	if err != nil {
-		return awsinternal.FormatAWSError(err, fmt.Sprintf("upgrading control plane of %s to %s", clusterName, targetVersion))
+		return onCluster(diag.OpUpdateClusterVersion, awsinternal.FormatAWSError(err, fmt.Sprintf("upgrading control plane of %s to %s", clusterName, targetVersion)))
 	}
 
 	updateID := ""
@@ -74,7 +76,7 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 			Name:     aws.String(clusterName),
 			UpdateId: aws.String(updateID),
 		}, fmt.Sprintf("control plane upgrade to %s", targetVersion), progress); err != nil {
-			return err
+			return &itemError{kind: diag.KindCluster, name: clusterName, updateID: updateID, err: diag.WithOperation(diag.OpDescribeUpdate, err)}
 		}
 	}
 
@@ -82,10 +84,10 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 	// addon phase may start.
 	cluster, err = s.waitForClusterActive(ctx, clusterName, progress)
 	if err != nil {
-		return err
+		return onCluster(diag.OpDescribeCluster, err)
 	}
 	if !versionAtLeast(aws.ToString(cluster.Version), targetVersion) {
-		return fmt.Errorf("control plane reports version %s after the upgrade to %s finished", aws.ToString(cluster.Version), targetVersion)
+		return onCluster("", fmt.Errorf("control plane reports version %s after the upgrade to %s finished", aws.ToString(cluster.Version), targetVersion))
 	}
 	progress("control plane is ACTIVE at %s", aws.ToString(cluster.Version))
 	return nil

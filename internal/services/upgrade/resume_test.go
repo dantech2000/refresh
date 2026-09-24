@@ -166,8 +166,8 @@ func TestExecute_PerHopReadinessBlocksLaterHop(t *testing.T) {
 	if !strings.Contains(err.Error(), "Deprecated APIs removed in 1.33") {
 		t.Fatalf("err = %v, want the blocking insight named", err)
 	}
-	if !strings.Contains(report.FailedAt, "1.32 → 1.33") {
-		t.Fatalf("failedAt = %q, want the 1.33 control-plane phase", report.FailedAt)
+	if !strings.Contains(report.StoppedAt, "1.32 → 1.33") {
+		t.Fatalf("stoppedAt = %q, want the 1.33 control-plane phase", report.StoppedAt)
 	}
 	if w.clusterVersion != "1.32" {
 		t.Fatalf("cluster version = %s, want 1.32 (1.33 must not start)", w.clusterVersion)

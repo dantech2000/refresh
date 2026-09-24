@@ -190,7 +190,7 @@ func TestUpdate(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
-	if result.Status != "DRY_RUN" {
+	if result.Status != StatusDryRun {
 		t.Errorf("Status = %s, want DRY_RUN", result.Status)
 	}
 
@@ -367,7 +367,7 @@ func TestAddonUpdateResult(t *testing.T) {
 		PreviousVersion: "v1.14.0",
 		NewVersion:      "v1.15.0",
 		UpdateID:        "update-123",
-		Status:          "IN_PROGRESS",
+		Status:          StatusInProgress,
 		StartedAt:       time.Now(),
 	}
 
@@ -379,14 +379,14 @@ func TestAddonUpdateResult(t *testing.T) {
 func TestAddonUpdateResult_HealthIssuesField(t *testing.T) {
 	result := AddonUpdateResult{
 		AddonName:    "vpc-cni",
-		Status:       "COMPLETED_WITH_ISSUES",
+		Status:       StatusCompletedWithIssues,
 		HealthIssues: "addon vpc-cni is ACTIVE but has 1 health issue(s)",
 	}
 
 	if result.HealthIssues == "" {
 		t.Error("expected non-empty HealthIssues")
 	}
-	if result.Status != "COMPLETED_WITH_ISSUES" {
+	if result.Status != StatusCompletedWithIssues {
 		t.Errorf("Status = %s, want COMPLETED_WITH_ISSUES", result.Status)
 	}
 }

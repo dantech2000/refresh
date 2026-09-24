@@ -167,8 +167,8 @@ func TestExecute_MidPlanFailureThenResumedRerun(t *testing.T) {
 	if len(report.Completed) != 1 || !strings.Contains(report.Completed[0], "control plane") {
 		t.Fatalf("completed = %v, want the control-plane phase", report.Completed)
 	}
-	if !strings.Contains(report.FailedAt, "addons") {
-		t.Fatalf("failedAt = %q, want the addon phase", report.FailedAt)
+	if !strings.Contains(report.StoppedAt, "addons") {
+		t.Fatalf("stoppedAt = %q, want the addon phase", report.StoppedAt)
 	}
 	if len(report.Remaining) != 1 || !strings.Contains(report.Remaining[0], "nodegroup") {
 		t.Fatalf("remaining = %v, want the nodegroup phase (halted before it)", report.Remaining)
@@ -202,7 +202,7 @@ func TestExecute_MidPlanFailureThenResumedRerun(t *testing.T) {
 	if w.ngVersions["workers-a"] != "1.32" {
 		t.Fatalf("nodegroup version = %s, want 1.32", w.ngVersions["workers-a"])
 	}
-	if report.FailedAt != "" || len(report.Remaining) != 0 {
+	if report.StoppedAt != "" || len(report.Remaining) != 0 || report.Status != RunSucceeded {
 		t.Fatalf("rerun report = %+v, want clean completion", report)
 	}
 }
@@ -267,8 +267,8 @@ func TestExecute_InterruptLeavesResumeGuidance(t *testing.T) {
 	if !strings.Contains(err.Error(), "continue server-side") || !strings.Contains(err.Error(), "rerun") {
 		t.Fatalf("err = %v, want server-side continuation + resume guidance", err)
 	}
-	if !strings.Contains(report.FailedAt, "control plane") {
-		t.Fatalf("failedAt = %q, want the control-plane phase", report.FailedAt)
+	if !strings.Contains(report.StoppedAt, "control plane") {
+		t.Fatalf("stoppedAt = %q, want the control-plane phase", report.StoppedAt)
 	}
 }
 

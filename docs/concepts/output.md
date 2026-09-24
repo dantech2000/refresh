@@ -50,16 +50,36 @@ exception: stdout gets the run summary with nothing started and the `health`
 verdict, the health report goes to stderr, and the error names the checks
 that blocked or warned.
 
-The documents for the mutating commands:
+The documents for the mutating commands. Each one has a top-level
+`failures` list (see [Failures](#failures)). Each item of a run has a
+`status`, and a `failure` when the item failed; the same failure is in the
+top-level list.
 
 | Command | Document on stdout |
 |---|---|
-| `nodegroup update` | The run summary: `cluster`, `started`, `skipped`, `customUnmanaged`, `failed` (updates that did not start), `rollFailures`, `verification`, and `health` (the pre-flight verdict, when a check ran). Each `rollFailures` entry is a started update that did not succeed: `nodegroup`, `updateId`, `status` (`Failed`, `Cancelled`, or `Unmonitored` when refresh could not poll it), and `error`. Every list is `[]` when empty |
-| `nodegroup update --dry-run` | The preview: `cluster`, `dryRun`, `force`, and one `nodegroups` entry per nodegroup with its `action` (`update`, `force-update`, `skip-updating`, `skip-latest`, `skip-custom`) |
-| `nodegroup update --health-only` | The health verdict. The exit code is `0`, `2`, or `3` |
-| `nodegroup update --all-clusters` | `clusters` (one result per cluster, with its run summary under `outcomes` and its `health` verdict when a check ran, or one preview with `--dry-run`), plus `discoveryErrors` and `skippedRegions`. With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
-| `cluster upgrade --dry-run` | The plan |
-| `cluster upgrade --yes` | `{plan, report}`: the plan the run started from and what it did (`completed`, `failedAt`, `remaining`). A blocked plan prints the plan alone and exits `3` |
+| `nodegroup update` | `cluster`, `nodegroups` (one entry per selected nodegroup: `name`, `status`, `updateId` once the update started, `reason` for a skip, `failure`), `verification`, `health` (the pre-flight verdict, when a check ran), and `failures` |
+| `nodegroup update --dry-run` | `cluster`, `dryRun`, `force`, `reroll`, one `nodegroups` entry per nodegroup with its `action` (`update`, `force-update`, `skip-updating`, `skip-latest`, `skip-custom`, or `unknown` with a `failure` when the nodegroup could not be read), and `failures` |
+| `nodegroup update --health-only` | The health verdict, with its own `failures` (the reads the checks could not make). The exit code is `0`, `2`, `3`, or `4` for a pass whose checks could not read everything |
+| `nodegroup update --all-clusters` | `clusters` (one entry per cluster: `cluster`, `region`, `status`, `nodegroups`, `verification`, `health`, and `failure` when the cluster itself failed; with `--dry-run`, `status` and a `plan` instead), `skippedRegions` (a notice: default-sweep regions these credentials can't use), and `failures` (every cluster's failures, and a `Region` failure for each region that could not be listed). With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
+| `addon update` | The result (`addonName`, `previousVersion`, `newVersion`, `updateId`, `status`, `healthIssues`, `warning`, `failure`, `startedAt`) and `failures` |
+| `addon update --all` | `cluster`, `dryRun`, `results` (one result per add-on), and `failures` |
+| `cluster upgrade --dry-run` | The plan: `hops`, `notices` (advisory lines that never change the exit code), and `failures` (the reads the planner could not make) |
+| `cluster upgrade --yes` | `{plan, report, failures}`: the plan the run started from, and what the run did: `status`, `completed`, `stoppedAt`, `remaining`, and `failure` (why it stopped). A blocked plan prints the plan alone and exits `3` |
+
+The status values:
+
+| Document | `status` values |
+|---|---|
+| `nodegroup update`, each nodegroup | `Started`, `Succeeded`, `Skipped`, `Failed`, `Cancelled`, `InProgress` (the run stopped watching an update that may still be running), `NotAttempted` |
+| `nodegroup update --all-clusters`, each cluster | `Succeeded`, `Incomplete`, `Failed`, `HealthBlocked`, `HealthWarned`, `VerifyFailed`, `Interrupted`, `TimedOut`, `NotAttempted`; with `--dry-run`: `Planned`, `Incomplete`, `Failed` |
+| `addon update`, each add-on | `DryRun`, `UpToDate`, `InProgress`, `Started`, `Completed`, `CompletedWithIssues`, `Unverified`, `WaitFailed`, `Failed`, `NotAttempted` |
+| `cluster upgrade`, the report | `Succeeded`, `Failed`, `Blocked`, `Interrupted`, `TimedOut`, `Aborted` |
+
+The command pages describe each value:
+[`nodegroup update`](../commands/nodegroup.md#json-document),
+[`addon update`](../commands/addon.md#waiting), and
+[`cluster upgrade`](../commands/cluster.md#json-document). New versions can
+add values; treat an unknown value as a failure you don't know how to handle.
 
 `cluster upgrade -o json|yaml` without `--dry-run` needs `--yes`, because it
 can't confirm each phase. It fails before any AWS call without it.
@@ -123,7 +143,9 @@ three come from the same list, so they always agree:
     appear only on stderr. The table view of a read command (`status`,
     `cluster list`, `cluster describe`, `cluster upgrade-check`, `nodegroup
     list`, `addon list`) lists the same lines at the end of its output,
-    under `INCOMPLETE DATA`, and does not repeat them on stderr.
+    under `INCOMPLETE DATA`, and does not repeat them on stderr. The table
+    view of a mutating command (`nodegroup update`, `nodegroup scale`,
+    `addon update`, `cluster upgrade`) does the same.
 - **The exit code.** A run with failures exits `4` (incomplete data), unless
   a code that wins over `4` also applies. Each command's order is in
   [Exit codes](exit-codes.md). The error message counts the failures by kind, for
@@ -258,8 +280,8 @@ skew). An empty list prints the header row only.
 
 `cluster upgrade -o plain` writes one row per plan step (`HOP`, `STEP`,
 `TYPE`, `TARGET`, `VERSION`, `STATUS`, `DESCRIPTION`, `REASON`). The plan's
-summary line, its warnings, and everything after the plan (prompts,
-progress, the report) go to stderr.
+summary line, its notices and failures, and everything after the plan
+(prompts, progress, the report) go to stderr.
 
 Skip the header with `NR>1` in awk or `tail -n +2`:
 

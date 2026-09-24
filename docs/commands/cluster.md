@@ -295,21 +295,24 @@ has no insights at all. The readiness step is **blocked** when:
 
 - an insight for the hop version reports `ERROR` or `UNKNOWN`,
 - EKS has no insights for the hop version yet, or
-- the refresh fails or does not finish in time.
+- the refresh fails or does not finish in time, or the insights can't be
+  read. The gate fails closed, and the read is also a
+  [failure](../concepts/output.md#failures) in the plan's `failures`.
 
 EKS no longer enforces insights when it updates the cluster version, so this
 gate is the only check for deprecated APIs and for the kubelet skew of nodes
 outside managed nodegroups (Fargate, Karpenter, self-managed, hybrid, and Auto
 Mode nodes). `--skip-insights-check` turns it off. Use it only when you have
-checked those yourself; the plan then carries a warning.
+checked those yourself; the plan then carries a notice.
 
 The refresh needs the IAM actions `eks:StartInsightsRefresh` and
 `eks:DescribeInsightsRefresh`, in addition to `eks:ListInsights`.
 
 `--dry-run` starts no refresh, because `StartInsightsRefresh` is a write API.
 It reads the insights EKS already has. `ERROR` insights still block the
-preview. Missing or `UNKNOWN` insights show as a warning, because a real run
+preview. Missing or `UNKNOWN` insights show as a notice, because a real run
 refreshes them first and blocks until EKS has evaluated the hop version.
+Insights that can't be read are a failure, so the dry run exits `4`.
 
 **Nodegroup pre-flight.** Before each nodegroup roll, after the nodegroup is
 confirmed `ACTIVE` with no health issues, `refresh` runs the same
@@ -389,13 +392,66 @@ CI, and `NO_COLOR` runs print text progress.
 | `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
 | `--quiet, -q` | Suppress progress output |
 | `--poll-interval` | How often to poll in-flight updates (default `15s`; must be greater than `0`) |
-| `--format, -o` | `table` (default), `json`, `yaml`, `plain`. With `json`/`yaml`, stdout gets one document: the plan for `--dry-run` or a blocked plan, else `{plan, report}` after the run. Progress goes to stderr, and a run without `--dry-run` needs `--yes`. With `plain`, stdout gets the plan as TSV and everything else goes to stderr |
+| `--format, -o` | `table` (default), `json`, `yaml`, `plain`. With `json`/`yaml`, stdout gets one document: the plan for `--dry-run` or a blocked plan, else `{plan, report, failures}` after the run. Progress goes to stderr, and a run without `--dry-run` needs `--yes`. With `plain`, stdout gets the plan as TSV and everything else goes to stderr |
 | `--wait-timeout` | How long to wait for the whole upgrade to finish (default `4h`; `0` = no limit; not read from `REFRESH_TIMEOUT`) |
 | `--timeout, -t` | Global API timeout when given before the subcommand (`refresh -t 2m cluster upgrade ...`). After the subcommand it is a deprecated alias of `--wait-timeout` in 0.11 and prints a warning |
 
 !!! tip "Exit code in dry-run"
     A dry-run (or any run) whose plan contains a **blocker** prints the plan and
-    exits `3` without mutating, so it works as a readiness gate in CI.
+    exits `3` without mutating, so it works as a readiness gate in CI. A plan
+    with no blocker whose planner could not read something (the check that
+    EKS offers the target version, the insights, or an add-on's version
+    catalog) exits `4`. A real run with such a failure goes ahead as before,
+    and exits `4` when it finishes.
+
+### JSON document
+
+With `-o json` or `-o yaml`, `--dry-run` and a blocked plan print the plan.
+An executed run prints `{plan, report, failures}`:
+
+```json
+{
+  "plan": {
+    "clusterName": "prod", "currentVersion": "1.31", "targetVersion": "1.32",
+    "hops": [{"from": "1.31", "to": "1.32", "steps": ["..."]}],
+    "notices": ["insight warnings for 1.32: Deprecated APIs removed in 1.32"],
+    "failures": []
+  },
+  "report": {
+    "status": "Failed",
+    "completed": [],
+    "stoppedAt": "control plane 1.31 → 1.32",
+    "remaining": ["addons for 1.32 (2 update(s), dependency order)"],
+    "failure": {"kind": "Update", "name": "prod", "region": "us-east-1",
+                "reason": "UpdateFailed", "retryable": false,
+                "error": "control plane upgrade to 1.32 failed: insufficient subnet IPs",
+                "updateId": "9c8b7a6d-..."}
+  },
+  "failures": [
+    {"kind": "Update", "name": "prod", "region": "us-east-1",
+     "reason": "UpdateFailed", "retryable": false,
+     "error": "control plane upgrade to 1.32 failed: insufficient subnet IPs",
+     "updateId": "9c8b7a6d-..."}
+  ]
+}
+```
+
+`plan.notices` are advisory and never change the exit code. `plan.failures`
+are the reads the planner could not make. `report.status` says how the run
+ended, and `report.failure` says why it stopped:
+
+| `report.status` | Meaning |
+|---|---|
+| `Succeeded` | Every pending phase finished, or there was nothing to do |
+| `Failed` | A phase failed (`failure` says why: for example `UpdateFailed`) |
+| `Blocked` | A gate stopped the run: the live readiness re-check, a pre-roll nodegroup gate, or an add-on's post-update health gate. `failure` is set when the gate could not read what it needed |
+| `Interrupted` | Ctrl+C or SIGTERM (`failure.reason` is `Interrupted`). Started EKS updates keep running |
+| `TimedOut` | `--wait-timeout` passed (`failure.reason` is `Timeout`). Started EKS updates keep running |
+| `Aborted` | You declined a phase confirmation |
+
+The top-level `failures` lists the plan's failures and the report's
+failure. Each is also named once: on stderr, or under `INCOMPLETE DATA` in
+the table view.
 
 !!! note "Kubernetes access for the live roll view"
     The nodegroup phase renders the same live per-node roll panel as

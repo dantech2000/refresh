@@ -217,7 +217,8 @@ func TestPrintScaleDryRunPDBGate(t *testing.T) {
 		},
 		"check failed": {
 			checkErr: errors.New("no Kubernetes client configured"),
-			want:     []string{"would be REFUSED", "no Kubernetes client configured"},
+			want:     []string{"would be REFUSED", "see INCOMPLETE DATA"},
+			notWant:  []string{"no Kubernetes client configured"}, // named once, in INCOMPLETE DATA
 		},
 		"check failed, forced": {
 			checkErr: errors.New("no Kubernetes client configured"),
@@ -247,7 +248,7 @@ func TestPrintScaleDryRunPDBGate(t *testing.T) {
 
 func TestWarnForcedScaleDown(t *testing.T) {
 	var buf bytes.Buffer
-	warnForcedScaleDown(&buf, "prod", "ng", blockedCheck(true), nil)
+	warnForcedScaleDown(&buf, "prod", "ng", blockedCheck(true))
 	out := buf.String()
 	for _, w := range []string{"--force", "prod/ng down from 3 to 1", "2 PodDisruptionBudget(s)", "app/web", "app/operator"} {
 		if !strings.Contains(out, w) {
@@ -256,15 +257,16 @@ func TestWarnForcedScaleDown(t *testing.T) {
 	}
 
 	buf.Reset()
-	warnForcedScaleDown(&buf, "prod", "ng", &nodegroupsvc.ScaleDownPDBCheck{CurrentDesired: 3, RequestedDesired: 1, ScaleDown: true}, nil)
+	warnForcedScaleDown(&buf, "prod", "ng", &nodegroupsvc.ScaleDownPDBCheck{CurrentDesired: 3, RequestedDesired: 1, ScaleDown: true})
 	if buf.Len() != 0 {
 		t.Errorf("no blockers should print nothing, got %q", buf.String())
 	}
 
+	// A check that could not run is a failure, reported once by the caller.
 	buf.Reset()
-	warnForcedScaleDown(&buf, "prod", "ng", nil, errors.New("listing PodDisruptionBudgets: forbidden"))
-	if !strings.Contains(buf.String(), "could not validate PodDisruptionBudgets") || !strings.Contains(buf.String(), "forbidden") {
-		t.Errorf("a failed check should be reported, got %q", buf.String())
+	warnForcedScaleDown(&buf, "prod", "ng", nil)
+	if buf.Len() != 0 {
+		t.Errorf("a failed check should print nothing here, got %q", buf.String())
 	}
 }
 

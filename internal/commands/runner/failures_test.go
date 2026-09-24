@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/diag"
@@ -56,5 +57,29 @@ func TestIncompleteExit(t *testing.T) {
 	}
 	if want := "incomplete data: 4 failure(s) (1 cluster, 2 nodegroup, 1 region)"; err.Error() != want {
 		t.Errorf("message = %q, want %q", err.Error(), want)
+	}
+}
+
+// WriteFailures names each failure once: in the table view's INCOMPLETE DATA
+// section on stdout, and for json, yaml, and plain on stderr.
+func TestWriteFailures(t *testing.T) {
+	f := diag.New(diag.KindNodegroup, "web", diag.ReasonThrottled, "Rate exceeded")
+	f.Cluster = "prod"
+	for _, tc := range []struct {
+		format        string
+		wantTableView bool
+	}{{"", true}, {"table", true}, {"json", false}, {"yaml", false}, {"plain", false}} {
+		var out, errOut bytes.Buffer
+		WriteFailures(tc.format, &out, &errOut, []diag.Failure{f})
+		table := strings.Contains(ui.StripANSI(out.String()), "INCOMPLETE DATA")
+		warned := strings.Contains(errOut.String(), "warning: nodegroup prod/web: Throttled: Rate exceeded")
+		if table != tc.wantTableView || warned == tc.wantTableView {
+			t.Errorf("format %q: stdout section %v, stderr line %v; want the failure named once in the right place", tc.format, table, warned)
+		}
+	}
+	var out, errOut bytes.Buffer
+	WriteFailures("table", &out, &errOut, nil)
+	if out.Len()+errOut.Len() != 0 {
+		t.Errorf("no failures wrote %q / %q", out.String(), errOut.String())
 	}
 }

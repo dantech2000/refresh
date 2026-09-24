@@ -35,12 +35,14 @@ func TestUpdateMachineOutput_SkipPath(t *testing.T) {
 			if doc["cluster"] != "prod" {
 				t.Errorf("cluster = %v, want prod", doc["cluster"])
 			}
-			if got := doc["skipped"]; !containsItem(got, "busy") {
-				t.Errorf("skipped = %v, want [busy]", got)
+			ngs := nodegroupEntries(t, doc)
+			if got := ngs["busy"]; got["status"] != "Skipped" || got["reason"] != "AlreadyUpdating" {
+				t.Errorf("busy = %v, want Skipped/AlreadyUpdating", got)
 			}
-			if got := doc["customUnmanaged"]; !containsItem(got, "custom") {
-				t.Errorf("customUnmanaged = %v, want [custom]", got)
+			if got := ngs["custom"]; got["status"] != "Skipped" || got["reason"] != "CustomAMI" {
+				t.Errorf("custom = %v, want Skipped/CustomAMI", got)
 			}
+			requireNoFailures(t, doc)
 			for _, want := range []string{"already UPDATING", "custom AMI"} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr missing notice %q; got:\n%s", want, stderr)
@@ -57,12 +59,14 @@ func TestUpdateMachineOutput_FailurePath(t *testing.T) {
 		t.Fatalf("exit code = %d (err %v), want 4 (update failed to start)", code, err)
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	if !containsItem(doc["failed"], "web") {
-		t.Errorf("failed = %v, want [web]", doc["failed"])
+	web := nodegroupEntries(t, doc)["web"]
+	if web["status"] != "Failed" || web["updateId"] != nil {
+		t.Errorf("web = %v, want Failed with no update ID", web)
 	}
-	if !strings.Contains(stderr, "Failed to update nodegroup web") {
-		t.Errorf("stderr missing the failure notice; got:\n%s", stderr)
-	}
+	want := failureWant{kind: "Nodegroup", name: "web", cluster: "prod", reason: "InvalidRequest", operation: "eks:UpdateNodegroupVersion"}
+	want.check(t, "nodegroups[web].failure", web["failure"])
+	want.check(t, "failures[0]", onlyFailure(t, doc))
+	requireStderrLine(t, stderr, "warning: nodegroup prod/web (us-east-1): InvalidRequest: InvalidRequestException: fake update failure for web")
 }
 
 // A started roll is monitored quietly: the monitor's progress tree must not
@@ -74,9 +78,10 @@ func TestUpdateMachineOutput_StartedAndMonitored(t *testing.T) {
 		t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "yaml", stdout).(map[string]any)
-	if !containsItem(doc["started"], "web") {
-		t.Errorf("started = %v, want [web]", doc["started"])
+	if web := nodegroupEntries(t, doc)["web"]; web["status"] != "Succeeded" || web["updateId"] == nil {
+		t.Errorf("web = %v, want Succeeded with its update ID", web)
 	}
+	requireNoFailures(t, doc)
 	if _, ok := doc["verification"]; !ok {
 		t.Errorf("document has no verification block: %v", doc)
 	}
@@ -144,8 +149,8 @@ func TestUpdateMachineOutput_HealthGateStaysOffStdout(t *testing.T) {
 		t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	if !containsItem(doc["skipped"], "web") {
-		t.Errorf("skipped = %v, want [web]", doc["skipped"])
+	if web := nodegroupEntries(t, doc)["web"]; web["status"] != "Skipped" {
+		t.Errorf("web = %v, want Skipped", web)
 	}
 	if h, ok := doc["health"].(map[string]any); !ok || h["decision"] != "WARN" {
 		t.Errorf("health = %v, want the WARN verdict in the run summary", doc["health"])
@@ -175,9 +180,10 @@ func TestUpdateMachineOutput_HealthWarnNeedsYes(t *testing.T) {
 	if !ok || h["decision"] != "WARN" {
 		t.Errorf("health = %v, want a WARN verdict", doc["health"])
 	}
-	if started, _ := doc["started"].([]any); len(started) != 0 || calledPath(srv, "/update-version") {
+	if ngs, _ := doc["nodegroups"].([]any); len(ngs) != 0 || calledPath(srv, "/update-version") {
 		t.Error("a run stopped by the health gate must not start an update")
 	}
+	requireNoFailures(t, doc)
 }
 
 func TestUpdateMachineOutput_HealthOnlyWithoutACheckFails(t *testing.T) {
@@ -236,9 +242,10 @@ func TestFleetMachineOutput_DryRun(t *testing.T) {
 	}
 	entry := clusters[0].(map[string]any)
 	plan, ok := entry["plan"].(map[string]any)
-	if entry["cluster"] != "prod" || !ok || plan["dryRun"] != true {
+	if entry["cluster"] != "prod" || entry["status"] != "Planned" || !ok || plan["dryRun"] != true {
 		t.Errorf("fleet dry-run entry = %v", entry)
 	}
+	requireNoFailures(t, doc)
 }
 
 // Fleet --health-only with -o yaml collects one verdict per cluster into the
@@ -275,16 +282,6 @@ func TestFleetMachineOutput_RollRecordsHealth(t *testing.T) {
 	if h, ok := entry["health"].(map[string]any); !ok || h["decision"] != "WARN" {
 		t.Errorf("fleet entry health = %v, want the WARN verdict", entry["health"])
 	}
-}
-
-func containsItem(list any, want string) bool {
-	items, _ := list.([]any)
-	for _, it := range items {
-		if it == want {
-			return true
-		}
-	}
-	return false
 }
 
 func calledPath(srv *fakeaws.Server, fragment string) bool {
