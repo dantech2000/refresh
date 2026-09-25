@@ -203,6 +203,8 @@ func (m Model) helpParts(w int) dialogParts {
 		body = append(body, Line{fg(colPeach, "Simulated fleet: no AWS calls are made.")})
 	case "READ-ONLY":
 		body = append(body, Line{fg(colPeach, "Read-only: changes are dry runs. c in a dry run copies the CLI command.")})
+	case "CHANGES ON":
+		body = append(body, Line{fg(colRed, "Changes on: y in a nodegroup roll's dry run starts the roll on the real cluster.")})
 	}
 	foot := Block{{}, joinRight(nil, Line{chip("esc"), sp(1), sub("close")}, w-4)}
 	return dialogParts{head: head, body: body, foot: foot, border: colMauve, w: w}

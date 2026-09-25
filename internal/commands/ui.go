@@ -41,19 +41,25 @@ const simWarmup = 19 * time.Minute
 func UICommand() *cli.Command {
 	return &cli.Command{
 		Name:   "ui",
-		Usage:  "Full-screen terminal UI (experimental, read-only)",
+		Usage:  "Full-screen terminal UI (experimental)",
 		Hidden: true,
 		Description: `Open the full-screen terminal UI: the fleet, readiness checks, live
 nodegroup rolls, and cluster upgrades, with live event and log streams.
 
-The UI is experimental and read-only: it shows the fleet, runs readiness
-checks, and dry-runs changes, and prints the CLI command that makes each
-change. It sweeps the config region, the regions given with -r, or with -A
-every EKS region (REFRESH_EKS_REGIONS narrows that list).`,
+The UI is experimental. It shows the fleet, runs readiness checks, and
+dry-runs changes, and prints the CLI command that makes each change. It is
+read-only unless --allow-changes is given; then a nodegroup roll can start
+from its dry run, after the same pre-flight health gate as nodegroup update.
+It sweeps the config region, the regions given with -r, or with -A every EKS
+region (REFRESH_EKS_REGIONS narrows that list).`,
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Sweep all EKS-supported regions"},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) to sweep (repeatable)"},
 			&cli.DurationFlag{Name: "interval", Usage: "Time between fleet sweeps", Value: time.Minute},
+			&cli.BoolFlag{Name: "allow-changes", Usage: "Let the UI start nodegroup rolls (after the dry run and the health gate); without it the UI is read-only"},
+			runner.WaitTimeoutFlag("How long the UI watches a roll it started (0 = no limit; the EKS update continues either way)", appconfig.DefaultUpdateTimeout),
+			runner.KubeconfigFlag("the live node view of a roll and the health gate's workload/PDB checks"),
+			runner.KubeContextFlag(),
 		},
 		Action: runUI,
 	}
@@ -91,6 +97,10 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		MaxConcurrency:   appconfig.ClampMaxConcurrency(cmd.Int("max-concurrency")),
 		Context:          activeContextName(),
 		Profile:          profile,
+		AllowChanges:     cmd.Bool("allow-changes"),
+		Kubeconfig:       cmd.String("kubeconfig"),
+		KubeContext:      cmd.String("kube-context"),
+		WaitTimeout:      runner.WaitTimeout(cmd, ""),
 	})
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()

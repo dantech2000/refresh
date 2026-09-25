@@ -185,19 +185,20 @@ func planRoll(c state.Cluster, t target, ngName string) (state.Plan, error) {
 		Title:   "Patch nodegroup · " + c.Name + " / " + ngName,
 		Command: regionFlag(t) + "nodegroup update -c " + t.name + " -n " + ngName,
 	}
-	if ng.Version != c.Version {
-		p.Changes = append(p.Changes, state.Change{Field: "version", From: ng.Version, To: c.Version})
-	}
-	if ng.AMIStale || ng.Version != c.Version {
-		p.Changes = append(p.Changes, state.Change{Field: "AMI", From: ng.AMI, To: "latest recommended for " + c.Version})
-	}
+	// An AMI patch keeps the nodegroup's own version, as `nodegroup
+	// update` does.
+	p.Changes = append(p.Changes, state.Change{Field: "AMI", From: ng.AMI, To: "latest recommended for " + ng.Version})
 	p.Facts = []state.Fact{
 		{Key: "nodes", Value: strconv.Itoa(ng.Nodes) + " replaced", Note: "the nodegroup's update config sets how many at a time"},
+		{Key: "version", Value: ng.Version + " (unchanged)"},
 		{Key: "region", Value: t.region},
 	}
+	if ng.Version != c.Version {
+		p.Facts[1].Note = "the control plane runs " + c.Version + "; `cluster upgrade` moves nodegroups"
+	}
 	p.Gates = []state.PlanGate{{Status: state.CheckPending, Text: "pre-flight health checks", Note: "run by the CLI command before it changes anything"}}
-	if !ng.NeedsPatch(c.Version) {
-		p.Blocked = ngName + " already runs the latest AMI for " + c.Version
+	if !ng.AMIStale {
+		p.Blocked = ngName + " already runs the latest AMI for " + ng.Version
 	}
 	return p, nil
 }

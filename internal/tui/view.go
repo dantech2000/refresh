@@ -88,7 +88,11 @@ func (m Model) topBar(w int) Line {
 	}
 	var badgeL Line
 	if m.st.Badge != "" {
-		badgeL = Line{badge(colPeach, m.st.Badge)}
+		c := colPeach
+		if m.st.Badge == "CHANGES ON" {
+			c = colRed // this TUI can change real clusters
+		}
+		badgeL = Line{badge(c, m.st.Badge)}
 	}
 	for _, drop := range [][]int{nil, {1}, {1, 2}, {0, 1, 2}, {0, 1, 2, 3}} {
 		var right Line

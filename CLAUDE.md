@@ -186,8 +186,15 @@ backend call runs in a `tea.Cmd`. Two backends: `internal/tui/live` (the
 default) sweeps the fleet in the background with the status service
 (`status.ListOptions.Detail` keeps the per-nodegroup and add-on rows), runs
 `cluster upgrade-check` for readiness, and dry-runs changes with the real
-planners. It is read-only: `Start` returns `live.ErrReadOnly` and every plan
-names the CLI command instead. `State` never calls AWS, so the TUI's fast
+planners. It is read-only unless `refresh ui --allow-changes`: then `Start`
+can begin a nodegroup roll (only rolls so far). The roll re-runs the
+`nodegroup update` health gate, pins to the nodegroup's own version through
+`StartNodegroupRoll`, claims the cluster (one change per cluster), and is
+watched through the EKS update (quiet `monitoring.MonitorUpdates`, the
+authority) and the `noderoll` observer when a kubeconfig context matches
+(resolved with `health.ConnectKubeClientForCluster` directly, never
+`runner.ResolveClusterKubeClient`, which writes to stderr). Without the
+flag `Start` returns `live.ErrReadOnly` and plans name the CLI command. `State` never calls AWS, so the TUI's fast
 polling is free. `internal/sim` is a deterministic simulated fleet on a
 virtual clock (rolls, add-on updates, readiness checks, upgrades; node
 lifecycle events come from the real `noderoll.Tracker`). The simulator is dev-only:

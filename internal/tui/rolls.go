@@ -113,7 +113,7 @@ func (m Model) nodeList(r state.Roll, w, h int) Block {
 			drainNode = n.Name
 		}
 	}
-	if drainNode != "" {
+	if drainNode != "" && len(r.Pods[drainNode]) > 0 {
 		card = m.podCard(r, drainNode, w-2)
 	}
 	listH := h - len(out) - len(card) - 1

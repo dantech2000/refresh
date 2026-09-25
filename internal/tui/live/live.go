@@ -3,9 +3,13 @@
 // service behind `refresh status`), runs `cluster upgrade-check` for the
 // readiness screen, and dry-runs changes with the real planners.
 //
-// It is read-only: Start refuses every change and points at the CLI command
-// that makes it. State is served from memory, so the TUI's fast polling
-// never turns into AWS calls; only the sweep and explicit actions do.
+// It is read-only unless Options.AllowChanges is set. With it, a nodegroup
+// roll can start: the pre-flight health gate runs again, the roll starts
+// through nodegroup.StartNodegroupRoll, and it is watched through the EKS
+// update (the authority on the result) and, when a kubeconfig context
+// reaches the cluster, the noderoll observer. Add-on updates and upgrades
+// stay dry runs that name the CLI command. State is served from memory, so
+// the TUI's fast polling never turns into AWS calls.
 package live
 
 import (
@@ -24,6 +28,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/regionsweep"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
@@ -33,7 +38,7 @@ import (
 )
 
 // ErrReadOnly is returned by every call that would change a cluster.
-var ErrReadOnly = errors.New("the live TUI is read-only for now: copy the CLI command (c) and run it in a shell")
+var ErrReadOnly = errors.New("the UI is read-only: restart it with --allow-changes, or copy the CLI command (c) and run it in a shell")
 
 // Event list bounds, as in the simulator.
 const (
@@ -60,6 +65,20 @@ type Options struct {
 	// the TUI's log pane: the TUI owns the terminal, so nothing may write
 	// to stderr while it runs.
 	Logger *slog.Logger
+	// AllowChanges lets Start begin a nodegroup roll. Off, every change is
+	// a dry run.
+	AllowChanges bool
+	// Kubeconfig and KubeContext pick the node view's Kubernetes access, as
+	// --kubeconfig and --kube-context do for `nodegroup update`.
+	Kubeconfig, KubeContext string
+	// WaitTimeout bounds how long a roll is watched (0 = no limit).
+	WaitTimeout time.Duration
+	// ObserveInterval is how often a roll's nodes are read. Zero means two
+	// seconds.
+	ObserveInterval time.Duration
+	// PollInterval is how often a roll's EKS update is read. Zero means the
+	// CLI's default.
+	PollInterval time.Duration
 }
 
 // services are the AWS-facing calls. Tests replace them.
@@ -81,6 +100,7 @@ type Backend struct {
 	base aws.Config
 	opts Options
 	svc  services
+	roll rollServices
 	now  func() time.Time
 
 	// wake asks the sweep loop to sweep now.
@@ -103,6 +123,10 @@ type Backend struct {
 	prev map[target]state.Cluster
 	// warnedClosed is set once the feed said no region is accessible.
 	warnedClosed bool
+	// rolls are the rolls this backend started, oldest first.
+	rolls []*liveRoll
+	// claimed names the change this backend runs on a cluster, by key.
+	claimed map[string]string
 }
 
 // New returns a backend for the accounts behind cfg. Call Run to start
@@ -114,6 +138,12 @@ func New(cfg aws.Config, opts Options) *Backend {
 	if opts.SweepTimeout <= 0 {
 		opts.SweepTimeout = 2 * time.Minute
 	}
+	if opts.ObserveInterval <= 0 {
+		opts.ObserveInterval = 2 * time.Second
+	}
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = appconfig.DefaultPollInterval
+	}
 	if len(opts.Regions) == 0 && cfg.Region != "" {
 		opts.Regions = []string{cfg.Region}
 	}
@@ -124,11 +154,13 @@ func New(cfg aws.Config, opts Options) *Backend {
 		wake:      make(chan struct{}, 1),
 		targets:   map[string]target{},
 		readiness: map[string]*state.Readiness{},
+		claimed:   map[string]string{},
 	}
 	if b.opts.Logger == nil {
 		b.opts.Logger = slog.New(&paneHandler{b: b, level: slog.LevelWarn})
 	}
 	b.svc = defaultServices(b.opts.Logger)
+	b.roll = defaultRollServices(b.opts)
 	return b
 }
 
@@ -447,10 +479,17 @@ func (b *Backend) State(ctx context.Context) (state.State, error) {
 		Log:             slices.Clone(b.log),
 		Readiness:       make(map[string]state.Readiness, len(b.readiness)),
 	}
+	if b.opts.AllowChanges {
+		st.Badge = "CHANGES ON"
+	}
 	for _, c := range b.clusters {
 		c.Nodegroups = slices.Clone(c.Nodegroups)
 		c.Addons = slices.Clone(c.Addons)
+		c.Busy = b.busyOf(c.Name, c)
 		st.Clusters = append(st.Clusters, c)
+	}
+	for _, r := range b.rolls {
+		st.Rolls = append(st.Rolls, r.snapshot())
 	}
 	for k, r := range b.readiness {
 		st.Readiness[k] = copyReadiness(*r)
@@ -592,6 +631,9 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	switch a.Kind {
 	case state.ActionRoll:
 		p, err = planRoll(c, t, a.Nodegroup)
+		if err == nil && b.opts.AllowChanges {
+			b.planRollLive(ctx, &p, cfg, t, a.Nodegroup)
+		}
 	case state.ActionAddons:
 		p = planAddons(c, t)
 	case state.ActionUpgrade:
@@ -614,17 +656,45 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		return state.Plan{}, err
 	}
 	p.Action = a
-	if p.Blocked == "" && c.Busy != "" {
-		p.Blocked = a.Cluster + " is busy: " + c.Busy
+	b.mu.Lock()
+	busy := b.busyOf(a.Cluster, c)
+	b.mu.Unlock()
+	if p.Blocked == "" && busy != "" {
+		p.Blocked = a.Cluster + " is busy: " + busy
 	}
-	if p.Blocked == "" {
-		p.Blocked = ErrReadOnly.Error()
+	if p.Blocked == "" && !b.canStart(a) {
+		p.Blocked = b.whyNot()
 	}
 	return p, nil
 }
 
-// Start implements state.Backend. The live backend changes nothing yet.
-func (b *Backend) Start(context.Context, state.Action) error { return ErrReadOnly }
+// Start implements state.Backend. With AllowChanges it starts a nodegroup
+// roll; every other change is refused.
+func (b *Backend) Start(ctx context.Context, a state.Action) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !b.opts.AllowChanges {
+		return ErrReadOnly
+	}
+	if !b.canStart(a) {
+		return errors.New(b.whyNot())
+	}
+	return b.startRoll(ctx, a)
+}
+
+// canStart reports whether this backend can start a.
+func (b *Backend) canStart(a state.Action) bool {
+	return b.opts.AllowChanges && a.Kind == state.ActionRoll
+}
+
+// whyNot says why a change cannot start here, and what to do instead.
+func (b *Backend) whyNot() string {
+	if !b.opts.AllowChanges {
+		return ErrReadOnly.Error()
+	}
+	return "only nodegroup rolls start from the TUI so far: copy the CLI command (c) and run it in a shell"
+}
 
 // StopAfterCurrent implements state.Backend.
 func (b *Backend) StopAfterCurrent(context.Context, string) error { return ErrReadOnly }

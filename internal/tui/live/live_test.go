@@ -613,3 +613,47 @@ func TestPlanHasADeadline(t *testing.T) {
 		t.Fatalf("Plan = %v, want a deadline", err)
 	}
 }
+
+// TestRollAgainstFakeAWS starts a roll with the default services: the real
+// health gate, StartNodegroupRoll, and the EKS update monitor, over
+// fakeaws. There is no kubeconfig, so the roll runs without the node view.
+func TestRollAgainstFakeAWS(t *testing.T) {
+	srv := fakeaws.New(t, &fakeaws.Cluster{
+		Name: "prod", Version: "1.32",
+		Nodegroups: []*fakeaws.Nodegroup{{Name: "ng-a", Version: "1.32"}},
+	})
+	srv.SetSupportedVersions("1.32")
+	cfg, err := config.LoadDefaultConfig(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := New(cfg, Options{SweepTimeout: 30 * time.Second, AllowChanges: true, WaitTimeout: 30 * time.Second, PollInterval: 10 * time.Millisecond})
+	b.sweep(t.Context())
+	// fakeaws does not model SSM, so the AMI status is unknown; mark the
+	// nodegroup stale as a sweep with SSM access would.
+	b.mu.Lock()
+	b.clusters[0].Nodegroups[0].AMIStale = true
+	b.mu.Unlock()
+
+	a := state.Action{Kind: state.ActionRoll, Cluster: "prod", Nodegroup: "ng-a"}
+	p, err := b.Plan(t.Context(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Blocked != "" {
+		t.Skipf("the health gate blocks against fakeaws (%s); covered by the unit tests", p.Blocked)
+	}
+	if err := b.Start(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	st, _ := b.State(t.Context())
+	r := st.Rolls[0]
+	if r.Running() || r.Failed != "" {
+		t.Fatalf("roll = %+v\nevents:\n%s", r, joinText(r.Events))
+	}
+	calls := strings.Join(srv.Calls(), "\n")
+	if !strings.Contains(calls, "eks POST /clusters/prod/node-groups/ng-a/update-version") {
+		t.Fatalf("no UpdateNodegroupVersion call:\n%s", calls)
+	}
+}
