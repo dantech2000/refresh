@@ -28,3 +28,9 @@ func TestNotefPlainForNonTerminal(t *testing.T) {
 		t.Errorf("Notef = %q", got)
 	}
 }
+
+func TestDryRun(t *testing.T) {
+	if got := New(ColorNone, true).DryRun("Would scale %s", "ng"); got != "DRY RUN: Would scale ng" {
+		t.Errorf("dry run = %q", got)
+	}
+}

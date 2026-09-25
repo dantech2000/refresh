@@ -8,10 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
-
-	"gopkg.in/yaml.v3"
-
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/services/addons"
@@ -23,7 +19,7 @@ import (
 // section for failures); `-o plain` writes pure TSV (header + one row per
 // add-on) and sends the empty-list notice to stderr. The caller reports
 // failures on stderr for -o plain.
-func outputAddonsTable(cluster string, rows []addons.AddonSummary, failures []diag.Failure, elapsed time.Duration) error {
+func outputAddonsTable(cluster string, rows []addons.AddonSummary, failures []diag.Failure) error {
 	if ui.PlainOutput() {
 		if len(rows) == 0 {
 			_, _ = fmt.Fprintf(ui.Stderr, "No add-ons found for cluster: %s\n", cluster)
@@ -33,9 +29,7 @@ func outputAddonsTable(cluster string, rows []addons.AddonSummary, failures []di
 	}
 	th := render.Default(os.Stdout)
 	if len(rows) == 0 {
-		ui.Outf("Add-ons for cluster: %s\n", color.CyanString(cluster))
-		ui.PrintElapsed(elapsed)
-		color.Yellow("No add-ons found")
+		fmt.Println(th.Line(render.Neutral, "No add-ons found for cluster: %s", cluster))
 	} else {
 		for _, line := range addonListLines(th, cluster, rows) {
 			fmt.Println(line)
@@ -73,34 +67,8 @@ func outputAddonDetailsTable(cluster string, d *addons.AddonDetails) error {
 		addonDetailPlain(cluster, d).Render()
 		return nil
 	}
-	fmt.Printf("Add-on Details: %s (%s)\n", color.CyanString(d.Name), color.WhiteString(cluster))
-	fmt.Printf("Version: %s\n", d.Version)
-	fmt.Printf("Status: %s\n", ui.StatusColorString(d.Status))
-	if d.Health != "" {
-		fmt.Printf("Health: %s\n", healthBadge(d.Health))
-	}
-	if d.ARN != "" {
-		fmt.Printf("ARN: %s\n", d.ARN)
-	}
-	if d.ServiceAccountRole != "" {
-		fmt.Printf("Service Account Role: %s\n", d.ServiceAccountRole)
-	}
-	if d.CreatedAt != nil {
-		fmt.Printf("Created: %s\n", d.CreatedAt.Format(time.RFC3339))
-	}
-	if d.ModifiedAt != nil {
-		fmt.Printf("Modified: %s\n", d.ModifiedAt.Format(time.RFC3339))
-	}
-	if len(d.Issues) > 0 {
-		fmt.Println("\nIssues:")
-		for _, issue := range d.Issues {
-			fmt.Printf("  - %s: %s\n", issue.Code, issue.Message)
-		}
-	}
-	if len(d.Configuration) > 0 {
-		fmt.Println("\nConfiguration:")
-		y, _ := yaml.Marshal(d.Configuration)
-		fmt.Println(string(y))
+	for _, l := range addonDetailLines(render.Default(os.Stdout), cluster, d) {
+		fmt.Println(l)
 	}
 	return nil
 }
@@ -140,18 +108,6 @@ func addonDetailPlain(cluster string, d *addons.AddonDetails) *ui.PlainTable {
 	return t
 }
 
-// updateResultColumns is the add-on update result column set, shared by the
-// human table and the `-o plain` header.
-func updateResultColumns() []ui.Column {
-	return []ui.Column{
-		{Title: "ADDON", Min: 20, Max: 30, Align: ui.AlignLeft},
-		{Title: "PREVIOUS", Min: 15, Max: 0, Align: ui.AlignLeft},
-		{Title: "NEW", Min: 15, Max: 0, Align: ui.AlignLeft},
-		{Title: "STATUS", Min: 10, Max: 0, Align: ui.AlignLeft},
-		{Title: "UPDATE ID", Min: 9, Max: 0, Align: ui.AlignLeft},
-	}
-}
-
 // addonUpdatePlain builds the `addon update [--all] -o plain` table: one row
 // per add-on update result. UPDATE ID is empty when no EKS update started
 // (dry run, already current).
@@ -177,72 +133,25 @@ func writeHealthIssues(w io.Writer, results []addons.AddonUpdateResult) {
 func outputUpdateAllResults(cluster string, results []addons.AddonUpdateResult, dryRun bool) error {
 	if ui.PlainOutput() {
 		if len(results) == 0 {
-			_, _ = fmt.Fprintf(ui.Stderr, "No addons to update for cluster: %s\n", cluster)
+			_, _ = fmt.Fprintf(ui.Stderr, "No add-ons to update for cluster: %s\n", cluster)
 		}
 		writeHealthIssues(ui.Stderr, results)
 		addonUpdatePlain(results).Render()
 		return nil
 	}
-	mode := ""
-	if dryRun {
-		mode = " (DRY RUN)"
-	}
-	ui.Outf("Addon Updates for cluster: %s%s\n\n", color.CyanString(cluster), color.YellowString(mode))
-
-	if len(results) == 0 {
-		color.Yellow("No addons to update")
-		return nil
-	}
-
-	table := ui.NewPTable(updateResultColumns(), ui.CyanHeaders())
-
-	successCount := 0
-	failCount := 0
-	warnCount := 0
-	upToDateCount := 0
-	for _, r := range results {
-		var status string
-		switch {
-		case r.Failed():
-			status = color.RedString(string(r.Status))
-			failCount++
-		case r.Status == addons.StatusDryRun:
-			status = color.YellowString(string(r.Status))
-		case r.Status == addons.StatusCompletedWithIssues:
-			status = color.YellowString(string(r.Status))
-			warnCount++
-		case r.Status == addons.StatusUpToDate:
-			status = string(r.Status)
-			upToDateCount++
-		default:
-			status = color.GreenString(string(r.Status))
-			successCount++
-		}
-
-		newVersion := r.NewVersion
-		if r.NewVersion != r.PreviousVersion {
-			newVersion = color.GreenString(r.NewVersion)
-		}
-
-		table.AddRow(r.AddonName, r.PreviousVersion, newVersion, status, orDashID(r.UpdateID))
-	}
-	table.Render()
-
-	ui.Outln()
-	if !dryRun {
-		summary := fmt.Sprintf("Summary: %s successful", color.GreenString("%d", successCount))
-		if warnCount > 0 {
-			summary += fmt.Sprintf(", %s with issues", color.YellowString("%d", warnCount))
-		}
-		if upToDateCount > 0 {
-			summary += fmt.Sprintf(", %d up to date", upToDateCount)
-		}
-		summary += fmt.Sprintf(", %s failed", color.RedString("%d", failCount))
-		ui.Outf("%s\n", summary)
+	for _, l := range updateResultLines(render.Default(os.Stdout), cluster, results, dryRun) {
+		fmt.Println(l)
 	}
 	writeHealthIssues(ui.Stderr, results)
-
 	return nil
+}
+
+// orDash renders an empty value as "-".
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
 }
 
 // orDashID renders an empty update ID (dry run, already current) as "-".

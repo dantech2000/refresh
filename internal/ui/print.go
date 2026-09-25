@@ -24,9 +24,3 @@ func Outf(format string, a ...any) {
 func ElapsedString(elapsed time.Duration) string {
 	return color.GreenString("%.1fs", elapsed.Seconds())
 }
-
-// PrintElapsed prints the standard "Retrieved in X.Xs" line followed by a
-// blank line — the shared trailer between a command's heading and its table.
-func PrintElapsed(elapsed time.Duration) {
-	Outf("Retrieved in %s\n\n", ElapsedString(elapsed))
-}

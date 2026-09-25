@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -17,6 +16,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -45,7 +45,6 @@ func listAddonsOnce(ctx context.Context, cmd *cli.Command) error {
 	addonSvc := factory.NewAddonService(cfg, nil)
 
 	var res addons.ListResult
-	start := time.Now()
 	if err := runner.WithSpinner("addon", "Add-on information gathered", func() error {
 		var ferr error
 		res, ferr = addonSvc.ListDetailed(ctx, clusterName, addons.ListOptions{ShowHealth: cmd.Bool("show-health")})
@@ -56,7 +55,7 @@ func listAddonsOnce(ctx context.Context, cmd *cli.Command) error {
 
 	format := cmd.String("format")
 	failures := listFailures(res.Failures, cfg.Region)
-	if err := writeAddonList(format, clusterName, res.Summaries, failures, time.Since(start)); err != nil {
+	if err := writeAddonList(format, clusterName, res.Summaries, failures); err != nil {
 		return err
 	}
 	if !runner.TableListsFailures(format) {
@@ -82,12 +81,12 @@ func listFailures(fs []diag.Failure, region string) diag.List {
 // add-ons that could not be described are in the document's "failures" (and
 // the table's INCOMPLETE DATA section), so "count" is never mistaken for the
 // full add-on count.
-func writeAddonList(format, clusterName string, rows []addons.AddonSummary, failures diag.List, elapsed time.Duration) error {
+func writeAddonList(format, clusterName string, rows []addons.AddonSummary, failures diag.List) error {
 	doc := addons.AddonList{Cluster: clusterName, Addons: apidoc.List(rows), Count: len(rows), Failures: failures}
 	if handled, err := runner.EncodeStdout(format, doc); handled {
 		return err
 	}
-	return outputAddonsTable(clusterName, rows, failures, elapsed)
+	return outputAddonsTable(clusterName, rows, failures)
 }
 
 func runDescribe(ctx context.Context, cmd *cli.Command) error {
@@ -180,15 +179,14 @@ func resolveAddonName(ctx context.Context, lister addonNameLister, clusterName, 
 // -o json/yaml (machine formats never prompt), the command fails and names
 // the candidate.
 func confirmPartialAddon(ctx context.Context, requested, match string, yes, machine bool) error {
-	yellow := ui.StderrColor(color.FgYellow)
 	if yes {
-		_, _ = yellow.Fprintf(ui.Stderr, "No add-on named %q; using the partial match %q (--yes)\n", requested, match)
+		render.Notef(ui.Stderr, render.Warn, "No add-on named %q; using the partial match %q (--yes)", requested, match)
 		return nil
 	}
 	if machine || !runner.StdinIsTerminal() {
 		return fmt.Errorf("no add-on named %q (partial match: %s); pass the exact name, or --yes to accept the match (no interactive terminal for confirmation)", requested, match)
 	}
-	_, _ = yellow.Fprintf(ui.Stderr, "No add-on named %q. Use %q? [y/N]: ", requested, match)
+	_, _ = fmt.Fprintf(ui.Stderr, "No add-on named %q. Use %q? [y/N]: ", requested, match)
 	answer, err := runner.PromptLine(ctx)
 	if err != nil {
 		return ui.PromptError(err)
@@ -327,7 +325,7 @@ func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 		return updateErr
 	}
 	if result.Warning != "" && result.Warning != warned {
-		_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "warning: %s\n", result.Warning)
+		render.Notef(ui.Stderr, render.Warn, "warning: %s", result.Warning)
 	}
 	results := []addons.AddonUpdateResult{*result}
 	fs := resultFailures(results, cfg.Region)
@@ -352,26 +350,8 @@ func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 		return updateExitError(result, fs, updateErr)
 	}
 
-	switch result.Status {
-	case addons.StatusDryRun:
-		color.Cyan("DRY RUN: Would update add-on %s from %s to %s on cluster %s",
-			addonName, result.PreviousVersion, result.NewVersion, clusterName)
-	case addons.StatusUpToDate:
-		color.Green("Add-on %s is already at %s; nothing to update", addonName, result.PreviousVersion)
-	case addons.StatusInProgress:
-		color.Yellow("Add-on %s is already being updated to %s; no new update was submitted. Use --wait to wait for it.", addonName, result.NewVersion)
-	case addons.StatusCompleted:
-		color.Green("Add-on %s updated to %s (was %s)", addonName, result.NewVersion, result.PreviousVersion)
-	case addons.StatusCompletedWithIssues:
-		color.Yellow("Add-on %s updated to %s, but the post-update health check found issues: %s",
-			addonName, result.NewVersion, result.HealthIssues)
-	case addons.StatusUnverified:
-		color.Yellow("Add-on %s updated to %s, but the post-update health check could not read it", addonName, result.NewVersion)
-	case addons.StatusWaitFailed:
-		color.Red("Update %s for add-on %s did not complete", result.UpdateID, addonName)
-	default:
-		color.Green("Update started for add-on %s (ID: %s)", addonName, result.UpdateID)
-		color.White("Use AWS Console or 'refresh addon describe %s --addon %s' to check status.", clusterName, addonName)
+	for _, l := range updateOutcomeLines(render.Default(os.Stdout), clusterName, addonName, result) {
+		fmt.Println(l)
 	}
 	runner.WriteFailures(cmd.String("format"), os.Stdout, ui.Stderr, fs)
 	return updateExitError(result, fs, updateErr)
@@ -403,7 +383,7 @@ func confirmAddonUpdate(ctx context.Context, cmd *cli.Command, svc addonUpdater,
 		return "", nil
 	}
 	if preview.Warning != "" {
-		_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "warning: %s\n", preview.Warning)
+		render.Notef(ui.Stderr, render.Warn, "warning: %s", preview.Warning)
 		warned = preview.Warning
 	}
 	question := fmt.Sprintf("Update %s %s → %s on %s?", addonName, preview.PreviousVersion, preview.NewVersion, clusterName)
@@ -586,22 +566,6 @@ func updateAllFailureError(ctx context.Context, results []addons.AddonUpdateResu
 		return cli.Exit(fmt.Sprintf("%d of %d add-on(s) were updated, but their post-update health check found issues", issues, len(results)), runner.ExitVerifyFailed)
 	}
 	return nil
-}
-
-// healthBadge converts an add-on health into the shared colored badges.
-func healthBadge(health addons.Health) string {
-	switch health {
-	case "":
-		return ""
-	case addons.HealthPass:
-		return ui.BadgePass()
-	case addons.HealthFail:
-		return ui.BadgeFail()
-	case addons.HealthInProgress:
-		return ui.BadgeInProgress()
-	default:
-		return ui.BadgeUnknown()
-	}
 }
 
 // healthLabel is the word the table and -o plain views show for an add-on
