@@ -45,7 +45,7 @@ var exitCodeHelp = map[string]string{
 	"install-man": "0 ok; 1 error",
 	"completion":  "0 ok; 1 error",
 	"gen-docs":    "0 ok; 1 error",
-	"ui":          "0 ok; 1 error, or no interactive terminal",
+	"ui":          "0 ok; 1 error, no interactive terminal, or no AWS credentials",
 }
 
 // DocumentExitCodes appends each command's exit codes and a link to the

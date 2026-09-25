@@ -198,8 +198,11 @@ func (m Model) helpParts(w int) dialogParts {
 	group("ON EVERY SCREEN", everywhere)
 	group("IN THE CONFIRM DIALOG", dialogBindings())
 	group("IN ANY DIALOG", append([]binding{{label: "esc", desc: "close (a confirm dialog stays open while its change starts)"}}, scrollBindings()...))
-	if m.st.Backend == "simulated" {
+	switch m.st.Badge {
+	case "SIMULATED":
 		body = append(body, Line{fg(colPeach, "Simulated fleet: no AWS calls are made.")})
+	case "READ-ONLY":
+		body = append(body, Line{fg(colPeach, "Read-only: changes are dry runs. c in a dry run copies the CLI command.")})
 	}
 	foot := Block{{}, joinRight(nil, Line{chip("esc"), sp(1), sub("close")}, w-4)}
 	return dialogParts{head: head, body: body, foot: foot, border: colMauve, w: w}
@@ -213,6 +216,9 @@ func (m Model) pickerParts(w int) dialogParts {
 	var body Block
 	for i, ng := range p.items {
 		why := "AMI " + ng.AMI + " → " + ng.LatestAMI
+		if ng.LatestAMI == "" {
+			why = "AMI outdated"
+		}
 		if ng.Version != m.clusterVersion(p.cluster) {
 			why = "on " + ng.Version
 		}

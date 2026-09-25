@@ -811,3 +811,25 @@ func TestResizeKeepsThePickerSelectionVisible(t *testing.T) {
 	h.send(tea.WindowSizeMsg{Width: minWidth, Height: minHeight})
 	h.contains("▶ 16 ng-15")
 }
+
+type refreshingBackend struct {
+	state.Backend
+	refreshed int
+}
+
+func (r *refreshingBackend) Refresh() { r.refreshed++ }
+
+func TestCtrlRRefreshesABackendThatCan(t *testing.T) {
+	h := newHarness(t, 160, 42, 0)
+	next, cmd := h.m.key("ctrl+r")
+	if cmd != nil || next.(Model).notice != "" {
+		t.Fatal("ctrl+r did something on a backend with no Refresh")
+	}
+	rb := &refreshingBackend{Backend: h.w}
+	h.m.b = rb
+	h.keys("ctrl+r", "?")
+	if rb.refreshed != 1 {
+		t.Fatalf("Refresh called %d times, want 1", rb.refreshed)
+	}
+	h.contains("read the fleet from AWS now")
+}

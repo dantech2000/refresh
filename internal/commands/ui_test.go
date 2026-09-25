@@ -17,10 +17,11 @@ func runUICommand(t *testing.T) error {
 	return runUI(t.Context(), UICommand())
 }
 
-func TestUIWithoutTheDevSwitchHasNoBackend(t *testing.T) {
+func TestUINeedsATerminalForTheLiveBackend(t *testing.T) {
+	// go test runs without a terminal on stdin.
 	t.Setenv(envDevSimulate, "")
 	err := runUICommand(t)
-	if err == nil || !strings.Contains(err.Error(), "no live AWS backend yet") {
+	if err == nil || !strings.Contains(err.Error(), "needs an interactive terminal") {
 		t.Fatalf("err = %v", err)
 	}
 	var ec cli.ExitCoder
@@ -40,7 +41,7 @@ func TestUISimulatedNeedsATerminal(t *testing.T) {
 
 func TestUICommandIsHidden(t *testing.T) {
 	if !UICommand().Hidden {
-		t.Fatal("refresh ui must stay hidden while it has no live backend")
+		t.Fatal("refresh ui must stay hidden while it is an experiment")
 	}
 }
 

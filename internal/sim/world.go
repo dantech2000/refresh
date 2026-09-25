@@ -269,6 +269,7 @@ func (w *World) snapshot() state.State {
 		Now:             w.now,
 		Seq:             w.evSeq,
 		Backend:         "simulated",
+		Badge:           "SIMULATED",
 		Context:         "prod",
 		Profile:         "prod-admin",
 		RegionsAnswered: 4,

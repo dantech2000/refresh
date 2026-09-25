@@ -87,8 +87,8 @@ func (m Model) topBar(w int) Line {
 		{tok(state.LevelProgress, "live · synced "+ago(m.st.Now.Sub(m.st.SyncedAt)))},
 	}
 	var badgeL Line
-	if m.st.Backend == "simulated" {
-		badgeL = Line{badge(colPeach, "SIMULATED")}
+	if m.st.Badge != "" {
+		badgeL = Line{badge(colPeach, m.st.Badge)}
 	}
 	for _, drop := range [][]int{nil, {1}, {1, 2}, {0, 1, 2}, {0, 1, 2, 3}} {
 		var right Line

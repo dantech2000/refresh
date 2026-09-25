@@ -72,6 +72,15 @@ func globalBindings() []binding {
 			return nil
 		}},
 		{keys: []string{"w"}, label: "w", desc: "warnings and errors only", do: func(m *Model) tea.Cmd { m.warnOnly = !m.warnOnly; return nil }},
+		{keys: []string{"ctrl+r"}, label: "ctrl+r", desc: "read the fleet from AWS now",
+			when: func(m Model) bool { _, ok := m.b.(refresher); return ok },
+			do: func(m *Model) tea.Cmd {
+				if r, ok := m.b.(refresher); ok {
+					r.Refresh()
+					m.say(state.LevelProgress, "reading the fleet…")
+				}
+				return nil
+			}},
 		{keys: []string{"?"}, label: "?", desc: "keys", do: func(m *Model) tea.Cmd { m.help, m.scroll = true, 0; return nil }},
 		{keys: []string{"q"}, label: "q", desc: "quit · in a dialog, close it · changes in flight keep running in EKS", do: func(*Model) tea.Cmd { return tea.Quit }},
 	}
@@ -408,3 +417,6 @@ func (m *Model) scrollTo(i int) {
 	}
 	m.scroll = m.clampScroll(m.scroll)
 }
+
+// refresher is a backend that can read its data again on request.
+type refresher interface{ Refresh() }

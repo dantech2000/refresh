@@ -149,6 +149,17 @@ type Server struct {
 	// clusterVersionsError is the error code DescribeClusterVersions
 	// answers, or "".
 	clusterVersionsError string
+	// supportedVersions answers an unfiltered DescribeClusterVersions.
+	supportedVersions []string
+}
+
+// SetSupportedVersions sets the versions an unfiltered
+// DescribeClusterVersions lists, as EKS lists every version it offers.
+// Without it that call lists none.
+func (s *Server) SetSupportedVersions(vs ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.supportedVersions = vs
 }
 
 // FailClusterVersions makes DescribeClusterVersions fail with the API error
@@ -362,7 +373,11 @@ func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		versions := []map[string]any{}
-		for _, v := range r.URL.Query()["clusterVersions"] {
+		asked := r.URL.Query()["clusterVersions"]
+		if len(asked) == 0 {
+			asked = s.supportedVersions
+		}
+		for _, v := range asked {
 			versions = append(versions, map[string]any{"clusterVersion": v, "versionStatus": "STANDARD_SUPPORT"})
 		}
 		writeJSON(w, map[string]any{"clusterVersions": versions})

@@ -119,9 +119,20 @@ func (m Model) clusterCard(w int) Block {
 	if c.Name == "" {
 		return nil
 	}
-	body := Block{{dimS(c.ARN)}}
+	var body Block
+	if c.ARN != "" {
+		body = append(body, Line{dimS(c.ARN)})
+	} else {
+		body = append(body, Line{dimS(c.Region)})
+	}
+	if c.Incomplete {
+		body = append(body, Line{tok(state.LevelWarn, "part of this cluster could not be read · counts may be low")})
+	}
 	next := Line{sub("next hop "), tx(c.Version + " → " + state.NextMinor(c.Version))}
-	if c.Behind() == 0 {
+	switch {
+	case c.Latest == "":
+		next = Line{sub("version "), tx(c.Version), dimS(" · newest EKS version unknown")}
+	case c.Behind() == 0:
 		next = Line{sub("version "), tx(c.Version), dimS(" · newest")}
 	}
 	next = append(next, sp(3), sub("readiness "))
@@ -140,6 +151,9 @@ func (m Model) clusterCard(w int) Block {
 	var stale Line
 	for _, ng := range c.StaleNodegroups() {
 		what := "AMI " + ng.LatestAMI
+		if ng.LatestAMI == "" {
+			what = "AMI outdated"
+		}
 		if ng.Version != c.Version {
 			what = "on " + ng.Version
 		}

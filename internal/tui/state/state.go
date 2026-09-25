@@ -77,6 +77,8 @@ type State struct {
 	Seq uint64
 	// Backend names the data source ("simulated", "live").
 	Backend string
+	// Badge, when set, is shown in the top bar ("SIMULATED", "READ-ONLY").
+	Badge   string
 	Context string
 	Profile string
 	// RegionsAnswered of RegionsTotal regions answered the last sweep.
@@ -113,17 +115,23 @@ type Cluster struct {
 	// Busy names the change in flight, if any ("upgrading", "rolling
 	// ng-general", "updating add-ons").
 	Busy string
+	// Incomplete is set when part of the cluster could not be read, so its
+	// counts may be missing something.
+	Incomplete bool
 }
 
 // Nodegroup is a managed nodegroup.
 type Nodegroup struct {
 	Name    string
 	Version string
-	// AMI is the release version the nodes run; LatestAMI is the newest one
-	// for Version.
+	// AMI is the release version (or image ID) the nodes run; LatestAMI is
+	// the newest one for Version, when the backend knows it.
 	AMI, LatestAMI string
-	Nodes          int
-	Status         string
+	// AMIStale is set when the backend knows the AMI is out of date without
+	// knowing the newest release by name.
+	AMIStale bool
+	Nodes    int
+	Status   string
 }
 
 // Addon is an installed EKS add-on.
@@ -429,7 +437,7 @@ func (c Cluster) StaleNodegroups() []Nodegroup {
 // NeedsPatch reports whether the nodegroup trails the control plane or its
 // AMI is not the newest.
 func (ng Nodegroup) NeedsPatch(clusterVersion string) bool {
-	return ng.Version != clusterVersion || (ng.LatestAMI != "" && ng.AMI != ng.LatestAMI)
+	return ng.Version != clusterVersion || ng.AMIStale || (ng.LatestAMI != "" && ng.AMI != ng.LatestAMI)
 }
 
 // StaleAddons lists add-ons that have a newer compatible version.

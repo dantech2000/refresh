@@ -7,11 +7,15 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/cliconfig"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/sim"
 	"github.com/dantech2000/refresh/internal/tui"
+	"github.com/dantech2000/refresh/internal/tui/live"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -33,27 +37,109 @@ const (
 const simWarmup = 19 * time.Minute
 
 // UICommand is the full-screen terminal UI. It is hidden while it is an
-// experiment: only the simulated backend exists so far.
+// experiment: the live backend is read-only so far.
 func UICommand() *cli.Command {
 	return &cli.Command{
 		Name:   "ui",
-		Usage:  "Full-screen terminal UI (experimental)",
+		Usage:  "Full-screen terminal UI (experimental, read-only)",
 		Hidden: true,
 		Description: `Open the full-screen terminal UI: the fleet, readiness checks, live
 nodegroup rolls, and cluster upgrades, with live event and log streams.
 
-The UI is experimental and has no live AWS backend yet.`,
+The UI is experimental and read-only: it shows the fleet, runs readiness
+checks, and dry-runs changes, and prints the CLI command that makes each
+change. It sweeps the config region, the regions given with -r, or with -A
+every EKS region (REFRESH_EKS_REGIONS narrows that list).`,
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Sweep all EKS-supported regions"},
+			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) to sweep (repeatable)"},
+			&cli.DurationFlag{Name: "interval", Usage: "Time between fleet sweeps", Value: time.Minute},
+		},
 		Action: runUI,
 	}
 }
 
-func runUI(ctx context.Context, _ *cli.Command) error {
-	if !envTruthy(os.Getenv(envDevSimulate)) {
-		return cli.Exit("refresh ui is experimental and has no live AWS backend yet", runner.ExitError)
-	}
+func runUI(ctx context.Context, cmd *cli.Command) error {
 	if !runner.StdinIsTerminal() || !ui.IsTerminal(os.Stdout) {
 		return cli.Exit("refresh ui needs an interactive terminal on stdin and stdout", runner.ExitError)
 	}
+	if envTruthy(os.Getenv(envDevSimulate)) {
+		return runSimulated(ctx)
+	}
+	return runLive(ctx, cmd)
+}
+
+// runLive runs the TUI against the accounts behind the AWS config.
+func runLive(ctx context.Context, cmd *cli.Command) error {
+	// No deadline: the TUI runs until the user quits. Each sweep and call
+	// has its own timeout.
+	ctx, cancel, awsCfg, err := runner.SetupAWSWithDeadline(ctx, cmd, 0)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	regions, skip := uiRegions(cmd, awsCfg)
+	profile := cmd.String("profile")
+	if profile == "" {
+		profile = os.Getenv("AWS_PROFILE")
+	}
+	backend := live.New(awsCfg, live.Options{
+		Regions:          regions,
+		SkipInaccessible: skip,
+		Interval:         cmd.Duration("interval"),
+		SweepTimeout:     2 * runner.APITimeout(cmd),
+		MaxConcurrency:   cmd.Int("max-concurrency"),
+		Context:          activeContextName(),
+		Profile:          profile,
+	})
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		backend.Run(ctx)
+	}()
+	err = tui.Run(ctx, backend, os.Stdin, os.Stdout)
+	stop()
+	<-done
+	backend.Close()
+	return err
+}
+
+// uiRegions picks the regions to sweep, as `refresh status` does: -r, else
+// -A (REFRESH_EKS_REGIONS, else the partition), else the config region.
+// skip reports a default partition sweep, which skips closed regions.
+func uiRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string, skip bool) {
+	if r := runner.Regions(cmd, cmd.Bool("all-regions")); len(r) > 0 {
+		return r, false
+	}
+	if cmd.Bool("all-regions") {
+		if env := appconfig.RegionsFromEnv(); len(env) > 0 {
+			return env, false
+		}
+		return appconfig.GetRegionsForPartition(awsCfg.Region), true
+	}
+	if awsCfg.Region != "" {
+		return []string{awsCfg.Region}, false
+	}
+	return appconfig.GetRegionsForPartition(awsCfg.Region), true
+}
+
+// activeContextName is the refresh context in use, or "".
+func activeContextName() string {
+	f, err := cliconfig.Load()
+	if err != nil {
+		return ""
+	}
+	name, _, ok, err := f.Active()
+	if err != nil || !ok {
+		return ""
+	}
+	return name
+}
+
+// runSimulated runs the TUI against the simulated fleet (internal/sim).
+func runSimulated(ctx context.Context) error {
 	speed, err := envFloat(envDevSimSpeed, 8)
 	if err != nil {
 		return cli.Exit(err.Error(), runner.ExitError)

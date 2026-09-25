@@ -24,6 +24,7 @@ var shadowAllowlist = map[string]string{
 	"refresh status --region":           "repeatable scan regions; read via runner.Regions",
 	"refresh cluster list --region":     "repeatable scan regions; read via runner.Regions",
 	"refresh nodegroup update --region": "repeatable fleet discovery regions (--all-clusters); read via runner.Regions",
+	"refresh ui --region":               "repeatable sweep regions; read via runner.Regions",
 	// Hidden, deprecated aliases of --wait-timeout (0.11.0, removed in
 	// 0.12.0). The API timeout is read through runner.APITimeout, which skips
 	// hidden local --timeout flags and uses the global one.

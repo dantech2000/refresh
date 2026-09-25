@@ -76,6 +76,7 @@ type Service struct {
 type sweep struct {
 	addonVersions common.Memo[addonVersionsKey, addonVersions]
 	latestAMI     *awsinternal.LatestAMICache // nil: one cache per cluster
+	detail        bool                        // ListOptions.Detail
 }
 
 func (s *Service) newSweep() *sweep {
@@ -102,6 +103,9 @@ type addonVersions struct {
 type ListOptions struct {
 	NamePattern    string
 	MaxConcurrency int
+	// Detail keeps the per-nodegroup and per-add-on rows on each
+	// ClusterStatus (Nodegroups, Addons). It costs no extra AWS calls.
+	Detail bool
 }
 
 // NewService builds a region-scoped status service from an AWS config, wiring
@@ -163,6 +167,7 @@ func (s *Service) ListClusterStatuses(ctx context.Context, opts ListOptions) ([]
 		conc = common.DefaultItemConcurrency
 	}
 	sw := s.newSweep()
+	sw.detail = opts.Detail
 	results := common.ForEachParallel(ctx, names, conc,
 		func(fctx context.Context, name string) ClusterStatus {
 			return s.assembleCluster(fctx, sw, name)
@@ -280,13 +285,14 @@ func (s *Service) assembleCluster(ctx context.Context, sw *sweep, name string) C
 		ngSide    = ClusterStatus{Name: name, Region: s.region}
 		addonSide struct {
 			behind   AddonsBehindSummary
+			rows     []AddonPosture
 			failures []diag.Failure
 			err      error
 		}
 		wg sync.WaitGroup
 	)
 	wg.Go(func() {
-		addonSide.behind, addonSide.failures, addonSide.err = s.addonsBehind(ctx, sw, name, cs.Version)
+		addonSide.behind, addonSide.rows, addonSide.failures, addonSide.err = s.addonsBehind(ctx, sw, name, cs.Version)
 	})
 	s.assembleNodegroups(ctx, sw, &ngSide, name, cluster, cs.Version)
 	wg.Wait()
@@ -295,6 +301,7 @@ func (s *Service) assembleCluster(ctx context.Context, sw *sweep, name string) C
 	cs.StaleAMI = ngSide.StaleAMI
 	cs.NodegroupsBehindControlPlane = ngSide.NodegroupsBehindControlPlane
 	cs.Compute = ngSide.Compute
+	cs.Nodegroups = ngSide.Nodegroups
 	for _, f := range ngSide.Failures {
 		s.addFailure(&cs, f)
 	}
@@ -306,6 +313,7 @@ func (s *Service) assembleCluster(ctx context.Context, sw *sweep, name string) C
 		s.addFailure(&cs, f)
 	}
 	cs.AddonsBehind = addonSide.behind
+	cs.Addons = addonSide.rows
 
 	return cs
 }
@@ -328,6 +336,12 @@ func (s *Service) assembleNodegroups(ctx context.Context, sw *sweep, cs *Cluster
 		for _, ng := range ngs.Summaries {
 			if ng.VersionBehind {
 				cs.NodegroupsBehindControlPlane++
+			}
+			if sw.detail {
+				cs.Nodegroups = append(cs.Nodegroups, NodegroupPosture{
+					Name: ng.Name, Status: ng.Status, Version: ng.K8sVersion, VersionBehind: ng.VersionBehind,
+					CurrentAMI: ng.CurrentAMI, AMIStatus: ng.AMIStatus, DesiredSize: ng.DesiredSize,
+				})
 			}
 			// Advisory in `nodegroup list`, but here an unknown AMI status
 			// makes the STALE AMI count incomplete.
@@ -399,11 +413,12 @@ func (s *Service) amiOldestDays(ctx context.Context, amiIDs []string) *int {
 // version compatible with the cluster's Kubernetes version. An addon whose
 // installed or latest version can't be read is never counted as behind; it is
 // returned as a failure alongside the partial summary. The error is set only
-// when the add-ons could not be listed at all.
-func (s *Service) addonsBehind(ctx context.Context, sw *sweep, cluster, k8sVersion string) (AddonsBehindSummary, []diag.Failure, error) {
+// when the add-ons could not be listed at all. With sw.detail it also
+// returns one row per described add-on.
+func (s *Service) addonsBehind(ctx context.Context, sw *sweep, cluster, k8sVersion string) (AddonsBehindSummary, []AddonPosture, []diag.Failure, error) {
 	res, err := s.addons.ListDetailed(ctx, cluster, addons.ListOptions{})
 	if err != nil {
-		return AddonsBehindSummary{}, nil, err
+		return AddonsBehindSummary{}, nil, nil, err
 	}
 	summary := AddonsBehindSummary{Total: len(res.Summaries) + len(res.Failures)}
 	failures := res.Failures
@@ -413,6 +428,7 @@ func (s *Service) addonsBehind(ctx context.Context, sw *sweep, cluster, k8sVersi
 	type check struct {
 		done    bool // false for addons ForEachParallel never dispatched
 		behind  bool
+		latest  string
 		failure *diag.Failure
 	}
 	checks := common.ForEachParallel(ctx, res.Summaries, common.DefaultItemConcurrency,
@@ -431,10 +447,14 @@ func (s *Service) addonsBehind(ctx context.Context, sw *sweep, cluster, k8sVersi
 			if avail.none {
 				return check{done: true} // no compatible version published — nothing to compare
 			}
-			return check{done: true, behind: addons.CompareVersions(a.Version, avail.latest) < 0}
+			return check{done: true, latest: avail.latest, behind: addons.CompareVersions(a.Version, avail.latest) < 0}
 		})
+	var rows []AddonPosture
 	for i, c := range checks {
 		a := res.Summaries[i]
+		if sw.detail {
+			rows = append(rows, AddonPosture{Name: a.Name, Status: a.Status, Version: a.Version, Latest: c.latest, Behind: c.behind})
+		}
 		switch {
 		case !c.done:
 			// The sweep was cancelled before this addon was checked; an
@@ -451,7 +471,7 @@ func (s *Service) addonsBehind(ctx context.Context, sw *sweep, cluster, k8sVersi
 			summary.Names = append(summary.Names, a.Name)
 		}
 	}
-	return summary, failures, nil
+	return summary, rows, failures, nil
 }
 
 // latestAddonVersion returns the newest version of addon compatible with

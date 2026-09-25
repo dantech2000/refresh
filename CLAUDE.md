@@ -181,13 +181,20 @@ with no AWS.
 
 **Experimental TUI** (branch `experiment/tui`): `refresh ui` is a hidden
 Bubble Tea app (`internal/tui`) that draws a `state.State` from a
-`state.Backend` (`internal/tui/state`) and never calls AWS itself. The only
-backend so far is `internal/sim`, a deterministic simulated fleet on a virtual
-clock (rolls, add-on updates, readiness checks, upgrades; node lifecycle
-events come from the real `noderoll.Tracker`). The simulator is dev-only:
+`state.Backend` (`internal/tui/state`) and never calls AWS itself; every
+backend call runs in a `tea.Cmd`. Two backends: `internal/tui/live` (the
+default) sweeps the fleet in the background with the status service
+(`status.ListOptions.Detail` keeps the per-nodegroup and add-on rows), runs
+`cluster upgrade-check` for readiness, and dry-runs changes with the real
+planners. It is read-only: `Start` returns `live.ErrReadOnly` and every plan
+names the CLI command instead. `State` never calls AWS, so the TUI's fast
+polling is free. `internal/sim` is a deterministic simulated fleet on a
+virtual clock (rolls, add-on updates, readiness checks, upgrades; node
+lifecycle events come from the real `noderoll.Tracker`). The simulator is dev-only:
 `REFRESH_DEV_SIMULATE=1 refresh ui` (or `task run:tui:sim`) turns it on, with
 `REFRESH_DEV_SIM_SPEED` and `REFRESH_DEV_SIM_SEED`; there is no flag and no
-user doc. Without the switch `refresh ui` exits 1. TUI glyphs come from
+user doc. Without the switch `refresh ui` runs the live backend (`-r`, `-A`,
+`--interval`). TUI glyphs come from
 `render.Theme.Mark`, so the render guard test and the ASCII fallback hold.
 Tests step the world with `sim.World.Advance` and assert every screen fills
 the terminal exactly (`internal/tui/model_test.go`).

@@ -9,6 +9,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/types"
 )
 
 // ComputeType describes how a cluster provisions its worker nodes. It exists so
@@ -107,6 +108,34 @@ type ClusterStatus struct {
 	// Failures are the row's failures. The command lists them in the
 	// FleetStatus document, not on the row.
 	Failures []diag.Failure `json:"-" yaml:"-"`
+	// Nodegroups and Addons are the per-item rows the counts above come
+	// from. They are filled only with ListOptions.Detail, and are not part of
+	// the FleetStatus document.
+	Nodegroups []NodegroupPosture `json:"-" yaml:"-"`
+	Addons     []AddonPosture     `json:"-" yaml:"-"`
+}
+
+// NodegroupPosture is one managed nodegroup's patch state.
+type NodegroupPosture struct {
+	Name    string
+	Status  string
+	Version string
+	// VersionBehind is true when the nodegroup trails the control plane.
+	VersionBehind bool
+	CurrentAMI    string
+	AMIStatus     types.AMIStatus
+	DesiredSize   int32
+}
+
+// AddonPosture is one installed add-on and the newest version compatible
+// with the cluster's Kubernetes version ("" when it could not be read, or
+// none is published).
+type AddonPosture struct {
+	Name    string
+	Status  string
+	Version string
+	Latest  string
+	Behind  bool
 }
 
 // addFailure records f against the row and marks it incomplete.
