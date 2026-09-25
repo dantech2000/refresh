@@ -3,12 +3,14 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v3"
+	"k8s.io/klog/v2"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
 	"github.com/dantech2000/refresh/internal/commands/runner"
@@ -84,6 +86,11 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	defer cancel()
+	// client-go logs watch and list failures through klog to stderr, which
+	// would print over the full screen. The roll's own feed reports what the
+	// node view could not read.
+	klog.LogToStderr(false)
+	klog.SetOutput(io.Discard)
 	regions, skip := uiRegions(cmd, awsCfg)
 	profile := cmd.String("profile")
 	if profile == "" {
@@ -101,6 +108,7 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		Kubeconfig:       cmd.String("kubeconfig"),
 		KubeContext:      cmd.String("kube-context"),
 		WaitTimeout:      runner.WaitTimeout(cmd, ""),
+		CallTimeout:      runner.APITimeout(cmd),
 	})
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()

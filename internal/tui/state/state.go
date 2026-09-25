@@ -130,8 +130,11 @@ type Nodegroup struct {
 	// AMIStale is set when the backend knows the AMI is out of date without
 	// knowing the newest release by name.
 	AMIStale bool
-	Nodes    int
-	Status   string
+	// AMIUnknown is set when the AMI's status could not be read (for
+	// example, no SSM access to the recommended-AMI parameters).
+	AMIUnknown bool
+	Nodes      int
+	Status     string
 }
 
 // Addon is an installed EKS add-on.
@@ -203,6 +206,9 @@ type Roll struct {
 	ToVersion          string
 	FromAMI, ToAMI     string
 	MaxUnavailable     int
+	// MaxUnavailableText, when set, is shown instead of MaxUnavailable (a
+	// percentage, or "unknown").
+	MaxUnavailableText string
 	StartedAt          time.Time
 	// EndedAt is zero while the roll runs.
 	EndedAt time.Time

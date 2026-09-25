@@ -48,12 +48,13 @@ func toClusters(rows []statussvc.ClusterStatus, latest string) ([]state.Cluster,
 		}
 		for _, ng := range r.Nodegroups {
 			c.Nodegroups = append(c.Nodegroups, state.Nodegroup{
-				Name:     ng.Name,
-				Version:  ng.Version,
-				AMI:      ng.CurrentAMI,
-				AMIStale: ng.AMIStatus == types.AMIOutdated,
-				Nodes:    int(ng.DesiredSize),
-				Status:   ng.Status,
+				Name:       ng.Name,
+				Version:    ng.Version,
+				AMI:        ng.CurrentAMI,
+				AMIStale:   ng.AMIStatus == types.AMIOutdated,
+				AMIUnknown: ng.AMIStatus == types.AMIUnknown,
+				Nodes:      int(ng.DesiredSize),
+				Status:     ng.Status,
 			})
 			if ng.Status == "UPDATING" && c.Busy == "" {
 				c.Busy = "updating " + ng.Name
@@ -197,7 +198,10 @@ func planRoll(c state.Cluster, t target, ngName string) (state.Plan, error) {
 		p.Facts[1].Note = "the control plane runs " + c.Version + "; `cluster upgrade` moves nodegroups"
 	}
 	p.Gates = []state.PlanGate{{Status: state.CheckPending, Text: "pre-flight health checks", Note: "run by the CLI command before it changes anything"}}
-	if !ng.AMIStale {
+	switch {
+	case ng.AMIUnknown:
+		p.Facts = append(p.Facts, state.Fact{Key: "AMI status", Value: "unknown", Note: "the recommended-AMI lookup failed; the roll moves to the latest recommended AMI"})
+	case !ng.AMIStale:
 		p.Blocked = ngName + " already runs the latest AMI for " + ng.Version
 	}
 	return p, nil

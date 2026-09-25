@@ -79,6 +79,9 @@ type Options struct {
 	// PollInterval is how often a roll's EKS update is read. Zero means the
 	// CLI's default.
 	PollInterval time.Duration
+	// CallTimeout bounds a single call that changes a cluster. Zero means
+	// one minute.
+	CallTimeout time.Duration
 }
 
 // services are the AWS-facing calls. Tests replace them.
@@ -125,8 +128,11 @@ type Backend struct {
 	warnedClosed bool
 	// rolls are the rolls this backend started, oldest first.
 	rolls []*liveRoll
-	// claimed names the change this backend runs on a cluster, by key.
-	claimed map[string]string
+	// claimed names the change this backend runs on a cluster.
+	claimed map[target]string
+	// accepted holds the health findings each roll's dry run showed, by
+	// acceptKey: the findings the user confirmed with y.
+	accepted map[string][]string
 }
 
 // New returns a backend for the accounts behind cfg. Call Run to start
@@ -144,6 +150,9 @@ func New(cfg aws.Config, opts Options) *Backend {
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = appconfig.DefaultPollInterval
 	}
+	if opts.CallTimeout <= 0 {
+		opts.CallTimeout = time.Minute
+	}
 	if len(opts.Regions) == 0 && cfg.Region != "" {
 		opts.Regions = []string{cfg.Region}
 	}
@@ -154,7 +163,8 @@ func New(cfg aws.Config, opts Options) *Backend {
 		wake:      make(chan struct{}, 1),
 		targets:   map[string]target{},
 		readiness: map[string]*state.Readiness{},
-		claimed:   map[string]string{},
+		claimed:   map[target]string{},
+		accepted:  map[string][]string{},
 	}
 	if b.opts.Logger == nil {
 		b.opts.Logger = slog.New(&paneHandler{b: b, level: slog.LevelWarn})
@@ -489,7 +499,7 @@ func (b *Backend) State(ctx context.Context) (state.State, error) {
 		st.Clusters = append(st.Clusters, c)
 	}
 	for _, r := range b.rolls {
-		st.Rolls = append(st.Rolls, r.snapshot())
+		st.Rolls = append(st.Rolls, b.rollSnapshot(r))
 	}
 	for k, r := range b.readiness {
 		st.Readiness[k] = copyReadiness(*r)
@@ -632,7 +642,9 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	case state.ActionRoll:
 		p, err = planRoll(c, t, a.Nodegroup)
 		if err == nil && b.opts.AllowChanges {
-			b.planRollLive(ctx, &p, cfg, t, a.Nodegroup)
+			pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
+			b.planRollLive(pctx, &p, cfg, t, a.Nodegroup)
+			cancel()
 		}
 	case state.ActionAddons:
 		p = planAddons(c, t)

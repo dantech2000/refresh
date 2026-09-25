@@ -44,7 +44,11 @@ func (m Model) rollHeader(r state.Roll, w int) Block {
 	if r.Running() && r.ETA > 0 {
 		right = append(right, sp(2), sub("eta "), tx(fmt.Sprintf("~%dm", max(1, int(r.ETA.Round(time.Minute).Minutes())))))
 	}
-	right = append(right, sp(2), sub("maxUnavailable "), tx(fmt.Sprint(r.MaxUnavailable)))
+	maxU := fmt.Sprint(r.MaxUnavailable)
+	if r.MaxUnavailableText != "" {
+		maxU = r.MaxUnavailableText
+	}
+	right = append(right, sp(2), sub("maxUnavailable "), tx(maxU))
 	if len(m.st.Rolls) > 1 {
 		right = append(right, sp(2), dimS(fmt.Sprintf("roll %d/%d · [ ]", m.rollIdx+1, len(m.st.Rolls))))
 	}

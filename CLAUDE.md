@@ -193,7 +193,14 @@ can begin a nodegroup roll (only rolls so far). The roll re-runs the
 watched through the EKS update (quiet `monitoring.MonitorUpdates`, the
 authority) and the `noderoll` observer when a kubeconfig context matches
 (resolved with `health.ConnectKubeClientForCluster` directly, never
-`runner.ResolveClusterKubeClient`, which writes to stderr). Without the
+`runner.ResolveClusterKubeClient`, which writes to stderr). `Start` needs the
+roll's dry run first, describes the nodegroup live (skips UPDATING and
+CUSTOM, pins the live version), and refuses when the re-run health gate
+finds anything the dry run did not show. The EKS update status decides the
+result (a Failed update is failed even though the monitor also errors).
+`runLive` silences klog, since client-go logs informer failures to stderr.
+Not yet in the TUI roll: post-roll verification, the instance-type
+availability pre-flight, and metrics-server drain headroom. Without the
 flag `Start` returns `live.ErrReadOnly` and plans name the CLI command. `State` never calls AWS, so the TUI's fast
 polling is free. `internal/sim` is a deterministic simulated fleet on a
 virtual clock (rolls, add-on updates, readiness checks, upgrades; node

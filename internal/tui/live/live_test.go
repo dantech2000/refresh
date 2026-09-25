@@ -628,12 +628,7 @@ func TestRollAgainstFakeAWS(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := New(cfg, Options{SweepTimeout: 30 * time.Second, AllowChanges: true, WaitTimeout: 30 * time.Second, PollInterval: 10 * time.Millisecond})
-	b.sweep(t.Context())
-	// fakeaws does not model SSM, so the AMI status is unknown; mark the
-	// nodegroup stale as a sweep with SSM access would.
-	b.mu.Lock()
-	b.clusters[0].Nodegroups[0].AMIStale = true
-	b.mu.Unlock()
+	b.sweep(t.Context()) // fakeaws does not model SSM: the AMI status is unknown, which can roll
 
 	a := state.Action{Kind: state.ActionRoll, Cluster: "prod", Nodegroup: "ng-a"}
 	p, err := b.Plan(t.Context(), a)
@@ -641,7 +636,7 @@ func TestRollAgainstFakeAWS(t *testing.T) {
 		t.Fatal(err)
 	}
 	if p.Blocked != "" {
-		t.Skipf("the health gate blocks against fakeaws (%s); covered by the unit tests", p.Blocked)
+		t.Fatalf("the roll is blocked against fakeaws: %s", p.Blocked)
 	}
 	if err := b.Start(t.Context(), a); err != nil {
 		t.Fatal(err)
@@ -655,5 +650,33 @@ func TestRollAgainstFakeAWS(t *testing.T) {
 	calls := strings.Join(srv.Calls(), "\n")
 	if !strings.Contains(calls, "eks POST /clusters/prod/node-groups/ng-a/update-version") {
 		t.Fatalf("no UpdateNodegroupVersion call:\n%s", calls)
+	}
+}
+
+// TestFailedRollAgainstFakeAWS: EKS reports the update Failed. The roll is
+// failed, not "outcome unknown", although the monitor returns an error too.
+func TestFailedRollAgainstFakeAWS(t *testing.T) {
+	srv := fakeaws.New(t, &fakeaws.Cluster{
+		Name: "prod", Version: "1.32",
+		Nodegroups: []*fakeaws.Nodegroup{{Name: "ng-a", Version: "1.32", UpdateStatus: "Failed"}},
+	})
+	srv.SetSupportedVersions("1.32")
+	cfg, err := config.LoadDefaultConfig(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := New(cfg, Options{SweepTimeout: 30 * time.Second, AllowChanges: true, WaitTimeout: 30 * time.Second, PollInterval: 10 * time.Millisecond})
+	b.sweep(t.Context())
+	a := state.Action{Kind: state.ActionRoll, Cluster: "prod", Nodegroup: "ng-a"}
+	if _, err := b.Plan(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Start(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	st, _ := b.State(t.Context())
+	if r := st.Rolls[0]; !strings.HasPrefix(r.Failed, "Failed") {
+		t.Fatalf("roll Failed = %q, want the EKS failure", r.Failed)
 	}
 }

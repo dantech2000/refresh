@@ -12,6 +12,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"k8s.io/client-go/kubernetes"
 
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
@@ -36,6 +37,9 @@ type rollServices struct {
 	// context it used or why there is none. It never writes to the
 	// terminal.
 	kubeFor func(ctx context.Context, cfg aws.Config, cluster string) (kubernetes.Interface, string)
+	// describe reads the nodegroup from EKS right before a roll starts, as
+	// `nodegroup update` does.
+	describe func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Nodegroup, error)
 	// healthCheck runs the pre-flight health gate `nodegroup update` runs.
 	healthCheck func(ctx context.Context, cfg aws.Config, cluster string, nodegroups []string, kube kubernetes.Interface) health.HealthSummary
 	startRoll   func(ctx context.Context, cfg aws.Config, cluster, nodegroup, version string) (*ekstypes.Update, error)
@@ -49,7 +53,7 @@ func defaultRollServices(opts Options) rollServices {
 		kubeFor: func(ctx context.Context, cfg aws.Config, cluster string) (kubernetes.Interface, string) {
 			target, err := health.DescribeTarget(ctx, factory.NewEKSClient(cfg), cluster, cfg.Region)
 			if err != nil {
-				return nil, "no node view: " + err.Error()
+				return nil, "no node view: " + awsinternal.FormatAWSError(err, "describing cluster "+cluster).Error()
 			}
 			client, sel, err := health.ConnectKubeClientForCluster(ctx, opts.Kubeconfig, opts.KubeContext, target, health.ProbeConnection)
 			if err != nil {
@@ -60,6 +64,9 @@ func defaultRollServices(opts Options) rollServices {
 				return nil, "no node view: " + err.Error()
 			}
 			return client, "kubeconfig context " + sel.Diag.Context
+		},
+		describe: func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Nodegroup, error) {
+			return factory.NewNodegroupService(cfg, false, opts.Logger).DescribeNodegroup(ctx, cluster, nodegroup)
 		},
 		healthCheck: func(ctx context.Context, cfg aws.Config, cluster string, nodegroups []string, kube kubernetes.Interface) health.HealthSummary {
 			checker := health.NewCheckerForConfig(cfg, kube, nil)
@@ -94,11 +101,15 @@ func defaultRollServices(opts Options) rollServices {
 
 // liveRoll is a roll this backend started.
 type liveRoll struct {
-	key     string // fleet key of the cluster
+	t       target // the cluster, by region and name
 	st      state.Roll
 	tracker *noderoll.Tracker
 	seen    int
 	warned  map[string]bool
+	// viewed is set once the node view read the nodes.
+	viewed bool
+	// perStep is how many nodes the roll replaces at a time, when known.
+	perStep int
 }
 
 // healthGates turns a health verdict into plan gates. blocked names the
@@ -141,6 +152,24 @@ func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Confi
 	if len(blocked) > 0 && p.Blocked == "" {
 		p.Blocked = "the health gate blocks the roll: " + strings.Join(blocked, ", ")
 	}
+	// What the user sees here and confirms with y: Start refuses a roll
+	// whose gate has found anything more since.
+	b.mu.Lock()
+	b.accepted[acceptKey(t, ng)] = findings(summary)
+	b.mu.Unlock()
+}
+
+func acceptKey(t target, ng string) string { return t.region + "/" + t.name + "/" + ng }
+
+// findings names the health results that did not pass.
+func findings(s health.HealthSummary) []string {
+	var out []string
+	for _, r := range s.Results {
+		if !r.Skipped && r.Status != health.StatusPass {
+			out = append(out, r.Name+" ("+string(r.Status)+")")
+		}
+	}
+	return out
 }
 
 // startRoll checks the gates again and starts the roll. The caller has
@@ -164,53 +193,82 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 	if ng == nil {
 		return fmt.Errorf("nodegroup %q not found in %s", a.Nodegroup, a.Cluster)
 	}
-	if !ng.AMIStale {
+	if !ng.AMIStale && !ng.AMIUnknown {
 		return fmt.Errorf("%s already runs the latest AMI for %s", a.Nodegroup, ng.Version)
 	}
-	// One change per cluster at a time: claim the cluster before any call.
+	// One change per cluster: claim the cluster, by region and name, before
+	// any call.
 	b.mu.Lock()
 	if busy := b.busyOf(a.Cluster, c); busy != "" {
 		b.mu.Unlock()
 		return fmt.Errorf("%s is busy: %s", a.Cluster, busy)
 	}
-	b.claimed[a.Cluster] = "starting a roll of " + a.Nodegroup
+	b.claimed[t] = "starting a roll of " + a.Nodegroup
+	accepted, planned := b.accepted[acceptKey(t, ng.Name)]
 	b.mu.Unlock()
-	release := func() {
-		b.mu.Lock()
-		delete(b.claimed, a.Cluster)
-		b.mu.Unlock()
+	started := false
+	defer func() {
+		if !started {
+			b.mu.Lock()
+			delete(b.claimed, t)
+			b.mu.Unlock()
+		}
+	}()
+	if !planned {
+		return errors.New("no dry run for this roll: open its dry run (p) first")
 	}
 
-	sctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
+	gctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 	defer cancel()
-	kube, how := b.roll.kubeFor(sctx, cfg, t.name)
-	summary := b.roll.healthCheck(sctx, cfg, t.name, []string{ng.Name}, kube)
+	// The nodegroup as EKS has it now, not as the last sweep saw it.
+	live, err := b.roll.describe(gctx, cfg, t.name, ng.Name)
+	if err != nil {
+		return err
+	}
+	switch {
+	case live.Status == ekstypes.NodegroupStatusUpdating:
+		return fmt.Errorf("%s is already updating", ng.Name)
+	case live.AmiType == ekstypes.AMITypesCustom:
+		return fmt.Errorf("%s uses a custom AMI (AmiType=CUSTOM): roll it by publishing a new launch template version", ng.Name)
+	}
+	version := aws.ToString(live.Version)
+
+	kube, how := b.roll.kubeFor(gctx, cfg, t.name)
+	summary := b.roll.healthCheck(gctx, cfg, t.name, []string{ng.Name}, kube)
 	if _, blocked := healthGates(summary); len(blocked) > 0 {
-		release()
 		return fmt.Errorf("blocked: the health gate blocks the roll: %s", strings.Join(blocked, ", "))
 	}
-	// An AMI patch is pinned to the nodegroup's own version, as `nodegroup
-	// update` does; a version change is `cluster upgrade`'s job.
-	update, err := b.roll.startRoll(sctx, cfg, t.name, ng.Name, ng.Version)
-	if err != nil {
-		release()
-		return fmt.Errorf("starting the roll of %s/%s: %w", t.name, ng.Name, err)
+	if added := newFindings(accepted, findings(summary)); len(added) > 0 {
+		return fmt.Errorf("the health gate found more since the dry run: %s; open the dry run again (p)", strings.Join(added, ", "))
 	}
 
+	// The start call gets its own budget, so a slow gate cannot leave it a
+	// nearly expired context.
+	sctx, scancel := context.WithTimeout(ctx, b.opts.CallTimeout)
+	defer scancel()
+	// An AMI patch is pinned to the nodegroup's own version, as `nodegroup
+	// update` does; a version change is `cluster upgrade`'s job.
+	update, err := b.roll.startRoll(sctx, cfg, t.name, ng.Name, version)
+	if err != nil {
+		return awsinternal.FormatAWSError(err, fmt.Sprintf("starting the roll of %s/%s", t.name, ng.Name))
+	}
+	started = true
+
 	b.mu.Lock()
-	r := &liveRoll{key: a.Cluster, tracker: noderoll.NewTracker(), warned: map[string]bool{}}
+	r := &liveRoll{t: t, tracker: noderoll.NewTracker(), warned: map[string]bool{}, perStep: perStep(live.UpdateConfig)}
 	r.st = state.Roll{
-		Cluster: a.Cluster, Nodegroup: ng.Name,
-		FromVersion: ng.Version, ToVersion: ng.Version,
-		FromAMI: ng.AMI, ToAMI: "latest for " + ng.Version,
-		MaxUnavailable: 1, StartedAt: b.now(), Planned: ng.Nodes,
+		Nodegroup: ng.Name, FromVersion: version, ToVersion: version,
+		FromAMI: ng.AMI, ToAMI: "latest for " + version,
+		MaxUnavailableText: maxUnavailableText(live.UpdateConfig),
+		StartedAt:          b.now(), Planned: int(aws.ToInt32(scalingDesired(live))),
 	}
 	id := aws.ToString(update.Id)
-	b.rollEvent(r, state.Event{Source: state.SourceAWS, Level: state.LevelInfo, Subject: "UpdateNodegroupVersion", Text: "id=" + id + " · " + ng.Version})
+	b.rollEvent(r, state.Event{Source: state.SourceAWS, Level: state.LevelInfo, Subject: "UpdateNodegroupVersion", Text: "id=" + id + " · " + version})
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "node view", Text: how})
 	b.emit(state.Event{Cluster: a.Cluster, Source: state.SourceRoll, Level: state.LevelProgress, Subject: ng.Name, Text: "roll started", Detail: "update " + id})
 	b.rolls = append(b.rolls, r)
-	b.claimed[a.Cluster] = "rolling " + ng.Name
+	b.claimed[t] = "rolling " + ng.Name
+	delete(b.accepted, acceptKey(t, ng.Name))
 	runCtx := b.runCtx
 	b.mu.Unlock()
 	if runCtx == nil {
@@ -225,18 +283,74 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 	return nil
 }
 
+// newFindings lists what now has that before did not.
+func newFindings(before, now []string) []string {
+	var out []string
+	for _, f := range now {
+		if !slices.Contains(before, f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func scalingDesired(ng *ekstypes.Nodegroup) *int32 {
+	if ng.ScalingConfig == nil {
+		return nil
+	}
+	return ng.ScalingConfig.DesiredSize
+}
+
+// perStep is how many nodes EKS replaces at a time, or 0 when it is a
+// percentage or unknown.
+func perStep(u *ekstypes.NodegroupUpdateConfig) int {
+	if u == nil {
+		return 1 // the EKS default
+	}
+	if u.MaxUnavailable != nil {
+		return int(*u.MaxUnavailable)
+	}
+	return 0
+}
+
+func maxUnavailableText(u *ekstypes.NodegroupUpdateConfig) string {
+	switch {
+	case u == nil:
+		return "1"
+	case u.MaxUnavailable != nil:
+		return fmt.Sprint(*u.MaxUnavailable)
+	case u.MaxUnavailablePercentage != nil:
+		return fmt.Sprintf("%d%%", *u.MaxUnavailablePercentage)
+	default:
+		return "unknown"
+	}
+}
+
 // busyOf names the change on a cluster, from this backend or from EKS. The
 // caller holds b.mu.
 func (b *Backend) busyOf(key string, c state.Cluster) string {
-	if s := b.claimed[key]; s != "" {
-		return s
+	if t, ok := b.targets[key]; ok {
+		if s := b.claimed[t]; s != "" {
+			return s
+		}
 	}
 	return c.Busy
 }
 
+// keyOf is the fleet key of t now; keys change when a second region gains a
+// cluster of the same name. The caller holds b.mu.
+func (b *Backend) keyOf(t target) string {
+	for k, tt := range b.targets {
+		if tt == t {
+			return k
+		}
+	}
+	return t.name
+}
+
 // rollEvent records e in r's feed. The caller holds b.mu.
 func (b *Backend) rollEvent(r *liveRoll, e state.Event) {
-	e.Cluster = r.key
+	e.Cluster = b.keyOf(r.t)
 	r.st.Events = appendCapped(r.st.Events, b.stamp(e), logCap)
 }
 
@@ -306,6 +420,7 @@ func (b *Backend) observeOnce(ctx context.Context, r *liveRoll, obs rollObserver
 		}
 	}
 	r.st.Snapshot = snap
+	r.viewed = true
 	r.tracker.Observe(snap)
 	evs := r.tracker.Recent(0)
 	if len(evs) < r.seen {
@@ -315,7 +430,7 @@ func (b *Backend) observeOnce(ctx context.Context, r *liveRoll, obs rollObserver
 		ev := lifecycleEvent(e)
 		b.rollEvent(r, ev)
 		if e.Kind != noderoll.EvtJoining {
-			ev.Cluster = r.key
+			ev.Cluster = b.keyOf(r.t)
 			b.emit(ev)
 		}
 	}
@@ -362,33 +477,41 @@ func lifecycleEvent(e noderoll.Event) state.Event {
 	return ev
 }
 
-// finishRoll records the EKS result and frees the cluster.
+// finishRoll records the EKS result and frees the cluster. The EKS status
+// decides: a Failed or Cancelled update is a failed roll even though the
+// monitor also returns an error for it; only a watch that stopped before a
+// final status is "outcome unknown".
 func (b *Backend) finishRoll(r *liveRoll, status ekstypes.UpdateStatus, msg string, err error) {
 	b.mu.Lock()
 	r.st.EndedAt = b.now()
 	lvl, text := state.LevelOK, "roll complete"
-	switch {
-	case err != nil && status != ekstypes.UpdateStatusSuccessful:
-		// The watch stopped (timeout, quit, lost access); the EKS update may
-		// still be running.
-		lvl, text = state.LevelWarn, "stopped watching: "+err.Error()
-		r.st.Failed = "outcome unknown · the EKS update may still be running"
-	case status != ekstypes.UpdateStatusSuccessful:
+	switch status {
+	case ekstypes.UpdateStatusSuccessful:
+	case ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusCancelled:
 		lvl, text = state.LevelError, "roll "+strings.ToLower(string(status))
 		r.st.Failed = strings.TrimSpace(string(status) + " " + msg)
+	default:
+		why := "the watch ended"
+		if err != nil {
+			why = err.Error()
+		}
+		lvl, text = state.LevelWarn, "stopped watching: "+why
+		r.st.Failed = "outcome unknown · the EKS update may still be running"
 	}
 	took := r.st.EndedAt.Sub(r.st.StartedAt).Round(time.Second)
+	key := b.keyOf(r.t)
 	b.rollEvent(r, state.Event{Source: state.SourceAWS, Level: lvl, Subject: "DescribeUpdate", Text: string(status), Detail: msg})
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: lvl, Subject: r.st.Nodegroup, Text: text, Detail: took.String()})
-	b.emit(state.Event{Cluster: r.key, Source: state.SourceRoll, Level: lvl, Subject: r.st.Nodegroup, Text: text, Detail: took.String()})
-	delete(b.claimed, r.key)
+	b.emit(state.Event{Cluster: key, Source: state.SourceRoll, Level: lvl, Subject: r.st.Nodegroup, Text: text, Detail: took.String()})
+	delete(b.claimed, r.t)
 	b.mu.Unlock()
 	b.Refresh() // read the nodegroup's new AMI
 }
 
-// snapshot copies a roll for State.
-func (r *liveRoll) snapshot() state.Roll {
+// rollSnapshot copies a roll for State. The caller holds b.mu.
+func (b *Backend) rollSnapshot(r *liveRoll) state.Roll {
 	st := r.st
+	st.Cluster = b.keyOf(r.t)
 	st.Events = slices.Clone(r.st.Events)
 	st.Gates = slices.Clone(r.st.Gates)
 	st.Snapshot.Nodes = slices.Clone(r.st.Snapshot.Nodes)
@@ -398,9 +521,12 @@ func (r *liveRoll) snapshot() state.Roll {
 	st.Snapshot.Warnings = slices.Clone(r.st.Snapshot.Warnings)
 	st.Pods = map[string][]state.Pod{}
 	st.NodePods = map[string]int{}
-	if r.st.Running() && st.Planned > 0 {
+	// An estimate only when the node view counts replaced nodes and the
+	// step size is a node count.
+	if r.st.Running() && r.viewed && r.perStep > 0 && st.Planned > 0 {
 		left := st.Planned - st.Replaced()
-		st.ETA = time.Duration(left) * 2 * time.Minute
+		steps := (left + r.perStep - 1) / r.perStep
+		st.ETA = time.Duration(steps) * 2 * time.Minute
 	}
 	return st
 }
