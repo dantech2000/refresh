@@ -13,8 +13,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/noderoll"
+	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/types"
@@ -51,10 +53,14 @@ type rollRig struct {
 	version atomic.Value // the version the roll was pinned to
 	health  health.Decision
 	// warn adds a Warn-level health result.
-	warn    string
-	live    ekstypes.Nodegroup // what describe returns
-	release chan ekstypes.UpdateStatus
-	atEnd   chan struct{}
+	warn string
+	live ekstypes.Nodegroup // what describe returns
+	// offerings, verification: what those services return.
+	offerings    []nodegroupsvc.UnavailableOffering
+	verification nodegroupsvc.PostRollVerification
+	verified     atomic.Int64
+	release      chan ekstypes.UpdateStatus
+	atEnd        chan struct{}
 }
 
 // start dry-runs a and starts it, as the TUI does (p, then y).
@@ -80,14 +86,14 @@ func newRollRig(t *testing.T) *rollRig {
 	b.opts.AllowChanges = true
 	b.opts.ObserveInterval = time.Millisecond
 	b.roll = rollServices{
-		kubeFor: func(context.Context, aws.Config, string) (kubernetes.Interface, string) {
-			return fake.NewClientset(), "kubeconfig context prod-api"
+		kubeFor: func(context.Context, aws.Config, string) (kubernetes.Interface, health.NodeMetricsLister, string) {
+			return fake.NewClientset(), nil, "kubeconfig context prod-api"
 		},
 		describe: func(context.Context, aws.Config, string, string) (*ekstypes.Nodegroup, error) {
 			ng := rig.live
 			return &ng, nil
 		},
-		healthCheck: func(context.Context, aws.Config, string, []string, kubernetes.Interface) health.HealthSummary {
+		healthCheck: func(context.Context, aws.Config, string, []string, kubernetes.Interface, health.NodeMetricsLister) health.HealthSummary {
 			s := health.HealthSummary{Decision: rig.health, Results: []health.HealthResult{{Name: "nodes Ready", Status: health.StatusPass}}}
 			if rig.warn != "" {
 				s.Results = append(s.Results, health.HealthResult{Name: rig.warn, Status: health.StatusWarn})
@@ -118,6 +124,16 @@ func newRollRig(t *testing.T) *rollRig {
 			case <-ctx.Done():
 				return ekstypes.UpdateStatusInProgress, "", ctx.Err()
 			}
+		},
+		offerings: func(context.Context, aws.Config, string, string) ([]nodegroupsvc.UnavailableOffering, error) {
+			return rig.offerings, nil
+		},
+		pendingPods: func(context.Context, kubernetes.Interface) (nodegroupsvc.PendingPods, bool) {
+			return nodegroupsvc.PendingPods{}, true
+		},
+		verify: func(context.Context, aws.Config, string, string, kubernetes.Interface, nodegroupsvc.PendingPods, bool) (nodegroupsvc.PostRollVerification, []diag.Failure) {
+			rig.verified.Add(1)
+			return rig.verification, nil
 		},
 		observe: func(kubernetes.Interface, string) rollObserver {
 			return scriptedObs{ScriptedObserver: noderoll.NewScriptedObserver(noderoll.DemoTimeline()), atEnd: rig.atEnd}
@@ -270,8 +286,8 @@ func TestOnlyRollsStartEvenWithChangesOn(t *testing.T) {
 
 func TestNoKubeAccessStillRollsWithoutTheNodeView(t *testing.T) {
 	rig := newRollRig(t)
-	rig.b.roll.kubeFor = func(context.Context, aws.Config, string) (kubernetes.Interface, string) {
-		return nil, "no kubeconfig context for this cluster · add one: aws eks update-kubeconfig --name prod-api --region us-east-1"
+	rig.b.roll.kubeFor = func(context.Context, aws.Config, string) (kubernetes.Interface, health.NodeMetricsLister, string) {
+		return nil, nil, "no kubeconfig context for this cluster · add one: aws eks update-kubeconfig --name prod-api --region us-east-1"
 	}
 	p, _ := rig.b.Plan(t.Context(), roll)
 	if p.Gates[0].Status != state.CheckWarn || p.Blocked != "" {
@@ -395,4 +411,61 @@ func TestClaimSurvivesAKeyChange(t *testing.T) {
 	}
 	rig.release <- ekstypes.UpdateStatusSuccessful
 	rig.b.Close()
+}
+
+func TestVerificationRunsAfterASuccessfulRoll(t *testing.T) {
+	rig := newRollRig(t)
+	rig.verification = nodegroupsvc.PostRollVerification{Checks: []string{"nodegroup ng-general is ACTIVE", "no new Pending pods"}}
+	if err := rig.start(t, roll); err != nil {
+		t.Fatal(err)
+	}
+	rig.release <- ekstypes.UpdateStatusSuccessful
+	rig.b.Close()
+	st, _ := rig.b.State(t.Context())
+	r := st.Rolls[0]
+	if rig.verified.Load() != 1 || r.Failed != "" || len(r.Gates) != 2 || r.Gates[1].Name != "no new Pending pods" {
+		t.Fatalf("verified %d, roll = %+v", rig.verified.Load(), r)
+	}
+
+	// Issues fail the roll's result, as exit 5 does for `nodegroup update`.
+	rig = newRollRig(t)
+	rig.verification = nodegroupsvc.PostRollVerification{Issues: []string{"2 pod(s) newly Pending after roll: [shop/checkout-1 shop/checkout-2]"}}
+	if err := rig.start(t, roll); err != nil {
+		t.Fatal(err)
+	}
+	rig.release <- ekstypes.UpdateStatusSuccessful
+	rig.b.Close()
+	st, _ = rig.b.State(t.Context())
+	if r := st.Rolls[0]; !strings.HasPrefix(r.Failed, "post-roll verification: 2 pod(s) newly Pending") {
+		t.Fatalf("roll Failed = %q", r.Failed)
+	}
+
+	// A failed roll is not verified.
+	rig = newRollRig(t)
+	if err := rig.start(t, roll); err != nil {
+		t.Fatal(err)
+	}
+	rig.release <- ekstypes.UpdateStatusFailed
+	rig.b.Close()
+	if rig.verified.Load() != 0 {
+		t.Fatal("a failed roll was verified")
+	}
+}
+
+func TestUnofferedInstanceTypesWarnInTheDryRun(t *testing.T) {
+	rig := newRollRig(t)
+	rig.offerings = []nodegroupsvc.UnavailableOffering{{InstanceType: "m7i.large", AvailabilityZone: "us-east-1e"}}
+	p, err := rig.b.Plan(t.Context(), roll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, g := range p.Gates {
+		if g.Text == "m7i.large not offered in us-east-1e" && g.Status == state.CheckWarn {
+			found = true
+		}
+	}
+	if !found || p.Blocked != "" {
+		t.Fatalf("gates = %+v, blocked %q; the offering check warns, never blocks", p.Gates, p.Blocked)
+	}
 }

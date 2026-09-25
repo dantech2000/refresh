@@ -199,8 +199,10 @@ CUSTOM, pins the live version), and refuses when the re-run health gate
 finds anything the dry run did not show. The EKS update status decides the
 result (a Failed update is failed even though the monitor also errors).
 `runLive` silences klog, since client-go logs informer failures to stderr.
-Not yet in the TUI roll: post-roll verification, the instance-type
-availability pre-flight, and metrics-server drain headroom. Without the
+The TUI roll runs the same pre-flight and post-roll steps as the CLI:
+metrics-server drain headroom in the health gate, the instance-type
+availability warning in the dry run, and `nodegroup.VerifyPostRoll` (shared
+with the command; issues fail the roll's result like exit 5). Without the
 flag `Start` returns `live.ErrReadOnly` and plans name the CLI command. `State` never calls AWS, so the TUI's fast
 polling is free. `internal/sim` is a deterministic simulated fleet on a
 virtual clock (rolls, add-on updates, readiness checks, upgrades; node

@@ -14,6 +14,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
 	"github.com/dantech2000/refresh/internal/noderoll"
@@ -36,12 +37,19 @@ type rollServices struct {
 	// whose server matches the cluster endpoint, and a line saying which
 	// context it used or why there is none. It never writes to the
 	// terminal.
-	kubeFor func(ctx context.Context, cfg aws.Config, cluster string) (kubernetes.Interface, string)
+	kubeFor func(ctx context.Context, cfg aws.Config, cluster string) (kubernetes.Interface, health.NodeMetricsLister, string)
 	// describe reads the nodegroup from EKS right before a roll starts, as
 	// `nodegroup update` does.
 	describe func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Nodegroup, error)
 	// healthCheck runs the pre-flight health gate `nodegroup update` runs.
-	healthCheck func(ctx context.Context, cfg aws.Config, cluster string, nodegroups []string, kube kubernetes.Interface) health.HealthSummary
+	healthCheck func(ctx context.Context, cfg aws.Config, cluster string, nodegroups []string, kube kubernetes.Interface, metrics health.NodeMetricsLister) health.HealthSummary
+	// offerings lists the (instance type, AZ) pairs the nodegroup spans
+	// where EC2 does not offer the type.
+	offerings func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) ([]nodegroupsvc.UnavailableOffering, error)
+	// pendingPods and verify are the post-roll verification of `nodegroup
+	// update`: pods newly stuck Pending, and the nodegroup back to ACTIVE.
+	pendingPods func(ctx context.Context, kube kubernetes.Interface) (nodegroupsvc.PendingPods, bool)
+	verify      func(ctx context.Context, cfg aws.Config, cluster, nodegroup string, kube kubernetes.Interface, pre nodegroupsvc.PendingPods, preOK bool) (nodegroupsvc.PostRollVerification, []diag.Failure)
 	startRoll   func(ctx context.Context, cfg aws.Config, cluster, nodegroup, version string) (*ekstypes.Update, error)
 	// waitUpdate polls the EKS update until it ends or ctx ends.
 	waitUpdate func(ctx context.Context, cfg aws.Config, cluster, nodegroup, updateID string, timeout time.Duration) (ekstypes.UpdateStatus, string, error)
@@ -50,30 +58,45 @@ type rollServices struct {
 
 func defaultRollServices(opts Options) rollServices {
 	return rollServices{
-		kubeFor: func(ctx context.Context, cfg aws.Config, cluster string) (kubernetes.Interface, string) {
+		kubeFor: func(ctx context.Context, cfg aws.Config, cluster string) (kubernetes.Interface, health.NodeMetricsLister, string) {
 			target, err := health.DescribeTarget(ctx, factory.NewEKSClient(cfg), cluster, cfg.Region)
 			if err != nil {
-				return nil, "no node view: " + awsinternal.FormatAWSError(err, "describing cluster "+cluster).Error()
+				return nil, nil, "no node view: " + awsinternal.FormatAWSError(err, "describing cluster "+cluster).Error()
 			}
 			client, sel, err := health.ConnectKubeClientForCluster(ctx, opts.Kubeconfig, opts.KubeContext, target, health.ProbeConnection)
 			if err != nil {
 				var mm *health.ClusterMismatchError
 				if errors.As(err, &mm) {
-					return nil, "no kubeconfig context for this cluster · add one: " + target.UpdateKubeconfigHint()
+					return nil, nil, "no kubeconfig context for this cluster · add one: " + target.UpdateKubeconfigHint()
 				}
-				return nil, "no node view: " + err.Error()
+				return nil, nil, "no node view: " + err.Error()
 			}
-			return client, "kubeconfig context " + sel.Diag.Context
+			// metrics-server, best effort, for the drain-headroom check.
+			metrics, merr := health.BuildMetricsClient(sel)
+			if merr != nil {
+				metrics = nil
+			}
+			return client, metrics, "kubeconfig context " + sel.Diag.Context
 		},
 		describe: func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Nodegroup, error) {
 			return factory.NewNodegroupService(cfg, false, opts.Logger).DescribeNodegroup(ctx, cluster, nodegroup)
 		},
-		healthCheck: func(ctx context.Context, cfg aws.Config, cluster string, nodegroups []string, kube kubernetes.Interface) health.HealthSummary {
+		healthCheck: func(ctx context.Context, cfg aws.Config, cluster string, nodegroups []string, kube kubernetes.Interface, metrics health.NodeMetricsLister) health.HealthSummary {
 			checker := health.NewCheckerForConfig(cfg, kube, nil)
 			if kube != nil {
 				checker.SetTargetNodegroups(nodegroups)
+				if metrics != nil {
+					checker.SetNodeMetrics(metrics)
+				}
 			}
 			return checker.RunAllChecks(ctx, cluster)
+		},
+		offerings: func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) ([]nodegroupsvc.UnavailableOffering, error) {
+			return factory.NewNodegroupService(cfg, false, opts.Logger).CheckInstanceTypeAvailability(ctx, cluster, nodegroup)
+		},
+		pendingPods: nodegroupsvc.SnapshotPendingPods,
+		verify: func(ctx context.Context, cfg aws.Config, cluster, nodegroup string, kube kubernetes.Interface, pre nodegroupsvc.PendingPods, preOK bool) (nodegroupsvc.PostRollVerification, []diag.Failure) {
+			return nodegroupsvc.VerifyPostRoll(ctx, factory.NewEKSClient(cfg), kube, cluster, []string{nodegroup}, pre, preOK)
 		},
 		startRoll: func(ctx context.Context, cfg aws.Config, cluster, nodegroup, version string) (*ekstypes.Update, error) {
 			return nodegroupsvc.StartNodegroupRoll(ctx, factory.NewEKSClient(cfg), cluster, nodegroup, version, false)
@@ -141,14 +164,21 @@ func healthGates(s health.HealthSummary) (gates []state.PlanGate, blocked []stri
 // planRollLive adds what only a change needs to a roll dry run: the
 // pre-flight health gate and the node view's Kubernetes access.
 func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Config, t target, ng string) {
-	kube, how := b.roll.kubeFor(ctx, cfg, t.name)
-	summary := b.roll.healthCheck(ctx, cfg, t.name, []string{ng}, kube)
+	kube, metrics, how := b.roll.kubeFor(ctx, cfg, t.name)
+	summary := b.roll.healthCheck(ctx, cfg, t.name, []string{ng}, kube, metrics)
 	gates, blocked := healthGates(summary)
 	nodeView := state.PlanGate{Status: state.CheckPass, Text: "live node view", Note: how}
 	if kube == nil {
 		nodeView.Status = state.CheckWarn
 	}
 	p.Gates = append([]state.PlanGate{nodeView}, gates...) // the real gate replaces the placeholder
+	// Instance types EC2 does not offer in some of the nodegroup's AZs: new
+	// nodes may fail to launch there. Advisory, as in `nodegroup update`.
+	if offs, err := b.roll.offerings(ctx, cfg, t.name, ng); err == nil {
+		for _, o := range offs {
+			p.Gates = append(p.Gates, state.PlanGate{Status: state.CheckWarn, Text: o.InstanceType + " not offered in " + o.AvailabilityZone, Note: "new nodes may fail to launch there"})
+		}
+	}
 	if len(blocked) > 0 && p.Blocked == "" {
 		p.Blocked = "the health gate blocks the roll: " + strings.Join(blocked, ", ")
 	}
@@ -233,14 +263,17 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 	}
 	version := aws.ToString(live.Version)
 
-	kube, how := b.roll.kubeFor(gctx, cfg, t.name)
-	summary := b.roll.healthCheck(gctx, cfg, t.name, []string{ng.Name}, kube)
+	kube, metrics, how := b.roll.kubeFor(gctx, cfg, t.name)
+	summary := b.roll.healthCheck(gctx, cfg, t.name, []string{ng.Name}, kube, metrics)
 	if _, blocked := healthGates(summary); len(blocked) > 0 {
 		return fmt.Errorf("blocked: the health gate blocks the roll: %s", strings.Join(blocked, ", "))
 	}
 	if added := newFindings(accepted, findings(summary)); len(added) > 0 {
 		return fmt.Errorf("the health gate found more since the dry run: %s; open the dry run again (p)", strings.Join(added, ", "))
 	}
+
+	// Pods already Pending now are not the roll's doing (post-roll check).
+	pre, preOK := b.roll.pendingPods(gctx, kube)
 
 	// The start call gets its own budget, so a slow gate cannot leave it a
 	// nearly expired context.
@@ -278,7 +311,7 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 	b.work.Add(1)
 	go func() {
 		defer b.work.Done()
-		b.watchRoll(runCtx, r, cfg, t, id, kube)
+		b.watchRoll(runCtx, r, cfg, t, id, kube, pre, preOK)
 	}()
 	return nil
 }
@@ -356,7 +389,7 @@ func (b *Backend) rollEvent(r *liveRoll, e state.Event) {
 
 // watchRoll follows the roll until EKS says it ended: the EKS update is the
 // authority on the result, and the node view is best effort beside it.
-func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t target, updateID string, kube kubernetes.Interface) {
+func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t target, updateID string, kube kubernetes.Interface, pre nodegroupsvc.PendingPods, preOK bool) {
 	type result struct {
 		status ekstypes.UpdateStatus
 		msg    string
@@ -388,7 +421,15 @@ func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t 
 		select {
 		case res := <-done:
 			b.observeOnce(ctx, r, obs, false)
-			b.finishRoll(r, res.status, res.msg, res.err)
+			var v *nodegroupsvc.PostRollVerification
+			var vf []diag.Failure
+			if res.status == ekstypes.UpdateStatusSuccessful && ctx.Err() == nil {
+				vctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
+				got, fs := b.roll.verify(vctx, cfg, t.name, r.st.Nodegroup, kube, pre, preOK)
+				cancel()
+				v, vf = &got, fs
+			}
+			b.finishRoll(r, res.status, res.msg, res.err, v, vf)
 			return
 		case <-tick.C:
 			b.observeOnce(ctx, r, obs, false)
@@ -481,12 +522,36 @@ func lifecycleEvent(e noderoll.Event) state.Event {
 // decides: a Failed or Cancelled update is a failed roll even though the
 // monitor also returns an error for it; only a watch that stopped before a
 // final status is "outcome unknown".
-func (b *Backend) finishRoll(r *liveRoll, status ekstypes.UpdateStatus, msg string, err error) {
+func (b *Backend) finishRoll(r *liveRoll, status ekstypes.UpdateStatus, msg string, err error, v *nodegroupsvc.PostRollVerification, vf []diag.Failure) {
 	b.mu.Lock()
 	r.st.EndedAt = b.now()
 	lvl, text := state.LevelOK, "roll complete"
 	switch status {
 	case ekstypes.UpdateStatusSuccessful:
+		// The post-roll verification of `nodegroup update`.
+		if v != nil {
+			r.st.Gates = nil
+			for _, c := range v.Checks {
+				st := state.CheckPass
+				if v.Skipped(c) {
+					st = state.CheckPending
+				}
+				r.st.Gates = append(r.st.Gates, state.Gate{Name: c, Status: st})
+				b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: levelOfCheck(st), Subject: "verify", Text: c})
+			}
+			for _, is := range v.Issues {
+				r.st.Gates = append(r.st.Gates, state.Gate{Name: is, Status: state.CheckFail})
+				b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelError, Subject: "verify", Text: is})
+			}
+			for _, f := range vf {
+				r.st.Gates = append(r.st.Gates, state.Gate{Name: "could not read " + f.Name, Status: state.CheckWarn})
+				b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelWarn, Subject: "verify", Text: f.Error})
+			}
+			if !v.OK() {
+				lvl, text = state.LevelError, "roll complete · verification found issues"
+				r.st.Failed = "post-roll verification: " + strings.Join(v.Issues, "; ")
+			}
+		}
 	case ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusCancelled:
 		lvl, text = state.LevelError, "roll "+strings.ToLower(string(status))
 		r.st.Failed = strings.TrimSpace(string(status) + " " + msg)
@@ -529,4 +594,17 @@ func (b *Backend) rollSnapshot(r *liveRoll) state.Roll {
 		st.ETA = time.Duration(steps) * 2 * time.Minute
 	}
 	return st
+}
+
+func levelOfCheck(s state.CheckStatus) state.Level {
+	switch s {
+	case state.CheckPass:
+		return state.LevelOK
+	case state.CheckFail:
+		return state.LevelError
+	case state.CheckWarn:
+		return state.LevelWarn
+	default:
+		return state.LevelInfo
+	}
 }
