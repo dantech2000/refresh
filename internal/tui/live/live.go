@@ -54,7 +54,10 @@ type Options struct {
 	MaxConcurrency int
 	// Context and Profile label the top bar.
 	Context, Profile string
-	Logger           *slog.Logger
+	// Logger receives the services' logs. Nil sends warnings and errors to
+	// the TUI's log pane: the TUI owns the terminal, so nothing may write
+	// to stderr while it runs.
+	Logger *slog.Logger
 }
 
 // services are the AWS-facing calls. Tests replace them.
@@ -109,9 +112,6 @@ func New(cfg aws.Config, opts Options) *Backend {
 	if len(opts.Regions) == 0 && cfg.Region != "" {
 		opts.Regions = []string{cfg.Region}
 	}
-	if opts.Logger == nil {
-		opts.Logger = factory.NewDefaultLogger(nil)
-	}
 	b := &Backend{
 		base:      cfg,
 		opts:      opts,
@@ -120,9 +120,48 @@ func New(cfg aws.Config, opts Options) *Backend {
 		targets:   map[string]target{},
 		readiness: map[string]*state.Readiness{},
 	}
-	b.svc = defaultServices(opts.Logger)
+	if b.opts.Logger == nil {
+		b.opts.Logger = slog.New(&paneHandler{b: b, level: slog.LevelWarn})
+	}
+	b.svc = defaultServices(b.opts.Logger)
 	return b
 }
+
+// paneHandler writes log records at or above level into the log pane.
+type paneHandler struct {
+	b     *Backend
+	level slog.Level
+	attrs []slog.Attr
+}
+
+func (h *paneHandler) Enabled(_ context.Context, l slog.Level) bool { return l >= h.level }
+
+func (h *paneHandler) Handle(_ context.Context, r slog.Record) error {
+	text := r.Message
+	add := func(a slog.Attr) bool {
+		text += " " + a.Key + "=" + a.Value.String()
+		return true
+	}
+	for _, a := range h.attrs {
+		add(a)
+	}
+	r.Attrs(add)
+	lvl := state.LevelWarn
+	if r.Level >= slog.LevelError {
+		lvl = state.LevelError
+	}
+	h.b.mu.Lock()
+	defer h.b.mu.Unlock()
+	h.b.api("log", text, lvl)
+	return nil
+}
+
+func (h *paneHandler) WithAttrs(as []slog.Attr) slog.Handler {
+	return &paneHandler{b: h.b, level: h.level, attrs: append(slices.Clone(h.attrs), as...)}
+}
+
+// WithGroup keeps the handler flat: the pane has one line per record.
+func (h *paneHandler) WithGroup(string) slog.Handler { return h }
 
 func defaultServices(logger *slog.Logger) services {
 	return services{
@@ -461,6 +500,9 @@ func (b *Backend) RunReadiness(ctx context.Context, key string) error {
 		cctx, cancel := context.WithTimeout(runCtx, b.opts.SweepTimeout)
 		defer cancel()
 		report, rerr := b.svc.upgradeCheck(cctx, cfg, t.name)
+		if rerr == nil && report == nil {
+			rerr = errors.New("cluster upgrade-check returned no report")
+		}
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if b.readiness[key] != run {

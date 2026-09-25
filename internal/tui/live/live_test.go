@@ -477,3 +477,34 @@ func TestAgainstFakeAWS(t *testing.T) {
 		t.Fatalf("upgrade plan = %+v", p)
 	}
 }
+
+func TestServiceLogsGoToThePaneNotTheTerminal(t *testing.T) {
+	b := New(aws.Config{Region: "us-east-1"}, Options{})
+	log := b.opts.Logger.With("cluster", "prod")
+	log.Info("routine detail") // below warn: dropped
+	log.Warn("AMI lookup failed", "nodegroup", "ng-a")
+	log.Error("describe failed")
+	st, _ := b.State(t.Context())
+	text := joinText(st.Log)
+	if strings.Contains(text, "routine detail") {
+		t.Fatal("an info log reached the pane")
+	}
+	if !strings.Contains(text, "AMI lookup failed cluster=prod nodegroup=ng-a") || !strings.Contains(text, "describe failed") {
+		t.Fatalf("log pane:\n%s", text)
+	}
+}
+
+func TestNilReportIsAFailedCheck(t *testing.T) {
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": prodRows()}}
+	b := newTestBackend(t, f, "us-east-1")
+	b.svc.upgradeCheck = func(context.Context, aws.Config, string) (*clustersvc.UpgradeReport, error) { return nil, nil }
+	b.sweep(t.Context())
+	if err := b.RunReadiness(t.Context(), "prod-api"); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	st, _ := b.State(t.Context())
+	if r := st.Readiness["prod-api"]; r.Running || r.Checks[0].Status != state.CheckFail {
+		t.Fatalf("readiness = %+v", r)
+	}
+}
