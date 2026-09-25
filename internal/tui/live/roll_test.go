@@ -268,15 +268,11 @@ func TestStartErrorReleasesTheCluster(t *testing.T) {
 	}
 }
 
-func TestOnlyRollsStartEvenWithChangesOn(t *testing.T) {
+func TestUpgradesDoNotStartEvenWithChangesOn(t *testing.T) {
 	rig := newRollRig(t)
-	for _, a := range []state.Action{
-		{Kind: state.ActionAddons, Cluster: "prod-api"},
-		{Kind: state.ActionUpgrade, Cluster: "prod-api"},
-	} {
-		if err := rig.b.Start(t.Context(), a); err == nil || !strings.Contains(err.Error(), "only nodegroup rolls") {
-			t.Fatalf("Start(%v) = %v", a.Kind, err)
-		}
+	a := state.Action{Kind: state.ActionUpgrade, Cluster: "prod-api"}
+	if err := rig.b.Start(t.Context(), a); err == nil || !strings.Contains(err.Error(), "upgrades do not start") {
+		t.Fatalf("Start(upgrade) = %v", err)
 	}
 	current := state.Action{Kind: state.ActionRoll, Cluster: "prod-api", Nodegroup: "ng-system"}
 	if err := rig.start(t, current); err == nil || rig.started.Load() != 0 {

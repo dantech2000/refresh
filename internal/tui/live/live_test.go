@@ -680,3 +680,35 @@ func TestFailedRollAgainstFakeAWS(t *testing.T) {
 		t.Fatalf("roll Failed = %q, want the EKS failure", r.Failed)
 	}
 }
+
+// TestAddonUpdateAgainstFakeAWS runs the add-on dry run and update with
+// the real add-on service over fakeaws.
+func TestAddonUpdateAgainstFakeAWS(t *testing.T) {
+	srv := fakeaws.New(t, &fakeaws.Cluster{
+		Name: "prod", Version: "1.32",
+		Addons: []*fakeaws.Addon{{Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.2", "v1.18.0"}}},
+	})
+	srv.SetSupportedVersions("1.32")
+	cfg, err := config.LoadDefaultConfig(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := New(cfg, Options{SweepTimeout: 30 * time.Second, AllowChanges: true, WaitTimeout: 30 * time.Second})
+	b.sweep(t.Context())
+	a := state.Action{Kind: state.ActionAddons, Cluster: "prod"}
+	p, err := b.Plan(t.Context(), a)
+	if err != nil || p.Blocked != "" || len(p.Changes) != 1 || p.Changes[0].To != "v1.19.2" {
+		t.Fatalf("plan = %+v, %v", p, err)
+	}
+	if err := b.Start(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	st, _ := b.State(t.Context())
+	if !strings.Contains(joinText(st.Feed), "vpc-cni ACTIVE v1.19.2") {
+		t.Fatalf("feed:\n%s\nlog:\n%s", joinText(st.Feed), joinText(st.Log))
+	}
+	if !strings.Contains(strings.Join(srv.Calls(), "\n"), "/addons/vpc-cni/update") {
+		t.Fatalf("no UpdateAddon call:\n%s", strings.Join(srv.Calls(), "\n"))
+	}
+}

@@ -100,11 +100,12 @@ type target struct {
 
 // Backend is the live state.Backend.
 type Backend struct {
-	base aws.Config
-	opts Options
-	svc  services
-	roll rollServices
-	now  func() time.Time
+	base  aws.Config
+	opts  Options
+	svc   services
+	roll  rollServices
+	addon addonServices
+	now   func() time.Time
 
 	// wake asks the sweep loop to sweep now.
 	wake chan struct{}
@@ -133,6 +134,9 @@ type Backend struct {
 	// accepted holds the health findings each roll's dry run showed, by
 	// acceptKey: the findings the user confirmed with y.
 	accepted map[string][]string
+	// acceptedAddons holds each cluster's last add-on dry run: the changes
+	// the user confirmed with y.
+	acceptedAddons map[target][]addonChange
 }
 
 // New returns a backend for the accounts behind cfg. Call Run to start
@@ -157,20 +161,22 @@ func New(cfg aws.Config, opts Options) *Backend {
 		opts.Regions = []string{cfg.Region}
 	}
 	b := &Backend{
-		base:      cfg,
-		opts:      opts,
-		now:       time.Now,
-		wake:      make(chan struct{}, 1),
-		targets:   map[string]target{},
-		readiness: map[string]*state.Readiness{},
-		claimed:   map[target]string{},
-		accepted:  map[string][]string{},
+		base:           cfg,
+		opts:           opts,
+		now:            time.Now,
+		wake:           make(chan struct{}, 1),
+		targets:        map[string]target{},
+		readiness:      map[string]*state.Readiness{},
+		claimed:        map[target]string{},
+		accepted:       map[string][]string{},
+		acceptedAddons: map[target][]addonChange{},
 	}
 	if b.opts.Logger == nil {
 		b.opts.Logger = slog.New(&paneHandler{b: b, level: slog.LevelWarn})
 	}
 	b.svc = defaultServices(b.opts.Logger)
 	b.roll = defaultRollServices(b.opts)
+	b.addon = defaultAddonServices(b.opts)
 	return b
 }
 
@@ -648,6 +654,11 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		}
 	case state.ActionAddons:
 		p = planAddons(c, t)
+		if b.opts.AllowChanges {
+			pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
+			err = b.planAddonsLive(pctx, &p, cfg, t)
+			cancel()
+		}
 	case state.ActionUpgrade:
 		to := nextHop(c)
 		if to == c.Version {
@@ -692,12 +703,15 @@ func (b *Backend) Start(ctx context.Context, a state.Action) error {
 	if !b.canStart(a) {
 		return errors.New(b.whyNot())
 	}
+	if a.Kind == state.ActionAddons {
+		return b.startAddons(ctx, a)
+	}
 	return b.startRoll(ctx, a)
 }
 
 // canStart reports whether this backend can start a.
 func (b *Backend) canStart(a state.Action) bool {
-	return b.opts.AllowChanges && a.Kind == state.ActionRoll
+	return b.opts.AllowChanges && (a.Kind == state.ActionRoll || a.Kind == state.ActionAddons)
 }
 
 // whyNot says why a change cannot start here, and what to do instead.
@@ -705,7 +719,7 @@ func (b *Backend) whyNot() string {
 	if !b.opts.AllowChanges {
 		return ErrReadOnly.Error()
 	}
-	return "only nodegroup rolls start from the TUI so far: copy the CLI command (c) and run it in a shell"
+	return "upgrades do not start from the TUI yet: copy the CLI command (c) and run it in a shell"
 }
 
 // StopAfterCurrent implements state.Backend.

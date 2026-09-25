@@ -187,7 +187,11 @@ default) sweeps the fleet in the background with the status service
 (`status.ListOptions.Detail` keeps the per-nodegroup and add-on rows), runs
 `cluster upgrade-check` for readiness, and dry-runs changes with the real
 planners. It is read-only unless `refresh ui --allow-changes`: then `Start`
-can begin a nodegroup roll (only rolls so far). The roll re-runs the
+can begin a nodegroup roll or an add-on update (upgrades stay dry runs). An
+add-on update's dry run is the service's own preview (`UpdateAll` dry run,
+dependency order); `Start` previews again, refuses if the plan changed, and
+updates each add-on pinned to the previewed version with `--health-check
+--wait` semantics. The roll re-runs the
 `nodegroup update` health gate, pins to the nodegroup's own version through
 `StartNodegroupRoll`, claims the cluster (one change per cluster), and is
 watched through the EKS update (quiet `monitoring.MonitorUpdates`, the
