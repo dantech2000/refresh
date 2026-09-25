@@ -78,13 +78,20 @@ func amiCell(th *render.Theme, ng nodegroupsvc.NodegroupSummary) string {
 	return amiToken(th, ng.AMIStatus)
 }
 
-// amiToken renders an AMI status as a status token.
+// amiToken renders an AMI status as a status token: the one mapping for the
+// list, describe, and every other human view. Outdated is a warning (stale,
+// not failed), Updating is in progress, and Custom is neutral: EKS does not
+// manage that AMI, so it is neither current nor stale.
 func amiToken(th *render.Theme, s types.AMIStatus) string {
 	switch s {
 	case types.AMILatest:
 		return th.Token(render.Healthy, s.String())
 	case types.AMIOutdated:
 		return th.Token(render.Warn, s.String())
+	case types.AMIUpdating:
+		return th.Token(render.Progress, s.String())
+	case types.AMICustom:
+		return th.Token(render.Neutral, s.String())
 	default:
 		return th.Token(render.Unknown, s.String())
 	}

@@ -459,13 +459,19 @@ protection.
 ## The human display (design system)
 
 The default `table` output is rendered by a small design system so every
-surface — `status`, `cluster`, `nodegroup`, `addon` — reads consistently:
+surface reads consistently: the list and describe views, the pre-flight
+health report, dry-run previews, the update and upgrade progress and
+results, and the context commands.
 
 - **Status tokens** pair a glyph with a label and color: `●` healthy/current,
-  `▲` warn/stale, `✗` failed/unsupported, `◷` in-progress, `○` unknown. The
-  glyph and label always carry the meaning, so **color is purely additive** —
-  output stays fully legible with `--no-color`, when piped, or on a non‑UTF‑8
-  terminal (where glyphs fall back to `[OK] [!] [X] [~] [?]`).
+  `▲` warn/stale, `✗` failed/unsupported, `◷` in-progress, `○` unknown, and
+  `•` neutral (for example a check that was skipped, so it never reads as
+  passed). The glyph and label always carry the meaning, so **color is purely
+  additive**: output stays fully legible with `--no-color`, when piped, or on
+  a non‑UTF‑8 terminal (where glyphs fall back to `[OK] [!] [X] [~] [?] -`).
+- A resource in transition (`UPDATING`, `CREATING`, `DELETING`, `SCALING`)
+  shows the in-progress token, the same as an EKS update that is
+  `InProgress`.
 - **Color depth adapts to the terminal:** 24‑bit truecolor when the terminal
   advertises it (`COLORTERM=truecolor`), a 256‑color approximation otherwise,
   and no color when piped / `NO_COLOR` / `--no-color`.

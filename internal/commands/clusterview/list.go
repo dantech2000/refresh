@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
-
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
@@ -32,7 +30,7 @@ func OutputClustersTable(summaries []clustersvc.ClusterSummary, failures []diag.
 	}
 	th := render.Default(os.Stdout)
 	if len(summaries) == 0 {
-		color.Yellow("No EKS clusters found")
+		fmt.Println(th.Line(render.Neutral, "No EKS clusters found"))
 	} else {
 		for _, line := range clusterListLines(th, summaries, multiRegion, showHealth) {
 			fmt.Println(line)
@@ -66,9 +64,10 @@ func WriteClustersHint(w io.Writer, summaries []clustersvc.ClusterSummary) {
 // OutputClustersTree renders cluster summaries grouped by region as a tree,
 // followed by the INCOMPLETE DATA section for failures.
 func OutputClustersTree(summaries []clustersvc.ClusterSummary, failures []diag.Failure, elapsed time.Duration, multiRegion bool, showHealth bool) error {
-	defer printLines(render.Default(os.Stdout).FailureSection(failures))
+	th := render.Default(os.Stdout)
+	defer printLines(th.FailureSection(failures))
 	if len(summaries) == 0 {
-		color.Yellow("No EKS clusters found")
+		fmt.Println(th.Line(render.Neutral, "No EKS clusters found"))
 		return nil
 	}
 
@@ -129,8 +128,10 @@ func OutputClustersTree(summaries []clustersvc.ClusterSummary, failures []diag.F
 				critical++
 			}
 		}
-		ui.Outf("\nHealth Summary: %s healthy, %s warnings, %s critical\n",
-			color.GreenString("%d", healthy), color.YellowString("%d", warning), color.RedString("%d", critical))
+		ui.Outf("\nHealth Summary: %s, %s, %s\n",
+			th.Token(render.Healthy, fmt.Sprintf("%d healthy", healthy)),
+			th.Token(render.Warn, fmt.Sprintf("%d warnings", warning)),
+			th.Token(render.Fail, fmt.Sprintf("%d critical", critical)))
 	}
 	return nil
 }

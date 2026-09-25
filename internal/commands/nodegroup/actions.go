@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/fatih/color"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -49,10 +49,10 @@ func warnInstanceTypeAvailabilityTo(ctx context.Context, w io.Writer, svc *nodeg
 	if err != nil || len(unavailable) == 0 {
 		return
 	}
-	yellow := ui.ColorFor(w, color.FgYellow)
-	_, _ = yellow.Fprintln(w, "Pre-flight: instance type(s) not offered in some of the nodegroup's AZs — new nodes may fail to launch there:")
+	th := render.Default(w)
+	_, _ = fmt.Fprintln(w, th.Line(render.Warn, "Pre-flight: instance type(s) not offered in some of the nodegroup's AZs — new nodes may fail to launch there:"))
 	for _, u := range unavailable {
 		_, _ = fmt.Fprintf(w, "  - %s not offered in %s\n", u.InstanceType, u.AvailabilityZone)
 	}
-	_, _ = yellow.Fprintln(w, "  Note: this checks availability, not live capacity (only a launch reveals InsufficientInstanceCapacity).")
+	_, _ = fmt.Fprintln(w, th.Paint(th.Pal.Dim, "  Note: this checks availability, not live capacity (only a launch reveals InsufficientInstanceCapacity)."))
 }

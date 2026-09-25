@@ -7,13 +7,13 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -118,6 +118,7 @@ func warnAMILookup(w io.Writer, items []nodegroupsvc.NodegroupSummary) {
 	if first == nil {
 		return
 	}
-	_, _ = fmt.Fprintln(w, ui.ColorFor(w, color.FgYellow).Sprintf("warning: could not look up the latest recommended AMI for %d nodegroup(s), so their AMI status shows %q (%s: %s: %s)",
-		n, amiLookupFailedText, first.Operation, first.Reason, first.Error))
+	th := render.Default(w)
+	_, _ = fmt.Fprintln(w, th.Paint(th.Pal.Yellow, fmt.Sprintf("warning: could not look up the latest recommended AMI for %d nodegroup(s), so their AMI status shows %q (%s: %s: %s)",
+		n, amiLookupFailedText, first.Operation, first.Reason, first.Error)))
 }

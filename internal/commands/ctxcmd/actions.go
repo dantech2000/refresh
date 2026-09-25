@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -41,14 +41,14 @@ func runUse(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	active := f.Contexts[f.Current]
-	color.Green("Switched to context %q (cluster=%s region=%s profile=%s)",
+	render.Notef(os.Stdout, render.Healthy, "Switched to context %q (cluster=%s region=%s profile=%s)",
 		f.Current, active.Cluster, orDash(active.Region), orDash(active.Profile))
 	// REFRESH_CONTEXT beats the saved current context, so in this shell
 	// commands still use the env context. Say so rather than let "Switched"
 	// stand alone.
 	if env := os.Getenv("REFRESH_CONTEXT"); env != "" && env != f.Current {
-		_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr,
-			"warning: REFRESH_CONTEXT=%s overrides the saved context in this shell; unset REFRESH_CONTEXT to use %q here\n", env, f.Current)
+		render.Notef(ui.Stderr, render.Warn,
+			"warning: REFRESH_CONTEXT=%s overrides the saved context in this shell; unset REFRESH_CONTEXT to use %q here", env, f.Current)
 	}
 	return nil
 }
@@ -64,11 +64,12 @@ func runCurrent(_ context.Context, _ *cli.Command) error {
 	}
 	if !ok {
 		// A hint, not data: stderr keeps `refresh current` stdout empty.
-		_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgYellow).Sprint("No active context. Set one with: refresh use <name>"))
+		render.Notef(ui.Stderr, render.Neutral, "No active context. Set one with: refresh use <name>")
 		return nil
 	}
+	th := render.Default(os.Stdout)
 	fmt.Printf("%s  cluster=%s  region=%s  profile=%s\n",
-		color.CyanString(name), ctx.Cluster, orDash(ctx.Region), orDash(ctx.Profile))
+		th.Bold(th.Pal.White, name), ctx.Cluster, orDash(ctx.Region), orDash(ctx.Profile))
 	return nil
 }
 
@@ -84,20 +85,21 @@ func contextListCommand() *cli.Command {
 				return err
 			}
 			if len(f.Contexts) == 0 {
-				_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgYellow).Sprint("No saved contexts. Add one with: refresh context add <name> --cluster <cluster>"))
+				render.Notef(ui.Stderr, render.Neutral, "No saved contexts. Add one with: refresh context add <name> --cluster <cluster>")
 				return nil
 			}
 			// The list is how a user finds the right name, so an unknown
 			// REFRESH_CONTEXT is a warning here, not an error.
 			activeName, _, _, aerr := f.Active()
 			if aerr != nil {
-				_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgYellow).Sprintf("warning: %v", aerr))
+				render.Notef(ui.Stderr, render.Warn, "warning: %v", aerr)
 			}
+			th := render.Default(os.Stdout)
 			for _, n := range f.Names() {
 				ctx := f.Contexts[n]
 				marker := "  "
 				if n == activeName {
-					marker = color.GreenString("* ")
+					marker = th.Paint(th.Pal.Green, "*") + " "
 				}
 				fmt.Printf("%s%-20s cluster=%s region=%s profile=%s\n",
 					marker, n, ctx.Cluster, orDash(ctx.Region), orDash(ctx.Profile))
@@ -149,7 +151,7 @@ Pass --use to switch to the context immediately after saving.
 			if err := cliconfig.Save(f); err != nil {
 				return err
 			}
-			color.Green("Saved context %q", name)
+			render.Notef(os.Stdout, render.Healthy, "Saved context %q", name)
 			return nil
 		},
 	}
@@ -178,7 +180,7 @@ func contextRemoveCommand() *cli.Command {
 			if err := cliconfig.Save(f); err != nil {
 				return err
 			}
-			color.Green("Removed context %q", name)
+			render.Notef(os.Stdout, render.Healthy, "Removed context %q", name)
 			return nil
 		},
 	}
@@ -190,11 +192,12 @@ func pickContext(ctx context.Context, f *cliconfig.File) (string, error) {
 	// REFRESH_CONTEXT set, that is not the saved current one. An unknown
 	// REFRESH_CONTEXT marks none; `use` reports it after the switch.
 	activeName, _, _, _ := f.Active() //nolint:dogsled // only the name matters for the marker
-	color.Cyan("Available contexts:")
+	th := render.Default(os.Stdout)
+	fmt.Println(th.Section("Available contexts"))
 	for i, n := range names {
 		marker := " "
 		if n == activeName {
-			marker = color.GreenString("*")
+			marker = th.Paint(th.Pal.Green, "*")
 		}
 		ctx := f.Contexts[n]
 		fmt.Printf("  %s %d) %-20s cluster=%s region=%s\n", marker, i+1, n, ctx.Cluster, orDash(ctx.Region))

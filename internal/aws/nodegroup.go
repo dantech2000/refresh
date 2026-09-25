@@ -6,8 +6,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/fatih/color"
-
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -56,7 +54,7 @@ var nodegroupPromptOut io.Writer = ui.Stderr
 // promptForSingleNodegroupMatch asks the user to confirm a non-exact match,
 // so a pattern such as "web" never silently rolls "payments-web".
 func promptForSingleNodegroupMatch(ctx context.Context, match, pattern string) ([]string, error) {
-	_, _ = ui.ColorFor(nodegroupPromptOut, color.FgYellow).Fprintf(nodegroupPromptOut, "No nodegroup named %q. Update %q? [y/N]: ", pattern, match)
+	_, _ = fmt.Fprintf(nodegroupPromptOut, "No nodegroup named %q. Update %q? [y/N]: ", pattern, match)
 	response, err := promptLine(ctx)
 	if err != nil {
 		return nil, ui.PromptError(err)
@@ -71,12 +69,12 @@ func promptForSingleNodegroupMatch(ctx context.Context, match, pattern string) (
 
 // promptForNodegroupConfirmation displays matching nodegroups and prompts for confirmation.
 func promptForNodegroupConfirmation(ctx context.Context, matches []string, pattern string) ([]string, error) {
-	_, _ = ui.ColorFor(nodegroupPromptOut, color.FgYellow).Fprintf(nodegroupPromptOut, "Multiple nodegroups match pattern '%s':\n", pattern)
+	_, _ = fmt.Fprintf(nodegroupPromptOut, "Multiple nodegroups match pattern '%s':\n", pattern)
 	for i, ng := range matches {
 		_, _ = fmt.Fprintf(nodegroupPromptOut, "  %d) %s\n", i+1, ng)
 	}
 
-	_, _ = ui.ColorFor(nodegroupPromptOut, color.FgCyan).Fprintf(nodegroupPromptOut, "Update all %d matching nodegroups? (y/N): ", len(matches))
+	_, _ = fmt.Fprintf(nodegroupPromptOut, "Update all %d matching nodegroups? (y/N): ", len(matches))
 
 	response, err := promptLine(ctx)
 	if err != nil {

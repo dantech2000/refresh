@@ -1,13 +1,12 @@
-// Package ui holds the terminal output helpers: tables, trees, spinners,
-// prompts, status and health badges, and the plain (TSV) output mode.
+// Package ui holds the low-level terminal helpers: ANSI-width math, trees,
+// spinners, prompts, per-stream color, and the plain (TSV) output mode. The
+// human status vocabulary (tokens, sections, tables) is internal/render,
+// which builds on this package.
 package ui
 
 import (
 	"fmt"
 	"os"
-	"time"
-
-	"github.com/fatih/color"
 )
 
 // Outln writes a line to stdout, ignoring write errors intentionally.
@@ -18,9 +17,4 @@ func Outln(a ...any) {
 // Outf writes formatted output to stdout, ignoring write errors intentionally.
 func Outf(format string, a ...any) {
 	_, _ = fmt.Fprintf(os.Stdout, format, a...)
-}
-
-// ElapsedString renders an elapsed duration as green seconds, e.g. "1.2s".
-func ElapsedString(elapsed time.Duration) string {
-	return color.GreenString("%.1fs", elapsed.Seconds())
 }

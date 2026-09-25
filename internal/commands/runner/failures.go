@@ -6,12 +6,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
-	"github.com/dantech2000/refresh/internal/ui"
 )
 
 // ReportFailures writes one warning line per failure to w, in diag.Sort
@@ -27,9 +25,9 @@ func ReportFailures(w io.Writer, fs []diag.Failure) {
 	}
 	sorted := slices.Clone(fs)
 	diag.Sort(sorted)
-	yellow := ui.ColorFor(w, color.FgYellow)
+	th := render.Default(w)
 	for _, f := range sorted {
-		_, _ = fmt.Fprintln(w, yellow.Sprint("warning: "+render.FailureText(f)))
+		_, _ = fmt.Fprintln(w, th.Paint(th.Pal.Yellow, "warning: "+render.FailureText(f)))
 	}
 }
 

@@ -1,10 +1,6 @@
 package types
 
-import (
-	"encoding/json"
-
-	"github.com/fatih/color"
-)
+import "encoding/json"
 
 // AMIStatus represents the status of a nodegroup's AMI relative to the latest available.
 type AMIStatus int
@@ -24,27 +20,11 @@ const (
 	AMICustom
 )
 
-// String returns the plain, uncolored representation. Presentation (color)
-// lives in ColorString so that %v formatting, logs, and serialization never
-// emit ANSI escape codes.
+// String returns the plain representation. Presentation (glyphs and color)
+// belongs to the view layer (internal/render tokens), so %v formatting, logs,
+// and serialization never emit ANSI escape codes.
 func (s AMIStatus) String() string {
 	return s.PlainString()
-}
-
-// ColorString returns a color-coded representation for terminal display.
-func (s AMIStatus) ColorString() string {
-	switch s {
-	case AMILatest:
-		return color.GreenString("Latest")
-	case AMIOutdated:
-		return color.RedString("Outdated")
-	case AMIUpdating:
-		return color.YellowString("Updating")
-	case AMICustom:
-		return color.CyanString("Custom")
-	default:
-		return color.WhiteString("Unknown")
-	}
 }
 
 // PlainString returns a plain string representation without color codes.

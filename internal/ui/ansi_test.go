@@ -145,12 +145,6 @@ func TestClassifyStatus(t *testing.T) {
 	}
 }
 
-func TestStatusColorStringNeutralUnchanged(t *testing.T) {
-	if got := StatusColorString("whatever"); got != "whatever" {
-		t.Fatalf("neutral status should be uncolored, got %q", got)
-	}
-}
-
 func TestStripANSI(t *testing.T) {
 	if got := StripANSI("\x1b[32mPASS\x1b[0m"); got != "PASS" {
 		t.Fatalf("StripANSI colored = %q, want PASS", got)
