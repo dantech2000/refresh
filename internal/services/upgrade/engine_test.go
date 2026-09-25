@@ -3,6 +3,7 @@ package upgrade
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -330,4 +331,33 @@ func TestExecute_BlockedPlanRefuses(t *testing.T) {
 		t.Fatal("blocked plan must not mutate anything")
 	}
 	_ = w
+}
+
+// The engine reports phase starts as labels and leaves glyphs and colors to
+// the view: PhaseStart gets each label, and no progress line carries a glyph.
+func TestExecute_PhaseStartGetsLabelsNoGlyphs(t *testing.T) {
+	w := newWorld()
+	svc := newTestService(newWorldMock(w))
+	ctx := context.Background()
+	plan, err := svc.BuildPlan(ctx, "prod-east", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	var phases, lines []string
+	_, err = svc.Execute(ctx, plan, ExecuteOptions{
+		Yes:        true,
+		PhaseStart: func(label string) { phases = append(phases, label) },
+		Progress:   func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) },
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(phases) == 0 || !strings.HasPrefix(phases[0], "control plane ") {
+		t.Fatalf("phases = %q, want the control plane phase first", phases)
+	}
+	for _, l := range append(phases, lines...) {
+		if strings.ContainsAny(l, "▸●✗▲◷○") {
+			t.Errorf("engine output carries a view glyph: %q", l)
+		}
+	}
 }

@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/dantech2000/refresh/internal/ui"
@@ -91,6 +92,13 @@ func (tb *Table) Render() []string {
 		out = append(out, strings.TrimRight(strings.Join(cells, colGap), " "))
 	}
 	return out
+}
+
+// DryRun renders the headline of a dry-run preview: a bold "DRY RUN:" badge
+// and the text, so every preview (nodegroup update and scale, add-on update)
+// opens the same way. Without color it reads "DRY RUN: Would ...".
+func (t *Theme) DryRun(format string, args ...any) string {
+	return t.Bold(t.Pal.Peach, "DRY RUN:") + " " + fmt.Sprintf(format, args...)
 }
 
 // Callout renders a titled block bounded by top/bottom rules (no side borders,

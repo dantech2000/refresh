@@ -238,10 +238,19 @@ func TestScaleHealthWarnings_Print(t *testing.T) {
 	h.add("post-scaling", []string{"pod b pending"})
 	var buf strings.Builder
 	h.print(&buf)
-	want := "Warning: the pre-scaling health check reported warnings:\n  - node a: DiskPressure\n" +
-		"Warning: the post-scaling health check reported warnings:\n  - pod b pending\n"
-	if buf.String() != want {
-		t.Errorf("printed:\n%q\nwant:\n%q", buf.String(), want)
+	// Each block opens with a warning token (its glyph depends on the
+	// locale: ▲ or [!]).
+	got := buf.String()
+	for _, want := range []string{
+		" The pre-scaling health check reported warnings:\n  - node a: DiskPressure\n",
+		" The post-scaling health check reported warnings:\n  - pod b pending\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("printed:\n%q\nwant it to contain:\n%q", got, want)
+		}
+	}
+	if n := strings.Count(got, "\n"); n != 4 {
+		t.Errorf("printed %d lines, want 4:\n%s", n, got)
 	}
 	var empty scaleHealthWarnings
 	buf.Reset()

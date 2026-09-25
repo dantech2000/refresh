@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/smithy-go"
 	awsClient "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/render"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
@@ -500,11 +501,11 @@ func TestDefaultPackageHooks(t *testing.T) {
 func TestPrintNodegroupListIncludesAmiDetails(t *testing.T) {
 	dr := newVerboseRunner()
 	out := captureStdout(func() {
-		dr.printNodegroupList("Header", []NodegroupUpdate{{
+		dr.printNodegroupList(render.New(render.ColorNone, true), render.Warn, "Header", []NodegroupUpdate{{
 			Name:       "ng",
 			CurrentAMI: "ami-old",
 			LatestAMI:  "ami-new",
-		}}, func(format string, a ...any) string { return format })
+		}})
 	})
 	if out == "" || !bytes.Contains([]byte(out), []byte("ami-old")) || !bytes.Contains([]byte(out), []byte("ami-new")) {
 		t.Fatalf("printNodegroupList output = %q", out)
@@ -512,6 +513,46 @@ func TestPrintNodegroupListIncludesAmiDetails(t *testing.T) {
 }
 
 var _ = eks.DescribeNodegroupInput{}
+
+// Each previewed action is a status token, readable without color or
+// Unicode.
+func TestUpdateStatusLine_Tokens(t *testing.T) {
+	cases := []struct {
+		action         refreshTypes.DryRunAction
+		unicode, ascii string
+	}{
+		{refreshTypes.ActionUpdate, "▲ UPDATE: Nodegroup ng - r", "[!] UPDATE: Nodegroup ng - r"},
+		{refreshTypes.ActionForceUpdate, "▲ FORCE UPDATE: Nodegroup ng - r", "[!] FORCE UPDATE: Nodegroup ng - r"},
+		{refreshTypes.ActionSkipUpdating, "◷ SKIP: Nodegroup ng - r", "[~] SKIP: Nodegroup ng - r"},
+		{refreshTypes.ActionSkipLatest, "● SKIP: Nodegroup ng - r", "[OK] SKIP: Nodegroup ng - r"},
+		{refreshTypes.ActionSkipCustom, "▲ SKIP: Nodegroup ng - r", "[!] SKIP: Nodegroup ng - r"},
+		{refreshTypes.ActionUnknown, "✗ UNKNOWN: Nodegroup ng - r", "[X] UNKNOWN: Nodegroup ng - r"},
+	}
+	for _, c := range cases {
+		u := NodegroupUpdate{Name: "ng", Action: c.action, Reason: "r"}
+		if got := updateStatusLine(render.New(render.ColorNone, true), u); got != c.unicode {
+			t.Errorf("%v: line = %q, want %q", c.action, got, c.unicode)
+		}
+		if got := updateStatusLine(render.New(render.ColorNone, false), u); got != c.ascii {
+			t.Errorf("%v: ASCII line = %q, want %q", c.action, got, c.ascii)
+		}
+	}
+}
+
+func TestDisplayResults_DryRunHeadline(t *testing.T) {
+	dr := &DryRunner{clusterName: "prod", force: true}
+	out := captureStdout(func() {
+		dr.DisplayResults(&DryRunResult{UpdatesNeeded: []NodegroupUpdate{{Name: "ng-1"}}})
+	})
+	for _, want := range []string{"DRY RUN: Preview of nodegroup updates for cluster prod", "Force update would be enabled", "SUMMARY", "Would update:", "  - ng-1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("preview missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("preview to a pipe has ANSI escapes: %q", out)
+	}
+}
 
 // Cluster on 1.32, nodegroups on 1.31: the preview must compare against the
 // latest 1.31 AMI (what the real run rolls to), not the 1.32 one.

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/ui"
 	"github.com/dantech2000/refresh/internal/ui/plaintest"
@@ -30,25 +31,28 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	return buf.String(), callErr
 }
 
-func TestHealthBadge(t *testing.T) {
+// Add-on health renders as the same tokens in every view (list and
+// describe): IN_PROGRESS is in progress, like an UPDATING add-on.
+func TestAddonHealthToken(t *testing.T) {
 	cases := map[addons.Health]string{
-		addons.HealthPass:       "PASS",
-		addons.HealthFail:       "FAIL",
-		addons.HealthInProgress: "IN PROGRESS",
-		"Something":             "UNKNOWN",
+		addons.HealthPass:       "● PASS",
+		addons.HealthFail:       "✗ FAIL",
+		addons.HealthInProgress: "◷ IN_PROGRESS",
+		"Something":             "○ UNKNOWN",
 	}
+	th := render.New(render.ColorNone, true)
 	for in, want := range cases {
-		if got := healthBadge(in); !strings.Contains(got, want) {
-			t.Errorf("healthBadge(%q) = %q, want it to contain %q", in, got, want)
+		if got := addonHealthToken(th, in); got != want {
+			t.Errorf("addonHealthToken(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := healthBadge(""); got != "" {
-		t.Errorf("healthBadge(\"\") = %q, want empty", got)
+	if got := th.Token(render.StatusFromString("UPDATING"), "UPDATING"); got != "◷ UPDATING" {
+		t.Errorf("UPDATING status = %q, want the in-progress token", got)
 	}
 }
 
 func TestOutputAddonsTable_Empty(t *testing.T) {
-	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", nil, nil, time.Second) })
+	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", nil, nil) })
 	if err != nil {
 		t.Fatalf("empty addons table: %v", err)
 	}
@@ -61,7 +65,7 @@ func TestOutputAddonsTable_WithRows(t *testing.T) {
 	rows := []addons.AddonSummary{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE", Health: addons.HealthPass}}
 
 	// Human path (render design system): ADD-ONS header + tokenized rows.
-	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, nil, time.Second) })
+	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, nil) })
 	if err != nil {
 		t.Fatalf("addons table: %v", err)
 	}
@@ -75,7 +79,7 @@ func TestOutputAddonsTable_WithRows(t *testing.T) {
 	// The header names match the human table's columns.
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
-	plain, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, nil, time.Second) })
+	plain, err := captureStdout(t, func() error { return outputAddonsTable("prod", rows, nil) })
 	if err != nil {
 		t.Fatalf("addons plain: %v", err)
 	}
@@ -94,7 +98,7 @@ func TestOutputAddonsTable_WithRows(t *testing.T) {
 func TestOutputAddonsTable_PlainEmptyIsHeaderOnly(t *testing.T) {
 	ui.SetPlainOutput(true)
 	defer ui.SetPlainOutput(false)
-	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", nil, nil, time.Second) })
+	out, err := captureStdout(t, func() error { return outputAddonsTable("prod", nil, nil) })
 	if err != nil {
 		t.Fatal(err)
 	}

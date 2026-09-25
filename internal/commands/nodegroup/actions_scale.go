@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
@@ -21,6 +20,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -177,9 +177,9 @@ func (h *scaleHealthWarnings) add(stage string, warnings []string) {
 
 // print writes the collected warnings to w, one block per stage.
 func (h *scaleHealthWarnings) print(w io.Writer) {
-	warn := ui.ColorFor(w, color.FgYellow)
+	th := render.Default(w)
 	for _, stage := range h.stages {
-		_, _ = warn.Fprintf(w, "Warning: the %s health check reported warnings:\n", stage)
+		_, _ = fmt.Fprintln(w, th.Line(render.Warn, "The %s health check reported warnings:", stage))
 		for _, msg := range h.warnings[stage] {
 			_, _ = fmt.Fprintf(w, "  - %s\n", msg)
 		}
@@ -246,48 +246,50 @@ func scaleDryRunGateErr(clusterName, nodegroupName string, check *nodegroupsvc.S
 // overriding. It prints nothing when the gate would pass, or when the check
 // could not run (its failure is on stderr already).
 func warnForcedScaleDown(w io.Writer, clusterName, nodegroupName string, check *nodegroupsvc.ScaleDownPDBCheck) {
-	warn := ui.ColorFor(w, color.FgYellow)
 	if check == nil || !check.Refused() {
 		return
 	}
-	_, _ = warn.Fprintf(w, "Warning: --force: scaling %s/%s down from %d to %d despite %d PodDisruptionBudget(s) it could violate:\n",
-		clusterName, nodegroupName, check.CurrentDesired, check.RequestedDesired, len(check.Blockers))
+	th := render.Default(w)
+	_, _ = fmt.Fprintln(w, th.Line(render.Warn, "--force: scaling %s/%s down from %d to %d despite %d PodDisruptionBudget(s) it could violate:",
+		clusterName, nodegroupName, check.CurrentDesired, check.RequestedDesired, len(check.Blockers)))
 	for _, p := range check.Blockers {
 		_, _ = fmt.Fprintf(w, "  - %s\n", p.DrainBlockerSummary())
 	}
-	_, _ = warn.Fprintln(w, "EKS terminates the removed nodes without honoring these PDBs; their pods on those nodes go down.")
+	_, _ = fmt.Fprintln(w, th.Paint(th.Pal.Yellow, "EKS terminates the removed nodes without honoring these PDBs; their pods on those nodes go down."))
 }
 
 // printScaleDryRunPDBGate shows what the --check-pdbs gate would decide for
 // the previewed scale.
 func printScaleDryRunPDBGate(w io.Writer, clusterName, nodegroupName string, check *nodegroupsvc.ScaleDownPDBCheck, checkErr error, force bool) {
+	th := render.Default(w)
+	gate := func(st render.Status, format string, args ...any) {
+		_, _ = fmt.Fprintln(w, "\n"+th.Line(st, "PDB gate: "+format, args...))
+	}
 	switch {
 	case checkErr != nil:
 		if force {
-			_, _ = ui.ColorFor(w, color.FgYellow).Fprintln(w, "\nPDB gate: could not validate PodDisruptionBudgets (see INCOMPLETE DATA); --force would scale anyway.")
+			gate(render.Warn, "could not validate PodDisruptionBudgets (see INCOMPLETE DATA); --force would scale anyway.")
 			return
 		}
-		_, _ = ui.ColorFor(w, color.FgRed).Fprintln(w, "\nPDB gate: would be REFUSED, PodDisruptionBudgets could not be validated (see INCOMPLETE DATA).")
+		gate(render.Fail, "would be REFUSED, PodDisruptionBudgets could not be validated (see INCOMPLETE DATA).")
 	case check == nil || !check.ScaleDown:
-		_, _ = fmt.Fprintln(w, "\nPDB gate: not a scale-down; nothing to check.")
+		gate(render.Neutral, "not a scale-down; nothing to check.")
 	case !check.Refused():
-		msg := fmt.Sprintf("\nPDB gate: no PodDisruptionBudget blocks removing nodes from %s.", nodegroupName)
+		msg := fmt.Sprintf("no PodDisruptionBudget blocks removing nodes from %s.", nodegroupName)
 		if check.Note != "" {
 			msg += " " + check.Note + "."
 		}
-		_, _ = ui.ColorFor(w, color.FgGreen).Fprintln(w, msg)
+		gate(render.Healthy, "%s", msg)
 	default:
-		verdict := "would be REFUSED"
-		c := color.New(color.FgRed)
+		verdict, st := "would be REFUSED", render.Fail
 		if force {
-			verdict = "would be overridden by --force"
-			c = color.New(color.FgYellow)
+			verdict, st = "would be overridden by --force", render.Warn
 		}
 		scope := "with pods on this nodegroup's nodes"
 		if !check.Scoped {
 			scope = "in the cluster (could not scope to this nodegroup's nodes)"
 		}
-		_, _ = c.Fprintf(w, "\nPDB gate: %s. %d PodDisruptionBudget(s) %s could lose more pods than they allow:\n", verdict, len(check.Blockers), scope)
+		gate(st, "%s. %d PodDisruptionBudget(s) %s could lose more pods than they allow:", verdict, len(check.Blockers), scope)
 		for _, p := range check.Blockers {
 			_, _ = fmt.Fprintf(w, "  - %s\n", p.DrainBlockerSummary())
 		}
@@ -374,7 +376,7 @@ func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, n
 		return fmt.Errorf("describing nodegroup %s/%s: empty DescribeNodegroup response", clusterName, nodegroupName)
 	}
 
-	color.Cyan("DRY RUN: Would scale nodegroup %s in cluster %s", nodegroupName, clusterName)
+	fmt.Println(render.Default(os.Stdout).DryRun("Would scale nodegroup %s in cluster %s", nodegroupName, clusterName))
 	if sc := desc.Nodegroup.ScalingConfig; sc != nil {
 		printScaleChange := func(label string, current *int32, requested *int32) {
 			switch {

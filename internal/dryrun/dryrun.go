@@ -5,6 +5,7 @@ package dryrun
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,10 +14,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	"github.com/fatih/color"
 
 	awsClient "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/common"
+	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -314,7 +315,33 @@ func (dr *DryRunner) categorizeUpdate(result *DryRunResult, update NodegroupUpda
 
 // printUpdateStatus prints the status of a single update analysis.
 func (dr *DryRunner) printUpdateStatus(update NodegroupUpdate) {
-	ui.Outf("%s: Nodegroup %s - %s\n", update.Action.ColorString(), update.Name, update.Reason)
+	ui.Outln(updateStatusLine(render.Default(os.Stdout), update))
+}
+
+// actionToken is the status token of a previewed action. The status says
+// what the run would do: roll an outdated nodegroup (Warn), leave one that
+// is already rolling (Progress) or current (Healthy), skip a custom AMI
+// (Warn: it needs a launch template change), or nothing known (Fail).
+func actionToken(th *render.Theme, a refreshTypes.DryRunAction) string {
+	switch a {
+	case refreshTypes.ActionUpdate:
+		return th.Tokenf(render.Warn, "UPDATE")
+	case refreshTypes.ActionForceUpdate:
+		return th.Tokenf(render.Warn, "FORCE UPDATE")
+	case refreshTypes.ActionSkipUpdating:
+		return th.Tokenf(render.Progress, "SKIP")
+	case refreshTypes.ActionSkipLatest:
+		return th.Tokenf(render.Healthy, "SKIP")
+	case refreshTypes.ActionSkipCustom:
+		return th.Tokenf(render.Warn, "SKIP")
+	default:
+		return th.Tokenf(render.Fail, "UNKNOWN")
+	}
+}
+
+// updateStatusLine is one nodegroup's line of the preview.
+func updateStatusLine(th *render.Theme, u NodegroupUpdate) string {
+	return fmt.Sprintf("%s: Nodegroup %s - %s", actionToken(th, u.Action), u.Name, u.Reason)
 }
 
 // DisplayResults shows the summary of the dry-run analysis.
@@ -323,18 +350,17 @@ func (dr *DryRunner) DisplayResults(result *DryRunResult) {
 		return
 	}
 
-	// Header
-	color.Cyan("\nDRY RUN: Preview of nodegroup updates for cluster %s\n", dr.clusterName)
+	th := render.Default(os.Stdout)
+	ui.Outln("\n" + th.DryRun("Preview of nodegroup updates for cluster %s", dr.clusterName))
 	if dr.force {
-		color.Yellow("Force update would be enabled")
+		ui.Outln(th.Line(render.Warn, "Force update would be enabled"))
 	}
 	if dr.reroll {
-		color.Yellow("Re-roll would be enabled: nodegroups already on the latest AMI are rolled too")
+		ui.Outln(th.Line(render.Warn, "Re-roll would be enabled: nodegroups already on the latest AMI are rolled too"))
 	}
 	ui.Outln()
 
-	// Summary
-	color.Cyan("Summary:")
+	ui.Outln(th.Section("SUMMARY"))
 	ui.Outf("- Nodegroups that would be updated: %d\n", len(result.UpdatesNeeded))
 	ui.Outf("- Nodegroups that would be skipped (already updating): %d\n", len(result.UpdatesSkipped))
 	ui.Outf("- Nodegroups already on latest AMI: %d\n", len(result.AlreadyLatest))
@@ -346,22 +372,22 @@ func (dr *DryRunner) DisplayResults(result *DryRunResult) {
 	}
 
 	// Detailed lists
-	dr.printNodegroupList("Would update:", result.UpdatesNeeded, color.GreenString)
-	dr.printNodegroupList("Would skip (already updating):", result.UpdatesSkipped, color.YellowString)
-	dr.printNodegroupList("Already on latest AMI:", result.AlreadyLatest, color.CyanString)
-	dr.printNodegroupList("Would skip (custom AMI, managed by the launch template):", result.CustomAMI, color.YellowString)
-	dr.printNodegroupList("Could not read (see the warnings on stderr):", result.Unreadable, color.RedString)
+	dr.printNodegroupList(th, render.Warn, "Would update:", result.UpdatesNeeded)
+	dr.printNodegroupList(th, render.Progress, "Would skip (already updating):", result.UpdatesSkipped)
+	dr.printNodegroupList(th, render.Healthy, "Already on latest AMI:", result.AlreadyLatest)
+	dr.printNodegroupList(th, render.Warn, "Would skip (custom AMI, managed by the launch template):", result.CustomAMI)
+	dr.printNodegroupList(th, render.Fail, "Could not read (see the warnings on stderr):", result.Unreadable)
 
 	ui.Outln("\nTo execute these updates, run the same command without --dry-run")
 }
 
-// printNodegroupList prints a list of nodegroups with the given header.
-func (dr *DryRunner) printNodegroupList(header string, updates []NodegroupUpdate, colorFn func(format string, a ...any) string) {
+// printNodegroupList prints a list of nodegroups under a header token.
+func (dr *DryRunner) printNodegroupList(th *render.Theme, st render.Status, header string, updates []NodegroupUpdate) {
 	if len(updates) == 0 {
 		return
 	}
 
-	ui.Outf("\n%s\n", colorFn(header))
+	ui.Outf("\n%s\n", th.Line(st, "%s", header))
 	for _, update := range updates {
 		ui.Outf("  - %s\n", update.Name)
 		if update.CurrentAMI != "" && update.LatestAMI != "" {

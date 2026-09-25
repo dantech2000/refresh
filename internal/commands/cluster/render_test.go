@@ -9,6 +9,7 @@ import (
 
 	"github.com/fatih/color"
 
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
 )
 
@@ -77,28 +78,61 @@ func TestClusterListCommand_HasFormatFlag(t *testing.T) {
 	}
 }
 
-// ── stepMarkerAndNote ──────────────────────────────────────────────────────
+// ── stepToken ──────────────────────────────────────────────────────────────
 
-func TestStepMarkerAndNote(t *testing.T) {
+func TestStepToken(t *testing.T) {
 	cases := []struct {
-		status     upgrade.StepStatus
-		wantMarker string
+		status         upgrade.StepStatus
+		unicode, ascii string
 	}{
-		{upgrade.StatusCompleted, "done"},
-		{upgrade.StatusBlocked, "BLOCKED"},
-		{upgrade.StatusManual, "manual"},
-		{upgrade.StatusPending, "pending"},
+		{upgrade.StatusCompleted, "● done", "[OK] done"},
+		{upgrade.StatusBlocked, "✗ BLOCKED", "[X] BLOCKED"},
+		{upgrade.StatusManual, "▲ manual", "[!] manual"},
+		{upgrade.StatusPending, "• pending", "- pending"},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.status), func(t *testing.T) {
-			marker, note := stepMarkerAndNote(upgrade.Step{Status: tc.status, Reason: "because"})
-			if !strings.Contains(marker, tc.wantMarker) {
-				t.Errorf("marker = %q, want it to contain %q", marker, tc.wantMarker)
+			if got := stepToken(render.New(render.ColorNone, true), tc.status); got != tc.unicode {
+				t.Errorf("token = %q, want %q", got, tc.unicode)
 			}
-			if note != "because" {
-				t.Errorf("note = %q, want the step Reason", note)
+			if got := stepToken(render.New(render.ColorNone, false), tc.status); got != tc.ascii {
+				t.Errorf("ASCII token = %q, want %q", got, tc.ascii)
 			}
 		})
+	}
+}
+
+// The step descriptions line up whatever the token width, and the step
+// reason follows the description.
+func TestPlanLines_AlignedTokens(t *testing.T) {
+	plan := &upgrade.Plan{
+		ClusterName: "prod", CurrentVersion: "1.30", TargetVersion: "1.31",
+		Hops: []upgrade.Hop{{From: "1.30", To: "1.31", Steps: []upgrade.Step{
+			{Description: "readiness check", Status: upgrade.StatusCompleted, Reason: "no blockers"},
+			{Description: "control plane → 1.31", Status: upgrade.StatusBlocked},
+		}}},
+	}
+	lines := planLines(render.New(render.ColorNone, true), plan)
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"▸ Hop 1.30 → 1.31",
+		"   1. ● done    readiness check — no blockers",
+		"   2. ✗ BLOCKED control plane → 1.31",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("plan missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "\x1b") {
+		t.Error("ColorNone plan has ANSI escapes")
+	}
+}
+
+func TestOutcomeLines(t *testing.T) {
+	th := render.New(render.ColorNone, false)
+	done := strings.Join(outcomeLines(th, "prod", &upgrade.Plan{TargetVersion: "1.32"}, true), "\n")
+	if !strings.Contains(done, "[OK] Upgrade complete: prod is at 1.32.") {
+		t.Errorf("outcome = %q", done)
 	}
 }
 

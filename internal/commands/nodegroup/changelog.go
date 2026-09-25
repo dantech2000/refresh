@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -13,11 +14,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/fatih/color"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/common"
+	"github.com/dantech2000/refresh/internal/render"
 )
 
 const changelogHTTPLimit = 4 * time.Second
@@ -207,13 +208,14 @@ func printChangelog(cl amiChangelog, full bool) {
 	if cl.Behind > 0 {
 		delta += fmt.Sprintf(" (%d release(s) behind)", cl.Behind)
 	}
-	color.Cyan("    AMI changelog: %s", delta)
+	th := render.Default(os.Stdout)
+	fmt.Println("    " + th.Bold(th.Pal.Sky, "AMI changelog:") + " " + delta)
 	if cl.NotesURL != "" {
 		fmt.Printf("      see release notes: %s\n", cl.NotesURL)
 		return
 	}
 	if cl.Degraded {
-		color.Yellow("      release notes unavailable (%s)", cl.Reason)
+		fmt.Println("      " + th.Line(render.Warn, "release notes unavailable (%s)", cl.Reason))
 		return
 	}
 	shown := cl.Notes

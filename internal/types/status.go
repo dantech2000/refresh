@@ -130,23 +130,3 @@ const (
 	// preview can't say what the update would do. It is a failure.
 	ActionUnknown
 )
-
-// ColorString returns a color-coded representation for terminal display.
-func (a DryRunAction) ColorString() string {
-	switch a {
-	case ActionUpdate:
-		return color.GreenString("UPDATE")
-	case ActionSkipUpdating:
-		return color.YellowString("SKIP")
-	case ActionSkipLatest:
-		return color.GreenString("SKIP")
-	case ActionForceUpdate:
-		return color.CyanString("FORCE UPDATE")
-	case ActionSkipCustom:
-		return color.YellowString("SKIP")
-	case ActionUnknown:
-		return color.RedString("UNKNOWN")
-	default:
-		return color.WhiteString("UNKNOWN")
-	}
-}
