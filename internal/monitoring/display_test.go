@@ -3,7 +3,6 @@ package monitoring
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"regexp"
@@ -12,6 +11,8 @@ import (
 	"time"
 
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+
+	"github.com/dantech2000/refresh/internal/render"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
@@ -39,113 +40,128 @@ func singleUpdate(status ekstypes.UpdateStatus) refreshTypes.UpdateProgress {
 	}
 }
 
+// plainTheme is a Unicode theme without color, so lines compare as text.
+func plainTheme() *render.Theme { return render.New(render.ColorNone, true) }
+
+// frameRecorder is a FrameDrawer that keeps every frame it is given.
+type frameRecorder struct{ frames [][]string }
+
+func (f *frameRecorder) Draw(frame []string) { f.frames = append(f.frames, frame) }
+
+// recordFrames makes the display draw into a recorder with a plain theme.
+func recordFrames(t *testing.T) *frameRecorder {
+	t.Helper()
+	rec := &frameRecorder{}
+	oldDrawer, oldTheme := newFrameDrawer, displayTheme
+	newFrameDrawer = func() refreshTypes.FrameDrawer { return rec }
+	displayTheme = plainTheme
+	t.Cleanup(func() { newFrameDrawer, displayTheme = oldDrawer, oldTheme })
+	return rec
+}
+
+func joined(lines []string) string { return strings.Join(lines, "\n") }
+
 // ──────────────────────────────────────────────────────────────────────────────
-// printUpdateProgressTree
+// progress tree
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestPrintUpdateProgressTree_EmptyReturnsZero(t *testing.T) {
-	var count int
-	captureStdout(func() {
-		count = printUpdateProgressTree(nil)
-	})
-	if count != 0 {
-		t.Errorf("empty updates: lineCount = %d, want 0", count)
+func TestUpdateProgressTree_Empty(t *testing.T) {
+	if got := updateProgressTree(plainTheme(), nil); len(got) != 0 {
+		t.Errorf("empty updates rendered %q", got)
 	}
 }
 
-func TestPrintUpdateProgressTree_SingleUpdate(t *testing.T) {
-	updates := []refreshTypes.UpdateProgress{singleUpdate(ekstypes.UpdateStatusInProgress)}
-	var count int
-	out := captureStdout(func() {
-		count = printUpdateProgressTree(updates)
-	})
-	if count == 0 {
-		t.Error("single update should produce lines")
-	}
-	if !strings.Contains(out, "ng-1") {
-		t.Errorf("output should contain nodegroup name, got:\n%s", out)
+func TestUpdateProgressTree_SingleUpdateToken(t *testing.T) {
+	out := joined(updateProgressTree(plainTheme(), []refreshTypes.UpdateProgress{singleUpdate(ekstypes.UpdateStatusInProgress)}))
+	for _, want := range []string{"└── ◷ IN PROGRESS ng-1", "├── Status: ◷ InProgress", "└── Last Checked: "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("progress tree missing %q:\n%s", want, out)
+		}
 	}
 }
 
-func TestPrintUpdateProgressTree_MultipleUpdates_LastHasCornerPrefix(t *testing.T) {
+func TestUpdateProgressTree_MultipleUpdates_LastHasCornerPrefix(t *testing.T) {
 	updates := []refreshTypes.UpdateProgress{
 		singleUpdate(ekstypes.UpdateStatusInProgress),
 		singleUpdate(ekstypes.UpdateStatusSuccessful),
 	}
 	updates[1].NodegroupName = "ng-2"
-	out := captureStdout(func() {
-		printUpdateProgressTree(updates)
-	})
-	if !strings.Contains(out, "└── ") {
-		t.Errorf("last entry should use └── prefix, output:\n%s", out)
-	}
-	if !strings.Contains(out, "├── ") {
-		t.Errorf("non-last entry should use ├── prefix, output:\n%s", out)
+	out := joined(updateProgressTree(plainTheme(), updates))
+	if !strings.Contains(out, "├── ◷ IN PROGRESS ng-1") || !strings.Contains(out, "└── ● SUCCESSFUL ng-2") {
+		t.Errorf("tree branches or tokens wrong:\n%s", out)
 	}
 }
 
-func TestPrintUpdateProgressTree_ErrorMessageShown(t *testing.T) {
+func TestUpdateProgressTree_ErrorMessageShown(t *testing.T) {
 	update := singleUpdate(ekstypes.UpdateStatusFailed)
 	update.ErrorMessage = "disk full"
-	out := captureStdout(func() {
-		printUpdateProgressTree([]refreshTypes.UpdateProgress{update})
-	})
-	if !strings.Contains(out, "disk full") {
-		t.Errorf("error message should appear in output, got:\n%s", out)
+	out := joined(updateProgressTree(plainTheme(), []refreshTypes.UpdateProgress{update}))
+	if !strings.Contains(out, "Status: ✗ Failed: disk full") {
+		t.Errorf("error message should appear with a fail token, got:\n%s", out)
+	}
+}
+
+// An update whose status could not be polled has an unknown outcome: the
+// unknown token, never the FAILED one.
+func TestUpdateProgressTree_MonitorErrIsUnknown(t *testing.T) {
+	update := singleUpdate(ekstypes.UpdateStatusInProgress)
+	update.MonitorErr = errors.New("AccessDenied: no\nsecond line")
+	out := joined(updateProgressTree(plainTheme(), []refreshTypes.UpdateProgress{update}))
+	if !strings.Contains(out, "○ MONITORING FAILED ng-1") || !strings.Contains(out, "Status: ○ MONITORING FAILED: AccessDenied: no") {
+		t.Errorf("unmonitored update rendering wrong:\n%s", out)
+	}
+	if strings.Contains(out, "✗") || strings.Contains(out, "second line") {
+		t.Errorf("unmonitored update must not read as failed or print the whole error:\n%s", out)
 	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// printCompletionSummaryTree
+// completion tree
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestPrintCompletionSummaryTree_Empty(t *testing.T) {
-	out := captureStdout(func() {
-		printCompletionSummaryTree(nil)
-	})
-	if out != "" {
-		t.Errorf("empty updates must print nothing, got %q", out)
+func TestCompletionSummaryTree_Tokens(t *testing.T) {
+	cases := []struct {
+		status ekstypes.UpdateStatus
+		want   string
+	}{
+		{ekstypes.UpdateStatusSuccessful, "Status: ● SUCCESSFUL"},
+		{ekstypes.UpdateStatusFailed, "Status: ✗ FAILED"},
+		{ekstypes.UpdateStatusCancelled, "Status: ▲ CANCELLED"},
+		{"SOME_UNKNOWN_STATUS", "Status: ○ SOME_UNKNOWN_STATUS"},
+	}
+	for _, c := range cases {
+		out := joined(completionSummaryTree(plainTheme(), []refreshTypes.UpdateProgress{singleUpdate(c.status)}))
+		if !strings.Contains(out, c.want) {
+			t.Errorf("%s: completion tree missing %q:\n%s", c.status, c.want, out)
+		}
+	}
+	if got := completionSummaryTree(plainTheme(), nil); len(got) != 0 {
+		t.Errorf("empty updates rendered %q", got)
 	}
 }
 
-func TestPrintCompletionSummaryTree_Successful(t *testing.T) {
-	updates := []refreshTypes.UpdateProgress{singleUpdate(ekstypes.UpdateStatusSuccessful)}
-	out := captureStdout(func() {
-		printCompletionSummaryTree(updates)
-	})
-	if !strings.Contains(out, "SUCCESSFUL") {
-		t.Errorf("output should contain SUCCESSFUL, got:\n%s", out)
-	}
-}
-
-func TestPrintCompletionSummaryTree_Failed(t *testing.T) {
-	updates := []refreshTypes.UpdateProgress{singleUpdate(ekstypes.UpdateStatusFailed)}
-	out := captureStdout(func() {
-		printCompletionSummaryTree(updates)
-	})
-	if !strings.Contains(out, "FAILED") {
-		t.Errorf("output should contain FAILED, got:\n%s", out)
-	}
-}
-
-func TestPrintCompletionSummaryTree_Cancelled(t *testing.T) {
-	updates := []refreshTypes.UpdateProgress{singleUpdate(ekstypes.UpdateStatusCancelled)}
-	out := captureStdout(func() {
-		printCompletionSummaryTree(updates)
-	})
-	if !strings.Contains(out, "CANCELLED") {
-		t.Errorf("output should contain CANCELLED, got:\n%s", out)
-	}
-}
-
-func TestPrintCompletionSummaryTree_FailedWithMessage(t *testing.T) {
+func TestCompletionSummaryTree_FailedWithMessage(t *testing.T) {
 	update := singleUpdate(ekstypes.UpdateStatusFailed)
 	update.ErrorMessage = "timeout error"
-	out := captureStdout(func() {
-		printCompletionSummaryTree([]refreshTypes.UpdateProgress{update})
-	})
-	if !strings.Contains(out, "timeout error") {
+	out := joined(completionSummaryTree(plainTheme(), []refreshTypes.UpdateProgress{update}))
+	if !strings.Contains(out, "✗ FAILED: timeout error") {
 		t.Errorf("error message should appear in completion tree, got:\n%s", out)
+	}
+}
+
+// Without Unicode the trees still carry the status in ASCII, and without
+// color no escape codes are written: color is additive.
+func TestTrees_ASCIIFallback(t *testing.T) {
+	th := render.New(render.ColorNone, false)
+	updates := []refreshTypes.UpdateProgress{singleUpdate(ekstypes.UpdateStatusInProgress), singleUpdate(ekstypes.UpdateStatusFailed)}
+	out := joined(updateProgressTree(th, updates)) + joined(completionSummaryTree(th, updates))
+	for _, want := range []string{"[~] IN PROGRESS ng-1", "[X] FAILED"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ASCII tree missing %q:\n%s", want, out)
+		}
+	}
+	if strings.ContainsAny(out, "●◷✗▲○\x1b") {
+		t.Errorf("ASCII tree has Unicode status glyphs or ANSI:\n%s", out)
 	}
 }
 
@@ -153,78 +169,53 @@ func TestPrintCompletionSummaryTree_FailedWithMessage(t *testing.T) {
 // DisplayProgressUpdate
 // ──────────────────────────────────────────────────────────────────────────────
 
-func forceInteractiveDisplay(t *testing.T) {
-	t.Helper()
-	old := displayIsTerminal
-	displayIsTerminal = func() bool { return true }
-	t.Cleanup(func() { displayIsTerminal = old })
-}
-
-func TestDisplayProgressUpdate_SetsLastPrinted(t *testing.T) {
-	forceInteractiveDisplay(t)
-	monitor := &refreshTypes.ProgressMonitor{}
+// Each poll draws one frame through the live region, which repaints it in
+// place on a terminal (render.LiveRegion counts wrapped rows) and appends
+// it when piped.
+func TestDisplayProgressUpdate_DrawsThroughLiveRegion(t *testing.T) {
+	rec := recordFrames(t)
+	monitor := &refreshTypes.ProgressMonitor{StartTime: time.Now()}
 	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusInProgress))
-	monitor.StartTime = time.Now()
 
-	captureStdout(func() {
-		DisplayProgressUpdate(monitor)
-	})
-	if monitor.LastPrinted == 0 {
-		t.Error("DisplayProgressUpdate should set LastPrinted > 0")
+	DisplayProgressUpdate(monitor)
+	DisplayProgressUpdate(monitor)
+	if len(rec.frames) != 2 {
+		t.Fatalf("frames drawn = %d, want 2", len(rec.frames))
+	}
+	if monitor.Live != refreshTypes.FrameDrawer(rec) {
+		t.Error("the monitor should keep its live region across polls")
+	}
+	frame := joined(rec.frames[0])
+	if !strings.HasPrefix(frame, "Elapsed: ") || !strings.Contains(frame, "\nmy-cluster\n") || !strings.Contains(frame, "ng-1") {
+		t.Errorf("frame = %q", frame)
 	}
 }
 
-func TestDisplayProgressUpdate_EmptyMonitor(t *testing.T) {
-	forceInteractiveDisplay(t)
-	monitor := &refreshTypes.ProgressMonitor{}
-	monitor.StartTime = time.Now()
-	out := stripANSI(captureStdout(func() {
-		DisplayProgressUpdate(monitor)
-	}))
+func TestProgressLines_EmptyMonitor(t *testing.T) {
+	monitor := &refreshTypes.ProgressMonitor{StartTime: time.Now()}
+	got := joined(progressLines(plainTheme(), monitor))
 	// Only the elapsed line and the trailing blank line: no cluster root and
 	// no tree.
-	if !regexp.MustCompile(`^Elapsed: \S+\n\n$`).MatchString(out) {
-		t.Errorf("empty monitor output = %q, want just the elapsed line", out)
-	}
-	if monitor.LastPrinted != 2 {
-		t.Errorf("LastPrinted = %d, want 2 (elapsed + blank)", monitor.LastPrinted)
+	if !regexp.MustCompile(`^Elapsed: \S+\n$`).MatchString(got) {
+		t.Errorf("empty monitor frame = %q, want just the elapsed line", got)
 	}
 }
 
-func TestDisplayProgressUpdate_WithPreviousOutput(t *testing.T) {
-	forceInteractiveDisplay(t)
-	monitor := &refreshTypes.ProgressMonitor{}
+// Piped output: the real live region appends frames and never writes cursor
+// controls.
+func TestDisplayProgressUpdate_NonInteractiveAppendsOnly(t *testing.T) {
+	monitor := &refreshTypes.ProgressMonitor{StartTime: time.Now()}
 	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusInProgress))
-	monitor.StartTime = time.Now()
-	monitor.LastPrinted = 5 // simulate previous output
-
 	out := captureStdout(func() {
 		DisplayProgressUpdate(monitor)
-	})
-	// Should include ANSI escape for clearing previous lines
-	if !strings.Contains(out, "\033[") {
-		t.Errorf("with LastPrinted>0 should emit ANSI clear sequence, got:\n%s", fmt.Sprintf("%q", out))
-	}
-}
-
-func TestDisplayProgressUpdate_NonInteractiveAppendsOnly(t *testing.T) {
-	old := displayIsTerminal
-	displayIsTerminal = func() bool { return false }
-	t.Cleanup(func() { displayIsTerminal = old })
-
-	monitor := &refreshTypes.ProgressMonitor{}
-	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusInProgress))
-	monitor.StartTime = time.Now()
-	monitor.LastPrinted = 5 // would trigger a clear when interactive
-
-	out := captureStdout(func() {
+		monitor.Updates[0].Status = ekstypes.UpdateStatusSuccessful
 		DisplayProgressUpdate(monitor)
 	})
 	if strings.Contains(out, "\033[") {
 		t.Errorf("piped output must not contain cursor-control codes, got %q", out)
 	}
-	if monitor.LastPrinted != 0 {
-		t.Errorf("LastPrinted should stay 0 when not interactive, got %d", monitor.LastPrinted)
+	if strings.Count(out, "Elapsed: ") != 2 {
+		t.Errorf("piped output should append both frames, got %q", out)
 	}
 }
 
@@ -233,25 +224,39 @@ func TestDisplayProgressUpdate_NonInteractiveAppendsOnly(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestDisplayCompletionSummary_VerboseOutputsResults(t *testing.T) {
-	monitor := &refreshTypes.ProgressMonitor{}
+	monitor := &refreshTypes.ProgressMonitor{StartTime: time.Now().Add(-5 * time.Second)}
 	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusSuccessful))
-	monitor.StartTime = time.Now().Add(-5 * time.Second)
-	cfg := refreshTypes.MonitorConfig{Quiet: false}
 	out := captureStdout(func() {
-		_ = DisplayCompletionSummary(monitor, cfg)
+		_ = DisplayCompletionSummary(monitor, refreshTypes.MonitorConfig{})
 	})
-	if !strings.Contains(out, "successful") && !strings.Contains(out, "Results") {
+	if !strings.Contains(out, "Results: 1 successful, 0 failed") {
 		t.Errorf("verbose mode should show results summary, got:\n%s", out)
 	}
 }
 
+// After progress frames, the summary replaces the last frame through the same
+// live region instead of printing under it.
+func TestDisplayCompletionSummary_ReplacesProgressFrame(t *testing.T) {
+	rec := recordFrames(t)
+	monitor := &refreshTypes.ProgressMonitor{StartTime: time.Now()}
+	monitor.Updates = append(monitor.Updates, singleUpdate(ekstypes.UpdateStatusSuccessful))
+	DisplayProgressUpdate(monitor)
+	out := captureStdout(func() {
+		_ = DisplayCompletionSummary(monitor, refreshTypes.MonitorConfig{})
+	})
+	if out != "" {
+		t.Errorf("summary printed around the live region: %q", out)
+	}
+	if len(rec.frames) != 2 || !strings.Contains(joined(rec.frames[1]), "All updates completed") {
+		t.Fatalf("summary frame not drawn in place: %q", rec.frames)
+	}
+}
+
 func TestDisplayCompletionSummary_VerboseEmptyUpdates(t *testing.T) {
-	monitor := &refreshTypes.ProgressMonitor{}
-	monitor.StartTime = time.Now()
-	cfg := refreshTypes.MonitorConfig{Quiet: false}
+	monitor := &refreshTypes.ProgressMonitor{StartTime: time.Now()}
 	var err error
 	out := stripANSI(captureStdout(func() {
-		err = DisplayCompletionSummary(monitor, cfg)
+		err = DisplayCompletionSummary(monitor, refreshTypes.MonitorConfig{})
 	}))
 	if err != nil {
 		t.Errorf("no updates: err = %v, want nil", err)
@@ -307,19 +312,5 @@ func TestHandleUserCancellation_VerboseWithUpdates(t *testing.T) {
 	// printing it here too would show it twice.
 	if strings.Contains(out, "refresh nodegroup list") || strings.Contains(out, "refresh list") {
 		t.Errorf("cancellation display must not repeat the status-check hint, got:\n%s", out)
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// printCompletionSummaryTree — default/unknown status branch
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestPrintCompletionSummaryTree_UnknownStatus(t *testing.T) {
-	update := singleUpdate("SOME_UNKNOWN_STATUS")
-	out := captureStdout(func() {
-		printCompletionSummaryTree([]refreshTypes.UpdateProgress{update})
-	})
-	if !strings.Contains(out, "SOME_UNKNOWN_STATUS") {
-		t.Errorf("unknown status should appear verbatim, got:\n%s", out)
 	}
 }

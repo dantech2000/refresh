@@ -93,7 +93,7 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 	// name substring — so the user never has to copy a raw UUID.
 	if q := cmd.String("id"); q != "" {
 		var detail *clustersvc.InsightDetail
-		if werr := runner.WithSpinner("cluster", "Insight detail loaded!", func() error {
+		if werr := runner.WithSpinner("cluster", "Insight details loaded", func() error {
 			id, rerr := service.ResolveInsightID(ctx, clusterName, cmd.String("category"), q)
 			if rerr != nil {
 				return rerr
@@ -122,7 +122,7 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	var report *clustersvc.UpgradeReport
-	if werr := runner.WithSpinner("cluster", "Upgrade readiness computed!", func() error {
+	if werr := runner.WithSpinner("cluster", "Upgrade readiness computed", func() error {
 		var rerr error
 		report, rerr = service.UpgradeCheck(ctx, clusterName, opts)
 		return rerr

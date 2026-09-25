@@ -19,6 +19,7 @@ import (
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/flagcanon"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/rollview"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -325,7 +326,7 @@ func buildUpgradePlan(ctx context.Context, cmd *cli.Command, svc *upgrade.Servic
 		}
 		return nil, err
 	}
-	spinner.Success("Upgrade plan computed!")
+	render.SpinnerDone(spinner, "Upgrade plan computed")
 	return plan, nil
 }
 

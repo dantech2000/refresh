@@ -59,7 +59,7 @@ func TestFunSpinnerLifecycle(t *testing.T) {
 	}
 	time.Sleep(2 * time.Millisecond)
 	spinner.Stop()
-	spinner.Success("ok")
+	spinner.Done("ok")
 
 	if NewFunSpinnerForCategory("cluster") == nil {
 		t.Fatal("category spinners should not be nil")
@@ -81,7 +81,7 @@ func TestFunSpinnerWritesToSpinnerStream(t *testing.T) {
 		if err := spinner.Start(); err != nil {
 			t.Fatalf("Start() = %v", err)
 		}
-		spinner.Success("done-marker")
+		spinner.Done("done-marker")
 	})
 	if stdout != "" {
 		t.Errorf("spinner wrote to stdout: %q", stdout)
@@ -113,7 +113,7 @@ func TestFunSpinnerNonInteractiveStaysSilent(t *testing.T) {
 	}
 	// Stop must not deadlock waiting for a render goroutine that never started.
 	spinner.Stop()
-	spinner.Success("ok")
+	spinner.Done("ok")
 	if buf.Len() != 0 {
 		t.Errorf("spinner wrote to a non-terminal stderr: %q", buf.String())
 	}

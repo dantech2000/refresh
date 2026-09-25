@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/healthview"
 	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -220,67 +221,13 @@ func statusToken(th *render.Theme, status string) string {
 // healthCardLines renders the `cluster describe` HEALTH section: a verdict +
 // score bar + a one-line summary.
 func healthCardLines(th *render.Theme, h *health.HealthSummary) []string {
-	st, col := decisionStatusColor(th, h.Decision)
+	st, col := healthview.Decision(th, h.Decision)
 	head := th.Section("HEALTH") +
 		th.Paint(th.Pal.Dim, fmt.Sprintf("  %d/100 · ", h.OverallScore)) +
 		th.Tokenf(st, decisionLabel(h.Decision))
 	bar := th.Bar(h.OverallScore, 100, 24, col)
 	out := []string{head, "  " + bar + "  " + th.Paint(th.Pal.Dim, healthSummaryMsg(h))}
-	return append(out, healthCheckRows(th, h.Results)...)
-}
-
-// healthCheckRows itemizes each individual health check beneath the card —
-// glyph + name + message — so the control-plane / utilization / quota / node /
-// PDB gates are all visible, not collapsed into one summary line. Skipped
-// checks (missing prerequisite) render dimmed so a gap reads as "not measured",
-// not "passed".
-func healthCheckRows(th *render.Theme, results []health.HealthResult) []string {
-	if len(results) == 0 {
-		return nil
-	}
-	nameWidth := 0
-	for _, r := range results {
-		if len(r.Name) > nameWidth {
-			nameWidth = len(r.Name)
-		}
-	}
-	out := make([]string, 0, len(results))
-	for _, r := range results {
-		name := r.Name + strings.Repeat(" ", nameWidth-len(r.Name))
-		if r.Skipped {
-			out = append(out, "    "+th.Glyph(render.Neutral)+" "+th.Paint(th.Pal.Dim, name+"  "+r.Message))
-			continue
-		}
-		out = append(out, "    "+th.Glyph(healthCheckStatus(r.Status))+" "+
-			th.Paint(th.Pal.White, name)+th.Paint(th.Pal.Dim, "  "+r.Message))
-	}
-	return out
-}
-
-func healthCheckStatus(s health.HealthStatus) render.Status {
-	switch s {
-	case health.StatusPass:
-		return render.Healthy
-	case health.StatusWarn:
-		return render.Warn
-	case health.StatusFail:
-		return render.Fail
-	default:
-		return render.Unknown
-	}
-}
-
-func decisionStatusColor(th *render.Theme, d health.Decision) (render.Status, render.Color) {
-	switch d {
-	case health.DecisionProceed:
-		return render.Healthy, th.Pal.Green
-	case health.DecisionWarn:
-		return render.Warn, th.Pal.Yellow
-	case health.DecisionBlock:
-		return render.Fail, th.Pal.Red
-	default:
-		return render.Unknown, th.Pal.Dim
-	}
+	return append(out, healthview.CheckRows(th, h.Results)...)
 }
 
 func healthSummaryMsg(h *health.HealthSummary) string {

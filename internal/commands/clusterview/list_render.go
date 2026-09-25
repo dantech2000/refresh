@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/healthview"
 	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -91,7 +92,7 @@ func decisionToken(th *render.Theme, h *health.HealthSummary) string {
 	if h == nil {
 		return th.Paint(th.Pal.Dim, "—")
 	}
-	st, _ := decisionStatusColor(th, h.Decision)
+	st, _ := healthview.Decision(th, h.Decision)
 	return th.Tokenf(st, decisionLabel(h.Decision))
 }
 

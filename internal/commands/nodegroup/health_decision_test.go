@@ -57,8 +57,12 @@ func TestApplyHealthDecision_HealthOnlyPrintsBannerEvenWhenQuiet(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected nil error on PASS, got %v", err)
 	}
-	if !strings.Contains(out, "PASS") {
+	if !strings.Contains(out, "All health checks passed") {
 		t.Errorf("expected PASS banner in output, got %q", out)
+	}
+	// --health-only checks and stops: the banner must not claim an update.
+	if strings.Contains(out, "Proceeding") {
+		t.Errorf("--health-only banner claims the update proceeds: %q", out)
 	}
 }
 
@@ -76,7 +80,7 @@ func TestApplyHealthDecision_QuietSuppressesBannerOnRegularUpdate(t *testing.T) 
 	if done {
 		t.Error("expected done=false so update can proceed")
 	}
-	if strings.Contains(out, "PASS") {
+	if strings.Contains(out, "All health checks passed") {
 		t.Errorf("quiet mode should not print PASS banner, got %q", out)
 	}
 }
@@ -90,7 +94,7 @@ func TestApplyHealthDecision_NonQuietProceedPrintsBanner(t *testing.T) {
 		_, _ = applyHealthDecision(t.Context(), summary, flags)
 	})
 
-	if !strings.Contains(out, "PASS") {
+	if !strings.Contains(out, "All health checks passed. Proceeding with the update.") {
 		t.Errorf("expected PASS banner, got %q", out)
 	}
 }
@@ -112,7 +116,7 @@ func TestApplyHealthDecision_BlockReturnsErrorAndPrintsBanner(t *testing.T) {
 	if err == nil {
 		t.Error("expected error on BLOCK")
 	}
-	if !strings.Contains(out, "FAIL") {
+	if !strings.Contains(out, "Critical health issues detected") {
 		t.Errorf("expected FAIL banner, got %q", out)
 	}
 }

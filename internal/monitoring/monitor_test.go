@@ -399,7 +399,7 @@ func TestMonitorUpdates_OneUnmonitoredUpdateDoesNotStopTheOthers(t *testing.T) {
 	}
 	// The final display lists both completed rolls and the unmonitored one.
 	summary := out[strings.LastIndex(out, "Monitoring finished"):]
-	for _, want := range []string{"[SUCCESSFUL] ng-a", "[SUCCESSFUL] ng-b", "[MONITORING FAILED] ng-denied", "2 successful, 0 failed, 1 not monitored"} {
+	for _, want := range []string{" SUCCESSFUL ng-a", " SUCCESSFUL ng-b", " MONITORING FAILED ng-denied", "2 successful, 0 failed, 1 not monitored"} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("final display missing %q:\n%s", want, summary)
 		}

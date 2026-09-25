@@ -137,14 +137,18 @@ func (fs *FunSpinner) clearLine() {
 	pterm.Fprinto(fs.spinner.Writer, "\033[K")
 }
 
-// Success completes the spinner with a success message. When stderr is not
-// an interactive terminal the spinner is off entirely, so no line is written.
-func (fs *FunSpinner) Success(message string) {
+// Done stops the spinner and writes line, a finished status line the caller
+// rendered with the render design system (for example
+// render.Default(ui.Stderr).Line(render.Healthy, "Plan computed")), so the
+// spinner's last word uses the same status tokens as every other view. When
+// stderr is not an interactive terminal the spinner is off entirely, so no
+// line is written.
+func (fs *FunSpinner) Done(line string) {
 	fs.stop()
 	if !spinnerOutputIsTerminal() {
 		return
 	}
-	pterm.Success.WithWriter(fs.spinner.Writer).Println(message)
+	_, _ = fmt.Fprintln(fs.spinner.Writer, line)
 }
 
 // Stop stops the spinner
