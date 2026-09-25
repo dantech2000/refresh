@@ -108,6 +108,9 @@ type ClusterStatus struct {
 	// Failures are the row's failures. The command lists them in the
 	// FleetStatus document, not on the row.
 	Failures []diag.Failure `json:"-" yaml:"-"`
+	// State is the EKS cluster status (ACTIVE, UPDATING, ...). It is not
+	// part of the FleetStatus document.
+	State string `json:"-" yaml:"-"`
 	// Nodegroups and Addons are the per-item rows the counts above come
 	// from. They are filled only with ListOptions.Detail, and are not part of
 	// the FleetStatus document.

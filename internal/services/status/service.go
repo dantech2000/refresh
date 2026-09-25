@@ -272,6 +272,7 @@ func (s *Service) assembleCluster(ctx context.Context, sw *sweep, name string) C
 	}
 	cluster := desc.Cluster
 	cs.Version = aws.ToString(cluster.Version)
+	cs.State = string(cluster.Status)
 	cs.Support = ApplySupportType(s.resolveSupport(ctx, cs.Version), SupportTypeOf(cluster))
 	if cluster.Health != nil {
 		cs.HealthIssues = len(cluster.Health.Issues)

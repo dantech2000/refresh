@@ -170,7 +170,7 @@ func (m Model) clusterCard(w int) Block {
 	}
 	if c.Busy != "" {
 		hint := "progress in the live feed"
-		if strings.HasPrefix(c.Busy, "upgrading") || strings.HasPrefix(c.Busy, "rolling") {
+		if m.watchable(c.Name) {
 			hint = "enter to watch"
 		}
 		body = append(body, Line{tok(state.LevelProgress, c.Busy), sp(2), dimS(hint)})
@@ -293,4 +293,20 @@ func (m Model) activeCards(w int) Block {
 		out = append(out, box(title, body, w, colSurface1)...)
 	}
 	return out
+}
+
+// watchable reports whether this TUI runs a change on cluster that the rolls
+// or upgrade screen can show.
+func (m Model) watchable(cluster string) bool {
+	for _, u := range m.st.Upgrades {
+		if u.Cluster == cluster && u.Running() {
+			return true
+		}
+	}
+	for _, r := range m.st.Rolls {
+		if r.Cluster == cluster && r.Running() {
+			return true
+		}
+	}
+	return false
 }

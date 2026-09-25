@@ -20,9 +20,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/regionsweep"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
@@ -97,7 +99,10 @@ type Backend struct {
 	answered  int
 	total     int
 	sweeping  bool
-	prev      map[string]state.Cluster // last sweep's rows, for change events
+	// prev is the last sweep's rows by region and name, for change events.
+	prev map[target]state.Cluster
+	// warnedClosed is set once the feed said no region is accessible.
+	warnedClosed bool
 }
 
 // New returns a backend for the accounts behind cfg. Call Run to start
@@ -188,12 +193,19 @@ func defaultServices(logger *slog.Logger) services {
 		},
 		upgradeCheck: func(ctx context.Context, cfg aws.Config, cluster string) (*clustersvc.UpgradeReport, error) {
 			report, err := factory.NewClusterService(cfg, false, logger).UpgradeCheck(ctx, cluster, clustersvc.UpgradeCheckOptions{ShowPassing: true})
-			if err != nil || report == nil || report.Skew.ControlPlaneVersion == "" {
+			if err != nil || report == nil {
 				return report, err
 			}
-			// Support posture, as `cluster upgrade-check` adds it.
-			posture := statussvc.NewSupportResolver(factory.NewEKSClient(cfg)).Resolve(ctx, report.Skew.ControlPlaneVersion)
-			report.Support = &posture
+			// What `cluster upgrade-check` adds after the service call: the
+			// support posture (with the cluster's upgrade policy) and the
+			// control-plane health gate.
+			if report.Skew.ControlPlaneVersion != "" {
+				posture := statussvc.NewSupportResolver(factory.NewEKSClient(cfg)).Resolve(ctx, report.Skew.ControlPlaneVersion)
+				posture = statussvc.ApplySupportType(posture, ekstypes.SupportType(report.SupportType))
+				report.Support = &posture
+			}
+			cp := health.NewCheckerForConfig(cfg, nil, nil).CheckControlPlaneMetrics(ctx, cluster)
+			report.ControlPlane = &cp
 			return report, nil
 		},
 		buildPlan: func(ctx context.Context, cfg aws.Config, cluster, target string) (*upgrade.Plan, error) {
@@ -285,7 +297,13 @@ func (b *Backend) sweep(ctx context.Context) {
 
 	sctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 	defer cancel()
-	latest, lerr := b.svc.latestVersion(sctx, b.base)
+	// The base config has no region in a default partition sweep; ask in
+	// the first region of the sweep.
+	vcfg := b.base.Copy()
+	if len(b.opts.Regions) > 0 {
+		vcfg.Region = b.opts.Regions[0]
+	}
+	latest, lerr := b.svc.latestVersion(sctx, vcfg)
 	res := regionsweep.Run(sctx, b.opts.Regions, regionsweep.Options{Concurrency: regionConcurrency(b.opts.MaxConcurrency), SkipInaccessible: b.opts.SkipInaccessible},
 		func(rctx context.Context, region string) ([]statussvc.ClusterStatus, error) {
 			cfg := b.base.Copy()
@@ -320,7 +338,20 @@ func (b *Backend) sweep(ctx context.Context) {
 		b.api("status", f.Name+" failed: "+res.Errors[i].Error(), state.LevelError)
 		b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelError, Subject: f.Name, Text: "region could not be read", Detail: res.Errors[i].Error()})
 	}
-	b.diff(clusters)
+	if n := len(res.Skipped); n > 0 {
+		why := ""
+		if err := res.SkipErrors[res.Skipped[0]]; err != nil {
+			why = " · " + res.Skipped[0] + ": " + err.Error()
+		}
+		b.api("status", fmt.Sprintf("skipped %d region(s) closed to these credentials%s", n, why), state.LevelWarn)
+		if len(res.Answered) == 0 && len(res.Failed) == 0 && !b.warnedClosed {
+			// Every region was closed: an empty fleet here is not a clean one.
+			b.warnedClosed = true
+			b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelError, Subject: "credentials",
+				Text: "no region is accessible to these credentials", Detail: "check eks:ListClusters, or scope with -r or REFRESH_EKS_REGIONS" + why})
+		}
+	}
+	b.diff(clusters, targets)
 	b.clusters, b.targets = clusters, targets
 	b.answered, b.total = len(res.Answered), len(b.opts.Regions)-len(res.Skipped)
 	b.syncedAt = b.now()
@@ -340,12 +371,15 @@ func regionConcurrency(maxConcurrency int) int {
 
 // diff turns what changed since the last sweep into feed events. The first
 // sweep reports every cluster that is not current. The caller holds b.mu.
-func (b *Backend) diff(now []state.Cluster) {
+func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 	first := b.prev == nil
-	next := make(map[string]state.Cluster, len(now))
+	// Keyed by region and name: a display key can change (a second region
+	// gains a cluster of the same name) while the cluster stays the same.
+	next := make(map[target]state.Cluster, len(now))
 	for _, c := range now {
-		next[c.Name] = c
-		old, seen := b.prev[c.Name]
+		id := targets[c.Name]
+		next[id] = c
+		old, seen := b.prev[id]
 		switch {
 		case first:
 			if lvl, text := c.Health(); lvl != state.LevelOK {
@@ -371,9 +405,9 @@ func (b *Backend) diff(now []state.Cluster) {
 			}
 		}
 	}
-	for name := range b.prev {
-		if _, ok := next[name]; !ok {
-			b.emit(state.Event{Cluster: name, Source: state.SourceAWS, Level: state.LevelWarn, Text: "cluster no longer listed"})
+	for id, old := range b.prev {
+		if _, ok := next[id]; !ok {
+			b.emit(state.Event{Cluster: old.Name, Source: state.SourceAWS, Level: state.LevelWarn, Subject: id.region, Text: "cluster no longer listed"})
 		}
 	}
 	b.prev = next
@@ -566,7 +600,9 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			p = state.Plan{Action: a, Title: "Upgrade cluster · " + a.Cluster, Blocked: a.Cluster + " already runs " + c.Version + ", the newest version"}
 			break
 		}
-		plan, perr := b.svc.buildPlan(ctx, cfg, t.name, to)
+		pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
+		plan, perr := b.svc.buildPlan(pctx, cfg, t.name, to)
+		cancel()
 		if perr != nil {
 			return state.Plan{}, perr
 		}
@@ -578,6 +614,9 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		return state.Plan{}, err
 	}
 	p.Action = a
+	if p.Blocked == "" && c.Busy != "" {
+		p.Blocked = a.Cluster + " is busy: " + c.Busy
+	}
 	if p.Blocked == "" {
 		p.Blocked = ErrReadOnly.Error()
 	}

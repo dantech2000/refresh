@@ -40,6 +40,9 @@ func toClusters(rows []statussvc.ClusterStatus, latest string) ([]state.Cluster,
 		if state.Minor(c.Latest) < state.Minor(c.Version) {
 			c.Latest = "" // unknown or stale: never claim the cluster is behind
 		}
+		if r.State == "UPDATING" {
+			c.Busy = "upgrading" // an update runs outside this TUI
+		}
 		if r.Support.StandardUntil != nil {
 			c.SupportEnds = *r.Support.StandardUntil
 		}

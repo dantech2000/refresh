@@ -88,7 +88,7 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		SkipInaccessible: skip,
 		Interval:         cmd.Duration("interval"),
 		SweepTimeout:     2 * runner.APITimeout(cmd),
-		MaxConcurrency:   cmd.Int("max-concurrency"),
+		MaxConcurrency:   appconfig.ClampMaxConcurrency(cmd.Int("max-concurrency")),
 		Context:          activeContextName(),
 		Profile:          profile,
 	})

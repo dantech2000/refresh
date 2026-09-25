@@ -14,6 +14,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
@@ -28,12 +29,17 @@ type fleet struct {
 	rows  map[string][]statussvc.ClusterStatus
 	errs  map[string]error
 	calls atomic.Int64
+	// swept, when set, receives one value per region listed.
+	swept chan struct{}
 	// detail records whether every sweep asked for the per-item rows.
 	noDetail atomic.Bool
 }
 
 func (f *fleet) list(_ context.Context, cfg aws.Config, opts statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
 	f.calls.Add(1)
+	if f.swept != nil {
+		defer func() { f.swept <- struct{}{} }()
+	}
 	if !opts.Detail {
 		f.noDetail.Store(true)
 	}
@@ -333,7 +339,9 @@ func TestReadinessErrorIsAFailedCheck(t *testing.T) {
 }
 
 func TestPlansAreDryRunsWithTheCLICommand(t *testing.T) {
-	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": prodRows()}}
+	rows := prodRows()
+	rows[0].Nodegroups[1].Status = "ACTIVE" // nothing in flight
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": rows}}
 	b := newTestBackend(t, f, "us-east-1")
 	b.sweep(t.Context())
 
@@ -401,30 +409,34 @@ func TestChangesAreRefused(t *testing.T) {
 }
 
 func TestRunSweepsOnTicksAndRefresh(t *testing.T) {
-	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": prodRows()}}
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": prodRows()}, swept: make(chan struct{})}
 	b := newTestBackend(t, f, "us-east-1")
 	ctx, cancel := context.WithCancel(t.Context())
-	ticks := make(chan time.Time)
+	ticks := make(chan time.Time, 1)
 	done := make(chan struct{})
 	go func() {
 		b.run(ctx, ticks)
 		close(done)
 	}()
-	// The loop sweeps at once, then waits. A send is taken only after the
-	// sweep before it returned, so after it the first sweep is complete.
+	<-f.swept // the sweep at start
 	ticks <- time.Time{}
-	ticks <- time.Time{}
-	if n := f.calls.Load(); n < 2 {
-		t.Fatalf("%d sweeps after one tick, want at least 2", n)
-	}
-	before := f.calls.Load()
+	<-f.swept // one per tick
 	b.Refresh()
-	ticks <- time.Time{} // taken once the refresh sweep finished
-	if n := f.calls.Load(); n < before+1 {
-		t.Fatalf("Refresh did not sweep: %d calls, had %d", n, before)
+	<-f.swept // and one per Refresh
+	// Nothing else sweeps until the next tick or Refresh.
+	select {
+	case <-f.swept:
+		t.Fatal("a sweep ran with no tick and no Refresh")
+	default:
 	}
 	cancel()
+	// A sweep that started as ctx ended must not block on the handshake.
+	go func() {
+		for range f.swept {
+		}
+	}()
 	<-done
+	close(f.swept)
 }
 
 // TestAgainstFakeAWS runs the real status service, upgrade check, and
@@ -468,6 +480,14 @@ func TestAgainstFakeAWS(t *testing.T) {
 	if r.Running || r.Blockers() == 0 {
 		t.Fatalf("readiness = %+v", r)
 	}
+	// As `cluster upgrade-check` shows: support and control-plane health.
+	names := map[string]bool{}
+	for _, c := range r.Checks {
+		names[c.Name] = true
+	}
+	if !names["health"] || !names["support"] {
+		t.Fatalf("readiness checks lack health or support: %+v", r.Checks)
+	}
 
 	p, err := b.Plan(t.Context(), state.Action{Kind: state.ActionUpgrade, Cluster: "prod"})
 	if err != nil {
@@ -506,5 +526,90 @@ func TestNilReportIsAFailedCheck(t *testing.T) {
 	st, _ := b.State(t.Context())
 	if r := st.Readiness["prod-api"]; r.Running || r.Checks[0].Status != state.CheckFail {
 		t.Fatalf("readiness = %+v", r)
+	}
+}
+
+func TestEveryRegionClosedIsAnErrorNotAnEmptyFleet(t *testing.T) {
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{}, errs: map[string]error{
+		// regionsweep classifies the typed API error.
+		"us-east-1": mocks.AccessDenied(),
+		"eu-west-1": mocks.AccessDenied(),
+	}}
+	b := newTestBackend(t, f, "us-east-1", "eu-west-1")
+	b.opts.SkipInaccessible = true
+	b.sweep(t.Context())
+	b.sweep(t.Context())
+	st, _ := b.State(t.Context())
+	if !strings.Contains(joinText(st.Log), "skipped 2 region(s) closed to these credentials") {
+		t.Fatalf("log:\n%s", joinText(st.Log))
+	}
+	if n := strings.Count(joinText(st.Feed), "no region is accessible to these credentials"); n != 1 {
+		t.Fatalf("the closed-regions error appears %d times in the feed, want once:\n%s", n, joinText(st.Feed))
+	}
+}
+
+func TestNewestVersionIsAskedInASweptRegion(t *testing.T) {
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"eu-west-1": {}}}
+	b := New(aws.Config{}, Options{Regions: []string{"eu-west-1", "us-east-1"}}) // partition sweep: no base region
+	b.svc = newTestBackend(t, f, "eu-west-1").svc
+	var asked string
+	b.svc.latestVersion = func(_ context.Context, cfg aws.Config) (string, error) {
+		asked = cfg.Region
+		return "1.33", nil
+	}
+	b.sweep(t.Context())
+	if asked != "eu-west-1" {
+		t.Fatalf("DescribeClusterVersions asked in %q, want the first swept region", asked)
+	}
+}
+
+func TestAClusterUpdatingOutsideTheTUIIsBusy(t *testing.T) {
+	rows := prodRows()
+	rows[1].State = "UPDATING"
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": rows}}
+	b := newTestBackend(t, f, "us-east-1")
+	b.sweep(t.Context())
+	c, _ := b.cluster("shared")
+	if c.Busy != "upgrading" {
+		t.Fatalf("Busy = %q", c.Busy)
+	}
+	p, err := b.Plan(t.Context(), state.Action{Kind: state.ActionAddons, Cluster: "shared"})
+	if err != nil || p.Blocked == ErrReadOnly.Error() {
+		t.Fatalf("plan on a busy cluster = %+v, %v", p, err)
+	}
+	prod, _ := b.Plan(t.Context(), state.Action{Kind: state.ActionRoll, Cluster: "prod-api", Nodegroup: "ng-general"})
+	if !strings.Contains(prod.Blocked, "busy: updating ng-system") {
+		t.Fatalf("roll plan on a cluster with a nodegroup updating = %q", prod.Blocked)
+	}
+}
+
+func TestSameClusterKeepsItsIdentityWhenItsKeyChanges(t *testing.T) {
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{
+		"us-east-1": {{Name: "prod", Region: "us-east-1", Version: "1.33"}},
+	}}
+	b := newTestBackend(t, f, "us-east-1", "eu-west-1")
+	b.sweep(t.Context())
+	// A cluster of the same name appears in another region: the first one's
+	// key becomes prod@us-east-1, but it is the same cluster.
+	f.set("eu-west-1", statussvc.ClusterStatus{Name: "prod", Region: "eu-west-1", Version: "1.33"})
+	b.sweep(t.Context())
+	st, _ := b.State(t.Context())
+	text := joinText(st.Feed)
+	if strings.Contains(text, "no longer listed") || strings.Count(text, "cluster found") != 1 {
+		t.Fatalf("feed:\n%s", text)
+	}
+}
+
+func TestPlanHasADeadline(t *testing.T) {
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": prodRows()}}
+	b := newTestBackend(t, f, "us-east-1")
+	b.opts.SweepTimeout = 10 * time.Millisecond
+	b.svc.buildPlan = func(ctx context.Context, _ aws.Config, _, _ string) (*upgrade.Plan, error) {
+		<-ctx.Done() // a planner call that never answers
+		return nil, ctx.Err()
+	}
+	b.sweep(t.Context())
+	if _, err := b.Plan(t.Context(), state.Action{Kind: state.ActionUpgrade, Cluster: "prod-api"}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Plan = %v, want a deadline", err)
 	}
 }
