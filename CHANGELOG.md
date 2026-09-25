@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.12.1](https://github.com/dantech2000/refresh/compare/v0.12.0...v0.12.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **addon:** order prereleases correctly and tighten the update gates ([#396](https://github.com/dantech2000/refresh/issues/396)) ([f9b1fd6](https://github.com/dantech2000/refresh/commit/f9b1fd6b54437649bcd9abc1fce6da168520c72d))
+* **cluster:** close the list/describe/upgrade-check correctness leftovers ([#400](https://github.com/dantech2000/refresh/issues/400)) ([7d9f109](https://github.com/dantech2000/refresh/commit/7d9f109a986b8b8faf76b04bd25a3a3c5a32f3a6))
+* **config:** apply a context as a unit and fail on bad context config ([#399](https://github.com/dantech2000/refresh/issues/399)) ([ddc7865](https://github.com/dantech2000/refresh/commit/ddc7865d4a30a0c94a464816089ca88e265a5b1d))
+* **health:** stop false BLOCKs from throttled reads and clusters without managed nodegroups ([#398](https://github.com/dantech2000/refresh/issues/398)) ([0ee4877](https://github.com/dantech2000/refresh/commit/0ee4877a65072f9b4ac0d305f3d7d0f492b57f98))
+* **nodegroup:** close the scale, list sort, and fleet health-gate leftovers ([#397](https://github.com/dantech2000/refresh/issues/397)) ([6d70a1a](https://github.com/dantech2000/refresh/commit/6d70a1a72f8e5f930f2bd637743b2809cee846c1))
+* retry the remaining unretried AWS calls and guard new ones ([#401](https://github.com/dantech2000/refresh/issues/401)) ([7cb12ef](https://github.com/dantech2000/refresh/commit/7cb12efaa4e91d7276127f2127bd70a121284256))
+* small leftovers from the 2026-09-23 review ([#394](https://github.com/dantech2000/refresh/issues/394)) ([7f87139](https://github.com/dantech2000/refresh/commit/7f871399bc57523dec1f439ffc2f93e8bb0c7738))
+* **status:** show Auto Mode nodegroup AMIs, name the region in the hint, reject unknown --sort ([#395](https://github.com/dantech2000/refresh/issues/395)) ([ef8acaa](https://github.com/dantech2000/refresh/commit/ef8acaa96f0d96f93f29c4d7ebdd9946bd0e8157))
+
+
+### Performance Improvements
+
+* **runner:** drop the STS pre-check from command setup ([#385](https://github.com/dantech2000/refresh/issues/385)) ([3deb68a](https://github.com/dantech2000/refresh/commit/3deb68a30cab7985ad326446f3cefbdbff1e9299))
+* **status:** share lookups across the fleet sweep and run cluster checks concurrently ([#384](https://github.com/dantech2000/refresh/issues/384)) ([3f98e0a](https://github.com/dantech2000/refresh/commit/3f98e0a245f2cd80c8964728d2e54c8bf55c28d8))
+
+
+### Code Refactoring
+
+* **commands:** build AWS clients only through the factory ([#391](https://github.com/dantech2000/refresh/issues/391)) ([050f177](https://github.com/dantech2000/refresh/commit/050f177f7c112c5ab646e0a79a3b1672b5d55e25))
+* move internal/services/common to internal/common ([#387](https://github.com/dantech2000/refresh/issues/387)) ([3f2ca00](https://github.com/dantech2000/refresh/commit/3f2ca00bd756d62c4875b84da5e368fcbb72f291))
+* **nodegroup:** one decision table for nodegroup update and its dry run ([#388](https://github.com/dantech2000/refresh/issues/388)) ([57baa6c](https://github.com/dantech2000/refresh/commit/57baa6c3b072289ad1ad33e7a0180ab265b117a0))
+* one region sweep for every multi-region command ([#389](https://github.com/dantech2000/refresh/issues/389)) ([15bb4df](https://github.com/dantech2000/refresh/commit/15bb4dfcf4293a8c2379facb45974ec9fd95ae22))
+* **render:** move health, verify, and monitoring output to status tokens ([#402](https://github.com/dantech2000/refresh/issues/402)) ([05ba080](https://github.com/dantech2000/refresh/commit/05ba080b8b0d40217acfa0042a3097de246fa5f3))
+* **render:** move lists, describe, contexts, and notices to status tokens ([#404](https://github.com/dantech2000/refresh/issues/404)) ([e303887](https://github.com/dantech2000/refresh/commit/e3038873272dc2bc9a914b00d8515511ead613aa))
+* **render:** move upgrade, dry-run, add-on, and scale output to status tokens ([#403](https://github.com/dantech2000/refresh/issues/403)) ([b68a867](https://github.com/dantech2000/refresh/commit/b68a867a29143fa2a03708f15604520bdb3d4deb))
+* share the nodegroup roll start and the permanent-error check ([#390](https://github.com/dantech2000/refresh/issues/390)) ([ea5b058](https://github.com/dantech2000/refresh/commit/ea5b05870f789989a7bec7db3805b63dd4476ca6))
+
 ## [0.12.0](https://github.com/dantech2000/refresh/compare/v0.11.1...v0.12.0) (2026-09-24)
 
 
