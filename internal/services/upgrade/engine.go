@@ -28,6 +28,11 @@ type ExecuteOptions struct {
 	Confirm ConfirmFunc
 	// Progress receives human-readable progress lines.
 	Progress ProgressFunc
+	// PhaseStart, when set, is called with each mutating phase's label as the
+	// phase starts, so the view can draw it as a section header. Without it
+	// the label goes to Progress as plain text. The engine never picks glyphs
+	// or colors.
+	PhaseStart func(label string)
 	// SkipAddons / SkipNodegroups mirror the plan options; Force is passed to
 	// UpdateNodegroupVersion. All three reach the phase executors.
 	SkipAddons     []string
@@ -131,7 +136,11 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 			}
 		}
 
-		progress("▸ %s", ph.label)
+		if opts.PhaseStart != nil {
+			opts.PhaseStart(ph.label)
+		} else {
+			progress("%s", ph.label)
+		}
 		if err := ph.run(ctx); err != nil {
 			report.stop(ctx, plan.ClusterName, ph.label, pendingLabels(phases[i+1:]), err, false)
 			if ctx.Err() != nil {

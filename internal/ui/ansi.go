@@ -220,12 +220,15 @@ func ClassifyStatus(status string) StatusCategory {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
 	case "ACTIVE", "RUNNING", "HEALTHY", "PASS", "SUCCESS", "SUCCESSFUL", "ENABLED", "READY", "COMPLETED":
 		return StatusGood
-	case "WARN", "WARNING", "UPDATING", "PENDING", "SCALING", "CREATING", "DELETING":
+	case "WARN", "WARNING", "PENDING":
 		return StatusWarning
 	case "FAIL", "FAILED", "ERROR", "CRITICAL", "DISABLED", "DEGRADED", "CANCELLED",
 		"CREATE_FAILED", "UPDATE_FAILED", "DELETE_FAILED":
 		return StatusBad
-	case "IN PROGRESS", "IN_PROGRESS", "INPROGRESS":
+	// A resource in transition is in progress, not a warning: EKS reports
+	// an add-on update as UPDATING and the update itself as InProgress, and
+	// both must read the same.
+	case "IN PROGRESS", "IN_PROGRESS", "INPROGRESS", "UPDATING", "CREATING", "DELETING", "SCALING":
 		return StatusInProgress
 	case "UNKNOWN", "N/A":
 		return StatusUnknown

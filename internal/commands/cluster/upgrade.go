@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -221,7 +220,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	// A plan that is only printed exits 4 when the planner could not read
 	// something.
 	if plan.Blocked() || cmd.Bool("dry-run") {
-		return planExit(plan, cli.Exit(ui.StderrColor(color.FgRed).Sprint("Upgrade blocked — resolve the blockers above and re-run."), runner.ExitBlocked))
+		return planExit(plan, cli.Exit("Upgrade blocked — resolve the blockers above and re-run.", runner.ExitBlocked))
 	}
 	if plan.PendingSteps() == 0 {
 		writeUpgradeOutcome(out, clusterName, plan, false)
@@ -254,6 +253,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	opts := executeOptions(cmd, healthGate)
 	opts.Confirm = func(label string) bool { return promptPhase(ctx, out, label) }
 	opts.Progress = progress
+	opts.PhaseStart = phaseStart(out, cmd.Bool("quiet"))
 	healthGate.confirm, healthGate.progress = opts.Confirm, progress
 	opts.NodegroupObserver = ngObserver
 	report, err := svc.Execute(ctx, plan, opts)
@@ -267,36 +267,13 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		runner.WriteFailures(format, os.Stdout, ui.Stderr, stop)
 	}
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", ui.ColorFor(out, color.FgCyan).Sprint(resumeCommand(cmd, clusterName, plan)))
+		th := render.Default(out)
+		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", th.Paint(th.Pal.Sky, resumeCommand(cmd, clusterName, plan)))
 		return err
 	}
 
 	writeUpgradeOutcome(out, clusterName, plan, true)
 	return runner.IncompleteExit(plan.Failures)
-}
-
-// writeUpgradeOutcome writes the last line of a run that did not fail:
-// "Upgrade complete" (ran is true) or "Nothing to do". When the plan has
-// manual steps (custom-AMI nodegroups, --skip, --skip-nodegroup), the upgrade
-// is not complete: it names them instead.
-func writeUpgradeOutcome(out io.Writer, clusterName string, plan *upgrade.Plan, ran bool) {
-	manual := plan.ManualSteps()
-	if len(manual) == 0 {
-		if ran {
-			_, _ = fmt.Fprintf(out, "\n%s\n", ui.ColorFor(out, color.FgGreen).Sprintf("Upgrade complete: %s is at %s.", clusterName, plan.TargetVersion))
-		} else {
-			_, _ = fmt.Fprintf(out, "\nNothing to do: %s already satisfies %s.\n", clusterName, plan.TargetVersion)
-		}
-		return
-	}
-	head := fmt.Sprintf("Upgrade not complete: %d manual step(s) remain before %s is fully at %s.", len(manual), clusterName, plan.TargetVersion)
-	if !ran {
-		head = fmt.Sprintf("Nothing left for refresh to do, but %d manual step(s) remain before %s is fully at %s.", len(manual), clusterName, plan.TargetVersion)
-	}
-	_, _ = fmt.Fprintf(out, "\n%s\n", ui.ColorFor(out, color.FgYellow).Sprint(head))
-	for _, m := range manual {
-		_, _ = fmt.Fprintf(out, "  %s %s\n", ui.ColorFor(out, color.FgYellow).Sprint("manual:"), m)
-	}
 }
 
 // buildUpgradePlan builds the plan behind a spinner. The insights refresh can
@@ -441,6 +418,7 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 				_, _ = fmt.Fprintf(ui.Stderr, "  "+format+"\n", args...)
 			}
 		}
+		opts.PhaseStart = phaseStart(ui.Stderr, cmd.Bool("quiet"))
 		healthGate.progress = opts.Progress
 		var r *upgrade.Report
 		r, err = svc.Execute(ctx, plan, opts)
@@ -469,62 +447,4 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 func promptPhase(ctx context.Context, w io.Writer, label string) bool {
 	_, _ = fmt.Fprintf(w, "\nProceed with %s? (y/N): ", label)
 	return ui.Confirm(ctx)
-}
-
-// renderPlan prints the human-readable plan.
-func renderPlan(plan *upgrade.Plan) {
-	ui.Outln()
-	path := plan.CurrentVersion
-	for _, hop := range plan.Hops {
-		path += " → " + hop.To
-	}
-	ui.Outf("Upgrade plan: %s %s (EKS upgrades are sequential minors)\n", color.New(color.Bold).Sprint(plan.ClusterName), path)
-
-	for _, n := range plan.Notices {
-		ui.Outf("  %s %s\n", color.YellowString("▸ notice:"), n)
-	}
-
-	for _, hop := range plan.Hops {
-		ui.Outln()
-		ui.Outf("%s\n", color.New(color.Bold).Sprintf("Hop %s → %s", hop.From, hop.To))
-		for i, step := range hop.Steps {
-			marker, note := stepMarkerAndNote(step)
-			line := fmt.Sprintf("  %2d. %s %s", i+1, marker, step.Description)
-			if note != "" {
-				line += " — " + note
-			}
-			ui.Outf("%s\n", line)
-		}
-	}
-}
-
-// stepMarkerAndNote maps a step's status to its display marker and note.
-func stepMarkerAndNote(step upgrade.Step) (string, string) {
-	switch step.Status {
-	case upgrade.StatusCompleted:
-		return color.GreenString("[done]   "), step.Reason
-	case upgrade.StatusBlocked:
-		return color.RedString("[BLOCKED]"), step.Reason
-	case upgrade.StatusManual:
-		return color.YellowString("[manual] "), step.Reason
-	default:
-		return color.CyanString("[pending]"), step.Reason
-	}
-}
-
-// renderReport writes the completed / stopped-at / remaining summary to w.
-func renderReport(w io.Writer, report *upgrade.Report) {
-	if report == nil {
-		return
-	}
-	_, _ = fmt.Fprintln(w)
-	for _, c := range report.Completed {
-		_, _ = fmt.Fprintf(w, "%s %s\n", ui.ColorFor(w, color.FgGreen).Sprint("completed:"), c)
-	}
-	if report.StoppedAt != "" {
-		_, _ = fmt.Fprintf(w, "%s %s (%s)\n", ui.ColorFor(w, color.FgRed).Sprint("stopped at:"), report.StoppedAt, report.Status)
-	}
-	for _, r := range report.Remaining {
-		_, _ = fmt.Fprintf(w, "%s %s\n", ui.ColorFor(w, color.FgYellow).Sprint("remaining:"), r)
-	}
 }

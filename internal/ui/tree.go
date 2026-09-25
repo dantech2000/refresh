@@ -53,6 +53,9 @@ func (tb *TreeBuilder) AddStatus(icon, text, status string) *TreeBuilder {
 	case StatusBad:
 		colorFunc = func(s string) string { return color.RedString("%s", s) }
 		statusText = "FAIL"
+	case StatusInProgress:
+		colorFunc = func(s string) string { return color.CyanString("%s", s) }
+		statusText = "IN PROGRESS"
 	default:
 		colorFunc = func(s string) string { return color.WhiteString("%s", s) }
 		statusText = ""

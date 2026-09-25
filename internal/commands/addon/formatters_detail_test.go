@@ -25,7 +25,7 @@ func TestOutputAddonDetailsTable_FullDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	for _, want := range []string{"vpc-cni", "v1.18.3", "arn:aws:eks", "Service Account Role", "Issues:", "AccessDenied", "Configuration:", "ENABLE_PREFIX_DELEGATION"} {
+	for _, want := range []string{"vpc-cni", "v1.18.3", "arn:aws:eks", "service account role", "ISSUES", "AccessDenied: missing permission", "CONFIGURATION", "ENABLE_PREFIX_DELEGATION"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("details output missing %q; got:\n%s", want, out)
 		}
@@ -42,21 +42,18 @@ func TestOutputAddonDetailsTable_Minimal(t *testing.T) {
 		t.Errorf("expected addon name, got: %q", out)
 	}
 	// No optional sections should appear.
-	if strings.Contains(out, "Issues:") || strings.Contains(out, "Configuration:") {
+	if strings.Contains(out, "ISSUES") || strings.Contains(out, "CONFIGURATION") {
 		t.Errorf("minimal details should omit empty sections, got:\n%s", out)
 	}
 }
 
 func TestOutputUpdateAllResults_Empty(t *testing.T) {
-	// The "No addons to update" notice goes via color.Yellow (color.Output),
-	// which this helper doesn't capture; assert on the header (ui.Outf → stdout)
-	// and that the call returns cleanly.
 	out, err := captureStdout(t, func() error { return outputUpdateAllResults("prod", nil, false) })
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "Addon Updates for cluster: prod") {
-		t.Errorf("expected the cluster header, got: %q", out)
+	if !strings.Contains(out, "ADD-ON UPDATES  prod") || !strings.Contains(out, "No add-ons to update") {
+		t.Errorf("expected the cluster header and the empty notice, got: %q", out)
 	}
 }
 

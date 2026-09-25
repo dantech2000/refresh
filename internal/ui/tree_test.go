@@ -93,10 +93,21 @@ func TestAddStatus_ActiveContainsPass(t *testing.T) {
 }
 
 func TestAddStatus_WarningContainsWarn(t *testing.T) {
-	for _, s := range []string{"UPDATING", "PENDING", "SCALING", "WARN", "WARNING"} {
+	for _, s := range []string{"PENDING", "WARN", "WARNING"} {
 		text := testAddStatusText(s)
 		if !strings.Contains(text, "WARN") {
 			t.Errorf("AddStatus(%q): expected WARN in text, got %q", s, text)
+		}
+	}
+}
+
+// A resource in transition reads as in progress, the same as an EKS update
+// that is InProgress, not as a warning.
+func TestAddStatus_TransitionIsInProgress(t *testing.T) {
+	for _, s := range []string{"UPDATING", "CREATING", "SCALING", "IN_PROGRESS"} {
+		text := testAddStatusText(s)
+		if !strings.Contains(text, "IN PROGRESS") || strings.Contains(text, "WARN") {
+			t.Errorf("AddStatus(%q): expected IN PROGRESS in text, got %q", s, text)
 		}
 	}
 }

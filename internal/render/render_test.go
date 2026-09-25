@@ -81,7 +81,8 @@ func TestTokenUnicodeAndASCII(t *testing.T) {
 func TestStatusFromString(t *testing.T) {
 	cases := map[string]Status{
 		"ACTIVE":      Healthy,
-		"UPDATING":    Warn,
+		"UPDATING":    Progress,
+		"PENDING":     Warn,
 		"FAILED":      Fail,
 		"IN_PROGRESS": Progress,
 		"UNKNOWN":     Unknown,
