@@ -288,9 +288,9 @@ func TestResolveClusterPattern_BrokenKubeconfigWrapsCause(t *testing.T) {
 // fakeSpinner records whether it is still running.
 type fakeSpinner struct{ running bool }
 
-func (s *fakeSpinner) Start() error   { s.running = true; return nil }
-func (s *fakeSpinner) Success(string) { s.running = false }
-func (s *fakeSpinner) Stop()          { s.running = false }
+func (s *fakeSpinner) Start() error { s.running = true; return nil }
+func (s *fakeSpinner) Done(string)  { s.running = false }
+func (s *fakeSpinner) Stop()        { s.running = false }
 
 // Both prompt paths (single partial match, multiple matches) must run after
 // the spinner stops; a running spinner redraws its line and erases the prompt.

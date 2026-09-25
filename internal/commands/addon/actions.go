@@ -46,7 +46,7 @@ func listAddonsOnce(ctx context.Context, cmd *cli.Command) error {
 
 	var res addons.ListResult
 	start := time.Now()
-	if err := runner.WithSpinner("addon", "Add-on information gathered!", func() error {
+	if err := runner.WithSpinner("addon", "Add-on information gathered", func() error {
 		var ferr error
 		res, ferr = addonSvc.ListDetailed(ctx, clusterName, addons.ListOptions{ShowHealth: cmd.Bool("show-health")})
 		return ferr
@@ -425,7 +425,7 @@ func confirmUpdateAll(ctx context.Context, cmd *cli.Command, svc addonBulkUpdate
 	previewOpts := options
 	previewOpts.DryRun, previewOpts.Wait, previewOpts.HealthCheck, previewOpts.Parallel = true, false, false, false
 	var preview []addons.AddonUpdateResult
-	if err := runner.WithSpinner("addon", "Update plan computed", func() error {
+	if err := runner.WithSpinner("addon", "Add-on update plan computed", func() error {
 		var perr error
 		preview, perr = svc.UpdateAll(ctx, clusterName, previewOpts)
 		return perr
@@ -533,7 +533,7 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 
 	var results []addons.AddonUpdateResult
-	if err := runner.WithSpinner("addon", "Addon updates processed!", func() error {
+	if err := runner.WithSpinner("addon", "Add-on updates processed", func() error {
 		var rerr error
 		results, rerr = addonSvc.UpdateAll(ctx, clusterName, options)
 		return rerr

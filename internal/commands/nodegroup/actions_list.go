@@ -59,7 +59,7 @@ func listNodegroupsOnce(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	var res nodegroupsvc.ListResult
-	if err := runner.WithSpinner("nodegroup", "Nodegroup information gathered!", func() error {
+	if err := runner.WithSpinner("nodegroup", "Nodegroup information gathered", func() error {
 		var lerr error
 		res, lerr = svc.ListDetailed(ctx, clusterName, opts)
 		return lerr

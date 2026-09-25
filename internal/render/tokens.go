@@ -1,6 +1,11 @@
 package render
 
-import "github.com/dantech2000/refresh/internal/ui"
+import (
+	"fmt"
+	"io"
+
+	"github.com/dantech2000/refresh/internal/ui"
+)
 
 // Status is a semantic state with a fixed glyph + color, so meaning is carried
 // by the glyph (not color alone).
@@ -74,4 +79,24 @@ func StatusFromString(s string) Status {
 	default:
 		return Neutral
 	}
+}
+
+// Line is one status line: the token with the label colored to match (see
+// Tokenf), for notices and banners such as "Update started" or "Nothing to
+// do". Without color or Unicode it still reads, e.g. "[!] 2 stale".
+func (t *Theme) Line(s Status, format string, args ...any) string {
+	return t.Tokenf(s, fmt.Sprintf(format, args...))
+}
+
+// Notef writes one status line (see Line) to w, themed for w itself: stderr
+// can be colored when stdout is piped, and the reverse.
+func Notef(w io.Writer, s Status, format string, args ...any) {
+	_, _ = fmt.Fprintln(w, Default(w).Line(s, format, args...))
+}
+
+// SpinnerDone stops s and writes msg as a Healthy status line on the
+// spinner's stream (stderr, and only when it is a terminal). Spinner copy is
+// sentence case with no closing punctuation: "Upgrade plan computed".
+func SpinnerDone(s *ui.FunSpinner, msg string) {
+	s.Done(Default(ui.Stderr).Line(Healthy, "%s", msg))
 }

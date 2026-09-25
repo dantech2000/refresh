@@ -32,9 +32,16 @@ type UpdateProgress struct {
 type ProgressMonitor struct {
 	Updates   []UpdateProgress
 	StartTime time.Time
-	// LastPrinted is how many lines the last progress redraw wrote, so the
-	// next one can move the cursor up over them.
-	LastPrinted int
+	// Live repaints the progress view in place (a render.LiveRegion); nil
+	// until the first progress frame is drawn.
+	Live FrameDrawer
+}
+
+// FrameDrawer paints one frame of lines, over the previous frame when it
+// can. render.LiveRegion implements it; the interface keeps this domain
+// package free of the view layer.
+type FrameDrawer interface {
+	Draw(frame []string)
 }
 
 // MonitorConfig contains configuration for the update monitoring process.

@@ -11,7 +11,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 	"k8s.io/client-go/kubernetes"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/healthview"
 	"github.com/dantech2000/refresh/internal/monitoring"
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/rollview"
@@ -127,9 +127,15 @@ func (f updateAMIFlags) noticeOut() io.Writer {
 	return os.Stdout
 }
 
-// notice writes one colored line to noticeOut.
-func (f updateAMIFlags) notice(attr color.Attribute, format string, args ...any) {
-	_, _ = ui.ColorFor(f.noticeOut(), attr).Fprintf(f.noticeOut(), format+"\n", args...)
+// notice writes one status line to noticeOut.
+func (f updateAMIFlags) notice(st render.Status, format string, args ...any) {
+	render.Notef(f.noticeOut(), st, format, args...)
+}
+
+// noticeDetail writes an indented continuation of the previous notice, with
+// no status glyph of its own.
+func (f updateAMIFlags) noticeDetail(format string, args ...any) {
+	_, _ = fmt.Fprintf(f.noticeOut(), "  "+format+"\n", args...)
 }
 
 func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
@@ -259,9 +265,9 @@ func runUpdateDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clie
 func printRunSummary(run updateRun, clusterName string, noWait bool) {
 	switch started := run.started(); {
 	case len(started) == 0:
-		color.Yellow("No nodegroup updates were started")
+		render.Notef(os.Stdout, render.Warn, "No nodegroup updates were started")
 	case noWait:
-		fmt.Printf("Started %d nodegroup update(s). Use 'refresh nodegroup list %s' to check status.\n",
+		render.Notef(os.Stdout, render.Progress, "Started %d nodegroup update(s). Use 'refresh nodegroup list %s' to check status.",
 			len(started), clusterName)
 	case run.verification != nil:
 		printVerification(*run.verification)
@@ -352,7 +358,7 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	// the updates that completed while an unmonitored roll may still be
 	// running. Skip it, and say why.
 	if verify && errors.Is(monErr, monitoring.ErrUnmonitored) && !quiet {
-		color.Yellow("Post-roll verification skipped: the outcome of one or more updates is unknown.")
+		render.Notef(os.Stdout, render.Warn, "Post-roll verification skipped: the outcome of one or more updates is unknown.")
 	}
 	if verify && shouldVerifyPostRoll(ctx, monErr) && len(run.started()) > 0 {
 		result, readFailures := verifyPostRoll(ctx, eksClient, verifyClient, clusterName, run.started(), preroll, prerollOK)
@@ -389,19 +395,8 @@ func shouldVerifyPostRoll(ctx context.Context, monErr error) bool {
 
 // printVerification renders the post-roll verification block.
 func printVerification(v PostRollVerification) {
-	if v.OK() {
-		color.Green("Post-roll verification passed:")
-		for _, c := range v.Checks {
-			fmt.Printf("  ✓ %s\n", c)
-		}
-		return
-	}
-	color.Red("Post-roll verification found issues:")
-	for _, issue := range v.Issues {
-		fmt.Printf("  ✖ %s\n", issue)
-	}
-	for _, c := range v.Checks {
-		fmt.Printf("  ✓ %s\n", c)
+	for _, l := range verificationLines(render.Default(os.Stdout), v) {
+		fmt.Println(l)
 	}
 }
 
@@ -450,7 +445,7 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 			if flags.machine() {
 				return nil, true, fmt.Errorf("--health-only with --skip-health-check or --dry-run runs no health check, so there is no -o %s result", flags.format)
 			}
-			color.Yellow("Health check skipped due to --skip-health-check or --dry-run flags")
+			render.Notef(os.Stdout, render.Warn, "Health check skipped due to --skip-health-check or --dry-run flags")
 			return nil, true, nil
 		}
 		return nil, false, nil
@@ -463,7 +458,7 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	humanOutput := !flags.quiet && !flags.machine()
 
 	if humanOutput {
-		ui.DisplayHealthCheckStart(clusterName)
+		healthview.WriteStart(os.Stdout, clusterName)
 	}
 	k8sClient, kubeSel := resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, flags.kubeconfig, flags.kubeContext, !flags.quiet)
 	checker := health.NewCheckerForConfig(awsCfg, k8sClient, nil)
@@ -490,12 +485,12 @@ func preflightHealthCheck(ctx context.Context, awsCfg aws.Config, eksClient *eks
 	}
 	result := checker.RunAllChecks(ctx, clusterName)
 	if humanOutput {
-		spinner.Success("Health validation complete!")
-		ui.DisplayHealthResults(result)
+		render.SpinnerDone(spinner, "Health checks complete")
+		healthview.WriteReport(os.Stdout, result)
 	}
 	// With --health-only the verdict is the document itself.
 	if flags.machine() && !flags.healthOnly && !flags.quiet {
-		ui.WriteHealthResults(ui.Stderr, result)
+		healthview.WriteReport(ui.Stderr, result)
 	}
 
 	if flags.machineHealthOutput() {
@@ -567,7 +562,7 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 	switch summary.Decision {
 	case health.DecisionBlock:
 		if human {
-			ui.DisplayHealthCheckComplete(summary.Decision)
+			healthview.WriteVerdict(os.Stdout, summary.Decision, flags.healthOnly)
 		}
 		if flags.healthOnly {
 			return true, healthExitError(summary)
@@ -578,7 +573,7 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 	case health.DecisionWarn:
 		if flags.healthOnly {
 			if human {
-				ui.DisplayHealthCheckComplete(summary.Decision)
+				healthview.WriteVerdict(os.Stdout, summary.Decision, flags.healthOnly)
 			}
 			return true, healthExitError(summary)
 		}
@@ -586,7 +581,7 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 		// knob) instead of a prompt.
 		if flags.requireHealthy {
 			if human {
-				ui.DisplayHealthCheckComplete(summary.Decision)
+				healthview.WriteVerdict(os.Stdout, summary.Decision, flags.healthOnly)
 			}
 			return true, cli.Exit("health checks reported warnings and --require-healthy is set: "+healthProblems(summary), 2)
 		}
@@ -596,7 +591,7 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 			// update that auto-accepts) sees them instead of proceeding
 			// silently. With -o json/yaml this goes to stderr.
 			if !flags.quiet {
-				flags.notice(color.FgYellow, "Health check reported warnings; proceeding: %s", healthProblems(summary))
+				flags.notice(render.Warn, "Health check reported warnings; proceeding: %s", healthProblems(summary))
 			}
 			return false, nil
 		}
@@ -607,12 +602,12 @@ func applyHealthDecision(ctx context.Context, summary health.HealthSummary, flag
 			return true, fmt.Errorf("health checks reported warnings (%s); re-run with --yes to proceed or --require-healthy to fail (%s)", healthProblems(summary), flags.noPromptReason())
 		}
 		if !ui.PromptContinueWithWarnings(ctx, summary.Warnings) {
-			color.Yellow("Update cancelled by user")
+			render.Notef(os.Stdout, render.Warn, "Update cancelled by user")
 			return true, fmt.Errorf("update cancelled")
 		}
 	case health.DecisionProceed:
 		if human && (flags.healthOnly || !flags.quiet) {
-			ui.DisplayHealthCheckComplete(summary.Decision)
+			healthview.WriteVerdict(os.Stdout, summary.Decision, flags.healthOnly)
 		}
 		if flags.healthOnly {
 			return true, healthExitError(summary)
@@ -663,7 +658,7 @@ func selectNodegroupsForUpdate(ctx context.Context, eksClient *eks.Client, clust
 	if awsinternal.NodegroupPatternNeedsConfirmation(matches, pattern) {
 		if flags.yes {
 			if len(matches) == 1 {
-				_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr, "No nodegroup named %q in %s; using the only partial match %q (--yes)\n", pattern, clusterName, matches[0])
+				render.Notef(ui.Stderr, render.Warn, "No nodegroup named %q in %s; using the only partial match %q (--yes)", pattern, clusterName, matches[0])
 			}
 			return matches, nil
 		}
@@ -798,21 +793,21 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 			// EKS doesn't manage the AMI (it lives in the user's launch
 			// template), so UpdateNodegroupVersion can't pick a recommended
 			// AMI. Skip with clear guidance instead of mis-rolling.
-			flags.notice(color.FgYellow, "Nodegroup %s uses a custom AMI (AmiType=CUSTOM); refresh can't select a recommended AMI.", ng)
-			flags.notice(color.FgYellow, "  Publish a new launch template version with the new AMI, then point the nodegroup at it (e.g. `aws eks update-nodegroup-version --launch-template name=<lt>,version=<n>`).")
+			flags.notice(render.Warn, "Nodegroup %s uses a custom AMI (AmiType=CUSTOM); refresh can't select a recommended AMI.", ng)
+			flags.noticeDetail("Publish a new launch template version with the new AMI, then point the nodegroup at it (e.g. `aws eks update-nodegroup-version --launch-template name=<lt>,version=<n>`).")
 			run.skip(ng, skipCustomAMI)
 			continue
 		case refreshTypes.ActionSkipUpdating:
-			flags.notice(color.FgYellow, "Nodegroup %s is already UPDATING. Skipping update.", ng)
+			flags.notice(render.Progress, "Nodegroup %s is already UPDATING. Skipping update.", ng)
 			run.skip(ng, skipAlreadyUpdating)
 			continue
 		case refreshTypes.ActionSkipLatest:
-			flags.notice(color.FgGreen, "Nodegroup %s is already on the latest AMI. Skipping (use --reroll to roll it anyway).", ng)
+			flags.notice(render.Healthy, "Nodegroup %s is already on the latest AMI. Skipping (use --reroll to roll it anyway).", ng)
 			run.skip(ng, skipAlreadyLatest)
 			continue
 		}
 		if human {
-			color.Cyan("Starting update for nodegroup %s...", ng)
+			render.Notef(os.Stdout, render.Progress, "Starting update for nodegroup %s...", ng)
 		}
 
 		// The service pins one ClientRequestToken across its retries, so a
@@ -840,7 +835,7 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 		})
 		run.nodegroups = append(run.nodegroups, nodegroupResult{Name: ng, Status: ngStarted, UpdateID: *update.Id})
 		if human {
-			color.Green("Update started for nodegroup %s (ID: %s)", ng, *update.Id)
+			render.Notef(os.Stdout, render.Healthy, "Update started for nodegroup %s (ID: %s)", ng, *update.Id)
 		}
 	}
 	return updates, run
@@ -875,7 +870,7 @@ func updateClusterAndNodegroupPatterns(cmd *cli.Command) (string, string) {
 		return runner.RequestedCluster(cmd), runner.PositionalSlot(cmd, "nodegroup", "cluster")
 	}
 
-	_, _ = ui.ColorFor(clusterEnvNoteOut, color.FgYellow).Fprintf(clusterEnvNoteOut, "Using cluster %s from %s\n", env, clusterEnvVar)
+	render.Notef(clusterEnvNoteOut, render.Neutral, "Using cluster %s from %s", env, clusterEnvVar)
 	nodegroupPattern := strings.TrimSpace(cmd.String("nodegroup"))
 	if !cmd.IsSet("nodegroup") && len(args) == 1 {
 		nodegroupPattern = args[0]

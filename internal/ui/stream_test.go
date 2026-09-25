@@ -271,7 +271,7 @@ func TestSpinnerOffOnDumbTerminal(t *testing.T) {
 		t.Fatal("spinner must not animate with TERM=dumb")
 	}
 	s.Stop()
-	s.Success("done")
+	s.Done("done")
 	if got := readErr(); got != "" {
 		t.Fatalf("spinner wrote with TERM=dumb: %q", got)
 	}

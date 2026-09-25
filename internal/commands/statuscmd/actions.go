@@ -60,7 +60,7 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 		}
 		return nil
 	}
-	if err := runner.WithSpinner("status", "Fleet status gathered!", gather); err != nil {
+	if err := runner.WithSpinner("status", "Fleet status gathered", gather); err != nil {
 		return err
 	}
 	elapsed := time.Since(start)

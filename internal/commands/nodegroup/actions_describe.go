@@ -62,7 +62,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 
 	var details *nodegroupsvc.NodegroupDetails
 	start := time.Now()
-	if err := runner.WithSpinner("nodegroup", "Nodegroup details gathered!", func() error {
+	if err := runner.WithSpinner("nodegroup", "Nodegroup details gathered", func() error {
 		var derr error
 		details, derr = svc.Describe(ctx, clusterName, ngName, opts)
 		return derr

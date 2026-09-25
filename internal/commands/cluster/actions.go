@@ -18,6 +18,7 @@ import (
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -90,7 +91,7 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 	if allRegions || len(regions) > 0 {
 		summaries, regionFailures, err = runMultiRegionListWithProgress(ctx, awsCfg, clusterService, options)
 	} else {
-		err = runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
+		err = runner.WithSpinner("cluster", "Cluster information gathered", func() error {
 			var lerr error
 			summaries, lerr = clusterService.List(ctx, options)
 			return lerr
@@ -222,7 +223,7 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	var details *clustersvc.ClusterDetails
-	if err := runner.WithSpinner("cluster", "Cluster information gathered!", func() error {
+	if err := runner.WithSpinner("cluster", "Cluster information gathered", func() error {
 		var derr error
 		details, derr = clusterService.Describe(ctx, clusterName, options)
 		return derr
@@ -278,9 +279,9 @@ func runMultiRegionListWithProgress(ctx context.Context, awsCfg aws.Config, clus
 	}
 
 	if len(res.Summaries) > 0 {
-		spinner.Success(fmt.Sprintf("Found %d clusters across %d regions!", len(res.Summaries), res.Queried))
+		render.SpinnerDone(spinner, fmt.Sprintf("Found %d clusters across %d regions", len(res.Summaries), res.Queried))
 	} else {
-		spinner.Success("Search complete - no clusters found")
+		render.SpinnerDone(spinner, "No clusters found")
 	}
 	runner.ReportSkippedRegions(ui.Stderr, res.Skipped)
 	return res.Summaries, res.Failed, nil
