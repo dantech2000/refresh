@@ -36,7 +36,7 @@ task deadcode       # fail on code unreachable even from tests (pinned)
 task tidy:check     # go mod tidy -diff
 task docs:check     # regenerate docs/reference and docs/schema, fail if either changed
 task fuzz           # run every FuzzXxx target for FUZZTIME (default 30s); failing inputs land in testdata/fuzz/
-task dev:full       # fmt, vet, lint, tidy:check, deadcode, docs:check, test:race, build (run before pushing)
+task dev:full       # fmt, vet, lint, tidy:check, deadcode, vuln, docs:check, test:race, build (run before pushing)
 ```
 
 CI mirrors `dev:full` on every PR: tidy check, docs reference check,
