@@ -171,6 +171,7 @@ skip the confirmation prompts.`,
 			commands.CompletionCommand(),
 			// Hidden: generates the Markdown command reference for the docs site.
 			commands.GenDocsCommand(),
+			commands.UICommand(),
 		},
 	}
 	// A shorthand removed in 0.11.0 fails with its replacement instead of a

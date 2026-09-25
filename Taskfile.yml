@@ -199,6 +199,13 @@ tasks:
     cmds:
       - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} version
 
+  run:tui:sim:
+    desc: Open the experimental TUI on the simulated fleet (no AWS; SPEED=n sets sim seconds per second)
+    deps: [build]
+    interactive: true
+    cmds:
+      - REFRESH_DEV_SIMULATE=1 REFRESH_DEV_SIM_SPEED={{.SPEED | default "8"}} ./{{.BUILD_DIR}}/{{.BINARY_NAME}} ui
+
   run:help:
     desc: Show help
     deps: [build]

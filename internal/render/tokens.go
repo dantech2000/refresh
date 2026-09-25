@@ -38,6 +38,16 @@ func (t *Theme) tokenParts(s Status) (glyph, ascii string, col Color) {
 	}
 }
 
+// Mark returns the status glyph as plain text, or its ASCII fallback, for a
+// view that styles it itself (the full-screen TUI).
+func (t *Theme) Mark(s Status) string {
+	g, a, _ := t.tokenParts(s)
+	return t.glyph(g, a)
+}
+
+// SectionMark returns the section-heading marker, or its ASCII fallback.
+func (t *Theme) SectionMark() string { return t.glyph("▸", ">") }
+
 // Glyph renders just the status glyph, colored.
 func (t *Theme) Glyph(s Status) string {
 	g, a, col := t.tokenParts(s)

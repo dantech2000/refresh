@@ -179,6 +179,19 @@ lifecycle event feed. Testable with **zero AWS / zero cluster** via
 whole live panel from the scripted observer — demos, asciinema, and manual QA
 with no AWS.
 
+**Experimental TUI** (branch `experiment/tui`): `refresh ui` is a hidden
+Bubble Tea app (`internal/tui`) that draws a `state.State` from a
+`state.Backend` (`internal/tui/state`) and never calls AWS itself. The only
+backend so far is `internal/sim`, a deterministic simulated fleet on a virtual
+clock (rolls, add-on updates, readiness checks, upgrades; node lifecycle
+events come from the real `noderoll.Tracker`). The simulator is dev-only:
+`REFRESH_DEV_SIMULATE=1 refresh ui` (or `task run:tui:sim`) turns it on, with
+`REFRESH_DEV_SIM_SPEED` and `REFRESH_DEV_SIM_SEED`; there is no flag and no
+user doc. Without the switch `refresh ui` exits 1. TUI glyphs come from
+`render.Theme.Mark`, so the render guard test and the ASCII fallback hold.
+Tests step the world with `sim.World.Advance` and assert every screen fills
+the terminal exactly (`internal/tui/model_test.go`).
+
 ## Conventions (follow these when editing)
 
 - **CLI framework:** urfave/cli **v3**. Handlers are
