@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -43,6 +44,22 @@ func snapshotPendingPods(ctx context.Context, k8sClient kubernetes.Interface) (s
 type PostRollVerification struct {
 	Checks []string `json:"checks,omitempty" yaml:"checks,omitempty"`
 	Issues []string `json:"issues,omitempty" yaml:"issues,omitempty"`
+	// skipped holds the Checks entries that did not run, so the human view
+	// marks them as not measured instead of passed. It is not serialized:
+	// the documents keep the check text as it was.
+	skipped []string
+}
+
+// skip records a check that did not run: in Checks, as the documents have
+// always shown it, and in skipped for the human view.
+func (v *PostRollVerification) skip(msg string) {
+	v.Checks = append(v.Checks, msg)
+	v.skipped = append(v.skipped, msg)
+}
+
+// Skipped reports whether check is a Checks entry that did not run.
+func (v PostRollVerification) Skipped(check string) bool {
+	return slices.Contains(v.skipped, check)
 }
 
 // OK reports whether verification found no problems.
@@ -91,17 +108,17 @@ func verifyPostRoll(ctx context.Context, eksClient nodegroupDescriber, k8sClient
 	}
 
 	if k8sClient == nil {
-		v.Checks = append(v.Checks, "pod verification skipped (no Kubernetes access)")
+		v.skip("pod verification skipped (no Kubernetes access)")
 		return v, failures
 	}
 
 	if !prerollOK {
-		v.Checks = append(v.Checks, "pod verification skipped (could not list Pending pods before the roll)")
+		v.skip("pod verification skipped (could not list Pending pods before the roll)")
 		return v, failures
 	}
 	after, ok := snapshotPendingPods(ctx, k8sClient)
 	if !ok {
-		v.Checks = append(v.Checks, "pod verification skipped (could not list Pending pods after the roll)")
+		v.skip("pod verification skipped (could not list Pending pods after the roll)")
 		return v, failures
 	}
 	var newlyPending []string

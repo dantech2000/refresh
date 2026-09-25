@@ -27,6 +27,7 @@ import (
 	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
+	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -542,6 +543,6 @@ func WithSpinner(category, successMsg string, fn func() error) error {
 	if err := fn(); err != nil {
 		return err
 	}
-	spinner.Success(successMsg)
+	render.SpinnerDone(spinner, successMsg)
 	return nil
 }

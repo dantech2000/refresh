@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/dantech2000/refresh/internal/cliconfig"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
 	"github.com/fatih/color"
 	"k8s.io/client-go/tools/clientcmd"
@@ -42,7 +43,7 @@ type ClusterNameOptions struct {
 // resolveSpinner is the progress indicator shown while clusters are listed.
 type resolveSpinner interface {
 	Start() error
-	Success(message string)
+	Done(line string)
 	Stop()
 }
 
@@ -101,9 +102,9 @@ func resolveClusterName(ctx context.Context, api ListClustersAPI, pattern string
 		// formatting it again would print the IAM help twice.
 		return "", err
 	}
-	// Success stops the spinner. It must happen before confirmClusterSelection:
+	// Done stops the spinner. It must happen before confirmClusterSelection:
 	// a running spinner redraws its line and would erase any prompt.
-	spinner.Success("Cluster name resolved!")
+	spinner.Done(render.Default(ui.Stderr).Line(render.Healthy, "Cluster name resolved"))
 
 	if len(clusters) == 0 {
 		return "", fmt.Errorf("no EKS clusters found in current region")

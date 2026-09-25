@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,11 +15,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/fatih/color"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/common"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/render"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
 )
 
@@ -126,7 +127,8 @@ func printMonitoringHeader(monitor *refreshTypes.ProgressMonitor, config refresh
 // (see nodegroup updateExit) so it prints once, in quiet/JSON runs too.
 func handleUserCancellation(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	if !config.Quiet && len(monitor.Updates) > 0 {
-		color.Yellow("\nMonitoring cancelled by user. Updates are still running in AWS.")
+		fmt.Println()
+		render.Notef(os.Stdout, render.Warn, "Monitoring cancelled by user. Updates are still running in AWS.")
 	}
 	return ErrCancelled
 }
@@ -134,7 +136,8 @@ func handleUserCancellation(monitor *refreshTypes.ProgressMonitor, config refres
 // handleTimeout handles monitoring timeout.
 func handleTimeout(monitor *refreshTypes.ProgressMonitor, config refreshTypes.MonitorConfig) error {
 	if !config.Quiet {
-		color.Red("\nMonitoring timeout reached after %v", config.Timeout)
+		fmt.Println()
+		render.Notef(os.Stdout, render.Fail, "Monitoring timeout reached after %v", config.Timeout)
 		if len(monitor.Updates) > 0 {
 			fmt.Printf("Updates may still be running. Use 'refresh nodegroup list %s' to check status.\n", monitor.Updates[0].ClusterName)
 		} else {

@@ -3,6 +3,7 @@ package nodegroup
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/urfave/cli/v3"
@@ -90,8 +91,11 @@ func TestUpdateClusterEnvVarPrecedence(t *testing.T) {
 			if tt.wantNote {
 				wantNote = "Using cluster staging from EKS_CLUSTER_NAME\n"
 			}
-			if got := note.String(); got != wantNote {
-				t.Errorf("stderr note = %q, want %q", got, wantNote)
+			// The note is a neutral status line: a glyph (Unicode or ASCII,
+			// by locale) and then the text.
+			got := note.String()
+			if (wantNote == "") != (got == "") || !strings.HasSuffix(got, wantNote) || strings.Count(got, "\n") > 1 {
+				t.Errorf("stderr note = %q, want a status line ending in %q", got, wantNote)
 			}
 		})
 	}

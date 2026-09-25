@@ -11,7 +11,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -24,6 +23,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
 	"github.com/dantech2000/refresh/internal/regionsweep"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -287,7 +287,7 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 			return fmt.Errorf("fleet update would modify %d cluster(s); re-run with --yes (%s)", len(targets), flags.noPromptReason())
 		}
 		if !promptYesNo(ctx, fmt.Sprintf("Update matching nodegroups across %d cluster(s) in %d region(s)?", len(targets), len(regions))) {
-			color.Yellow("Fleet update cancelled")
+			render.Notef(os.Stdout, render.Warn, "Fleet update cancelled")
 			return fmt.Errorf("fleet update cancelled")
 		}
 	}
@@ -305,12 +305,12 @@ func runFleetUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 			continue
 		}
 		if !flags.quiet && !machine {
-			color.Cyan("\n=== %s (%s) ===", tgt.cluster, tgt.region)
+			printFleetClusterHeader(tgt)
 		}
 		results = append(results, updateOneClusterInFleet(ctx, tgt, nodegroupPattern, cflags))
 	}
 	if notStarted > 0 {
-		flags.notice(color.FgYellow, "Interrupted: %d of %d cluster(s) not started", notStarted, len(targets))
+		flags.notice(render.Warn, "Interrupted: %d of %d cluster(s) not started", notStarted, len(targets))
 	}
 
 	doc := newFleetUpdateDocument(results, disc)
@@ -344,7 +344,7 @@ func finishEmptyFleet(ctx context.Context, disc fleetDiscovery, regions int, fla
 			return err
 		}
 	} else {
-		color.Yellow("No clusters found across %d region(s)", regions-len(disc.failed)-len(disc.skipped))
+		render.Notef(os.Stdout, render.Warn, "No clusters found across %d region(s)", regions-len(disc.failed)-len(disc.skipped))
 	}
 	runner.WriteFailures(flags.format, os.Stdout, fleetStderr, disc.failed)
 	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(disc.failed))
@@ -611,13 +611,14 @@ func listRegionClusters(ctx context.Context, cfg aws.Config) ([]string, error) {
 // fleetDryRun prints the per-cluster plan without mutating anything and
 // returns the failures of the clusters it could not preview fully.
 func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]diag.Failure, error) {
-	color.Cyan("Fleet dry-run: %d cluster(s)", len(targets))
+	th := render.Default(os.Stdout)
+	fmt.Println(th.Section("FLEET DRY RUN") + th.Paint(th.Pal.Dim, fmt.Sprintf("  %d cluster(s)", len(targets))))
 	var fs []diag.Failure
 	for _, tgt := range targets {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		color.Cyan("\n=== %s (%s) ===", tgt.cluster, tgt.region)
+		printFleetClusterHeader(tgt)
 		fs = append(fs, fleetDryRunCluster(ctx, tgt, nodegroupPattern, flags)...)
 	}
 	return fs, nil
@@ -632,12 +633,12 @@ func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern
 	flags.yes = true // a preview selects every match without asking
 	selected, err := selectNodegroupsForUpdate(ctx, eksClient, tgt.cluster, nodegroupPattern, flags)
 	if err != nil {
-		color.Red("  could not select nodegroups (see INCOMPLETE DATA)")
+		render.Notef(os.Stdout, render.Fail, "could not select nodegroups (see INCOMPLETE DATA)")
 		return []diag.Failure{selectionFailure(tgt.cluster, tgt.region, err)}
 	}
 	unreadable, err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.dryRunOptions())
 	if err != nil {
-		color.Red("  could not preview the cluster (see INCOMPLETE DATA)")
+		render.Notef(os.Stdout, render.Fail, "could not preview the cluster (see INCOMPLETE DATA)")
 		f := diag.FromError(diag.KindCluster, tgt.cluster, diag.OpDescribeCluster, err)
 		f.Region = tgt.region
 		return []diag.Failure{f}
@@ -690,52 +691,72 @@ func fleetDryRunOne(ctx context.Context, tgt clusterTarget, nodegroupPattern str
 	return res
 }
 
+// printFleetClusterHeader starts one cluster's section of a fleet run.
+func printFleetClusterHeader(tgt clusterTarget) {
+	th := render.Default(os.Stdout)
+	fmt.Printf("\n%s\n", th.Section(tgt.cluster)+th.Paint(th.Pal.Dim, "  "+tgt.region))
+}
+
 // printFleetSummary renders the end-of-run aggregate. Failures, including
 // the regions discovery could not list, are on stderr.
 func printFleetSummary(results []clusterUpdateResult, failedRegions int) {
-	color.Cyan("\nFleet summary (%d cluster(s)):", len(results))
-	for _, r := range results {
-		status := summarizeClusterResult(r)
-		fmt.Printf("  %-28s %s\n", r.Cluster+" ("+r.Region+")", status)
-	}
-	if failedRegions > 0 {
-		color.Red("%d region(s) could not be listed; their clusters were not checked (see INCOMPLETE DATA)", failedRegions)
+	for _, l := range fleetSummaryLines(render.Default(os.Stdout), results, failedRegions) {
+		fmt.Println(l)
 	}
 }
 
-func summarizeClusterResult(r clusterUpdateResult) string {
+// fleetSummaryLines builds the fleet summary: one status token per cluster.
+func fleetSummaryLines(th *render.Theme, results []clusterUpdateResult, failedRegions int) []string {
+	out := []string{"", th.Section("FLEET SUMMARY") + th.Paint(th.Pal.Dim, fmt.Sprintf("  %d cluster(s)", len(results)))}
+	tbl := th.NewTable(ui.Column{Title: "CLUSTER", Min: 7}, ui.Column{Title: "RESULT"})
+	for _, r := range results {
+		st, text := summarizeClusterResult(r)
+		tbl.Row(th.Paint(th.Pal.White, r.Cluster)+th.Paint(th.Pal.Dim, " ("+r.Region+")"), th.Line(st, "%s", text))
+	}
+	for _, l := range tbl.Render() {
+		out = append(out, "  "+l)
+	}
+	if failedRegions > 0 {
+		out = append(out, th.Line(render.Fail, "%d region(s) could not be listed; their clusters were not checked (see INCOMPLETE DATA)", failedRegions))
+	}
+	return out
+}
+
+// summarizeClusterResult is the status and text of one cluster's row in the
+// fleet summary.
+func summarizeClusterResult(r clusterUpdateResult) (render.Status, string) {
 	run := updateRun{nodegroups: r.Nodegroups}
 	started := len(run.started())
 	skipped := run.count(ngSkipped)
 	switch r.Status {
 	case clusterHealthBlocked:
-		return color.RedString("health-blocked (%s)", healthProblemsOf(r.Health))
+		return render.Fail, fmt.Sprintf("health-blocked (%s)", healthProblemsOf(r.Health))
 	case clusterHealthWarned:
-		return color.YellowString("health warnings (%s)", healthProblemsOf(r.Health))
+		return render.Warn, fmt.Sprintf("health warnings (%s)", healthProblemsOf(r.Health))
 	case clusterFailed:
 		n := len(r.run.failures())
 		if r.Failure != nil {
 			n++
 		}
-		return color.RedString("failed: %d failure(s), see INCOMPLETE DATA", n)
+		return render.Fail, fmt.Sprintf("failed: %d failure(s), see INCOMPLETE DATA", n)
 	case clusterInterrupted:
 		if started > 0 {
-			return color.YellowString("interrupted (update continues in AWS; check with refresh nodegroup list %s)", r.Cluster)
+			return render.Warn, fmt.Sprintf("interrupted (update continues in AWS; check with refresh nodegroup list %s)", r.Cluster)
 		}
-		return color.YellowString("interrupted before any update started")
+		return render.Warn, "interrupted before any update started"
 	case clusterTimedOut:
-		return color.YellowString("timed out (--wait-timeout; an update may still be running; check with refresh nodegroup list %s)", r.Cluster)
+		return render.Warn, fmt.Sprintf("timed out (--wait-timeout; an update may still be running; check with refresh nodegroup list %s)", r.Cluster)
 	case clusterNotAttempted:
-		return color.YellowString("not started (the run was interrupted)")
+		return render.Unknown, "not started (the run was interrupted)"
 	case clusterVerifyFailed:
-		return color.YellowString("updated %d, verification issues", started)
+		return render.Warn, fmt.Sprintf("updated %d, verification issues", started)
 	case clusterIncomplete:
-		return color.YellowString("updated %d, skipped %d, some data could not be read", started, skipped)
+		return render.Warn, fmt.Sprintf("updated %d, skipped %d, some data could not be read", started, skipped)
 	default:
 		if started > 0 {
-			return color.GreenString("updated %d, skipped %d", started, skipped)
+			return render.Healthy, fmt.Sprintf("updated %d, skipped %d", started, skipped)
 		}
-		return color.GreenString("nothing to update (skipped %d)", skipped)
+		return render.Healthy, fmt.Sprintf("nothing to update (skipped %d)", skipped)
 	}
 }
 

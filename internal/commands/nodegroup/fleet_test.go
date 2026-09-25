@@ -12,11 +12,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/smithy-go"
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/render"
 )
 
 func TestFleetExit_WorstOutcome(t *testing.T) {
@@ -56,21 +56,41 @@ func TestFleetExit_WorstOutcome(t *testing.T) {
 }
 
 func TestSummarizeClusterResult_InterruptAndTimeout(t *testing.T) {
-	prev := color.NoColor
-	color.NoColor = true
-	t.Cleanup(func() { color.NoColor = prev })
-
 	started := []nodegroupResult{{Name: "ng", Status: ngInProgress, UpdateID: "u-1"}}
-	got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Status: clusterInterrupted, Nodegroups: started})
+	st, got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Status: clusterInterrupted, Nodegroups: started})
 	want := "interrupted (update continues in AWS; check with refresh nodegroup list prod)"
-	if got != want {
-		t.Errorf("interrupted = %q, want %q", got, want)
+	if got != want || st != render.Warn {
+		t.Errorf("interrupted = %v %q, want Warn %q", st, got, want)
 	}
-	if got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Status: clusterInterrupted}); got != "interrupted before any update started" {
+	if _, got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Status: clusterInterrupted}); got != "interrupted before any update started" {
 		t.Errorf("interrupted before start = %q", got)
 	}
-	if got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Status: clusterTimedOut}); !strings.Contains(got, "timed out") || strings.Contains(got, "failed") {
+	if _, got := summarizeClusterResult(clusterUpdateResult{Cluster: "prod", Status: clusterTimedOut}); !strings.Contains(got, "timed out") || strings.Contains(got, "failed") {
 		t.Errorf("timed out = %q", got)
+	}
+}
+
+// The fleet summary carries each cluster's result as a status token, and it
+// reads the same without color or Unicode.
+func TestFleetSummaryLines_Tokens(t *testing.T) {
+	results := []clusterUpdateResult{
+		{Cluster: "prod", Region: "us-east-1", Status: clusterHealthBlocked},
+		{Cluster: "dev", Region: "us-west-2"},
+	}
+	uni := strings.Join(fleetSummaryLines(render.New(render.ColorNone, true), results, 1), "\n")
+	for _, want := range []string{"▸ FLEET SUMMARY  2 cluster(s)", "prod (us-east-1)", "✗ health-blocked", "● nothing to update (skipped 0)", "✗ 1 region(s) could not be listed"} {
+		if !strings.Contains(uni, want) {
+			t.Errorf("summary missing %q:\n%s", want, uni)
+		}
+	}
+	ascii := strings.Join(fleetSummaryLines(render.New(render.ColorNone, false), results, 0), "\n")
+	for _, want := range []string{"> FLEET SUMMARY", "[X] health-blocked", "[OK] nothing to update"} {
+		if !strings.Contains(ascii, want) {
+			t.Errorf("ASCII summary missing %q:\n%s", want, ascii)
+		}
+	}
+	if strings.Contains(uni+ascii, "\x1b") {
+		t.Error("ColorNone summary contains ANSI escapes")
 	}
 }
 

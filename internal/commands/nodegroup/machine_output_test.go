@@ -172,7 +172,7 @@ func TestUpdateMachineOutput_HealthWarnNeedsYes(t *testing.T) {
 	if !strings.Contains(err.Error(), "Cluster Capacity:") {
 		t.Errorf("error does not name the warning check: %v", err)
 	}
-	if !strings.Contains(stderr, "Cluster Health Assessment") {
+	if !strings.Contains(stderr, "CLUSTER HEALTH ASSESSMENT") {
 		t.Errorf("stderr has no health report; got:\n%s", stderr)
 	}
 	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
