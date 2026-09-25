@@ -20,6 +20,7 @@ require (
 	github.com/aws/smithy-go v1.28.1
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/fatih/color v1.19.0
+	github.com/go-logr/logr v1.4.4
 	github.com/invopop/jsonschema v0.14.0
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-runewidth v0.0.29
@@ -65,7 +66,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
-	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-openapi/jsonpointer v1.0.1 // indirect
 	github.com/go-openapi/jsonreference v1.0.2 // indirect
 	github.com/go-openapi/swag v0.29.2 // indirect

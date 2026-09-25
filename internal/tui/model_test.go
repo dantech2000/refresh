@@ -833,3 +833,45 @@ func TestCtrlRRefreshesABackendThatCan(t *testing.T) {
 	}
 	h.contains("read the fleet from AWS now")
 }
+
+// askingBackend puts a question on the running upgrade and records answers.
+type askingBackend struct {
+	*sim.World
+	answers []bool
+}
+
+func (a *askingBackend) State(ctx context.Context) (state.State, error) {
+	st, err := a.World.State(ctx)
+	for i := range st.Upgrades {
+		if st.Upgrades[i].Running() && len(a.answers) == 0 {
+			st.Upgrades[i].Question = "health warnings before rolling ng-general: PodDisruptionBudgets (Warn)"
+		}
+	}
+	return st, err
+}
+
+func (a *askingBackend) Answer(_ context.Context, _ string, yes bool) error {
+	a.answers = append(a.answers, yes)
+	return nil
+}
+
+func TestUpgradeQuestionIsAnsweredWithYOrN(t *testing.T) {
+	world := sim.New(sim.Options{Seed: 7, Warmup: 19 * time.Minute})
+	ab := &askingBackend{World: world}
+	h := &harness{t: t, w: world, m: New(t.Context(), ab, time.Millisecond)}
+	h.send(tea.WindowSizeMsg{Width: 160, Height: 42})
+	h.refresh()
+	h.keys("down", "down", "enter")
+	h.contains("health warnings before rolling ng-general", " y  go on", " n  stop")
+	checkFrame(t, "question", h.m)
+	h.keys("n")
+	if len(ab.answers) != 1 || ab.answers[0] {
+		t.Fatalf("answers = %v, want one no", ab.answers)
+	}
+	h.refresh()
+	h.lacks("health warnings before rolling")
+	// With no question pending, y and n do nothing on the upgrade screen.
+	if _, cmd := h.m.key("y"); cmd != nil {
+		t.Fatal("y did something with no question")
+	}
+}

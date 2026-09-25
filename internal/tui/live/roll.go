@@ -38,9 +38,10 @@ type rollServices struct {
 	// context it used or why there is none. It never writes to the
 	// terminal.
 	kubeFor func(ctx context.Context, cfg aws.Config, cluster string) (kubernetes.Interface, health.NodeMetricsLister, string)
-	// describe reads the nodegroup from EKS right before a roll starts, as
-	// `nodegroup update` does.
-	describe func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Nodegroup, error)
+	// decide reads the nodegroup from EKS right before a roll starts and
+	// applies `nodegroup update`'s decision table to it (custom AMI, already
+	// updating, already on the latest AMI).
+	decide func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Nodegroup, nodegroupsvc.AMIUpdateDecision, error)
 	// healthCheck runs the pre-flight health gate `nodegroup update` runs.
 	healthCheck func(ctx context.Context, cfg aws.Config, cluster string, nodegroups []string, kube kubernetes.Interface, metrics health.NodeMetricsLister) health.HealthSummary
 	// offerings lists the (instance type, AZ) pairs the nodegroup spans
@@ -78,8 +79,13 @@ func defaultRollServices(opts Options) rollServices {
 			}
 			return client, metrics, "kubeconfig context " + sel.Diag.Context
 		},
-		describe: func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Nodegroup, error) {
-			return factory.NewNodegroupService(cfg, false, opts.Logger).DescribeNodegroup(ctx, cluster, nodegroup)
+		decide: func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Nodegroup, nodegroupsvc.AMIUpdateDecision, error) {
+			svc := factory.NewNodegroupService(cfg, false, opts.Logger)
+			live, err := svc.DescribeNodegroup(ctx, cluster, nodegroup)
+			if err != nil {
+				return nil, nodegroupsvc.AMIUpdateDecision{}, err
+			}
+			return live, svc.AMIUpdateDecider(cluster, nodegroupsvc.AMIUpdateOptions{})(ctx, live), nil
 		},
 		healthCheck: func(ctx context.Context, cfg aws.Config, cluster string, nodegroups []string, kube kubernetes.Interface, metrics health.NodeMetricsLister) health.HealthSummary {
 			checker := health.NewCheckerForConfig(cfg, kube, nil)
@@ -131,8 +137,6 @@ type liveRoll struct {
 	warned  map[string]bool
 	// viewed is set once the node view read the nodes.
 	viewed bool
-	// perStep is how many nodes the roll replaces at a time, when known.
-	perStep int
 }
 
 // healthGates turns a health verdict into plan gates. blocked names the
@@ -191,11 +195,16 @@ func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Confi
 
 func acceptKey(t target, ng string) string { return t.region + "/" + t.name + "/" + ng }
 
-// findings names the health results that did not pass.
+// findings names the health results that did not pass, and the ones that
+// did not run: a check the dry run measured and Start could not (the node
+// view is gone) is a new finding, not a pass.
 func findings(s health.HealthSummary) []string {
 	var out []string
 	for _, r := range s.Results {
-		if !r.Skipped && r.Status != health.StatusPass {
+		switch {
+		case r.Skipped:
+			out = append(out, r.Name+" (Skipped)")
+		case r.Status != health.StatusPass:
 			out = append(out, r.Name+" ("+string(r.Status)+")")
 		}
 	}
@@ -223,9 +232,6 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 	if ng == nil {
 		return fmt.Errorf("nodegroup %q not found in %s", a.Nodegroup, a.Cluster)
 	}
-	if !ng.AMIStale && !ng.AMIUnknown {
-		return fmt.Errorf("%s already runs the latest AMI for %s", a.Nodegroup, ng.Version)
-	}
 	// One change per cluster: claim the cluster, by region and name, before
 	// any call.
 	b.mu.Lock()
@@ -250,16 +256,14 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 
 	gctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 	defer cancel()
-	// The nodegroup as EKS has it now, not as the last sweep saw it.
-	live, err := b.roll.describe(gctx, cfg, t.name, ng.Name)
+	// The nodegroup as EKS has it now, not as the last sweep saw it, through
+	// the decision table of `nodegroup update`.
+	live, d, err := b.roll.decide(gctx, cfg, t.name, ng.Name)
 	if err != nil {
 		return err
 	}
-	switch {
-	case live.Status == ekstypes.NodegroupStatusUpdating:
-		return fmt.Errorf("%s is already updating", ng.Name)
-	case live.AmiType == ekstypes.AMITypesCustom:
-		return fmt.Errorf("%s uses a custom AMI (AmiType=CUSTOM): roll it by publishing a new launch template version", ng.Name)
+	if !d.Starts() {
+		return fmt.Errorf("%s: %s", ng.Name, d.Reason)
 	}
 	version := aws.ToString(live.Version)
 
@@ -288,7 +292,7 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 	started = true
 
 	b.mu.Lock()
-	r := &liveRoll{t: t, tracker: noderoll.NewTracker(), warned: map[string]bool{}, perStep: perStep(live.UpdateConfig)}
+	r := &liveRoll{t: t, tracker: noderoll.NewTracker(), warned: map[string]bool{}}
 	r.st = state.Roll{
 		Nodegroup: ng.Name, FromVersion: version, ToVersion: version,
 		FromAMI: ng.AMI, ToAMI: "latest for " + version,
@@ -332,18 +336,6 @@ func scalingDesired(ng *ekstypes.Nodegroup) *int32 {
 		return nil
 	}
 	return ng.ScalingConfig.DesiredSize
-}
-
-// perStep is how many nodes EKS replaces at a time, or 0 when it is a
-// percentage or unknown.
-func perStep(u *ekstypes.NodegroupUpdateConfig) int {
-	if u == nil {
-		return 1 // the EKS default
-	}
-	if u.MaxUnavailable != nil {
-		return int(*u.MaxUnavailable)
-	}
-	return 0
 }
 
 func maxUnavailableText(u *ekstypes.NodegroupUpdateConfig) string {
@@ -586,12 +578,11 @@ func (b *Backend) rollSnapshot(r *liveRoll) state.Roll {
 	st.Snapshot.Warnings = slices.Clone(r.st.Snapshot.Warnings)
 	st.Pods = map[string][]state.Pod{}
 	st.NodePods = map[string]int{}
-	// An estimate only when the node view counts replaced nodes and the
-	// step size is a node count.
-	if r.st.Running() && r.viewed && r.perStep > 0 && st.Planned > 0 {
-		left := st.Planned - st.Replaced()
-		steps := (left + r.perStep - 1) / r.perStep
-		st.ETA = time.Duration(steps) * 2 * time.Minute
+	// An estimate only from the pace this roll has shown: the time per
+	// replaced node so far, times the nodes left.
+	if done := st.Replaced(); r.st.Running() && r.viewed && done > 0 && st.Planned > done {
+		per := b.now().Sub(r.st.StartedAt) / time.Duration(done)
+		st.ETA = per * time.Duration(st.Planned-done)
 	}
 	return st
 }

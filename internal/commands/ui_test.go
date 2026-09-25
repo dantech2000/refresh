@@ -2,6 +2,8 @@ package commands
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -59,5 +61,26 @@ func TestEnvFloat(t *testing.T) {
 		if _, err := envFloat(envDevSimSpeed, 8); err == nil || !strings.Contains(err.Error(), envDevSimSpeed) {
 			t.Errorf("%q: err = %v", bad, err)
 		}
+	}
+}
+
+func TestDetachStdioHidesStderrAndStdinUntilRestore(t *testing.T) {
+	in, errOut := os.Stdin, os.Stderr
+	tty, restore, err := detachStdio()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tty.in != in {
+		t.Fatal("the TUI did not keep the original stdin")
+	}
+	if os.Stderr == errOut || os.Stdin == in {
+		t.Fatal("stderr or stdin still points at the terminal while the TUI runs")
+	}
+	if _, err := fmt.Fprintln(os.Stderr, "an exec plugin's traceback"); err != nil {
+		t.Fatalf("writing to the detached stderr: %v", err)
+	}
+	restore()
+	if os.Stderr != errOut || os.Stdin != in {
+		t.Fatal("restore did not put stdin and stderr back")
 	}
 }

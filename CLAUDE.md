@@ -198,11 +198,15 @@ watched through the EKS update (quiet `monitoring.MonitorUpdates`, the
 authority) and the `noderoll` observer when a kubeconfig context matches
 (resolved with `health.ConnectKubeClientForCluster` directly, never
 `runner.ResolveClusterKubeClient`, which writes to stderr). `Start` needs the
-roll's dry run first, describes the nodegroup live (skips UPDATING and
-CUSTOM, pins the live version), and refuses when the re-run health gate
-finds anything the dry run did not show. The EKS update status decides the
-result (a Failed update is failed even though the monitor also errors).
-`runLive` silences klog, since client-go logs informer failures to stderr.
+roll's dry run first, runs `nodegroup update`'s decision table
+(`AMIUpdateDecider`) on the live nodegroup and pins its live version, and
+refuses when the re-run health gate finds anything the dry run did not show
+(a check that ran in the dry run and is skipped now counts). The EKS update
+status decides the result (a Failed update is failed even though the monitor
+also errors). While the TUI runs, `runLive` discards klog
+(`klog.SetLogger(logr.Discard())`) and points `os.Stdin`/`os.Stderr` at
+/dev/null (`detachStdio`): client-go's exec authenticator captures them for
+kubeconfig exec plugins. The TUI keeps the real terminal.
 The TUI roll runs the same pre-flight and post-roll steps as the CLI:
 metrics-server drain headroom in the health gate, the instance-type
 availability warning in the dry run, and `nodegroup.VerifyPostRoll` (shared

@@ -407,6 +407,16 @@ func (w *World) TogglePause(ctx context.Context, name string) error {
 	return nil
 }
 
+// Answer implements state.Backend. Simulated upgrades never ask.
+func (w *World) Answer(ctx context.Context, name string, _ bool) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("the upgrade of %s is not waiting on a question", name)
+}
+
 func (w *World) runningUpgrade(name string) *upgrade {
 	for _, u := range w.upgrades {
 		if u.st.Cluster == name && u.st.Running() {

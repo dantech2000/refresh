@@ -126,7 +126,6 @@ type (
 	}
 	// doneMsg reports a call with no result: readiness, stop, pause.
 	doneMsg struct {
-		ok  string
 		err error
 	}
 )
@@ -154,9 +153,9 @@ func fetchCmd(ctx context.Context, b state.Backend, id int, poll bool) tea.Cmd {
 }
 
 // call runs a backend call with no result in a command.
-func (m Model) call(ok string, fn func(context.Context) error) tea.Cmd {
+func (m Model) call(fn func(context.Context) error) tea.Cmd {
 	ctx := m.ctx
-	return func() tea.Msg { return doneMsg{ok: ok, err: fn(ctx)} }
+	return func() tea.Msg { return doneMsg{err: fn(ctx)} }
 }
 
 // Init implements tea.Model. It starts the polling loop with fetch id 0;
@@ -206,8 +205,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		if msg.err != nil {
 			m.say(state.LevelError, "%v", msg.err)
-		} else if msg.ok != "" {
-			m.say(state.LevelOK, "%s", msg.ok)
 		}
 		cmd := m.fetch() // fetch bumps m.fetchID; take it before m is copied out
 		return m, cmd

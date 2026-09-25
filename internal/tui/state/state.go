@@ -274,6 +274,9 @@ type Upgrade struct {
 	Stopped bool
 	Failed  string
 	Events  []Event
+	// Question, when set, is a decision the run waits on (health warnings
+	// before a roll, a plan that changed). Backend.Answer gives it.
+	Question string
 }
 
 // Running reports whether the upgrade is still in flight.
@@ -392,6 +395,9 @@ type Backend interface {
 	StopAfterCurrent(ctx context.Context, cluster string) error
 	// TogglePause holds or releases a cluster upgrade before its next phase.
 	TogglePause(ctx context.Context, cluster string) error
+	// Answer gives the decision a cluster upgrade waits on (its Question):
+	// yes goes on, no stops the run after the current step.
+	Answer(ctx context.Context, cluster string, yes bool) error
 }
 
 // Minor returns the minor number of a "1.NN" version, or -1.

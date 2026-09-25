@@ -3,12 +3,12 @@ package commands
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/go-logr/logr"
 	"github.com/urfave/cli/v3"
 	"k8s.io/klog/v2"
 
@@ -87,11 +87,19 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	defer cancel()
-	// client-go logs watch and list failures through klog to stderr, which
-	// would print over the full screen. The roll's own feed reports what the
-	// node view could not read.
-	klog.LogToStderr(false)
-	klog.SetOutput(io.Discard)
+	// Nothing may write to the terminal while the TUI owns it: client-go
+	// logs list/watch failures through klog, and a kubeconfig exec plugin
+	// (aws eks get-token with an expired SSO token) prints to the process's
+	// stderr and may read its stdin. The TUI keeps the real terminal; the
+	// rest of the process gets /dev/null until it exits. The feed and the
+	// log pane report what failed.
+	klog.SetLogger(logr.Discard())
+	defer klog.ClearLogger()
+	tty, restore, err := detachStdio()
+	if err != nil {
+		return err
+	}
+	defer restore()
 	regions, skip := uiRegions(cmd, awsCfg)
 	profile := cmd.String("profile")
 	if profile == "" {
@@ -118,11 +126,31 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		defer close(done)
 		backend.Run(ctx)
 	}()
-	err = tui.Run(ctx, backend, os.Stdin, os.Stdout)
+	err = tui.Run(ctx, backend, tty.in, os.Stdout)
 	stop()
 	<-done
 	backend.Close()
 	return err
+}
+
+// stdio is the terminal the TUI keeps.
+type stdio struct{ in *os.File }
+
+// detachStdio points os.Stdin and os.Stderr at /dev/null and returns the
+// original stdin for the TUI. restore puts both back. Code that captures
+// them while the TUI runs (client-go's exec authenticator, klog) gets
+// /dev/null.
+func detachStdio() (stdio, func(), error) {
+	null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return stdio{}, nil, err
+	}
+	in, errOut := os.Stdin, os.Stderr
+	os.Stdin, os.Stderr = null, null
+	return stdio{in: in}, func() {
+		os.Stdin, os.Stderr = in, errOut
+		_ = null.Close()
+	}, nil
 }
 
 // uiRegions picks the regions to sweep, as `refresh status` does: -r, else

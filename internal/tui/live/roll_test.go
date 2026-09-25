@@ -54,7 +54,9 @@ type rollRig struct {
 	health  health.Decision
 	// warn adds a Warn-level health result.
 	warn string
-	live ekstypes.Nodegroup // what describe returns
+	live ekstypes.Nodegroup // what the live describe returns
+	// decisions override the decision table's answer, by nodegroup.
+	decisions map[string]nodegroupsvc.AMIUpdateDecision
 	// offerings, verification: what those services return.
 	offerings    []nodegroupsvc.UnavailableOffering
 	verification nodegroupsvc.PostRollVerification
@@ -79,6 +81,9 @@ func newRollRig(t *testing.T) *rollRig {
 	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": rows}}
 	rig := &rollRig{b: newTestBackend(t, f, "us-east-1"), health: health.DecisionProceed,
 		release: make(chan ekstypes.UpdateStatus, 1), atEnd: make(chan struct{}, 1),
+		decisions: map[string]nodegroupsvc.AMIUpdateDecision{
+			"ng-system": {Action: types.ActionSkipLatest, Reason: "already on latest AMI"},
+		},
 		live: ekstypes.Nodegroup{Version: aws.String("1.31"), Status: ekstypes.NodegroupStatusActive,
 			ScalingConfig: &ekstypes.NodegroupScalingConfig{DesiredSize: aws.Int32(6)},
 			UpdateConfig:  &ekstypes.NodegroupUpdateConfig{MaxUnavailable: aws.Int32(2)}}}
@@ -89,9 +94,13 @@ func newRollRig(t *testing.T) *rollRig {
 		kubeFor: func(context.Context, aws.Config, string) (kubernetes.Interface, health.NodeMetricsLister, string) {
 			return fake.NewClientset(), nil, "kubeconfig context prod-api"
 		},
-		describe: func(context.Context, aws.Config, string, string) (*ekstypes.Nodegroup, error) {
-			ng := rig.live
-			return &ng, nil
+		decide: func(_ context.Context, _ aws.Config, _, ng string) (*ekstypes.Nodegroup, nodegroupsvc.AMIUpdateDecision, error) {
+			live := rig.live
+			d := nodegroupsvc.AMIUpdateDecision{Action: types.ActionUpdate, Reason: "AMI is outdated"}
+			if dd, ok := rig.decisions[ng]; ok {
+				d = dd
+			}
+			return &live, d, nil
 		},
 		healthCheck: func(context.Context, aws.Config, string, []string, kubernetes.Interface, health.NodeMetricsLister) health.HealthSummary {
 			s := health.HealthSummary{Decision: rig.health, Results: []health.HealthResult{{Name: "nodes Ready", Status: health.StatusPass}}}
@@ -275,7 +284,10 @@ func TestUpgradesDoNotStartEvenWithChangesOn(t *testing.T) {
 		t.Fatalf("Start(upgrade) = %v", err)
 	}
 	current := state.Action{Kind: state.ActionRoll, Cluster: "prod-api", Nodegroup: "ng-system"}
-	if err := rig.start(t, current); err == nil || rig.started.Load() != 0 {
+	rig.b.mu.Lock()
+	rig.b.accepted[acceptKey(rig.b.targets["prod-api"], "ng-system")] = nil // as a dry run would
+	rig.b.mu.Unlock()
+	if err := rig.b.Start(t.Context(), current); err == nil || !strings.Contains(err.Error(), "already on latest AMI") || rig.started.Load() != 0 {
 		t.Fatalf("a roll of a current nodegroup started: %v", err)
 	}
 }
@@ -328,19 +340,17 @@ func TestNewHealthFindingsSinceTheDryRunStopTheRoll(t *testing.T) {
 	rig.b.Close()
 }
 
-func TestLiveDescribeDecidesAtStart(t *testing.T) {
-	for name, tc := range map[string]struct {
-		live ekstypes.Nodegroup
-		want string
-	}{
-		"updating": {ekstypes.Nodegroup{Version: aws.String("1.31"), Status: ekstypes.NodegroupStatusUpdating}, "already updating"},
-		"custom":   {ekstypes.Nodegroup{Version: aws.String("1.31"), Status: ekstypes.NodegroupStatusActive, AmiType: ekstypes.AMITypesCustom}, "custom AMI"},
+func TestTheDecisionTableDecidesAtStart(t *testing.T) {
+	for name, d := range map[string]nodegroupsvc.AMIUpdateDecision{
+		"updating": {Action: types.ActionSkipUpdating, Reason: "already updating"},
+		"custom":   {Action: types.ActionSkipCustom, Reason: "custom AMI (AmiType=CUSTOM)"},
+		"latest":   {Action: types.ActionSkipLatest, Reason: "already on latest AMI"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rig := newRollRig(t)
-			rig.live = tc.live
-			if err := rig.start(t, roll); err == nil || !strings.Contains(err.Error(), tc.want) || rig.started.Load() != 0 {
-				t.Fatalf("Start = %v, want %q and no roll", err, tc.want)
+			rig.decisions["ng-general"] = d
+			if err := rig.start(t, roll); err == nil || !strings.Contains(err.Error(), d.Reason) || rig.started.Load() != 0 {
+				t.Fatalf("Start = %v, want %q and no roll", err, d.Reason)
 			}
 		})
 	}
@@ -355,6 +365,28 @@ func TestLiveDescribeDecidesAtStart(t *testing.T) {
 	}
 	rig.release <- ekstypes.UpdateStatusSuccessful
 	rig.b.Close()
+}
+
+func TestLosingTheNodeViewSinceTheDryRunStopsTheRoll(t *testing.T) {
+	rig := newRollRig(t)
+	rig.b.roll.healthCheck = func(_ context.Context, _ aws.Config, _ string, _ []string, kube kubernetes.Interface, _ health.NodeMetricsLister) health.HealthSummary {
+		r := health.HealthResult{Name: "Pod Disruption Budgets", Status: health.StatusPass}
+		if kube == nil {
+			r.Skipped = true
+		}
+		return health.HealthSummary{Decision: health.DecisionProceed, Results: []health.HealthResult{r}}
+	}
+	if _, err := rig.b.Plan(t.Context(), roll); err != nil {
+		t.Fatal(err)
+	}
+	// The token expires between p and y: the PDB check can no longer run.
+	rig.b.roll.kubeFor = func(context.Context, aws.Config, string) (kubernetes.Interface, health.NodeMetricsLister, string) {
+		return nil, nil, "no node view: token expired"
+	}
+	err := rig.b.Start(t.Context(), roll)
+	if err == nil || !strings.Contains(err.Error(), "Pod Disruption Budgets (Skipped)") || rig.started.Load() != 0 {
+		t.Fatalf("Start = %v; a check that passed in the dry run and cannot run now must stop the roll", err)
+	}
 }
 
 func TestUnknownAMIStatusCanRoll(t *testing.T) {

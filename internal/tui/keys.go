@@ -177,16 +177,29 @@ func screenBindings() []binding {
 		u, ok := m.upgrade()
 		return m.screen == screenUpgrade && ok && u.Running()
 	}
+	asking := func(m Model) bool {
+		u, ok := m.upgrade()
+		return m.screen == screenUpgrade && ok && u.Running() && u.Question != ""
+	}
+	answer := func(yes bool) func(*Model) tea.Cmd {
+		return func(m *Model) tea.Cmd {
+			u, _ := m.upgrade()
+			b := m.b
+			return m.call(func(ctx context.Context) error { return b.Answer(ctx, u.Cluster, yes) })
+		}
+	}
 	bs = append(bs,
+		binding{keys: []string{"y"}, label: "y", desc: "answer the upgrade's question: go on", short: "go on", bar: true, primary: true, when: asking, do: answer(true)},
+		binding{keys: []string{"n"}, label: "n", desc: "answer the upgrade's question: stop after this step", short: "stop", bar: true, primary: true, when: asking, do: answer(false)},
 		binding{keys: []string{"S"}, label: "S", desc: "stop after this step (an EKS update in flight finishes)", short: "stop after", bar: true, primary: true, when: running, do: func(m *Model) tea.Cmd {
 			u, _ := m.upgrade()
 			b := m.b
-			return m.call("", func(ctx context.Context) error { return b.StopAfterCurrent(ctx, u.Cluster) })
+			return m.call(func(ctx context.Context) error { return b.StopAfterCurrent(ctx, u.Cluster) })
 		}},
 		binding{keys: []string{"P"}, label: "P", desc: "pause before the next phase", short: "pause phase", bar: true, primary: true, when: running, do: func(m *Model) tea.Cmd {
 			u, _ := m.upgrade()
 			b := m.b
-			return m.call("", func(ctx context.Context) error { return b.TogglePause(ctx, u.Cluster) })
+			return m.call(func(ctx context.Context) error { return b.TogglePause(ctx, u.Cluster) })
 		}},
 	)
 	return bs
@@ -320,7 +333,7 @@ func (m *Model) open() tea.Cmd {
 func (m *Model) runReadiness() tea.Cmd {
 	name, b := m.cluster().Name, m.b
 	m.checkSel = 0
-	return m.call("", func(ctx context.Context) error { return b.RunReadiness(ctx, name) })
+	return m.call(func(ctx context.Context) error { return b.RunReadiness(ctx, name) })
 }
 
 // planRoll dry-runs a roll of the selected cluster's stale nodegroup, or

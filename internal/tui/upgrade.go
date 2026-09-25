@@ -197,25 +197,46 @@ func (m Model) nowCard(u state.Upgrade, w int) Block {
 				what = append(what, sub(" · "+it.Name+" "+it.Text))
 			}
 		}
-		if cur == 3 {
-			for _, r := range m.st.Rolls {
-				if r.UpgradeOf == u.Cluster && r.Running() {
-					if pods := r.Pods; len(pods) > 0 {
-						for _, ps := range pods {
-							for _, p := range ps {
-								if p.State == state.PodBlocked {
-									what = append(what, fg(colYellow, " · a drain waits on a PDB"))
-								}
-							}
-						}
-					}
-				}
-			}
+		if m.drainWaitsOnPDB(u.Cluster) {
+			what = append(what, fg(colYellow, " · a drain waits on a PDB"))
 		}
 	}
 	body := Block{
 		what,
 		append(bar(w-18, u.Progress(), 0), sp(2), sub(fmt.Sprintf("overall %3.0f%%", u.Progress()*100))),
 	}
-	return box(Line{bold(colMauve, "Now")}, body, w, colSurface1)
+	border := colSurface1
+	if u.Running() && u.Question != "" {
+		// The run waits on the user: say so where the eye already is.
+		border = colYellow
+		body = append(questionLines(u.Question, w-6), body...)
+	}
+	return box(Line{bold(colMauve, "Now")}, body, w, border)
+}
+
+// questionLines draws a question the upgrade waits on, with its keys.
+func questionLines(q string, w int) Block {
+	var out Block
+	for _, s := range wrap(q, w) {
+		out = append(out, Line{tok(state.LevelWarn, s)})
+	}
+	return append(out, Line{chip("y"), sp(1), sub("go on"), sp(3), chip("n"), sp(1), sub("stop after this step")})
+}
+
+// drainWaitsOnPDB reports whether a roll of cluster's upgrade has a pod a
+// PodDisruptionBudget holds.
+func (m Model) drainWaitsOnPDB(cluster string) bool {
+	for _, r := range m.st.Rolls {
+		if r.UpgradeOf != cluster || !r.Running() {
+			continue
+		}
+		for _, ps := range r.Pods {
+			for _, p := range ps {
+				if p.State == state.PodBlocked {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

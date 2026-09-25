@@ -728,6 +728,9 @@ func (b *Backend) StopAfterCurrent(context.Context, string) error { return ErrRe
 // TogglePause implements state.Backend.
 func (b *Backend) TogglePause(context.Context, string) error { return ErrReadOnly }
 
+// Answer implements state.Backend.
+func (b *Backend) Answer(context.Context, string, bool) error { return ErrReadOnly }
+
 var _ state.Backend = (*Backend)(nil)
 
 // sortClusters orders the fleet by region, then name, like `refresh status`.
