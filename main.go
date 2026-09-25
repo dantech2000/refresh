@@ -27,6 +27,7 @@ import (
 	statuscmd "github.com/dantech2000/refresh/internal/commands/statuscmd"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/flagcanon"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -261,7 +262,8 @@ func main() {
 	if err := run(ctx, os.Args, os.Stdout, ui.Stderr); err != nil {
 		// Errors belong on stderr: scripted consumers piping stdout must not
 		// find error text mixed into their data.
-		_, _ = fmt.Fprintln(ui.Stderr, ui.StderrColor(color.FgRed).Sprintf("Error: %v", err))
+		th := render.Default(ui.Stderr)
+		_, _ = fmt.Fprintln(ui.Stderr, th.Paint(th.Pal.Red, fmt.Sprintf("Error: %v", err)))
 		exitProcess(1)
 	}
 }

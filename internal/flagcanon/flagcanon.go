@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -182,9 +182,10 @@ func Install(root *cli.Command) {
 
 // Warn prints the one-line stderr notice for a deprecated flag set on cmd.
 func Warn(cmd *cli.Command, flag, hint string) {
-	_, _ = ui.StderrColor(color.FgYellow).Fprintf(ui.Stderr,
-		"warning: %s on '%s' is deprecated and will be removed in %s; %s\n",
-		flag, commandPath(cmd), RemovalVersion, hint)
+	th := render.Default(ui.Stderr)
+	_, _ = fmt.Fprintln(ui.Stderr, th.Paint(th.Pal.Yellow, fmt.Sprintf(
+		"warning: %s on '%s' is deprecated and will be removed in %s; %s",
+		flag, commandPath(cmd), RemovalVersion, hint)))
 }
 
 // DeprecatedDuration returns a hidden --name duration flag kept for one

@@ -123,7 +123,7 @@ func TestOutputNodegroupDetailsTable(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
-	for _, want := range []string{"workers", "m5.large", "ami-aaa", "ami-bbb", "Workloads", "2 PDBs"} {
+	for _, want := range []string{"workers", "m5.large", "ami-aaa", "ami-bbb", "WORKLOADS", "2 PDBs", "ami status", " Outdated"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("details output missing %q; got:\n%s", want, out)
 		}

@@ -8,12 +8,12 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -161,7 +161,8 @@ func (g *nodegroupHealthGate) warnf(format string, args ...any) {
 	if g.warn == nil {
 		return
 	}
-	_, _ = ui.ColorFor(g.warn, color.FgYellow).Fprintf(g.warn, format, args...)
+	th := render.Default(g.warn)
+	_, _ = fmt.Fprint(g.warn, th.Paint(th.Pal.Yellow, fmt.Sprintf(format, args...)))
 }
 
 func (g *nodegroupHealthGate) progressf(format string, args ...any) {

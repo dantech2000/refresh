@@ -7,12 +7,12 @@ import (
 	"io"
 	"sync"
 
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v3"
 	"k8s.io/client-go/kubernetes"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -70,6 +70,14 @@ func kubeWarn() io.Writer {
 	return ui.Stderr
 }
 
+// kubeWarnf writes a warning to kubeWarn, in the render palette's warning
+// color when that stream is a color terminal.
+func kubeWarnf(format string, args ...any) {
+	w := kubeWarn()
+	th := render.Default(w)
+	_, _ = fmt.Fprint(w, th.Paint(th.Pal.Yellow, fmt.Sprintf(format, args...)))
+}
+
 // kubeNotices dedupes cluster-mismatch and context notices, which several
 // resolutions for the same cluster in one run would otherwise repeat. One set
 // lives on the context of each CLI run (WithKubeNotices), so nothing carries
@@ -107,10 +115,10 @@ func ResolveClusterKubeClient(ctx context.Context, req KubeRequest) (kubernetes.
 	target, err := health.DescribeTarget(ctx, req.API, req.Cluster, req.Region)
 	if err != nil {
 		if req.Verbose {
-			_, _ = ui.ColorFor(kubeWarn(), color.FgYellow).Fprintf(kubeWarn(), "Kubernetes checks unavailable: cannot verify the kubeconfig targets %s: %v\n",
+			kubeWarnf("Kubernetes checks unavailable: cannot verify the kubeconfig targets %s: %v\n",
 				req.Cluster, awsinternal.FormatAWSError(err, "describing cluster"))
 			if req.SkipNote != "" {
-				_, _ = ui.ColorFor(kubeWarn(), color.FgYellow).Fprintf(kubeWarn(), "%s\n", req.SkipNote)
+				kubeWarnf("%s\n", req.SkipNote)
 			}
 		}
 		return nil, health.KubeSelection{Target: target}
@@ -122,28 +130,27 @@ func ResolveClusterKubeClient(ctx context.Context, req KubeRequest) (kubernetes.
 		switch {
 		case errors.As(err, &mm):
 			if noticeOnce(ctx, "mismatch|"+target.Name+"|"+mm.Server) {
-				warn := ui.ColorFor(kubeWarn(), color.FgYellow)
-				_, _ = warn.Fprintf(kubeWarn(), "Warning: skipping Kubernetes checks: %v\n", mm)
+				kubeWarnf("Warning: skipping Kubernetes checks: %v\n", mm)
 				if !mm.InCluster {
-					_, _ = warn.Fprintf(kubeWarn(), "  To add a context for %s, run: %s (or pass --kube-context)\n",
+					kubeWarnf("  To add a context for %s, run: %s (or pass --kube-context)\n",
 						target.Name, target.UpdateKubeconfigHint())
 				}
 				if req.SkipNote != "" {
-					_, _ = warn.Fprintf(kubeWarn(), "  %s\n", req.SkipNote)
+					kubeWarnf("  %s\n", req.SkipNote)
 				}
 			}
 		case health.IsProbeError(err):
 			if req.Verbose {
-				_, _ = ui.ColorFor(kubeWarn(), color.FgYellow).Fprintf(kubeWarn(), "Kubernetes API unreachable via %s: %v\n", sel.Diag, err)
+				kubeWarnf("Kubernetes API unreachable via %s: %v\n", sel.Diag, err)
 				if req.SkipNote != "" {
-					_, _ = ui.ColorFor(kubeWarn(), color.FgYellow).Fprintf(kubeWarn(), "%s\n", req.SkipNote)
+					kubeWarnf("%s\n", req.SkipNote)
 				}
 			}
 		default:
 			if req.Verbose {
-				_, _ = ui.ColorFor(kubeWarn(), color.FgYellow).Fprintf(kubeWarn(), "Kubernetes checks unavailable: %v (%s)\n", err, sel.Diag)
+				kubeWarnf("Kubernetes checks unavailable: %v (%s)\n", err, sel.Diag)
 				if req.SkipNote != "" {
-					_, _ = ui.ColorFor(kubeWarn(), color.FgYellow).Fprintf(kubeWarn(), "%s\n", req.SkipNote)
+					kubeWarnf("%s\n", req.SkipNote)
 				}
 			}
 		}

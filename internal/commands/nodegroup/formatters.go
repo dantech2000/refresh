@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
-
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
@@ -31,7 +29,7 @@ func outputNodegroupsTable(clusterName string, items []nodegroupsvc.NodegroupSum
 	th := render.Default(os.Stdout)
 	lines := th.FailureSection(failures)
 	if len(items) == 0 {
-		color.Yellow("No nodegroups found for cluster: %s", clusterName)
+		lines = append([]string{th.Line(render.Neutral, "No nodegroups found for cluster: %s", clusterName)}, lines...)
 	} else {
 		lines = append(nodegroupListLines(th, clusterName, items), lines...)
 	}
@@ -88,58 +86,8 @@ func outputNodegroupDetailsTable(details *nodegroupsvc.NodegroupDetails, elapsed
 		nodegroupDetailPlain(details).Render()
 		return nil
 	}
-	ui.Outf("Nodegroup: %s\n", color.CyanString(details.Name))
-	ui.Outf("Retrieved in %s\n\n", ui.ElapsedString(elapsed))
-
-	latestAMI := details.LatestAMI
-	amiStatus := details.AMIStatus.PlainString()
-	amiStatusColor := func(string) string { return details.AMIStatus.ColorString() }
-	if details.AMILookupFailure != nil {
-		latestAMI = amiLookupFailedText
-		amiStatus = amiLookupFailedText
-		amiStatusColor = func(s string) string { return color.YellowString("%s", s) }
-	}
-
-	table := ui.NewDynamicTable()
-	table.AddStatus("Status", details.Status).
-		Add("Instance", details.InstanceType).
-		Add("AMI Type", details.AmiType).
-		Add("Capacity", details.CapacityType).
-		Add("Current AMI", details.CurrentAMI).
-		Add("Latest AMI", latestAMI).
-		AddColored("AMI Status", amiStatus, amiStatusColor).
-		Add("Scaling", scalingText(details.Scaling))
-	table.Render()
-
-	if details.Workloads.TotalPods > 0 || details.Workloads.PodDisruption != "" {
-		workloadTable := ui.NewDynamicTable()
-		workloadTable.Add("Total Pods", fmt.Sprintf("%d", details.Workloads.TotalPods)).
-			Add("Critical Pods", fmt.Sprintf("%d", details.Workloads.CriticalPods)).
-			Add("PDBs", details.Workloads.PodDisruption)
-		workloadTable.RenderSection("Workloads")
-	}
-
-	if details.Instances != nil && len(*details.Instances) > 0 {
-		ui.Outln()
-		ui.Outln("Instances:")
-		columns := []ui.Column{
-			{Title: "INSTANCE ID", Min: 10, Max: 22, Align: ui.AlignLeft},
-			{Title: "TYPE", Min: 10, Max: 0, Align: ui.AlignLeft},
-			{Title: "LAUNCH", Min: 10, Max: 0, Align: ui.AlignLeft},
-			{Title: "LIFECYCLE", Min: 9, Max: 0, Align: ui.AlignLeft},
-			{Title: "STATE", Min: 8, Max: 0, Align: ui.AlignLeft},
-		}
-		instTable := ui.NewPTable(columns, ui.CyanHeaders())
-		for _, inst := range *details.Instances {
-			instTable.AddRow(
-				ui.TruncateANSI(inst.InstanceID, 22),
-				inst.InstanceType,
-				inst.LaunchTime.Format("2006-01-02"),
-				inst.Lifecycle,
-				inst.State,
-			)
-		}
-		instTable.Render()
+	for _, l := range nodegroupDetailLines(render.Default(os.Stdout), details, elapsed) {
+		fmt.Println(l)
 	}
 	return nil
 }

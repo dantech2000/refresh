@@ -3,12 +3,11 @@ package ui
 import (
 	"strings"
 
-	"github.com/fatih/color"
 	"github.com/mattn/go-runewidth"
 )
 
 // This file is the single home for ANSI-aware string measurement, padding,
-// truncation, and status coloring. Table renderers and command formatters
+// truncation, and status classification. Table renderers and command formatters
 // must use these helpers instead of growing their own copies (the codebase
 // previously had three diverging truncation implementations, one of which
 // sliced colored strings mid-escape-sequence).
@@ -234,23 +233,5 @@ func ClassifyStatus(status string) StatusCategory {
 		return StatusUnknown
 	default:
 		return StatusNeutral
-	}
-}
-
-// StatusColorString colors a status string according to its category.
-func StatusColorString(status string) string {
-	switch ClassifyStatus(status) {
-	case StatusGood:
-		return color.GreenString(status)
-	case StatusWarning:
-		return color.YellowString(status)
-	case StatusBad:
-		return color.RedString(status)
-	case StatusInProgress:
-		return color.CyanString(status)
-	case StatusUnknown:
-		return color.WhiteString(status)
-	default:
-		return status
 	}
 }

@@ -7,12 +7,11 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/fatih/color"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/diag"
-	"github.com/dantech2000/refresh/internal/ui"
+	"github.com/dantech2000/refresh/internal/render"
 )
 
 // RegionScopeHint tells the user how to narrow a region sweep.
@@ -31,8 +30,9 @@ func ReportSkippedRegions(w io.Writer, skipped []string) {
 	if len(skipped) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintln(w, ui.ColorFor(w, color.FgYellow).Sprintf("Skipped %d region(s) not accessible to these credentials: %s (%s)",
-		len(skipped), strings.Join(skipped, ", "), RegionScopeHint))
+	th := render.Default(w)
+	_, _ = fmt.Fprintln(w, th.Paint(th.Pal.Yellow, fmt.Sprintf("Skipped %d region(s) not accessible to these credentials: %s (%s)",
+		len(skipped), strings.Join(skipped, ", "), RegionScopeHint)))
 }
 
 // NoRegionAnswered explains a region sweep in which no region answered.
