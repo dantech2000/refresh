@@ -372,7 +372,7 @@ func TestPlansAreDryRunsWithTheCLICommand(t *testing.T) {
 			Hops: []upgrade.Hop{{From: "1.31", To: target, Steps: []upgrade.Step{
 				{Type: upgrade.StepReadiness, Description: "readiness", Status: upgrade.StatusBlocked, Reason: "1 insight in ERROR"},
 				{Type: upgrade.StepControlPlane, Description: "control plane to " + target, Status: upgrade.StatusPending},
-				{Type: upgrade.StepAddon, Target: "vpc-cni", Description: "vpc-cni to v1.19.2", Status: upgrade.StatusPending},
+				{Type: upgrade.StepAddon, Target: "vpc-cni", Description: "vpc-cni to v1.19.2", Version: "v1.19.2", Status: upgrade.StatusPending},
 				{Type: upgrade.StepAddon, Target: "aws-ebs-csi-driver", Description: "managed by Helm", Status: upgrade.StatusManual, Reason: "--skip-addons"},
 			}}},
 			Notices: []string{"insights were refreshed 3d ago"},
@@ -385,7 +385,10 @@ func TestPlansAreDryRunsWithTheCLICommand(t *testing.T) {
 	if up.Command != "refresh --region us-east-1 cluster upgrade -c prod-api --to 1.32" || !strings.Contains(up.Blocked, "1 blocker(s): Readiness") {
 		t.Fatalf("upgrade plan = %+v", up)
 	}
-	if len(up.Gates) != 3 || len(up.Facts) != 3 {
+	// The control plane is the change line, not a fact; the gates end with
+	// the two checked before each roll.
+	if len(up.Gates) != 5 || len(up.Facts) != 2 || up.Facts[0].Value != "→ v1.19.2" || up.Facts[1].Value != "managed by Helm" ||
+		up.Gates[3].Text != "nodegroup health gate" || up.Gates[4].Text != "PDB drain blockers" {
 		t.Fatalf("gates %+v facts %+v", up.Gates, up.Facts)
 	}
 

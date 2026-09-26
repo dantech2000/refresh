@@ -243,10 +243,27 @@ func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan) state.Plan {
 			case upgrade.StatusCompleted:
 				continue
 			}
-			if s.Type == upgrade.StepReadiness {
+			switch s.Type {
+			case upgrade.StepReadiness:
+				// What the gate found in the preview, or when it runs.
+				if s.Status != upgrade.StatusBlocked {
+					p.Gates = append(p.Gates, state.PlanGate{Status: state.CheckPass, Text: "readiness for " + hop.To, Note: s.Reason})
+				}
 				continue
+			case upgrade.StepControlPlane:
+				continue // the control plane change is the plan's first line
+			case upgrade.StepAddon, upgrade.StepNodegroup:
+				v := "→ " + s.Version
+				switch {
+				case s.Status == upgrade.StatusManual || s.Version == "":
+					v = s.Description
+				case s.Type == upgrade.StepNodegroup:
+					v = "roll to " + s.Version
+				}
+				p.Facts = append(p.Facts, state.Fact{Key: key, Value: v})
+			default:
+				p.Facts = append(p.Facts, state.Fact{Key: key, Value: s.Description})
 			}
-			p.Facts = append(p.Facts, state.Fact{Key: key, Value: s.Description})
 		}
 	}
 	for _, n := range plan.Notices {
@@ -255,9 +272,20 @@ func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan) state.Plan {
 	for _, f := range plan.Failures {
 		p.Gates = append(p.Gates, state.PlanGate{Status: state.CheckWarn, Text: "could not read " + f.Name, Note: f.Error})
 	}
+	p.Gates = append(p.Gates,
+		state.PlanGate{Status: state.CheckPending, Text: "nodegroup health gate", Note: "checked before each roll; warnings ask y/n"},
+		state.PlanGate{Status: state.CheckPending, Text: "PDB drain blockers", Note: "checked before each roll; a blocker stops the run"})
 	p.Changes = []state.Change{{Field: "control plane", From: plan.CurrentVersion, To: plan.TargetVersion}}
 	if len(blockers) > 0 {
 		p.Blocked = fmt.Sprintf("%d blocker(s): %s", len(blockers), strings.Join(blockers, ", "))
 	}
 	return p
+}
+
+// plural is n and noun, with an "s" unless n is 1.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }

@@ -467,6 +467,14 @@ func (c Cluster) StaleAddons() []Addon {
 	return out
 }
 
+// NeedsAttention reports whether the cluster has anything to act on, whether
+// or not a change is running on it.
+func (c Cluster) NeedsAttention() bool {
+	c.Busy = ""
+	lvl, _ := c.Health()
+	return lvl == LevelWarn || lvl == LevelError
+}
+
 // Health is the one-token verdict for a cluster row.
 func (c Cluster) Health() (Level, string) {
 	switch {

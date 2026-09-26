@@ -38,7 +38,10 @@ func (m Model) fleetCols(w int) []fleetCol {
 func (m Model) fleetTable(w, h int) Block {
 	need, busy := 0, 0
 	for _, c := range m.st.Clusters {
-		if lvl, _ := c.Health(); lvl == state.LevelWarn || lvl == state.LevelError {
+		// A cluster that is changing can still need attention for
+		// something else (stale add-ons during a roll), as refresh status
+		// counts it.
+		if c.NeedsAttention() {
 			need++
 		}
 		if c.Busy != "" {
@@ -47,7 +50,7 @@ func (m Model) fleetTable(w, h int) Block {
 	}
 	out := Block{
 		{},
-		{sp(1), bold(colMauve, heading("Fleet")), sp(2), dimS(fmt.Sprintf("%d clusters · %d need attention · %d changing", len(m.st.Clusters), need, busy))},
+		{sp(1), bold(colMauve, heading("Fleet")), sp(2), dimS(fmt.Sprintf("%s · %d need attention · %d changing", plural(len(m.st.Clusters), "cluster"), need, busy))},
 	}
 	cols := m.fleetCols(w)
 	head := Line{sp(1)}
@@ -167,7 +170,10 @@ func (m Model) clusterCard(w int) Block {
 		next = append(next, tx("until "+c.SupportEnds.Format("2006-01-02")))
 	}
 	body = append(body, next)
-	var stale Line
+	// One stale item per line, names aligned: wrapping them as one line
+	// split a name from its version.
+	type staleItem struct{ name, what string }
+	var items []staleItem
 	for _, ng := range c.StaleNodegroups() {
 		what := "AMI " + ng.LatestAMI
 		if ng.LatestAMI == "" {
@@ -176,16 +182,25 @@ func (m Model) clusterCard(w int) Block {
 		if ng.Version != c.Version {
 			what = "on " + ng.Version
 		}
-		stale = append(stale, sub(ng.Name+" "), tok(state.LevelWarn, ""+what), sp(3))
+		items = append(items, staleItem{ng.Name, what})
 	}
 	for _, a := range c.StaleAddons() {
-		stale = append(stale, sub(a.Name+" "), tok(state.LevelWarn, ""+a.Version+" → "+a.Latest), sp(3))
+		items = append(items, staleItem{a.Name, a.Version + " → " + a.Latest})
 	}
-	if len(stale) == 0 {
-		stale = Line{tok(state.LevelOK, "every nodegroup and add-on is current")}
+	if len(items) == 0 {
+		body = append(body, Line{tok(state.LevelOK, "every nodegroup and add-on is current")})
 	}
-	for _, l := range wrapLine(stale, w-4) {
-		body = append(body, l)
+	nameW := 0
+	for _, it := range items {
+		nameW = max(nameW, width(it.name))
+	}
+	const staleRows = 8
+	for i, it := range items {
+		if i == staleRows && len(items) > staleRows+1 {
+			body = append(body, Line{dimS(fmt.Sprintf("and %d more · enter for the cluster", len(items)-staleRows))})
+			break
+		}
+		body = append(body, Line{sub(padRight(it.name, nameW) + "  "), tok(state.LevelWarn, it.what)}.Fit(w-4))
 	}
 	if c.Busy != "" {
 		hint := "progress in the live feed"
@@ -196,27 +211,6 @@ func (m Model) clusterCard(w int) Block {
 	}
 	body = append(body, Line{chip("r"), sp(1), sub("readiness"), sp(2), chip("p"), sp(1), sub("patch nodegroup"), sp(2), chip("a"), sp(1), sub("update add-ons"), sp(2), chip("U"), sp(1), sub("upgrade cluster")})
 	return box(Line{bold(colMauve, c.Name)}, body, w, colSurface1)
-}
-
-// wrapLine breaks a line of segments into lines at most w wide, on segment
-// boundaries.
-func wrapLine(l Line, w int) []Line {
-	var out []Line
-	var cur Line
-	for _, s := range l {
-		if cur.Width()+width(s.Text) > w && len(cur) > 0 {
-			out = append(out, cur)
-			cur = nil
-			if strings.TrimSpace(s.Text) == "" {
-				continue
-			}
-		}
-		cur = append(cur, s)
-	}
-	if len(cur) > 0 {
-		out = append(out, cur)
-	}
-	return out
 }
 
 func readinessVerdict(r state.Readiness) Line {

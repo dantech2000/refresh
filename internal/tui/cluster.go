@@ -29,12 +29,15 @@ func (m Model) clusterScreen(w, h int) Block {
 	head = append(head, sp(2), sub(plural(r.Blockers(), "blocker")+" · "+plural(r.Warnings(), "warning")+" · "+strconv.Itoa(r.Passed())+" passed"))
 	right := Line{dimS("started " + clock(r.StartedAt)), sp(1)}
 	if n := r.Pending(); n > 0 {
-		right = Line{tok(state.LevelProgress, fmt.Sprintf("%d checks to go", n)), sp(1)}
+		right = Line{tok(state.LevelProgress, plural(n, "check")+" to go"), sp(1)}
 	}
 	top := Block{{}, joinRight(head, right, w), append(Line{sp(1)}, hrule(w-2)...)}
 
 	bodyH := h - len(top)
 	lw := w * 44 / 100
+	if w >= 140 {
+		lw = w * 55 / 100 // wide: room for the check names and verdicts
+	}
 	rw := w - lw - 1
 	return append(top, hjoin(bodyH, col{m.checkList(r, lw, bodyH), lw}, vrule(bodyH), col{m.checkDetail(r, rw, bodyH), rw})...)
 }

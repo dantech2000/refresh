@@ -94,7 +94,7 @@ func TestAddonUpdateRunsInOrderPinnedToThePlan(t *testing.T) {
 	}
 	st, _ := rig.b.State(t.Context())
 	text := joinText(st.Feed)
-	for _, want := range []string{"add-ons update started vpc-cni → coredns", "vpc-cni ACTIVE v1.19.2", "add-ons add-ons updated"} {
+	for _, want := range []string{"add-ons update started vpc-cni → coredns", "vpc-cni ACTIVE v1.19.2", "add-ons update done · 2 add-ons updated"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("feed lacks %q:\n%s", want, text)
 		}

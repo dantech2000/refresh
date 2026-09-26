@@ -87,8 +87,12 @@ func (m Model) phaseList(u state.Upgrade, w, h int) Block {
 		if p.Status == state.PhaseRunning && len(p.Items) == 0 {
 			out = append(out, append(Line{sp(2), conn, sp(1)}, bar(w-12, p.Progress, 0)...))
 		}
+		nameW := 11 // "control plane" is longer: size to the phase's names
 		for _, it := range p.Items {
-			l := Line{sp(2), conn, sp(1), phaseGlyph(it.Status), sp(1), tx(padRight(it.Name, 12))}
+			nameW = max(nameW, width(it.Name))
+		}
+		for _, it := range p.Items {
+			l := Line{sp(2), conn, sp(1), phaseGlyph(it.Status), sp(1), tx(padRight(it.Name, nameW)), sp(1)}
 			if it.Status == state.PhaseRunning && it.Progress > 0 && it.Progress < 1 {
 				l = append(l, fg(colTeal, padRight(it.Text, 6)), sp(1))
 				l = append(l, bar(max(4, w-l.Width()-2), it.Progress, 0)...)

@@ -24,9 +24,9 @@ func (m Model) openDialog() (dialogParts, bool) {
 	case m.pick != nil:
 		return m.pickerParts(dialogWidth(m.w, 72)), true
 	case m.confirm != nil:
-		return m.confirmParts(dialogWidth(m.w, 92)), true
+		return m.confirmParts(dialogWidth(m.w, 116)), true // fits the longest CLI command
 	case m.help:
-		return m.helpParts(dialogWidth(m.w, 76)), true
+		return m.helpParts(dialogWidth(m.w, 100)), true
 	}
 	return dialogParts{}, false
 }

@@ -214,8 +214,7 @@ func dialogBindings() []binding {
 			when: func(m Model) bool { return !m.starting },
 			do:   func(m *Model) tea.Cmd { m.confirm = nil; return nil }},
 		{keys: []string{"c"}, label: "c", desc: "copy the CLI command", do: func(m *Model) tea.Cmd {
-			m.say(state.LevelOK, "copied: %s", m.confirm.Command)
-			return tea.SetClipboard(m.confirm.Command)
+			return copyText(m.confirm.Command)
 		}},
 	}
 }

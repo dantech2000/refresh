@@ -213,9 +213,10 @@ func (b *Backend) runAddons(ctx context.Context, cfg aws.Config, t target, chang
 		b.mu.Unlock()
 	}
 	b.mu.Lock()
-	lvl, text := state.LevelOK, "add-ons updated"
+	// The subject is "add-ons", so the text does not repeat it.
+	lvl, text := state.LevelOK, "update done · "+plural(len(changes), "add-on")+" updated"
 	if failed > 0 {
-		lvl, text = state.LevelWarn, fmt.Sprintf("add-on update finished · %d of %d need attention", failed, len(changes))
+		lvl, text = state.LevelWarn, fmt.Sprintf("update finished · %d of %d need attention", failed, len(changes))
 	}
 	b.emit(state.Event{Cluster: b.keyOf(t), Source: state.SourceAddon, Level: lvl, Subject: "add-ons", Text: text})
 	delete(b.claimed, t)

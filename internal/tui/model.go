@@ -165,6 +165,14 @@ func (m Model) Init() tea.Cmd { return fetchCmd(m.ctx, m.b, 0, true) }
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case copiedMsg:
+		if msg.native {
+			m.say(state.LevelOK, "copied: %s", msg.text)
+		} else {
+			// Only OSC 52 went out; the terminal may have dropped it.
+			m.say(state.LevelWarn, "sent to the terminal clipboard (it may not allow it): %s", msg.text)
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.scroll = m.clampScroll(m.scroll)

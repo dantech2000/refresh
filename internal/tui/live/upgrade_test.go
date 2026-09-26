@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"k8s.io/client-go/kubernetes"
@@ -394,5 +395,34 @@ func TestSkippedChecksAloneAreNotAsked(t *testing.T) {
 		if e.Subject == "question" {
 			t.Fatalf("asked %q with only skipped checks", e.Text)
 		}
+	}
+}
+
+// A real control-plane update ran ten minutes with the bar at 5% and its
+// item pending. The snapshot now estimates from the elapsed time, capped
+// short of done, and marks the item running.
+func TestControlPlanePhaseShowsProgress(t *testing.T) {
+	b := newTestBackend(t, &fleet{rows: map[string][]statussvc.ClusterStatus{}}, "us-east-1")
+	now := b.now()
+	u := &liveUpgrade{st: state.Upgrade{Phases: []state.Phase{
+		{Name: "Plan", Status: state.PhaseDone},
+		{Name: "Control plane 1.35", Status: state.PhaseRunning, StartedAt: now.Add(-5 * time.Minute),
+			Items: []state.PhaseItem{{Name: "control plane", Text: "1.34 → 1.35"}}},
+		{Name: "Add-ons 1.35", Status: state.PhasePending, Items: []state.PhaseItem{{Name: "coredns"}}},
+	}}}
+	st := b.upgradeSnapshot(u)
+	cp := st.Phases[1]
+	if cp.Progress < 0.49 || cp.Progress > 0.51 || cp.Items[0].Status != state.PhaseRunning {
+		t.Fatalf("control plane = %+v", cp)
+	}
+	if st.Phases[2].Progress != 0 || st.Phases[2].Items[0].Status != state.PhasePending {
+		t.Fatalf("a pending phase moved: %+v", st.Phases[2])
+	}
+	if u.st.Phases[1].Progress != 0 {
+		t.Fatal("the snapshot changed the upgrade itself")
+	}
+	u.st.Phases[1].StartedAt = now.Add(-20 * time.Minute)
+	if p := b.upgradeSnapshot(u).Phases[1].Progress; p != 0.95 {
+		t.Fatalf("a long update shows %v, want 0.95 until EKS says done", p)
 	}
 }

@@ -461,13 +461,29 @@ func (b *Backend) upgradeSnapshot(u *liveUpgrade) state.Upgrade {
 	st := u.st
 	st.Cluster = b.keyOf(u.t)
 	st.Phases = make([]state.Phase, len(u.st.Phases))
+	now := b.now()
 	for i, p := range u.st.Phases {
 		p.Items = slices.Clone(p.Items)
+		if p.Status == state.PhaseRunning && strings.HasPrefix(p.Name, "Control plane") {
+			// EKS reports no progress for a control-plane update, which
+			// takes about ten minutes: estimate from the elapsed time, and
+			// never show it done before EKS says so. A real upgrade sat at
+			// "5%" with a pending item for the whole phase.
+			est := min(0.95, float64(now.Sub(p.StartedAt))/float64(controlPlaneTypical))
+			p.Progress = est
+			for j := range p.Items {
+				p.Items[j].Status, p.Items[j].Progress = state.PhaseRunning, est
+			}
+		}
 		st.Phases[i] = p
 	}
 	st.Events = slices.Clone(u.st.Events)
 	return st
 }
+
+// controlPlaneTypical is how long an EKS control-plane version update
+// usually takes (the progress estimate's full scale).
+const controlPlaneTypical = 10 * time.Minute
 
 // runningUpgrade returns the running upgrade on a fleet key. The caller
 // holds b.mu.
