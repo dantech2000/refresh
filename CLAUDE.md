@@ -238,7 +238,11 @@ stop act between phases through the engine's `Confirm` hook; only
 request is still a failure. The run is bounded by
 `config.DefaultUpgradeTimeout`, as `cluster upgrade` is. An add-on dry run
 that could not preview every add-on is blocked, as `addon update --all`
-fails closed. Without the flag `Start`, `StopAfterCurrent`, `TogglePause`,
+fails closed. A cluster rollback (`live/rollback.go`) runs `cluster
+rollback`'s planner and engine (`BuildRollbackPlan` + `ExecuteRollback`) on
+the Upgrade screen with the same dry run, questions, pause, stop, and
+pre-roll gate; `B` offers it only after a readiness run found a rollback
+window (`UpgradeReport.Rollback`), and the simulator refuses it. Without the flag `Start`, `StopAfterCurrent`, `TogglePause`,
 and `Answer` return `live.ErrReadOnly` and plans name the CLI command. Changes started elsewhere (the CLI, the console)
 are adopted by the sweep (`live/observed.go`): an `UPDATING` nodegroup gets a
 watched roll (the EKS update found with `ListUpdates`, the node view, the
@@ -319,7 +323,7 @@ the terminal exactly (`internal/tui/model_test.go`).
   release as a hidden alias (`flagcanon.DeprecatedDuration` / `DeprecatedSwitch`), which warns
   on stderr.
 - **Mutating commands** (`addon update`, `nodegroup scale`, `nodegroup update`, `cluster
-  upgrade`) share `runner.DryRunFlag` (`-d`), `runner.YesFlag` (`-y`), `--wait-timeout`
+  upgrade`, `cluster rollback`) share `runner.DryRunFlag` (`-d`), `runner.YesFlag` (`-y`), `--wait-timeout`
   (`runner.WaitTimeoutFlag`, read with `runner.WaitTimeout`), and `--kubeconfig`/`--kube-context`
   where a kube client is used. Call `runner.RequireYesUnattended(cmd)` before any AWS call
   (fails for `-o json/yaml` or no TTY without `--yes`), and ask with

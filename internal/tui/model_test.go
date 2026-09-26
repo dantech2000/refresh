@@ -951,3 +951,63 @@ func TestChangeKeysOnABusyClusterSayWhy(t *testing.T) {
 		}
 	}
 }
+
+// rollbackFleet is the simulated world with a rollback available on its
+// first cluster, and a rollback dry run the simulator does not have.
+type rollbackFleet struct{ *sim.World }
+
+func (b rollbackFleet) State(ctx context.Context) (state.State, error) {
+	st, err := b.World.State(ctx)
+	if len(st.Clusters) > 0 {
+		st.Clusters[0].RollbackTo = "1.30"
+		st.Clusters[0].RollbackUntil = st.Now.Add(48 * time.Hour)
+	}
+	return st, err
+}
+
+func (b rollbackFleet) Plan(ctx context.Context, a state.Action) (state.Plan, error) {
+	if a.Kind != state.ActionRollback {
+		return b.World.Plan(ctx, a)
+	}
+	return state.Plan{Action: a, Title: "Roll back cluster · " + a.Cluster,
+		Changes: []state.Change{{Field: "control plane", From: "1.31", To: "1.30"}},
+		Command: "refresh cluster rollback -c " + a.Cluster}, nil
+}
+
+// B opens the rollback dry run only while a rollback is available.
+func TestRollbackKeyOnlyWhenAvailable(t *testing.T) {
+	h := newHarness(t, 160, 42, 0)
+	h.lacks("roll back to")
+	h.keys("B")
+	if h.m.confirm != nil || h.m.planning != "" {
+		t.Fatal("B opened a dry run without a rollback window")
+	}
+
+	world := sim.New(sim.Options{Seed: 7})
+	h = &harness{t: t, w: world, m: New(t.Context(), rollbackFleet{world}, time.Millisecond)}
+	h.send(tea.WindowSizeMsg{Width: 160, Height: 42})
+	h.refresh()
+	h.contains("roll back to 1.30")
+	h.keys("B")
+	if h.m.confirm == nil || h.m.confirm.Action.Kind != state.ActionRollback {
+		t.Fatalf("B opened %+v", h.m.confirm)
+	}
+	h.contains("Roll back cluster", "Start rollback and watch", "refresh cluster rollback -c")
+	checkFrame(t, "rollback dry run", h.m)
+}
+
+// The simulator has no rollback: it says so instead of starting an upgrade.
+func TestSimulatorRefusesARollback(t *testing.T) {
+	w := sim.New(sim.Options{Seed: 7})
+	st, _ := w.State(t.Context())
+	a := state.Action{Kind: state.ActionRollback, Cluster: st.Clusters[0].Name}
+	if _, err := w.Plan(t.Context(), a); err == nil || !strings.Contains(err.Error(), "not simulated") {
+		t.Fatalf("Plan = %v", err)
+	}
+	if err := w.Start(t.Context(), a); err == nil || !strings.Contains(err.Error(), "not simulated") {
+		t.Fatalf("Start = %v", err)
+	}
+	if n := len(w.Snapshot().Upgrades); n != 0 {
+		t.Fatalf("%d upgrades started", n)
+	}
+}

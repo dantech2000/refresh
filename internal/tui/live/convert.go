@@ -150,6 +150,17 @@ func readinessChecks(r *clustersvc.UpgradeReport, to, cli string) []state.Check 
 		}
 		add(c)
 	}
+	if a := r.Rollback; a != nil {
+		// Information, not a verdict on the upgrade: it never warns.
+		c := state.Check{Group: "ROLLBACK", Name: "rollback window", Status: state.CheckPass,
+			Summary: "to " + a.PreviousVersion + " until about " + a.AvailableUntil.UTC().Format("2006-01-02 15:04 MST"),
+			Detail:  []string{"EKS can roll the control plane back one minor for about 7 days after an in-place upgrade. B dry-runs the rollback."},
+			Source:  "EKS update history"}
+		if n := a.Insights; n != nil {
+			c.Detail = append(c.Detail, fmt.Sprintf("Rollback readiness insights: %d error, %d unknown, %d warning, %d passing. ERROR and UNKNOWN block the rollback.", n.Error, n.Unknown, n.Warning, n.Passing))
+		}
+		add(c)
+	}
 	for _, f := range r.Failures {
 		add(state.Check{Group: "COULD NOT READ", Name: f.Name, Status: state.CheckWarn, Summary: f.Error})
 	}

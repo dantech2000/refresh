@@ -158,6 +158,8 @@ func startLabel(k state.ActionKind) string {
 		return "Start roll and watch"
 	case state.ActionUpgrade:
 		return "Start upgrade and watch"
+	case state.ActionRollback:
+		return "Start rollback and watch"
 	default:
 		return "Start add-on update"
 	}

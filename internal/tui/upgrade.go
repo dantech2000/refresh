@@ -24,7 +24,11 @@ func (m Model) upgradeScreen(w, h int) Block {
 }
 
 func (m Model) upgradeHeader(u state.Upgrade, w int) Block {
-	title := Line{sp(1), bold(colMauve, heading(fmt.Sprintf("Upgrade %s %s → %s", u.Cluster, u.From, u.To))), sp(2)}
+	what := "Upgrade"
+	if u.Rollback {
+		what = "Rollback"
+	}
+	title := Line{sp(1), bold(colMauve, heading(fmt.Sprintf("%s %s %s → %s", what, u.Cluster, u.From, u.To))), sp(2)}
 	cur := u.Current()
 	switch {
 	case u.Failed != "":

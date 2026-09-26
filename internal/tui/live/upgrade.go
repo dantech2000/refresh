@@ -46,6 +46,14 @@ type liveUpgrade struct {
 	labels []string
 }
 
+// noun names the run in messages.
+func (u *liveUpgrade) noun() string {
+	if u.st.Rollback {
+		return "rollback"
+	}
+	return "upgrade"
+}
+
 // pendingSteps names a plan's pending steps, in order: what the user
 // confirms in the dry run.
 func pendingSteps(p *upgrade.Plan) []string {
@@ -176,11 +184,7 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 		defer cancel()
 	}
 	svc := b.newUpgrader(cfg)
-	progress := func(format string, args ...any) {
-		b.mu.Lock()
-		b.upgradeEvent(u, state.LevelInfo, "", fmt.Sprintf(format, args...), "")
-		b.mu.Unlock()
-	}
+	progress := b.progressOf(u)
 
 	// The real plan: not a preview, so it refreshes insights and blocks
 	// until EKS has evaluated them, as `cluster upgrade` does.
@@ -204,7 +208,23 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 	b.setPhases(u, plan)
 	b.mu.Unlock()
 
-	opts := upgrade.ExecuteOptions{
+	report, err := svc.Execute(ctx, plan, b.engineOptions(ctx, cfg, u, progress))
+	b.finishRun(ctx, u, report, err)
+}
+
+// progressOf returns the engine's Progress hook for u: each line goes on the
+// timeline.
+func (b *Backend) progressOf(u *liveUpgrade) upgrade.ProgressFunc {
+	return func(format string, args ...any) {
+		b.mu.Lock()
+		b.upgradeEvent(u, state.LevelInfo, "", fmt.Sprintf(format, args...), "")
+		b.mu.Unlock()
+	}
+}
+
+// engineOptions are the hooks the upgrade and rollback engines run with.
+func (b *Backend) engineOptions(ctx context.Context, cfg aws.Config, u *liveUpgrade, progress upgrade.ProgressFunc) upgrade.ExecuteOptions {
+	return upgrade.ExecuteOptions{
 		Progress: progress,
 		PhaseStart: func(label string) {
 			b.mu.Lock()
@@ -221,7 +241,10 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 			b.observeUpgradeRoll(octx, u, ng)
 		},
 	}
-	report, err := svc.Execute(ctx, plan, opts)
+}
+
+// finishRun records how the engine's run of u ended.
+func (b *Backend) finishRun(ctx context.Context, u *liveUpgrade, report *upgrade.Report, err error) {
 	// Only the two sentinels mean the user stopped the run: a stop asked for
 	// during a phase that then fails is still a failure.
 	switch {
@@ -243,7 +266,7 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 			why = report.Failure.Error
 		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) { // the run deadline, not one call's
-			why = fmt.Sprintf("the upgrade ran past %s; in-flight EKS updates continue, and a rerun resumes from live cluster state: %s", b.opts.UpgradeTimeout, why)
+			why = fmt.Sprintf("the %s ran past %s; in-flight EKS updates continue, and a rerun resumes from live cluster state: %s", u.noun(), b.opts.UpgradeTimeout, why)
 		}
 		b.endUpgrade(u, why, false)
 	}
@@ -434,13 +457,13 @@ func (b *Backend) endUpgrade(u *liveUpgrade, failed string, stopped bool) {
 		if cur >= 0 {
 			u.st.Phases[cur].Status, u.st.Phases[cur].EndedAt, u.st.Phases[cur].Summary = state.PhaseFailed, now, failed
 		}
-		b.upgradeEvent(u, state.LevelError, "upgrade", "failed", failed)
+		b.upgradeEvent(u, state.LevelError, u.noun(), "failed", failed)
 	case stopped:
 		u.st.Stopped = true
 		if cur >= 0 {
 			u.st.Phases[cur].Status, u.st.Phases[cur].EndedAt = state.PhaseStopped, now
 		}
-		b.upgradeEvent(u, state.LevelWarn, "upgrade", "stopped", "in-flight EKS updates finish; a rerun resumes from live cluster state")
+		b.upgradeEvent(u, state.LevelWarn, u.noun(), "stopped", "in-flight EKS updates finish; a rerun resumes from live cluster state")
 	default:
 		for i := range u.st.Phases {
 			if u.st.Phases[i].Status != state.PhaseDone {
@@ -448,16 +471,16 @@ func (b *Backend) endUpgrade(u *liveUpgrade, failed string, stopped bool) {
 			}
 			doneItems(&u.st.Phases[i])
 		}
-		b.upgradeEvent(u, state.LevelOK, "upgrade", "done · "+b.keyOf(u.t)+" on "+u.st.To, now.Sub(u.st.StartedAt).Round(time.Second).String())
+		b.upgradeEvent(u, state.LevelOK, u.noun(), "done · "+b.keyOf(u.t)+" on "+u.st.To, now.Sub(u.st.StartedAt).Round(time.Second).String())
 	}
-	lvl, text := state.LevelOK, "upgrade done · "+u.st.To
+	lvl, text := state.LevelOK, u.noun()+" done · "+u.st.To
 	switch {
 	case failed != "":
-		lvl, text = state.LevelError, "upgrade failed"
+		lvl, text = state.LevelError, u.noun()+" failed"
 	case stopped:
-		lvl, text = state.LevelWarn, "upgrade stopped"
+		lvl, text = state.LevelWarn, u.noun()+" stopped"
 	}
-	b.emit(state.Event{Cluster: b.keyOf(u.t), Source: state.SourceUpgrade, Level: lvl, Subject: "upgrade", Text: text, Detail: failed})
+	b.emit(state.Event{Cluster: b.keyOf(u.t), Source: state.SourceUpgrade, Level: lvl, Subject: u.noun(), Text: text, Detail: failed})
 	delete(b.claimed, u.t)
 	b.mu.Unlock()
 	b.Refresh()

@@ -155,6 +155,13 @@ type Backend struct {
 	upgrades []*liveUpgrade
 	// newUpgrader builds the orchestrator for a cluster's config.
 	newUpgrader func(aws.Config) upgrader
+	// newRollbacker builds the rollback planner and engine.
+	newRollbacker func(aws.Config) rollbacker
+	// acceptedRollbacks holds each cluster's last rollback dry run.
+	acceptedRollbacks map[target]acceptedUpgrade
+	// rollbackWindows holds what the last readiness run said about a
+	// rollback of each cluster.
+	rollbackWindows map[target]rollbackWindow
 	// adopting marks the changes started elsewhere that are being looked up
 	// or watched (acceptKey for a nodegroup, "cluster/region/name").
 	adopting map[string]bool
@@ -193,6 +200,9 @@ func New(cfg aws.Config, opts Options) *Backend {
 		accepted:         map[string][]string{},
 		acceptedAddons:   map[target][]addonChange{},
 		acceptedUpgrades: map[target]acceptedUpgrade{},
+
+		acceptedRollbacks: map[target]acceptedUpgrade{},
+		rollbackWindows:   map[target]rollbackWindow{},
 	}
 	if b.opts.Logger == nil {
 		b.opts.Logger = slog.New(&paneHandler{b: b, level: slog.LevelWarn})
@@ -201,6 +211,7 @@ func New(cfg aws.Config, opts Options) *Backend {
 	b.roll = defaultRollServices(b.opts)
 	b.addon = defaultAddonServices(b.opts)
 	b.newUpgrader = defaultUpgrader(b.opts)
+	b.newRollbacker = defaultRollbacker(b.opts)
 	return b
 }
 
@@ -280,6 +291,13 @@ func defaultServices(logger *slog.Logger) services {
 			}
 			cp := health.NewCheckerForConfig(cfg, nil, nil).CheckControlPlaneMetrics(ctx, cluster)
 			report.ControlPlane = &cp
+			// Rollback availability, best effort, as the command adds it.
+			if report.Skew.ControlPlaneVersion != "" {
+				rb := upgrade.NewService(factory.NewEKSClient(cfg), logger)
+				if a, rerr := rb.RollbackAvailability(ctx, cluster, report.Skew.ControlPlaneVersion); rerr == nil {
+					report.Rollback = a
+				}
+			}
 			return report, nil
 		},
 		buildPlan: func(ctx context.Context, cfg aws.Config, cluster, target string) (*upgrade.Plan, error) {
@@ -541,6 +559,9 @@ func (b *Backend) State(ctx context.Context) (state.State, error) {
 		c.Nodegroups = slices.Clone(c.Nodegroups)
 		c.Addons = slices.Clone(c.Addons)
 		c.Busy = b.busyOf(c.Name, c)
+		if w, ok := b.rollbackWindows[b.targets[c.Name]]; ok && w.from == c.Version && b.now().Before(w.until) {
+			c.RollbackTo, c.RollbackUntil = w.to, w.until
+		}
 		st.Clusters = append(st.Clusters, c)
 	}
 	for _, r := range b.rolls {
@@ -648,6 +669,11 @@ func (b *Backend) RunReadiness(ctx context.Context, key string) error {
 			return
 		}
 		run.Checks = readinessChecks(report, run.To, regionFlag(t))
+		if a := report.Rollback; a != nil {
+			b.rollbackWindows[t] = rollbackWindow{from: report.Skew.ControlPlaneVersion, to: a.PreviousVersion, until: a.AvailableUntil}
+		} else {
+			delete(b.rollbackWindows, t)
+		}
 		run.Log = appendCapped(run.Log, b.stamp(state.Event{Cluster: key, Source: state.SourceCheck, Level: state.LevelOK, Subject: "UpgradeCheck",
 			Text: fmt.Sprintf("%d insight(s) · %d nodegroup(s) · %d add-on(s) · %s", len(report.Insights), len(report.Skew.Nodegroups), len(report.Skew.Addons), took)}), logCap)
 		lvl, text := state.LevelOK, "ready to upgrade"
@@ -718,6 +744,20 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			b.planUpgradeLive(t, plan)
 			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again for real", Note: "insights may refresh first; a changed plan asks before it runs"})
 		}
+	case state.ActionRollback:
+		pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
+		plan, perr := b.newRollbacker(cfg).BuildRollbackPlan(pctx, t.name, upgrade.RollbackOptions{})
+		cancel()
+		if perr != nil {
+			return state.Plan{}, perr
+		}
+		p = planRollback(c, t, plan)
+		if b.opts.AllowChanges && p.Blocked == "" {
+			b.mu.Lock()
+			b.acceptedRollbacks[t] = acceptedUpgrade{target: plan.TargetVersion, steps: rollbackSteps(plan)}
+			b.mu.Unlock()
+			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again", Note: "a changed plan asks before it runs"})
+		}
 	default:
 		return state.Plan{}, fmt.Errorf("unknown action %d", a.Kind)
 	}
@@ -754,6 +794,8 @@ func (b *Backend) Start(ctx context.Context, a state.Action) error {
 		return b.startAddons(ctx, a)
 	case state.ActionUpgrade:
 		return b.startUpgrade(ctx, a)
+	case state.ActionRollback:
+		return b.startRollback(ctx, a)
 	default:
 		return b.startRoll(ctx, a)
 	}

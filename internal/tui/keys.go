@@ -115,6 +115,14 @@ func actionBindings() []binding {
 			}
 			return m.plan(state.Action{Kind: state.ActionUpgrade, Cluster: m.cluster().Name})
 		}},
+		{keys: []string{"B"}, label: "B", desc: "roll back one minor (only while a rollback is available)", bar: true,
+			when: func(m Model) bool { return here(m) && m.cluster().RollbackTo != "" },
+			do: func(m *Model) tea.Cmd {
+				if m.saidBusy() {
+					return nil
+				}
+				return m.plan(state.Action{Kind: state.ActionRollback, Cluster: m.cluster().Name})
+			}},
 	}
 }
 
@@ -422,6 +430,8 @@ func planName(a state.Action) string {
 		return "a patch of " + a.Cluster + "/" + a.Nodegroup
 	case state.ActionUpgrade:
 		return "an upgrade of " + a.Cluster
+	case state.ActionRollback:
+		return "a rollback of " + a.Cluster
 	default:
 		return "add-on updates on " + a.Cluster
 	}

@@ -14,6 +14,7 @@ package sim
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"slices"
@@ -340,6 +341,8 @@ func (w *World) plan(a state.Action) (state.Plan, error) {
 		return w.planAddons(c)
 	case state.ActionUpgrade:
 		return w.planUpgrade(c)
+	case state.ActionRollback:
+		return state.Plan{}, errors.New("a cluster rollback is not simulated")
 	default:
 		return state.Plan{}, fmt.Errorf("unknown action %d", a.Kind)
 	}
@@ -370,6 +373,8 @@ func (w *World) Start(ctx context.Context, a state.Action) error {
 	case state.ActionAddons:
 		w.startAddons(c, nil, "")
 		return nil
+	case state.ActionRollback:
+		return errors.New("a cluster rollback is not simulated")
 	default:
 		return w.startUpgrade(a.Cluster)
 	}

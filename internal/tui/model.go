@@ -266,7 +266,7 @@ func (m Model) applyState(msg stateMsg) (tea.Model, tea.Cmd) {
 			if m.focusRoll(a.Cluster) {
 				m.screen, m.src, m.focusAfter = screenRolls, logRoll, nil
 			}
-		case state.ActionUpgrade:
+		case state.ActionUpgrade, state.ActionRollback:
 			if m.focusUpgrade(a.Cluster) {
 				m.screen, m.src, m.focusAfter = screenUpgrade, logRoll, nil
 			}

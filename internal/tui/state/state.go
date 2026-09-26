@@ -119,6 +119,11 @@ type Cluster struct {
 	// Busy names the change in flight, if any ("upgrading", "rolling
 	// ng-general", "updating add-ons").
 	Busy string
+	// RollbackTo is the version a rollback returns to, while one is
+	// available (within about 7 days of an in-place upgrade), and
+	// RollbackUntil is when the window closes. Empty when unknown.
+	RollbackTo    string
+	RollbackUntil time.Time
 	// Incomplete is set when part of the cluster could not be read, so its
 	// counts may be missing something.
 	Incomplete bool
@@ -272,11 +277,13 @@ type Upgrade struct {
 	// StartedElsewhere marks an upgrade this UI did not start: it shows the
 	// control-plane change EKS reports, and cannot be paused or stopped here.
 	StartedElsewhere bool
-	Cluster          string
-	From, To         string
-	StartedAt        time.Time
-	EndedAt          time.Time
-	Phases           []Phase
+	// Rollback marks a version rollback (To is one minor below From).
+	Rollback  bool
+	Cluster   string
+	From, To  string
+	StartedAt time.Time
+	EndedAt   time.Time
+	Phases    []Phase
 	// StopAfter stops the run once the current nodegroup finishes.
 	StopAfter bool
 	// Paused holds the run before its next phase.
@@ -346,9 +353,10 @@ type PhaseItem struct {
 type ActionKind int
 
 const (
-	ActionRoll    ActionKind = iota // nodegroup update
-	ActionAddons                    // update every stale add-on
-	ActionUpgrade                   // cluster upgrade to the next minor
+	ActionRoll     ActionKind = iota // nodegroup update
+	ActionAddons                     // update every stale add-on
+	ActionUpgrade                    // cluster upgrade to the next minor
+	ActionRollback                   // cluster rollback to the previous minor
 )
 
 // Action is a change request.
