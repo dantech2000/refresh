@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -94,6 +95,8 @@ type services struct {
 	latestVersion func(ctx context.Context, cfg aws.Config) (string, error)
 	upgradeCheck  func(ctx context.Context, cfg aws.Config, cluster string) (*clustersvc.UpgradeReport, error)
 	buildPlan     func(ctx context.Context, cfg aws.Config, cluster, target string) (*upgrade.Plan, error)
+	// changesInProgress reads what EKS is changing on a cluster right now.
+	changesInProgress func(ctx context.Context, cfg aws.Config, cluster string) ([]string, error)
 	// noRegionAnswered explains a sweep that read no region
 	// (runner.NoRegionAnswered): nil when it cannot tell.
 	noRegionAnswered func(ctx context.Context, cfg aws.Config, skipped []string, errs []error) error
@@ -235,7 +238,8 @@ func (h *paneHandler) WithGroup(string) slog.Handler { return h }
 
 func defaultServices(logger *slog.Logger) services {
 	return services{
-		noRegionAnswered: runner.NoRegionAnswered,
+		noRegionAnswered:  runner.NoRegionAnswered,
+		changesInProgress: changesInProgress,
 		listStatuses: func(ctx context.Context, cfg aws.Config, opts statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
 			return statussvc.NewService(cfg, logger).ListClusterStatuses(ctx, opts)
 		},
@@ -737,6 +741,9 @@ func (b *Backend) Start(ctx context.Context, a state.Action) error {
 	if !b.opts.AllowChanges {
 		return ErrReadOnly
 	}
+	if err := b.checkNotBusy(ctx, a.Cluster); err != nil {
+		return err
+	}
 	switch a.Kind {
 	case state.ActionAddons:
 		return b.startAddons(ctx, a)
@@ -813,4 +820,23 @@ func sortClusters(cs []state.Cluster) {
 		}
 		return cs[i].Name < cs[j].Name
 	})
+}
+
+// checkNotBusy refuses a change on a cluster EKS is changing right now,
+// whoever started it. A fresh read, not the sweep: see changesInProgress.
+func (b *Backend) checkNotBusy(ctx context.Context, key string) error {
+	cfg, t, err := b.cfgFor(key)
+	if err != nil {
+		return err
+	}
+	cctx, cancel := context.WithTimeout(ctx, b.opts.CallTimeout)
+	defer cancel()
+	busy, err := b.svc.changesInProgress(cctx, cfg, t.name)
+	if err != nil {
+		return fmt.Errorf("could not check what is changing on %s, so nothing was started: %w", key, err)
+	}
+	if len(busy) > 0 {
+		return fmt.Errorf("%s is busy (%s), so nothing was started; start it again once that finishes", key, strings.Join(busy, ", "))
+	}
+	return nil
 }

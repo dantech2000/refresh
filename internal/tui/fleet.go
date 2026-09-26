@@ -209,7 +209,12 @@ func (m Model) clusterCard(w int) Block {
 		}
 		body = append(body, Line{tok(state.LevelProgress, c.Busy), sp(2), dimS(hint)})
 	}
-	body = append(body, Line{chip("r"), sp(1), sub("readiness"), sp(2), chip("p"), sp(1), sub("patch nodegroup"), sp(2), chip("a"), sp(1), sub("update add-ons"), sp(2), chip("U"), sp(1), sub("upgrade cluster")})
+	if c.Busy != "" {
+		// Changes wait: say so where the keys would be.
+		body = append(body, Line{chip("r"), sp(1), sub("readiness"), sp(2), dimS("p a U wait until the change finishes")})
+	} else {
+		body = append(body, Line{chip("r"), sp(1), sub("readiness"), sp(2), chip("p"), sp(1), sub("patch nodegroup"), sp(2), chip("a"), sp(1), sub("update add-ons"), sp(2), chip("U"), sp(1), sub("upgrade cluster")})
+	}
 	return box(Line{bold(colMauve, c.Name)}, body, w, colSurface1)
 }
 

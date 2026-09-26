@@ -67,7 +67,8 @@ func newTestBackend(t *testing.T, f *fleet, regions ...string) *Backend {
 		buildPlan: func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) {
 			return nil, errors.New("no planner in this test")
 		},
-		noRegionAnswered: func(context.Context, aws.Config, []string, []error) error { return nil },
+		noRegionAnswered:  func(context.Context, aws.Config, []string, []error) error { return nil },
+		changesInProgress: func(context.Context, aws.Config, string) ([]string, error) { return nil, nil },
 	}
 	return b
 }
@@ -739,5 +740,51 @@ func TestNoRegionAnsweredIsExplained(t *testing.T) {
 	b.sweep(t.Context())
 	if st, _ := b.State(t.Context()); st.FleetProblem != "" {
 		t.Fatalf("problem stayed: %q", st.FleetProblem)
+	}
+}
+
+// What EKS is changing right now, read fresh: a nodegroup or add-on that is
+// not settled names itself; a settled cluster reads empty.
+func TestChangesInProgressReadsLiveState(t *testing.T) {
+	fakeaws.New(t, &fakeaws.Cluster{
+		Name: "prod", Version: "1.32",
+		Nodegroups: []*fakeaws.Nodegroup{{Name: "ng-a", Version: "1.32", Status: "UPDATING"}, {Name: "ng-b", Version: "1.32"}},
+		Addons:     []*fakeaws.Addon{{Name: "vpc-cni", Version: "v1.18.0", Status: "UPDATING"}, {Name: "coredns", Version: "v1.11.1"}},
+	}, &fakeaws.Cluster{Name: "calm", Version: "1.32", Nodegroups: []*fakeaws.Nodegroup{{Name: "ng-a", Version: "1.32"}}})
+	cfg, err := config.LoadDefaultConfig(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	busy, err := changesInProgress(t.Context(), cfg, "prod")
+	if err != nil || strings.Join(busy, "; ") != "nodegroup ng-a UPDATING; add-on vpc-cni UPDATING" {
+		t.Fatalf("prod: %v, %v", busy, err)
+	}
+	if busy, err := changesInProgress(t.Context(), cfg, "calm"); err != nil || len(busy) != 0 {
+		t.Fatalf("calm: %v, %v", busy, err)
+	}
+}
+
+// Start reads the live state first: a change started elsewhere (the CLI, the
+// console), or a check that cannot run, stops every kind of start before
+// anything changes.
+func TestStartRefusesWhileEKSIsChangingTheCluster(t *testing.T) {
+	rig := newRollRig(t)
+	for _, tc := range []struct {
+		busy []string
+		err  error
+		want string
+	}{
+		{busy: []string{"nodegroup ng-system UPDATING"}, want: "busy (nodegroup ng-system UPDATING), so nothing was started"},
+		{err: errors.New("AccessDenied"), want: "could not check what is changing on prod-api, so nothing was started"},
+	} {
+		rig.b.svc.changesInProgress = func(context.Context, aws.Config, string) ([]string, error) { return tc.busy, tc.err }
+		for _, a := range []state.Action{roll, {Kind: state.ActionAddons, Cluster: "prod-api"}, {Kind: state.ActionUpgrade, Cluster: "prod-api"}} {
+			if err := rig.b.Start(t.Context(), a); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("%v: Start = %v, want %q", a.Kind, err, tc.want)
+			}
+		}
+	}
+	if rig.started.Load() != 0 {
+		t.Fatal("a roll started on a busy cluster")
 	}
 }

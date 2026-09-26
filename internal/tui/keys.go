@@ -97,11 +97,22 @@ func actionBindings() []binding {
 			m.screen = screenCluster
 			return m.runReadiness()
 		}},
-		{keys: []string{"p"}, label: "p", desc: "patch", bar: true, primary: true, when: here, do: func(m *Model) tea.Cmd { return m.planRoll() }},
+		{keys: []string{"p"}, label: "p", desc: "patch", bar: true, primary: true, when: here, do: func(m *Model) tea.Cmd {
+			if m.saidBusy() {
+				return nil
+			}
+			return m.planRoll()
+		}},
 		{keys: []string{"a"}, label: "a", desc: "add-ons", bar: true, primary: true, when: here, do: func(m *Model) tea.Cmd {
+			if m.saidBusy() {
+				return nil
+			}
 			return m.plan(state.Action{Kind: state.ActionAddons, Cluster: m.cluster().Name})
 		}},
 		{keys: []string{"U"}, label: "U", desc: "upgrade", bar: true, primary: true, when: here, do: func(m *Model) tea.Cmd {
+			if m.saidBusy() {
+				return nil
+			}
 			return m.plan(state.Action{Kind: state.ActionUpgrade, Cluster: m.cluster().Name})
 		}},
 	}
@@ -432,3 +443,16 @@ func (m *Model) scrollTo(i int) {
 
 // refresher is a backend that can read its data again on request.
 type refresher interface{ Refresh() }
+
+// saidBusy reports, in one line, that the selected cluster is changing, and
+// is true when it is: a change on it waits until that finishes, and a dry
+// run planned against a cluster that is moving would be stale. The backend
+// checks again at start, fresh, for changes made elsewhere.
+func (m *Model) saidBusy() bool {
+	c := m.cluster()
+	if c.Busy == "" {
+		return false
+	}
+	m.say(state.LevelWarn, "%s is busy: %s · changes wait until it finishes", c.Name, c.Busy)
+	return true
+}

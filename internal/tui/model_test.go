@@ -921,3 +921,33 @@ func TestNoRegionAnsweredSaysWhyNotEmpty(t *testing.T) {
 	h.contains("no region answered, but STS in us-east-1 accepts these credentials", "AWS: UnrecognizedClientException")
 	h.lacks("No EKS clusters in the regions swept.")
 }
+
+// busyFleet is a world whose only cluster is being upgraded from elsewhere.
+type busyFleet struct{ *sim.World }
+
+func (b busyFleet) State(ctx context.Context) (state.State, error) {
+	st, err := b.World.State(ctx)
+	st.Clusters = []state.Cluster{{Name: "prod-api", Region: "us-east-1", Version: "1.35", Latest: "1.36", Busy: "upgrading"}}
+	st.Rolls, st.Upgrades = nil, nil
+	return st, err
+}
+
+// A cluster that is changing (here, an upgrade the CLI started) says so on
+// p, a, and U instead of opening a dry run against a moving cluster.
+func TestChangeKeysOnABusyClusterSayWhy(t *testing.T) {
+	world := sim.New(sim.Options{Seed: 7})
+	h := &harness{t: t, w: world, m: New(t.Context(), busyFleet{world}, time.Millisecond)}
+	h.send(tea.WindowSizeMsg{Width: 120, Height: 36})
+	h.refresh()
+	h.contains("p a U wait until the change finishes")
+	for _, k := range []string{"p", "a", "U"} {
+		h.m.notice = ""
+		h.keys(k)
+		if h.m.confirm != nil || h.m.pick != nil {
+			t.Fatalf("%s opened a dialog on a busy cluster", k)
+		}
+		if !strings.Contains(h.m.notice, "prod-api is busy: upgrading · changes wait until it finishes") {
+			t.Fatalf("%s: notice = %q", k, h.m.notice)
+		}
+	}
+}
