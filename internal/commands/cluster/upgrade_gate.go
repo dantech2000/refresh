@@ -109,7 +109,7 @@ func (g *nodegroupHealthGate) check(ctx context.Context, nodegroup string) error
 		if err != nil {
 			return fmt.Errorf("checking PodDisruptionBudgets for nodegroup %s: %w (pass --skip-health-check to roll without this check)", nodegroup, err)
 		}
-		if blockers := drainBlockerNames(report); len(blockers) > 0 {
+		if blockers := report.Names(); len(blockers) > 0 {
 			if !g.force {
 				return fmt.Errorf("%d drain blocker(s) would stop draining nodegroup %s: %s; let the workloads recover, relax the PDBs, or narrow PDB selectors so each pod matches one PDB, or pass --force to evict anyway",
 					len(blockers), nodegroup, strings.Join(blockers, "; "))
@@ -141,20 +141,6 @@ func (g *nodegroupHealthGate) check(ctx context.Context, nodegroup string) error
 		}
 	}
 	return nil
-}
-
-// drainBlockerNames lists what in report would refuse an eviction: each PDB
-// that allows 0 disruptions, and each pod that more than one PDB selects (the
-// eviction API refuses it), as in the pre-flight PDB check.
-func drainBlockerNames(report health.DrainBlockerReport) []string {
-	names := make([]string, 0, len(report.Blockers)+len(report.MultiPDBPods))
-	for _, b := range report.Blockers {
-		names = append(names, "PDB "+b.Namespace+"/"+b.Name+" allows 0 disruptions")
-	}
-	for _, p := range report.MultiPDBPods {
-		names = append(names, fmt.Sprintf("pod %s/%s is covered by %d PDBs (%s)", p.Namespace, p.Name, len(p.PDBs), strings.Join(p.PDBs, ", ")))
-	}
-	return names
 }
 
 func (g *nodegroupHealthGate) warnf(format string, args ...any) {

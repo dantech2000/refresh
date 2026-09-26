@@ -274,7 +274,10 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	// Resolve the cluster's Kubernetes version once; it scopes "latest"
 	// resolution to versions this cluster can actually run, and backs the
 	// compatibility validation for pinned versions.
-	k8sVersion := s.clusterK8sVersion(ctx, clusterName)
+	k8sVersion := options.KubernetesVersion
+	if k8sVersion == "" {
+		k8sVersion = s.clusterK8sVersion(ctx, clusterName)
+	}
 
 	targetVersion := options.Version
 	resolvedLatest := strings.EqualFold(targetVersion, "latest") || targetVersion == ""

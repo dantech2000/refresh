@@ -60,6 +60,14 @@ type NodegroupRollOptions struct {
 // nodegroups are surfaced as manual actions, never mutated. A gate failure
 // halts the remaining nodegroups so the operator can intervene.
 func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVersion string, opts NodegroupRollOptions, progress ProgressFunc) error {
+	return s.rollNodegroupsTo(ctx, clusterName, targetVersion, opts,
+		func(version string) bool { return versionAtLeast(version, targetVersion) }, progress)
+}
+
+// rollNodegroupsTo rolls each managed nodegroup to targetVersion unless done
+// reports that its version already satisfies the phase: at or above the
+// target for an upgrade, at or below it for a rollback.
+func (s *Service) rollNodegroupsTo(ctx context.Context, clusterName, targetVersion string, opts NodegroupRollOptions, done func(version string) bool, progress ProgressFunc) error {
 	progress = ensureProgress(progress)
 
 	nodegroups, err := s.listNodegroupStates(ctx, clusterName)
@@ -74,7 +82,7 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 			continue
 		}
 		switch {
-		case versionAtLeast(ng.Version, targetVersion):
+		case done(ng.Version):
 			progress("nodegroup %s already at %s, skipping", ng.Name, ng.Version)
 			continue
 		case matchesAny(ng.Name, opts.SkipPatterns):
@@ -95,7 +103,7 @@ func (s *Service) UpgradeNodegroups(ctx context.Context, clusterName, targetVers
 			if err != nil {
 				return onItem(diag.KindNodegroup, ng.Name, diag.OpDescribeNodegroup, fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", ng.Name, err))
 			}
-			if versionAtLeast(version, targetVersion) {
+			if done(version) {
 				progress("nodegroup %s reached %s", ng.Name, version)
 				continue
 			}

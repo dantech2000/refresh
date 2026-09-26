@@ -8,6 +8,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
+	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -131,6 +132,10 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport, categ
 	}
 	if report.Support != nil {
 		out = append(out, th.Paint(pal.Dim, "support  ")+supportToken(th, report.Support))
+	}
+	if report.Rollback != nil {
+		out = append(out, th.Paint(pal.Dim, "rollback ")+th.Token(render.Neutral, rollbackText(report.Rollback))+
+			th.Paint(pal.Dim, "  refresh cluster rollback "+report.Cluster))
 	}
 	out = append(out,
 		"",
@@ -358,4 +363,25 @@ func insightCountChips(th *render.Theme, errc, warnc, passc, unknownc int) strin
 		parts = append(parts, th.Token(render.Healthy, fmt.Sprintf("%d passing", passc)))
 	}
 	return joinSpaced(parts)
+}
+
+// rollbackText says when a rollback is available, with the rollback
+// readiness insight counts when they were read.
+func rollbackText(a *upgrade.RollbackAvailability) string {
+	s := fmt.Sprintf("to %s available until about %s", a.PreviousVersion, a.AvailableUntil.UTC().Format("2006-01-02 15:04 MST"))
+	if c := a.Insights; c != nil {
+		var parts []string
+		for _, p := range []struct {
+			n    int
+			name string
+		}{{c.Error, "error"}, {c.Unknown, "unknown"}, {c.Warning, "warning"}, {c.Passing, "passing"}} {
+			if p.n > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", p.n, p.name))
+			}
+		}
+		if len(parts) > 0 {
+			s += " (rollback insights: " + strings.Join(parts, ", ") + ")"
+		}
+	}
+	return s
 }

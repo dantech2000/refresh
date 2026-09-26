@@ -105,10 +105,13 @@ if one of its pods runs on a node with the label
 in the cluster as one that "may block a drain". If the target nodegroups are
 scaled to 0, nothing is drained, so nothing blocks.
 
-In `nodegroup update` a drain blocker is a warning. In `cluster upgrade` a
-drain blocker stops the nodegroup roll before EKS is asked to roll anything.
-With `--force` it is only a warning, because `--force` tells EKS to evict
-through PDBs.
+The health check reports a drain blocker as a warning. Then `nodegroup
+update` and `cluster upgrade` run a drain gate on each nodegroup they would
+roll: a drain blocker stops the run before EKS is asked to roll anything
+(exit `3`). `nodegroup update --dry-run` shows the blockers and exits `3`
+too. With `--force` a blocker is only a warning, because `--force` tells EKS
+to evict through PDBs. Without Kubernetes access, or with
+`--skip-health-check`, the gate does not run.
 
 ## Scale-down PDB gate
 

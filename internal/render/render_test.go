@@ -268,3 +268,19 @@ func TestDetectLevelPerStream(t *testing.T) {
 		restore()
 	}
 }
+
+func TestMarkAndSectionMarkFallBackToASCII(t *testing.T) {
+	uni, ascii := New(ColorTrue, true), New(ColorTrue, false)
+	if got := uni.Mark(Fail); got != "✗" {
+		t.Errorf("Unicode Mark(Fail) = %q", got)
+	}
+	if got := ascii.Mark(Fail); got != "[X]" {
+		t.Errorf("ASCII Mark(Fail) = %q", got)
+	}
+	if uni.SectionMark() != "▸" || ascii.SectionMark() != ">" {
+		t.Errorf("SectionMark = %q / %q", uni.SectionMark(), ascii.SectionMark())
+	}
+	if strings.Contains(uni.Mark(Healthy), "\x1b") {
+		t.Error("Mark is styled; it must be plain text")
+	}
+}

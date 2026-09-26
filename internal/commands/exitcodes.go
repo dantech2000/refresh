@@ -21,18 +21,19 @@ var exitCodeHelp = map[string]string{
 	"cluster describe":      "0 ok; 1 error; 4 incomplete: some add-ons or nodegroups could not be read",
 	"cluster upgrade-check": "",
 	"cluster upgrade":       "0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run); 4 the planner could not read something",
+	"cluster rollback":      "0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, declined confirmation, interrupt, or timeout; 3 blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking rollback-readiness insight, or the upgrade policy (also with --dry-run); 4 the planner could not read something",
 
 	"nodegroup":          "",
 	"nodegroup list":     "0 ok; 1 error; 4 incomplete: a nodegroup could not be described",
 	"nodegroup describe": "0 ok; 1 error",
-	"nodegroup scale":    "0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs or the pre-scaling health check, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues",
+	"nodegroup scale":    "0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues",
 	"nodegroup update":   "",
 
 	"addon":            "",
 	"addon list":       "0 ok; 1 error; 4 incomplete: an add-on could not be described",
 	"addon describe":   "0 ok; 1 error",
-	"addon update":     "0 ok; 1 error, interrupt, or a failed single-add-on update; 4 with --all, an add-on update failed or was not attempted, or an add-on could not be read after its update; 5 updated, but the post-update health check found issues",
-	"addon update-all": "0 ok; 1 error or interrupt; 4 an add-on update failed, was not attempted, or could not be read after its update; 5 updated, but a post-update health check found issues",
+	"addon update":     "0 ok; 1 error, interrupt, or a failed single-add-on update; 3 EKS is already changing the cluster, nothing changed; 4 with --all, an add-on update failed or was not attempted, or an add-on could not be read after its update; 5 updated, but the post-update health check found issues",
+	"addon update-all": "0 ok; 1 error or interrupt; 3 EKS is already changing the cluster, nothing changed; 4 an add-on update failed, was not attempted, or could not be read after its update; 5 updated, but a post-update health check found issues",
 
 	"use":            "0 ok; 1 error",
 	"current":        "0 ok; 1 error",
@@ -45,6 +46,7 @@ var exitCodeHelp = map[string]string{
 	"install-man": "0 ok; 1 error",
 	"completion":  "0 ok; 1 error",
 	"gen-docs":    "0 ok; 1 error",
+	"ui":          "0 ok; 1 error, no interactive terminal, or no AWS credentials",
 }
 
 // DocumentExitCodes appends each command's exit codes and a link to the

@@ -12,6 +12,7 @@ func Documents() []apidoc.Document {
 	return []apidoc.Document{
 		nodegroupsvc.NodegroupList{},
 		nodegroupsvc.NodegroupDetails{},
+		scaleDocument{},
 		updateDocument{},
 		dryRunPlan{},
 		fleetUpdateDocument{},

@@ -22,6 +22,16 @@ import (
 // watches instead of failing. On context cancellation (Ctrl+C) it returns
 // ctx.Err() — the upgrade keeps running server-side and a rerun re-attaches.
 func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVersion string, progress ProgressFunc) error {
+	return s.moveControlPlane(ctx, clusterName, targetVersion, "upgrade",
+		func(version string) bool { return versionAtLeast(version, targetVersion) }, nil, progress)
+}
+
+// moveControlPlane starts an UpdateClusterVersion to targetVersion unless
+// done reports that the live version already satisfies it, waits for the
+// update, and checks the settled version with done. what names the change
+// in messages ("upgrade", "rollback"). prepare, when set, adds fields to the
+// request (a rollback's Force and RollbackConfig).
+func (s *Service) moveControlPlane(ctx context.Context, clusterName, targetVersion, what string, done func(version string) bool, prepare func(*eks.UpdateClusterVersionInput), progress ProgressFunc) error {
 	progress = ensureProgress(progress)
 	onCluster := func(op string, err error) error { return onItem(diag.KindCluster, clusterName, op, err) }
 
@@ -30,7 +40,7 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 		return onCluster(diag.OpDescribeCluster, err)
 	}
 
-	if versionAtLeast(aws.ToString(cluster.Version), targetVersion) {
+	if done(aws.ToString(cluster.Version)) {
 		progress("control plane already at %s, skipping", aws.ToString(cluster.Version))
 		return nil
 	}
@@ -43,7 +53,7 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 		if err != nil {
 			return onCluster(diag.OpDescribeCluster, err)
 		}
-		if versionAtLeast(aws.ToString(cluster.Version), targetVersion) {
+		if done(aws.ToString(cluster.Version)) {
 			progress("control plane reached %s", aws.ToString(cluster.Version))
 			return nil
 		}
@@ -58,24 +68,27 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 		// instead of submitting a fresh update per attempt.
 		ClientRequestToken: aws.String(common.IdempotencyToken()),
 	}
+	if prepare != nil {
+		prepare(input)
+	}
 	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.UpdateClusterVersionOutput, error) {
 		return s.eksClient.UpdateClusterVersion(rc, input)
 	})
 	if err != nil {
-		return onCluster(diag.OpUpdateClusterVersion, awsinternal.FormatAWSError(err, fmt.Sprintf("upgrading control plane of %s to %s", clusterName, targetVersion)))
+		return onCluster(diag.OpUpdateClusterVersion, awsinternal.FormatAWSError(err, fmt.Sprintf("starting the control-plane %s of %s to %s", what, clusterName, targetVersion)))
 	}
 
 	updateID := ""
 	if out.Update != nil {
 		updateID = aws.ToString(out.Update.Id)
 	}
-	progress("control plane upgrade to %s started (update %s); this typically takes ~10 minutes", targetVersion, updateID)
+	progress("control plane %s to %s started (update %s); this typically takes ~10 minutes", what, targetVersion, updateID)
 
 	if updateID != "" {
 		if err := s.waitForUpdate(ctx, &eks.DescribeUpdateInput{
 			Name:     aws.String(clusterName),
 			UpdateId: aws.String(updateID),
-		}, fmt.Sprintf("control plane upgrade to %s", targetVersion), progress); err != nil {
+		}, fmt.Sprintf("control plane %s to %s", what, targetVersion), progress); err != nil {
 			return &itemError{kind: diag.KindCluster, name: clusterName, updateID: updateID, err: diag.WithOperation(diag.OpDescribeUpdate, err)}
 		}
 	}
@@ -86,8 +99,8 @@ func (s *Service) UpgradeControlPlane(ctx context.Context, clusterName, targetVe
 	if err != nil {
 		return onCluster(diag.OpDescribeCluster, err)
 	}
-	if !versionAtLeast(aws.ToString(cluster.Version), targetVersion) {
-		return onCluster("", fmt.Errorf("control plane reports version %s after the upgrade to %s finished", aws.ToString(cluster.Version), targetVersion))
+	if !done(aws.ToString(cluster.Version)) {
+		return onCluster("", fmt.Errorf("control plane reports version %s after the %s to %s finished", aws.ToString(cluster.Version), what, targetVersion))
 	}
 	progress("control plane is ACTIVE at %s", aws.ToString(cluster.Version))
 	return nil

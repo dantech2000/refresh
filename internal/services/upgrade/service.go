@@ -26,6 +26,7 @@ type EKSAPI interface {
 	DescribeCluster(ctx context.Context, params *eks.DescribeClusterInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterOutput, error)
 	UpdateClusterVersion(ctx context.Context, params *eks.UpdateClusterVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateClusterVersionOutput, error)
 	DescribeUpdate(ctx context.Context, params *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error)
+	ListUpdates(ctx context.Context, params *eks.ListUpdatesInput, optFns ...func(*eks.Options)) (*eks.ListUpdatesOutput, error)
 	DescribeClusterVersions(ctx context.Context, params *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error)
 	ListInsights(ctx context.Context, params *eks.ListInsightsInput, optFns ...func(*eks.Options)) (*eks.ListInsightsOutput, error)
 	StartInsightsRefresh(ctx context.Context, params *eks.StartInsightsRefreshInput, optFns ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error)
@@ -59,6 +60,9 @@ type Service struct {
 	// cluster and control-plane version (see refreshInsights).
 	refreshMu   sync.Mutex
 	refreshedAt map[string]time.Time
+
+	// now is the clock for the rollback window; nil means time.Now.
+	now func() time.Time
 }
 
 // NewService creates the upgrade orchestrator service.

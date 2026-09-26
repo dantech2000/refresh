@@ -36,6 +36,7 @@ task deadcode       # fail on code unreachable even from tests (pinned)
 task tidy:check     # go mod tidy -diff
 task docs:check     # regenerate docs/reference and docs/schema, fail if either changed
 task fuzz           # run every FuzzXxx target for FUZZTIME (default 30s); failing inputs land in testdata/fuzz/
+task test:live      # read-only checks against a real account (AWS_PROFILE): AMI SSM paths, support calendar, add-on versions, offerings, schemas
 task dev:full       # fmt, vet, lint, tidy:check, deadcode, vuln, docs:check, test:race, build (run before pushing)
 ```
 
@@ -45,6 +46,14 @@ job, `golangci-lint` (includes govet and gofmt), `govulncheck`, and
 `deadcode`. A push to main runs only the coverage job (Codecov's base). A
 nightly workflow runs `-race -count=20`, every fuzz target for 60s, and
 `govulncheck` on main.
+
+`task test:live` (`-tags livecheck`, never in CI) checks the data refresh
+depends on against a real account, with read-only calls that cost nothing: the
+latest-AMI SSM path of every AMI type for every EKS version, the
+`fallbackCalendar` dates against `DescribeClusterVersions`, add-on version
+ordering, instance offerings, and the published schemas against real
+`-o json|yaml` output. Run it with a `ReadOnlyAccess` identity. It fails when
+AWS adds an AMI type refresh has no SSM spec for, or the calendar goes stale.
 
 **Toolchain pinning.** The Taskfile sets `GOTOOLCHAIN` to the `toolchain`
 line in `go.mod`, which is the Go that CI uses. A newer local Go formats
@@ -150,6 +159,12 @@ Classify errors with `errors.As`, never by matching strings.
   `--no-color`, any non-empty `NO_COLOR`, and `TERM=dumb` disable both.
 - Prompts use `ui.ReadLine` / `ui.Confirm` (one shared, ctx-cancellable stdin
   reader).
+- A top-level error prints through `render.Theme.ErrorLines` (in `main`),
+  which styles lines by role and wraps to the terminal width. Multi-line help
+  text uses its layout: a headline without a trailing period, a `Cause: …` or
+  `AWS: …` line (use `awserr.Summary`, not the raw SDK chain), then a heading
+  ending in `:` and rows indented two spaces whose second column starts after
+  two spaces. A row whose first column the cause names is marked.
 
 **Output / rendering** (`internal/render`): the human-facing design system —
 palette (Catppuccin, truecolor with 256/none downgrade + capability detection),
@@ -178,6 +193,77 @@ lifecycle event feed. Testable with **zero AWS / zero cluster** via
 (`DemoTimeline`). `refresh nodegroup update --simulate` (hidden flag) drives the
 whole live panel from the scripted observer — demos, asciinema, and manual QA
 with no AWS.
+
+**Experimental TUI** (branch `experiment/tui`): `refresh ui` is a hidden
+Bubble Tea app (`internal/tui`) that draws a `state.State` from a
+`state.Backend` (`internal/tui/state`) and never calls AWS itself; every
+backend call runs in a `tea.Cmd`. Two backends: `internal/tui/live` (the
+default) sweeps the fleet in the background with the status service
+(`status.ListOptions.Detail` keeps the per-nodegroup and add-on rows), runs
+`cluster upgrade-check` for readiness, and dry-runs changes with the real
+planners. It is read-only unless `refresh ui --allow-changes`: then `Start`
+can begin a nodegroup roll, an add-on update, or a cluster upgrade. An
+add-on update's dry run is the service's own preview (`UpdateAll` dry run,
+dependency order); `Start` previews again, refuses if the plan changed, and
+updates each add-on pinned to the previewed version with `--health-check
+--wait` semantics. The roll re-runs the
+`nodegroup update` health gate, pins to the nodegroup's own version through
+`StartNodegroupRoll`, runs `nodegroup update`'s PDB drain gate in the dry
+run and again at `Start` (a blocker or unreadable PDBs block; the TUI has no
+`--force`), refuses when the nodegroup's version changed since the dry run,
+claims the cluster (one change per cluster), and is
+watched through the EKS update (quiet `monitoring.MonitorUpdates`, the
+authority) and the `noderoll` observer when a kubeconfig context matches
+(resolved with `health.ConnectKubeClientForCluster` directly, never
+`runner.ResolveClusterKubeClient`, which writes to stderr). `Start` needs the
+roll's dry run first, runs `nodegroup update`'s decision table
+(`AMIUpdateDecider`) on the live nodegroup and pins its live version, and
+refuses when the re-run health gate finds anything the dry run did not show
+(a check that ran in the dry run and is skipped now counts). The EKS update
+status decides the result (a Failed update is failed even though the monitor
+also errors). While the TUI runs, `runLive` discards klog
+(`klog.SetLogger(logr.Discard())`) and points `os.Stdin`/`os.Stderr` at
+/dev/null (`detachStdio`): client-go's exec authenticator captures them for
+kubeconfig exec plugins. The TUI keeps the real terminal.
+The TUI roll runs the same pre-flight and post-roll steps as the CLI:
+metrics-server drain headroom in the health gate, the instance-type
+availability warning in the dry run, and `nodegroup.VerifyPostRoll` (shared
+with the command; issues fail the roll's result like exit 5). A cluster
+upgrade (`live/upgrade.go`) runs the `cluster upgrade` engine
+(`upgrade.Service.BuildPlan` + `Execute`): `Start` needs the upgrade's dry
+run, `BuildPlan` refreshes insights, and the run asks (y/n in the TUI,
+`Backend.Answer`) when the steps changed since the dry run or a nodegroup's
+health gate warns (a WARN decision; skipped checks alone never ask). Before
+each nodegroup roll the gate also runs `cluster upgrade`'s PDB drain-blocker
+check (`health.DrainBlockerReport.Names`), which stops the run. Pause and
+stop act between phases through the engine's `Confirm` hook; only
+`ErrAborted` and the gate's stop mean stopped, so a failure after a stop
+request is still a failure. The run is bounded by
+`config.DefaultUpgradeTimeout`, as `cluster upgrade` is. An add-on dry run
+that could not preview every add-on is blocked, as `addon update --all`
+fails closed. A cluster rollback (`live/rollback.go`) runs `cluster
+rollback`'s planner and engine (`BuildRollbackPlan` + `ExecuteRollback`) on
+the Upgrade screen with the same dry run, questions, pause, stop, and
+pre-roll gate; `B` offers it only after a readiness run found a rollback
+window (`UpgradeReport.Rollback`), and the simulator refuses it. Without the flag `Start`, `StopAfterCurrent`, `TogglePause`,
+and `Answer` return `live.ErrReadOnly` and plans name the CLI command. Changes started elsewhere (the CLI, the console)
+are adopted by the sweep (`live/observed.go`): an `UPDATING` nodegroup gets a
+watched roll (the EKS update found with `ListUpdates`, the node view, the
+post-roll nodegroup check) and an `UPDATING` cluster a watched control-plane
+phase; both are `StartedElsewhere`, claim nothing, and refuse stop, pause,
+and answer. Before any start the backend re-reads the cluster, nodegroup,
+and add-on statuses and refuses while one is changing (`checkNotBusy`).
+`State` never calls AWS, so the TUI's fast
+polling is free. `internal/sim` is a deterministic simulated fleet on a
+virtual clock (rolls, add-on updates, readiness checks, upgrades; node
+lifecycle events come from the real `noderoll.Tracker`). The simulator is dev-only:
+`REFRESH_DEV_SIMULATE=1 refresh ui` (or `task run:tui:sim`) turns it on, with
+`REFRESH_DEV_SIM_SPEED` and `REFRESH_DEV_SIM_SEED`; there is no flag and no
+user doc. Without the switch `refresh ui` runs the live backend (`-r`, `-A`,
+`--interval`). TUI glyphs come from
+`render.Theme.Mark`, so the render guard test and the ASCII fallback hold.
+Tests step the world with `sim.World.Advance` and assert every screen fills
+the terminal exactly (`internal/tui/model_test.go`).
 
 ## Conventions (follow these when editing)
 
@@ -240,7 +326,7 @@ with no AWS.
   release as a hidden alias (`flagcanon.DeprecatedDuration` / `DeprecatedSwitch`), which warns
   on stderr.
 - **Mutating commands** (`addon update`, `nodegroup scale`, `nodegroup update`, `cluster
-  upgrade`) share `runner.DryRunFlag` (`-d`), `runner.YesFlag` (`-y`), `--wait-timeout`
+  upgrade`, `cluster rollback`) share `runner.DryRunFlag` (`-d`), `runner.YesFlag` (`-y`), `--wait-timeout`
   (`runner.WaitTimeoutFlag`, read with `runner.WaitTimeout`), and `--kubeconfig`/`--kube-context`
   where a kube client is used. Call `runner.RequireYesUnattended(cmd)` before any AWS call
   (fails for `-o json/yaml` or no TTY without `--yes`), and ask with

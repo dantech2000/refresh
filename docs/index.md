@@ -22,7 +22,7 @@ It turns "I think we're behind on patches" into a safe, repeatable loop:
 
 - :material-layers-triple: **Upgrade** — *orchestrate the whole thing*
 
-    `refresh cluster upgrade` sequences control plane → add-ons → nodegroups,
+    `refresh cluster upgrade` sequences control plane → nodegroups → add-ons,
     with a health gate after every phase.
 
 </div>

@@ -33,8 +33,11 @@ const (
 	KindInsightDescription   Kind = "InsightDescription"
 	KindUpgradePlan          Kind = "UpgradePlan"
 	KindUpgradeRun           Kind = "UpgradeRun"
+	KindRollbackPlan         Kind = "RollbackPlan"
+	KindRollbackRun          Kind = "RollbackRun"
 	KindNodegroupList        Kind = "NodegroupList"
 	KindNodegroupDescription Kind = "NodegroupDescription"
+	KindNodegroupScale       Kind = "NodegroupScale"
 	KindNodegroupUpdate      Kind = "NodegroupUpdate"
 	KindNodegroupUpdatePlan  Kind = "NodegroupUpdatePlan"
 	KindFleetUpdate          Kind = "FleetUpdate"
@@ -55,8 +58,11 @@ var commands = map[Kind]string{
 	KindInsightDescription:   "cluster upgrade-check --id",
 	KindUpgradePlan:          "cluster upgrade --dry-run",
 	KindUpgradeRun:           "cluster upgrade --yes",
+	KindRollbackPlan:         "cluster rollback --dry-run",
+	KindRollbackRun:          "cluster rollback --yes",
 	KindNodegroupList:        "nodegroup list",
 	KindNodegroupDescription: "nodegroup describe",
+	KindNodegroupScale:       "nodegroup scale",
 	KindNodegroupUpdate:      "nodegroup update",
 	KindNodegroupUpdatePlan:  "nodegroup update --dry-run",
 	KindFleetUpdate:          "nodegroup update --all-clusters",
@@ -82,8 +88,11 @@ func Kinds() []Kind {
 		KindInsightDescription,
 		KindUpgradePlan,
 		KindUpgradeRun,
+		KindRollbackPlan,
+		KindRollbackRun,
 		KindNodegroupList,
 		KindNodegroupDescription,
+		KindNodegroupScale,
 		KindNodegroupUpdate,
 		KindNodegroupUpdatePlan,
 		KindFleetUpdate,

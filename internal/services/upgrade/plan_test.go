@@ -82,13 +82,15 @@ func TestBuildPlan_TwoMinorsBehindYieldsTwoHops(t *testing.T) {
 	}
 
 	// Every hop shows the full gated sequence: readiness → control plane →
-	// addons → nodegroups, in that order.
+	// nodegroups → addons, in that order. The installed vpc-cni build stays
+	// in the catalogue, so the new control plane can run it and its update
+	// waits for the rolls.
 	for _, hop := range plan.Hops {
 		var order []StepType
 		for _, s := range hop.Steps {
 			order = append(order, s.Type)
 		}
-		want := []StepType{StepReadiness, StepControlPlane, StepAddon, StepNodegroup}
+		want := []StepType{StepReadiness, StepControlPlane, StepNodegroup, StepAddon}
 		if len(order) != len(want) {
 			t.Fatalf("hop %s→%s steps = %v, want %v", hop.From, hop.To, order, want)
 		}

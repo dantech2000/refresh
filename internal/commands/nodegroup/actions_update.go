@@ -173,6 +173,18 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 	eksClient := factory.NewEKSClient(awsCfg)
 
+	// EKS refuses a second update while one runs, but only after the prompts:
+	// say so first. A dry run or --health-only changes nothing, so it goes on.
+	if !flags.dryRun && !flags.healthOnly {
+		busy, err := updateBusyChanges(ctx, eksClient, clusterName, nodegroupPattern)
+		switch {
+		case err != nil:
+			return runner.BusyUnknownExit(ctx, clusterName, err)
+		case len(busy) > 0:
+			return runner.BusyExit(clusterName, busy)
+		}
+	}
+
 	summary, done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, nodegroupPattern, flags)
 	if err != nil || done {
 		return finishAtHealthGate(newUpdateRun(clusterName, awsCfg.Region), summary, flags, err)
@@ -234,9 +246,12 @@ func finishAtHealthGate(run updateRun, summary *health.HealthSummary, flags upda
 
 // runUpdateDryRun previews the selected nodegroups: the plan document with
 // -o json/yaml, else the human preview. A nodegroup the preview could not
-// describe is a failure (exit 4).
+// describe is a failure (exit 4). The preview runs the PDB drain gate too,
+// and exits 3 where the real run would refuse.
 func runUpdateDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selected []string, flags updateAMIFlags) error {
 	var fs []diag.Failure
+	var toRoll []string
+	var blockers drainBlockers
 	if flags.machine() {
 		plan, err := dryRunDocument(ctx, awsCfg, eksClient, clusterName, selected, flags)
 		if err != nil {
@@ -246,18 +261,39 @@ func runUpdateDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clie
 			return err
 		}
 		fs = plan.Failures
+		toRoll, blockers = plan.drainBlockers()
 	} else {
-		unreadable, err := dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selected, flags.dryRunOptions())
+		result, err := dryrun.PerformDryRun(ctx, awsCfg, eksClient, clusterName, selected, flags.dryRunOptions())
 		if err != nil {
 			return err
+		}
+		toRoll = dryRunToRoll(result.UpdatesNeeded)
+		var checked bool
+		blockers, checked = drainGate(ctx, awsCfg, eksClient, clusterName, toRoll, flags, !flags.quiet)
+		if checked {
+			printDrainGate(os.Stdout, toRoll, blockers, flags.force)
 		}
 		if !flags.quiet {
 			printChangelogsForNodegroups(ctx, awsCfg, eksClient, clusterName, selected, flags.changelog)
 		}
-		fs = dryRunFailures(clusterName, awsCfg.Region, unreadable)
+		fs = dryRunFailures(clusterName, awsCfg.Region, result.Unreadable)
 	}
 	runner.WriteFailures(flags.format, os.Stdout, ui.Stderr, fs)
+	if len(blockers) > 0 && !flags.force {
+		return runner.UnlessInterrupted(ctx, drainBlockedExit(clusterName, toRoll, blockers))
+	}
 	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(fs))
+}
+
+// dryRunToRoll names the nodegroups a preview would roll.
+func dryRunToRoll(updates []dryrun.NodegroupUpdate) []string {
+	var out []string
+	for _, u := range updates {
+		if u.Action == refreshTypes.ActionUpdate || u.Action == refreshTypes.ActionForceUpdate {
+			out = append(out, u.Name)
+		}
+	}
+	return out
 }
 
 // printRunSummary prints the human end of a single-cluster run: nothing
@@ -289,7 +325,11 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		preroll, prerollOK = snapshotPendingPods(ctx, verifyClient)
 	}
 
-	updates, run := startNodegroupUpdates(ctx, awsCfg, clusterName, region, selected, flags)
+	gate := func(toRoll []string) drainBlockers {
+		blockers, _ := drainGate(ctx, awsCfg, eksClient, clusterName, toRoll, flags, false)
+		return blockers
+	}
+	updates, run := startNodegroupUpdates(ctx, awsCfg, clusterName, region, selected, flags, gate)
 	if len(updates) == 0 || flags.noWait {
 		return run, false, nil
 	}
@@ -401,7 +441,7 @@ func printVerification(v PostRollVerification) {
 }
 
 // updateExit maps a single-cluster update run to the exit-code contract, in
-// this order: exit 1 for an interrupt, a monitoring timeout, or a started
+// this order: exit 3 when the PDB drain gate refused the run; exit 1 for an interrupt, a monitoring timeout, or a started
 // update that ended Failed or Cancelled or could not be monitored; exit 4
 // for the other failures (a nodegroup that could not be read, an update that
 // could not start); exit 5 when post-roll verification found issues. The
@@ -410,6 +450,10 @@ func printVerification(v PostRollVerification) {
 func updateExit(run updateRun, fs []diag.Failure, monErr error, verifyFailed bool) error {
 	check := fmt.Sprintf("check with 'refresh nodegroup list %s'", run.cluster)
 	switch {
+	case run.drainBlocked():
+		// Nothing started: the refusal is the result, also when a
+		// nodegroup could not be read (its failure is on stderr).
+		return run.drainBlockedExit()
 	case errors.Is(monErr, monitoring.ErrCancelled):
 		return fmt.Errorf("%w; %s", monErr, check)
 	case errors.Is(monErr, monitoring.ErrMonitorTimeout):
@@ -692,6 +736,9 @@ type dryRunNodegroup struct {
 	// Failure is set when the action is unknown. The same failure is in the
 	// document's failures.
 	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
+	// DrainBlockers names what would stop EKS draining a nodegroup the run
+	// would roll. Without --force the real run refuses (exit 3).
+	DrainBlockers []string `json:"drainBlockers,omitempty" yaml:"drainBlockers,omitempty"`
 }
 
 // dryRunPlan is the -o json/yaml document for `nodegroup update --dry-run`.
@@ -706,6 +753,29 @@ type dryRunPlan struct {
 
 // DocumentKind is NodegroupUpdatePlan.
 func (dryRunPlan) DocumentKind() apidoc.Kind { return apidoc.KindNodegroupUpdatePlan }
+
+// drainBlockers returns the nodegroups the plan would roll and their drain
+// blockers.
+func (p dryRunPlan) drainBlockers() ([]string, drainBlockers) {
+	var toRoll []string
+	blockers := drainBlockers{}
+	for _, ng := range p.Nodegroups {
+		if ng.Action != dryrun.ActionUpdate && ng.Action != dryrun.ActionForceUpdate {
+			continue
+		}
+		toRoll = append(toRoll, ng.Name)
+		if len(ng.DrainBlockers) > 0 {
+			blockers[ng.Name] = ng.DrainBlockers
+		}
+	}
+	return toRoll, blockers
+}
+
+// drainBlocked reports whether the real run would refuse the plan.
+func (p dryRunPlan) drainBlocked() bool {
+	_, blockers := p.drainBlockers()
+	return len(blockers) > 0 && !p.Force
+}
 
 // dryRunFailure is the failure of a nodegroup the preview could not
 // describe.
@@ -756,6 +826,10 @@ func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		plan.Nodegroups = append(plan.Nodegroups, ng)
 	}
 	plan.Failures = dryRunFailures(clusterName, awsCfg.Region, unreadable)
+	blockers, _ := drainGate(ctx, awsCfg, eksClient, clusterName, dryRunToRoll(updates), flags, !flags.quiet)
+	for i := range plan.Nodegroups {
+		plan.Nodegroups[i].DrainBlockers = blockers[plan.Nodegroups[i].Name]
+	}
 	return plan, nil
 }
 
@@ -768,8 +842,11 @@ func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 //
 // Each nodegroup's action comes from nodegroupsvc.DecideAMIUpdate, the table
 // the dry-run preview uses too, so the real run does what `--dry-run`
-// promised.
-func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, region string, nodegroups []string, flags updateAMIFlags) ([]refreshTypes.UpdateProgress, updateRun) {
+// promised. Every nodegroup is decided before any update starts, so gate
+// sees the whole roll: when it returns blockers (and --force is not set),
+// nothing starts and the nodegroups to roll are DrainBlocked. A nil gate
+// passes.
+func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, region string, nodegroups []string, flags updateAMIFlags, gate func(toRoll []string) drainBlockers) ([]refreshTypes.UpdateProgress, updateRun) {
 	// Progress lines are human-only. Skip notices always print: to stderr
 	// with -o json/yaml (see noticeOut).
 	human := !flags.quiet && !flags.machine()
@@ -778,6 +855,11 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 	decide := ngSvc.AMIUpdateDecider(clusterName, nodegroupsvc.AMIUpdateOptions{Force: flags.force, Reroll: flags.reroll})
 	run := newUpdateRun(clusterName, region)
 	updates := make([]refreshTypes.UpdateProgress, 0, len(nodegroups))
+
+	// Decide. A nodegroup to roll holds its place in run.nodegroups (in
+	// selection order) until the start below fills it in.
+	var toRoll []string
+	slot := map[string]int{}
 	for _, ng := range nodegroups {
 		if ctx.Err() != nil {
 			run.notAttempted(ctx, ng)
@@ -806,6 +888,28 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 			run.skip(ng, skipAlreadyLatest)
 			continue
 		}
+		slot[ng] = len(run.nodegroups)
+		run.nodegroups = append(run.nodegroups, nodegroupResult{Name: ng})
+		toRoll = append(toRoll, ng)
+	}
+
+	if gate != nil && ctx.Err() == nil {
+		if blockers := gate(toRoll); len(blockers) > 0 && !flags.force {
+			for _, ng := range toRoll {
+				run.nodegroups[slot[ng]] = nodegroupResult{Name: ng, Status: ngDrainBlocked, DrainBlockers: blockers[ng]}
+			}
+			run.drainBlockers = blockers
+			return updates, run
+		}
+	}
+
+	// Start.
+	for _, ng := range toRoll {
+		i := slot[ng]
+		if ctx.Err() != nil {
+			run.nodegroups[i] = run.notAttemptedResult(ctx, ng)
+			continue
+		}
 		if human {
 			render.Notef(os.Stdout, render.Progress, "Starting update for nodegroup %s...", ng)
 		}
@@ -816,11 +920,11 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 		// keeps it from rolling the nodegroup again.
 		update, err := ngSvc.StartVersionUpdate(ctx, clusterName, ng, nodegroupsvc.VersionUpdateOptions{Force: flags.force})
 		if err != nil {
-			run.fail(ng, diag.OpUpdateNodegroupVersion, err)
+			run.nodegroups[i] = run.failed(ng, diag.OpUpdateNodegroupVersion, err)
 			continue
 		}
 		if update == nil || update.Id == nil {
-			run.fail(ng, diag.OpUpdateNodegroupVersion, errors.New("UpdateNodegroupVersion returned no update ID"))
+			run.nodegroups[i] = run.failed(ng, diag.OpUpdateNodegroupVersion, errors.New("UpdateNodegroupVersion returned no update ID"))
 			continue
 		}
 
@@ -833,7 +937,7 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 			StartTime:     now,
 			LastChecked:   now,
 		})
-		run.nodegroups = append(run.nodegroups, nodegroupResult{Name: ng, Status: ngStarted, UpdateID: *update.Id})
+		run.nodegroups[i] = nodegroupResult{Name: ng, Status: ngStarted, UpdateID: *update.Id}
 		if human {
 			render.Notef(os.Stdout, render.Healthy, "Update started for nodegroup %s (ID: %s)", ng, *update.Id)
 		}

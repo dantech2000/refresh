@@ -106,7 +106,7 @@ type RegionsClosedError struct {
 
 func (e *RegionsClosedError) Error() string {
 	return fmt.Sprintf("no region answered, but STS in %s accepts these credentials\n"+
-		"  first error: %s\n"+
+		"AWS: %s\n"+
 		"A region refuses valid credentials when the account has not enabled it (an opt-in region) or a policy such as an SCP blocks it.\n"+
 		"Enable the region in the account settings, or choose other regions (%s).",
 		e.STSRegion, strings.TrimSuffix(awserr.Summary(e.Err), "."), RegionScopeHint)

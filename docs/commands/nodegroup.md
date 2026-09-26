@@ -190,6 +190,7 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint |
 | `--dry-run, -d` | Preview the scaling impact without executing. Never prompts |
 | `--yes, -y` | Scale without the confirmation prompt (required without a terminal) |
+| `--format, -o` | `table` (default), `json`, or `yaml`: one document on stdout (see below), with notices on stderr. `json` and `yaml` need `--yes` or `--dry-run` |
 | `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`). With `--wait`, `--wait-timeout` is added on top |
 
 !!! warning "Confirmation (new in 0.11)"
@@ -216,6 +217,12 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     check, and the command exits `4`. See
     [Scale-down PDB gate](../concepts/health-checks.md#scale-down-pdb-gate).
 
+!!! note "Busy clusters"
+    EKS runs one update at a time on a cluster. Before the prompt, `scale`
+    reads what EKS is changing (the control plane, each nodegroup, each
+    add-on). If something is changing, it exits `3` and names it. Nothing
+    changed. `--dry-run` does not check.
+
 With `--wait`, `refresh` follows the EKS update that the scaling request
 starts. If the update fails or is cancelled, the command exits non-zero with
 the update's error details. When the update succeeds, `refresh` reads the
@@ -223,6 +230,48 @@ nodegroup and fails if a requested size (`--desired`, `--min`, `--max`) does
 not match. With `--desired`, it also waits for the nodegroup to be `ACTIVE`.
 Throttling and network errors during the wait are retried. A permanent error,
 such as a missing `eks:DescribeUpdate` permission, stops the wait at once.
+
+With `-o json` or `-o yaml`, `scale` prints one `NodegroupScale` document:
+
+```json
+{
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "NodegroupScale",
+  "cluster": "prod",
+  "nodegroup": "ng-default",
+  "region": "us-east-1",
+  "outcome": "Completed",
+  "dryRun": false,
+  "before": {"desired": 3, "min": 1, "max": 5},
+  "after": {"desired": 2, "min": 1, "max": 5},
+  "waited": true,
+  "nodegroupStatus": "ACTIVE",
+  "pdbGate": {"result": "Passed", "blockers": [], "scoped": true},
+  "failures": []
+}
+```
+
+`after` is `before` with the requested sizes. `nodegroupStatus` is the EKS
+status after a `--wait`. `pdbGate` is there with `--check-pdbs`.
+
+| `outcome` | Meaning | Exit |
+|---|---|---|
+| `Planned` | `--dry-run`: nothing changed | `0`, or the code the real run would give |
+| `Requested` | EKS accepted the request; the run did not wait (no `--wait`) | `0` |
+| `Completed` | With `--wait`, the nodegroup settled at the requested sizes | `0` |
+| `Blocked` | `--check-pdbs` or the pre-scaling health check refused the scale; nothing changed | `3` |
+| `CompletedWithIssues` | The scale was applied, but the post-scaling health check found blocking issues | `5` |
+
+| `pdbGate.result` | Meaning |
+|---|---|
+| `NotScaleDown` | The desired size does not go down, so there was nothing to check |
+| `Passed` | No PDB blocks the scale-down |
+| `Refused` | PDBs in `blockers` refuse the scale-down |
+| `Overridden` | PDBs in `blockers` would refuse it, and `--force` scales anyway |
+| `Unchecked` | The PDBs could not be read, and `--force` scaled without the check (see `failures`, exit `4`) |
+
+A run that fails with exit `1` (an AWS error, a failed wait, or a
+`--check-pdbs` gate that fails closed) prints no document.
 
 ### Examples
 
@@ -265,6 +314,35 @@ confirmation for a name that is not exact, are in
 Before the roll, `refresh` runs the
 [pre-flight health checks](../concepts/health-checks.md), scoped to the
 nodegroups that match. `--quiet` does not skip them.
+
+!!! warning "PDB drain gate (breaking change)"
+    A PodDisruptionBudget that allows 0 disruptions, or a pod that more than
+    one PDB selects, stops EKS draining a node, so the roll stalls after EKS
+    has started it. `update` now checks each nodegroup it would roll after
+    the health checks and refuses the run (exit `3`, nothing started) when it
+    finds such a blocker. Before, it only warned. The error names each
+    blocker. To go on, let the workloads recover, relax the PDB (or narrow
+    its selector so each pod matches one PDB), or pass `--force`, which rolls
+    anyway with a warning on stderr. `--dry-run` shows the blockers and exits
+    `3` where the real run would refuse. PDBs that cannot be read (for
+    example, no RBAC access to them) count as a blocker: the run refuses,
+    and `--force` rolls anyway with a warning. The gate needs Kubernetes
+    access: without it, the gate is skipped with the usual notice.
+    `--skip-health-check` skips it too. In fleet mode each cluster is gated on its own, and a
+    refused cluster has the status `DrainBlocked`.
+
+!!! note "Busy clusters"
+    EKS runs one update at a time on a cluster. Before the health checks and
+    any prompt, `update` reads what EKS is changing: the control plane, each
+    nodegroup, and each add-on. If something is changing, the run exits `3`
+    and names it, for example `prod is busy (add-on vpc-cni UPDATING);
+    nothing was started`. A selected nodegroup that is already `UPDATING`
+    does not count: the run skips it (`AlreadyUpdating`). If refresh cannot
+    read one of them, it cannot tell whether EKS is changing it, so the run
+    also exits `3`, and the error names the call that failed. `--dry-run` and
+    `--health-only` do not check. In fleet mode, a busy cluster is skipped
+    with the status `Busy`, a cluster that cannot be read fails, and the rest
+    of the fleet goes on.
 
 !!! note "Custom-AMI nodegroups are skipped"
     Nodegroups whose AMI is managed via a launch template (`AmiType=CUSTOM`)
@@ -321,7 +399,7 @@ nothing was gathered.
 | `--region, -r` | Region(s) for `--all-clusters` discovery (default: partition EKS regions / `REFRESH_EKS_REGIONS`) |
 | `--dry-run, -d` | Preview changes without executing |
 | `--changelog` | In dry-run, print the `amazon-eks-ami` release notes between the current and target AMI for AL2/AL2023 nodegroups. Bottlerocket and Windows nodegroups get a link to their own release notes |
-| `--force` | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use `--reroll` |
+| `--force` | Force the roll: pass the PDB drain gate with a warning, and EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use `--reroll` |
 | `--reroll` | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--no-wait` | Don't wait for update completion (start-and-return) |
 | `--quiet, -q` | Minimal output. `--quiet` does not prompt. A run that needs a confirmation (warn-level health findings, a nodegroup pattern that is not an exact name, the fleet batch) stops unless you pass `--yes` |
@@ -395,6 +473,7 @@ See [Failures](../concepts/output.md#failures) for the failure object.
 | `Cancelled` | EKS ended the update `Cancelled` |
 | `InProgress` | The update started, but the run stopped watching it: `--wait-timeout` passed (`Timeout`), Ctrl+C (`Interrupted`), or its status could not be polled (`NotMonitored`). The EKS update may still be running |
 | `NotAttempted` | The run stopped before it reached this nodegroup |
+| `DrainBlocked` | The run would roll the nodegroup, but the PDB drain gate refused the run, so nothing started. `drainBlockers` names this nodegroup's blockers |
 
 The document also has `verification` (the post-roll checks and issues) and
 `health` (the pre-flight verdict), when they ran. A nodegroup that
@@ -402,7 +481,8 @@ post-roll verification can't describe is a failure (exit `4`), not a
 verification issue. The `--dry-run` preview has an `action` per nodegroup
 instead of a status: `Update`, `ForceUpdate`, `SkipUpdating`, `SkipLatest`,
 or `SkipCustom`. A nodegroup it can't describe has the action `Unknown`
-and a `failure` (exit `4`).
+and a `failure` (exit `4`). A nodegroup to roll that a PDB would block has
+`drainBlockers`, and the preview exits `3` unless `--force` is set.
 
 With `--all-clusters`, `clusters` has one entry per cluster: `cluster`,
 `region`, `status`, and the cluster's `nodegroups`, `verification`, and
@@ -420,9 +500,12 @@ regions discovery could not list.
 | `VerifyFailed` | The updates succeeded, but post-roll verification found issues | `5` |
 | `Interrupted`, `TimedOut` | Ctrl+C, or the cluster's `--wait-timeout`. Started updates keep running | `1` |
 | `NotAttempted` | The run stopped before it reached the cluster | `1` |
+| `Busy` | EKS was already changing the cluster, so the run skipped it; `changesInProgress` names what was changing | `3` |
+| `DrainBlocked` | The PDB drain gate refused the cluster's roll; nothing started | `3` |
 
 A fleet `--dry-run` entry has `status` `Planned`, `Incomplete` (the `plan`
-has nodegroups it could not read), or `Failed` (no `plan`; see `failure`).
+has nodegroups it could not read), `DrainBlocked` (the real run's drain gate
+would refuse the plan), or `Failed` (no `plan`; see `failure`).
 
 ### Exit-code contract
 
@@ -433,7 +516,7 @@ has nodegroups it could not read), or `Failed` (no `plan`; see `failure`).
 | `0` | Success — updates started/completed as expected |
 | `1` | An error, an interrupt, a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health **warnings** (with `--health-only` or `--require-healthy`) |
-| `3` | Health **blocked** — a pre-flight check failed; nothing was rolled |
+| `3` | **Blocked**: a pre-flight check failed, a PodDisruptionBudget would block the drain (without `--force`), or EKS is already changing the cluster; nothing was rolled. A `--dry-run` exits `3` where the drain gate would refuse |
 | `4` | A **failure**: a nodegroup that could not be read, an update that could not start, or a `--dry-run` preview with a nodegroup it could not read |
 | `5` | Post-roll **verification** found issues (nodes not Ready / newly-stuck pods) |
 

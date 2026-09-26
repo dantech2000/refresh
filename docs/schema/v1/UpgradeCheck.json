@@ -168,6 +168,30 @@
       ],
       "description": "HealthStatus represents the status of a health check"
     },
+    "InsightCounts": {
+      "properties": {
+        "passing": {
+          "type": "integer"
+        },
+        "warning": {
+          "type": "integer"
+        },
+        "error": {
+          "type": "integer"
+        },
+        "unknown": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "passing",
+        "warning",
+        "error",
+        "unknown"
+      ],
+      "description": "InsightCounts counts insights by status."
+    },
     "InsightSummary": {
       "properties": {
         "id": {
@@ -228,6 +252,34 @@
         "blocking"
       ],
       "description": "NodegroupSkew is a managed nodegroup's Kubernetes version relative to the control plane."
+    },
+    "RollbackAvailability": {
+      "properties": {
+        "previousVersion": {
+          "type": "string",
+          "description": "previousVersion is the version a rollback returns to."
+        },
+        "upgradedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "upgradedAt is when the upgrade to the current version started. EKS counts the window from when it finished, so dates are approximate."
+        },
+        "availableUntil": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "insights": {
+          "$ref": "#/$defs/InsightCounts",
+          "description": "insights counts the ROLLBACK_READINESS insights; left out when they could not be read."
+        }
+      },
+      "type": "object",
+      "required": [
+        "previousVersion",
+        "upgradedAt",
+        "availableUntil"
+      ],
+      "description": "RollbackAvailability says that a cluster can roll back and until when."
     },
     "SkewReport": {
       "properties": {
@@ -344,6 +396,10 @@
     },
     "skew": {
       "$ref": "#/$defs/SkewReport"
+    },
+    "rollback": {
+      "$ref": "#/$defs/RollbackAvailability",
+      "description": "rollback is set while the cluster can roll back to the previous minor version (within about 7 days of an in-place upgrade)."
     },
     "failures": {
       "$ref": "#/$defs/FailureList",

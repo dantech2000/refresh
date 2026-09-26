@@ -47,8 +47,9 @@ meant for a person goes to stderr or is not printed:
 
 The exit code is the same as in the human view, and it applies after the
 document is printed (see [Exit codes](exit-codes.md)). When a command fails before
-it has a result (bad credentials, a missing `--yes`), stdout is empty and the
-error is on stderr. A `nodegroup update` that the health gate stops is the
+it has a result (bad credentials, a missing `--yes`, a cluster EKS is
+already changing or that refresh could not read to check), stdout is empty
+and the error is on stderr. A `nodegroup update` that the health gate stops is the
 exception: stdout gets the run summary with nothing started and the `health`
 verdict, the health report goes to stderr, and the error names the checks
 that blocked or warned.
@@ -60,10 +61,11 @@ top-level list.
 
 | Command | Document on stdout |
 |---|---|
-| `nodegroup update` | `cluster`, `nodegroups` (one entry per selected nodegroup: `name`, `status`, `updateId` once the update started, `reason` for a skip, `failure`), `verification`, `health` (the pre-flight verdict, when a check ran), and `failures` |
-| `nodegroup update --dry-run` | `cluster`, `dryRun`, `force`, `reroll`, one `nodegroups` entry per nodegroup with its `action` (`Update`, `ForceUpdate`, `SkipUpdating`, `SkipLatest`, `SkipCustom`, or `Unknown` with a `failure` when the nodegroup could not be read), and `failures` |
+| `nodegroup scale` | `cluster`, `nodegroup`, `region`, `outcome`, `dryRun`, `before` and `after` (`desired`, `min`, `max`), `waited`, `nodegroupStatus` after a `--wait`, `pdbGate` with `--check-pdbs`, and `failures` |
+| `nodegroup update` | `cluster`, `nodegroups` (one entry per selected nodegroup: `name`, `status`, `updateId` once the update started, `reason` for a skip, `failure`, `drainBlockers` when the PDB drain gate refused the run), `verification`, `health` (the pre-flight verdict, when a check ran), and `failures` |
+| `nodegroup update --dry-run` | `cluster`, `dryRun`, `force`, `reroll`, one `nodegroups` entry per nodegroup with its `action` (`Update`, `ForceUpdate`, `SkipUpdating`, `SkipLatest`, `SkipCustom`, or `Unknown` with a `failure` when the nodegroup could not be read, and `drainBlockers` when a PDB would block its drain), and `failures` |
 | `nodegroup update --health-only` | The health verdict, with its own `failures` (the reads the checks could not make). The exit code is `0`, `2`, `3`, or `4` for a pass whose checks could not read everything |
-| `nodegroup update --all-clusters` | `clusters` (one entry per cluster: `cluster`, `region`, `status`, `nodegroups`, `verification`, `health`, and `failure` when the cluster itself failed; with `--dry-run`, `status` and a `plan` instead), `skippedRegions` (a notice: default-sweep regions these credentials can't use), and `failures` (every cluster's failures, and a `Region` failure for each region that could not be listed). With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
+| `nodegroup update --all-clusters` | `clusters` (one entry per cluster: `cluster`, `region`, `status`, `nodegroups`, `verification`, `health`, `failure` when the cluster itself failed, and `changesInProgress` for a `Busy` cluster; with `--dry-run`, `status` and a `plan` instead), `skippedRegions` (a notice: default-sweep regions these credentials can't use), and `failures` (every cluster's failures, and a `Region` failure for each region that could not be listed). With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
 | `addon update` | The result (`addonName`, `previousVersion`, `newVersion`, `updateId`, `status`, `healthIssues`, `warning`, `failure`, `startedAt`) and `failures` |
 | `addon update --all` | `cluster`, `dryRun`, `results` (one result per add-on), and `failures` |
 | `cluster upgrade --dry-run` | The plan: `hops`, `notices` (advisory lines that never change the exit code), and `failures` (the reads the planner could not make) |
@@ -73,8 +75,9 @@ The status values:
 
 | Document | `status` values |
 |---|---|
-| `nodegroup update`, each nodegroup | `Started`, `Succeeded`, `Skipped`, `Failed`, `Cancelled`, `InProgress` (the run stopped watching an update that may still be running), `NotAttempted` |
-| `nodegroup update --all-clusters`, each cluster | `Succeeded`, `Incomplete`, `Failed`, `HealthBlocked`, `HealthWarned`, `VerifyFailed`, `Interrupted`, `TimedOut`, `NotAttempted`; with `--dry-run`: `Planned`, `Incomplete`, `Failed` |
+| `nodegroup update`, each nodegroup | `Started`, `Succeeded`, `Skipped`, `Failed`, `Cancelled`, `InProgress` (the run stopped watching an update that may still be running), `NotAttempted`, `DrainBlocked` |
+| `nodegroup update --all-clusters`, each cluster | `Succeeded`, `Incomplete`, `Failed`, `HealthBlocked`, `HealthWarned`, `VerifyFailed`, `Interrupted`, `TimedOut`, `NotAttempted`, `Busy`, `DrainBlocked`; with `--dry-run`: `Planned`, `Incomplete`, `DrainBlocked`, `Failed` |
+| `nodegroup scale` (`outcome`) | `Planned`, `Requested`, `Completed`, `Blocked`, `CompletedWithIssues` |
 | `addon update`, each add-on | `DryRun`, `UpToDate`, `InProgress`, `Started`, `Completed`, `CompletedWithIssues`, `Unverified`, `WaitFailed`, `Failed`, `NotAttempted` |
 | `cluster upgrade`, the report | `Succeeded`, `Failed`, `Blocked`, `Interrupted`, `TimedOut`, `Aborted` |
 
@@ -113,7 +116,7 @@ Every `-o json` and `-o yaml` document starts with two keys:
 `apiVersion` is the version of the contract on this page. `kind` names the
 document type, in PascalCase: `FleetStatus`, `ClusterList`,
 `ClusterDescription`, `UpgradeCheck`, `InsightDescription`, `UpgradePlan`,
-`UpgradeRun`, `NodegroupList`, `NodegroupDescription`, `NodegroupUpdate`,
+`UpgradeRun`, `RollbackPlan`, `RollbackRun`, `NodegroupList`, `NodegroupDescription`, `NodegroupScale`, `NodegroupUpdate`,
 `NodegroupUpdatePlan`, `FleetUpdate`, `FleetUpdatePlan`, `HealthSummary`,
 `AddonList`, `AddonDescription`, `AddonUpdate`, or `AddonUpdateAll`. A
 document nested in another one, such as the plan inside an `UpgradeRun` or
@@ -289,10 +292,10 @@ error says that the regions refused valid credentials: enable the region in
 the account settings, or choose other regions.
 
 ```text
-Error: no region answered, but STS in us-east-1 accepts these credentials
-  first error: UnrecognizedClientException: The security token included in the request is invalid
-A region refuses valid credentials when the account has not enabled it (an opt-in region) or a policy such as an SCP blocks it.
-Enable the region in the account settings, or choose other regions (scope with -r or REFRESH_EKS_REGIONS).
+✗ Error: no region answered, but STS in us-east-1 accepts these credentials
+  AWS UnrecognizedClientException: The security token included in the request is invalid
+  A region refuses valid credentials when the account has not enabled it (an opt-in region) or a policy such as an SCP blocks it.
+  Enable the region in the account settings, or choose other regions (scope with -r or REFRESH_EKS_REGIONS).
 ```
 
 ### The failure object

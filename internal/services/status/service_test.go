@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -290,5 +291,60 @@ func TestAssembleCluster_NodegroupBehindControlPlane(t *testing.T) {
 	}
 	if !cs.NeedsAttention() {
 		t.Error("a nodegroup behind the control plane should need attention")
+	}
+}
+
+func TestListClusterStatuses_DetailKeepsTheRows(t *testing.T) {
+	api := &fakeClusterAPI{
+		clusters: []string{"prod"},
+		describe: map[string]*ekstypes.Cluster{"prod": {Name: aws.String("prod"), Version: aws.String("1.32")}},
+	}
+	ng := &fakeNodegroups{byCluster: map[string][]nodegroup.NodegroupSummary{
+		"prod": {
+			{Name: "ng-a", AMIStatus: types.AMILatest, CurrentAMI: "ami-1", K8sVersion: "1.32", DesiredSize: 3, Status: "ACTIVE"},
+			{Name: "ng-b", AMIStatus: types.AMIOutdated, CurrentAMI: "ami-2", K8sVersion: "1.31", VersionBehind: true},
+		},
+	}}
+	ad := &fakeAddons{
+		installed: map[string][]addons.AddonSummary{
+			"prod": {{Name: "vpc-cni", Version: "v1.10.0", Status: "ACTIVE"}, {Name: "coredns", Version: "v1.11.4"}},
+		},
+		available: map[string][]addons.AddonVersionInfo{
+			"vpc-cni": {{Version: "v1.18.1"}, {Version: "v1.10.0"}},
+			"coredns": {{Version: "v1.11.4"}},
+		},
+	}
+	svc := newTestService(api, ng, ad)
+
+	plain, err := svc.ListClusterStatuses(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain[0].Nodegroups != nil || plain[0].Addons != nil {
+		t.Fatal("rows kept without Detail")
+	}
+
+	detailed, err := svc.ListClusterStatuses(context.Background(), ListOptions{Detail: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := detailed[0]
+	wantNG := []NodegroupPosture{
+		{Name: "ng-a", Status: "ACTIVE", Version: "1.32", CurrentAMI: "ami-1", AMIStatus: types.AMILatest, DesiredSize: 3},
+		{Name: "ng-b", Version: "1.31", VersionBehind: true, CurrentAMI: "ami-2", AMIStatus: types.AMIOutdated},
+	}
+	if !reflect.DeepEqual(c.Nodegroups, wantNG) {
+		t.Errorf("Nodegroups = %+v\nwant %+v", c.Nodegroups, wantNG)
+	}
+	wantAddons := []AddonPosture{
+		{Name: "vpc-cni", Status: "ACTIVE", Version: "v1.10.0", Latest: "v1.18.1", Behind: true},
+		{Name: "coredns", Version: "v1.11.4", Latest: "v1.11.4"},
+	}
+	if !reflect.DeepEqual(c.Addons, wantAddons) {
+		t.Errorf("Addons = %+v\nwant %+v", c.Addons, wantAddons)
+	}
+	// The counts are the same either way.
+	if c.StaleAMI != plain[0].StaleAMI || c.AddonsBehind.Behind != plain[0].AddonsBehind.Behind {
+		t.Error("Detail changed the summary counts")
 	}
 }

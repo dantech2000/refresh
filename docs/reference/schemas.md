@@ -13,8 +13,11 @@ Every `-o json` and `-o yaml` document starts with `apiVersion: refresh.drod.dev
 | `InsightDescription` | `refresh cluster upgrade-check --id` | [InsightDescription.json](../schema/v1/InsightDescription.json) |
 | `UpgradePlan` | `refresh cluster upgrade --dry-run` | [UpgradePlan.json](../schema/v1/UpgradePlan.json) |
 | `UpgradeRun` | `refresh cluster upgrade --yes` | [UpgradeRun.json](../schema/v1/UpgradeRun.json) |
+| `RollbackPlan` | `refresh cluster rollback --dry-run` | [RollbackPlan.json](../schema/v1/RollbackPlan.json) |
+| `RollbackRun` | `refresh cluster rollback --yes` | [RollbackRun.json](../schema/v1/RollbackRun.json) |
 | `NodegroupList` | `refresh nodegroup list` | [NodegroupList.json](../schema/v1/NodegroupList.json) |
 | `NodegroupDescription` | `refresh nodegroup describe` | [NodegroupDescription.json](../schema/v1/NodegroupDescription.json) |
+| `NodegroupScale` | `refresh nodegroup scale` | [NodegroupScale.json](../schema/v1/NodegroupScale.json) |
 | `NodegroupUpdate` | `refresh nodegroup update` | [NodegroupUpdate.json](../schema/v1/NodegroupUpdate.json) |
 | `NodegroupUpdatePlan` | `refresh nodegroup update --dry-run` | [NodegroupUpdatePlan.json](../schema/v1/NodegroupUpdatePlan.json) |
 | `FleetUpdate` | `refresh nodegroup update --all-clusters` | [FleetUpdate.json](../schema/v1/FleetUpdate.json) |

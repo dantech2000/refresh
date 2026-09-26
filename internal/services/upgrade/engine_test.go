@@ -25,8 +25,14 @@ type fakeWorld struct {
 	addonVersions  map[string]string // name -> installed version
 	ngVersions     map[string]string // name -> k8s version
 	failAddons     bool              // make UpdateAddon fail (gate failure simulation)
-	hangUpdates    bool              // make DescribeUpdate never complete (SIGINT simulation)
-	customAMI      map[string]bool   // nodegroups reported with AMI type CUSTOM
+	failAddon      string            // make UpdateAddon fail for this addon only
+	// keepsCompat names addons whose catalogue for a version also lists the
+	// build for the previous minor, so the new control plane can still run
+	// them (vpc-cni). Other addons are compatible with one minor only
+	// (kube-proxy).
+	keepsCompat map[string]bool
+	hangUpdates bool            // make DescribeUpdate never complete (SIGINT simulation)
+	customAMI   map[string]bool // nodegroups reported with AMI type CUSTOM
 }
 
 // latestFor maps a k8s version to the fake addon catalogue's latest
@@ -84,18 +90,29 @@ func newWorldMock(w *fakeWorld) *mocks.EKSAPI {
 	}
 	m.DescribeAddonVersionsFn = func(_ context.Context, in *eks.DescribeAddonVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
 		k8s := aws.ToString(in.KubernetesVersion)
-		return &eks.DescribeAddonVersionsOutput{Addons: []ekstypes.AddonInfo{{
-			AddonName: in.AddonName,
-			AddonVersions: []ekstypes.AddonVersionInfo{{
-				AddonVersion:    aws.String(latestFor(k8s)),
+		catalogue := []string{latestFor(k8s)}
+		w.mu.Lock()
+		keeps := w.keepsCompat[aws.ToString(in.AddonName)]
+		w.mu.Unlock()
+		if minor, err := minorVersion(k8s); err == nil && keeps {
+			catalogue = append(catalogue, latestFor(fmt.Sprintf("1.%d", minor-1)))
+		}
+		infos := make([]ekstypes.AddonVersionInfo, 0, len(catalogue))
+		for _, v := range catalogue {
+			infos = append(infos, ekstypes.AddonVersionInfo{
+				AddonVersion:    aws.String(v),
 				Compatibilities: []ekstypes.Compatibility{{ClusterVersion: in.KubernetesVersion}},
-			}},
+			})
+		}
+		return &eks.DescribeAddonVersionsOutput{Addons: []ekstypes.AddonInfo{{
+			AddonName:     in.AddonName,
+			AddonVersions: infos,
 		}}}, nil
 	}
 	m.UpdateAddonFn = func(_ context.Context, in *eks.UpdateAddonInput, _ ...func(*eks.Options)) (*eks.UpdateAddonOutput, error) {
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		if w.failAddons {
+		if w.failAddons || w.failAddon == aws.ToString(in.AddonName) {
 			return nil, errors.New("addon update rejected by fake world")
 		}
 		w.addonVersions[aws.ToString(in.AddonName)] = aws.ToString(in.AddonVersion)

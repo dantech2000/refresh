@@ -104,7 +104,7 @@ upgrade.
 | (preview the full ordered plan) | `refresh cluster upgrade my-cluster --to 1.33 --dry-run` |
 
 `refresh cluster upgrade` orchestrates the whole sequence — control plane →
-add-ons → nodegroups — with per-phase health gates and confirmations. Unlike a
+nodegroups → add-ons — with per-phase health gates and confirmations. Unlike a
 bare `UpdateClusterVersion`, it refreshes Cluster Insights before each hop and
 blocks on problems. It is resumable: re-running re-derives the plan from live
 cluster state.

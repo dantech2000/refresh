@@ -116,13 +116,13 @@ func resolveClusterName(ctx context.Context, api ListClustersAPI, pattern string
 		// formatting it again would print the IAM help twice.
 		return "", err
 	}
+	if len(clusters) == 0 {
+		spinner.Stop() // nothing was resolved: no success line above the error
+		return "", errNoClusters
+	}
 	// Done stops the spinner. It must happen before confirmClusterSelection:
 	// a running spinner redraws its line and would erase any prompt.
 	spinner.Done(render.Default(ui.Stderr).Line(render.Healthy, "Cluster name resolved"))
-
-	if len(clusters) == 0 {
-		return "", errNoClusters
-	}
 
 	// Find matching clusters (an exact name match short-circuits to itself)
 	matches := MatchingClusters(clusters, pattern)

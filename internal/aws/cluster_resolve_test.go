@@ -150,7 +150,7 @@ func TestResolveClusterName_ListFailureIAMHelpOnce(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	if n := strings.Count(err.Error(), "Required permissions"); n != 1 {
+	if n := strings.Count(err.Error(), "Permissions refresh uses"); n != 1 {
 		t.Errorf("IAM help appears %d times, want 1:\n%s", n, err)
 	}
 }

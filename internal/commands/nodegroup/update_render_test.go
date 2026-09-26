@@ -50,7 +50,7 @@ func TestVerificationLines_Issues(t *testing.T) {
 // checks, as before.
 func TestPostRollVerification_SkippedNotSerialized(t *testing.T) {
 	var v PostRollVerification
-	v.skip("pod verification skipped (no Kubernetes access)")
+	v.Skip("pod verification skipped (no Kubernetes access)")
 	b, err := json.Marshal(v)
 	if err != nil {
 		t.Fatal(err)

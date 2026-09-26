@@ -38,13 +38,17 @@ const (
 	ngInProgress nodegroupStatus = "InProgress"
 	// ngNotAttempted: the run stopped before it reached this nodegroup.
 	ngNotAttempted nodegroupStatus = "NotAttempted"
+	// ngDrainBlocked: the run would have rolled the nodegroup, but the PDB
+	// drain gate refused the run, so nothing started. drainBlockers names
+	// this nodegroup's blockers, if it has any.
+	ngDrainBlocked nodegroupStatus = "DrainBlocked"
 )
 
 // EnumValues lists every nodegroupStatus.
 func (nodegroupStatus) EnumValues() []string {
 	return []string{
 		string(ngStarted), string(ngSucceeded), string(ngSkipped), string(ngFailed),
-		string(ngCancelled), string(ngInProgress), string(ngNotAttempted),
+		string(ngCancelled), string(ngInProgress), string(ngNotAttempted), string(ngDrainBlocked),
 	}
 }
 
@@ -74,6 +78,10 @@ type nodegroupResult struct {
 	// Failure is set when the status is Failed, Cancelled, InProgress, or
 	// NotAttempted. The same failure is in the document's failures.
 	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
+	// DrainBlockers names what would stop EKS draining the nodegroup: a
+	// PodDisruptionBudget that allows 0 disruptions, or a pod that more
+	// than one PDB selects.
+	DrainBlockers []string `json:"drainBlockers,omitempty" yaml:"drainBlockers,omitempty"`
 }
 
 // updateRun is what an update run did in one cluster: one result per
@@ -86,6 +94,8 @@ type updateRun struct {
 	// readFailures are failures that belong to no nodegroup result, such as
 	// a nodegroup that post-roll verification could not describe.
 	readFailures []diag.Failure
+	// drainBlockers is set when the PDB drain gate refused the run.
+	drainBlockers drainBlockers
 }
 
 // newUpdateRun returns an empty run for cluster.
@@ -174,11 +184,36 @@ func (r updateRun) withCluster(f diag.Failure) *diag.Failure {
 
 // fail records nodegroup ng as Failed with the failure of op on err.
 func (r *updateRun) fail(ng, op string, err error) {
-	r.nodegroups = append(r.nodegroups, nodegroupResult{
+	r.nodegroups = append(r.nodegroups, r.failed(ng, op, err))
+}
+
+// failed is the Failed result of nodegroup ng, with the failure of op on
+// err.
+func (r *updateRun) failed(ng, op string, err error) nodegroupResult {
+	return nodegroupResult{
 		Name:    ng,
 		Status:  ngFailed,
 		Failure: r.withCluster(diag.FromError(diag.KindNodegroup, ng, op, err)),
-	})
+	}
+}
+
+// drainBlocked reports whether the PDB drain gate refused the run.
+func (r updateRun) drainBlocked() bool { return len(r.drainBlockers) > 0 }
+
+// drainBlockedExit is the exit 3 error of a run the drain gate refused.
+func (r updateRun) drainBlockedExit() error {
+	return drainBlockedExit(r.cluster, r.drainBlockedOrder(), r.drainBlockers)
+}
+
+// drainBlockedOrder names the DrainBlocked nodegroups, in order.
+func (r updateRun) drainBlockedOrder() []string {
+	var order []string
+	for _, ng := range r.nodegroups {
+		if ng.Status == ngDrainBlocked {
+			order = append(order, ng.Name)
+		}
+	}
+	return order
 }
 
 // skip records nodegroup ng as Skipped for reason.
@@ -188,8 +223,13 @@ func (r *updateRun) skip(ng string, reason skipReason) {
 
 // notAttempted records nodegroup ng as not attempted because ctx ended.
 func (r *updateRun) notAttempted(ctx context.Context, ng string) {
+	r.nodegroups = append(r.nodegroups, r.notAttemptedResult(ctx, ng))
+}
+
+// notAttemptedResult is the NotAttempted result of nodegroup ng.
+func (r *updateRun) notAttemptedResult(ctx context.Context, ng string) nodegroupResult {
 	f := diag.New(diag.KindNodegroup, ng, diag.ReasonNotAttempted, "the run stopped before this nodegroup: "+context.Cause(ctx).Error())
-	r.nodegroups = append(r.nodegroups, nodegroupResult{Name: ng, Status: ngNotAttempted, Failure: r.withCluster(f)})
+	return nodegroupResult{Name: ng, Status: ngNotAttempted, Failure: r.withCluster(f)}
 }
 
 // applyMonitorResult sets the final status of each started nodegroup from the

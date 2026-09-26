@@ -93,7 +93,6 @@ type AddonVersionInfo struct {
 	Version           string   `json:"version"`
 	Compatibilities   []string `json:"compatibilities"`
 	Architecture      []string `json:"architecture,omitempty"`
-	DefaultVersion    bool     `json:"defaultVersion"`
 	RequiresIAMPolicy bool     `json:"requiresIamPolicy"`
 }
 
@@ -186,6 +185,11 @@ type UpdateOptions struct {
 	WaitTimeout   time.Duration `json:"waitTimeout"`
 	PollInterval  time.Duration `json:"pollInterval,omitempty"` // re-check cadence while waiting (default 5s)
 	Configuration string        `json:"configuration,omitempty"`
+	// KubernetesVersion, when set, is the version that "latest" and a pinned
+	// Version are checked against instead of the cluster's. A rollback
+	// downgrades add-ons to builds for the previous minor while the control
+	// plane still runs the current one.
+	KubernetesVersion string `json:"kubernetesVersion,omitempty"`
 }
 
 // UpdateAllOptions controls bulk addon update behavior

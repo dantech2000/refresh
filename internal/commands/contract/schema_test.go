@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
@@ -43,6 +44,27 @@ func fullCluster() *fakeaws.Cluster {
 	}
 }
 
+// calmCluster is fullCluster with no nodegroup UPDATING, for the commands
+// that refuse to start a change on a busy cluster.
+func calmCluster() *fakeaws.Cluster {
+	c := fullCluster()
+	c.Nodegroups = c.Nodegroups[:1]
+	return c
+}
+
+// scaleCluster has a nodegroup with sizes, for nodegroup scale.
+func scaleCluster() *fakeaws.Cluster {
+	return prod(&fakeaws.Nodegroup{Name: "web", Version: "1.31", Desired: 3, Min: 1, Max: 5})
+}
+
+// upgradedCluster is fullCluster upgraded in place to 1.31 a day ago, so it
+// can roll back to 1.30.
+func upgradedCluster() *fakeaws.Cluster {
+	c := fullCluster()
+	c.History = []fakeaws.Update{{ID: "u-up", Type: "VersionUpdate", Version: "1.31", CreatedAt: time.Now().Add(-24 * time.Hour)}}
+	return c
+}
+
 // schemaCases are the successful runs, one or more per kind. The failure
 // runs come from the failure contract's cases.
 var schemaCases = []schemaCase{
@@ -54,8 +76,15 @@ var schemaCases = []schemaCase{
 	{name: "cluster upgrade-check --id", kind: apidoc.KindInsightDescription, args: []string{"cluster", "upgrade-check", "prod", "--id", "insight-skew", "--exit-zero"}},
 	{name: "cluster upgrade --dry-run", kind: apidoc.KindUpgradePlan, args: []string{"cluster", "upgrade", "prod", "--to", "1.32", "--dry-run", "--skip-insights-check"}},
 	{name: "cluster upgrade --yes", kind: apidoc.KindUpgradeRun, args: []string{"cluster", "upgrade", "prod", "--to", "1.32", "--yes", "--skip-insights-check", "--skip", "vpc-cni", "--skip-nodegroup", "busy", "--poll-interval", "5ms"}},
+	{name: "cluster upgrade-check in the rollback window", kind: apidoc.KindUpgradeCheck, world: []*fakeaws.Cluster{upgradedCluster()}, args: []string{"cluster", "upgrade-check", "prod", "--exit-zero"}},
+	{name: "cluster rollback --dry-run", kind: apidoc.KindRollbackPlan, world: []*fakeaws.Cluster{upgradedCluster()}, args: []string{"cluster", "rollback", "prod", "--dry-run"}},
+	{name: "cluster rollback --dry-run, blocked", kind: apidoc.KindRollbackPlan, args: []string{"cluster", "rollback", "prod", "--dry-run"}},
+	{name: "cluster rollback --yes", kind: apidoc.KindRollbackRun, world: []*fakeaws.Cluster{upgradedCluster()}, args: []string{"cluster", "rollback", "prod", "--yes", "--skip-health-check", "--skip-nodegroup", "busy", "--poll-interval", "5ms"}},
 	{name: "nodegroup list", kind: apidoc.KindNodegroupList, args: []string{"nodegroup", "list", "prod"}},
 	{name: "nodegroup describe", kind: apidoc.KindNodegroupDescription, args: []string{"nodegroup", "describe", "prod", "-n", "web"}},
+	{name: "nodegroup scale", kind: apidoc.KindNodegroupScale, world: []*fakeaws.Cluster{scaleCluster()}, args: []string{"nodegroup", "scale", "prod", "-n", "web", "--desired", "4", "--yes"}},
+	{name: "nodegroup scale --wait", kind: apidoc.KindNodegroupScale, world: []*fakeaws.Cluster{scaleCluster()}, args: []string{"nodegroup", "scale", "prod", "-n", "web", "--desired", "4", "--max", "6", "--wait", "--yes"}},
+	{name: "nodegroup scale --dry-run", kind: apidoc.KindNodegroupScale, world: []*fakeaws.Cluster{scaleCluster()}, args: []string{"nodegroup", "scale", "prod", "-n", "web", "--desired", "2", "--dry-run"}},
 	{name: "nodegroup update", kind: apidoc.KindNodegroupUpdate, args: []string{"nodegroup", "update", "prod", "--skip-health-check", "--yes", "--poll-interval", "5ms"}},
 	{
 		name: "nodegroup update stopped by the health gate", kind: apidoc.KindNodegroupUpdate,
@@ -68,9 +97,9 @@ var schemaCases = []schemaCase{
 	{name: "nodegroup update --health-only", kind: apidoc.KindHealthSummary, args: []string{"nodegroup", "update", "prod", "--health-only"}},
 	{name: "addon list", kind: apidoc.KindAddonList, args: []string{"addon", "list", "prod", "--show-health"}},
 	{name: "addon describe", kind: apidoc.KindAddonDescription, args: []string{"addon", "describe", "prod", "vpc-cni"}},
-	{name: "addon update", kind: apidoc.KindAddonUpdate, args: []string{"addon", "update", "prod", "vpc-cni", "--yes", "--wait"}},
+	{name: "addon update", kind: apidoc.KindAddonUpdate, world: []*fakeaws.Cluster{calmCluster()}, args: []string{"addon", "update", "prod", "vpc-cni", "--yes", "--wait"}},
 	{name: "addon update --dry-run", kind: apidoc.KindAddonUpdate, args: []string{"addon", "update", "prod", "vpc-cni", "--dry-run"}},
-	{name: "addon update --all", kind: apidoc.KindAddonUpdateAll, args: []string{"addon", "update", "prod", "--all", "--yes"}},
+	{name: "addon update --all", kind: apidoc.KindAddonUpdateAll, world: []*fakeaws.Cluster{calmCluster()}, args: []string{"addon", "update", "prod", "--all", "--yes"}},
 }
 
 // emptyCluster has no nodegroups, add-ons, tags, or VPC details, so every
@@ -108,6 +137,8 @@ func failureKind(args []string) (apidoc.Kind, bool) {
 		return apidoc.KindNodegroupUpdatePlan, true
 	case strings.HasPrefix(line, "nodegroup update"):
 		return apidoc.KindNodegroupUpdate, true
+	case strings.HasPrefix(line, "nodegroup scale"):
+		return apidoc.KindNodegroupScale, true
 	case strings.HasPrefix(line, "addon update") && slices.Contains(args, "--all"):
 		return apidoc.KindAddonUpdateAll, true
 	case strings.HasPrefix(line, "addon update"):

@@ -121,13 +121,15 @@ until the operation settles, for up to --wait-timeout.
 
 Before it changes anything, scale asks for confirmation
 ("Scale prod/ng-default desired 3 → 1? [y/N]"). --yes skips the prompt;
-without a terminal, --yes is required. --dry-run never prompts.
+without a terminal, or with -o json|yaml, --yes is required. --dry-run never
+prompts. -o json|yaml prints one document: the sizes before and after, the
+PDB gate verdict, and the outcome.
 
   refresh nodegroup scale my-cluster -n ng-default --desired 5
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
   refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force --yes
 
-Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs or the pre-scaling health check, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -148,6 +150,7 @@ Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked b
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--dry-run, -d` | — | — | Preview scaling impact without executing (never prompts) |
 | `--yes, -y` | — | — | Scale without the confirmation prompt (required without a terminal) |
+| `--format, -o string` | — | `table` | Output format (table, json, yaml). json/yaml print one document with the sizes before and after, the PDB gate verdict, and the outcome; they need --yes (or --dry-run) |
 | `--help, -h` | — | — | show help |
 
 ### refresh nodegroup update
@@ -191,8 +194,11 @@ Exit codes:
    0  success            1  error, interrupt, monitoring timeout, or a roll
                             that ended Failed/Cancelled
    2  health warnings (--health-only / --require-healthy)
-   3  health blocked     4  a failure: a nodegroup that could not be read,
-                            or an update that could not start
+   3  health blocked, a PodDisruptionBudget would block the drain (the PDB
+      drain gate; --force rolls anyway, --dry-run exits 3 too), or EKS is
+      already changing the cluster; nothing was started
+   4  a failure: a nodegroup that could not be read, or an update that
+      could not start
    5  post-roll verification found issues
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
@@ -207,7 +213,7 @@ Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
 | `--nodegroup, -n string` | — | — | Nodegroup name or partial name pattern (if not set, update all). A pattern that is not an exact name needs confirmation, or --yes without a terminal |
 | `--all-clusters` | — | — | Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r. |
 | `--region, -r string` | — | — | Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS) |
-| `--force` | — | — | Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll |
+| `--force` | — | — | Force the roll: pass the PDB drain gate with a warning, and EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll |
 | `--reroll` | — | — | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
 | `--dry-run, -d` | — | — | Preview changes without executing them |
 | `--no-wait` | — | — | Don't wait for update completion (original behavior) |

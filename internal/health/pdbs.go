@@ -409,6 +409,20 @@ type DrainBlockerReport struct {
 	Note string
 }
 
+// Names lists what in r would refuse an eviction: each PDB that allows 0
+// disruptions, and each pod that more than one PDB selects (the eviction API
+// refuses it), as in the pre-flight PDB check.
+func (r DrainBlockerReport) Names() []string {
+	names := make([]string, 0, len(r.Blockers)+len(r.MultiPDBPods))
+	for _, b := range r.Blockers {
+		names = append(names, "PDB "+b.Namespace+"/"+b.Name+" allows 0 disruptions")
+	}
+	for _, p := range r.MultiPDBPods {
+		names = append(names, fmt.Sprintf("pod %s/%s is covered by %d PDBs (%s)", p.Namespace, p.Name, len(p.PDBs), strings.Join(p.PDBs, ", ")))
+	}
+	return names
+}
+
 // DrainBlockers lists the PDBs that would block draining the nodes of the
 // given managed nodegroups, with the same scoping rules as the pre-flight PDB
 // check (see findDrainBlockers). Unlike SetTargetNodegroups it leaves the

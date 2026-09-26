@@ -1,6 +1,9 @@
 package awserr
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Permission is one row of the required IAM permissions: the actions and the
 // commands that call them. UsedBy is Markdown (command names in backticks).
@@ -20,17 +23,18 @@ var RequiredPermissions = []Permission{
 	{[]string{"sts:GetCallerIdentity"}, "Region sweeps in which no region answered (credential check)"},
 	{[]string{"eks:ListClusters"}, "`status`, `cluster list`, `nodegroup update --all-clusters`, partial cluster names"},
 	{[]string{"eks:DescribeCluster"}, "Every cluster command"},
-	{[]string{"eks:ListNodegroups", "eks:DescribeNodegroup"}, "`status`, `nodegroup *`, `cluster describe`/`upgrade-check`/`upgrade`, health checks"},
-	{[]string{"eks:ListAddons"}, "`status`, `addon *` (also to resolve a partial add-on name), `cluster describe`/`upgrade-check`/`upgrade`"},
-	{[]string{"eks:DescribeAddon", "eks:DescribeAddonVersions"}, "`status`, `addon *`, `cluster upgrade-check`/`upgrade`"},
-	{[]string{"eks:DescribeClusterVersions"}, "`status`, `cluster describe`/`upgrade-check`/`upgrade` (support calendar; `refresh` falls back to a built-in calendar)"},
-	{[]string{"eks:ListInsights", "eks:DescribeInsight"}, "`cluster upgrade-check`, `cluster upgrade`"},
+	{[]string{"eks:ListNodegroups", "eks:DescribeNodegroup"}, "`status`, `nodegroup *`, `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, health checks, the busy check of `addon update`"},
+	{[]string{"eks:ListAddons"}, "`status`, `addon *` (also to resolve a partial add-on name), `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, the busy check of `nodegroup update`/`scale`"},
+	{[]string{"eks:DescribeAddon", "eks:DescribeAddonVersions"}, "`status`, `addon *`, `cluster upgrade-check`/`upgrade`/`rollback`; `eks:DescribeAddon` also in the busy check of `nodegroup update`/`scale`"},
+	{[]string{"eks:DescribeClusterVersions"}, "`status`, `cluster describe`/`upgrade-check`/`upgrade`/`rollback` (support calendar; `refresh` falls back to a built-in calendar)"},
+	{[]string{"eks:ListInsights", "eks:DescribeInsight"}, "`cluster upgrade-check`, `cluster upgrade`, `cluster rollback`"},
 	{[]string{"eks:StartInsightsRefresh", "eks:DescribeInsightsRefresh"}, "`cluster upgrade` (not with `--dry-run` or `--skip-insights-check`)"},
-	{[]string{"eks:UpdateNodegroupVersion"}, "`nodegroup update`, `cluster upgrade`"},
+	{[]string{"eks:UpdateNodegroupVersion"}, "`nodegroup update`, `cluster upgrade`, `cluster rollback`"},
 	{[]string{"eks:UpdateNodegroupConfig"}, "`nodegroup scale`"},
-	{[]string{"eks:UpdateClusterVersion"}, "`cluster upgrade`"},
-	{[]string{"eks:UpdateAddon"}, "`addon update`, `cluster upgrade`"},
-	{[]string{"eks:DescribeUpdate"}, "`nodegroup update`, `nodegroup scale --wait`, `addon update --wait`, `cluster upgrade`"},
+	{[]string{"eks:UpdateClusterVersion"}, "`cluster upgrade`, `cluster rollback`"},
+	{[]string{"eks:UpdateAddon"}, "`addon update`, `cluster upgrade`, `cluster rollback`"},
+	{[]string{"eks:DescribeUpdate"}, "`nodegroup update`, `nodegroup scale --wait`, `addon update --wait`, `cluster upgrade`, `cluster rollback`, `cluster upgrade-check` (rollback window)"},
+	{[]string{"eks:ListUpdates"}, "`cluster rollback`, `cluster upgrade-check` (rollback window), `refresh ui` (watch a roll or upgrade started elsewhere)"},
 	{[]string{"ssm:GetParameter"}, "Latest recommended AMI: `status`, `nodegroup list`/`describe`/`update`"},
 	{[]string{"ec2:DescribeImages"}, "`status` (AMI age)"},
 	{[]string{"ec2:DescribeInstances"}, "`status` (Karpenter detection), `nodegroup describe --show-instances`, current AMI lookup"},
@@ -45,13 +49,24 @@ var RequiredPermissions = []Permission{
 // permissionHint renders RequiredPermissions as a plain-text list for the
 // terminal: one line per row, with the Markdown backticks removed.
 func permissionHint() string {
+	// Two aligned columns, one action per row; a group's use is on its
+	// first row.
+	w := 0
+	for _, p := range RequiredPermissions {
+		for _, a := range p.Actions {
+			w = max(w, len(a))
+		}
+	}
 	var b strings.Builder
 	for _, p := range RequiredPermissions {
-		b.WriteString("- ")
-		b.WriteString(strings.Join(p.Actions, ", "))
-		b.WriteString(" (")
-		b.WriteString(strings.ReplaceAll(p.UsedBy, "`", ""))
-		b.WriteString(")\n")
+		for i, a := range p.Actions {
+			used := ""
+			if i == 0 {
+				used = strings.ReplaceAll(p.UsedBy, "`", "")
+			}
+			b.WriteString(strings.TrimRight(fmt.Sprintf("  %-*s  %s", w, a, used), " "))
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }

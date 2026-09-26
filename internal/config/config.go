@@ -27,6 +27,10 @@ const (
 
 	// DefaultUpdateTimeout is the default timeout for AMI update operations.
 	DefaultUpdateTimeout = 40 * time.Minute
+	// DefaultUpgradeTimeout bounds a full orchestrated upgrade. Control-plane
+	// hops run ~10m each and nodegroup rolls ~10-20m per group, so multi-hop
+	// upgrades legitimately run for hours.
+	DefaultUpgradeTimeout = 4 * time.Hour
 )
 
 // ClampMaxConcurrency returns v clamped to [1, MaxConcurrencyCap].

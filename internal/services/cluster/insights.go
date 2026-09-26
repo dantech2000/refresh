@@ -20,6 +20,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/services/status"
+	"github.com/dantech2000/refresh/internal/services/upgrade"
 )
 
 // Insight status values (the flattened InsightStatus.Status enum).
@@ -140,6 +141,9 @@ type UpgradeReport struct {
 	// not mean "nothing to address".
 	InsightsNotEvaluated bool       `json:"insightsNotEvaluated,omitempty" yaml:"insightsNotEvaluated,omitempty"`
 	Skew                 SkewReport `json:"skew" yaml:"skew"`
+	// Rollback is set while the cluster can roll back to the previous
+	// minor version (within about 7 days of an in-place upgrade).
+	Rollback *upgrade.RollbackAvailability `json:"rollback,omitempty" yaml:"rollback,omitempty"`
 	// Failures are the nodegroups and add-ons whose version skew could not
 	// be read. The skew verdict does not cover them, so the check is
 	// incomplete (exit 4). [] when everything was read.

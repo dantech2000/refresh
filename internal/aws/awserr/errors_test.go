@@ -196,7 +196,7 @@ func TestFormatAWSError_AlreadyFormattedIsUnchanged(t *testing.T) {
 			if strings.Count(twice.Error(), "listing") != strings.Count(once.Error(), "listing") {
 				t.Errorf("second format changed the message:\nonce:  %s\ntwice: %s", once, twice)
 			}
-			if n := strings.Count(twice.Error(), "Required permissions"); n > 1 {
+			if n := strings.Count(twice.Error(), "Permissions refresh uses"); n > 1 {
 				t.Errorf("IAM help printed %d times", n)
 			}
 			if !errors.Is(twice, cause) {
@@ -208,14 +208,14 @@ func TestFormatAWSError_AlreadyFormattedIsUnchanged(t *testing.T) {
 
 func TestFormatAWSError_TypedAccessDeniedIsNotRegion(t *testing.T) {
 	err := FormatAWSError(apiErr("AccessDeniedException", "not authorized to perform eks:ListClusters in region us-east-1"), "listing clusters")
-	if strings.Contains(err.Error(), "AWS_DEFAULT_REGION") {
+	if strings.Contains(err.Error(), "AWS_REGION=") {
 		t.Errorf("typed AccessDenied must not get region guidance, got: %s", err.Error())
 	}
 }
 
 func TestFormatAWSError_CancelGetsNoNetworkHelp(t *testing.T) {
 	err := FormatAWSError(sdkOpErr(&url.Error{Op: "Post", URL: "x", Err: context.Canceled}), "listing clusters")
-	if strings.Contains(err.Error(), "Internet connection") {
+	if strings.Contains(err.Error(), "internet connection") {
 		t.Errorf("cancellation must not get network remediation help, got: %s", err.Error())
 	}
 }
@@ -247,8 +247,10 @@ func TestSummary(t *testing.T) {
 	cases := map[string]error{
 		"":                                    nil,
 		"AccessDeniedException: no eks:ListX": FormatAWSError(apiErr("AccessDeniedException", "no eks:ListX"), "listing"),
-		"network connectivity issue while listing.": FormatAWSError(dialErr(syscall.ECONNREFUSED), "listing"),
+		"network connectivity issue while listing": FormatAWSError(dialErr(syscall.ECONNREFUSED), "listing"),
 		"plain": errors.New("plain"),
+		"dial tcp 127.0.0.1:9: connect: connection refused": fmt.Errorf("operation error EKS: ListClusters, exceeded maximum number of attempts, 3: %w",
+			&net.OpError{Op: "dial", Net: "tcp", Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}, Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED}}),
 	}
 	for want, in := range cases {
 		if got := Summary(in); got != want {
@@ -266,5 +268,16 @@ func TestFormatPermissionError_ListsPermissions(t *testing.T) {
 		if !strings.Contains(err.Error(), action) {
 			t.Errorf("expected %s (cluster upgrade readiness) in the permission list, got: %s", action, err.Error())
 		}
+	}
+}
+
+// AWS's own message, which names the denied action and an explicit deny,
+// is the second line: before the long permission list, not after it.
+func TestFormatPermissionError_AWSMessageFirst(t *testing.T) {
+	cause := apiErr("AccessDeniedException", "User: arn:aws:iam::1:user/x is not authorized to perform: eks:ListClusters with an explicit deny")
+	lines := strings.Split(FormatAWSError(cause, "listing clusters").Error(), "\n")
+	if lines[0] != "insufficient AWS permissions while listing clusters" ||
+		lines[1] != "AWS: AccessDeniedException: User: arn:aws:iam::1:user/x is not authorized to perform: eks:ListClusters with an explicit deny" {
+		t.Errorf("first lines = %q", lines[:2])
 	}
 }

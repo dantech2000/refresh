@@ -9,7 +9,7 @@ Complete, auto-generated reference for every `refresh` command and flag. It is g
 | Command | Description |
 |---|---|
 | [`refresh status`](status.md) | Fleet patch posture across clusters and regions (the front door) |
-| [`refresh cluster`](cluster.md) | Cluster operations (list, describe, upgrade-check, upgrade) |
+| [`refresh cluster`](cluster.md) | Cluster operations (list, describe, upgrade-check, upgrade, rollback) |
 | [`refresh nodegroup`](nodegroup.md) | Nodegroup operations (list, get, scale, update) |
 | [`refresh addon`](addon.md) | EKS add-on operations (list, get, update) |
 | [`refresh use`](use.md) | Switch the active refresh context (kubectx-style) |

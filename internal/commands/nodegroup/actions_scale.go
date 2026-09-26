@@ -18,7 +18,6 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
-	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
@@ -26,6 +25,10 @@ import (
 )
 
 func runScale(ctx context.Context, cmd *cli.Command) (err error) {
+	if err := runner.ValidateFormat(cmd.String("format"), runner.FormatsDocument); err != nil {
+		return err
+	}
+	format := strings.ToLower(cmd.String("format"))
 	// Bad or missing sizes are usage errors, before any AWS call.
 	desired, minSize, maxSize, err := readScaleSizes(cmd)
 	if err != nil {
@@ -58,28 +61,17 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		return err
 	}
 
-	logger := factory.NewDefaultLogger(nil)
-	// Only the health check and the PDB gate read the cluster API. --wait
-	// polls EKS alone, so it needs no Kubernetes client (and no "checks will
-	// be skipped" note when the cluster can't be reached).
-	withHealth := cmd.Bool("health-check") || cmd.Bool("check-pdbs")
-	var svc *nodegroupsvc.ServiceImpl
-	if withHealth {
-		// Wire a Kubernetes client so workload/PDB checks run against the right
-		// cluster (--kubeconfig), with an actionable diagnostic when unreachable.
-		k8sClient, _ := resolveHealthKubeClient(ctx, factory.NewEKSClient(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), true)
-		svc = factory.NewNodegroupServiceWithHealth(awsCfg, k8sClient, logger)
-	} else {
-		svc = factory.NewNodegroupService(awsCfg, false, logger)
-	}
-
+	eksClient := factory.NewEKSClient(awsCfg)
+	svc := newScaleService(ctx, cmd, awsCfg, eksClient, clusterName)
 	opts := nodegroupsvc.ScaleOptions{
 		HealthCheck: cmd.Bool("health-check"),
 		CheckPDBs:   cmd.Bool("check-pdbs"),
 		Wait:        cmd.Bool("wait"),
 		Timeout:     waitTimeout,
 		DryRun:      cmd.Bool("dry-run"),
-		Force:       cmd.Bool("force"),
+		// The command runs the --check-pdbs gate itself, for the document:
+		// the service does not run it again (see ScaleOptions.Force).
+		Force: true,
 	}
 
 	// Pre-flight: warn if the nodegroup's instance type isn't offered in one of
@@ -93,93 +85,222 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		return err
 	}
 
-	// --check-pdbs gate. Without --force the service refuses a blocked
-	// scale-down itself; with --force (or --dry-run) run the check here so the
-	// overridden blockers are shown before anything changes.
-	var pdbCheck *nodegroupsvc.ScaleDownPDBCheck
-	var pdbCheckErr error
-	if opts.CheckPDBs && (opts.DryRun || opts.Force) {
-		pdbCheck, pdbCheckErr = svc.CheckScaleDownPDBs(ctx, clusterName, nodegroupName, desired)
-	}
-
-	// A PDB check that could not read what it needs is a failure: named
-	// once, here, in the INCOMPLETE DATA section. Without --force the gate
-	// fails closed (exit 1); with --force the scale goes ahead and the run
-	// exits 4.
-	fs := pdbCheckFailures(awsCfg.Region, pdbCheckErr)
-	runner.WriteFailures("", os.Stdout, ui.Stderr, fs)
-
-	if opts.DryRun {
-		if err := printScaleDryRun(ctx, factory.NewEKSClient(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
+	// EKS refuses a scale while another update runs, but only after the
+	// prompt: say so first. A dry run still previews a busy cluster.
+	if !opts.DryRun {
+		if err := runner.RefuseIfBusy(ctx, eksClient, clusterName, nil); err != nil {
 			return err
 		}
-		if opts.CheckPDBs {
-			printScaleDryRunPDBGate(os.Stdout, clusterName, nodegroupName, pdbCheck, pdbCheckErr, opts.Force)
+	}
+
+	current, err := svc.DescribeNodegroup(ctx, clusterName, nodegroupName)
+	if err != nil {
+		return err
+	}
+	r := &scaleRun{
+		cmd: cmd, format: format, machine: runner.IsMachineFormat(format), force: cmd.Bool("force"),
+		region: awsCfg.Region, cluster: clusterName, nodegroup: nodegroupName,
+		desired: desired, minSize: minSize, maxSize: maxSize,
+		svc: svc, opts: opts,
+	}
+	if current.ScalingConfig != nil {
+		r.before = *current.ScalingConfig
+	}
+	r.doc = scaleDocument{
+		Cluster:   clusterName,
+		Nodegroup: nodegroupName,
+		Region:    awsCfg.Region,
+		DryRun:    opts.DryRun,
+		Before:    sizesOf(r.before),
+		After:     sizesOf(r.before).withRequested(desired, minSize, maxSize),
+		Waited:    opts.Wait && !opts.DryRun,
+		Failures:  diag.List{},
+	}
+
+	// A dry run or --force checks the PDBs first, so the blockers show
+	// before anything changes. A real run without --force checks after the
+	// prompt, right before the change (see execute).
+	if opts.CheckPDBs && (opts.DryRun || r.force) {
+		r.runGate(ctx)
+	}
+	if opts.DryRun {
+		return r.preview()
+	}
+	return r.execute(ctx)
+}
+
+// newScaleService builds the nodegroup service for a scale. Only the health
+// check and the PDB gate read the cluster API. --wait polls EKS alone, so it
+// needs no Kubernetes client (and no "checks will be skipped" note when the
+// cluster can't be reached).
+func newScaleService(ctx context.Context, cmd *cli.Command, awsCfg aws.Config, eksClient *eks.Client, clusterName string) *nodegroupsvc.ServiceImpl {
+	logger := factory.NewDefaultLogger(nil)
+	if !cmd.Bool("health-check") && !cmd.Bool("check-pdbs") {
+		return factory.NewNodegroupService(awsCfg, false, logger)
+	}
+	// Wire a Kubernetes client so workload/PDB checks run against the right
+	// cluster (--kubeconfig), with an actionable diagnostic when unreachable.
+	k8sClient, _ := resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), true)
+	return factory.NewNodegroupServiceWithHealth(awsCfg, k8sClient, logger)
+}
+
+// scaleRun is a `nodegroup scale` run after setup: what it asks for, and
+// what it has found so far.
+type scaleRun struct {
+	cmd                        *cli.Command
+	format                     string
+	machine, force             bool
+	region, cluster, nodegroup string
+	desired, minSize, maxSize  *int32
+	svc                        *nodegroupsvc.ServiceImpl
+	opts                       nodegroupsvc.ScaleOptions
+	before                     ekstypes.NodegroupScalingConfig
+	doc                        scaleDocument
+
+	// The --check-pdbs gate: the check and its read error, the failures
+	// the run reports, and the gate's refusal without --force (exit 3, or
+	// exit 1 when it fails closed).
+	pdbCheck    *nodegroupsvc.ScaleDownPDBCheck
+	pdbCheckErr error
+	fs          []diag.Failure
+	gateErr     error
+	failClosed  bool
+}
+
+// finish prints the document (-o json/yaml) and returns exit.
+func (r *scaleRun) finish(outcome scaleOutcome, exit error) error {
+	r.doc.Outcome = outcome
+	if _, err := runner.EncodeStdout(r.format, r.doc); err != nil {
+		return err
+	}
+	return exit
+}
+
+// runGate runs the --check-pdbs gate. Without --force a blocked scale-down
+// is refused (exit 3) and a check that could not read what it needs fails
+// closed (exit 1, with no document, as for any error); with --force the
+// blockers are a warning.
+func (r *scaleRun) runGate(ctx context.Context) {
+	r.pdbCheck, r.pdbCheckErr = r.svc.CheckScaleDownPDBs(ctx, r.cluster, r.nodegroup, r.desired)
+	r.doc.PDBGate = pdbGateOf(r.pdbCheck, r.pdbCheckErr, r.force)
+	// A PDB check that could not read what it needs is a failure: named
+	// once, here (in the INCOMPLETE DATA section of the table view). With
+	// --force the scale goes ahead and the run exits 4.
+	r.fs = pdbCheckFailures(r.region, r.pdbCheckErr)
+	r.doc.Failures = append(diag.List{}, r.fs...)
+	runner.WriteFailures(r.format, os.Stdout, ui.Stderr, r.fs)
+	if !r.force {
+		r.gateErr = scaleExit(scaleDryRunGateErr(r.cluster, r.nodegroup, r.pdbCheck, r.pdbCheckErr))
+		r.failClosed = r.pdbCheckErr != nil
+	}
+}
+
+// preview ends a --dry-run. It exits as the real run would at the gate: 3
+// when it would refuse the scale-down, 1 when the PDBs could not be read,
+// and 4 when --force would scale without them.
+func (r *scaleRun) preview() error {
+	if !r.machine {
+		printScaleDryRun(r.cluster, r.nodegroup, r.before, r.desired, r.minSize, r.maxSize)
+		if r.opts.CheckPDBs {
+			printScaleDryRunPDBGate(os.Stdout, r.cluster, r.nodegroup, r.pdbCheck, r.pdbCheckErr, r.force)
 		}
 		fmt.Println("\nNo changes were made. Re-run without --dry-run to execute.")
-		// The preview exits as the real run would at the gate: 3 when it
-		// would refuse the scale-down, 1 when the PDBs could not be read,
-		// and 4 when --force would scale without them.
-		if opts.CheckPDBs && !opts.Force {
-			return scaleExit(scaleDryRunGateErr(clusterName, nodegroupName, pdbCheck, pdbCheckErr))
-		}
-		return runner.IncompleteExit(fs)
 	}
-
-	if opts.CheckPDBs && opts.Force {
-		warnForcedScaleDown(ui.Stderr, clusterName, nodegroupName, pdbCheck)
+	switch {
+	case r.failClosed:
+		return r.gateErr
+	case r.gateErr != nil:
+		return r.finish(scalePlanned, r.gateErr)
 	}
+	return r.finish(scalePlanned, runner.IncompleteExit(r.fs))
+}
 
-	if !cmd.Bool("yes") {
-		question, qerr := scaleQuestion(ctx, factory.NewEKSClient(awsCfg), clusterName, nodegroupName, desired, minSize, maxSize)
-		if qerr != nil {
-			return qerr
-		}
+// execute confirms, gates, and scales.
+func (r *scaleRun) execute(ctx context.Context) error {
+	if r.opts.CheckPDBs && r.force {
+		warnForcedScaleDown(ui.Stderr, r.cluster, r.nodegroup, r.pdbCheck)
+	}
+	if !r.cmd.Bool("yes") {
+		question := formatScaleQuestion(r.cluster, r.nodegroup, r.before, r.desired, r.minSize, r.maxSize)
 		if err := runner.ConfirmMutation(ctx, question); err != nil {
 			return err
+		}
+	}
+	if r.opts.CheckPDBs && !r.force {
+		r.runGate(ctx)
+		switch {
+		case r.failClosed:
+			return r.gateErr
+		case r.gateErr != nil:
+			return r.finish(scaleBlocked, r.gateErr)
 		}
 	}
 
 	// Health warnings are held until the spinner stops, then printed on
 	// stderr, so they don't interleave with the spinner line.
 	var healthWarnings scaleHealthWarnings
-	opts.OnHealthWarnings = healthWarnings.add
-	err = runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
-		return svc.Scale(ctx, clusterName, nodegroupName, desired, minSize, maxSize, opts)
+	r.opts.OnHealthWarnings = healthWarnings.add
+	err := runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
+		return r.svc.Scale(ctx, r.cluster, r.nodegroup, r.desired, r.minSize, r.maxSize, r.opts)
 	})
 	healthWarnings.print(ui.Stderr)
-	var pdbErr *nodegroupsvc.PDBCheckError
-	if errors.As(err, &pdbErr) {
-		runner.WriteFailures("", os.Stdout, ui.Stderr, pdbCheckFailures(awsCfg.Region, pdbErr))
-		return pdbGateClosed()
-	}
-	if err != nil {
+	switch {
+	case errors.Is(err, nodegroupsvc.ErrScaleHealthBlocked):
+		return r.finish(scaleBlocked, scaleExit(err))
+	case errors.Is(err, nodegroupsvc.ErrScaleVerifyFailed):
+		return r.finish(scaleCompletedWithIssues, scaleExit(err))
+	case err != nil:
 		return scaleExit(err)
 	}
-	// The spinner's line shows only on a terminal: say what happened either
-	// way, and whether --wait saw the nodegroup settle.
+	if r.machine {
+		return r.finishScaled(ctx)
+	}
+	r.printScaled()
+	return runner.IncompleteExit(r.fs)
+}
+
+// finishScaled prints the document of a scale EKS accepted. After --wait
+// it reads the nodegroup's status; a failed read is a failure (exit 4).
+func (r *scaleRun) finishScaled(ctx context.Context) error {
+	if !r.opts.Wait {
+		return r.finish(scaleRequested, runner.IncompleteExit(r.fs))
+	}
+	if ng, err := r.svc.DescribeNodegroup(ctx, r.cluster, r.nodegroup); err != nil {
+		f := diag.FromError(diag.KindNodegroup, r.nodegroup, diag.OpDescribeNodegroup, err)
+		f.Cluster, f.Region = r.cluster, r.region
+		r.fs = append(r.fs, f)
+		r.doc.Failures = append(r.doc.Failures, f)
+		runner.WriteFailures(r.format, os.Stdout, ui.Stderr, []diag.Failure{f})
+	} else {
+		r.doc.NodegroupStatus = string(ng.Status)
+	}
+	return r.finish(scaleCompleted, runner.IncompleteExit(r.fs))
+}
+
+// printScaled says what happened, as the spinner's line shows only on a
+// terminal, and whether --wait saw the nodegroup settle.
+func (r *scaleRun) printScaled() {
 	th := render.Default(os.Stdout)
 	what := "Scaled"
-	if !cmd.Bool("wait") {
+	if !r.opts.Wait {
 		what = "Scale requested for"
 	}
 	var sizes []string
 	for _, s := range []struct {
 		label string
 		v     *int32
-	}{{"desired", desired}, {"min", minSize}, {"max", maxSize}} {
+	}{{"desired", r.desired}, {"min", r.minSize}, {"max", r.maxSize}} {
 		if s.v != nil {
 			sizes = append(sizes, fmt.Sprintf("%s %d", s.label, *s.v))
 		}
 	}
-	line := fmt.Sprintf("%s %s/%s: %s", what, clusterName, nodegroupName, strings.Join(sizes, ", "))
-	if cmd.Bool("wait") {
+	line := fmt.Sprintf("%s %s/%s: %s", what, r.cluster, r.nodegroup, strings.Join(sizes, ", "))
+	if r.opts.Wait {
 		line += " · nodegroup ACTIVE"
 	} else {
 		line += " · add --wait to wait for the nodes"
 	}
 	fmt.Println(th.Line(render.Healthy, "%s", line))
-	return runner.IncompleteExit(fs)
 }
 
 // scaleHealthWarnings collects the health-check warnings of a scale, per
@@ -345,29 +466,9 @@ func scaleSetupTimeout(apiTimeout, opTimeout time.Duration, wait, healthCheck bo
 	return total
 }
 
-// scaleQuestion builds the confirmation prompt for a scale, from the
+// formatScaleQuestion is the confirmation prompt for a scale, from the
 // nodegroup's current scaling config: "Scale prod/ng-a desired 3 → 1?". Only
 // the requested bounds are listed.
-func scaleQuestion(ctx context.Context, eksClient *eks.Client, clusterName, nodegroupName string, desired, minSize, maxSize *int32) (string, error) {
-	// Retried: a throttle here would otherwise abort the scale before the
-	// prompt.
-	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
-		return eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(nodegroupName),
-		})
-	})
-	if err != nil {
-		return "", awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))
-	}
-	var sc ekstypes.NodegroupScalingConfig
-	if desc != nil && desc.Nodegroup != nil && desc.Nodegroup.ScalingConfig != nil {
-		sc = *desc.Nodegroup.ScalingConfig
-	}
-	return formatScaleQuestion(clusterName, nodegroupName, sc, desired, minSize, maxSize), nil
-}
-
-// formatScaleQuestion is scaleQuestion's text, split out for tests.
 func formatScaleQuestion(clusterName, nodegroupName string, sc ekstypes.NodegroupScalingConfig, desired, minSize, maxSize *int32) string {
 	var parts []string
 	for _, b := range []struct {
@@ -387,38 +488,21 @@ func formatScaleQuestion(clusterName, nodegroupName string, sc ekstypes.Nodegrou
 
 // printScaleDryRun shows the current vs requested scaling configuration
 // without executing, honoring the flag's "Preview scaling impact" promise.
-func printScaleDryRun(ctx context.Context, eksClient *eks.Client, clusterName, nodegroupName string, desired, minSize, maxSize *int32) error {
-	desc, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
-		return eksClient.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{
-			ClusterName:   aws.String(clusterName),
-			NodegroupName: aws.String(nodegroupName),
-		})
-	})
-	if err != nil {
-		return awsinternal.FormatAWSError(err, fmt.Sprintf("describing nodegroup %s/%s", clusterName, nodegroupName))
-	}
-	if desc == nil || desc.Nodegroup == nil {
-		return fmt.Errorf("describing nodegroup %s/%s: empty DescribeNodegroup response", clusterName, nodegroupName)
-	}
-
+func printScaleDryRun(clusterName, nodegroupName string, sc ekstypes.NodegroupScalingConfig, desired, minSize, maxSize *int32) {
 	fmt.Println(render.Default(os.Stdout).DryRun("Would scale nodegroup %s in cluster %s", nodegroupName, clusterName))
-	if sc := desc.Nodegroup.ScalingConfig; sc != nil {
-		printScaleChange := func(label string, current *int32, requested *int32) {
-			switch {
-			case requested == nil:
-				fmt.Printf("  %-8s %d (unchanged)\n", label+":", aws.ToInt32(current))
-			case aws.ToInt32(current) == *requested:
-				fmt.Printf("  %-8s %d (no change)\n", label+":", *requested)
-			default:
-				fmt.Printf("  %-8s %d -> %d\n", label+":", aws.ToInt32(current), *requested)
-			}
+	printScaleChange := func(label string, current *int32, requested *int32) {
+		switch {
+		case requested == nil:
+			fmt.Printf("  %-8s %d (unchanged)\n", label+":", aws.ToInt32(current))
+		case aws.ToInt32(current) == *requested:
+			fmt.Printf("  %-8s %d (no change)\n", label+":", *requested)
+		default:
+			fmt.Printf("  %-8s %d -> %d\n", label+":", aws.ToInt32(current), *requested)
 		}
-		printScaleChange("Desired", sc.DesiredSize, desired)
-		printScaleChange("Min", sc.MinSize, minSize)
-		printScaleChange("Max", sc.MaxSize, maxSize)
 	}
-
-	return nil
+	printScaleChange("Desired", sc.DesiredSize, desired)
+	printScaleChange("Min", sc.MinSize, minSize)
+	printScaleChange("Max", sc.MaxSize, maxSize)
 }
 
 // readScaleSizes reads --desired, --min, and --max. At least one is required:

@@ -18,7 +18,10 @@ Rules that apply to every command:
 
 - With `-o json` or `-o yaml`, the command prints its document first. Then the
   exit code applies. A non-zero code never means the document is missing,
-  unless the code is `1`.
+  unless the code is `1`, or the code is `3` because a mutating command
+  refused to start on a cluster EKS is already changing, or one it could not
+  read to check. That refusal comes before any result: stdout is empty, and
+  the error on stderr names the change or the failed call.
 - A partial result is never a success. The command names what it could not
   read on stderr, lists it under `failures` in the JSON/YAML document (see
   [Failures](output.md#failures)), and exits `4`.
@@ -40,13 +43,14 @@ Rules that apply to every command:
 | `cluster describe` | `0`, `1`, `4` some add-ons or nodegroups could not be read |
 | [`cluster upgrade-check`](#cluster-upgrade-check) | `0` ready, `1`, `2` warnings only, `3` blocked, `4` a nodegroup or add-on could not be read |
 | [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker, `4` the planner could not read something |
+| [`cluster rollback`](../commands/cluster.md#rollback-exit-codes) | `0`, `1` error, failed phase, declined confirmation, interrupt, or timeout, `3` blocked (window, insights, upgrade policy), `4` the planner could not read something |
 | `nodegroup list` | `0`, `1`, `4` a nodegroup could not be described |
 | `nodegroup describe` | `0`, `1` |
-| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs` or the pre-scaling health check, `4` `--force` scaled without being able to check the PDBs, `5` post-scaling health check failed |
+| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs`, the pre-scaling health check, or a busy cluster, `4` `--force` scaled without being able to check the PDBs, `5` post-scaling health check failed |
 | [`nodegroup update`](#nodegroup-update) | `0`, `1`, `2`, `3`, `4`, `5` |
 | `addon list` | `0`, `1`, `4` an add-on could not be described |
 | `addon describe` | `0`, `1` |
-| [`addon update`](#addon-update) | `0`, `1`, `4`, `5` |
+| [`addon update`](#addon-update) | `0`, `1`, `3`, `4`, `5` |
 | `use`, `current`, `context list/add/remove` | `0`, `1` |
 | `version`, `install-man`, `completion` | `0`, `1` |
 
@@ -156,7 +160,7 @@ or a timeout, `refresh` prints the command that resumes the upgrade, with the `-
 |---|---|
 | `0` | The scaling request was accepted (and, with `--wait`, it settled) |
 | `1` | An error, including a `--check-pdbs` check that could not read the PDBs, a declined confirmation, or a missing `--yes` without a terminal |
-| `3` | Blocked: `--check-pdbs` refused a scale-down, or the pre-scaling health check (`--health-check`) blocked it. Nothing changed. A `--dry-run` with `--check-pdbs` exits `3` or `1` where the real run would |
+| `3` | Blocked: `--check-pdbs` refused a scale-down, the pre-scaling health check (`--health-check`) blocked it, or EKS was already changing the cluster. Nothing changed. A `--dry-run` with `--check-pdbs` exits `3` or `1` where the real run would |
 | `4` | With `--check-pdbs --force`: the PDBs could not be checked, and the scale went ahead without the check (a `--dry-run` exits `4` too) |
 | `5` | The scale was applied, but the post-scaling health check found blocking issues |
 
@@ -172,7 +176,7 @@ See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
 | `0` | Success: updates started or completed as expected |
 | `1` | An error, an interrupt (Ctrl+C), a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health warnings (with `--health-only` or `--require-healthy`) |
-| `3` | Health blocked: a pre-flight check failed, and nothing was rolled |
+| `3` | Blocked: a pre-flight check failed, the PDB drain gate found a blocker (without `--force`), or EKS was already changing the cluster. Nothing was rolled. A `--dry-run` exits `3` where the drain gate would refuse |
 | `4` | A failure: a nodegroup could not be read (also in a `--dry-run` preview or after the roll), or its update could not start. With `--health-only`, a pass whose checks could not read everything |
 | `5` | Post-roll verification found issues (nodes not Ready, or newly stuck pods) |
 
@@ -185,7 +189,8 @@ AWS. Check it with `refresh nodegroup list <cluster>`.
 
 In fleet mode (`--all-clusters`) the run exits with the worst code across
 clusters: `5`, then `4`, then `3`, then `2`, then `1`. A cluster stopped by
-health warnings (`--health-only` or `--require-healthy`) counts as `2`, and
+health warnings (`--health-only` or `--require-healthy`) counts as `2`, a
+cluster skipped as `Busy` or refused as `DrainBlocked` counts as `3`, and
 an interrupted or timed-out cluster counts as `1`. A region whose clusters
 could not be listed counts as `4`; see [Region sweeps](#region-sweeps).
 
@@ -214,6 +219,7 @@ drive these (`--health-only`, `--require-healthy`, `--skip-verify`).
 |---|---|
 | `0` | Success: updates started, completed, were already `UpToDate`, or were already `InProgress` |
 | `1` | An error or an interrupt. For a single add-on, also a failed update: the API call failed, or with `--wait` the EKS update was `Failed`/`Cancelled`, the add-on ended at another version, or the wait timed out (`WaitFailed`) |
+| `3` | EKS was already changing the cluster (the control plane, a nodegroup, or another add-on). Nothing was started |
 | `4` | A failure: with `--all`, an add-on update failed, did not complete, or was not attempted because the run hit its deadline. For any run, an add-on that could not be read after its update (`Unverified`) |
 | `5` | The update landed, but a post-update health check found issues (`CompletedWithIssues`) |
 
@@ -229,6 +235,14 @@ case $? in
   *) echo "update failed" ;;
 esac
 ```
+
+## Changes after 0.12 (mutating commands)
+
+| Command | Before | Now |
+|---|---|---|
+| `nodegroup update` (a PodDisruptionBudget would block the drain of a nodegroup to roll) | Warning; the roll started and stalled | `3`, nothing started; `--force` rolls anyway |
+| `nodegroup update --dry-run` (the same) | `0` | `3` |
+| `nodegroup update`, `nodegroup scale`, `addon update` (EKS is already changing the cluster) | `1` from EKS after the prompt | `3` before the prompt |
 
 ## Changes in 0.12.0 (mutating commands)
 

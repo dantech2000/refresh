@@ -49,10 +49,20 @@ type NodeView struct {
 	// not draining or when pod accounting isn't available).
 	Pods      int `json:"pods,omitempty"`
 	PodsTotal int `json:"podsTotal,omitempty"`
+	// PodList names the evictable pods still on a Draining node, when pod
+	// accounting is available, so a view can show which pods are left, not
+	// only how many.
+	PodList []PodView `json:"podList,omitempty"`
 	// Pressure lists active node-pressure conditions (MemoryPressure, etc.) — an
 	// advisory layered over Phase. A node can be Ready yet under pressure when the
 	// replacement instance is undersized; the roll looks healthy while it isn't.
 	Pressure []string `json:"pressure,omitempty"`
+}
+
+// PodView is one evictable pod on a draining node.
+type PodView struct {
+	Name        string `json:"name"` // namespace/name
+	Terminating bool   `json:"terminating,omitempty"`
 }
 
 // Snapshot is the nodegroup's state at one instant, plus roll aggregates.
@@ -109,6 +119,7 @@ type KubeObserver struct {
 	// are fast and read a local cache) the per-node pod Lists run at most once
 	// per podRefresh; with 0 (polling) every Snapshot re-reads.
 	podCounts   map[string]int
+	podLists    map[string][]PodView // the evictable pods behind podCounts
 	podCountsAt time.Time
 	podRefresh  time.Duration
 	// warnEvents caches the last cluster Warning-event read, taken at
@@ -310,7 +321,7 @@ func (o *KubeObserver) listWarningEvents(ctx context.Context) (events []corev1.E
 // a failed read for a node leaves that node's pod fields zero (the panel just
 // omits its bar).
 func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
-	counts := o.drainingPodCounts(ctx, snap.Nodes)
+	counts, lists := o.drainingPodCounts(ctx, snap.Nodes)
 	if o.drainStart == nil {
 		o.drainStart = make(map[string]int)
 	}
@@ -328,6 +339,7 @@ func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
 		}
 		n.Pods = cur
 		n.PodsTotal = o.drainStart[n.Name]
+		n.PodList = lists[n.Name]
 	}
 }
 
@@ -336,7 +348,7 @@ func (o *KubeObserver) fillPodEviction(ctx context.Context, snap *Snapshot) {
 // spec.nodeName field selector (indexed server-side), so the cost scales with
 // the draining set, not with the cluster's pod count. When podRefresh is set,
 // a recent result for the same draining set is reused.
-func (o *KubeObserver) drainingPodCounts(ctx context.Context, nodes []NodeView) map[string]int {
+func (o *KubeObserver) drainingPodCounts(ctx context.Context, nodes []NodeView) (map[string]int, map[string][]PodView) {
 	var draining []string
 	for _, n := range nodes {
 		if n.Phase == PhaseDraining {
@@ -344,9 +356,10 @@ func (o *KubeObserver) drainingPodCounts(ctx context.Context, nodes []NodeView) 
 		}
 	}
 	if o.podRefresh > 0 && o.podCounts != nil && time.Since(o.podCountsAt) < o.podRefresh && sameKeys(o.podCounts, draining) {
-		return o.podCounts
+		return o.podCounts, o.podLists
 	}
 	counts := make(map[string]int, len(draining))
+	lists := make(map[string][]PodView, len(draining))
 	for _, name := range draining {
 		pods, err := o.listPodsOnNode(ctx, name)
 		if err != nil {
@@ -356,12 +369,16 @@ func (o *KubeObserver) drainingPodCounts(ctx context.Context, nodes []NodeView) 
 		for i := range pods {
 			if isEvictablePod(&pods[i]) {
 				c++
+				lists[name] = append(lists[name], PodView{
+					Name:        pods[i].Namespace + "/" + pods[i].Name,
+					Terminating: pods[i].DeletionTimestamp != nil,
+				})
 			}
 		}
 		counts[name] = c
 	}
-	o.podCounts, o.podCountsAt = counts, time.Now()
-	return counts
+	o.podCounts, o.podLists, o.podCountsAt = counts, lists, time.Now()
+	return counts, lists
 }
 
 // sameKeys reports whether m holds exactly the names in keys.

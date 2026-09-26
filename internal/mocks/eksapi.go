@@ -34,6 +34,7 @@ type EKSAPI struct {
 	UpdateClusterVersionFn    func(ctx context.Context, in *eks.UpdateClusterVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateClusterVersionOutput, error)
 	UpdateNodegroupVersionFn  func(ctx context.Context, in *eks.UpdateNodegroupVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error)
 	DescribeUpdateFn          func(ctx context.Context, in *eks.DescribeUpdateInput, optFns ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error)
+	ListUpdatesFn             func(ctx context.Context, in *eks.ListUpdatesInput, optFns ...func(*eks.Options)) (*eks.ListUpdatesOutput, error)
 	DescribeClusterVersionsFn func(ctx context.Context, in *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error)
 	ListInsightsFn            func(ctx context.Context, in *eks.ListInsightsInput, optFns ...func(*eks.Options)) (*eks.ListInsightsOutput, error)
 	DescribeInsightFn         func(ctx context.Context, in *eks.DescribeInsightInput, optFns ...func(*eks.Options)) (*eks.DescribeInsightOutput, error)
@@ -65,6 +66,7 @@ type EKSAPI struct {
 		UpdateClusterVersion    int
 		UpdateNodegroupVersion  int
 		DescribeUpdate          int
+		ListUpdates             int
 		DescribeClusterVersions int
 		ListInsights            int
 		DescribeInsight         int
@@ -203,6 +205,14 @@ func (m *EKSAPI) DescribeUpdate(ctx context.Context, in *eks.DescribeUpdateInput
 		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to DescribeUpdate (id=%s)", ptrStr(in.UpdateId)))
 	}
 	return m.DescribeUpdateFn(ctx, in, optFns...)
+}
+
+func (m *EKSAPI) ListUpdates(ctx context.Context, in *eks.ListUpdatesInput, optFns ...func(*eks.Options)) (*eks.ListUpdatesOutput, error) {
+	m.inc(&m.Calls.ListUpdates)
+	if m.ListUpdatesFn == nil {
+		panic(fmt.Sprintf("mocks.EKSAPI: unexpected call to ListUpdates (cluster=%s)", ptrStr(in.Name)))
+	}
+	return m.ListUpdatesFn(ctx, in, optFns...)
 }
 
 func (m *EKSAPI) DescribeClusterVersions(ctx context.Context, in *eks.DescribeClusterVersionsInput, optFns ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error) {

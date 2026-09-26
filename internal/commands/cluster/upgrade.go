@@ -24,22 +24,23 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-// upgradeDefaultTimeout bounds a full orchestrated upgrade. Control-plane
-// hops run ~10m each and nodegroup rolls ~10-20m per group, so multi-hop
-// upgrades legitimately run for hours.
-const upgradeDefaultTimeout = 4 * time.Hour
+// upgradeDefaultTimeout bounds a full orchestrated upgrade.
+const upgradeDefaultTimeout = appconfig.DefaultUpgradeTimeout
 
 func upgradeCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "upgrade",
-		Usage:     "Orchestrate a cluster upgrade: control plane → addons → nodegroups, with gates",
+		Usage:     "Orchestrate a cluster upgrade: control plane → nodegroups → addons, with gates",
 		ArgsUsage: "[cluster]",
 		Description: `Plan and execute a full EKS cluster upgrade to a target Kubernetes version.
 
 EKS upgrades one minor version at a time, so a multi-minor upgrade expands
 into sequential hops. Each hop runs: readiness (cluster insights + kubelet
-version skew) → control plane → addons (dependency order, versions compatible
-with the hop target) → nodegroup rolls, with a health gate after every phase.
+version skew) → control plane → required addons → nodegroup rolls → the other
+addons, with a health gate after every phase. Required addons are the ones
+whose installed version the new control plane cannot run (kube-proxy, as a
+rule). Addons update in dependency order to the latest version compatible
+with the hop target.
 
 Before each control-plane step, refresh asks EKS to re-evaluate Cluster
 Insights (up to 5m) and blocks on ERROR or UNKNOWN insights, or when EKS has

@@ -26,7 +26,9 @@
         "Interrupted",
         "TimedOut",
         "NotAttempted",
-        "Planned"
+        "Planned",
+        "Busy",
+        "DrainBlocked"
       ],
       "description": "ClusterStatus is the outcome of one cluster in a fleet run. docs/concepts/output.md documents the values; later versions may add values."
     },
@@ -51,6 +53,13 @@
         "failure": {
           "$ref": "#/$defs/Failure",
           "description": "failure is set when the action is unknown. The same failure is in the document's failures."
+        },
+        "drainBlockers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "drainBlockers names what would stop EKS draining a nodegroup the run would roll. Without --force the real run refuses (exit 3)."
         }
       },
       "type": "object",
@@ -195,7 +204,7 @@
         },
         "status": {
           "$ref": "#/$defs/ClusterStatus",
-          "description": "status is Planned, Incomplete (the plan has nodegroups that could not be read), or Failed (no plan)."
+          "description": "status is Planned, Incomplete (the plan has nodegroups that could not be read), DrainBlocked (the real run's drain gate would refuse the plan), or Failed (no plan)."
         },
         "plan": {
           "$ref": "#/$defs/DryRunPlan"

@@ -66,7 +66,7 @@ func TestUpgradeAddons_ChoosesTargetCompatibleVersion(t *testing.T) {
 	mocks.SettleAddonUpdates(m)
 	svc := newTestService(m)
 
-	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
+	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil, nil); err != nil {
 		t.Fatalf("UpgradeAddons: %v", err)
 	}
 
@@ -92,7 +92,7 @@ func TestUpgradeAddons_AlreadyLatestSkipped(t *testing.T) {
 	})
 	svc := newTestService(m)
 
-	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
+	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil, nil); err != nil {
 		t.Fatalf("UpgradeAddons: %v", err)
 	}
 	if m.Calls.UpdateAddon != 0 {
@@ -112,7 +112,7 @@ func TestUpgradeAddons_SkipListRespected(t *testing.T) {
 	})
 	svc := newTestService(m)
 
-	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", []string{"vpc-cni"}, nil); err != nil {
+	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", []string{"vpc-cni"}, nil, nil); err != nil {
 		t.Fatalf("UpgradeAddons: %v", err)
 	}
 	if m.Calls.UpdateAddon != 0 {
@@ -150,7 +150,7 @@ func TestUpgradeAddons_SkipIsExactName(t *testing.T) {
 			mocks.SettleAddonUpdates(m)
 			svc := newTestService(m)
 
-			if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", tc.skip, nil); err != nil {
+			if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", tc.skip, nil, nil); err != nil {
 				t.Fatalf("UpgradeAddons: %v", err)
 			}
 			if m.Calls.UpdateAddon != tc.wantUpdates {
@@ -192,7 +192,7 @@ func TestUpgradeAddons_DependencyOrder(t *testing.T) {
 	mocks.SettleAddonUpdates(m)
 	svc := newTestService(m)
 
-	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
+	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil, nil); err != nil {
 		t.Fatalf("UpgradeAddons: %v", err)
 	}
 	if len(order) != 2 || order[0] != "vpc-cni" || order[1] != "coredns" {
@@ -214,7 +214,7 @@ func TestUpgradeAddons_FailureHaltsPhase(t *testing.T) {
 	}
 	svc := newTestService(m)
 
-	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil)
+	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "vpc-cni") {
 		t.Fatalf("err = %v, want failure naming vpc-cni", err)
 	}
@@ -253,7 +253,7 @@ func TestUpgradeAddons_ResumeAttachesToInFlightUpdate(t *testing.T) {
 	}
 	svc := newTestService(m)
 
-	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
+	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil, nil); err != nil {
 		t.Fatalf("UpgradeAddons: %v", err)
 	}
 	if m.Calls.UpdateAddon != 0 {
@@ -307,7 +307,7 @@ func TestUpgradeAddons_ResumeThenConverges(t *testing.T) {
 	mocks.SettleAddonUpdates(m)
 	svc := newTestService(m)
 
-	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil); err != nil {
+	if err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil, nil); err != nil {
 		t.Fatalf("UpgradeAddons: %v", err)
 	}
 	mu.Lock()
@@ -325,7 +325,7 @@ func TestUpgradeAddons_NoCompatibleVersionFails(t *testing.T) {
 		Build()
 	svc := newTestService(m)
 
-	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil)
+	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "legacy-addon") {
 		t.Fatalf("err = %v, want failure naming legacy-addon", err)
 	}
@@ -361,7 +361,7 @@ func TestUpgradeAddons_ResumeWaitFailsFastOnPermanentError(t *testing.T) {
 	svc := newTestService(m)
 
 	start := time.Now()
-	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil)
+	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil, nil)
 	if time.Since(start) > 10*time.Second {
 		t.Fatalf("resume wait took %v; a permanent error must fail fast", time.Since(start))
 	}
@@ -382,7 +382,7 @@ func TestUpgradeAddons_FailedUpdateHaltsPhase(t *testing.T) {
 	versionsByK8s(m, "vpc-cni", map[string][]string{"1.32": {"v1.32.2-eksbuild.1"}})
 	svc := newTestService(m)
 
-	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil)
+	err := svc.UpgradeAddons(context.Background(), "prod-east", "1.32", nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "u-vpc Failed") {
 		t.Fatalf("err = %v, want the failed update named", err)
 	}

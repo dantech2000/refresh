@@ -35,6 +35,13 @@
         "failure": {
           "$ref": "#/$defs/Failure",
           "description": "failure is set when the action is unknown. The same failure is in the document's failures."
+        },
+        "drainBlockers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "drainBlockers names what would stop EKS draining a nodegroup the run would roll. Without --force the real run refuses (exit 3)."
         }
       },
       "type": "object",

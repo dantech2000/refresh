@@ -58,11 +58,22 @@ The patch stage is also where the **safety story** lives:
 ## 4. Upgrade — orchestrate the whole thing
 
 [`refresh cluster upgrade`](../commands/cluster.md#upgrade) sequences a full
-cluster upgrade: **control plane → add-ons → nodegroups**, with a health gate
-after each phase. Before each control-plane step it asks EKS to re-evaluate
+cluster upgrade: **control plane → nodegroups → add-ons**, with a health gate
+after each phase. Add-ons the new control plane cannot run update before the
+rolls. Before each control-plane step it asks EKS to re-evaluate
 Cluster Insights and blocks on problems, and before each nodegroup roll it
 runs the pre-flight health checks. It's resumable by re-deriving the plan
 from live cluster state (no state files to corrupt).
+
+## Undo — roll an upgrade back
+
+For about 7 days after an in-place upgrade, EKS can roll the control plane
+back one minor version.
+[`refresh cluster rollback`](../commands/cluster.md#rollback) does it in the
+order AWS documents: **nodegroups → add-ons → control plane**. It checks the
+window, the upgrade policy, and the rollback-readiness insights first, and it
+is resumable in the same way as `cluster upgrade`. `cluster upgrade-check`
+shows when a rollback is available.
 
 ## Supporting surface
 

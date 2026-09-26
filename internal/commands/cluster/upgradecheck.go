@@ -15,6 +15,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/services/status"
+	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -136,6 +137,15 @@ func runUpgradeCheck(ctx context.Context, cmd *cli.Command) error {
 		posture := status.NewSupportResolver(factory.NewEKSClient(awsCfg)).Resolve(ctx, report.Skew.ControlPlaneVersion)
 		posture = status.ApplySupportType(posture, ekstypes.SupportType(report.SupportType))
 		report.Support = &posture
+	}
+
+	// Rollback availability, best effort: the key is left out when the
+	// update history can't be read (eks:ListUpdates).
+	if report != nil && report.Skew.ControlPlaneVersion != "" {
+		rb := upgrade.NewService(factory.NewEKSClient(awsCfg), factory.NewDefaultLogger(nil))
+		if a, rerr := rb.RollbackAvailability(ctx, clusterName, report.Skew.ControlPlaneVersion); rerr == nil {
+			report.Rollback = a
+		}
 	}
 
 	// Control-plane health gate from the free AWS/EKS CloudWatch metrics — etcd

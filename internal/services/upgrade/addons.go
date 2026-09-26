@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -28,6 +29,9 @@ const addonWaitTimeout = 20 * time.Minute
 // UpgradeAddons updates every installed addon (minus the skip list) to the
 // latest version compatible with targetVersion, serially in dependency order
 // (vpc-cni → coredns/kube-proxy → the rest), waiting for each to go ACTIVE.
+// When only is not empty, the phase updates just the addons it names: the
+// engine runs one phase for the addons the new control plane cannot run
+// (before the nodegroup rolls) and one for the rest (after them).
 //
 // It runs after the control-plane step of a hop, so targetVersion is also the
 // cluster's (new) current version; versions are still chosen explicitly
@@ -35,7 +39,22 @@ const addonWaitTimeout = 20 * time.Minute
 // so the intent survives mid-phase retries. The addon service's built-in
 // pre/post health checks act as the phase gate: the first failure halts the
 // phase (and therefore the hop) with the failing addon named.
-func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion string, skip []string, progress ProgressFunc) error {
+func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion string, skip, only []string, progress ProgressFunc) error {
+	return s.updateAddonsFor(ctx, clusterName, targetVersion, skip, only,
+		func(current string, versions []addons.AddonVersionInfo) (bool, string) {
+			if addons.CompareVersions(current, versions[0].Version) >= 0 {
+				return true, fmt.Sprintf("already at %s (latest compatible with %s)", current, targetVersion)
+			}
+			return false, ""
+		}, progress)
+}
+
+// updateAddonsFor moves each installed addon (minus skip, and limited to
+// only when it is not empty) to the newest version compatible with
+// targetVersion, unless keep reports that its current version satisfies the
+// phase, with the reason to print. An upgrade keeps an addon at or above
+// the newest version; a rollback keeps one that targetVersion lists.
+func (s *Service) updateAddonsFor(ctx context.Context, clusterName, targetVersion string, skip, only []string, keep func(current string, versions []addons.AddonVersionInfo) (bool, string), progress ProgressFunc) error {
 	progress = ensureProgress(progress)
 	svc := s.addonsService()
 
@@ -46,6 +65,9 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 	addonList = addons.SortByDependency(addonList)
 
 	for _, a := range addonList {
+		if len(only) > 0 && !slices.Contains(only, a.Name) {
+			continue
+		}
 		if isSkippedAddon(a.Name, skip) {
 			progress("addon %s: skipped (managed out-of-band)", a.Name)
 			continue
@@ -81,18 +103,22 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 			}
 		}
 
-		if addons.CompareVersions(current, chosen) >= 0 {
-			progress("addon %s already at %s (latest compatible with %s), skipping", a.Name, current, targetVersion)
+		if ok, why := keep(current, versions); ok {
+			progress("addon %s %s, skipping", a.Name, why)
 			continue
 		}
 
 		progress("addon %s: %s → %s", a.Name, current, chosen)
 		result, err := svc.Update(ctx, clusterName, a.Name, addons.UpdateOptions{
-			Version:      chosen,
-			HealthCheck:  true,
-			Wait:         true,
-			WaitTimeout:  addonWaitTimeout,
-			PollInterval: s.PollInterval,
+			Version: chosen,
+			// Validate the pinned version against the phase's target, not
+			// the live control plane: a rollback downgrades addons before
+			// the control plane moves back.
+			KubernetesVersion: targetVersion,
+			HealthCheck:       true,
+			Wait:              true,
+			WaitTimeout:       addonWaitTimeout,
+			PollInterval:      s.PollInterval,
 		})
 		if err != nil {
 			updateID := ""

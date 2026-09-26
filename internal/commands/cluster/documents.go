@@ -16,5 +16,7 @@ func Documents() []apidoc.Document {
 		clustersvc.InsightDetail{},
 		upgrade.Plan{},
 		upgradeResult{},
+		upgrade.RollbackPlan{},
+		rollbackResult{},
 	}
 }

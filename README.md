@@ -21,7 +21,10 @@ The core loop:
 3. **`refresh nodegroup update`** and **`refresh addon update`** patch with
    health gates, dry-run, and real-time monitoring.
 4. **`refresh cluster upgrade`** runs a full upgrade in order (control plane,
-   then add-ons, then nodegroups) with a health gate after every phase.
+   then nodegroups, then add-ons) with a health gate after every phase.
+5. **`refresh cluster rollback`** undoes an in-place upgrade within about 7
+   days: nodegroups, then add-ons, then the control plane go back one minor
+   version.
 
 `list` and `describe` commands for clusters, nodegroups, and add-ons cover the
 day-to-day reads.
@@ -147,8 +150,11 @@ refresh cluster upgrade-check -c prod
 refresh nodegroup update -c prod --dry-run
 refresh nodegroup update -c prod
 
-# 4. Upgrade the whole cluster (control plane, add-ons, nodegroups), with gates
+# 4. Upgrade the whole cluster (control plane, nodegroups, add-ons), with gates
 refresh cluster upgrade -c prod --to 1.33
+
+# 5. Changed your mind within about 7 days? Roll back one minor version
+refresh cluster rollback -c prod --dry-run
 ```
 
 Contexts bind a cluster to a region and profile:
@@ -168,8 +174,8 @@ nodegroup, `-a` addon, `-o` format, `-r` region, `-t` timeout, `-d` dry-run,
 `-y` yes, `-q` quiet, `-w` watch, `-f` filter. The commands that change a
 cluster share `--dry-run`, `--yes`, and `--wait-timeout`.
 
-`cluster upgrade`, `addon update`, `nodegroup scale`, and `nodegroup update
---all-clusters` ask for confirmation before they act. `nodegroup update` asks
+`cluster upgrade`, `cluster rollback`, `addon update`, `nodegroup scale`, and
+`nodegroup update --all-clusters` ask for confirmation before they act. `nodegroup update` asks
 when a health check warns. In scripts, pass `--yes`.
 
 ### Upgrading refresh
@@ -191,7 +197,7 @@ Every command follows one contract:
 | `0` | OK |
 | `1` | Error or interrupt (Ctrl+C) |
 | `2` | Needs attention: warnings or stale items (`status`, `cluster upgrade-check`, `nodegroup update` health warnings) |
-| `3` | Blocked or unsupported: a gate stopped the operation (`cluster upgrade-check`, `cluster upgrade`, `nodegroup update`, `nodegroup scale --check-pdbs`), or a cluster is on extended support |
+| `3` | Blocked or unsupported: a gate stopped the operation (`cluster upgrade-check`, `cluster upgrade`, `cluster rollback`, `nodegroup update`, `nodegroup scale --check-pdbs`), or a cluster is on extended support |
 | `4` | Incomplete data or partial failure: some items or regions could not be read, or some updates failed |
 | `5` | Post-action verification failed (`nodegroup update`, `nodegroup scale`, `addon update`) |
 

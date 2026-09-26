@@ -4,8 +4,9 @@
 //
 // EKS upgrades one minor version at a time, so a multi-minor upgrade expands
 // into sequential "hops" (1.31 → 1.32 → 1.33). Each hop runs control plane →
-// addons (dependency order, versions compatible with the hop target) →
-// nodegroup rolls, with a gate after every phase.
+// the addons whose version the new control plane cannot run → nodegroup
+// rolls → the remaining addons, with a gate after every phase. Addons update
+// in dependency order to the latest version compatible with the hop target.
 //
 // The orchestrator is resumable by re-derivation rather than state files:
 // BuildPlan inspects actual cluster state and marks already-satisfied steps
@@ -67,6 +68,11 @@ type Step struct {
 	Version     string     `json:"version,omitempty" yaml:"version,omitempty"`
 	Status      StepStatus `json:"status" yaml:"status"`
 	Reason      string     `json:"reason,omitempty" yaml:"reason,omitempty"`
+	// BeforeNodegroups marks an addon step that runs before the hop's
+	// nodegroup rolls: the addon's version is not compatible with the hop's
+	// control-plane version, or (on a blocked step) its compatibility is
+	// unknown. Other addon steps run after the rolls.
+	BeforeNodegroups bool `json:"beforeNodegroups,omitempty" yaml:"beforeNodegroups,omitempty"`
 }
 
 // Hop is a single minor-version upgrade cycle within the plan.

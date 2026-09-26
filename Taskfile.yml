@@ -112,6 +112,12 @@ tasks:
     cmds:
       - go test -race -shuffle=on -count={{.COUNT | default 2}} ./...
 
+  test:live:
+    desc: Read-only checks against a real AWS account (AWS_PROFILE); free, never changes anything
+    cmds:
+      - task: build
+      - go test -tags livecheck -count=1 -v -run TestLive ./internal/aws/ ./internal/services/status/ ./internal/services/addons/ ./internal/services/nodegroup/ ./internal/tools/livecheck/
+
   test:coverage:
     desc: Run tests with coverage
     cmds:
@@ -198,6 +204,13 @@ tasks:
     deps: [build]
     cmds:
       - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} version
+
+  run:tui:sim:
+    desc: Open the experimental TUI on the simulated fleet (no AWS; SPEED=n sets sim seconds per second)
+    deps: [build]
+    interactive: true
+    cmds:
+      - REFRESH_DEV_SIMULATE=1 REFRESH_DEV_SIM_SPEED={{.SPEED | default "8"}} ./{{.BUILD_DIR}}/{{.BINARY_NAME}} ui
 
   run:help:
     desc: Show help

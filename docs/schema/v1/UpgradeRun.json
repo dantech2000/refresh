@@ -219,6 +219,10 @@
         },
         "reason": {
           "type": "string"
+        },
+        "beforeNodegroups": {
+          "type": "boolean",
+          "description": "beforeNodegroups marks an addon step that runs before the hop's nodegroup rolls: the addon's version is not compatible with the hop's control-plane version, or (on a blocked step) its compatibility is unknown. Other addon steps run after the rolls."
         }
       },
       "type": "object",
