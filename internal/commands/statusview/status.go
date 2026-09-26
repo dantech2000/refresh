@@ -116,7 +116,7 @@ func supportCell(s statussvc.SupportPosture) string {
 func computeCell(c statussvc.ClusterStatus) string {
 	switch c.Compute {
 	case statussvc.ComputeManaged:
-		return fmt.Sprintf("%d nodegroups", c.NodegroupCount)
+		return render.Plural(c.NodegroupCount, "nodegroup")
 	case statussvc.ComputeAutoMode:
 		return autoModeText(c)
 	case statussvc.ComputeKarpenter:
@@ -149,7 +149,7 @@ func autoModeText(c statussvc.ClusterStatus) string {
 	case c.NodegroupCount == 1:
 		return "Auto Mode + 1 nodegroup"
 	case c.NodegroupCount > 1:
-		return fmt.Sprintf("Auto Mode + %d nodegroups", c.NodegroupCount)
+		return "Auto Mode + " + render.Plural(c.NodegroupCount, "nodegroup")
 	}
 	return "Auto Mode"
 }

@@ -81,8 +81,8 @@ func fleetLines(th *render.Theme, statuses []statussvc.ClusterStatus, failures [
 	}
 	out := []string{
 		th.Bold(pal.Mauve, "FLEET") + "  " +
-			th.Paint(pal.White, fmt.Sprintf("%d clusters", len(statuses))) +
-			th.Paint(pal.Dim, fmt.Sprintf(" · %d region(s)", distinctRegions(statuses))),
+			th.Paint(pal.White, render.Plural(len(statuses), "cluster")) +
+			th.Paint(pal.Dim, " · "+render.Plural(distinctRegions(statuses), "region")),
 		"",
 		chipsLine(th, statuses),
 		"",
@@ -166,7 +166,7 @@ func supportPretty(th *render.Theme, s statussvc.SupportPosture) string {
 func computePretty(th *render.Theme, c statussvc.ClusterStatus) string {
 	switch c.Compute {
 	case statussvc.ComputeManaged:
-		return th.Paint(th.Pal.Dim, fmt.Sprintf("%d nodegroups", c.NodegroupCount))
+		return th.Paint(th.Pal.Dim, render.Plural(c.NodegroupCount, "nodegroup"))
 	case statussvc.ComputeAutoMode:
 		return th.Paint(th.Pal.Teal, autoModeText(c))
 	case statussvc.ComputeKarpenter:
@@ -244,10 +244,10 @@ func footerPretty(th *render.Theme, statuses []statussvc.ClusterStatus, elapsed 
 			supportRisk++
 		}
 	}
-	txt := fmt.Sprintf("%d clusters · %d stale nodegroups · %d addons behind · %d extended/unsupported",
-		len(statuses), staleNG, addonsBehind, supportRisk)
+	txt := fmt.Sprintf("%s · %s · %s behind · %d extended/unsupported",
+		render.Plural(len(statuses), "cluster"), render.Plural(staleNG, "stale nodegroup"), render.Plural(addonsBehind, "addon"), supportRisk)
 	if ngBehindCP > 0 {
-		txt += fmt.Sprintf(" · %d nodegroups behind control plane", ngBehindCP)
+		txt += " · " + render.Plural(ngBehindCP, "nodegroup") + " behind control plane"
 	}
 	incomplete := countIncomplete(statuses)
 	if incomplete > 0 {

@@ -253,6 +253,10 @@ func runDescribe(ctx context.Context, cmd *cli.Command) error {
 		}
 	} else if err := clusterview.OutputClusterDetailsTable(details, options.ShowSecurity); err != nil {
 		return err
+	} else if showHealth && !cmd.Bool("check-readiness") {
+		// Without --check-readiness the health card has no Kubernetes
+		// client, so its workload, PDB, and live-utilization checks skip.
+		render.Notef(ui.Stderr, render.Neutral, "Workload, PDB, and live node checks need cluster access: add --check-readiness")
 	}
 	// Add-ons or nodegroups that could not be read would otherwise just be
 	// missing from the output.

@@ -2,6 +2,7 @@ package nodegroup
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,5 +106,58 @@ func TestBuildAMIChangelog_NonAmazonLinuxFamilies(t *testing.T) {
 		if !strings.Contains(out, "see release notes: "+tc.url) || strings.Contains(out, "unavailable") {
 			t.Errorf("%s: printed %q", tc.amiType, out)
 		}
+	}
+}
+
+// Release bodies grew to ~26 KB each, so the list outgrew the old 1 MiB read
+// cap and the notes failed with "unexpected end of JSON input" (seen against
+// the real API). A multi-MiB list parses; one past the cap says so.
+func TestBuildAMIChangelog_LargeReleaseList(t *testing.T) {
+	big := strings.Repeat("- a long line of release notes\\n", 900) // ~27 KB per body
+	list := func(n int) string {
+		var b strings.Builder
+		b.WriteString("[")
+		for i := range n {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, `{"tag_name":"v202605%02d","body":"%s"}`, i%28+1, big)
+		}
+		b.WriteString("]")
+		return b.String()
+	}
+	for _, tc := range []struct {
+		n        int
+		degraded string
+	}{{n: 60}, {n: 200, degraded: "larger than 4 MiB"}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(list(tc.n)))
+		}))
+		oldURL := eksAMIReleasesURL
+		eksAMIReleasesURL = srv.URL
+		cl := buildAMIChangelog(context.Background(), srv.Client(), ekstypes.AMITypesAl2023X8664Standard, "1.34.10-20260501", "1.34.11-20260528")
+		eksAMIReleasesURL = oldURL
+		srv.Close()
+		if tc.degraded == "" && (cl.Degraded || cl.Behind == 0) {
+			t.Errorf("%d releases: degraded %q, behind %d", tc.n, cl.Reason, cl.Behind)
+		}
+		if tc.degraded != "" && (!cl.Degraded || !strings.Contains(cl.Reason, tc.degraded)) {
+			t.Errorf("%d releases: reason = %q, want %q", tc.n, cl.Reason, tc.degraded)
+		}
+	}
+}
+
+// The real notes (2026): GitHub-generated PR titles, then HTML tables whose
+// cells mention kernels. The summary keeps the PR titles, not the cells.
+func TestSummarizeReleaseBody_GeneratedNotes(t *testing.T) {
+	body := "<!-- Release notes generated -->\n\n## What's Changed\n" +
+		"* fix(boot-hook): poll managed interfaces by @mselim00 in https://github.com/awslabs/amazon-eks-ami/pull/2821\n" +
+		"* feat: use igzip for decompression by @fletcherw in https://github.com/awslabs/amazon-eks-ami/pull/2828\n\n" +
+		"**Full Changelog**: https://github.com/awslabs/amazon-eks-ami/compare/v1...v2\n\n---\n\n<h2>AMI Details</h2>\n<table>\n" +
+		"  <tr>\n    <td>al2023-ami-minimal-2023.12.20260918.0-kernel-6.18-arm64</td>\n  </tr>\n</table>\n"
+	got := summarizeReleaseBody(body)
+	want := []string{"fix(boot-hook): poll managed interfaces (#2821)", "feat: use igzip for decompression (#2828)"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
