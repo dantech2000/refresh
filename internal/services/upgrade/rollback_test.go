@@ -587,3 +587,39 @@ func TestExecuteRollback_RefusesAChangedPlan(t *testing.T) {
 		t.Fatalf("changed %v for a plan that no longer matched", *events)
 	}
 }
+
+// An add-on whose installed version changed since the plan, with the same
+// downgrade target, is a change the user did not confirm.
+func TestExecuteRollback_RefusesAChangedAddonVersion(t *testing.T) {
+	w := newRollbackWorld()
+	svc, m := w.service()
+	events := recordMutations(m)
+	plan := buildRollback(t, svc, RollbackOptions{SkipInsightsCheck: true})
+	w.mu.Lock()
+	w.addonVersions["kube-proxy"] = "v1.33.9-eksbuild.9"
+	w.mu.Unlock()
+	_, err := svc.ExecuteRollback(context.Background(), plan, ExecuteOptions{Yes: true, SkipInsightsCheck: true})
+	if !errors.Is(err, ErrRollbackBlocked) || !strings.Contains(err.Error(), "v1.33.9-eksbuild.9") {
+		t.Fatalf("ExecuteRollback = %v, want ErrRollbackBlocked naming the new version", err)
+	}
+	if len(*events) != 0 {
+		t.Fatalf("changed %v", *events)
+	}
+}
+
+// A stop at the control plane's nodegroup check, with no nodegroup or
+// add-on work before it, changed nothing: ErrRollbackBlocked (exit 3).
+func TestExecuteRollback_PrecheckWithNothingChangedIsBlocked(t *testing.T) {
+	w := newRollbackWorld()
+	w.addonVersions["kube-proxy"] = latestFor("1.32") // no add-on work
+	svc, m := w.service()
+	events := recordMutations(m)
+	plan := buildRollback(t, svc, RollbackOptions{SkipNodegroups: []string{"ng-new"}, SkipInsightsCheck: true})
+	report, err := svc.ExecuteRollback(context.Background(), plan, ExecuteOptions{Yes: true, SkipNodegroups: []string{"ng-new"}, SkipInsightsCheck: true})
+	if !errors.Is(err, ErrRollbackBlocked) || !strings.Contains(err.Error(), "ng-new at 1.33") || report.Status != RunBlocked {
+		t.Fatalf("ExecuteRollback = %v (%+v), want ErrRollbackBlocked naming ng-new", err, report)
+	}
+	if len(*events) != 0 || len(w.cpInputs) != 0 {
+		t.Fatalf("changed %v", *events)
+	}
+}

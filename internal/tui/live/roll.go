@@ -186,7 +186,7 @@ func healthGates(s health.HealthSummary) (gates []state.PlanGate, blocked []stri
 
 // planRollLive adds what only a change needs to a roll dry run: the
 // pre-flight health gate and the node view's Kubernetes access.
-func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Config, t target, ng string) {
+func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Config, t target, ng, shown string) {
 	kube, metrics, how := b.roll.kubeFor(ctx, cfg, t.name)
 	summary := b.roll.healthCheck(ctx, cfg, t.name, []string{ng}, kube, metrics)
 	gates, blocked := healthGates(summary)
@@ -214,18 +214,26 @@ func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Confi
 	}
 	// What the user sees here and confirms with y: Start refuses a roll
 	// whose gate has found anything more since, or whose nodegroup has
-	// moved to another version.
-	version := ""
-	if c, ok := b.cluster(t.name); ok {
-		for _, n := range c.Nodegroups {
-			if n.Name == ng {
-				version = n.Version
-			}
+	// moved to another version. The version is the one the dry run shows,
+	// or EKS's when the sweep had none.
+	if shown == "" {
+		if live, _, err := b.roll.decide(ctx, cfg, t.name, ng); err == nil {
+			shown = aws.ToString(live.Version)
 		}
 	}
 	b.mu.Lock()
-	b.accepted[acceptKey(t, ng)] = acceptedRoll{findings: findings(summary), version: version}
+	b.accepted[acceptKey(t, ng)] = acceptedRoll{findings: findings(summary), version: shown}
 	b.mu.Unlock()
+}
+
+// shownVersion is the Kubernetes version the roll's dry run shows for ng.
+func shownVersion(c state.Cluster, ng string) string {
+	for _, n := range c.Nodegroups {
+		if n.Name == ng {
+			return n.Version
+		}
+	}
+	return ""
 }
 
 // acceptedRoll is what a roll's dry run showed: the health findings and
@@ -328,7 +336,10 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 		return fmt.Errorf("%s: %s", ng.Name, d.Reason)
 	}
 	version := aws.ToString(live.Version)
-	if accepted.version != "" && version != accepted.version {
+	switch {
+	case accepted.version == "":
+		return fmt.Errorf("the dry run could not read the version of %s: open the dry run again (p)", ng.Name)
+	case version != accepted.version:
 		return fmt.Errorf("%s is at %s now, and the dry run showed %s: open the dry run again (p)", ng.Name, version, accepted.version)
 	}
 

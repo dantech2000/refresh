@@ -706,3 +706,26 @@ func TestAdoptedRollResumesAndKeepsOthersClaims(t *testing.T) {
 		t.Fatalf("the watched roll released another change's claim: %q", b.claimed[tgt])
 	}
 }
+
+// A dry run that recorded no version (no sweep version, and EKS could not
+// be read) cannot vouch for what Start would roll: Start refuses.
+func TestARollWithNoRecordedVersionRefuses(t *testing.T) {
+	rig := newRollRig(t)
+	rig.b.mu.Lock()
+	rig.b.accepted[acceptKey(rig.b.targets["prod-api"], "ng-general")] = acceptedRoll{}
+	rig.b.mu.Unlock()
+	if err := rig.b.Start(t.Context(), roll); err == nil || !strings.Contains(err.Error(), "could not read the version of ng-general") || rig.started.Load() != 0 {
+		t.Fatalf("Start = %v, want a refusal and no roll", err)
+	}
+	rig.b.Close()
+}
+
+func TestShownVersionIsTheDryRunsCluster(t *testing.T) {
+	c := state.Cluster{Name: "prod-api", Nodegroups: []state.Nodegroup{{Name: "ng-a", Version: "1.31"}, {Name: "ng-b", Version: "1.30"}}}
+	if got := shownVersion(c, "ng-b"); got != "1.30" {
+		t.Errorf("shownVersion = %q, want 1.30", got)
+	}
+	if got := shownVersion(c, "ng-x"); got != "" {
+		t.Errorf("shownVersion of a missing nodegroup = %q, want empty", got)
+	}
+}

@@ -47,8 +47,9 @@ meant for a person goes to stderr or is not printed:
 
 The exit code is the same as in the human view, and it applies after the
 document is printed (see [Exit codes](exit-codes.md)). When a command fails before
-it has a result (bad credentials, a missing `--yes`), stdout is empty and the
-error is on stderr. A `nodegroup update` that the health gate stops is the
+it has a result (bad credentials, a missing `--yes`, a cluster EKS is
+already changing or that refresh could not read to check), stdout is empty
+and the error is on stderr. A `nodegroup update` that the health gate stops is the
 exception: stdout gets the run summary with nothing started and the `health`
 verdict, the health report goes to stderr, and the error names the checks
 that blocked or warned.

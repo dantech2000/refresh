@@ -671,7 +671,13 @@ func (s *Service) ExecuteRollback(ctx context.Context, plan *RollbackPlan, opts 
 		report.Status = RunBlocked
 		return report, fmt.Errorf("%w: the cluster changed since the plan (%s); nothing was changed: plan again", ErrRollbackBlocked, strings.Join(diff, "; "))
 	}
-	return runPhases(ctx, fresh.ClusterName, s.rollbackPhases(fresh, opts), opts, report)
+	report, err = runPhases(ctx, fresh.ClusterName, s.rollbackPhases(fresh, opts), opts, report)
+	if err != nil && report.Status == RunBlocked && len(report.Completed) == 0 {
+		// A gate stopped the run before its first change (the control
+		// plane's nodegroup check with no nodegroup or add-on work).
+		err = fmt.Errorf("%w: %w", ErrRollbackBlocked, err)
+	}
+	return report, err
 }
 
 // ErrRollbackBlocked marks a rollback that ExecuteRollback refused before
@@ -698,8 +704,8 @@ func changedSteps(confirmed, fresh []Step) []string {
 		switch {
 		case !ok:
 			diff = append(diff, "new: "+n.Description)
-		case w.Status != n.Status || w.Version != n.Version:
-			diff = append(diff, fmt.Sprintf("%s: %s, was %s", n.Description, n.Status, w.Status))
+		case w.Status != n.Status || w.Version != n.Version || w.Description != n.Description:
+			diff = append(diff, fmt.Sprintf("%s (%s), was %s (%s)", n.Description, n.Status, w.Description, w.Status))
 		}
 	}
 	for k, w := range was {
