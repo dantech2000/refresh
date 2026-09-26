@@ -166,9 +166,16 @@ func (b *Backend) ownUpgrade(t target) *liveUpgrade {
 
 func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 	key := acceptKey(t, ng)
+	// The mark ends when the roll is registered (runningRoll guards it from
+	// then on), not when the watch returns: a sweep right after the roll
+	// ends must be able to adopt the nodegroup again. cleared is set under
+	// b.mu, so this never clears a later adoption's mark.
+	cleared := false
 	defer func() {
 		b.mu.Lock()
-		delete(b.adopting, key)
+		if !cleared {
+			delete(b.adopting, key)
+		}
 		b.mu.Unlock()
 	}()
 	cfg := b.cfgOf(t)
@@ -193,6 +200,8 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 		if old.t == t && old.updateID == id {
 			old.st.EndedAt, old.st.Failed = time.Time{}, ""
 			b.rollEvent(old, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "started elsewhere", Text: "watching update " + id + " again"})
+			delete(b.adopting, key)
+			cleared = true
 			b.mu.Unlock()
 			b.watchRoll(ctx, old, cfg, t, id, kube, nil, false)
 			return
@@ -210,6 +219,8 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "node view", Text: how})
 	b.emit(state.Event{Cluster: b.keyOf(t), Source: state.SourceRoll, Level: state.LevelProgress, Subject: ng, Text: "roll started elsewhere · watching", Detail: "update " + id})
 	b.rolls = append(b.rolls, r)
+	delete(b.adopting, key)
+	cleared = true
 	b.mu.Unlock()
 	// The pending pods before it started are unknown: the post-roll pod
 	// check is skipped, the nodegroup check still runs.
@@ -218,9 +229,12 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 
 func (b *Backend) adoptUpgrade(ctx context.Context, t target, from string) {
 	key := "cluster/" + t.region + "/" + t.name
+	cleared := false // as in adoptRoll
 	defer func() {
 		b.mu.Lock()
-		delete(b.adopting, key)
+		if !cleared {
+			delete(b.adopting, key)
+		}
 		b.mu.Unlock()
 	}()
 	cfg := b.cfgOf(t)
@@ -251,6 +265,8 @@ func (b *Backend) adoptUpgrade(ctx context.Context, t target, from string) {
 			old.st.EndedAt, old.st.Failed = time.Time{}, ""
 			old.st.Phases[0].Status, old.st.Phases[0].Summary = state.PhaseRunning, ""
 			b.upgradeEvent(old, state.LevelInfo, "started elsewhere", "watching update "+id+" again", "")
+			delete(b.adopting, key)
+			cleared = true
 			b.mu.Unlock()
 			b.watchClusterUpdate(ctx, old, cfg, id, started, to)
 			return
@@ -263,6 +279,8 @@ func (b *Backend) adoptUpgrade(ctx context.Context, t target, from string) {
 	b.upgradeEvent(lu, state.LevelInfo, "started elsewhere", "watching update "+aws.ToString(u.Id), "not started by this UI; add-ons and nodegroup rolls it runs show on the Rolls screen")
 	b.emit(state.Event{Cluster: b.keyOf(t), Source: state.SourceUpgrade, Level: state.LevelProgress, Subject: "upgrade", Text: "started elsewhere · watching", Detail: from + " → " + to})
 	b.upgrades = append(b.upgrades, lu)
+	delete(b.adopting, key)
+	cleared = true
 	b.mu.Unlock()
 	b.watchClusterUpdate(ctx, lu, cfg, id, started, to)
 }
