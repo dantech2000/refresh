@@ -235,7 +235,7 @@ three come from the same list, so they always agree:
 - **The exit code.** A run with failures exits `4` (incomplete data), unless
   a code that wins over `4` also applies. Each command's order is in
   [Exit codes](exit-codes.md). The error message counts the failures by kind, for
-  example `incomplete data: 3 failure(s) (1 cluster, 2 nodegroup)`.
+  example `incomplete data: 3 failure(s) (1 cluster, 2 nodegroups)`.
 
 Failures are not findings. A stale AMI, a blocked upgrade, a health warning,
 or version skew is a finding: it stays in its own field and drives exit `2`,
