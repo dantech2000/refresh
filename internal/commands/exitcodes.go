@@ -21,6 +21,7 @@ var exitCodeHelp = map[string]string{
 	"cluster describe":      "0 ok; 1 error; 4 incomplete: some add-ons or nodegroups could not be read",
 	"cluster upgrade-check": "",
 	"cluster upgrade":       "0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run); 4 the planner could not read something",
+	"cluster rollback":      "0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, declined confirmation, interrupt, or timeout; 3 blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking rollback-readiness insight, or the upgrade policy (also with --dry-run); 4 the planner could not read something",
 
 	"nodegroup":          "",
 	"nodegroup list":     "0 ok; 1 error; 4 incomplete: a nodegroup could not be described",

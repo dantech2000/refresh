@@ -115,7 +115,7 @@ Every `-o json` and `-o yaml` document starts with two keys:
 `apiVersion` is the version of the contract on this page. `kind` names the
 document type, in PascalCase: `FleetStatus`, `ClusterList`,
 `ClusterDescription`, `UpgradeCheck`, `InsightDescription`, `UpgradePlan`,
-`UpgradeRun`, `NodegroupList`, `NodegroupDescription`, `NodegroupScale`, `NodegroupUpdate`,
+`UpgradeRun`, `RollbackPlan`, `RollbackRun`, `NodegroupList`, `NodegroupDescription`, `NodegroupScale`, `NodegroupUpdate`,
 `NodegroupUpdatePlan`, `FleetUpdate`, `FleetUpdatePlan`, `HealthSummary`,
 `AddonList`, `AddonDescription`, `AddonUpdate`, or `AddonUpdateAll`. A
 document nested in another one, such as the plan inside an `UpgradeRun` or

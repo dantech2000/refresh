@@ -11,20 +11,22 @@ import (
 )
 
 // Command returns the cluster command group with list, describe, upgrade-check,
-// and upgrade subcommands.
+// upgrade, and rollback subcommands.
 func Command() *cli.Command {
 	return &cli.Command{
 		Name:  "cluster",
-		Usage: "Cluster operations (list, describe, upgrade-check, upgrade)",
+		Usage: "Cluster operations (list, describe, upgrade-check, upgrade, rollback)",
 		Description: `Discover and operate on EKS clusters: list them (optionally across all
 regions), describe one in depth, run an upgrade readiness check
 (upgrade-check), and orchestrate a full control-plane + add-on + nodegroup
-upgrade (upgrade).`,
+upgrade (upgrade), and roll an upgrade back one minor version within about 7
+days (rollback).`,
 		Commands: []*cli.Command{
 			listCommand(),
 			describeCommand(),
 			upgradeCheckCommand(),
 			upgradeCommand(),
+			rollbackCommand(),
 		},
 	}
 }

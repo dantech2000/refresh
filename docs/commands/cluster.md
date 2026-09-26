@@ -1,17 +1,18 @@
 # cluster
 
 Discover and operate on EKS clusters: list them (optionally across every
-region), describe one in depth, run a read-only upgrade-readiness check, and
-orchestrate a full control-plane → add-on → nodegroup upgrade.
+region), describe one in depth, run a read-only upgrade-readiness check,
+orchestrate a full control-plane → add-on → nodegroup upgrade, and roll an
+upgrade back one minor version.
 
 ```bash
-refresh cluster <list|describe|upgrade-check|upgrade> [args] [flags]
+refresh cluster <list|describe|upgrade-check|upgrade|rollback> [args] [flags]
 ```
 
 The cluster argument is a positional on most subcommands, or `--cluster/-c`,
 falling back to the [active context](../concepts/contexts.md). The read-only
 subcommands also fall back to the kubeconfig's current cluster; `upgrade`
-never does. See
+and `rollback` never do. See
 [Cluster resolution](../concepts/configuration.md#cluster-resolution).
 
 ---
@@ -203,7 +204,14 @@ Common `UPGRADE_READINESS` checks:
 - **Cluster health issues** — control-plane health problems that would block an upgrade.
 
 A second category, `MISCONFIGURATION` (`--category MISCONFIGURATION`), covers
-EKS Hybrid Nodes.
+EKS Hybrid Nodes. After an in-place upgrade, EKS also reports
+`ROLLBACK_READINESS` insights (`--category ROLLBACK_READINESS`).
+
+While a [rollback](#rollback) is available, the report has a `rollback` line
+with the previous version, the date the window closes, and the rollback
+readiness insight counts. The JSON document has the same data under
+`rollback`. The key is left out when no rollback is available or the update
+history can't be read.
 
 Drill into any insight with `--id` — it accepts the **short ID** from the table,
 the full insight ID, or a **case-insensitive name substring**:
@@ -513,3 +521,112 @@ refresh cluster upgrade -c prod-east --to 1.33 --yes -o json | jq '.report'
 
 See the [upgrade lifecycle](../concepts/lifecycle.md) for how this fits the
 `status → upgrade-check → patch → upgrade` loop.
+
+---
+
+## rollback
+
+Roll a cluster back to the previous minor version (N to N-1) after an
+in-place upgrade. refresh follows the order in the AWS guide
+[Roll back a cluster to a previous Kubernetes version](https://docs.aws.amazon.com/eks/latest/userguide/rollback-cluster.html):
+
+1. Check the prerequisites and the `ROLLBACK_READINESS` cluster insights.
+2. Roll back the managed nodegroups that run N to N-1.
+3. Downgrade the add-ons whose version N-1 cannot run to the newest version
+   compatible with N-1. EKS does not roll back add-ons itself.
+4. Roll back the control plane (`UpdateClusterVersion` to N-1) and wait for
+   the `VersionRollback` update to finish.
+
+```bash
+refresh cluster rollback [cluster] [flags]
+```
+
+### Prerequisites
+
+EKS accepts a rollback only when all of these are true. refresh checks them
+first, prints the plan, and exits `3` when one fails:
+
+- The upgrade to the current version started less than about 7 days ago.
+  refresh reads the date from the cluster's update history (`ListUpdates`).
+  EKS counts from the end of the upgrade, so the dates are approximate, and
+  EKS has the final word.
+- The cluster was upgraded in place to its current version. A cluster created
+  at its version cannot roll back.
+- The target is one minor back and a version EKS still supports.
+- If the target is in extended support, the cluster's upgrade policy is
+  `EXTENDED`. Change it first with
+  `aws eks update-cluster-config --name <cluster> --upgrade-policy supportType=EXTENDED`.
+  Extended support charges then apply.
+- The cluster is `ACTIVE` with no update in progress.
+- No `ROLLBACK_READINESS` insight is `ERROR` or `UNKNOWN`. `WARNING` is a
+  notice. EKS refreshes stale insights itself when the rollback starts.
+
+EKS also rejects a rollback when an EKS feature enabled on the cluster does
+not exist in N-1. refresh shows the EKS error.
+
+EKS does not roll back self-managed nodes, hybrid nodes, or Fargate pods.
+Move them to N-1 yourself before you roll back. Fargate pods at N cause an
+`ERROR` kubelet skew insight until you delete them. EKS rolls back
+EKS Auto Mode nodes itself, before the control plane.
+
+### Flags
+
+| Flag | Description |
+|---|---|
+| `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
+| `--dry-run, -d` | Print the plan without changing anything. Never prompts |
+| `--yes, -y` | Skip the confirmation prompt (required with `-o json`/`yaml` or without a terminal) |
+| `--force` | Force nodegroup rollbacks when pods can't be drained due to PDBs (the same meaning as in `cluster upgrade`) |
+| `--skip-insights-check` | Roll back despite `ERROR` or `UNKNOWN` rollback-readiness insights. refresh also sets `force` on `UpdateClusterVersion`, so EKS skips them too. Not recommended |
+| `--skip-health-check` | Roll back nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
+| `--kubeconfig` | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel |
+| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint |
+| `--skip-nodegroup` | Nodegroup name pattern to leave alone (repeatable). Move it to N-1 yourself |
+| `--rollback-timeout` | How long EKS may take before it cancels the control-plane rollback (`RollbackConfig`), from `2h` to `168h`. Default: EKS's `12h` |
+| `--quiet, -q` | Suppress progress output |
+| `--wait-timeout` | How long to wait for the whole rollback to finish (default `4h`; `0` = no limit) |
+| `--poll-interval` | How often to poll in-flight updates (default `15s`) |
+| `--format, -o` | `table` (default), `json`, `yaml`. With `json`/`yaml`, stdout gets one document: the `RollbackPlan` for `--dry-run` or a blocked plan, else a `RollbackRun` (`{plan, report, failures}`) after the run |
+
+`--force` in `cluster upgrade` already means "evict pods despite PDBs", so
+the insight bypass is `--skip-insights-check`, the name `cluster upgrade`
+uses for its own insight check.
+
+### How it runs
+
+refresh asks once before it changes anything. The question lists the
+nodegroups it rolls back, the add-ons it downgrades, and the control-plane
+rollback. Before each nodegroup rollback, the same pre-flight checks as
+[`cluster upgrade`](#nodegroup-rolls) run, including PodDisruptionBudgets
+that would block the drain.
+
+The plan is derived from live cluster state on every run. A rerun after a
+failure or Ctrl+C skips nodegroups already at N-1 and add-ons already
+compatible with N-1. A rerun after a finished rollback finds the
+`VersionRollback` update in the history and has nothing to do.
+
+A plan step has the same `type` and `status` values as an
+[upgrade plan](#json-document). `report.status` has the same values as in
+`cluster upgrade`.
+
+### Rollback exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | The rollback finished, or there was nothing to do. A `--dry-run` with no blocker |
+| `1` | A phase failed, you declined the confirmation, the run was interrupted, or it timed out |
+| `3` | Blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking insight, the upgrade policy, or an unsupported target. Also with `--dry-run` |
+| `4` | The planner could not read something, such as the target's support status or an add-on's version catalog |
+
+### Examples
+
+```bash
+# Print the plan only (exits 3 if anything blocks the rollback)
+refresh cluster rollback prod-east --dry-run
+
+# Roll back, after one confirmation
+refresh cluster rollback prod-east
+
+# Non-interactive run with a 4h EKS rollback timeout
+refresh cluster rollback prod-east --yes --rollback-timeout 4h -o json | jq '.report'
+```

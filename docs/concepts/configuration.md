@@ -356,15 +356,15 @@ the data incomplete.
 | `eks:ListNodegroups`, `eks:DescribeNodegroup` | `status`, `nodegroup *`, `cluster describe`/`upgrade-check`/`upgrade`, health checks |
 | `eks:ListAddons` | `status`, `addon *` (also to resolve a partial add-on name), `cluster describe`/`upgrade-check`/`upgrade` |
 | `eks:DescribeAddon`, `eks:DescribeAddonVersions` | `status`, `addon *`, `cluster upgrade-check`/`upgrade` |
-| `eks:DescribeClusterVersions` | `status`, `cluster describe`/`upgrade-check`/`upgrade` (support calendar; `refresh` falls back to a built-in calendar) |
-| `eks:ListInsights`, `eks:DescribeInsight` | `cluster upgrade-check`, `cluster upgrade` |
+| `eks:DescribeClusterVersions` | `status`, `cluster describe`/`upgrade-check`/`upgrade`/`rollback` (support calendar; `refresh` falls back to a built-in calendar) |
+| `eks:ListInsights`, `eks:DescribeInsight` | `cluster upgrade-check`, `cluster upgrade`, `cluster rollback` |
 | `eks:StartInsightsRefresh`, `eks:DescribeInsightsRefresh` | `cluster upgrade` (not with `--dry-run` or `--skip-insights-check`) |
-| `eks:UpdateNodegroupVersion` | `nodegroup update`, `cluster upgrade` |
+| `eks:UpdateNodegroupVersion` | `nodegroup update`, `cluster upgrade`, `cluster rollback` |
 | `eks:UpdateNodegroupConfig` | `nodegroup scale` |
-| `eks:UpdateClusterVersion` | `cluster upgrade` |
-| `eks:UpdateAddon` | `addon update`, `cluster upgrade` |
-| `eks:DescribeUpdate` | `nodegroup update`, `nodegroup scale --wait`, `addon update --wait`, `cluster upgrade` |
-| `eks:ListUpdates` | `refresh ui` (watch a roll or upgrade started elsewhere) |
+| `eks:UpdateClusterVersion` | `cluster upgrade`, `cluster rollback` |
+| `eks:UpdateAddon` | `addon update`, `cluster upgrade`, `cluster rollback` |
+| `eks:DescribeUpdate` | `nodegroup update`, `nodegroup scale --wait`, `addon update --wait`, `cluster upgrade`, `cluster rollback`, `cluster upgrade-check` (rollback window) |
+| `eks:ListUpdates` | `cluster rollback`, `cluster upgrade-check` (rollback window), `refresh ui` (watch a roll or upgrade started elsewhere) |
 | `ssm:GetParameter` | Latest recommended AMI: `status`, `nodegroup list`/`describe`/`update` |
 | `ec2:DescribeImages` | `status` (AMI age) |
 | `ec2:DescribeInstances` | `status` (Karpenter detection), `nodegroup describe --show-instances`, current AMI lookup |

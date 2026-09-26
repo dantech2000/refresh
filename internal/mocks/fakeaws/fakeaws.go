@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Nodegroup is a managed nodegroup in the fake world.
@@ -113,6 +114,31 @@ type Cluster struct {
 	// ListInsightsError, when set, makes ListInsights fail with that API
 	// error code.
 	ListInsightsError string
+	// History is the cluster's past cluster-level updates, which
+	// ListUpdates lists and DescribeUpdate answers. UpdateClusterVersion
+	// adds to what ListUpdates lists, not to this slice.
+	History []Update
+	// SupportType is the upgrade policy (STANDARD or EXTENDED); "" reports
+	// none.
+	SupportType string
+	// AutoMode reports EKS Auto Mode compute as enabled.
+	AutoMode bool
+	// UpdateForce and RollbackTimeoutMinutes record the force and
+	// rollbackConfig.timeoutMinutes fields of the last UpdateClusterVersion
+	// request (for assertions).
+	UpdateForce            bool
+	RollbackTimeoutMinutes int32
+}
+
+// Update is a past cluster-level EKS update.
+type Update struct {
+	ID string
+	// Type is VersionUpdate, VersionRollback, or another EKS update type.
+	Type string
+	// Status defaults to Successful.
+	Status    string
+	Version   string
+	CreatedAt time.Time
 }
 
 // Insight is an EKS Cluster Insight in the fake world.
@@ -155,6 +181,26 @@ type Server struct {
 	clusterVersionsError string
 	// supportedVersions answers an unfiltered DescribeClusterVersions.
 	supportedVersions []string
+	// clusterUpdates lists, per cluster, the IDs of the version updates
+	// UpdateClusterVersion started; updateInfo holds their type, version,
+	// and start time.
+	clusterUpdates map[string][]string
+	updateInfo     map[string]Update
+	// versionStatus overrides a version's DescribeClusterVersions
+	// versionStatus (default STANDARD_SUPPORT).
+	versionStatus map[string]string
+}
+
+// SetVersionStatus sets the versionStatus DescribeClusterVersions reports
+// for version: STANDARD_SUPPORT (the default), EXTENDED_SUPPORT, or
+// UNSUPPORTED.
+func (s *Server) SetVersionStatus(version, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.versionStatus == nil {
+		s.versionStatus = map[string]string{}
+	}
+	s.versionStatus[version] = status
 }
 
 // SetSupportedVersions sets the versions an unfiltered
@@ -197,7 +243,10 @@ func (s *Server) HangEKS() {
 // refresh context, and no reachable Kubernetes cluster.
 func New(tb testing.TB, clusters ...*Cluster) *Server {
 	tb.Helper()
-	s := &Server{clusters: map[string]*Cluster{}, updates: map[string]func(){}, updateStatus: map[string]string{}}
+	s := &Server{
+		clusters: map[string]*Cluster{}, updates: map[string]func(){}, updateStatus: map[string]string{},
+		clusterUpdates: map[string][]string{}, updateInfo: map[string]Update{},
+	}
 	for _, c := range clusters {
 		s.clusters[c.Name] = c
 	}
@@ -382,7 +431,11 @@ func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, body []byte) {
 			asked = s.supportedVersions
 		}
 		for _, v := range asked {
-			versions = append(versions, map[string]any{"clusterVersion": v, "versionStatus": "STANDARD_SUPPORT"})
+			status := "STANDARD_SUPPORT"
+			if st := s.versionStatus[v]; st != "" {
+				status = st
+			}
+			versions = append(versions, map[string]any{"clusterVersion": v, "versionStatus": status})
 		}
 		writeJSON(w, map[string]any{"clusterVersions": versions})
 		return
@@ -459,24 +512,52 @@ func (s *Server) serveEKSCluster(w http.ResponseWriter, r *http.Request, c *Clus
 	}
 }
 
-// serveClusterUpdates handles UpdateClusterVersion (POST updates) and
-// DescribeUpdate (GET updates/{id}).
+// serveClusterUpdates handles UpdateClusterVersion (POST updates),
+// ListUpdates (GET updates), and DescribeUpdate (GET updates/{id}).
 func (s *Server) serveClusterUpdates(w http.ResponseWriter, r *http.Request, c *Cluster, rest []string, body []byte) {
 	switch {
+	case r.Method == http.MethodGet && len(rest) == 0:
+		ids := []string{}
+		q := r.URL.Query()
+		if q.Get("nodegroupName") == "" && q.Get("addonName") == "" {
+			for _, u := range c.History {
+				ids = append(ids, u.ID)
+			}
+			ids = append(ids, s.clusterUpdates[c.Name]...)
+		}
+		writeJSON(w, map[string]any{"updateIds": ids})
+	case r.Method == http.MethodGet && len(rest) == 1 && historyUpdate(c, rest[0]) != nil:
+		writeJSON(w, map[string]any{"update": updateJSON(*historyUpdate(c, rest[0]))})
 	case r.Method == http.MethodPost && len(rest) == 0:
 		var in struct {
 			Version            string `json:"version"`
 			ClientRequestToken string `json:"clientRequestToken"`
+			Force              bool   `json:"force"`
+			RollbackConfig     *struct {
+				TimeoutMinutes int32 `json:"timeoutMinutes"`
+			} `json:"rollbackConfig"`
 		}
 		_ = json.Unmarshal(body, &in)
+		c.UpdateForce, c.RollbackTimeoutMinutes = in.Force, 0
+		if in.RollbackConfig != nil {
+			c.RollbackTimeoutMinutes = in.RollbackConfig.TimeoutMinutes
+		}
 		// As EKS does: a real upgrade failed on a 32-character token.
 		if n := len(in.ClientRequestToken); in.ClientRequestToken != "" && (n < 33 || n > 126) {
 			writeError(w, http.StatusBadRequest, "InvalidParameterException", "The client request token parameter must be between 33 and 126 characters.")
 			return
 		}
-		update := s.startUpdate("VersionUpdate", func() { c.Version = in.Version })
-		if id, ok := update["id"].(string); ok && c.UpdateStatus != "" {
-			s.updateStatus[id] = c.UpdateStatus
+		kind := "VersionUpdate"
+		if minorOf(in.Version) < minorOf(c.Version) {
+			kind = "VersionRollback"
+		}
+		update := s.startUpdate(kind, func() { c.Version = in.Version })
+		if id, ok := update["id"].(string); ok {
+			if c.UpdateStatus != "" {
+				s.updateStatus[id] = c.UpdateStatus
+			}
+			s.clusterUpdates[c.Name] = append(s.clusterUpdates[c.Name], id)
+			s.updateInfo[id] = Update{ID: id, Type: kind, Version: in.Version, CreatedAt: time.Now().UTC()}
 		}
 		writeJSON(w, map[string]any{"update": update})
 	case r.Method == http.MethodGet && len(rest) == 1:
@@ -490,6 +571,10 @@ func (s *Server) serveClusterUpdates(w http.ResponseWriter, r *http.Request, c *
 			status = "Successful"
 		}
 		update := map[string]any{"id": rest[0], "status": status, "type": "VersionUpdate"}
+		if info, ok := s.updateInfo[rest[0]]; ok {
+			info.Status = status
+			update = updateJSON(info)
+		}
 		if status == "InProgress" {
 			writeJSON(w, map[string]any{"update": update})
 			return
@@ -507,6 +592,41 @@ func (s *Server) serveClusterUpdates(w http.ResponseWriter, r *http.Request, c *
 	default:
 		unsupported(w, r, "eks")
 	}
+}
+
+// historyUpdate returns the History entry with id, or nil.
+func historyUpdate(c *Cluster, id string) *Update {
+	for i := range c.History {
+		if c.History[i].ID == id {
+			return &c.History[i]
+		}
+	}
+	return nil
+}
+
+// updateJSON is the DescribeUpdate shape of u.
+func updateJSON(u Update) map[string]any {
+	status := u.Status
+	if status == "" {
+		status = "Successful"
+	}
+	out := map[string]any{"id": u.ID, "status": status, "type": u.Type}
+	if u.Version != "" {
+		out["params"] = []any{map[string]any{"type": "Version", "value": u.Version}}
+	}
+	if !u.CreatedAt.IsZero() {
+		out["createdAt"] = float64(u.CreatedAt.Unix())
+	}
+	return out
+}
+
+// minorOf returns the minor of a "1.<minor>" version, or -1.
+func minorOf(v string) int {
+	var major, minor int
+	if _, err := fmt.Sscanf(v, "%d.%d", &major, &minor); err != nil {
+		return -1
+	}
+	return minor
 }
 
 // serveNodegroups handles ListNodegroups, DescribeNodegroup, and
@@ -765,6 +885,9 @@ func insightsJSON(c *Cluster, body []byte) []any {
 		}
 		return out
 	}
+	if len(in.Filter.Categories) > 0 && !slices.Contains(in.Filter.Categories, "UPGRADE_READINESS") {
+		return []any{}
+	}
 	var major, minor int
 	if _, err := fmt.Sscanf(c.Version, "%d.%d", &major, &minor); err != nil {
 		return []any{}
@@ -796,7 +919,7 @@ func insightJSON(c *Cluster, in *Insight) map[string]any {
 }
 
 func clusterJSON(c *Cluster) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"name":            c.Name,
 		"arn":             "arn:aws:eks:us-east-1:123456789012:cluster/" + c.Name,
 		"version":         c.Version,
@@ -804,6 +927,13 @@ func clusterJSON(c *Cluster) map[string]any {
 		"endpoint":        "https://" + c.Name + ".eks.fake.invalid",
 		"platformVersion": "eks.1",
 	}
+	if c.SupportType != "" {
+		out["upgradePolicy"] = map[string]any{"supportType": c.SupportType}
+	}
+	if c.AutoMode {
+		out["computeConfig"] = map[string]any{"enabled": true}
+	}
+	return out
 }
 
 func nodegroupJSON(c *Cluster, ng *Nodegroup) map[string]any {

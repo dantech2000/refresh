@@ -40,6 +40,7 @@ Rules that apply to every command:
 | `cluster describe` | `0`, `1`, `4` some add-ons or nodegroups could not be read |
 | [`cluster upgrade-check`](#cluster-upgrade-check) | `0` ready, `1`, `2` warnings only, `3` blocked, `4` a nodegroup or add-on could not be read |
 | [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker, `4` the planner could not read something |
+| [`cluster rollback`](../commands/cluster.md#rollback-exit-codes) | `0`, `1` error, failed phase, declined confirmation, interrupt, or timeout, `3` blocked (window, insights, upgrade policy), `4` the planner could not read something |
 | `nodegroup list` | `0`, `1`, `4` a nodegroup could not be described |
 | `nodegroup describe` | `0`, `1` |
 | [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs`, the pre-scaling health check, or a busy cluster, `4` `--force` scaled without being able to check the PDBs, `5` post-scaling health check failed |

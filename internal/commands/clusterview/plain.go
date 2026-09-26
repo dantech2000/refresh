@@ -195,6 +195,9 @@ func writeUpgradeCheckInfo(w io.Writer, report *clustersvc.UpgradeReport, catego
 	if report.Support != nil {
 		_, _ = fmt.Fprintf(w, "support: %s\n", supportPlain(report.Support))
 	}
+	if report.Rollback != nil {
+		_, _ = fmt.Fprintf(w, "rollback: %s\n", rollbackText(report.Rollback))
+	}
 	if cp := report.ControlPlane; cp != nil {
 		if cp.Skipped {
 			_, _ = fmt.Fprintf(w, "control plane: %s\n", cp.Message)

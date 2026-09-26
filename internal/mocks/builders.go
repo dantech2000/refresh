@@ -95,6 +95,16 @@ func NewEKSAPI() *EKSAPIBuilder {
 		}
 		return &eks.ListInsightsOutput{}, nil
 	}
+	// No update history: a cluster created at its version.
+	b.m.ListUpdatesFn = func(_ context.Context, in *eks.ListUpdatesInput, _ ...func(*eks.Options)) (*eks.ListUpdatesOutput, error) {
+		if err := checkToken(in.NextToken); err != nil {
+			return nil, err
+		}
+		if err := b.checkCluster(in.Name); err != nil {
+			return nil, err
+		}
+		return &eks.ListUpdatesOutput{}, nil
+	}
 	b.m.DescribeAddonVersionsFn = func(_ context.Context, in *eks.DescribeAddonVersionsInput, _ ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
 		if err := checkToken(in.NextToken); err != nil {
 			return nil, err

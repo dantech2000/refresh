@@ -17,6 +17,7 @@ const (
 	OpStartInsightsRefresh           = "eks:StartInsightsRefresh"
 	OpDescribeInsightsRefresh        = "eks:DescribeInsightsRefresh"
 	OpDescribeUpdate                 = "eks:DescribeUpdate"
+	OpListUpdates                    = "eks:ListUpdates"
 	OpUpdateClusterVersion           = "eks:UpdateClusterVersion"
 	OpUpdateNodegroupVersion         = "eks:UpdateNodegroupVersion"
 	OpUpdateNodegroupConfig          = "eks:UpdateNodegroupConfig"

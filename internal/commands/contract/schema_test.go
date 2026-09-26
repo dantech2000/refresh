@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
@@ -56,6 +57,14 @@ func scaleCluster() *fakeaws.Cluster {
 	return prod(&fakeaws.Nodegroup{Name: "web", Version: "1.31", Desired: 3, Min: 1, Max: 5})
 }
 
+// upgradedCluster is fullCluster upgraded in place to 1.31 a day ago, so it
+// can roll back to 1.30.
+func upgradedCluster() *fakeaws.Cluster {
+	c := fullCluster()
+	c.History = []fakeaws.Update{{ID: "u-up", Type: "VersionUpdate", Version: "1.31", CreatedAt: time.Now().Add(-24 * time.Hour)}}
+	return c
+}
+
 // schemaCases are the successful runs, one or more per kind. The failure
 // runs come from the failure contract's cases.
 var schemaCases = []schemaCase{
@@ -67,6 +76,10 @@ var schemaCases = []schemaCase{
 	{name: "cluster upgrade-check --id", kind: apidoc.KindInsightDescription, args: []string{"cluster", "upgrade-check", "prod", "--id", "insight-skew", "--exit-zero"}},
 	{name: "cluster upgrade --dry-run", kind: apidoc.KindUpgradePlan, args: []string{"cluster", "upgrade", "prod", "--to", "1.32", "--dry-run", "--skip-insights-check"}},
 	{name: "cluster upgrade --yes", kind: apidoc.KindUpgradeRun, args: []string{"cluster", "upgrade", "prod", "--to", "1.32", "--yes", "--skip-insights-check", "--skip", "vpc-cni", "--skip-nodegroup", "busy", "--poll-interval", "5ms"}},
+	{name: "cluster upgrade-check in the rollback window", kind: apidoc.KindUpgradeCheck, world: []*fakeaws.Cluster{upgradedCluster()}, args: []string{"cluster", "upgrade-check", "prod", "--exit-zero"}},
+	{name: "cluster rollback --dry-run", kind: apidoc.KindRollbackPlan, world: []*fakeaws.Cluster{upgradedCluster()}, args: []string{"cluster", "rollback", "prod", "--dry-run"}},
+	{name: "cluster rollback --dry-run, blocked", kind: apidoc.KindRollbackPlan, args: []string{"cluster", "rollback", "prod", "--dry-run"}},
+	{name: "cluster rollback --yes", kind: apidoc.KindRollbackRun, world: []*fakeaws.Cluster{upgradedCluster()}, args: []string{"cluster", "rollback", "prod", "--yes", "--skip-health-check", "--skip-nodegroup", "busy", "--poll-interval", "5ms"}},
 	{name: "nodegroup list", kind: apidoc.KindNodegroupList, args: []string{"nodegroup", "list", "prod"}},
 	{name: "nodegroup describe", kind: apidoc.KindNodegroupDescription, args: []string{"nodegroup", "describe", "prod", "-n", "web"}},
 	{name: "nodegroup scale", kind: apidoc.KindNodegroupScale, world: []*fakeaws.Cluster{scaleCluster()}, args: []string{"nodegroup", "scale", "prod", "-n", "web", "--desired", "4", "--yes"}},

@@ -13,7 +13,7 @@ flag-by-flag detail and examples.
 | Group | What it does |
 |---|---|
 | [`status`](status.md) | Fleet patch posture across clusters/regions |
-| [`cluster`](cluster.md) | `list`, `describe`, `upgrade-check`, `upgrade` |
+| [`cluster`](cluster.md) | `list`, `describe`, `upgrade-check`, `upgrade`, `rollback` |
 | [`nodegroup`](nodegroup.md) | `list`, `describe`, `scale`, `update` (AMI roll) |
 | [`addon`](addon.md) | `list`, `describe`, `update` (incl. `--all`) |
 | [Contexts](contexts.md) | `use`, `current`, `context add/list/remove` |

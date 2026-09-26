@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
@@ -46,6 +47,9 @@ type ExecuteOptions struct {
 	// NodegroupObserver, when set, renders a live per-node roll view during each
 	// nodegroup roll. Supplied by the command (view) layer; nil → text progress.
 	NodegroupObserver RollObserver
+	// RollbackTimeout is the rollback's RollbackConfig.TimeoutMinutes
+	// (ExecuteRollback only). 0 leaves EKS's default (12h).
+	RollbackTimeout time.Duration
 }
 
 // Report describes how far an execution got: how it ended, what ran, where
@@ -99,7 +103,6 @@ type phase struct {
 // re-checks live state, so rerunning after a failure (or a SIGINT, or a
 // complete success) is safe and only performs the remaining work.
 func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) (*Report, error) {
-	progress := ensureProgress(opts.Progress)
 	report := NewReport()
 
 	if plan.Blocked() {
@@ -108,8 +111,15 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 			joinLines(plan.Blockers()))
 	}
 
-	phases := s.phases(plan, opts)
+	return runPhases(ctx, plan.ClusterName, s.phases(plan, opts), opts, report)
+}
 
+// runPhases runs phases in order: the precheck, a confirmation unless
+// opts.Yes, then the phase itself. It stops at the first error and records
+// in report what ran, where it stopped, and what remains. Phases with no
+// pending steps are skipped. The upgrade and the rollback engines share it.
+func runPhases(ctx context.Context, clusterName string, phases []phase, opts ExecuteOptions, report *Report) (*Report, error) {
+	progress := ensureProgress(opts.Progress)
 	for i, ph := range phases {
 		if len(ph.steps) == 0 {
 			continue // nothing pending in this phase
@@ -117,7 +127,7 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 
 		if ph.precheck != nil {
 			if err := ph.precheck(ctx); err != nil {
-				report.stop(ctx, plan.ClusterName, ph.label, pendingLabels(phases[i+1:]), err, true)
+				report.stop(ctx, clusterName, ph.label, pendingLabels(phases[i+1:]), err, true)
 				if ctx.Err() != nil {
 					return report, stopped(ctx, "before "+ph.label, "rerun the same command to resume", err)
 				}
@@ -131,7 +141,7 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 				return report, fmt.Errorf("confirmation required for %q but no prompt available (use --yes for non-interactive runs)", ph.label)
 			}
 			if !opts.Confirm(ph.label) {
-				report.stop(ctx, plan.ClusterName, ph.label, pendingLabels(phases[i:]), ErrAborted, false)
+				report.stop(ctx, clusterName, ph.label, pendingLabels(phases[i:]), ErrAborted, false)
 				return report, ErrAborted
 			}
 		}
@@ -142,7 +152,7 @@ func (s *Service) Execute(ctx context.Context, plan *Plan, opts ExecuteOptions) 
 			progress("%s", ph.label)
 		}
 		if err := ph.run(ctx); err != nil {
-			report.stop(ctx, plan.ClusterName, ph.label, pendingLabels(phases[i+1:]), err, false)
+			report.stop(ctx, clusterName, ph.label, pendingLabels(phases[i+1:]), err, false)
 			if ctx.Err() != nil {
 				// SIGINT / timeout: anything started keeps running
 				// server-side; a rerun re-attaches and resumes.
