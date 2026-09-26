@@ -189,6 +189,14 @@ func TestUpgradeRunsThroughTheOrchestrator(t *testing.T) {
 	if !strings.Contains(joinText(st.Feed), "upgrade done · 1.32") {
 		t.Fatalf("feed:\n%s", joinText(st.Feed))
 	}
+	// A finished upgrade shows every item done, not pending.
+	for _, ph := range st.Upgrades[0].Phases {
+		for _, it := range ph.Items {
+			if it.Status != state.PhaseDone {
+				t.Fatalf("%s item %s is %v after the upgrade", ph.Name, it.Name, it.Status)
+			}
+		}
+	}
 }
 
 func TestUpgradeNeedsItsDryRun(t *testing.T) {

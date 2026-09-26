@@ -150,6 +150,7 @@ func (m Model) upgradeFeed(u state.Upgrade, w, h int) Block {
 		sortByTime(all)
 		evs = m.visible(all, func(e state.Event) bool { return m.src == logAll || e.Source == state.SourceKube })
 	}
+	cols := kubeColumns(evs, w)
 	for i := 0; i < len(evs) && i < feedH; i++ {
 		e := evs[i]
 		if e.Source == state.SourceUpgrade {
@@ -162,7 +163,7 @@ func (m Model) upgradeFeed(u state.Upgrade, w, h int) Block {
 			out = append(out, l)
 			continue
 		}
-		out = append(out, eventLine(e))
+		out = append(out, eventLine(e, cols))
 	}
 	switch {
 	case m.pausedSeq != 0 && m.upgradeEvents(u) == nil:

@@ -405,6 +405,7 @@ func (b *Backend) startPhase(u *liveUpgrade, label string) {
 		for j := 1; j < idx; j++ {
 			if u.st.Phases[j].Status == state.PhaseRunning || u.st.Phases[j].Status == state.PhasePending {
 				u.st.Phases[j].Status, u.st.Phases[j].Progress, u.st.Phases[j].EndedAt = state.PhaseDone, 1, b.now()
+				doneItems(&u.st.Phases[j])
 			}
 		}
 		u.st.Phases[idx].Status, u.st.Phases[idx].StartedAt = state.PhaseRunning, b.now()
@@ -440,6 +441,7 @@ func (b *Backend) endUpgrade(u *liveUpgrade, failed string, stopped bool) {
 			if u.st.Phases[i].Status != state.PhaseDone {
 				u.st.Phases[i].Status, u.st.Phases[i].Progress, u.st.Phases[i].EndedAt = state.PhaseDone, 1, now
 			}
+			doneItems(&u.st.Phases[i])
 		}
 		b.upgradeEvent(u, state.LevelOK, "upgrade", "done · "+b.keyOf(u.t)+" on "+u.st.To, now.Sub(u.st.StartedAt).Round(time.Second).String())
 	}
@@ -504,5 +506,13 @@ func poke(ch chan struct{}) {
 	select {
 	case ch <- struct{}{}:
 	default:
+	}
+}
+
+// doneItems marks a finished phase's items done: a real upgrade ended "done"
+// with every item still pending.
+func doneItems(p *state.Phase) {
+	for i := range p.Items {
+		p.Items[i].Status, p.Items[i].Progress = state.PhaseDone, 1
 	}
 }

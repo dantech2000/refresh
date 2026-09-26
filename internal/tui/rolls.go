@@ -101,11 +101,18 @@ func phaseOrder(n noderoll.NodeView) int {
 func (m Model) nodeList(r state.Roll, w, h int) Block {
 	nodes := slices.Clone(r.Snapshot.Nodes)
 	slices.SortStableFunc(nodes, func(a, b noderoll.NodeView) int { return phaseOrder(a) - phaseOrder(b) })
+	// Real EC2 node names ("ip-192-168-44-55.ec2.internal") are 29 wide:
+	// size the column to the longest, so a name never runs into its phase.
+	nameW := 18
+	for _, n := range nodes {
+		nameW = max(nameW, width(n.Name)+1)
+	}
+	nameW = min(nameW, max(18, w/2))
 	head := Line{sp(3)}
 	for _, c := range []struct {
 		n string
 		w int
-	}{{"NODE", 18}, {"PHASE", 13}, {"PODS", 0}} {
+	}{{"NODE", nameW}, {"PHASE", 13}, {"PODS", 0}} {
 		head = append(head, Seg{Text: padRight(c.n, c.w), FG: colDim, Bold: true})
 	}
 	out := Block{{}, head}
@@ -140,7 +147,7 @@ func (m Model) nodeList(r state.Roll, w, h int) Block {
 		} else {
 			l = append(l, sp(2))
 		}
-		l = append(l, tx(padRight(n.Name, 18)))
+		l = append(l, Line{tx(padRight(n.Name, nameW))}.Fit(nameW)...)
 		var phase, pods Line
 		switch {
 		case n.Phase == noderoll.PhaseDraining:
@@ -152,10 +159,10 @@ func (m Model) nodeList(r state.Roll, w, h int) Block {
 			pods = Line{dimS("kubelet up · CNI pending")}
 		case !n.OnTarget:
 			phase = Line{tok(state.LevelInfo, "old")}
-			pods = Line{sub(fmt.Sprintf("%d pods", r.NodePods[n.Name]))}
+			pods = podCount(r, n.Name)
 		default:
 			phase = Line{tok(state.LevelOK, "new")}
-			pods = Line{sub(fmt.Sprintf("%d pods", r.NodePods[n.Name]))}
+			pods = podCount(r, n.Name)
 		}
 		if len(n.Pressure) > 0 {
 			pods = append(pods, sp(1), tok(state.LevelWarn, ""+strings.Join(n.Pressure, ",")))
@@ -245,8 +252,9 @@ func (m Model) rollFeed(r state.Roll, w, h int) Block {
 	}
 	feedH := h - len(out) - len(gateBox) - len(kubeSide) - 1
 	evs := m.visible(m.rollEvents(r), m.keepSource)
+	cols := kubeColumns(evs, w)
 	for i := 0; i < len(evs) && i < feedH; i++ {
-		out = append(out, eventLine(evs[i]))
+		out = append(out, eventLine(evs[i], cols))
 	}
 	switch {
 	case m.pausedSeq != 0 && m.rollEvents(r) == nil:
@@ -275,19 +283,20 @@ func (m Model) kubeSummary(r state.Roll, w, n int) Block {
 		return 0
 	})
 	out := Block{append(Line{sp(1)}, hrule(w-2)...), append(Line{sp(1)}, section("Kube events", dimS("warnings first"))...)}
+	cols := kubeColumns(evs, w)
 	for i := 0; i < len(evs) && i < n; i++ {
-		out = append(out, kubeLine(evs[i]))
+		out = append(out, kubeLine(evs[i], cols))
 	}
 	return out
 }
 
 // eventLine draws one feed event by its source.
-func eventLine(e state.Event) Line {
+func eventLine(e state.Event, cols kubeCols) Line {
 	switch e.Source {
 	case state.SourceKube:
-		return kubeLine(e)
+		return kubeLine(e, cols)
 	case state.SourceAWS:
-		return Line{sp(1), dimS(clock(e.At)), sp(1), fg(colBlue, padRight(e.Subject, 26)), sub(e.Text)}
+		return Line{sp(1), dimS(clock(e.At)), sp(1), fg(colBlue, padRight(e.Subject, 26)), sp(1), sub(e.Text)}
 	}
 	l := Line{sp(1), dimS(clock(e.At)), sp(1), levelGlyph(e.Level), sp(1)}
 	c := levelColor(e.Level)
@@ -309,10 +318,46 @@ func eventLine(e state.Event) Line {
 	return l
 }
 
-func kubeLine(e state.Event) Line {
+// kubeCols are the widths of a Kube event line's reason and object columns.
+type kubeCols struct{ reason, object int }
+
+// kubeColumns sizes the reason and object columns to the events shown, for a
+// pane w wide. Real values fill or pass fixed widths ("InvalidDiskCapacity",
+// "Pod/eks-pod-identity-agent-fpsb8"), which ran into the next column: each
+// column is as wide as its longest value, capped so the message keeps room,
+// and a longer value is cut with "…". It is worked out on every draw, so a
+// resize reflows the columns.
+func kubeColumns(evs []state.Event, w int) kubeCols {
+	c := kubeCols{reason: 6, object: 10}
+	for _, e := range evs {
+		if e.Source == state.SourceKube {
+			c.reason = max(c.reason, width(e.Text))
+			c.object = max(c.object, width(e.Subject))
+		}
+	}
+	c.reason = min(c.reason, 20)
+	room := w - 20 // " 20:41:21 Warning " and the column gaps
+	c.object = min(c.object, 36, max(12, (room-c.reason)*45/100))
+	return c
+}
+
+func kubeLine(e state.Event, c kubeCols) Line {
 	kind := fg(colBlue, "Normal ")
 	if e.Level == state.LevelWarn {
 		kind = fg(colYellow, "Warning")
 	}
-	return Line{sp(1), dimS(clock(e.At)), sp(1), kind, sp(1), sub(padRight(e.Text, 19)), tx(padRight(e.Subject, 32)), dimS(e.Detail)}
+	l := Line{sp(1), dimS(clock(e.At)), sp(1), kind, sp(1)}
+	l = append(l, Line{sub(e.Text)}.Fit(c.reason)...)
+	l = append(l, sp(1))
+	l = append(l, Line{tx(e.Subject)}.Fit(c.object)...)
+	return append(l, sp(1), dimS(e.Detail))
+}
+
+// podCount is a node's pod count, or "—" when the backend did not count it
+// (the live backend lists pods only on the node being drained).
+func podCount(r state.Roll, node string) Line {
+	if n, ok := r.NodePods[node]; ok {
+		return Line{sub(plural(n, "pod"))}
+	}
+	return Line{dimS("—")}
 }
