@@ -10,6 +10,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 )
@@ -58,6 +59,7 @@ func ReportSkippedRegions(w io.Writer, skipped []string) {
 // and the caller reports its own error.
 func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, errs []error) error {
 	lookalike := len(skipped) > 0
+	var closed error // the first region that refused the credentials as closed
 	for _, err := range errs {
 		// Classify as the sweeps do, so this agrees with the failure list.
 		switch diag.FromError(diag.KindRegion, "", diag.OpListClusters, err).Reason {
@@ -67,6 +69,9 @@ func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, err
 			return fmt.Errorf("AWS credential validation failed: %w", awsinternal.FormatAWSError(err, "listing clusters"))
 		case diag.ReasonRegionUnavailable:
 			lookalike = true
+			if closed == nil {
+				closed = err
+			}
 		}
 	}
 	select {
@@ -77,11 +82,37 @@ func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, err
 	if !lookalike {
 		return nil
 	}
-	if err := awsinternal.CheckAWSCredentials(ctx, cfg); err != nil && awserr.IsCredentialError(err) {
+	stsCfg := cfg.Copy()
+	stsCfg.Region = appconfig.STSRegion(cfg.Region)
+	err := awsinternal.CheckAWSCredentials(ctx, stsCfg)
+	switch {
+	case err != nil && awserr.IsCredentialError(err):
 		return err
+	case err == nil && closed != nil:
+		// STS took the keys, so the region, not the keys, refused them. The
+		// region's own error would print the credential setup help.
+		return &RegionsClosedError{STSRegion: stsCfg.Region, Err: closed}
 	}
 	return nil
 }
+
+// RegionsClosedError reports a sweep in which every region that failed
+// refused credentials that STS accepts: the regions are not enabled for the
+// account, or a policy blocks them.
+type RegionsClosedError struct {
+	STSRegion string // where the credentials were checked
+	Err       error  // the first region's error
+}
+
+func (e *RegionsClosedError) Error() string {
+	return fmt.Sprintf("no region answered, but STS in %s accepts these credentials\n"+
+		"  first error: %s\n"+
+		"A region refuses valid credentials when the account has not enabled it (an opt-in region) or a policy such as an SCP blocks it.\n"+
+		"Enable the region in the account settings, or choose other regions (%s).",
+		e.STSRegion, strings.TrimSuffix(awserr.Summary(e.Err), "."), RegionScopeHint)
+}
+
+func (e *RegionsClosedError) Unwrap() error { return e.Err }
 
 // TableListsFailures reports whether the output format is a human view
 // (table, or cluster list's tree) that lists the run's failures itself, in

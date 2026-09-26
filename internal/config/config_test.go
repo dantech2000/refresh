@@ -84,3 +84,14 @@ func TestGetRegionsForPartition(t *testing.T) {
 		})
 	}
 }
+
+func TestSTSRegionIsAlwaysOnInThePartition(t *testing.T) {
+	for region, want := range map[string]string{
+		"af-south-1": "us-east-1", "me-south-1": "us-east-1", "": "us-east-1",
+		"us-gov-east-1": "us-gov-west-1", "cn-northwest-1": "cn-north-1",
+	} {
+		if got := STSRegion(region); got != want {
+			t.Errorf("STSRegion(%q) = %q, want %q", region, got, want)
+		}
+	}
+}

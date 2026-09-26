@@ -358,3 +358,12 @@ func TestFleetLines_HintNamesRegion(t *testing.T) {
 	joined := strings.Join(fleetLines(th, fleet, nil, 0), "\n")
 	mustContain(t, joined, "refresh cluster upgrade-check -c far -r ap-southeast-2")
 }
+
+func TestFleetLines_EmptyFleetSaysSo(t *testing.T) {
+	th := render.New(render.ColorNone, true)
+	lines := fleetLines(th, nil, nil, 251*time.Millisecond)
+	want := []string{"FLEET  No EKS clusters found", "", "0 clusters  (251ms)"}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("empty fleet =\n%s", strings.Join(lines, "\n"))
+	}
+}

@@ -111,13 +111,14 @@ func TestNoRegionAnswered(t *testing.T) {
 		skipped  []string
 		failed   []error
 		wantErr  bool
+		closed   bool // want a RegionsClosedError, not the credential help
 		stsCalls int
 	}{
 		{name: "expired token needs no STS call", failed: []error{apiErr("ExpiredTokenException")}, wantErr: true},
 		{name: "expired token after another failure", failed: []error{
 			apiErr("ThrottlingException"), apiErr("ExpiredTokenException"),
 		}, wantErr: true},
-		{name: "region-closed code, valid credentials", failed: unavailable, stsCalls: 1},
+		{name: "region-closed code, valid credentials", failed: unavailable, wantErr: true, closed: true, stsCalls: 1},
 		{name: "skipped, bad credentials", badCreds: true, skipped: []string{"us-east-1"}, wantErr: true, stsCalls: 1},
 		{name: "unavailable, bad credentials", badCreds: true, failed: unavailable, wantErr: true, stsCalls: 1},
 		{name: "skipped, valid credentials", skipped: []string{"us-east-1"}, stsCalls: 1},
@@ -136,7 +137,14 @@ func TestNoRegionAnswered(t *testing.T) {
 			if (err != nil) != tc.wantErr {
 				t.Errorf("err = %v, want error %v", err, tc.wantErr)
 			}
-			if err != nil && !strings.Contains(err.Error(), "AWS credentials not configured or invalid") {
+			var ce *RegionsClosedError
+			if isClosed := errors.As(err, &ce); isClosed != tc.closed {
+				t.Errorf("err = %v, want RegionsClosedError %v", err, tc.closed)
+			}
+			if tc.closed && (strings.Contains(err.Error(), "not configured") || !strings.Contains(err.Error(), "account has not enabled it")) {
+				t.Errorf("a closed region reads as bad credentials:\n%v", err)
+			}
+			if err != nil && !tc.closed && !strings.Contains(err.Error(), "AWS credentials not configured or invalid") {
 				t.Errorf("err lacks the credential help:\n%v", err)
 			}
 			if n := len(srv.Calls()); n != tc.stsCalls {

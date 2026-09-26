@@ -280,6 +280,21 @@ When every region is skipped, the command exits `1`: nothing could be read.
 A region you name with `-r` or `REFRESH_EKS_REGIONS` is never skipped; if it
 cannot be listed, it is a `Region` failure.
 
+When no region answers, refresh checks the credentials once with STS in an
+always-on region of the partition (`us-east-1`, `us-gov-west-1`, or
+`cn-north-1`). A region the account has not enabled rejects valid keys with
+the same error as bad keys, so the check must not run there. If STS rejects
+the keys, the error shows the credential setup help. If STS accepts them, the
+error says that the regions refused valid credentials: enable the region in
+the account settings, or choose other regions.
+
+```text
+Error: no region answered, but STS in us-east-1 accepts these credentials
+  first error: UnrecognizedClientException: The security token included in the request is invalid
+A region refuses valid credentials when the account has not enabled it (an opt-in region) or a policy such as an SCP blocks it.
+Enable the region in the account settings, or choose other regions (scope with -r or REFRESH_EKS_REGIONS).
+```
+
 ### The failure object
 
 ```json
