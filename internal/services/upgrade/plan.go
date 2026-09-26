@@ -541,6 +541,12 @@ func nodegroupSteps(nodegroups []nodegroupState, hopTo string, skipPatterns []st
 		case ng.CustomAMI:
 			step.Status = StatusManual
 			step.Reason = fmt.Sprintf("custom AMI nodegroup: build and roll a %s-compatible AMI yourself", hopTo)
+		case ng.AL2 && !versionAtLeast(al2LastVersion, hopTo):
+			// The roll would fail after the control plane moved: EKS has no
+			// Amazon Linux 2 AMI for hopTo. Block before anything changes.
+			step.Status = StatusBlocked
+			step.Reason = fmt.Sprintf("Amazon Linux 2 AMIs end at Kubernetes %s: replace nodegroup %s with an AL2023 or Bottlerocket nodegroup first, or leave it at %s with --skip-nodegroup %s",
+				al2LastVersion, ng.Name, ng.Version, ng.Name)
 		case ng.Status == ekstypes.NodegroupStatusUpdating:
 			step.Reason = "an update is already in progress; the orchestrator will attach and wait for it"
 		}

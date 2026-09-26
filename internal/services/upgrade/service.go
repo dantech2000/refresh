@@ -98,7 +98,15 @@ type nodegroupState struct {
 	Version   string
 	Status    ekstypes.NodegroupStatus
 	CustomAMI bool
+	// AL2 is an Amazon Linux 2 AMI type, which EKS does not publish past
+	// al2LastVersion.
+	AL2 bool
 }
+
+// al2LastVersion is the last Kubernetes minor with EKS-optimized Amazon
+// Linux 2 AMIs.
+// https://docs.aws.amazon.com/eks/latest/userguide/eks-ami-deprecation-faqs.html
+const al2LastVersion = "1.32"
 
 // listNodegroupStates describes every nodegroup in the cluster.
 func (s *Service) listNodegroupStates(ctx context.Context, clusterName string) ([]nodegroupState, error) {
@@ -135,6 +143,7 @@ func (s *Service) listNodegroupStates(ctx context.Context, clusterName string) (
 			Version:   aws.ToString(ng.Version),
 			Status:    ng.Status,
 			CustomAMI: ng.AmiType == ekstypes.AMITypesCustom,
+			AL2:       strings.HasPrefix(string(ng.AmiType), "AL2_"),
 		})
 	}
 	return states, nil
