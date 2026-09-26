@@ -18,6 +18,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
 	"github.com/dantech2000/refresh/internal/noderoll"
+	"github.com/dantech2000/refresh/internal/render"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	refreshTypes "github.com/dantech2000/refresh/internal/types"
@@ -204,11 +205,54 @@ func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Confi
 	if len(blocked) > 0 && p.Blocked == "" {
 		p.Blocked = "the health gate blocks the roll: " + strings.Join(blocked, ", ")
 	}
+	// The drain gate of `nodegroup update`: a PDB that would refuse an
+	// eviction blocks the roll. The TUI has no --force.
+	gate, why := b.rollDrainGate(ctx, cfg, t, ng, kube)
+	p.Gates = append(p.Gates, gate)
+	if why != "" && p.Blocked == "" {
+		p.Blocked = why
+	}
 	// What the user sees here and confirms with y: Start refuses a roll
-	// whose gate has found anything more since.
+	// whose gate has found anything more since, or whose nodegroup has
+	// moved to another version.
+	version := ""
+	if c, ok := b.cluster(t.name); ok {
+		for _, n := range c.Nodegroups {
+			if n.Name == ng {
+				version = n.Version
+			}
+		}
+	}
 	b.mu.Lock()
-	b.accepted[acceptKey(t, ng)] = findings(summary)
+	b.accepted[acceptKey(t, ng)] = acceptedRoll{findings: findings(summary), version: version}
 	b.mu.Unlock()
+}
+
+// acceptedRoll is what a roll's dry run showed: the health findings and
+// the nodegroup's Kubernetes version.
+type acceptedRoll struct {
+	findings []string
+	version  string
+}
+
+// rollDrainGate runs the PDB drain-blocker check on ng. It returns the
+// dry-run gate line and, when the roll must not start, why. Without
+// Kubernetes access the check cannot run, as in `nodegroup update`.
+func (b *Backend) rollDrainGate(ctx context.Context, cfg aws.Config, t target, ng string, kube kubernetes.Interface) (state.PlanGate, string) {
+	if kube == nil {
+		return state.PlanGate{Status: state.CheckWarn, Text: "PDB drain gate", Note: "skipped: no Kubernetes access"}, ""
+	}
+	report, err := b.roll.drainBlockers(ctx, cfg, t.name, ng, kube)
+	if err != nil {
+		why := fmt.Sprintf("could not check the PodDisruptionBudgets of %s: %v", ng, err)
+		return state.PlanGate{Status: state.CheckFail, Text: "PDB drain gate", Note: "could not read the PDBs"}, why
+	}
+	if names := report.Names(); len(names) > 0 {
+		why := fmt.Sprintf("%s would stop draining %s: %s; let the workloads recover or relax the PDBs (the CLI's nodegroup update --force evicts anyway)",
+			render.Plural(len(names), "drain blocker"), ng, strings.Join(names, "; "))
+		return state.PlanGate{Status: state.CheckFail, Text: "PDB drain gate", Note: strings.Join(names, "; ")}, why
+	}
+	return state.PlanGate{Status: state.CheckPass, Text: "PDB drain gate", Note: "no PodDisruptionBudget blocks the drain"}, ""
 }
 
 func acceptKey(t target, ng string) string { return t.region + "/" + t.name + "/" + ng }
@@ -284,13 +328,19 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 		return fmt.Errorf("%s: %s", ng.Name, d.Reason)
 	}
 	version := aws.ToString(live.Version)
+	if accepted.version != "" && version != accepted.version {
+		return fmt.Errorf("%s is at %s now, and the dry run showed %s: open the dry run again (p)", ng.Name, version, accepted.version)
+	}
 
 	kube, metrics, how := b.roll.kubeFor(gctx, cfg, t.name)
+	if _, why := b.rollDrainGate(gctx, cfg, t, ng.Name, kube); why != "" {
+		return errors.New("blocked: " + why)
+	}
 	summary := b.roll.healthCheck(gctx, cfg, t.name, []string{ng.Name}, kube, metrics)
 	if _, blocked := healthGates(summary); len(blocked) > 0 {
 		return fmt.Errorf("blocked: the health gate blocks the roll: %s", strings.Join(blocked, ", "))
 	}
-	if added := newFindings(accepted, findings(summary)); len(added) > 0 {
+	if added := newFindings(accepted.findings, findings(summary)); len(added) > 0 {
 		return fmt.Errorf("the health gate found more since the dry run: %s; open the dry run again (p)", strings.Join(added, ", "))
 	}
 

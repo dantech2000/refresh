@@ -550,20 +550,31 @@ first, prints the plan, and exits `3` when one fails:
   counts from when the upgrade finished, but the update history records only
   when it started, so refresh refuses only once the window has certainly
   closed; in the last few hours it warns and lets EKS decide. Just before the
-  first change, refresh checks the window, the target, and the insights again.
+  first change, refresh builds the plan again. It refuses (exit `3`, nothing
+  changed) when the new plan is blocked, or differs from the one you
+  confirmed, for example a nodegroup that appeared since.
   refresh reads the date from the cluster's update history (`ListUpdates`).
   EKS counts from the end of the upgrade, so the dates are approximate, and
   EKS has the final word.
 - The cluster was upgraded in place to its current version. A cluster created
   at its version cannot roll back.
-- The target is one minor back and a version EKS still supports.
+- The target is one minor back and a version EKS still supports. If refresh
+  cannot read the support status (`DescribeClusterVersions`), the plan is
+  blocked.
 - If the target is in extended support, the cluster's upgrade policy is
   `EXTENDED`. Change it first with
   `aws eks update-cluster-config --name <cluster> --upgrade-policy supportType=EXTENDED`.
   Extended support charges then apply.
 - The cluster is `ACTIVE` with no update in progress.
 - No `ROLLBACK_READINESS` insight is `ERROR` or `UNKNOWN`. `WARNING` is a
-  notice. EKS refreshes stale insights itself when the rollback starts.
+  notice. EKS refreshes stale insights itself when the rollback starts. If
+  refresh cannot read the insights, the plan is blocked unless you pass
+  `--skip-insights-check`.
+- Before the control plane rolls back, every managed nodegroup is at N-1.
+  refresh reads them again just before that step. A nodegroup you skipped
+  (`--skip-nodegroup`), a custom-AMI nodegroup, or a roll that did not finish
+  stops the run there, and the control plane does not change. Nodes newer
+  than the control plane are outside the Kubernetes version skew policy.
 
 EKS also rejects a rollback when an EKS feature enabled on the cluster does
 not exist in N-1. refresh shows the EKS error.

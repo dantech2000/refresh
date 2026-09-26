@@ -92,31 +92,44 @@ func TestUpdate_DrainBlockerForce(t *testing.T) {
 	}
 }
 
-// Without Kubernetes access, or when the PDBs can't be read, the gate does
-// not stop the run (the health gate reports it).
-func TestUpdate_DrainGateCannotCheck(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		err  error
-		warn string
-	}{
-		{"no kube", health.ErrNoKubeClient, ""},
-		{"read error", context.DeadlineExceeded, "Could not check the PodDisruptionBudgets of prod"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			withDrainBlockers(t, nil, tc.err)
-			srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
-			_, stderr, err := runNodegroup(t, "update", "prod", "web", "--yes", "--poll-interval", "5ms", "-o", "json")
-			if err != nil {
-				t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
-			}
-			if tc.warn != "" && !strings.Contains(stderr, tc.warn) {
-				t.Errorf("stderr does not contain %q:\n%s", tc.warn, stderr)
-			}
-			if !calledPath(srv, "/update-version") {
-				t.Error("the update did not start")
-			}
-		})
+// Without Kubernetes access the gate cannot run and does not stop the run
+// (the kube notice says so).
+func TestUpdate_DrainGateWithoutKube(t *testing.T) {
+	withDrainBlockers(t, nil, health.ErrNoKubeClient)
+	srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
+	_, stderr, err := runNodegroup(t, "update", "prod", "web", "--yes", "--poll-interval", "5ms", "-o", "json")
+	if err != nil {
+		t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
+	}
+	if !calledPath(srv, "/update-version") {
+		t.Error("the update did not start")
+	}
+}
+
+// PDBs that cannot be read are not clear: the gate refuses (exit 3), as for
+// a blocker, and --force rolls past it with a warning.
+func TestUpdate_DrainGateReadErrorRefuses(t *testing.T) {
+	withDrainBlockers(t, nil, context.DeadlineExceeded)
+	srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
+	_, stderr, err := runNodegroup(t, "update", "prod", "web", "--yes", "--poll-interval", "5ms", "-o", "json")
+	if code := exitCodeOf(err); code != 3 || !strings.Contains(err.Error(), "web: the PodDisruptionBudgets could not be read") {
+		t.Fatalf("update = %v (exit %d), want exit 3\nstderr:\n%s", err, code, stderr)
+	}
+	if calledPath(srv, "/update-version") {
+		t.Fatal("the update started with unread PDBs")
+	}
+
+	withDrainBlockers(t, nil, context.DeadlineExceeded)
+	srv = fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
+	_, stderr, err = runNodegroup(t, "update", "prod", "web", "--yes", "--force", "--poll-interval", "5ms", "-o", "json")
+	if err != nil {
+		t.Fatalf("update --force: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "--force: rolling prod despite these drain blockers: web: the PodDisruptionBudgets could not be read") {
+		t.Errorf("stderr does not warn:\n%s", stderr)
+	}
+	if !calledPath(srv, "/update-version") {
+		t.Error("--force must start the update")
 	}
 }
 

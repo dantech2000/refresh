@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -503,10 +504,86 @@ func TestExecuteRollback_RechecksBeforeTheFirstChange(t *testing.T) {
 	}
 	svc.now = func() time.Time { return testNow.Add(6 * 24 * time.Hour) } // 8 days after the upgrade
 	report, err := svc.ExecuteRollback(context.Background(), plan, ExecuteOptions{Yes: true, SkipInsightsCheck: true})
-	if err == nil || !strings.Contains(err.Error(), "blocked now; nothing was changed") || report.Status != RunBlocked {
+	if !errors.Is(err, ErrRollbackBlocked) || !strings.Contains(err.Error(), "blocked now; nothing was changed") || report.Status != RunBlocked {
 		t.Fatalf("ExecuteRollback = %v (%+v)", err, report)
 	}
 	if len(*events) != 0 {
 		t.Fatalf("changed %v after the window closed", *events)
+	}
+}
+
+// A check the rollback depends on that cannot be read blocks the plan:
+// unchecked, the run could roll nodegroups and add-ons back before EKS
+// refuses the control plane.
+func TestRollbackPlan_UnreadableChecksBlock(t *testing.T) {
+	t.Run("insights", func(t *testing.T) {
+		w := newRollbackWorld()
+		svc, m := w.service()
+		m.ListInsightsFn = func(context.Context, *eks.ListInsightsInput, ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+			return nil, mocks.AccessDenied()
+		}
+		if s := insightsStep(t, buildRollback(t, svc, RollbackOptions{})); s.Status != StatusBlocked || !strings.Contains(s.Reason, "--skip-insights-check") {
+			t.Errorf("insights step = %+v, want blocked, naming --skip-insights-check", s)
+		}
+		if s := insightsStep(t, buildRollback(t, svc, RollbackOptions{SkipInsightsCheck: true})); s.Status == StatusBlocked {
+			t.Errorf("insights step = %+v, want not blocked with --skip-insights-check", s)
+		}
+	})
+	t.Run("support status", func(t *testing.T) {
+		w := newRollbackWorld()
+		svc, m := w.service()
+		m.DescribeClusterVersionsFn = func(context.Context, *eks.DescribeClusterVersionsInput, ...func(*eks.Options)) (*eks.DescribeClusterVersionsOutput, error) {
+			return nil, mocks.AccessDenied()
+		}
+		plan := buildRollback(t, svc, RollbackOptions{SkipInsightsCheck: true})
+		if s := eligibility(t, plan); s.Status != StatusBlocked || !strings.Contains(s.Reason, "could not check that EKS still supports 1.32") {
+			t.Errorf("eligibility = %+v, want blocked", s)
+		}
+	})
+}
+
+// A nodegroup the run does not roll back (skipped, custom AMI) and that is
+// still above the target stops the run before the control plane: nodes
+// newer than the control plane break the version skew policy.
+func TestExecuteRollback_NodegroupAboveTheTargetStopsTheControlPlane(t *testing.T) {
+	w := newRollbackWorld()
+	svc, m := w.service()
+	events := recordMutations(m)
+	plan := buildRollback(t, svc, RollbackOptions{SkipNodegroups: []string{"ng-new"}, SkipInsightsCheck: true})
+	if plan.Blocked() {
+		t.Fatalf("plan blocked: %v", plan.Blockers())
+	}
+	report, err := svc.ExecuteRollback(context.Background(), plan, ExecuteOptions{Yes: true, SkipNodegroups: []string{"ng-new"}, SkipInsightsCheck: true})
+	if err == nil || !strings.Contains(err.Error(), "ng-new at 1.33") {
+		t.Fatalf("ExecuteRollback = %v, want a stop naming ng-new", err)
+	}
+	if len(w.cpInputs) != 0 {
+		t.Fatalf("the control plane rolled back with ng-new at 1.33")
+	}
+	if got := strings.Join(*events, ","); got != "addon→"+latestFor("1.32") {
+		t.Errorf("mutations = %s, want only the add-on", got)
+	}
+	if report.Status != RunBlocked {
+		t.Errorf("report status = %s, want %s", report.Status, RunBlocked)
+	}
+}
+
+// The run executes what was confirmed: a nodegroup that appears after the
+// plan would be left out of the phases while the control plane rolls back,
+// so the run refuses before any change.
+func TestExecuteRollback_RefusesAChangedPlan(t *testing.T) {
+	w := newRollbackWorld()
+	svc, m := w.service()
+	events := recordMutations(m)
+	plan := buildRollback(t, svc, RollbackOptions{SkipInsightsCheck: true})
+	w.mu.Lock()
+	w.ngVersions["ng-late"] = "1.33"
+	w.mu.Unlock()
+	report, err := svc.ExecuteRollback(context.Background(), plan, ExecuteOptions{Yes: true, SkipInsightsCheck: true})
+	if !errors.Is(err, ErrRollbackBlocked) || !strings.Contains(err.Error(), "new: nodegroup ng-late 1.33 → 1.32") || report.Status != RunBlocked {
+		t.Fatalf("ExecuteRollback = %v (%+v), want ErrRollbackBlocked naming ng-late", err, report)
+	}
+	if len(*events) != 0 {
+		t.Fatalf("changed %v for a plan that no longer matched", *events)
 	}
 }

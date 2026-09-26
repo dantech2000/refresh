@@ -145,7 +145,7 @@ type Backend struct {
 	claimed map[target]string
 	// accepted holds the health findings each roll's dry run showed, by
 	// acceptKey: the findings the user confirmed with y.
-	accepted map[string][]string
+	accepted map[string]acceptedRoll
 	// acceptedAddons holds each cluster's last add-on dry run: the changes
 	// the user confirmed with y.
 	acceptedAddons map[target][]addonChange
@@ -197,7 +197,7 @@ func New(cfg aws.Config, opts Options) *Backend {
 		readiness:        map[string]*state.Readiness{},
 		claimed:          map[target]string{},
 		adopting:         map[string]bool{},
-		accepted:         map[string][]string{},
+		accepted:         map[string]acceptedRoll{},
 		acceptedAddons:   map[target][]addonChange{},
 		acceptedUpgrades: map[target]acceptedUpgrade{},
 

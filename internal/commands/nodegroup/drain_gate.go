@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
@@ -50,10 +51,11 @@ func readDrainBlockers(ctx context.Context, awsCfg aws.Config, eksClient *eks.Cl
 // nodes, so the gate refuses first, as `cluster upgrade` does.
 //
 // It returns the blockers, and checked=false when the check did not run:
-// --skip-health-check, nothing to roll, no Kubernetes access (the kube
-// notice says so), or PDBs that could not be read (a warning here; the
-// health gate's PDB check warns too). With --force it warns on stderr about
-// the blockers it rolls past. verbose prints the kube notice, for a dry run
+// --skip-health-check, nothing to roll, or no Kubernetes access (the kube
+// notice says so). PDBs that could not be read are a blocker on every
+// nodegroup to roll: the roll is refused unless --force, as a PDB that
+// allows no disruption is. With --force it warns on stderr about the
+// blockers it rolls past. verbose prints the kube notice, for a dry run
 // that has not printed it.
 func drainGate(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, cluster string, toRoll []string, flags updateAMIFlags, verbose bool) (blockers drainBlockers, checked bool) {
 	if flags.skipHealthCheck || len(toRoll) == 0 {
@@ -63,11 +65,14 @@ func drainGate(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, cl
 	switch {
 	case errors.Is(err, health.ErrNoKubeClient):
 		return nil, false
-	case err != nil:
-		if ctx.Err() == nil {
-			render.Notef(ui.Stderr, render.Warn, "Could not check the PodDisruptionBudgets of %s: %v; the roll is not gated on them", cluster, err)
-		}
+	case err != nil && ctx.Err() != nil:
 		return nil, false
+	case err != nil:
+		// Unchecked is not clear: refuse, as for a blocker, unless --force.
+		blockers = drainBlockers{}
+		for _, ng := range toRoll {
+			blockers[ng] = []string{"the PodDisruptionBudgets could not be read (" + awserr.Summary(err) + ")"}
+		}
 	}
 	if len(blockers) > 0 && flags.force {
 		verb := "rolling"
@@ -93,7 +98,7 @@ func (b drainBlockers) text(order []string) string {
 
 // drainBlockedExit is the exit 3 error of a run the drain gate refused.
 func drainBlockedExit(cluster string, order []string, blockers drainBlockers) error {
-	return cli.Exit(fmt.Sprintf("PodDisruptionBudgets would block draining nodegroups of %s (%s); nothing was started. Let the workloads recover, relax the PDBs (or narrow their selectors so each pod matches one PDB), or pass --force to evict anyway",
+	return cli.Exit(fmt.Sprintf("the PDB drain gate stopped the nodegroups of %s (%s); nothing was started. Let the workloads recover, relax the PDBs (or narrow their selectors so each pod matches one PDB), fix the access to them, or pass --force to evict anyway",
 		cluster, blockers.text(order)), runner.ExitBlocked)
 }
 

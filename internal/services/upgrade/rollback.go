@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/addons"
@@ -466,8 +468,9 @@ func (s *Service) rollbackTargetBlockers(ctx context.Context, plan *RollbackPlan
 	})
 	if err != nil {
 		plan.addFailure(diag.FromError(diag.KindCluster, plan.ClusterName, diag.OpDescribeClusterVersions, err))
-		plan.Notices = append(plan.Notices, fmt.Sprintf("could not check the support status of %s; EKS rejects the rollback if it is not supported", target))
-		return nil
+		// Unchecked, the run could roll nodegroups and add-ons back before
+		// EKS refuses the control plane.
+		return []string{fmt.Sprintf("could not check that EKS still supports %s (rerun to retry): %s", target, awserr.Summary(err))}
 	}
 	for _, v := range out.ClusterVersions {
 		if aws.ToString(v.ClusterVersion) != target {
@@ -498,13 +501,20 @@ func orUnset(s string) string {
 // rollbackInsightsStep reads the ROLLBACK_READINESS insights. ERROR and
 // UNKNOWN block unless opts.SkipInsightsCheck; WARNING is a notice. EKS
 // refreshes stale insights itself when the rollback starts, so refresh
-// starts no refresh, and a failed read does not block.
+// starts no refresh. A failed read blocks unless opts.SkipInsightsCheck:
+// unchecked, the run could roll nodegroups and add-ons back before EKS
+// refuses the control plane.
 func (s *Service) rollbackInsightsStep(ctx context.Context, plan *RollbackPlan, opts RollbackOptions) Step {
 	step := Step{Type: StepReadiness, Description: "rollback readiness insights", Version: plan.TargetVersion, Status: StatusPending}
 	insights, err := s.listRollbackInsights(ctx, plan.ClusterName)
 	if err != nil {
 		plan.addFailure(diag.FromError(diag.KindCluster, plan.ClusterName, diag.OpListInsights, err))
-		step.Reason = "could not read the rollback readiness insights; EKS checks them when the rollback starts"
+		if opts.SkipInsightsCheck {
+			step.Reason = "could not read the rollback readiness insights; --skip-insights-check: EKS skips them too"
+			return step
+		}
+		step.Status = StatusBlocked
+		step.Reason = fmt.Sprintf("could not read the rollback readiness insights (rerun to retry, or pass --skip-insights-check to roll back without them, not recommended): %s", awserr.Summary(err))
 		return step
 	}
 	if len(insights) == 0 {
@@ -571,10 +581,10 @@ func (s *Service) rollbackWorkSteps(ctx context.Context, plan *RollbackPlan, clu
 			step.Reason = fmt.Sprintf("already at %s", ng.Version)
 		case matchesAny(ng.Name, opts.SkipNodegroups):
 			step.Status = StatusManual
-			step.Reason = fmt.Sprintf("skipped via --skip-nodegroup: move it to %s yourself before the control plane rolls back", target)
+			step.Reason = fmt.Sprintf("skipped via --skip-nodegroup: move it to %s yourself; the control plane does not roll back while it is at %s", target, ng.Version)
 		case ng.CustomAMI:
 			step.Status = StatusManual
-			step.Reason = fmt.Sprintf("custom AMI nodegroup: roll it to a %s AMI yourself before the control plane rolls back", target)
+			step.Reason = fmt.Sprintf("custom AMI nodegroup: roll it to a %s AMI yourself; the control plane does not roll back while it is at %s", target, ng.Version)
 		case ng.Status == ekstypes.NodegroupStatusUpdating:
 			step.Reason = "an update is already in progress; refresh attaches and waits for it"
 		}
@@ -649,12 +659,56 @@ func (s *Service) ExecuteRollback(ctx context.Context, plan *RollbackPlan, opts 
 	switch {
 	case fresh.Blocked():
 		report.Status = RunBlocked
-		return report, fmt.Errorf("the rollback is blocked now; nothing was changed:\n  %s", joinLines(fresh.Blockers()))
+		return report, fmt.Errorf("%w: the rollback is blocked now; nothing was changed:\n  %s", ErrRollbackBlocked, joinLines(fresh.Blockers()))
 	case fresh.TargetVersion != plan.TargetVersion:
 		report.Status = RunBlocked
-		return report, fmt.Errorf("the rollback target changed from %s to %s since the plan; nothing was changed: plan again", plan.TargetVersion, fresh.TargetVersion)
+		return report, fmt.Errorf("%w: the rollback target changed from %s to %s since the plan; nothing was changed: plan again", ErrRollbackBlocked, plan.TargetVersion, fresh.TargetVersion)
 	}
-	return runPhases(ctx, plan.ClusterName, s.rollbackPhases(plan, opts), opts, report)
+	// Run only what was confirmed: a nodegroup or add-on that appeared or
+	// changed since the plan would otherwise be left out of the phases
+	// while the control plane still rolls back.
+	if diff := changedSteps(plan.Steps, fresh.Steps); len(diff) > 0 {
+		report.Status = RunBlocked
+		return report, fmt.Errorf("%w: the cluster changed since the plan (%s); nothing was changed: plan again", ErrRollbackBlocked, strings.Join(diff, "; "))
+	}
+	return runPhases(ctx, fresh.ClusterName, s.rollbackPhases(fresh, opts), opts, report)
+}
+
+// ErrRollbackBlocked marks a rollback that ExecuteRollback refused before
+// any change: the command exits 3.
+var ErrRollbackBlocked = errors.New("rollback blocked")
+
+// changedSteps names the work steps (nodegroups, add-ons, control plane)
+// whose pending work differs between the confirmed plan and a fresh one.
+func changedSteps(confirmed, fresh []Step) []string {
+	key := func(st Step) string { return string(st.Type) + " " + st.Target }
+	work := func(steps []Step) map[string]Step {
+		out := map[string]Step{}
+		for _, st := range steps {
+			if st.Type == StepNodegroup || st.Type == StepAddon || st.Type == StepControlPlane {
+				out[key(st)] = st
+			}
+		}
+		return out
+	}
+	was, now := work(confirmed), work(fresh)
+	var diff []string
+	for k, n := range now {
+		w, ok := was[k]
+		switch {
+		case !ok:
+			diff = append(diff, "new: "+n.Description)
+		case w.Status != n.Status || w.Version != n.Version:
+			diff = append(diff, fmt.Sprintf("%s: %s, was %s", n.Description, n.Status, w.Status))
+		}
+	}
+	for k, w := range was {
+		if _, ok := now[k]; !ok {
+			diff = append(diff, "gone: "+w.Description)
+		}
+	}
+	sort.Strings(diff)
+	return diff
 }
 
 // rollbackPhases lists the rollback phases in the documented order.
@@ -708,6 +762,12 @@ func (s *Service) rollbackPhases(plan *RollbackPlan, opts ExecuteOptions) []phas
 		{
 			label: fmt.Sprintf("control plane rollback %s → %s", plan.CurrentVersion, target),
 			steps: cpSteps,
+			// Nodes newer than the control plane are outside the Kubernetes
+			// version skew policy: a skipped, custom-AMI, or failed
+			// nodegroup still above the target stops the run here.
+			precheck: func(ctx context.Context) error {
+				return s.nodegroupsAtOrBelow(ctx, plan.ClusterName, target)
+			},
 			run: func(ctx context.Context) error {
 				return s.moveControlPlane(ctx, plan.ClusterName, target, "rollback", atOrBelow,
 					func(in *eks.UpdateClusterVersionInput) {
@@ -719,4 +779,24 @@ func (s *Service) rollbackPhases(plan *RollbackPlan, opts ExecuteOptions) []phas
 			},
 		},
 	}
+}
+
+// nodegroupsAtOrBelow fails when a managed nodegroup of cluster is above
+// target, as EKS reports it now.
+func (s *Service) nodegroupsAtOrBelow(ctx context.Context, cluster, target string) error {
+	nodegroups, err := s.listNodegroupStates(ctx, cluster)
+	if err != nil {
+		return fmt.Errorf("checking the nodegroup versions before the control plane rolls back: %w", err)
+	}
+	var above []string
+	for _, ng := range nodegroups {
+		if !versionAtLeast(target, ng.Version) {
+			above = append(above, fmt.Sprintf("%s at %s", ng.Name, ng.Version))
+		}
+	}
+	if len(above) > 0 {
+		return fmt.Errorf("the control plane has not changed: nodegroups above %s (%s) must move to %s first, then rerun",
+			target, strings.Join(above, ", "), target)
+	}
+	return nil
 }

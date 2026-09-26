@@ -176,7 +176,11 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 	// EKS refuses a second update while one runs, but only after the prompts:
 	// say so first. A dry run or --health-only changes nothing, so it goes on.
 	if !flags.dryRun && !flags.healthOnly {
-		if busy := updateBusyChanges(ctx, eksClient, clusterName, nodegroupPattern); len(busy) > 0 {
+		busy, err := updateBusyChanges(ctx, eksClient, clusterName, nodegroupPattern)
+		switch {
+		case err != nil:
+			return runner.BusyUnknownExit(ctx, clusterName, err)
+		case len(busy) > 0:
 			return runner.BusyExit(clusterName, busy)
 		}
 	}

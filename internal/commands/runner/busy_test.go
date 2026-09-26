@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/dantech2000/refresh/internal/mocks"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
-	"github.com/dantech2000/refresh/internal/ui"
 )
 
 func TestRefuseIfBusy(t *testing.T) {
@@ -30,23 +28,19 @@ func TestRefuseIfBusy(t *testing.T) {
 	}
 }
 
-// A check that cannot read the cluster warns and lets the run go on: EKS
-// still refuses a second update itself.
-func TestClusterChangesReadFailureWarns(t *testing.T) {
-	var buf bytes.Buffer
-	orig := ui.Stderr
-	ui.Stderr = &buf
-	t.Cleanup(func() { ui.Stderr = orig })
-
+// A check that cannot read the cluster refuses the run (exit 3): an add-on
+// update EKS is running could go unseen.
+func TestRefuseIfBusyReadFailureRefuses(t *testing.T) {
 	api := mocks.NewEKSAPI().WithCluster("prod", "1.32").Build()
 	api.ListAddonsFn = func(context.Context, *eks.ListAddonsInput, ...func(*eks.Options)) (*eks.ListAddonsOutput, error) {
 		return nil, mocks.AccessDenied()
 	}
-	if got := ClusterChanges(t.Context(), api, "prod", nil); len(got) != 0 {
-		t.Fatalf("changes = %v, want none", got)
+	if _, err := ClusterChanges(t.Context(), api, "prod", nil); err == nil {
+		t.Fatal("ClusterChanges read failure returned no error")
 	}
-	if !strings.Contains(buf.String(), "Could not check what EKS is changing on prod") {
-		t.Errorf("stderr = %q, want the warning", buf.String())
+	err := RefuseIfBusy(t.Context(), api, "prod", nil)
+	if code := exitCode(err); code != ExitBlocked || !strings.Contains(err.Error(), "could not check what EKS is changing on prod; nothing was started") {
+		t.Fatalf("err = %v (exit %d), want exit 3", err, code)
 	}
 }
 

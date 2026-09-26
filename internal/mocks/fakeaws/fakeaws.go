@@ -85,6 +85,10 @@ type Addon struct {
 	// DescribeAddonError, when set, makes DescribeAddon for this add-on fail
 	// with that API error code (HTTP 403 for AccessDenied*, else 400).
 	DescribeAddonError string
+	// DescribeAddonErrorAfter delays DescribeAddonError: that many
+	// DescribeAddon calls succeed first (a check that reads the add-on
+	// before the step under test).
+	DescribeAddonErrorAfter int
 	// DescribeErrorAfterUpdate is like DescribeAddonError, but only for the
 	// post-update health check: every DescribeAddon after the one that
 	// confirms the updated version fails.
@@ -92,6 +96,7 @@ type Addon struct {
 
 	rolled             bool
 	describesAfterRoll int
+	describes          int
 }
 
 // Cluster is an EKS cluster in the fake world.
@@ -735,7 +740,8 @@ func (s *Server) serveAddons(w http.ResponseWriter, r *http.Request, c *Cluster,
 			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No addon: "+rest[0])
 			return
 		}
-		if a.DescribeAddonError != "" {
+		a.describes++
+		if a.DescribeAddonError != "" && a.describes > a.DescribeAddonErrorAfter {
 			writeCodeError(w, a.DescribeAddonError, "fake DescribeAddon failure for "+a.Name)
 			return
 		}

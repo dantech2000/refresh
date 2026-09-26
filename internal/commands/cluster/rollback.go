@@ -214,6 +214,9 @@ func runRollback(ctx context.Context, cmd *cli.Command) (err error) {
 		setRegion(stop, awsCfg.Region)
 		runner.WriteFailures(format, out, ui.Stderr, stop)
 	}
+	if errors.Is(err, upgrade.ErrRollbackBlocked) {
+		return cli.Exit(err.Error(), runner.ExitBlocked) // nothing changed: nothing to resume
+	}
 	if err != nil {
 		th := render.Default(out)
 		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", th.Paint(th.Pal.Sky, rollbackResumeCommand(cmd, clusterName)))
@@ -262,6 +265,9 @@ func runRollbackMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Serv
 		return eerr
 	}
 	runner.ReportFailures(ui.Stderr, fs)
+	if errors.Is(err, upgrade.ErrRollbackBlocked) {
+		return cli.Exit(err.Error(), runner.ExitBlocked)
+	}
 	if err != nil {
 		return fmt.Errorf("%w (resume with: %s)", err, rollbackResumeCommand(cmd, plan.ClusterName))
 	}

@@ -208,7 +208,10 @@ dependency order); `Start` previews again, refuses if the plan changed, and
 updates each add-on pinned to the previewed version with `--health-check
 --wait` semantics. The roll re-runs the
 `nodegroup update` health gate, pins to the nodegroup's own version through
-`StartNodegroupRoll`, claims the cluster (one change per cluster), and is
+`StartNodegroupRoll`, runs `nodegroup update`'s PDB drain gate in the dry
+run and again at `Start` (a blocker or unreadable PDBs block; the TUI has no
+`--force`), refuses when the nodegroup's version changed since the dry run,
+claims the cluster (one change per cluster), and is
 watched through the EKS update (quiet `monitoring.MonitorUpdates`, the
 authority) and the `noderoll` observer when a kubeconfig context matches
 (resolved with `health.ConnectKubeClientForCluster` directly, never

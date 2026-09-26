@@ -150,7 +150,7 @@ refresh cluster upgrade-check -c prod
 refresh nodegroup update -c prod --dry-run
 refresh nodegroup update -c prod
 
-# 4. Upgrade the whole cluster (control plane, add-ons, nodegroups), with gates
+# 4. Upgrade the whole cluster (control plane, nodegroups, add-ons), with gates
 refresh cluster upgrade -c prod --to 1.33
 
 # 5. Changed your mind within about 7 days? Roll back one minor version

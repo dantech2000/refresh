@@ -64,6 +64,9 @@ type rollRig struct {
 	verified     atomic.Int64
 	release      chan ekstypes.UpdateStatus
 	atEnd        chan struct{}
+	// drainBlocked blocks the drain gate; drainErr fails its PDB read.
+	drainBlocked bool
+	drainErr     error
 }
 
 // start dry-runs a and starts it, as the TUI does (p, then y).
@@ -114,7 +117,14 @@ func newRollRig(t *testing.T) *rollRig {
 			return s
 		},
 		drainBlockers: func(context.Context, aws.Config, string, string, kubernetes.Interface) (health.DrainBlockerReport, error) {
-			return health.DrainBlockerReport{Scoped: true}, nil
+			if rig.drainErr != nil {
+				return health.DrainBlockerReport{}, rig.drainErr
+			}
+			r := health.DrainBlockerReport{Scoped: true}
+			if rig.drainBlocked {
+				r.Blockers = []health.PDBInfo{{Namespace: "default", Name: "web"}}
+			}
+			return r, nil
 		},
 		startRoll: func(_ context.Context, _ aws.Config, cluster, ng, version string) (*ekstypes.Update, error) {
 			rig.started.Add(1)
@@ -285,7 +295,7 @@ func TestACurrentNodegroupDoesNotRoll(t *testing.T) {
 	rig := newRollRig(t)
 	current := state.Action{Kind: state.ActionRoll, Cluster: "prod-api", Nodegroup: "ng-system"}
 	rig.b.mu.Lock()
-	rig.b.accepted[acceptKey(rig.b.targets["prod-api"], "ng-system")] = nil // as a dry run would
+	rig.b.accepted[acceptKey(rig.b.targets["prod-api"], "ng-system")] = acceptedRoll{} // as a dry run would
 	rig.b.mu.Unlock()
 	if err := rig.b.Start(t.Context(), current); err == nil || !strings.Contains(err.Error(), "already on latest AMI") || rig.started.Load() != 0 {
 		t.Fatalf("a roll of a current nodegroup started: %v", err)
@@ -354,16 +364,56 @@ func TestTheDecisionTableDecidesAtStart(t *testing.T) {
 			}
 		})
 	}
-	// The version pinned is the one EKS reports now.
+	// A nodegroup that moved to another version since the dry run needs a
+	// new dry run: the roll would replace nodes for a version the user
+	// never saw.
 	rig := newRollRig(t)
 	rig.live.Version = aws.String("1.32")
+	if err := rig.start(t, roll); err == nil || !strings.Contains(err.Error(), "the dry run showed 1.31") || rig.started.Load() != 0 {
+		t.Fatalf("Start = %v, want a refusal and no roll", err)
+	}
+	rig.b.Close()
+	// The version pinned is the one EKS reports, which the dry run showed.
+	rig = newRollRig(t)
 	if err := rig.start(t, roll); err != nil {
 		t.Fatal(err)
 	}
-	if got := rig.version.Load(); got != "prod-api/ng-general@1.32" {
+	if got := rig.version.Load(); got != "prod-api/ng-general@1.31" {
 		t.Fatalf("pinned %v, want the live version", got)
 	}
 	rig.release <- ekstypes.UpdateStatusSuccessful
+	rig.b.Close()
+}
+
+// The roll runs the PDB drain gate of `nodegroup update` in its dry run and
+// again at Start; the TUI has no --force, so a blocker refuses the roll.
+func TestADrainBlockerStopsTheRoll(t *testing.T) {
+	rig := newRollRig(t)
+	rig.drainBlocked = true
+	p, err := rig.b.Plan(t.Context(), roll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.Blocked, "PDB default/web allows 0 disruptions") {
+		t.Fatalf("dry run Blocked = %q, want the drain blocker", p.Blocked)
+	}
+	if err := rig.b.Start(t.Context(), roll); err == nil || !strings.Contains(err.Error(), "would stop draining") || rig.started.Load() != 0 {
+		t.Fatalf("Start = %v, want a refusal and no roll", err)
+	}
+	// A blocker that appears after a clean dry run stops Start too.
+	rig.drainBlocked = false
+	if _, err := rig.b.Plan(t.Context(), roll); err != nil {
+		t.Fatal(err)
+	}
+	rig.drainBlocked = true
+	if err := rig.b.Start(t.Context(), roll); err == nil || !strings.Contains(err.Error(), "would stop draining") || rig.started.Load() != 0 {
+		t.Fatalf("Start = %v, want a refusal and no roll", err)
+	}
+	// So does a PDB read that fails.
+	rig.drainBlocked, rig.drainErr = false, errors.New("pdbs forbidden")
+	if err := rig.b.Start(t.Context(), roll); err == nil || !strings.Contains(err.Error(), "could not check the PodDisruptionBudgets") || rig.started.Load() != 0 {
+		t.Fatalf("Start = %v, want a refusal and no roll", err)
+	}
 	rig.b.Close()
 }
 

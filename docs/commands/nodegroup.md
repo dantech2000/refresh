@@ -324,9 +324,11 @@ nodegroups that match. `--quiet` does not skip them.
     blocker. To go on, let the workloads recover, relax the PDB (or narrow
     its selector so each pod matches one PDB), or pass `--force`, which rolls
     anyway with a warning on stderr. `--dry-run` shows the blockers and exits
-    `3` where the real run would refuse. The gate needs Kubernetes access:
-    without it, the gate is skipped with the usual notice. `--skip-health-check`
-    skips it too. In fleet mode each cluster is gated on its own, and a
+    `3` where the real run would refuse. PDBs that cannot be read (for
+    example, no RBAC access to them) count as a blocker: the run refuses,
+    and `--force` rolls anyway with a warning. The gate needs Kubernetes
+    access: without it, the gate is skipped with the usual notice.
+    `--skip-health-check` skips it too. In fleet mode each cluster is gated on its own, and a
     refused cluster has the status `DrainBlocked`.
 
 !!! note "Busy clusters"
@@ -335,9 +337,12 @@ nodegroups that match. `--quiet` does not skip them.
     nodegroup, and each add-on. If something is changing, the run exits `3`
     and names it, for example `prod is busy (add-on vpc-cni UPDATING);
     nothing was started`. A selected nodegroup that is already `UPDATING`
-    does not count: the run skips it (`AlreadyUpdating`). `--dry-run` and
+    does not count: the run skips it (`AlreadyUpdating`). If refresh cannot
+    read one of them, it cannot tell whether EKS is changing it, so the run
+    also exits `3`, and the error names the call that failed. `--dry-run` and
     `--health-only` do not check. In fleet mode, a busy cluster is skipped
-    with the status `Busy` and the rest of the fleet goes on.
+    with the status `Busy`, a cluster that cannot be read fails, and the rest
+    of the fleet goes on.
 
 !!! note "Custom-AMI nodegroups are skipped"
     Nodegroups whose AMI is managed via a launch template (`AmiType=CUSTOM`)

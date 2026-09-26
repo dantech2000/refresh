@@ -128,6 +128,21 @@ func TestUpdateAll_Confirmation(t *testing.T) {
 			t.Errorf("UpdateAddon calls = %d, want 0", n)
 		}
 	})
+	// An add-on the busy check cannot read could be one EKS is updating:
+	// the command refuses before the preview (exit 3).
+	t.Run("an unreadable add-on refuses the run", func(t *testing.T) {
+		asked := withPrompt(t, true, "y")
+		w := world()
+		w.Addons[1].DescribeAddonError = "AccessDeniedException"
+		srv := fakeaws.New(t, w)
+		_, stderr, err := runAddon(t, "update", "prod", "--all")
+		if code := exitCodeOf(err); code != 3 || !strings.Contains(err.Error(), "could not check what EKS is changing on prod") {
+			t.Fatalf("err = %v (exit %d), want exit 3\nstderr:\n%s", err, code, stderr)
+		}
+		if *asked != 0 || updateCalls(srv) != 0 {
+			t.Errorf("prompts = %d, UpdateAddon calls = %d, want 0 and 0", *asked, updateCalls(srv))
+		}
+	})
 	t.Run("yes", func(t *testing.T) {
 		withPrompt(t, true, "y")
 		srv := fakeaws.New(t, world())
@@ -151,12 +166,14 @@ func TestUpdateAll_Confirmation(t *testing.T) {
 		}
 	})
 	// An add-on the preview could not read would be updated unseen by the
-	// real run, so the command fails closed: no prompt, no update.
+	// real run, so the command fails closed: no prompt, no update. (The
+	// busy check reads it once first, and passes.)
 	t.Run("a failed preview fails closed", func(t *testing.T) {
 		asked := withPrompt(t, true, "y")
 		w := world()
 		w.Addons[1].Version = "v1.18.0"
 		w.Addons[1].DescribeAddonError = "AccessDeniedException"
+		w.Addons[1].DescribeAddonErrorAfter = 1
 		srv := fakeaws.New(t, w)
 		stdout, stderr, err := runAddon(t, "update", "prod", "--all")
 		if err == nil || !strings.Contains(err.Error(), "could not preview 1 add-on(s)") {

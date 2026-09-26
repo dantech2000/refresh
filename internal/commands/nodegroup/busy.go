@@ -12,8 +12,9 @@ import (
 
 // updateBusyChanges reads what EKS is changing on cluster before `nodegroup
 // update` starts anything. A nodegroup the pattern selects is left out: the
-// run skips a target that is already UPDATING (skipAlreadyUpdating).
-func updateBusyChanges(ctx context.Context, eksClient *eks.Client, clusterName, pattern string) clustersvc.Changes {
+// run skips a target that is already UPDATING (skipAlreadyUpdating). A
+// read that fails returns the error: the caller refuses the cluster.
+func updateBusyChanges(ctx context.Context, eksClient *eks.Client, clusterName, pattern string) (clustersvc.Changes, error) {
 	targets := healthTargetNodegroups(ctx, eksClient, clusterName, pattern)
 	return runner.ClusterChanges(ctx, eksClient, clusterName, func(c clustersvc.Change) bool {
 		return c.Kind == clustersvc.ChangeNodegroup && slices.Contains(targets, c.Name)

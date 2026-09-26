@@ -176,8 +176,10 @@ reads what EKS is changing: the control plane, each nodegroup, and each
 add-on. If something is changing, the command exits `3` and names it, for
 example `prod is busy (nodegroup ng-a UPDATING); nothing was started`. Run it
 again once that finishes. An update of the named add-on that is already
-running does not count: the command waits on it as before. `--dry-run` does
-not check.
+running does not count: the command waits on it as before. If refresh cannot
+read the cluster, a nodegroup, or an add-on, it cannot tell whether EKS is
+changing it, so the command also exits `3` and names the call that failed.
+`--dry-run` does not check.
 
 ### Add-on names
 

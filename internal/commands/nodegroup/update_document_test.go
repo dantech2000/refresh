@@ -307,20 +307,20 @@ func TestUpdate_PostRollDescribeFailureExitsFour(t *testing.T) {
 	}
 }
 
-// A health gate that blocks because a read failed keeps its exit code (3),
-// and the read failure is listed in the document and on stderr.
-func TestUpdate_HealthReadFailureBlocksAndIsListed(t *testing.T) {
-	fakeaws.New(t, &fakeaws.Cluster{Name: "prod", Version: "1.31", ListNodegroupsError: "AccessDeniedException"})
-	stdout, stderr, err := runNodegroup(t, "update", "prod", "--yes", "-o", "json")
+// A cluster whose nodegroups cannot be read is refused before the health
+// gate (exit 3): the busy check cannot tell whether EKS is changing one.
+func TestUpdate_UnreadableNodegroupsRefuse(t *testing.T) {
+	srv := fakeaws.New(t, &fakeaws.Cluster{Name: "prod", Version: "1.31", ListNodegroupsError: "AccessDeniedException"})
+	_, stderr, err := runNodegroup(t, "update", "prod", "--yes", "-o", "json")
 	if code := exitCodeOf(err); code != 3 {
 		t.Fatalf("exit code = %d (err %v), want 3\nstderr:\n%s", code, err, stderr)
 	}
-	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
-	if h, _ := doc["health"].(map[string]any); h["decision"] != "Block" {
-		t.Errorf("health = %v, want BLOCK", doc["health"])
+	if !strings.Contains(err.Error(), "could not check what EKS is changing on prod") || !strings.Contains(err.Error(), "ListNodegroups") {
+		t.Errorf("err = %v, want the busy check naming ListNodegroups", err)
 	}
-	failureWant{kind: "Cluster", name: "prod", reason: "AccessDenied", operation: "eks:ListNodegroups"}.check(t, "failures[0]", onlyFailure(t, doc))
-	requireStderrLine(t, stderr, "warning: cluster prod (us-east-1): AccessDenied: AccessDeniedException: fake ListNodegroups failure for prod")
+	if calledPath(srv, "/update-version") {
+		t.Error("an update started")
+	}
 }
 
 func TestApplyMonitorResult(t *testing.T) {

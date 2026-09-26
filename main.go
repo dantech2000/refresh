@@ -83,7 +83,7 @@ func newApp() *cli.Command {
    2. refresh cluster upgrade-check  Check if a cluster is ready to upgrade.
    3. refresh nodegroup update       Patch nodegroups and add-ons.
       refresh addon update
-   4. refresh cluster upgrade        Upgrade control plane, add-ons, nodegroups.
+   4. refresh cluster upgrade        Upgrade control plane, nodegroups, add-ons.
 
 Commands that change a cluster support --dry-run. Use --yes in scripts to
 skip the confirmation prompts.`,

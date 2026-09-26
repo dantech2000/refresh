@@ -464,7 +464,16 @@ func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegrou
 	// A cluster EKS is changing is skipped, not failed: the rest of the fleet
 	// goes on.
 	if !flags.healthOnly {
-		if busy := updateBusyChanges(ctx, eksClient, tgt.cluster, nodegroupPattern); len(busy) > 0 {
+		busy, err := updateBusyChanges(ctx, eksClient, tgt.cluster, nodegroupPattern)
+		if err != nil && ctx.Err() == nil {
+			// Unknown is not idle: an add-on update EKS runs could go
+			// unseen, so this cluster fails and the rest go on.
+			f := diag.FromError(diag.KindCluster, tgt.cluster, "", err)
+			f.Region = tgt.region
+			res.Status, res.Failure = clusterFailed, &f
+			return res
+		}
+		if len(busy) > 0 {
 			res.Status = clusterBusy
 			res.ChangesInProgress = busyStrings(busy)
 			if !flags.quiet {
