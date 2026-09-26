@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.0](https://github.com/dantech2000/refresh/compare/v0.12.2...v0.13.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **nodegroup:** refuse a roll that a PodDisruptionBudget would block
+
+### Features
+
+* **cluster:** add cluster rollback ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* **nodegroup:** add -o json|yaml to nodegroup scale ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* **nodegroup:** refuse a roll that a PodDisruptionBudget would block ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* refuse to start a change on a cluster EKS is changing ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* style top-level errors and lead with the cause ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* **upgrade:** roll nodegroups before add-ons, except add-ons the new control plane cannot run ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+
 ## [0.12.2](https://github.com/dantech2000/refresh/compare/v0.12.1...v0.12.2) (2026-09-26)
 
 
