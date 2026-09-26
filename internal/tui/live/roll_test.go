@@ -277,12 +277,8 @@ func TestStartErrorReleasesTheCluster(t *testing.T) {
 	}
 }
 
-func TestUpgradesDoNotStartEvenWithChangesOn(t *testing.T) {
+func TestACurrentNodegroupDoesNotRoll(t *testing.T) {
 	rig := newRollRig(t)
-	a := state.Action{Kind: state.ActionUpgrade, Cluster: "prod-api"}
-	if err := rig.b.Start(t.Context(), a); err == nil || !strings.Contains(err.Error(), "upgrades do not start") {
-		t.Fatalf("Start(upgrade) = %v", err)
-	}
 	current := state.Action{Kind: state.ActionRoll, Cluster: "prod-api", Nodegroup: "ng-system"}
 	rig.b.mu.Lock()
 	rig.b.accepted[acceptKey(rig.b.targets["prod-api"], "ng-system")] = nil // as a dry run would

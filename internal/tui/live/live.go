@@ -137,6 +137,12 @@ type Backend struct {
 	// acceptedAddons holds each cluster's last add-on dry run: the changes
 	// the user confirmed with y.
 	acceptedAddons map[target][]addonChange
+	// acceptedUpgrades holds each cluster's last upgrade dry run.
+	acceptedUpgrades map[target]acceptedUpgrade
+	// upgrades are the upgrades this backend ran, oldest first.
+	upgrades []*liveUpgrade
+	// newUpgrader builds the orchestrator for a cluster's config.
+	newUpgrader func(aws.Config) upgrader
 }
 
 // New returns a backend for the accounts behind cfg. Call Run to start
@@ -161,15 +167,16 @@ func New(cfg aws.Config, opts Options) *Backend {
 		opts.Regions = []string{cfg.Region}
 	}
 	b := &Backend{
-		base:           cfg,
-		opts:           opts,
-		now:            time.Now,
-		wake:           make(chan struct{}, 1),
-		targets:        map[string]target{},
-		readiness:      map[string]*state.Readiness{},
-		claimed:        map[target]string{},
-		accepted:       map[string][]string{},
-		acceptedAddons: map[target][]addonChange{},
+		base:             cfg,
+		opts:             opts,
+		now:              time.Now,
+		wake:             make(chan struct{}, 1),
+		targets:          map[string]target{},
+		readiness:        map[string]*state.Readiness{},
+		claimed:          map[target]string{},
+		accepted:         map[string][]string{},
+		acceptedAddons:   map[target][]addonChange{},
+		acceptedUpgrades: map[target]acceptedUpgrade{},
 	}
 	if b.opts.Logger == nil {
 		b.opts.Logger = slog.New(&paneHandler{b: b, level: slog.LevelWarn})
@@ -177,6 +184,7 @@ func New(cfg aws.Config, opts Options) *Backend {
 	b.svc = defaultServices(b.opts.Logger)
 	b.roll = defaultRollServices(b.opts)
 	b.addon = defaultAddonServices(b.opts)
+	b.newUpgrader = defaultUpgrader(b.opts)
 	return b
 }
 
@@ -507,6 +515,9 @@ func (b *Backend) State(ctx context.Context) (state.State, error) {
 	for _, r := range b.rolls {
 		st.Rolls = append(st.Rolls, b.rollSnapshot(r))
 	}
+	for _, u := range b.upgrades {
+		st.Upgrades = append(st.Upgrades, b.upgradeSnapshot(u))
+	}
 	for k, r := range b.readiness {
 		st.Readiness[k] = copyReadiness(*r)
 	}
@@ -672,6 +683,10 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			return state.Plan{}, perr
 		}
 		p = planUpgrade(c, t, plan)
+		if b.opts.AllowChanges && p.Blocked == "" {
+			b.planUpgradeLive(t, plan)
+			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again for real", Note: "insights may refresh first; a changed plan asks before it runs"})
+		}
 	default:
 		return state.Plan{}, fmt.Errorf("unknown action %d", a.Kind)
 	}
@@ -685,8 +700,8 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	if p.Blocked == "" && busy != "" {
 		p.Blocked = a.Cluster + " is busy: " + busy
 	}
-	if p.Blocked == "" && !b.canStart(a) {
-		p.Blocked = b.whyNot()
+	if p.Blocked == "" && !b.opts.AllowChanges {
+		p.Blocked = ErrReadOnly.Error()
 	}
 	return p, nil
 }
@@ -700,36 +715,68 @@ func (b *Backend) Start(ctx context.Context, a state.Action) error {
 	if !b.opts.AllowChanges {
 		return ErrReadOnly
 	}
-	if !b.canStart(a) {
-		return errors.New(b.whyNot())
-	}
-	if a.Kind == state.ActionAddons {
+	switch a.Kind {
+	case state.ActionAddons:
 		return b.startAddons(ctx, a)
+	case state.ActionUpgrade:
+		return b.startUpgrade(ctx, a)
+	default:
+		return b.startRoll(ctx, a)
 	}
-	return b.startRoll(ctx, a)
 }
 
-// canStart reports whether this backend can start a.
-func (b *Backend) canStart(a state.Action) bool {
-	return b.opts.AllowChanges && (a.Kind == state.ActionRoll || a.Kind == state.ActionAddons)
-}
-
-// whyNot says why a change cannot start here, and what to do instead.
-func (b *Backend) whyNot() string {
+// StopAfterCurrent implements state.Backend: the upgrade stops before its
+// next phase or nodegroup roll. An EKS update in flight is never cancelled.
+func (b *Backend) StopAfterCurrent(_ context.Context, key string) error {
 	if !b.opts.AllowChanges {
-		return ErrReadOnly.Error()
+		return ErrReadOnly
 	}
-	return "upgrades do not start from the TUI yet: copy the CLI command (c) and run it in a shell"
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	u := b.runningUpgrade(key)
+	if u == nil {
+		return fmt.Errorf("no upgrade is running on %s", key)
+	}
+	u.st.StopAfter = !u.st.StopAfter
+	poke(u.wake)
+	return nil
 }
 
-// StopAfterCurrent implements state.Backend.
-func (b *Backend) StopAfterCurrent(context.Context, string) error { return ErrReadOnly }
-
-// TogglePause implements state.Backend.
-func (b *Backend) TogglePause(context.Context, string) error { return ErrReadOnly }
+// TogglePause implements state.Backend: the upgrade holds before its next
+// phase.
+func (b *Backend) TogglePause(_ context.Context, key string) error {
+	if !b.opts.AllowChanges {
+		return ErrReadOnly
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	u := b.runningUpgrade(key)
+	if u == nil {
+		return fmt.Errorf("no upgrade is running on %s", key)
+	}
+	u.st.Paused = !u.st.Paused
+	poke(u.wake)
+	return nil
+}
 
 // Answer implements state.Backend.
-func (b *Backend) Answer(context.Context, string, bool) error { return ErrReadOnly }
+func (b *Backend) Answer(_ context.Context, key string, yes bool) error {
+	if !b.opts.AllowChanges {
+		return ErrReadOnly
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	u := b.runningUpgrade(key)
+	if u == nil || u.st.Question == "" {
+		return fmt.Errorf("the upgrade of %s is not waiting on a question", key)
+	}
+	select {
+	case u.answers <- yes:
+		return nil
+	default:
+		return fmt.Errorf("the upgrade of %s already has an answer", key)
+	}
+}
 
 var _ state.Backend = (*Backend)(nil)
 

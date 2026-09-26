@@ -39,7 +39,7 @@ const (
 const simWarmup = 19 * time.Minute
 
 // UICommand is the full-screen terminal UI. It is hidden while it is an
-// experiment: the live backend is read-only so far.
+// experiment.
 func UICommand() *cli.Command {
 	return &cli.Command{
 		Name:   "ui",
@@ -50,16 +50,17 @@ nodegroup rolls, and cluster upgrades, with live event and log streams.
 
 The UI is experimental. It shows the fleet, runs readiness checks, and
 dry-runs changes, and prints the CLI command that makes each change. It is
-read-only unless --allow-changes is given; then a nodegroup roll or an
-add-on update can start from its dry run, after the same checks as the
-nodegroup update and addon update --all commands. Upgrades stay dry runs.
+read-only unless --allow-changes is given; then a nodegroup roll, an add-on
+update, or a cluster upgrade can start from its dry run, after the same
+checks as the nodegroup update, addon update --all, and cluster upgrade
+commands.
 It sweeps the config region, the regions given with -r, or with -A every EKS
 region (REFRESH_EKS_REGIONS narrows that list).`,
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Sweep all EKS-supported regions"},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) to sweep (repeatable)"},
 			&cli.DurationFlag{Name: "interval", Usage: "Time between fleet sweeps", Value: time.Minute},
-			&cli.BoolFlag{Name: "allow-changes", Usage: "Let the UI start nodegroup rolls and add-on updates (after their dry runs and gates); without it the UI is read-only"},
+			&cli.BoolFlag{Name: "allow-changes", Usage: "Let the UI start nodegroup rolls, add-on updates, and cluster upgrades (after their dry runs and gates); without it the UI is read-only"},
 			runner.WaitTimeoutFlag("How long the UI watches a roll it started (0 = no limit; the EKS update continues either way)", appconfig.DefaultUpdateTimeout),
 			runner.KubeconfigFlag("the live node view of a roll and the health gate's workload/PDB checks"),
 			runner.KubeContextFlag(),

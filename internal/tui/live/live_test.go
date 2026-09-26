@@ -398,9 +398,10 @@ func TestChangesAreRefused(t *testing.T) {
 	b := newTestBackend(t, &fleet{rows: map[string][]statussvc.ClusterStatus{}}, "us-east-1")
 	a := state.Action{Kind: state.ActionRoll, Cluster: "prod-api", Nodegroup: "ng-general"}
 	for name, err := range map[string]error{
-		"Start": b.Start(t.Context(), a),
-		"Stop":  b.StopAfterCurrent(t.Context(), "prod-api"),
-		"Pause": b.TogglePause(t.Context(), "prod-api"),
+		"Start":  b.Start(t.Context(), a),
+		"Stop":   b.StopAfterCurrent(t.Context(), "prod-api"),
+		"Pause":  b.TogglePause(t.Context(), "prod-api"),
+		"Answer": b.Answer(t.Context(), "prod-api", true),
 	} {
 		if !errors.Is(err, ErrReadOnly) {
 			t.Errorf("%s = %v, want ErrReadOnly", name, err)

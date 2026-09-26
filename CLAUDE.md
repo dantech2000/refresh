@@ -187,7 +187,7 @@ default) sweeps the fleet in the background with the status service
 (`status.ListOptions.Detail` keeps the per-nodegroup and add-on rows), runs
 `cluster upgrade-check` for readiness, and dry-runs changes with the real
 planners. It is read-only unless `refresh ui --allow-changes`: then `Start`
-can begin a nodegroup roll or an add-on update (upgrades stay dry runs). An
+can begin a nodegroup roll, an add-on update, or a cluster upgrade. An
 add-on update's dry run is the service's own preview (`UpdateAll` dry run,
 dependency order); `Start` previews again, refuses if the plan changed, and
 updates each add-on pinned to the previewed version with `--health-check
@@ -210,8 +210,14 @@ kubeconfig exec plugins. The TUI keeps the real terminal.
 The TUI roll runs the same pre-flight and post-roll steps as the CLI:
 metrics-server drain headroom in the health gate, the instance-type
 availability warning in the dry run, and `nodegroup.VerifyPostRoll` (shared
-with the command; issues fail the roll's result like exit 5). Without the
-flag `Start` returns `live.ErrReadOnly` and plans name the CLI command. `State` never calls AWS, so the TUI's fast
+with the command; issues fail the roll's result like exit 5). A cluster
+upgrade (`live/upgrade.go`) runs the `cluster upgrade` engine
+(`upgrade.Service.BuildPlan` + `Execute`): `Start` needs the upgrade's dry
+run, `BuildPlan` refreshes insights, and the run asks (y/n in the TUI,
+`Backend.Answer`) when the steps changed since the dry run or a nodegroup's
+health gate warns. Pause and stop act between phases through the engine's
+`Confirm` hook. Without the flag `Start`, `StopAfterCurrent`, `TogglePause`,
+and `Answer` return `live.ErrReadOnly` and plans name the CLI command. `State` never calls AWS, so the TUI's fast
 polling is free. `internal/sim` is a deterministic simulated fleet on a
 virtual clock (rolls, add-on updates, readiness checks, upgrades; node
 lifecycle events come from the real `noderoll.Tracker`). The simulator is dev-only:
