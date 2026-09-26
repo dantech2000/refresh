@@ -50,7 +50,7 @@ func WriteFailures(format string, out, errOut io.Writer, fs []diag.Failure) {
 // IncompleteExit returns the ExitIncomplete error for a run with failures,
 // or nil when fs is empty:
 //
-//	incomplete data: 3 failure(s) (1 cluster, 2 nodegroup)
+//	incomplete data: 3 failure(s) (1 cluster, 2 nodegroups)
 //
 // Print the document and call ReportFailures first. Wrap the result with
 // UnlessInterrupted, so a run cut short by Ctrl+C exits 1.
@@ -69,7 +69,11 @@ func IncompleteExit(fs []diag.Failure) error {
 	slices.Sort(kinds)
 	parts := make([]string, 0, len(kinds))
 	for _, k := range kinds {
-		parts = append(parts, fmt.Sprintf("%d %s", counts[k], k.Noun()))
+		noun := k.Noun()
+		if counts[k] != 1 {
+			noun += "s"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", counts[k], noun))
 	}
 	return cli.Exit(fmt.Sprintf("incomplete data: %d failure(s) (%s)", len(fs), strings.Join(parts, ", ")), ExitIncomplete)
 }

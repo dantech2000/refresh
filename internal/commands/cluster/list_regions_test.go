@@ -245,3 +245,19 @@ func TestListRegions_FailuresInDocument(t *testing.T) {
 	}
 	fakeaws.RequireFailures(t, fakeaws.RequireOneDocument(t, "json", stdout))
 }
+
+// With no region configured anywhere, cluster list sweeps the regions, as
+// status does, instead of failing on an empty region.
+func TestListWithNoRegionSweeps(t *testing.T) {
+	fakeaws.New(t, listWorld())
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("REFRESH_EKS_REGIONS", "us-west-2,ap-south-1")
+	stdout, stderr, err := fakeaws.Run(t, fakeaws.App(Command()), "refresh", "cluster", "list", "-o", "json")
+	if err != nil {
+		t.Fatalf("%v\nstderr:\n%s", err, stderr)
+	}
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	if doc["count"] != float64(2) {
+		t.Errorf("count = %v, want 2 (one row per swept region)", doc["count"])
+	}
+}

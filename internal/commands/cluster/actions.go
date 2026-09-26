@@ -77,6 +77,10 @@ func listClustersOnce(ctx context.Context, cmd *cli.Command) error {
 	// runner.Regions honors a global `refresh --region X cluster list` too
 	// (not with -A/--tree, where it only picks the home region/partition).
 	regions := runner.Regions(cmd, allRegions)
+	if len(regions) == 0 && awsCfg.Region == "" {
+		// No region anywhere: sweep the partition, as `status` does.
+		allRegions = true
+	}
 	options := clustersvc.ListOptions{
 		Regions:        regions,
 		ShowHealth:     cmd.Bool("show-health"),

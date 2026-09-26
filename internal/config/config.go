@@ -94,6 +94,21 @@ func ChinaRegions() []string {
 	return []string{"cn-north-1", "cn-northwest-1"}
 }
 
+// STSRegion returns a region in currentRegion's partition that every account
+// has enabled, for a credential check. STS in a region the account has not
+// enabled rejects valid keys with InvalidClientTokenId, the same code as a bad
+// key, so the check must not run in the region the user named.
+func STSRegion(currentRegion string) string {
+	switch {
+	case strings.HasPrefix(currentRegion, "us-gov-"):
+		return "us-gov-west-1"
+	case strings.HasPrefix(currentRegion, "cn-"):
+		return "cn-north-1"
+	default:
+		return "us-east-1"
+	}
+}
+
 // GetRegionsForPartition returns the appropriate regions based on the current
 // AWS partition detected from the provided region.
 func GetRegionsForPartition(currentRegion string) []string {

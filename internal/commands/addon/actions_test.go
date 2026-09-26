@@ -113,7 +113,7 @@ func TestUpdateAllFailureError_CountsNotAttempted(t *testing.T) {
 	}
 	fs := resultFailures(results, "us-east-1")
 	err := updateAllFailureError(t.Context(), results, fs)
-	if err == nil || !strings.Contains(err.Error(), "3 failure(s) (3 addon)") {
+	if err == nil || !strings.Contains(err.Error(), "3 failure(s) (3 addons)") {
 		t.Fatalf("err = %v, want 3 addon failures", err)
 	}
 	if code := exitCodeOf(err); code != 4 {

@@ -82,8 +82,23 @@ func ClusterNameWithOptions(ctx context.Context, awsCfg aws.Config, cliFlag stri
 	if fromContext != "" && !opts.ReadOnly {
 		render.Notef(ui.Stderr, render.Neutral, "Using cluster %s (from context %s)", pattern, fromContext)
 	}
-	return resolveClusterName(ctx, eks.NewFromConfig(awsCfg), pattern, opts)
+	name, err := resolveClusterName(ctx, eks.NewFromConfig(awsCfg), pattern, opts)
+	if errors.Is(err, errNoClusters) {
+		region := awsCfg.Region
+		if region == "" {
+			region = "the configured region"
+		}
+		if pattern == "" {
+			return "", fmt.Errorf("no EKS clusters in %s (choose another region with -r)", region)
+		}
+		return "", fmt.Errorf("no EKS clusters in %s, so there is no cluster %q there (choose another region with -r)", region, pattern)
+	}
+	return name, err
 }
+
+// errNoClusters is resolveClusterName's error for a region with no clusters;
+// ClusterNameWithOptions names the region.
+var errNoClusters = errors.New("no EKS clusters found in the region")
 
 // resolveClusterName lists the clusters visible through api and selects the
 // one that pattern refers to.
@@ -106,7 +121,7 @@ func resolveClusterName(ctx context.Context, api ListClustersAPI, pattern string
 	spinner.Done(render.Default(ui.Stderr).Line(render.Healthy, "Cluster name resolved"))
 
 	if len(clusters) == 0 {
-		return "", fmt.Errorf("no EKS clusters found in current region")
+		return "", errNoClusters
 	}
 
 	// Find matching clusters (an exact name match short-circuits to itself)

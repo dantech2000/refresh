@@ -55,7 +55,7 @@ func TestIncompleteExit(t *testing.T) {
 	if code := ExitCodeOf(err); code != ExitIncomplete {
 		t.Errorf("exit code = %d, want %d", code, ExitIncomplete)
 	}
-	if want := "incomplete data: 4 failure(s) (1 cluster, 2 nodegroup, 1 region)"; err.Error() != want {
+	if want := "incomplete data: 4 failure(s) (1 cluster, 2 nodegroups, 1 region)"; err.Error() != want {
 		t.Errorf("message = %q, want %q", err.Error(), want)
 	}
 }

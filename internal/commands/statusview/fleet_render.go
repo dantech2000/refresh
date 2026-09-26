@@ -72,6 +72,13 @@ func fleetDataColumns() []ui.Column {
 // failures are the run's failures, listed in the INCOMPLETE DATA section.
 func fleetLines(th *render.Theme, statuses []statussvc.ClusterStatus, failures []diag.Failure, elapsed time.Duration) []string {
 	pal := th.Pal
+	if len(statuses) == 0 {
+		// An empty sweep: no table of empty columns, and no "0 region(s)",
+		// which reads as if nothing was swept.
+		out := []string{th.Bold(pal.Mauve, "FLEET") + "  " + th.Paint(pal.White, "No EKS clusters found")}
+		out = append(out, th.FailureSection(failures)...)
+		return append(out, "", th.Paint(pal.Dim, fmt.Sprintf("0 clusters  (%s)", elapsed.Round(time.Millisecond))))
+	}
 	out := []string{
 		th.Bold(pal.Mauve, "FLEET") + "  " +
 			th.Paint(pal.White, fmt.Sprintf("%d clusters", len(statuses))) +
