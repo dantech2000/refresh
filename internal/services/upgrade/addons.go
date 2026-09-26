@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -28,6 +29,9 @@ const addonWaitTimeout = 20 * time.Minute
 // UpgradeAddons updates every installed addon (minus the skip list) to the
 // latest version compatible with targetVersion, serially in dependency order
 // (vpc-cni → coredns/kube-proxy → the rest), waiting for each to go ACTIVE.
+// When only is not empty, the phase updates just the addons it names: the
+// engine runs one phase for the addons the new control plane cannot run
+// (before the nodegroup rolls) and one for the rest (after them).
 //
 // It runs after the control-plane step of a hop, so targetVersion is also the
 // cluster's (new) current version; versions are still chosen explicitly
@@ -35,7 +39,7 @@ const addonWaitTimeout = 20 * time.Minute
 // so the intent survives mid-phase retries. The addon service's built-in
 // pre/post health checks act as the phase gate: the first failure halts the
 // phase (and therefore the hop) with the failing addon named.
-func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion string, skip []string, progress ProgressFunc) error {
+func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion string, skip, only []string, progress ProgressFunc) error {
 	progress = ensureProgress(progress)
 	svc := s.addonsService()
 
@@ -46,6 +50,9 @@ func (s *Service) UpgradeAddons(ctx context.Context, clusterName, targetVersion 
 	addonList = addons.SortByDependency(addonList)
 
 	for _, a := range addonList {
+		if len(only) > 0 && !slices.Contains(only, a.Name) {
+			continue
+		}
 		if isSkippedAddon(a.Name, skip) {
 			progress("addon %s: skipped (managed out-of-band)", a.Name)
 			continue

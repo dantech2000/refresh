@@ -275,16 +275,31 @@ refresh cluster upgrade-check -c prod-east --id "deprecated"
 ## upgrade
 
 Plan and execute a full EKS cluster upgrade to a target Kubernetes version:
-control plane → add-ons → nodegroups, with a health gate after every phase.
+control plane → nodegroups → add-ons, with a health gate after every phase.
 
 ```bash
 refresh cluster upgrade [cluster] --to <version> [flags]
 ```
 
 EKS upgrades one minor version at a time, so a multi-minor jump expands into
-sequential **hops**. Each hop runs: readiness (cluster insights + kubelet
-version skew) → control plane → add-ons (dependency order, versions compatible
-with the hop target) → nodegroup rolls.
+sequential **hops**. Each hop runs these phases:
+
+1. Readiness: cluster insights and kubelet version skew.
+2. Control plane.
+3. Required add-ons: the add-ons whose installed version is not compatible
+   with the new control-plane version (`DescribeAddonVersions`). kube-proxy
+   is usually one, because its version follows the Kubernetes minor.
+4. Nodegroup rolls.
+5. The other add-ons: those behind the latest compatible version but still
+   compatible with the new control plane.
+
+This is the order in the
+[EKS user guide](https://docs.aws.amazon.com/eks/latest/userguide/update-cluster.html):
+update the nodes, then the add-ons. The one exception is an add-on that the
+new control plane cannot run: it goes before the rolls. A hop leaves out a
+phase with nothing to do. Each add-on phase runs in dependency order and moves
+each add-on to the latest version compatible with the hop target. In
+`-o json` and `-o yaml`, a required add-on step has `beforeNodegroups: true`.
 
 ### Readiness gates
 
@@ -352,6 +367,8 @@ makes it a `Manual` step.
 If an installed add-on is not compatible with the live control-plane version
 (for example, after an interrupted hop), the plan first adds a catch-up hop
 that updates it for the current version, before the next control-plane step.
+A run that stops in the last add-on phase needs no catch-up: those add-ons
+still run on the live control plane, and the rerun updates them.
 
 If a nodegroup is already `UPDATING` when its turn comes, `refresh` waits for
 that update to settle, reads the version again, and then skips it or rolls it.

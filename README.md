@@ -21,7 +21,7 @@ The core loop:
 3. **`refresh nodegroup update`** and **`refresh addon update`** patch with
    health gates, dry-run, and real-time monitoring.
 4. **`refresh cluster upgrade`** runs a full upgrade in order (control plane,
-   then add-ons, then nodegroups) with a health gate after every phase.
+   then nodegroups, then add-ons) with a health gate after every phase.
 
 `list` and `describe` commands for clusters, nodegroups, and add-ons cover the
 day-to-day reads.

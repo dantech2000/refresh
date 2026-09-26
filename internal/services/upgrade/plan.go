@@ -116,6 +116,13 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	for _, ng := range nodegroups {
 		simNodegroups[ng.Name] = ng.Version
 	}
+	// Addon versions advance the same way, so a later hop decides which
+	// addons must go before its nodegroup rolls from the version the addon
+	// will run by then.
+	simAddons := make(map[string]string, len(addonList))
+	for _, a := range addonList {
+		simAddons[a.Name] = a.Version
+	}
 
 	// Before the next control-plane step, finish work at the live version
 	// that the step depends on: addons an interrupted hop left incompatible
@@ -125,7 +132,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		preRoll := preRollNodegroups(nodegroups, currentVersion, hops[0], opts.SkipNodegroups)
 		addonLag := s.addonsIncompatible(ctx, addonsSvc, addonList, currentVersion, opts.SkipAddons)
 		if addonLag || len(preRoll) > 0 {
-			plan.Hops = append(plan.Hops, s.catchUpHop(ctx, addonsSvc, plan, addonList, preRoll, addonLag, cluster, currentVersion, opts))
+			plan.Hops = append(plan.Hops, s.catchUpHop(ctx, addonsSvc, plan, addonList, simAddons, preRoll, addonLag, cluster, currentVersion, opts))
 			advanceSimulation(simNodegroups, preRoll, currentVersion, opts.SkipNodegroups)
 		}
 	}
@@ -139,8 +146,10 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		}
 		hop.Steps = append(hop.Steps, ready)
 		hop.Steps = append(hop.Steps, controlPlaneStep(currentVersion, aws.ToString(cluster.Version), hopTo, cluster.Status))
-		hop.Steps = append(hop.Steps, s.addonSteps(ctx, addonsSvc, plan, addonList, hopTo, opts.SkipAddons)...)
+		before, after := s.addonSteps(ctx, addonsSvc, plan, addonList, simAddons, hopTo, opts.SkipAddons)
+		hop.Steps = append(hop.Steps, before...)
 		hop.Steps = append(hop.Steps, nodegroupSteps(nodegroups, hopTo, opts.SkipNodegroups)...)
+		hop.Steps = append(hop.Steps, after...)
 
 		plan.Hops = append(plan.Hops, hop)
 
@@ -208,14 +217,7 @@ func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImp
 		if err != nil {
 			continue
 		}
-		compatible := false
-		for _, v := range versions {
-			if addons.CompareVersions(a.Version, v.Version) == 0 {
-				compatible = true
-				break
-			}
-		}
-		if !compatible {
+		if !versionListed(a.Version, versions) {
 			return true
 		}
 	}
@@ -225,14 +227,18 @@ func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImp
 // catchUpHop builds a same-version hop that runs before the next
 // control-plane step. It updates addons to the latest version compatible with
 // the live control plane only when withAddons is set (an addon is
-// incompatible with it), and rolls only the preRoll nodegroups to it. The
-// control-plane step is already satisfied, and no readiness step is needed
-// because the control plane does not move.
-func (s *Service) catchUpHop(ctx context.Context, svc *addons.ServiceImpl, plan *Plan, addonList []addons.AddonSummary, preRoll []nodegroupState, withAddons bool, cluster *ekstypes.Cluster, cpVersion string, opts PlanOptions) Hop {
+// incompatible with it), and rolls only the preRoll nodegroups to it. As in a
+// regular hop, the incompatible addons go before the rolls and the rest after
+// them. The control-plane step is already satisfied, and no readiness step is
+// needed because the control plane does not move.
+func (s *Service) catchUpHop(ctx context.Context, svc *addons.ServiceImpl, plan *Plan, addonList []addons.AddonSummary, simAddons map[string]string, preRoll []nodegroupState, withAddons bool, cluster *ekstypes.Cluster, cpVersion string, opts PlanOptions) Hop {
 	hop := Hop{From: cpVersion, To: cpVersion, Steps: []Step{}}
 	hop.Steps = append(hop.Steps, controlPlaneStep(cpVersion, aws.ToString(cluster.Version), cpVersion, cluster.Status))
+	var after []Step
 	if withAddons {
-		hop.Steps = append(hop.Steps, s.addonSteps(ctx, svc, plan, addonList, cpVersion, opts.SkipAddons)...)
+		var before []Step
+		before, after = s.addonSteps(ctx, svc, plan, addonList, simAddons, cpVersion, opts.SkipAddons)
+		hop.Steps = append(hop.Steps, before...)
 	}
 	ngSteps := nodegroupSteps(preRoll, cpVersion, opts.SkipNodegroups)
 	for i := range ngSteps {
@@ -241,6 +247,7 @@ func (s *Service) catchUpHop(ctx context.Context, svc *addons.ServiceImpl, plan 
 		}
 	}
 	hop.Steps = append(hop.Steps, ngSteps...)
+	hop.Steps = append(hop.Steps, after...)
 	return hop
 }
 
@@ -474,8 +481,16 @@ func controlPlaneStep(_, liveVersion, hopTo string, status ekstypes.ClusterStatu
 // addonSteps derives one step per addon for the hop: the latest version
 // compatible with the hop target, completed when the addon already runs it,
 // blocked when no compatible version exists.
-func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, plan *Plan, addonList []addons.AddonSummary, hopTo string, skip []string) []Step {
-	steps := make([]Step, 0, len(addonList))
+//
+// The steps come back in two groups, each in dependency order. before holds
+// the addons the hop's control plane cannot run: the version an addon has
+// when the hop starts (sim, advanced here to the chosen version) is not in
+// the hop target's catalogue. They update before the nodegroup rolls. A
+// blocked step goes there too, since its compatibility is unknown or absent.
+// after holds the rest (behind but compatible, completed, or skipped). They
+// update after the rolls, the order AWS documents.
+func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, plan *Plan, addonList []addons.AddonSummary, sim map[string]string, hopTo string, skip []string) (before, after []Step) {
+	before, after = []Step{}, []Step{}
 	for _, a := range addonList {
 		step := Step{
 			Type:        StepAddon,
@@ -486,7 +501,7 @@ func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, plan 
 		if isSkippedAddon(a.Name, skip) {
 			step.Status = StatusManual
 			step.Reason = "skipped via --skip (managed out-of-band)"
-			steps = append(steps, step)
+			after = append(after, step)
 			continue
 		}
 		versions, err := svc.GetAvailableVersions(ctx, a.Name, hopTo)
@@ -495,6 +510,7 @@ func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, plan 
 			// empty catalogue means "incompatible"; an API failure
 			// (throttling after retries, AccessDenied) says so instead.
 			step.Status = StatusBlocked
+			step.BeforeNodegroups = true
 			if errors.Is(err, addons.ErrNoVersionsFound) {
 				step.Reason = fmt.Sprintf("no version of %s is compatible with %s: %v", a.Name, hopTo, err)
 			} else {
@@ -503,7 +519,7 @@ func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, plan 
 				f.Cluster = plan.ClusterName
 				plan.addFailure(f)
 			}
-			steps = append(steps, step)
+			before = append(before, step)
 			continue
 		}
 		chosen := versions[0].Version
@@ -512,10 +528,35 @@ func (s *Service) addonSteps(ctx context.Context, svc *addons.ServiceImpl, plan 
 		if addons.CompareVersions(a.Version, chosen) >= 0 {
 			step.Status = StatusCompleted
 			step.Reason = fmt.Sprintf("already at %s", a.Version)
+			after = append(after, step)
+			continue
 		}
-		steps = append(steps, step)
+		current := sim[a.Name]
+		if current == "" {
+			current = a.Version
+		}
+		if addons.CompareVersions(current, chosen) < 0 {
+			sim[a.Name] = chosen
+		}
+		if !versionListed(current, versions) {
+			step.BeforeNodegroups = true
+			step.Reason = fmt.Sprintf("%s is not compatible with %s: updated before the nodegroup rolls", current, hopTo)
+			before = append(before, step)
+			continue
+		}
+		after = append(after, step)
 	}
-	return steps
+	return before, after
+}
+
+// versionListed reports whether version is one of versions.
+func versionListed(version string, versions []addons.AddonVersionInfo) bool {
+	for _, v := range versions {
+		if addons.CompareVersions(version, v.Version) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // nodegroupSteps derives one step per nodegroup for the hop. Custom-AMI

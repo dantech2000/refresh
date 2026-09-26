@@ -71,6 +71,10 @@ type Addon struct {
 	// Available is the version catalog DescribeAddonVersions returns for
 	// this add-on, newest first, all compatible with the cluster version.
 	Available []string
+	// AvailableFor, when set, is the catalog by Kubernetes version instead
+	// (newest first), for an add-on whose builds track the minor, as
+	// kube-proxy does. A version it does not list has no compatible build.
+	AvailableFor map[string][]string
 	// UpdateStatus is the final DescribeUpdate status of an UpdateAddon
 	// update: "" or "Successful" applies the new version; "Failed" or
 	// "Cancelled" leaves the add-on as it is.
@@ -684,7 +688,11 @@ func (s *Server) addonVersionsJSON(addonName, k8sVersion string) []any {
 			if cv == "" {
 				cv = c.Version
 			}
-			for _, v := range a.Available {
+			catalog := a.Available
+			if a.AvailableFor != nil {
+				catalog = a.AvailableFor[cv]
+			}
+			for _, v := range catalog {
 				if seen[v] {
 					continue
 				}

@@ -200,8 +200,8 @@ refresh use stage                # flip the whole environment
 ## Orchestrate a full cluster upgrade
 
 When you're ready to move a minor version, let `refresh` sequence the whole
-thing: control plane → add-ons → nodegroups, with a health gate after every
-phase. EKS upgrades one minor at a time, so a multi-minor jump expands into
+thing: control plane → nodegroups → add-ons, with a health gate after every
+phase. Add-ons the new control plane cannot run update before the rolls. EKS upgrades one minor at a time, so a multi-minor jump expands into
 sequential hops. Always dry-run first.
 
 ```bash

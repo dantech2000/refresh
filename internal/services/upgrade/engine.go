@@ -89,8 +89,8 @@ type phase struct {
 	run      func(ctx context.Context) error
 }
 
-// Execute runs the plan: hops in order, phases (control plane → addons →
-// nodegroups) in order within each hop, a confirmation before every mutating
+// Execute runs the plan: hops in order, phases (control plane → required
+// addons → nodegroups → remaining addons) in order within each hop, a confirmation before every mutating
 // phase unless opts.Yes, and a halt with a precise completed / failed-at /
 // remaining report on the first failure.
 //
@@ -184,18 +184,22 @@ func stopped(ctx context.Context, where, next string, err error) error {
 func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 	var out []phase
 	for _, hop := range plan.Hops {
-		var cpSteps, addonSteps, ngSteps []Step
-		var ngNames []string
+		var cpSteps, requiredSteps, ngSteps, addonSteps []Step
+		var requiredNames, ngNames, addonNames []string
 		for _, st := range hop.Steps {
 			if st.Status != StatusPending {
 				continue
 			}
-			switch st.Type {
-			case StepControlPlane:
+			switch {
+			case st.Type == StepControlPlane:
 				cpSteps = append(cpSteps, st)
-			case StepAddon:
+			case st.Type == StepAddon && st.BeforeNodegroups:
+				requiredSteps = append(requiredSteps, st)
+				requiredNames = append(requiredNames, st.Target)
+			case st.Type == StepAddon:
 				addonSteps = append(addonSteps, st)
-			case StepNodegroup:
+				addonNames = append(addonNames, st.Target)
+			case st.Type == StepNodegroup:
 				ngSteps = append(ngSteps, st)
 				ngNames = append(ngNames, st.Target)
 			}
@@ -215,11 +219,12 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 				return s.UpgradeControlPlane(ctx, plan.ClusterName, hop.To, opts.Progress)
 			},
 		})
+		// Addons the new control plane cannot run go before the rolls.
 		out = append(out, phase{
-			label: fmt.Sprintf("addons for %s (%d update(s), dependency order)", hop.To, len(addonSteps)),
-			steps: addonSteps,
+			label: fmt.Sprintf("required addons for %s (%d update(s), before nodegroup rolls)", hop.To, len(requiredSteps)),
+			steps: requiredSteps,
 			run: func(ctx context.Context) error {
-				return s.UpgradeAddons(ctx, plan.ClusterName, hop.To, opts.SkipAddons, opts.Progress)
+				return s.UpgradeAddons(ctx, plan.ClusterName, hop.To, opts.SkipAddons, requiredNames, opts.Progress)
 			},
 		})
 		out = append(out, phase{
@@ -233,6 +238,14 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 					Gate:         opts.NodegroupGate,
 					Observer:     opts.NodegroupObserver,
 				}, opts.Progress)
+			},
+		})
+		// Every other addon update follows the rolls, as AWS documents.
+		out = append(out, phase{
+			label: fmt.Sprintf("addons for %s (%d update(s), dependency order)", hop.To, len(addonSteps)),
+			steps: addonSteps,
+			run: func(ctx context.Context) error {
+				return s.UpgradeAddons(ctx, plan.ClusterName, hop.To, opts.SkipAddons, addonNames, opts.Progress)
 			},
 		})
 	}
