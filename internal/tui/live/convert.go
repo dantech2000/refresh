@@ -199,13 +199,17 @@ func planRoll(c state.Cluster, t target, ngName string) (state.Plan, error) {
 	}
 	// An AMI patch keeps the nodegroup's own version, as `nodegroup
 	// update` does.
-	p.Changes = append(p.Changes, state.Change{Field: "AMI", From: ng.AMI, To: "latest recommended for " + ng.Version})
+	version := ng.Version
+	if version == "" {
+		version = "unknown" // the sweep could not read it
+	}
+	p.Changes = append(p.Changes, state.Change{Field: "AMI", From: ng.AMI, To: "latest recommended for " + version})
 	p.Facts = []state.Fact{
 		{Key: "nodes", Value: strconv.Itoa(ng.Nodes) + " replaced", Note: "the nodegroup's update config sets how many at a time"},
-		{Key: "version", Value: ng.Version + " (unchanged)"},
+		{Key: "version", Value: version + " (unchanged)"},
 		{Key: "region", Value: t.region},
 	}
-	if ng.Version != c.Version {
+	if ng.Version != "" && ng.Version != c.Version {
 		p.Facts[1].Note = "the control plane runs " + c.Version + "; `cluster upgrade` moves nodegroups"
 	}
 	p.Gates = []state.PlanGate{{Status: state.CheckPending, Text: "pre-flight health checks", Note: "run by the CLI command before it changes anything"}}

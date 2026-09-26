@@ -763,6 +763,22 @@ func TestADryRunWithoutASweepVersion(t *testing.T) {
 	rig.release <- ekstypes.UpdateStatusSuccessful
 	rig.b.Close()
 
+	// Read-only, the preview says the version is unknown.
+	rig = newRollRig(t, noVersion)
+	rig.b.opts.AllowChanges = false
+	if p, err = rig.b.Plan(t.Context(), roll); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range p.Facts {
+		if f.Key == "version" && f.Value != "unknown (unchanged)" {
+			t.Errorf("read-only version fact = %q, want unknown", f.Value)
+		}
+	}
+	if len(p.Changes) == 0 || p.Changes[0].To != "latest recommended for unknown" {
+		t.Errorf("read-only changes = %+v, want the unknown version", p.Changes)
+	}
+	rig.b.Close()
+
 	rig = newRollRig(t, noVersion)
 	rig.decideErr = errors.New("describe denied")
 	p, err = rig.b.Plan(t.Context(), roll)
