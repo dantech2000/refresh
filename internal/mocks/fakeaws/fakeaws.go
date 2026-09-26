@@ -446,9 +446,15 @@ func (s *Server) serveClusterUpdates(w http.ResponseWriter, r *http.Request, c *
 	switch {
 	case r.Method == http.MethodPost && len(rest) == 0:
 		var in struct {
-			Version string `json:"version"`
+			Version            string `json:"version"`
+			ClientRequestToken string `json:"clientRequestToken"`
 		}
 		_ = json.Unmarshal(body, &in)
+		// As EKS does: a real upgrade failed on a 32-character token.
+		if n := len(in.ClientRequestToken); in.ClientRequestToken != "" && (n < 33 || n > 126) {
+			writeError(w, http.StatusBadRequest, "InvalidParameterException", "The client request token parameter must be between 33 and 126 characters.")
+			return
+		}
 		update := s.startUpdate("VersionUpdate", func() { c.Version = in.Version })
 		if id, ok := update["id"].(string); ok && c.UpdateStatus != "" {
 			s.updateStatus[id] = c.UpdateStatus

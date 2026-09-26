@@ -140,11 +140,15 @@ func IsPermanentAPIError(err error) bool {
 // retry wrappers re-issue the request without risking a double-apply (the SDK
 // only auto-fills a fresh token per call, which defeats idempotency across
 // caller-level retries).
+//
+// EKS takes 33 to 126 characters for UpdateClusterVersion's token (the other
+// Update calls took 32, so only a real cluster upgrade found this): the token
+// is 40 hex characters, and the fallback is 39.
 func IdempotencyToken() string {
-	b := make([]byte, 16)
+	b := make([]byte, 20)
 	if _, err := crand.Read(b); err != nil {
 		// Fall back to a time-based token; uniqueness is what matters here.
-		return time.Now().UTC().Format("20060102T150405.000000000")
+		return "refresh-token-" + time.Now().UTC().Format("20060102T150405.000000000")
 	}
 	return hex.EncodeToString(b)
 }
