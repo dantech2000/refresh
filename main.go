@@ -236,6 +236,10 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	app := newApp()
 	// Every command's help ends with its exit codes (REF-165).
 	_ = commands.DocumentExitCodes(app)
+	// A usage error (unknown flag, bad value) is one error on stderr. By
+	// default urfave/cli prints the command's help to app.Writer (stdout),
+	// which broke -o json|yaml's one-document stdout.
+	setUsageErrors(app)
 	app.Writer = out
 	app.ErrWriter = errOut
 	// urfave/cli prints ExitCoder messages (cli.Exit) to its package-level
@@ -247,6 +251,17 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	// main propagates to in-flight AWS calls. The kubeconfig notice dedupe is
 	// per run.
 	return app.Run(runner.WithKubeNotices(ctx), args)
+}
+
+// setUsageErrors makes every command report a usage error as one error that
+// points at its --help, instead of printing the help page.
+func setUsageErrors(cmd *cli.Command) {
+	cmd.OnUsageError = func(_ context.Context, c *cli.Command, err error, _ bool) error {
+		return fmt.Errorf("%w (run '%s --help' for usage)", err, c.FullName())
+	}
+	for _, sub := range cmd.Commands {
+		setUsageErrors(sub)
+	}
 }
 
 func main() {
