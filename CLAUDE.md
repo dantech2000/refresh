@@ -36,6 +36,7 @@ task deadcode       # fail on code unreachable even from tests (pinned)
 task tidy:check     # go mod tidy -diff
 task docs:check     # regenerate docs/reference and docs/schema, fail if either changed
 task fuzz           # run every FuzzXxx target for FUZZTIME (default 30s); failing inputs land in testdata/fuzz/
+task test:live      # read-only checks against a real account (AWS_PROFILE): AMI SSM paths, support calendar, add-on versions, offerings, schemas
 task dev:full       # fmt, vet, lint, tidy:check, deadcode, vuln, docs:check, test:race, build (run before pushing)
 ```
 
@@ -45,6 +46,14 @@ job, `golangci-lint` (includes govet and gofmt), `govulncheck`, and
 `deadcode`. A push to main runs only the coverage job (Codecov's base). A
 nightly workflow runs `-race -count=20`, every fuzz target for 60s, and
 `govulncheck` on main.
+
+`task test:live` (`-tags livecheck`, never in CI) checks the data refresh
+depends on against a real account, with read-only calls that cost nothing: the
+latest-AMI SSM path of every AMI type for every EKS version, the
+`fallbackCalendar` dates against `DescribeClusterVersions`, add-on version
+ordering, instance offerings, and the published schemas against real
+`-o json|yaml` output. Run it with a `ReadOnlyAccess` identity. It fails when
+AWS adds an AMI type refresh has no SSM spec for, or the calendar goes stale.
 
 **Toolchain pinning.** The Taskfile sets `GOTOOLCHAIN` to the `toolchain`
 line in `go.mod`, which is the Go that CI uses. A newer local Go formats
