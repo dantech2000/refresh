@@ -35,8 +35,10 @@ var errStoppedByUser = errors.New("stopped as asked; in-flight EKS updates finis
 
 // liveUpgrade is an upgrade this backend runs.
 type liveUpgrade struct {
-	t  target
-	st state.Upgrade
+	t target
+	// updateID is the EKS update watched, for an upgrade started elsewhere.
+	updateID string
+	st       state.Upgrade
 	// answers carries the user's answer to st.Question.
 	answers chan bool
 	// wake is signalled when pause or stop changes, so a waiting Confirm

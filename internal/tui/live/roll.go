@@ -145,11 +145,14 @@ func defaultRollServices(opts Options) rollServices {
 
 // liveRoll is a roll this backend started or watches (StartedElsewhere).
 type liveRoll struct {
-	t       target // the cluster, by region and name
-	st      state.Roll
-	tracker *noderoll.Tracker
-	seen    int
-	warned  map[string]bool
+	t target // the cluster, by region and name
+	// updateID is the EKS update watched (set for a roll started
+	// elsewhere, so a second adoption of it resumes this roll).
+	updateID string
+	st       state.Roll
+	tracker  *noderoll.Tracker
+	seen     int
+	warned   map[string]bool
 	// viewed is set once the node view read the nodes.
 	viewed bool
 }
@@ -319,7 +322,7 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "node view", Text: how})
 	b.emit(state.Event{Cluster: a.Cluster, Source: state.SourceRoll, Level: state.LevelProgress, Subject: ng.Name, Text: "roll started", Detail: "update " + id})
 	b.rolls = append(b.rolls, r)
-	b.claimed[t] = "rolling " + ng.Name
+	b.claimed[t] = rollClaim(ng.Name)
 	delete(b.accepted, acceptKey(t, ng.Name))
 	runCtx := b.runCtx
 	b.mu.Unlock()
@@ -575,7 +578,12 @@ func (b *Backend) finishRoll(r *liveRoll, status ekstypes.UpdateStatus, msg stri
 	b.rollEvent(r, state.Event{Source: state.SourceAWS, Level: lvl, Subject: "DescribeUpdate", Text: string(status), Detail: msg})
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: lvl, Subject: r.st.Nodegroup, Text: text, Detail: took.String()})
 	b.emit(state.Event{Cluster: key, Source: state.SourceRoll, Level: lvl, Subject: r.st.Nodegroup, Text: text, Detail: took.String()})
-	delete(b.claimed, r.t)
+	// Only the roll that took the claim releases it: a roll watched for a
+	// change started elsewhere claimed nothing, and the cluster may be
+	// claimed by an upgrade started here since.
+	if !r.st.StartedElsewhere && b.claimed[r.t] == rollClaim(r.st.Nodegroup) {
+		delete(b.claimed, r.t)
+	}
 	b.mu.Unlock()
 	b.Refresh() // read the nodegroup's new AMI
 }
@@ -626,3 +634,6 @@ func levelOfCheck(s state.CheckStatus) state.Level {
 		return state.LevelInfo
 	}
 }
+
+// rollClaim is the claim a roll started here takes on its cluster.
+func rollClaim(nodegroup string) string { return "rolling " + nodegroup }

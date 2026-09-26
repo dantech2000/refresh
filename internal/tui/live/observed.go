@@ -181,12 +181,24 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 	kube, _, how := b.roll.kubeFor(ctx, cfg, t.name)
 	version := updateParam(u, ekstypes.UpdateParamTypeVersion)
 	release := updateParam(u, ekstypes.UpdateParamTypeReleaseVersion)
+	id := aws.ToString(u.Id)
 	b.mu.Lock()
 	if b.runningRoll(t, ng) {
 		b.mu.Unlock()
 		return
 	}
-	r := &liveRoll{t: t, tracker: noderoll.NewTracker(), warned: map[string]bool{}}
+	// A watch of this update that ended early (an error while EKS still
+	// reports UPDATING) resumes in the same roll, not a second one.
+	for _, old := range b.rolls {
+		if old.t == t && old.updateID == id {
+			old.st.EndedAt, old.st.Failed = time.Time{}, ""
+			b.rollEvent(old, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "started elsewhere", Text: "watching update " + id + " again"})
+			b.mu.Unlock()
+			b.watchRoll(ctx, old, cfg, t, id, kube, nil, false)
+			return
+		}
+	}
+	r := &liveRoll{t: t, updateID: id, tracker: noderoll.NewTracker(), warned: map[string]bool{}}
 	r.st = state.Roll{
 		Nodegroup: ng, FromVersion: version, ToVersion: version, ToAMI: release,
 		StartedAt: aws.ToTime(u.CreatedAt), StartedElsewhere: true, MaxUnavailableText: "per update config",
@@ -194,7 +206,6 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 	if r.st.StartedAt.IsZero() {
 		r.st.StartedAt = b.now()
 	}
-	id := aws.ToString(u.Id)
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "started elsewhere", Text: "watching update " + id, Detail: "not started by this UI; it cannot be stopped here"})
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "node view", Text: how})
 	b.emit(state.Event{Cluster: b.keyOf(t), Source: state.SourceRoll, Level: state.LevelProgress, Subject: ng, Text: "roll started elsewhere · watching", Detail: "update " + id})
@@ -228,12 +239,24 @@ func (b *Backend) adoptUpgrade(ctx context.Context, t target, from string) {
 	if started.IsZero() {
 		started = b.now()
 	}
+	id := aws.ToString(u.Id)
 	b.mu.Lock()
 	if b.ownUpgrade(t) != nil {
 		b.mu.Unlock()
 		return
 	}
-	lu := &liveUpgrade{t: t, answers: make(chan bool, 1), wake: make(chan struct{}, 1)}
+	// A watch of this update that ended early resumes the same entry.
+	for _, old := range b.upgrades {
+		if old.t == t && old.updateID == id {
+			old.st.EndedAt, old.st.Failed = time.Time{}, ""
+			old.st.Phases[0].Status, old.st.Phases[0].Summary = state.PhaseRunning, ""
+			b.upgradeEvent(old, state.LevelInfo, "started elsewhere", "watching update "+id+" again", "")
+			b.mu.Unlock()
+			b.watchClusterUpdate(ctx, old, cfg, id, started, to)
+			return
+		}
+	}
+	lu := &liveUpgrade{t: t, updateID: id, answers: make(chan bool, 1), wake: make(chan struct{}, 1)}
 	lu.st = state.Upgrade{StartedElsewhere: true, Cluster: b.keyOf(t), From: from, To: to, StartedAt: started,
 		Phases: []state.Phase{{Name: what, Weight: 1, Status: state.PhaseRunning, StartedAt: started,
 			Items: []state.PhaseItem{{Name: "control plane", Text: from + " → " + to}}}}}
@@ -241,8 +264,14 @@ func (b *Backend) adoptUpgrade(ctx context.Context, t target, from string) {
 	b.emit(state.Event{Cluster: b.keyOf(t), Source: state.SourceUpgrade, Level: state.LevelProgress, Subject: "upgrade", Text: "started elsewhere · watching", Detail: from + " → " + to})
 	b.upgrades = append(b.upgrades, lu)
 	b.mu.Unlock()
+	b.watchClusterUpdate(ctx, lu, cfg, id, started, to)
+}
 
-	status, msg, err := b.roll.waitCluster(ctx, cfg, t.name, aws.ToString(u.Id))
+// watchClusterUpdate follows a control-plane update started elsewhere until
+// EKS reports its end, and records it on lu.
+func (b *Backend) watchClusterUpdate(ctx context.Context, lu *liveUpgrade, cfg aws.Config, id string, started time.Time, to string) {
+	t := lu.t
+	status, msg, err := b.roll.waitCluster(ctx, cfg, t.name, id)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()

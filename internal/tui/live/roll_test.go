@@ -603,3 +603,56 @@ func TestChangesStartedElsewhereAreWatched(t *testing.T) {
 		t.Fatalf("left adopting %v, claimed %v", b.adopting, b.claimed)
 	}
 }
+
+// From review: a watched roll that ended must not release a claim someone
+// else holds, and a second adoption of the same update (after a watch that
+// ended early while EKS still reports UPDATING) resumes the same roll.
+func TestAdoptedRollResumesAndKeepsOthersClaims(t *testing.T) {
+	rig := newRollRig(t)
+	b := rig.b
+	rows := prodRows() // ng-system is UPDATING
+	b.svc.listStatuses = func(_ context.Context, cfg aws.Config, _ statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
+		if cfg.Region != "us-east-1" {
+			return nil, nil
+		}
+		return rows, nil
+	}
+	b.roll.findUpdate = func(_ context.Context, _ aws.Config, _, ng string) (*ekstypes.Update, error) {
+		if ng != "ng-system" {
+			return nil, nil
+		}
+		return &ekstypes.Update{Id: aws.String("u-ng"), Status: ekstypes.UpdateStatusInProgress}, nil
+	}
+	b.mu.Lock()
+	b.runCtx = t.Context()
+	b.mu.Unlock()
+	rolls := func() []state.Roll { st, _ := b.State(t.Context()); return st.Rolls }
+	waitFor := func(ok func([]state.Roll) bool) {
+		for !ok(rolls()) {
+			runtime.Gosched()
+		}
+	}
+
+	b.sweep(t.Context())
+	waitFor(func(rs []state.Roll) bool { return len(rs) == 1 && rs[0].Running() })
+	b.mu.Lock()
+	tgt := b.targets["prod-api"]
+	b.claimed[tgt] = "upgrading" // an upgrade started here since
+	b.mu.Unlock()
+
+	rig.release <- ekstypes.UpdateStatusInProgress // the watch ends early
+	waitFor(func(rs []state.Roll) bool { return !rs[0].Running() })
+	b.sweep(t.Context()) // EKS still reports UPDATING
+	waitFor(func(rs []state.Roll) bool { return len(rs) == 1 && rs[0].Running() })
+
+	rig.release <- ekstypes.UpdateStatusSuccessful
+	b.Close()
+	if rs := rolls(); len(rs) != 1 || rs[0].Running() || rs[0].Failed != "" {
+		t.Fatalf("rolls = %+v", rs)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.claimed[tgt] != "upgrading" {
+		t.Fatalf("the watched roll released another change's claim: %q", b.claimed[tgt])
+	}
+}
