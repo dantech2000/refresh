@@ -254,7 +254,7 @@ func (m Model) rollFeed(r state.Roll, w, h int) Block {
 	evs := m.visible(m.rollEvents(r), m.keepSource)
 	cols := kubeColumns(evs, w)
 	for i := 0; i < len(evs) && i < feedH; i++ {
-		out = append(out, eventLine(evs[i], cols))
+		out = append(out, eventLine(evs[i], cols)...)
 	}
 	switch {
 	case m.pausedSeq != 0 && m.rollEvents(r) == nil:
@@ -285,18 +285,18 @@ func (m Model) kubeSummary(r state.Roll, w, n int) Block {
 	out := Block{append(Line{sp(1)}, hrule(w-2)...), append(Line{sp(1)}, section("Kube events", dimS("warnings first"))...)}
 	cols := kubeColumns(evs, w)
 	for i := 0; i < len(evs) && i < n; i++ {
-		out = append(out, kubeLine(evs[i], cols))
+		out = append(out, kubeLine(evs[i], cols)...)
 	}
 	return out
 }
 
 // eventLine draws one feed event by its source.
-func eventLine(e state.Event, cols kubeCols) Line {
+func eventLine(e state.Event, cols kubeCols) Block {
 	switch e.Source {
 	case state.SourceKube:
 		return kubeLine(e, cols)
 	case state.SourceAWS:
-		return Line{sp(1), dimS(clock(e.At)), sp(1), fg(colBlue, padRight(e.Subject, 26)), sp(1), sub(e.Text)}
+		return Block{{sp(1), dimS(clock(e.At)), sp(1), fg(colBlue, padRight(e.Subject, 26)), sp(1), sub(e.Text)}}
 	}
 	l := Line{sp(1), dimS(clock(e.At)), sp(1), levelGlyph(e.Level), sp(1)}
 	c := levelColor(e.Level)
@@ -315,11 +315,16 @@ func eventLine(e state.Event, cols kubeCols) Line {
 	if e.Detail != "" {
 		l = append(l, sp(2), dimS(e.Detail))
 	}
-	return l
+	return Block{l}
 }
 
 // kubeCols are the widths of a Kube event line's reason and object columns.
-type kubeCols struct{ reason, object int }
+// split puts the message on its own line when the pane leaves it too little
+// room beside them.
+type kubeCols struct {
+	reason, object int
+	split          bool
+}
 
 // kubeColumns sizes the reason and object columns to the events shown, for a
 // pane w wide. Real values fill or pass fixed widths ("InvalidDiskCapacity",
@@ -338,10 +343,16 @@ func kubeColumns(evs []state.Event, w int) kubeCols {
 	c.reason = min(c.reason, 20)
 	room := w - 20 // " 20:41:21 Warning " and the column gaps
 	c.object = min(c.object, 36, max(12, (room-c.reason)*45/100))
+	if room-c.reason-c.object < 24 {
+		// Too narrow for the message beside the columns ("0/6 …"): it
+		// goes on the next line, and the object gets the rest of this one.
+		c.split = true
+		c.object = max(12, min(40, room-c.reason))
+	}
 	return c
 }
 
-func kubeLine(e state.Event, c kubeCols) Line {
+func kubeLine(e state.Event, c kubeCols) Block {
 	kind := fg(colBlue, "Normal ")
 	if e.Level == state.LevelWarn {
 		kind = fg(colYellow, "Warning")
@@ -350,7 +361,13 @@ func kubeLine(e state.Event, c kubeCols) Line {
 	l = append(l, Line{sub(e.Text)}.Fit(c.reason)...)
 	l = append(l, sp(1))
 	l = append(l, Line{tx(e.Subject)}.Fit(c.object)...)
-	return append(l, sp(1), dimS(e.Detail))
+	if c.split {
+		if e.Detail == "" {
+			return Block{l}
+		}
+		return Block{l, {sp(10), dimS(e.Detail)}}
+	}
+	return Block{append(l, sp(1), dimS(e.Detail))}
 }
 
 // podCount is a node's pod count, or "—" when the backend did not count it

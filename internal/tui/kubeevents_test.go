@@ -26,7 +26,8 @@ func TestKubeEventColumnsKeepAGapAtAnyWidth(t *testing.T) {
 	for _, w := range []int{140, 90, 60} {
 		cols := kubeColumns(evs, w)
 		for _, e := range evs {
-			got := kubeLine(e, cols).Fit(w).Plain()
+			lines := kubeLine(e, cols)
+			got := lines[0].Fit(w).Plain()
 			if width(got) != w {
 				t.Errorf("w=%d: line is %d wide: %q", w, width(got), got)
 			}
@@ -39,12 +40,17 @@ func TestKubeEventColumnsKeepAGapAtAnyWidth(t *testing.T) {
 			if s := string(obj); !strings.HasPrefix(e.Subject, strings.TrimRight(strings.TrimSuffix(s, "…"), " ")) {
 				t.Errorf("w=%d: object column %q is not a cut of %q", w, s, e.Subject)
 			}
-			if r := []rune(got); r[objAt+cols.object] != ' ' {
+			if cols.split {
+				// Narrow: the message has its own line, indented.
+				if len(lines) != 2 || !strings.HasPrefix(strings.TrimSpace(lines[1].Plain()), e.Detail[:10]) {
+					t.Errorf("w=%d: message not on its own line: %v", w, lines)
+				}
+			} else if r := []rune(got); r[objAt+cols.object] != ' ' {
 				t.Errorf("w=%d: no gap before the message: %q", w, got)
 			}
 		}
 	}
-	if wide, narrow := kubeColumns(evs, 140), kubeColumns(evs, 60); narrow.object >= wide.object {
-		t.Errorf("the object column does not shrink with the pane: %d at 140, %d at 60", wide.object, narrow.object)
+	if kubeColumns(evs, 140).split || !kubeColumns(evs, 60).split {
+		t.Error("a wide pane should keep one line per event, a narrow one should split")
 	}
 }

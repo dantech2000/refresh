@@ -163,7 +163,7 @@ func (m Model) upgradeFeed(u state.Upgrade, w, h int) Block {
 			out = append(out, l)
 			continue
 		}
-		out = append(out, eventLine(e, cols))
+		out = append(out, eventLine(e, cols)...)
 	}
 	switch {
 	case m.pausedSeq != 0 && m.upgradeEvents(u) == nil:
