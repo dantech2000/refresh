@@ -351,3 +351,56 @@ func findStep(t *testing.T, steps []Step, typ StepType, target string) Step {
 	t.Fatalf("no %s step for %q in %+v", typ, target, steps)
 	return Step{}
 }
+
+// EKS publishes no Amazon Linux 2 AMI past 1.32, so a plan that would roll
+// an AL2 nodegroup to 1.33 is blocked before the control plane moves. A
+// nodegroup left behind with --skip-nodegroup stays a manual step.
+func TestBuildPlan_AL2NodegroupPast132Blocks(t *testing.T) {
+	build := func() *mocks.EKSAPI {
+		return mocks.NewEKSAPI().
+			WithCluster("prod-east", "1.32").
+			WithAddon("vpc-cni", "v1.32.0-eksbuild.1", ekstypes.AddonStatusActive).
+			WithAddonVersions("vpc-cni", []string{"v1.33.0-eksbuild.1", "v1.32.0-eksbuild.1"}, "1.33").
+			WithNodegroup("legacy", "1.32", ekstypes.AMITypesAl2X8664).
+			WithNodegroup("modern", "1.32", ekstypes.AMITypesAl2023X8664Standard).
+			Build()
+	}
+
+	plan, err := newTestService(build()).BuildPlan(context.Background(), "prod-east", "1.33", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	step := findStep(t, plan.Hops[0].Steps, StepNodegroup, "legacy")
+	if step.Status != StatusBlocked || !strings.Contains(step.Reason, "Amazon Linux 2 AMIs end at Kubernetes 1.32") {
+		t.Fatalf("AL2 step = %s %q, want blocked", step.Status, step.Reason)
+	}
+	if s := findStep(t, plan.Hops[0].Steps, StepNodegroup, "modern"); s.Status == StatusBlocked {
+		t.Fatalf("AL2023 step blocked: %q", s.Reason)
+	}
+	if !plan.Blocked() {
+		t.Fatal("plan not blocked")
+	}
+
+	plan, err = newTestService(build()).BuildPlan(context.Background(), "prod-east", "1.33", PlanOptions{SkipNodegroups: []string{"legacy"}})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if s := findStep(t, plan.Hops[0].Steps, StepNodegroup, "legacy"); s.Status != StatusManual {
+		t.Fatalf("skipped AL2 step = %s %q, want manual", s.Status, s.Reason)
+	}
+
+	// Up to 1.32 an AL2 nodegroup still rolls.
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.31").
+		WithAddon("vpc-cni", "v1.31.0-eksbuild.1", ekstypes.AddonStatusActive).
+		WithAddonVersions("vpc-cni", []string{"v1.32.0-eksbuild.1", "v1.31.0-eksbuild.1"}, "1.32").
+		WithNodegroup("legacy", "1.31", ekstypes.AMITypesAl2X8664).
+		Build()
+	plan, err = newTestService(m).BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if s := findStep(t, plan.Hops[0].Steps, StepNodegroup, "legacy"); s.Status != StatusPending {
+		t.Fatalf("AL2 step to 1.32 = %s %q, want pending", s.Status, s.Reason)
+	}
+}

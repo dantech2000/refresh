@@ -343,6 +343,12 @@ control-plane version, only when the next control-plane step would put it past
 the kubelet skew limit (3 minor versions). A nodegroup already past that limit,
 or one that is custom-AMI or skipped, blocks the plan instead.
 
+An Amazon Linux 2 nodegroup (`AL2_*` AMI types) blocks any hop to Kubernetes
+1.33 or later: EKS publishes no AL2 AMIs past 1.32, so its roll would fail
+after the control plane moved. Replace it with an AL2023 or Bottlerocket
+nodegroup first, or leave it at its version with `--skip-nodegroup`, which
+makes it a `Manual` step.
+
 If an installed add-on is not compatible with the live control-plane version
 (for example, after an interrupted hop), the plan first adds a catch-up hop
 that updates it for the current version, before the next control-plane step.
