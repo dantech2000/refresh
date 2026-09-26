@@ -44,8 +44,10 @@ func TestIdempotencyToken_UniqueHex(t *testing.T) {
 	seen := map[string]bool{}
 	for range 100 {
 		tok := IdempotencyToken()
-		if b, err := hex.DecodeString(tok); err != nil || len(b) != 16 {
-			t.Fatalf("token %q is not 16 random bytes in hex", tok)
+		// EKS rejects a token outside 33..126 characters on
+		// UpdateClusterVersion (a real upgrade failed on 32).
+		if b, err := hex.DecodeString(tok); err != nil || len(b) != 20 || len(tok) < 33 || len(tok) > 126 {
+			t.Fatalf("token %q is not 20 random bytes in hex (33..126 characters)", tok)
 		}
 		if seen[tok] {
 			t.Fatalf("token %q repeated", tok)
