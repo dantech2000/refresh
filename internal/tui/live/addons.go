@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	"github.com/dantech2000/refresh/internal/tui/state"
@@ -52,13 +53,24 @@ func changesOf(rows []addons.AddonUpdateResult) []addonChange {
 	return out
 }
 
+// unpreviewed names the add-ons the preview could not read.
+func unpreviewed(rows []addons.AddonUpdateResult) []string {
+	var out []string
+	for _, r := range rows {
+		if r.Failed() {
+			out = append(out, r.AddonName)
+		}
+	}
+	return out
+}
+
 // planAddonsLive replaces a sweep-based add-on plan with the service's own
 // preview, which is exactly what Start will do, and records it as the plan
 // the user confirms.
 func (b *Backend) planAddonsLive(ctx context.Context, p *state.Plan, cfg aws.Config, t target) error {
 	rows, err := b.addon.preview(ctx, cfg, t.name)
 	if err != nil {
-		return err
+		return awsinternal.FormatAWSError(err, "previewing the add-on updates of "+t.name)
 	}
 	changes := changesOf(rows)
 	p.Changes = nil
@@ -79,7 +91,12 @@ func (b *Backend) planAddonsLive(ctx context.Context, p *state.Plan, cfg aws.Con
 		state.PlanGate{Status: state.CheckPending, Text: "post-update health", Note: "each add-on is waited for and checked"})
 	p.Command = regionFlag(t) + "addon update --all -c " + t.name + " --dependency-order --health-check --wait"
 	p.Blocked = ""
-	if len(changes) == 0 {
+	switch unread := unpreviewed(rows); {
+	case len(unread) > 0:
+		// Fail closed, as `addon update --all` does: the real run could
+		// update an add-on the user never saw.
+		p.Blocked = "could not preview " + strings.Join(unread, ", ") + "; nothing will change until every add-on previews"
+	case len(changes) == 0:
 		p.Blocked = "every add-on is on its newest compatible version"
 	}
 	b.mu.Lock()
@@ -119,7 +136,10 @@ func (b *Backend) startAddons(ctx context.Context, a state.Action) error {
 	rows, err := b.addon.preview(pctx, cfg, t.name)
 	cancel()
 	if err != nil {
-		return err
+		return awsinternal.FormatAWSError(err, "previewing the add-on updates of "+t.name)
+	}
+	if unread := unpreviewed(rows); len(unread) > 0 {
+		return fmt.Errorf("could not preview %s, so nothing was changed", strings.Join(unread, ", "))
 	}
 	changes := changesOf(rows)
 	if !slices.Equal(changes, accepted) {
@@ -177,13 +197,16 @@ func (b *Backend) runAddons(ctx context.Context, cfg aws.Config, t target, chang
 		switch {
 		case err != nil:
 			failed++
-			b.emit(state.Event{Cluster: key, Source: state.SourceAddon, Level: state.LevelError, Subject: ch.name, Text: "update failed", Detail: err.Error()})
+			b.emit(state.Event{Cluster: key, Source: state.SourceAddon, Level: state.LevelError, Subject: ch.name, Text: "update failed", Detail: awsinternal.FormatAWSError(err, "updating add-on "+ch.name).Error()})
 		case res.Failed():
 			failed++
 			b.emit(state.Event{Cluster: key, Source: state.SourceAddon, Level: state.LevelError, Subject: ch.name, Text: string(res.Status), Detail: res.Failure.Error})
 		case res.HealthIssues != "":
 			failed++
 			b.emit(state.Event{Cluster: key, Source: state.SourceAddon, Level: state.LevelWarn, Subject: ch.name, Text: "updated with health issues", Detail: res.HealthIssues})
+		case res.Status != addons.StatusCompleted:
+			failed++
+			b.emit(state.Event{Cluster: key, Source: state.SourceAddon, Level: state.LevelWarn, Subject: ch.name, Text: "ended " + string(res.Status)})
 		default:
 			b.emit(state.Event{Cluster: key, Source: state.SourceAddon, Level: state.LevelOK, Subject: ch.name, Text: "ACTIVE " + res.NewVersion})
 		}

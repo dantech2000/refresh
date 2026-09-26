@@ -118,6 +118,7 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		Kubeconfig:       cmd.String("kubeconfig"),
 		KubeContext:      cmd.String("kube-context"),
 		WaitTimeout:      runner.WaitTimeout(cmd, ""),
+		UpgradeTimeout:   appconfig.DefaultUpgradeTimeout,
 		CallTimeout:      runner.APITimeout(cmd),
 	})
 	ctx, stop := context.WithCancel(ctx)

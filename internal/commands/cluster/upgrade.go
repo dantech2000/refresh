@@ -24,10 +24,8 @@ import (
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
-// upgradeDefaultTimeout bounds a full orchestrated upgrade. Control-plane
-// hops run ~10m each and nodegroup rolls ~10-20m per group, so multi-hop
-// upgrades legitimately run for hours.
-const upgradeDefaultTimeout = 4 * time.Hour
+// upgradeDefaultTimeout bounds a full orchestrated upgrade.
+const upgradeDefaultTimeout = appconfig.DefaultUpgradeTimeout
 
 func upgradeCommand() *cli.Command {
 	return &cli.Command{

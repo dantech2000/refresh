@@ -30,6 +30,10 @@ type fakeUpgrader struct {
 	// phaseAck, when set, holds the run after each phase announcement until
 	// the test lets it go on.
 	phaseAck chan struct{}
+	// failRoll, when set, fails the roll of that nodegroup; duringRoll runs
+	// while it rolls.
+	failRoll   string
+	duringRoll func()
 }
 
 func (f *fakeUpgrader) BuildPlan(context.Context, string, string, upgrade.PlanOptions) (*upgrade.Plan, error) {
@@ -66,6 +70,12 @@ func (f *fakeUpgrader) Execute(ctx context.Context, plan *upgrade.Plan, opts upg
 					go func() { opts.NodegroupObserver(octx, ng); close(done) }()
 					cancel() // the roll's wait ended
 					<-done
+					if ng == f.failRoll {
+						if f.duringRoll != nil {
+							f.duringRoll()
+						}
+						return &upgrade.Report{Status: upgrade.RunFailed}, fmt.Errorf("%s failed: roll failed: NodeCreationFailure", ph)
+					}
 					f.mu.Lock()
 					f.rolled = append(f.rolled, ng)
 					f.mu.Unlock()
@@ -89,7 +99,10 @@ type upgradeRig struct {
 	b  *Backend
 	f  *fakeUpgrader
 	hw []string // health warnings the gate finds
-	mu sync.Mutex
+	// hwOnly, when set, limits hw to the gate before that nodegroup.
+	hwOnly   string
+	blockers []health.PDBInfo // PDBs the drain-blocker check finds
+	mu       sync.Mutex
 }
 
 func newUpgradeRig(t *testing.T) *upgradeRig {
@@ -104,11 +117,22 @@ func newUpgradeRig(t *testing.T) *upgradeRig {
 	b.newUpgrader = func(aws.Config) upgrader { return rig.f }
 	rr := newRollRig(t) // reuse its fake kube, health, and observer
 	b.roll = rr.b.roll
-	b.roll.healthCheck = func(context.Context, aws.Config, string, []string, kubernetes.Interface, health.NodeMetricsLister) health.HealthSummary {
+	b.roll.drainBlockers = func(context.Context, aws.Config, string, string, kubernetes.Interface) (health.DrainBlockerReport, error) {
+		rig.mu.Lock()
+		defer rig.mu.Unlock()
+		return health.DrainBlockerReport{Blockers: rig.blockers, Scoped: true}, nil
+	}
+	b.roll.healthCheck = func(_ context.Context, _ aws.Config, _ string, ngs []string, _ kubernetes.Interface, _ health.NodeMetricsLister) health.HealthSummary {
 		rig.mu.Lock()
 		defer rig.mu.Unlock()
 		s := health.HealthSummary{Decision: health.DecisionProceed}
+		if rig.hwOnly != "" && (len(ngs) != 1 || ngs[0] != rig.hwOnly) {
+			return s
+		}
+		// Skipped checks do not change the decision, as in RunAllChecks.
+		s.Results = append(s.Results, health.HealthResult{Name: "Service Quotas", Status: health.StatusPass, Skipped: true})
 		for _, w := range rig.hw {
+			s.Decision = health.DecisionWarn
 			s.Results = append(s.Results, health.HealthResult{Name: w, Status: health.StatusWarn})
 		}
 		return s
@@ -245,7 +269,7 @@ func TestAChangedPlanIsAsked(t *testing.T) {
 	for {
 		st, _ := rig.b.State(t.Context())
 		if q := st.Upgrades[0].Question; q != "" {
-			if !strings.Contains(q, "the plan changed since the dry run") {
+			if !strings.Contains(q, "the plan changed since the dry run: + Addon coredns v1.11.4;") {
 				t.Fatalf("question = %q", q)
 			}
 			break
@@ -271,5 +295,104 @@ func TestBlockedRealPlanFailsWithoutRunning(t *testing.T) {
 	st, _ := rig.b.State(t.Context())
 	if u := st.Upgrades[0]; !strings.HasPrefix(u.Failed, "blocked:") || len(rig.f.phases) != 0 {
 		t.Fatalf("upgrade = %+v, phases %v", u, rig.f.phases)
+	}
+}
+
+func TestDrainBlockersStopTheUpgradeBeforeARoll(t *testing.T) {
+	rig := newUpgradeRig(t)
+	rig.blockers = []health.PDBInfo{{Namespace: "shop", Name: "checkout"}}
+	rig.start(t)
+	rig.b.Close()
+	st, _ := rig.b.State(t.Context())
+	u := st.Upgrades[0]
+	if !strings.Contains(u.Failed, "PDB shop/checkout allows 0 disruptions") || u.Question != "" {
+		t.Fatalf("upgrade = %+v", u)
+	}
+	rig.f.mu.Lock()
+	defer rig.f.mu.Unlock()
+	if len(rig.f.rolled) != 0 {
+		t.Fatalf("rolled %v past a drain blocker", rig.f.rolled)
+	}
+}
+
+func TestOneAnswerPerQuestion(t *testing.T) {
+	rig := newUpgradeRig(t)
+	rig.hw = []string{"PodDisruptionBudgets"}
+	rig.hwOnly = "ng-a" // the only question of the run
+	rig.start(t)
+	for {
+		st, _ := rig.b.State(t.Context())
+		if st.Upgrades[0].Question != "" {
+			break
+		}
+		if !st.Upgrades[0].Running() {
+			t.Fatal("the upgrade ended without asking")
+		}
+		runtime.Gosched()
+	}
+	if err := rig.b.Answer(t.Context(), "prod-api", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.b.Answer(t.Context(), "prod-api", false); err == nil {
+		t.Fatal("a second answer to one question was taken")
+	}
+	rig.b.Close()
+	st, _ := rig.b.State(t.Context())
+	rig.f.mu.Lock()
+	defer rig.f.mu.Unlock()
+	if u := st.Upgrades[0]; u.Stopped || u.Failed != "" || strings.Join(rig.f.rolled, ",") != "ng-a,ng-b" {
+		t.Fatalf("upgrade = %+v, rolled %v", u, rig.f.rolled)
+	}
+}
+
+func TestAStopDoesNotHideAFailure(t *testing.T) {
+	rig := newUpgradeRig(t)
+	rig.f.failRoll = "ng-a"
+	// Stop while ng-a rolls; then its roll fails.
+	rig.f.duringRoll = func() {
+		if err := rig.b.StopAfterCurrent(t.Context(), "prod-api"); err != nil {
+			t.Error(err)
+		}
+	}
+	rig.start(t)
+	rig.b.Close()
+	st, _ := rig.b.State(t.Context())
+	if u := st.Upgrades[0]; u.Stopped || !strings.Contains(u.Failed, "NodeCreationFailure") {
+		t.Fatalf("upgrade = %+v", u)
+	}
+}
+
+func TestAStopBetweenPhasesKeepsTheFinishedPhaseDone(t *testing.T) {
+	rig := newUpgradeRig(t)
+	rig.f.phaseRun = make(chan string)
+	rig.f.phaseAck = make(chan struct{})
+	rig.start(t)
+	<-rig.f.phaseRun // the control plane phase started
+	if err := rig.b.StopAfterCurrent(t.Context(), "prod-api"); err != nil {
+		t.Fatal(err)
+	}
+	rig.f.phaseAck <- struct{}{}
+	rig.b.Close()
+	st, _ := rig.b.State(t.Context())
+	u := st.Upgrades[0]
+	if !u.Stopped || u.Phases[1].Status != state.PhaseDone || u.Phases[2].Status != state.PhasePending {
+		t.Fatalf("phases = %+v", u.Phases)
+	}
+}
+
+func TestSkippedChecksAloneAreNotAsked(t *testing.T) {
+	rig := newUpgradeRig(t)
+	rig.start(t)
+	rig.b.Close()
+	st, _ := rig.b.State(t.Context())
+	rig.f.mu.Lock()
+	defer rig.f.mu.Unlock()
+	if u := st.Upgrades[0]; u.Failed != "" || u.Stopped || strings.Join(rig.f.rolled, ",") != "ng-a,ng-b" {
+		t.Fatalf("upgrade = %+v, rolled %v", u, rig.f.rolled)
+	}
+	for _, e := range st.Upgrades[0].Events {
+		if e.Subject == "question" {
+			t.Fatalf("asked %q with only skipped checks", e.Text)
+		}
 	}
 }

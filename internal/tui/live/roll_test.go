@@ -112,6 +112,9 @@ func newRollRig(t *testing.T) *rollRig {
 			}
 			return s
 		},
+		drainBlockers: func(context.Context, aws.Config, string, string, kubernetes.Interface) (health.DrainBlockerReport, error) {
+			return health.DrainBlockerReport{Scoped: true}, nil
+		},
 		startRoll: func(_ context.Context, _ aws.Config, cluster, ng, version string) (*ekstypes.Update, error) {
 			rig.started.Add(1)
 			rig.version.Store(cluster + "/" + ng + "@" + version)

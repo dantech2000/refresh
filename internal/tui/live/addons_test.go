@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/services/addons"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/tui/state"
@@ -164,5 +165,32 @@ func TestAddonUpdateWhileRollingIsBusy(t *testing.T) {
 	}
 	if err := rig.b.Start(t.Context(), addonUpdate); err == nil || !strings.Contains(err.Error(), "busy") {
 		t.Fatalf("Start = %v", err)
+	}
+}
+
+func TestAnAddonThatCannotBePreviewedBlocksTheUpdate(t *testing.T) {
+	rig := newAddonRig(t)
+	rig.plan = append(rig.plan, addons.AddonUpdateResult{AddonName: "aws-ebs-csi-driver", Status: addons.StatusFailed,
+		Failure: &diag.Failure{Error: "AccessDenied"}})
+	p, err := rig.b.Plan(t.Context(), addonUpdate)
+	if err != nil || !strings.Contains(p.Blocked, "could not preview aws-ebs-csi-driver") {
+		t.Fatalf("plan blocked = %q, %v", p.Blocked, err)
+	}
+	// The failure appears between the dry run and y.
+	rig.mu.Lock()
+	rig.plan = rig.plan[:3]
+	rig.mu.Unlock()
+	if _, err := rig.b.Plan(t.Context(), addonUpdate); err != nil {
+		t.Fatal(err)
+	}
+	rig.mu.Lock()
+	rig.plan = append(rig.plan, addons.AddonUpdateResult{AddonName: "aws-ebs-csi-driver", Status: addons.StatusFailed,
+		Failure: &diag.Failure{Error: "AccessDenied"}})
+	rig.mu.Unlock()
+	if err := rig.b.Start(t.Context(), addonUpdate); err == nil || !strings.Contains(err.Error(), "could not preview aws-ebs-csi-driver") {
+		t.Fatalf("Start = %v", err)
+	}
+	if len(rig.order) != 0 {
+		t.Fatalf("updated %v with an add-on unread", rig.order)
 	}
 }

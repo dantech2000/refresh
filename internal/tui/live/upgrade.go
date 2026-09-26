@@ -10,7 +10,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/noderoll"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/tui/state"
@@ -56,6 +58,37 @@ func pendingSteps(p *upgrade.Plan) []string {
 		}
 	}
 	return out
+}
+
+// warned names the checks that warned or failed, skipping skipped ones.
+func warned(s health.HealthSummary) []string {
+	var out []string
+	for _, r := range s.Results {
+		if !r.Skipped && r.Status != health.StatusPass {
+			out = append(out, r.Name+" ("+string(r.Status)+")")
+		}
+	}
+	return out
+}
+
+// stepDiff names the steps now has that was lacks (+) and the steps was has
+// that now lacks (−), so the user sees exactly what a changed plan runs.
+func stepDiff(was, now []string) string {
+	var parts []string
+	for _, s := range now {
+		if !slices.Contains(was, s) {
+			parts = append(parts, "+ "+s)
+		}
+	}
+	for _, s := range was {
+		if !slices.Contains(now, s) {
+			parts = append(parts, "− "+s)
+		}
+	}
+	if len(parts) == 0 {
+		return "the same steps in a new order"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // planUpgradeLive records what the user confirms with y: the target and the
@@ -137,6 +170,11 @@ func (b *Backend) ask(ctx context.Context, u *liveUpgrade, q string) bool {
 }
 
 func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade, acc acceptedUpgrade) {
+	if d := b.opts.UpgradeTimeout; d > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
+	}
 	svc := b.newUpgrader(cfg)
 	progress := func(format string, args ...any) {
 		b.mu.Lock()
@@ -148,7 +186,7 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 	// until EKS has evaluated them, as `cluster upgrade` does.
 	plan, err := svc.BuildPlan(ctx, u.t.name, acc.target, upgrade.PlanOptions{Progress: progress})
 	if err != nil {
-		b.endUpgrade(u, "the plan could not be built: "+err.Error(), false)
+		b.endUpgrade(u, "the plan could not be built: "+awsinternal.FormatAWSError(err, "building the upgrade plan for "+u.t.name).Error(), false)
 		return
 	}
 	if plan.Blocked() {
@@ -156,7 +194,7 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 		return
 	}
 	if steps := pendingSteps(plan); !slices.Equal(steps, acc.steps) {
-		if !b.ask(ctx, u, fmt.Sprintf("the plan changed since the dry run (%d step(s) now, %d then); go on with the new plan?", len(steps), len(acc.steps))) {
+		if !b.ask(ctx, u, "the plan changed since the dry run: "+stepDiff(acc.steps, steps)+"; go on with the new plan?") {
 			b.endUpgrade(u, "", true)
 			return
 		}
@@ -184,18 +222,28 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 		},
 	}
 	report, err := svc.Execute(ctx, plan, opts)
-	b.mu.Lock()
-	stopped := u.st.StopAfter
-	b.mu.Unlock()
+	// Only the two sentinels mean the user stopped the run: a stop asked for
+	// during a phase that then fails is still a failure.
 	switch {
 	case err == nil:
 		b.endUpgrade(u, "", false)
-	case errors.Is(err, upgrade.ErrAborted) || errors.Is(err, errStoppedByUser) || stopped:
+	case errors.Is(err, upgrade.ErrAborted):
+		// Confirm declined before the next phase: the running one finished.
+		b.mu.Lock()
+		if cur := u.st.Current(); cur >= 0 {
+			u.st.Phases[cur].Status, u.st.Phases[cur].Progress, u.st.Phases[cur].EndedAt = state.PhaseDone, 1, b.now()
+		}
+		b.mu.Unlock()
+		b.endUpgrade(u, "", true)
+	case errors.Is(err, errStoppedByUser):
 		b.endUpgrade(u, "", true)
 	default:
 		why := err.Error()
 		if report != nil && report.Failure != nil {
 			why = report.Failure.Error
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) { // the run deadline, not one call's
+			why = fmt.Sprintf("the upgrade ran past %s; in-flight EKS updates continue, and a rerun resumes from live cluster state: %s", b.opts.UpgradeTimeout, why)
 		}
 		b.endUpgrade(u, why, false)
 	}
@@ -232,12 +280,26 @@ func (b *Backend) upgradeGate(ctx context.Context, cfg aws.Config, u *liveUpgrad
 		return errStoppedByUser
 	}
 	kube, metrics, _ := b.roll.kubeFor(ctx, cfg, u.t.name)
+	// As `cluster upgrade` does without --force: a PDB that would refuse an
+	// eviction stops the run before the roll, whatever the user answers.
+	if kube != nil {
+		report, err := b.roll.drainBlockers(ctx, cfg, u.t.name, ng, kube)
+		if err != nil {
+			return fmt.Errorf("checking PodDisruptionBudgets for nodegroup %s: %w", ng, err)
+		}
+		if names := report.Names(); len(names) > 0 {
+			return fmt.Errorf("%d drain blocker(s) would stop draining nodegroup %s: %s; let the workloads recover, relax the PDBs, or narrow PDB selectors so each pod matches one PDB",
+				len(names), ng, strings.Join(names, "; "))
+		}
+	}
 	summary := b.roll.healthCheck(ctx, cfg, u.t.name, []string{ng}, kube, metrics)
 	if _, blocked := healthGates(summary); len(blocked) > 0 {
 		return fmt.Errorf("the health gate blocks the roll of %s: %s", ng, strings.Join(blocked, ", "))
 	}
-	if found := findings(summary); len(found) > 0 {
-		if !b.ask(ctx, u, fmt.Sprintf("health warnings before rolling %s: %s; roll it?", ng, strings.Join(found, ", "))) {
+	// As `cluster upgrade` asks: on a WARN decision, naming the checks that
+	// warned or failed. A skipped check is not a warning here.
+	if summary.Decision == health.DecisionWarn {
+		if !b.ask(ctx, u, fmt.Sprintf("health warnings before rolling %s: %s; roll it?", ng, strings.Join(warned(summary), ", "))) {
 			return errStoppedByUser
 		}
 	}

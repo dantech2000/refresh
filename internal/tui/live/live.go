@@ -73,6 +73,9 @@ type Options struct {
 	Kubeconfig, KubeContext string
 	// WaitTimeout bounds how long a roll is watched (0 = no limit).
 	WaitTimeout time.Duration
+	// UpgradeTimeout bounds a whole cluster upgrade run, as `cluster
+	// upgrade`'s --wait-timeout does (0 = no limit).
+	UpgradeTimeout time.Duration
 	// ObserveInterval is how often a roll's nodes are read. Zero means two
 	// seconds.
 	ObserveInterval time.Duration
@@ -770,6 +773,9 @@ func (b *Backend) Answer(_ context.Context, key string, yes bool) error {
 	if u == nil || u.st.Question == "" {
 		return fmt.Errorf("the upgrade of %s is not waiting on a question", key)
 	}
+	// One answer per question: clear it now, so a second key press before
+	// ask wakes up cannot answer the next question.
+	u.st.Question = ""
 	select {
 	case u.answers <- yes:
 		return nil

@@ -215,8 +215,15 @@ upgrade (`live/upgrade.go`) runs the `cluster upgrade` engine
 (`upgrade.Service.BuildPlan` + `Execute`): `Start` needs the upgrade's dry
 run, `BuildPlan` refreshes insights, and the run asks (y/n in the TUI,
 `Backend.Answer`) when the steps changed since the dry run or a nodegroup's
-health gate warns. Pause and stop act between phases through the engine's
-`Confirm` hook. Without the flag `Start`, `StopAfterCurrent`, `TogglePause`,
+health gate warns (a WARN decision; skipped checks alone never ask). Before
+each nodegroup roll the gate also runs `cluster upgrade`'s PDB drain-blocker
+check (`health.DrainBlockerReport.Names`), which stops the run. Pause and
+stop act between phases through the engine's `Confirm` hook; only
+`ErrAborted` and the gate's stop mean stopped, so a failure after a stop
+request is still a failure. The run is bounded by
+`config.DefaultUpgradeTimeout`, as `cluster upgrade` is. An add-on dry run
+that could not preview every add-on is blocked, as `addon update --all`
+fails closed. Without the flag `Start`, `StopAfterCurrent`, `TogglePause`,
 and `Answer` return `live.ErrReadOnly` and plans name the CLI command. `State` never calls AWS, so the TUI's fast
 polling is free. `internal/sim` is a deterministic simulated fleet on a
 virtual clock (rolls, add-on updates, readiness checks, upgrades; node

@@ -44,6 +44,9 @@ type rollServices struct {
 	decide func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Nodegroup, nodegroupsvc.AMIUpdateDecision, error)
 	// healthCheck runs the pre-flight health gate `nodegroup update` runs.
 	healthCheck func(ctx context.Context, cfg aws.Config, cluster string, nodegroups []string, kube kubernetes.Interface, metrics health.NodeMetricsLister) health.HealthSummary
+	// drainBlockers is `cluster upgrade`'s PDB gate before each nodegroup
+	// roll: the PDBs and pods that would refuse an eviction from nodegroup.
+	drainBlockers func(ctx context.Context, cfg aws.Config, cluster, nodegroup string, kube kubernetes.Interface) (health.DrainBlockerReport, error)
 	// offerings lists the (instance type, AZ) pairs the nodegroup spans
 	// where EC2 does not offer the type.
 	offerings func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) ([]nodegroupsvc.UnavailableOffering, error)
@@ -96,6 +99,9 @@ func defaultRollServices(opts Options) rollServices {
 				}
 			}
 			return checker.RunAllChecks(ctx, cluster)
+		},
+		drainBlockers: func(ctx context.Context, cfg aws.Config, cluster, nodegroup string, kube kubernetes.Interface) (health.DrainBlockerReport, error) {
+			return health.NewCheckerForConfig(cfg, kube, nil).DrainBlockers(ctx, cluster, []string{nodegroup})
 		},
 		offerings: func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) ([]nodegroupsvc.UnavailableOffering, error) {
 			return factory.NewNodegroupService(cfg, false, opts.Logger).CheckInstanceTypeAvailability(ctx, cluster, nodegroup)
