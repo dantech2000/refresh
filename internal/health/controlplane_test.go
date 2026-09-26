@@ -123,8 +123,19 @@ func TestEvaluateControlPlane(t *testing.T) {
 		},
 		{
 			name:       "throttling warns",
-			m:          controlPlaneMetrics{hasData: true, etcdKnown: true, etcdInUseBytes: gib(2), req429: 12},
+			m:          controlPlaneMetrics{hasData: true, etcdKnown: true, etcdInUseBytes: gib(2), reqTotal: 5000, req429: 100}, // 2%
 			wantStatus: StatusWarn,
+		},
+		{
+			// Seen on a new real cluster: add-on installs got one request shed.
+			name:       "a stray 429 passes",
+			m:          controlPlaneMetrics{hasData: true, etcdKnown: true, etcdInUseBytes: gib(2), reqTotal: 4348, req429: 1},
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "429 below volume floor ignored",
+			m:          controlPlaneMetrics{hasData: true, etcdKnown: true, etcdInUseBytes: gib(2), reqTotal: 200, req429: 50},
+			wantStatus: StatusPass,
 		},
 		{
 			name:        "no data skipped",

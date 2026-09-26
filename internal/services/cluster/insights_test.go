@@ -297,3 +297,43 @@ func TestResolveInsightID_UsesCategory(t *testing.T) {
 		t.Error("the default category should not find a MISCONFIGURATION insight")
 	}
 }
+
+// A cluster EKS has not evaluated yet has no upgrade-readiness insights at
+// all (seen on a real 20-minute-old cluster). That is not "nothing to
+// address": the report says so and the verdict is REVIEW, not READY. Only
+// PASSING insights, or a status filter, is a real empty list.
+func TestUpgradeCheck_InsightsNotEvaluated(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		insights []ekstypes.InsightSummary
+		opts     UpgradeCheckOptions
+		want     bool
+	}{
+		{name: "none returned", want: true},
+		{name: "only passing", insights: []ekstypes.InsightSummary{{Name: aws.String("Kubelet skew"),
+			InsightStatus: &ekstypes.InsightStatus{Status: ekstypes.InsightStatusValuePassing}}}},
+		{name: "status filter", opts: UpgradeCheckOptions{Statuses: []string{"ERROR"}}},
+		{name: "other category", opts: UpgradeCheckOptions{Category: "MISCONFIGURATION"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := mocks.NewEKSAPI().WithCluster("prod", "1.34").Build()
+			m.ListInsightsFn = func(context.Context, *eks.ListInsightsInput, ...func(*eks.Options)) (*eks.ListInsightsOutput, error) {
+				return &eks.ListInsightsOutput{Insights: tc.insights}, nil
+			}
+			r, err := (&ServiceImpl{eksClient: m}).UpgradeCheck(context.Background(), "prod", tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.InsightsNotEvaluated != tc.want || len(r.Insights) != 0 {
+				t.Fatalf("notEvaluated = %v, insights %v", r.InsightsNotEvaluated, r.Insights)
+			}
+			level, why := r.Readiness()
+			if tc.want && (level != ReadinessReview || !strings.Contains(strings.Join(why, ";"), "not evaluated")) {
+				t.Errorf("readiness = %v %v, want REVIEW", level, why)
+			}
+			if !tc.want && level != ReadinessReady {
+				t.Errorf("readiness = %v %v, want READY", level, why)
+			}
+		})
+	}
+}
