@@ -93,6 +93,14 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		return err
 	}
 
+	// EKS refuses a scale while another update runs, but only after the
+	// prompt: say so first. A dry run still previews a busy cluster.
+	if !opts.DryRun {
+		if err := runner.RefuseIfBusy(ctx, factory.NewEKSClient(awsCfg), clusterName, nil); err != nil {
+			return err
+		}
+	}
+
 	// --check-pdbs gate. Without --force the service refuses a blocked
 	// scale-down itself; with --force (or --dry-run) run the check here so the
 	// overridden blockers are shown before anything changes.

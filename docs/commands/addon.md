@@ -169,6 +169,16 @@ add-on, the command changes nothing and names that add-on under
 - With `-o json`/`-o yaml`, or without a terminal, a run without `--yes` or
   `--dry-run` fails before any AWS call. Add `--yes` to scripts.
 
+### Busy clusters
+
+EKS runs one update at a time on a cluster. Before the prompt, `addon update`
+reads what EKS is changing: the control plane, each nodegroup, and each
+add-on. If something is changing, the command exits `3` and names it, for
+example `prod is busy (nodegroup ng-a UPDATING); nothing was started`. Run it
+again once that finishes. An update of the named add-on that is already
+running does not count: the command waits on it as before. `--dry-run` does
+not check.
+
 ### Add-on names
 
 An exact name, or an exact name in a different case, goes ahead. The names

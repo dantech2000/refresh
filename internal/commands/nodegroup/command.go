@@ -175,8 +175,10 @@ Exit codes:
    0  success            1  error, interrupt, monitoring timeout, or a roll
                             that ended Failed/Cancelled
    2  health warnings (--health-only / --require-healthy)
-   3  health blocked     4  a failure: a nodegroup that could not be read,
-                            or an update that could not start
+   3  health blocked, or EKS is already changing the cluster (another
+      nodegroup, an add-on, or the control plane); nothing was started
+   4  a failure: a nodegroup that could not be read, or an update that
+      could not start
    5  post-roll verification found issues
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json`,

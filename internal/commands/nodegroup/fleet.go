@@ -71,6 +71,9 @@ const (
 	clusterNotAttempted clusterStatus = "NotAttempted"
 	// clusterPlanned: a dry run previewed every selected nodegroup.
 	clusterPlanned clusterStatus = "Planned"
+	// clusterBusy: EKS was already changing the cluster (see
+	// changesInProgress), so the run skipped it. Nothing was started. Exit 3.
+	clusterBusy clusterStatus = "Busy"
 )
 
 // EnumValues lists every clusterStatus.
@@ -79,7 +82,7 @@ func (clusterStatus) EnumValues() []string {
 		string(clusterSucceeded), string(clusterIncomplete), string(clusterFailed),
 		string(clusterHealthBlocked), string(clusterHealthWarned), string(clusterVerifyFailed),
 		string(clusterInterrupted), string(clusterTimedOut), string(clusterNotAttempted),
-		string(clusterPlanned),
+		string(clusterPlanned), string(clusterBusy),
 	}
 }
 
@@ -97,6 +100,9 @@ type clusterUpdateResult struct {
 	// be selected, or the run stopped (Interrupted, TimedOut, NotAttempted)
 	// before any update started. A nodegroup's failure is on the nodegroup.
 	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
+	// ChangesInProgress names what EKS was changing on a Busy cluster, such
+	// as "nodegroup ng-a UPDATING".
+	ChangesInProgress []string `json:"changesInProgress,omitempty" yaml:"changesInProgress,omitempty"`
 
 	// run is what the run did in the cluster, for the failures list.
 	run updateRun
@@ -438,6 +444,22 @@ func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegrou
 		return res
 	}
 
+	// A cluster EKS is changing is skipped, not failed: the rest of the fleet
+	// goes on.
+	if !flags.healthOnly {
+		if busy := updateBusyChanges(ctx, eksClient, tgt.cluster, nodegroupPattern); len(busy) > 0 {
+			res.Status = clusterBusy
+			res.ChangesInProgress = busyStrings(busy)
+			if !flags.quiet {
+				flags.notice(render.Warn, "%s", runner.BusyMessage(tgt.cluster, busy))
+			}
+			return res
+		}
+		if ctx.Err() != nil {
+			return stopped("stopped while checking what EKS is changing")
+		}
+	}
+
 	summary, done, err := preflightHealthCheck(ctx, tgt.awsCfg, eksClient, tgt.cluster, nodegroupPattern, flags)
 	res.Health = summary
 	if err != nil {
@@ -748,6 +770,8 @@ func summarizeClusterResult(r clusterUpdateResult) (render.Status, string) {
 		return render.Warn, fmt.Sprintf("timed out (--wait-timeout; an update may still be running; check with refresh nodegroup list %s)", r.Cluster)
 	case clusterNotAttempted:
 		return render.Unknown, "not started (the run was interrupted)"
+	case clusterBusy:
+		return render.Warn, fmt.Sprintf("skipped: busy (%s)", strings.Join(r.ChangesInProgress, ", "))
 	case clusterVerifyFailed:
 		return render.Warn, fmt.Sprintf("updated %d, verification issues", started)
 	case clusterIncomplete:
@@ -771,7 +795,7 @@ func healthProblemsOf(summary *health.HealthSummary) string {
 
 // fleetExit returns the worst (highest) exit code across the run:
 // 5 verification, 4 a failed or incomplete cluster or a region that
-// discovery could not list, 3 health-blocked, 2 health warnings that stopped
+// discovery could not list, 3 health-blocked or busy, 2 health warnings that stopped
 // a cluster (--health-only or --require-healthy), 1 interrupted, timed out,
 // or not started (as in the single-cluster updateExit), else 0.
 func fleetExit(results []clusterUpdateResult, failedRegions []diag.Failure) error {
@@ -788,7 +812,7 @@ func fleetExit(results []clusterUpdateResult, failedRegions []diag.Failure) erro
 		switch r.Status {
 		case clusterFailed, clusterIncomplete:
 			bump(runner.ExitIncomplete)
-		case clusterHealthBlocked:
+		case clusterHealthBlocked, clusterBusy:
 			bump(runner.ExitBlocked)
 		case clusterHealthWarned:
 			bump(runner.ExitNeedsAttention)

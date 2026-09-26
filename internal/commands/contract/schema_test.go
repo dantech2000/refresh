@@ -43,6 +43,14 @@ func fullCluster() *fakeaws.Cluster {
 	}
 }
 
+// calmCluster is fullCluster with no nodegroup UPDATING, for the commands
+// that refuse to start a change on a busy cluster.
+func calmCluster() *fakeaws.Cluster {
+	c := fullCluster()
+	c.Nodegroups = c.Nodegroups[:1]
+	return c
+}
+
 // schemaCases are the successful runs, one or more per kind. The failure
 // runs come from the failure contract's cases.
 var schemaCases = []schemaCase{
@@ -68,9 +76,9 @@ var schemaCases = []schemaCase{
 	{name: "nodegroup update --health-only", kind: apidoc.KindHealthSummary, args: []string{"nodegroup", "update", "prod", "--health-only"}},
 	{name: "addon list", kind: apidoc.KindAddonList, args: []string{"addon", "list", "prod", "--show-health"}},
 	{name: "addon describe", kind: apidoc.KindAddonDescription, args: []string{"addon", "describe", "prod", "vpc-cni"}},
-	{name: "addon update", kind: apidoc.KindAddonUpdate, args: []string{"addon", "update", "prod", "vpc-cni", "--yes", "--wait"}},
+	{name: "addon update", kind: apidoc.KindAddonUpdate, world: []*fakeaws.Cluster{calmCluster()}, args: []string{"addon", "update", "prod", "vpc-cni", "--yes", "--wait"}},
 	{name: "addon update --dry-run", kind: apidoc.KindAddonUpdate, args: []string{"addon", "update", "prod", "vpc-cni", "--dry-run"}},
-	{name: "addon update --all", kind: apidoc.KindAddonUpdateAll, args: []string{"addon", "update", "prod", "--all", "--yes"}},
+	{name: "addon update --all", kind: apidoc.KindAddonUpdateAll, world: []*fakeaws.Cluster{calmCluster()}, args: []string{"addon", "update", "prod", "--all", "--yes"}},
 }
 
 // emptyCluster has no nodegroups, add-ons, tags, or VPC details, so every

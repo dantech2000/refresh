@@ -42,11 +42,11 @@ Rules that apply to every command:
 | [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker, `4` the planner could not read something |
 | `nodegroup list` | `0`, `1`, `4` a nodegroup could not be described |
 | `nodegroup describe` | `0`, `1` |
-| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs` or the pre-scaling health check, `4` `--force` scaled without being able to check the PDBs, `5` post-scaling health check failed |
+| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs`, the pre-scaling health check, or a busy cluster, `4` `--force` scaled without being able to check the PDBs, `5` post-scaling health check failed |
 | [`nodegroup update`](#nodegroup-update) | `0`, `1`, `2`, `3`, `4`, `5` |
 | `addon list` | `0`, `1`, `4` an add-on could not be described |
 | `addon describe` | `0`, `1` |
-| [`addon update`](#addon-update) | `0`, `1`, `4`, `5` |
+| [`addon update`](#addon-update) | `0`, `1`, `3`, `4`, `5` |
 | `use`, `current`, `context list/add/remove` | `0`, `1` |
 | `version`, `install-man`, `completion` | `0`, `1` |
 
@@ -156,7 +156,7 @@ or a timeout, `refresh` prints the command that resumes the upgrade, with the `-
 |---|---|
 | `0` | The scaling request was accepted (and, with `--wait`, it settled) |
 | `1` | An error, including a `--check-pdbs` check that could not read the PDBs, a declined confirmation, or a missing `--yes` without a terminal |
-| `3` | Blocked: `--check-pdbs` refused a scale-down, or the pre-scaling health check (`--health-check`) blocked it. Nothing changed. A `--dry-run` with `--check-pdbs` exits `3` or `1` where the real run would |
+| `3` | Blocked: `--check-pdbs` refused a scale-down, the pre-scaling health check (`--health-check`) blocked it, or EKS was already changing the cluster. Nothing changed. A `--dry-run` with `--check-pdbs` exits `3` or `1` where the real run would |
 | `4` | With `--check-pdbs --force`: the PDBs could not be checked, and the scale went ahead without the check (a `--dry-run` exits `4` too) |
 | `5` | The scale was applied, but the post-scaling health check found blocking issues |
 
@@ -172,7 +172,7 @@ See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
 | `0` | Success: updates started or completed as expected |
 | `1` | An error, an interrupt (Ctrl+C), a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health warnings (with `--health-only` or `--require-healthy`) |
-| `3` | Health blocked: a pre-flight check failed, and nothing was rolled |
+| `3` | Blocked: a pre-flight check failed, or EKS was already changing the cluster. Nothing was rolled |
 | `4` | A failure: a nodegroup could not be read (also in a `--dry-run` preview or after the roll), or its update could not start. With `--health-only`, a pass whose checks could not read everything |
 | `5` | Post-roll verification found issues (nodes not Ready, or newly stuck pods) |
 
@@ -185,7 +185,8 @@ AWS. Check it with `refresh nodegroup list <cluster>`.
 
 In fleet mode (`--all-clusters`) the run exits with the worst code across
 clusters: `5`, then `4`, then `3`, then `2`, then `1`. A cluster stopped by
-health warnings (`--health-only` or `--require-healthy`) counts as `2`, and
+health warnings (`--health-only` or `--require-healthy`) counts as `2`, a
+cluster skipped as `Busy` counts as `3`, and
 an interrupted or timed-out cluster counts as `1`. A region whose clusters
 could not be listed counts as `4`; see [Region sweeps](#region-sweeps).
 
@@ -214,6 +215,7 @@ drive these (`--health-only`, `--require-healthy`, `--skip-verify`).
 |---|---|
 | `0` | Success: updates started, completed, were already `UpToDate`, or were already `InProgress` |
 | `1` | An error or an interrupt. For a single add-on, also a failed update: the API call failed, or with `--wait` the EKS update was `Failed`/`Cancelled`, the add-on ended at another version, or the wait timed out (`WaitFailed`) |
+| `3` | EKS was already changing the cluster (the control plane, a nodegroup, or another add-on). Nothing was started |
 | `4` | A failure: with `--all`, an add-on update failed, did not complete, or was not attempted because the run hit its deadline. For any run, an add-on that could not be read after its update (`Unverified`) |
 | `5` | The update landed, but a post-update health check found issues (`CompletedWithIssues`) |
 

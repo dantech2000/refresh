@@ -18,6 +18,7 @@ import (
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/services/addons"
+	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	"github.com/dantech2000/refresh/internal/ui"
 )
 
@@ -295,6 +296,18 @@ func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	if err != nil {
 		return err
 	}
+	// EKS refuses a second update while one runs, but only after the prompt:
+	// say so first. An update of this add-on that is already running is
+	// left to the service, which waits on it.
+	if !cmd.Bool("dry-run") {
+		target := addonName
+		if err := runner.RefuseIfBusy(ctx, factory.NewEKSClient(cfg), clusterName, func(c clustersvc.Change) bool {
+			return c.Kind == clustersvc.ChangeAddon && c.Name == target
+		}); err != nil {
+			return err
+		}
+	}
+
 	if partial {
 		if err := confirmPartialAddon(ctx, requested, addonName, cmd.Bool("yes"), runner.IsMachineFormat(cmd.String("format"))); err != nil {
 			return err
@@ -506,6 +519,12 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) (err error) {
 		DependencyOrder: cmd.Bool("dependency-order"),
 		HealthCheck:     cmd.Bool("health-check"),
 		Timeout:         timeout,
+	}
+
+	if !options.DryRun {
+		if err := runner.RefuseIfBusy(ctx, factory.NewEKSClient(cfg), clusterName, nil); err != nil {
+			return err
+		}
 	}
 
 	if err := confirmUpdateAll(ctx, cmd, addonSvc, clusterName, cfg.Region, options); err != nil {

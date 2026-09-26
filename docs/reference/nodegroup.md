@@ -127,7 +127,7 @@ without a terminal, --yes is required. --dry-run never prompts.
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
   refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force --yes
 
-Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs or the pre-scaling health check, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -191,8 +191,10 @@ Exit codes:
    0  success            1  error, interrupt, monitoring timeout, or a roll
                             that ended Failed/Cancelled
    2  health warnings (--health-only / --require-healthy)
-   3  health blocked     4  a failure: a nodegroup that could not be read,
-                            or an update that could not start
+   3  health blocked, or EKS is already changing the cluster (another
+      nodegroup, an add-on, or the control plane); nothing was started
+   4  a failure: a nodegroup that could not be read, or an update that
+      could not start
    5  post-roll verification found issues
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json

@@ -26,7 +26,8 @@
         "Interrupted",
         "TimedOut",
         "NotAttempted",
-        "Planned"
+        "Planned",
+        "Busy"
       ],
       "description": "ClusterStatus is the outcome of one cluster in a fleet run. docs/concepts/output.md documents the values; later versions may add values."
     },

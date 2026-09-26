@@ -216,6 +216,12 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     check, and the command exits `4`. See
     [Scale-down PDB gate](../concepts/health-checks.md#scale-down-pdb-gate).
 
+!!! note "Busy clusters"
+    EKS runs one update at a time on a cluster. Before the prompt, `scale`
+    reads what EKS is changing (the control plane, each nodegroup, each
+    add-on). If something is changing, it exits `3` and names it. Nothing
+    changed. `--dry-run` does not check.
+
 With `--wait`, `refresh` follows the EKS update that the scaling request
 starts. If the update fails or is cancelled, the command exits non-zero with
 the update's error details. When the update succeeds, `refresh` reads the
@@ -265,6 +271,16 @@ confirmation for a name that is not exact, are in
 Before the roll, `refresh` runs the
 [pre-flight health checks](../concepts/health-checks.md), scoped to the
 nodegroups that match. `--quiet` does not skip them.
+
+!!! note "Busy clusters"
+    EKS runs one update at a time on a cluster. Before the health checks and
+    any prompt, `update` reads what EKS is changing: the control plane, each
+    nodegroup, and each add-on. If something is changing, the run exits `3`
+    and names it, for example `prod is busy (add-on vpc-cni UPDATING);
+    nothing was started`. A selected nodegroup that is already `UPDATING`
+    does not count: the run skips it (`AlreadyUpdating`). `--dry-run` and
+    `--health-only` do not check. In fleet mode, a busy cluster is skipped
+    with the status `Busy` and the rest of the fleet goes on.
 
 !!! note "Custom-AMI nodegroups are skipped"
     Nodegroups whose AMI is managed via a launch template (`AmiType=CUSTOM`)
@@ -420,6 +436,7 @@ regions discovery could not list.
 | `VerifyFailed` | The updates succeeded, but post-roll verification found issues | `5` |
 | `Interrupted`, `TimedOut` | Ctrl+C, or the cluster's `--wait-timeout`. Started updates keep running | `1` |
 | `NotAttempted` | The run stopped before it reached the cluster | `1` |
+| `Busy` | EKS was already changing the cluster, so the run skipped it; `changesInProgress` names what was changing | `3` |
 
 A fleet `--dry-run` entry has `status` `Planned`, `Incomplete` (the `plan`
 has nodegroups it could not read), or `Failed` (no `plan`; see `failure`).
@@ -433,7 +450,7 @@ has nodegroups it could not read), or `Failed` (no `plan`; see `failure`).
 | `0` | Success — updates started/completed as expected |
 | `1` | An error, an interrupt, a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health **warnings** (with `--health-only` or `--require-healthy`) |
-| `3` | Health **blocked** — a pre-flight check failed; nothing was rolled |
+| `3` | **Blocked**: a pre-flight check failed, or EKS is already changing the cluster; nothing was rolled |
 | `4` | A **failure**: a nodegroup that could not be read, an update that could not start, or a `--dry-run` preview with a nodegroup it could not read |
 | `5` | Post-roll **verification** found issues (nodes not Ready / newly-stuck pods) |
 

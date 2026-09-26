@@ -37,9 +37,6 @@ func TestChangesInProgress(t *testing.T) {
 	if want := "cluster UPDATING, nodegroup ng-b UPDATING, add-on vpc-cni UPDATING"; got.String() != want {
 		t.Fatalf("changes = %q, want %q", got, want)
 	}
-	if want := "cluster UPDATING, add-on vpc-cni UPDATING"; got.Without(ChangeNodegroup, "ng-b").String() != want {
-		t.Fatalf("without ng-b = %q, want %q", got.Without(ChangeNodegroup, "ng-b"), want)
-	}
 }
 
 func TestChangesInProgressSettled(t *testing.T) {

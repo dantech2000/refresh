@@ -173,6 +173,14 @@ func runUpdateAMI(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 	eksClient := factory.NewEKSClient(awsCfg)
 
+	// EKS refuses a second update while one runs, but only after the prompts:
+	// say so first. A dry run or --health-only changes nothing, so it goes on.
+	if !flags.dryRun && !flags.healthOnly {
+		if busy := updateBusyChanges(ctx, eksClient, clusterName, nodegroupPattern); len(busy) > 0 {
+			return runner.BusyExit(clusterName, busy)
+		}
+	}
+
 	summary, done, err := preflightHealthCheck(ctx, awsCfg, eksClient, clusterName, nodegroupPattern, flags)
 	if err != nil || done {
 		return finishAtHealthGate(newUpdateRun(clusterName, awsCfg.Region), summary, flags, err)

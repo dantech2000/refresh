@@ -55,19 +55,6 @@ func (cs Changes) String() string {
 	return strings.Join(parts, ", ")
 }
 
-// Without drops the named resource, for a caller that handles that
-// resource's own update itself.
-func (cs Changes) Without(kind, name string) Changes {
-	var out Changes
-	for _, c := range cs {
-		if c.Kind == kind && c.Name == name {
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
-}
-
 // ChangesInProgress reads, right now, what EKS is changing on cluster: the
 // cluster itself (status not ACTIVE), each nodegroup not ACTIVE or DEGRADED,
 // and each add-on CREATING, UPDATING, or DELETING. EKS rejects a second
