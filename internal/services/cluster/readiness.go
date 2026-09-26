@@ -83,6 +83,9 @@ func (r *UpgradeReport) Readiness() (Readiness, []string) {
 		blockers = append(blockers, "control-plane health check failed")
 	}
 	add(&warnings, warn, "%d WARNING insight(s)")
+	if r.InsightsNotEvaluated {
+		warnings = append(warnings, "EKS has not evaluated upgrade insights yet")
+	}
 	add(&warnings, skewBehind, "%d nodegroup(s) behind the control plane")
 	add(&warnings, addonsBehind, "%d addon(s) behind latest")
 	if cpWarn {

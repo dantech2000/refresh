@@ -137,7 +137,10 @@ func upgradeCheckLines(th *render.Theme, report *clustersvc.UpgradeReport, categ
 		th.Section("INSIGHTS")+th.Paint(pal.Dim, fmt.Sprintf("  %d", len(report.Insights))),
 	)
 
-	if len(report.Insights) == 0 {
+	if len(report.Insights) == 0 && report.InsightsNotEvaluated {
+		out = append(out, "  "+th.Token(render.Warn, "EKS has not evaluated upgrade insights for this cluster yet"),
+			"    "+th.Paint(pal.Dim, "a new cluster waits up to a day; cluster upgrade asks EKS to evaluate them first"))
+	} else if len(report.Insights) == 0 {
 		kind := "upgrade"
 		if !isDefaultCategory(category) {
 			kind = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(category), "_", " "))

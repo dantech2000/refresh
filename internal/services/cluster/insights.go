@@ -134,7 +134,12 @@ type UpgradeReport struct {
 	SupportType  string               `json:"supportType,omitempty" yaml:"supportType,omitempty"`
 	ControlPlane *health.HealthResult `json:"controlPlane,omitempty" yaml:"controlPlane,omitempty"`
 	Insights     []InsightSummary     `json:"insights" yaml:"insights"`
-	Skew         SkewReport           `json:"skew" yaml:"skew"`
+	// InsightsNotEvaluated is true when EKS returned no upgrade-readiness
+	// insight at all, passing ones included: it has not evaluated the
+	// cluster yet (a new cluster waits up to a day), so an empty list does
+	// not mean "nothing to address".
+	InsightsNotEvaluated bool       `json:"insightsNotEvaluated,omitempty" yaml:"insightsNotEvaluated,omitempty"`
+	Skew                 SkewReport `json:"skew" yaml:"skew"`
 	// Failures are the nodegroups and add-ons whose version skew could not
 	// be read. The skew verdict does not cover them, so the check is
 	// incomplete (exit 4). [] when everything was read.
@@ -148,6 +153,13 @@ func (UpgradeReport) DocumentKind() apidoc.Kind { return apidoc.KindUpgradeCheck
 // PASSING insights are dropped unless opts.ShowPassing or opts.Statuses asks
 // for PASSING.
 func (s *ServiceImpl) ListInsights(ctx context.Context, clusterName string, opts UpgradeCheckOptions) ([]InsightSummary, error) {
+	out, _, err := s.listInsights(ctx, clusterName, opts)
+	return out, err
+}
+
+// listInsights is ListInsights that also reports how many insights EKS
+// returned before PASSING ones were dropped.
+func (s *ServiceImpl) listInsights(ctx context.Context, clusterName string, opts UpgradeCheckOptions) ([]InsightSummary, int, error) {
 	category := opts.Category
 	if category == "" {
 		category = string(ekstypes.CategoryUpgradeReadiness)
@@ -174,7 +186,7 @@ func (s *ServiceImpl) ListInsights(ctx context.Context, clusterName string, opts
 		},
 	)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	result := make([]InsightSummary, 0, len(raw))
@@ -197,7 +209,7 @@ func (s *ServiceImpl) ListInsights(ctx context.Context, clusterName string, opts
 		}
 		result = append(result, is)
 	}
-	return result, nil
+	return result, len(raw), nil
 }
 
 // ResolveInsightID turns a user-supplied reference — a full insight ID, a short
@@ -322,17 +334,21 @@ func (s *ServiceImpl) UpgradeCheck(ctx context.Context, clusterName string, opts
 		supportType = string(status.SupportTypeOf(desc.Cluster))
 	}
 
-	insights, err := s.ListInsights(ctx, clusterName, opts)
+	insights, returned, err := s.listInsights(ctx, clusterName, opts)
 	if err != nil {
 		return nil, err
 	}
+	// An evaluated cluster always has upgrade-readiness insights, passing
+	// ones included. A status filter can empty the list on its own.
+	notEvaluated := returned == 0 && len(opts.Statuses) == 0 &&
+		(opts.Category == "" || strings.EqualFold(opts.Category, string(ekstypes.CategoryUpgradeReadiness)))
 
 	skew, failures, err := s.computeSkew(ctx, clusterName, cpVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	return &UpgradeReport{Cluster: clusterName, SupportType: supportType, Insights: apidoc.List(insights), Skew: skew, Failures: failures}, nil
+	return &UpgradeReport{Cluster: clusterName, SupportType: supportType, Insights: apidoc.List(insights), InsightsNotEvaluated: notEvaluated, Skew: skew, Failures: failures}, nil
 }
 
 // computeSkew builds the local version-skew report and ordered findings. It

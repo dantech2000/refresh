@@ -338,6 +338,10 @@
       },
       "type": "array"
     },
+    "insightsNotEvaluated": {
+      "type": "boolean",
+      "description": "insightsNotEvaluated is true when EKS returned no upgrade-readiness insight at all, passing ones included: it has not evaluated the cluster yet (a new cluster waits up to a day), so an empty list does not mean \"nothing to address\"."
+    },
     "skew": {
       "$ref": "#/$defs/SkewReport"
     },

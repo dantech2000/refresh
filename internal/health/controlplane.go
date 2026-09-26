@@ -27,6 +27,7 @@ const (
 	etcdWarnPercent = 80.0 // getting tight — warn
 
 	apiserver5xxWarnPercent = 2.0    // server-error ratio over the window
+	apiserver429WarnPercent = 1.0    // throttled ratio over the window
 	apiserverMinReqsForRate = 1000.0 // ignore the ratio below this volume (too noisy)
 
 	// controlPlaneWindow is how far back to aggregate. The AWS/EKS metrics are
@@ -209,10 +210,13 @@ func evaluateControlPlane(m controlPlaneMetrics) HealthResult {
 	}
 	if m.req429 > 0 {
 		result.Details = append(result.Details, fmt.Sprintf("API-server throttled %d requests (429) in the window", int(m.req429)))
-		if result.Status == StatusPass {
+		// A few 429s are normal: API priority and fairness sheds bursts,
+		// such as a new cluster's add-on installs. Warn on a rate, above
+		// the same volume floor as 5xx (a real cluster showed 1 in 4,348).
+		if m.reqTotal >= apiserverMinReqsForRate && m.req429/m.reqTotal*100 >= apiserver429WarnPercent && result.Status == StatusPass {
 			result.Status = StatusWarn
 			result.Score = 70
-			result.Message = "API-server is throttling requests (429)"
+			result.Message = fmt.Sprintf("API-server is throttling requests (%.1f%% 429)", m.req429/m.reqTotal*100)
 		}
 	}
 
