@@ -2,6 +2,7 @@ package noderoll
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -54,6 +55,14 @@ func TestKubeObserver_PodEviction(t *testing.T) {
 	if n.PodsTotal != 3 || n.Pods != 3 {
 		t.Fatalf("drain start: Pods=%d PodsTotal=%d, want 3/3 (DaemonSet/mirror/terminal/other excluded)", n.Pods, n.PodsTotal)
 	}
+	// The same pods by name, for a per-pod view.
+	var names []string
+	for _, p := range n.PodList {
+		names = append(names, p.Name)
+	}
+	if strings.Join(names, ",") != "default/web-1,default/web-2,default/web-3" {
+		t.Fatalf("pod list = %v", names)
+	}
 
 	// Evict one workload pod; total stays at the remembered start (3), remaining drops to 2.
 	if err := client.CoreV1().Pods("default").Delete(ctx, "web-1", metav1.DeleteOptions{}); err != nil {
@@ -63,5 +72,8 @@ func TestKubeObserver_PodEviction(t *testing.T) {
 	n = nodeOf(s, "ip-1")
 	if n.Pods != 2 || n.PodsTotal != 3 {
 		t.Fatalf("after eviction: Pods=%d PodsTotal=%d, want 2/3", n.Pods, n.PodsTotal)
+	}
+	if len(n.PodList) != 2 {
+		t.Fatalf("after eviction: pod list = %v", n.PodList)
 	}
 }

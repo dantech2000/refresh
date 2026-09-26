@@ -584,6 +584,18 @@ func (b *Backend) rollSnapshot(r *liveRoll) state.Roll {
 	st.Snapshot.Warnings = slices.Clone(r.st.Snapshot.Warnings)
 	st.Pods = map[string][]state.Pod{}
 	st.NodePods = map[string]int{}
+	// The pods still on each draining node, from the observer's per-node
+	// read, for the drain card (a real roll showed only counts).
+	for i, n := range st.Snapshot.Nodes {
+		st.Snapshot.Nodes[i].PodList = slices.Clone(n.PodList)
+		for _, p := range n.PodList {
+			ps := state.Pod{Name: p.Name, State: state.PodRunning}
+			if p.Terminating {
+				ps.State = state.PodTerminating
+			}
+			st.Pods[n.Name] = append(st.Pods[n.Name], ps)
+		}
+	}
 	// An estimate only from the pace this roll has shown: the time per
 	// replaced node so far, times the nodes left.
 	if done := st.Replaced(); r.st.Running() && r.viewed && done > 0 && st.Planned > done {

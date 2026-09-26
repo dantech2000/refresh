@@ -496,3 +496,27 @@ func TestUnofferedInstanceTypesWarnInTheDryRun(t *testing.T) {
 		t.Fatalf("gates = %+v, blocked %q; the offering check warns, never blocks", p.Gates, p.Blocked)
 	}
 }
+
+// A real roll's drain view showed counts only: the observer now names the
+// pods left on a draining node, and the snapshot hands them to the view.
+func TestRollSnapshotNamesTheDrainingPods(t *testing.T) {
+	b := newTestBackend(t, &fleet{rows: map[string][]statussvc.ClusterStatus{}}, "us-east-1")
+	r := &liveRoll{st: state.Roll{Snapshot: noderoll.Snapshot{Nodes: []noderoll.NodeView{
+		{Name: "ip-old", Phase: noderoll.PhaseDraining, Pods: 2, PodsTotal: 3, PodList: []noderoll.PodView{
+			{Name: "default/web-1"}, {Name: "kube-system/coredns-5d", Terminating: true},
+		}},
+		{Name: "ip-new", Phase: noderoll.PhaseReady, OnTarget: true},
+	}}}}
+	st := b.rollSnapshot(r)
+	pods := st.Pods["ip-old"]
+	if len(pods) != 2 || pods[0].Name != "default/web-1" || pods[0].State != state.PodRunning || pods[1].State != state.PodTerminating {
+		t.Fatalf("pods = %+v", pods)
+	}
+	if _, ok := st.Pods["ip-new"]; ok {
+		t.Fatal("a ready node got a drain list")
+	}
+	st.Snapshot.Nodes[0].PodList[0].Name = "changed"
+	if r.st.Snapshot.Nodes[0].PodList[0].Name != "default/web-1" {
+		t.Fatal("the snapshot shares the pod list with the roll")
+	}
+}
