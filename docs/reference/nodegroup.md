@@ -103,7 +103,7 @@ Exit codes: 0 ok; 1 error. See https://drod.dev/refresh/concepts/exit-codes/
 > Scale a nodegroup's desired/min/max size with optional health checks
 
 ```
-refresh nodegroup scale [options] [cluster]
+refresh nodegroup scale [options] [cluster] [nodegroup]
 ```
 
 Change a managed nodegroup's desired/min/max size. Any subset of
@@ -134,7 +134,7 @@ Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked b
 | Flag | Env | Default | Description |
 |---|---|---|---|
 | `--cluster, -c string` | — | — | EKS cluster name |
-| `--nodegroup, -n string` | — | — | Nodegroup name |
+| `--nodegroup, -n string` | — | — | Nodegroup name (or the second positional) |
 | `--desired int` | — | — | Desired node count |
 | `--min int` | — | — | Minimum node count |
 | `--max int` | — | — | Maximum node count |

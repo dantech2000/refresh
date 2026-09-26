@@ -95,7 +95,7 @@ func scaleCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "scale",
 		Usage:     "Scale a nodegroup's desired/min/max size with optional health checks",
-		ArgsUsage: "[cluster]",
+		ArgsUsage: "[cluster] [nodegroup]",
 		Description: `Change a managed nodegroup's desired/min/max size. Any subset of
 --desired/--min/--max may be set, and at least one is required; unspecified
 bounds are left unchanged.
@@ -118,7 +118,7 @@ without a terminal, --yes is required. --dry-run never prompts.
   refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force --yes`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "cluster", Aliases: []string{"c"}, Usage: "EKS cluster name"},
-			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name", Required: true},
+			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name (or the second positional)"},
 			&cli.IntFlag{Name: "desired", Usage: "Desired node count"},
 			&cli.IntFlag{Name: "min", Usage: "Minimum node count"},
 			&cli.IntFlag{Name: "max", Usage: "Maximum node count"},

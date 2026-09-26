@@ -181,3 +181,39 @@ func TestVerifyPostRoll_PreRollSnapshotFailureSkipsPodCheck(t *testing.T) {
 		t.Errorf("expected a skipped pod check, got checks: %v", v.Checks)
 	}
 }
+
+// After a real roll, the DaemonSet controller made aws-node, kube-proxy, and
+// eks-pod-identity-agent pods for the node EKS had just terminated. They sat
+// Pending until garbage collection and failed the roll's verification (exit
+// 5). A Pending pod pinned to a node that no longer exists is not stuck.
+func TestVerifyPostRoll_PodsForARemovedNodeAreNotStuck(t *testing.T) {
+	eksMock := &mocks.EKSAPI{
+		DescribeNodegroupFn: func(_ context.Context, _ *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+			return &eks.DescribeNodegroupOutput{Nodegroup: &ekstypes.Nodegroup{Status: ekstypes.NodegroupStatusActive}}, nil
+		},
+	}
+	pinnedByAffinity := func(ns, name, node string) *corev1.Pod {
+		p := pendingPod(ns, name)
+		p.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node}}},
+			}}},
+		}}
+		return p
+	}
+	bound := pendingPod("kube-system", "kube-proxy-gone")
+	bound.Spec.NodeName = "ip-old"
+	boundLive := pendingPod("default", "stuck-on-new-node")
+	boundLive.Spec.NodeName = "ip-new"
+	k8s := fakek8s.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "ip-new"}},
+		bound,
+		pinnedByAffinity("kube-system", "aws-node-gone", "ip-old"),
+		boundLive,
+	)
+	v, _ := verifyPostRoll(context.Background(), eksMock, k8s, "c", []string{"ng-a"}, pendingPodSet{}, true)
+	got := strings.Join(v.Issues, "; ")
+	if !strings.Contains(got, "1 pod(s) newly Pending") || !strings.Contains(got, "stuck-on-new-node") || strings.Contains(got, "gone") {
+		t.Errorf("issues = %q, want only the pod on the live node", got)
+	}
+}

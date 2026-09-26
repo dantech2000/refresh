@@ -93,3 +93,29 @@ func TestCheckServiceQuotas_SkipsGracefully(t *testing.T) {
 		t.Errorf("missing usage should skip (not fail), got %+v", r)
 	}
 }
+
+// scriptedUsage returns the values it is given, newest first, and records the
+// query so a test can check it asked for recent minutes, newest first.
+type scriptedUsage struct {
+	values []float64
+	in     *cloudwatch.GetMetricDataInput
+}
+
+func (s *scriptedUsage) GetMetricData(_ context.Context, in *cloudwatch.GetMetricDataInput, _ ...func(*cloudwatch.Options)) (*cloudwatch.GetMetricDataOutput, error) {
+	s.in = in
+	return &cloudwatch.GetMetricDataOutput{MetricDataResults: []cwtypes.MetricDataResult{{Id: aws.String("vcpu"), Values: s.values}}}, nil
+}
+
+// On a real account with an 8 vCPU quota, a roll surged 2 → 4 t3.medium nodes
+// and back. Just after it, the minutes read 4, 6, 8, 8 (newest first): the
+// check must see the current 4 (50%), not the finished surge's 8 (100%).
+func TestCheckServiceQuotas_UsesTheNewestMinute(t *testing.T) {
+	md := &scriptedUsage{values: []float64{4, 6, 8, 8}}
+	r := checkServiceQuotas(context.Background(), &fakeServiceQuotas{value: aws.Float64(8)}, md)
+	if r.Status != StatusPass || r.Skipped {
+		t.Fatalf("result = %+v, want PASS at 50%%", r)
+	}
+	if md.in.ScanBy != cwtypes.ScanByTimestampDescending || aws.ToInt32(md.in.MetricDataQueries[0].MetricStat.Period) != 60 {
+		t.Errorf("query = scan %s, period %d; want newest first, per minute", md.in.ScanBy, aws.ToInt32(md.in.MetricDataQueries[0].MetricStat.Period))
+	}
+}
