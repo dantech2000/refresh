@@ -44,9 +44,45 @@ func (f *fakeUpgrader) BuildPlan(context.Context, string, string, upgrade.PlanOp
 	return f.plan, nil
 }
 
+// enginePhases lists a hop's phase labels as the engine names them, in the
+// engine's order, leaving out phases with nothing pending.
+func enginePhases(hop upgrade.Hop) []string {
+	var cp, req, ng, ad int
+	for _, s := range hop.Steps {
+		if s.Status != upgrade.StatusPending {
+			continue
+		}
+		switch {
+		case s.Type == upgrade.StepControlPlane:
+			cp++
+		case s.Type == upgrade.StepAddon && s.BeforeNodegroups:
+			req++
+		case s.Type == upgrade.StepAddon:
+			ad++
+		case s.Type == upgrade.StepNodegroup:
+			ng++
+		}
+	}
+	var out []string
+	for _, p := range []struct {
+		n     int
+		label string
+	}{
+		{cp, "control plane " + hop.From + " → " + hop.To},
+		{req, fmt.Sprintf("required addons for %s (%d update(s), before nodegroup rolls)", hop.To, req)},
+		{ng, fmt.Sprintf("nodegroup rolls to %s (%d nodegroup(s))", hop.To, ng)},
+		{ad, fmt.Sprintf("addons for %s (%d update(s), dependency order)", hop.To, ad)},
+	} {
+		if p.n > 0 {
+			out = append(out, p.label)
+		}
+	}
+	return out
+}
+
 func (f *fakeUpgrader) Execute(ctx context.Context, plan *upgrade.Plan, opts upgrade.ExecuteOptions) (*upgrade.Report, error) {
 	for _, hop := range plan.Hops {
-		for _, ph := range []string{"control plane " + hop.From + " → " + hop.To, "addons for " + hop.To + " (1 update(s), dependency order)", "nodegroup rolls to " + hop.To + " (2 nodegroup(s))"} {
+		for _, ph := range enginePhases(hop) {
 			if !opts.Confirm(ph) {
 				return &upgrade.Report{Status: upgrade.RunAborted}, upgrade.ErrAborted
 			}
@@ -90,9 +126,10 @@ func (f *fakeUpgrader) Execute(ctx context.Context, plan *upgrade.Plan, opts upg
 func upgradePlan() *upgrade.Plan {
 	return &upgrade.Plan{ClusterName: "prod-api", CurrentVersion: "1.31", TargetVersion: "1.32", Hops: []upgrade.Hop{{From: "1.31", To: "1.32", Steps: []upgrade.Step{
 		{Type: upgrade.StepControlPlane, Description: "control plane to 1.32", Version: "1.32", Status: upgrade.StatusPending},
-		{Type: upgrade.StepAddon, Target: "vpc-cni", Version: "v1.19.2", Status: upgrade.StatusPending},
+		{Type: upgrade.StepAddon, Target: "kube-proxy", Version: "v1.32.0", Status: upgrade.StatusPending, BeforeNodegroups: true},
 		{Type: upgrade.StepNodegroup, Target: "ng-a", Version: "1.32", Status: upgrade.StatusPending},
 		{Type: upgrade.StepNodegroup, Target: "ng-b", Version: "1.32", Status: upgrade.StatusPending},
+		{Type: upgrade.StepAddon, Target: "vpc-cni", Version: "v1.19.2", Status: upgrade.StatusPending},
 	}}}}
 }
 
@@ -171,8 +208,18 @@ func TestUpgradeRunsThroughTheOrchestrator(t *testing.T) {
 	for _, p := range u.Phases {
 		names = append(names, p.Name)
 	}
-	if got := strings.Join(names, ","); got != "Plan,Control plane 1.32,Add-ons 1.32,Nodegroups 1.32" {
+	if got := strings.Join(names, ","); got != "Plan,Control plane 1.32,Required add-ons 1.32,Nodegroups 1.32,Add-ons 1.32" {
 		t.Fatalf("phases = %s", got)
+	}
+	// Every phase ran, in the engine's order, and each started its own
+	// timeline phase.
+	if got := strings.Join(rig.f.phases, ","); got != strings.Join(enginePhases(upgradePlan().Hops[0]), ",") || len(rig.f.phases) != 4 {
+		t.Fatalf("engine phases = %v", rig.f.phases)
+	}
+	for _, e := range u.Events {
+		if e.Subject == "phase" && e.Level != state.LevelProgress {
+			t.Fatalf("phase %q matched no timeline phase", e.Text)
+		}
 	}
 	if rig.f.built != 1 || strings.Join(rig.f.rolled, ",") != "ng-a,ng-b" {
 		t.Fatalf("built %d plans, rolled %v", rig.f.built, rig.f.rolled)
@@ -252,7 +299,7 @@ func TestPauseHoldsAndStopEndsBeforeTheNextPhase(t *testing.T) {
 	if err := rig.b.TogglePause(t.Context(), "prod-api"); err != nil {
 		t.Fatal(err)
 	}
-	// Paused: the add-ons phase waits in Confirm. Asking to stop now ends
+	// Paused: the required add-ons phase waits in Confirm. Asking to stop now ends
 	// the run there, with the control plane done and nothing else started.
 	if err := rig.b.StopAfterCurrent(t.Context(), "prod-api"); err != nil {
 		t.Fatal(err)

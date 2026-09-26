@@ -354,27 +354,31 @@ func (b *Backend) cfgOf(t target) aws.Config {
 }
 
 // setPhases lays out the timeline from the plan: the plan phase, then each
-// hop's control plane, add-ons, and nodegroups that have pending steps. The
-// caller holds b.mu.
+// hop's control plane, required add-ons, nodegroups, and remaining add-ons
+// that have pending steps. The caller holds b.mu.
 func (b *Backend) setPhases(u *liveUpgrade, plan *upgrade.Plan) {
 	u.st.Phases[0].Status, u.st.Phases[0].EndedAt, u.st.Phases[0].Progress = state.PhaseDone, b.now(), 1
 	u.st.Phases[0].Summary = fmt.Sprintf("%d step(s) to %s", len(pendingSteps(plan)), plan.TargetVersion)
 	for _, hop := range plan.Hops {
-		var cp, ad, ng []state.PhaseItem
+		var cp, req, ng, ad []state.PhaseItem
 		for _, s := range hop.Steps {
 			if s.Status != upgrade.StatusPending {
 				continue
 			}
 			item := state.PhaseItem{Name: s.Target, Text: s.Version}
-			switch s.Type {
-			case upgrade.StepControlPlane:
+			switch {
+			case s.Type == upgrade.StepControlPlane:
 				cp = append(cp, state.PhaseItem{Name: "control plane", Text: hop.From + " → " + hop.To})
-			case upgrade.StepAddon:
+			case s.Type == upgrade.StepAddon && s.BeforeNodegroups:
+				req = append(req, item)
+			case s.Type == upgrade.StepAddon:
 				ad = append(ad, item)
-			case upgrade.StepNodegroup:
+			case s.Type == upgrade.StepNodegroup:
 				ng = append(ng, item)
 			}
 		}
+		// The engine's order: the add-ons the new control plane cannot run
+		// go before the rolls, the rest after them.
 		for _, p := range []struct {
 			name  string
 			label string
@@ -382,8 +386,9 @@ func (b *Backend) setPhases(u *liveUpgrade, plan *upgrade.Plan) {
 			w     float64
 		}{
 			{"Control plane " + hop.To, fmt.Sprintf("control plane %s → %s", hop.From, hop.To), cp, 0.35},
-			{"Add-ons " + hop.To, "addons for " + hop.To, ad, 0.15},
+			{"Required add-ons " + hop.To, "required addons for " + hop.To, req, 0.08},
 			{"Nodegroups " + hop.To, "nodegroup rolls to " + hop.To, ng, 0.45},
+			{"Add-ons " + hop.To, "addons for " + hop.To, ad, 0.12},
 		} {
 			if len(p.items) == 0 {
 				continue

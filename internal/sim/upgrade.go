@@ -9,12 +9,14 @@ import (
 	"github.com/dantech2000/refresh/internal/tui/state"
 )
 
-// Upgrade phases, in order.
+// Upgrade phases, in order. As in `cluster upgrade`, the nodegroups roll
+// before the add-ons update (the simulator does not model add-ons the new
+// control plane cannot run).
 const (
 	phasePreflight = iota
 	phaseControlPlane
-	phaseAddons
 	phaseNodegroups
+	phaseAddons
 	phaseVerify
 )
 
@@ -63,7 +65,7 @@ func (w *World) planUpgrade(c *cluster) (state.Plan, error) {
 	}
 	est := 9*time.Minute + time.Duration(len(c.Addons))*50*time.Second + time.Duration(nodes)*perNodeEstimate
 	p.Facts = []state.Fact{
-		{Key: "phases", Value: "pre-flight → control plane → add-ons → nodegroups → verify"},
+		{Key: "phases", Value: "pre-flight → control plane → nodegroups → add-ons → verify"},
 		{Key: "nodes", Value: strconv.Itoa(nodes) + " replaced", Note: "one nodegroup at a time"},
 		{Key: "estimate", Value: "~" + roundMinutes(est)},
 	}
@@ -103,7 +105,7 @@ func (w *World) startUpgrade(name string) error {
 	for _, ph := range []struct {
 		name   string
 		weight float64
-	}{{"Pre-flight", 0.05}, {"Control plane", 0.35}, {"Add-ons", 0.15}, {"Nodegroups", 0.40}, {"Verify", 0.05}} {
+	}{{"Pre-flight", 0.05}, {"Control plane", 0.35}, {"Nodegroups", 0.40}, {"Add-ons", 0.15}, {"Verify", 0.05}} {
 		u.st.Phases = append(u.st.Phases, state.Phase{Name: ph.name, Weight: ph.weight})
 	}
 	c.Busy = "upgrading"
