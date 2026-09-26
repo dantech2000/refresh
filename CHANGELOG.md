@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.2](https://github.com/dantech2000/refresh/compare/v0.12.1...v0.12.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* **completion:** leave hidden commands out of the fish script ([#429](https://github.com/dantech2000/refresh/issues/429)) ([c6c6fab](https://github.com/dantech2000/refresh/commit/c6c6fab63bda4de05be2a4a61c4f8de0f3aa84a8))
+* make the idempotency token long enough for UpdateClusterVersion ([#422](https://github.com/dantech2000/refresh/issues/422)) ([cb1c461](https://github.com/dantech2000/refresh/commit/cb1c461bb1a62f9b282f527527598c5c41fcbf0b))
+* **nodegroup:** no false exit 5 after a roll, current vCPU use, and scale by name ([#427](https://github.com/dantech2000/refresh/issues/427)) ([29d775b](https://github.com/dantech2000/refresh/commit/29d775b2edfd573c93cb3c0f722454256fbd9820))
+* read the AMI release notes again, and polish counts and hints ([#426](https://github.com/dantech2000/refresh/issues/426)) ([c13e5fb](https://github.com/dantech2000/refresh/commit/c13e5fb002a75a1f366a5c5c6bf31b376d23fdd1))
+* say when EKS has not evaluated upgrade insights, and warn on a 429 rate ([#425](https://github.com/dantech2000/refresh/issues/425)) ([c7fefb1](https://github.com/dantech2000/refresh/commit/c7fefb198d6e2c0be4912a80477c25485d617cbc))
+* tell closed regions from bad credentials ([#424](https://github.com/dantech2000/refresh/issues/424)) ([8c6f4f2](https://github.com/dantech2000/refresh/commit/8c6f4f225d4faa66c92ca6f4155ef6c322f78dee))
+* **upgrade:** block a plan that would roll an AL2 nodegroup past 1.32 ([#423](https://github.com/dantech2000/refresh/issues/423)) ([e0f9569](https://github.com/dantech2000/refresh/commit/e0f956968ab2d0e60382fd177ecd02d32935fc1a))
+* usage errors keep stdout clean, and output polish ([#428](https://github.com/dantech2000/refresh/issues/428)) ([c08285b](https://github.com/dantech2000/refresh/commit/c08285bba710104d0ecc71d71487e16eccb4a97f))
+
 ## [0.12.1](https://github.com/dantech2000/refresh/compare/v0.12.0...v0.12.1) (2026-09-25)
 
 
