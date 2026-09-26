@@ -15,7 +15,8 @@
         "TimedOut",
         "NotAttempted",
         "Planned",
-        "Busy"
+        "Busy",
+        "DrainBlocked"
       ],
       "description": "ClusterStatus is the outcome of one cluster in a fleet run. docs/concepts/output.md documents the values; later versions may add values."
     },
@@ -270,6 +271,13 @@
         "failure": {
           "$ref": "#/$defs/Failure",
           "description": "failure is set when the status is Failed, Cancelled, InProgress, or NotAttempted. The same failure is in the document's failures."
+        },
+        "drainBlockers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "drainBlockers names what would stop EKS draining the nodegroup: a PodDisruptionBudget that allows 0 disruptions, or a pod that more than one PDB selects."
         }
       },
       "type": "object",
@@ -288,7 +296,8 @@
         "Failed",
         "Cancelled",
         "InProgress",
-        "NotAttempted"
+        "NotAttempted",
+        "DrainBlocked"
       ],
       "description": "NodegroupStatus is the outcome of one nodegroup in a `nodegroup update` run. docs/concepts/output.md documents the values; later versions may add values."
     },

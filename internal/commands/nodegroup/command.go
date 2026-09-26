@@ -175,8 +175,9 @@ Exit codes:
    0  success            1  error, interrupt, monitoring timeout, or a roll
                             that ended Failed/Cancelled
    2  health warnings (--health-only / --require-healthy)
-   3  health blocked, or EKS is already changing the cluster (another
-      nodegroup, an add-on, or the control plane); nothing was started
+   3  health blocked, a PodDisruptionBudget would block the drain (the PDB
+      drain gate; --force rolls anyway, --dry-run exits 3 too), or EKS is
+      already changing the cluster; nothing was started
    4  a failure: a nodegroup that could not be read, or an update that
       could not start
    5  post-roll verification found issues
@@ -187,7 +188,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.StringFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Nodegroup name or partial name pattern (if not set, update all). A pattern that is not an exact name needs confirmation, or --yes without a terminal"},
 			&cli.BoolFlag{Name: "all-clusters", Usage: "Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r."},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS)"},
-			&cli.BoolFlag{Name: "force", Usage: "Force the roll: EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll"},
+			&cli.BoolFlag{Name: "force", Usage: "Force the roll: pass the PDB drain gate with a warning, and EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll"},
 			&cli.BoolFlag{Name: "reroll", Usage: "Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored"},
 			runner.DryRunFlag("Preview changes without executing them"),
 			&cli.BoolFlag{Name: "no-wait", Usage: "Don't wait for update completion (original behavior)"},

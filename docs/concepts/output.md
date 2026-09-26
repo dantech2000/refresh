@@ -60,8 +60,8 @@ top-level list.
 
 | Command | Document on stdout |
 |---|---|
-| `nodegroup update` | `cluster`, `nodegroups` (one entry per selected nodegroup: `name`, `status`, `updateId` once the update started, `reason` for a skip, `failure`), `verification`, `health` (the pre-flight verdict, when a check ran), and `failures` |
-| `nodegroup update --dry-run` | `cluster`, `dryRun`, `force`, `reroll`, one `nodegroups` entry per nodegroup with its `action` (`Update`, `ForceUpdate`, `SkipUpdating`, `SkipLatest`, `SkipCustom`, or `Unknown` with a `failure` when the nodegroup could not be read), and `failures` |
+| `nodegroup update` | `cluster`, `nodegroups` (one entry per selected nodegroup: `name`, `status`, `updateId` once the update started, `reason` for a skip, `failure`, `drainBlockers` when the PDB drain gate refused the run), `verification`, `health` (the pre-flight verdict, when a check ran), and `failures` |
+| `nodegroup update --dry-run` | `cluster`, `dryRun`, `force`, `reroll`, one `nodegroups` entry per nodegroup with its `action` (`Update`, `ForceUpdate`, `SkipUpdating`, `SkipLatest`, `SkipCustom`, or `Unknown` with a `failure` when the nodegroup could not be read, and `drainBlockers` when a PDB would block its drain), and `failures` |
 | `nodegroup update --health-only` | The health verdict, with its own `failures` (the reads the checks could not make). The exit code is `0`, `2`, `3`, or `4` for a pass whose checks could not read everything |
 | `nodegroup update --all-clusters` | `clusters` (one entry per cluster: `cluster`, `region`, `status`, `nodegroups`, `verification`, `health`, `failure` when the cluster itself failed, and `changesInProgress` for a `Busy` cluster; with `--dry-run`, `status` and a `plan` instead), `skippedRegions` (a notice: default-sweep regions these credentials can't use), and `failures` (every cluster's failures, and a `Region` failure for each region that could not be listed). With no clusters found, `clusters` is an empty list. `--health-only` needs no `--yes` |
 | `addon update` | The result (`addonName`, `previousVersion`, `newVersion`, `updateId`, `status`, `healthIssues`, `warning`, `failure`, `startedAt`) and `failures` |
@@ -73,8 +73,8 @@ The status values:
 
 | Document | `status` values |
 |---|---|
-| `nodegroup update`, each nodegroup | `Started`, `Succeeded`, `Skipped`, `Failed`, `Cancelled`, `InProgress` (the run stopped watching an update that may still be running), `NotAttempted` |
-| `nodegroup update --all-clusters`, each cluster | `Succeeded`, `Incomplete`, `Failed`, `HealthBlocked`, `HealthWarned`, `VerifyFailed`, `Interrupted`, `TimedOut`, `NotAttempted`, `Busy`; with `--dry-run`: `Planned`, `Incomplete`, `Failed` |
+| `nodegroup update`, each nodegroup | `Started`, `Succeeded`, `Skipped`, `Failed`, `Cancelled`, `InProgress` (the run stopped watching an update that may still be running), `NotAttempted`, `DrainBlocked` |
+| `nodegroup update --all-clusters`, each cluster | `Succeeded`, `Incomplete`, `Failed`, `HealthBlocked`, `HealthWarned`, `VerifyFailed`, `Interrupted`, `TimedOut`, `NotAttempted`, `Busy`, `DrainBlocked`; with `--dry-run`: `Planned`, `Incomplete`, `DrainBlocked`, `Failed` |
 | `addon update`, each add-on | `DryRun`, `UpToDate`, `InProgress`, `Started`, `Completed`, `CompletedWithIssues`, `Unverified`, `WaitFailed`, `Failed`, `NotAttempted` |
 | `cluster upgrade`, the report | `Succeeded`, `Failed`, `Blocked`, `Interrupted`, `TimedOut`, `Aborted` |
 

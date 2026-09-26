@@ -74,6 +74,10 @@ const (
 	// clusterBusy: EKS was already changing the cluster (see
 	// changesInProgress), so the run skipped it. Nothing was started. Exit 3.
 	clusterBusy clusterStatus = "Busy"
+	// clusterDrainBlocked: the PDB drain gate refused the cluster's roll (see
+	// each nodegroup's drainBlockers). Nothing was started. Exit 3. A dry run
+	// has it where the real run would refuse.
+	clusterDrainBlocked clusterStatus = "DrainBlocked"
 )
 
 // EnumValues lists every clusterStatus.
@@ -82,7 +86,7 @@ func (clusterStatus) EnumValues() []string {
 		string(clusterSucceeded), string(clusterIncomplete), string(clusterFailed),
 		string(clusterHealthBlocked), string(clusterHealthWarned), string(clusterVerifyFailed),
 		string(clusterInterrupted), string(clusterTimedOut), string(clusterNotAttempted),
-		string(clusterPlanned), string(clusterBusy),
+		string(clusterPlanned), string(clusterBusy), string(clusterDrainBlocked),
 	}
 }
 
@@ -127,7 +131,8 @@ type fleetDryRunResult struct {
 	Cluster string `json:"cluster" yaml:"cluster"`
 	Region  string `json:"region" yaml:"region"`
 	// Status is Planned, Incomplete (the plan has nodegroups that could not
-	// be read), or Failed (no plan).
+	// be read), DrainBlocked (the real run's drain gate would refuse the
+	// plan), or Failed (no plan).
 	Status clusterStatus `json:"status" yaml:"status"`
 	Plan   *dryRunPlan   `json:"plan,omitempty" yaml:"plan,omitempty"`
 	// Failure is set when the cluster has no plan.
@@ -362,6 +367,7 @@ func finishEmptyFleet(ctx context.Context, disc fleetDiscovery, regions int, fla
 // (exit 4).
 func runFleetDryRun(ctx context.Context, targets []clusterTarget, disc fleetDiscovery, nodegroupPattern string, flags updateAMIFlags) error {
 	var fs diag.List
+	blocked := 0
 	if flags.machine() {
 		plans, err := fleetDryRunResults(ctx, targets, nodegroupPattern, flags)
 		if err != nil {
@@ -372,15 +378,26 @@ func runFleetDryRun(ctx context.Context, targets []clusterTarget, disc fleetDisc
 			return err
 		}
 		fs = doc.Failures
+		for _, p := range plans {
+			if p.Status == clusterDrainBlocked {
+				blocked++
+			}
+		}
 	} else {
-		clusterFailures, err := fleetDryRun(ctx, targets, nodegroupPattern, flags)
+		clusterFailures, nBlocked, err := fleetDryRun(ctx, targets, nodegroupPattern, flags)
 		if err != nil {
 			return err
 		}
+		blocked = nBlocked
 		fs = append(diag.List(append([]diag.Failure(nil), disc.failed...)), clusterFailures...)
 		diag.Sort(fs)
 	}
 	runner.WriteFailures(flags.format, os.Stdout, fleetStderr, fs)
+	// The worst code wins: 4 for a failure, then 3 where the real run's
+	// drain gate would refuse a cluster.
+	if len(fs) == 0 && blocked > 0 {
+		return runner.UnlessInterrupted(ctx, cli.Exit(fmt.Sprintf("the PDB drain gate would refuse %d cluster(s); see the plan", blocked), runner.ExitBlocked))
+	}
 	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(fs))
 }
 
@@ -489,6 +506,9 @@ func updateOneClusterInFleet(parent context.Context, tgt clusterTarget, nodegrou
 	res.Nodegroups = run.nodegroups
 	res.Verification = run.verification
 	switch {
+	case run.drainBlocked():
+		res.Status = clusterDrainBlocked
+		flags.notice(render.Fail, "%s", run.drainBlockedExit().Error())
 	case run.rollFailed() || run.startFailed():
 		res.Status = clusterFailed
 	case errors.Is(monErr, monitoring.ErrCancelled) || parent.Err() != nil:
@@ -631,24 +651,30 @@ func listRegionClusters(ctx context.Context, cfg aws.Config) ([]string, error) {
 }
 
 // fleetDryRun prints the per-cluster plan without mutating anything and
-// returns the failures of the clusters it could not preview fully.
-func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]diag.Failure, error) {
+// returns the failures of the clusters it could not preview fully, and how
+// many clusters the PDB drain gate would refuse.
+func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]diag.Failure, int, error) {
 	th := render.Default(os.Stdout)
 	fmt.Println(th.Section("FLEET DRY RUN") + th.Paint(th.Pal.Dim, fmt.Sprintf("  %d cluster(s)", len(targets))))
 	var fs []diag.Failure
+	blocked := 0
 	for _, tgt := range targets {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, 0, ctx.Err()
 		}
 		printFleetClusterHeader(tgt)
-		fs = append(fs, fleetDryRunCluster(ctx, tgt, nodegroupPattern, flags)...)
+		cfs, drainBlocked := fleetDryRunCluster(ctx, tgt, nodegroupPattern, flags)
+		fs = append(fs, cfs...)
+		if drainBlocked {
+			blocked++
+		}
 	}
-	return fs, nil
+	return fs, blocked, nil
 }
 
 // fleetDryRunCluster previews one cluster under a per-cluster --wait-timeout
-// and returns its failures.
-func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) []diag.Failure {
+// and returns its failures, and whether the drain gate would refuse it.
+func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]diag.Failure, bool) {
 	ctx, cancel := fleetClusterContext(ctx, flags.timeout)
 	defer cancel()
 	eksClient := factory.NewEKSClient(tgt.awsCfg)
@@ -656,19 +682,24 @@ func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern
 	selected, err := selectNodegroupsForUpdate(ctx, eksClient, tgt.cluster, nodegroupPattern, flags)
 	if err != nil {
 		render.Notef(os.Stdout, render.Fail, "could not select nodegroups (see INCOMPLETE DATA)")
-		return []diag.Failure{selectionFailure(tgt.cluster, tgt.region, err)}
+		return []diag.Failure{selectionFailure(tgt.cluster, tgt.region, err)}, false
 	}
-	unreadable, err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.dryRunOptions())
+	result, err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.dryRunOptions())
 	if err != nil {
 		render.Notef(os.Stdout, render.Fail, "could not preview the cluster (see INCOMPLETE DATA)")
 		f := diag.FromError(diag.KindCluster, tgt.cluster, diag.OpDescribeCluster, err)
 		f.Region = tgt.region
-		return []diag.Failure{f}
+		return []diag.Failure{f}, false
+	}
+	toRoll := dryRunToRoll(result.UpdatesNeeded)
+	blockers, checked := drainGate(ctx, tgt.awsCfg, eksClient, tgt.cluster, toRoll, flags, !flags.quiet)
+	if checked {
+		printDrainGate(os.Stdout, toRoll, blockers, flags.force)
 	}
 	if !flags.quiet {
 		printChangelogsForNodegroups(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.changelog)
 	}
-	return dryRunFailures(tgt.cluster, tgt.region, unreadable)
+	return dryRunFailures(tgt.cluster, tgt.region, result.Unreadable), len(blockers) > 0 && !flags.force
 }
 
 // fleetDryRunResults previews every cluster without printing, for the
@@ -706,9 +737,13 @@ func fleetDryRunOne(ctx context.Context, tgt clusterTarget, nodegroupPattern str
 		return res
 	}
 	res.Plan = &plan
-	res.Status = clusterPlanned
-	if len(plan.Failures) > 0 {
+	switch {
+	case plan.drainBlocked():
+		res.Status = clusterDrainBlocked
+	case len(plan.Failures) > 0:
 		res.Status = clusterIncomplete
+	default:
+		res.Status = clusterPlanned
 	}
 	return res
 }
@@ -772,6 +807,8 @@ func summarizeClusterResult(r clusterUpdateResult) (render.Status, string) {
 		return render.Unknown, "not started (the run was interrupted)"
 	case clusterBusy:
 		return render.Warn, fmt.Sprintf("skipped: busy (%s)", strings.Join(r.ChangesInProgress, ", "))
+	case clusterDrainBlocked:
+		return render.Fail, fmt.Sprintf("drain-blocked, nothing started (%s)", r.run.drainBlockers.text(r.run.drainBlockedOrder()))
 	case clusterVerifyFailed:
 		return render.Warn, fmt.Sprintf("updated %d, verification issues", started)
 	case clusterIncomplete:
@@ -812,7 +849,7 @@ func fleetExit(results []clusterUpdateResult, failedRegions []diag.Failure) erro
 		switch r.Status {
 		case clusterFailed, clusterIncomplete:
 			bump(runner.ExitIncomplete)
-		case clusterHealthBlocked, clusterBusy:
+		case clusterHealthBlocked, clusterBusy, clusterDrainBlocked:
 			bump(runner.ExitBlocked)
 		case clusterHealthWarned:
 			bump(runner.ExitNeedsAttention)

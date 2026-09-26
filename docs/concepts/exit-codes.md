@@ -172,7 +172,7 @@ See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
 | `0` | Success: updates started or completed as expected |
 | `1` | An error, an interrupt (Ctrl+C), a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health warnings (with `--health-only` or `--require-healthy`) |
-| `3` | Blocked: a pre-flight check failed, or EKS was already changing the cluster. Nothing was rolled |
+| `3` | Blocked: a pre-flight check failed, the PDB drain gate found a blocker (without `--force`), or EKS was already changing the cluster. Nothing was rolled. A `--dry-run` exits `3` where the drain gate would refuse |
 | `4` | A failure: a nodegroup could not be read (also in a `--dry-run` preview or after the roll), or its update could not start. With `--health-only`, a pass whose checks could not read everything |
 | `5` | Post-roll verification found issues (nodes not Ready, or newly stuck pods) |
 
@@ -186,7 +186,7 @@ AWS. Check it with `refresh nodegroup list <cluster>`.
 In fleet mode (`--all-clusters`) the run exits with the worst code across
 clusters: `5`, then `4`, then `3`, then `2`, then `1`. A cluster stopped by
 health warnings (`--health-only` or `--require-healthy`) counts as `2`, a
-cluster skipped as `Busy` counts as `3`, and
+cluster skipped as `Busy` or refused as `DrainBlocked` counts as `3`, and
 an interrupted or timed-out cluster counts as `1`. A region whose clusters
 could not be listed counts as `4`; see [Region sweeps](#region-sweeps).
 
@@ -231,6 +231,14 @@ case $? in
   *) echo "update failed" ;;
 esac
 ```
+
+## Changes after 0.12 (mutating commands)
+
+| Command | Before | Now |
+|---|---|---|
+| `nodegroup update` (a PodDisruptionBudget would block the drain of a nodegroup to roll) | Warning; the roll started and stalled | `3`, nothing started; `--force` rolls anyway |
+| `nodegroup update --dry-run` (the same) | `0` | `3` |
+| `nodegroup update`, `nodegroup scale`, `addon update` (EKS is already changing the cluster) | `1` from EKS after the prompt | `3` before the prompt |
 
 ## Changes in 0.12.0 (mutating commands)
 

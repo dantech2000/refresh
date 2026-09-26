@@ -121,9 +121,10 @@ type Options struct {
 }
 
 // PerformDryRun shows what would be updated without making changes. It
-// returns the nodegroups that could not be described (ActionUnknown), so the
-// caller can report them as failures.
-func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, opts Options) ([]NodegroupUpdate, error) {
+// returns the analysis: the caller reports the nodegroups that could not be
+// described (Unreadable) as failures, and gates the ones that would roll
+// (UpdatesNeeded).
+func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, clusterName string, selectedNodegroups []string, opts Options) (*DryRunResult, error) {
 	runner, err := newDryRunner(ctx, awsCfg, eksClient, clusterName, opts.Force, opts.Quiet)
 	if err != nil {
 		return nil, err
@@ -133,7 +134,7 @@ func PerformDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client
 	result := runner.Analyze(ctx, selectedNodegroups)
 	runner.DisplayResults(result)
 
-	return result.Unreadable, nil
+	return result, nil
 }
 
 // Preview analyzes the selected nodegroups, in order, without printing
