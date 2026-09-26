@@ -546,7 +546,11 @@ refresh cluster rollback [cluster] [flags]
 EKS accepts a rollback only when all of these are true. refresh checks them
 first, prints the plan, and exits `3` when one fails:
 
-- The upgrade to the current version started less than about 7 days ago.
+- The upgrade to the current version finished less than 7 days ago. EKS
+  counts from when the upgrade finished, but the update history records only
+  when it started, so refresh refuses only once the window has certainly
+  closed; in the last few hours it warns and lets EKS decide. Just before the
+  first change, refresh checks the window, the target, and the insights again.
   refresh reads the date from the cluster's update history (`ListUpdates`).
   EKS counts from the end of the upgrade, so the dates are approximate, and
   EKS has the final word.

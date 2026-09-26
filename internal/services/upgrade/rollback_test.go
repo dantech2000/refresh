@@ -449,3 +449,64 @@ func TestValidateRollbackTimeout(t *testing.T) {
 		}
 	}
 }
+
+// From review. EKS counts the 7-day window from the upgrade finishing, but an
+// update records only its start: refresh blocks only once even a slow update
+// would have closed it, and leaves the last hours to EKS with a notice.
+func TestRollbackPlan_WindowSlack(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		age     time.Duration
+		blocked bool
+	}{
+		{"just past 7 days from the start", 7*24*time.Hour + time.Hour, false},
+		{"well past", 7*24*time.Hour + 3*time.Hour, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newRollbackWorld()
+			w.history[1].CreatedAt = aws.Time(testNow.Add(-tc.age))
+			svc, _ := w.service()
+			plan := buildRollback(t, svc, RollbackOptions{})
+			if blocked := eligibility(t, plan).Status == StatusBlocked; blocked != tc.blocked {
+				t.Fatalf("blocked = %v, want %v: %+v", blocked, tc.blocked, eligibility(t, plan))
+			}
+			if !tc.blocked && !strings.Contains(strings.Join(plan.Notices, "; "), "may have just closed") {
+				t.Errorf("notices = %v", plan.Notices)
+			}
+		})
+	}
+}
+
+// From review: a rollback in progress to another version is not this plan's
+// rollback; resuming it would roll nodes and add-ons back to the wrong version.
+func TestRollbackPlan_InFlightRollbackToAnotherVersionBlocks(t *testing.T) {
+	w := newRollbackWorld()
+	u := versionUpdate("u-rb", ekstypes.UpdateTypeVersionRollback, "1.31", testNow)
+	u.Status = ekstypes.UpdateStatusInProgress
+	w.history = append(w.history, u)
+	svc, _ := w.service()
+	e := eligibility(t, buildRollback(t, svc, RollbackOptions{}))
+	if e.Status != StatusBlocked || !strings.Contains(e.Reason, "a rollback to 1.31 is in progress (update u-rb), not to 1.32") {
+		t.Fatalf("eligibility = %+v", e)
+	}
+}
+
+// From review: a plan confirmed a while ago is checked again before the first
+// change. Here the window closed in between: nothing is rolled back.
+func TestExecuteRollback_RechecksBeforeTheFirstChange(t *testing.T) {
+	w := newRollbackWorld()
+	svc, m := w.service()
+	events := recordMutations(m)
+	plan := buildRollback(t, svc, RollbackOptions{SkipInsightsCheck: true})
+	if plan.Blocked() {
+		t.Fatalf("plan blocked: %v", plan.Blockers())
+	}
+	svc.now = func() time.Time { return testNow.Add(6 * 24 * time.Hour) } // 8 days after the upgrade
+	report, err := svc.ExecuteRollback(context.Background(), plan, ExecuteOptions{Yes: true, SkipInsightsCheck: true})
+	if err == nil || !strings.Contains(err.Error(), "blocked now; nothing was changed") || report.Status != RunBlocked {
+		t.Fatalf("ExecuteRollback = %v (%+v)", err, report)
+	}
+	if len(*events) != 0 {
+		t.Fatalf("changed %v after the window closed", *events)
+	}
+}

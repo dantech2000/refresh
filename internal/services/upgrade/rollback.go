@@ -33,6 +33,12 @@ import (
 // RollbackWindow is how long after an upgrade EKS accepts a rollback.
 const RollbackWindow = 7 * 24 * time.Hour
 
+// rollbackWindowSlack covers the unknown length of the upgrade itself. EKS
+// counts the window from the upgrade completing, but an update records only
+// when it was created, so refresh blocks only once even a slow control-plane
+// update would have closed the window, and leaves the last hours to EKS.
+const rollbackWindowSlack = 2 * time.Hour
+
 // Rollback timeout bounds (RollbackConfig.TimeoutMinutes).
 const (
 	MinRollbackTimeout = 2 * time.Hour
@@ -388,6 +394,10 @@ func (s *Service) BuildRollbackPlan(ctx context.Context, clusterName string, opt
 
 	var blockers, reasons []string
 	switch {
+	case inFlightRollback && updateVersion(h.inFlight) != target:
+		// Not this plan's rollback: resuming it would roll nodes and
+		// add-ons back to a version the control plane is not going to.
+		blockers = append(blockers, fmt.Sprintf("a rollback to %s is in progress (update %s), not to %s: wait for it to finish, then rerun", updateVersion(h.inFlight), aws.ToString(h.inFlight.Id), target))
 	case inFlightRollback:
 		reasons = append(reasons, fmt.Sprintf("the rollback to %s is in progress (update %s); refresh waits for it", updateVersion(h.inFlight), aws.ToString(h.inFlight.Id)))
 	case cluster.Status != ekstypes.ClusterStatusActive || h.inFlight != nil:
@@ -398,9 +408,13 @@ func (s *Service) BuildRollbackPlan(ctx context.Context, clusterName string, opt
 		started := aws.ToTime(h.upgrade.CreatedAt)
 		until := started.Add(RollbackWindow)
 		plan.UpgradedAt, plan.AvailableUntil = &started, &until
-		if !s.clock().Before(until) {
+		switch now := s.clock(); {
+		case !now.Before(until.Add(rollbackWindowSlack)):
 			blockers = append(blockers, fmt.Sprintf("the upgrade to %s started about %s; the 7-day rollback window closed about %s", current, aboutDate(started), aboutDate(until)))
-		} else {
+		case !now.Before(until):
+			plan.Notices = append(plan.Notices, fmt.Sprintf("the 7-day rollback window may have just closed (the upgrade to %s started about %s, and EKS counts from when it finished); EKS decides", current, aboutDate(started)))
+			reasons = append(reasons, fmt.Sprintf("upgraded to %s about %s; the rollback window ends about now", current, aboutDate(started)))
+		default:
 			reasons = append(reasons, fmt.Sprintf("upgraded to %s about %s; rollback available until about %s", current, aboutDate(started), aboutDate(until)))
 		}
 	}
@@ -621,6 +635,24 @@ func (s *Service) ExecuteRollback(ctx context.Context, plan *RollbackPlan, opts 
 	if err := ValidateRollbackTimeout(opts.RollbackTimeout); err != nil {
 		report.Status = RunFailed
 		return report, err
+	}
+	// The plan may be stale by now (a confirmation left open while the
+	// window closed, an insight turning ERROR, another rollback started):
+	// check again against live state before the first change, so no
+	// nodegroup or add-on is rolled back for a control-plane rollback EKS
+	// would refuse.
+	fresh, err := s.BuildRollbackPlan(ctx, plan.ClusterName, RollbackOptions{SkipNodegroups: opts.SkipNodegroups, SkipInsightsCheck: opts.SkipInsightsCheck})
+	if err != nil {
+		report.Status = RunFailed
+		return report, fmt.Errorf("checking the rollback again before it starts: %w", err)
+	}
+	switch {
+	case fresh.Blocked():
+		report.Status = RunBlocked
+		return report, fmt.Errorf("the rollback is blocked now; nothing was changed:\n  %s", joinLines(fresh.Blockers()))
+	case fresh.TargetVersion != plan.TargetVersion:
+		report.Status = RunBlocked
+		return report, fmt.Errorf("the rollback target changed from %s to %s since the plan; nothing was changed: plan again", plan.TargetVersion, fresh.TargetVersion)
 	}
 	return runPhases(ctx, plan.ClusterName, s.rollbackPhases(plan, opts), opts, report)
 }
