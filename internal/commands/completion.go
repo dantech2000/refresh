@@ -74,7 +74,9 @@ Examples:
 			case "zsh":
 				_, _ = fmt.Fprint(root.Writer, zshCompletionScript)
 			case "fish":
+				restore := hideHidden(root)
 				script, err := root.ToFishCompletion()
+				restore()
 				if err != nil {
 					return fmt.Errorf("generating fish completion: %w", err)
 				}
@@ -84,5 +86,32 @@ Examples:
 			}
 			return nil
 		},
+	}
+}
+
+// hideHidden takes hidden commands out of cmd's tree and returns a func that
+// puts them back. urfave's fish generator leaves a hidden command's name out
+// but still writes its flags and lists it with the top-level commands; bash
+// and zsh ask the binary at runtime, which already skips hidden commands.
+func hideHidden(cmd *cli.Command) (restore func()) {
+	var undo []func()
+	var walk func(c *cli.Command)
+	walk = func(c *cli.Command) {
+		all := c.Commands
+		visible := make([]*cli.Command, 0, len(all))
+		for _, sub := range all {
+			if !sub.Hidden {
+				visible = append(visible, sub)
+				walk(sub)
+			}
+		}
+		c.Commands = visible
+		undo = append(undo, func() { c.Commands = all })
+	}
+	walk(cmd)
+	return func() {
+		for _, u := range undo {
+			u()
+		}
 	}
 }
