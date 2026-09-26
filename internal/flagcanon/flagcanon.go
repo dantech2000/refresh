@@ -146,19 +146,14 @@ func RemovedShorthandError(cmd *cli.Command, err error) error {
 
 // HandleUsageError is the OnUsageError handler for every command. A removed
 // shorthand gets an error that names its replacement. Any other usage error
-// keeps urfave/cli's default behavior: the error and the command help on
-// stderr.
-func HandleUsageError(_ context.Context, cmd *cli.Command, err error, isSubcommand bool) error {
+// is one error that points at the command's --help. It prints no help page:
+// urfave/cli's help goes to the root Writer, stdout, which broke -o
+// json|yaml's one-document stdout (found testing against a real cluster).
+func HandleUsageError(_ context.Context, cmd *cli.Command, err error, _ bool) error {
 	if rerr := RemovedShorthandError(cmd, err); rerr != nil {
 		return rerr
 	}
-	_, _ = fmt.Fprintf(cmd.Root().ErrWriter, "Incorrect Usage: %s\n\n", err.Error())
-	if isSubcommand {
-		_ = cli.ShowSubcommandHelp(cmd)
-	} else {
-		_ = cli.ShowRootCommandHelp(cmd)
-	}
-	return err
+	return fmt.Errorf("%w (run '%s --help' for usage)", err, cmd.FullName())
 }
 
 // Install applies the CLI-wide parsing rules to root and every command

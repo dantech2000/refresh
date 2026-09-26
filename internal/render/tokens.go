@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -107,4 +108,19 @@ func Plural(n int, noun string) string {
 		return fmt.Sprintf("%d %s", n, noun)
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// Age is a coarse, readable age: "3 days", "1 hour", "12 minutes", or "just
+// now". A negative duration (clock skew) reads as "just now".
+func Age(d time.Duration) string {
+	switch {
+	case d >= 24*time.Hour:
+		return Plural(int(d.Hours()/24), "day")
+	case d >= time.Hour:
+		return Plural(int(d.Hours()), "hour")
+	case d >= time.Minute:
+		return Plural(int(d.Minutes()), "minute")
+	default:
+		return "just now"
+	}
 }

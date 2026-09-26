@@ -287,7 +287,7 @@ func runMultiRegionListWithProgress(ctx context.Context, awsCfg aws.Config, clus
 	}
 
 	if len(res.Summaries) > 0 {
-		render.SpinnerDone(spinner, fmt.Sprintf("Found %d clusters across %d regions", len(res.Summaries), res.Queried))
+		render.SpinnerDone(spinner, fmt.Sprintf("Found %s across %s", render.Plural(len(res.Summaries), "cluster"), render.Plural(res.Queried, "region")))
 	} else {
 		render.SpinnerDone(spinner, "No clusters found")
 	}

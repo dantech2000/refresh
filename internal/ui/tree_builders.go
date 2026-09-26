@@ -16,7 +16,11 @@ func NewRegionTreeBuilder() *RegionTreeBuilder {
 
 // AddRegion adds a region root node
 func (rtb *RegionTreeBuilder) AddRegion(name string, clusterCount int) *RegionTreeBuilder {
-	rtb.builder.AddRoot("REGION " + fmt.Sprintf("%s (%d clusters)", name, clusterCount))
+	noun := "clusters"
+	if clusterCount == 1 {
+		noun = "cluster"
+	}
+	rtb.builder.AddRoot("REGION " + fmt.Sprintf("%s (%d %s)", name, clusterCount, noun))
 	return rtb
 }
 
