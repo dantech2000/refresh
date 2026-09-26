@@ -184,9 +184,11 @@ func screenBindings() []binding {
 	bs = append(bs, actionBindings()...)
 	bs = append(bs, logBindings(screenRolls, func(m *Model) *int { return &m.rollIdx }, func(m Model) int { return len(m.st.Rolls) }, "rolls")...)
 	bs = append(bs, logBindings(screenUpgrade, func(m *Model) *int { return &m.upIdx }, func(m Model) int { return len(m.st.Upgrades) }, "upgrades")...)
+	// An upgrade started elsewhere is watched only: no stop, pause, or
+	// answer keys for it.
 	running := func(m Model) bool {
 		u, ok := m.upgrade()
-		return m.screen == screenUpgrade && ok && u.Running()
+		return m.screen == screenUpgrade && ok && u.Running() && !u.StartedElsewhere
 	}
 	asking := func(m Model) bool {
 		u, ok := m.upgrade()

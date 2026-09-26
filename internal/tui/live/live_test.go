@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
@@ -69,6 +70,12 @@ func newTestBackend(t *testing.T, f *fleet, regions ...string) *Backend {
 		},
 		noRegionAnswered:  func(context.Context, aws.Config, []string, []error) error { return nil },
 		changesInProgress: func(context.Context, aws.Config, string) ([]string, error) { return nil, nil },
+	}
+	// No change started elsewhere unless a test says so.
+	b.roll.findUpdate = func(context.Context, aws.Config, string, string) (*ekstypes.Update, error) { return nil, nil }
+	b.roll.waitCluster = func(ctx context.Context, _ aws.Config, _, _ string) (ekstypes.UpdateStatus, string, error) {
+		<-ctx.Done()
+		return "", "", ctx.Err()
 	}
 	return b
 }

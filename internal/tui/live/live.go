@@ -155,6 +155,9 @@ type Backend struct {
 	upgrades []*liveUpgrade
 	// newUpgrader builds the orchestrator for a cluster's config.
 	newUpgrader func(aws.Config) upgrader
+	// adopting marks the changes started elsewhere that are being looked up
+	// or watched (acceptKey for a nodegroup, "cluster/region/name").
+	adopting map[string]bool
 }
 
 // New returns a backend for the accounts behind cfg. Call Run to start
@@ -186,6 +189,7 @@ func New(cfg aws.Config, opts Options) *Backend {
 		targets:          map[string]target{},
 		readiness:        map[string]*state.Readiness{},
 		claimed:          map[target]string{},
+		adopting:         map[string]bool{},
 		accepted:         map[string][]string{},
 		acceptedAddons:   map[target][]addonChange{},
 		acceptedUpgrades: map[target]acceptedUpgrade{},
@@ -433,6 +437,7 @@ func (b *Backend) sweep(ctx context.Context) {
 	}
 	b.diff(clusters, targets)
 	b.clusters, b.targets = clusters, targets
+	b.adoptExternal(rows)
 	b.answered, b.total = len(res.Answered), len(b.opts.Regions)-len(res.Skipped)
 	b.problem = problem
 	b.syncedAt = b.now()
@@ -766,6 +771,9 @@ func (b *Backend) StopAfterCurrent(_ context.Context, key string) error {
 	if u == nil {
 		return fmt.Errorf("no upgrade is running on %s", key)
 	}
+	if u.st.StartedElsewhere {
+		return fmt.Errorf("the upgrade of %s was started elsewhere; it can only be watched here", key)
+	}
 	u.st.StopAfter = !u.st.StopAfter
 	poke(u.wake)
 	return nil
@@ -783,6 +791,9 @@ func (b *Backend) TogglePause(_ context.Context, key string) error {
 	if u == nil {
 		return fmt.Errorf("no upgrade is running on %s", key)
 	}
+	if u.st.StartedElsewhere {
+		return fmt.Errorf("the upgrade of %s was started elsewhere; it can only be watched here", key)
+	}
 	u.st.Paused = !u.st.Paused
 	poke(u.wake)
 	return nil
@@ -798,6 +809,9 @@ func (b *Backend) Answer(_ context.Context, key string, yes bool) error {
 	u := b.runningUpgrade(key)
 	if u == nil || u.st.Question == "" {
 		return fmt.Errorf("the upgrade of %s is not waiting on a question", key)
+	}
+	if u.st.StartedElsewhere {
+		return fmt.Errorf("the upgrade of %s was started elsewhere; it can only be watched here", key)
 	}
 	// One answer per question: clear it now, so a second key press before
 	// ask wakes up cannot answer the next question.

@@ -58,6 +58,11 @@ type rollServices struct {
 	// waitUpdate polls the EKS update until it ends or ctx ends.
 	waitUpdate func(ctx context.Context, cfg aws.Config, cluster, nodegroup, updateID string, timeout time.Duration) (ekstypes.UpdateStatus, string, error)
 	observe    func(kube kubernetes.Interface, nodegroup string) rollObserver
+	// findUpdate returns the EKS update in progress on a nodegroup, or on
+	// the cluster when nodegroup is "" (a change started elsewhere).
+	findUpdate func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Update, error)
+	// waitCluster polls a cluster-level update until it ends.
+	waitCluster func(ctx context.Context, cfg aws.Config, cluster, updateID string) (ekstypes.UpdateStatus, string, error)
 }
 
 func defaultRollServices(opts Options) rollServices {
@@ -131,10 +136,14 @@ func defaultRollServices(opts Options) rollServices {
 		observe: func(kube kubernetes.Interface, nodegroup string) rollObserver {
 			return noderoll.NewKubeObserver(kube, nodegroup, "")
 		},
+		findUpdate: inProgressUpdate,
+		waitCluster: func(ctx context.Context, cfg aws.Config, cluster, updateID string) (ekstypes.UpdateStatus, string, error) {
+			return waitClusterUpdate(ctx, cfg, cluster, updateID, opts.PollInterval)
+		},
 	}
 }
 
-// liveRoll is a roll this backend started.
+// liveRoll is a roll this backend started or watches (StartedElsewhere).
 type liveRoll struct {
 	t       target // the cluster, by region and name
 	st      state.Roll

@@ -42,7 +42,11 @@ func (m Model) upgradeHeader(u state.Upgrade, w int) Block {
 	if !u.Running() {
 		elapsed = u.EndedAt.Sub(u.StartedAt)
 	}
-	right := Line{sub("elapsed "), tx(dur(elapsed)), sp(2), dimS("safe to quit · a rerun resumes from live cluster state"), sp(1)}
+	note := "safe to quit · a rerun resumes from live cluster state"
+	if u.StartedElsewhere {
+		note = "started elsewhere · watch only"
+	}
+	right := Line{sub("elapsed "), tx(dur(elapsed)), sp(2), dimS(note), sp(1)}
 	if title.Width()+right.Width() > w {
 		right = Line{sub("elapsed "), tx(dur(elapsed)), sp(1)}
 	}
@@ -110,7 +114,12 @@ func (m Model) phaseList(u state.Upgrade, w, h int) Block {
 		pauseOn = fg(colYellow, "on")
 	}
 	var opts Block
-	if u.Running() {
+	if u.Running() && u.StartedElsewhere {
+		opts = box(Line{bold(colMauve, "Watching")}, Block{
+			{sub("This upgrade was started outside this UI. Stop or pause it where it runs.")},
+			{dimS("Its add-on updates and nodegroup rolls show on the Rolls screen.")},
+		}, w-2, colSurface1)
+	} else if u.Running() {
 		opts = box(Line{bold(colMauve, "Stop options")}, Block{
 			{chip("S"), sp(1), sub("stop after the current step "), stopOn},
 			{chip("P"), sp(1), sub("pause before next phase "), pauseOn},

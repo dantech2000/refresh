@@ -239,7 +239,14 @@ request is still a failure. The run is bounded by
 `config.DefaultUpgradeTimeout`, as `cluster upgrade` is. An add-on dry run
 that could not preview every add-on is blocked, as `addon update --all`
 fails closed. Without the flag `Start`, `StopAfterCurrent`, `TogglePause`,
-and `Answer` return `live.ErrReadOnly` and plans name the CLI command. `State` never calls AWS, so the TUI's fast
+and `Answer` return `live.ErrReadOnly` and plans name the CLI command. Changes started elsewhere (the CLI, the console)
+are adopted by the sweep (`live/observed.go`): an `UPDATING` nodegroup gets a
+watched roll (the EKS update found with `ListUpdates`, the node view, the
+post-roll nodegroup check) and an `UPDATING` cluster a watched control-plane
+phase; both are `StartedElsewhere`, claim nothing, and refuse stop, pause,
+and answer. Before any start the backend re-reads the cluster, nodegroup,
+and add-on statuses and refuses while one is changing (`checkNotBusy`).
+`State` never calls AWS, so the TUI's fast
 polling is free. `internal/sim` is a deterministic simulated fleet on a
 virtual clock (rolls, add-on updates, readiness checks, upgrades; node
 lifecycle events come from the real `noderoll.Tracker`). The simulator is dev-only:

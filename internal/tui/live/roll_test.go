@@ -3,6 +3,7 @@ package live
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -518,5 +519,87 @@ func TestRollSnapshotNamesTheDrainingPods(t *testing.T) {
 	st.Snapshot.Nodes[0].PodList[0].Name = "changed"
 	if r.st.Snapshot.Nodes[0].PodList[0].Name != "default/web-1" {
 		t.Fatal("the snapshot shares the pod list with the roll")
+	}
+}
+
+// A real `cluster upgrade` from the CLI showed nothing on the Rolls or
+// Upgrade screens. The sweep now adopts changes started elsewhere: an
+// UPDATING nodegroup gets a watched roll, an UPDATING cluster a watched
+// upgrade; both are marked, cannot be controlled here, adopted once, and end
+// when EKS says so.
+func TestChangesStartedElsewhereAreWatched(t *testing.T) {
+	rig := newRollRig(t)
+	b := rig.b
+	rows := prodRows() // ng-system is UPDATING
+	rows[0].State = "UPDATING"
+	b.svc.listStatuses = func(_ context.Context, cfg aws.Config, _ statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
+		if cfg.Region != "us-east-1" {
+			return nil, nil
+		}
+		return rows, nil
+	}
+	created := time.Date(2026, 9, 25, 11, 50, 0, 0, time.UTC)
+	var looked atomic.Int64
+	b.roll.findUpdate = func(_ context.Context, _ aws.Config, cluster, ng string) (*ekstypes.Update, error) {
+		looked.Add(1)
+		switch ng {
+		case "ng-system":
+			return &ekstypes.Update{Id: aws.String("u-ng"), Status: ekstypes.UpdateStatusInProgress, CreatedAt: &created,
+				Params: []ekstypes.UpdateParam{{Type: ekstypes.UpdateParamTypeVersion, Value: aws.String("1.32")}}}, nil
+		case "":
+			return &ekstypes.Update{Id: aws.String("u-cp"), Type: ekstypes.UpdateTypeVersionUpdate, Status: ekstypes.UpdateStatusInProgress, CreatedAt: &created,
+				Params: []ekstypes.UpdateParam{{Type: ekstypes.UpdateParamTypeVersion, Value: aws.String("1.32")}}}, nil
+		}
+		return nil, nil
+	}
+	cpDone := make(chan struct{})
+	b.roll.waitCluster = func(ctx context.Context, _ aws.Config, _, _ string) (ekstypes.UpdateStatus, string, error) {
+		select {
+		case <-cpDone:
+			return ekstypes.UpdateStatusSuccessful, "", nil
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		}
+	}
+	b.mu.Lock()
+	b.runCtx = t.Context()
+	b.mu.Unlock()
+
+	b.sweep(t.Context())
+	var st state.State
+	for {
+		st, _ = b.State(t.Context())
+		if len(st.Rolls) == 1 && len(st.Upgrades) == 1 {
+			break
+		}
+		runtime.Gosched()
+	}
+	r, u := st.Rolls[0], st.Upgrades[0]
+	if !r.StartedElsewhere || r.Nodegroup != "ng-system" || !r.StartedAt.Equal(created) || !u.StartedElsewhere || u.To != "1.32" || u.Phases[0].Status != state.PhaseRunning {
+		t.Fatalf("roll %+v\nupgrade %+v", r, u)
+	}
+	if err := b.StopAfterCurrent(t.Context(), "prod-api"); err == nil || !strings.Contains(err.Error(), "started elsewhere") {
+		t.Fatalf("StopAfterCurrent = %v", err)
+	}
+	// A second sweep while they run adopts nothing new.
+	b.sweep(t.Context())
+	if st, _ := b.State(t.Context()); len(st.Rolls) != 1 || len(st.Upgrades) != 1 {
+		t.Fatalf("adopted twice: %d rolls, %d upgrades", len(st.Rolls), len(st.Upgrades))
+	}
+
+	rig.release <- ekstypes.UpdateStatusSuccessful
+	close(cpDone)
+	b.Close()
+	st, _ = b.State(t.Context())
+	if r := st.Rolls[0]; r.Running() || r.Failed != "" {
+		t.Fatalf("roll after its update ended: %+v", r)
+	}
+	if u := st.Upgrades[0]; u.Running() || u.Phases[0].Status != state.PhaseDone || u.Phases[0].Items[0].Status != state.PhaseDone {
+		t.Fatalf("upgrade after its update ended: %+v", u)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.adopting) != 0 || len(b.claimed) != 0 {
+		t.Fatalf("left adopting %v, claimed %v", b.adopting, b.claimed)
 	}
 }

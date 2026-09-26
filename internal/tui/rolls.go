@@ -36,6 +36,9 @@ func (m Model) rollHeader(r state.Roll, w int) Block {
 	if r.UpgradeOf != "" {
 		title = append(title, sp(2), fg(colBlue, "part of the upgrade"))
 	}
+	if r.StartedElsewhere {
+		title = append(title, sp(2), fg(colPeach, "started elsewhere · watch only"))
+	}
 	elapsed := m.st.Now.Sub(r.StartedAt)
 	if !r.Running() {
 		elapsed = r.EndedAt.Sub(r.StartedAt)

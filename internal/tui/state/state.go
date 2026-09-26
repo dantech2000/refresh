@@ -206,10 +206,13 @@ type Gate struct {
 // Roll is one managed-nodegroup rolling update.
 type Roll struct {
 	Cluster, Nodegroup string
-	FromVersion        string
-	ToVersion          string
-	FromAMI, ToAMI     string
-	MaxUnavailable     int
+	// StartedElsewhere marks a roll this UI did not start (the CLI, the
+	// console, another tool): it is watched, not controlled.
+	StartedElsewhere bool
+	FromVersion      string
+	ToVersion        string
+	FromAMI, ToAMI   string
+	MaxUnavailable   int
 	// MaxUnavailableText, when set, is shown instead of MaxUnavailable (a
 	// percentage, or "unknown").
 	MaxUnavailableText string
@@ -266,11 +269,14 @@ const (
 
 // Upgrade is one cluster upgrade run by the orchestrator.
 type Upgrade struct {
-	Cluster   string
-	From, To  string
-	StartedAt time.Time
-	EndedAt   time.Time
-	Phases    []Phase
+	// StartedElsewhere marks an upgrade this UI did not start: it shows the
+	// control-plane change EKS reports, and cannot be paused or stopped here.
+	StartedElsewhere bool
+	Cluster          string
+	From, To         string
+	StartedAt        time.Time
+	EndedAt          time.Time
+	Phases           []Phase
 	// StopAfter stops the run once the current nodegroup finishes.
 	StopAfter bool
 	// Paused holds the run before its next phase.
