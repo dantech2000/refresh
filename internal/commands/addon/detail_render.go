@@ -37,10 +37,10 @@ func addonDetailLines(th *render.Theme, cluster string, d *addons.AddonDetails) 
 		kv = append(kv, [2]string{"service account role", th.Paint(pal.Text, d.ServiceAccountRole)})
 	}
 	if d.CreatedAt != nil {
-		kv = append(kv, [2]string{"created", th.Paint(pal.Text, d.CreatedAt.Format(time.RFC3339))})
+		kv = append(kv, [2]string{"created", th.Paint(pal.Text, d.CreatedAt.Format("2006-01-02")) + th.Paint(pal.Dim, "  ("+render.Age(time.Since(*d.CreatedAt))+")")})
 	}
 	if d.ModifiedAt != nil {
-		kv = append(kv, [2]string{"modified", th.Paint(pal.Text, d.ModifiedAt.Format(time.RFC3339))})
+		kv = append(kv, [2]string{"modified", th.Paint(pal.Text, d.ModifiedAt.Format("2006-01-02")) + th.Paint(pal.Dim, "  ("+render.Age(time.Since(*d.ModifiedAt))+" ago)")})
 	}
 	for _, l := range th.KV(kv) {
 		out = append(out, "  "+l)

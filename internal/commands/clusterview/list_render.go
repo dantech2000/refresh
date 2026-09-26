@@ -24,7 +24,7 @@ func clusterListLines(th *render.Theme, summaries []clustersvc.ClusterSummary, m
 	pal := th.Pal
 	head := th.Bold(pal.Mauve, "CLUSTERS") + "  " + th.Paint(pal.White, fmt.Sprintf("%d", len(summaries)))
 	if multiRegion {
-		head += th.Paint(pal.Dim, fmt.Sprintf(" · %d regions", distinctRegionsSummary(summaries)))
+		head += th.Paint(pal.Dim, " · "+render.Plural(distinctRegionsSummary(summaries), "region"))
 	}
 	out := []string{head, ""}
 

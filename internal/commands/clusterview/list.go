@@ -104,9 +104,9 @@ func OutputClustersTree(summaries []clustersvc.ClusterSummary, failures []diag.F
 		regionTree.FinishRegion()
 	}
 
-	title := fmt.Sprintf("EKS Clusters (%d clusters)", len(summaries))
+	title := fmt.Sprintf("EKS Clusters (%s)", render.Plural(len(summaries), "cluster"))
 	if multiRegion {
-		title = fmt.Sprintf("EKS Clusters (%d regions, %d clusters)", len(regions), len(summaries))
+		title = fmt.Sprintf("EKS Clusters (%s, %s)", render.Plural(len(regions), "region"), render.Plural(len(summaries), "cluster"))
 	}
 	if err := regionTree.RenderWithTitle(title); err != nil {
 		return err

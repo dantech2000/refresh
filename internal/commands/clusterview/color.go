@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/render"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 )
 
@@ -70,20 +71,4 @@ func truncateEndpoint(endpoint string) string {
 	return endpoint
 }
 
-func formatAge(d time.Duration) string {
-	// Clamp negatives (clock skew / a future timestamp) so we never render a
-	// nonsensical "-3 minutes".
-	if d < 0 {
-		d = 0
-	}
-	if days := int(d.Hours() / 24); days > 0 {
-		return fmt.Sprintf("%d days", days)
-	}
-	if hours := int(d.Hours()); hours > 0 {
-		return fmt.Sprintf("%d hours", hours)
-	}
-	if mins := int(d.Minutes()); mins > 0 {
-		return fmt.Sprintf("%d minutes", mins)
-	}
-	return "just now"
-}
+func formatAge(d time.Duration) string { return render.Age(d) }

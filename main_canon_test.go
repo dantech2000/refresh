@@ -170,11 +170,12 @@ func TestUnknownFlagKeepsDefaultUsageError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -bogus") {
 		t.Fatalf("err = %v, want the undefined-flag error", err)
 	}
-	if !strings.Contains(errOut.String(), "Incorrect Usage") {
-		t.Errorf("stderr = %q, want the usage error", errOut.String())
+	if !strings.Contains(err.Error(), "run 'refresh cluster describe --help' for usage") {
+		t.Errorf("err = %v, want a pointer to --help", err)
 	}
-	if !strings.Contains(out.String(), "USAGE") {
-		t.Errorf("stdout = %q, want the command help", out.String())
+	// Stdout stays clean for -o json|yaml: no help page anywhere.
+	if out.Len() != 0 || strings.Contains(errOut.String(), "USAGE") {
+		t.Errorf("stdout = %q, stderr = %q", out.String(), errOut.String())
 	}
 }
 

@@ -315,7 +315,7 @@ func (s *ServiceImpl) Update(ctx context.Context, clusterName, addonName string,
 	}
 	previousVersion := aws.ToString(currentDesc.Addon.AddonVersion)
 
-	startedAt := time.Now()
+	startedAt := time.Now().UTC().Truncate(time.Second) // UTC like every other timestamp in the output
 	result := &AddonUpdateResult{
 		AddonName:       addonName,
 		PreviousVersion: previousVersion,
