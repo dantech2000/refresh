@@ -60,6 +60,7 @@ top-level list.
 
 | Command | Document on stdout |
 |---|---|
+| `nodegroup scale` | `cluster`, `nodegroup`, `region`, `outcome`, `dryRun`, `before` and `after` (`desired`, `min`, `max`), `waited`, `nodegroupStatus` after a `--wait`, `pdbGate` with `--check-pdbs`, and `failures` |
 | `nodegroup update` | `cluster`, `nodegroups` (one entry per selected nodegroup: `name`, `status`, `updateId` once the update started, `reason` for a skip, `failure`, `drainBlockers` when the PDB drain gate refused the run), `verification`, `health` (the pre-flight verdict, when a check ran), and `failures` |
 | `nodegroup update --dry-run` | `cluster`, `dryRun`, `force`, `reroll`, one `nodegroups` entry per nodegroup with its `action` (`Update`, `ForceUpdate`, `SkipUpdating`, `SkipLatest`, `SkipCustom`, or `Unknown` with a `failure` when the nodegroup could not be read, and `drainBlockers` when a PDB would block its drain), and `failures` |
 | `nodegroup update --health-only` | The health verdict, with its own `failures` (the reads the checks could not make). The exit code is `0`, `2`, `3`, or `4` for a pass whose checks could not read everything |
@@ -75,6 +76,7 @@ The status values:
 |---|---|
 | `nodegroup update`, each nodegroup | `Started`, `Succeeded`, `Skipped`, `Failed`, `Cancelled`, `InProgress` (the run stopped watching an update that may still be running), `NotAttempted`, `DrainBlocked` |
 | `nodegroup update --all-clusters`, each cluster | `Succeeded`, `Incomplete`, `Failed`, `HealthBlocked`, `HealthWarned`, `VerifyFailed`, `Interrupted`, `TimedOut`, `NotAttempted`, `Busy`, `DrainBlocked`; with `--dry-run`: `Planned`, `Incomplete`, `DrainBlocked`, `Failed` |
+| `nodegroup scale` (`outcome`) | `Planned`, `Requested`, `Completed`, `Blocked`, `CompletedWithIssues` |
 | `addon update`, each add-on | `DryRun`, `UpToDate`, `InProgress`, `Started`, `Completed`, `CompletedWithIssues`, `Unverified`, `WaitFailed`, `Failed`, `NotAttempted` |
 | `cluster upgrade`, the report | `Succeeded`, `Failed`, `Blocked`, `Interrupted`, `TimedOut`, `Aborted` |
 
@@ -113,7 +115,7 @@ Every `-o json` and `-o yaml` document starts with two keys:
 `apiVersion` is the version of the contract on this page. `kind` names the
 document type, in PascalCase: `FleetStatus`, `ClusterList`,
 `ClusterDescription`, `UpgradeCheck`, `InsightDescription`, `UpgradePlan`,
-`UpgradeRun`, `NodegroupList`, `NodegroupDescription`, `NodegroupUpdate`,
+`UpgradeRun`, `NodegroupList`, `NodegroupDescription`, `NodegroupScale`, `NodegroupUpdate`,
 `NodegroupUpdatePlan`, `FleetUpdate`, `FleetUpdatePlan`, `HealthSummary`,
 `AddonList`, `AddonDescription`, `AddonUpdate`, or `AddonUpdateAll`. A
 document nested in another one, such as the plan inside an `UpgradeRun` or

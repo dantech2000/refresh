@@ -15,6 +15,7 @@ Every `-o json` and `-o yaml` document starts with `apiVersion: refresh.drod.dev
 | `UpgradeRun` | `refresh cluster upgrade --yes` | [UpgradeRun.json](../schema/v1/UpgradeRun.json) |
 | `NodegroupList` | `refresh nodegroup list` | [NodegroupList.json](../schema/v1/NodegroupList.json) |
 | `NodegroupDescription` | `refresh nodegroup describe` | [NodegroupDescription.json](../schema/v1/NodegroupDescription.json) |
+| `NodegroupScale` | `refresh nodegroup scale` | [NodegroupScale.json](../schema/v1/NodegroupScale.json) |
 | `NodegroupUpdate` | `refresh nodegroup update` | [NodegroupUpdate.json](../schema/v1/NodegroupUpdate.json) |
 | `NodegroupUpdatePlan` | `refresh nodegroup update --dry-run` | [NodegroupUpdatePlan.json](../schema/v1/NodegroupUpdatePlan.json) |
 | `FleetUpdate` | `refresh nodegroup update --all-clusters` | [FleetUpdate.json](../schema/v1/FleetUpdate.json) |

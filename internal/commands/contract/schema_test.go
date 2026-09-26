@@ -51,6 +51,11 @@ func calmCluster() *fakeaws.Cluster {
 	return c
 }
 
+// scaleCluster has a nodegroup with sizes, for nodegroup scale.
+func scaleCluster() *fakeaws.Cluster {
+	return prod(&fakeaws.Nodegroup{Name: "web", Version: "1.31", Desired: 3, Min: 1, Max: 5})
+}
+
 // schemaCases are the successful runs, one or more per kind. The failure
 // runs come from the failure contract's cases.
 var schemaCases = []schemaCase{
@@ -64,6 +69,9 @@ var schemaCases = []schemaCase{
 	{name: "cluster upgrade --yes", kind: apidoc.KindUpgradeRun, args: []string{"cluster", "upgrade", "prod", "--to", "1.32", "--yes", "--skip-insights-check", "--skip", "vpc-cni", "--skip-nodegroup", "busy", "--poll-interval", "5ms"}},
 	{name: "nodegroup list", kind: apidoc.KindNodegroupList, args: []string{"nodegroup", "list", "prod"}},
 	{name: "nodegroup describe", kind: apidoc.KindNodegroupDescription, args: []string{"nodegroup", "describe", "prod", "-n", "web"}},
+	{name: "nodegroup scale", kind: apidoc.KindNodegroupScale, world: []*fakeaws.Cluster{scaleCluster()}, args: []string{"nodegroup", "scale", "prod", "-n", "web", "--desired", "4", "--yes"}},
+	{name: "nodegroup scale --wait", kind: apidoc.KindNodegroupScale, world: []*fakeaws.Cluster{scaleCluster()}, args: []string{"nodegroup", "scale", "prod", "-n", "web", "--desired", "4", "--max", "6", "--wait", "--yes"}},
+	{name: "nodegroup scale --dry-run", kind: apidoc.KindNodegroupScale, world: []*fakeaws.Cluster{scaleCluster()}, args: []string{"nodegroup", "scale", "prod", "-n", "web", "--desired", "2", "--dry-run"}},
 	{name: "nodegroup update", kind: apidoc.KindNodegroupUpdate, args: []string{"nodegroup", "update", "prod", "--skip-health-check", "--yes", "--poll-interval", "5ms"}},
 	{
 		name: "nodegroup update stopped by the health gate", kind: apidoc.KindNodegroupUpdate,
@@ -116,6 +124,8 @@ func failureKind(args []string) (apidoc.Kind, bool) {
 		return apidoc.KindNodegroupUpdatePlan, true
 	case strings.HasPrefix(line, "nodegroup update"):
 		return apidoc.KindNodegroupUpdate, true
+	case strings.HasPrefix(line, "nodegroup scale"):
+		return apidoc.KindNodegroupScale, true
 	case strings.HasPrefix(line, "addon update") && slices.Contains(args, "--all"):
 		return apidoc.KindAddonUpdateAll, true
 	case strings.HasPrefix(line, "addon update"):

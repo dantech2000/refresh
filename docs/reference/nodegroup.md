@@ -121,7 +121,9 @@ until the operation settles, for up to --wait-timeout.
 
 Before it changes anything, scale asks for confirmation
 ("Scale prod/ng-default desired 3 → 1? [y/N]"). --yes skips the prompt;
-without a terminal, --yes is required. --dry-run never prompts.
+without a terminal, or with -o json|yaml, --yes is required. --dry-run never
+prompts. -o json|yaml prints one document: the sizes before and after, the
+PDB gate verdict, and the outcome.
 
   refresh nodegroup scale my-cluster -n ng-default --desired 5
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
@@ -148,6 +150,7 @@ Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked b
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--dry-run, -d` | — | — | Preview scaling impact without executing (never prompts) |
 | `--yes, -y` | — | — | Scale without the confirmation prompt (required without a terminal) |
+| `--format, -o string` | — | `table` | Output format (table, json, yaml). json/yaml print one document with the sizes before and after, the PDB gate verdict, and the outcome; they need --yes (or --dry-run) |
 | `--help, -h` | — | — | show help |
 
 ### refresh nodegroup update

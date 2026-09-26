@@ -190,6 +190,7 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint |
 | `--dry-run, -d` | Preview the scaling impact without executing. Never prompts |
 | `--yes, -y` | Scale without the confirmation prompt (required without a terminal) |
+| `--format, -o` | `table` (default), `json`, or `yaml`: one document on stdout (see below), with notices on stderr. `json` and `yaml` need `--yes` or `--dry-run` |
 | `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`). With `--wait`, `--wait-timeout` is added on top |
 
 !!! warning "Confirmation (new in 0.11)"
@@ -229,6 +230,48 @@ nodegroup and fails if a requested size (`--desired`, `--min`, `--max`) does
 not match. With `--desired`, it also waits for the nodegroup to be `ACTIVE`.
 Throttling and network errors during the wait are retried. A permanent error,
 such as a missing `eks:DescribeUpdate` permission, stops the wait at once.
+
+With `-o json` or `-o yaml`, `scale` prints one `NodegroupScale` document:
+
+```json
+{
+  "apiVersion": "refresh.drod.dev/v1",
+  "kind": "NodegroupScale",
+  "cluster": "prod",
+  "nodegroup": "ng-default",
+  "region": "us-east-1",
+  "outcome": "Completed",
+  "dryRun": false,
+  "before": {"desired": 3, "min": 1, "max": 5},
+  "after": {"desired": 2, "min": 1, "max": 5},
+  "waited": true,
+  "nodegroupStatus": "ACTIVE",
+  "pdbGate": {"result": "Passed", "blockers": [], "scoped": true},
+  "failures": []
+}
+```
+
+`after` is `before` with the requested sizes. `nodegroupStatus` is the EKS
+status after a `--wait`. `pdbGate` is there with `--check-pdbs`.
+
+| `outcome` | Meaning | Exit |
+|---|---|---|
+| `Planned` | `--dry-run`: nothing changed | `0`, or the code the real run would give |
+| `Requested` | EKS accepted the request; the run did not wait (no `--wait`) | `0` |
+| `Completed` | With `--wait`, the nodegroup settled at the requested sizes | `0` |
+| `Blocked` | `--check-pdbs` or the pre-scaling health check refused the scale; nothing changed | `3` |
+| `CompletedWithIssues` | The scale was applied, but the post-scaling health check found blocking issues | `5` |
+
+| `pdbGate.result` | Meaning |
+|---|---|
+| `NotScaleDown` | The desired size does not go down, so there was nothing to check |
+| `Passed` | No PDB blocks the scale-down |
+| `Refused` | PDBs in `blockers` refuse the scale-down |
+| `Overridden` | PDBs in `blockers` would refuse it, and `--force` scales anyway |
+| `Unchecked` | The PDBs could not be read, and `--force` scaled without the check (see `failures`, exit `4`) |
+
+A run that fails with exit `1` (an AWS error, a failed wait, or a
+`--check-pdbs` gate that fails closed) prints no document.
 
 ### Examples
 

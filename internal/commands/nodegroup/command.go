@@ -111,7 +111,9 @@ until the operation settles, for up to --wait-timeout.
 
 Before it changes anything, scale asks for confirmation
 ("Scale prod/ng-default desired 3 → 1? [y/N]"). --yes skips the prompt;
-without a terminal, --yes is required. --dry-run never prompts.
+without a terminal, or with -o json|yaml, --yes is required. --dry-run never
+prompts. -o json|yaml prints one document: the sizes before and after, the
+PDB gate verdict, and the outcome.
 
   refresh nodegroup scale my-cluster -n ng-default --desired 5
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
@@ -133,6 +135,7 @@ without a terminal, --yes is required. --dry-run never prompts.
 			runner.KubeContextFlag(),
 			runner.DryRunFlag("Preview scaling impact without executing (never prompts)"),
 			runner.YesFlag("Scale without the confirmation prompt (required without a terminal)"),
+			&cli.StringFlag{Name: "format", Aliases: []string{"o"}, Usage: "Output format (table, json, yaml). json/yaml print one document with the sizes before and after, the PDB gate verdict, and the outcome; they need --yes (or --dry-run)", Value: "table"},
 		},
 		Action: runScale,
 	}

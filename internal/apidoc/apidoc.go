@@ -35,6 +35,7 @@ const (
 	KindUpgradeRun           Kind = "UpgradeRun"
 	KindNodegroupList        Kind = "NodegroupList"
 	KindNodegroupDescription Kind = "NodegroupDescription"
+	KindNodegroupScale       Kind = "NodegroupScale"
 	KindNodegroupUpdate      Kind = "NodegroupUpdate"
 	KindNodegroupUpdatePlan  Kind = "NodegroupUpdatePlan"
 	KindFleetUpdate          Kind = "FleetUpdate"
@@ -57,6 +58,7 @@ var commands = map[Kind]string{
 	KindUpgradeRun:           "cluster upgrade --yes",
 	KindNodegroupList:        "nodegroup list",
 	KindNodegroupDescription: "nodegroup describe",
+	KindNodegroupScale:       "nodegroup scale",
 	KindNodegroupUpdate:      "nodegroup update",
 	KindNodegroupUpdatePlan:  "nodegroup update --dry-run",
 	KindFleetUpdate:          "nodegroup update --all-clusters",
@@ -84,6 +86,7 @@ func Kinds() []Kind {
 		KindUpgradeRun,
 		KindNodegroupList,
 		KindNodegroupDescription,
+		KindNodegroupScale,
 		KindNodegroupUpdate,
 		KindNodegroupUpdatePlan,
 		KindFleetUpdate,

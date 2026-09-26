@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v1/NodegroupScale.json",
+  "$defs": {
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For KindRegion it is the region name."
+        },
+        "cluster": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "$ref": "#/$defs/FailureReason"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether running the same command again, with no other change, may succeed. It is always encoded."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of human text. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the raw AWS API error code, such as AccessDeniedException, when the failure came from an API response."
+        },
+        "updateId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item refresh could not read, or one action it attempted that did not complete. The JSON and YAML keys are a public contract (docs/concepts/output.md): later versions only add fields."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "FailureList": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "A list of failures. It is [] when there are none, never null."
+    },
+    "FailureReason": {
+      "type": "string",
+      "enum": [
+        "AccessDenied",
+        "CredentialError",
+        "Throttled",
+        "NotFound",
+        "RegionUnavailable",
+        "InvalidRequest",
+        "ServiceError",
+        "NetworkError",
+        "Timeout",
+        "Interrupted",
+        "UpdateFailed",
+        "UpdateCancelled",
+        "NotMonitored",
+        "NotAttempted",
+        "Unknown"
+      ],
+      "description": "FailureReason is why a Failure happened, from a closed set. Scripts branch on it. Later versions may add reasons; consumers must accept unknown values."
+    },
+    "PdbGateResult": {
+      "type": "string",
+      "enum": [
+        "NotScaleDown",
+        "Passed",
+        "Refused",
+        "Overridden",
+        "Unchecked"
+      ],
+      "description": "PdbGateResult is the verdict of the --check-pdbs gate."
+    },
+    "ScaleOutcome": {
+      "type": "string",
+      "enum": [
+        "Planned",
+        "Requested",
+        "Completed",
+        "Blocked",
+        "CompletedWithIssues"
+      ],
+      "description": "ScaleOutcome is what `nodegroup scale` did. docs/commands/nodegroup.md documents the values; later versions may add values."
+    },
+    "ScalePDBGate": {
+      "properties": {
+        "result": {
+          "$ref": "#/$defs/PdbGateResult"
+        },
+        "blockers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "blockers name the PodDisruptionBudgets that the scale-down could take below their budget."
+        },
+        "scoped": {
+          "type": "boolean",
+          "description": "scoped is false when the blockers could not be narrowed to the nodegroup's nodes: they are then every at-risk PDB in the cluster."
+        },
+        "note": {
+          "type": "string",
+          "description": "note explains a short-circuit in the check, if any."
+        }
+      },
+      "type": "object",
+      "required": [
+        "result",
+        "blockers",
+        "scoped"
+      ],
+      "description": "ScalePDBGate is the --check-pdbs verdict."
+    },
+    "ScaleSizes": {
+      "properties": {
+        "desired": {
+          "type": "integer"
+        },
+        "min": {
+          "type": "integer"
+        },
+        "max": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "desired",
+        "min",
+        "max"
+      ],
+      "description": "ScaleSizes is a nodegroup's desired/min/max size."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v1",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "NodegroupScale",
+      "description": "The type of the document."
+    },
+    "cluster": {
+      "type": "string"
+    },
+    "nodegroup": {
+      "type": "string"
+    },
+    "region": {
+      "type": "string"
+    },
+    "outcome": {
+      "$ref": "#/$defs/ScaleOutcome"
+    },
+    "dryRun": {
+      "type": "boolean"
+    },
+    "before": {
+      "$ref": "#/$defs/ScaleSizes",
+      "description": "before is the scaling config before the run; After is what the run asks for (Before with the requested sizes)."
+    },
+    "after": {
+      "$ref": "#/$defs/ScaleSizes"
+    },
+    "waited": {
+      "type": "boolean",
+      "description": "waited is true with --wait."
+    },
+    "nodegroupStatus": {
+      "type": "string",
+      "description": "nodegroupStatus is the nodegroup's EKS status after a --wait that completed."
+    },
+    "pdbGate": {
+      "$ref": "#/$defs/ScalePDBGate",
+      "description": "pdbGate is the --check-pdbs verdict, when the gate ran."
+    },
+    "failures": {
+      "$ref": "#/$defs/FailureList",
+      "description": "Every failure of the run: the items refresh could not read and the actions that did not complete. This top-level list is complete; a nested failure or failures field repeats a subset of it. The list is sorted by kind, region, cluster, name, and operation. [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "cluster",
+    "nodegroup",
+    "region",
+    "outcome",
+    "dryRun",
+    "before",
+    "after",
+    "waited",
+    "failures"
+  ],
+  "title": "NodegroupScale",
+  "description": "The document that `refresh nodegroup scale -o json` prints. -o yaml prints the same structure."
+}

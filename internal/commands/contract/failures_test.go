@@ -119,8 +119,9 @@ var cases = []contractCase{
 		world:   []*fakeaws.Cluster{prod(&fakeaws.Nodegroup{Name: "web", Version: "1.31", Desired: 3, Min: 1, Max: 5})},
 		args:    []string{"nodegroup", "scale", "prod", "-n", "web", "--desired", "1", "--check-pdbs", "--force", "--yes"},
 		code:    runner.ExitIncomplete,
+		failure: map[string]any{"kind": "Cluster", "name": "prod", "reason": "Unknown"},
 		stderr:  "warning: cluster prod (us-east-1): Unknown: listing PodDisruptionBudgets: no Kubernetes client configured",
-		formats: nil, // no -o flag
+		formats: []string{"", "json", "yaml"},
 	},
 	{
 		name:         "addon update --wait: an update that EKS ends Failed",
