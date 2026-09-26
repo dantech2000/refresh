@@ -875,3 +875,49 @@ func TestUpgradeQuestionIsAnsweredWithYOrN(t *testing.T) {
 		t.Fatal("y did something with no question")
 	}
 }
+
+// emptyFleet is a world whose sweep found no clusters, as in an account
+// with no EKS clusters.
+type emptyFleet struct{ *sim.World }
+
+func (e emptyFleet) State(ctx context.Context) (state.State, error) {
+	st, err := e.World.State(ctx)
+	st.Clusters, st.Rolls, st.Upgrades, st.Feed = nil, nil, nil, nil
+	return st, err
+}
+
+func TestAnEmptyFleetSaysSoAndSurvivesEveryKey(t *testing.T) {
+	world := sim.New(sim.Options{Seed: 7})
+	h := &harness{t: t, w: world, m: New(t.Context(), emptyFleet{world}, time.Millisecond)}
+	h.send(tea.WindowSizeMsg{Width: 120, Height: 36})
+	h.refresh()
+	h.contains("0 clusters", "No EKS clusters in the regions swept.", "all clusters")
+	// f scopes the feed to the selected cluster; with none it stays on all.
+	h.keys("f")
+	h.contains("all clusters")
+	for _, k := range []string{"2", "3", "4", "1", "enter", "j", "k", "r", "u", "a", "U", "p", "y", "n", "S", "P", "space", "?", "esc"} {
+		h.keys(k)
+		h.refresh()
+	}
+	h.keys("1")
+	h.contains("No EKS clusters in the regions swept.")
+}
+
+// closedFleet is a world in which no region answered.
+type closedFleet struct{ emptyFleet }
+
+func (c closedFleet) State(ctx context.Context) (state.State, error) {
+	st, err := c.emptyFleet.State(ctx)
+	st.RegionsAnswered, st.RegionsTotal = 0, 1
+	st.FleetProblem = "no region answered, but STS in us-east-1 accepts these credentials\n  first error: UnrecognizedClientException"
+	return st, err
+}
+
+func TestNoRegionAnsweredSaysWhyNotEmpty(t *testing.T) {
+	world := sim.New(sim.Options{Seed: 7})
+	h := &harness{t: t, w: world, m: New(t.Context(), closedFleet{emptyFleet{world}}, time.Millisecond)}
+	h.send(tea.WindowSizeMsg{Width: 120, Height: 36})
+	h.refresh()
+	h.contains("no region answered, but STS in us-east-1 accepts these credentials", "first error: UnrecognizedClientException")
+	h.lacks("No EKS clusters in the regions swept.")
+}

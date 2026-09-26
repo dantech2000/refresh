@@ -84,6 +84,10 @@ type State struct {
 	// RegionsAnswered of RegionsTotal regions answered the last sweep.
 	RegionsAnswered, RegionsTotal int
 	SyncedAt                      time.Time
+	// FleetProblem, when set, is why the last sweep read no region: bad or
+	// expired credentials, or regions closed to the account. It may span
+	// several lines.
+	FleetProblem string
 
 	Clusters []Cluster
 	// Feed is the fleet-wide event feed, oldest first.

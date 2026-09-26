@@ -67,6 +67,7 @@ func newTestBackend(t *testing.T, f *fleet, regions ...string) *Backend {
 		buildPlan: func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) {
 			return nil, errors.New("no planner in this test")
 		},
+		noRegionAnswered: func(context.Context, aws.Config, []string, []error) error { return nil },
 	}
 	return b
 }
@@ -711,5 +712,29 @@ func TestAddonUpdateAgainstFakeAWS(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(srv.Calls(), "\n"), "/addons/vpc-cni/update") {
 		t.Fatalf("no UpdateAddon call:\n%s", strings.Join(srv.Calls(), "\n"))
+	}
+}
+
+func TestNoRegionAnsweredIsExplained(t *testing.T) {
+	closed := errors.New("UnrecognizedClientException")
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{}, errs: map[string]error{"af-south-1": closed}}
+	b := newTestBackend(t, f, "af-south-1")
+	var gotErrs []error
+	b.svc.noRegionAnswered = func(_ context.Context, _ aws.Config, _ []string, errs []error) error {
+		gotErrs = errs
+		return errors.New("no region answered, but STS in us-east-1 accepts these credentials")
+	}
+	b.sweep(t.Context())
+	st, _ := b.State(t.Context())
+	if !strings.HasPrefix(st.FleetProblem, "no region answered, but STS") || len(gotErrs) != 1 || !errors.Is(gotErrs[0], closed) {
+		t.Fatalf("problem = %q, errs %v", st.FleetProblem, gotErrs)
+	}
+	// A region answers again: the problem clears.
+	f.mu.Lock()
+	f.errs = nil
+	f.mu.Unlock()
+	b.sweep(t.Context())
+	if st, _ := b.State(t.Context()); st.FleetProblem != "" {
+		t.Fatalf("problem stayed: %q", st.FleetProblem)
 	}
 }

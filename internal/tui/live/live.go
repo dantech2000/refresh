@@ -28,6 +28,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/regionsweep"
@@ -93,6 +94,9 @@ type services struct {
 	latestVersion func(ctx context.Context, cfg aws.Config) (string, error)
 	upgradeCheck  func(ctx context.Context, cfg aws.Config, cluster string) (*clustersvc.UpgradeReport, error)
 	buildPlan     func(ctx context.Context, cfg aws.Config, cluster, target string) (*upgrade.Plan, error)
+	// noRegionAnswered explains a sweep that read no region
+	// (runner.NoRegionAnswered): nil when it cannot tell.
+	noRegionAnswered func(ctx context.Context, cfg aws.Config, skipped []string, errs []error) error
 }
 
 // target is where a fleet row lives. Keys are unique even when two regions
@@ -130,6 +134,8 @@ type Backend struct {
 	prev map[target]state.Cluster
 	// warnedClosed is set once the feed said no region is accessible.
 	warnedClosed bool
+	// problem is why the last sweep read no region (State.FleetProblem).
+	problem string
 	// rolls are the rolls this backend started, oldest first.
 	rolls []*liveRoll
 	// claimed names the change this backend runs on a cluster.
@@ -229,6 +235,7 @@ func (h *paneHandler) WithGroup(string) slog.Handler { return h }
 
 func defaultServices(logger *slog.Logger) services {
 	return services{
+		noRegionAnswered: runner.NoRegionAnswered,
 		listStatuses: func(ctx context.Context, cfg aws.Config, opts statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
 			return statussvc.NewService(cfg, logger).ListClusterStatuses(ctx, opts)
 		},
@@ -379,6 +386,16 @@ func (b *Backend) sweep(ctx context.Context) {
 		rows = append(rows, a.Value...)
 	}
 	clusters, targets := toClusters(rows, latest)
+	// No region answered: tell bad credentials from closed regions, as the
+	// CLI does (one STS call when a region looked closed).
+	problem := ""
+	if len(res.Answered) == 0 && (len(res.Failed) > 0 || len(res.Skipped) > 0) {
+		if err := b.svc.noRegionAnswered(ctx, b.base, res.Skipped, res.Errors); err != nil {
+			problem = err.Error()
+		} else if len(res.Errors) > 0 {
+			problem = "no region answered: " + res.Errors[0].Error()
+		}
+	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -413,6 +430,7 @@ func (b *Backend) sweep(ctx context.Context) {
 	b.diff(clusters, targets)
 	b.clusters, b.targets = clusters, targets
 	b.answered, b.total = len(res.Answered), len(b.opts.Regions)-len(res.Skipped)
+	b.problem = problem
 	b.syncedAt = b.now()
 	b.sweeping = false
 	b.api("sweep", fmt.Sprintf("%d cluster(s) in %d region(s) · %s", len(clusters), len(res.Answered), took), state.LevelOK)
@@ -500,6 +518,7 @@ func (b *Backend) State(ctx context.Context) (state.State, error) {
 		Context:         b.opts.Context,
 		Profile:         b.opts.Profile,
 		RegionsAnswered: b.answered,
+		FleetProblem:    b.problem,
 		RegionsTotal:    b.total,
 		SyncedAt:        b.syncedAt,
 		Feed:            slices.Clone(b.feed),

@@ -55,6 +55,25 @@ func (m Model) fleetTable(w, h int) Block {
 		head = append(head, Seg{Text: padRight(c.name, c.w), FG: colDim, Bold: true})
 	}
 	out = append(out, head, append(Line{sp(1)}, hrule(w-2)...))
+	if len(m.st.Clusters) == 0 {
+		out = append(out, Line{})
+		if p := m.st.FleetProblem; p != "" {
+			// No region answered: say why, not "no clusters".
+			for i, para := range strings.Split(p, "\n") {
+				c := colDim
+				if i == 0 {
+					c = colRed
+				}
+				for _, l := range wrap(para, w-4) {
+					out = append(out, Line{sp(2), fg(c, l)})
+				}
+			}
+			return out.fit(w, h)
+		}
+		out = append(out, Line{sp(2), fg(colText, "No EKS clusters in the regions swept.")},
+			Line{sp(2), dimS("The header counts the regions swept; pick others with -r, or all with -A.")})
+		return out.fit(w, h)
+	}
 	for i, c := range m.st.Clusters {
 		row := Line{sp(1)}
 		for _, fc := range cols {
@@ -220,8 +239,10 @@ func readinessVerdict(r state.Readiness) Line {
 // fleetFeed is the live fleet event feed, newest first, over cards for the
 // changes in flight.
 func (m Model) fleetFeed(w, h int) Block {
+	// With no cluster to scope to, the feed shows everything.
+	all := m.feedAll || len(m.st.Clusters) == 0
 	scope := "all clusters"
-	if !m.feedAll {
+	if !all {
 		scope = m.cluster().Name
 	}
 	out := Block{{}, joinRight(append(Line{sp(1), bold(colMauve, heading("Live")), sp(2)}, m.followToken()...), Line{dimS(scope), sp(1), chip("f"), sp(1)}, w)}
@@ -232,11 +253,11 @@ func (m Model) fleetFeed(w, h int) Block {
 		nameW = max(nameW, width(c.Name))
 	}
 	sel := m.cluster().Name
-	evs := m.visible(m.feed().Feed, func(e state.Event) bool { return m.feedAll || e.Cluster == sel })
+	evs := m.visible(m.feed().Feed, func(e state.Event) bool { return all || e.Cluster == sel })
 	for i := 0; i < len(evs) && i < feedH; i++ {
 		e := evs[i]
 		l := Line{sp(1), dimS(clock(e.At)), sp(1)}
-		if m.feedAll {
+		if all {
 			l = append(l, fg(colSky, padRight(e.Cluster, nameW)), sp(1))
 		}
 		l = append(l, levelGlyph(e.Level), sp(1))
