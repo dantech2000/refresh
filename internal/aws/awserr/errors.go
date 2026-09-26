@@ -317,6 +317,14 @@ func Summary(err error) string {
 	if errors.As(err, &ae) {
 		return oneLine(fmt.Sprintf("%s: %s", ae.ErrorCode(), ae.ErrorMessage()))
 	}
+	// A network failure below the SDK: the dial error says what failed
+	// ("dial tcp …: connection refused") without the SDK's retry chain.
+	// An error FormatAWSError already formatted keeps its own headline.
+	var fe *formattedError
+	var ne *net.OpError
+	if !errors.As(err, &fe) && errors.As(err, &ne) {
+		return oneLine(ne.Error())
+	}
 	msg := err.Error()
 	if i := strings.IndexAny(msg, "\r\n"); i >= 0 {
 		msg = msg[:i]
@@ -330,58 +338,50 @@ func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// The help texts share one layout, which render.ErrorLines styles: a
+// headline, the cause on a "Cause:" (or "AWS:") line, then a heading and
+// indented rows whose second column starts after two spaces.
+
 func formatRegionError(err error, operation string) error {
-	return formatted(err, `AWS region configuration issue while %s.
+	return formatted(err, `AWS region configuration issue while %s
+Cause: %s
 
-Please verify:
-- AWS_DEFAULT_REGION environment variable is set to a valid region
-- Region in ~/.aws/config matches an AWS region
-- Common regions: us-east-1, us-west-2, eu-west-1, ap-southeast-1
-
-Current error indicates an invalid or unsupported region.
-
-Current error: %w`, operation, err)
+Set a valid region:
+  -r <region>              for this command (status and the fleet commands take several)
+  AWS_REGION=<region>      for this shell
+  region = <region>        in the profile in ~/.aws/config
+  common regions           us-east-1, us-west-2, eu-west-1, ap-southeast-1`, operation, Summary(err))
 }
 
 func formatCredentialError(err error) error {
-	return formatted(err, `AWS credentials not configured or invalid.
+	return formatted(err, `AWS credentials not configured or invalid
+Cause: %s
 
-Please set up your AWS credentials using one of these methods:
-
-1. AWS CLI configuration:
-   aws configure
-
-2. Environment variables:
-   export AWS_ACCESS_KEY_ID="your-access-key"
-   export AWS_SECRET_ACCESS_KEY="your-secret-key"
-   export AWS_DEFAULT_REGION="us-west-2"
-
-3. IAM role (if running on EC2/EKS/Lambda)
-
-4. AWS SSO:
-   aws sso login
-
-Current error: %w`, err)
+Set up credentials in one of these ways:
+  aws sso login            an SSO profile (IAM Identity Center); pick it with --profile or AWS_PROFILE
+  aws configure            an access key in a profile
+  AWS_ACCESS_KEY_ID        with AWS_SECRET_ACCESS_KEY, as environment variables
+  an IAM role              when refresh runs on EC2, EKS, or Lambda`, Summary(err))
 }
 
 func formatNetworkError(err error, operation string) error {
-	return formatted(err, `network connectivity issue while %s.
+	return formatted(err, `network connectivity issue while %s
+Cause: %s
 
-Please check:
-- Internet connection
-- AWS service endpoints are accessible
-- VPC/Security group settings (if running in private network)
-- Regional service availability
-
-Current error: %w`, operation, err)
+Check:
+  the internet connection
+  that the AWS endpoint for the region is reachable (a proxy, VPN, or firewall can block it)
+  VPC endpoints and security groups, when refresh runs in a private network
+  the AWS Health Dashboard, for an outage in the region`, operation, Summary(err))
 }
 
 func formatPermissionError(err error, operation string) error {
-	return formatted(err, `insufficient AWS permissions while %s.
+	// AWS's own message comes first: it names the denied action and says
+	// whether a policy denies it explicitly. The full list follows.
+	return formatted(err, `insufficient AWS permissions while %s
+AWS: %s
 
-Required permissions for refresh tool:
+Permissions refresh uses (grant the ones for the commands you run):
 %s
-See %s
-
-Current error: %w`, operation, permissionHint(), PermissionsDocURL, err)
+See %s`, operation, Summary(err), permissionHint(), PermissionsDocURL)
 }

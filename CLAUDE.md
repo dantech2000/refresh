@@ -159,6 +159,12 @@ Classify errors with `errors.As`, never by matching strings.
   `--no-color`, any non-empty `NO_COLOR`, and `TERM=dumb` disable both.
 - Prompts use `ui.ReadLine` / `ui.Confirm` (one shared, ctx-cancellable stdin
   reader).
+- A top-level error prints through `render.Theme.ErrorLines` (in `main`),
+  which styles lines by role and wraps to the terminal width. Multi-line help
+  text uses its layout: a headline without a trailing period, a `Cause: …` or
+  `AWS: …` line (use `awserr.Summary`, not the raw SDK chain), then a heading
+  ending in `:` and rows indented two spaces whose second column starts after
+  two spaces. A row whose first column the cause names is marked.
 
 **Output / rendering** (`internal/render`): the human-facing design system —
 palette (Catppuccin, truecolor with 256/none downgrade + capability detection),

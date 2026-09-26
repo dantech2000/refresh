@@ -289,10 +289,10 @@ error says that the regions refused valid credentials: enable the region in
 the account settings, or choose other regions.
 
 ```text
-Error: no region answered, but STS in us-east-1 accepts these credentials
-  first error: UnrecognizedClientException: The security token included in the request is invalid
-A region refuses valid credentials when the account has not enabled it (an opt-in region) or a policy such as an SCP blocks it.
-Enable the region in the account settings, or choose other regions (scope with -r or REFRESH_EKS_REGIONS).
+✗ Error: no region answered, but STS in us-east-1 accepts these credentials
+  AWS UnrecognizedClientException: The security token included in the request is invalid
+  A region refuses valid credentials when the account has not enabled it (an opt-in region) or a policy such as an SCP blocks it.
+  Enable the region in the account settings, or choose other regions (scope with -r or REFRESH_EKS_REGIONS).
 ```
 
 ### The failure object

@@ -1,6 +1,9 @@
 package awserr
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Permission is one row of the required IAM permissions: the actions and the
 // commands that call them. UsedBy is Markdown (command names in backticks).
@@ -45,13 +48,24 @@ var RequiredPermissions = []Permission{
 // permissionHint renders RequiredPermissions as a plain-text list for the
 // terminal: one line per row, with the Markdown backticks removed.
 func permissionHint() string {
+	// Two aligned columns, one action per row; a group's use is on its
+	// first row.
+	w := 0
+	for _, p := range RequiredPermissions {
+		for _, a := range p.Actions {
+			w = max(w, len(a))
+		}
+	}
 	var b strings.Builder
 	for _, p := range RequiredPermissions {
-		b.WriteString("- ")
-		b.WriteString(strings.Join(p.Actions, ", "))
-		b.WriteString(" (")
-		b.WriteString(strings.ReplaceAll(p.UsedBy, "`", ""))
-		b.WriteString(")\n")
+		for i, a := range p.Actions {
+			used := ""
+			if i == 0 {
+				used = strings.ReplaceAll(p.UsedBy, "`", "")
+			}
+			b.WriteString(strings.TrimRight(fmt.Sprintf("  %-*s  %s", w, a, used), " "))
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }

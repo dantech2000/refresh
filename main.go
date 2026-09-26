@@ -16,6 +16,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"
+	"golang.org/x/term"
 
 	"github.com/dantech2000/refresh/internal/commands"
 	addoncmd "github.com/dantech2000/refresh/internal/commands/addon"
@@ -264,7 +265,15 @@ func main() {
 		// Errors belong on stderr: scripted consumers piping stdout must not
 		// find error text mixed into their data.
 		th := render.Default(ui.Stderr)
-		_, _ = fmt.Fprintln(ui.Stderr, th.Paint(th.Pal.Red, fmt.Sprintf("Error: %v", err)))
+		width := 0
+		if ui.IsTerminal(os.Stderr) {
+			if cols, _, werr := term.GetSize(int(os.Stderr.Fd())); werr == nil {
+				width = cols
+			}
+		}
+		for _, l := range th.ErrorLines(err.Error(), width) {
+			_, _ = fmt.Fprintln(ui.Stderr, l)
+		}
 		exitProcess(1)
 	}
 }

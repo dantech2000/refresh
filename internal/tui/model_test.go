@@ -909,7 +909,7 @@ type closedFleet struct{ emptyFleet }
 func (c closedFleet) State(ctx context.Context) (state.State, error) {
 	st, err := c.emptyFleet.State(ctx)
 	st.RegionsAnswered, st.RegionsTotal = 0, 1
-	st.FleetProblem = "no region answered, but STS in us-east-1 accepts these credentials\n  first error: UnrecognizedClientException"
+	st.FleetProblem = "no region answered, but STS in us-east-1 accepts these credentials\nAWS: UnrecognizedClientException"
 	return st, err
 }
 
@@ -918,6 +918,6 @@ func TestNoRegionAnsweredSaysWhyNotEmpty(t *testing.T) {
 	h := &harness{t: t, w: world, m: New(t.Context(), closedFleet{emptyFleet{world}}, time.Millisecond)}
 	h.send(tea.WindowSizeMsg{Width: 120, Height: 36})
 	h.refresh()
-	h.contains("no region answered, but STS in us-east-1 accepts these credentials", "first error: UnrecognizedClientException")
+	h.contains("no region answered, but STS in us-east-1 accepts these credentials", "AWS: UnrecognizedClientException")
 	h.lacks("No EKS clusters in the regions swept.")
 }
