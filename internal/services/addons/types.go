@@ -93,7 +93,6 @@ type AddonVersionInfo struct {
 	Version           string   `json:"version"`
 	Compatibilities   []string `json:"compatibilities"`
 	Architecture      []string `json:"architecture,omitempty"`
-	DefaultVersion    bool     `json:"defaultVersion"`
 	RequiresIAMPolicy bool     `json:"requiresIamPolicy"`
 }
 
