@@ -100,3 +100,11 @@ func Notef(w io.Writer, s Status, format string, args ...any) {
 func SpinnerDone(s *ui.FunSpinner, msg string) {
 	s.Done(Default(ui.Stderr).Line(Healthy, "%s", msg))
 }
+
+// Plural is n and noun, with an "s" unless n is 1: "1 cluster", "2 clusters".
+func Plural(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}

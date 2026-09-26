@@ -222,6 +222,9 @@ func (hc *HealthChecker) checkPodDisruptionBudgets(ctx context.Context, clusterN
 		result.Status = StatusPass
 		result.Score = 100
 		result.Message = fmt.Sprintf("All %d deployments have PDB protection", totalDeployments)
+		if totalDeployments == 1 {
+			result.Message = "The one deployment has PDB protection"
+		}
 	default:
 		// For PDBs, we're more lenient - it's a warning, not a failure
 		pdbCoveragePercentage := (protectedDeployments * 100) / totalDeployments

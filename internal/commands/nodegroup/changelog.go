@@ -23,8 +23,13 @@ import (
 
 const changelogHTTPLimit = 4 * time.Second
 
+// changelogBodyLimit caps the release list read (50 releases are ~1.3 MB).
+const changelogBodyLimit = 4 << 20
+
 // eksAMIReleasesURL is a var (not const) so tests can point it at a stub server.
-var eksAMIReleasesURL = "https://api.github.com/repos/awslabs/amazon-eks-ami/releases?per_page=100"
+// 50 releases is about a year of weekly AMIs. Release bodies run ~26 KB
+// each, so 100 of them (2.6 MB) overran the old 1 MiB read cap.
+var eksAMIReleasesURL = "https://api.github.com/repos/awslabs/amazon-eks-ami/releases?per_page=50"
 
 // dateInRelease matches the 8-digit date stamp in an EKS AMI release version or
 // tag (e.g. "1.31.0-20260601" → "20260601", "v20260601" → "20260601").
@@ -58,24 +63,39 @@ func releaseDate(release string) (string, bool) {
 	return m[len(m)-1], true
 }
 
-// summarizeReleaseBody pulls the lines that matter for a node patch (kernel,
-// container runtime, CVE fixes) out of a release body.
+// prAuthorTail is the "by @user in <PR url>" tail GitHub's generated
+// release notes put on each change.
+var prAuthorTail = regexp.MustCompile(`\s+by @\S+ in https://github\.com/\S+/pull/(\d+)\s*$`)
+
+// summarizeReleaseBody pulls the lines that matter for a node patch out of a
+// release body. amazon-eks-ami's notes are GitHub-generated: a "What's
+// Changed" list of PR titles, then HTML tables of source AMIs. It keeps the
+// PR titles ("fix(x): … (#2821)") and, from older plain-text notes, lines
+// about the kernel, the container runtime, or a CVE. HTML is skipped.
 func summarizeReleaseBody(body string) []string {
 	var out []string
 	seen := map[string]struct{}{}
+	add := func(l string) {
+		if _, dup := seen[l]; !dup {
+			seen[l] = struct{}{}
+			out = append(out, l)
+		}
+	}
 	for _, line := range strings.Split(body, "\n") {
-		l := strings.TrimLeft(strings.TrimSpace(line), "-*# ")
-		if l == "" {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "<") || strings.HasPrefix(t, "**Full Changelog") {
 			continue
 		}
+		if m := prAuthorTail.FindStringSubmatchIndex(t); m != nil {
+			title := strings.TrimLeft(t[:m[0]], "-* ")
+			add(title + " (#" + t[m[2]:m[3]] + ")")
+			continue
+		}
+		l := strings.TrimLeft(t, "-*# ")
 		low := strings.ToLower(l)
 		if strings.Contains(low, "kernel") || strings.Contains(low, "containerd") ||
 			strings.Contains(low, "runc") || strings.Contains(low, "cve-") {
-			if _, dup := seen[l]; dup {
-				continue
-			}
-			seen[l] = struct{}{}
-			out = append(out, l)
+			add(l)
 		}
 	}
 	if len(out) > 6 {
@@ -154,9 +174,12 @@ func fetchEKSAMIReleases(ctx context.Context, httpClient *http.Client) ([]ghRele
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("amazon-eks-ami releases API returned %s", resp.Status)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MiB cap
+	body, err := io.ReadAll(io.LimitReader(resp.Body, changelogBodyLimit+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > changelogBodyLimit {
+		return nil, fmt.Errorf("the amazon-eks-ami release list is larger than %d MiB", changelogBodyLimit>>20)
 	}
 	var releases []ghRelease
 	if err := json.Unmarshal(body, &releases); err != nil {

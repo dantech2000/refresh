@@ -76,7 +76,7 @@ func TestFleetLines_Pretty(t *testing.T) {
 	}
 
 	// Header + summary chips (chips have no column padding, so exact-match).
-	if lines[0] != "FLEET  3 clusters · 3 region(s)" {
+	if lines[0] != "FLEET  3 clusters · 3 regions" {
 		t.Errorf("header = %q", lines[0])
 	}
 	if lines[2] != "● 1 current   ▲ 1 need attention   ✗ 1 unsupported" {
@@ -189,7 +189,7 @@ func TestFleetLines_NodegroupsBehindControlPlane(t *testing.T) {
 	}}
 	joined := strings.Join(fleetLines(th, fleet, nil, 0), "\n")
 	mustContain(t, joined, "▲  prod-east")
-	mustContain(t, joined, "1 nodegroups behind control plane")
+	mustContain(t, joined, "1 nodegroup behind control plane")
 	mustContain(t, joined, "has 1 nodegroup(s) behind the control plane")
 	// The STALE AMI cell gives the row's reason, not a bare "0".
 	mustContain(t, joined, "▲ 0 · 1 behind CP")
@@ -322,7 +322,7 @@ func TestFleetLines_AutoModeWithNodegroupsShowsStaleAMI(t *testing.T) {
 	joined := strings.Join(fleetLines(th, fleet, nil, 0), "\n")
 	mustContain(t, joined, "Auto Mode + 2 nodegroups")
 	mustContain(t, joined, "▲ 1/2 (30d)")
-	mustContain(t, joined, "1 stale nodegroups")
+	mustContain(t, joined, "1 stale nodegroup")
 
 	rows := plaintest.Check(t, fleetPlainOut(t, fleet), fleetPlainHeaders...)
 	if got := rows[0][4:6]; got[0] != "Auto Mode + 2 nodegroups" || got[1] != "1/2 (30d)" {
