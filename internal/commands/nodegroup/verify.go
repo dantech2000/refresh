@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -33,11 +34,47 @@ func snapshotPendingPods(ctx context.Context, k8sClient kubernetes.Interface) (s
 	if err != nil {
 		return nil, false
 	}
+	// A pod pinned to a node that no longer exists is not stuck: it is a
+	// DaemonSet pod the controller made for a node the roll just removed,
+	// and the pod garbage collector deletes it. Seen on a real roll, where
+	// aws-node, kube-proxy, and eks-pod-identity-agent pods for the
+	// terminated node read as "newly Pending". When the nodes cannot be
+	// listed, every Pending pod counts, as before.
+	var nodes map[string]bool
+	if list, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{}); err == nil {
+		nodes = make(map[string]bool, len(list.Items))
+		for _, n := range list.Items {
+			nodes[n.Name] = true
+		}
+	}
 	set = pendingPodSet{}
 	for _, p := range pods.Items {
+		if name := pinnedNode(&p); nodes != nil && name != "" && !nodes[name] {
+			continue
+		}
 		set[p.Namespace+"/"+p.Name] = struct{}{}
 	}
 	return set, true
+}
+
+// pinnedNode is the node a pod is bound to (spec.nodeName) or, for a
+// DaemonSet pod not yet bound, the node its affinity requires by name.
+func pinnedNode(p *corev1.Pod) string {
+	if p.Spec.NodeName != "" {
+		return p.Spec.NodeName
+	}
+	a := p.Spec.Affinity
+	if a == nil || a.NodeAffinity == nil || a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		return ""
+	}
+	for _, term := range a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+		for _, f := range term.MatchFields {
+			if f.Key == "metadata.name" && f.Operator == corev1.NodeSelectorOpIn && len(f.Values) == 1 {
+				return f.Values[0]
+			}
+		}
+	}
+	return ""
 }
 
 // PostRollVerification is the result of verifying a completed AMI roll.

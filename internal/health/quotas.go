@@ -95,10 +95,15 @@ func onDemandVCPUUsage(ctx context.Context, md metricDataAPI) (usage float64, ok
 							{Name: aws.String("Class"), Value: aws.String("Standard/OnDemand")},
 						},
 					},
-					Period: aws.Int32(int32(quotaUsageWindow.Seconds())),
+					// Per minute, newest first: the gate wants current use.
+					// The maximum over the window counted a surge that had
+					// already ended: right after a real roll it reported 8 of
+					// 8 vCPUs (100%) with 4 in use.
+					Period: aws.Int32(60),
 					Stat:   aws.String("Maximum"),
 				},
 			}},
+			ScanBy: cwtypes.ScanByTimestampDescending,
 		})
 	})
 	if err != nil {
@@ -106,7 +111,7 @@ func onDemandVCPUUsage(ctx context.Context, md metricDataAPI) (usage float64, ok
 	}
 	for _, r := range out.MetricDataResults {
 		if aws.ToString(r.Id) == "vcpu" && len(r.Values) > 0 {
-			return maxFloat(r.Values), true, nil
+			return r.Values[0], true, nil // the newest minute
 		}
 	}
 	return 0, false, nil

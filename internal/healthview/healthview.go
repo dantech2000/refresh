@@ -134,7 +134,7 @@ func ReportLines(th *render.Theme, s health.HealthSummary) []string {
 	st, _ := Decision(th, s.Decision)
 	verdict := "Status: " + th.Tokenf(st, verdictText(s.Decision))
 	if n := len(s.Warnings) + len(s.Errors); n > 0 {
-		verdict += th.Paint(th.Pal.Dim, fmt.Sprintf(" (%d issues found)", n))
+		verdict += th.Paint(th.Pal.Dim, " ("+render.Plural(n, "issue")+" found)")
 	}
 	out = append(out, "", verdict)
 

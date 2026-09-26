@@ -31,6 +31,10 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	if err != nil {
 		return err
 	}
+	nodegroupName := scaleNodegroup(cmd)
+	if nodegroupName == "" {
+		return errors.New("name the nodegroup: refresh nodegroup scale CLUSTER NODEGROUP --desired N (or -n NODEGROUP)")
+	}
 	// A scale that can't be confirmed fails before any AWS call.
 	if err := runner.RequireYesUnattended(cmd); err != nil {
 		return err
@@ -81,9 +85,7 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	// Pre-flight: warn if the nodegroup's instance type isn't offered in one of
 	// its AZs — a scale-up would fail to place nodes there. Runs for both the
 	// dry-run preview and a real scale, so the preview surfaces it too. (REF-143)
-	warnInstanceTypeAvailability(ctx, svc, clusterName, cmd.String("nodegroup"))
-
-	nodegroupName := cmd.String("nodegroup")
+	warnInstanceTypeAvailability(ctx, svc, clusterName, nodegroupName)
 
 	// A --min/--max that excludes the current desired size fails the same way
 	// in a preview, and before the PDB gate and the confirmation prompt.
@@ -154,6 +156,29 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	if err != nil {
 		return scaleExit(err)
 	}
+	// The spinner's line shows only on a terminal: say what happened either
+	// way, and whether --wait saw the nodegroup settle.
+	th := render.Default(os.Stdout)
+	what := "Scaled"
+	if !cmd.Bool("wait") {
+		what = "Scale requested for"
+	}
+	var sizes []string
+	for _, s := range []struct {
+		label string
+		v     *int32
+	}{{"desired", desired}, {"min", minSize}, {"max", maxSize}} {
+		if s.v != nil {
+			sizes = append(sizes, fmt.Sprintf("%s %d", s.label, *s.v))
+		}
+	}
+	line := fmt.Sprintf("%s %s/%s: %s", what, clusterName, nodegroupName, strings.Join(sizes, ", "))
+	if cmd.Bool("wait") {
+		line += " · nodegroup ACTIVE"
+	} else {
+		line += " · add --wait to wait for the nodes"
+	}
+	fmt.Println(th.Line(render.Healthy, "%s", line))
 	return runner.IncompleteExit(fs)
 }
 
@@ -429,4 +454,22 @@ func int32PtrIfSet(cmd *cli.Command, name string) (*int32, error) {
 	}
 	out := int32(v)
 	return &out, nil
+}
+
+// scaleNodegroup is the nodegroup to scale: -n, else the positional after the
+// cluster (`scale CLUSTER NODEGROUP`, as nodegroup update takes it), or the
+// only positional when --cluster names the cluster.
+func scaleNodegroup(cmd *cli.Command) string {
+	if v := strings.TrimSpace(cmd.String("nodegroup")); v != "" {
+		return v
+	}
+	args := cmd.Args().Slice()
+	i := 1
+	if cmd.IsSet("cluster") {
+		i = 0
+	}
+	if len(args) > i {
+		return strings.TrimSpace(args[i])
+	}
+	return ""
 }

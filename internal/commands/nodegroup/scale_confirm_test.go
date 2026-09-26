@@ -259,3 +259,32 @@ func TestScaleHealthWarnings_Print(t *testing.T) {
 		t.Errorf("no warnings printed %q", buf.String())
 	}
 }
+
+// scale takes the nodegroup as a positional, as nodegroup update does, and
+// names what is missing without printing the whole help page.
+func TestScale_NodegroupPositional(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string // "" = the dry run runs for ng-a
+	}{
+		{name: "cluster and nodegroup", args: []string{"scale", "prod", "ng-a", "--desired", "2", "--dry-run"}},
+		{name: "--cluster and nodegroup", args: []string{"scale", "--cluster", "prod", "ng-a", "--desired", "2", "--dry-run"}},
+		{name: "-n still works", args: []string{"scale", "prod", "-n", "ng-a", "--desired", "2", "--dry-run"}},
+		{name: "no nodegroup", args: []string{"scale", "prod", "--desired", "2", "--dry-run"}, want: "name the nodegroup"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5}))
+			stdout, stderr, err := runNodegroup(t, tc.args...)
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(stdout+stderr, "USAGE:") {
+					t.Fatalf("err = %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+				}
+				return
+			}
+			if err != nil || !strings.Contains(stdout, "ng-a") {
+				t.Fatalf("err = %v\nstdout: %s", err, stdout)
+			}
+		})
+	}
+}
