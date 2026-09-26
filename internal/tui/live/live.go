@@ -717,7 +717,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		p, err = planRoll(c, t, a.Nodegroup)
 		if err == nil && b.opts.AllowChanges {
 			pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
-			b.planRollLive(pctx, &p, cfg, t, a.Nodegroup, shownVersion(c, a.Nodegroup))
+			b.planRollLive(pctx, &p, cfg, t, c, a.Nodegroup)
 			cancel()
 		}
 	case state.ActionAddons:

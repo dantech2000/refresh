@@ -186,7 +186,7 @@ func healthGates(s health.HealthSummary) (gates []state.PlanGate, blocked []stri
 
 // planRollLive adds what only a change needs to a roll dry run: the
 // pre-flight health gate and the node view's Kubernetes access.
-func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Config, t target, ng, shown string) {
+func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Config, t target, c state.Cluster, ng string) {
 	kube, metrics, how := b.roll.kubeFor(ctx, cfg, t.name)
 	summary := b.roll.healthCheck(ctx, cfg, t.name, []string{ng}, kube, metrics)
 	gates, blocked := healthGates(summary)
@@ -216,6 +216,7 @@ func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Confi
 	// whose gate has found anything more since, or whose nodegroup has
 	// moved to another version. The version is the one the dry run shows,
 	// or EKS's when the sweep had none.
+	shown := shownVersion(c, ng)
 	if shown == "" {
 		if live, _, err := b.roll.decide(ctx, cfg, t.name, ng); err == nil {
 			shown = aws.ToString(live.Version)
@@ -229,6 +230,9 @@ func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Confi
 			for i := range p.Facts {
 				if p.Facts[i].Key == "version" {
 					p.Facts[i].Value = shown + " (unchanged)"
+					if shown != c.Version {
+						p.Facts[i].Note = "the control plane runs " + c.Version + "; `cluster upgrade` moves nodegroups"
+					}
 				}
 			}
 			for i := range p.Changes {
