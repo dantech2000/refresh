@@ -220,6 +220,23 @@ func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Confi
 		if live, _, err := b.roll.decide(ctx, cfg, t.name, ng); err == nil {
 			shown = aws.ToString(live.Version)
 		}
+		if shown == "" {
+			if p.Blocked == "" {
+				p.Blocked = "could not read the Kubernetes version of " + ng + ": open the dry run again"
+			}
+		} else {
+			// Show what the roll is pinned to.
+			for i := range p.Facts {
+				if p.Facts[i].Key == "version" {
+					p.Facts[i].Value = shown + " (unchanged)"
+				}
+			}
+			for i := range p.Changes {
+				if p.Changes[i].Field == "AMI" {
+					p.Changes[i].To = "latest recommended for " + shown
+				}
+			}
+		}
 	}
 	b.mu.Lock()
 	b.accepted[acceptKey(t, ng)] = acceptedRoll{findings: findings(summary), version: shown}

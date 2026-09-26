@@ -18,7 +18,10 @@ Rules that apply to every command:
 
 - With `-o json` or `-o yaml`, the command prints its document first. Then the
   exit code applies. A non-zero code never means the document is missing,
-  unless the code is `1`.
+  unless the code is `1`, or the code is `3` because a mutating command
+  refused to start on a cluster EKS is already changing, or one it could not
+  read to check. That refusal comes before any result: stdout is empty, and
+  the error on stderr names the change or the failed call.
 - A partial result is never a success. The command names what it could not
   read on stderr, lists it under `failures` in the JSON/YAML document (see
   [Failures](output.md#failures)), and exits `4`.

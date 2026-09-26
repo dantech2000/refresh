@@ -672,9 +672,10 @@ func (s *Service) ExecuteRollback(ctx context.Context, plan *RollbackPlan, opts 
 		return report, fmt.Errorf("%w: the cluster changed since the plan (%s); nothing was changed: plan again", ErrRollbackBlocked, strings.Join(diff, "; "))
 	}
 	report, err = runPhases(ctx, fresh.ClusterName, s.rollbackPhases(fresh, opts), opts, report)
-	if err != nil && report.Status == RunBlocked && len(report.Completed) == 0 {
-		// A gate stopped the run before its first change (the control
-		// plane's nodegroup check with no nodegroup or add-on work).
+	if errors.Is(err, errNodegroupsAboveTarget) && len(report.Completed) == 0 {
+		// The control plane's nodegroup check stopped the run before its
+		// first change (no nodegroup or add-on work). A read error there
+		// stays an error (exit 1).
 		err = fmt.Errorf("%w: %w", ErrRollbackBlocked, err)
 	}
 	return report, err
@@ -683,6 +684,10 @@ func (s *Service) ExecuteRollback(ctx context.Context, plan *RollbackPlan, opts 
 // ErrRollbackBlocked marks a rollback that ExecuteRollback refused before
 // any change: the command exits 3.
 var ErrRollbackBlocked = errors.New("rollback blocked")
+
+// errNodegroupsAboveTarget is the control plane's nodegroup check finding a
+// nodegroup still above the rollback target.
+var errNodegroupsAboveTarget = errors.New("nodegroups above the rollback target")
 
 // changedSteps names the work steps (nodegroups, add-ons, control plane)
 // whose pending work differs between the confirmed plan and a fresh one.
@@ -801,8 +806,8 @@ func (s *Service) nodegroupsAtOrBelow(ctx context.Context, cluster, target strin
 		}
 	}
 	if len(above) > 0 {
-		return fmt.Errorf("the control plane has not changed: nodegroups above %s (%s) must move to %s first, then rerun",
-			target, strings.Join(above, ", "), target)
+		return fmt.Errorf("%w: the control plane has not changed: nodegroups above %s (%s) must move to %s first, then rerun",
+			errNodegroupsAboveTarget, target, strings.Join(above, ", "), target)
 	}
 	return nil
 }

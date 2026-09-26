@@ -623,3 +623,28 @@ func TestExecuteRollback_PrecheckWithNothingChangedIsBlocked(t *testing.T) {
 		t.Fatalf("changed %v", *events)
 	}
 }
+
+// An AWS error in the control plane's nodegroup check is an error (exit 1),
+// not a blocked run, even with nothing changed.
+func TestExecuteRollback_PrecheckReadErrorIsNotBlocked(t *testing.T) {
+	w := newRollbackWorld()
+	w.addonVersions["kube-proxy"] = latestFor("1.32") // no add-on work
+	svc, m := w.service()
+	list := m.ListNodegroupsFn
+	calls := 0
+	m.ListNodegroupsFn = func(ctx context.Context, in *eks.ListNodegroupsInput, o ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+		calls++
+		if calls > 2 { // the plan and the recheck read; the precheck fails
+			return nil, mocks.AccessDenied()
+		}
+		return list(ctx, in, o...)
+	}
+	plan := buildRollback(t, svc, RollbackOptions{SkipNodegroups: []string{"ng-new"}, SkipInsightsCheck: true})
+	_, err := svc.ExecuteRollback(context.Background(), plan, ExecuteOptions{Yes: true, SkipNodegroups: []string{"ng-new"}, SkipInsightsCheck: true})
+	if err == nil || errors.Is(err, ErrRollbackBlocked) || !strings.Contains(err.Error(), "checking the nodegroup versions") {
+		t.Fatalf("ExecuteRollback = %v, want a plain error from the nodegroup read", err)
+	}
+	if len(w.cpInputs) != 0 {
+		t.Fatal("the control plane rolled back")
+	}
+}

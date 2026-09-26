@@ -67,6 +67,8 @@ type rollRig struct {
 	// drainBlocked blocks the drain gate; drainErr fails its PDB read.
 	drainBlocked bool
 	drainErr     error
+	// decideErr fails the live nodegroup read.
+	decideErr error
 }
 
 // start dry-runs a and starts it, as the TUI does (p, then y).
@@ -78,10 +80,14 @@ func (rig *rollRig) start(t *testing.T, a state.Action) error {
 	return rig.b.Start(t.Context(), a)
 }
 
-func newRollRig(t *testing.T) *rollRig {
+// newRollRig builds the rig; edit changes the sweep's rows first.
+func newRollRig(t *testing.T, edit ...func([]statussvc.ClusterStatus)) *rollRig {
 	t.Helper()
 	rows := prodRows()
 	rows[0].Nodegroups[1].Status = "ACTIVE" // nothing in flight
+	for _, e := range edit {
+		e(rows)
+	}
 	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": rows}}
 	rig := &rollRig{b: newTestBackend(t, f, "us-east-1"), health: health.DecisionProceed,
 		release: make(chan ekstypes.UpdateStatus, 1), atEnd: make(chan struct{}, 1),
@@ -99,6 +105,9 @@ func newRollRig(t *testing.T) *rollRig {
 			return fake.NewClientset(), nil, "kubeconfig context prod-api"
 		},
 		decide: func(_ context.Context, _ aws.Config, _, ng string) (*ekstypes.Nodegroup, nodegroupsvc.AMIUpdateDecision, error) {
+			if rig.decideErr != nil {
+				return nil, nodegroupsvc.AMIUpdateDecision{}, rig.decideErr
+			}
 			live := rig.live
 			d := nodegroupsvc.AMIUpdateDecision{Action: types.ActionUpdate, Reason: "AMI is outdated"}
 			if dd, ok := rig.decisions[ng]; ok {
@@ -728,4 +737,40 @@ func TestShownVersionIsTheDryRunsCluster(t *testing.T) {
 	if got := shownVersion(c, "ng-x"); got != "" {
 		t.Errorf("shownVersion of a missing nodegroup = %q, want empty", got)
 	}
+}
+
+// With no version from the sweep, the dry run reads it from EKS and shows
+// it; when that read fails too, the dry run is blocked, not offered.
+func TestADryRunWithoutASweepVersion(t *testing.T) {
+	noVersion := func(rows []statussvc.ClusterStatus) { rows[0].Nodegroups[0].Version = "" }
+	rig := newRollRig(t, noVersion)
+	p, err := rig.b.Plan(t.Context(), roll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shown string
+	for _, f := range p.Facts {
+		if f.Key == "version" {
+			shown = f.Value
+		}
+	}
+	if shown != "1.31 (unchanged)" || p.Blocked != "" {
+		t.Fatalf("version fact = %q, Blocked = %q, want EKS's 1.31 and not blocked", shown, p.Blocked)
+	}
+	if err := rig.b.Start(t.Context(), roll); err != nil {
+		t.Fatalf("Start = %v", err)
+	}
+	rig.release <- ekstypes.UpdateStatusSuccessful
+	rig.b.Close()
+
+	rig = newRollRig(t, noVersion)
+	rig.decideErr = errors.New("describe denied")
+	p, err = rig.b.Plan(t.Context(), roll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.Blocked, "could not read the Kubernetes version of ng-general") {
+		t.Fatalf("Blocked = %q, want the version read failure", p.Blocked)
+	}
+	rig.b.Close()
 }
