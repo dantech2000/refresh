@@ -23,7 +23,7 @@ require (
 	github.com/go-logr/logr v1.4.4
 	github.com/invopop/jsonschema v0.14.0
 	github.com/mattn/go-isatty v0.0.24
-	github.com/mattn/go-runewidth v0.0.29
+	github.com/mattn/go-runewidth v0.0.30
 	github.com/pterm/pterm v0.12.83
 	github.com/rivo/uniseg v0.4.7
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
