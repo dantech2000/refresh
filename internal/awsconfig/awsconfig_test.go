@@ -308,3 +308,28 @@ func TestLoadUsesContextProfile(t *testing.T) {
 		t.Fatalf("cfg.Region = %q, want context profile region eu-central-1", cfg.Region)
 	}
 }
+
+// From review: the UI named only --profile and AWS_PROFILE in the commands
+// it shows, so a context's profile dropped out of a copied command, which
+// then ran in another account. EffectiveProfile follows Load's order.
+func TestEffectiveProfile(t *testing.T) {
+	flags := []cli.Flag{&cli.StringFlag{Name: "region"}, &cli.StringFlag{Name: "profile"}}
+
+	setupContext(t, "prod", cliconfig.Context{Cluster: "x", Profile: "ctx-profile"})
+	if got, err := EffectiveProfile(newParsedCommand(t, flags)); err != nil || got != "ctx-profile" {
+		t.Errorf("context: %q, %v; want ctx-profile", got, err)
+	}
+	if got, _ := EffectiveProfile(newParsedCommand(t, flags, "--profile", "flag-profile")); got != "flag-profile" {
+		t.Errorf("flag over context: %q", got)
+	}
+
+	setupContext(t, "noprofile", cliconfig.Context{Cluster: "x"})
+	t.Setenv("AWS_DEFAULT_PROFILE", "default-env")
+	if got, _ := EffectiveProfile(newParsedCommand(t, flags)); got != "default-env" {
+		t.Errorf("AWS_DEFAULT_PROFILE: %q", got)
+	}
+	t.Setenv("AWS_PROFILE", "env")
+	if got, _ := EffectiveProfile(newParsedCommand(t, flags)); got != "env" {
+		t.Errorf("AWS_PROFILE over AWS_DEFAULT_PROFILE: %q", got)
+	}
+}

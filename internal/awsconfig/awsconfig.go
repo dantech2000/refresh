@@ -71,6 +71,30 @@ func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 	return config.LoadDefaultConfig(ctx, opts...)
 }
 
+// EffectiveProfile is the AWS profile Load uses, by the same rules: the
+// --profile flag, else the active refresh context's profile, else
+// AWS_PROFILE, else AWS_DEFAULT_PROFILE; "" when none is set (the SDK's
+// default chain). A caller that shows a command to run elsewhere names
+// this profile, so the command reaches the same account.
+func EffectiveProfile(cmd *cli.Command) (string, error) {
+	if p := flagOrEmpty(cmd, "profile"); p != "" {
+		return p, nil
+	}
+	_, active, ok, err := activeContext()
+	if err != nil {
+		return "", err
+	}
+	if ok && active.Profile != "" {
+		return active.Profile, nil
+	}
+	for _, env := range []string{"AWS_PROFILE", "AWS_DEFAULT_PROFILE"} {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			return v, nil
+		}
+	}
+	return "", nil
+}
+
 // envConflict returns an error when the SDK would read setting from an env
 // var whose value differs from ctxValue, the value the active context saved.
 // envVars are in the SDK's order: the first non-empty one is the one it

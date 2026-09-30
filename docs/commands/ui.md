@@ -46,11 +46,12 @@ dialog instead.
 ## Keys
 
 The key bar at the bottom shows the keys that work on the current screen. `?`
-lists them all.
+lists them all. While a dialog is open (a dry run, the key list, the
+nodegroup picker), only the dialog's own keys work.
 
 | Key | Where | Action |
 |---|---|---|
-| `↑` `↓`, `g` `G` | Lists | Move through a list, or jump to the first or last item |
+| `↑` `↓`, `g` `G` | Lists | Move through a list, or jump to the first or last item (`g` `G` not in the nodegroup picker) |
 | `enter` | Fleet | Open the selected cluster |
 | `r` | Fleet, Cluster | Run readiness for the next version |
 | `p` | Fleet, Cluster | Dry-run a nodegroup patch (pick the nodegroup, then `enter`) |
@@ -59,16 +60,16 @@ lists them all.
 | `B` | Fleet, Cluster | Dry-run a rollback one minor version back (only after readiness found a rollback window) |
 | `y` | Dry run | Start the change (`--allow-changes` only) |
 | `c` | Dry run | Copy the CLI command |
-| `S` | Upgrade | Stop the upgrade before its next phase. The current phase finishes, and an EKS update in flight is never cancelled. Press `S` again to cancel the stop |
-| `P` | Upgrade | Pause the upgrade before its next phase. Press `P` again to go on |
-| `y` / `n` | Upgrade | Answer the upgrade's question: go on, or stop after this step |
+| `S` | Upgrade | Stop an upgrade or rollback this UI started, before its next phase or its next nodegroup roll. An EKS update in flight is never cancelled. Press `S` again to cancel the stop |
+| `P` | Upgrade | Pause an upgrade or rollback this UI started, before its next phase. Press `P` again to go on |
+| `y` / `n` | Upgrade | When the upgrade asks a question: go on, or stop after this step |
 | `f` | Fleet | Feed: all clusters, or the selected one |
 | `w` | Any | Feed: warnings and errors only |
 | `space` | Any | Freeze the live panes, or follow them again |
 | `tab` `←` `→` | Rolls, Upgrade | Switch the log source of a live pane |
 | `[` `]` | Rolls, Upgrade | Page through rolls or upgrades |
 | `ctrl+r` | Any | Sweep the fleet now |
-| `q` | Any | Quit (in a dialog, close it). Changes in flight keep running in EKS |
+| `q` | Any | Quit (in a dialog, close it; a dry run cannot close while its change is starting). Changes in flight keep running in EKS |
 
 ## Read-only and --allow-changes
 

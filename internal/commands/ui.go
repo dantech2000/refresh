@@ -12,6 +12,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"k8s.io/klog/v2"
 
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/cliconfig"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
@@ -102,9 +103,11 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer restore()
 	regions, skip := uiRegions(cmd, awsCfg)
-	profile := cmd.String("profile")
-	if profile == "" {
-		profile = os.Getenv("AWS_PROFILE")
+	// The profile the AWS config was loaded with, from any source: the
+	// header shows it and copied commands carry it.
+	profile, err := awsconfig.EffectiveProfile(cmd)
+	if err != nil {
+		return err
 	}
 	backend := live.New(awsCfg, live.Options{
 		Regions:          regions,
