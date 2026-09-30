@@ -157,6 +157,11 @@ refresh cluster upgrade -c prod --to 1.33
 refresh cluster rollback -c prod --dry-run
 ```
 
+Prefer a full-screen view? `refresh ui` (experimental) shows the fleet,
+readiness, live rolls, and upgrades in the terminal. It is read-only unless
+you pass `--allow-changes`. See the
+[docs](https://drod.dev/refresh/commands/ui/).
+
 Contexts bind a cluster to a region and profile:
 
 ```bash

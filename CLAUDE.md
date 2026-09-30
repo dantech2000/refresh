@@ -269,7 +269,8 @@ lifecycle events come from the real `noderoll.Tracker`). The simulator is dev-on
 `REFRESH_DEV_SIM_SPEED` and `REFRESH_DEV_SIM_SEED`; there is no flag and no
 user doc. Without the switch `refresh ui` runs the live backend (`-r`, `-A`,
 `--interval`). TUI glyphs come from
-`render.Theme.Mark`, so the render guard test and the ASCII fallback hold.
+`render.Theme.Mark`, so the render guard test holds; they are always Unicode
+(the TUI needs a UTF-8 terminal: its borders and bars are Unicode too).
 Tests step the world with `sim.World.Advance` and assert every screen fills
 the terminal exactly (`internal/tui/model_test.go`).
 

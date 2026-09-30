@@ -181,7 +181,52 @@ func healthStatus(hr health.HealthResult) state.CheckStatus {
 }
 
 // regionFlag is the global flag that points a CLI command at t's region.
+// Backend.cliCommand adds the rest of what the UI runs with.
 func regionFlag(t target) string { return "refresh --region " + t.region + " " }
+
+// kubeCommands are the change commands that take --kubeconfig and
+// --kube-context.
+var kubeCommands = []string{"nodegroup update ", "cluster upgrade ", "cluster rollback "}
+
+// cliCommand makes a command the UI shows run as the UI does: with its AWS
+// profile (a copied command in another shell must not fall back to the
+// default profile, possibly another account), and with its Kubernetes
+// access on the commands that take it.
+func (b *Backend) cliCommand(cmd string) string {
+	rest, ok := strings.CutPrefix(cmd, "refresh ")
+	if !ok {
+		return cmd
+	}
+	out := "refresh "
+	if p := b.opts.CommandProfile; p != "" {
+		out += "--profile " + shellWord(p) + " "
+	}
+	out += rest
+	for _, k := range kubeCommands {
+		if !strings.Contains(rest, k) {
+			continue
+		}
+		if b.opts.Kubeconfig != "" {
+			out += " --kubeconfig " + shellWord(b.opts.Kubeconfig)
+		}
+		if b.opts.KubeContext != "" {
+			out += " --kube-context " + shellWord(b.opts.KubeContext)
+		}
+	}
+	return out
+}
+
+// shellWord quotes s for a POSIX shell when it holds anything but plain
+// word characters.
+func shellWord(s string) string {
+	plain := func(r rune) bool {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:@=+,", r)
+	}
+	if s != "" && strings.IndexFunc(s, func(r rune) bool { return !plain(r) }) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 func planRoll(c state.Cluster, t target, ngName string) (state.Plan, error) {
 	var ng *state.Nodegroup

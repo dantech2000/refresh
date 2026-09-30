@@ -12,9 +12,11 @@ import (
 	"github.com/urfave/cli/v3"
 	"k8s.io/klog/v2"
 
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/cliconfig"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/sim"
 	"github.com/dantech2000/refresh/internal/tui"
 	"github.com/dantech2000/refresh/internal/tui/live"
@@ -38,13 +40,11 @@ const (
 // the prod-eu upgrade is already rolling nodegroups when the TUI opens.
 const simWarmup = 19 * time.Minute
 
-// UICommand is the full-screen terminal UI. It is hidden while it is an
-// experiment.
+// UICommand is the full-screen terminal UI, shown as experimental.
 func UICommand() *cli.Command {
 	return &cli.Command{
-		Name:   "ui",
-		Usage:  "Full-screen terminal UI (experimental)",
-		Hidden: true,
+		Name:  "ui",
+		Usage: "Full-screen terminal UI (experimental)",
 		Description: `Open the full-screen terminal UI: the fleet, readiness checks, live
 nodegroup rolls, and cluster upgrades, with live event and log streams.
 
@@ -103,9 +103,15 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer restore()
 	regions, skip := uiRegions(cmd, awsCfg)
-	profile := cmd.String("profile")
-	if profile == "" {
-		profile = os.Getenv("AWS_PROFILE")
+	// The profile the AWS config was loaded with, from any source: the
+	// header shows it and copied commands carry it.
+	profile, explicit, err := awsconfig.EffectiveProfile(cmd)
+	if err != nil {
+		return err
+	}
+	commandProfile := ""
+	if explicit {
+		commandProfile = profile
 	}
 	backend := live.New(awsCfg, live.Options{
 		Regions:          regions,
@@ -115,6 +121,7 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		MaxConcurrency:   appconfig.ClampMaxConcurrency(cmd.Int("max-concurrency")),
 		Context:          activeContextName(),
 		Profile:          profile,
+		CommandProfile:   commandProfile,
 		AllowChanges:     cmd.Bool("allow-changes"),
 		Kubeconfig:       cmd.String("kubeconfig"),
 		KubeContext:      cmd.String("kube-context"),
@@ -129,7 +136,7 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		defer close(done)
 		backend.Run(ctx)
 	}()
-	err = tui.Run(ctx, backend, tty.in, os.Stdout)
+	err = tui.Run(ctx, backend, tty.in, os.Stdout, render.DetectLevel(os.Stdout) == render.ColorNone)
 	stop()
 	<-done
 	backend.Close()
@@ -208,7 +215,7 @@ func runSimulated(ctx context.Context) error {
 		defer close(done)
 		world.Run(ctx, speed)
 	}()
-	err = tui.Run(ctx, world, os.Stdin, os.Stdout)
+	err = tui.Run(ctx, world, os.Stdin, os.Stdout, render.DetectLevel(os.Stdout) == render.ColorNone)
 	cancel()
 	<-done
 	return err

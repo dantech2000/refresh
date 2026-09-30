@@ -46,6 +46,8 @@ const (
 
 // Model is the Bubble Tea model.
 type Model struct {
+	// noColor turns off color and the background (see Run).
+	noColor  bool
 	ctx      context.Context
 	b        state.Backend
 	st       state.State

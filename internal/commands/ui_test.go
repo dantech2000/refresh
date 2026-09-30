@@ -41,9 +41,12 @@ func TestUISimulatedNeedsATerminal(t *testing.T) {
 	}
 }
 
-func TestUICommandIsHidden(t *testing.T) {
-	if !UICommand().Hidden {
-		t.Fatal("refresh ui must stay hidden while it is an experiment")
+// refresh ui is shown, and says it is experimental wherever it is listed
+// (help, completion, the command reference).
+func TestUICommandIsShownAsExperimental(t *testing.T) {
+	c := UICommand()
+	if c.Hidden || !strings.Contains(c.Usage, "experimental") {
+		t.Fatalf("Hidden = %v, Usage = %q; want shown and labelled experimental", c.Hidden, c.Usage)
 	}
 }
 

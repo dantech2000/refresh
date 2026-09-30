@@ -61,8 +61,11 @@ type Options struct {
 	SweepTimeout time.Duration
 	// MaxConcurrency caps the clusters evaluated at once per region.
 	MaxConcurrency int
-	// Context and Profile label the top bar.
-	Context, Profile string
+	// Context and Profile label the top bar. CommandProfile is the
+	// --profile the commands the UI shows carry: set only when refresh
+	// gave the SDK that profile itself (flag or context), not when it came
+	// from the environment, where exported access keys can win over it.
+	Context, Profile, CommandProfile string
 	// Logger receives the services' logs. Nil sends warnings and errors to
 	// the TUI's log pane: the TUI owns the terminal, so nothing may write
 	// to stderr while it runs.
@@ -705,7 +708,7 @@ func (b *Backend) RunReadiness(ctx context.Context, key string) error {
 			run.Log = appendCapped(run.Log, b.stamp(state.Event{Cluster: key, Source: state.SourceCheck, Level: state.LevelError, Subject: "UpgradeCheck", Text: rerr.Error()}), logCap)
 			return
 		}
-		run.Checks = readinessChecks(report, run.To, regionFlag(t))
+		run.Checks = readinessChecks(report, run.To, b.cliCommand(regionFlag(t)))
 		if a := report.Rollback; a != nil {
 			b.rollbackWindows[t] = rollbackWindow{from: report.Skew.ControlPlaneVersion, to: a.PreviousVersion, until: a.AvailableUntil}
 		} else {
@@ -802,6 +805,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		return state.Plan{}, err
 	}
 	p.Action = a
+	p.Command = b.cliCommand(p.Command)
 	b.mu.Lock()
 	busy := b.busyOf(a.Cluster, c)
 	b.mu.Unlock()

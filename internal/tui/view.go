@@ -15,7 +15,9 @@ import (
 func (m Model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
-	v.BackgroundColor = colBase
+	if !m.noColor {
+		v.BackgroundColor = colBase // with color off, the terminal keeps its own
+	}
 	v.WindowTitle = "refresh"
 	return v
 }

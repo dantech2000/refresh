@@ -18,6 +18,7 @@ Complete, auto-generated reference for every `refresh` command and flag. It is g
 | [`refresh version`](version.md) | Print the version of this CLI |
 | [`refresh install-man`](install-man.md) | Install the man page for refresh |
 | [`refresh completion`](completion.md) | Output shell completion script (bash, zsh, or fish) |
+| [`refresh ui`](ui.md) | Full-screen terminal UI (experimental) |
 
 ## Global flags
 

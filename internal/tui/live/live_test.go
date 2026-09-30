@@ -890,3 +890,26 @@ func TestFirstSweepShowsTheErrorUnderAChange(t *testing.T) {
 		t.Errorf("progress %d, errors %d; want one of each: %+v", progress, errs, st.Feed)
 	}
 }
+
+// From review: a command copied from a dry run ran with the shell's default
+// profile, possibly another account. It carries the UI's profile, and its
+// Kubernetes access on the commands that take it.
+func TestCopiedCommandsRunAsTheUI(t *testing.T) {
+	b := newTestBackend(t, &fleet{}, "us-east-1")
+	b.opts.CommandProfile, b.opts.KubeContext, b.opts.Kubeconfig = "staging admin", "stg", "/home/me/.kube/stg"
+	tg := target{name: "prod", region: "us-east-1"}
+	for in, want := range map[string]string{
+		regionFlag(tg) + "nodegroup update -c prod -n ng":       "refresh --profile 'staging admin' --region us-east-1 nodegroup update -c prod -n ng --kubeconfig /home/me/.kube/stg --kube-context stg",
+		regionFlag(tg) + "addon update --all -c prod":           "refresh --profile 'staging admin' --region us-east-1 addon update --all -c prod",
+		regionFlag(tg) + "cluster rollback -c prod":             "refresh --profile 'staging admin' --region us-east-1 cluster rollback -c prod --kubeconfig /home/me/.kube/stg --kube-context stg",
+		regionFlag(tg) + "cluster upgrade-check -c prod --id x": "refresh --profile 'staging admin' --region us-east-1 cluster upgrade-check -c prod --id x",
+	} {
+		if got := b.cliCommand(in); got != want {
+			t.Errorf("cliCommand(%q) =\n %q\nwant\n %q", in, got, want)
+		}
+	}
+	b.opts.CommandProfile, b.opts.KubeContext, b.opts.Kubeconfig = "", "", ""
+	if got := b.cliCommand(regionFlag(tg) + "cluster upgrade -c prod --to 1.32"); got != "refresh --region us-east-1 cluster upgrade -c prod --to 1.32" {
+		t.Errorf("no profile: %q", got)
+	}
+}

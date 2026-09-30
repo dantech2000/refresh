@@ -123,3 +123,16 @@ func TestKeyBarKeepsWordsOnLetterKeys(t *testing.T) {
 		t.Errorf("key bar is %d cells", width(got))
 	}
 }
+
+// From review: with color off (NO_COLOR, --no-color, TERM=dumb) the UI still
+// set the terminal's background color. It leaves it alone now.
+func TestNoColorLeavesTheBackgroundAlone(t *testing.T) {
+	m := Model{st: bigFleet(2), w: 120, h: 30}
+	if v := m.View(); v.BackgroundColor == nil {
+		t.Fatal("with color on, the view should set its background")
+	}
+	m.noColor = true
+	if v := m.View(); v.BackgroundColor != nil {
+		t.Errorf("with color off, BackgroundColor = %v, want none", v.BackgroundColor)
+	}
+}

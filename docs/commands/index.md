@@ -16,6 +16,7 @@ flag-by-flag detail and examples.
 | [`cluster`](cluster.md) | `list`, `describe`, `upgrade-check`, `upgrade`, `rollback` |
 | [`nodegroup`](nodegroup.md) | `list`, `describe`, `scale`, `update` (AMI roll) |
 | [`addon`](addon.md) | `list`, `describe`, `update` (incl. `--all`) |
+| [`ui`](ui.md) | Full-screen terminal UI (experimental): the fleet, readiness, live rolls, upgrades, and rollbacks |
 | [Contexts](contexts.md) | `use`, `current`, `context add/list/remove` |
 | [Utility](utility.md) | `version`, `install-man`, `completion` |
 
