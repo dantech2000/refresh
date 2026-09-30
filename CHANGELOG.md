@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.13.0](https://github.com/dantech2000/refresh/compare/v0.12.2...v0.13.0) (2026-09-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* **nodegroup:** refuse a roll that a PodDisruptionBudget would block
+
+### Features
+
+* **cluster:** add cluster rollback ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* **nodegroup:** add -o json|yaml to nodegroup scale ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* **nodegroup:** refuse a roll that a PodDisruptionBudget would block ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* refuse to start a change on a cluster EKS is changing ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* style top-level errors and lead with the cause ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+* **ui:** show refresh ui as experimental, with its docs page ([#457](https://github.com/dantech2000/refresh/issues/457)) ([45651f3](https://github.com/dantech2000/refresh/commit/45651f377e5cfd76c894f093afb7d19accbff38e))
+* **upgrade:** roll nodegroups before add-ons, except add-ons the new control plane cannot run ([729b51d](https://github.com/dantech2000/refresh/commit/729b51d85c0d0e15bd86fc6bfda9414f8b5d4b22))
+
+
+### Bug Fixes
+
+* an unreachable region fails a sweep in seconds, as a network error ([#460](https://github.com/dantech2000/refresh/issues/460)) ([bae4ec5](https://github.com/dantech2000/refresh/commit/bae4ec5c272b2dc0bf0a123b338627651a65ec33))
+* **deps:** bump github.com/aws/aws-sdk-go-v2 from 1.47.0 to 1.47.1 ([#449](https://github.com/dantech2000/refresh/issues/449)) ([2509cf5](https://github.com/dantech2000/refresh/commit/2509cf53fd0b81e2b9fe65f1b452812413b2c25c))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/config ([#444](https://github.com/dantech2000/refresh/issues/444)) ([5a673a6](https://github.com/dantech2000/refresh/commit/5a673a68ead135b7c0e3064008d03d0964c5ec6a))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#440](https://github.com/dantech2000/refresh/issues/440)) ([a876a20](https://github.com/dantech2000/refresh/commit/a876a2037836b405ac6f9852fee522f0f9d0d53b))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#447](https://github.com/dantech2000/refresh/issues/447)) ([359f166](https://github.com/dantech2000/refresh/commit/359f166ff29d5db46a7e011682faf16fb0fcb8c0))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#450](https://github.com/dantech2000/refresh/issues/450)) ([6db00f0](https://github.com/dantech2000/refresh/commit/6db00f033c3e7eb93e70932dc7c8005f21348088))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/internal/presigned-url ([#442](https://github.com/dantech2000/refresh/issues/442)) ([2faf227](https://github.com/dantech2000/refresh/commit/2faf2279fea8d1dbf9def3e1b36dc48c2518f47a))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#445](https://github.com/dantech2000/refresh/issues/445)) ([487346f](https://github.com/dantech2000/refresh/commit/487346ffe0d40fe945578a8bff46fd6ff0a4f33e))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#435](https://github.com/dantech2000/refresh/issues/435)) ([107b7cc](https://github.com/dantech2000/refresh/commit/107b7cc3d370a78ecc27292484918452d95d2e71))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sts ([#441](https://github.com/dantech2000/refresh/issues/441)) ([1b7e827](https://github.com/dantech2000/refresh/commit/1b7e827499949a2d5773dcd4c115c604531cac45))
+* **deps:** bump github.com/mattn/go-runewidth from 0.0.29 to 0.0.30 ([#452](https://github.com/dantech2000/refresh/issues/452)) ([782489a](https://github.com/dantech2000/refresh/commit/782489a397799f26640488bf60e686897d874098))
+* **deps:** bump github.com/urfave/cli/v3 from 3.12.0 to 3.13.0 ([#436](https://github.com/dantech2000/refresh/issues/436)) ([3f97264](https://github.com/dantech2000/refresh/commit/3f97264c003ad937c6f6f63afad203ac83bca09a))
+* **deps:** bump go.yaml.in/yaml/v4 from 4.0.0-rc.2 to 4.0.0-rc.6 ([#446](https://github.com/dantech2000/refresh/issues/446)) ([3e397cc](https://github.com/dantech2000/refresh/commit/3e397cc89b8b52da29a3849a7d4030f5a535a401))
+* **deps:** bump k8s.io/metrics from 0.37.0 to 0.37.1 ([#439](https://github.com/dantech2000/refresh/issues/439)) ([75dbfbd](https://github.com/dantech2000/refresh/commit/75dbfbda7c35c54d0a41eab222cd7711b40a71f1))
+* what a fleet-scale test found in the TUI and the AMI status ([#456](https://github.com/dantech2000/refresh/issues/456)) ([2f1c12a](https://github.com/dantech2000/refresh/commit/2f1c12ad99300531d40cdefbd141f53b57bc826a))
+* what a second real-EKS run found in rollback and the TUI ([#455](https://github.com/dantech2000/refresh/issues/455)) ([9a91f89](https://github.com/dantech2000/refresh/commit/9a91f8961acba1b5301d68f58049409e4b842ec1))
+
 ## [0.12.2](https://github.com/dantech2000/refresh/compare/v0.12.1...v0.12.2) (2026-09-26)
 
 
