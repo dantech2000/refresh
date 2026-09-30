@@ -35,6 +35,9 @@ func (s scriptedObs) StartInformers(context.Context) error {
 }
 func (s scriptedObs) StopInformers()                        {}
 func (s scriptedObs) CaptureBaseline(context.Context) error { return nil }
+func (s scriptedObs) CaptureBaselineBefore(context.Context, time.Time) error {
+	return nil
+}
 
 func (s scriptedObs) Snapshot(ctx context.Context) (noderoll.Snapshot, error) {
 	snap, err := s.ScriptedObserver.Snapshot(ctx)
@@ -795,4 +798,59 @@ func TestADryRunWithoutASweepVersion(t *testing.T) {
 		t.Fatalf("Blocked = %q, want the version read failure", p.Blocked)
 	}
 	rig.b.Close()
+}
+
+// Found on a real cluster: a control-plane rollback started with the CLI
+// read "upgrading" in the fleet and "upgrade started elsewhere" in the feed.
+func TestAWatchedRollbackSaysRollback(t *testing.T) {
+	rig := newRollRig(t)
+	b := rig.b
+	rows := prodRows()
+	rows[0].State = "UPDATING"
+	rows[0].Nodegroups[1].Status = "ACTIVE"
+	b.svc.listStatuses = func(_ context.Context, cfg aws.Config, _ statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
+		if cfg.Region != "us-east-1" {
+			return nil, nil
+		}
+		return rows, nil
+	}
+	b.roll.findUpdate = func(_ context.Context, _ aws.Config, _, ng string) (*ekstypes.Update, error) {
+		if ng != "" {
+			return nil, nil
+		}
+		return &ekstypes.Update{Id: aws.String("u-rb"), Type: ekstypes.UpdateTypeVersionRollback, Status: ekstypes.UpdateStatusInProgress,
+			Params: []ekstypes.UpdateParam{{Type: ekstypes.UpdateParamTypeVersion, Value: aws.String("1.30")}}}, nil
+	}
+	done := make(chan struct{})
+	b.roll.waitCluster = func(ctx context.Context, _ aws.Config, _, _ string) (ekstypes.UpdateStatus, string, error) {
+		select {
+		case <-done:
+			return ekstypes.UpdateStatusSuccessful, "", nil
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		}
+	}
+	b.mu.Lock()
+	b.runCtx = t.Context()
+	b.mu.Unlock()
+
+	b.sweep(t.Context())
+	var st state.State
+	for {
+		st, _ = b.State(t.Context())
+		if len(st.Upgrades) == 1 {
+			break
+		}
+		runtime.Gosched()
+	}
+	if u := st.Upgrades[0]; !u.Rollback || !u.StartedElsewhere {
+		t.Errorf("upgrade = %+v, want a watched rollback", u)
+	}
+	for _, c := range st.Clusters {
+		if c.Name == "prod-api" && c.Busy != "rolling back" {
+			t.Errorf("Busy = %q, want rolling back", c.Busy)
+		}
+	}
+	close(done)
+	b.Close()
 }

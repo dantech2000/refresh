@@ -29,6 +29,7 @@ type rollObserver interface {
 	StartInformers(ctx context.Context) error
 	StopInformers()
 	CaptureBaseline(ctx context.Context) error
+	CaptureBaselineBefore(ctx context.Context, start time.Time) error
 	Snapshot(ctx context.Context) (noderoll.Snapshot, error)
 }
 
@@ -458,6 +459,14 @@ func (b *Backend) busyOf(key string, c state.Cluster) string {
 		if s := b.claimed[t]; s != "" {
 			return s
 		}
+		// The sweep sees only UPDATING; a watched rollback says what it is.
+		if c.Busy == "upgrading" {
+			for _, u := range b.upgrades {
+				if u.t == t && u.st.Running() && u.st.Rollback {
+					return "rolling back"
+				}
+			}
+		}
 	}
 	return c.Busy
 }
@@ -499,7 +508,12 @@ func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t 
 		if err := obs.StartInformers(ctx); err == nil {
 			defer obs.StopInformers()
 		}
-		if err := obs.CaptureBaseline(ctx); err != nil {
+		capture := obs.CaptureBaseline
+		if r.st.StartedElsewhere {
+			// The roll began before this watch: nodes it already launched are new.
+			capture = func(ctx context.Context) error { return obs.CaptureBaselineBefore(ctx, r.st.StartedAt) }
+		}
+		if err := capture(ctx); err != nil {
 			b.mu.Lock()
 			b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelWarn, Subject: "node view", Text: "could not read the nodes: " + err.Error()})
 			b.mu.Unlock()
@@ -519,6 +533,10 @@ func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t 
 				vctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 				got, fs := b.roll.verify(vctx, cfg, t.name, r.st.Nodegroup, kube, pre, preOK)
 				cancel()
+				if r.st.StartedElsewhere {
+					// No snapshot was possible, not a failed one.
+					got.RenameSkip(nodegroupsvc.SkipNoPreroll, "pod verification skipped (the roll started elsewhere, before this UI could list the Pending pods)")
+				}
 				v, vf = &got, fs
 			}
 			b.finishRoll(r, res.status, res.msg, res.err, v, vf)

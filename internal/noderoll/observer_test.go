@@ -257,3 +257,30 @@ func nodeOf(s Snapshot, name string) NodeView {
 	}
 	return NodeView{}
 }
+
+// Found on a real cluster: a roll adopted a minute after it began counted
+// the replacement node EKS had already launched as old ("0/3 replaced" on a
+// two-node nodegroup). Only nodes created before the roll's start are old.
+func TestCaptureBaselineBeforeCountsLaunchedNodesAsNew(t *testing.T) {
+	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
+	at := func(n *corev1.Node, ts time.Time) *corev1.Node {
+		n.CreationTimestamp = metav1.NewTime(ts)
+		return n
+	}
+	client := fake.NewClientset(
+		at(mkNode("old-1", "", true, false), start.Add(-time.Hour)),
+		at(mkNode("old-2", "", true, true), start.Add(-time.Hour)),
+		at(mkNode("launched", "", true, false), start.Add(44*time.Second)),
+	)
+	obs := NewKubeObserver(client, ng, "")
+	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := obs.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodeOf(snap, "launched").OnTarget != true || nodeOf(snap, "old-1").OnTarget || nodeOf(snap, "old-2").OnTarget {
+		t.Fatalf("nodes = %+v, want only launched new", snap.Nodes)
+	}
+}

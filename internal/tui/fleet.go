@@ -104,7 +104,7 @@ func fleetCell(col string, c state.Cluster) Line {
 		return Line{sub(c.Region)}
 	case "VERSION":
 		l := Line{tx(c.Version)}
-		if c.Busy == "upgrading" || strings.HasPrefix(c.Busy, "upgrading") {
+		if strings.HasPrefix(c.Busy, "upgrading") || c.Busy == "rolling back" {
 			return append(l, sp(1), levelGlyph(state.LevelProgress))
 		}
 		if c.Behind() > 0 {

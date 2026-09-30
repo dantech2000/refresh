@@ -155,6 +155,23 @@ func (o *KubeObserver) CaptureBaseline(ctx context.Context) error {
 	return nil
 }
 
+// CaptureBaselineBefore records as "old" only the nodes created before start:
+// for a roll that began before the observer did (a roll started elsewhere),
+// nodes the roll has already launched count as new.
+func (o *KubeObserver) CaptureBaselineBefore(ctx context.Context, start time.Time) error {
+	nodes, err := o.listNodes(ctx)
+	if err != nil {
+		return err
+	}
+	o.baseline = make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		if n.CreationTimestamp.Time.Before(start) {
+			o.baseline[n.Name] = true
+		}
+	}
+	return nil
+}
+
 // listNodes returns the nodegroup's nodes: from the informer cache when
 // watching, else via a label-scoped List call.
 func (o *KubeObserver) listNodes(ctx context.Context) ([]*corev1.Node, error) {
