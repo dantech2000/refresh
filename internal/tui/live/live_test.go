@@ -867,3 +867,26 @@ func TestFirstSweepKeepsChangingClusters(t *testing.T) {
 		t.Errorf("progress events = %d, want one per changing cluster", progress)
 	}
 }
+
+// From review: a changing cluster that also has an error reported only its
+// progress; the error gets its own event too.
+func TestFirstSweepShowsTheErrorUnderAChange(t *testing.T) {
+	b := newTestBackend(t, &fleet{}, "us-east-1")
+	c := state.Cluster{Name: "c", Region: "us-east-1", Version: "1.31", Latest: "1.31", Busy: "updating ng-a", ExtendedSupport: true}
+	b.mu.Lock()
+	b.diff([]state.Cluster{c}, map[string]target{"c": {name: "c", region: "us-east-1"}})
+	b.mu.Unlock()
+	st, _ := b.State(t.Context())
+	var progress, errs int
+	for _, e := range st.Feed {
+		switch e.Level {
+		case state.LevelProgress:
+			progress++
+		case state.LevelError:
+			errs++
+		}
+	}
+	if progress != 1 || errs != 1 {
+		t.Errorf("progress %d, errors %d; want one of each: %+v", progress, errs, st.Feed)
+	}
+}

@@ -511,6 +511,15 @@ func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 			if lvl != state.LevelOK && (attention <= firstSweepEvents || lvl == state.LevelError || c.Busy != "") {
 				b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: lvl, Subject: c.Region, Text: text})
 			}
+			// Health names the change in flight first; an error under it
+			// (extended support, say) gets its own event too.
+			if c.Busy != "" {
+				idle := c
+				idle.Busy = ""
+				if l, t := idle.Health(); l == state.LevelError {
+					b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: l, Subject: c.Region, Text: t})
+				}
+			}
 		case !seen:
 			b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: state.LevelInfo, Subject: c.Region, Text: "cluster found", Detail: c.Version})
 		default:
