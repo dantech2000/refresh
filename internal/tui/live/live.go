@@ -491,7 +491,8 @@ func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 			}
 		}
 		if attention > firstSweepEvents {
-			b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: "fleet",
+			// Last, so the newest-first feed shows it on top.
+			defer b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: "fleet",
 				Text: fmt.Sprintf("%d of %d clusters need attention", attention, len(now)), Detail: "errors are listed one by one; the fleet table shows the rest"})
 		}
 	}

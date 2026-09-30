@@ -831,6 +831,9 @@ func TestFirstSweepOfABigFleetSummarizes(t *testing.T) {
 			}
 		}
 	}
+	if last := st.Feed[len(st.Feed)-1]; last.Subject != "fleet" {
+		t.Errorf("the summary is not the newest event (shown on top): %+v", last)
+	}
 	if summary != 1 || perCluster != 2 {
 		t.Errorf("summary %d, per-cluster %d; want 1 and 2 (the errors): %+v", summary, perCluster, st.Feed)
 	}

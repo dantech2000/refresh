@@ -31,8 +31,8 @@ func (m Model) fleetCols(w int) []fleetCol {
 	for _, c := range m.st.Clusters {
 		nameW, regionW = max(nameW, width(c.Name)), max(regionW, width(c.Region))
 	}
-	nameW, regionW = min(nameW, 30)+1, min(regionW, 15)+1
-	cols := []fleetCol{{"", 2}, {"CLUSTER", nameW}, {"REGION", regionW}, {"VERSION", 13}, {"NODEGROUPS", 12}, {"ADD-ONS", 11}, {"STATUS", 0}}
+	nameW, regionW = max(min(nameW, 30), 12)+1, max(min(regionW, 15), 10)+1
+	cols := []fleetCol{{"", 2}, {"CLUSTER", nameW}, {"REGION", regionW}, {"VERSION", 13}, {"NODEGROUPS", 14}, {"ADD-ONS", 11}, {"STATUS", 0}}
 	const statusMin = 14
 	used := func() int {
 		n := 2 // the table's indent and right edge
