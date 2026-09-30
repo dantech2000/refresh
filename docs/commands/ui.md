@@ -24,7 +24,7 @@ the same change, and `c` copies it.
 | Flag | Description |
 |---|---|
 | `--all-regions, -A` | Sweep all EKS-supported regions (or the `REFRESH_EKS_REGIONS` list) |
-| `--region, -r` | Region(s) to sweep (repeatable). Without `-A` or `-r`, the UI sweeps the configured region |
+| `--region, -r` | Region(s) to sweep (repeatable). Without `-A` or `-r`, the UI sweeps the configured region; with no region configured, the regions of the partition |
 | `--interval` | Time between fleet sweeps (default `1m`). `ctrl+r` sweeps now |
 | `--allow-changes` | Let the UI start changes after their dry runs and gates. Without it, the UI is read-only |
 | `--wait-timeout` | How long the UI watches a roll it started (default `40m`, `0` = no limit). The EKS update continues either way |
@@ -39,34 +39,36 @@ the same change, and `c` copies it.
 | `3` | Rolls | Each nodegroup roll: nodes draining, joining, and terminated, the pods left on a draining node, and Kubernetes events |
 | `4` | Upgrade | A cluster upgrade or rollback: its phases, the current step, and its timeline |
 
-`esc` goes back to the fleet. A change in flight keeps running.
+`esc` goes back to the fleet. A change in flight keeps running. In a dialog
+(a dry run, the key list, the nodegroup picker), `esc` and `q` close the
+dialog instead.
 
 ## Keys
 
 The key bar at the bottom shows the keys that work on the current screen. `?`
 lists them all.
 
-| Key | Action |
-|---|---|
-| `↑` `↓`, `g` `G` | Move through a list, or jump to the first or last item |
-| `enter` | Open the selected cluster |
-| `r` | Run readiness for the next version |
-| `p` | Dry-run a nodegroup patch (pick the nodegroup, then `enter`) |
-| `a` | Dry-run the add-on updates |
-| `U` | Dry-run a cluster upgrade to the next version |
-| `B` | Dry-run a rollback one minor version back (only after readiness found a rollback window) |
-| `y` | In a dry run: start the change (`--allow-changes` only) |
-| `c` | In a dry run: copy the CLI command |
-| `S` | Stop the upgrade after the current step. An EKS update in flight finishes |
-| `P` | Pause the upgrade before its next phase |
-| `y` / `n` | Answer the upgrade's question: go on, or stop after this step |
-| `f` | Feed: all clusters, or the selected one |
-| `w` | Feed: warnings and errors only |
-| `space` | Freeze the live panes, or follow them again |
-| `tab` `←` `→` | Switch the log source of a live pane |
-| `[` `]` | Page through rolls or upgrades |
-| `ctrl+r` | Sweep the fleet now |
-| `q` | Quit. Changes in flight keep running in EKS |
+| Key | Where | Action |
+|---|---|---|
+| `↑` `↓`, `g` `G` | Lists | Move through a list, or jump to the first or last item |
+| `enter` | Fleet | Open the selected cluster |
+| `r` | Fleet, Cluster | Run readiness for the next version |
+| `p` | Fleet, Cluster | Dry-run a nodegroup patch (pick the nodegroup, then `enter`) |
+| `a` | Fleet, Cluster | Dry-run the add-on updates |
+| `U` | Fleet, Cluster | Dry-run a cluster upgrade to the next version |
+| `B` | Fleet, Cluster | Dry-run a rollback one minor version back (only after readiness found a rollback window) |
+| `y` | Dry run | Start the change (`--allow-changes` only) |
+| `c` | Dry run | Copy the CLI command |
+| `S` | Upgrade | Stop the upgrade before its next phase. The current phase finishes, and an EKS update in flight is never cancelled. Press `S` again to cancel the stop |
+| `P` | Upgrade | Pause the upgrade before its next phase. Press `P` again to go on |
+| `y` / `n` | Upgrade | Answer the upgrade's question: go on, or stop after this step |
+| `f` | Fleet | Feed: all clusters, or the selected one |
+| `w` | Any | Feed: warnings and errors only |
+| `space` | Any | Freeze the live panes, or follow them again |
+| `tab` `←` `→` | Rolls, Upgrade | Switch the log source of a live pane |
+| `[` `]` | Rolls, Upgrade | Page through rolls or upgrades |
+| `ctrl+r` | Any | Sweep the fleet now |
+| `q` | Any | Quit (in a dialog, close it). Changes in flight keep running in EKS |
 
 ## Read-only and --allow-changes
 
@@ -83,7 +85,9 @@ says `CHANGES ON`. Before the UI starts anything, it checks again:
   refuses when the gate finds something the dry run did not show. It also
   refuses when a PodDisruptionBudget would block the drain or cannot be read
   (the UI has no `--force`), or when the nodegroup's version changed since
-  the dry run.
+  the dry run. Without Kubernetes access (no kubeconfig context for the
+  cluster), the PDB check is skipped, as in `nodegroup update`, and the dry
+  run says so.
 - **An add-on update** previews again, and refuses when the plan changed.
 - **A cluster upgrade** builds its plan again and asks (`y`/`n`) when the steps
   changed or a nodegroup's health gate warns. A PDB drain blocker before a
@@ -95,15 +99,20 @@ The UI runs one change at a time on a cluster.
 
 ## Changes started elsewhere
 
-A roll, upgrade, or rollback started with the CLI or the AWS console shows up
-on the next sweep. The UI watches it, including the live node view, and marks it
-`started elsewhere · watch only`. It cannot stop or pause it.
+A nodegroup roll or a control-plane update (an upgrade or a rollback) started
+with the CLI or the AWS console shows up on the next sweep. The UI watches
+it, including the live node view of a roll, and marks it `started elsewhere ·
+watch only`. It cannot stop or pause it. An add-on update started elsewhere
+marks the cluster busy, but the UI does not watch it. The UI shows changes
+in flight, not past ones.
 
 If you quit the UI (or it stops) during a change it started, the EKS update
 in flight keeps running, and the next `refresh ui` watches it the same way.
-The later phases of an upgrade or rollback do not start: run the same
-upgrade or rollback again (in the UI, or with the CLI command the dry run
-names), and it continues from the cluster's live state.
+The later phases of an upgrade or rollback do not start. To finish them, run
+the CLI command the dry run named (`c` copies it), with the same `--to`: it
+continues from the cluster's live state. `U` in the UI plans the next
+version from the version the cluster is on, so after the control plane
+moved it offers the version after that.
 
 ## Terminal
 

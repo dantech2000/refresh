@@ -15,6 +15,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cliconfig"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/sim"
 	"github.com/dantech2000/refresh/internal/tui"
 	"github.com/dantech2000/refresh/internal/tui/live"
@@ -127,7 +128,7 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		defer close(done)
 		backend.Run(ctx)
 	}()
-	err = tui.Run(ctx, backend, tty.in, os.Stdout)
+	err = tui.Run(ctx, backend, tty.in, os.Stdout, render.DetectLevel(os.Stdout) == render.ColorNone)
 	stop()
 	<-done
 	backend.Close()
@@ -206,7 +207,7 @@ func runSimulated(ctx context.Context) error {
 		defer close(done)
 		world.Run(ctx, speed)
 	}()
-	err = tui.Run(ctx, world, os.Stdin, os.Stdout)
+	err = tui.Run(ctx, world, os.Stdin, os.Stdout, render.DetectLevel(os.Stdout) == render.ColorNone)
 	cancel()
 	<-done
 	return err

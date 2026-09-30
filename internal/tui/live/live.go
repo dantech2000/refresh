@@ -705,7 +705,7 @@ func (b *Backend) RunReadiness(ctx context.Context, key string) error {
 			run.Log = appendCapped(run.Log, b.stamp(state.Event{Cluster: key, Source: state.SourceCheck, Level: state.LevelError, Subject: "UpgradeCheck", Text: rerr.Error()}), logCap)
 			return
 		}
-		run.Checks = readinessChecks(report, run.To, regionFlag(t))
+		run.Checks = readinessChecks(report, run.To, b.cliCommand(regionFlag(t)))
 		if a := report.Rollback; a != nil {
 			b.rollbackWindows[t] = rollbackWindow{from: report.Skew.ControlPlaneVersion, to: a.PreviousVersion, until: a.AvailableUntil}
 		} else {
@@ -802,6 +802,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		return state.Plan{}, err
 	}
 	p.Action = a
+	p.Command = b.cliCommand(p.Command)
 	b.mu.Lock()
 	busy := b.busyOf(a.Cluster, c)
 	b.mu.Unlock()

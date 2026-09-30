@@ -136,7 +136,7 @@ func TestRollbackDryRunIsTheCLIPlan(t *testing.T) {
 	if err != nil || p.Blocked != "" {
 		t.Fatalf("plan = %+v, %v", p, err)
 	}
-	if p.Command != "refresh --region us-east-1 cluster rollback -c prod-api" || p.Changes[0] != (state.Change{Field: "control plane", From: "1.31", To: "1.30"}) {
+	if p.Command != "refresh --profile admin --region us-east-1 cluster rollback -c prod-api" || p.Changes[0] != (state.Change{Field: "control plane", From: "1.31", To: "1.30"}) {
 		t.Fatalf("plan = %+v", p)
 	}
 

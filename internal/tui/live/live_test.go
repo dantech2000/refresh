@@ -319,7 +319,7 @@ func TestReadinessRunsInTheBackgroundAndMapsTheReport(t *testing.T) {
 		}
 	}
 	fix := strings.Join(byName["Deprecated APIs removed in Kubernetes v1.32"].Fix, " ")
-	if !strings.Contains(fix, "refresh --region us-east-1 cluster upgrade-check -c prod-api --id abc123") {
+	if !strings.Contains(fix, "refresh --profile admin --region us-east-1 cluster upgrade-check -c prod-api --id abc123") {
 		t.Fatalf("fix = %q", fix)
 	}
 	if r.Blockers() != 2 || !strings.Contains(joinText(st.Feed), "readiness: 2 blocker(s)") {
@@ -359,7 +359,7 @@ func TestPlansAreDryRunsWithTheCLICommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if roll.Command != "refresh --region us-east-1 nodegroup update -c prod-api -n ng-general" || roll.Blocked != ErrReadOnly.Error() {
+	if roll.Command != "refresh --profile admin --region us-east-1 nodegroup update -c prod-api -n ng-general" || roll.Blocked != ErrReadOnly.Error() {
 		t.Fatalf("roll plan = %+v", roll)
 	}
 	if len(roll.Changes) != 1 || roll.Changes[0].From != "ami-old" {
@@ -371,7 +371,7 @@ func TestPlansAreDryRunsWithTheCLICommand(t *testing.T) {
 	}
 
 	addons, _ := b.Plan(t.Context(), state.Action{Kind: state.ActionAddons, Cluster: "prod-api"})
-	if len(addons.Changes) != 1 || addons.Command != "refresh --region us-east-1 addon update --all -c prod-api" {
+	if len(addons.Changes) != 1 || addons.Command != "refresh --profile admin --region us-east-1 addon update --all -c prod-api" {
 		t.Fatalf("add-on plan = %+v", addons)
 	}
 
@@ -391,7 +391,7 @@ func TestPlansAreDryRunsWithTheCLICommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if up.Command != "refresh --region us-east-1 cluster upgrade -c prod-api --to 1.32" || !strings.Contains(up.Blocked, "1 blocker(s): Readiness") {
+	if up.Command != "refresh --profile admin --region us-east-1 cluster upgrade -c prod-api --to 1.32" || !strings.Contains(up.Blocked, "1 blocker(s): Readiness") {
 		t.Fatalf("upgrade plan = %+v", up)
 	}
 	// The control plane is the change line, not a fact; the gates end with
@@ -888,5 +888,28 @@ func TestFirstSweepShowsTheErrorUnderAChange(t *testing.T) {
 	}
 	if progress != 1 || errs != 1 {
 		t.Errorf("progress %d, errors %d; want one of each: %+v", progress, errs, st.Feed)
+	}
+}
+
+// From review: a command copied from a dry run ran with the shell's default
+// profile, possibly another account. It carries the UI's profile, and its
+// Kubernetes access on the commands that take it.
+func TestCopiedCommandsRunAsTheUI(t *testing.T) {
+	b := newTestBackend(t, &fleet{}, "us-east-1")
+	b.opts.Profile, b.opts.KubeContext, b.opts.Kubeconfig = "staging admin", "stg", "/home/me/.kube/stg"
+	tg := target{name: "prod", region: "us-east-1"}
+	for in, want := range map[string]string{
+		regionFlag(tg) + "nodegroup update -c prod -n ng":       "refresh --profile 'staging admin' --region us-east-1 nodegroup update -c prod -n ng --kubeconfig /home/me/.kube/stg --kube-context stg",
+		regionFlag(tg) + "addon update --all -c prod":           "refresh --profile 'staging admin' --region us-east-1 addon update --all -c prod",
+		regionFlag(tg) + "cluster rollback -c prod":             "refresh --profile 'staging admin' --region us-east-1 cluster rollback -c prod --kubeconfig /home/me/.kube/stg --kube-context stg",
+		regionFlag(tg) + "cluster upgrade-check -c prod --id x": "refresh --profile 'staging admin' --region us-east-1 cluster upgrade-check -c prod --id x",
+	} {
+		if got := b.cliCommand(in); got != want {
+			t.Errorf("cliCommand(%q) =\n %q\nwant\n %q", in, got, want)
+		}
+	}
+	b.opts.Profile, b.opts.KubeContext, b.opts.Kubeconfig = "", "", ""
+	if got := b.cliCommand(regionFlag(tg) + "cluster upgrade -c prod --to 1.32"); got != "refresh --region us-east-1 cluster upgrade -c prod --to 1.32" {
+		t.Errorf("no profile: %q", got)
 	}
 }
