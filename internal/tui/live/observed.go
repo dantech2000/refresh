@@ -231,8 +231,8 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 				continue
 			}
 			r.st.Planned = n.Nodes
-			if n.Version != "" && n.Version != version {
-				r.st.FromVersion = n.Version
+			if n.Version != "" && version != "" && n.Version != version {
+				r.st.FromVersion, r.versionRoll = n.Version, true
 			}
 		}
 	}

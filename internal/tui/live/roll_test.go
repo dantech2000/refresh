@@ -38,6 +38,9 @@ type obsRec struct {
 	mu      sync.Mutex
 	calls   []string
 	version string
+	// seesVersionRoll is what VersionRoll reports, as if a node on another
+	// minor had been seen.
+	seesVersionRoll bool
 }
 
 func (r *obsRec) add(call string) {
@@ -63,6 +66,15 @@ func (s scriptedObs) CaptureBaseline(context.Context) error { s.rec.add("baselin
 func (s scriptedObs) CaptureBaselineBefore(context.Context, time.Time) error {
 	s.rec.add("baseline-before")
 	return nil
+}
+func (s scriptedObs) MarkVersionRoll() { s.rec.add("mark") }
+func (s scriptedObs) VersionRoll() bool {
+	if s.rec == nil {
+		return false
+	}
+	s.rec.mu.Lock()
+	defer s.rec.mu.Unlock()
+	return s.rec.seesVersionRoll
 }
 func (s scriptedObs) SetTargetVersion(v string) {
 	s.rec.add("version")
@@ -905,7 +917,7 @@ func TestAnAdoptedRollCountsFromItsStart(t *testing.T) {
 		wantVersion string
 		wantNote    bool
 	}{
-		{"version roll", aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)), "1.32", []string{"version", "baseline-before"}, "1.32", false},
+		{"version roll", aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)), "1.32", []string{"version", "mark", "baseline-before"}, "1.32", false},
 		{"AMI patch", aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)), "1.31", []string{"version", "baseline-before"}, "1.31", false},
 		{"no start time", nil, "1.31", []string{"version", "baseline"}, "1.31", true},
 	} {
@@ -960,4 +972,64 @@ func TestAnAdoptedRollCountsFromItsStart(t *testing.T) {
 			b.Close()
 		})
 	}
+}
+
+// From review: each watch builds a new observer, so a resumed watch of a
+// version roll must be told it is one, even after the old-minor nodes left
+// and the sweep shows the target version.
+func TestAResumedWatchKeepsTheVersionRoll(t *testing.T) {
+	rig := newRollRig(t)
+	b := rig.b
+	rows := prodRows()                     // ng-system is UPDATING
+	rows[0].Nodegroups[1].Version = "1.32" // the sweep already shows the target
+	b.svc.listStatuses = func(_ context.Context, cfg aws.Config, _ statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
+		if cfg.Region != "us-east-1" {
+			return nil, nil
+		}
+		return rows, nil
+	}
+	b.roll.findUpdate = func(_ context.Context, _ aws.Config, _, ng string) (*ekstypes.Update, error) {
+		if ng != "ng-system" {
+			return nil, nil
+		}
+		return &ekstypes.Update{Id: aws.String("u-ng"), Status: ekstypes.UpdateStatusInProgress, CreatedAt: aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)),
+			Params: []ekstypes.UpdateParam{{Type: ekstypes.UpdateParamTypeVersion, Value: aws.String("1.32")}}}, nil
+	}
+	rig.obs.mu.Lock()
+	rig.obs.seesVersionRoll = true // the first watch sees a 1.31 node
+	rig.obs.mu.Unlock()
+	b.mu.Lock()
+	b.runCtx = t.Context()
+	b.mu.Unlock()
+	rolls := func() []state.Roll { st, _ := b.State(t.Context()); return st.Rolls }
+	waitFor := func(ok func([]state.Roll) bool) {
+		for !ok(rolls()) {
+			runtime.Gosched()
+		}
+	}
+
+	b.sweep(t.Context())
+	waitFor(func(rs []state.Roll) bool { return len(rs) == 1 && rs[0].Running() && rs[0].Snapshot.Nodes != nil })
+	if calls, _ := rig.obs.got(); slices.Contains(calls, "mark") {
+		t.Fatalf("first watch marked without evidence: %v", calls)
+	}
+	rig.obs.mu.Lock()
+	rig.obs.calls, rig.obs.seesVersionRoll = nil, false // the old nodes are gone now
+	rig.obs.mu.Unlock()
+
+	rig.release <- ekstypes.UpdateStatusInProgress // the watch ends early
+	waitFor(func(rs []state.Roll) bool { return !rs[0].Running() })
+	b.sweep(t.Context()) // EKS still reports UPDATING: resume
+	waitFor(func(rs []state.Roll) bool { return len(rs) == 1 && rs[0].Running() })
+	for {
+		if calls, _ := rig.obs.got(); slices.Contains(calls, "baseline-before") {
+			if !slices.Contains(calls, "mark") {
+				t.Errorf("resumed watch calls %v, want the version roll marked", calls)
+			}
+			break
+		}
+		runtime.Gosched()
+	}
+	rig.release <- ekstypes.UpdateStatusSuccessful
+	b.Close()
 }

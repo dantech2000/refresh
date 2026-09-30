@@ -31,6 +31,8 @@ type rollObserver interface {
 	CaptureBaseline(ctx context.Context) error
 	CaptureBaselineBefore(ctx context.Context, start time.Time) error
 	SetTargetVersion(v string)
+	MarkVersionRoll()
+	VersionRoll() bool
 	Snapshot(ctx context.Context) (noderoll.Snapshot, error)
 }
 
@@ -164,6 +166,10 @@ type liveRoll struct {
 	// when it began.
 	toVersion  string
 	startKnown bool
+	// versionRoll is set once the roll is known to change the Kubernetes
+	// version (the sweep's version before it, or a node seen on another
+	// minor), and outlives each watch's observer.
+	versionRoll bool
 }
 
 // healthGates turns a health verdict into plan gates. blocked names the
@@ -522,6 +528,12 @@ func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t 
 			// began are old, or, with no start time, the nodes seen now.
 			if r.toVersion != "" {
 				obs.SetTargetVersion(r.toVersion)
+				b.mu.Lock()
+				known := r.versionRoll
+				b.mu.Unlock()
+				if known {
+					obs.MarkVersionRoll()
+				}
 			}
 			if r.startKnown {
 				capture = func(ctx context.Context) error { return obs.CaptureBaselineBefore(ctx, r.st.StartedAt) }
@@ -589,6 +601,9 @@ func (b *Backend) observeOnce(ctx context.Context, r *liveRoll, obs rollObserver
 		if old > 0 && (!r.st.StartedElsewhere || r.st.Planned == 0) {
 			r.st.Planned = old
 		}
+	}
+	if obs.VersionRoll() {
+		r.versionRoll = true // for the next watch's observer, on a resume
 	}
 	r.st.Snapshot = snap
 	r.viewed = true

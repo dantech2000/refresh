@@ -169,6 +169,14 @@ func (o *KubeObserver) CaptureBaseline(ctx context.Context) error {
 // the AMI label.
 func (o *KubeObserver) SetTargetVersion(v string) { o.targetVersion = v }
 
+// MarkVersionRoll says the roll changes the Kubernetes version even when no
+// node on another minor is left to show it (known from the nodegroup's
+// version before the update, or from an earlier watch of the same roll).
+func (o *KubeObserver) MarkVersionRoll() { o.versionRoll = true }
+
+// VersionRoll reports whether kubelet versions decide old from new.
+func (o *KubeObserver) VersionRoll() bool { return o.versionRoll }
+
 // CaptureBaselineBefore records as "old" only the nodes created before start:
 // for a roll that began before the observer did (a roll started elsewhere),
 // nodes the roll has already launched count as new.
