@@ -30,14 +30,22 @@ func stepToken(th *render.Theme, st upgrade.StepStatus) string {
 // planLines builds the human plan (pure, so tests can check it): the path,
 // the notices, and each hop's numbered steps with a status token.
 func planLines(th *render.Theme, plan *upgrade.Plan) []string {
-	path := plan.CurrentVersion
+	// A rerun after the control plane moved has a hop to the version the
+	// cluster is on: say that the run finishes it, not "1.35 → 1.35".
+	path, prev := plan.CurrentVersion, plan.CurrentVersion
 	for _, hop := range plan.Hops {
-		path += " → " + hop.To
+		if hop.To != prev {
+			path += " → " + hop.To
+			prev = hop.To
+		}
+	}
+	note := " (EKS upgrades are sequential minors)"
+	if len(plan.Hops) > 0 && path == plan.CurrentVersion {
+		note = " (the control plane is on " + plan.CurrentVersion + "; this run finishes the upgrade)"
 	}
 	out := []string{
 		"",
-		"Upgrade plan: " + th.Bold(th.Pal.White, plan.ClusterName) + " " + path +
-			th.Paint(th.Pal.Dim, " (EKS upgrades are sequential minors)"),
+		"Upgrade plan: " + th.Bold(th.Pal.White, plan.ClusterName) + " " + path + th.Paint(th.Pal.Dim, note),
 	}
 	for _, n := range plan.Notices {
 		out = append(out, "  "+th.Token(render.Warn, "notice: "+n))
@@ -49,7 +57,11 @@ func planLines(th *render.Theme, plan *upgrade.Plan) []string {
 		width = max(width, ui.VisibleWidth(stepToken(th, st)))
 	}
 	for _, hop := range plan.Hops {
-		out = append(out, "", th.Section(fmt.Sprintf("Hop %s → %s", hop.From, hop.To)))
+		title := fmt.Sprintf("Hop %s → %s", hop.From, hop.To)
+		if hop.From == hop.To {
+			title = "Finish " + hop.To
+		}
+		out = append(out, "", th.Section(title))
 		for i, step := range hop.Steps {
 			line := fmt.Sprintf("  %2d. %s %s", i+1, ui.PadANSI(stepToken(th, step.Status), width, ui.AlignLeft), step.Description)
 			if step.Reason != "" {

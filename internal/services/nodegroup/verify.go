@@ -95,6 +95,24 @@ func (v *PostRollVerification) Skip(msg string) {
 	v.skipped = append(v.skipped, msg)
 }
 
+// SkipNoPreroll is the check skipped when there is no Pending-pod snapshot
+// from before the roll.
+const SkipNoPreroll = "pod verification skipped (could not list Pending pods before the roll)"
+
+// RenameSkip replaces the skipped check old with msg, keeping its place.
+func (v *PostRollVerification) RenameSkip(old, msg string) {
+	for i, c := range v.Checks {
+		if c == old && v.Skipped(c) {
+			v.Checks[i] = msg
+		}
+	}
+	for i, c := range v.skipped {
+		if c == old {
+			v.skipped[i] = msg
+		}
+	}
+}
+
 // Skipped reports whether check is a Checks entry that did not run.
 func (v PostRollVerification) Skipped(check string) bool {
 	return slices.Contains(v.skipped, check)
@@ -151,7 +169,7 @@ func VerifyPostRoll(ctx context.Context, eksClient NodegroupDescriber, k8sClient
 	}
 
 	if !prerollOK {
-		v.Skip("pod verification skipped (could not list Pending pods before the roll)")
+		v.Skip(SkipNoPreroll)
 		return v, failures
 	}
 	after, ok := SnapshotPendingPods(ctx, k8sClient)

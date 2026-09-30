@@ -3,6 +3,7 @@ package addons
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -391,5 +392,21 @@ func TestListDetailed_UndispatchedAreNamedFailures(t *testing.T) {
 	}
 	if notDescribed == 0 {
 		t.Errorf("failures = %+v, want undispatched add-ons reported as NotAttempted with the context cause", res.Failures)
+	}
+}
+
+// Found on a real rollback: the downgrade warning also went to the logger at
+// WARN, which the CLI prints at its default level as a raw slog line next to
+// the readable result.Warning. The log line is Info now.
+func TestUpdate_DowngradeLogsNothingAtWarn(t *testing.T) {
+	var buf strings.Builder
+	l := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	m := waitMock("v1.19.0", ekstypes.AddonStatusActive, "v1.19.0", "v1.18.0").Build()
+	res, err := NewService(m, l).Update(t.Context(), "prod", "vpc-cni", UpdateOptions{Version: "v1.18.0"})
+	if err != nil || res.Warning == "" {
+		t.Fatalf("Update = %+v, %v; want a downgrade with its warning", res, err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("logged at WARN: %s", buf.String())
 	}
 }

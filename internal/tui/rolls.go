@@ -182,31 +182,45 @@ func (m Model) nodeList(r state.Roll, w, h int) Block {
 	return append(out, card.indent(1)...)
 }
 
-// podCard lists the pods still on the draining node.
+// podCard lists the pods still on the draining node. The name column fits
+// the box: a name too long for it ends in "…", and two spaces always
+// separate it from the reason.
 func (m Model) podCard(r state.Roll, node string, w int) Block {
 	pods := r.Pods[node]
 	var body Block
 	const maxPods = 6
-	nameW := 0
+	reason := func(p state.Pod) string {
+		if p.State == state.PodBlocked || p.State == state.PodTerminating || p.State == state.PodDaemonSet {
+			return p.Reason
+		}
+		return "waiting"
+	}
+	nameW, reasonW := 0, 0
 	for _, p := range pods {
 		nameW = max(nameW, width(p.Name))
+		reasonW = max(reasonW, width(reason(p)))
 	}
-	nameW = min(nameW+2, 30)
+	// The box border and padding take 4 cells, the glyph and its space 2,
+	// and the gap 2. Names get the room first, up to 40 cells; a reason too
+	// long for the rest is cut by the box, but never squeezes the names
+	// below 20 cells (or the whole line, on a very narrow card).
+	nameW = max(1, min(nameW, 40, max(w-8-reasonW, min(nameW, 20), 0), w-8))
 	for i, p := range pods {
 		if i == maxPods {
 			body = append(body, Line{tok(state.LevelInfo, fmt.Sprintf("+%d more", len(pods)-maxPods))})
 			break
 		}
+		name := func(style func(string) Seg) Line { return append(Line{style(p.Name)}.Fit(nameW), sp(2)) }
 		l := Line{}
 		switch p.State {
 		case state.PodBlocked:
-			l = append(l, levelGlyph(state.LevelWarn), sp(1), tx(padRight(p.Name, nameW)), fg(colYellow, p.Reason))
+			l = append(append(l, levelGlyph(state.LevelWarn), sp(1)), append(name(tx), fg(colYellow, p.Reason))...)
 		case state.PodTerminating:
-			l = append(l, levelGlyph(state.LevelProgress), sp(1), tx(padRight(p.Name, nameW)), sub(p.Reason))
+			l = append(append(l, levelGlyph(state.LevelProgress), sp(1)), append(name(tx), sub(p.Reason))...)
 		case state.PodDaemonSet:
-			l = append(l, levelGlyph(state.LevelInfo), sp(1), sub(padRight(p.Name, nameW)), dimS(p.Reason))
+			l = append(append(l, levelGlyph(state.LevelInfo), sp(1)), append(name(sub), dimS(p.Reason))...)
 		default:
-			l = append(l, levelGlyph(state.LevelInfo), sp(1), tx(padRight(p.Name, nameW)), dimS("waiting"))
+			l = append(append(l, levelGlyph(state.LevelInfo), sp(1)), append(name(tx), dimS("waiting"))...)
 		}
 		body = append(body, l)
 	}

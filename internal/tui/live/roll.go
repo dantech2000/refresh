@@ -29,6 +29,10 @@ type rollObserver interface {
 	StartInformers(ctx context.Context) error
 	StopInformers()
 	CaptureBaseline(ctx context.Context) error
+	CaptureBaselineBefore(ctx context.Context, start time.Time) error
+	SetTargetVersion(v string)
+	MarkVersionRoll()
+	VersionRoll() bool
 	Snapshot(ctx context.Context) (noderoll.Snapshot, error)
 }
 
@@ -156,6 +160,16 @@ type liveRoll struct {
 	warned   map[string]bool
 	// viewed is set once the node view read the nodes.
 	viewed bool
+	// For a roll started elsewhere: toVersion is the Kubernetes minor the
+	// EKS update moves the nodes to (the node view tells a version roll
+	// apart by kubelet versions), and startKnown says the update reported
+	// when it began.
+	toVersion  string
+	startKnown bool
+	// versionRoll is set once the roll is known to change the Kubernetes
+	// version (the sweep's version before it, or a node seen on another
+	// minor), and outlives each watch's observer.
+	versionRoll bool
 }
 
 // healthGates turns a health verdict into plan gates. blocked names the
@@ -458,6 +472,14 @@ func (b *Backend) busyOf(key string, c state.Cluster) string {
 		if s := b.claimed[t]; s != "" {
 			return s
 		}
+		// The sweep sees only UPDATING; a watched rollback says what it is.
+		if c.Busy == "upgrading" {
+			for _, u := range b.upgrades {
+				if u.t == t && u.st.Running() && u.st.Rollback {
+					return "rolling back"
+				}
+			}
+		}
 	}
 	return c.Busy
 }
@@ -499,7 +521,29 @@ func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t 
 		if err := obs.StartInformers(ctx); err == nil {
 			defer obs.StopInformers()
 		}
-		if err := obs.CaptureBaseline(ctx); err != nil {
+		capture := obs.CaptureBaseline
+		if r.st.StartedElsewhere {
+			// The roll began before this watch. A version change is exact
+			// (kubelet versions); otherwise nodes created before the update
+			// began are old, or, with no start time, the nodes seen now.
+			if r.toVersion != "" {
+				obs.SetTargetVersion(r.toVersion)
+				b.mu.Lock()
+				known := r.versionRoll
+				b.mu.Unlock()
+				if known {
+					obs.MarkVersionRoll()
+				}
+			}
+			if r.startKnown {
+				capture = func(ctx context.Context) error { return obs.CaptureBaselineBefore(ctx, r.st.StartedAt) }
+			} else {
+				b.mu.Lock()
+				b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "node view", Text: "old and new nodes count from when this UI began watching", Detail: "EKS reported no start time for the update"})
+				b.mu.Unlock()
+			}
+		}
+		if err := capture(ctx); err != nil {
 			b.mu.Lock()
 			b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelWarn, Subject: "node view", Text: "could not read the nodes: " + err.Error()})
 			b.mu.Unlock()
@@ -519,6 +563,10 @@ func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t 
 				vctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 				got, fs := b.roll.verify(vctx, cfg, t.name, r.st.Nodegroup, kube, pre, preOK)
 				cancel()
+				if r.st.StartedElsewhere {
+					// No snapshot was possible, not a failed one.
+					got.RenameSkip(nodegroupsvc.SkipNoPreroll, "pod verification skipped (the roll started elsewhere, before this UI could list the Pending pods)")
+				}
 				v, vf = &got, fs
 			}
 			b.finishRoll(r, res.status, res.msg, res.err, v, vf)
@@ -548,9 +596,14 @@ func (b *Backend) observeOnce(ctx context.Context, r *liveRoll, obs rollObserver
 				old++
 			}
 		}
-		if old > 0 {
+		// A roll started elsewhere keeps the total adoption set (the
+		// nodegroup's size): nodes it already replaced are gone.
+		if old > 0 && (!r.st.StartedElsewhere || r.st.Planned == 0) {
 			r.st.Planned = old
 		}
+	}
+	if obs.VersionRoll() {
+		r.versionRoll = true // for the next watch's observer, on a resume
 	}
 	r.st.Snapshot = snap
 	r.viewed = true

@@ -212,8 +212,29 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 		Nodegroup: ng, FromVersion: version, ToVersion: version, ToAMI: release,
 		StartedAt: aws.ToTime(u.CreatedAt), StartedElsewhere: true, MaxUnavailableText: "per update config",
 	}
-	if r.st.StartedAt.IsZero() {
+	r.startKnown = !r.st.StartedAt.IsZero()
+	if !r.startKnown {
 		r.st.StartedAt = b.now()
+	}
+	// The node view tells a version roll apart by kubelet versions (the
+	// observer decides from the nodes, not from the sweep's version, which
+	// can already show the target). The sweep's size for the nodegroup is
+	// the roll's total: nodes already replaced are gone from the node list.
+	r.toVersion = version
+	fleetKey := b.keyOf(t)
+	for _, c := range b.clusters {
+		if c.Name != fleetKey {
+			continue
+		}
+		for _, n := range c.Nodegroups {
+			if n.Name != ng {
+				continue
+			}
+			r.st.Planned = n.Nodes
+			if n.Version != "" && version != "" && n.Version != version {
+				r.st.FromVersion, r.versionRoll = n.Version, true
+			}
+		}
 	}
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "started elsewhere", Text: "watching update " + id, Detail: "not started by this UI; it cannot be stopped here"})
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "node view", Text: how})
@@ -245,9 +266,10 @@ func (b *Backend) adoptUpgrade(ctx context.Context, t target, from string) {
 		return
 	}
 	to := updateParam(u, ekstypes.UpdateParamTypeVersion)
-	what := "Control plane " + to
-	if u.Type == ekstypes.UpdateTypeVersionRollback {
-		what = "Control plane rollback to " + to
+	rollback := u.Type == ekstypes.UpdateTypeVersionRollback
+	what, kind := "Control plane "+to, "upgrade"
+	if rollback {
+		what, kind = "Control plane rollback to "+to, "rollback"
 	}
 	started := aws.ToTime(u.CreatedAt)
 	if started.IsZero() {
@@ -273,11 +295,11 @@ func (b *Backend) adoptUpgrade(ctx context.Context, t target, from string) {
 		}
 	}
 	lu := &liveUpgrade{t: t, updateID: id, answers: make(chan bool, 1), wake: make(chan struct{}, 1)}
-	lu.st = state.Upgrade{StartedElsewhere: true, Cluster: b.keyOf(t), From: from, To: to, StartedAt: started,
+	lu.st = state.Upgrade{StartedElsewhere: true, Rollback: rollback, Cluster: b.keyOf(t), From: from, To: to, StartedAt: started,
 		Phases: []state.Phase{{Name: what, Weight: 1, Status: state.PhaseRunning, StartedAt: started,
 			Items: []state.PhaseItem{{Name: "control plane", Text: from + " → " + to}}}}}
 	b.upgradeEvent(lu, state.LevelInfo, "started elsewhere", "watching update "+aws.ToString(u.Id), "not started by this UI; add-ons and nodegroup rolls it runs show on the Rolls screen")
-	b.emit(state.Event{Cluster: b.keyOf(t), Source: state.SourceUpgrade, Level: state.LevelProgress, Subject: "upgrade", Text: "started elsewhere · watching", Detail: from + " → " + to})
+	b.emit(state.Event{Cluster: b.keyOf(t), Source: state.SourceUpgrade, Level: state.LevelProgress, Subject: kind, Text: "started elsewhere · watching", Detail: from + " → " + to})
 	b.upgrades = append(b.upgrades, lu)
 	delete(b.adopting, key)
 	cleared = true

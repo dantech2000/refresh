@@ -257,3 +257,129 @@ func nodeOf(s Snapshot, name string) NodeView {
 	}
 	return NodeView{}
 }
+
+// Found on a real cluster: a roll adopted a minute after it began counted
+// the replacement node EKS had already launched as old ("0/3 replaced" on a
+// two-node nodegroup). Only nodes created before the roll's start are old.
+func TestCaptureBaselineBeforeCountsLaunchedNodesAsNew(t *testing.T) {
+	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
+	at := func(n *corev1.Node, ts time.Time) *corev1.Node {
+		n.CreationTimestamp = metav1.NewTime(ts)
+		return n
+	}
+	client := fake.NewClientset(
+		at(mkNode("old-1", "", true, false), start.Add(-time.Hour)),
+		at(mkNode("old-2", "", true, true), start.Add(-time.Hour)),
+		at(mkNode("launched", "", true, false), start.Add(44*time.Second)),
+	)
+	obs := NewKubeObserver(client, ng, "")
+	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := obs.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodeOf(snap, "launched").OnTarget != true || nodeOf(snap, "old-1").OnTarget || nodeOf(snap, "old-2").OnTarget {
+		t.Fatalf("nodes = %+v, want only launched new", snap.Nodes)
+	}
+}
+
+// From review: creation times can mislead (clock skew, a scale-out during
+// the roll). For a roll between versions the kubelet version decides.
+func TestTargetVersionBeatsTheBaseline(t *testing.T) {
+	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
+	node := func(name, kubelet string, created time.Time) *corev1.Node {
+		n := mkNode(name, "", true, false)
+		n.CreationTimestamp = metav1.NewTime(created)
+		n.Status.NodeInfo.KubeletVersion = kubelet
+		return n
+	}
+	client := fake.NewClientset(
+		node("old-after", "v1.34.6-eks-3c1d8b1", start.Add(2*time.Second)),   // old image, created just after
+		node("new-before", "v1.35.3-eks-7a2b9c0", start.Add(-2*time.Second)), // new image, created just before
+		node("unknown", "", start.Add(time.Minute)),                          // no kubelet version yet
+	)
+	obs := NewKubeObserver(client, ng, "")
+	obs.SetTargetVersion("1.35")
+	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := obs.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodeOf(snap, "old-after").OnTarget || !nodeOf(snap, "new-before").OnTarget {
+		t.Errorf("kubelet version did not decide: %+v", snap.Nodes)
+	}
+	if !nodeOf(snap, "unknown").OnTarget {
+		t.Errorf("a node with no kubelet version should fall back to the baseline (created after start: new)")
+	}
+}
+
+func TestKubeletMinor(t *testing.T) {
+	for in, want := range map[string]string{"v1.35.3-eks-7a2b9c0": "1.35", "1.34.6": "1.34", "": "", "v1": "", "garbage": ""} {
+		n := &corev1.Node{}
+		n.Status.NodeInfo.KubeletVersion = in
+		if got := kubeletMinor(n); got != want {
+			t.Errorf("kubeletMinor(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// From review: whether a roll changes versions is read from the nodes, not
+// assumed. With every node on the target version (an AMI patch), the
+// creation-time baseline decides; the first node on another minor makes
+// it a version roll, which then stays one as the old nodes leave.
+func TestTargetVersionOnlyDecidesAVersionRoll(t *testing.T) {
+	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
+	node := func(name, kubelet string, created time.Time) *corev1.Node {
+		n := mkNode(name, "", true, false)
+		n.CreationTimestamp = metav1.NewTime(created)
+		n.Status.NodeInfo.KubeletVersion = kubelet
+		return n
+	}
+	// An AMI patch: both nodes run 1.35; creation time decides.
+	client := fake.NewClientset(
+		node("patched-old", "v1.35.3-eks-1", start.Add(-time.Hour)),
+		node("patched-new", "v1.35.3-eks-2", start.Add(time.Minute)),
+	)
+	obs := NewKubeObserver(client, ng, "")
+	obs.SetTargetVersion("1.35")
+	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := obs.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodeOf(snap, "patched-old").OnTarget || !nodeOf(snap, "patched-new").OnTarget {
+		t.Errorf("AMI patch: %+v", snap.Nodes)
+	}
+
+	// A version roll that ends: once an old-minor node was seen, the kubelet
+	// decides even after it is gone, so a new node created "before" the
+	// start (skew) stays new.
+	client = fake.NewClientset(
+		node("old", "v1.34.6-eks-1", start.Add(-time.Hour)),
+		node("new-skewed", "v1.35.3-eks-2", start.Add(-2*time.Second)),
+	)
+	obs = NewKubeObserver(client, ng, "")
+	obs.SetTargetVersion("1.35")
+	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := obs.Snapshot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CoreV1().Nodes().Delete(t.Context(), "old", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err = obs.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !nodeOf(snap, "new-skewed").OnTarget {
+		t.Errorf("after the old node left, the skewed new node reads old: %+v", snap.Nodes)
+	}
+}

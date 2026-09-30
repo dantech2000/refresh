@@ -191,3 +191,23 @@ func TestRenderReport_CompletedFailedRemaining(t *testing.T) {
 		}
 	}
 }
+
+// Found on a real cluster: a rerun after the control plane reached the
+// target read "Upgrade plan: prod 1.35 → 1.35".
+func TestPlanLines_RerunAfterTheControlPlaneMoved(t *testing.T) {
+	plan := &upgrade.Plan{
+		ClusterName: "prod", CurrentVersion: "1.35", TargetVersion: "1.35",
+		Hops: []upgrade.Hop{{From: "1.35", To: "1.35", Steps: []upgrade.Step{
+			{Description: "nodegroup ng-a → 1.35", Status: upgrade.StatusPending},
+		}}},
+	}
+	joined := strings.Join(planLines(render.New(render.ColorNone, true), plan), "\n")
+	if strings.Contains(joined, "1.35 → 1.35") {
+		t.Errorf("plan names a hop to the same version:\n%s", joined)
+	}
+	for _, want := range []string{"Upgrade plan: prod 1.35 (the control plane is on 1.35; this run finishes the upgrade)", "▸ Finish 1.35"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("plan missing %q:\n%s", want, joined)
+		}
+	}
+}

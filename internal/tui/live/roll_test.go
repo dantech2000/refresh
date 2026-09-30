@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,13 +30,60 @@ import (
 type scriptedObs struct {
 	*noderoll.ScriptedObserver
 	atEnd chan struct{}
+	rec   *obsRec // nil: calls are not recorded
+}
+
+// obsRec records how a watch set up its observer.
+type obsRec struct {
+	mu      sync.Mutex
+	calls   []string
+	version string
+	// seesVersionRoll is what VersionRoll reports, as if a node on another
+	// minor had been seen.
+	seesVersionRoll bool
+}
+
+func (r *obsRec) add(call string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, call)
+}
+
+func (r *obsRec) got() ([]string, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...), r.version
 }
 
 func (s scriptedObs) StartInformers(context.Context) error {
 	return errors.New("no informers in tests")
 }
 func (s scriptedObs) StopInformers()                        {}
-func (s scriptedObs) CaptureBaseline(context.Context) error { return nil }
+func (s scriptedObs) CaptureBaseline(context.Context) error { s.rec.add("baseline"); return nil }
+func (s scriptedObs) CaptureBaselineBefore(context.Context, time.Time) error {
+	s.rec.add("baseline-before")
+	return nil
+}
+func (s scriptedObs) MarkVersionRoll() { s.rec.add("mark") }
+func (s scriptedObs) VersionRoll() bool {
+	if s.rec == nil {
+		return false
+	}
+	s.rec.mu.Lock()
+	defer s.rec.mu.Unlock()
+	return s.rec.seesVersionRoll
+}
+func (s scriptedObs) SetTargetVersion(v string) {
+	s.rec.add("version")
+	if s.rec != nil {
+		s.rec.mu.Lock()
+		s.rec.version = v
+		s.rec.mu.Unlock()
+	}
+}
 
 func (s scriptedObs) Snapshot(ctx context.Context) (noderoll.Snapshot, error) {
 	snap, err := s.ScriptedObserver.Snapshot(ctx)
@@ -69,6 +118,8 @@ type rollRig struct {
 	drainErr     error
 	// decideErr fails the live nodegroup read.
 	decideErr error
+	// obs records how watches set up their observers.
+	obs *obsRec
 }
 
 // start dry-runs a and starts it, as the TUI does (p, then y).
@@ -89,7 +140,7 @@ func newRollRig(t *testing.T, edit ...func([]statussvc.ClusterStatus)) *rollRig 
 		e(rows)
 	}
 	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": rows}}
-	rig := &rollRig{b: newTestBackend(t, f, "us-east-1"), health: health.DecisionProceed,
+	rig := &rollRig{b: newTestBackend(t, f, "us-east-1"), health: health.DecisionProceed, obs: &obsRec{},
 		release: make(chan ekstypes.UpdateStatus, 1), atEnd: make(chan struct{}, 1),
 		decisions: map[string]nodegroupsvc.AMIUpdateDecision{
 			"ng-system": {Action: types.ActionSkipLatest, Reason: "already on latest AMI"},
@@ -168,7 +219,7 @@ func newRollRig(t *testing.T, edit ...func([]statussvc.ClusterStatus)) *rollRig 
 			return rig.verification, nil
 		},
 		observe: func(kubernetes.Interface, string) rollObserver {
-			return scriptedObs{ScriptedObserver: noderoll.NewScriptedObserver(noderoll.DemoTimeline()), atEnd: rig.atEnd}
+			return scriptedObs{ScriptedObserver: noderoll.NewScriptedObserver(noderoll.DemoTimeline()), atEnd: rig.atEnd, rec: rig.obs}
 		},
 	}
 	b.sweep(t.Context())
@@ -795,4 +846,190 @@ func TestADryRunWithoutASweepVersion(t *testing.T) {
 		t.Fatalf("Blocked = %q, want the version read failure", p.Blocked)
 	}
 	rig.b.Close()
+}
+
+// Found on a real cluster: a control-plane rollback started with the CLI
+// read "upgrading" in the fleet and "upgrade started elsewhere" in the feed.
+func TestAWatchedRollbackSaysRollback(t *testing.T) {
+	rig := newRollRig(t)
+	b := rig.b
+	rows := prodRows()
+	rows[0].State = "UPDATING"
+	rows[0].Nodegroups[1].Status = "ACTIVE"
+	b.svc.listStatuses = func(_ context.Context, cfg aws.Config, _ statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
+		if cfg.Region != "us-east-1" {
+			return nil, nil
+		}
+		return rows, nil
+	}
+	b.roll.findUpdate = func(_ context.Context, _ aws.Config, _, ng string) (*ekstypes.Update, error) {
+		if ng != "" {
+			return nil, nil
+		}
+		return &ekstypes.Update{Id: aws.String("u-rb"), Type: ekstypes.UpdateTypeVersionRollback, Status: ekstypes.UpdateStatusInProgress,
+			Params: []ekstypes.UpdateParam{{Type: ekstypes.UpdateParamTypeVersion, Value: aws.String("1.30")}}}, nil
+	}
+	done := make(chan struct{})
+	b.roll.waitCluster = func(ctx context.Context, _ aws.Config, _, _ string) (ekstypes.UpdateStatus, string, error) {
+		select {
+		case <-done:
+			return ekstypes.UpdateStatusSuccessful, "", nil
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		}
+	}
+	b.mu.Lock()
+	b.runCtx = t.Context()
+	b.mu.Unlock()
+
+	b.sweep(t.Context())
+	var st state.State
+	for {
+		st, _ = b.State(t.Context())
+		if len(st.Upgrades) == 1 {
+			break
+		}
+		runtime.Gosched()
+	}
+	if u := st.Upgrades[0]; !u.Rollback || !u.StartedElsewhere {
+		t.Errorf("upgrade = %+v, want a watched rollback", u)
+	}
+	for _, c := range st.Clusters {
+		if c.Name == "prod-api" && c.Busy != "rolling back" {
+			t.Errorf("Busy = %q, want rolling back", c.Busy)
+		}
+	}
+	close(done)
+	b.Close()
+}
+
+// A roll adopted after it began: the total is the nodegroup's size from the
+// sweep, the observer gets the update's target version (it tells a version
+// roll apart by kubelet versions), and the baseline counts only nodes
+// created before the update began, or, with no start time from EKS, the
+// nodes seen at adoption (said in the feed).
+func TestAnAdoptedRollCountsFromItsStart(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		created     *time.Time
+		version     string // the update's target version
+		wantCalls   []string
+		wantVersion string
+		wantNote    bool
+	}{
+		{"version roll", aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)), "1.32", []string{"version", "mark", "baseline-before"}, "1.32", false},
+		{"AMI patch", aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)), "1.31", []string{"version", "baseline-before"}, "1.31", false},
+		{"no start time", nil, "1.31", []string{"version", "baseline"}, "1.31", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newRollRig(t)
+			b := rig.b
+			rows := prodRows()                    // ng-system is UPDATING, at 1.31
+			rows[0].Nodegroups[1].DesiredSize = 5 // not the scripted timeline's count
+			b.svc.listStatuses = func(_ context.Context, cfg aws.Config, _ statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
+				if cfg.Region != "us-east-1" {
+					return nil, nil
+				}
+				return rows, nil
+			}
+			b.roll.findUpdate = func(_ context.Context, _ aws.Config, _, ng string) (*ekstypes.Update, error) {
+				if ng != "ng-system" {
+					return nil, nil
+				}
+				return &ekstypes.Update{Id: aws.String("u-ng"), Status: ekstypes.UpdateStatusInProgress, CreatedAt: tc.created,
+					Params: []ekstypes.UpdateParam{{Type: ekstypes.UpdateParamTypeVersion, Value: aws.String(tc.version)}}}, nil
+			}
+			b.mu.Lock()
+			b.runCtx = t.Context()
+			b.mu.Unlock()
+			b.sweep(t.Context())
+			var r state.Roll
+			for {
+				st, _ := b.State(t.Context())
+				if len(st.Rolls) == 1 && st.Rolls[0].Snapshot.Nodes != nil {
+					r = st.Rolls[0]
+					break
+				}
+				runtime.Gosched()
+			}
+			calls, version := rig.obs.got()
+			if !slices.Equal(calls, tc.wantCalls) || version != tc.wantVersion {
+				t.Errorf("observer calls %v version %q, want %v %q", calls, version, tc.wantCalls, tc.wantVersion)
+			}
+			if r.Planned != 5 {
+				t.Errorf("Planned = %d, want the nodegroup's 5", r.Planned)
+			}
+			note := false
+			for _, e := range r.Events {
+				if strings.Contains(e.Text, "count from when this UI began watching") {
+					note = true
+				}
+			}
+			if note != tc.wantNote {
+				t.Errorf("start-time note = %v, want %v", note, tc.wantNote)
+			}
+			rig.release <- ekstypes.UpdateStatusSuccessful
+			b.Close()
+		})
+	}
+}
+
+// From review: each watch builds a new observer, so a resumed watch of a
+// version roll must be told it is one, even after the old-minor nodes left
+// and the sweep shows the target version.
+func TestAResumedWatchKeepsTheVersionRoll(t *testing.T) {
+	rig := newRollRig(t)
+	b := rig.b
+	rows := prodRows()                     // ng-system is UPDATING
+	rows[0].Nodegroups[1].Version = "1.32" // the sweep already shows the target
+	b.svc.listStatuses = func(_ context.Context, cfg aws.Config, _ statussvc.ListOptions) ([]statussvc.ClusterStatus, error) {
+		if cfg.Region != "us-east-1" {
+			return nil, nil
+		}
+		return rows, nil
+	}
+	b.roll.findUpdate = func(_ context.Context, _ aws.Config, _, ng string) (*ekstypes.Update, error) {
+		if ng != "ng-system" {
+			return nil, nil
+		}
+		return &ekstypes.Update{Id: aws.String("u-ng"), Status: ekstypes.UpdateStatusInProgress, CreatedAt: aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)),
+			Params: []ekstypes.UpdateParam{{Type: ekstypes.UpdateParamTypeVersion, Value: aws.String("1.32")}}}, nil
+	}
+	rig.obs.mu.Lock()
+	rig.obs.seesVersionRoll = true // the first watch sees a 1.31 node
+	rig.obs.mu.Unlock()
+	b.mu.Lock()
+	b.runCtx = t.Context()
+	b.mu.Unlock()
+	rolls := func() []state.Roll { st, _ := b.State(t.Context()); return st.Rolls }
+	waitFor := func(ok func([]state.Roll) bool) {
+		for !ok(rolls()) {
+			runtime.Gosched()
+		}
+	}
+
+	b.sweep(t.Context())
+	waitFor(func(rs []state.Roll) bool { return len(rs) == 1 && rs[0].Running() && rs[0].Snapshot.Nodes != nil })
+	if calls, _ := rig.obs.got(); slices.Contains(calls, "mark") {
+		t.Fatalf("first watch marked without evidence: %v", calls)
+	}
+	rig.obs.mu.Lock()
+	rig.obs.calls, rig.obs.seesVersionRoll = nil, false // the old nodes are gone now
+	rig.obs.mu.Unlock()
+
+	rig.release <- ekstypes.UpdateStatusInProgress // the watch ends early
+	waitFor(func(rs []state.Roll) bool { return !rs[0].Running() })
+	b.sweep(t.Context()) // EKS still reports UPDATING: resume
+	waitFor(func(rs []state.Roll) bool { return len(rs) == 1 && rs[0].Running() })
+	for {
+		if calls, _ := rig.obs.got(); slices.Contains(calls, "baseline-before") {
+			if !slices.Contains(calls, "mark") {
+				t.Errorf("resumed watch calls %v, want the version roll marked", calls)
+			}
+			break
+		}
+		runtime.Gosched()
+	}
+	rig.release <- ekstypes.UpdateStatusSuccessful
+	b.Close()
 }

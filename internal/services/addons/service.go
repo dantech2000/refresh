@@ -425,8 +425,10 @@ func (s *ServiceImpl) versionGuard(status ekstypes.AddonStatus, resolvedLatest b
 	case atTarget:
 		s.logger.Info("re-applying addon at its current version", "addon", addonName, "version", installed, "status", status)
 	case cmp > 0:
+		// The caller shows result.Warning; a rollback downgrades on purpose,
+		// so the log line stays at Info (--verbose), not a raw WARN line.
 		result.Warning = fmt.Sprintf("downgrading %s from %s to %s", addonName, installed, target)
-		s.logger.Warn("addon downgrade requested", "addon", addonName, "installed", installed, "target", target)
+		s.logger.Info("addon downgrade requested", "addon", addonName, "installed", installed, "target", target)
 	}
 	return false
 }

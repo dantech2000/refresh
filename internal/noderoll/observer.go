@@ -111,6 +111,13 @@ type KubeObserver struct {
 	// for live rolls where the target AMI ID isn't known up front. nil → fall
 	// back to the nodegroup-image AMI label.
 	baseline map[string]bool
+	// targetVersion is the Kubernetes minor the roll moves nodes to
+	// (SetTargetVersion). Once a node runs another minor (versionRoll, which
+	// stays set), the kubelet version decides old-vs-new, ahead of the
+	// baseline and the AMI label: exact for a roll between versions. While
+	// every node runs targetVersion (an AMI patch), the baseline decides.
+	targetVersion string
+	versionRoll   bool
 	// drainStart remembers the evictable-pod count when a node first appears
 	// Draining, so the panel can show evicted/total as pods leave.
 	drainStart map[string]int
@@ -155,6 +162,38 @@ func (o *KubeObserver) CaptureBaseline(ctx context.Context) error {
 	return nil
 }
 
+// SetTargetVersion names the Kubernetes minor version v (such as "1.35")
+// the roll moves nodes to. Once any node runs another minor, a node is
+// "new" when its kubelet runs v. A node whose kubelet version cannot be
+// read, and an AMI patch (every node on v), fall back to the baseline or
+// the AMI label.
+func (o *KubeObserver) SetTargetVersion(v string) { o.targetVersion = v }
+
+// MarkVersionRoll says the roll changes the Kubernetes version even when no
+// node on another minor is left to show it (known from the nodegroup's
+// version before the update, or from an earlier watch of the same roll).
+func (o *KubeObserver) MarkVersionRoll() { o.versionRoll = true }
+
+// VersionRoll reports whether kubelet versions decide old from new.
+func (o *KubeObserver) VersionRoll() bool { return o.versionRoll }
+
+// CaptureBaselineBefore records as "old" only the nodes created before start:
+// for a roll that began before the observer did (a roll started elsewhere),
+// nodes the roll has already launched count as new.
+func (o *KubeObserver) CaptureBaselineBefore(ctx context.Context, start time.Time) error {
+	nodes, err := o.listNodes(ctx)
+	if err != nil {
+		return err
+	}
+	o.baseline = make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		if n.CreationTimestamp.Time.Before(start) {
+			o.baseline[n.Name] = true
+		}
+	}
+	return nil
+}
+
 // listNodes returns the nodegroup's nodes: from the informer cache when
 // watching, else via a label-scoped List call.
 func (o *KubeObserver) listNodes(ctx context.Context) ([]*corev1.Node, error) {
@@ -184,9 +223,19 @@ func (o *KubeObserver) Snapshot(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 
+	if o.targetVersion != "" && !o.versionRoll {
+		for _, n := range nodes {
+			if m := kubeletMinor(n); m != "" && m != o.targetVersion {
+				o.versionRoll = true
+			}
+		}
+	}
 	var snap Snapshot
 	for _, n := range nodes {
 		v := classify(n, o.targetAMI, o.baseline)
+		if m := kubeletMinor(n); o.versionRoll && m != "" {
+			v.OnTarget = m == o.targetVersion
+		}
 		snap.Nodes = append(snap.Nodes, v)
 		snap.Total++
 		switch v.Phase {
@@ -521,6 +570,21 @@ func classify(n *corev1.Node, targetAMI string, baseline map[string]bool) NodeVi
 		Phase:    phase,
 		Pressure: pressureConditions(n),
 	}
+}
+
+// kubeletMinor is the node's kubelet "major.minor" ("v1.35.2-eks-…" →
+// "1.35"), or "" when it cannot be read.
+func kubeletMinor(n *corev1.Node) string {
+	v := strings.TrimPrefix(n.Status.NodeInfo.KubeletVersion, "v")
+	major, rest, ok := strings.Cut(v, ".")
+	if !ok || major == "" {
+		return ""
+	}
+	minor, _, _ := strings.Cut(rest, ".")
+	if minor == "" {
+		return ""
+	}
+	return major + "." + minor
 }
 
 // pressureNodeConditions are the conditions signalling a node is unhealthy under
