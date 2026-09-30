@@ -22,16 +22,38 @@ type fleetCol struct {
 	w    int
 }
 
+// fleetCols sizes the fleet table's columns to the names in the fleet: the
+// cluster and region columns fit their longest value (within limits), and
+// STATUS takes the rest. Every cell but the last leaves one space before
+// the next.
 func (m Model) fleetCols(w int) []fleetCol {
-	cols := []fleetCol{{"", 2}, {"CLUSTER", 14}, {"REGION", 11}, {"VERSION", 13}, {"NODEGROUPS", 12}, {"ADD-ONS", 11}, {"STATUS", 0}}
-	if w < 92 {
-		cols = slices.Delete(cols, 2, 3)
+	nameW, regionW := len("CLUSTER"), len("REGION")
+	for _, c := range m.st.Clusters {
+		nameW, regionW = max(nameW, width(c.Name)), max(regionW, width(c.Region))
 	}
-	used := 0
-	for _, c := range cols {
-		used += c.w
+	nameW, regionW = min(nameW, 30)+1, min(regionW, 15)+1
+	cols := []fleetCol{{"", 2}, {"CLUSTER", nameW}, {"REGION", regionW}, {"VERSION", 13}, {"NODEGROUPS", 12}, {"ADD-ONS", 11}, {"STATUS", 0}}
+	const statusMin = 14
+	used := func() int {
+		n := 2 // the table's indent and right edge
+		for _, c := range cols {
+			n += c.w
+		}
+		return n
 	}
-	cols[len(cols)-1].w = max(10, w-2-used)
+	// A narrow pane keeps the names readable: REGION goes first, then
+	// NODEGROUPS and ADD-ONS (the card below shows them for the selected
+	// cluster), and only then does CLUSTER shrink.
+	for _, drop := range []string{"REGION", "NODEGROUPS", "ADD-ONS"} {
+		if used()+statusMin <= w {
+			break
+		}
+		cols = slices.DeleteFunc(cols, func(c fleetCol) bool { return c.name == drop })
+	}
+	if over := used() + statusMin - w; over > 0 {
+		cols[1].w = max(12, cols[1].w-over)
+	}
+	cols[len(cols)-1].w = max(10, w-used())
 	return cols
 }
 
@@ -73,14 +95,40 @@ func (m Model) fleetTable(w, h int) Block {
 			}
 			return out.fit(w, h)
 		}
+		if m.st.SyncedAt.IsZero() {
+			// The first sweep has not ended: nothing is known yet.
+			out = append(out, Line{sp(2), tok(state.LevelProgress, "Sweeping the regions for EKS clusters…")},
+				Line{sp(2), dimS("A large fleet, or many regions, takes a few seconds.")})
+			return out.fit(w, h)
+		}
 		out = append(out, Line{sp(2), fg(colText, "No EKS clusters in the regions swept.")},
 			Line{sp(2), dimS("The header counts the regions swept; pick others with -r, or all with -A.")})
 		return out.fit(w, h)
 	}
-	for i, c := range m.st.Clusters {
+	// The rows that fit above the selected cluster's card; the window keeps
+	// the selection in view. A pane too short for five rows and the card
+	// drops the card.
+	card := m.clusterCard(w - 2)
+	rowsH := h - len(out) - 1 - len(card)
+	if rowsH < 5 {
+		card, rowsH = nil, h-len(out)
+	}
+	first, last := 0, len(m.st.Clusters)
+	if last > rowsH {
+		window := max(1, rowsH-1) // one line says what is above and below
+		first = min(max(0, m.sel-window/2), last-window)
+		last = first + window
+	}
+	for i := first; i < last; i++ {
+		c := m.st.Clusters[i]
 		row := Line{sp(1)}
-		for _, fc := range cols {
-			row = append(row, fleetCell(fc.name, c).Fit(fc.w)...)
+		for j, fc := range cols {
+			cell := fleetCell(fc.name, c)
+			if j > 0 && j < len(cols)-1 {
+				row = append(row, append(cell.Fit(fc.w-1), sp(1))...)
+				continue
+			}
+			row = append(row, cell.Fit(fc.w)...)
 		}
 		if i == m.sel {
 			row[1] = fg(colMauve, "▶ ")
@@ -88,9 +136,20 @@ func (m Model) fleetTable(w, h int) Block {
 		}
 		out = append(out, row)
 	}
-	out = append(out, Line{})
-	card := m.clusterCard(w - 2)
-	out = append(out, card.indent(1)...)
+	if first > 0 || last < len(m.st.Clusters) {
+		var more []string
+		if first > 0 {
+			more = append(more, fmt.Sprintf("↑ %d above", first))
+		}
+		if n := len(m.st.Clusters) - last; n > 0 {
+			more = append(more, fmt.Sprintf("↓ %d below", n))
+		}
+		out = append(out, Line{sp(3), dimS(strings.Join(more, " · "))})
+	}
+	if card != nil {
+		out = append(out, Line{})
+		out = append(out, card.indent(1)...)
+	}
 	return out.fit(w, h)
 }
 
@@ -118,6 +177,16 @@ func fleetCell(col string, c state.Cluster) Line {
 		}
 		if n := len(c.StaleNodegroups()); n > 0 {
 			return append(l, tok(state.LevelWarn, fmt.Sprintf("%d stale", n)))
+		}
+		// An AMI that could not be read is not current: say so.
+		unknown := 0
+		for _, ng := range c.Nodegroups {
+			if ng.AMIUnknown {
+				unknown++
+			}
+		}
+		if unknown > 0 {
+			return append(l, dimS(fmt.Sprintf("? %d unknown", unknown)))
 		}
 		return append(l, levelGlyph(state.LevelOK))
 	case "ADD-ONS":

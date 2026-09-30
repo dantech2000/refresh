@@ -75,7 +75,9 @@ func TestAMIUpdateDecider_UsesNodegroupVersion(t *testing.T) {
 		"ng-old":        "ami-131-older",
 		"ng-no-version": "ami-132-latest",
 	}
-	svc.currentAMIFn = func(_ context.Context, ng *ekstypes.Nodegroup) string { return current[aws.ToString(ng.NodegroupName)] }
+	svc.currentAMIFn = func(_ context.Context, ng *ekstypes.Nodegroup) (string, error) {
+		return current[aws.ToString(ng.NodegroupName)], nil
+	}
 	decide := svc.AMIUpdateDecider("prod", AMIUpdateOptions{})
 
 	cases := []struct {
@@ -104,7 +106,7 @@ func TestAMIUpdateDecider_UndescribableClusterRolls(t *testing.T) {
 	// The mock knows no cluster "prod", so DescribeCluster is NotFound.
 	svc := newTestService(mocks.NewEKSAPI().WithCluster("other", "1.31").Build())
 	svc.latestAMIFn = func(context.Context, string, ekstypes.AMITypes) (string, error) { return "ami-x", nil }
-	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) string { return "ami-x" }
+	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) (string, error) { return "ami-x", nil }
 
 	d := svc.AMIUpdateDecider("prod", AMIUpdateOptions{})(context.Background(),
 		&ekstypes.Nodegroup{Version: aws.String("1.31"), AmiType: ekstypes.AMITypesAl2023X8664Standard})
@@ -116,7 +118,7 @@ func TestAMIUpdateDecider_UndescribableClusterRolls(t *testing.T) {
 // onLatest is a managed 1.31 nodegroup that already runs the latest AMI.
 func onLatest(svc *ServiceImpl) *ekstypes.Nodegroup {
 	svc.latestAMIFn = func(context.Context, string, ekstypes.AMITypes) (string, error) { return "ami-x", nil }
-	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) string { return "ami-x" }
+	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) (string, error) { return "ami-x", nil }
 	return &ekstypes.Nodegroup{Version: aws.String("1.31"), AmiType: ekstypes.AMITypesAl2023X8664Standard}
 }
 

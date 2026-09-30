@@ -9,9 +9,12 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/smithy-go"
+
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 func TestCurrentAmiIDEmptyNodegroupPaths(t *testing.T) {
@@ -178,5 +181,40 @@ func TestBuildSSMParameterPath_InfersUnknownTypes(t *testing.T) {
 	}
 	if got := buildReleaseVersionParameterPath("1.30", "BOTTLEROCKET_x86_64_X"); got != "/aws/service/bottlerocket/aws-k8s-1.30/x86_64/latest/image_version" {
 		t.Errorf("inferred Bottlerocket release path = %q", got)
+	}
+}
+
+type xmlStubDoer struct {
+	status int
+	body   string
+}
+
+func (d xmlStubDoer) Do(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: d.status,
+		Header:     http.Header{"Content-Type": []string{"text/xml"}},
+		Body:       io.NopCloser(strings.NewReader(d.body)),
+	}, nil
+}
+
+// Found at fleet scale: a failed current-AMI lookup read as "" (no AMI), so
+// status counted the nodegroup as not stale. CurrentAmiIDErr says it failed,
+// tagged with the operation.
+func TestCurrentAmiIDErr_ReportsAFailedLookup(t *testing.T) {
+	asg := autoscaling.New(autoscaling.Options{
+		Region: "us-east-1", Credentials: aws.AnonymousCredentials{}, RetryMaxAttempts: 1,
+		HTTPClient: xmlStubDoer{status: 403, body: `<ErrorResponse><Error><Type>Sender</Type><Code>AccessDenied</Code><Message>not authorized to perform: autoscaling:DescribeAutoScalingGroups</Message></Error><RequestId>r</RequestId></ErrorResponse>`},
+	})
+	ng := &types.Nodegroup{Resources: &types.NodegroupResources{AutoScalingGroups: []types.AutoScalingGroup{{Name: aws.String("asg-1")}}}}
+	id, err := CurrentAmiIDErr(context.Background(), ng, nil, asg)
+	if id != "" || err == nil {
+		t.Fatalf("CurrentAmiIDErr = %q, %v; want an error", id, err)
+	}
+	if op := diag.OperationOf(err); op != diag.OpDescribeAutoScalingGroups {
+		t.Errorf("operation = %q, want %q", op, diag.OpDescribeAutoScalingGroups)
+	}
+	// Nothing to read is not a failure.
+	if id, err := CurrentAmiIDErr(context.Background(), &types.Nodegroup{}, nil, asg); id != "" || err != nil {
+		t.Errorf("no ASG: CurrentAmiIDErr = %q, %v; want \"\", nil", id, err)
 	}
 }

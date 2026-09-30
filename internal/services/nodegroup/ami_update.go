@@ -116,7 +116,8 @@ func (s *ServiceImpl) AMIUpdateDecider(clusterName string, opts AMIUpdateOptions
 		if err != nil || l == "" {
 			return "", ""
 		}
-		return s.currentAMI(ctx, ng), l
+		current, _ := s.currentAMI(ctx, ng) // "" decides as unknown
+		return current, l
 	}
 	return func(ctx context.Context, ng *ekstypes.Nodegroup) AMIUpdateDecision {
 		return DecideAMIUpdate(ctx, ng, opts, amis)

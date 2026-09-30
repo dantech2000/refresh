@@ -255,9 +255,14 @@ failure.
 ### Advisory AMI lookup
 
 `nodegroup list` and `nodegroup describe` look up the latest recommended AMI
-in SSM (`ssm:GetParameter`). When that lookup fails, the nodegroup's
+in SSM (`ssm:GetParameter`), and the AMI the nodes run through the launch
+template or an instance of the Auto Scaling group
+(`ec2:DescribeLaunchTemplateVersions`, `autoscaling:DescribeAutoScalingGroups`,
+`ec2:DescribeInstances`). When either lookup fails, the nodegroup's
 `amiStatus` is `Unknown` and the row (or the describe object) has an
-`amiLookupFailure` object with the same keys as a failure. It is advisory:
+`amiLookupFailure` object with the same keys as a failure; its `operation`
+names the call that failed. A nodegroup with no instances to read is
+`Unknown` without a failure. It is advisory:
 the nodegroup itself was read, so it is not in `failures` and does not change
 the exit code. One `warning:` line on stderr names the reason and the
 action. `status` counts the same lookup as a failure (exit `4`), because an

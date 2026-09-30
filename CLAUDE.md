@@ -47,6 +47,14 @@ job, `golangci-lint` (includes govet and gofmt), `govulncheck`, and
 nightly workflow runs `-race -count=20`, every fuzz target for 60s, and
 `govulncheck` on main.
 
+`go run ./internal/tools/fakefleet` (a dev tool, not linked into the binary)
+serves a large fake fleet on `fakeaws.Start`: many clusters over many
+regions, random latency, a slow region, a closed region, and throttled
+calls (`-clusters`, `-regions`, `-latency`, `-throttle`, `-closed-region`).
+It prints the environment to point refresh at it (`source` it, then run
+`refresh status -A` or `refresh ui -A`). Use it to test sweeps, retries,
+and the TUI at fleet scale with no AWS account.
+
 `task test:live` (`-tags livecheck`, never in CI) checks the data refresh
 depends on against a real account, with read-only calls that cost nothing: the
 latest-AMI SSM path of every AMI type for every EKS version, the

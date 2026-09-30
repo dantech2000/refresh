@@ -473,10 +473,28 @@ func regionConcurrency(maxConcurrency int) int {
 	return regions
 }
 
+// firstSweepEvents is the most clusters the first sweep reports one by one;
+// past it, a big fleet gets one summary line and events for errors only,
+// so the feed is not flooded (the fleet table shows every cluster).
+const firstSweepEvents = 12
+
 // diff turns what changed since the last sweep into feed events. The first
-// sweep reports every cluster that is not current. The caller holds b.mu.
+// sweep reports every cluster that is not current (see firstSweepEvents).
+// The caller holds b.mu.
 func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 	first := b.prev == nil
+	attention := 0
+	if first {
+		for _, c := range now {
+			if lvl, _ := c.Health(); lvl != state.LevelOK {
+				attention++
+			}
+		}
+		if attention > firstSweepEvents {
+			b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: "fleet",
+				Text: fmt.Sprintf("%d of %d clusters need attention", attention, len(now)), Detail: "errors are listed one by one; the fleet table shows the rest"})
+		}
+	}
 	// Keyed by region and name: a display key can change (a second region
 	// gains a cluster of the same name) while the cluster stays the same.
 	next := make(map[target]state.Cluster, len(now))
@@ -486,7 +504,8 @@ func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 		old, seen := b.prev[id]
 		switch {
 		case first:
-			if lvl, text := c.Health(); lvl != state.LevelOK {
+			lvl, text := c.Health()
+			if lvl != state.LevelOK && (attention <= firstSweepEvents || lvl == state.LevelError) {
 				b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: lvl, Subject: c.Region, Text: text})
 			}
 		case !seen:
