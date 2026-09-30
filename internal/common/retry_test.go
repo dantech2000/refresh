@@ -365,3 +365,30 @@ func TestWithRetry_DialFailureIsNotRetriedAgain(t *testing.T) {
 		t.Errorf("reset connection: fn called %d times, want a retry", calls)
 	}
 }
+
+// From review: a real connect timeout also matches context.DeadlineExceeded,
+// so it was not retried, and a long wait's poll stopped on it. It is a
+// network failure: retryable, including behind a proxy.
+func TestDialTimeoutIsRetryable(t *testing.T) {
+	d := net.Dialer{Timeout: time.Millisecond}
+	_, err := d.Dial("tcp", "10.255.255.1:443")
+	if err == nil {
+		t.Skip("the test address answered")
+	}
+	real := &url.Error{Op: "Post", URL: "https://eks.me-south-1.amazonaws.com", Err: err}
+	if !IsDialFailure(real) || !IsRetryable(real) {
+		t.Errorf("real dial failure %v: IsDialFailure=%v IsRetryable=%v, want both", real, IsDialFailure(real), IsRetryable(real))
+	}
+	proxy := &url.Error{Op: "Post", URL: "https://eks.us-east-1.amazonaws.com", Err: &net.OpError{Op: "proxyconnect", Net: "tcp", Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}}}
+	if !IsDialFailure(proxy) {
+		t.Error("a proxy that cannot be reached is a dial failure")
+	}
+	calls := 0
+	_, _ = WithRetry(FailFastOnDial(context.Background()), fastRetry, func(_ context.Context) (int, error) {
+		calls++
+		return 0, proxy
+	})
+	if calls != 1 {
+		t.Errorf("proxy dial failure in a sweep: %d calls, want 1", calls)
+	}
+}

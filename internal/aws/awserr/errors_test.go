@@ -299,3 +299,13 @@ func TestFormatAWSError_DialTimeoutIsANetworkFailure(t *testing.T) {
 		t.Errorf("dial timeout formatted as:\n%s", msg)
 	}
 }
+
+// From review: the early dial branch hid the region help of an invalid
+// region, whose endpoint does not resolve. A DNS failure keeps its path.
+func TestFormatAWSError_DNSFailureKeepsTheRegionPath(t *testing.T) {
+	dns := &url.Error{Op: "Post", URL: "https://eks.us-bogus-1.amazonaws.com", Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "eks.us-bogus-1.amazonaws.com", IsNotFound: true}}}
+	got := FormatAWSError(dns, "listing clusters").Error()
+	if IsRegionError(dns) && strings.HasPrefix(got, "network connectivity issue") {
+		t.Errorf("an invalid region's DNS failure lost its region help:\n%s", got)
+	}
+}

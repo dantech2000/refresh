@@ -2,17 +2,19 @@ package awsconfig
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
-	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // newParsedCommand runs a throwaway command with the given flags and argv and
@@ -346,20 +348,40 @@ func TestEffectiveProfile(t *testing.T) {
 	}
 }
 
-// #418: the SDK waits 30s for a TCP connection; refresh waits DialTimeout,
-// so an unreachable regional endpoint fails in seconds.
-func TestLoadSetsTheDialTimeout(t *testing.T) {
+// #418: in a region sweep (common.FailFastOnDial) a dial is bounded, so an
+// unreachable regional endpoint fails in seconds; any other dial keeps the
+// caller's deadline (the SDK's 30s). The client stays the SDK's buildable
+// one, so AWS_CA_BUNDLE and defaults modes still apply to it.
+func TestSweepDialIsBoundedOnlyInSweeps(t *testing.T) {
+	hang := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	dial := sweepDial(hang, 20*time.Millisecond)
+
+	start := time.Now()
+	if _, err := dial(common.FailFastOnDial(context.Background()), "tcp", "eks.me-south-1.amazonaws.com:443"); err == nil {
+		t.Fatal("a hanging dial in a sweep returned no error")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("a sweep's dial took %v, want about the 20ms bound", d)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start = time.Now()
+	_, _ = dial(ctx, "tcp", "eks.us-east-1.amazonaws.com:443")
+	if d := time.Since(start); d < 150*time.Millisecond {
+		t.Errorf("a dial outside a sweep ended after %v, before the caller's deadline", d)
+	}
+
 	setupContext(t, "prod", cliconfig.Context{Cluster: "x", Region: "us-east-1"})
 	setupAWSConfigFile(t)
 	cfg, err := Load(context.Background(), newParsedCommand(t, []cli.Flag{&cli.StringFlag{Name: "region"}, &cli.StringFlag{Name: "profile"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	bc, ok := cfg.HTTPClient.(*awshttp.BuildableClient)
-	if !ok {
-		t.Fatalf("HTTPClient is %T, want the SDK's buildable client", cfg.HTTPClient)
-	}
-	if got := bc.GetDialer().Timeout; got != appconfig.DialTimeout {
-		t.Errorf("dial timeout = %v, want %v", got, appconfig.DialTimeout)
+	if _, ok := cfg.HTTPClient.(*awshttp.BuildableClient); !ok {
+		t.Errorf("HTTPClient is %T, want the SDK's buildable client", cfg.HTTPClient)
 	}
 }

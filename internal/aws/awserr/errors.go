@@ -23,6 +23,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/smithy-go"
+
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 var (
@@ -270,11 +272,12 @@ func FormatAWSError(err error, operation string) error {
 	if errors.Is(err, context.Canceled) {
 		return &formattedError{msg: fmt.Sprintf("operation cancelled while %s", operation), err: err}
 	}
-	// A connection that could not be opened. Go's dial timeout also reports
-	// itself as context.DeadlineExceeded, but a longer --timeout does not
-	// help an endpoint that cannot be reached (#418).
-	var dial *net.OpError
-	if errors.As(err, &dial) && dial.Op == "dial" {
+	// A connect timeout also reports itself as context.DeadlineExceeded,
+	// but a longer --timeout does not help an endpoint that cannot be
+	// reached (#418). A DNS failure keeps its own path below (an invalid
+	// region's endpoint does not resolve).
+	var dns *net.DNSError
+	if common.IsDialFailure(err) && !errors.As(err, &dns) && !errors.Is(err, context.Canceled) {
 		return formatNetworkError(err, operation)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {

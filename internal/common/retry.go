@@ -101,6 +101,12 @@ func shouldRetry(err error) bool {
 	if err == nil {
 		return false
 	}
+	// A connection that could not be opened is transient, even when it is a
+	// connect timeout (which also matches context.DeadlineExceeded below).
+	// WithRetry checks the caller's own deadline before every attempt.
+	if IsDialFailure(err) && !errors.Is(err, context.Canceled) {
+		return true
+	}
 	// Do not retry context cancellations/timeouts
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return false
@@ -120,26 +126,31 @@ func shouldRetry(err error) bool {
 		errors.Is(err, io.ErrUnexpectedEOF)
 }
 
-// dialFailed reports whether err is a connection that could not be opened
-// (DNS, refused, connect timeout).
-func dialFailed(err error) bool {
+// IsDialFailure reports whether err is a connection that could not be
+// opened: a DNS failure, a refused connection, a connect timeout, or a proxy
+// that could not be reached. It never got a response from AWS. Go's connect
+// timeout also reports itself as context.DeadlineExceeded, so callers check
+// this first to tell it from the caller's own deadline.
+func IsDialFailure(err error) bool {
 	var op *net.OpError
-	return errors.As(err, &op) && op.Op == "dial"
+	return errors.As(err, &op) && (op.Op == "dial" || op.Op == "proxyconnect")
 }
 
 type failFastDialKey struct{}
 
-// FailFastOnDial marks ctx so WithRetry does not retry a connection that
-// could not be opened: the SDK's retryer has already tried it three times.
-// A region sweep sets it, so a region whose endpoint cannot be reached (an
-// outage) fails in seconds instead of taking the whole deadline. Other
-// calls, such as the polls of a long wait, keep retrying through a network
-// blip without a warning.
+// FailFastOnDial marks ctx for a region sweep: opening a connection is
+// bounded by config.SweepDialTimeout (see awsconfig), and WithRetry does not
+// retry a connection that could not be opened, since the SDK's retryer has
+// already tried it three times. A region whose endpoint cannot be reached
+// (an outage) then fails in seconds instead of taking the whole deadline.
+// Other calls, such as the polls of a long wait, keep the SDK's 30s dial and
+// keep retrying through a network blip without a warning.
 func FailFastOnDial(ctx context.Context) context.Context {
 	return context.WithValue(ctx, failFastDialKey{}, true)
 }
 
-func failFastOnDial(ctx context.Context) bool {
+// IsFailFastOnDial reports whether ctx was marked by FailFastOnDial.
+func IsFailFastOnDial(ctx context.Context) bool {
 	v, _ := ctx.Value(failFastDialKey{}).(bool)
 	return v
 }
@@ -217,7 +228,7 @@ func WithRetry[T any](ctx context.Context, cfg RetryConfig, fn func(context.Cont
 		if err == nil {
 			return result, nil
 		}
-		if !shouldRetry(err) || (dialFailed(err) && failFastOnDial(ctx)) || attempt >= cfg.MaxAttempts {
+		if !shouldRetry(err) || (IsDialFailure(err) && IsFailFastOnDial(ctx)) || attempt >= cfg.MaxAttempts {
 			return zero, err
 		}
 

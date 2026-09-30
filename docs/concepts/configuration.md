@@ -264,13 +264,16 @@ The global `--timeout` (default `60s`, or `REFRESH_TIMEOUT`) bounds the AWS
 calls of list, describe, and check commands. Config loading and credential
 resolution always run under it.
 
-Opening a connection to an AWS endpoint times out after 5 seconds. In a
-region sweep (`status`, `cluster list`, and the other commands that read
-several regions), a connection that cannot be opened is not retried beyond
-the AWS SDK's own three attempts: a region whose endpoint cannot be reached
-(a regional outage, or a proxy or firewall that blocks it) fails in about 20
-seconds with a network error, not after the whole `--timeout`. A longer
-`--timeout` does not help there. A long wait, such as an update, keeps
+In a region sweep (`status`, `cluster list`, `refresh ui`, and the other
+commands that read several regions), opening a connection to an AWS endpoint
+(the DNS lookup and the TCP connect) times out after 10 seconds, and a
+connection that cannot be opened is not retried beyond the AWS SDK's own
+three attempts. A region whose endpoint cannot be reached (a regional
+outage, or a firewall that blocks it) fails in 30 to 40 seconds with a
+network error, not after the whole `--timeout`. A longer `--timeout` does
+not help there. This bounds the connection only: with an HTTPS proxy, the
+proxy's own CONNECT step has its own timeout. Other calls keep the SDK's
+30-second connect timeout, and a long wait, such as an update, keeps
 polling through a failed connection.
 
 These commands bound long-running work with their own flags. `REFRESH_TIMEOUT`
