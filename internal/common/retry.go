@@ -103,8 +103,9 @@ func shouldRetry(err error) bool {
 	}
 	// A connection that could not be opened is transient, even when it is a
 	// connect timeout (which also matches context.DeadlineExceeded below).
-	// WithRetry checks the caller's own deadline before every attempt.
-	if IsDialFailure(err) && !errors.Is(err, context.Canceled) {
+	// WithRetry checks the caller's own deadline before every attempt. A
+	// name that does not exist (NXDOMAIN, an invalid region) is permanent.
+	if IsDialFailure(err) && !errors.Is(err, context.Canceled) && !nameNotFound(err) {
 		return true
 	}
 	// Do not retry context cancellations/timeouts
@@ -134,6 +135,12 @@ func shouldRetry(err error) bool {
 func IsDialFailure(err error) bool {
 	var op *net.OpError
 	return errors.As(err, &op) && (op.Op == "dial" || op.Op == "proxyconnect")
+}
+
+// nameNotFound reports a DNS answer that the name does not exist.
+func nameNotFound(err error) bool {
+	var dns *net.DNSError
+	return errors.As(err, &dns) && dns.IsNotFound
 }
 
 type failFastDialKey struct{}

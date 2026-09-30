@@ -37,6 +37,8 @@ import (
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/tui/state"
+
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // ErrReadOnly is returned by every call that would change a cluster.
@@ -398,7 +400,9 @@ func (b *Backend) sweep(ctx context.Context) {
 	if len(b.opts.Regions) > 0 {
 		vcfg.Region = b.opts.Regions[0]
 	}
-	latest, lerr := b.svc.latestVersion(sctx, vcfg)
+	// Part of the sweep: an unreachable first region fails fast here too,
+	// instead of using up the sweep's time before any region is read.
+	latest, lerr := b.svc.latestVersion(common.FailFastOnDial(sctx), vcfg)
 	res := regionsweep.Run(sctx, b.opts.Regions, regionsweep.Options{Concurrency: regionConcurrency(b.opts.MaxConcurrency), SkipInaccessible: b.opts.SkipInaccessible},
 		func(rctx context.Context, region string) ([]statussvc.ClusterStatus, error) {
 			cfg := b.base.Copy()

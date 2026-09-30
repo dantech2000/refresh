@@ -23,6 +23,8 @@ import (
 	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/types"
+
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // fleet is a fake status sweep: rows and errors per region.
@@ -911,5 +913,21 @@ func TestCopiedCommandsRunAsTheUI(t *testing.T) {
 	b.opts.CommandProfile, b.opts.KubeContext, b.opts.Kubeconfig = "", "", ""
 	if got := b.cliCommand(regionFlag(tg) + "cluster upgrade -c prod --to 1.32"); got != "refresh --region us-east-1 cluster upgrade -c prod --to 1.32" {
 		t.Errorf("no profile: %q", got)
+	}
+}
+
+// From review: the sweep's newest-version lookup ran without the sweep's
+// fail-fast dial, so an unreachable first region could use up the sweep's
+// time before any region was read.
+func TestTheVersionLookupFailsFastLikeTheSweep(t *testing.T) {
+	b := newTestBackend(t, &fleet{}, "us-east-1")
+	marked := make(chan bool, 1)
+	b.svc.latestVersion = func(ctx context.Context, _ aws.Config) (string, error) {
+		marked <- common.IsFailFastOnDial(ctx)
+		return "1.33", nil
+	}
+	b.sweep(t.Context())
+	if !<-marked {
+		t.Error("the version lookup is not marked FailFastOnDial")
 	}
 }

@@ -272,8 +272,9 @@ three attempts. A region whose endpoint cannot be reached (a regional
 outage, or a firewall that blocks it) fails in 30 to 40 seconds with a
 network error, not after the whole `--timeout`. A longer `--timeout` does
 not help there. This bounds the connection only: with an HTTPS proxy, the
-proxy's own CONNECT step has its own timeout. Other calls keep the SDK's
-30-second connect timeout, and a long wait, such as an update, keeps
+proxy's own CONNECT step has its own timeout, and with `AWS_DEFAULTS_MODE`
+set, the SDK's connect timeout for that mode applies. Other calls keep the
+SDK's 30-second connect timeout, and a long wait, such as an update, keeps
 polling through a failed connection.
 
 These commands bound long-running work with their own flags. `REFRESH_TIMEOUT`

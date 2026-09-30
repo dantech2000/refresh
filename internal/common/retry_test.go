@@ -392,3 +392,17 @@ func TestDialTimeoutIsRetryable(t *testing.T) {
 		t.Errorf("proxy dial failure in a sweep: %d calls, want 1", calls)
 	}
 }
+
+// From review: an invalid region's endpoint does not resolve (NXDOMAIN). The
+// SDK calls that permanent, and so does refresh: no retries, so the region
+// help is not replaced by a deadline error.
+func TestNXDOMAINIsNotRetried(t *testing.T) {
+	nx := &url.Error{Op: "Post", URL: "https://eks.us-bogus-1.amazonaws.com", Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "eks.us-bogus-1.amazonaws.com", IsNotFound: true}}}
+	if IsRetryable(nx) {
+		t.Error("NXDOMAIN is retryable")
+	}
+	slow := &url.Error{Op: "Post", URL: "https://eks.us-east-1.amazonaws.com", Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "i/o timeout", Name: "eks.us-east-1.amazonaws.com", IsTimeout: true}}}
+	if !IsRetryable(slow) {
+		t.Error("a DNS timeout is not retryable")
+	}
+}
