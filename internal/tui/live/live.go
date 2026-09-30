@@ -61,8 +61,11 @@ type Options struct {
 	SweepTimeout time.Duration
 	// MaxConcurrency caps the clusters evaluated at once per region.
 	MaxConcurrency int
-	// Context and Profile label the top bar.
-	Context, Profile string
+	// Context and Profile label the top bar. CommandProfile is the
+	// --profile the commands the UI shows carry: set only when refresh
+	// gave the SDK that profile itself (flag or context), not when it came
+	// from the environment, where exported access keys can win over it.
+	Context, Profile, CommandProfile string
 	// Logger receives the services' logs. Nil sends warnings and errors to
 	// the TUI's log pane: the TUI owns the terminal, so nothing may write
 	// to stderr while it runs.

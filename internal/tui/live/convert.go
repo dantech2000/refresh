@@ -198,7 +198,7 @@ func (b *Backend) cliCommand(cmd string) string {
 		return cmd
 	}
 	out := "refresh "
-	if p := b.opts.Profile; p != "" {
+	if p := b.opts.CommandProfile; p != "" {
 		out += "--profile " + shellWord(p) + " "
 	}
 	out += rest

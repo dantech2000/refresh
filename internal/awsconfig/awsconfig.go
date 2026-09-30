@@ -34,32 +34,10 @@ import (
 // and an unknown REFRESH_CONTEXT are errors too.
 func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 	var opts []func(*config.LoadOptions) error
-
-	profile := flagOrEmpty(cmd, "profile")
-	region := flagOrEmpty(cmd, "region")
-
-	// Resolve the context even when both flags are set: a mistyped
-	// REFRESH_CONTEXT or a corrupt context file must fail every command the
-	// same way.
-	name, active, ok, err := activeContext()
+	profile, region, err := resolve(cmd)
 	if err != nil {
 		return aws.Config{}, err
 	}
-	if ok {
-		if profile == "" {
-			if err := envConflict(name, "profile", active.Profile, "AWS_PROFILE", "AWS_DEFAULT_PROFILE"); err != nil {
-				return aws.Config{}, err
-			}
-			profile = active.Profile
-		}
-		if region == "" {
-			if err := envConflict(name, "region", active.Region, "AWS_REGION", "AWS_DEFAULT_REGION"); err != nil {
-				return aws.Config{}, err
-			}
-			region = active.Region
-		}
-	}
-
 	// A flag value, or a context value that no env var contradicts.
 	if profile != "" {
 		opts = append(opts, config.WithSharedConfigProfile(profile))
@@ -71,28 +49,57 @@ func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 	return config.LoadDefaultConfig(ctx, opts...)
 }
 
-// EffectiveProfile is the AWS profile Load uses, by the same rules: the
-// --profile flag, else the active refresh context's profile, else
-// AWS_PROFILE, else AWS_DEFAULT_PROFILE; "" when none is set (the SDK's
-// default chain). A caller that shows a command to run elsewhere names
-// this profile, so the command reaches the same account.
-func EffectiveProfile(cmd *cli.Command) (string, error) {
-	if p := flagOrEmpty(cmd, "profile"); p != "" {
-		return p, nil
-	}
-	_, active, ok, err := activeContext()
+// resolve is the profile and region Load gives the SDK itself (the flags,
+// else the active context), after checking the context against the env
+// vars. "" leaves the setting to the SDK's own chain (env vars, defaults).
+func resolve(cmd *cli.Command) (profile, region string, err error) {
+	profile = flagOrEmpty(cmd, "profile")
+	region = flagOrEmpty(cmd, "region")
+
+	// Resolve the context even when both flags are set: a mistyped
+	// REFRESH_CONTEXT or a corrupt context file must fail every command the
+	// same way.
+	name, active, ok, err := activeContext()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	if ok && active.Profile != "" {
-		return active.Profile, nil
+	if ok {
+		if profile == "" {
+			if err := envConflict(name, "profile", active.Profile, "AWS_PROFILE", "AWS_DEFAULT_PROFILE"); err != nil {
+				return "", "", err
+			}
+			profile = active.Profile
+		}
+		if region == "" {
+			if err := envConflict(name, "region", active.Region, "AWS_REGION", "AWS_DEFAULT_REGION"); err != nil {
+				return "", "", err
+			}
+			region = active.Region
+		}
+	}
+	return profile, region, nil
+}
+
+// EffectiveProfile is the AWS profile Load uses, by the same rules: the
+// --profile flag, else the active refresh context's profile (explicit:
+// Load gives it to the SDK), else AWS_PROFILE, else AWS_DEFAULT_PROFILE
+// (not explicit: the SDK reads them, and exported access keys win over
+// them); "" when none is set.
+//
+// A caller that shows a command to run elsewhere adds --profile only when
+// explicit: the command then reaches the same account. A profile from the
+// environment is left to the environment, as the UI itself used it.
+func EffectiveProfile(cmd *cli.Command) (profile string, explicit bool, err error) {
+	profile, _, err = resolve(cmd)
+	if err != nil || profile != "" {
+		return profile, profile != "", err
 	}
 	for _, env := range []string{"AWS_PROFILE", "AWS_DEFAULT_PROFILE"} {
 		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
-			return v, nil
+			return v, false, nil
 		}
 	}
-	return "", nil
+	return "", false, nil
 }
 
 // envConflict returns an error when the SDK would read setting from an env

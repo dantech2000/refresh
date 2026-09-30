@@ -311,25 +311,34 @@ func TestLoadUsesContextProfile(t *testing.T) {
 
 // From review: the UI named only --profile and AWS_PROFILE in the commands
 // it shows, so a context's profile dropped out of a copied command, which
-// then ran in another account. EffectiveProfile follows Load's order.
+// then ran in another account. EffectiveProfile follows Load's rules, and
+// says whether refresh gave the profile to the SDK itself (explicit).
 func TestEffectiveProfile(t *testing.T) {
 	flags := []cli.Flag{&cli.StringFlag{Name: "region"}, &cli.StringFlag{Name: "profile"}}
+	check := func(name string, cmd *cli.Command, want string, wantExplicit bool) {
+		t.Helper()
+		got, explicit, err := EffectiveProfile(cmd)
+		if err != nil || got != want || explicit != wantExplicit {
+			t.Errorf("%s: %q explicit=%v err=%v; want %q explicit=%v", name, got, explicit, err, want, wantExplicit)
+		}
+	}
 
 	setupContext(t, "prod", cliconfig.Context{Cluster: "x", Profile: "ctx-profile"})
-	if got, err := EffectiveProfile(newParsedCommand(t, flags)); err != nil || got != "ctx-profile" {
-		t.Errorf("context: %q, %v; want ctx-profile", got, err)
-	}
-	if got, _ := EffectiveProfile(newParsedCommand(t, flags, "--profile", "flag-profile")); got != "flag-profile" {
-		t.Errorf("flag over context: %q", got)
+	check("context", newParsedCommand(t, flags), "ctx-profile", true)
+	check("flag over context", newParsedCommand(t, flags, "--profile", "flag-profile"), "flag-profile", true)
+	t.Setenv("AWS_DEFAULT_PROFILE", "other")
+	if _, _, err := EffectiveProfile(newParsedCommand(t, flags)); err == nil {
+		t.Error("a context profile an env var contradicts must fail, as Load does")
 	}
 
 	setupContext(t, "noprofile", cliconfig.Context{Cluster: "x"})
 	t.Setenv("AWS_DEFAULT_PROFILE", "default-env")
-	if got, _ := EffectiveProfile(newParsedCommand(t, flags)); got != "default-env" {
-		t.Errorf("AWS_DEFAULT_PROFILE: %q", got)
-	}
+	check("AWS_DEFAULT_PROFILE", newParsedCommand(t, flags), "default-env", false)
 	t.Setenv("AWS_PROFILE", "env")
-	if got, _ := EffectiveProfile(newParsedCommand(t, flags)); got != "env" {
-		t.Errorf("AWS_PROFILE over AWS_DEFAULT_PROFILE: %q", got)
+	check("AWS_PROFILE", newParsedCommand(t, flags), "env", false)
+
+	t.Setenv("REFRESH_CONTEXT", "missing")
+	if _, _, err := EffectiveProfile(newParsedCommand(t, flags, "--profile", "p")); err == nil {
+		t.Error("an unknown REFRESH_CONTEXT must fail, as Load does")
 	}
 }

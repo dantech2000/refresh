@@ -41,7 +41,7 @@ the same change, and `c` copies it.
 
 `esc` goes back to the fleet. A change in flight keeps running. In a dialog
 (a dry run, the key list, the nodegroup picker), `esc` and `q` close the
-dialog instead.
+dialog instead, except in a dry run while its change is starting.
 
 ## Keys
 
@@ -110,8 +110,9 @@ in flight, not past ones.
 If you quit the UI (or it stops) during a change it started, the EKS update
 in flight keeps running, and the next `refresh ui` watches it the same way.
 The later phases of an upgrade or rollback do not start. To finish them, run
-the CLI command the dry run named (`c` copies it), with the same `--to`: it
-continues from the cluster's live state. `U` in the UI plans the next
+the CLI command the dry run named (`c` copies it) again: `cluster upgrade`
+with the same `--to`, or the same `cluster rollback`. Each continues from
+the cluster's live state. `U` in the UI plans the next
 version from the version the cluster is on, so after the control plane
 moved it offers the version after that.
 

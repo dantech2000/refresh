@@ -105,9 +105,13 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 	regions, skip := uiRegions(cmd, awsCfg)
 	// The profile the AWS config was loaded with, from any source: the
 	// header shows it and copied commands carry it.
-	profile, err := awsconfig.EffectiveProfile(cmd)
+	profile, explicit, err := awsconfig.EffectiveProfile(cmd)
 	if err != nil {
 		return err
+	}
+	commandProfile := ""
+	if explicit {
+		commandProfile = profile
 	}
 	backend := live.New(awsCfg, live.Options{
 		Regions:          regions,
@@ -117,6 +121,7 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		MaxConcurrency:   appconfig.ClampMaxConcurrency(cmd.Int("max-concurrency")),
 		Context:          activeContextName(),
 		Profile:          profile,
+		CommandProfile:   commandProfile,
 		AllowChanges:     cmd.Bool("allow-changes"),
 		Kubeconfig:       cmd.String("kubeconfig"),
 		KubeContext:      cmd.String("kube-context"),
