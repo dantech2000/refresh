@@ -505,21 +505,7 @@ func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 		old, seen := b.prev[id]
 		switch {
 		case first:
-			// Past the limit, errors and changes in flight still get their
-			// own event; the other clusters are in the summary.
-			lvl, text := c.Health()
-			if lvl != state.LevelOK && (attention <= firstSweepEvents || lvl == state.LevelError || c.Busy != "") {
-				b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: lvl, Subject: c.Region, Text: text})
-			}
-			// Health names the change in flight first; an error under it
-			// (extended support, say) gets its own event too.
-			if c.Busy != "" {
-				idle := c
-				idle.Busy = ""
-				if l, t := idle.Health(); l == state.LevelError {
-					b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: l, Subject: c.Region, Text: t})
-				}
-			}
+			b.firstSweepEvent(c, attention > firstSweepEvents)
 		case !seen:
 			b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: state.LevelInfo, Subject: c.Region, Text: "cluster found", Detail: c.Version})
 		default:
@@ -546,6 +532,26 @@ func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 		}
 	}
 	b.prev = next
+}
+
+// firstSweepEvent reports c on the first sweep. On a big fleet (summarized)
+// only errors and changes in flight get their own event; the other
+// clusters are in the summary. Health names the change in flight first, so
+// an error under it (extended support, say) gets its own event too. The
+// caller holds b.mu.
+func (b *Backend) firstSweepEvent(c state.Cluster, summarized bool) {
+	lvl, text := c.Health()
+	if lvl != state.LevelOK && (!summarized || lvl == state.LevelError || c.Busy != "") {
+		b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: lvl, Subject: c.Region, Text: text})
+	}
+	if c.Busy == "" {
+		return
+	}
+	idle := c
+	idle.Busy = ""
+	if l, t := idle.Health(); l == state.LevelError {
+		b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: l, Subject: c.Region, Text: t})
+	}
 }
 
 func statusLevel(s string) state.Level {
