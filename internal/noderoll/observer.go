@@ -111,10 +111,13 @@ type KubeObserver struct {
 	// for live rolls where the target AMI ID isn't known up front. nil → fall
 	// back to the nodegroup-image AMI label.
 	baseline map[string]bool
-	// targetVersion, when set (SetTargetVersion), decides old-vs-new by each
-	// node's kubelet minor version, ahead of the baseline and the AMI label:
-	// exact for a roll that changes the Kubernetes version.
+	// targetVersion is the Kubernetes minor the roll moves nodes to
+	// (SetTargetVersion). Once a node runs another minor (versionRoll, which
+	// stays set), the kubelet version decides old-vs-new, ahead of the
+	// baseline and the AMI label: exact for a roll between versions. While
+	// every node runs targetVersion (an AMI patch), the baseline decides.
 	targetVersion string
+	versionRoll   bool
 	// drainStart remembers the evictable-pod count when a node first appears
 	// Draining, so the panel can show evicted/total as pods leave.
 	drainStart map[string]int
@@ -159,9 +162,11 @@ func (o *KubeObserver) CaptureBaseline(ctx context.Context) error {
 	return nil
 }
 
-// SetTargetVersion makes a node "new" when its kubelet runs the Kubernetes
-// minor version v (such as "1.35"), for a roll between two versions. A node
-// whose kubelet version cannot be read falls back to the baseline or label.
+// SetTargetVersion names the Kubernetes minor version v (such as "1.35")
+// the roll moves nodes to. Once any node runs another minor, a node is
+// "new" when its kubelet runs v. A node whose kubelet version cannot be
+// read, and an AMI patch (every node on v), fall back to the baseline or
+// the AMI label.
 func (o *KubeObserver) SetTargetVersion(v string) { o.targetVersion = v }
 
 // CaptureBaselineBefore records as "old" only the nodes created before start:
@@ -210,10 +215,17 @@ func (o *KubeObserver) Snapshot(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 
+	if o.targetVersion != "" && !o.versionRoll {
+		for _, n := range nodes {
+			if m := kubeletMinor(n); m != "" && m != o.targetVersion {
+				o.versionRoll = true
+			}
+		}
+	}
 	var snap Snapshot
 	for _, n := range nodes {
 		v := classify(n, o.targetAMI, o.baseline)
-		if m := kubeletMinor(n); o.targetVersion != "" && m != "" {
+		if m := kubeletMinor(n); o.versionRoll && m != "" {
 			v.OnTarget = m == o.targetVersion
 		}
 		snap.Nodes = append(snap.Nodes, v)

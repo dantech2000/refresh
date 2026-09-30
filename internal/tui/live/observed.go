@@ -216,10 +216,11 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 	if !r.startKnown {
 		r.st.StartedAt = b.now()
 	}
-	// The sweep's row for the nodegroup: its size is the roll's total
-	// (nodes already replaced are gone from the node list), and a version
-	// other than the update's makes this a version roll, told apart
-	// exactly by kubelet versions.
+	// The node view tells a version roll apart by kubelet versions (the
+	// observer decides from the nodes, not from the sweep's version, which
+	// can already show the target). The sweep's size for the nodegroup is
+	// the roll's total: nodes already replaced are gone from the node list.
+	r.toVersion = version
 	fleetKey := b.keyOf(t)
 	for _, c := range b.clusters {
 		if c.Name != fleetKey {
@@ -230,8 +231,8 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 				continue
 			}
 			r.st.Planned = n.Nodes
-			if n.Version != "" && version != "" && n.Version != version {
-				r.toVersion, r.st.FromVersion = version, n.Version
+			if n.Version != "" && n.Version != version {
+				r.st.FromVersion = n.Version
 			}
 		}
 	}

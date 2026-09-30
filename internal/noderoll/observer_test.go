@@ -326,3 +326,60 @@ func TestKubeletMinor(t *testing.T) {
 		}
 	}
 }
+
+// From review: whether a roll changes versions is read from the nodes, not
+// assumed. With every node on the target version (an AMI patch), the
+// creation-time baseline decides; the first node on another minor makes
+// it a version roll, which then stays one as the old nodes leave.
+func TestTargetVersionOnlyDecidesAVersionRoll(t *testing.T) {
+	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
+	node := func(name, kubelet string, created time.Time) *corev1.Node {
+		n := mkNode(name, "", true, false)
+		n.CreationTimestamp = metav1.NewTime(created)
+		n.Status.NodeInfo.KubeletVersion = kubelet
+		return n
+	}
+	// An AMI patch: both nodes run 1.35; creation time decides.
+	client := fake.NewClientset(
+		node("patched-old", "v1.35.3-eks-1", start.Add(-time.Hour)),
+		node("patched-new", "v1.35.3-eks-2", start.Add(time.Minute)),
+	)
+	obs := NewKubeObserver(client, ng, "")
+	obs.SetTargetVersion("1.35")
+	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := obs.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodeOf(snap, "patched-old").OnTarget || !nodeOf(snap, "patched-new").OnTarget {
+		t.Errorf("AMI patch: %+v", snap.Nodes)
+	}
+
+	// A version roll that ends: once an old-minor node was seen, the kubelet
+	// decides even after it is gone, so a new node created "before" the
+	// start (skew) stays new.
+	client = fake.NewClientset(
+		node("old", "v1.34.6-eks-1", start.Add(-time.Hour)),
+		node("new-skewed", "v1.35.3-eks-2", start.Add(-2*time.Second)),
+	)
+	obs = NewKubeObserver(client, ng, "")
+	obs.SetTargetVersion("1.35")
+	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := obs.Snapshot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CoreV1().Nodes().Delete(t.Context(), "old", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err = obs.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !nodeOf(snap, "new-skewed").OnTarget {
+		t.Errorf("after the old node left, the skewed new node reads old: %+v", snap.Nodes)
+	}
+}

@@ -158,10 +158,10 @@ type liveRoll struct {
 	warned   map[string]bool
 	// viewed is set once the node view read the nodes.
 	viewed bool
-	// For a roll started elsewhere: toVersion is the Kubernetes minor it
-	// moves the nodes to when that differs from theirs (kubelet versions
-	// then tell old from new exactly), and startKnown says the EKS update
-	// reported when it began.
+	// For a roll started elsewhere: toVersion is the Kubernetes minor the
+	// EKS update moves the nodes to (the node view tells a version roll
+	// apart by kubelet versions), and startKnown says the update reported
+	// when it began.
 	toVersion  string
 	startKnown bool
 }
@@ -525,7 +525,7 @@ func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t 
 			}
 			if r.startKnown {
 				capture = func(ctx context.Context) error { return obs.CaptureBaselineBefore(ctx, r.st.StartedAt) }
-			} else if r.toVersion == "" {
+			} else {
 				b.mu.Lock()
 				b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "node view", Text: "old and new nodes count from when this UI began watching", Detail: "EKS reported no start time for the update"})
 				b.mu.Unlock()

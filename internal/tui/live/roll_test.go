@@ -892,9 +892,10 @@ func TestAWatchedRollbackSaysRollback(t *testing.T) {
 }
 
 // A roll adopted after it began: the total is the nodegroup's size from the
-// sweep, a version roll tells old from new by kubelet version, and the
-// baseline counts only nodes created before the update began, or, with no
-// start time from EKS, the nodes seen at adoption (said in the feed).
+// sweep, the observer gets the update's target version (it tells a version
+// roll apart by kubelet versions), and the baseline counts only nodes
+// created before the update began, or, with no start time from EKS, the
+// nodes seen at adoption (said in the feed).
 func TestAnAdoptedRollCountsFromItsStart(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -905,8 +906,8 @@ func TestAnAdoptedRollCountsFromItsStart(t *testing.T) {
 		wantNote    bool
 	}{
 		{"version roll", aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)), "1.32", []string{"version", "baseline-before"}, "1.32", false},
-		{"AMI patch", aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)), "1.31", []string{"baseline-before"}, "", false},
-		{"no start time", nil, "1.31", []string{"baseline"}, "", true},
+		{"AMI patch", aws.Time(time.Date(2026, 9, 30, 19, 27, 0, 0, time.UTC)), "1.31", []string{"version", "baseline-before"}, "1.31", false},
+		{"no start time", nil, "1.31", []string{"version", "baseline"}, "1.31", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rig := newRollRig(t)
