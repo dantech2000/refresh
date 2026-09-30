@@ -270,6 +270,13 @@ func FormatAWSError(err error, operation string) error {
 	if errors.Is(err, context.Canceled) {
 		return &formattedError{msg: fmt.Sprintf("operation cancelled while %s", operation), err: err}
 	}
+	// A connection that could not be opened. Go's dial timeout also reports
+	// itself as context.DeadlineExceeded, but a longer --timeout does not
+	// help an endpoint that cannot be reached (#418).
+	var dial *net.OpError
+	if errors.As(err, &dial) && dial.Op == "dial" {
+		return formatNetworkError(err, operation)
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return &formattedError{msg: fmt.Sprintf("timed out while %s %s", operation, deadlineHint(DefaultTimeoutFlag)), err: err}
 	}

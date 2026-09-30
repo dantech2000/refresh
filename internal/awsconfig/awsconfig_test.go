@@ -8,8 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dantech2000/refresh/internal/cliconfig"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/urfave/cli/v3"
+
+	"github.com/dantech2000/refresh/internal/cliconfig"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
 // newParsedCommand runs a throwaway command with the given flags and argv and
@@ -340,5 +343,23 @@ func TestEffectiveProfile(t *testing.T) {
 	t.Setenv("REFRESH_CONTEXT", "missing")
 	if _, _, err := EffectiveProfile(newParsedCommand(t, flags, "--profile", "p")); err == nil {
 		t.Error("an unknown REFRESH_CONTEXT must fail, as Load does")
+	}
+}
+
+// #418: the SDK waits 30s for a TCP connection; refresh waits DialTimeout,
+// so an unreachable regional endpoint fails in seconds.
+func TestLoadSetsTheDialTimeout(t *testing.T) {
+	setupContext(t, "prod", cliconfig.Context{Cluster: "x", Region: "us-east-1"})
+	setupAWSConfigFile(t)
+	cfg, err := Load(context.Background(), newParsedCommand(t, []cli.Flag{&cli.StringFlag{Name: "region"}, &cli.StringFlag{Name: "profile"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bc, ok := cfg.HTTPClient.(*awshttp.BuildableClient)
+	if !ok {
+		t.Fatalf("HTTPClient is %T, want the SDK's buildable client", cfg.HTTPClient)
+	}
+	if got := bc.GetDialer().Timeout; got != appconfig.DialTimeout {
+		t.Errorf("dial timeout = %v, want %v", got, appconfig.DialTimeout)
 	}
 }

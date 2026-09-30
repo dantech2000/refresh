@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
@@ -279,5 +280,22 @@ func TestFormatPermissionError_AWSMessageFirst(t *testing.T) {
 	if lines[0] != "insufficient AWS permissions while listing clusters" ||
 		lines[1] != "AWS: AccessDeniedException: User: arn:aws:iam::1:user/x is not authorized to perform: eks:ListClusters with an explicit deny" {
 		t.Errorf("first lines = %q", lines[:2])
+	}
+}
+
+// #418: a connect timeout reports itself as context.DeadlineExceeded, which
+// read as "timed out … (increase --timeout)". It is a network failure: the
+// endpoint could not be reached.
+func TestFormatAWSError_DialTimeoutIsANetworkFailure(t *testing.T) {
+	var dialErr error
+	d := net.Dialer{Timeout: time.Millisecond}
+	if _, err := d.Dial("tcp", "10.255.255.1:443"); err != nil {
+		dialErr = &url.Error{Op: "Post", URL: "https://eks.me-south-1.amazonaws.com", Err: err}
+	} else {
+		t.Skip("the test address answered")
+	}
+	msg := FormatAWSError(dialErr, "listing clusters in me-south-1").Error()
+	if !strings.Contains(msg, "network connectivity issue while listing clusters in me-south-1") || strings.Contains(msg, "increase --timeout") {
+		t.Errorf("dial timeout formatted as:\n%s", msg)
 	}
 }

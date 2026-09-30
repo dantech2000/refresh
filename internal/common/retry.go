@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"math/rand/v2"
+	"net"
 	"syscall"
 	"time"
 
@@ -119,6 +120,30 @@ func shouldRetry(err error) bool {
 		errors.Is(err, io.ErrUnexpectedEOF)
 }
 
+// dialFailed reports whether err is a connection that could not be opened
+// (DNS, refused, connect timeout).
+func dialFailed(err error) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
+}
+
+type failFastDialKey struct{}
+
+// FailFastOnDial marks ctx so WithRetry does not retry a connection that
+// could not be opened: the SDK's retryer has already tried it three times.
+// A region sweep sets it, so a region whose endpoint cannot be reached (an
+// outage) fails in seconds instead of taking the whole deadline. Other
+// calls, such as the polls of a long wait, keep retrying through a network
+// blip without a warning.
+func FailFastOnDial(ctx context.Context) context.Context {
+	return context.WithValue(ctx, failFastDialKey{}, true)
+}
+
+func failFastOnDial(ctx context.Context) bool {
+	v, _ := ctx.Value(failFastDialKey{}).(bool)
+	return v
+}
+
 // IsRetryable reports whether err is a transient condition (throttling,
 // server-side fault, network glitch) that is worth retrying or polling
 // through. Permanent errors such as AccessDenied or validation failures
@@ -192,7 +217,7 @@ func WithRetry[T any](ctx context.Context, cfg RetryConfig, fn func(context.Cont
 		if err == nil {
 			return result, nil
 		}
-		if !shouldRetry(err) || attempt >= cfg.MaxAttempts {
+		if !shouldRetry(err) || (dialFailed(err) && failFastOnDial(ctx)) || attempt >= cfg.MaxAttempts {
 			return zero, err
 		}
 

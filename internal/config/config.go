@@ -31,6 +31,11 @@ const (
 	// hops run ~10m each and nodegroup rolls ~10-20m per group, so multi-hop
 	// upgrades legitimately run for hours.
 	DefaultUpgradeTimeout = 4 * time.Hour
+	// DialTimeout bounds opening a TCP connection to an AWS endpoint (the
+	// SDK's default is 30s). A healthy endpoint connects in well under a
+	// second; an unreachable one (a region in an outage) then fails in
+	// seconds instead of holding a sweep for the whole --timeout.
+	DialTimeout = 5 * time.Second
 )
 
 // ClampMaxConcurrency returns v clamped to [1, MaxConcurrencyCap].

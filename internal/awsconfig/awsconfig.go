@@ -7,15 +7,18 @@ package awsconfig
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
 // Load returns an aws.Config with profile/region resolved from (in order):
@@ -33,7 +36,11 @@ import (
 // cluster never runs with half of its settings. An unreadable context file
 // and an unknown REFRESH_CONTEXT are errors too.
 func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
-	var opts []func(*config.LoadOptions) error
+	// A short connect timeout: an unreachable regional endpoint fails in
+	// seconds, not after the SDK's 30s dial on every attempt.
+	opts := []func(*config.LoadOptions) error{config.WithHTTPClient(awshttp.NewBuildableClient().WithDialerOptions(func(d *net.Dialer) {
+		d.Timeout = appconfig.DialTimeout
+	}))}
 	profile, region, err := resolve(cmd)
 	if err != nil {
 		return aws.Config{}, err

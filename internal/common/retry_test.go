@@ -322,3 +322,46 @@ func TestJitter_StaysWithinCeiling(t *testing.T) {
 		t.Error("jitter(0) should be 0")
 	}
 }
+
+// #418: in a region sweep (FailFastOnDial), an endpoint that cannot be
+// dialed (the SDK already tried it three times) is not tried again, so an
+// unreachable region fails in seconds. Elsewhere it is retried as before,
+// IsRetryable still calls it transient, and a reset connection is retried.
+func TestWithRetry_DialFailureIsNotRetriedAgain(t *testing.T) {
+	dial := &url.Error{Op: "Post", URL: "https://eks.me-south-1.amazonaws.com", Err: &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}}
+	calls := 0
+	_, err := WithRetry(FailFastOnDial(context.Background()), fastRetry, func(_ context.Context) (int, error) {
+		calls++
+		return 0, dial
+	})
+	if err == nil || calls != 1 {
+		t.Errorf("dial failure in a sweep: fn called %d times (err %v), want 1", calls, err)
+	}
+	// Outside a sweep (a long wait's polls), it is retried as before.
+	calls = 0
+	_, _ = WithRetry(context.Background(), fastRetry, func(_ context.Context) (int, error) {
+		calls++
+		if calls < 2 {
+			return 0, dial
+		}
+		return 1, nil
+	})
+	if calls != 2 {
+		t.Errorf("dial failure outside a sweep: fn called %d times, want a retry", calls)
+	}
+	if !IsRetryable(dial) {
+		t.Error("IsRetryable(dial failure) = false; long polls must keep going through it")
+	}
+	reset := &url.Error{Op: "Post", URL: "https://eks.us-east-1.amazonaws.com", Err: &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}}
+	calls = 0
+	_, _ = WithRetry(context.Background(), fastRetry, func(_ context.Context) (int, error) {
+		calls++
+		if calls < 2 {
+			return 0, reset
+		}
+		return 1, nil
+	})
+	if calls != 2 {
+		t.Errorf("reset connection: fn called %d times, want a retry", calls)
+	}
+}
