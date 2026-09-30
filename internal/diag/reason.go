@@ -3,8 +3,11 @@ package diag
 import (
 	"context"
 	"errors"
+	"net"
 
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // Reason is why a Failure happened, from a closed set. Scripts branch on it.
@@ -124,6 +127,11 @@ func classify(err error) Reason {
 		return ReasonUnknown
 	case errors.Is(err, context.Canceled):
 		return ReasonInterrupted
+	// A connect timeout also matches context.DeadlineExceeded, but the
+	// request never reached AWS: a network error, not the run's deadline.
+	// A DNS failure keeps its own path below (an invalid region).
+	case common.IsDialFailure(err) && !isDNS(err):
+		return ReasonNetworkError
 	case errors.Is(err, context.DeadlineExceeded):
 		return ReasonTimeout
 	// A credential code must win over IsPermissionError's HTTP 403 check:
@@ -154,4 +162,9 @@ func classify(err error) Reason {
 		return ReasonNetworkError
 	}
 	return ReasonUnknown
+}
+
+func isDNS(err error) bool {
+	var dns *net.DNSError
+	return errors.As(err, &dns)
 }

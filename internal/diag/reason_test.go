@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
@@ -199,5 +200,22 @@ func TestReasonsAreDocumented(t *testing.T) {
 		if !strings.Contains(doc, "| `"+string(r)+"` |") {
 			t.Errorf("docs/concepts/output.md has no table row for reason %s", r)
 		}
+	}
+}
+
+// From review: a connect timeout was classified as the run's Timeout; it is a
+// network error. A failed DNS lookup (an invalid region) keeps its own path.
+func TestClassifyDialTimeoutIsNetworkError(t *testing.T) {
+	d := net.Dialer{Timeout: time.Millisecond}
+	_, err := d.Dial("tcp", "10.255.255.1:443")
+	if err == nil {
+		t.Skip("the test address answered")
+	}
+	if r, _, _ := diag.Classify(&url.Error{Op: "Post", URL: "https://eks.me-south-1.amazonaws.com", Err: err}); r != diag.ReasonNetworkError {
+		t.Errorf("dial timeout = %s, want %s", r, diag.ReasonNetworkError)
+	}
+	dns := &url.Error{Op: "Post", URL: "https://eks.us-bogus-1.amazonaws.com", Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "eks.us-bogus-1.amazonaws.com", IsNotFound: true}}}
+	if r, _, _ := diag.Classify(dns); r == diag.ReasonTimeout {
+		t.Errorf("DNS failure = %s", r)
 	}
 }

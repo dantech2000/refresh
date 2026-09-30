@@ -31,6 +31,13 @@ const (
 	// hops run ~10m each and nodegroup rolls ~10-20m per group, so multi-hop
 	// upgrades legitimately run for hours.
 	DefaultUpgradeTimeout = 4 * time.Hour
+	// SweepDialTimeout bounds opening a connection (DNS and TCP connect) to
+	// an AWS endpoint during a region sweep; other calls keep the SDK's 30s.
+	// A healthy endpoint connects in well under a second, and 10s leaves
+	// room for one slow DNS answer, so an unreachable region (an outage)
+	// fails a sweep in about 30s instead of holding it for the whole
+	// --timeout.
+	SweepDialTimeout = 10 * time.Second
 )
 
 // ClampMaxConcurrency returns v clamped to [1, MaxConcurrencyCap].

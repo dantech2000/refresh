@@ -61,7 +61,9 @@ func Run[T any](ctx context.Context, regions []string, opts Options, fn func(ctx
 		err   error
 	}
 	outcomes := common.ForEachParallel(ctx, regions, opts.Concurrency, func(rctx context.Context, region string) outcome {
-		v, err := fn(rctx, region)
+		// An endpoint that cannot be reached fails this region in seconds
+		// (common.FailFastOnDial), not after the whole deadline.
+		v, err := fn(common.FailFastOnDial(rctx), region)
 		return outcome{ran: true, value: v, err: err}
 	})
 

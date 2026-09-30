@@ -7,15 +7,21 @@ package awsconfig
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/cliconfig"
+	"github.com/dantech2000/refresh/internal/common"
+	appconfig "github.com/dantech2000/refresh/internal/config"
 )
 
 // Load returns an aws.Config with profile/region resolved from (in order):
@@ -33,7 +39,13 @@ import (
 // cluster never runs with half of its settings. An unreadable context file
 // and an unknown REFRESH_CONTEXT are errors too.
 func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
-	var opts []func(*config.LoadOptions) error
+	// The SDK's own client (so AWS_CA_BUNDLE and defaults modes still
+	// apply), with a short dial in region sweeps: an unreachable regional
+	// endpoint fails a sweep in seconds, not after the SDK's 30s dial on
+	// every attempt. Other calls keep the 30s.
+	opts := []func(*config.LoadOptions) error{config.WithHTTPClient(awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+		tr.DialContext = sweepDial(tr.DialContext, appconfig.SweepDialTimeout)
+	}))}
 	profile, region, err := resolve(cmd)
 	if err != nil {
 		return aws.Config{}, err
@@ -47,6 +59,19 @@ func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 	}
 
 	return config.LoadDefaultConfig(ctx, opts...)
+}
+
+// sweepDial bounds dial by timeout when the context is a region sweep's
+// (common.FailFastOnDial), and leaves every other dial as it is.
+func sweepDial(dial func(ctx context.Context, network, addr string) (net.Conn, error), timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if common.IsFailFastOnDial(ctx) {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		return dial(ctx, network, addr)
+	}
 }
 
 // resolve is the profile and region Load gives the SDK itself (the flags,
