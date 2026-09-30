@@ -14,24 +14,44 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
 	"github.com/dantech2000/refresh/internal/common"
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 // CurrentAmiID resolves the current AMI ID for a nodegroup.
 // It attempts resolution in order: launch template, then ASG instance.
 func CurrentAmiID(ctx context.Context, ng *types.Nodegroup, ec2Client *ec2.Client, autoscalingClient *autoscaling.Client) string {
+	id, _ := CurrentAmiIDErr(ctx, ng, ec2Client, autoscalingClient)
+	return id
+}
+
+// CurrentAmiIDErr is CurrentAmiID with the reason it found nothing: ("", nil)
+// when there is nothing to read (no launch template image, an ASG with no
+// instances), and an error, tagged with the AWS operation, when a call
+// failed. A caller that counts stale AMIs must not read a failed lookup as
+// "not stale".
+func CurrentAmiIDErr(ctx context.Context, ng *types.Nodegroup, ec2Client *ec2.Client, autoscalingClient *autoscaling.Client) (string, error) {
 	// Try launch template first
-	if amiID := resolveFromLaunchTemplate(ctx, ng, ec2Client); amiID != "" {
-		return amiID
+	amiID, ltErr := resolveFromLaunchTemplate(ctx, ng, ec2Client)
+	if amiID != "" {
+		return amiID, nil
 	}
 
-	// Fall back to ASG instance
-	return resolveFromASG(ctx, ng, autoscalingClient, ec2Client)
+	// Fall back to an ASG instance, also when the launch template could
+	// not be read: one readable source is enough.
+	amiID, asgErr := resolveFromASG(ctx, ng, autoscalingClient, ec2Client)
+	switch {
+	case amiID != "":
+		return amiID, nil
+	case ltErr != nil:
+		return "", ltErr
+	}
+	return "", asgErr
 }
 
 // resolveFromLaunchTemplate attempts to get the AMI ID from the nodegroup's launch template.
-func resolveFromLaunchTemplate(ctx context.Context, ng *types.Nodegroup, ec2Client *ec2.Client) string {
+func resolveFromLaunchTemplate(ctx context.Context, ng *types.Nodegroup, ec2Client *ec2.Client) (string, error) {
 	if ng.LaunchTemplate == nil || ng.LaunchTemplate.Version == nil || ng.LaunchTemplate.Id == nil {
-		return ""
+		return "", nil
 	}
 
 	ltOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeLaunchTemplateVersionsOutput, error) {
@@ -40,23 +60,23 @@ func resolveFromLaunchTemplate(ctx context.Context, ng *types.Nodegroup, ec2Clie
 			Versions:         []string{*ng.LaunchTemplate.Version},
 		})
 	})
-	if err != nil || ltOut == nil {
-		return ""
+	if err != nil {
+		return "", diag.WithOperation(diag.OpDescribeLaunchTemplateVersions, err)
 	}
 
-	if len(ltOut.LaunchTemplateVersions) == 0 ||
+	if ltOut == nil || len(ltOut.LaunchTemplateVersions) == 0 ||
 		ltOut.LaunchTemplateVersions[0].LaunchTemplateData == nil ||
 		ltOut.LaunchTemplateVersions[0].LaunchTemplateData.ImageId == nil {
-		return ""
+		return "", nil
 	}
 
-	return *ltOut.LaunchTemplateVersions[0].LaunchTemplateData.ImageId
+	return *ltOut.LaunchTemplateVersions[0].LaunchTemplateData.ImageId, nil
 }
 
 // resolveFromASG attempts to get the AMI ID from instances in the nodegroup's ASG.
-func resolveFromASG(ctx context.Context, ng *types.Nodegroup, autoscalingClient *autoscaling.Client, ec2Client *ec2.Client) string {
+func resolveFromASG(ctx context.Context, ng *types.Nodegroup, autoscalingClient *autoscaling.Client, ec2Client *ec2.Client) (string, error) {
 	if ng.Resources == nil || len(ng.Resources.AutoScalingGroups) == 0 || ng.Resources.AutoScalingGroups[0].Name == nil {
-		return ""
+		return "", nil
 	}
 
 	asgName := *ng.Resources.AutoScalingGroups[0].Name
@@ -66,13 +86,16 @@ func resolveFromASG(ctx context.Context, ng *types.Nodegroup, autoscalingClient 
 			AutoScalingGroupNames: []string{asgName},
 		})
 	})
-	if err != nil || describeAsgOut == nil || len(describeAsgOut.AutoScalingGroups) == 0 || len(describeAsgOut.AutoScalingGroups[0].Instances) == 0 {
-		return ""
+	if err != nil {
+		return "", diag.WithOperation(diag.OpDescribeAutoScalingGroups, err)
+	}
+	if describeAsgOut == nil || len(describeAsgOut.AutoScalingGroups) == 0 || len(describeAsgOut.AutoScalingGroups[0].Instances) == 0 {
+		return "", nil
 	}
 
 	instanceID := describeAsgOut.AutoScalingGroups[0].Instances[0].InstanceId
 	if instanceID == nil {
-		return ""
+		return "", nil
 	}
 
 	descInstOut, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*ec2.DescribeInstancesOutput, error) {
@@ -80,17 +103,17 @@ func resolveFromASG(ctx context.Context, ng *types.Nodegroup, autoscalingClient 
 			InstanceIds: []string{*instanceID},
 		})
 	})
-	if err != nil || descInstOut == nil {
-		return ""
+	if err != nil {
+		return "", diag.WithOperation(diag.OpDescribeInstances, err)
 	}
 
-	if len(descInstOut.Reservations) == 0 ||
+	if descInstOut == nil || len(descInstOut.Reservations) == 0 ||
 		len(descInstOut.Reservations[0].Instances) == 0 ||
 		descInstOut.Reservations[0].Instances[0].ImageId == nil {
-		return ""
+		return "", nil
 	}
 
-	return *descInstOut.Reservations[0].Instances[0].ImageId
+	return *descInstOut.Reservations[0].Instances[0].ImageId, nil
 }
 
 // LatestAmiIDForType returns the latest recommended AMI ID for a specific AMI type.

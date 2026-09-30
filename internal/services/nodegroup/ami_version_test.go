@@ -21,8 +21,8 @@ var latestAMIByVersion = map[string]string{
 // name to the AMI its nodes run; latest AMIs come from latestAMIByVersion.
 func newAMIVersionTestService(api EKSAPI, currentByNG map[string]string, lookups *atomic.Int32) *ServiceImpl {
 	svc := newTestService(api)
-	svc.currentAMIFn = func(_ context.Context, ng *ekstypes.Nodegroup) string {
-		return currentByNG[aws.ToString(ng.NodegroupName)]
+	svc.currentAMIFn = func(_ context.Context, ng *ekstypes.Nodegroup) (string, error) {
+		return currentByNG[aws.ToString(ng.NodegroupName)], nil
 	}
 	svc.latestAMIFn = func(_ context.Context, v string, _ ekstypes.AMITypes) (string, error) {
 		lookups.Add(1)

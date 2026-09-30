@@ -19,7 +19,7 @@ func TestListDetailed_ClusterVersionSkipsDescribeCluster(t *testing.T) {
 		WithNodegroup("ng-a", "1.32", ekstypes.AMITypesAl2023X8664Standard).
 		Build()
 	svc := newTestService(api)
-	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) string { return "ami-current" }
+	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) (string, error) { return "ami-current", nil }
 	svc.latestAMIFn = func(context.Context, string, ekstypes.AMITypes) (string, error) { return "ami-current", nil }
 
 	res, err := svc.ListDetailed(context.Background(), "prod", ListOptions{ClusterVersion: "1.32"})
@@ -43,7 +43,7 @@ func TestListDetailed_SharedLatestAMICache(t *testing.T) {
 		WithNodegroup("ng-b", "1.32", ekstypes.AMITypesAl2023X8664Standard).
 		Build()
 	svc := newTestService(api)
-	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) string { return "ami-current" }
+	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) (string, error) { return "ami-current", nil }
 	var lookups atomic.Int32
 	shared := awsinternal.NewLatestAMICache(func(context.Context, string, ekstypes.AMITypes) (string, error) {
 		lookups.Add(1)

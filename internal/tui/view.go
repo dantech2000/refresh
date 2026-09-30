@@ -80,11 +80,16 @@ func (m Model) topBar(w int) Line {
 		}
 	}
 	// The right side drops its least useful parts until it fits.
+	// Before the first sweep ends there is no sync time and no region count.
+	regions, synced := fmt.Sprintf("%d/%d", m.st.RegionsAnswered, m.st.RegionsTotal), "live · synced "+ago(m.st.Now.Sub(m.st.SyncedAt))
+	if m.st.SyncedAt.IsZero() {
+		regions, synced = "…", "live · sweeping…"
+	}
 	parts := []Line{
 		{sub("ctx "), fg(colMauve, m.st.Context)},
 		{sub("aws "), fg(colSky, m.st.Profile)},
-		{sub("regions "), fg(colGreen, fmt.Sprintf("%d/%d", m.st.RegionsAnswered, m.st.RegionsTotal))},
-		{tok(state.LevelProgress, "live · synced "+ago(m.st.Now.Sub(m.st.SyncedAt)))},
+		{sub("regions "), fg(colGreen, regions)},
+		{tok(state.LevelProgress, synced)},
 	}
 	var badgeL Line
 	if m.st.Badge != "" {
@@ -165,14 +170,23 @@ func firstWord(b binding) string {
 // it shortens the labels, then drops them, before it lets a key fall off the
 // end: every key stays visible.
 func (m Model) keyBar(w int) Line {
-	right := Line{chip("?"), sp(1), dimS("keys"), sp(2), chip("q"), sp(1), dimS("quit"), sp(1)}
+	full := Line{chip("?"), sp(1), dimS("keys"), sp(2), chip("q"), sp(1), dimS("quit"), sp(1)}
+	compact := Line{chip("?"), sp(1), chip("q"), sp(1)} // everyone knows these two
 	bs := m.barBindings()
 	var l Line
+	right := full
 	for _, text := range []func(binding) string{
 		binding.barText,
 		firstWord,
-		// Keep words on the one-letter action keys; arrows and enter
-		// explain themselves.
+		// Drop the words of the keys that explain themselves (arrows,
+		// enter, esc, tab); a letter or space keeps its first word.
+		func(b binding) string {
+			if selfExplaining(b.label) {
+				return ""
+			}
+			return firstWord(b)
+		},
+		// Then keep words only on the action keys.
 		func(b binding) string {
 			if b.primary {
 				return firstWord(b)
@@ -193,11 +207,26 @@ func (m Model) keyBar(w int) Line {
 			}
 			l = append(l, sp(gap))
 		}
-		if l.Width()+right.Width() <= w {
+		if l.Width()+full.Width() <= w {
+			right = full
+			break
+		}
+		if l.Width()+compact.Width() <= w {
+			right = compact
 			break
 		}
 	}
 	return joinRight(l, right, w)
+}
+
+// selfExplaining reports whether a key's label says what it does without
+// words: arrows, enter, esc, tab.
+func selfExplaining(label string) bool {
+	switch label {
+	case "enter", "esc", "tab", "shift+tab":
+		return true
+	}
+	return strings.ContainsAny(label, "↑↓←→")
 }
 
 // visible filters a feed for the live panes: the pause point, the source,

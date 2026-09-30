@@ -28,7 +28,7 @@ func ssmAccessDenied() error {
 // current-AMI lookup that always succeeds.
 func newDeniedLookupService(api EKSAPI, lookups *atomic.Int32) *ServiceImpl {
 	svc := newTestService(api)
-	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) string { return "ami-current" }
+	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) (string, error) { return "ami-current", nil }
 	svc.latestAMIFn = func(context.Context, string, ekstypes.AMITypes) (string, error) {
 		lookups.Add(1)
 		return "", ssmAccessDenied()
@@ -132,5 +132,28 @@ func TestDescribe_LatestAMILookupFailureIsReported(t *testing.T) {
 	}
 	if f := d.AMILookupFailure; f == nil || f.Operation != diag.OpGetParameter || f.Reason != diag.ReasonAccessDenied {
 		t.Errorf("lookup failure not reported: AMILookupFailure = %+v", f)
+	}
+}
+
+// Found at fleet scale: when the AMI the nodes run could not be read, the
+// nodegroup read as not stale. It is Unknown with an AMILookupFailure that
+// names the failed call, as for the latest-AMI lookup.
+func TestList_CurrentAMILookupFailureIsReported(t *testing.T) {
+	api := mocks.NewEKSAPI().
+		WithCluster("prod", "1.32").
+		WithNodegroup("api", "1.32", ekstypes.AMITypesAl2023X8664Standard).
+		Build()
+	svc := newTestService(api)
+	svc.currentAMIFn = func(context.Context, *ekstypes.Nodegroup) (string, error) {
+		return "", diag.WithOperation(diag.OpDescribeInstances, &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "not authorized to perform: ec2:DescribeInstances"})
+	}
+	svc.latestAMIFn = func(context.Context, string, ekstypes.AMITypes) (string, error) { return "ami-latest", nil }
+	res, err := svc.ListDetailed(t.Context(), "prod", ListOptions{})
+	if err != nil || len(res.Summaries) != 1 {
+		t.Fatalf("ListDetailed = %+v, %v", res, err)
+	}
+	s := res.Summaries[0]
+	if s.AMIStatus != types.AMIUnknown || s.AMILookupFailure == nil || s.AMILookupFailure.Operation != diag.OpDescribeInstances {
+		t.Fatalf("summary = %+v (failure %+v), want Unknown with an ec2:DescribeInstances failure", s, s.AMILookupFailure)
 	}
 }

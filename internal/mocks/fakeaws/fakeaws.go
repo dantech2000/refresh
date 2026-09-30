@@ -101,8 +101,11 @@ type Addon struct {
 
 // Cluster is an EKS cluster in the fake world.
 type Cluster struct {
-	Name       string
-	Version    string
+	Name    string
+	Version string
+	// Region, when set, is the only region that lists and answers for the
+	// cluster; "" answers in every region.
+	Region     string
 	Nodegroups []*Nodegroup
 	Addons     []*Addon
 	// Insights are the cluster's UPGRADE_READINESS insights. Nil answers
@@ -194,6 +197,39 @@ type Server struct {
 	// versionStatus overrides a version's DescribeClusterVersions
 	// versionStatus (default STANDARD_SUPPORT).
 	versionStatus map[string]string
+	// latency, when set, delays each call by what it returns for the
+	// call's region, service, and path, outside the lock, so slow calls overlap as
+	// on real AWS. throttle, when set, answers ThrottlingException when it
+	// returns true.
+	latency func(region, service, path string) time.Duration
+	// ssmError is the error code GetParameter answers, or "".
+	ssmError string
+	throttle func(service, path string) bool
+}
+
+// SetLatency delays every call by what d returns for its region, service,
+// and path (0 answers at once). The delay ends early when the client gives
+// up. d runs outside the server's lock.
+func (s *Server) SetLatency(d func(region, service, path string) time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.latency = d
+}
+
+// FailSSM makes GetParameter fail with the API error code, as when the
+// credentials lack ssm:GetParameter (the latest-AMI lookup).
+func (s *Server) FailSSM(code string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ssmError = code
+}
+
+// SetThrottle answers ThrottlingException for every call that throttle
+// returns true for, as AWS does over its request rate.
+func (s *Server) SetThrottle(throttle func(service, path string) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.throttle = throttle
 }
 
 // SetVersionStatus sets the versionStatus DescribeClusterVersions reports
@@ -248,16 +284,8 @@ func (s *Server) HangEKS() {
 // refresh context, and no reachable Kubernetes cluster.
 func New(tb testing.TB, clusters ...*Cluster) *Server {
 	tb.Helper()
-	s := &Server{
-		clusters: map[string]*Cluster{}, updates: map[string]func(){}, updateStatus: map[string]string{},
-		clusterUpdates: map[string][]string{}, updateInfo: map[string]Update{},
-	}
-	for _, c := range clusters {
-		s.clusters[c.Name] = c
-	}
-	ts := httptest.NewServer(http.HandlerFunc(s.serve))
-	tb.Cleanup(ts.Close)
-	s.URL = ts.URL
+	s, closeFn := Start(clusters...)
+	tb.Cleanup(closeFn)
 
 	dir := tb.TempDir()
 	empty := filepath.Join(dir, "empty")
@@ -265,7 +293,7 @@ func New(tb testing.TB, clusters ...*Cluster) *Server {
 		tb.Fatal(err)
 	}
 	for k, v := range map[string]string{
-		"AWS_ENDPOINT_URL":            ts.URL,
+		"AWS_ENDPOINT_URL":            s.URL,
 		"AWS_ACCESS_KEY_ID":           "AKIDFAKEFAKEFAKE",
 		"AWS_SECRET_ACCESS_KEY":       "fake-secret",
 		"AWS_SESSION_TOKEN":           "",
@@ -287,6 +315,22 @@ func New(tb testing.TB, clusters ...*Cluster) *Server {
 		tb.Setenv(k, v)
 	}
 	return s
+}
+
+// Start serves clusters on a local port without touching the process
+// environment, for dev tools that point the real binary at a fake fleet.
+// Cluster names must be unique. Call the returned func to stop it.
+func Start(clusters ...*Cluster) (*Server, func()) {
+	s := &Server{
+		clusters: map[string]*Cluster{}, updates: map[string]func(){}, updateStatus: map[string]string{},
+		clusterUpdates: map[string][]string{}, updateInfo: map[string]Update{},
+	}
+	for _, c := range clusters {
+		s.clusters[c.Name] = c
+	}
+	ts := httptest.NewServer(http.HandlerFunc(s.serve))
+	s.URL = ts.URL
+	return s, ts.Close
 }
 
 // FailCredentials rejects the credentials, as AWS does with revoked or
@@ -336,7 +380,21 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	hang := s.hangEKS && service == "eks"
+	latency, throttle := s.latency, s.throttle
 	s.mu.Unlock()
+	if latency != nil {
+		if d := latency(region, service, r.URL.Path); d > 0 {
+			select {
+			case <-time.After(d):
+			case <-r.Context().Done():
+				return
+			}
+		}
+	}
+	if throttle != nil && service != "sts" && throttle(service, r.URL.Path) {
+		writeError(w, http.StatusBadRequest, "ThrottlingException", "Rate exceeded")
+		return
+	}
 	if hang {
 		// Block outside the lock so other calls still get answered.
 		<-r.Context().Done()
@@ -350,6 +408,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	switch service {
 	case "sts":
 		s.serveSTS(w)
+	case "ssm":
+		s.serveSSM(w, r, body)
 	case "eks":
 		if s.stsError != "" {
 			writeError(w, http.StatusForbidden, "UnrecognizedClientException", "The security token included in the request is invalid.")
@@ -361,10 +421,48 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.serveEKS(w, r, body)
+		s.serveEKS(w, r, region, body)
 	default:
 		unsupported(w, r, service)
 	}
+}
+
+// serveSSM answers GetParameter for the EKS-optimized AMI parameters: a
+// recommended image ID or release version for the Kubernetes version in
+// the parameter's path. Other SSM calls are not modelled.
+func (s *Server) serveSSM(w http.ResponseWriter, r *http.Request, body []byte) {
+	if r.Header.Get("X-Amz-Target") != "AmazonSSM.GetParameter" {
+		unsupported(w, r, "ssm")
+		return
+	}
+	if s.ssmError != "" {
+		writeCodeError(w, s.ssmError, "fake GetParameter failure")
+		return
+	}
+	var in struct{ Name string }
+	_ = json.Unmarshal(body, &in)
+	version := ""
+	for _, part := range strings.Split(in.Name, "/") {
+		if v, ok := strings.CutPrefix(part, "aws-k8s-"); ok {
+			part = v // bottlerocket: aws-k8s-1.34[-variant]
+		}
+		if len(part) >= 4 && part[0] == '1' && part[1] == '.' {
+			version, _, _ = strings.Cut(part, "-")
+			break
+		}
+	}
+	if version == "" {
+		writeError(w, http.StatusBadRequest, "ParameterNotFound", "fakeaws: no Kubernetes version in "+in.Name)
+		return
+	}
+	value := "ami-latest" + strings.ReplaceAll(version, ".", "")
+	if strings.HasSuffix(in.Name, "/release_version") || strings.HasSuffix(in.Name, "/image_version") {
+		// The release fake nodegroups run (see nodegroupJSON): no release
+		// delta, so no command fetches release notes from GitHub.
+		value = version + ".0-20260101"
+	}
+	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+	_ = json.NewEncoder(w).Encode(map[string]any{"Parameter": map[string]any{"Name": in.Name, "Value": value, "Type": "String"}})
 }
 
 func (s *Server) serveSTS(w http.ResponseWriter) {
@@ -413,15 +511,17 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, region string, body []byte) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	get := r.Method == http.MethodGet
 
 	switch {
 	case get && len(parts) == 1 && parts[0] == "clusters":
 		names := []string{}
-		for name := range s.clusters {
-			names = append(names, name)
+		for name, c := range s.clusters {
+			if c.Region == "" || c.Region == region {
+				names = append(names, name)
+			}
 		}
 		writeJSON(w, map[string]any{"clusters": names})
 		return
@@ -454,6 +554,9 @@ func (s *Server) serveEKS(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	c := s.clusters[parts[1]]
+	if c != nil && c.Region != "" && c.Region != region {
+		c = nil // lives in another region
+	}
 	if c == nil {
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No cluster found for name: "+parts[1]+".")
 		return

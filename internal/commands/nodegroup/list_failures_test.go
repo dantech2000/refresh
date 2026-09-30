@@ -115,7 +115,7 @@ func TestList_FailuresContract(t *testing.T) {
 
 	for _, format := range []string{"json", "yaml"} {
 		t.Run(format, func(t *testing.T) {
-			fakeaws.New(t, world())
+			fakeaws.New(t, world()).FailSSM("AccessDeniedException")
 			stdout, stderr, err := runNodegroup(t, "list", "prod", "-o", format)
 			if got := runner.ExitCodeOf(err); got != runner.ExitIncomplete {
 				t.Fatalf("exit = %d (%v), want 4\nstderr:\n%s", got, err, stderr)
@@ -140,7 +140,7 @@ func TestList_FailuresContract(t *testing.T) {
 		})
 	}
 	t.Run("plain", func(t *testing.T) {
-		fakeaws.New(t, world())
+		fakeaws.New(t, world()).FailSSM("AccessDeniedException")
 		stdout, stderr, err := runNodegroup(t, "list", "prod", "-o", "plain")
 		if got := runner.ExitCodeOf(err); got != runner.ExitIncomplete {
 			t.Fatalf("exit = %d (%v), want 4", got, err)
@@ -164,7 +164,7 @@ func TestList_FailuresContract(t *testing.T) {
 		}
 	})
 	t.Run("AMI lookup alone exits 0", func(t *testing.T) {
-		fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "api", Version: "1.31"}))
+		fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "api", Version: "1.31"})).FailSSM("AccessDeniedException")
 		stdout, stderr, err := runNodegroup(t, "list", "prod", "-o", "json")
 		if err != nil {
 			t.Fatalf("list: %v\nstderr:\n%s", err, stderr)
@@ -176,7 +176,7 @@ func TestList_FailuresContract(t *testing.T) {
 // nodegroup describe reads one nodegroup or fails (exit 1), so failures is
 // always []. A failed latest-AMI lookup is advisory there too.
 func TestDescribe_FailuresContract(t *testing.T) {
-	fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "api", Version: "1.31"}))
+	fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "api", Version: "1.31"})).FailSSM("AccessDeniedException")
 	for _, format := range []string{"json", "yaml"} {
 		stdout, stderr, err := runNodegroup(t, "describe", "prod", "api", "-o", format)
 		if err != nil {

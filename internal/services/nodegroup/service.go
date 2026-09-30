@@ -66,7 +66,7 @@ type ServiceImpl struct {
 	ssmClient     *ssm.Client
 
 	// Test seams; nil in production (the real EC2/ASG/SSM lookups are used).
-	currentAMIFn func(context.Context, *ekstypes.Nodegroup) string
+	currentAMIFn func(context.Context, *ekstypes.Nodegroup) (string, error)
 	latestAMIFn  awsinternal.AMILookupFunc
 	// scalePollInterval overrides the Scale --wait poll interval (0 = default).
 	scalePollInterval time.Duration
@@ -246,11 +246,17 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 				instanceType = ng.InstanceTypes[0]
 			}
 
-			currentAmiID := s.currentAMI(fctx, ng)
+			currentAmiID, currentErr := s.currentAMI(fctx, ng)
 			latestAmiID, lookupErr := latestAMI.ForNodegroup(fctx, ng, k8sVersion)
 			amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiID, latestAmiID)
+			lookupOp := diag.OpGetParameter
+			if lookupErr == nil && currentErr != nil {
+				// The AMI the nodes run could not be read: the status is
+				// Unknown because of the failure, as for the latest AMI.
+				lookupErr, lookupOp = currentErr, diag.OperationOf(currentErr)
+			}
 			if lookupErr != nil {
-				s.logger.Debug("failed to resolve latest AMI", "cluster", clusterName, "nodegroup", name, "error", lookupErr)
+				s.logger.Debug("failed to resolve the nodegroup's AMIs", "cluster", clusterName, "nodegroup", name, "error", lookupErr)
 				if !latestAMILookupMatters(ng) {
 					lookupErr = nil
 				}
@@ -269,7 +275,7 @@ func (s *ServiceImpl) ListDetailed(ctx context.Context, clusterName string, opti
 			}
 			summary.VersionBehind = minorBehind(summary.K8sVersion, k8sVersion)
 			if lookupErr != nil {
-				summary.AMILookupFailure = s.failure(clusterName, name, diag.OpGetParameter, lookupErr)
+				summary.AMILookupFailure = s.failure(clusterName, name, lookupOp, lookupErr)
 			}
 			if !matchesFilters(summary, options.Filters) {
 				return ngResult{done: true}
@@ -338,11 +344,11 @@ func (s *ServiceImpl) NewLatestAMICache() *awsinternal.LatestAMICache {
 }
 
 // currentAMI resolves the AMI the nodegroup's nodes currently run.
-func (s *ServiceImpl) currentAMI(ctx context.Context, ng *ekstypes.Nodegroup) string {
+func (s *ServiceImpl) currentAMI(ctx context.Context, ng *ekstypes.Nodegroup) (string, error) {
 	if s.currentAMIFn != nil {
 		return s.currentAMIFn(ctx, ng)
 	}
-	return awsinternal.CurrentAmiID(ctx, ng, s.ec2Client, s.asgClient)
+	return awsinternal.CurrentAmiIDErr(ctx, ng, s.ec2Client, s.asgClient)
 }
 
 // Describe returns expanded details for a single nodegroup.
@@ -374,9 +380,13 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 	}
 	ng := out.Nodegroup
 
-	currentAmiID := s.currentAMI(ctx, ng)
+	currentAmiID, currentErr := s.currentAMI(ctx, ng)
 	latestAmiID, lookupErr := s.NewLatestAMICache().ForNodegroup(ctx, ng, k8sVersion)
 	amiStatus := classifyAMI(ng.AmiType, ng.Status, currentAmiID, latestAmiID)
+	lookupOp := diag.OpGetParameter
+	if lookupErr == nil && currentErr != nil {
+		lookupErr, lookupOp = currentErr, diag.OperationOf(currentErr) // as in ListDetailed
+	}
 	if lookupErr != nil && !latestAMILookupMatters(ng) {
 		lookupErr = nil
 	}
@@ -404,7 +414,7 @@ func (s *ServiceImpl) Describe(ctx context.Context, clusterName, nodegroupName s
 		Scaling:      scaling,
 	}
 	if lookupErr != nil {
-		details.AMILookupFailure = s.failure(clusterName, nodegroupName, diag.OpGetParameter, lookupErr)
+		details.AMILookupFailure = s.failure(clusterName, nodegroupName, lookupOp, lookupErr)
 	}
 	// Resolve backing instances once from the nodegroup we already described;
 	// workloads and instance details reuse the result.

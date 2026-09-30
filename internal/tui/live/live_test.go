@@ -3,6 +3,7 @@ package live
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -793,5 +794,99 @@ func TestStartRefusesWhileEKSIsChangingTheCluster(t *testing.T) {
 	}
 	if rig.started.Load() != 0 {
 		t.Fatal("a roll started on a busy cluster")
+	}
+}
+
+// Found at fleet scale: the first sweep of a 60-cluster fleet wrote one
+// feed event per cluster. Past firstSweepEvents it writes one summary and
+// the errors only.
+func TestFirstSweepOfABigFleetSummarizes(t *testing.T) {
+	b := newTestBackend(t, &fleet{}, "us-east-1")
+	var now []state.Cluster
+	targets := map[string]target{}
+	for i := range 20 {
+		c := state.Cluster{Name: fmt.Sprintf("c-%02d", i), Region: "us-east-1", Version: "1.34", Latest: "1.36"} // 2 minors behind: a warning
+		if i < 2 {
+			c.ExtendedSupport = true // an error
+		}
+		if i >= 17 {
+			c.Latest = "1.34" // current
+		}
+		now = append(now, c)
+		targets[c.Name] = target{name: c.Name, region: "us-east-1"}
+	}
+	b.mu.Lock()
+	b.diff(now, targets)
+	b.mu.Unlock()
+	st, _ := b.State(t.Context())
+	var summary, perCluster int
+	for _, e := range st.Feed {
+		switch {
+		case e.Subject == "fleet" && strings.Contains(e.Text, "17 of 20 clusters need attention"):
+			summary++
+		case e.Cluster != "":
+			perCluster++
+			if e.Level != state.LevelError {
+				t.Errorf("per-cluster event for a warning: %+v", e)
+			}
+		}
+	}
+	if last := st.Feed[len(st.Feed)-1]; last.Subject != "fleet" {
+		t.Errorf("the summary is not the newest event (shown on top): %+v", last)
+	}
+	if summary != 1 || perCluster != 2 {
+		t.Errorf("summary %d, per-cluster %d; want 1 and 2 (the errors): %+v", summary, perCluster, st.Feed)
+	}
+}
+
+// From review: clusters that are only changing (Busy) do not need attention,
+// and their progress stays in the feed on a big fleet's first sweep.
+func TestFirstSweepKeepsChangingClusters(t *testing.T) {
+	b := newTestBackend(t, &fleet{}, "us-east-1")
+	var now []state.Cluster
+	targets := map[string]target{}
+	for i := range 13 {
+		c := state.Cluster{Name: fmt.Sprintf("c-%02d", i), Region: "us-east-1", Version: "1.34", Latest: "1.34", Busy: "updating ng-a"}
+		now = append(now, c)
+		targets[c.Name] = target{name: c.Name, region: "us-east-1"}
+	}
+	b.mu.Lock()
+	b.diff(now, targets)
+	b.mu.Unlock()
+	st, _ := b.State(t.Context())
+	progress := 0
+	for _, e := range st.Feed {
+		if e.Subject == "fleet" {
+			t.Errorf("summary for a fleet that needs no attention: %+v", e)
+		}
+		if e.Cluster != "" && e.Level == state.LevelProgress {
+			progress++
+		}
+	}
+	if progress != 13 {
+		t.Errorf("progress events = %d, want one per changing cluster", progress)
+	}
+}
+
+// From review: a changing cluster that also has an error reported only its
+// progress; the error gets its own event too.
+func TestFirstSweepShowsTheErrorUnderAChange(t *testing.T) {
+	b := newTestBackend(t, &fleet{}, "us-east-1")
+	c := state.Cluster{Name: "c", Region: "us-east-1", Version: "1.31", Latest: "1.31", Busy: "updating ng-a", ExtendedSupport: true}
+	b.mu.Lock()
+	b.diff([]state.Cluster{c}, map[string]target{"c": {name: "c", region: "us-east-1"}})
+	b.mu.Unlock()
+	st, _ := b.State(t.Context())
+	var progress, errs int
+	for _, e := range st.Feed {
+		switch e.Level {
+		case state.LevelProgress:
+			progress++
+		case state.LevelError:
+			errs++
+		}
+	}
+	if progress != 1 || errs != 1 {
+		t.Errorf("progress %d, errors %d; want one of each: %+v", progress, errs, st.Feed)
 	}
 }

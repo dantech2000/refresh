@@ -473,10 +473,29 @@ func regionConcurrency(maxConcurrency int) int {
 	return regions
 }
 
+// firstSweepEvents is the most clusters the first sweep reports one by one;
+// past it, a big fleet gets one summary line and events for errors only,
+// so the feed is not flooded (the fleet table shows every cluster).
+const firstSweepEvents = 12
+
 // diff turns what changed since the last sweep into feed events. The first
-// sweep reports every cluster that is not current. The caller holds b.mu.
+// sweep reports every cluster that is not current (see firstSweepEvents).
+// The caller holds b.mu.
 func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 	first := b.prev == nil
+	attention := 0
+	if first {
+		for _, c := range now {
+			if c.NeedsAttention() {
+				attention++
+			}
+		}
+		if attention > firstSweepEvents {
+			// Last, so the newest-first feed shows it on top.
+			defer b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: "fleet",
+				Text: fmt.Sprintf("%d of %d clusters need attention", attention, len(now)), Detail: "errors are listed one by one; the fleet table shows the rest"})
+		}
+	}
 	// Keyed by region and name: a display key can change (a second region
 	// gains a cluster of the same name) while the cluster stays the same.
 	next := make(map[target]state.Cluster, len(now))
@@ -486,9 +505,7 @@ func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 		old, seen := b.prev[id]
 		switch {
 		case first:
-			if lvl, text := c.Health(); lvl != state.LevelOK {
-				b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: lvl, Subject: c.Region, Text: text})
-			}
+			b.firstSweepEvent(c, attention > firstSweepEvents)
 		case !seen:
 			b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: state.LevelInfo, Subject: c.Region, Text: "cluster found", Detail: c.Version})
 		default:
@@ -515,6 +532,26 @@ func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 		}
 	}
 	b.prev = next
+}
+
+// firstSweepEvent reports c on the first sweep. On a big fleet (summarized)
+// only errors and changes in flight get their own event; the other
+// clusters are in the summary. Health names the change in flight first, so
+// an error under it (extended support, say) gets its own event too. The
+// caller holds b.mu.
+func (b *Backend) firstSweepEvent(c state.Cluster, summarized bool) {
+	lvl, text := c.Health()
+	if lvl != state.LevelOK && (!summarized || lvl == state.LevelError || c.Busy != "") {
+		b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: lvl, Subject: c.Region, Text: text})
+	}
+	if c.Busy == "" {
+		return
+	}
+	idle := c
+	idle.Busy = ""
+	if l, t := idle.Health(); l == state.LevelError {
+		b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: l, Subject: c.Region, Text: t})
+	}
 }
 
 func statusLevel(s string) state.Level {

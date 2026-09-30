@@ -103,10 +103,10 @@ type NodegroupSummary struct {
 	// need a version upgrade; VersionBehind carries that signal.
 	K8sVersion    string `json:"k8sVersion" yaml:"k8sVersion"`
 	VersionBehind bool   `json:"versionBehind" yaml:"versionBehind"`
-	// AMILookupFailure is set when the latest recommended AMI could not be
-	// resolved (for example, no ssm:GetParameter permission, or throttling).
-	// AMIStatus is then Unknown because of the failure, not because nothing
-	// is stale. It is advisory: `nodegroup list` does not count it as
+	// AMILookupFailure is set when the latest recommended AMI, or the AMI the
+	// nodes run, could not be read (for example, no ssm:GetParameter or
+	// ec2:DescribeInstances permission, or throttling). AMIStatus is then
+	// Unknown because of the failure, not because nothing is stale. It is advisory: `nodegroup list` does not count it as
 	// incomplete data, while `status` does (see docs/concepts/output.md).
 	AMILookupFailure *diag.Failure `json:"amiLookupFailure,omitempty" yaml:"amiLookupFailure,omitempty"`
 }

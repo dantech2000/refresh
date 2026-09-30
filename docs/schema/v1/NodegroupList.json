@@ -141,7 +141,7 @@
         },
         "amiLookupFailure": {
           "$ref": "#/$defs/Failure",
-          "description": "amiLookupFailure is set when the latest recommended AMI could not be resolved (for example, no ssm:GetParameter permission, or throttling). AMIStatus is then Unknown because of the failure, not because nothing is stale. It is advisory: `nodegroup list` does not count it as incomplete data, while `status` does (see docs/concepts/output.md)."
+          "description": "amiLookupFailure is set when the latest recommended AMI, or the AMI the nodes run, could not be read (for example, no ssm:GetParameter or ec2:DescribeInstances permission, or throttling). AMIStatus is then Unknown because of the failure, not because nothing is stale. It is advisory: `nodegroup list` does not count it as incomplete data, while `status` does (see docs/concepts/output.md)."
         }
       },
       "type": "object",
