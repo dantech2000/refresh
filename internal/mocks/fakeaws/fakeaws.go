@@ -457,7 +457,9 @@ func (s *Server) serveSSM(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	value := "ami-latest" + strings.ReplaceAll(version, ".", "")
 	if strings.HasSuffix(in.Name, "/release_version") || strings.HasSuffix(in.Name, "/image_version") {
-		value = version + ".0-20260923"
+		// The release fake nodegroups run (see nodegroupJSON): no release
+		// delta, so no command fetches release notes from GitHub.
+		value = version + ".0-20260101"
 	}
 	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 	_ = json.NewEncoder(w).Encode(map[string]any{"Parameter": map[string]any{"Name": in.Name, "Value": value, "Type": "String"}})

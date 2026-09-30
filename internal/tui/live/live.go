@@ -486,7 +486,7 @@ func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 	attention := 0
 	if first {
 		for _, c := range now {
-			if lvl, _ := c.Health(); lvl != state.LevelOK {
+			if c.NeedsAttention() {
 				attention++
 			}
 		}
@@ -505,8 +505,10 @@ func (b *Backend) diff(now []state.Cluster, targets map[string]target) {
 		old, seen := b.prev[id]
 		switch {
 		case first:
+			// Past the limit, errors and changes in flight still get their
+			// own event; the other clusters are in the summary.
 			lvl, text := c.Health()
-			if lvl != state.LevelOK && (attention <= firstSweepEvents || lvl == state.LevelError) {
+			if lvl != state.LevelOK && (attention <= firstSweepEvents || lvl == state.LevelError || c.Busy != "") {
 				b.emit(state.Event{Cluster: c.Name, Source: state.SourceAWS, Level: lvl, Subject: c.Region, Text: text})
 			}
 		case !seen:

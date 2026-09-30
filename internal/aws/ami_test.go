@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/smithy-go"
@@ -216,5 +217,47 @@ func TestCurrentAmiIDErr_ReportsAFailedLookup(t *testing.T) {
 	// Nothing to read is not a failure.
 	if id, err := CurrentAmiIDErr(context.Background(), &types.Nodegroup{}, nil, asg); id != "" || err != nil {
 		t.Errorf("no ASG: CurrentAmiIDErr = %q, %v; want \"\", nil", id, err)
+	}
+}
+
+// routeDoer answers each query-protocol call by its Action.
+type routeDoer map[string]xmlStubDoer
+
+func (d routeDoer) Do(r *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(r.Body)
+	for action, stub := range d {
+		if strings.Contains(string(body), "Action="+action) {
+			return stub.Do(r)
+		}
+	}
+	return xmlStubDoer{status: 400, body: `<Response><Errors><Error><Code>Unexpected</Code><Message>` + string(body) + `</Message></Error></Errors></Response>`}.Do(r)
+}
+
+// From review: a denied launch-template read must not hide an AMI the ASG
+// instance shows; the failure counts only when no source resolves the AMI.
+func TestCurrentAmiIDErr_FallsBackToTheASG(t *testing.T) {
+	denied := xmlStubDoer{status: 403, body: `<Response><Errors><Error><Code>UnauthorizedOperation</Code><Message>not authorized</Message></Error></Errors><RequestID>r</RequestID></Response>`}
+	ng := &types.Nodegroup{
+		LaunchTemplate: &types.LaunchTemplateSpecification{Id: aws.String("lt-1"), Version: aws.String("3")},
+		Resources:      &types.NodegroupResources{AutoScalingGroups: []types.AutoScalingGroup{{Name: aws.String("asg-1")}}},
+	}
+	ec2c := func(d routeDoer) *ec2.Client {
+		return ec2.New(ec2.Options{Region: "us-east-1", Credentials: aws.AnonymousCredentials{}, RetryMaxAttempts: 1, HTTPClient: d})
+	}
+	asgWith := func(instances string) *autoscaling.Client {
+		return autoscaling.New(autoscaling.Options{Region: "us-east-1", Credentials: aws.AnonymousCredentials{}, RetryMaxAttempts: 1,
+			HTTPClient: xmlStubDoer{status: 200, body: `<DescribeAutoScalingGroupsResponse><DescribeAutoScalingGroupsResult><AutoScalingGroups><member><AutoScalingGroupName>asg-1</AutoScalingGroupName><Instances>` + instances + `</Instances></member></AutoScalingGroups></DescribeAutoScalingGroupsResult></DescribeAutoScalingGroupsResponse>`}})
+	}
+	instances := routeDoer{
+		"DescribeLaunchTemplateVersions": denied,
+		"DescribeInstances":              {status: 200, body: `<DescribeInstancesResponse><reservationSet><item><instancesSet><item><instanceId>i-1</instanceId><imageId>ami-running</imageId></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`},
+	}
+	id, err := CurrentAmiIDErr(context.Background(), ng, ec2c(instances), asgWith(`<member><InstanceId>i-1</InstanceId></member>`))
+	if id != "ami-running" || err != nil {
+		t.Errorf("denied template, readable ASG: CurrentAmiIDErr = %q, %v; want ami-running, nil", id, err)
+	}
+	id, err = CurrentAmiIDErr(context.Background(), ng, ec2c(instances), asgWith(""))
+	if id != "" || diag.OperationOf(err) != diag.OpDescribeLaunchTemplateVersions {
+		t.Errorf("denied template, empty ASG: CurrentAmiIDErr = %q, %v; want the template failure", id, err)
 	}
 }

@@ -838,3 +838,32 @@ func TestFirstSweepOfABigFleetSummarizes(t *testing.T) {
 		t.Errorf("summary %d, per-cluster %d; want 1 and 2 (the errors): %+v", summary, perCluster, st.Feed)
 	}
 }
+
+// From review: clusters that are only changing (Busy) do not need attention,
+// and their progress stays in the feed on a big fleet's first sweep.
+func TestFirstSweepKeepsChangingClusters(t *testing.T) {
+	b := newTestBackend(t, &fleet{}, "us-east-1")
+	var now []state.Cluster
+	targets := map[string]target{}
+	for i := range 13 {
+		c := state.Cluster{Name: fmt.Sprintf("c-%02d", i), Region: "us-east-1", Version: "1.34", Latest: "1.34", Busy: "updating ng-a"}
+		now = append(now, c)
+		targets[c.Name] = target{name: c.Name, region: "us-east-1"}
+	}
+	b.mu.Lock()
+	b.diff(now, targets)
+	b.mu.Unlock()
+	st, _ := b.State(t.Context())
+	progress := 0
+	for _, e := range st.Feed {
+		if e.Subject == "fleet" {
+			t.Errorf("summary for a fleet that needs no attention: %+v", e)
+		}
+		if e.Cluster != "" && e.Level == state.LevelProgress {
+			progress++
+		}
+	}
+	if progress != 13 {
+		t.Errorf("progress events = %d, want one per changing cluster", progress)
+	}
+}

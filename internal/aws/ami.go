@@ -31,13 +31,21 @@ func CurrentAmiID(ctx context.Context, ng *types.Nodegroup, ec2Client *ec2.Clien
 // "not stale".
 func CurrentAmiIDErr(ctx context.Context, ng *types.Nodegroup, ec2Client *ec2.Client, autoscalingClient *autoscaling.Client) (string, error) {
 	// Try launch template first
-	amiID, err := resolveFromLaunchTemplate(ctx, ng, ec2Client)
-	if err != nil || amiID != "" {
-		return amiID, err
+	amiID, ltErr := resolveFromLaunchTemplate(ctx, ng, ec2Client)
+	if amiID != "" {
+		return amiID, nil
 	}
 
-	// Fall back to ASG instance
-	return resolveFromASG(ctx, ng, autoscalingClient, ec2Client)
+	// Fall back to an ASG instance, also when the launch template could
+	// not be read: one readable source is enough.
+	amiID, asgErr := resolveFromASG(ctx, ng, autoscalingClient, ec2Client)
+	switch {
+	case amiID != "":
+		return amiID, nil
+	case ltErr != nil:
+		return "", ltErr
+	}
+	return "", asgErr
 }
 
 // resolveFromLaunchTemplate attempts to get the AMI ID from the nodegroup's launch template.

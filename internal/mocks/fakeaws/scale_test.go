@@ -69,7 +69,7 @@ func TestSSMGetParameter(t *testing.T) {
 		}))})
 	for name, want := range map[string]string{
 		"/aws/service/eks/optimized-ami/1.34/amazon-linux-2023/x86_64/standard/recommended/image_id":        "ami-latest134",
-		"/aws/service/eks/optimized-ami/1.34/amazon-linux-2023/x86_64/standard/recommended/release_version": "1.34.0-20260923",
+		"/aws/service/eks/optimized-ami/1.34/amazon-linux-2023/x86_64/standard/recommended/release_version": "1.34.0-20260101",
 		"/aws/service/bottlerocket/aws-k8s-1.35/x86_64/latest/image_id":                                     "ami-latest135",
 	} {
 		out, err := c.GetParameter(t.Context(), &ssm.GetParameterInput{Name: aws.String(name)})
@@ -81,5 +81,28 @@ func TestSSMGetParameter(t *testing.T) {
 	var api smithy.APIError
 	if _, err := c.GetParameter(t.Context(), &ssm.GetParameterInput{Name: aws.String("/aws/service/eks/optimized-ami/1.34/x/image_id")}); !errors.As(err, &api) || api.ErrorCode() != "AccessDeniedException" {
 		t.Errorf("FailSSM: %v, want AccessDeniedException", err)
+	}
+}
+
+// From review: when the fake's latest release differed from the release its
+// nodegroups report, human dry runs in command tests fetched release notes
+// from GitHub. The two must match, so no release delta is ever shown.
+func TestSSMLatestReleaseMatchesTheNodegroups(t *testing.T) {
+	s, stop := Start(&Cluster{Name: "c", Version: "1.34", Nodegroups: []*Nodegroup{{Name: "ng", Version: "1.34"}}})
+	defer stop()
+	ng, err := eksIn(s, "us-east-1").DescribeNodegroup(t.Context(), &eks.DescribeNodegroupInput{ClusterName: aws.String("c"), NodegroupName: aws.String("ng")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := ssm.New(ssm.Options{Region: "us-east-1", BaseEndpoint: aws.String(s.URL), RetryMaxAttempts: 1,
+		Credentials: aws.NewCredentialsCache(aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{AccessKeyID: "AKIDFAKE", SecretAccessKey: "fake"}, nil
+		}))})
+	out, err := c.GetParameter(t.Context(), &ssm.GetParameterInput{Name: aws.String("/aws/service/eks/optimized-ami/1.34/amazon-linux-2023/x86_64/standard/recommended/release_version")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := aws.ToString(out.Parameter.Value), aws.ToString(ng.Nodegroup.ReleaseVersion); got != want {
+		t.Errorf("latest release %q, nodegroup release %q: a delta makes commands fetch release notes", got, want)
 	}
 }
