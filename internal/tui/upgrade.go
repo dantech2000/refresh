@@ -89,8 +89,8 @@ func (m Model) phaseList(u state.Upgrade, w, h int) Block {
 		}
 		if p.Summary != "" {
 			out = append(out, Line{sp(2), conn, sp(1), dimS(p.Summary)})
-		} else if p.Status == state.PhasePending {
-			out = append(out, Line{sp(2), conn, sp(1), dimS(pendingHint(i))})
+		} else if h := pendingHint(p.Name); p.Status == state.PhasePending && h != "" {
+			out = append(out, Line{sp(2), conn, sp(1), dimS(h)})
 		}
 		if p.Status == state.PhaseRunning && len(p.Items) == 0 {
 			out = append(out, append(Line{sp(2), conn, sp(1)}, bar(w-12, p.Progress, 0)...))
@@ -120,7 +120,7 @@ func (m Model) phaseList(u state.Upgrade, w, h int) Block {
 	var opts Block
 	if u.Running() && u.StartedElsewhere {
 		opts = box(Line{bold(colMauve, "Watching")}, Block{
-			{sub("This upgrade was started outside this UI. Stop or pause it where it runs.")},
+			{sub("This " + map[bool]string{false: "upgrade", true: "rollback"}[u.Rollback] + " was started outside this UI. Stop or pause it where it runs.")},
 			{dimS("Its add-on updates and nodegroup rolls show on the Rolls screen.")},
 		}, w-2, colSurface1)
 	} else if u.Running() {
@@ -134,8 +134,24 @@ func (m Model) phaseList(u state.Upgrade, w, h int) Block {
 	return append(out, opts.indent(1)...)
 }
 
-func pendingHint(i int) string {
-	return []string{"readiness checks", "UpdateClusterVersion", "update stale add-ons", "roll each nodegroup", "nodes, pods, add-on health"}[min(i, 4)]
+// pendingHint says what a pending phase will do, by its name: the phase
+// order differs between an upgrade, a rollback, and the simulator.
+func pendingHint(name string) string {
+	switch {
+	case strings.HasPrefix(name, "Plan"), strings.HasPrefix(name, "Pre-flight"):
+		return "readiness checks"
+	case strings.HasPrefix(name, "Control plane"):
+		return "UpdateClusterVersion"
+	case strings.HasPrefix(name, "Required add-ons"):
+		return "add-ons the new control plane needs first"
+	case strings.HasPrefix(name, "Nodegroups"):
+		return "roll each nodegroup"
+	case strings.HasPrefix(name, "Add-ons"):
+		return "update stale add-ons"
+	case strings.HasPrefix(name, "Verify"):
+		return "nodes, pods, add-on health"
+	}
+	return ""
 }
 
 // upgradeFeed shows the upgrade timeline, or the Kubernetes events and AWS
