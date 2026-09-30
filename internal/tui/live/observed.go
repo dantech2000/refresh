@@ -212,8 +212,28 @@ func (b *Backend) adoptRoll(ctx context.Context, t target, ng string) {
 		Nodegroup: ng, FromVersion: version, ToVersion: version, ToAMI: release,
 		StartedAt: aws.ToTime(u.CreatedAt), StartedElsewhere: true, MaxUnavailableText: "per update config",
 	}
-	if r.st.StartedAt.IsZero() {
+	r.startKnown = !r.st.StartedAt.IsZero()
+	if !r.startKnown {
 		r.st.StartedAt = b.now()
+	}
+	// The sweep's row for the nodegroup: its size is the roll's total
+	// (nodes already replaced are gone from the node list), and a version
+	// other than the update's makes this a version roll, told apart
+	// exactly by kubelet versions.
+	fleetKey := b.keyOf(t)
+	for _, c := range b.clusters {
+		if c.Name != fleetKey {
+			continue
+		}
+		for _, n := range c.Nodegroups {
+			if n.Name != ng {
+				continue
+			}
+			r.st.Planned = n.Nodes
+			if n.Version != "" && version != "" && n.Version != version {
+				r.toVersion, r.st.FromVersion = version, n.Version
+			}
+		}
 	}
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "started elsewhere", Text: "watching update " + id, Detail: "not started by this UI; it cannot be stopped here"})
 	b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "node view", Text: how})

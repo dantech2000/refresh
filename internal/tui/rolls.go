@@ -201,8 +201,10 @@ func (m Model) podCard(r state.Roll, node string, w int) Block {
 		reasonW = max(reasonW, width(reason(p)))
 	}
 	// The box border and padding take 4 cells, the glyph and its space 2,
-	// and the gap 2.
-	nameW = max(1, min(nameW, w-8-reasonW, 40))
+	// and the gap 2. Names get the room first, up to 40 cells; a reason too
+	// long for the rest is cut by the box, but never squeezes the names
+	// below 20 cells (or the whole line, on a very narrow card).
+	nameW = max(1, min(nameW, 40, max(w-8-reasonW, min(nameW, 20), 0), w-8))
 	for i, p := range pods {
 		if i == maxPods {
 			body = append(body, Line{tok(state.LevelInfo, fmt.Sprintf("+%d more", len(pods)-maxPods))})

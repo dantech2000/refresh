@@ -284,3 +284,45 @@ func TestCaptureBaselineBeforeCountsLaunchedNodesAsNew(t *testing.T) {
 		t.Fatalf("nodes = %+v, want only launched new", snap.Nodes)
 	}
 }
+
+// From review: creation times can mislead (clock skew, a scale-out during
+// the roll). For a roll between versions the kubelet version decides.
+func TestTargetVersionBeatsTheBaseline(t *testing.T) {
+	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
+	node := func(name, kubelet string, created time.Time) *corev1.Node {
+		n := mkNode(name, "", true, false)
+		n.CreationTimestamp = metav1.NewTime(created)
+		n.Status.NodeInfo.KubeletVersion = kubelet
+		return n
+	}
+	client := fake.NewClientset(
+		node("old-after", "v1.34.6-eks-3c1d8b1", start.Add(2*time.Second)),   // old image, created just after
+		node("new-before", "v1.35.3-eks-7a2b9c0", start.Add(-2*time.Second)), // new image, created just before
+		node("unknown", "", start.Add(time.Minute)),                          // no kubelet version yet
+	)
+	obs := NewKubeObserver(client, ng, "")
+	obs.SetTargetVersion("1.35")
+	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := obs.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodeOf(snap, "old-after").OnTarget || !nodeOf(snap, "new-before").OnTarget {
+		t.Errorf("kubelet version did not decide: %+v", snap.Nodes)
+	}
+	if !nodeOf(snap, "unknown").OnTarget {
+		t.Errorf("a node with no kubelet version should fall back to the baseline (created after start: new)")
+	}
+}
+
+func TestKubeletMinor(t *testing.T) {
+	for in, want := range map[string]string{"v1.35.3-eks-7a2b9c0": "1.35", "1.34.6": "1.34", "": "", "v1": "", "garbage": ""} {
+		n := &corev1.Node{}
+		n.Status.NodeInfo.KubeletVersion = in
+		if got := kubeletMinor(n); got != want {
+			t.Errorf("kubeletMinor(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

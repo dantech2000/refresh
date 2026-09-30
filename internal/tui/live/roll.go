@@ -30,6 +30,7 @@ type rollObserver interface {
 	StopInformers()
 	CaptureBaseline(ctx context.Context) error
 	CaptureBaselineBefore(ctx context.Context, start time.Time) error
+	SetTargetVersion(v string)
 	Snapshot(ctx context.Context) (noderoll.Snapshot, error)
 }
 
@@ -157,6 +158,12 @@ type liveRoll struct {
 	warned   map[string]bool
 	// viewed is set once the node view read the nodes.
 	viewed bool
+	// For a roll started elsewhere: toVersion is the Kubernetes minor it
+	// moves the nodes to when that differs from theirs (kubelet versions
+	// then tell old from new exactly), and startKnown says the EKS update
+	// reported when it began.
+	toVersion  string
+	startKnown bool
 }
 
 // healthGates turns a health verdict into plan gates. blocked names the
@@ -510,8 +517,19 @@ func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t 
 		}
 		capture := obs.CaptureBaseline
 		if r.st.StartedElsewhere {
-			// The roll began before this watch: nodes it already launched are new.
-			capture = func(ctx context.Context) error { return obs.CaptureBaselineBefore(ctx, r.st.StartedAt) }
+			// The roll began before this watch. A version change is exact
+			// (kubelet versions); otherwise nodes created before the update
+			// began are old, or, with no start time, the nodes seen now.
+			if r.toVersion != "" {
+				obs.SetTargetVersion(r.toVersion)
+			}
+			if r.startKnown {
+				capture = func(ctx context.Context) error { return obs.CaptureBaselineBefore(ctx, r.st.StartedAt) }
+			} else if r.toVersion == "" {
+				b.mu.Lock()
+				b.rollEvent(r, state.Event{Source: state.SourceRoll, Level: state.LevelInfo, Subject: "node view", Text: "old and new nodes count from when this UI began watching", Detail: "EKS reported no start time for the update"})
+				b.mu.Unlock()
+			}
 		}
 		if err := capture(ctx); err != nil {
 			b.mu.Lock()
@@ -566,7 +584,9 @@ func (b *Backend) observeOnce(ctx context.Context, r *liveRoll, obs rollObserver
 				old++
 			}
 		}
-		if old > 0 {
+		// A roll started elsewhere keeps the total adoption set (the
+		// nodegroup's size): nodes it already replaced are gone.
+		if old > 0 && (!r.st.StartedElsewhere || r.st.Planned == 0) {
 			r.st.Planned = old
 		}
 	}

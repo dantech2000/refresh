@@ -51,3 +51,29 @@ func TestPodCardKeepsAGapAfterLongNames(t *testing.T) {
 		}
 	}
 }
+
+// From review: at a 42-column card, a long PDB reason squeezed every pod
+// name down to "…". Names keep up to 20 cells; the box cuts the reason.
+func TestPodCardKeepsNamesReadableBesideLongReasons(t *testing.T) {
+	r := state.Roll{Pods: map[string][]state.Pod{"n1": {
+		{Name: "shop/checkout-7d9f5c6b8-x2kqz", State: state.PodBlocked, Reason: "blocked by pdb/checkout (0 disruptions allowed)"},
+		{Name: "default/web-6bbb4849d5-gj2jg"},
+	}}}
+	for _, w := range []int{42, 20, 9} {
+		var all strings.Builder
+		for _, l := range (Model{}).podCard(r, "n1", w) {
+			var b strings.Builder
+			for _, s := range l {
+				b.WriteString(s.Text)
+			}
+			line := b.String()
+			all.WriteString(line + "\n")
+			if width(line) > w {
+				t.Errorf("width %d: line is %d cells: %q", w, width(line), line)
+			}
+		}
+		if w == 42 && !strings.Contains(all.String(), "default/web-6bbb") {
+			t.Errorf("width 42: pod names squeezed:\n%s", all.String())
+		}
+	}
+}
