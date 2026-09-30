@@ -2,7 +2,6 @@ package tui
 
 import (
 	"image/color"
-	"io"
 
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/tui/state"
@@ -34,9 +33,12 @@ var (
 	colDim      color.Color = color.RGBA{0x93, 0x99, 0xb2, 0xff}
 )
 
-// glyphs supplies the status glyphs: the same tokens as the CLI views, with
-// the same ASCII fallback on a terminal without UTF-8.
-var glyphs = render.Default(io.Discard)
+// glyphs supplies the status glyphs: the same tokens as the CLI views, always
+// in Unicode. The TUI draws borders, bars, and arrows in Unicode, so it needs
+// a UTF-8 terminal whatever the locale says; an ASCII status glyph ("[OK]")
+// there only overflowed the columns, which are sized for one-cell glyphs.
+// The CLI keeps its ASCII fallback (logs, CI).
+var glyphs = render.New(render.ColorNone, true)
 
 // mark is the status glyph of an event level.
 func mark(l state.Level) string {

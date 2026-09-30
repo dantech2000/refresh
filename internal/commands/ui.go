@@ -38,13 +38,11 @@ const (
 // the prod-eu upgrade is already rolling nodegroups when the TUI opens.
 const simWarmup = 19 * time.Minute
 
-// UICommand is the full-screen terminal UI. It is hidden while it is an
-// experiment.
+// UICommand is the full-screen terminal UI, shown as experimental.
 func UICommand() *cli.Command {
 	return &cli.Command{
-		Name:   "ui",
-		Usage:  "Full-screen terminal UI (experimental)",
-		Hidden: true,
+		Name:  "ui",
+		Usage: "Full-screen terminal UI (experimental)",
 		Description: `Open the full-screen terminal UI: the fleet, readiness checks, live
 nodegroup rolls, and cluster upgrades, with live event and log streams.
 
