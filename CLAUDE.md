@@ -202,8 +202,8 @@ lifecycle event feed. Testable with **zero AWS / zero cluster** via
 whole live panel from the scripted observer — demos, asciinema, and manual QA
 with no AWS.
 
-**Experimental TUI** (branch `experiment/tui`): `refresh ui` is a hidden
-Bubble Tea app (`internal/tui`) that draws a `state.State` from a
+**Experimental TUI**: `refresh ui` is a Bubble Tea app (`internal/tui`),
+shown as experimental (user docs: `docs/commands/ui.md`), that draws a `state.State` from a
 `state.Backend` (`internal/tui/state`) and never calls AWS itself; every
 backend call runs in a `tea.Cmd`. Two backends: `internal/tui/live` (the
 default) sweeps the fleet in the background with the status service
