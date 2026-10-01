@@ -158,8 +158,8 @@ refresh cluster rollback -c prod --dry-run
 ```
 
 Prefer a full-screen view? `refresh ui` (experimental) shows the fleet,
-readiness, live rolls, and upgrades in the terminal. It is read-only unless
-you pass `--allow-changes`. See the
+readiness, live rolls, and upgrades in the terminal. It starts read-only:
+pass `--allow-changes`, or press `ctrl+u` in the UI, to make changes. See the
 [docs](https://drod.dev/refresh/commands/ui/).
 
 Contexts bind a cluster to a region and profile:

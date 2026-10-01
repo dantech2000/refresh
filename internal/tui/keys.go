@@ -428,6 +428,7 @@ func (m *Model) start() tea.Cmd {
 	m.starting = true
 	m.confirmErr = ""
 	ctx, b, a := m.ctx, m.b, m.confirm.Action
+	a.PlanID = m.confirm.ID
 	return func() tea.Msg { return startMsg{a: a, err: b.Start(ctx, a)} }
 }
 

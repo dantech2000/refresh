@@ -367,11 +367,17 @@ type Action struct {
 	Kind      ActionKind
 	Cluster   string
 	Nodegroup string
+	// PlanID, on Start, is the ID of the dry run the user confirmed. The
+	// backend refuses it when a newer dry run replaced that one; 0 means
+	// the newest.
+	PlanID uint64
 }
 
 // Plan is the dry run of an Action, shown before the TUI asks to start it.
 type Plan struct {
 	Action Action
+	// ID names this dry run; Start passes it back in Action.PlanID.
+	ID uint64
 	Title  string
 	// Changes are before/after pairs ("AMI release", from, to).
 	Changes []Change

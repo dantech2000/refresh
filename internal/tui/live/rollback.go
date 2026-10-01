@@ -110,6 +110,10 @@ func (b *Backend) startRollback(ctx context.Context, a state.Action) error {
 		b.mu.Unlock()
 		return fmt.Errorf("%s is busy: %s", a.Cluster, busy)
 	}
+	if err := b.confirmedNewest(rollbackKey(t), a.PlanID); err != nil {
+		b.mu.Unlock()
+		return err
+	}
 	acc, planned := b.acceptedRollbacks[t]
 	if !planned {
 		b.mu.Unlock()

@@ -163,6 +163,12 @@ type Backend struct {
 	// accepted holds the health findings each roll's dry run showed, by
 	// acceptKey: the findings the user confirmed with y.
 	accepted map[string]acceptedRoll
+	// acceptedBy is the dry run (Plan.ID) behind each accepted plan, by
+	// acceptance key; planSeq numbers the dry runs. A dry run never
+	// replaces a newer one's acceptance, and Start runs only the change of
+	// the dry run the user confirmed.
+	acceptedBy map[string]uint64
+	planSeq    uint64
 	// acceptedAddons holds each cluster's last add-on dry run: the changes
 	// the user confirmed with y.
 	acceptedAddons map[target][]addonChange
@@ -215,6 +221,7 @@ func New(cfg aws.Config, opts Options) *Backend {
 		claimed:          map[target]string{},
 		adopting:         map[string]bool{},
 		accepted:         map[string]acceptedRoll{},
+		acceptedBy:       map[string]uint64{},
 		acceptedAddons:   map[target][]addonChange{},
 		acceptedUpgrades: map[target]acceptedUpgrade{},
 
@@ -881,6 +888,10 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	// changes are allowed while it runs. It skipped the live gates, so it
 	// must never become startable.
 	allowed := b.changesAllowed()
+	b.mu.Lock()
+	b.planSeq++
+	id := b.planSeq
+	b.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return state.Plan{}, err
 	}
@@ -896,6 +907,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	switch a.Kind {
 	case state.ActionRoll:
 		p, err = planRoll(c, t, a.Nodegroup)
+		p.ID = id
 		if err == nil && allowed {
 			pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 			b.planRollLive(pctx, &p, cfg, t, c, a.Nodegroup)
@@ -903,6 +915,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		}
 	case state.ActionAddons:
 		p = planAddons(c, t)
+		p.ID = id
 		if allowed {
 			pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 			err = b.planAddonsLive(pctx, &p, cfg, t)
@@ -922,7 +935,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		}
 		p = planUpgrade(c, t, plan)
 		if allowed && p.Blocked == "" {
-			b.planUpgradeLive(t, plan)
+			b.planUpgradeLive(t, plan, id)
 			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again for real", Note: "insights may refresh first; a changed plan asks before it runs"})
 		}
 	case state.ActionRollback:
@@ -935,7 +948,9 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		p = planRollback(c, t, plan)
 		if allowed && p.Blocked == "" {
 			b.mu.Lock()
-			b.acceptedRollbacks[t] = acceptedUpgrade{target: plan.TargetVersion, steps: rollbackSteps(plan)}
+			if b.claimAccept(rollbackKey(t), id) {
+				b.acceptedRollbacks[t] = acceptedUpgrade{target: plan.TargetVersion, steps: rollbackSteps(plan)}
+			}
 			b.mu.Unlock()
 			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again", Note: "a changed plan asks before it runs"})
 		}
@@ -946,6 +961,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		return state.Plan{}, err
 	}
 	p.Action = a
+	p.ID = id
 	p.Command = b.cliCommand(p.Command)
 	b.mu.Lock()
 	busy := b.busyOf(a.Cluster, c)
@@ -958,6 +974,31 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	}
 	return p, nil
 }
+
+// claimAccept reports whether dry run id may record its acceptance under
+// key: no newer dry run has. It records id. The caller holds b.mu.
+func (b *Backend) claimAccept(key string, id uint64) bool {
+	if b.acceptedBy[key] > id {
+		return false
+	}
+	b.acceptedBy[key] = id
+	return true
+}
+
+// confirmedNewest returns an error unless key's acceptance is dry run id:
+// the user confirmed a dry run that a newer one replaced. The TUI always
+// names the dry run; an id of 0 (a caller that does not) means the newest.
+// The caller holds b.mu.
+func (b *Backend) confirmedNewest(key string, id uint64) error {
+	if got, ok := b.acceptedBy[key]; ok && id != 0 && got != id {
+		return errors.New("a newer dry run replaced the one on screen: close it and open the dry run again")
+	}
+	return nil
+}
+
+func addonsKey(t target) string   { return "addons/" + t.region + "/" + t.name }
+func upgradeKey(t target) string  { return "upgrade/" + t.region + "/" + t.name }
+func rollbackKey(t target) string { return "rollback/" + t.region + "/" + t.name }
 
 // changesAllowed reports whether the UI may change clusters.
 func (b *Backend) changesAllowed() bool { return b.allow.Load() }

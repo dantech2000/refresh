@@ -103,10 +103,12 @@ func stepDiff(was, now []string) string {
 
 // planUpgradeLive records what the user confirms with y: the target and the
 // pending steps of the preview.
-func (b *Backend) planUpgradeLive(t target, plan *upgrade.Plan) {
+func (b *Backend) planUpgradeLive(t target, plan *upgrade.Plan, id uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.acceptedUpgrades[t] = acceptedUpgrade{target: plan.TargetVersion, steps: pendingSteps(plan)}
+	if b.claimAccept(upgradeKey(t), id) {
+		b.acceptedUpgrades[t] = acceptedUpgrade{target: plan.TargetVersion, steps: pendingSteps(plan)}
+	}
 }
 
 type acceptedUpgrade struct {
@@ -125,6 +127,10 @@ func (b *Backend) startUpgrade(ctx context.Context, a state.Action) error {
 	if busy := b.busyOf(a.Cluster, c); busy != "" {
 		b.mu.Unlock()
 		return fmt.Errorf("%s is busy: %s", a.Cluster, busy)
+	}
+	if err := b.confirmedNewest(upgradeKey(t), a.PlanID); err != nil {
+		b.mu.Unlock()
+		return err
 	}
 	acc, planned := b.acceptedUpgrades[t]
 	if !planned {

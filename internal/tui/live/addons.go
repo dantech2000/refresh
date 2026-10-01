@@ -100,7 +100,9 @@ func (b *Backend) planAddonsLive(ctx context.Context, p *state.Plan, cfg aws.Con
 		p.Blocked = "every add-on is on its newest compatible version"
 	}
 	b.mu.Lock()
-	b.acceptedAddons[t] = changes
+	if b.claimAccept(addonsKey(t), p.ID) {
+		b.acceptedAddons[t] = changes
+	}
 	b.mu.Unlock()
 	return nil
 }
@@ -117,6 +119,10 @@ func (b *Backend) startAddons(ctx context.Context, a state.Action) error {
 	if busy := b.busyOf(a.Cluster, c); busy != "" {
 		b.mu.Unlock()
 		return fmt.Errorf("%s is busy: %s", a.Cluster, busy)
+	}
+	if err := b.confirmedNewest(addonsKey(t), a.PlanID); err != nil {
+		b.mu.Unlock()
+		return err
 	}
 	accepted, planned := b.acceptedAddons[t]
 	b.claimed[t] = "updating add-ons"
