@@ -19,7 +19,9 @@ after the same checks as the nodegroup update, addon update --all, cluster
 upgrade, and cluster rollback commands. B dry-runs a rollback once a
 readiness run found one available.
 It sweeps the config region, the regions given with -r, or with -A every EKS
-region (REFRESH_EKS_REGIONS narrows that list).
+region (REFRESH_EKS_REGIONS narrows that list). Without -r or -A it also
+sweeps the region of the kubectl context's EKS cluster (or --kube-context's),
+and the fleet cursor starts on that cluster.
 
 Exit codes: 0 ok; 1 error, no interactive terminal, or no AWS credentials. See https://drod.dev/refresh/concepts/exit-codes/
 

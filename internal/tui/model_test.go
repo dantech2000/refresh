@@ -1011,3 +1011,28 @@ func TestSimulatorRefusesARollback(t *testing.T) {
 		t.Fatalf("%d upgrades started", n)
 	}
 }
+
+// The first fleet puts the cursor on the kubectl cluster; after that the
+// cursor stays where the user put it.
+func TestCursorStartsOnTheKubectlCluster(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	cs := []state.Cluster{{Name: "a"}, {Name: "b"}, {Name: "c"}}
+	// Before the first sweep the fleet is empty: nothing to place yet.
+	next, _ := m.Update(stateMsg{id: 1, st: state.State{Home: "c"}})
+	next, _ = next.(Model).Update(stateMsg{id: 2, st: state.State{Home: "c", Clusters: cs}})
+	if got := next.(Model).cluster().Name; got != "c" {
+		t.Fatalf("selected %q, want the kubectl cluster c", got)
+	}
+	next, _ = next.(Model).key("up")
+	next, _ = next.(Model).Update(stateMsg{id: 3, st: state.State{Home: "c", Clusters: cs}})
+	if got := next.(Model).cluster().Name; got != "b" {
+		t.Fatalf("selected %q after the user moved to b", got)
+	}
+	// A home that shows up only after the first fleet does not take the cursor.
+	m = New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	next, _ = m.Update(stateMsg{id: 1, st: state.State{Clusters: cs}})
+	next, _ = next.(Model).Update(stateMsg{id: 2, st: state.State{Home: "c", Clusters: cs}})
+	if got := next.(Model).cluster().Name; got != "a" {
+		t.Fatalf("selected %q, want a: the home came after the first fleet", got)
+	}
+}

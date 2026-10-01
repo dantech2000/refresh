@@ -78,6 +78,10 @@ type Options struct {
 	// Kubeconfig and KubeContext pick the node view's Kubernetes access, as
 	// --kubeconfig and --kube-context do for `nodegroup update`.
 	Kubeconfig, KubeContext string
+	// Kubectl is the EKS cluster of the kubectl context (zero when there is
+	// none). The fleet cursor starts on it, and the feed says when the
+	// sweep does not find it.
+	Kubectl health.KubectlCluster
 	// WaitTimeout bounds how long a roll is watched (0 = no limit).
 	WaitTimeout time.Duration
 	// UpgradeTimeout bounds a whole cluster upgrade run, as `cluster
@@ -142,6 +146,8 @@ type Backend struct {
 	prev map[target]state.Cluster
 	// warnedClosed is set once the feed said no region is accessible.
 	warnedClosed bool
+	// kubectlNoted is set once the feed said where the kubectl cluster is.
+	kubectlNoted bool
 	// problem is why the last sweep read no region (State.FleetProblem).
 	problem string
 	// rolls are the rolls this backend started, oldest first.
@@ -461,6 +467,7 @@ func (b *Backend) sweep(ctx context.Context) {
 		}
 	}
 	b.diff(clusters, targets)
+	b.noteKubectl(res.Answered, targets)
 	b.clusters, b.targets = clusters, targets
 	b.adoptExternal(rows)
 	b.answered, b.total = len(res.Answered), len(b.opts.Regions)-len(res.Skipped)
@@ -468,6 +475,39 @@ func (b *Backend) sweep(ctx context.Context) {
 	b.syncedAt = b.now()
 	b.sweeping = false
 	b.api("sweep", fmt.Sprintf("%d cluster(s) in %d region(s) · %s", len(clusters), len(res.Answered), took), state.LevelOK)
+}
+
+// noteKubectl says once, after the first sweep that read the kubectl
+// cluster's region, whether the fleet has that cluster. A cluster the sweep
+// did not find is most often in another account than the credentials'. The
+// caller holds b.mu.
+func (b *Backend) noteKubectl(answered []regionsweep.Answer[[]statussvc.ClusterStatus], targets map[string]target) {
+	k := b.opts.Kubectl
+	if b.kubectlNoted || k.Name == "" || !slices.ContainsFunc(answered, func(a regionsweep.Answer[[]statussvc.ClusterStatus]) bool { return a.Region == k.Region }) {
+		return
+	}
+	b.kubectlNoted = true
+	if key := keyOf(targets, target{name: k.Name, region: k.Region}); key != "" {
+		b.emit(state.Event{Cluster: key, Source: state.SourceAWS, Level: state.LevelInfo, Subject: k.Region,
+			Text: "started on " + k.Name, Detail: "from kubectl context " + k.Context})
+		return
+	}
+	detail := "kubectl context " + k.Context + " · the credentials may be for another account"
+	if k.Account != "" {
+		detail = "kubectl context " + k.Context + " is in account " + k.Account + " · the credentials may be for another account"
+	}
+	b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: k.Region,
+		Text: "kubectl cluster " + k.Name + " not found", Detail: detail})
+}
+
+// keyOf is the fleet key of t, or "".
+func keyOf(targets map[string]target, t target) string {
+	for key, v := range targets {
+		if v == t {
+			return key
+		}
+	}
+	return ""
 }
 
 // regionConcurrency matches `refresh status`: four regions at a time, fewer
@@ -598,6 +638,9 @@ func (b *Backend) State(ctx context.Context) (state.State, error) {
 	}
 	if b.opts.AllowChanges {
 		st.Badge = "CHANGES ON"
+	}
+	if k := b.opts.Kubectl; k.Name != "" {
+		st.Home = keyOf(b.targets, target{name: k.Name, region: k.Region})
 	}
 	for _, c := range b.clusters {
 		c.Nodegroups = slices.Clone(c.Nodegroups)

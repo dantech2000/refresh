@@ -24,11 +24,25 @@ the same change, and `c` copies it.
 | Flag | Description |
 |---|---|
 | `--all-regions, -A` | Sweep all EKS-supported regions (or the `REFRESH_EKS_REGIONS` list) |
-| `--region, -r` | Region(s) to sweep (repeatable). Without `-A` or `-r`, the UI sweeps the configured region; with no region configured, the regions of the partition |
+| `--region, -r` | Region(s) to sweep (repeatable). Without `-A` or `-r`, the UI sweeps the configured region and the region of the kubectl cluster (see [Start on the kubectl cluster](#start-on-the-kubectl-cluster)); with no region configured, the regions of the partition |
 | `--interval` | Time between fleet sweeps (default `1m`). `ctrl+r` sweeps now |
 | `--allow-changes` | Let the UI start changes after their dry runs and gates. Without it, the UI is read-only |
 | `--wait-timeout` | How long the UI watches a roll it started (default `40m`, `0` = no limit). The EKS update continues either way |
 | `--kubeconfig`, `--kube-context` | The Kubernetes access for the live node view and the health gate's workload and PDB checks, as in `nodegroup update` |
+
+## Start on the kubectl cluster
+
+When the kubectl context (or `--kube-context`) points at an EKS cluster, the
+fleet cursor starts on that cluster, and the feed says `started on <name>`.
+The UI reads the cluster's name and region from the kubeconfig: a cluster ARN
+(as `aws eks update-kubeconfig` writes it), an eksctl cluster name, or the
+`aws eks get-token` arguments. Without `-r` or `-A`, the UI adds the
+cluster's region to the sweep.
+
+If the sweep reads that region and does not find the cluster, the feed says
+`kubectl cluster <name> not found`, with the account from the cluster ARN.
+This usually means that the AWS credentials are for a different account.
+Pick the profile for that account with `--profile` or a refresh context.
 
 ## Screens
 

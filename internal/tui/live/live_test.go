@@ -931,3 +931,68 @@ func TestTheVersionLookupFailsFastLikeTheSweep(t *testing.T) {
 		t.Error("the version lookup is not marked FailFastOnDial")
 	}
 }
+
+// The kubectl cluster is the fleet's home, the feed says so once, and a
+// shared name finds its region's row.
+func TestSweepNotesTheKubectlCluster(t *testing.T) {
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{
+		"us-east-1": prodRows(),
+		"eu-west-1": {{Name: "shared", Region: "eu-west-1", Version: "1.33"}},
+	}}
+	b := newTestBackend(t, f, "us-east-1", "eu-west-1")
+	b.opts.Kubectl = health.KubectlCluster{Context: "ctx-shared", Name: "shared", Region: "eu-west-1", Account: "111122223333"}
+	b.sweep(t.Context())
+	b.sweep(t.Context())
+	st, err := b.State(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Home != "shared@eu-west-1" {
+		t.Fatalf("Home = %q, want shared@eu-west-1", st.Home)
+	}
+	n := 0
+	for _, e := range st.Feed {
+		if strings.Contains(e.Text, "started on shared") {
+			n++
+			if e.Cluster != "shared@eu-west-1" || !strings.Contains(e.Detail, "ctx-shared") {
+				t.Errorf("event = %+v", e)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d 'started on' events, want 1: %+v", n, st.Feed)
+	}
+}
+
+// A kubectl cluster the sweep of its region did not find is named in the
+// feed with its account, and is no home; one whose region did not answer
+// waits for a sweep that reads it.
+func TestSweepWarnsWhenTheKubectlClusterIsMissing(t *testing.T) {
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": prodRows()}, errs: map[string]error{"eu-west-1": mocks.Throttling()}}
+	b := newTestBackend(t, f, "us-east-1", "eu-west-1")
+	b.opts.Kubectl = health.KubectlCluster{Context: "payments", Name: "payments-api", Region: "eu-west-1", Account: "222233334444"}
+	b.sweep(t.Context())
+	st, _ := b.State(t.Context())
+	for _, e := range st.Feed {
+		if strings.Contains(e.Text, "payments-api") {
+			t.Fatalf("noted before eu-west-1 answered: %+v", e)
+		}
+	}
+	f.mu.Lock()
+	f.errs = nil
+	f.mu.Unlock()
+	b.sweep(t.Context())
+	st, _ = b.State(t.Context())
+	if st.Home != "" {
+		t.Fatalf("Home = %q for a cluster not in the fleet", st.Home)
+	}
+	found := false
+	for _, e := range st.Feed {
+		if e.Text == "kubectl cluster payments-api not found" {
+			found = e.Level == state.LevelWarn && strings.Contains(e.Detail, "222233334444")
+		}
+	}
+	if !found {
+		t.Fatalf("no warning naming the account: %+v", st.Feed)
+	}
+}

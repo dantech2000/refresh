@@ -90,6 +90,9 @@ type State struct {
 	FleetProblem string
 
 	Clusters []Cluster
+	// Home is the cluster the fleet cursor starts on (the kubectl
+	// context's), or "".
+	Home string
 	// Feed is the fleet-wide event feed, oldest first.
 	Feed []Event
 	// Log is the fleet-wide AWS API call log, oldest first.
