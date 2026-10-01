@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -16,6 +18,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cliconfig"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	appconfig "github.com/dantech2000/refresh/internal/config"
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/sim"
 	"github.com/dantech2000/refresh/internal/tui"
@@ -56,7 +59,9 @@ after the same checks as the nodegroup update, addon update --all, cluster
 upgrade, and cluster rollback commands. B dry-runs a rollback once a
 readiness run found one available.
 It sweeps the config region, the regions given with -r, or with -A every EKS
-region (REFRESH_EKS_REGIONS narrows that list).`,
+region (REFRESH_EKS_REGIONS narrows that list). Without -r or -A it also
+sweeps the region of the kubectl context's EKS cluster (or --kube-context's),
+and the fleet cursor goes to that cluster when the sweep finds it.`,
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Sweep all EKS-supported regions"},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) to sweep (repeatable)"},
@@ -102,7 +107,8 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	defer restore()
-	regions, skip := uiRegions(cmd, awsCfg)
+	kubectl, _ := health.CurrentKubectlCluster(cmd.String("kubeconfig"), cmd.String("kube-context"))
+	regions, skip := uiRegions(cmd, awsCfg, kubectl.Region)
 	// The profile the AWS config was loaded with, from any source: the
 	// header shows it and copied commands carry it.
 	profile, explicit, err := awsconfig.EffectiveProfile(cmd)
@@ -125,6 +131,7 @@ func runLive(ctx context.Context, cmd *cli.Command) error {
 		AllowChanges:     cmd.Bool("allow-changes"),
 		Kubeconfig:       cmd.String("kubeconfig"),
 		KubeContext:      cmd.String("kube-context"),
+		Kubectl:          kubectl,
 		WaitTimeout:      runner.WaitTimeout(cmd, ""),
 		UpgradeTimeout:   appconfig.DefaultUpgradeTimeout,
 		CallTimeout:      runner.APITimeout(cmd),
@@ -164,9 +171,10 @@ func detachStdio() (stdio, func(), error) {
 }
 
 // uiRegions picks the regions to sweep, as `refresh status` does: -r, else
-// -A (REFRESH_EKS_REGIONS, else the partition), else the config region.
-// skip reports a default partition sweep, which skips closed regions.
-func uiRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string, skip bool) {
+// -A (REFRESH_EKS_REGIONS, else the partition), else the config region and
+// the kubectl cluster's region (kubectlRegion, "" for none). skip reports a
+// default partition sweep, which skips closed regions.
+func uiRegions(cmd *cli.Command, awsCfg aws.Config, kubectlRegion string) (regions []string, skip bool) {
 	if r := runner.Regions(cmd, cmd.Bool("all-regions")); len(r) > 0 {
 		return r, false
 	}
@@ -177,9 +185,27 @@ func uiRegions(cmd *cli.Command, awsCfg aws.Config) (regions []string, skip bool
 		return appconfig.GetRegionsForPartition(awsCfg.Region), true
 	}
 	if awsCfg.Region != "" {
+		if kubectlRegion != "" && kubectlRegion != awsCfg.Region && partitionOf(kubectlRegion) == partitionOf(awsCfg.Region) {
+			return []string{awsCfg.Region, kubectlRegion}, false
+		}
 		return []string{awsCfg.Region}, false
 	}
-	return appconfig.GetRegionsForPartition(awsCfg.Region), true
+	regions = appconfig.GetRegionsForPartition(awsCfg.Region)
+	if kubectlRegion != "" && partitionOf(kubectlRegion) == partitionOf(regions[0]) && !slices.Contains(regions, kubectlRegion) {
+		regions = append(slices.Clone(regions), kubectlRegion)
+	}
+	return regions, true
+}
+
+// partitionOf names the AWS partition of a region: credentials work only
+// within one.
+func partitionOf(region string) string {
+	for _, p := range []string{"cn-", "us-gov-", "us-isob-", "us-iso-", "eu-isoe-", "us-isof-", "eusc-"} {
+		if strings.HasPrefix(region, p) {
+			return p
+		}
+	}
+	return "aws"
 }
 
 // activeContextName is the refresh context in use, or "".

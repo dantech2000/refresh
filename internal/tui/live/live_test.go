@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -929,5 +930,157 @@ func TestTheVersionLookupFailsFastLikeTheSweep(t *testing.T) {
 	b.sweep(t.Context())
 	if !<-marked {
 		t.Error("the version lookup is not marked FailFastOnDial")
+	}
+}
+
+// The kubectl cluster is the fleet's home, the feed says so once, and a
+// shared name finds its region's row.
+func TestSweepNotesTheKubectlCluster(t *testing.T) {
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{
+		"us-east-1": prodRows(),
+		"eu-west-1": {{Name: "shared", Region: "eu-west-1", Version: "1.33", ARN: "arn:aws:eks:eu-west-1:111122223333:cluster/shared"}},
+	}}
+	b := newTestBackend(t, f, "us-east-1", "eu-west-1")
+	b.opts.Kubectl = health.KubectlCluster{Context: "ctx-shared", Name: "shared", Region: "eu-west-1", Account: "111122223333"}
+	b.sweep(t.Context())
+	b.sweep(t.Context())
+	st, err := b.State(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Home != "shared@eu-west-1" {
+		t.Fatalf("Home = %q, want shared@eu-west-1", st.Home)
+	}
+	n := 0
+	for _, e := range st.Feed {
+		if e.Text == "kubectl cluster shared" {
+			n++
+			if e.Cluster != "shared@eu-west-1" || !strings.Contains(e.Detail, "ctx-shared") {
+				t.Errorf("event = %+v", e)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d 'kubectl cluster' events, want 1: %+v", n, st.Feed)
+	}
+}
+
+// A kubectl cluster the sweep of its region did not find is named in the
+// feed with its account, and is no home; one whose region did not answer
+// waits for a sweep that reads it.
+func TestSweepWarnsWhenTheKubectlClusterIsMissing(t *testing.T) {
+	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": prodRows()}, errs: map[string]error{"eu-west-1": mocks.Throttling()}}
+	b := newTestBackend(t, f, "us-east-1", "eu-west-1")
+	b.opts.Kubectl = health.KubectlCluster{Context: "payments", Name: "payments-api", Region: "eu-west-1", Account: "222233334444"}
+	b.sweep(t.Context())
+	st, _ := b.State(t.Context())
+	for _, e := range st.Feed {
+		if strings.Contains(e.Text, "payments-api") {
+			t.Fatalf("noted before eu-west-1 answered: %+v", e)
+		}
+	}
+	f.mu.Lock()
+	f.errs = nil
+	f.mu.Unlock()
+	b.sweep(t.Context())
+	st, _ = b.State(t.Context())
+	if st.Home != "" {
+		t.Fatalf("Home = %q for a cluster not in the fleet", st.Home)
+	}
+	found := false
+	for _, e := range st.Feed {
+		if e.Text == "kubectl cluster payments-api not found" {
+			found = e.Level == state.LevelWarn && strings.Contains(e.Detail, "222233334444")
+		}
+	}
+	if !found {
+		t.Fatalf("no warning naming the account: %+v", st.Feed)
+	}
+}
+
+// A cluster of the same name and region in another account, or behind
+// another endpoint, is not the kubectl cluster: no home, and the feed says
+// which is which.
+func TestSweepRefusesAKubectlClusterThatIsAnotherCluster(t *testing.T) {
+	row := statussvc.ClusterStatus{Name: "prod", Region: "us-east-1", Version: "1.33",
+		ARN: "arn:aws:eks:us-east-1:999988887777:cluster/prod", Endpoint: "https://B.gr7.us-east-1.eks.amazonaws.com"}
+	for _, tc := range []struct {
+		name    string
+		kubectl health.KubectlCluster
+		row     func(statussvc.ClusterStatus) statussvc.ClusterStatus
+		home    bool
+		detail  string
+	}{
+		{"another account", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Account: "111122223333"}, nil, false, "account 111122223333; the fleet's prod is in account 999988887777"},
+		{"another endpoint", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://A.gr7.us-east-1.eks.amazonaws.com"}, nil, false, "https://A.gr7.us-east-1.eks.amazonaws.com"},
+		{"same endpoint", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://b.gr7.us-east-1.eks.amazonaws.com/"}, nil, true, ""},
+		{"proxied server", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://k8s.example"}, nil, true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := row
+			if tc.row != nil {
+				r = tc.row(r)
+			}
+			f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": {r}}}
+			b := newTestBackend(t, f, "us-east-1")
+			b.opts.Kubectl = tc.kubectl
+			b.sweep(t.Context())
+			st, _ := b.State(t.Context())
+			if (st.Home == "prod") != tc.home {
+				t.Fatalf("Home = %q, want home %v", st.Home, tc.home)
+			}
+			if tc.home {
+				return
+			}
+			found := false
+			for _, e := range st.Feed {
+				if e.Text == "kubectl cluster prod is another cluster" {
+					found = e.Level == state.LevelWarn && strings.Contains(e.Detail, tc.detail)
+				}
+			}
+			if !found {
+				t.Fatalf("no warning with %q: %+v", tc.detail, st.Feed)
+			}
+		})
+	}
+}
+
+// A row whose ARN or endpoint could not be read (DescribeCluster failed) is
+// neither the kubectl cluster nor another one: no home and no feed line,
+// until a sweep reads it.
+func TestSweepWaitsForAnUnreadKubectlCluster(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		kubectl health.KubectlCluster
+	}{
+		{"ARN context", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Account: "999988887777"}},
+		{"eksctl context", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://B.gr7.us-east-1.eks.amazonaws.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			unread := statussvc.ClusterStatus{Name: "prod", Region: "us-east-1", Incomplete: true}
+			f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": {unread}}}
+			b := newTestBackend(t, f, "us-east-1")
+			b.opts.Kubectl = tc.kubectl
+			b.sweep(t.Context())
+			st, _ := b.State(t.Context())
+			if st.Home != "" {
+				t.Fatalf("Home = %q for an unread row", st.Home)
+			}
+			for _, e := range st.Feed {
+				if strings.HasPrefix(e.Text, "kubectl cluster") {
+					t.Fatalf("noted an unread row: %+v", e)
+				}
+			}
+			f.set("us-east-1", statussvc.ClusterStatus{Name: "prod", Region: "us-east-1", Version: "1.33",
+				ARN: "arn:aws:eks:us-east-1:999988887777:cluster/prod", Endpoint: "https://B.gr7.us-east-1.eks.amazonaws.com"})
+			b.sweep(t.Context())
+			st, _ = b.State(t.Context())
+			if st.Home != "prod" {
+				t.Fatalf("Home = %q once the row was read", st.Home)
+			}
+			if !slices.ContainsFunc(st.Feed, func(e state.Event) bool { return e.Text == "kubectl cluster prod" }) {
+				t.Fatalf("no feed line once the row was read: %+v", st.Feed)
+			}
+		})
 	}
 }

@@ -24,11 +24,46 @@ the same change, and `c` copies it.
 | Flag | Description |
 |---|---|
 | `--all-regions, -A` | Sweep all EKS-supported regions (or the `REFRESH_EKS_REGIONS` list) |
-| `--region, -r` | Region(s) to sweep (repeatable). Without `-A` or `-r`, the UI sweeps the configured region; with no region configured, the regions of the partition |
+| `--region, -r` | Region(s) to sweep (repeatable). Without `-A` or `-r`, the UI sweeps the configured region and the region of the kubectl cluster (see [Start on the kubectl cluster](#start-on-the-kubectl-cluster)); with no region configured, the regions of the partition |
 | `--interval` | Time between fleet sweeps (default `1m`). `ctrl+r` sweeps now |
 | `--allow-changes` | Let the UI start changes after their dry runs and gates. Without it, the UI is read-only |
 | `--wait-timeout` | How long the UI watches a roll it started (default `40m`, `0` = no limit). The EKS update continues either way |
 | `--kubeconfig`, `--kube-context` | The Kubernetes access for the live node view and the health gate's workload and PDB checks, as in `nodegroup update` |
+
+## Start on the kubectl cluster
+
+When the kubectl context (or `--kube-context`) points at an EKS cluster, the
+fleet cursor moves to that cluster when the sweep finds it, and the feed says
+`kubectl cluster <name>`. If you use a key that acts first (move the cursor,
+open a screen, or change a pane), the cursor stays where it is. A key that
+does nothing yet, such as `enter` before the first sweep, does not count. The
+cursor never moves while a dialog is open.
+
+The UI reads the cluster's name and region from the kubeconfig: a cluster ARN
+(as `aws eks update-kubeconfig` writes it), an eksctl cluster name, or the API
+server address and the `aws eks get-token` arguments. Without `-r` or `-A`,
+the UI adds the cluster's region to the sweep, when the region is in the same
+AWS partition as the configured region.
+
+A cluster with the same name and region is the kubectl cluster only when the
+UI can check it:
+
+- If the kubeconfig has a cluster ARN, the account must match.
+- If the kubeconfig's server is an EKS endpoint, the endpoint must match.
+- If the kubeconfig has neither (a proxied API server, for example), the name
+  and region decide.
+
+If the UI cannot read the cluster's ARN or endpoint, it waits for the next
+sweep. The feed tells you when the cluster does not match:
+
+- `kubectl cluster <name> is another cluster`: the sweep found a cluster with
+  that name in a different account, or behind a different endpoint.
+- `kubectl cluster <name> not found`: the sweep read the region and did not
+  find the cluster.
+
+Both usually mean that the AWS credentials are for a different account than
+the kubectl context. Select the profile for that account with `--profile` or a
+refresh context.
 
 ## Screens
 

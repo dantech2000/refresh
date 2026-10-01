@@ -1,12 +1,15 @@
 package commands
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/commands/runner"
@@ -85,5 +88,69 @@ func TestDetachStdioHidesStderrAndStdinUntilRestore(t *testing.T) {
 	restore()
 	if os.Stderr != errOut || os.Stdin != in {
 		t.Fatal("restore did not put stdin and stderr back")
+	}
+}
+
+// Without -r or -A the UI sweeps the config region and the kubectl
+// cluster's region, when that one is in the same partition.
+func TestUIRegionsAddTheKubectlRegion(t *testing.T) {
+	t.Setenv("REFRESH_EKS_REGIONS", "")
+	for _, tc := range []struct {
+		name, cfg, kubectl string
+		args               []string
+		want               []string
+	}{
+		{"no kubectl", "us-east-1", "", nil, []string{"us-east-1"}},
+		{"same region", "us-east-1", "us-east-1", nil, []string{"us-east-1"}},
+		{"other region", "us-east-1", "eu-west-1", nil, []string{"us-east-1", "eu-west-1"}},
+		{"other partition", "us-east-1", "cn-north-1", nil, []string{"us-east-1"}},
+		{"govcloud", "us-east-1", "us-gov-west-1", nil, []string{"us-east-1"}},
+		{"opt-in region", "us-east-1", "eu-south-1", nil, []string{"us-east-1", "eu-south-1"}},
+		{"sovereign cloud", "us-east-1", "eusc-de-east-1", nil, []string{"us-east-1"}},
+		{"china to china", "cn-north-1", "cn-northwest-1", nil, []string{"cn-north-1", "cn-northwest-1"}},
+		{"explicit -r", "us-east-1", "eu-west-1", []string{"-r", "ap-south-1"}, []string{"ap-south-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			cmd := UICommand()
+			cmd.Action = func(_ context.Context, cmd *cli.Command) error {
+				got, _ = uiRegions(cmd, aws.Config{Region: tc.cfg}, tc.kubectl)
+				return nil
+			}
+			if err := cmd.Run(t.Context(), append([]string{"ui"}, tc.args...)); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("regions = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// With no configured region the UI sweeps the partition, plus the kubectl
+// region when the partition list lacks it.
+func TestUIRegionsWithoutAConfigRegion(t *testing.T) {
+	t.Setenv("REFRESH_EKS_REGIONS", "")
+	run := func(kubectl string) []string {
+		var got []string
+		cmd := UICommand()
+		cmd.Action = func(_ context.Context, cmd *cli.Command) error {
+			got, _ = uiRegions(cmd, aws.Config{}, kubectl)
+			return nil
+		}
+		if err := cmd.Run(t.Context(), []string{"ui"}); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	base := run("")
+	if slices.Contains(base, "eu-south-1") {
+		t.Skip("the partition list now has eu-south-1; pick another region")
+	}
+	if got := run("eu-south-1"); !slices.Equal(got, append(slices.Clone(base), "eu-south-1")) {
+		t.Fatalf("regions = %v, want the partition plus eu-south-1", got)
+	}
+	if got := run("cn-north-1"); !slices.Equal(got, base) {
+		t.Fatalf("regions = %v, want the partition alone", got)
 	}
 }
