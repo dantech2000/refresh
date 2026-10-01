@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/mocks"
@@ -193,5 +195,30 @@ func TestBuildPlan_SecondControlPlaneOnlyRunWaitsForTheAddons(t *testing.T) {
 	}
 	if b := plan.Blockers(); len(b) > 0 {
 		t.Fatalf("blockers after the add-ons caught up = %v", b)
+	}
+}
+
+// The guard fails closed: when the add-on versions for the live control
+// plane cannot be read, a control-plane move that leaves the add-ons out is
+// blocked.
+func TestBuildPlan_ControlPlaneOnlyBlocksOnUnreadAddonVersions(t *testing.T) {
+	w := newWorld()
+	w.clusterVersion = "1.32"
+	w.addonVersions["vpc-cni"] = latestFor("1.32")
+	w.ngVersions["workers-a"] = "1.32"
+	m := newWorldMock(w)
+	inner := m.DescribeAddonVersionsFn
+	m.DescribeAddonVersionsFn = func(ctx context.Context, in *eks.DescribeAddonVersionsInput, opts ...func(*eks.Options)) (*eks.DescribeAddonVersionsOutput, error) {
+		if aws.ToString(in.KubernetesVersion) == "1.32" {
+			return nil, mocks.AccessDenied()
+		}
+		return inner(ctx, in, opts...)
+	}
+	plan, err := newTestService(m).BuildPlan(context.Background(), "prod-east", "1.33", PlanOptions{Only: []Part{PartControlPlane}})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "vpc-cni") || !strings.Contains(b, "could not be read") {
+		t.Fatalf("blockers = %q, want the unread vpc-cni versions", b)
 	}
 }

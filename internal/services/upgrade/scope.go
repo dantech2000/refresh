@@ -141,17 +141,25 @@ func applyScope(plan *Plan, o PlanOptions) {
 // blockOnLaggingAddons blocks the plan's first control-plane move when
 // add-ons left out of it already cannot run on the live control plane (an
 // earlier --only run left them): moving the control plane again would leave
-// them two versions behind.
-func blockOnLaggingAddons(plan *Plan, lagging []string, live string) {
-	if len(lagging) == 0 {
+// them two versions behind. It fails closed: an add-on whose versions for
+// the live control plane could not be read (unread) blocks too.
+func blockOnLaggingAddons(plan *Plan, lagging, unread []string, live string) {
+	if len(lagging) == 0 && len(unread) == 0 {
 		return
+	}
+	var why []string
+	if len(lagging) > 0 {
+		why = append(why, fmt.Sprintf("add-on(s) %s do not run on the live control plane %s", strings.Join(lagging, ", "), live))
+	}
+	if len(unread) > 0 {
+		why = append(why, fmt.Sprintf("the versions of add-on(s) %s for %s could not be read", strings.Join(unread, ", "), live))
 	}
 	for h := range plan.Hops {
 		for i := range plan.Hops[h].Steps {
 			st := &plan.Hops[h].Steps[i]
 			if st.Type == StepControlPlane && st.Status == StatusPending {
 				st.Status = StatusBlocked
-				st.Reason = fmt.Sprintf("add-on(s) %s do not run on the live control plane %s: update them first (refresh cluster upgrade -c %s --to %s --only addons), or add addons to --only", strings.Join(lagging, ", "), live, plan.ClusterName, live)
+				st.Reason = fmt.Sprintf("%s: update the add-ons first (refresh cluster upgrade -c %s --to %s --only addons), or add addons to --only", strings.Join(why, "; "), plan.ClusterName, live)
 				return
 			}
 		}
