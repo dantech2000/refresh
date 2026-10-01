@@ -333,7 +333,10 @@ the cluster safe:
   runs: the nodegroups and add-ons catch up to it.
 - Without `addons`, `--to` is one minor version up. An add-on that the new
   control plane cannot run (often kube-proxy) is named in a notice: update
-  it right after the control plane with `refresh addon update --all`.
+  it right after the control plane with `refresh addon update --all`. If an
+  earlier `--only` run left an add-on that the live control plane cannot run
+  (or its versions cannot be read), the next control-plane move without
+  `addons` is blocked until the add-ons catch up.
 
 ### Readiness gates
 
