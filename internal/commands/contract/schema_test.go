@@ -100,6 +100,11 @@ var schemaCases = []schemaCase{
 	{name: "addon update", kind: apidoc.KindAddonUpdate, world: []*fakeaws.Cluster{calmCluster()}, args: []string{"addon", "update", "prod", "vpc-cni", "--yes", "--wait"}},
 	{name: "addon update --dry-run", kind: apidoc.KindAddonUpdate, args: []string{"addon", "update", "prod", "vpc-cni", "--dry-run"}},
 	{name: "addon update --all", kind: apidoc.KindAddonUpdateAll, world: []*fakeaws.Cluster{calmCluster()}, args: []string{"addon", "update", "prod", "--all", "--yes"}},
+	// fullCluster has a nodegroup UPDATING: these refuse to start (#433).
+	{name: "nodegroup update refused on a busy cluster", kind: apidoc.KindNodegroupUpdate, args: []string{"nodegroup", "update", "prod", "web", "--skip-health-check", "--yes"}},
+	{name: "nodegroup scale refused on a busy cluster", kind: apidoc.KindNodegroupScale, args: []string{"nodegroup", "scale", "prod", "-n", "web", "--desired", "4", "--yes"}},
+	{name: "addon update refused on a busy cluster", kind: apidoc.KindAddonUpdate, args: []string{"addon", "update", "prod", "vpc-cni", "--yes"}},
+	{name: "addon update --all refused on a busy cluster", kind: apidoc.KindAddonUpdateAll, args: []string{"addon", "update", "prod", "--all", "--yes"}},
 }
 
 // emptyCluster has no nodegroups, add-ons, tags, or VPC details, so every

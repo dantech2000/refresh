@@ -1,6 +1,7 @@
 package nodegroup
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -93,4 +94,73 @@ func TestScale_BusyClusterExitsThree(t *testing.T) {
 	if _, stderr, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2", "--dry-run"); err != nil {
 		t.Fatalf("dry run on a busy cluster: %v\nstderr:\n%s", err, stderr)
 	}
+}
+
+// #433: with -o json, a refusal prints the command's document with nothing
+// started: changesInProgress for a busy cluster, the failed read for one
+// refresh could not check. Exit 3 either way.
+func TestBusyRefusalsPrintADocument(t *testing.T) {
+	t.Run("update busy", func(t *testing.T) {
+		fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}, &fakeaws.Nodegroup{Name: "other", Version: "1.31", Status: "UPDATING"}))
+		stdout, stderr, err := runNodegroup(t, "update", "prod", "web", "--skip-health-check", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)\nstderr:\n%s", code, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		if doc["kind"] != "NodegroupUpdate" || fmt.Sprint(doc["changesInProgress"]) != "[nodegroup other UPDATING]" || fmt.Sprint(doc["nodegroups"]) != "[]" {
+			t.Errorf("document = %v", doc)
+		}
+		fakeaws.RequireFailures(t, doc)
+	})
+	t.Run("update unreadable", func(t *testing.T) {
+		fakeaws.New(t, &fakeaws.Cluster{Name: "prod", Version: "1.31", ListNodegroupsError: "AccessDeniedException"})
+		stdout, _, err := runNodegroup(t, "update", "prod", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)", code, err)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		if _, ok := doc["changesInProgress"]; ok {
+			t.Errorf("an unreadable cluster has no changesInProgress: %v", doc)
+		}
+		failureWant{kind: "Cluster", name: "prod", reason: "AccessDenied", operation: "eks:ListNodegroups"}.check(t, "failures[0]", onlyFailure(t, doc))
+	})
+	t.Run("scale busy", func(t *testing.T) {
+		fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5}, &fakeaws.Nodegroup{Name: "ng-b", Version: "1.31", Status: "UPDATING"}))
+		stdout, stderr, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)\nstderr:\n%s", code, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		before, _ := doc["before"].(map[string]any)
+		if doc["outcome"] != "Busy" || fmt.Sprint(doc["changesInProgress"]) != "[nodegroup ng-b UPDATING]" || fmt.Sprint(before["desired"]) != "3" {
+			t.Errorf("document = %v", doc)
+		}
+	})
+	// From review: the busy check comes first, as before #433. A nodegroup
+	// that cannot be read does not turn a busy refusal into exit 1; its
+	// sizes are left out.
+	t.Run("scale busy, nodegroup unreadable", func(t *testing.T) {
+		fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", DescribeNodegroupError: "AccessDeniedException"}, &fakeaws.Nodegroup{Name: "ng-b", Version: "1.31", Status: "UPDATING"}))
+		stdout, stderr, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)\nstderr:\n%s", code, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		if _, ok := doc["before"]; ok {
+			t.Errorf("sizes of an unreadable nodegroup: %v", doc)
+		}
+		// Bounds only: the bounds check reads the nodegroup too, but after
+		// the busy check, so the run still refuses with a document (exit 3).
+		for _, bound := range [][]string{{"--min", "2"}, {"--max", "6"}} {
+			stdout, stderr, err := runNodegroup(t, append([]string{"scale", "prod", "ng-a", "--yes", "-o", "json"}, bound...)...)
+			if code := exitCodeOf(err); code != 3 {
+				t.Fatalf("%v: exit = %d (%v)\nstderr:\n%s", bound, code, err, stderr)
+			}
+			// The busy scan cannot read ng-a either, so it cannot tell:
+			// Blocked, with the failed read.
+			if doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any); doc["outcome"] != "Blocked" || !strings.Contains(fmt.Sprint(doc["failures"]), "eks:DescribeNodegroup") {
+				t.Errorf("%v: document = %v", bound, doc)
+			}
+		}
+	})
 }

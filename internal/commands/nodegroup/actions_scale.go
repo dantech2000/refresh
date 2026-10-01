@@ -79,43 +79,46 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	// dry-run preview and a real scale, so the preview surfaces it too. (REF-143)
 	warnInstanceTypeAvailability(ctx, svc, clusterName, nodegroupName)
 
-	// A --min/--max that excludes the current desired size fails the same way
-	// in a preview, and before the PDB gate and the confirmation prompt.
-	if err := svc.CheckScaleBounds(ctx, clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
-		return err
-	}
-
-	// EKS refuses a scale while another update runs, but only after the
-	// prompt: say so first. A dry run still previews a busy cluster.
-	if !opts.DryRun {
-		if err := runner.RefuseIfBusy(ctx, eksClient, clusterName, nil); err != nil {
-			return err
-		}
-	}
-
-	current, err := svc.DescribeNodegroup(ctx, clusterName, nodegroupName)
-	if err != nil {
-		return err
-	}
 	r := &scaleRun{
 		cmd: cmd, format: format, machine: runner.IsMachineFormat(format), force: cmd.Bool("force"),
 		region: awsCfg.Region, cluster: clusterName, nodegroup: nodegroupName,
 		desired: desired, minSize: minSize, maxSize: maxSize,
 		svc: svc, opts: opts,
 	}
-	if current.ScalingConfig != nil {
-		r.before = *current.ScalingConfig
-	}
 	r.doc = scaleDocument{
 		Cluster:   clusterName,
 		Nodegroup: nodegroupName,
 		Region:    awsCfg.Region,
 		DryRun:    opts.DryRun,
-		Before:    sizesOf(r.before),
-		After:     sizesOf(r.before).withRequested(desired, minSize, maxSize),
 		Waited:    opts.Wait && !opts.DryRun,
 		Failures:  diag.List{},
 	}
+
+	// EKS refuses a scale while another update runs, but only after the
+	// prompt: say so first, before anything else can fail. A dry run still
+	// previews a busy cluster.
+	if !opts.DryRun {
+		if busy := runner.CheckBusy(ctx, eksClient, clusterName, awsCfg.Region, nil); busy != nil {
+			// The sizes, when the nodegroup can still be read.
+			if current, err := svc.DescribeNodegroup(ctx, clusterName, nodegroupName); err == nil {
+				r.setSizes(current)
+			}
+			return r.refuse(busy)
+		}
+	}
+
+	// A --min/--max that excludes the current desired size fails the same way
+	// in a preview, and before the PDB gate and the confirmation prompt. It
+	// comes after the busy check: a busy cluster is refused first.
+	if err := svc.CheckScaleBounds(ctx, clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
+		return err
+	}
+
+	current, err := svc.DescribeNodegroup(ctx, clusterName, nodegroupName)
+	if err != nil {
+		return err
+	}
+	r.setSizes(current)
 
 	// A dry run or --force checks the PDBs first, so the blockers show
 	// before anything changes. A real run without --force checks after the
@@ -127,6 +130,32 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		return r.preview()
 	}
 	return r.execute(ctx)
+}
+
+// setSizes records the nodegroup's scaling config before the run, and the
+// sizes the run asks for.
+func (r *scaleRun) setSizes(ng *ekstypes.Nodegroup) {
+	if ng.ScalingConfig != nil {
+		r.before = *ng.ScalingConfig
+	}
+	before, after := sizesOf(r.before), sizesOf(r.before).withRequested(r.desired, r.minSize, r.maxSize)
+	r.doc.Before, r.doc.After = &before, &after
+}
+
+// refuse ends a scale that refused to start: EKS was changing the cluster
+// (Outcome Busy) or it could not be read (Blocked, with the failed read).
+// -o json|yaml prints the document; then the exit 3 error.
+func (r *scaleRun) refuse(busy *runner.Busy) error {
+	r.doc.Outcome, r.doc.ChangesInProgress = scaleBusy, busy.Changes
+	if busy.Failure != nil {
+		r.doc.Outcome, r.doc.Failures = scaleBlocked, diag.List{*busy.Failure}
+	}
+	if r.machine {
+		if _, err := runner.EncodeStdout(r.format, r.doc); err != nil {
+			return err
+		}
+	}
+	return busy.Exit
 }
 
 // newScaleService builds the nodegroup service for a scale. Only the health

@@ -28,13 +28,16 @@ const (
 	// scaleCompletedWithIssues: the scale was applied, but the
 	// post-scaling health check found blocking issues. Exit 5.
 	scaleCompletedWithIssues scaleOutcome = "CompletedWithIssues"
+	// scaleBusy: EKS was already changing the cluster, so nothing was asked
+	// (exit 3); changesInProgress names what.
+	scaleBusy scaleOutcome = "Busy"
 )
 
 // EnumValues lists every scaleOutcome.
 func (scaleOutcome) EnumValues() []string {
 	return []string{
 		string(scalePlanned), string(scaleRequested), string(scaleCompleted),
-		string(scaleBlocked), string(scaleCompletedWithIssues),
+		string(scaleBlocked), string(scaleCompletedWithIssues), string(scaleBusy),
 	}
 }
 
@@ -92,17 +95,22 @@ type scaleDocument struct {
 	Outcome   scaleOutcome `json:"outcome" yaml:"outcome"`
 	DryRun    bool         `json:"dryRun" yaml:"dryRun"`
 	// Before is the scaling config before the run; After is what the run
-	// asks for (Before with the requested sizes).
-	Before scaleSizes `json:"before" yaml:"before"`
-	After  scaleSizes `json:"after" yaml:"after"`
+	// asks for (Before with the requested sizes). Both are left out only
+	// when a refusal (Busy, or Blocked by an unreadable cluster) could not
+	// read the nodegroup.
+	Before *scaleSizes `json:"before,omitempty" yaml:"before,omitempty"`
+	After  *scaleSizes `json:"after,omitempty" yaml:"after,omitempty"`
 	// Waited is true with --wait.
 	Waited bool `json:"waited" yaml:"waited"`
 	// NodegroupStatus is the nodegroup's EKS status after a --wait that
 	// completed.
 	NodegroupStatus string `json:"nodegroupStatus,omitempty" yaml:"nodegroupStatus,omitempty"`
 	// PDBGate is the --check-pdbs verdict, when the gate ran.
-	PDBGate  *scalePDBGate `json:"pdbGate,omitempty" yaml:"pdbGate,omitempty"`
-	Failures diag.List     `json:"failures" yaml:"failures"`
+	PDBGate *scalePDBGate `json:"pdbGate,omitempty" yaml:"pdbGate,omitempty"`
+	// ChangesInProgress names what EKS was changing on the cluster when the
+	// scale refused to start (Outcome Busy). Left out otherwise.
+	ChangesInProgress []string  `json:"changesInProgress,omitempty" yaml:"changesInProgress,omitempty"`
+	Failures          diag.List `json:"failures" yaml:"failures"`
 }
 
 // DocumentKind is NodegroupScale.

@@ -285,6 +285,13 @@
       },
       "type": "array"
     },
+    "changesInProgress": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "changesInProgress names what EKS was changing on the cluster when the run refused to start (exit 3). Left out otherwise."
+    },
     "verification": {
       "$ref": "#/$defs/PostRollVerification"
     },

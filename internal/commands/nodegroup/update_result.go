@@ -8,6 +8,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/monitoring"
@@ -290,9 +291,12 @@ func (r *updateRun) applyMonitorResult(updates []refreshTypes.UpdateProgress, mo
 // updateDocument is the -o json/yaml document of a single-cluster
 // `nodegroup update`.
 type updateDocument struct {
-	Cluster      string                `json:"cluster" yaml:"cluster"`
-	Nodegroups   []nodegroupResult     `json:"nodegroups" yaml:"nodegroups"`
-	Verification *PostRollVerification `json:"verification,omitempty" yaml:"verification,omitempty"`
+	Cluster    string            `json:"cluster" yaml:"cluster"`
+	Nodegroups []nodegroupResult `json:"nodegroups" yaml:"nodegroups"`
+	// ChangesInProgress names what EKS was changing on the cluster when the
+	// run refused to start (exit 3). Left out otherwise.
+	ChangesInProgress []string              `json:"changesInProgress,omitempty" yaml:"changesInProgress,omitempty"`
+	Verification      *PostRollVerification `json:"verification,omitempty" yaml:"verification,omitempty"`
 	// Health is the pre-flight verdict, when a check ran.
 	Health   *health.HealthSummary `json:"health,omitempty" yaml:"health,omitempty"`
 	Failures diag.List             `json:"failures" yaml:"failures"`
@@ -300,6 +304,22 @@ type updateDocument struct {
 
 // DocumentKind is NodegroupUpdate.
 func (updateDocument) DocumentKind() apidoc.Kind { return apidoc.KindNodegroupUpdate }
+
+// refuseUpdate ends a run that refused to start because EKS was changing the
+// cluster or it could not be read: with -o json|yaml, the run's document
+// with nothing started, then the exit 3 error.
+func refuseUpdate(cluster string, busy *runner.Busy, flags updateAMIFlags) error {
+	if flags.machine() {
+		doc := updateDocument{Cluster: cluster, Nodegroups: apidoc.List([]nodegroupResult(nil)), ChangesInProgress: busy.Changes, Failures: diag.List{}}
+		if busy.Failure != nil {
+			doc.Failures = diag.List{*busy.Failure}
+		}
+		if _, err := runner.EncodeStdout(flags.format, doc); err != nil {
+			return err
+		}
+	}
+	return busy.Exit
+}
 
 // newUpdateDocument builds the document of run, with the health verdict
 // when a check ran. The document's failures are the run's plus the health

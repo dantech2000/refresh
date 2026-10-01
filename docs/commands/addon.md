@@ -179,7 +179,10 @@ again once that finishes. An update of the named add-on that is already
 running does not count: the command waits on it as before. If refresh cannot
 read the cluster, a nodegroup, or an add-on, it cannot tell whether EKS is
 changing it, so the command also exits `3` and names the call that failed.
-`--dry-run` does not check.
+With `-o json|yaml`, the document says so: for one add-on, the status `Busy`
+and `changesInProgress` (or `NotAttempted` with the failed call); for
+`--all`, no results and `changesInProgress` (or the failed call in
+`failures`). `--dry-run` does not check.
 
 ### Add-on names
 
@@ -228,7 +231,8 @@ The result is printed in every output format, also when the wait fails. See
 | `Unverified` | The update landed, but the post-update health check could not read the add-on (`failure`) |
 | `WaitFailed` | The update was sent but did not complete (`failure`) |
 | `Failed` | The update could not be sent (`failure`) |
-| `NotAttempted` | With `--all`: the run stopped before this add-on (`failure`) |
+| `NotAttempted` | With `--all`: the run stopped before this add-on (`failure`). For one add-on: refresh could not read the cluster to check that EKS is not changing it, so nothing started (`failure` names the call) |
+| `Busy` | EKS was already changing the cluster, so the update did not start (`changesInProgress` says what) |
 
 ```json
 {

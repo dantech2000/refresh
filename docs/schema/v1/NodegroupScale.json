@@ -110,7 +110,8 @@
         "Requested",
         "Completed",
         "Blocked",
-        "CompletedWithIssues"
+        "CompletedWithIssues",
+        "Busy"
       ],
       "description": "ScaleOutcome is what `nodegroup scale` did. docs/commands/nodegroup.md documents the values; later versions may add values."
     },
@@ -192,7 +193,7 @@
     },
     "before": {
       "$ref": "#/$defs/ScaleSizes",
-      "description": "before is the scaling config before the run; After is what the run asks for (Before with the requested sizes)."
+      "description": "before is the scaling config before the run; After is what the run asks for (Before with the requested sizes). Both are left out only when a refusal (Busy, or Blocked by an unreadable cluster) could not read the nodegroup."
     },
     "after": {
       "$ref": "#/$defs/ScaleSizes"
@@ -209,6 +210,13 @@
       "$ref": "#/$defs/ScalePDBGate",
       "description": "pdbGate is the --check-pdbs verdict, when the gate ran."
     },
+    "changesInProgress": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "changesInProgress names what EKS was changing on the cluster when the scale refused to start (Outcome Busy). Left out otherwise."
+    },
     "failures": {
       "$ref": "#/$defs/FailureList",
       "description": "Every failure of the run: the items refresh could not read and the actions that did not complete. This top-level list is complete; a nested failure or failures field repeats a subset of it. The list is sorted by kind, region, cluster, name, and operation. [] when there are no failures."
@@ -223,8 +231,6 @@
     "region",
     "outcome",
     "dryRun",
-    "before",
-    "after",
     "waited",
     "failures"
   ],

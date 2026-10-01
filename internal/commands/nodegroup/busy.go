@@ -21,6 +21,15 @@ func updateBusyChanges(ctx context.Context, eksClient *eks.Client, clusterName, 
 	})
 }
 
+// updateBusy is updateBusyChanges for the single-cluster run: the refusal
+// to put in its document, or nil when the cluster is clear.
+func updateBusy(ctx context.Context, eksClient *eks.Client, clusterName, region, pattern string) *runner.Busy {
+	targets := healthTargetNodegroups(ctx, eksClient, clusterName, pattern)
+	return runner.CheckBusy(ctx, eksClient, clusterName, region, func(c clustersvc.Change) bool {
+		return c.Kind == clustersvc.ChangeNodegroup && slices.Contains(targets, c.Name)
+	})
+}
+
 // busyStrings is changes as text, one entry per change.
 func busyStrings(changes clustersvc.Changes) []string {
 	out := make([]string, len(changes))

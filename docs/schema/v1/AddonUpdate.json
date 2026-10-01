@@ -104,7 +104,8 @@
         "Unverified",
         "WaitFailed",
         "Failed",
-        "NotAttempted"
+        "NotAttempted",
+        "Busy"
       ],
       "description": "UpdateStatus is the outcome of one add-on update."
     }
@@ -150,6 +151,13 @@
     "startedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "changesInProgress": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "changesInProgress names what EKS was changing on the cluster when the update refused to start (Status Busy). Left out otherwise."
     },
     "failures": {
       "$ref": "#/$defs/FailureList",
