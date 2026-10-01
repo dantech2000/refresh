@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/dantech2000/refresh/compare/v0.13.0...v0.14.0) (2026-10-01)
+
+
+### Features
+
+* a busy or unreadable cluster refusal prints its document ([#461](https://github.com/dantech2000/refresh/issues/461)) ([ddeb287](https://github.com/dantech2000/refresh/commit/ddeb287fc4444c30b6c7b1e16b3ae9fff7c82d57))
+* **ui:** start on the kubectl cluster ([#463](https://github.com/dantech2000/refresh/issues/463)) ([aa243d5](https://github.com/dantech2000/refresh/commit/aa243d5694261fa605163690b1ec08a3c0bb29be))
+
 ## [0.13.0](https://github.com/dantech2000/refresh/compare/v0.12.2...v0.13.0) (2026-09-30)
 
 
