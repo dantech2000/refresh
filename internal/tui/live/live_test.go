@@ -937,7 +937,7 @@ func TestTheVersionLookupFailsFastLikeTheSweep(t *testing.T) {
 func TestSweepNotesTheKubectlCluster(t *testing.T) {
 	f := &fleet{rows: map[string][]statussvc.ClusterStatus{
 		"us-east-1": prodRows(),
-		"eu-west-1": {{Name: "shared", Region: "eu-west-1", Version: "1.33"}},
+		"eu-west-1": {{Name: "shared", Region: "eu-west-1", Version: "1.33", ARN: "arn:aws:eks:eu-west-1:111122223333:cluster/shared"}},
 	}}
 	b := newTestBackend(t, f, "us-east-1", "eu-west-1")
 	b.opts.Kubectl = health.KubectlCluster{Context: "ctx-shared", Name: "shared", Region: "eu-west-1", Account: "111122223333"}
@@ -952,7 +952,7 @@ func TestSweepNotesTheKubectlCluster(t *testing.T) {
 	}
 	n := 0
 	for _, e := range st.Feed {
-		if strings.Contains(e.Text, "started on shared") {
+		if e.Text == "kubectl cluster shared" {
 			n++
 			if e.Cluster != "shared@eu-west-1" || !strings.Contains(e.Detail, "ctx-shared") {
 				t.Errorf("event = %+v", e)
@@ -960,7 +960,7 @@ func TestSweepNotesTheKubectlCluster(t *testing.T) {
 		}
 	}
 	if n != 1 {
-		t.Fatalf("%d 'started on' events, want 1: %+v", n, st.Feed)
+		t.Fatalf("%d 'kubectl cluster' events, want 1: %+v", n, st.Feed)
 	}
 }
 
@@ -994,5 +994,54 @@ func TestSweepWarnsWhenTheKubectlClusterIsMissing(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no warning naming the account: %+v", st.Feed)
+	}
+}
+
+// A cluster of the same name and region in another account, or behind
+// another endpoint, is not the kubectl cluster: no home, and the feed says
+// which is which.
+func TestSweepRefusesAKubectlClusterThatIsAnotherCluster(t *testing.T) {
+	row := statussvc.ClusterStatus{Name: "prod", Region: "us-east-1", Version: "1.33",
+		ARN: "arn:aws:eks:us-east-1:999988887777:cluster/prod", Endpoint: "https://B.gr7.us-east-1.eks.amazonaws.com"}
+	for _, tc := range []struct {
+		name    string
+		kubectl health.KubectlCluster
+		row     func(statussvc.ClusterStatus) statussvc.ClusterStatus
+		home    bool
+		detail  string
+	}{
+		{"another account", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Account: "111122223333"}, nil, false, "account 111122223333; the fleet's prod is in account 999988887777"},
+		{"unknown row ARN", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Account: "999988887777"},
+			func(r statussvc.ClusterStatus) statussvc.ClusterStatus { r.ARN = ""; return r }, false, ""},
+		{"another endpoint", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://A.gr7.us-east-1.eks.amazonaws.com"}, nil, false, "https://A.gr7.us-east-1.eks.amazonaws.com"},
+		{"same endpoint", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://b.gr7.us-east-1.eks.amazonaws.com/"}, nil, true, ""},
+		{"proxied server", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://k8s.example"}, nil, true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := row
+			if tc.row != nil {
+				r = tc.row(r)
+			}
+			f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": {r}}}
+			b := newTestBackend(t, f, "us-east-1")
+			b.opts.Kubectl = tc.kubectl
+			b.sweep(t.Context())
+			st, _ := b.State(t.Context())
+			if (st.Home == "prod") != tc.home {
+				t.Fatalf("Home = %q, want home %v", st.Home, tc.home)
+			}
+			if tc.home {
+				return
+			}
+			found := false
+			for _, e := range st.Feed {
+				if e.Text == "kubectl cluster prod is another cluster" {
+					found = e.Level == state.LevelWarn && strings.Contains(e.Detail, tc.detail)
+				}
+			}
+			if !found {
+				t.Fatalf("no warning with %q: %+v", tc.detail, st.Feed)
+			}
+		})
 	}
 }

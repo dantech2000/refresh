@@ -1012,13 +1012,12 @@ func TestSimulatorRefusesARollback(t *testing.T) {
 	}
 }
 
-// The first fleet puts the cursor on the kubectl cluster; after that the
-// cursor stays where the user put it.
+// The cursor goes to the kubectl cluster when the fleet first has it, and
+// stays where the user put it after that, or if the user moved first.
 func TestCursorStartsOnTheKubectlCluster(t *testing.T) {
-	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
 	cs := []state.Cluster{{Name: "a"}, {Name: "b"}, {Name: "c"}}
-	// Before the first sweep the fleet is empty: nothing to place yet.
-	next, _ := m.Update(stateMsg{id: 1, st: state.State{Home: "c"}})
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	next, _ := m.Update(stateMsg{id: 1, st: state.State{Home: "c"}}) // before the first sweep
 	next, _ = next.(Model).Update(stateMsg{id: 2, st: state.State{Home: "c", Clusters: cs}})
 	if got := next.(Model).cluster().Name; got != "c" {
 		t.Fatalf("selected %q, want the kubectl cluster c", got)
@@ -1028,11 +1027,21 @@ func TestCursorStartsOnTheKubectlCluster(t *testing.T) {
 	if got := next.(Model).cluster().Name; got != "b" {
 		t.Fatalf("selected %q after the user moved to b", got)
 	}
-	// A home that shows up only after the first fleet does not take the cursor.
+
+	// The kubectl region answers on a later sweep: the cursor still goes.
 	m = New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
-	next, _ = m.Update(stateMsg{id: 1, st: state.State{Clusters: cs}})
+	next, _ = m.Update(stateMsg{id: 1, st: state.State{Clusters: cs[:2]}})
 	next, _ = next.(Model).Update(stateMsg{id: 2, st: state.State{Home: "c", Clusters: cs}})
-	if got := next.(Model).cluster().Name; got != "a" {
-		t.Fatalf("selected %q, want a: the home came after the first fleet", got)
+	if got := next.(Model).cluster().Name; got != "c" {
+		t.Fatalf("selected %q, want c once the fleet has it", got)
+	}
+
+	// The user moved before it was found: the cursor stays.
+	m = New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	next, _ = m.Update(stateMsg{id: 1, st: state.State{Clusters: cs[:2]}})
+	next, _ = next.(Model).key("down")
+	next, _ = next.(Model).Update(stateMsg{id: 2, st: state.State{Home: "c", Clusters: cs}})
+	if got := next.(Model).cluster().Name; got != "b" {
+		t.Fatalf("selected %q, want b: the user moved first", got)
 	}
 }

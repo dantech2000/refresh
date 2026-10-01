@@ -111,6 +111,10 @@ type ClusterStatus struct {
 	// State is the EKS cluster status (ACTIVE, UPDATING, ...). It is not
 	// part of the FleetStatus document.
 	State string `json:"-" yaml:"-"`
+	// ARN and Endpoint identify the cluster (DescribeCluster). They are not
+	// part of the FleetStatus document.
+	ARN      string `json:"-" yaml:"-"`
+	Endpoint string `json:"-" yaml:"-"`
 	// Nodegroups and Addons are the per-item rows the counts above come
 	// from. They are filled only with ListOptions.Detail, and are not part of
 	// the FleetStatus document.

@@ -33,16 +33,28 @@ the same change, and `c` copies it.
 ## Start on the kubectl cluster
 
 When the kubectl context (or `--kube-context`) points at an EKS cluster, the
-fleet cursor starts on that cluster, and the feed says `started on <name>`.
-The UI reads the cluster's name and region from the kubeconfig: a cluster ARN
-(as `aws eks update-kubeconfig` writes it), an eksctl cluster name, or the
-`aws eks get-token` arguments. Without `-r` or `-A`, the UI adds the
-cluster's region to the sweep.
+fleet cursor moves to that cluster when the sweep finds it, and the feed says
+`kubectl cluster <name>`. If you move the cursor or open a screen first, the
+cursor stays where you put it.
 
-If the sweep reads that region and does not find the cluster, the feed says
-`kubectl cluster <name> not found`, with the account from the cluster ARN.
-This usually means that the AWS credentials are for a different account.
-Pick the profile for that account with `--profile` or a refresh context.
+The UI reads the cluster's name and region from the kubeconfig: a cluster ARN
+(as `aws eks update-kubeconfig` writes it), an eksctl cluster name, or the API
+server address and the `aws eks get-token` arguments. Without `-r` or `-A`,
+the UI adds the cluster's region to the sweep, when the region is in the same
+AWS partition as the configured region.
+
+A cluster with the same name and region is the kubectl cluster only when its
+account matches the account in the cluster ARN, and its endpoint matches the
+kubeconfig's EKS server. The feed tells you when it does not:
+
+- `kubectl cluster <name> is another cluster`: the sweep found a cluster with
+  that name in a different account, or behind a different endpoint.
+- `kubectl cluster <name> not found`: the sweep read the region and did not
+  find the cluster.
+
+Both usually mean that the AWS credentials are for a different account than
+the kubectl context. Select the profile for that account with `--profile` or a
+refresh context.
 
 ## Screens
 

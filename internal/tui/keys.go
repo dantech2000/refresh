@@ -283,8 +283,9 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			if m.screen != screenBefore || m.cluster().Name != clusterBefore {
 				// The user moved on: a dry run for the old target must not
 				// open over the new one, and a started change must not pull
-				// them back.
+				// them back, nor may the kubectl cluster, found later.
 				m.focusAfter = nil
+				m.homed = true
 				if m.planning != "" && m.planID == planBefore {
 					m.cancelPlan()
 				}

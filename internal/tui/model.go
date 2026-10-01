@@ -67,7 +67,7 @@ type Model struct {
 	screen screen
 
 	sel      int  // fleet cursor
-	homed    bool // the cursor was placed on State.Home (or the fleet came without it)
+	homed    bool // the cursor was placed on State.Home, or the user moved it first
 	checkSel int
 	rollIdx  int
 	upIdx    int
@@ -253,13 +253,12 @@ func (m Model) applyState(msg stateMsg) (tea.Model, tea.Cmd) {
 			m.sel = i
 		}
 	}
-	// The first fleet starts on the kubectl cluster; later ones keep the
-	// user's cursor.
-	if !m.homed && len(m.st.Clusters) > 0 {
-		m.homed = true
+	// The cursor goes to the kubectl cluster once, when the fleet first
+	// has it, unless the user already moved or opened a screen.
+	if !m.homed && m.st.Home != "" {
 		for i, c := range m.st.Clusters {
 			if c.Name == m.st.Home {
-				m.sel = i
+				m.sel, m.homed = i, true
 			}
 		}
 	}

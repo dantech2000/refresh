@@ -32,6 +32,7 @@ func toClusters(rows []statussvc.ClusterStatus, latest string) ([]state.Cluster,
 		c := state.Cluster{
 			Name:            key,
 			Region:          r.Region,
+			ARN:             r.ARN,
 			Version:         r.Version,
 			Latest:          latest,
 			ExtendedSupport: r.Support.Tier == statussvc.SupportExtended || r.Support.Tier == statussvc.SupportUnsupported,

@@ -148,6 +148,8 @@ type Backend struct {
 	warnedClosed bool
 	// kubectlNoted is set once the feed said where the kubectl cluster is.
 	kubectlNoted bool
+	// home is the fleet key of the kubectl cluster, or "".
+	home string
 	// problem is why the last sweep read no region (State.FleetProblem).
 	problem string
 	// rolls are the rolls this backend started, oldest first.
@@ -467,7 +469,7 @@ func (b *Backend) sweep(ctx context.Context) {
 		}
 	}
 	b.diff(clusters, targets)
-	b.noteKubectl(res.Answered, targets)
+	b.noteKubectl(rows, res.Answered, targets)
 	b.clusters, b.targets = clusters, targets
 	b.adoptExternal(rows)
 	b.answered, b.total = len(res.Answered), len(b.opts.Regions)-len(res.Skipped)
@@ -477,27 +479,87 @@ func (b *Backend) sweep(ctx context.Context) {
 	b.api("sweep", fmt.Sprintf("%d cluster(s) in %d region(s) · %s", len(clusters), len(res.Answered), took), state.LevelOK)
 }
 
-// noteKubectl says once, after the first sweep that read the kubectl
-// cluster's region, whether the fleet has that cluster. A cluster the sweep
-// did not find is most often in another account than the credentials'. The
-// caller holds b.mu.
-func (b *Backend) noteKubectl(answered []regionsweep.Answer[[]statussvc.ClusterStatus], targets map[string]target) {
+// noteKubectl finds the kubectl cluster in the sweep's rows and sets
+// b.home, its fleet key. A row of the same name and region is the kubectl
+// cluster only when nothing the kubeconfig says contradicts it: the account
+// of its ARN, and its endpoint when the kubeconfig's server is an EKS
+// endpoint. After the first sweep that read the cluster's region, the feed
+// says once whether the fleet has it; a cluster not found is most often in
+// another account than the credentials'. The caller holds b.mu.
+func (b *Backend) noteKubectl(rows []statussvc.ClusterStatus, answered []regionsweep.Answer[[]statussvc.ClusterStatus], targets map[string]target) {
 	k := b.opts.Kubectl
-	if b.kubectlNoted || k.Name == "" || !slices.ContainsFunc(answered, func(a regionsweep.Answer[[]statussvc.ClusterStatus]) bool { return a.Region == k.Region }) {
+	if k.Name == "" {
+		return
+	}
+	b.home = ""
+	var other *statussvc.ClusterStatus // same name and region, another cluster
+	for i, r := range rows {
+		if r.Name != k.Name || r.Region != k.Region {
+			continue
+		}
+		if kubectlMatches(k, r) {
+			b.home = keyOf(targets, target{name: r.Name, region: r.Region})
+		} else {
+			other = &rows[i]
+		}
+	}
+	if b.kubectlNoted || !slices.ContainsFunc(answered, func(a regionsweep.Answer[[]statussvc.ClusterStatus]) bool { return a.Region == k.Region }) {
 		return
 	}
 	b.kubectlNoted = true
-	if key := keyOf(targets, target{name: k.Name, region: k.Region}); key != "" {
-		b.emit(state.Event{Cluster: key, Source: state.SourceAWS, Level: state.LevelInfo, Subject: k.Region,
-			Text: "started on " + k.Name, Detail: "from kubectl context " + k.Context})
-		return
+	switch {
+	case b.home != "":
+		b.emit(state.Event{Cluster: b.home, Source: state.SourceAWS, Level: state.LevelInfo, Subject: k.Region,
+			Text: "kubectl cluster " + k.Name, Detail: "from context " + k.Context})
+	case other != nil:
+		b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: k.Region,
+			Text: "kubectl cluster " + k.Name + " is another cluster",
+			Detail: "context " + k.Context + " points at " + kubectlWhere(k) + "; the fleet's " + k.Name + " is " + clusterWhere(*other)})
+	default:
+		b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: k.Region,
+			Text:   "kubectl cluster " + k.Name + " not found",
+			Detail: "context " + k.Context + " points at " + kubectlWhere(k) + " · the credentials may be for another account"})
 	}
-	detail := "kubectl context " + k.Context + " · the credentials may be for another account"
-	if k.Account != "" {
-		detail = "kubectl context " + k.Context + " is in account " + k.Account + " · the credentials may be for another account"
+}
+
+// kubectlMatches reports whether row r can be the kubectl cluster k: the
+// same account (when both ARNs are known; an unknown row ARN with a known
+// kubectl account is no match), and the same endpoint when k's server is an
+// EKS endpoint and the row's is known.
+func kubectlMatches(k health.KubectlCluster, r statussvc.ClusterStatus) bool {
+	if k.Account != "" && arnAccount(r.ARN) != k.Account {
+		return false
 	}
-	b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: k.Region,
-		Text: "kubectl cluster " + k.Name + " not found", Detail: detail})
+	if health.IsEKSServer(k.Server) && r.Endpoint != "" && !health.SameClusterEndpoint(k.Server, r.Endpoint) {
+		return false
+	}
+	return true
+}
+
+// arnAccount is the account of an ARN, or "".
+func arnAccount(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 {
+		return ""
+	}
+	return parts[4]
+}
+
+func kubectlWhere(k health.KubectlCluster) string {
+	switch {
+	case k.Account != "":
+		return "account " + k.Account
+	case k.Server != "":
+		return k.Server
+	}
+	return "a cluster this sweep did not list"
+}
+
+func clusterWhere(r statussvc.ClusterStatus) string {
+	if a := arnAccount(r.ARN); a != "" {
+		return "in account " + a
+	}
+	return r.Endpoint
 }
 
 // keyOf is the fleet key of t, or "".
@@ -639,9 +701,7 @@ func (b *Backend) State(ctx context.Context) (state.State, error) {
 	if b.opts.AllowChanges {
 		st.Badge = "CHANGES ON"
 	}
-	if k := b.opts.Kubectl; k.Name != "" {
-		st.Home = keyOf(b.targets, target{name: k.Name, region: k.Region})
-	}
+	st.Home = b.home
 	for _, c := range b.clusters {
 		c.Nodegroups = slices.Clone(c.Nodegroups)
 		c.Addons = slices.Clone(c.Addons)

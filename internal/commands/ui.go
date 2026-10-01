@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -60,7 +60,7 @@ readiness run found one available.
 It sweeps the config region, the regions given with -r, or with -A every EKS
 region (REFRESH_EKS_REGIONS narrows that list). Without -r or -A it also
 sweeps the region of the kubectl context's EKS cluster (or --kube-context's),
-and the fleet cursor starts on that cluster.`,
+and the fleet cursor goes to that cluster when the sweep finds it.`,
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Sweep all EKS-supported regions"},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) to sweep (repeatable)"},
@@ -184,12 +184,23 @@ func uiRegions(cmd *cli.Command, awsCfg aws.Config, kubectlRegion string) (regio
 		return appconfig.GetRegionsForPartition(awsCfg.Region), true
 	}
 	if awsCfg.Region != "" {
-		if kubectlRegion != "" && kubectlRegion != awsCfg.Region && slices.Contains(appconfig.GetRegionsForPartition(awsCfg.Region), kubectlRegion) {
+		if kubectlRegion != "" && kubectlRegion != awsCfg.Region && partitionOf(kubectlRegion) == partitionOf(awsCfg.Region) {
 			return []string{awsCfg.Region, kubectlRegion}, false
 		}
 		return []string{awsCfg.Region}, false
 	}
 	return appconfig.GetRegionsForPartition(awsCfg.Region), true
+}
+
+// partitionOf names the AWS partition of a region: credentials work only
+// within one.
+func partitionOf(region string) string {
+	for _, p := range []string{"cn-", "us-gov-", "us-isob-", "us-iso-", "eu-isoe-", "us-isof-"} {
+		if strings.HasPrefix(region, p) {
+			return p
+		}
+	}
+	return "aws"
 }
 
 // activeContextName is the refresh context in use, or "".

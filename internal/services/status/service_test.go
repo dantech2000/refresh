@@ -237,6 +237,24 @@ func TestAssembleCluster_HealthIssues(t *testing.T) {
 	}
 }
 
+// The row carries the cluster's ARN and endpoint (the TUI matches the
+// kubectl cluster by them), outside the document.
+func TestAssembleCluster_ARNAndEndpoint(t *testing.T) {
+	const arn, endpoint = "arn:aws:eks:us-east-1:111122223333:cluster/prod", "https://A.gr7.us-east-1.eks.amazonaws.com"
+	api := &fakeClusterAPI{
+		clusters: []string{"prod"},
+		describe: map[string]*ekstypes.Cluster{"prod": {Name: aws.String("prod"), Version: aws.String("1.32"), Arn: aws.String(arn), Endpoint: aws.String(endpoint)}},
+	}
+	svc := newTestService(api, &fakeNodegroups{}, &fakeAddons{})
+	statuses, err := svc.ListClusterStatuses(context.Background(), ListOptions{})
+	if err != nil || len(statuses) != 1 {
+		t.Fatalf("statuses = %+v, %v", statuses, err)
+	}
+	if c := statuses[0]; c.ARN != arn || c.Endpoint != endpoint {
+		t.Fatalf("ARN, Endpoint = %q, %q", c.ARN, c.Endpoint)
+	}
+}
+
 func TestListClusterStatuses_NameFilter(t *testing.T) {
 	api := &fakeClusterAPI{
 		clusters: []string{"prod-east", "staging", "prod-west"},

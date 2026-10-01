@@ -104,6 +104,9 @@ func TestUIRegionsAddTheKubectlRegion(t *testing.T) {
 		{"same region", "us-east-1", "us-east-1", nil, []string{"us-east-1"}},
 		{"other region", "us-east-1", "eu-west-1", nil, []string{"us-east-1", "eu-west-1"}},
 		{"other partition", "us-east-1", "cn-north-1", nil, []string{"us-east-1"}},
+		{"govcloud", "us-east-1", "us-gov-west-1", nil, []string{"us-east-1"}},
+		{"opt-in region", "us-east-1", "eu-south-1", nil, []string{"us-east-1", "eu-south-1"}},
+		{"china to china", "cn-north-1", "cn-northwest-1", nil, []string{"cn-north-1", "cn-northwest-1"}},
 		{"explicit -r", "us-east-1", "eu-west-1", []string{"-r", "ap-south-1"}, []string{"ap-south-1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
