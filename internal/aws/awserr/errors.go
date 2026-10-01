@@ -88,6 +88,18 @@ func IsCredentialError(err error) bool {
 	return containsAny(err.Error(), credentialFallbackPatterns)
 }
 
+// IsNoCredentials reports whether the credential chain found no
+// credentials: it ran down to its last resort, the EC2 instance metadata
+// service, and that call failed. Off EC2 that most often means no profile
+// was chosen (`aws sso login --profile X` caches a login, but refresh uses
+// profile X only when told to); on EC2, a missing instance role or an
+// unreachable metadata service. The SDK gives IMDS a short timeout of its
+// own, so its "deadline exceeded" is this, not the --timeout.
+func IsNoCredentials(err error) bool {
+	var op *smithy.OperationError
+	return errors.As(err, &op) && op.ServiceID == "ec2imds"
+}
+
 // IsPermissionError reports whether err is an IAM denial: a permission-class
 // API error code, or an HTTP 403 response.
 func IsPermissionError(err error) bool {
@@ -272,6 +284,12 @@ func FormatAWSError(err error, operation string) error {
 	if errors.Is(err, context.Canceled) {
 		return &formattedError{msg: fmt.Sprintf("operation cancelled while %s", operation), err: err}
 	}
+	// Before the timeout and network checks: the chain found nothing and
+	// asked IMDS last, so its timeout or dial failure is the symptom, not
+	// the cause.
+	if IsNoCredentials(err) {
+		return FormatNoCredentials(err, nil)
+	}
 	// A connect timeout also reports itself as context.DeadlineExceeded,
 	// but a longer --timeout does not help an endpoint that cannot be
 	// reached (#418). A DNS failure keeps its own path below (an invalid
@@ -372,6 +390,30 @@ Set up credentials in one of these ways:
   aws configure            an access key in a profile
   AWS_ACCESS_KEY_ID        with AWS_SECRET_ACCESS_KEY, as environment variables
   an IAM role              when refresh runs on EC2, EKS, or Lambda`, Summary(err))
+}
+
+// FormatNoCredentials explains a credential chain that found nothing
+// (IsNoCredentials). ssoProfiles, when given, are the SSO profiles in the
+// AWS config file, to pick one from.
+func FormatNoCredentials(err error, ssoProfiles []string) error {
+	msg := fmt.Sprintf(`no AWS credentials found
+Cause: the credential chain found no keys or profile with credentials, and ended at the EC2 instance metadata service, which gave none (%s)
+
+After aws sso login --profile <name>, tell refresh to use that profile:
+  --profile <name>                for one command
+  export AWS_PROFILE=<name>       for this shell
+  refresh context add <ctx> --profile <name> --cluster <cluster> --region <region>  saved, then refresh use <ctx>
+
+On EC2, check:
+  the instance role               an instance profile is attached
+  the metadata service            IMDS is enabled, and its hop limit is 2 or more in a container`, Summary(err))
+	if len(ssoProfiles) > 0 {
+		msg += "\n\nSSO profiles in your AWS config:"
+		for _, p := range ssoProfiles {
+			msg += "\n  " + p
+		}
+	}
+	return &formattedError{msg: msg, err: err}
 }
 
 func formatNetworkError(err error, operation string) error {

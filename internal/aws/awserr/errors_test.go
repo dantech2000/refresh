@@ -309,3 +309,30 @@ func TestFormatAWSError_DNSFailureKeepsTheRegionPath(t *testing.T) {
 		t.Errorf("an invalid region's DNS failure lost its region help:\n%s", got)
 	}
 }
+
+// A credential chain that ended at IMDS is "no credentials", with the
+// profile help, not a timeout or a network error.
+func TestFormatAWSErrorNoCredentials(t *testing.T) {
+	for _, cause := range []error{context.DeadlineExceeded, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: host is down")}} {
+		err := fmt.Errorf("failed to refresh cached credentials, no EC2 IMDS role found, %w",
+			&smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: cause})
+		if !IsNoCredentials(err) {
+			t.Fatalf("%v: not classified as no credentials", cause)
+		}
+		msg := FormatAWSError(err, "loading AWS credentials").Error()
+		if !strings.HasPrefix(msg, "no AWS credentials found") || !strings.Contains(msg, "--profile <name>") || strings.Contains(msg, "--timeout") {
+			t.Fatalf("%v: message = %q", cause, msg)
+		}
+		if !errors.Is(FormatAWSError(err, "x"), cause) {
+			t.Fatalf("%v: the cause is not wrapped", cause)
+		}
+	}
+	other := &smithy.OperationError{ServiceID: "STS", OperationName: "GetCallerIdentity", Err: context.DeadlineExceeded}
+	if IsNoCredentials(other) {
+		t.Fatal("an STS timeout classified as no credentials")
+	}
+	msg := FormatNoCredentials(errors.New("x"), []string{"prod-admin", "dev"}).Error()
+	if !strings.Contains(msg, "SSO profiles in your AWS config:\n  prod-admin\n  dev") {
+		t.Fatalf("profiles not listed: %q", msg)
+	}
+}

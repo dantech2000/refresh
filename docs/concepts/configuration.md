@@ -57,6 +57,25 @@ SSO session has expired, the command stops with the setup help. Keys that
 resolve but are revoked or expired fail on the first AWS call, with the same
 help.
 
+### After aws sso login
+
+`aws sso login --profile <name>` caches a login for that profile. It does not
+select the profile for other tools. Tell refresh to use it in one of these
+ways:
+
+```bash
+refresh --profile <name> status                 # one command
+export AWS_PROFILE=<name>                       # this shell
+refresh context add prod --profile <name> --cluster prod-eks --region us-east-1
+refresh use prod                                # saved with a cluster and region
+```
+
+Without a profile, keys, or an instance role, the SDK chain ends at the EC2
+instance metadata service, which the SDK gives a few seconds. refresh then
+stops with `no AWS credentials found`, the steps above, and the SSO profiles
+in your AWS config. On EC2 the same message also means a missing instance
+role or an unreachable metadata service.
+
 ## Cluster resolution
 
 Every command that targets one cluster resolves it in this order (first match
