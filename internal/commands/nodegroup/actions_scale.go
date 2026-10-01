@@ -79,12 +79,6 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 	// dry-run preview and a real scale, so the preview surfaces it too. (REF-143)
 	warnInstanceTypeAvailability(ctx, svc, clusterName, nodegroupName)
 
-	// A --min/--max that excludes the current desired size fails the same way
-	// in a preview, and before the PDB gate and the confirmation prompt.
-	if err := svc.CheckScaleBounds(ctx, clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
-		return err
-	}
-
 	r := &scaleRun{
 		cmd: cmd, format: format, machine: runner.IsMachineFormat(format), force: cmd.Bool("force"),
 		region: awsCfg.Region, cluster: clusterName, nodegroup: nodegroupName,
@@ -111,6 +105,13 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 			}
 			return r.refuse(busy)
 		}
+	}
+
+	// A --min/--max that excludes the current desired size fails the same way
+	// in a preview, and before the PDB gate and the confirmation prompt. It
+	// comes after the busy check: a busy cluster is refused first.
+	if err := svc.CheckScaleBounds(ctx, clusterName, nodegroupName, desired, minSize, maxSize); err != nil {
+		return err
 	}
 
 	current, err := svc.DescribeNodegroup(ctx, clusterName, nodegroupName)

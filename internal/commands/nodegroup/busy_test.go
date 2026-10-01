@@ -149,5 +149,18 @@ func TestBusyRefusalsPrintADocument(t *testing.T) {
 		if _, ok := doc["before"]; ok {
 			t.Errorf("sizes of an unreadable nodegroup: %v", doc)
 		}
+		// Bounds only: the bounds check reads the nodegroup too, but after
+		// the busy check, so the run still refuses with a document (exit 3).
+		for _, bound := range [][]string{{"--min", "2"}, {"--max", "6"}} {
+			stdout, stderr, err := runNodegroup(t, append([]string{"scale", "prod", "ng-a", "--yes", "-o", "json"}, bound...)...)
+			if code := exitCodeOf(err); code != 3 {
+				t.Fatalf("%v: exit = %d (%v)\nstderr:\n%s", bound, code, err, stderr)
+			}
+			// The busy scan cannot read ng-a either, so it cannot tell:
+			// Blocked, with the failed read.
+			if doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any); doc["outcome"] != "Blocked" || !strings.Contains(fmt.Sprint(doc["failures"]), "eks:DescribeNodegroup") {
+				t.Errorf("%v: document = %v", bound, doc)
+			}
+		}
 	})
 }
