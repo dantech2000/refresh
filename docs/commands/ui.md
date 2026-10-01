@@ -94,9 +94,9 @@ nodegroup picker), only the dialog's own keys work.
 | `a` | Fleet, Cluster | Dry-run the add-on updates |
 | `U` | Fleet, Cluster | Dry-run a cluster upgrade to the next version |
 | `B` | Fleet, Cluster | Dry-run a rollback one minor version back (only after readiness found a rollback window) |
-| `y` | Dry run | Start the change (`--allow-changes` only) |
+| `y` | Dry run | Start the change (once changes are allowed: `--allow-changes` or `ctrl+u`) |
 | `c` | Dry run | Copy the CLI command |
-| `ctrl+u` | Any, or a read-only dry run | Allow changes for this session (asks first). In a read-only dry run, the dry run then runs again with its live gates |
+| `ctrl+u` | Screens, and a read-only dry run | Allow changes for this session (asks first). In a read-only dry run, the dry run then runs again with its live gates. Not in the key list or the nodegroup picker |
 | `S` | Upgrade | Stop an upgrade or rollback this UI started, before its next phase or its next nodegroup roll. An EKS update in flight is never cancelled. Press `S` again to cancel the stop |
 | `P` | Upgrade | Pause an upgrade or rollback this UI started, before its next phase. Press `P` again to go on |
 | `y` / `n` | Upgrade | When the upgrade asks a question: go on, or stop after this step |

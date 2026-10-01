@@ -877,6 +877,10 @@ func nextHop(c state.Cluster) string {
 // Plan implements state.Backend. Roll and add-on plans come from the last
 // sweep; upgrade plans call the real planner in preview mode.
 func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) {
+	// Read once: a dry run that started read-only stays read-only, even if
+	// changes are allowed while it runs. It skipped the live gates, so it
+	// must never become startable.
+	allowed := b.changesAllowed()
 	if err := ctx.Err(); err != nil {
 		return state.Plan{}, err
 	}
@@ -892,14 +896,14 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	switch a.Kind {
 	case state.ActionRoll:
 		p, err = planRoll(c, t, a.Nodegroup)
-		if err == nil && b.changesAllowed() {
+		if err == nil && allowed {
 			pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 			b.planRollLive(pctx, &p, cfg, t, c, a.Nodegroup)
 			cancel()
 		}
 	case state.ActionAddons:
 		p = planAddons(c, t)
-		if b.changesAllowed() {
+		if allowed {
 			pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 			err = b.planAddonsLive(pctx, &p, cfg, t)
 			cancel()
@@ -917,7 +921,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			return state.Plan{}, perr
 		}
 		p = planUpgrade(c, t, plan)
-		if b.changesAllowed() && p.Blocked == "" {
+		if allowed && p.Blocked == "" {
 			b.planUpgradeLive(t, plan)
 			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again for real", Note: "insights may refresh first; a changed plan asks before it runs"})
 		}
@@ -929,7 +933,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			return state.Plan{}, perr
 		}
 		p = planRollback(c, t, plan)
-		if b.changesAllowed() && p.Blocked == "" {
+		if allowed && p.Blocked == "" {
 			b.mu.Lock()
 			b.acceptedRollbacks[t] = acceptedUpgrade{target: plan.TargetVersion, steps: rollbackSteps(plan)}
 			b.mu.Unlock()
@@ -949,7 +953,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	if p.Blocked == "" && busy != "" {
 		p.Blocked = a.Cluster + " is busy: " + busy
 	}
-	if p.Blocked == "" && !b.changesAllowed() {
+	if p.Blocked == "" && !allowed {
 		p.Blocked, p.ReadOnly = ErrReadOnly.Error(), true
 	}
 	return p, nil

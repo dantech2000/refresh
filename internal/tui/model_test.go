@@ -1158,3 +1158,23 @@ func TestUnlockKeyOnlyWhereItCanWork(t *testing.T) {
 		t.Fatal("ctrl+u asked on a backend that cannot be unlocked")
 	}
 }
+
+// A read-only dry run that answers after changes were allowed runs again
+// instead of opening blocked.
+func TestLateReadOnlyDryRunRunsAgainAfterUnlock(t *testing.T) {
+	world := &lockedWorld{World: sim.New(sim.Options{Seed: 7})}
+	h := &harness{t: t, w: world.World, m: New(t.Context(), world, time.Millisecond)}
+	h.send(tea.WindowSizeMsg{Width: 160, Height: 42})
+	h.refresh()
+	next, pending := h.m.key("a")
+	h.m = next.(Model)
+	late := pending() // built read-only
+	h.keys("ctrl+u", "y")
+	h.send(late)
+	if len(world.plans) != 2 || world.plans[1] != world.plans[0] {
+		t.Fatalf("plans = %+v, want the dry run again", world.plans)
+	}
+	if h.m.confirm == nil || h.m.confirm.ReadOnly {
+		t.Fatalf("confirm = %+v, want the fresh dry run", h.m.confirm)
+	}
+}

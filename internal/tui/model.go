@@ -200,6 +200,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		p := msg.plan
+		if p.ReadOnly && !m.canUnlock() {
+			if _, ok := m.b.(unlocker); ok {
+				// Changes were allowed while this dry run was read-only: it
+				// skipped the live gates, so run it again.
+				return m, m.plan(p.Action)
+			}
+		}
 		m.confirm, m.confirmErr, m.scroll, m.starting, m.help = &p, "", 0, false, false
 	case startMsg:
 		m.starting = false

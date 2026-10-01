@@ -481,3 +481,31 @@ func TestControlPlanePhaseShowsProgress(t *testing.T) {
 		t.Fatalf("a long update shows %v, want 0.95 until EKS says done", p)
 	}
 }
+
+// Changes allowed while a dry run is being built do not make that dry run
+// startable: it started read-only and skipped the live gates. Start then
+// refuses until a dry run built after the unlock.
+func TestUnlockDuringADryRunKeepsItReadOnly(t *testing.T) {
+	rig := newUpgradeRig(t)
+	b := rig.b
+	b.allow.Store(false)
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) {
+		b.AllowChanges() // ctrl+u, y while the planner runs
+		return upgradePlan(), nil
+	}
+	p, err := b.Plan(t.Context(), upgradeAction)
+	if err != nil || !p.ReadOnly || p.Blocked == "" {
+		t.Fatalf("plan = %+v, %v; want read-only", p, err)
+	}
+	if err := b.Start(t.Context(), upgradeAction); err == nil || !strings.Contains(err.Error(), "no dry run") {
+		t.Fatalf("Start after a read-only dry run = %v", err)
+	}
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) { return upgradePlan(), nil }
+	if p, err := b.Plan(t.Context(), upgradeAction); err != nil || p.ReadOnly || p.Blocked != "" {
+		t.Fatalf("plan after unlock = %+v, %v", p, err)
+	}
+	if err := b.Start(t.Context(), upgradeAction); err != nil {
+		t.Fatalf("Start after a fresh dry run = %v", err)
+	}
+	b.Close()
+}
