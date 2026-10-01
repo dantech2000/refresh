@@ -71,6 +71,9 @@ func ResolveAWSCredentials(ctx context.Context, awsCfg aws.Config) error {
 		return nil // anonymous: nothing to resolve
 	}
 	if _, err := awsCfg.Credentials.Retrieve(ctx); err != nil {
+		if awserr.IsNoCredentials(err) {
+			return fmt.Errorf("AWS credential validation failed: %w", awserr.FormatNoCredentials(err, SSOProfiles()))
+		}
 		return fmt.Errorf("AWS credential validation failed: %w", FormatAWSError(err, "loading AWS credentials"))
 	}
 	return nil
