@@ -204,6 +204,12 @@ Examples:
    # Execute, confirming each mutating phase
    refresh cluster upgrade -c prod-east --to 1.33
 
+   # Each part on its own: the control plane first, then the nodegroups and
+   # the add-ons when you are ready
+   refresh cluster upgrade -c prod-east --to 1.33 --only control-plane
+   refresh cluster upgrade -c prod-east --to 1.33 --only nodegroups
+   refresh cluster upgrade -c prod-east --to 1.33 --only addons
+
    # Non-interactive (CI) run
    refresh cluster upgrade -c prod-east --to 1.33 --yes
 
@@ -228,6 +234,7 @@ Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, fail
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--skip string` | — | — | Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps) |
 | `--skip-nodegroup string` | — | — | Nodegroup name pattern to skip (repeatable) |
+| `--only string` | — | — | Upgrade only these parts: control-plane, addons, nodegroups (repeatable or comma-separated; default all). The parts left out are manual steps in the plan. Without control-plane, --to must be the control plane's version; without addons, --to is one minor version up |
 | `--quiet, -q` | — | — | Suppress progress output |
 | `--wait-timeout duration` | — | `4h0m0s` | How long to wait for the whole upgrade to finish (0 = no limit; not read from REFRESH_TIMEOUT, which only sets API timeouts) |
 | `--timeout, -t duration` | — | — | Deprecated: use --wait-timeout |

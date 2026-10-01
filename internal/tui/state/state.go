@@ -362,6 +362,19 @@ const (
 	ActionRollback                   // cluster rollback to the previous minor
 )
 
+// Scope limits a cluster upgrade to some of its parts, as `cluster upgrade
+// --only` does. Zero is every part.
+type Scope uint8
+
+const (
+	ScopeControlPlane Scope = 1 << iota
+	ScopeAddons
+	ScopeNodegroups
+)
+
+// Has reports whether the scope covers part (every part when s is zero).
+func (s Scope) Has(part Scope) bool { return s == 0 || s&part != 0 }
+
 // Action is a change request.
 type Action struct {
 	Kind      ActionKind
@@ -371,6 +384,8 @@ type Action struct {
 	// backend refuses it when a newer dry run replaced that one; 0 means
 	// the newest.
 	PlanID uint64
+	// Scope limits an upgrade to some of its parts. Zero is every part.
+	Scope Scope
 }
 
 // Plan is the dry run of an Action, shown before the TUI asks to start it.

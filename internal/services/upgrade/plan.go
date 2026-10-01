@@ -35,6 +35,11 @@ type PlanOptions struct {
 	// Progress, when set, receives progress lines while the plan is built
 	// (the insights refresh can take minutes).
 	Progress ProgressFunc
+	// Only limits the plan to these parts (--only). Empty means every part.
+	// Steps of the other parts are manual, so the run leaves them alone.
+	// Without the control plane, the target must be the version the control
+	// plane runs; without add-ons, the plan crosses one minor version.
+	Only []Part
 }
 
 // insightsMode selects how the readiness gate treats Cluster Insights.
@@ -77,6 +82,9 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 
 	hops, err := expandHops(currentVersion, targetVersion)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkScope(opts, clusterName, currentVersion, targetVersion, len(hops)); err != nil {
 		return nil, err
 	}
 	if len(hops) == 0 {
@@ -124,13 +132,26 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		simAddons[a.Name] = a.Version
 	}
 
+	// Add-ons an earlier --only run left behind that the live control plane
+	// cannot run, when this run leaves the add-ons out too.
+	var laggingLeftOut, unreadLeftOut []string
+
 	// Before the next control-plane step, finish work at the live version
 	// that the step depends on: addons an interrupted hop left incompatible
 	// with the live control plane, and nodegroups the next step would push
 	// beyond the kubelet skew. Everything else rolls with the regular hops.
 	if hops[0] != currentVersion {
-		preRoll := preRollNodegroups(nodegroups, currentVersion, hops[0], opts.SkipNodegroups)
-		addonLag := s.addonsIncompatible(ctx, addonsSvc, addonList, currentVersion, opts.SkipAddons)
+		// A part left out by --only does not catch up either: the next
+		// hop's readiness step blocks on nodegroups beyond the skew.
+		var preRoll []nodegroupState
+		if opts.includes(PartNodegroups) {
+			preRoll = preRollNodegroups(nodegroups, currentVersion, hops[0], opts.SkipNodegroups)
+		}
+		lagging, unread := s.addonsIncompatible(ctx, addonsSvc, addonList, currentVersion, opts.SkipAddons)
+		addonLag := opts.includes(PartAddons) && len(lagging) > 0
+		if !opts.includes(PartAddons) {
+			laggingLeftOut, unreadLeftOut = lagging, unread
+		}
 		if addonLag || len(preRoll) > 0 {
 			plan.Hops = append(plan.Hops, s.catchUpHop(ctx, addonsSvc, plan, addonList, simAddons, preRoll, addonLag, cluster, currentVersion, opts))
 			advanceSimulation(simNodegroups, preRoll, currentVersion, opts.SkipNodegroups)
@@ -154,8 +175,10 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		plan.Hops = append(plan.Hops, hop)
 
 		// Advance the simulation: after this hop, rollable nodegroups sit at
-		// the hop target.
-		advanceSimulation(simNodegroups, nodegroups, hopTo, opts.SkipNodegroups)
+		// the hop target, unless --only leaves them out.
+		if opts.includes(PartNodegroups) {
+			advanceSimulation(simNodegroups, nodegroups, hopTo, opts.SkipNodegroups)
+		}
 	}
 
 	// Lookups that fail on a cancelled ctx surface as blocked steps; an
@@ -163,6 +186,8 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	if err := ctx.Err(); err != nil {
 		return nil, stopped(ctx, "while building the upgrade plan", "", err)
 	}
+	applyScope(plan, opts)
+	blockOnLaggingAddons(plan, laggingLeftOut, unreadLeftOut, currentVersion)
 	return plan, nil
 }
 
@@ -200,28 +225,31 @@ func preRollNodegroups(nodegroups []nodegroupState, cpVersion, nextVersion strin
 	return out
 }
 
-// addonsIncompatible reports whether an installed addon's version is not
+// addonsIncompatible lists the installed addons whose version is not
 // among the versions EKS lists as compatible with the live control-plane
 // version, i.e. a previous run moved the control plane but was interrupted
 // before that hop's addon phase finished.
 //
 // An addon that is merely not the newest compatible build does not count;
-// the next hop's addon phase moves it anyway. Version-lookup API errors are
-// not treated as lag here: the regular hop steps surface them.
-func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImpl, addonList []addons.AddonSummary, cpVersion string, skip []string) bool {
+// the next hop's addon phase moves it anyway. unread lists the addons whose
+// versions could not be read: the regular hop steps surface those errors
+// when the add-ons are in the plan, and a plan that leaves them out blocks
+// on them (blockOnLaggingAddons).
+func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImpl, addonList []addons.AddonSummary, cpVersion string, skip []string) (incompatible, unread []string) {
 	for _, a := range addonList {
 		if isSkippedAddon(a.Name, skip) {
 			continue
 		}
 		versions, err := svc.GetAvailableVersions(ctx, a.Name, cpVersion)
 		if err != nil {
+			unread = append(unread, a.Name)
 			continue
 		}
 		if !versionListed(a.Version, versions) {
-			return true
+			incompatible = append(incompatible, a.Name)
 		}
 	}
-	return false
+	return incompatible, unread
 }
 
 // catchUpHop builds a same-version hop that runs before the next

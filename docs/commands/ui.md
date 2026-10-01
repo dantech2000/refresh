@@ -92,7 +92,7 @@ nodegroup picker), only the dialog's own keys work.
 | `r` | Fleet, Cluster | Run readiness for the next version |
 | `p` | Fleet, Cluster | Dry-run a nodegroup patch (pick the nodegroup, then `enter`) |
 | `a` | Fleet, Cluster | Dry-run the add-on updates |
-| `U` | Fleet, Cluster | Dry-run a cluster upgrade to the next version |
+| `U` | Fleet, Cluster | Choose what to upgrade, then dry-run it: the control plane only, the control plane and add-ons, or everything, to the next version. With the control plane on the newest version, catch the nodegroups (and add-ons) up to it. A single choice dry-runs at once |
 | `B` | Fleet, Cluster | Dry-run a rollback one minor version back (only after readiness found a rollback window) |
 | `y` | Dry run | Start the change (once changes are allowed: `--allow-changes` or `ctrl+u`) |
 | `c` | Dry run | Copy the CLI command |
@@ -135,7 +135,8 @@ starts the change. Before the UI starts anything, it checks again:
   cluster), the PDB check is skipped, as in `nodegroup update`, and the dry
   run says so.
 - **An add-on update** previews again, and refuses when the plan changed.
-- **A cluster upgrade** builds its plan again and asks (`y`/`n`) when the steps
+- **A cluster upgrade** builds its plan again, for the same parts as the dry
+  run (as `cluster upgrade --only`), and asks (`y`/`n`) when the steps
   changed or a nodegroup's health gate warns. A PDB drain blocker before a
   roll stops the run.
 - **A rollback** follows the rules of [`cluster rollback`](cluster.md): within

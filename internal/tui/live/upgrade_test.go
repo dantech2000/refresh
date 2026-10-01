@@ -37,12 +37,15 @@ type fakeUpgrader struct {
 	// while it rolls.
 	failRoll   string
 	duringRoll func()
+	// only is the --only scope of the last real plan.
+	only []upgrade.Part
 }
 
-func (f *fakeUpgrader) BuildPlan(context.Context, string, string, upgrade.PlanOptions) (*upgrade.Plan, error) {
+func (f *fakeUpgrader) BuildPlan(_ context.Context, _, _ string, o upgrade.PlanOptions) (*upgrade.Plan, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.built++
+	f.only = o.Only
 	return f.plan, nil
 }
 
@@ -153,7 +156,9 @@ func newUpgradeRig(t *testing.T) *upgradeRig {
 	rig := &upgradeRig{b: newTestBackend(t, fl, "us-east-1"), f: &fakeUpgrader{plan: upgradePlan()}}
 	b := rig.b
 	b.allow.Store(true)
-	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) { return upgradePlan(), nil }
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string, []upgrade.Part) (*upgrade.Plan, error) {
+		return upgradePlan(), nil
+	}
 	b.newUpgrader = func(aws.Config) upgrader { return rig.f }
 	rr := newRollRig(t) // reuse its fake kube, health, and observer
 	b.roll = rr.b.roll
@@ -491,7 +496,7 @@ func TestUnlockDuringADryRunKeepsItReadOnly(t *testing.T) {
 	rig := newUpgradeRig(t)
 	b := rig.b
 	b.allow.Store(false)
-	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) {
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string, []upgrade.Part) (*upgrade.Plan, error) {
 		b.AllowChanges() // ctrl+u, y while the planner runs
 		return upgradePlan(), nil
 	}
@@ -502,7 +507,9 @@ func TestUnlockDuringADryRunKeepsItReadOnly(t *testing.T) {
 	if err := b.Start(t.Context(), upgradeAction); err == nil || !strings.Contains(err.Error(), "no dry run") {
 		t.Fatalf("Start after a read-only dry run = %v", err)
 	}
-	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) { return upgradePlan(), nil }
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string, []upgrade.Part) (*upgrade.Plan, error) {
+		return upgradePlan(), nil
+	}
 	if p, err := b.Plan(t.Context(), upgradeAction); err != nil || p.ReadOnly || p.Blocked != "" {
 		t.Fatalf("plan after unlock = %+v, %v", p, err)
 	}
@@ -521,7 +528,7 @@ func TestAnOlderDryRunCannotReplaceTheConfirmedOne(t *testing.T) {
 	older := upgradePlan()
 	older.Hops[0].Steps = append(older.Hops[0].Steps, upgrade.Step{Type: upgrade.StepNodegroup, Target: "ng-new", Version: "1.32", Status: upgrade.StatusPending})
 	var calls atomic.Int32
-	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) {
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string, []upgrade.Part) (*upgrade.Plan, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			<-release // dry run A is slow
@@ -564,4 +571,50 @@ func TestAnOlderDryRunCannotReplaceTheConfirmedOne(t *testing.T) {
 		t.Fatalf("Start with dry run B = %v", err)
 	}
 	b.Close()
+}
+
+// A scoped upgrade dry-runs and runs with the same --only parts: the
+// control plane alone goes to the next version, and catching up the
+// nodegroups targets the version the control plane runs. Start refuses a
+// scope the last dry run did not cover.
+func TestUpgradeScopeReachesThePlanner(t *testing.T) {
+	rig := newUpgradeRig(t)
+	var gotTarget string
+	var gotOnly []upgrade.Part
+	rig.b.svc.buildPlan = func(_ context.Context, _ aws.Config, _, target string, only []upgrade.Part) (*upgrade.Plan, error) {
+		gotTarget, gotOnly = target, only
+		return upgradePlan(), nil
+	}
+	cp := state.Action{Kind: state.ActionUpgrade, Cluster: "prod-api", Scope: state.ScopeControlPlane}
+	p, err := rig.b.Plan(t.Context(), cp)
+	if err != nil || p.Blocked != "" {
+		t.Fatalf("plan = %+v, %v", p, err)
+	}
+	if gotTarget != "1.32" || len(gotOnly) != 1 || gotOnly[0] != upgrade.PartControlPlane {
+		t.Fatalf("planner got %s %v, want 1.32 [control-plane]", gotTarget, gotOnly)
+	}
+	if !strings.HasSuffix(p.Command, "--to 1.32 --only control-plane") || !strings.HasPrefix(p.Title, "Upgrade control plane ·") {
+		t.Fatalf("command %q, title %q", p.Command, p.Title)
+	}
+	if err := rig.b.Start(t.Context(), upgradeAction); err == nil || !strings.Contains(err.Error(), "other parts") {
+		t.Fatalf("Start with another scope = %v", err)
+	}
+	if err := rig.b.Start(t.Context(), cp); err != nil {
+		t.Fatal(err)
+	}
+	rig.b.Close()
+	rig.f.mu.Lock()
+	only := rig.f.only
+	rig.f.mu.Unlock()
+	if len(only) != 1 || only[0] != upgrade.PartControlPlane {
+		t.Fatalf("the run planned with --only %v, want control-plane", only)
+	}
+
+	ng := state.Action{Kind: state.ActionUpgrade, Cluster: "prod-api", Scope: state.ScopeNodegroups}
+	if _, err := rig.b.Plan(t.Context(), ng); err != nil {
+		t.Fatal(err)
+	}
+	if gotTarget != "1.31" || len(gotOnly) != 1 || gotOnly[0] != upgrade.PartNodegroups {
+		t.Fatalf("catch-up planner got %s %v, want 1.31 [nodegroups]", gotTarget, gotOnly)
+	}
 }

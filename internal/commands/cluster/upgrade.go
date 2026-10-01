@@ -67,6 +67,12 @@ Examples:
    # Execute, confirming each mutating phase
    refresh cluster upgrade -c prod-east --to 1.33
 
+   # Each part on its own: the control plane first, then the nodegroups and
+   # the add-ons when you are ready
+   refresh cluster upgrade -c prod-east --to 1.33 --only control-plane
+   refresh cluster upgrade -c prod-east --to 1.33 --only nodegroups
+   refresh cluster upgrade -c prod-east --to 1.33 --only addons
+
    # Non-interactive (CI) run
    refresh cluster upgrade -c prod-east --to 1.33 --yes
 
@@ -85,6 +91,7 @@ Examples:
 			runner.KubeContextFlag(),
 			&cli.StringSliceFlag{Name: "skip", Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to skip (repeatable)"},
+			&cli.StringSliceFlag{Name: "only", Usage: "Upgrade only these parts: control-plane, addons, nodegroups (repeatable or comma-separated; default all). The parts left out are manual steps in the plan. Without control-plane, --to must be the control plane's version; without addons, --to is one minor version up"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
 			runner.WaitTimeoutFlag("How long to wait for the whole upgrade to finish (0 = no limit; not read from REFRESH_TIMEOUT, which only sets API timeouts)", upgradeDefaultTimeout),
 			// Deprecated in 0.11.0: the local --timeout/-t meant the wait
@@ -157,6 +164,14 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	if err := runner.RequireYesUnattended(cmd); err != nil {
 		return err
 	}
+	only, err := upgrade.ParseParts(cmd.StringSlice("only"))
+	if err != nil {
+		return err
+	}
+	if cmd.IsSet("only") && len(only) == 0 {
+		// An empty --only (an unset variable) must not mean "every part".
+		return fmt.Errorf("--only needs at least one of control-plane, addons, nodegroups")
+	}
 	pollInterval := cmd.Duration("poll-interval")
 	if pollInterval <= 0 {
 		return fmt.Errorf("--poll-interval must be greater than 0 (got %s)", pollInterval)
@@ -188,6 +203,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		SkipInsightsCheck: cmd.Bool("skip-insights-check"),
 		// A dry run starts no insights refresh (a write API).
 		Preview: cmd.Bool("dry-run"),
+		Only:    only,
 	}
 	healthGate := newNodegroupHealthGate(cmd, awsCfg, clusterName)
 
@@ -340,7 +356,9 @@ func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) str
 		}
 	}
 	parts = append(parts, "cluster", "upgrade", "-c", shellQuote(clusterName), "--to", shellQuote(plan.TargetVersion))
-	for _, name := range []string{"skip", "skip-nodegroup"} {
+	// The resume runs the same parts: --only must carry over, or a resumed
+	// control-plane-only run would roll the nodegroups too.
+	for _, name := range []string{"skip", "skip-nodegroup", "only"} {
 		for _, v := range cmd.StringSlice(name) {
 			parts = append(parts, "--"+name, shellQuote(v))
 		}

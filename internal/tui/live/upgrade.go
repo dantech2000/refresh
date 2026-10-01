@@ -103,17 +103,19 @@ func stepDiff(was, now []string) string {
 
 // planUpgradeLive records what the user confirms with y: the target and the
 // pending steps of the preview.
-func (b *Backend) planUpgradeLive(t target, plan *upgrade.Plan, id uint64) {
+func (b *Backend) planUpgradeLive(t target, plan *upgrade.Plan, scope state.Scope, id uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.claimAccept(upgradeKey(t), id) {
-		b.acceptedUpgrades[t] = acceptedUpgrade{target: plan.TargetVersion, steps: pendingSteps(plan)}
+		b.acceptedUpgrades[t] = acceptedUpgrade{target: plan.TargetVersion, steps: pendingSteps(plan), scope: scope}
 	}
 }
 
 type acceptedUpgrade struct {
 	target string
 	steps  []string
+	// scope is the parts the dry run covered; the run covers the same.
+	scope state.Scope
 }
 
 // startUpgrade claims the cluster and runs the upgrade in the background.
@@ -136,6 +138,10 @@ func (b *Backend) startUpgrade(ctx context.Context, a state.Action) error {
 	if !planned {
 		b.mu.Unlock()
 		return errors.New("no dry run for this upgrade: open its dry run (U) first")
+	}
+	if acc.scope != a.Scope {
+		b.mu.Unlock()
+		return errors.New("the last dry run on this cluster covered other parts of the upgrade: open this one's dry run (U) again")
 	}
 	delete(b.acceptedUpgrades, t)
 	b.claimed[t] = "upgrading"
@@ -196,7 +202,7 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 
 	// The real plan: not a preview, so it refreshes insights and blocks
 	// until EKS has evaluated them, as `cluster upgrade` does.
-	plan, err := svc.BuildPlan(ctx, u.t.name, acc.target, upgrade.PlanOptions{Progress: progress})
+	plan, err := svc.BuildPlan(ctx, u.t.name, acc.target, upgrade.PlanOptions{Progress: progress, Only: scopeParts(acc.scope)})
 	if err != nil {
 		b.endUpgrade(u, "the plan could not be built: "+awsinternal.FormatAWSError(err, "building the upgrade plan for "+u.t.name).Error(), false)
 		return

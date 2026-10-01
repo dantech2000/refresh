@@ -150,6 +150,8 @@ func TestEveryScreenFillsTheTerminalExactly(t *testing.T) {
 		h.keys("?")
 		checkFrame(t, "help", h.m)
 		h.keys("esc", "1", "U")
+		checkFrame(t, "upgrade chooser", h.m)
+		h.keys("3")
 		checkFrame(t, "blocked upgrade dialog", h.m)
 	}
 }
@@ -208,7 +210,7 @@ func TestPatchFlowRunsARollToTheEnd(t *testing.T) {
 
 func TestBlockedUpgradeDoesNotStart(t *testing.T) {
 	h := newHarness(t, 160, 42, 0)
-	h.keys("U")
+	h.keys("U", "3")
 	h.contains("blocked: 1 readiness blocker: deprecated APIs")
 	h.lacks("Start upgrade")
 	h.keys("y", "enter")
@@ -234,7 +236,7 @@ func TestEnterNeverConfirmsAChange(t *testing.T) {
 
 func TestDialogScrollsOnAShortTerminal(t *testing.T) {
 	h := newHarness(t, minWidth, minHeight, 0)
-	h.keys("U") // the longest plan: every add-on and nodegroup
+	h.keys("U", "3") // the longest plan: every add-on and nodegroup
 	// The verdict and the keys stay on screen without scrolling.
 	h.contains("blocked: 1 readiness blocker", "esc", "Cancel", "more below")
 	h.lacks("CLI equivalent")
@@ -767,11 +769,7 @@ func TestNoPlanOpensBehindThePicker(t *testing.T) {
 
 func TestPickerKeepsItsSelectionOnScreen(t *testing.T) {
 	h := newHarness(t, minWidth, minHeight, 0)
-	var items []state.Nodegroup
-	for i := range 20 {
-		items = append(items, state.Nodegroup{Name: fmt.Sprintf("ng-%02d", i), Version: "1.31", AMI: "old", LatestAMI: "new"})
-	}
-	h.m.pick = &picker{cluster: "prod-api", items: items}
+	h.m.pick = &picker{title: "Patch which nodegroup?", cluster: "prod-api", items: manyPickItems(20)}
 	for range 15 {
 		h.keys("down")
 	}
@@ -808,11 +806,7 @@ func TestAPlanRequestDropsThePendingFocus(t *testing.T) {
 
 func TestResizeKeepsThePickerSelectionVisible(t *testing.T) {
 	h := newHarness(t, minWidth, 42, 0)
-	var items []state.Nodegroup
-	for i := range 20 {
-		items = append(items, state.Nodegroup{Name: fmt.Sprintf("ng-%02d", i), Version: "1.31", AMI: "old", LatestAMI: "new"})
-	}
-	h.m.pick = &picker{cluster: "prod-api", items: items}
+	h.m.pick = &picker{title: "Patch which nodegroup?", cluster: "prod-api", items: manyPickItems(20)}
 	for range 15 {
 		h.keys("down")
 	}
@@ -1176,5 +1170,108 @@ func TestLateReadOnlyDryRunRunsAgainAfterUnlock(t *testing.T) {
 	}
 	if h.m.confirm == nil || h.m.confirm.ReadOnly {
 		t.Fatalf("confirm = %+v, want the fresh dry run", h.m.confirm)
+	}
+}
+
+// manyPickItems is n nodegroup patches to choose from.
+func manyPickItems(n int) []pickItem {
+	var items []pickItem
+	for i := range n {
+		name := fmt.Sprintf("ng-%02d", i)
+		items = append(items, pickItem{name: name, why: "AMI old → new", action: state.Action{Kind: state.ActionRoll, Cluster: "prod-api", Nodegroup: name}})
+	}
+	return items
+}
+
+// U offers the parts of an upgrade: the control plane alone, with its
+// add-ons, or everything. With the control plane on the newest version and a
+// nodegroup behind it, the one choice (catch up the nodegroups) dry-runs
+// at once.
+func TestUpgradeKeyOffersTheParts(t *testing.T) {
+	world := &recordingWorld{World: sim.New(sim.Options{Seed: 7})}
+	m := New(t.Context(), world, time.Millisecond)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 42})
+	behind := state.State{Clusters: []state.Cluster{{Name: "a", Version: "1.33", Latest: "1.35"}}}
+	next, _ = next.(Model).Update(stateMsg{id: 1, st: behind})
+	next, _ = next.(Model).key("U")
+	pm := next.(Model)
+	if pm.pick == nil || len(pm.pick.items) != 3 {
+		t.Fatalf("picker = %+v, want three parts", pm.pick)
+	}
+	txt := strings.Join(func() []string {
+		var out []string
+		for _, l := range pm.frame() {
+			out = append(out, l.Plain())
+		}
+		return out
+	}(), "\n")
+	for _, want := range []string{"Upgrade what?", "Control plane only", "Control plane and add-ons", "Everything", "1.33 → 1.34"} {
+		if !strings.Contains(txt, want) {
+			t.Fatalf("picker lacks %q:\n%s", want, txt)
+		}
+	}
+	for key, scope := range map[string]state.Scope{"1": state.ScopeControlPlane, "2": state.ScopeControlPlane | state.ScopeAddons, "3": 0} {
+		next, cmd := pm.key(key)
+		if cmd == nil || next.(Model).pick != nil {
+			t.Fatalf("%s: no dry run", key)
+		}
+		cmd()
+		if got := world.plans[len(world.plans)-1]; got.Scope != scope || got.Kind != state.ActionUpgrade || got.Cluster != "a" {
+			t.Fatalf("%s: planned %+v, want scope %d", key, got, scope)
+		}
+	}
+
+	current := state.State{Clusters: []state.Cluster{{Name: "b", Version: "1.35", Latest: "1.35",
+		Nodegroups: []state.Nodegroup{{Name: "ng", Version: "1.34"}, {Name: "ok", Version: "1.35"}}}}}
+	m = New(t.Context(), world, time.Millisecond)
+	next, _ = m.Update(stateMsg{id: 1, st: current})
+	next, cmd := next.(Model).key("U")
+	if cmd == nil || next.(Model).pick != nil {
+		t.Fatal("one choice did not dry-run at once")
+	}
+	cmd()
+	if got := world.plans[len(world.plans)-1]; got.Scope != state.ScopeNodegroups || got.Cluster != "b" {
+		t.Fatalf("planned %+v, want the nodegroups of b", got)
+	}
+}
+
+// recordingWorld is the simulated fleet that records each dry run asked of
+// it.
+type recordingWorld struct {
+	*sim.World
+	plans []state.Action
+}
+
+func (w *recordingWorld) Plan(ctx context.Context, a state.Action) (state.Plan, error) {
+	w.plans = append(w.plans, a)
+	return w.World.Plan(ctx, a)
+}
+
+// Catch-up choices depend on what lags, not on the newest version: a
+// cluster mid-way (control plane behind the newest, nodegroups behind it)
+// offers both moving on and catching up; add-ons alone behind offers them.
+func TestUpgradeKeyOffersCatchUpMidway(t *testing.T) {
+	world := &recordingWorld{World: sim.New(sim.Options{Seed: 7})}
+	m := New(t.Context(), world, time.Millisecond)
+	midway := state.State{Clusters: []state.Cluster{{Name: "a", Version: "1.32", Latest: "1.35",
+		Nodegroups: []state.Nodegroup{{Name: "ng", Version: "1.31"}}}}}
+	next, _ := m.Update(stateMsg{id: 1, st: midway})
+	next, _ = next.(Model).key("U")
+	pm := next.(Model)
+	if pm.pick == nil || len(pm.pick.items) != 4 || pm.pick.items[3].action.Scope != state.ScopeNodegroups {
+		t.Fatalf("picker = %+v, want three moves and a nodegroup catch-up", pm.pick)
+	}
+
+	addonsOnly := state.State{Clusters: []state.Cluster{{Name: "b", Version: "1.35", Latest: "1.35",
+		Addons: []state.Addon{{Name: "vpc-cni", Version: "v1", Latest: "v2"}}}}}
+	m = New(t.Context(), world, time.Millisecond)
+	next, _ = m.Update(stateMsg{id: 1, st: addonsOnly})
+	next, cmd := next.(Model).key("U")
+	if cmd == nil || next.(Model).pick != nil {
+		t.Fatal("one choice did not dry-run at once")
+	}
+	cmd()
+	if got := world.plans[len(world.plans)-1]; got.Scope != state.ScopeAddons {
+		t.Fatalf("planned %+v, want the add-ons", got)
 	}
 }
