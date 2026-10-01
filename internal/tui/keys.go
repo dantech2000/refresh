@@ -280,7 +280,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	for _, b := range table {
 		if b.matches(k) && b.active(m) {
 			// The user acts: the kubectl cluster, found later, must not
-			// move the cursor.
+			// move the cursor. A key that does nothing yet does not count.
 			m.homed = true
 			cmd := b.do(&m)
 			if m.screen != screenBefore || m.cluster().Name != clusterBefore {

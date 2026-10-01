@@ -34,8 +34,10 @@ the same change, and `c` copies it.
 
 When the kubectl context (or `--kube-context`) points at an EKS cluster, the
 fleet cursor moves to that cluster when the sweep finds it, and the feed says
-`kubectl cluster <name>`. If you press a key first, the cursor stays where it
-is. The cursor never moves while a dialog is open.
+`kubectl cluster <name>`. If you use a key that acts first (move the cursor,
+open a screen, or change a pane), the cursor stays where it is. A key that
+does nothing yet, such as `enter` before the first sweep, does not count. The
+cursor never moves while a dialog is open.
 
 The UI reads the cluster's name and region from the kubeconfig: a cluster ARN
 (as `aws eks update-kubeconfig` writes it), an eksctl cluster name, or the API
