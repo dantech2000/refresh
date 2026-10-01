@@ -204,7 +204,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if _, ok := m.b.(unlocker); ok {
 				// Changes were allowed while this dry run was read-only: it
 				// skipped the live gates, so run it again.
-				return m, m.plan(p.Action)
+				cmd := m.plan(p.Action) // plan bumps m.planID: take it before m is copied out
+				return m, cmd
 			}
 		}
 		m.confirm, m.confirmErr, m.scroll, m.starting, m.help = &p, "", 0, false, false
