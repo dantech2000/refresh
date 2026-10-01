@@ -84,3 +84,17 @@ func TestUpgrade_EmptyOnlyFails(t *testing.T) {
 		t.Fatalf("mutations = %v", got)
 	}
 }
+
+// -n rolls one nodegroup to the control plane's version; the other stays.
+func TestUpgrade_OneNodegroup(t *testing.T) {
+	w := orderWorld()
+	w.Version = "1.32"
+	w.Nodegroups = append(w.Nodegroups, &fakeaws.Nodegroup{Name: "batch", Version: "1.31"})
+	srv := fakeaws.New(t, w)
+	if _, stderr, err := runCluster(t, "upgrade", "prod", "--to", "1.32", "--only", "nodegroups", "-n", "batch", "--yes", "--poll-interval", "5ms", "-o", "json"); err != nil {
+		t.Fatalf("upgrade: %v\nstderr:\n%s", err, stderr)
+	}
+	if got := strings.Join(mutations(srv.Calls()), ","); got != "ng batch" {
+		t.Fatalf("mutations = %s, want ng batch", got)
+	}
+}

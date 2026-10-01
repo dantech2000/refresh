@@ -97,7 +97,7 @@ func checkScope(o PlanOptions, cluster, live, target string, hops int) error {
 // the add-ons out cannot make that control-plane move safe. A blocked step
 // that turns manual keeps its reason.
 func applyScope(plan *Plan, o PlanOptions) {
-	if len(o.Only) == 0 {
+	if len(o.Only) == 0 && len(o.Nodegroups) == 0 {
 		return
 	}
 	var incompatible, addonsLeft, nodegroupsLeft []string
@@ -105,13 +105,21 @@ func applyScope(plan *Plan, o PlanOptions) {
 		for i := range plan.Hops[h].Steps {
 			st := &plan.Hops[h].Steps[i]
 			p := partOf(st.Type)
-			if p == "" || o.includes(p) || (st.Status != StatusPending && st.Status != StatusBlocked) {
+			if p == "" || (st.Status != StatusPending && st.Status != StatusBlocked) {
+				continue
+			}
+			var left string
+			switch {
+			case !o.includes(p):
+				left = "left out by --only " + joinParts(o.Only)
+			case p == PartNodegroups && len(o.Nodegroups) > 0 && !slices.Contains(o.Nodegroups, st.Target):
+				left = "left out by --nodegroup " + strings.Join(o.Nodegroups, ",")
+			default:
 				continue
 			}
 			if st.Status == StatusBlocked && p == PartAddons && st.BeforeNodegroups {
 				continue
 			}
-			left := "left out by --only " + joinParts(o.Only)
 			if st.Status == StatusBlocked && st.Reason != "" {
 				left += "; blocked: " + st.Reason
 			}
@@ -164,6 +172,35 @@ func blockOnLaggingAddons(plan *Plan, lagging, unread []string, live string) {
 			}
 		}
 	}
+}
+
+// checkNodegroups refuses a --nodegroup name the cluster does not have.
+func checkNodegroups(names []string, nodegroups []nodegroupState, cluster string) error {
+	for _, n := range names {
+		if !slices.ContainsFunc(nodegroups, func(ng nodegroupState) bool { return ng.Name == n }) {
+			have := make([]string, len(nodegroups))
+			for i, ng := range nodegroups {
+				have[i] = ng.Name
+			}
+			return fmt.Errorf("--nodegroup %q: cluster %s has no such nodegroup (it has: %s)", n, cluster, strings.Join(have, ", "))
+		}
+	}
+	return nil
+}
+
+// selectedNodegroups is the nodegroups named in names, or all of them when
+// names is empty.
+func selectedNodegroups(nodegroups []nodegroupState, names []string) []nodegroupState {
+	if len(names) == 0 {
+		return nodegroups
+	}
+	var out []nodegroupState
+	for _, ng := range nodegroups {
+		if slices.Contains(names, ng.Name) {
+			out = append(out, ng)
+		}
+	}
+	return out
 }
 
 func appendNew(list []string, s string) []string {

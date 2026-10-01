@@ -40,6 +40,10 @@ type PlanOptions struct {
 	// Without the control plane, the target must be the version the control
 	// plane runs; without add-ons, the plan crosses one minor version.
 	Only []Part
+	// Nodegroups limits the rolls to these nodegroups, by exact name
+	// (--nodegroup). Empty means every nodegroup. The others are manual
+	// steps, and the readiness gate still checks their kubelet skew.
+	Nodegroups []string
 }
 
 // insightsMode selects how the readiness gate treats Cluster Insights.
@@ -110,6 +114,12 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	if err != nil {
 		return nil, err
 	}
+	if err := checkNodegroups(opts.Nodegroups, nodegroups, clusterName); err != nil {
+		return nil, err
+	}
+	// The nodegroups the plan may roll; the readiness gate still checks
+	// every one.
+	rollable := selectedNodegroups(nodegroups, opts.Nodegroups)
 
 	addonsSvc := s.addonsService()
 	addonList, err := addonsSvc.List(ctx, clusterName, addons.ListOptions{})
@@ -145,7 +155,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		// hop's readiness step blocks on nodegroups beyond the skew.
 		var preRoll []nodegroupState
 		if opts.includes(PartNodegroups) {
-			preRoll = preRollNodegroups(nodegroups, currentVersion, hops[0], opts.SkipNodegroups)
+			preRoll = preRollNodegroups(rollable, currentVersion, hops[0], opts.SkipNodegroups)
 		}
 		lagging, unread := s.addonsIncompatible(ctx, addonsSvc, addonList, currentVersion, opts.SkipAddons)
 		addonLag := opts.includes(PartAddons) && len(lagging) > 0
@@ -177,7 +187,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		// Advance the simulation: after this hop, rollable nodegroups sit at
 		// the hop target, unless --only leaves them out.
 		if opts.includes(PartNodegroups) {
-			advanceSimulation(simNodegroups, nodegroups, hopTo, opts.SkipNodegroups)
+			advanceSimulation(simNodegroups, rollable, hopTo, opts.SkipNodegroups)
 		}
 	}
 

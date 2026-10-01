@@ -70,7 +70,7 @@ func newTestBackend(t *testing.T, f *fleet, regions ...string) *Backend {
 		upgradeCheck: func(context.Context, aws.Config, string) (*clustersvc.UpgradeReport, error) {
 			return nil, errors.New("no upgrade check in this test")
 		},
-		buildPlan: func(context.Context, aws.Config, string, string, []upgrade.Part) (*upgrade.Plan, error) {
+		buildPlan: func(context.Context, aws.Config, string, string, upgrade.PlanOptions) (*upgrade.Plan, error) {
 			return nil, errors.New("no planner in this test")
 		},
 		noRegionAnswered:  func(context.Context, aws.Config, []string, []error) error { return nil },
@@ -176,7 +176,7 @@ func TestUnknownNewestVersionNeverReadsAsBehind(t *testing.T) {
 		}
 	}
 	// An upgrade can still be planned: the planner checks the target.
-	b.svc.buildPlan = func(_ context.Context, _ aws.Config, cluster, target string, _ []upgrade.Part) (*upgrade.Plan, error) {
+	b.svc.buildPlan = func(_ context.Context, _ aws.Config, cluster, target string, _ upgrade.PlanOptions) (*upgrade.Plan, error) {
 		return &upgrade.Plan{ClusterName: cluster, CurrentVersion: "1.33", TargetVersion: target}, nil
 	}
 	p, err := b.Plan(t.Context(), state.Action{Kind: state.ActionUpgrade, Cluster: "shared"})
@@ -379,7 +379,7 @@ func TestPlansAreDryRunsWithTheCLICommand(t *testing.T) {
 		t.Fatalf("add-on plan = %+v", addons)
 	}
 
-	b.svc.buildPlan = func(_ context.Context, _ aws.Config, cluster, target string, _ []upgrade.Part) (*upgrade.Plan, error) {
+	b.svc.buildPlan = func(_ context.Context, _ aws.Config, cluster, target string, _ upgrade.PlanOptions) (*upgrade.Plan, error) {
 		return &upgrade.Plan{
 			ClusterName: cluster, CurrentVersion: "1.31", TargetVersion: target,
 			Hops: []upgrade.Hop{{From: "1.31", To: target, Steps: []upgrade.Step{
@@ -622,7 +622,7 @@ func TestPlanHasADeadline(t *testing.T) {
 	f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": prodRows()}}
 	b := newTestBackend(t, f, "us-east-1")
 	b.opts.SweepTimeout = 10 * time.Millisecond
-	b.svc.buildPlan = func(ctx context.Context, _ aws.Config, _, _ string, _ []upgrade.Part) (*upgrade.Plan, error) {
+	b.svc.buildPlan = func(ctx context.Context, _ aws.Config, _, _ string, _ upgrade.PlanOptions) (*upgrade.Plan, error) {
 		<-ctx.Done() // a planner call that never answers
 		return nil, ctx.Err()
 	}

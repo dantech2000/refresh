@@ -333,10 +333,19 @@ the cluster safe:
   runs: the nodegroups and add-ons catch up to it.
 - Without `addons`, `--to` is one minor version up. An add-on that the new
   control plane cannot run (often kube-proxy) is named in a notice: update
-  it right after the control plane with `refresh addon update --all`. If an
-  earlier `--only` run left an add-on that the live control plane cannot run
-  (or its versions cannot be read), the next control-plane move without
-  `addons` is blocked until the add-ons catch up.
+  it right after the control plane with `refresh addon update --all`. If
+  such an add-on has no compatible version at all, the plan stays blocked.
+  If an earlier `--only` run left an add-on that the live control plane
+  cannot run (or its versions cannot be read), the next control-plane move
+  without `addons` is blocked until the add-ons catch up.
+
+To roll one nodegroup, name it with `--nodegroup` (`-n`, repeatable). The
+other nodegroups are manual steps, and the readiness gate still checks their
+kubelet skew:
+
+```bash
+refresh cluster upgrade -c prod-east --to 1.33 --only nodegroups -n workers-a
+```
 
 ### Readiness gates
 
@@ -452,6 +461,7 @@ CI, and `NO_COLOR` runs print text progress.
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
 | `--skip` | Add-on name to skip, exact and case-insensitive (repeatable; for add-ons managed via Helm/GitOps) |
 | `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
+| `--nodegroup, -n` | Roll only this nodegroup, by exact name (repeatable; default all). The others are manual steps; the readiness gate still checks their kubelet skew |
 | `--only` | Run only these parts: `control-plane`, `addons`, `nodegroups` (repeatable or comma-separated; default all). See [One part at a time](#one-part-at-a-time-only) |
 | `--quiet, -q` | Suppress progress output |
 | `--poll-interval` | How often to poll in-flight updates (default `15s`; must be greater than `0`) |

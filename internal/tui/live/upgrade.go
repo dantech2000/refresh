@@ -103,19 +103,21 @@ func stepDiff(was, now []string) string {
 
 // planUpgradeLive records what the user confirms with y: the target and the
 // pending steps of the preview.
-func (b *Backend) planUpgradeLive(t target, plan *upgrade.Plan, scope state.Scope, id uint64) {
+func (b *Backend) planUpgradeLive(t target, plan *upgrade.Plan, a state.Action, id uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.claimAccept(upgradeKey(t), id) {
-		b.acceptedUpgrades[t] = acceptedUpgrade{target: plan.TargetVersion, steps: pendingSteps(plan), scope: scope}
+		b.acceptedUpgrades[t] = acceptedUpgrade{target: plan.TargetVersion, steps: pendingSteps(plan), scope: a.Scope, nodegroup: a.Nodegroup}
 	}
 }
 
 type acceptedUpgrade struct {
 	target string
 	steps  []string
-	// scope is the parts the dry run covered; the run covers the same.
-	scope state.Scope
+	// scope is the parts the dry run covered, and nodegroup the one
+	// nodegroup it rolls ("" for all); the run covers the same.
+	scope     state.Scope
+	nodegroup string
 }
 
 // startUpgrade claims the cluster and runs the upgrade in the background.
@@ -139,7 +141,7 @@ func (b *Backend) startUpgrade(ctx context.Context, a state.Action) error {
 		b.mu.Unlock()
 		return errors.New("no dry run for this upgrade: open its dry run (U) first")
 	}
-	if acc.scope != a.Scope {
+	if acc.scope != a.Scope || acc.nodegroup != a.Nodegroup {
 		b.mu.Unlock()
 		return errors.New("the last dry run on this cluster covered other parts of the upgrade: open this one's dry run (U) again")
 	}
@@ -202,7 +204,9 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 
 	// The real plan: not a preview, so it refreshes insights and blocks
 	// until EKS has evaluated them, as `cluster upgrade` does.
-	plan, err := svc.BuildPlan(ctx, u.t.name, acc.target, upgrade.PlanOptions{Progress: progress, Only: scopeParts(acc.scope)})
+	opts := upgradeOptions(state.Action{Scope: acc.scope, Nodegroup: acc.nodegroup})
+	opts.Progress = progress
+	plan, err := svc.BuildPlan(ctx, u.t.name, acc.target, opts)
 	if err != nil {
 		b.endUpgrade(u, "the plan could not be built: "+awsinternal.FormatAWSError(err, "building the upgrade plan for "+u.t.name).Error(), false)
 		return

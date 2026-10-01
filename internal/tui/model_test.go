@@ -1275,3 +1275,23 @@ func TestUpgradeKeyOffersCatchUpMidway(t *testing.T) {
 		t.Fatalf("planned %+v, want the add-ons", got)
 	}
 }
+
+// p offers a nodegroup behind the control plane a roll to its version (an
+// upgrade of that nodegroup), and a nodegroup on it the newest AMI.
+func TestPatchKeyRollsALaggingNodegroupToTheControlPlane(t *testing.T) {
+	c := state.Cluster{Name: "a", Version: "1.34", Latest: "1.34", Nodegroups: []state.Nodegroup{
+		{Name: "old", Version: "1.33", Nodes: 3},
+		{Name: "stale", Version: "1.34", AMI: "x", LatestAMI: "y", Nodes: 2},
+		{Name: "ok", Version: "1.34", AMI: "y", LatestAMI: "y"},
+	}}
+	items := patchItems(c)
+	if len(items) != 2 {
+		t.Fatalf("items = %+v", items)
+	}
+	if a := items[0].action; a.Kind != state.ActionUpgrade || a.Scope != state.ScopeNodegroups || a.Nodegroup != "old" || items[0].why != "1.33 → 1.34" {
+		t.Fatalf("lagging item = %+v", items[0])
+	}
+	if a := items[1].action; a.Kind != state.ActionRoll || a.Nodegroup != "stale" {
+		t.Fatalf("AMI item = %+v", items[1])
+	}
+}

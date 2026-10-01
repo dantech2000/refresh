@@ -73,6 +73,9 @@ Examples:
    refresh cluster upgrade -c prod-east --to 1.33 --only nodegroups
    refresh cluster upgrade -c prod-east --to 1.33 --only addons
 
+   # One nodegroup to the control plane's version
+   refresh cluster upgrade -c prod-east --to 1.33 --only nodegroups -n workers-a
+
    # Non-interactive (CI) run
    refresh cluster upgrade -c prod-east --to 1.33 --yes
 
@@ -91,6 +94,7 @@ Examples:
 			runner.KubeContextFlag(),
 			&cli.StringSliceFlag{Name: "skip", Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to skip (repeatable)"},
+			&cli.StringSliceFlag{Name: "nodegroup", Aliases: []string{"n"}, Usage: "Roll only this nodegroup, by exact name (repeatable; default all). The others are manual steps; the readiness gate still checks their kubelet skew"},
 			&cli.StringSliceFlag{Name: "only", Usage: "Upgrade only these parts: control-plane, addons, nodegroups (repeatable or comma-separated; default all). The parts left out are manual steps in the plan. Without control-plane, --to must be the control plane's version; without addons, --to is one minor version up"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Suppress progress output"},
 			runner.WaitTimeoutFlag("How long to wait for the whole upgrade to finish (0 = no limit; not read from REFRESH_TIMEOUT, which only sets API timeouts)", upgradeDefaultTimeout),
@@ -202,8 +206,9 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		SkipNodegroups:    cmd.StringSlice("skip-nodegroup"),
 		SkipInsightsCheck: cmd.Bool("skip-insights-check"),
 		// A dry run starts no insights refresh (a write API).
-		Preview: cmd.Bool("dry-run"),
-		Only:    only,
+		Preview:    cmd.Bool("dry-run"),
+		Only:       only,
+		Nodegroups: cmd.StringSlice("nodegroup"),
 	}
 	healthGate := newNodegroupHealthGate(cmd, awsCfg, clusterName)
 

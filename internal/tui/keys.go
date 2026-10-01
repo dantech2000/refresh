@@ -368,34 +368,39 @@ func (m *Model) runReadiness() tea.Cmd {
 // opens a picker when more than one is stale.
 func (m *Model) planRoll() tea.Cmd {
 	c := m.cluster()
-	stale := c.StaleNodegroups()
-	switch len(stale) {
+	items := patchItems(c)
+	switch len(items) {
 	case 0:
 		m.say(state.LevelOK, "every nodegroup in %s is current", c.Name)
 		return nil
 	case 1:
-		return m.plan(state.Action{Kind: state.ActionRoll, Cluster: c.Name, Nodegroup: stale[0].Name})
+		return m.plan(items[0].action)
 	default:
-		// The picker takes over: nothing may open or move behind it.
-		if m.planning != "" {
-			m.cancelPlan()
-		}
-		m.focusAfter = nil
-		items := make([]pickItem, len(stale))
-		for i, ng := range stale {
-			why := "AMI " + ng.AMI + " → " + ng.LatestAMI
-			if ng.LatestAMI == "" {
-				why = "AMI outdated"
-			}
-			if ng.Version != c.Version {
-				why = "on " + ng.Version
-			}
-			items[i] = pickItem{name: ng.Name, why: why, level: state.LevelWarn, note: fmt.Sprintf("%d nodes", ng.Nodes),
-				action: state.Action{Kind: state.ActionRoll, Cluster: c.Name, Nodegroup: ng.Name}}
-		}
 		m.openPicker(&picker{title: "Patch which nodegroup?", cluster: c.Name, items: items})
 		return nil
 	}
+}
+
+// patchItems are the nodegroups p offers: a nodegroup behind the control
+// plane rolls to its version (as `cluster upgrade --only nodegroups -n`),
+// one on it gets the newest AMI (as `nodegroup update`).
+func patchItems(c state.Cluster) []pickItem {
+	var items []pickItem
+	for _, ng := range c.StaleNodegroups() {
+		it := pickItem{name: ng.Name, level: state.LevelWarn, note: fmt.Sprintf("%d nodes", ng.Nodes),
+			action: state.Action{Kind: state.ActionRoll, Cluster: c.Name, Nodegroup: ng.Name}}
+		switch {
+		case state.Minor(ng.Version) >= 0 && state.Minor(ng.Version) < state.Minor(c.Version):
+			it.why = ng.Version + " → " + c.Version
+			it.action = state.Action{Kind: state.ActionUpgrade, Cluster: c.Name, Nodegroup: ng.Name, Scope: state.ScopeNodegroups}
+		case ng.LatestAMI == "":
+			it.why = "AMI outdated"
+		default:
+			it.why = "AMI " + ng.AMI + " → " + ng.LatestAMI
+		}
+		items = append(items, it)
+	}
+	return items
 }
 
 // openPicker shows p: nothing may open or move behind it.

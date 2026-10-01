@@ -283,10 +283,14 @@ func planAddons(c state.Cluster, t target) state.Plan {
 	return p
 }
 
-func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan, scope state.Scope) state.Plan {
+func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan, a state.Action) state.Plan {
+	scope := a.Scope
 	p := state.Plan{
 		Title:   fmt.Sprintf("%s · %s %s → %s", upgradeTitle(scope), c.Name, plan.CurrentVersion, plan.TargetVersion),
 		Command: regionFlag(t) + "cluster upgrade -c " + t.name + " --to " + plan.TargetVersion,
+	}
+	if a.Nodegroup != "" {
+		p.Title = fmt.Sprintf("Roll nodegroup · %s/%s → %s", c.Name, a.Nodegroup, plan.TargetVersion)
 	}
 	if only := scopeParts(scope); len(only) > 0 {
 		names := make([]string, len(only))
@@ -295,6 +299,9 @@ func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan, scope state.Scop
 		}
 		p.Command += " --only " + strings.Join(names, ",")
 	}
+	if a.Nodegroup != "" {
+		p.Command += " -n " + shellWord(a.Nodegroup)
+	}
 	var blockers []string
 	for _, hop := range plan.Hops {
 		for _, s := range hop.Steps {
@@ -302,7 +309,7 @@ func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan, scope state.Scop
 			if s.Target != "" {
 				key = s.Target
 			}
-			if s.Status == upgrade.StatusManual && strings.HasPrefix(s.Reason, "left out by --only") {
+			if s.Status == upgrade.StatusManual && (strings.HasPrefix(s.Reason, "left out by --only") || strings.HasPrefix(s.Reason, "left out by --nodegroup")) {
 				continue // the plan's notices say what stays and what to run next
 			}
 			switch s.Status {
