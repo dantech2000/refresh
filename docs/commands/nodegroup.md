@@ -221,7 +221,10 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     EKS runs one update at a time on a cluster. Before the prompt, `scale`
     reads what EKS is changing (the control plane, each nodegroup, each
     add-on). If something is changing, it exits `3` and names it. Nothing
-    changed. `--dry-run` does not check.
+    changed. With `-o json|yaml`, the document has the outcome `Busy` and
+    `changesInProgress`; when refresh could not read the cluster to check,
+    the outcome `Blocked` and the failed call in `failures`. `--dry-run`
+    does not check.
 
 With `--wait`, `refresh` follows the EKS update that the scaling request
 starts. If the update fails or is cancelled, the command exits non-zero with
@@ -339,7 +342,9 @@ nodegroups that match. `--quiet` does not skip them.
     nothing was started`. A selected nodegroup that is already `UPDATING`
     does not count: the run skips it (`AlreadyUpdating`). If refresh cannot
     read one of them, it cannot tell whether EKS is changing it, so the run
-    also exits `3`, and the error names the call that failed. `--dry-run` and
+    also exits `3`, and the error names the call that failed. With `-o
+    json|yaml`, the run's document has no nodegroups and either
+    `changesInProgress` or the failed call in `failures`. `--dry-run` and
     `--health-only` do not check. In fleet mode, a busy cluster is skipped
     with the status `Busy`, a cluster that cannot be read fails, and the rest
     of the fleet goes on.

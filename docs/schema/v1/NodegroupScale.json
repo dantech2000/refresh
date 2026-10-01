@@ -110,7 +110,8 @@
         "Requested",
         "Completed",
         "Blocked",
-        "CompletedWithIssues"
+        "CompletedWithIssues",
+        "Busy"
       ],
       "description": "ScaleOutcome is what `nodegroup scale` did. docs/commands/nodegroup.md documents the values; later versions may add values."
     },
@@ -208,6 +209,13 @@
     "pdbGate": {
       "$ref": "#/$defs/ScalePDBGate",
       "description": "pdbGate is the --check-pdbs verdict, when the gate ran."
+    },
+    "changesInProgress": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "changesInProgress names what EKS was changing on the cluster when the scale refused to start (Outcome Busy). Left out otherwise."
     },
     "failures": {
       "$ref": "#/$defs/FailureList",

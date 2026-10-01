@@ -85,14 +85,6 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		return err
 	}
 
-	// EKS refuses a scale while another update runs, but only after the
-	// prompt: say so first. A dry run still previews a busy cluster.
-	if !opts.DryRun {
-		if err := runner.RefuseIfBusy(ctx, eksClient, clusterName, nil); err != nil {
-			return err
-		}
-	}
-
 	current, err := svc.DescribeNodegroup(ctx, clusterName, nodegroupName)
 	if err != nil {
 		return err
@@ -117,6 +109,14 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		Failures:  diag.List{},
 	}
 
+	// EKS refuses a scale while another update runs, but only after the
+	// prompt: say so first. A dry run still previews a busy cluster.
+	if !opts.DryRun {
+		if busy := runner.CheckBusy(ctx, eksClient, clusterName, awsCfg.Region, nil); busy != nil {
+			return r.refuse(busy)
+		}
+	}
+
 	// A dry run or --force checks the PDBs first, so the blockers show
 	// before anything changes. A real run without --force checks after the
 	// prompt, right before the change (see execute).
@@ -127,6 +127,22 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		return r.preview()
 	}
 	return r.execute(ctx)
+}
+
+// refuse ends a scale that refused to start: EKS was changing the cluster
+// (Outcome Busy) or it could not be read (Blocked, with the failed read).
+// -o json|yaml prints the document; then the exit 3 error.
+func (r *scaleRun) refuse(busy *runner.Busy) error {
+	r.doc.Outcome, r.doc.ChangesInProgress = scaleBusy, busy.Changes
+	if busy.Failure != nil {
+		r.doc.Outcome, r.doc.Failures = scaleBlocked, diag.List{*busy.Failure}
+	}
+	if r.machine {
+		if _, err := runner.EncodeStdout(r.format, r.doc); err != nil {
+			return err
+		}
+	}
+	return busy.Exit
 }
 
 // newScaleService builds the nodegroup service for a scale. Only the health

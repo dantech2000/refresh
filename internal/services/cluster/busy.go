@@ -10,6 +10,7 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/common"
+	"github.com/dantech2000/refresh/internal/diag"
 )
 
 // BusyAPI is the part of the EKS API that ChangesInProgress reads.
@@ -66,7 +67,7 @@ func ChangesInProgress(ctx context.Context, api BusyAPI, cluster string) (Change
 		return api.DescribeCluster(rc, &eks.DescribeClusterInput{Name: aws.String(cluster)})
 	})
 	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, "describing cluster "+cluster)
+		return nil, diag.WithOperation(diag.OpDescribeCluster, awsinternal.FormatAWSError(err, "describing cluster "+cluster))
 	}
 	if desc.Cluster != nil && desc.Cluster.Status != ekstypes.ClusterStatusActive {
 		busy = append(busy, Change{Kind: ChangeCluster, Status: string(desc.Cluster.Status)})
@@ -77,14 +78,14 @@ func ChangesInProgress(ctx context.Context, api BusyAPI, cluster string) (Change
 		},
 		func(out *eks.ListNodegroupsOutput) ([]string, *string) { return out.Nodegroups, out.NextToken })
 	if err != nil {
-		return nil, err
+		return nil, diag.WithOperation(diag.OpListNodegroups, err)
 	}
 	for _, ng := range ngs {
 		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeNodegroupOutput, error) {
 			return api.DescribeNodegroup(rc, &eks.DescribeNodegroupInput{ClusterName: aws.String(cluster), NodegroupName: aws.String(ng)})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, "describing nodegroup "+ng)
+			return nil, diag.WithOperation(diag.OpDescribeNodegroup, awsinternal.FormatAWSError(err, "describing nodegroup "+ng))
 		}
 		if out.Nodegroup == nil {
 			continue
@@ -99,14 +100,14 @@ func ChangesInProgress(ctx context.Context, api BusyAPI, cluster string) (Change
 		},
 		func(out *eks.ListAddonsOutput) ([]string, *string) { return out.Addons, out.NextToken })
 	if err != nil {
-		return nil, err
+		return nil, diag.WithOperation(diag.OpListAddons, err)
 	}
 	for _, a := range addons {
 		out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeAddonOutput, error) {
 			return api.DescribeAddon(rc, &eks.DescribeAddonInput{ClusterName: aws.String(cluster), AddonName: aws.String(a)})
 		})
 		if err != nil {
-			return nil, awsinternal.FormatAWSError(err, "describing add-on "+a)
+			return nil, diag.WithOperation(diag.OpDescribeAddon, awsinternal.FormatAWSError(err, "describing add-on "+a))
 		}
 		if out.Addon == nil {
 			continue

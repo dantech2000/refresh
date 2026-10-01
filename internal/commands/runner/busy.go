@@ -7,6 +7,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/diag"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 )
 
@@ -42,15 +43,33 @@ func BusyExit(cluster string, changes clustersvc.Changes) error {
 	return cli.Exit(BusyMessage(cluster, changes), ExitBlocked)
 }
 
-// RefuseIfBusy returns BusyExit when ClusterChanges finds anything,
-// BusyUnknownExit when it could not read the cluster, else nil.
-func RefuseIfBusy(ctx context.Context, api clustersvc.BusyAPI, cluster string, ignore func(clustersvc.Change) bool) error {
+// Busy is a refusal to start: what EKS is changing on the cluster, or the
+// read that failed when refresh could not tell. Exit is the exit 3 error;
+// a nil *Busy means the cluster is clear.
+type Busy struct {
+	// Changes are the changes in progress ("add-on vpc-cni UPDATING").
+	Changes []string
+	// Failure is the read that failed, when refresh could not tell.
+	Failure *diag.Failure
+	Exit    error
+}
+
+// CheckBusy is ClusterChanges for a command that prints a document when it
+// refuses (-o json|yaml): it returns what to put in the document and the
+// exit error, or nil when the cluster is clear.
+func CheckBusy(ctx context.Context, api clustersvc.BusyAPI, cluster, region string, ignore func(clustersvc.Change) bool) *Busy {
 	changes, err := ClusterChanges(ctx, api, cluster, ignore)
 	switch {
 	case err != nil:
-		return BusyUnknownExit(ctx, cluster, err)
+		f := diag.FromError(diag.KindCluster, cluster, diag.OperationOf(err), err)
+		f.Region = region
+		return &Busy{Failure: &f, Exit: BusyUnknownExit(ctx, cluster, err)}
 	case len(changes) > 0:
-		return BusyExit(cluster, changes)
+		out := make([]string, len(changes))
+		for i, c := range changes {
+			out[i] = c.String()
+		}
+		return &Busy{Changes: out, Exit: BusyExit(cluster, changes)}
 	}
 	return nil
 }

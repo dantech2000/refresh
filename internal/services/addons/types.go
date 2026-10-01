@@ -131,6 +131,10 @@ const (
 	// StatusNotAttempted: an UpdateAll run stopped before this add-on (see
 	// Failure).
 	StatusNotAttempted UpdateStatus = "NotAttempted"
+	// StatusBusy: the command refused to start because EKS was already
+	// changing the cluster (exit 3). The document's changesInProgress says
+	// what.
+	StatusBusy UpdateStatus = "Busy"
 )
 
 // EnumValues lists every UpdateStatus.
@@ -138,7 +142,7 @@ func (UpdateStatus) EnumValues() []string {
 	return []string{
 		string(StatusDryRun), string(StatusUpToDate), string(StatusInProgress), string(StatusStarted),
 		string(StatusCompleted), string(StatusCompletedWithIssues), string(StatusUnverified),
-		string(StatusWaitFailed), string(StatusFailed), string(StatusNotAttempted),
+		string(StatusWaitFailed), string(StatusFailed), string(StatusNotAttempted), string(StatusBusy),
 	}
 }
 

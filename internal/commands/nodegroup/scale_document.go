@@ -28,13 +28,16 @@ const (
 	// scaleCompletedWithIssues: the scale was applied, but the
 	// post-scaling health check found blocking issues. Exit 5.
 	scaleCompletedWithIssues scaleOutcome = "CompletedWithIssues"
+	// scaleBusy: EKS was already changing the cluster, so nothing was asked
+	// (exit 3); changesInProgress names what.
+	scaleBusy scaleOutcome = "Busy"
 )
 
 // EnumValues lists every scaleOutcome.
 func (scaleOutcome) EnumValues() []string {
 	return []string{
 		string(scalePlanned), string(scaleRequested), string(scaleCompleted),
-		string(scaleBlocked), string(scaleCompletedWithIssues),
+		string(scaleBlocked), string(scaleCompletedWithIssues), string(scaleBusy),
 	}
 }
 
@@ -101,8 +104,11 @@ type scaleDocument struct {
 	// completed.
 	NodegroupStatus string `json:"nodegroupStatus,omitempty" yaml:"nodegroupStatus,omitempty"`
 	// PDBGate is the --check-pdbs verdict, when the gate ran.
-	PDBGate  *scalePDBGate `json:"pdbGate,omitempty" yaml:"pdbGate,omitempty"`
-	Failures diag.List     `json:"failures" yaml:"failures"`
+	PDBGate *scalePDBGate `json:"pdbGate,omitempty" yaml:"pdbGate,omitempty"`
+	// ChangesInProgress names what EKS was changing on the cluster when the
+	// scale refused to start (Outcome Busy). Left out otherwise.
+	ChangesInProgress []string  `json:"changesInProgress,omitempty" yaml:"changesInProgress,omitempty"`
+	Failures          diag.List `json:"failures" yaml:"failures"`
 }
 
 // DocumentKind is NodegroupScale.

@@ -1,6 +1,7 @@
 package nodegroup
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -93,4 +94,46 @@ func TestScale_BusyClusterExitsThree(t *testing.T) {
 	if _, stderr, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2", "--dry-run"); err != nil {
 		t.Fatalf("dry run on a busy cluster: %v\nstderr:\n%s", err, stderr)
 	}
+}
+
+// #433: with -o json, a refusal prints the command's document with nothing
+// started: changesInProgress for a busy cluster, the failed read for one
+// refresh could not check. Exit 3 either way.
+func TestBusyRefusalsPrintADocument(t *testing.T) {
+	t.Run("update busy", func(t *testing.T) {
+		fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}, &fakeaws.Nodegroup{Name: "other", Version: "1.31", Status: "UPDATING"}))
+		stdout, stderr, err := runNodegroup(t, "update", "prod", "web", "--skip-health-check", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)\nstderr:\n%s", code, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		if doc["kind"] != "NodegroupUpdate" || fmt.Sprint(doc["changesInProgress"]) != "[nodegroup other UPDATING]" || fmt.Sprint(doc["nodegroups"]) != "[]" {
+			t.Errorf("document = %v", doc)
+		}
+		fakeaws.RequireFailures(t, doc)
+	})
+	t.Run("update unreadable", func(t *testing.T) {
+		fakeaws.New(t, &fakeaws.Cluster{Name: "prod", Version: "1.31", ListNodegroupsError: "AccessDeniedException"})
+		stdout, _, err := runNodegroup(t, "update", "prod", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)", code, err)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		if _, ok := doc["changesInProgress"]; ok {
+			t.Errorf("an unreadable cluster has no changesInProgress: %v", doc)
+		}
+		failureWant{kind: "Cluster", name: "prod", reason: "AccessDenied", operation: "eks:ListNodegroups"}.check(t, "failures[0]", onlyFailure(t, doc))
+	})
+	t.Run("scale busy", func(t *testing.T) {
+		fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5}, &fakeaws.Nodegroup{Name: "ng-b", Version: "1.31", Status: "UPDATING"}))
+		stdout, stderr, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)\nstderr:\n%s", code, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		before, _ := doc["before"].(map[string]any)
+		if doc["outcome"] != "Busy" || fmt.Sprint(doc["changesInProgress"]) != "[nodegroup ng-b UPDATING]" || fmt.Sprint(before["desired"]) != "3" {
+			t.Errorf("document = %v", doc)
+		}
+	})
 }

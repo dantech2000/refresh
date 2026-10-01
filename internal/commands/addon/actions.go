@@ -301,10 +301,10 @@ func runUpdate(ctx context.Context, cmd *cli.Command) (err error) {
 	// left to the service, which waits on it.
 	if !cmd.Bool("dry-run") {
 		target := addonName
-		if err := runner.RefuseIfBusy(ctx, factory.NewEKSClient(cfg), clusterName, func(c clustersvc.Change) bool {
+		if busy := runner.CheckBusy(ctx, factory.NewEKSClient(cfg), clusterName, cfg.Region, func(c clustersvc.Change) bool {
 			return c.Kind == clustersvc.ChangeAddon && c.Name == target
-		}); err != nil {
-			return err
+		}); busy != nil {
+			return refuseOne(cmd.String("format"), addonName, busy)
 		}
 	}
 
@@ -522,8 +522,8 @@ func runUpdateAll(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 
 	if !options.DryRun {
-		if err := runner.RefuseIfBusy(ctx, factory.NewEKSClient(cfg), clusterName, nil); err != nil {
-			return err
+		if busy := runner.CheckBusy(ctx, factory.NewEKSClient(cfg), clusterName, cfg.Region, nil); busy != nil {
+			return refuseAll(cmd.String("format"), clusterName, busy)
 		}
 	}
 

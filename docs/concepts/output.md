@@ -47,12 +47,20 @@ meant for a person goes to stderr or is not printed:
 
 The exit code is the same as in the human view, and it applies after the
 document is printed (see [Exit codes](exit-codes.md)). When a command fails before
-it has a result (bad credentials, a missing `--yes`, a cluster EKS is
-already changing or that refresh could not read to check), stdout is empty
-and the error is on stderr. A `nodegroup update` that the health gate stops is the
-exception: stdout gets the run summary with nothing started and the `health`
-verdict, the health report goes to stderr, and the error names the checks
-that blocked or warned.
+it has a result (bad credentials, a missing `--yes`), stdout is empty and
+the error is on stderr. Two refusals still print the command's document,
+with nothing started, and exit `3`:
+
+- A `nodegroup update` that the health gate stops: the run summary and the
+  `health` verdict. The health report goes to stderr, and the error names
+  the checks that blocked or warned.
+- A mutating command (`nodegroup update`, `nodegroup scale`, `addon update`,
+  `addon update --all`) that refuses to start because EKS is already
+  changing the cluster: `changesInProgress` lists what (for example
+  `nodegroup ng-a UPDATING`). `nodegroup scale` reports the outcome `Busy`,
+  and `addon update` the status `Busy`. When refresh could not read the
+  cluster to check, `failures` names the call that failed instead
+  (`nodegroup scale` reports `Blocked`, `addon update` `NotAttempted`).
 
 The documents for the mutating commands. Each one has a top-level
 `failures` list (see [Failures](#failures)). Each item of a run has a

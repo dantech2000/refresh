@@ -1,6 +1,7 @@
 package addon
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -47,6 +48,52 @@ func TestUpdate_BusyCluster(t *testing.T) {
 		_, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--yes")
 		if err != nil && strings.Contains(err.Error(), "is busy") {
 			t.Fatalf("the target's own update refused the run: %v\nstderr:\n%s", err, stderr)
+		}
+	})
+}
+
+// #433: with -o json, a refusal prints the command's document with nothing
+// started. Exit 3 either way.
+func TestBusyRefusalsPrintADocument(t *testing.T) {
+	busyNodegroup := func() *fakeaws.Cluster {
+		c := addonCluster(&fakeaws.Addon{Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}})
+		c.Nodegroups = []*fakeaws.Nodegroup{{Name: "ng-a", Version: "1.31", Status: "UPDATING"}}
+		return c
+	}
+	t.Run("one add-on", func(t *testing.T) {
+		fakeaws.New(t, busyNodegroup())
+		stdout, stderr, err := runAddon(t, "update", "prod", "vpc-cni", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)\nstderr:\n%s", code, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		if doc["kind"] != "AddonUpdate" || doc["status"] != "Busy" || doc["addonName"] != "vpc-cni" || fmt.Sprint(doc["changesInProgress"]) != "[nodegroup ng-a UPDATING]" {
+			t.Errorf("document = %v", doc)
+		}
+		fakeaws.RequireFailures(t, doc)
+	})
+	t.Run("all", func(t *testing.T) {
+		fakeaws.New(t, busyNodegroup())
+		stdout, _, err := runAddon(t, "update", "prod", "--all", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)", code, err)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		if doc["kind"] != "AddonUpdateAll" || fmt.Sprint(doc["results"]) != "[]" || fmt.Sprint(doc["changesInProgress"]) != "[nodegroup ng-a UPDATING]" {
+			t.Errorf("document = %v", doc)
+		}
+	})
+	t.Run("all unreadable", func(t *testing.T) {
+		c := addonCluster(&fakeaws.Addon{Name: "vpc-cni", Version: "v1.18.0", Available: []string{"v1.19.0", "v1.18.0"}, DescribeAddonError: "AccessDeniedException"})
+		fakeaws.New(t, c)
+		stdout, _, err := runAddon(t, "update", "prod", "--all", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)", code, err)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		fs, _ := doc["failures"].([]any)
+		if len(fs) != 1 || !strings.Contains(fmt.Sprint(fs[0]), "AccessDenied") {
+			t.Errorf("failures = %v, want the failed read", doc["failures"])
 		}
 	})
 }
