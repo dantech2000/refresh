@@ -85,8 +85,8 @@ The status values:
 |---|---|
 | `nodegroup update`, each nodegroup | `Started`, `Succeeded`, `Skipped`, `Failed`, `Cancelled`, `InProgress` (the run stopped watching an update that may still be running), `NotAttempted`, `DrainBlocked` |
 | `nodegroup update --all-clusters`, each cluster | `Succeeded`, `Incomplete`, `Failed`, `HealthBlocked`, `HealthWarned`, `VerifyFailed`, `Interrupted`, `TimedOut`, `NotAttempted`, `Busy`, `DrainBlocked`; with `--dry-run`: `Planned`, `Incomplete`, `DrainBlocked`, `Failed` |
-| `nodegroup scale` (`outcome`) | `Planned`, `Requested`, `Completed`, `Blocked`, `CompletedWithIssues` |
-| `addon update`, each add-on | `DryRun`, `UpToDate`, `InProgress`, `Started`, `Completed`, `CompletedWithIssues`, `Unverified`, `WaitFailed`, `Failed`, `NotAttempted` |
+| `nodegroup scale` (`outcome`) | `Planned`, `Requested`, `Completed`, `Blocked`, `CompletedWithIssues`, `Busy` |
+| `addon update`, each add-on | `DryRun`, `UpToDate`, `InProgress`, `Started`, `Completed`, `CompletedWithIssues`, `Unverified`, `WaitFailed`, `Failed`, `NotAttempted`, `Busy` |
 | `cluster upgrade`, the report | `Succeeded`, `Failed`, `Blocked`, `Interrupted`, `TimedOut`, `Aborted` |
 
 The command pages describe each value:

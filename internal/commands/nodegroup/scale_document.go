@@ -95,9 +95,11 @@ type scaleDocument struct {
 	Outcome   scaleOutcome `json:"outcome" yaml:"outcome"`
 	DryRun    bool         `json:"dryRun" yaml:"dryRun"`
 	// Before is the scaling config before the run; After is what the run
-	// asks for (Before with the requested sizes).
-	Before scaleSizes `json:"before" yaml:"before"`
-	After  scaleSizes `json:"after" yaml:"after"`
+	// asks for (Before with the requested sizes). Both are left out only
+	// when a refusal (Busy, or Blocked by an unreadable cluster) could not
+	// read the nodegroup.
+	Before *scaleSizes `json:"before,omitempty" yaml:"before,omitempty"`
+	After  *scaleSizes `json:"after,omitempty" yaml:"after,omitempty"`
 	// Waited is true with --wait.
 	Waited bool `json:"waited" yaml:"waited"`
 	// NodegroupStatus is the nodegroup's EKS status after a --wait that

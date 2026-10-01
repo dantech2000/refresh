@@ -136,4 +136,18 @@ func TestBusyRefusalsPrintADocument(t *testing.T) {
 			t.Errorf("document = %v", doc)
 		}
 	})
+	// From review: the busy check comes first, as before #433. A nodegroup
+	// that cannot be read does not turn a busy refusal into exit 1; its
+	// sizes are left out.
+	t.Run("scale busy, nodegroup unreadable", func(t *testing.T) {
+		fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", DescribeNodegroupError: "AccessDeniedException"}, &fakeaws.Nodegroup{Name: "ng-b", Version: "1.31", Status: "UPDATING"}))
+		stdout, stderr, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2", "--yes", "-o", "json")
+		if code := exitCodeOf(err); code != 3 {
+			t.Fatalf("exit = %d (%v)\nstderr:\n%s", code, err, stderr)
+		}
+		doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+		if _, ok := doc["before"]; ok {
+			t.Errorf("sizes of an unreadable nodegroup: %v", doc)
+		}
+	})
 }

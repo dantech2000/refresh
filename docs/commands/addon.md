@@ -231,7 +231,8 @@ The result is printed in every output format, also when the wait fails. See
 | `Unverified` | The update landed, but the post-update health check could not read the add-on (`failure`) |
 | `WaitFailed` | The update was sent but did not complete (`failure`) |
 | `Failed` | The update could not be sent (`failure`) |
-| `NotAttempted` | With `--all`: the run stopped before this add-on (`failure`) |
+| `NotAttempted` | With `--all`: the run stopped before this add-on (`failure`). For one add-on: refresh could not read the cluster to check that EKS is not changing it, so nothing started (`failure` names the call) |
+| `Busy` | EKS was already changing the cluster, so the update did not start (`changesInProgress` says what) |
 
 ```json
 {

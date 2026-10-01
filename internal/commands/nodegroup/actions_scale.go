@@ -85,37 +85,39 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		return err
 	}
 
-	current, err := svc.DescribeNodegroup(ctx, clusterName, nodegroupName)
-	if err != nil {
-		return err
-	}
 	r := &scaleRun{
 		cmd: cmd, format: format, machine: runner.IsMachineFormat(format), force: cmd.Bool("force"),
 		region: awsCfg.Region, cluster: clusterName, nodegroup: nodegroupName,
 		desired: desired, minSize: minSize, maxSize: maxSize,
 		svc: svc, opts: opts,
 	}
-	if current.ScalingConfig != nil {
-		r.before = *current.ScalingConfig
-	}
 	r.doc = scaleDocument{
 		Cluster:   clusterName,
 		Nodegroup: nodegroupName,
 		Region:    awsCfg.Region,
 		DryRun:    opts.DryRun,
-		Before:    sizesOf(r.before),
-		After:     sizesOf(r.before).withRequested(desired, minSize, maxSize),
 		Waited:    opts.Wait && !opts.DryRun,
 		Failures:  diag.List{},
 	}
 
 	// EKS refuses a scale while another update runs, but only after the
-	// prompt: say so first. A dry run still previews a busy cluster.
+	// prompt: say so first, before anything else can fail. A dry run still
+	// previews a busy cluster.
 	if !opts.DryRun {
 		if busy := runner.CheckBusy(ctx, eksClient, clusterName, awsCfg.Region, nil); busy != nil {
+			// The sizes, when the nodegroup can still be read.
+			if current, err := svc.DescribeNodegroup(ctx, clusterName, nodegroupName); err == nil {
+				r.setSizes(current)
+			}
 			return r.refuse(busy)
 		}
 	}
+
+	current, err := svc.DescribeNodegroup(ctx, clusterName, nodegroupName)
+	if err != nil {
+		return err
+	}
+	r.setSizes(current)
 
 	// A dry run or --force checks the PDBs first, so the blockers show
 	// before anything changes. A real run without --force checks after the
@@ -127,6 +129,16 @@ func runScale(ctx context.Context, cmd *cli.Command) (err error) {
 		return r.preview()
 	}
 	return r.execute(ctx)
+}
+
+// setSizes records the nodegroup's scaling config before the run, and the
+// sizes the run asks for.
+func (r *scaleRun) setSizes(ng *ekstypes.Nodegroup) {
+	if ng.ScalingConfig != nil {
+		r.before = *ng.ScalingConfig
+	}
+	before, after := sizesOf(r.before), sizesOf(r.before).withRequested(r.desired, r.minSize, r.maxSize)
+	r.doc.Before, r.doc.After = &before, &after
 }
 
 // refuse ends a scale that refused to start: EKS was changing the cluster

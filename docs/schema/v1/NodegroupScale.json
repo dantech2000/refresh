@@ -193,7 +193,7 @@
     },
     "before": {
       "$ref": "#/$defs/ScaleSizes",
-      "description": "before is the scaling config before the run; After is what the run asks for (Before with the requested sizes)."
+      "description": "before is the scaling config before the run; After is what the run asks for (Before with the requested sizes). Both are left out only when a refusal (Busy, or Blocked by an unreadable cluster) could not read the nodegroup."
     },
     "after": {
       "$ref": "#/$defs/ScaleSizes"
@@ -231,8 +231,6 @@
     "region",
     "outcome",
     "dryRun",
-    "before",
-    "after",
     "waited",
     "failures"
   ],

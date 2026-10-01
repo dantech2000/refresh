@@ -262,8 +262,9 @@ status after a `--wait`. `pdbGate` is there with `--check-pdbs`.
 | `Planned` | `--dry-run`: nothing changed | `0`, or the code the real run would give |
 | `Requested` | EKS accepted the request; the run did not wait (no `--wait`) | `0` |
 | `Completed` | With `--wait`, the nodegroup settled at the requested sizes | `0` |
-| `Blocked` | `--check-pdbs` or the pre-scaling health check refused the scale; nothing changed | `3` |
+| `Blocked` | `--check-pdbs` or the pre-scaling health check refused the scale, or refresh could not read the cluster to check that EKS is not changing it (`failures` names the call); nothing changed | `3` |
 | `CompletedWithIssues` | The scale was applied, but the post-scaling health check found blocking issues | `5` |
+| `Busy` | EKS was already changing the cluster (`changesInProgress` says what); nothing changed | `3` |
 
 | `pdbGate.result` | Meaning |
 |---|---|
