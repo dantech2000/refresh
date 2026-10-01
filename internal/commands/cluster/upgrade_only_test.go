@@ -65,11 +65,11 @@ func TestUpgrade_ResumeKeepsOnly(t *testing.T) {
 		got = resumeCommand(c, "prod", &upgrade.Plan{TargetVersion: "1.32"})
 		return nil
 	}
-	if err := cmd.Run(t.Context(), []string{"upgrade", "prod", "--to", "1.32", "--only", "control-plane"}); err != nil {
+	if err := cmd.Run(t.Context(), []string{"upgrade", "prod", "--to", "1.32", "--only", "control-plane", "-n", "web"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "--only control-plane") {
-		t.Fatalf("resume command %q lacks --only", got)
+	if !strings.Contains(got, "--only control-plane") || !strings.Contains(got, "--nodegroup web") {
+		t.Fatalf("resume command %q lacks --only or --nodegroup", got)
 	}
 }
 
@@ -82,5 +82,19 @@ func TestUpgrade_EmptyOnlyFails(t *testing.T) {
 	}
 	if got := mutations(srv.Calls()); len(got) != 0 {
 		t.Fatalf("mutations = %v", got)
+	}
+}
+
+// -n rolls one nodegroup to the control plane's version; the other stays.
+func TestUpgrade_OneNodegroup(t *testing.T) {
+	w := orderWorld()
+	w.Version = "1.32"
+	w.Nodegroups = append(w.Nodegroups, &fakeaws.Nodegroup{Name: "batch", Version: "1.31"})
+	srv := fakeaws.New(t, w)
+	if _, stderr, err := runCluster(t, "upgrade", "prod", "--to", "1.32", "--only", "nodegroups", "-n", "batch", "--yes", "--poll-interval", "5ms", "-o", "json"); err != nil {
+		t.Fatalf("upgrade: %v\nstderr:\n%s", err, stderr)
+	}
+	if got := strings.Join(mutations(srv.Calls()), ","); got != "ng batch" {
+		t.Fatalf("mutations = %s, want ng batch", got)
 	}
 }

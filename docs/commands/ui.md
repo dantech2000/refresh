@@ -90,7 +90,7 @@ nodegroup picker), only the dialog's own keys work.
 | `↑` `↓`, `g` `G` | Lists | Move through a list, or jump to the first or last item (`g` `G` not in the nodegroup picker) |
 | `enter` | Fleet | Open the selected cluster |
 | `r` | Fleet, Cluster | Run readiness for the next version |
-| `p` | Fleet, Cluster | Dry-run a nodegroup patch (pick the nodegroup, then `enter`) |
+| `p` | Fleet, Cluster | Dry-run a nodegroup patch (pick the nodegroup, then `enter`). A nodegroup on the control plane's version gets the newest AMI (`nodegroup update`); a nodegroup behind it rolls to the control plane's version (`cluster upgrade --only nodegroups -n`) |
 | `a` | Fleet, Cluster | Dry-run the add-on updates |
 | `U` | Fleet, Cluster | Choose what to upgrade, then dry-run it: the control plane only, the control plane and add-ons, or everything, to the next version. With the control plane on the newest version, catch the nodegroups (and add-ons) up to it. A single choice dry-runs at once |
 | `B` | Fleet, Cluster | Dry-run a rollback one minor version back (only after readiness found a rollback window) |

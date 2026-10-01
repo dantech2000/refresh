@@ -156,7 +156,7 @@ func newUpgradeRig(t *testing.T) *upgradeRig {
 	rig := &upgradeRig{b: newTestBackend(t, fl, "us-east-1"), f: &fakeUpgrader{plan: upgradePlan()}}
 	b := rig.b
 	b.allow.Store(true)
-	b.svc.buildPlan = func(context.Context, aws.Config, string, string, []upgrade.Part) (*upgrade.Plan, error) {
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string, upgrade.PlanOptions) (*upgrade.Plan, error) {
 		return upgradePlan(), nil
 	}
 	b.newUpgrader = func(aws.Config) upgrader { return rig.f }
@@ -496,7 +496,7 @@ func TestUnlockDuringADryRunKeepsItReadOnly(t *testing.T) {
 	rig := newUpgradeRig(t)
 	b := rig.b
 	b.allow.Store(false)
-	b.svc.buildPlan = func(context.Context, aws.Config, string, string, []upgrade.Part) (*upgrade.Plan, error) {
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string, upgrade.PlanOptions) (*upgrade.Plan, error) {
 		b.AllowChanges() // ctrl+u, y while the planner runs
 		return upgradePlan(), nil
 	}
@@ -507,7 +507,7 @@ func TestUnlockDuringADryRunKeepsItReadOnly(t *testing.T) {
 	if err := b.Start(t.Context(), upgradeAction); err == nil || !strings.Contains(err.Error(), "no dry run") {
 		t.Fatalf("Start after a read-only dry run = %v", err)
 	}
-	b.svc.buildPlan = func(context.Context, aws.Config, string, string, []upgrade.Part) (*upgrade.Plan, error) {
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string, upgrade.PlanOptions) (*upgrade.Plan, error) {
 		return upgradePlan(), nil
 	}
 	if p, err := b.Plan(t.Context(), upgradeAction); err != nil || p.ReadOnly || p.Blocked != "" {
@@ -528,7 +528,7 @@ func TestAnOlderDryRunCannotReplaceTheConfirmedOne(t *testing.T) {
 	older := upgradePlan()
 	older.Hops[0].Steps = append(older.Hops[0].Steps, upgrade.Step{Type: upgrade.StepNodegroup, Target: "ng-new", Version: "1.32", Status: upgrade.StatusPending})
 	var calls atomic.Int32
-	b.svc.buildPlan = func(context.Context, aws.Config, string, string, []upgrade.Part) (*upgrade.Plan, error) {
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string, upgrade.PlanOptions) (*upgrade.Plan, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			<-release // dry run A is slow
@@ -581,8 +581,8 @@ func TestUpgradeScopeReachesThePlanner(t *testing.T) {
 	rig := newUpgradeRig(t)
 	var gotTarget string
 	var gotOnly []upgrade.Part
-	rig.b.svc.buildPlan = func(_ context.Context, _ aws.Config, _, target string, only []upgrade.Part) (*upgrade.Plan, error) {
-		gotTarget, gotOnly = target, only
+	rig.b.svc.buildPlan = func(_ context.Context, _ aws.Config, _, target string, o upgrade.PlanOptions) (*upgrade.Plan, error) {
+		gotTarget, gotOnly = target, o.Only
 		return upgradePlan(), nil
 	}
 	cp := state.Action{Kind: state.ActionUpgrade, Cluster: "prod-api", Scope: state.ScopeControlPlane}
@@ -617,4 +617,37 @@ func TestUpgradeScopeReachesThePlanner(t *testing.T) {
 	if gotTarget != "1.31" || len(gotOnly) != 1 || gotOnly[0] != upgrade.PartNodegroups {
 		t.Fatalf("catch-up planner got %s %v, want 1.31 [nodegroups]", gotTarget, gotOnly)
 	}
+}
+
+// A one-nodegroup roll to the control plane's version plans with
+// --only nodegroups -n, and Start refuses another nodegroup than the dry
+// run's.
+func TestUpgradeOfOneNodegroup(t *testing.T) {
+	rig := newUpgradeRig(t)
+	var got upgrade.PlanOptions
+	var gotTarget string
+	rig.b.svc.buildPlan = func(_ context.Context, _ aws.Config, _, target string, o upgrade.PlanOptions) (*upgrade.Plan, error) {
+		gotTarget, got = target, o
+		return upgradePlan(), nil
+	}
+	a := state.Action{Kind: state.ActionUpgrade, Cluster: "prod-api", Scope: state.ScopeNodegroups, Nodegroup: "ng-general"}
+	p, err := rig.b.Plan(t.Context(), a)
+	if err != nil || p.Blocked != "" {
+		t.Fatalf("plan = %+v, %v", p, err)
+	}
+	if gotTarget != "1.31" || len(got.Nodegroups) != 1 || got.Nodegroups[0] != "ng-general" || len(got.Only) != 1 || got.Only[0] != upgrade.PartNodegroups {
+		t.Fatalf("planner got %s %+v", gotTarget, got)
+	}
+	if !strings.HasSuffix(p.Command, "--only nodegroups -n ng-general") || !strings.HasPrefix(p.Title, "Roll nodegroup · prod-api/ng-general") {
+		t.Fatalf("command %q, title %q", p.Command, p.Title)
+	}
+	other := a
+	other.Nodegroup = "ng-system"
+	if err := rig.b.Start(t.Context(), other); err == nil || !strings.Contains(err.Error(), "other parts") {
+		t.Fatalf("Start with another nodegroup = %v", err)
+	}
+	if err := rig.b.Start(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	rig.b.Close()
 }

@@ -104,7 +104,7 @@ type services struct {
 	listStatuses  func(ctx context.Context, cfg aws.Config, opts statussvc.ListOptions) ([]statussvc.ClusterStatus, error)
 	latestVersion func(ctx context.Context, cfg aws.Config) (string, error)
 	upgradeCheck  func(ctx context.Context, cfg aws.Config, cluster string) (*clustersvc.UpgradeReport, error)
-	buildPlan     func(ctx context.Context, cfg aws.Config, cluster, target string, only []upgrade.Part) (*upgrade.Plan, error)
+	buildPlan     func(ctx context.Context, cfg aws.Config, cluster, target string, opts upgrade.PlanOptions) (*upgrade.Plan, error)
 	// changesInProgress reads what EKS is changing on a cluster right now.
 	changesInProgress func(ctx context.Context, cfg aws.Config, cluster string) ([]string, error)
 	// noRegionAnswered explains a sweep that read no region
@@ -325,9 +325,10 @@ func defaultServices(logger *slog.Logger) services {
 			}
 			return report, nil
 		},
-		buildPlan: func(ctx context.Context, cfg aws.Config, cluster, target string, only []upgrade.Part) (*upgrade.Plan, error) {
+		buildPlan: func(ctx context.Context, cfg aws.Config, cluster, target string, opts upgrade.PlanOptions) (*upgrade.Plan, error) {
 			svc := upgrade.NewService(factory.NewEKSClient(cfg), logger)
-			return svc.BuildPlan(ctx, cluster, target, upgrade.PlanOptions{Preview: true, Only: only})
+			opts.Preview = true
+			return svc.BuildPlan(ctx, cluster, target, opts)
 		},
 	}
 }
@@ -872,6 +873,15 @@ func (b *Backend) RunReadiness(ctx context.Context, key string) error {
 	return nil
 }
 
+// upgradeOptions are the planner's --only and --nodegroup for a.
+func upgradeOptions(a state.Action) upgrade.PlanOptions {
+	o := upgrade.PlanOptions{Only: scopeParts(a.Scope)}
+	if a.Nodegroup != "" {
+		o.Nodegroups = []string{a.Nodegroup}
+	}
+	return o
+}
+
 // scopeParts is the --only list of a scope; nil for every part.
 func scopeParts(s state.Scope) []upgrade.Part {
 	if s == 0 {
@@ -950,14 +960,14 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			}
 		}
 		pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
-		plan, perr := b.svc.buildPlan(pctx, cfg, t.name, to, scopeParts(a.Scope))
+		plan, perr := b.svc.buildPlan(pctx, cfg, t.name, to, upgradeOptions(a))
 		cancel()
 		if perr != nil {
 			return state.Plan{}, perr
 		}
-		p = planUpgrade(c, t, plan, a.Scope)
+		p = planUpgrade(c, t, plan, a)
 		if allowed && p.Blocked == "" {
-			b.planUpgradeLive(t, plan, a.Scope, id)
+			b.planUpgradeLive(t, plan, a, id)
 			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again for real", Note: "insights may refresh first; a changed plan asks before it runs"})
 		}
 	case state.ActionRollback:

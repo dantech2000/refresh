@@ -222,3 +222,53 @@ func TestBuildPlan_ControlPlaneOnlyBlocksOnUnreadAddonVersions(t *testing.T) {
 		t.Fatalf("blockers = %q, want the unread vpc-cni versions", b)
 	}
 }
+
+// --nodegroup rolls only the named nodegroups: the others are manual steps
+// and keep their version. An unknown name fails before anything changes.
+func TestExecute_OneNodegroupToTheControlPlane(t *testing.T) {
+	w := newWorld()
+	w.clusterVersion = "1.32"
+	w.addonVersions["vpc-cni"] = latestFor("1.32")
+	w.ngVersions = map[string]string{"workers-a": "1.31", "workers-b": "1.31"}
+	m := newWorldMock(w)
+	svc := newTestService(m)
+	ctx := context.Background()
+
+	if _, err := svc.BuildPlan(ctx, "prod-east", "1.32", PlanOptions{Only: []Part{PartNodegroups}, Nodegroups: []string{"workers-c"}}); err == nil || !strings.Contains(err.Error(), "workers-a, workers-b") && !strings.Contains(err.Error(), "workers-b, workers-a") {
+		t.Fatalf("unknown nodegroup: err = %v", err)
+	}
+	plan, err := svc.BuildPlan(ctx, "prod-east", "1.32", PlanOptions{Only: []Part{PartNodegroups}, Nodegroups: []string{"workers-a"}})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	last := plan.Hops[len(plan.Hops)-1].Steps
+	if s := findStep(t, last, StepNodegroup, "workers-b"); s.Status != StatusManual || !strings.Contains(s.Reason, "--nodegroup workers-a") {
+		t.Fatalf("workers-b step = %+v, want manual, left out by --nodegroup", s)
+	}
+	if s := findStep(t, last, StepNodegroup, "workers-a"); s.Status != StatusPending {
+		t.Fatalf("workers-a step = %+v, want pending", s)
+	}
+	if _, err := svc.Execute(ctx, plan, ExecuteOptions{Yes: true}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if w.ngVersions["workers-a"] != "1.32" || w.ngVersions["workers-b"] != "1.31" || m.Calls.UpdateNodegroupVersion != 1 || m.Calls.UpdateClusterVersion != 0 {
+		t.Fatalf("after: a=%s b=%s ng calls=%d cp calls=%d", w.ngVersions["workers-a"], w.ngVersions["workers-b"], m.Calls.UpdateNodegroupVersion, m.Calls.UpdateClusterVersion)
+	}
+}
+
+// A nodegroup left out by --nodegroup still counts in the readiness gate:
+// moving the control plane past its kubelet skew is blocked.
+func TestBuildPlan_NodegroupSelectionStillGatesTheSkew(t *testing.T) {
+	m := newWorldMock(&fakeWorld{
+		clusterVersion: "1.31",
+		addonVersions:  map[string]string{"vpc-cni": latestFor("1.31")},
+		ngVersions:     map[string]string{"workers-a": "1.31", "workers-old": "1.28"},
+	})
+	plan, err := newTestService(m).BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{Nodegroups: []string{"workers-a"}})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "workers-old") {
+		t.Fatalf("blockers = %q, want workers-old's kubelet skew", b)
+	}
+}
