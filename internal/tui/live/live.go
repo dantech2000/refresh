@@ -513,7 +513,7 @@ func (b *Backend) noteKubectl(rows []statussvc.ClusterStatus, answered []regions
 			Text: "kubectl cluster " + k.Name, Detail: "from context " + k.Context})
 	case other != nil:
 		b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: k.Region,
-			Text: "kubectl cluster " + k.Name + " is another cluster",
+			Text:   "kubectl cluster " + k.Name + " is another cluster",
 			Detail: "context " + k.Context + " points at " + kubectlWhere(k) + "; the fleet's " + k.Name + " is " + clusterWhere(*other)})
 	default:
 		b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: k.Region,
