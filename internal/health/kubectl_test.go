@@ -9,6 +9,8 @@ import (
 )
 
 func TestKubectlCluster(t *testing.T) {
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
 	const arn = "arn:aws:eks:eu-west-1:111122223333:cluster/prod-api"
 	const ieServer = "https://ABC.gr7.eu-west-1.eks.amazonaws.com"
 	exec := func(cmd string, env map[string]string, args ...string) *clientcmdapi.AuthInfo {
@@ -121,5 +123,27 @@ contexts:
 	}
 	if _, ok := CurrentKubectlCluster(filepath.Join(dir, "missing"), ""); ok {
 		t.Error("a missing kubeconfig gave a cluster")
+	}
+}
+
+// The plugin inherits refresh's environment: an inherited AWS_REGION wins
+// over the plugin's own AWS_DEFAULT_REGION, and the plugin's own AWS_REGION
+// wins over the inherited one.
+func TestExecRegionInheritsTheEnvironment(t *testing.T) {
+	t.Setenv("AWS_REGION", "eu-west-1")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	e := &clientcmdapi.ExecConfig{Command: "aws", Args: []string{"eks", "get-token", "--cluster-name", "app"},
+		Env: []clientcmdapi.ExecEnvVar{{Name: "AWS_DEFAULT_REGION", Value: "us-east-1"}}}
+	if got := execRegion(e); got != "eu-west-1" {
+		t.Fatalf("inherited AWS_REGION: got %q, want eu-west-1", got)
+	}
+	e.Env = append(e.Env, clientcmdapi.ExecEnvVar{Name: "AWS_REGION", Value: "ap-south-1"})
+	if got := execRegion(e); got != "ap-south-1" {
+		t.Fatalf("the plugin's AWS_REGION: got %q, want ap-south-1", got)
+	}
+	t.Setenv("AWS_REGION", "")
+	e.Env = e.Env[:1]
+	if got := execRegion(e); got != "us-east-1" {
+		t.Fatalf("only the plugin's AWS_DEFAULT_REGION: got %q, want us-east-1", got)
 	}
 }

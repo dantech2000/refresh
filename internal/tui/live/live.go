@@ -481,11 +481,13 @@ func (b *Backend) sweep(ctx context.Context) {
 
 // noteKubectl finds the kubectl cluster in the sweep's rows and sets
 // b.home, its fleet key. A row of the same name and region is the kubectl
-// cluster only when nothing the kubeconfig says contradicts it: the account
-// of its ARN, and its endpoint when the kubeconfig's server is an EKS
-// endpoint. After the first sweep that read the cluster's region, the feed
-// says once whether the fleet has it; a cluster not found is most often in
-// another account than the credentials'. The caller holds b.mu.
+// cluster only when what the kubeconfig says can be checked and matches:
+// the account of its ARN, and its endpoint when the kubeconfig's server is
+// an EKS endpoint. A row whose ARN or endpoint could not be read is
+// neither, until a later sweep reads it. Once the sweep has read the
+// cluster's region and checked every row of its name, the feed says once
+// whether the fleet has it; a cluster not found is most often in another
+// account than the credentials'. The caller holds b.mu.
 func (b *Backend) noteKubectl(rows []statussvc.ClusterStatus, answered []regionsweep.Answer[[]statussvc.ClusterStatus], targets map[string]target) {
 	k := b.opts.Kubectl
 	if k.Name == "" {
@@ -493,17 +495,22 @@ func (b *Backend) noteKubectl(rows []statussvc.ClusterStatus, answered []regions
 	}
 	b.home = ""
 	var other *statussvc.ClusterStatus // same name and region, another cluster
+	unknown := false
 	for i, r := range rows {
 		if r.Name != k.Name || r.Region != k.Region {
 			continue
 		}
-		if kubectlMatches(k, r) {
+		switch kubectlMatch(k, r) {
+		case matchYes:
 			b.home = keyOf(targets, target{name: r.Name, region: r.Region})
-		} else {
+		case matchNo:
 			other = &rows[i]
+		default:
+			unknown = true
 		}
 	}
-	if b.kubectlNoted || !slices.ContainsFunc(answered, func(a regionsweep.Answer[[]statussvc.ClusterStatus]) bool { return a.Region == k.Region }) {
+	read := slices.ContainsFunc(answered, func(a regionsweep.Answer[[]statussvc.ClusterStatus]) bool { return a.Region == k.Region })
+	if b.kubectlNoted || !read || (b.home == "" && unknown) {
 		return
 	}
 	b.kubectlNoted = true
@@ -522,18 +529,36 @@ func (b *Backend) noteKubectl(rows []statussvc.ClusterStatus, answered []regions
 	}
 }
 
-// kubectlMatches reports whether row r can be the kubectl cluster k: the
-// same account (when both ARNs are known; an unknown row ARN with a known
-// kubectl account is no match), and the same endpoint when k's server is an
-// EKS endpoint and the row's is known.
-func kubectlMatches(k health.KubectlCluster, r statussvc.ClusterStatus) bool {
-	if k.Account != "" && arnAccount(r.ARN) != k.Account {
-		return false
+// match is whether a fleet row is the kubectl cluster.
+type match int
+
+const (
+	matchUnknown match = iota // the row's ARN or endpoint could not be read
+	matchYes
+	matchNo
+)
+
+// kubectlMatch checks row r against the kubectl cluster k: the account of
+// its ARN when k has one, and its endpoint when k's server is an EKS
+// endpoint. With neither to check, the name and region decide.
+func kubectlMatch(k health.KubectlCluster, r statussvc.ClusterStatus) match {
+	if k.Account != "" {
+		switch a := arnAccount(r.ARN); {
+		case a == "":
+			return matchUnknown
+		case a != k.Account:
+			return matchNo
+		}
 	}
-	if health.IsEKSServer(k.Server) && r.Endpoint != "" && !health.SameClusterEndpoint(k.Server, r.Endpoint) {
-		return false
+	if health.IsEKSServer(k.Server) {
+		switch {
+		case r.Endpoint == "":
+			return matchUnknown
+		case !health.SameClusterEndpoint(k.Server, r.Endpoint):
+			return matchNo
+		}
 	}
-	return true
+	return matchYes
 }
 
 // arnAccount is the account of an ARN, or "".

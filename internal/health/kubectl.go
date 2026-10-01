@@ -2,6 +2,7 @@ package health
 
 import (
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -118,16 +119,22 @@ func isGetToken(e *clientcmdapi.ExecConfig) bool {
 }
 
 // execRegion is the region an exec plugin signs with: --region, else
-// AWS_REGION, else AWS_DEFAULT_REGION, as the AWS CLI reads them.
+// AWS_REGION, else AWS_DEFAULT_REGION, as the AWS CLI reads them. The
+// plugin inherits this process's environment, and its own env entries
+// override single variables.
 func execRegion(e *clientcmdapi.ExecConfig) string {
 	if r := argValue(e.Args, "--region"); r != "" {
 		return r
 	}
 	for _, name := range []string{"AWS_REGION", "AWS_DEFAULT_REGION"} {
-		for _, v := range e.Env {
-			if v.Name == name && strings.TrimSpace(v.Value) != "" {
-				return strings.TrimSpace(v.Value)
+		v, set := os.LookupEnv(name)
+		for _, ev := range e.Env {
+			if ev.Name == name {
+				v, set = ev.Value, true
 			}
+		}
+		if v = strings.TrimSpace(v); set && v != "" {
+			return v
 		}
 	}
 	return ""

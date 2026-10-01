@@ -34,8 +34,8 @@ the same change, and `c` copies it.
 
 When the kubectl context (or `--kube-context`) points at an EKS cluster, the
 fleet cursor moves to that cluster when the sweep finds it, and the feed says
-`kubectl cluster <name>`. If you move the cursor or open a screen first, the
-cursor stays where you put it.
+`kubectl cluster <name>`. If you press a key first, the cursor stays where it
+is. The cursor never moves while a dialog is open.
 
 The UI reads the cluster's name and region from the kubeconfig: a cluster ARN
 (as `aws eks update-kubeconfig` writes it), an eksctl cluster name, or the API
@@ -43,9 +43,16 @@ server address and the `aws eks get-token` arguments. Without `-r` or `-A`,
 the UI adds the cluster's region to the sweep, when the region is in the same
 AWS partition as the configured region.
 
-A cluster with the same name and region is the kubectl cluster only when its
-account matches the account in the cluster ARN, and its endpoint matches the
-kubeconfig's EKS server. The feed tells you when it does not:
+A cluster with the same name and region is the kubectl cluster only when the
+UI can check it:
+
+- If the kubeconfig has a cluster ARN, the account must match.
+- If the kubeconfig's server is an EKS endpoint, the endpoint must match.
+- If the kubeconfig has neither (a proxied API server, for example), the name
+  and region decide.
+
+If the UI cannot read the cluster's ARN or endpoint, it waits for the next
+sweep. The feed tells you when the cluster does not match:
 
 - `kubectl cluster <name> is another cluster`: the sweep found a cluster with
   that name in a different account, or behind a different endpoint.

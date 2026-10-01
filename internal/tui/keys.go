@@ -279,13 +279,15 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	screenBefore, clusterBefore, planBefore := m.screen, m.cluster().Name, m.planID
 	for _, b := range table {
 		if b.matches(k) && b.active(m) {
+			// The user acts: the kubectl cluster, found later, must not
+			// move the cursor.
+			m.homed = true
 			cmd := b.do(&m)
 			if m.screen != screenBefore || m.cluster().Name != clusterBefore {
 				// The user moved on: a dry run for the old target must not
 				// open over the new one, and a started change must not pull
-				// them back, nor may the kubectl cluster, found later.
+				// them back.
 				m.focusAfter = nil
-				m.homed = true
 				if m.planning != "" && m.planID == planBefore {
 					m.cancelPlan()
 				}

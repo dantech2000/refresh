@@ -1036,6 +1036,25 @@ func TestCursorStartsOnTheKubectlCluster(t *testing.T) {
 		t.Fatalf("selected %q, want c once the fleet has it", got)
 	}
 
+	// A dialog is open when it is found: the cursor stays under it.
+	m = New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	next, _ = m.Update(stateMsg{id: 1, st: state.State{Clusters: cs[:2]}})
+	mm := next.(Model)
+	mm.confirm = &state.Plan{}
+	next, _ = mm.Update(stateMsg{id: 2, st: state.State{Home: "c", Clusters: cs}})
+	if got := next.(Model).cluster().Name; got != "a" {
+		t.Fatalf("selected %q under an open dialog, want a", got)
+	}
+
+	// The user pressed a key before it was found: the cursor stays.
+	m = New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	next, _ = m.Update(stateMsg{id: 1, st: state.State{Clusters: cs[:2]}})
+	next, _ = next.(Model).key("w")
+	next, _ = next.(Model).Update(stateMsg{id: 2, st: state.State{Home: "c", Clusters: cs}})
+	if got := next.(Model).cluster().Name; got != "a" {
+		t.Fatalf("selected %q, want a: the user pressed a key first", got)
+	}
+
 	// The user moved before it was found: the cursor stays.
 	m = New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
 	next, _ = m.Update(stateMsg{id: 1, st: state.State{Clusters: cs[:2]}})

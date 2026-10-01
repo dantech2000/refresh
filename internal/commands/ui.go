@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -189,13 +190,17 @@ func uiRegions(cmd *cli.Command, awsCfg aws.Config, kubectlRegion string) (regio
 		}
 		return []string{awsCfg.Region}, false
 	}
-	return appconfig.GetRegionsForPartition(awsCfg.Region), true
+	regions = appconfig.GetRegionsForPartition(awsCfg.Region)
+	if kubectlRegion != "" && partitionOf(kubectlRegion) == partitionOf(regions[0]) && !slices.Contains(regions, kubectlRegion) {
+		regions = append(slices.Clone(regions), kubectlRegion)
+	}
+	return regions, true
 }
 
 // partitionOf names the AWS partition of a region: credentials work only
 // within one.
 func partitionOf(region string) string {
-	for _, p := range []string{"cn-", "us-gov-", "us-isob-", "us-iso-", "eu-isoe-", "us-isof-"} {
+	for _, p := range []string{"cn-", "us-gov-", "us-isob-", "us-iso-", "eu-isoe-", "us-isof-", "eusc-"} {
 		if strings.HasPrefix(region, p) {
 			return p
 		}

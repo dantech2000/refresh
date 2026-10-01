@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1011,8 +1012,6 @@ func TestSweepRefusesAKubectlClusterThatIsAnotherCluster(t *testing.T) {
 		detail  string
 	}{
 		{"another account", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Account: "111122223333"}, nil, false, "account 111122223333; the fleet's prod is in account 999988887777"},
-		{"unknown row ARN", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Account: "999988887777"},
-			func(r statussvc.ClusterStatus) statussvc.ClusterStatus { r.ARN = ""; return r }, false, ""},
 		{"another endpoint", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://A.gr7.us-east-1.eks.amazonaws.com"}, nil, false, "https://A.gr7.us-east-1.eks.amazonaws.com"},
 		{"same endpoint", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://b.gr7.us-east-1.eks.amazonaws.com/"}, nil, true, ""},
 		{"proxied server", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://k8s.example"}, nil, true, ""},
@@ -1041,6 +1040,46 @@ func TestSweepRefusesAKubectlClusterThatIsAnotherCluster(t *testing.T) {
 			}
 			if !found {
 				t.Fatalf("no warning with %q: %+v", tc.detail, st.Feed)
+			}
+		})
+	}
+}
+
+// A row whose ARN or endpoint could not be read (DescribeCluster failed) is
+// neither the kubectl cluster nor another one: no home and no feed line,
+// until a sweep reads it.
+func TestSweepWaitsForAnUnreadKubectlCluster(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		kubectl health.KubectlCluster
+	}{
+		{"ARN context", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Account: "999988887777"}},
+		{"eksctl context", health.KubectlCluster{Context: "a", Name: "prod", Region: "us-east-1", Server: "https://B.gr7.us-east-1.eks.amazonaws.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			unread := statussvc.ClusterStatus{Name: "prod", Region: "us-east-1", Incomplete: true}
+			f := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": {unread}}}
+			b := newTestBackend(t, f, "us-east-1")
+			b.opts.Kubectl = tc.kubectl
+			b.sweep(t.Context())
+			st, _ := b.State(t.Context())
+			if st.Home != "" {
+				t.Fatalf("Home = %q for an unread row", st.Home)
+			}
+			for _, e := range st.Feed {
+				if strings.HasPrefix(e.Text, "kubectl cluster") {
+					t.Fatalf("noted an unread row: %+v", e)
+				}
+			}
+			f.set("us-east-1", statussvc.ClusterStatus{Name: "prod", Region: "us-east-1", Version: "1.33",
+				ARN: "arn:aws:eks:us-east-1:999988887777:cluster/prod", Endpoint: "https://B.gr7.us-east-1.eks.amazonaws.com"})
+			b.sweep(t.Context())
+			st, _ = b.State(t.Context())
+			if st.Home != "prod" {
+				t.Fatalf("Home = %q once the row was read", st.Home)
+			}
+			if !slices.ContainsFunc(st.Feed, func(e state.Event) bool { return e.Text == "kubectl cluster prod" }) {
+				t.Fatalf("no feed line once the row was read: %+v", st.Feed)
 			}
 		})
 	}

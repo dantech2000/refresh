@@ -106,6 +106,7 @@ func TestUIRegionsAddTheKubectlRegion(t *testing.T) {
 		{"other partition", "us-east-1", "cn-north-1", nil, []string{"us-east-1"}},
 		{"govcloud", "us-east-1", "us-gov-west-1", nil, []string{"us-east-1"}},
 		{"opt-in region", "us-east-1", "eu-south-1", nil, []string{"us-east-1", "eu-south-1"}},
+		{"sovereign cloud", "us-east-1", "eusc-de-east-1", nil, []string{"us-east-1"}},
 		{"china to china", "cn-north-1", "cn-northwest-1", nil, []string{"cn-north-1", "cn-northwest-1"}},
 		{"explicit -r", "us-east-1", "eu-west-1", []string{"-r", "ap-south-1"}, []string{"ap-south-1"}},
 	} {
@@ -123,5 +124,33 @@ func TestUIRegionsAddTheKubectlRegion(t *testing.T) {
 				t.Fatalf("regions = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// With no configured region the UI sweeps the partition, plus the kubectl
+// region when the partition list lacks it.
+func TestUIRegionsWithoutAConfigRegion(t *testing.T) {
+	t.Setenv("REFRESH_EKS_REGIONS", "")
+	run := func(kubectl string) []string {
+		var got []string
+		cmd := UICommand()
+		cmd.Action = func(_ context.Context, cmd *cli.Command) error {
+			got, _ = uiRegions(cmd, aws.Config{}, kubectl)
+			return nil
+		}
+		if err := cmd.Run(t.Context(), []string{"ui"}); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	base := run("")
+	if slices.Contains(base, "eu-south-1") {
+		t.Skip("the partition list now has eu-south-1; pick another region")
+	}
+	if got := run("eu-south-1"); !slices.Equal(got, append(slices.Clone(base), "eu-south-1")) {
+		t.Fatalf("regions = %v, want the partition plus eu-south-1", got)
+	}
+	if got := run("cn-north-1"); !slices.Equal(got, base) {
+		t.Fatalf("regions = %v, want the partition alone", got)
 	}
 }
