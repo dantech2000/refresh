@@ -65,11 +65,11 @@ func TestUpgrade_ResumeKeepsOnly(t *testing.T) {
 		got = resumeCommand(c, "prod", &upgrade.Plan{TargetVersion: "1.32"})
 		return nil
 	}
-	if err := cmd.Run(t.Context(), []string{"upgrade", "prod", "--to", "1.32", "--only", "control-plane"}); err != nil {
+	if err := cmd.Run(t.Context(), []string{"upgrade", "prod", "--to", "1.32", "--only", "control-plane", "-n", "web"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "--only control-plane") {
-		t.Fatalf("resume command %q lacks --only", got)
+	if !strings.Contains(got, "--only control-plane") || !strings.Contains(got, "--nodegroup web") {
+		t.Fatalf("resume command %q lacks --only or --nodegroup", got)
 	}
 }
 

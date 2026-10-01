@@ -361,9 +361,10 @@ func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) str
 		}
 	}
 	parts = append(parts, "cluster", "upgrade", "-c", shellQuote(clusterName), "--to", shellQuote(plan.TargetVersion))
-	// The resume runs the same parts: --only must carry over, or a resumed
-	// control-plane-only run would roll the nodegroups too.
-	for _, name := range []string{"skip", "skip-nodegroup", "only"} {
+	// The resume runs the same parts: --only and --nodegroup must carry
+	// over, or a resumed control-plane-only run would roll the nodegroups
+	// too.
+	for _, name := range []string{"skip", "skip-nodegroup", "only", "nodegroup"} {
 		for _, v := range cmd.StringSlice(name) {
 			parts = append(parts, "--"+name, shellQuote(v))
 		}
