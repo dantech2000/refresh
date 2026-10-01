@@ -43,20 +43,22 @@ func ssoProfiles(sc *bufio.Scanner) []string {
 			if end < 0 {
 				continue
 			}
-			name := strings.Join(strings.Fields(line[1:end]), " ")
+			// As the SDK reads it: the name keeps its inner spaces.
+			name := strings.TrimSpace(line[1:end])
 			switch {
 			case name == "default":
 				profile = name
-			case strings.HasPrefix(name, "profile "):
-				profile = strings.TrimSpace(strings.TrimPrefix(name, "profile "))
+			case strings.HasPrefix(name, "profile") && len(name) > len("profile") && (name[len("profile")] == ' ' || name[len("profile")] == '\t'):
+				profile = strings.TrimSpace(name[len("profile"):])
 			}
 			continue
 		}
-		key, _, ok := strings.Cut(line, "=")
-		if !ok || profile == "" || added {
+		// key = value, or key: value.
+		sep := strings.IndexAny(line, "=:")
+		if sep < 0 || profile == "" || added {
 			continue
 		}
-		if k := strings.ToLower(strings.TrimSpace(key)); k == "sso_session" || k == "sso_start_url" {
+		if k := strings.ToLower(strings.TrimSpace(line[:sep])); k == "sso_session" || k == "sso_start_url" {
 			out = append(out, profile)
 			added = true
 		}

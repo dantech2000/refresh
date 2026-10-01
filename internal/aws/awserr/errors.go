@@ -96,8 +96,20 @@ func IsCredentialError(err error) bool {
 // unreachable metadata service. The SDK gives IMDS a short timeout of its
 // own, so its "deadline exceeded" is this, not the --timeout.
 func IsNoCredentials(err error) bool {
-	var op *smithy.OperationError
-	return errors.As(err, &op) && op.ServiceID == "ec2imds"
+	// An IMDS failure can sit inside another operation error (an
+	// AssumeRole profile whose credential_source is Ec2InstanceMetadata):
+	// look inside each operation error errors.As finds.
+	for e := err; e != nil; {
+		var op *smithy.OperationError
+		if !errors.As(e, &op) {
+			return false
+		}
+		if op.ServiceID == "ec2imds" {
+			return true
+		}
+		e = op.Err
+	}
+	return false
 }
 
 // IsPermissionError reports whether err is an IAM denial: a permission-class

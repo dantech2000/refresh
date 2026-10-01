@@ -327,6 +327,13 @@ func TestFormatAWSErrorNoCredentials(t *testing.T) {
 			t.Fatalf("%v: the cause is not wrapped", cause)
 		}
 	}
+	// An IMDS failure inside an AssumeRole call (credential_source =
+	// Ec2InstanceMetadata) is the same.
+	nested := &smithy.OperationError{ServiceID: "STS", OperationName: "AssumeRole",
+		Err: fmt.Errorf("failed to retrieve credentials: %w", &smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: context.DeadlineExceeded})}
+	if !IsNoCredentials(nested) || strings.Contains(FormatAWSError(nested, "x").Error(), "--timeout") {
+		t.Fatal("a nested IMDS failure is not classified as no credentials")
+	}
 	other := &smithy.OperationError{ServiceID: "STS", OperationName: "GetCallerIdentity", Err: context.DeadlineExceeded}
 	if IsNoCredentials(other) {
 		t.Fatal("an STS timeout classified as no credentials")

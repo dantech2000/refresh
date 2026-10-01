@@ -29,14 +29,17 @@ aws_access_key_id = x
 ; a comment
 SSO_START_URL = https://acme.awsapps.com/start
 
-[profile   spaced  ]
+[profile   prod  admin  ]
 sso_session = acme
+
+[profile colon]
+sso_start_url: https://acme.awsapps.com/start
 
 [sso-session acme]
 sso_start_url = https://acme.awsapps.com/start
 `
 	got := ssoProfiles(bufio.NewScanner(strings.NewReader(cfg)))
-	if !slices.Equal(got, []string{"prod-admin", "legacy", "commented", "spaced"}) {
+	if !slices.Equal(got, []string{"prod-admin", "legacy", "commented", "prod  admin", "colon"}) {
 		t.Fatalf("got %v", got)
 	}
 	path := filepath.Join(t.TempDir(), "config")
@@ -44,7 +47,7 @@ sso_start_url = https://acme.awsapps.com/start
 		t.Fatal(err)
 	}
 	t.Setenv("AWS_CONFIG_FILE", path)
-	if got := SSOProfiles(); len(got) != 4 {
+	if got := SSOProfiles(); len(got) != 5 {
 		t.Fatalf("SSOProfiles = %v", got)
 	}
 	t.Setenv("AWS_CONFIG_FILE", filepath.Join(t.TempDir(), "missing"))
