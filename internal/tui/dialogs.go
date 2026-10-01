@@ -238,26 +238,26 @@ func (m Model) unlockParts(w int) dialogParts {
 	return dialogParts{head: head, body: body, foot: foot, border: colPeach, w: w}
 }
 
-// pickerParts lists the stale nodegroups to choose from.
+// pickerParts lists the changes to choose from.
 func (m Model) pickerParts(w int) dialogParts {
 	p := m.pick
 	inner := w - 4
-	head := Block{{bold(colMauve, "Patch which nodegroup?"), sp(2), dimS(p.cluster)}, {}}
+	head := Block{{bold(colMauve, p.title), sp(2), dimS(p.cluster)}, {}}
+	nameW := 14
+	for _, it := range p.items {
+		nameW = max(nameW, width(it.name)+2)
+	}
 	var body Block
-	for i, ng := range p.items {
-		why := "AMI " + ng.AMI + " → " + ng.LatestAMI
-		if ng.LatestAMI == "" {
-			why = "AMI outdated"
-		}
-		if ng.Version != m.clusterVersion(p.cluster) {
-			why = "on " + ng.Version
-		}
+	for i, it := range p.items {
 		mark := sp(2)
 		if i == p.sel {
 			mark = fg(colMauve, "▶ ")
 		}
 		l := Line{mark, dimS(fmt.Sprintf("%-2d", i+1)), sp(1)}
-		l = append(l, tx(padRight(ng.Name, 14)), tok(state.LevelWarn, why), sp(2), dimS(fmt.Sprintf("%d nodes", ng.Nodes)))
+		l = append(l, tx(padRight(it.name, nameW)), tok(it.level, it.why))
+		if it.note != "" {
+			l = append(l, sp(2), dimS(it.note))
+		}
 		if i == p.sel {
 			l = l.Fit(inner).WithBG(colSurface0)
 		}
@@ -265,13 +265,4 @@ func (m Model) pickerParts(w int) dialogParts {
 	}
 	foot := Block{{}, joinRight(nil, Line{chip("↑↓"), sp(1), sub("choose"), sp(3), chip("enter"), sp(1), sub("dry run"), sp(3), chip("esc"), sp(1), sub("close")}, inner)}
 	return dialogParts{head: head, body: body, foot: foot, border: colMauve, w: w}
-}
-
-func (m Model) clusterVersion(name string) string {
-	for _, c := range m.st.Clusters {
-		if c.Name == name {
-			return c.Version
-		}
-	}
-	return ""
 }

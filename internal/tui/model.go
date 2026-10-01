@@ -420,8 +420,19 @@ func (m Model) upgradeEvents(u state.Upgrade) []state.Event {
 }
 
 // picker chooses which stale nodegroup to patch.
+// picker is a list of changes to choose from: the stale nodegroups of a
+// patch, or the parts of an upgrade. enter dry-runs the chosen item.
 type picker struct {
+	title   string
 	cluster string
-	items   []state.Nodegroup
+	items   []pickItem
 	sel     int
+}
+
+// pickItem is one choice: a name, why it is offered, a note, and the
+// change it dry-runs.
+type pickItem struct {
+	name, why, note string
+	level           state.Level
+	action          state.Action
 }

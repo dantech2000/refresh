@@ -104,7 +104,7 @@ type services struct {
 	listStatuses  func(ctx context.Context, cfg aws.Config, opts statussvc.ListOptions) ([]statussvc.ClusterStatus, error)
 	latestVersion func(ctx context.Context, cfg aws.Config) (string, error)
 	upgradeCheck  func(ctx context.Context, cfg aws.Config, cluster string) (*clustersvc.UpgradeReport, error)
-	buildPlan     func(ctx context.Context, cfg aws.Config, cluster, target string) (*upgrade.Plan, error)
+	buildPlan     func(ctx context.Context, cfg aws.Config, cluster, target string, only []upgrade.Part) (*upgrade.Plan, error)
 	// changesInProgress reads what EKS is changing on a cluster right now.
 	changesInProgress func(ctx context.Context, cfg aws.Config, cluster string) ([]string, error)
 	// noRegionAnswered explains a sweep that read no region
@@ -325,9 +325,9 @@ func defaultServices(logger *slog.Logger) services {
 			}
 			return report, nil
 		},
-		buildPlan: func(ctx context.Context, cfg aws.Config, cluster, target string) (*upgrade.Plan, error) {
+		buildPlan: func(ctx context.Context, cfg aws.Config, cluster, target string, only []upgrade.Part) (*upgrade.Plan, error) {
 			svc := upgrade.NewService(factory.NewEKSClient(cfg), logger)
-			return svc.BuildPlan(ctx, cluster, target, upgrade.PlanOptions{Preview: true})
+			return svc.BuildPlan(ctx, cluster, target, upgrade.PlanOptions{Preview: true, Only: only})
 		},
 	}
 }
@@ -872,6 +872,23 @@ func (b *Backend) RunReadiness(ctx context.Context, key string) error {
 	return nil
 }
 
+// scopeParts is the --only list of a scope; nil for every part.
+func scopeParts(s state.Scope) []upgrade.Part {
+	if s == 0 {
+		return nil
+	}
+	var out []upgrade.Part
+	for _, p := range []struct {
+		scope state.Scope
+		part  upgrade.Part
+	}{{state.ScopeControlPlane, upgrade.PartControlPlane}, {state.ScopeAddons, upgrade.PartAddons}, {state.ScopeNodegroups, upgrade.PartNodegroups}} {
+		if s&p.scope != 0 {
+			out = append(out, p.part)
+		}
+	}
+	return out
+}
+
 // nextHop is the version an upgrade of c would move to. With the newest
 // version unknown it is the next minor; the planner checks that it exists.
 func nextHop(c state.Cluster) string {
@@ -922,20 +939,25 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			cancel()
 		}
 	case state.ActionUpgrade:
-		to := nextHop(c)
-		if to == c.Version {
-			p = state.Plan{Action: a, Title: "Upgrade cluster · " + a.Cluster, Blocked: a.Cluster + " already runs " + c.Version + ", the newest version"}
-			break
+		// Without the control plane, the parts catch up to the version it
+		// runs; with it, the upgrade goes to the next version.
+		to := c.Version
+		if a.Scope.Has(state.ScopeControlPlane) {
+			to = nextHop(c)
+			if to == c.Version {
+				p = state.Plan{Action: a, Title: "Upgrade cluster · " + a.Cluster, Blocked: a.Cluster + " already runs " + c.Version + ", the newest version"}
+				break
+			}
 		}
 		pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
-		plan, perr := b.svc.buildPlan(pctx, cfg, t.name, to)
+		plan, perr := b.svc.buildPlan(pctx, cfg, t.name, to, scopeParts(a.Scope))
 		cancel()
 		if perr != nil {
 			return state.Plan{}, perr
 		}
-		p = planUpgrade(c, t, plan)
+		p = planUpgrade(c, t, plan, a.Scope)
 		if allowed && p.Blocked == "" {
-			b.planUpgradeLive(t, plan, id)
+			b.planUpgradeLive(t, plan, a.Scope, id)
 			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again for real", Note: "insights may refresh first; a changed plan asks before it runs"})
 		}
 	case state.ActionRollback:

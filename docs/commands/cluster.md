@@ -309,6 +309,32 @@ phase with nothing to do. Each add-on phase runs in dependency order and moves
 each add-on to the latest version compatible with the hop target. In
 `-o json` and `-o yaml`, a required add-on step has `beforeNodegroups: true`.
 
+### One part at a time (--only)
+
+By default, an upgrade runs every part. To run some parts only, give
+`--only` with one or more of `control-plane`, `addons`, and `nodegroups`. For
+example, upgrade the control plane now, and roll the nodegroups later:
+
+```bash
+refresh cluster upgrade -c prod-east --to 1.33 --only control-plane
+refresh cluster upgrade -c prod-east --to 1.33 --only nodegroups
+refresh cluster upgrade -c prod-east --to 1.33 --only addons
+```
+
+The steps of the parts left out stay in the plan as manual steps (`Manual`,
+reason `left out by --only …`), and the run does not touch them. The plan
+adds a notice that names the command for each part left out. These rules keep
+the cluster safe:
+
+- The readiness gate always runs. Nodes can run up to three minor versions
+  behind the control plane. If a nodegroup left out would be further
+  behind, the control-plane step is blocked.
+- Without `control-plane`, `--to` must be the version the control plane
+  runs: the nodegroups and add-ons catch up to it.
+- Without `addons`, `--to` is one minor version up. An add-on that the new
+  control plane cannot run (often kube-proxy) is named in a notice: update
+  it right after the control plane with `refresh addon update --all`.
+
 ### Readiness gates
 
 **Cluster Insights.** Before each control-plane step (at plan time for the
@@ -423,6 +449,7 @@ CI, and `NO_COLOR` runs print text progress.
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
 | `--skip` | Add-on name to skip, exact and case-insensitive (repeatable; for add-ons managed via Helm/GitOps) |
 | `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
+| `--only` | Run only these parts: `control-plane`, `addons`, `nodegroups` (repeatable or comma-separated; default all). See [One part at a time](#one-part-at-a-time-only) |
 | `--quiet, -q` | Suppress progress output |
 | `--poll-interval` | How often to poll in-flight updates (default `15s`; must be greater than `0`) |
 | `--format, -o` | `table` (default), `json`, `yaml`, `plain`. With `json`/`yaml`, stdout gets one document: the plan for `--dry-run` or a blocked plan, else `{plan, report, failures}` after the run. Progress goes to stderr, and a run without `--dry-run` needs `--yes`. With `plain`, stdout gets the plan as TSV and everything else goes to stderr |
@@ -511,6 +538,9 @@ refresh cluster upgrade -c prod-east --to 1.33 --dry-run
 
 # Execute, confirming each mutating phase
 refresh cluster upgrade -c prod-east --to 1.33
+
+# The control plane only; the nodegroups and add-ons later
+refresh cluster upgrade -c prod-east --to 1.33 --only control-plane
 
 # Non-interactive (CI) run, skipping a Helm-managed add-on
 refresh cluster upgrade -c prod-east --to 1.33 --yes --skip aws-load-balancer-controller

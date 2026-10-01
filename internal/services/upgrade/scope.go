@@ -1,0 +1,146 @@
+package upgrade
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+)
+
+// Part is one part of a cluster upgrade that --only selects.
+type Part string
+
+const (
+	// PartControlPlane is the control-plane version step.
+	PartControlPlane Part = "control-plane"
+	// PartAddons is every EKS add-on step.
+	PartAddons Part = "addons"
+	// PartNodegroups is every managed nodegroup roll.
+	PartNodegroups Part = "nodegroups"
+)
+
+// Parts lists every Part in run order.
+func Parts() []Part { return []Part{PartControlPlane, PartAddons, PartNodegroups} }
+
+// ParseParts reads --only values. No values means every part; values that
+// name no part (--only "" or --only ,) are an error, so an empty variable
+// never widens a run to every part.
+func ParseParts(values []string) ([]Part, error) {
+	var out []Part
+	for _, v := range values {
+		for _, f := range strings.Split(v, ",") {
+			p := Part(strings.ToLower(strings.TrimSpace(f)))
+			if p == "" {
+				continue
+			}
+			if !slices.Contains(Parts(), p) {
+				return nil, fmt.Errorf("--only %q: want %s", f, joinParts(Parts()))
+			}
+			if !slices.Contains(out, p) {
+				out = append(out, p)
+			}
+		}
+	}
+	if len(values) > 0 && len(out) == 0 {
+		return nil, fmt.Errorf("--only needs at least one of %s", joinParts(Parts()))
+	}
+	return out, nil
+}
+
+func joinParts(parts []Part) string {
+	s := make([]string, len(parts))
+	for i, p := range parts {
+		s[i] = string(p)
+	}
+	return strings.Join(s, ", ")
+}
+
+// includes reports whether the plan covers part: every part when Only is
+// empty.
+func (o PlanOptions) includes(p Part) bool { return len(o.Only) == 0 || slices.Contains(o.Only, p) }
+
+// partOf is the part a step belongs to; "" for the readiness gate, which
+// every scope keeps.
+func partOf(t StepType) Part {
+	switch t {
+	case StepControlPlane:
+		return PartControlPlane
+	case StepAddon:
+		return PartAddons
+	case StepNodegroup:
+		return PartNodegroups
+	}
+	return ""
+}
+
+// checkScope refuses a scope the plan cannot keep safe. Without the control
+// plane, add-ons and nodegroups can only catch up to the version it already
+// runs. Without add-ons, the control plane moves one minor version at a
+// time: an add-on left behind may not run two versions on.
+func checkScope(o PlanOptions, cluster, live, target string, hops int) error {
+	if len(o.Only) == 0 {
+		return nil
+	}
+	if !o.includes(PartControlPlane) && live != target {
+		return fmt.Errorf("the control plane of %s runs %s: --only %s catches up to the control plane's version, so use --to %s, or add control-plane to --only", cluster, live, joinParts(o.Only), live)
+	}
+	if !o.includes(PartAddons) && hops > 1 {
+		return fmt.Errorf("without add-ons, %s upgrades one minor version at a time: an add-on left on the old version may not run two versions on; use --to %s, or add addons to --only", cluster, nextMinor(live))
+	}
+	return nil
+}
+
+// applyScope turns the pending and blocked steps of the parts outside
+// o.Only into manual steps, and adds a notice for each part left out that
+// still has work: what to run next. An add-on step that is blocked and must
+// go before the rolls (the new control plane cannot run the installed
+// version, and no compatible one could be found) stays blocked: leaving
+// the add-ons out cannot make that control-plane move safe. A blocked step
+// that turns manual keeps its reason.
+func applyScope(plan *Plan, o PlanOptions) {
+	if len(o.Only) == 0 {
+		return
+	}
+	var incompatible, addonsLeft, nodegroupsLeft []string
+	for h := range plan.Hops {
+		for i := range plan.Hops[h].Steps {
+			st := &plan.Hops[h].Steps[i]
+			p := partOf(st.Type)
+			if p == "" || o.includes(p) || (st.Status != StatusPending && st.Status != StatusBlocked) {
+				continue
+			}
+			if st.Status == StatusBlocked && p == PartAddons && st.BeforeNodegroups {
+				continue
+			}
+			left := "left out by --only " + joinParts(o.Only)
+			if st.Status == StatusBlocked && st.Reason != "" {
+				left += "; blocked: " + st.Reason
+			}
+			st.Status, st.Reason = StatusManual, left
+			switch p {
+			case PartAddons:
+				addonsLeft = appendNew(addonsLeft, st.Target)
+				if st.BeforeNodegroups {
+					incompatible = appendNew(incompatible, st.Target)
+				}
+			case PartNodegroups:
+				nodegroupsLeft = appendNew(nodegroupsLeft, st.Target)
+			}
+		}
+	}
+	target := plan.TargetVersion
+	if len(incompatible) > 0 {
+		plan.Notices = append(plan.Notices, fmt.Sprintf("add-on(s) %s may not run on Kubernetes %s: update them right after the control plane: refresh addon update --all -c %s", strings.Join(incompatible, ", "), target, plan.ClusterName))
+	} else if len(addonsLeft) > 0 {
+		plan.Notices = append(plan.Notices, fmt.Sprintf("add-on(s) %s stay where they are; update them later: refresh addon update --all -c %s", strings.Join(addonsLeft, ", "), plan.ClusterName))
+	}
+	if len(nodegroupsLeft) > 0 {
+		plan.Notices = append(plan.Notices, fmt.Sprintf("nodegroup(s) %s stay on their version; roll them later: refresh cluster upgrade -c %s --to %s --only nodegroups", strings.Join(nodegroupsLeft, ", "), plan.ClusterName, target))
+	}
+}
+
+func appendNew(list []string, s string) []string {
+	if s == "" || slices.Contains(list, s) {
+		return list
+	}
+	return append(list, s)
+}

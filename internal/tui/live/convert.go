@@ -283,10 +283,17 @@ func planAddons(c state.Cluster, t target) state.Plan {
 	return p
 }
 
-func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan) state.Plan {
+func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan, scope state.Scope) state.Plan {
 	p := state.Plan{
-		Title:   fmt.Sprintf("Upgrade cluster · %s %s → %s", c.Name, plan.CurrentVersion, plan.TargetVersion),
+		Title:   fmt.Sprintf("%s · %s %s → %s", upgradeTitle(scope), c.Name, plan.CurrentVersion, plan.TargetVersion),
 		Command: regionFlag(t) + "cluster upgrade -c " + t.name + " --to " + plan.TargetVersion,
+	}
+	if only := scopeParts(scope); len(only) > 0 {
+		names := make([]string, len(only))
+		for i, o := range only {
+			names[i] = string(o)
+		}
+		p.Command += " --only " + strings.Join(names, ",")
 	}
 	var blockers []string
 	for _, hop := range plan.Hops {
@@ -294,6 +301,9 @@ func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan) state.Plan {
 			key := string(s.Type)
 			if s.Target != "" {
 				key = s.Target
+			}
+			if s.Status == upgrade.StatusManual && strings.HasPrefix(s.Reason, "left out by --only") {
+				continue // the plan's notices say what stays and what to run next
 			}
 			switch s.Status {
 			case upgrade.StatusBlocked:
@@ -333,14 +343,39 @@ func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan) state.Plan {
 	for _, f := range plan.Failures {
 		p.Gates = append(p.Gates, state.PlanGate{Status: state.CheckWarn, Text: "could not read " + f.Name, Note: f.Error})
 	}
-	p.Gates = append(p.Gates,
-		state.PlanGate{Status: state.CheckPending, Text: "nodegroup health gate", Note: "checked before each roll; warnings ask y/n"},
-		state.PlanGate{Status: state.CheckPending, Text: "PDB drain blockers", Note: "checked before each roll; a blocker stops the run"})
-	p.Changes = []state.Change{{Field: "control plane", From: plan.CurrentVersion, To: plan.TargetVersion}}
+	if scope.Has(state.ScopeNodegroups) {
+		p.Gates = append(p.Gates,
+			state.PlanGate{Status: state.CheckPending, Text: "nodegroup health gate", Note: "checked before each roll; warnings ask y/n"},
+			state.PlanGate{Status: state.CheckPending, Text: "PDB drain blockers", Note: "checked before each roll; a blocker stops the run"})
+	}
+	if scope.Has(state.ScopeControlPlane) {
+		p.Changes = []state.Change{{Field: "control plane", From: plan.CurrentVersion, To: plan.TargetVersion}}
+	} else if len(p.Facts) == 0 && len(blockers) == 0 {
+		p.Blocked = "nothing to catch up: every part in scope already runs " + plan.TargetVersion
+	}
 	if len(blockers) > 0 {
 		p.Blocked = fmt.Sprintf("%d blocker(s): %s", len(blockers), strings.Join(blockers, ", "))
 	}
 	return p
+}
+
+// upgradeTitle names the parts of an upgrade.
+func upgradeTitle(s state.Scope) string {
+	switch s {
+	case 0:
+		return "Upgrade cluster"
+	case state.ScopeControlPlane:
+		return "Upgrade control plane"
+	case state.ScopeControlPlane | state.ScopeAddons:
+		return "Upgrade control plane and add-ons"
+	case state.ScopeNodegroups:
+		return "Catch up nodegroups"
+	case state.ScopeNodegroups | state.ScopeAddons:
+		return "Catch up nodegroups and add-ons"
+	case state.ScopeAddons:
+		return "Catch up add-ons"
+	}
+	return "Upgrade"
 }
 
 // plural is n and noun, with an "s" unless n is 1.

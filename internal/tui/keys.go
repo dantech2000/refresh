@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
@@ -114,7 +115,7 @@ func actionBindings() []binding {
 			if m.saidBusy() {
 				return nil
 			}
-			return m.plan(state.Action{Kind: state.ActionUpgrade, Cluster: m.cluster().Name})
+			return m.planUpgrade()
 		}},
 		{keys: []string{"B"}, label: "B", desc: "roll back one minor (only while a rollback is available)", bar: true,
 			when: func(m Model) bool { return here(m) && m.cluster().RollbackTo != "" },
@@ -380,9 +381,75 @@ func (m *Model) planRoll() tea.Cmd {
 			m.cancelPlan()
 		}
 		m.focusAfter = nil
-		m.pick, m.scroll = &picker{cluster: c.Name, items: stale}, 0
+		items := make([]pickItem, len(stale))
+		for i, ng := range stale {
+			why := "AMI " + ng.AMI + " → " + ng.LatestAMI
+			if ng.LatestAMI == "" {
+				why = "AMI outdated"
+			}
+			if ng.Version != c.Version {
+				why = "on " + ng.Version
+			}
+			items[i] = pickItem{name: ng.Name, why: why, level: state.LevelWarn, note: fmt.Sprintf("%d nodes", ng.Nodes),
+				action: state.Action{Kind: state.ActionRoll, Cluster: c.Name, Nodegroup: ng.Name}}
+		}
+		m.openPicker(&picker{title: "Patch which nodegroup?", cluster: c.Name, items: items})
 		return nil
 	}
+}
+
+// openPicker shows p: nothing may open or move behind it.
+func (m *Model) openPicker(p *picker) {
+	if m.planning != "" {
+		m.cancelPlan()
+	}
+	m.focusAfter = nil
+	m.pick, m.scroll = p, 0
+}
+
+// planUpgrade offers the parts of an upgrade of the selected cluster, as
+// `cluster upgrade --only` does: to the next version, the control plane
+// alone, with its add-ons, or everything; and, whatever the newest version
+// is, catching the nodegroups and add-ons that lag up to the control
+// plane's version. A single choice dry-runs at once.
+func (m *Model) planUpgrade() tea.Cmd {
+	c := m.cluster()
+	up := func(s state.Scope) state.Action {
+		return state.Action{Kind: state.ActionUpgrade, Cluster: c.Name, Scope: s}
+	}
+	var items []pickItem
+	if c.Latest == "" || state.Minor(c.Version) < state.Minor(c.Latest) {
+		cp := c.Version + " → " + state.NextMinor(c.Version)
+		items = []pickItem{
+			{name: "Control plane only", why: cp, level: state.LevelProgress, note: "add-ons and nodegroups stay", action: up(state.ScopeControlPlane)},
+			{name: "Control plane and add-ons", why: cp, level: state.LevelProgress, note: "nodegroups stay", action: up(state.ScopeControlPlane | state.ScopeAddons)},
+			{name: "Everything", why: cp, level: state.LevelProgress, note: "then add-ons and nodegroup rolls", action: up(0)},
+		}
+	}
+	behind := 0
+	for _, ng := range c.Nodegroups {
+		if v := state.Minor(ng.Version); v >= 0 && v < state.Minor(c.Version) {
+			behind++
+		}
+	}
+	stale := len(c.StaleAddons())
+	if behind > 0 {
+		items = append(items, pickItem{name: "Catch up nodegroups", why: "roll to " + c.Version, level: state.LevelWarn, note: plural(behind, "nodegroup") + " behind", action: up(state.ScopeNodegroups)})
+	}
+	if stale > 0 {
+		items = append(items, pickItem{name: "Catch up add-ons", why: "newest for " + c.Version, level: state.LevelWarn, note: plural(stale, "add-on") + " behind", action: up(state.ScopeAddons)})
+	}
+	if behind > 0 && stale > 0 {
+		items = append(items, pickItem{name: "Catch up both", why: "to " + c.Version, level: state.LevelWarn, note: "nodegroups, then add-ons", action: up(state.ScopeNodegroups | state.ScopeAddons)})
+	}
+	switch len(items) {
+	case 0:
+		return m.plan(up(0)) // the dry run says there is nothing to do
+	case 1:
+		return m.plan(items[0].action)
+	}
+	m.openPicker(&picker{title: "Upgrade what?", cluster: c.Name, items: items})
+	return nil
 }
 
 // pickerBindings apply while the nodegroup picker is open.
@@ -397,12 +464,12 @@ func pickerBindings() []binding {
 	choose := func(m *Model) tea.Cmd {
 		p := m.pick
 		m.pick = nil
-		return m.plan(state.Action{Kind: state.ActionRoll, Cluster: p.cluster, Nodegroup: p.items[p.sel].Name})
+		return m.plan(p.items[p.sel].action)
 	}
 	bs := []binding{
-		{keys: keysUp, label: "↑↓", desc: "choose a nodegroup", do: move(-1)},
+		{keys: keysUp, label: "↑↓", desc: "choose", do: move(-1)},
 		{keys: keysDown, do: move(1)},
-		{keys: []string{"enter"}, label: "enter", desc: "dry-run a patch of it", do: choose},
+		{keys: []string{"enter"}, label: "enter", desc: "dry-run it", do: choose},
 		{keys: []string{"esc", "q"}, label: "esc", desc: "close", do: func(m *Model) tea.Cmd { m.pick = nil; return nil }},
 	}
 	for i := range 9 {

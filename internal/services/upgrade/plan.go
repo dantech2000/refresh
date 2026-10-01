@@ -35,6 +35,11 @@ type PlanOptions struct {
 	// Progress, when set, receives progress lines while the plan is built
 	// (the insights refresh can take minutes).
 	Progress ProgressFunc
+	// Only limits the plan to these parts (--only). Empty means every part.
+	// Steps of the other parts are manual, so the run leaves them alone.
+	// Without the control plane, the target must be the version the control
+	// plane runs; without add-ons, the plan crosses one minor version.
+	Only []Part
 }
 
 // insightsMode selects how the readiness gate treats Cluster Insights.
@@ -77,6 +82,9 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 
 	hops, err := expandHops(currentVersion, targetVersion)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkScope(opts, clusterName, currentVersion, targetVersion, len(hops)); err != nil {
 		return nil, err
 	}
 	if len(hops) == 0 {
@@ -129,8 +137,13 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	// with the live control plane, and nodegroups the next step would push
 	// beyond the kubelet skew. Everything else rolls with the regular hops.
 	if hops[0] != currentVersion {
-		preRoll := preRollNodegroups(nodegroups, currentVersion, hops[0], opts.SkipNodegroups)
-		addonLag := s.addonsIncompatible(ctx, addonsSvc, addonList, currentVersion, opts.SkipAddons)
+		// A part left out by --only does not catch up either: the next
+		// hop's readiness step blocks on nodegroups beyond the skew.
+		var preRoll []nodegroupState
+		if opts.includes(PartNodegroups) {
+			preRoll = preRollNodegroups(nodegroups, currentVersion, hops[0], opts.SkipNodegroups)
+		}
+		addonLag := opts.includes(PartAddons) && s.addonsIncompatible(ctx, addonsSvc, addonList, currentVersion, opts.SkipAddons)
 		if addonLag || len(preRoll) > 0 {
 			plan.Hops = append(plan.Hops, s.catchUpHop(ctx, addonsSvc, plan, addonList, simAddons, preRoll, addonLag, cluster, currentVersion, opts))
 			advanceSimulation(simNodegroups, preRoll, currentVersion, opts.SkipNodegroups)
@@ -154,8 +167,10 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		plan.Hops = append(plan.Hops, hop)
 
 		// Advance the simulation: after this hop, rollable nodegroups sit at
-		// the hop target.
-		advanceSimulation(simNodegroups, nodegroups, hopTo, opts.SkipNodegroups)
+		// the hop target, unless --only leaves them out.
+		if opts.includes(PartNodegroups) {
+			advanceSimulation(simNodegroups, nodegroups, hopTo, opts.SkipNodegroups)
+		}
 	}
 
 	// Lookups that fail on a cancelled ctx surface as blocked steps; an
@@ -163,6 +178,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	if err := ctx.Err(); err != nil {
 		return nil, stopped(ctx, "while building the upgrade plan", "", err)
 	}
+	applyScope(plan, opts)
 	return plan, nil
 }
 
