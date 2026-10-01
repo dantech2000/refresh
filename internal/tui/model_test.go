@@ -45,6 +45,14 @@ func (h *harness) send(msg tea.Msg) {
 			h.quit = true
 			continue
 		}
+		if batch, ok := m.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				if c != nil {
+					queue = append(queue, c())
+				}
+			}
+			continue
+		}
 		next, cmd := h.m.Update(m)
 		h.m = next.(Model)
 		if _, isState := m.(stateMsg); isState || cmd == nil {
@@ -1062,5 +1070,91 @@ func TestCursorStartsOnTheKubectlCluster(t *testing.T) {
 	next, _ = next.(Model).Update(stateMsg{id: 2, st: state.State{Home: "c", Clusters: cs}})
 	if got := next.(Model).cluster().Name; got != "b" {
 		t.Fatalf("selected %q, want b: the user moved first", got)
+	}
+}
+
+// lockedWorld is the simulated fleet behind a read-only switch, as the live
+// backend has.
+type lockedWorld struct {
+	*sim.World
+	allowed bool
+	plans   []state.Action
+}
+
+func (w *lockedWorld) ChangesAllowed() bool { return w.allowed }
+func (w *lockedWorld) AllowChanges()        { w.allowed = true }
+
+func (w *lockedWorld) Plan(ctx context.Context, a state.Action) (state.Plan, error) {
+	w.plans = append(w.plans, a)
+	p, err := w.World.Plan(ctx, a)
+	if err == nil && p.Blocked == "" && !w.allowed {
+		p.Blocked, p.ReadOnly = "the UI is read-only", true
+	}
+	return p, err
+}
+
+func (w *lockedWorld) Start(ctx context.Context, a state.Action) error {
+	if !w.allowed {
+		return errors.New("read-only")
+	}
+	return w.World.Start(ctx, a)
+}
+
+// ctrl+u in a read-only dry run asks, allows changes, and runs the dry run
+// again, which can then start.
+func TestUnlockAllowsChangesAndRunsTheDryRunAgain(t *testing.T) {
+	world := &lockedWorld{World: sim.New(sim.Options{Seed: 7})}
+	h := &harness{t: t, w: world.World, m: New(t.Context(), world, time.Millisecond)}
+	h.send(tea.WindowSizeMsg{Width: 160, Height: 42})
+	h.refresh()
+	h.keys("a")
+	if h.m.confirm == nil || !h.m.confirm.ReadOnly {
+		t.Fatalf("confirm = %+v, want a read-only dry run", h.m.confirm)
+	}
+	h.contains("ctrl+u", "Allow changes")
+	h.keys("y") // read-only: y does nothing
+	if world.allowed || h.m.confirm == nil {
+		t.Fatal("y in a read-only dry run did something")
+	}
+	h.keys("ctrl+u")
+	h.contains("Allow changes for this session?")
+	h.keys("esc")
+	if world.allowed || h.m.unlocking || h.m.confirm == nil {
+		t.Fatalf("esc: allowed=%v unlocking=%v confirm=%v", world.allowed, h.m.unlocking, h.m.confirm != nil)
+	}
+	h.keys("ctrl+u", "y")
+	if !world.allowed {
+		t.Fatal("y did not allow changes")
+	}
+	if len(world.plans) != 2 || world.plans[1] != world.plans[0] {
+		t.Fatalf("plans = %+v, want the same dry run twice", world.plans)
+	}
+	if h.m.confirm == nil || h.m.confirm.ReadOnly || h.m.confirm.Blocked != "" {
+		t.Fatalf("confirm after unlock = %+v", h.m.confirm)
+	}
+	h.lacks("ctrl+u")
+	checkFrame(t, "after unlock", h.m)
+}
+
+// ctrl+u from any screen asks the same; a backend that cannot be unlocked
+// (the simulator) has no ctrl+u.
+func TestUnlockKeyOnlyWhereItCanWork(t *testing.T) {
+	world := &lockedWorld{World: sim.New(sim.Options{Seed: 7})}
+	h := &harness{t: t, w: world.World, m: New(t.Context(), world, time.Millisecond)}
+	h.send(tea.WindowSizeMsg{Width: 160, Height: 42})
+	h.refresh()
+	h.keys("ctrl+u", "y")
+	if !world.allowed {
+		t.Fatal("ctrl+u, y on the fleet did not allow changes")
+	}
+	h.keys("ctrl+u")
+	if h.m.unlocking {
+		t.Fatal("ctrl+u asked again after changes were allowed")
+	}
+
+	plain := newHarness(t, 160, 42, 0)
+	plain.keys("ctrl+u")
+	if plain.m.unlocking {
+		t.Fatal("ctrl+u asked on a backend that cannot be unlocked")
 	}
 }

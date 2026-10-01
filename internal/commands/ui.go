@@ -53,7 +53,8 @@ nodegroup rolls, and cluster upgrades, with live event and log streams.
 
 The UI is experimental. It shows the fleet, runs readiness checks, and
 dry-runs changes, and prints the CLI command that makes each change. It is
-read-only unless --allow-changes is given; then a nodegroup roll, an add-on
+read-only until changes are allowed, with --allow-changes or with ctrl+u in
+the UI; then a nodegroup roll, an add-on
 update, a cluster upgrade, or a cluster rollback can start from its dry run,
 after the same checks as the nodegroup update, addon update --all, cluster
 upgrade, and cluster rollback commands. B dry-runs a rollback once a
@@ -66,7 +67,7 @@ and the fleet cursor goes to that cluster when the sweep finds it.`,
 			&cli.BoolFlag{Name: "all-regions", Aliases: []string{"A"}, Usage: "Sweep all EKS-supported regions"},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) to sweep (repeatable)"},
 			&cli.DurationFlag{Name: "interval", Usage: "Time between fleet sweeps", Value: time.Minute},
-			&cli.BoolFlag{Name: "allow-changes", Usage: "Let the UI start nodegroup rolls, add-on updates, cluster upgrades, and cluster rollbacks (after their dry runs and gates); without it the UI is read-only"},
+			&cli.BoolFlag{Name: "allow-changes", Usage: "Let the UI start nodegroup rolls, add-on updates, cluster upgrades, and cluster rollbacks (after their dry runs and gates); without it the UI starts read-only, and ctrl+u allows changes later"},
 			runner.WaitTimeoutFlag("How long the UI watches a roll it started (0 = no limit; the EKS update continues either way)", appconfig.DefaultUpdateTimeout),
 			runner.KubeconfigFlag("the live node view of a roll and the health gate's workload/PDB checks"),
 			runner.KubeContextFlag(),

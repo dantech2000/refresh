@@ -10,8 +10,9 @@ refresh ui [flags]
 
 !!! warning "Experimental"
     The UI is new, and its keys and screens can change between releases. It
-    is read-only unless you pass `--allow-changes`. Try changes on a
-    non-production cluster first. It is tested on macOS and Linux.
+    starts read-only: pass `--allow-changes`, or press `ctrl+u` in the UI, to
+    allow changes. Try changes on a non-production cluster first. It is
+    tested on macOS and Linux.
 
 The UI runs the same code as the CLI. The fleet comes from `refresh status`,
 readiness from `refresh cluster upgrade-check`, and every change from the
@@ -26,7 +27,7 @@ the same change, and `c` copies it.
 | `--all-regions, -A` | Sweep all EKS-supported regions (or the `REFRESH_EKS_REGIONS` list) |
 | `--region, -r` | Region(s) to sweep (repeatable). Without `-A` or `-r`, the UI sweeps the configured region and the region of the kubectl cluster (see [Start on the kubectl cluster](#start-on-the-kubectl-cluster)); with no region configured, the regions of the partition |
 | `--interval` | Time between fleet sweeps (default `1m`). `ctrl+r` sweeps now |
-| `--allow-changes` | Let the UI start changes after their dry runs and gates. Without it, the UI is read-only |
+| `--allow-changes` | Let the UI start changes after their dry runs and gates. Without it, the UI starts read-only, and `ctrl+u` allows changes later |
 | `--wait-timeout` | How long the UI watches a roll it started (default `40m`, `0` = no limit). The EKS update continues either way |
 | `--kubeconfig`, `--kube-context` | The Kubernetes access for the live node view and the health gate's workload and PDB checks, as in `nodegroup update` |
 
@@ -95,6 +96,7 @@ nodegroup picker), only the dialog's own keys work.
 | `B` | Fleet, Cluster | Dry-run a rollback one minor version back (only after readiness found a rollback window) |
 | `y` | Dry run | Start the change (`--allow-changes` only) |
 | `c` | Dry run | Copy the CLI command |
+| `ctrl+u` | Any, or a read-only dry run | Allow changes for this session (asks first). In a read-only dry run, the dry run then runs again with its live gates |
 | `S` | Upgrade | Stop an upgrade or rollback this UI started, before its next phase or its next nodegroup roll. An EKS update in flight is never cancelled. Press `S` again to cancel the stop |
 | `P` | Upgrade | Pause an upgrade or rollback this UI started, before its next phase. Press `P` again to go on |
 | `y` / `n` | Upgrade | When the upgrade asks a question: go on, or stop after this step |
@@ -106,13 +108,21 @@ nodegroup picker), only the dialog's own keys work.
 | `ctrl+r` | Any | Sweep the fleet now |
 | `q` | Any | Quit (in a dialog, close it; a dry run cannot close while its change is starting). Changes in flight keep running in EKS |
 
-## Read-only and --allow-changes
+## Read-only and allowing changes
 
-Without `--allow-changes`, the UI reads the fleet and dry-runs changes, and
-each dry run names the CLI command to run. The top bar says `READ-ONLY`.
+Without `--allow-changes`, the UI starts read-only. It reads the fleet and
+dry-runs changes, and each dry run names the CLI command to run. The top bar
+says `READ-ONLY`.
 
-With `--allow-changes`, `y` in a dry run starts the change, and the top bar
-says `CHANGES ON`. Before the UI starts anything, it checks again:
+To change a cluster from the UI, allow changes in one of two ways:
+
+- Start the UI with `refresh ui --allow-changes`.
+- Press `ctrl+u` in the UI, then `y`. Changes are allowed until you quit.
+  If a read-only dry run is open, it runs again with its live gates, and
+  `y` then starts the change.
+
+When changes are allowed, the top bar says `CHANGES ON`, and `y` in a dry run
+starts the change. Before the UI starts anything, it checks again:
 
 - The cluster is not changing. The UI reads the control plane, each
   nodegroup, and each add-on again, and refuses while one is changing, or

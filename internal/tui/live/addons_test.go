@@ -37,7 +37,7 @@ func newAddonRig(t *testing.T) *addonRig {
 		{AddonName: "coredns", PreviousVersion: "v1.11.1", NewVersion: "v1.11.4", Status: addons.StatusDryRun, Warning: "coredns has a custom Corefile"},
 		{AddonName: "kube-proxy", PreviousVersion: "v1.31.7", NewVersion: "v1.31.7", Status: addons.StatusUpToDate},
 	}
-	rig.b.opts.AllowChanges = true
+	rig.b.allow.Store(true)
 	rig.b.addon = addonServices{
 		preview: func(context.Context, aws.Config, string) ([]addons.AddonUpdateResult, error) {
 			rig.mu.Lock()

@@ -66,12 +66,14 @@ type Model struct {
 	w, h   int
 	screen screen
 
-	sel      int  // fleet cursor
-	homed    bool // the cursor was placed on State.Home, or the user pressed a key first
-	checkSel int
-	rollIdx  int
-	upIdx    int
-	src      logSource
+	sel int // fleet cursor
+	// unlocking is set while the "allow changes?" question is open.
+	unlocking bool
+	homed     bool // the cursor was placed on State.Home, or the user pressed a key first
+	checkSel  int
+	rollIdx   int
+	upIdx     int
+	src       logSource
 	// pausedSeq freezes the live panes at an event sequence number; zero
 	// follows. frozen holds the state at the freeze, so the panes keep
 	// showing events that the backend's capped lists have since dropped.

@@ -82,6 +82,7 @@ func globalBindings() []binding {
 				return nil
 			}},
 		{keys: []string{"?"}, label: "?", desc: "keys", do: func(m *Model) tea.Cmd { m.help, m.scroll = true, 0; return nil }},
+		unlockBinding(nil),
 		{keys: []string{"q"}, label: "q", desc: "quit · in a dialog, close it · changes in flight keep running in EKS", do: func(*Model) tea.Cmd { return tea.Quit }},
 	}
 }
@@ -237,6 +238,7 @@ func dialogBindings() []binding {
 		{keys: []string{"c"}, label: "c", desc: "copy the CLI command", do: func(m *Model) tea.Cmd {
 			return copyText(m.confirm.Command)
 		}},
+		unlockBinding(func(m Model) bool { return m.confirm != nil && m.confirm.ReadOnly && !m.starting }),
 	}
 }
 
@@ -263,6 +265,8 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	}
 	var table []binding
 	switch {
+	case m.unlocking:
+		table = unlockBindings()
 	case m.pick != nil:
 		table = pickerBindings()
 	case m.confirm != nil:
@@ -458,6 +462,51 @@ func (m *Model) scrollTo(i int) {
 
 // refresher is a backend that can read its data again on request.
 type refresher interface{ Refresh() }
+
+// unlocker is a backend that can start read-only and allow changes later
+// (the live backend).
+type unlocker interface {
+	ChangesAllowed() bool
+	AllowChanges()
+}
+
+// canUnlock reports whether ctrl+u can allow changes: the backend is
+// read-only and can be unlocked.
+func (m Model) canUnlock() bool {
+	u, ok := m.b.(unlocker)
+	return ok && !u.ChangesAllowed()
+}
+
+// unlockBindings answer the "allow changes?" question.
+func unlockBindings() []binding {
+	return []binding{
+		{keys: []string{"y"}, label: "y", desc: "allow changes for this session", do: func(m *Model) tea.Cmd {
+			m.unlocking = false
+			u, ok := m.b.(unlocker)
+			if !ok {
+				return nil
+			}
+			u.AllowChanges()
+			m.say(state.LevelWarn, "changes allowed for this session: y in a dry run changes the real cluster")
+			fetch := m.fetch()
+			if m.confirm != nil && m.confirm.ReadOnly {
+				// The read-only dry run skipped the live gates: run it again.
+				a := m.confirm.Action
+				m.confirm = nil
+				return tea.Batch(fetch, m.plan(a))
+			}
+			return fetch
+		}},
+		{keys: []string{"esc", "n", "q"}, label: "esc n q", desc: "stay read-only", do: func(m *Model) tea.Cmd { m.unlocking = false; return nil }},
+	}
+}
+
+// unlockBinding opens the "allow changes?" question.
+func unlockBinding(when func(Model) bool) binding {
+	return binding{keys: []string{"ctrl+u"}, label: "ctrl+u", desc: "allow changes for this session (asks first)", short: "allow changes", bar: true,
+		when: func(m Model) bool { return m.canUnlock() && (when == nil || when(m)) },
+		do:   func(m *Model) tea.Cmd { m.unlocking, m.scroll = true, 0; return nil }}
+}
 
 // saidBusy reports, in one line, that the selected cluster is changing, and
 // is true when it is: a change on it waits until that finishes, and a dry

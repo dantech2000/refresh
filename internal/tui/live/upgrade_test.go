@@ -150,7 +150,7 @@ func newUpgradeRig(t *testing.T) *upgradeRig {
 	fl := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": rows}}
 	rig := &upgradeRig{b: newTestBackend(t, fl, "us-east-1"), f: &fakeUpgrader{plan: upgradePlan()}}
 	b := rig.b
-	b.opts.AllowChanges = true
+	b.allow.Store(true)
 	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) { return upgradePlan(), nil }
 	b.newUpgrader = func(aws.Config) upgrader { return rig.f }
 	rr := newRollRig(t) // reuse its fake kube, health, and observer

@@ -380,6 +380,9 @@ type Plan struct {
 	Gates []PlanGate
 	// Blocked is set when a gate stops the action.
 	Blocked string
+	// ReadOnly is set when the only block is that the UI is read-only: once
+	// the user allows changes, the dry run runs again.
+	ReadOnly bool
 	// Command is the CLI equivalent.
 	Command string
 }

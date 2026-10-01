@@ -140,7 +140,7 @@ func TestRollbackDryRunIsTheCLIPlan(t *testing.T) {
 		t.Fatalf("plan = %+v", p)
 	}
 
-	rig.b.opts.AllowChanges = false
+	rig.b.allow.Store(false)
 	if p, _ := rig.b.Plan(t.Context(), rollbackAction); p.Blocked != ErrReadOnly.Error() {
 		t.Fatalf("read-only plan blocked = %q", p.Blocked)
 	}

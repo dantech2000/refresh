@@ -19,6 +19,7 @@ import (
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
+	"github.com/dantech2000/refresh/internal/services/addons"
 	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	statussvc "github.com/dantech2000/refresh/internal/services/status"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
@@ -1082,5 +1083,53 @@ func TestSweepWaitsForAnUnreadKubectlCluster(t *testing.T) {
 				t.Fatalf("no feed line once the row was read: %+v", st.Feed)
 			}
 		})
+	}
+}
+
+// A read-only backend blocks every dry run as read-only, skips the live
+// preview, and refuses Start; AllowChanges lifts all three for the session,
+// says so once, and the badge follows.
+func TestAllowChangesUnlocksTheSession(t *testing.T) {
+	rig := newAddonRig(t)
+	b := rig.b
+	b.allow.Store(false)
+	previews := 0
+	preview := b.addon.preview
+	b.addon.preview = func(ctx context.Context, cfg aws.Config, cluster string) ([]addons.AddonUpdateResult, error) {
+		previews++
+		return preview(ctx, cfg, cluster)
+	}
+	a := state.Action{Kind: state.ActionAddons, Cluster: "prod-api"}
+	if b.ChangesAllowed() {
+		t.Fatal("a read-only backend allows changes")
+	}
+	p, err := b.Plan(t.Context(), a)
+	if err != nil || !p.ReadOnly || !strings.Contains(p.Blocked, "ctrl+u") || previews != 0 {
+		t.Fatalf("read-only plan = %+v, %v (previews %d)", p, err, previews)
+	}
+	if err := b.Start(t.Context(), a); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("Start = %v, want ErrReadOnly", err)
+	}
+	b.AllowChanges()
+	b.AllowChanges()
+	if !b.ChangesAllowed() {
+		t.Fatal("AllowChanges did not allow changes")
+	}
+	st, _ := b.State(t.Context())
+	if st.Badge != "CHANGES ON" {
+		t.Fatalf("badge = %q", st.Badge)
+	}
+	n := 0
+	for _, e := range st.Feed {
+		if e.Text == "changes allowed" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d 'changes allowed' events, want 1", n)
+	}
+	p, err = b.Plan(t.Context(), a)
+	if err != nil || p.ReadOnly || p.Blocked != "" || previews != 1 {
+		t.Fatalf("plan after unlock = %+v, %v (previews %d)", p, err, previews)
 	}
 }
