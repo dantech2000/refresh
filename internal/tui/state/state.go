@@ -367,12 +367,18 @@ type Action struct {
 	Kind      ActionKind
 	Cluster   string
 	Nodegroup string
+	// PlanID, on Start, is the ID of the dry run the user confirmed. The
+	// backend refuses it when a newer dry run replaced that one; 0 means
+	// the newest.
+	PlanID uint64
 }
 
 // Plan is the dry run of an Action, shown before the TUI asks to start it.
 type Plan struct {
 	Action Action
-	Title  string
+	// ID names this dry run; Start passes it back in Action.PlanID.
+	ID    uint64
+	Title string
 	// Changes are before/after pairs ("AMI release", from, to).
 	Changes []Change
 	// Facts are plain key/value lines (nodes, estimate).
@@ -380,6 +386,9 @@ type Plan struct {
 	Gates []PlanGate
 	// Blocked is set when a gate stops the action.
 	Blocked string
+	// ReadOnly is set when the only block is that the UI is read-only: once
+	// the user allows changes, the dry run runs again.
+	ReadOnly bool
 	// Command is the CLI equivalent.
 	Command string
 }

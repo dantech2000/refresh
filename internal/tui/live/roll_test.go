@@ -149,7 +149,7 @@ func newRollRig(t *testing.T, edit ...func([]statussvc.ClusterStatus)) *rollRig 
 			ScalingConfig: &ekstypes.NodegroupScalingConfig{DesiredSize: aws.Int32(6)},
 			UpdateConfig:  &ekstypes.NodegroupUpdateConfig{MaxUnavailable: aws.Int32(2)}}}
 	b := rig.b
-	b.opts.AllowChanges = true
+	b.allow.Store(true)
 	b.opts.ObserveInterval = time.Millisecond
 	b.roll = rollServices{
 		kubeFor: func(context.Context, aws.Config, string) (kubernetes.Interface, health.NodeMetricsLister, string) {
@@ -822,7 +822,7 @@ func TestADryRunWithoutASweepVersion(t *testing.T) {
 
 	// Read-only, the preview says the version is unknown.
 	rig = newRollRig(t, noVersion)
-	rig.b.opts.AllowChanges = false
+	rig.b.allow.Store(false)
 	if p, err = rig.b.Plan(t.Context(), roll); err != nil {
 		t.Fatal(err)
 	}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -150,7 +152,7 @@ func newUpgradeRig(t *testing.T) *upgradeRig {
 	fl := &fleet{rows: map[string][]statussvc.ClusterStatus{"us-east-1": rows}}
 	rig := &upgradeRig{b: newTestBackend(t, fl, "us-east-1"), f: &fakeUpgrader{plan: upgradePlan()}}
 	b := rig.b
-	b.opts.AllowChanges = true
+	b.allow.Store(true)
 	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) { return upgradePlan(), nil }
 	b.newUpgrader = func(aws.Config) upgrader { return rig.f }
 	rr := newRollRig(t) // reuse its fake kube, health, and observer
@@ -480,4 +482,86 @@ func TestControlPlanePhaseShowsProgress(t *testing.T) {
 	if p := b.upgradeSnapshot(u).Phases[1].Progress; p != 0.95 {
 		t.Fatalf("a long update shows %v, want 0.95 until EKS says done", p)
 	}
+}
+
+// Changes allowed while a dry run is being built do not make that dry run
+// startable: it started read-only and skipped the live gates. Start then
+// refuses until a dry run built after the unlock.
+func TestUnlockDuringADryRunKeepsItReadOnly(t *testing.T) {
+	rig := newUpgradeRig(t)
+	b := rig.b
+	b.allow.Store(false)
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) {
+		b.AllowChanges() // ctrl+u, y while the planner runs
+		return upgradePlan(), nil
+	}
+	p, err := b.Plan(t.Context(), upgradeAction)
+	if err != nil || !p.ReadOnly || p.Blocked == "" {
+		t.Fatalf("plan = %+v, %v; want read-only", p, err)
+	}
+	if err := b.Start(t.Context(), upgradeAction); err == nil || !strings.Contains(err.Error(), "no dry run") {
+		t.Fatalf("Start after a read-only dry run = %v", err)
+	}
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) { return upgradePlan(), nil }
+	if p, err := b.Plan(t.Context(), upgradeAction); err != nil || p.ReadOnly || p.Blocked != "" {
+		t.Fatalf("plan after unlock = %+v, %v", p, err)
+	}
+	if err := b.Start(t.Context(), upgradeAction); err != nil {
+		t.Fatalf("Start after a fresh dry run = %v", err)
+	}
+	b.Close()
+}
+
+// A dry run that finishes after a newer one never replaces the newer one's
+// plan, and Start runs only the change of the dry run the user confirmed.
+func TestAnOlderDryRunCannotReplaceTheConfirmedOne(t *testing.T) {
+	rig := newUpgradeRig(t)
+	b := rig.b
+	release, entered := make(chan struct{}), make(chan struct{})
+	older := upgradePlan()
+	older.Hops[0].Steps = append(older.Hops[0].Steps, upgrade.Step{Type: upgrade.StepNodegroup, Target: "ng-new", Version: "1.32", Status: upgrade.StatusPending})
+	var calls atomic.Int32
+	b.svc.buildPlan = func(context.Context, aws.Config, string, string) (*upgrade.Plan, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release // dry run A is slow
+			return older, nil
+		}
+		return upgradePlan(), nil // dry run B
+	}
+	type res struct {
+		p   state.Plan
+		err error
+	}
+	aDone := make(chan res, 1)
+	go func() {
+		p, err := b.Plan(t.Context(), upgradeAction)
+		aDone <- res{p, err}
+	}()
+	<-entered
+	pb, err := b.Plan(t.Context(), upgradeAction)
+	if err != nil || pb.Blocked != "" {
+		t.Fatalf("dry run B = %+v, %v", pb, err)
+	}
+	close(release)
+	ra := <-aDone
+	if ra.err != nil || ra.p.ID >= pb.ID {
+		t.Fatalf("dry run A = %+v, %v; want an older ID than B's %d", ra.p, ra.err, pb.ID)
+	}
+	b.mu.Lock()
+	steps := b.acceptedUpgrades[target{name: "prod-api", region: "us-east-1"}].steps
+	b.mu.Unlock()
+	if !slices.Equal(steps, pendingSteps(upgradePlan())) {
+		t.Fatalf("accepted steps = %v, want dry run B's", steps)
+	}
+	a := upgradeAction
+	a.PlanID = ra.p.ID
+	if err := b.Start(t.Context(), a); err == nil || !strings.Contains(err.Error(), "newer dry run") {
+		t.Fatalf("Start with dry run A = %v", err)
+	}
+	a.PlanID = pb.ID
+	if err := b.Start(t.Context(), a); err != nil {
+		t.Fatalf("Start with dry run B = %v", err)
+	}
+	b.Close()
 }

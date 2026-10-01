@@ -66,12 +66,14 @@ type Model struct {
 	w, h   int
 	screen screen
 
-	sel      int  // fleet cursor
-	homed    bool // the cursor was placed on State.Home, or the user pressed a key first
-	checkSel int
-	rollIdx  int
-	upIdx    int
-	src      logSource
+	sel int // fleet cursor
+	// unlocking is set while the "allow changes?" question is open.
+	unlocking bool
+	homed     bool // the cursor was placed on State.Home, or the user pressed a key first
+	checkSel  int
+	rollIdx   int
+	upIdx     int
+	src       logSource
 	// pausedSeq freezes the live panes at an event sequence number; zero
 	// follows. frozen holds the state at the freeze, so the panes keep
 	// showing events that the backend's capped lists have since dropped.
@@ -198,6 +200,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		p := msg.plan
+		if p.ReadOnly && !m.canUnlock() {
+			if _, ok := m.b.(unlocker); ok {
+				// Changes were allowed while this dry run was read-only: it
+				// skipped the live gates, so run it again.
+				cmd := m.plan(p.Action) // plan bumps m.planID: take it before m is copied out
+				return m, cmd
+			}
+		}
 		m.confirm, m.confirmErr, m.scroll, m.starting, m.help = &p, "", 0, false, false
 	case startMsg:
 		m.starting = false

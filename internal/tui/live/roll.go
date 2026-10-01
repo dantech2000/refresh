@@ -257,7 +257,9 @@ func (b *Backend) planRollLive(ctx context.Context, p *state.Plan, cfg aws.Confi
 		}
 	}
 	b.mu.Lock()
-	b.accepted[acceptKey(t, ng)] = acceptedRoll{findings: findings(summary), version: shown}
+	if b.claimAccept(acceptKey(t, ng), p.ID) {
+		b.accepted[acceptKey(t, ng)] = acceptedRoll{findings: findings(summary), version: shown}
+	}
 	b.mu.Unlock()
 }
 
@@ -343,6 +345,10 @@ func (b *Backend) startRoll(ctx context.Context, a state.Action) error {
 	if busy := b.busyOf(a.Cluster, c); busy != "" {
 		b.mu.Unlock()
 		return fmt.Errorf("%s is busy: %s", a.Cluster, busy)
+	}
+	if err := b.confirmedNewest(acceptKey(t, ng.Name), a.PlanID); err != nil {
+		b.mu.Unlock()
+		return err
 	}
 	b.claimed[t] = "starting a roll of " + a.Nodegroup
 	accepted, planned := b.accepted[acceptKey(t, ng.Name)]

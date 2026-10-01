@@ -21,6 +21,8 @@ func dialogWidth(w, want int) int { return min(w-4, want) }
 // openDialog returns the dialog on screen, if any.
 func (m Model) openDialog() (dialogParts, bool) {
 	switch {
+	case m.unlocking:
+		return m.unlockParts(dialogWidth(m.w, 80)), true
 	case m.pick != nil:
 		return m.pickerParts(dialogWidth(m.w, 72)), true
 	case m.confirm != nil:
@@ -136,6 +138,8 @@ func (m Model) confirmParts(w int) dialogParts {
 		buttons = Line{chip("c"), sp(1), sub("Copy command"), sp(3), tok(state.LevelProgress, "starting… the result shows here")}
 	case p.Blocked == "":
 		buttons = append(buttons, sp(3), Seg{Text: " y ", FG: colCrust, BG: colMauve, Bold: true}, sp(1), bold(colMauve, startLabel(p.Action.Kind)))
+	case p.ReadOnly && m.canUnlock():
+		buttons = append(buttons, sp(3), Seg{Text: " ctrl+u ", FG: colCrust, BG: colMauve, Bold: true}, sp(1), bold(colMauve, "Allow changes"))
 	}
 	foot = append(foot, joinRight(nil, buttons, inner))
 	border := colMauve
@@ -204,12 +208,34 @@ func (m Model) helpParts(w int) dialogParts {
 	case "SIMULATED":
 		body = append(body, Line{fg(colPeach, "Simulated fleet: no AWS calls are made.")})
 	case "READ-ONLY":
-		body = append(body, Line{fg(colPeach, "Read-only: changes are dry runs. c in a dry run copies the CLI command.")})
+		body = append(body, Line{fg(colPeach, "Read-only: changes are dry runs. ctrl+u allows changes for this session; c in a dry run copies the CLI command.")})
 	case "CHANGES ON":
 		body = append(body, Line{fg(colRed, "Changes on: y in a roll's or an add-on update's dry run changes the real cluster.")})
 	}
 	foot := Block{{}, joinRight(nil, Line{chip("esc"), sp(1), sub("close")}, w-4)}
 	return dialogParts{head: head, body: body, foot: foot, border: colMauve, w: w}
+}
+
+// unlockParts asks before the session may change clusters.
+func (m Model) unlockParts(w int) dialogParts {
+	inner := w - 4
+	head := Block{{bold(colPeach, "Allow changes for this session?")}, {}}
+	var body Block
+	for _, s := range []string{
+		"The UI can then start nodegroup rolls, add-on updates, cluster upgrades, and rollbacks on the real clusters.",
+		"Each change still runs its dry run and its gates first, and starts only when you press y in it.",
+		"This lasts until you quit. refresh ui --allow-changes starts with changes allowed.",
+	} {
+		for _, l := range wrap(s, inner) {
+			body = append(body, Line{sub(l)})
+		}
+		body = append(body, Line{})
+	}
+	if m.confirm != nil && m.confirm.ReadOnly {
+		body = append(body, Line{dimS("The open dry run runs again with the live gates.")})
+	}
+	foot := Block{{}, joinRight(nil, Line{chip("esc"), sp(1), sub("Stay read-only"), sp(3), Seg{Text: " y ", FG: colCrust, BG: colPeach, Bold: true}, sp(1), bold(colPeach, "Allow changes")}, inner)}
+	return dialogParts{head: head, body: body, foot: foot, border: colPeach, w: w}
 }
 
 // pickerParts lists the stale nodegroups to choose from.

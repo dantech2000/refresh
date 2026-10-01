@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -42,7 +43,7 @@ import (
 )
 
 // ErrReadOnly is returned by every call that would change a cluster.
-var ErrReadOnly = errors.New("the UI is read-only: restart it with --allow-changes, or copy the CLI command (c) and run it in a shell")
+var ErrReadOnly = errors.New("the UI is read-only: press ctrl+u to allow changes for this session, or copy the CLI command (c)")
 
 // Event list bounds, as in the simulator.
 const (
@@ -128,6 +129,9 @@ type Backend struct {
 
 	// wake asks the sweep loop to sweep now.
 	wake chan struct{}
+	// allow is set while changes are allowed: from Options.AllowChanges, or
+	// once the user allows them in the UI (AllowChanges).
+	allow atomic.Bool
 	// work tracks readiness runs, so Close can wait for them.
 	work sync.WaitGroup
 
@@ -159,6 +163,12 @@ type Backend struct {
 	// accepted holds the health findings each roll's dry run showed, by
 	// acceptKey: the findings the user confirmed with y.
 	accepted map[string]acceptedRoll
+	// acceptedBy is the dry run (Plan.ID) behind each accepted plan, by
+	// acceptance key; planSeq numbers the dry runs. A dry run never
+	// replaces a newer one's acceptance, and Start runs only the change of
+	// the dry run the user confirmed.
+	acceptedBy map[string]uint64
+	planSeq    uint64
 	// acceptedAddons holds each cluster's last add-on dry run: the changes
 	// the user confirmed with y.
 	acceptedAddons map[target][]addonChange
@@ -211,12 +221,14 @@ func New(cfg aws.Config, opts Options) *Backend {
 		claimed:          map[target]string{},
 		adopting:         map[string]bool{},
 		accepted:         map[string]acceptedRoll{},
+		acceptedBy:       map[string]uint64{},
 		acceptedAddons:   map[target][]addonChange{},
 		acceptedUpgrades: map[target]acceptedUpgrade{},
 
 		acceptedRollbacks: map[target]acceptedUpgrade{},
 		rollbackWindows:   map[target]rollbackWindow{},
 	}
+	b.allow.Store(opts.AllowChanges)
 	if b.opts.Logger == nil {
 		b.opts.Logger = slog.New(&paneHandler{b: b, level: slog.LevelWarn})
 	}
@@ -723,7 +735,7 @@ func (b *Backend) State(ctx context.Context) (state.State, error) {
 		Log:             slices.Clone(b.log),
 		Readiness:       make(map[string]state.Readiness, len(b.readiness)),
 	}
-	if b.opts.AllowChanges {
+	if b.changesAllowed() {
 		st.Badge = "CHANGES ON"
 	}
 	st.Home = b.home
@@ -872,6 +884,14 @@ func nextHop(c state.Cluster) string {
 // Plan implements state.Backend. Roll and add-on plans come from the last
 // sweep; upgrade plans call the real planner in preview mode.
 func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) {
+	// Read once: a dry run that started read-only stays read-only, even if
+	// changes are allowed while it runs. It skipped the live gates, so it
+	// must never become startable.
+	allowed := b.changesAllowed()
+	b.mu.Lock()
+	b.planSeq++
+	id := b.planSeq
+	b.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return state.Plan{}, err
 	}
@@ -887,14 +907,16 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	switch a.Kind {
 	case state.ActionRoll:
 		p, err = planRoll(c, t, a.Nodegroup)
-		if err == nil && b.opts.AllowChanges {
+		p.ID = id
+		if err == nil && allowed {
 			pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 			b.planRollLive(pctx, &p, cfg, t, c, a.Nodegroup)
 			cancel()
 		}
 	case state.ActionAddons:
 		p = planAddons(c, t)
-		if b.opts.AllowChanges {
+		p.ID = id
+		if allowed {
 			pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
 			err = b.planAddonsLive(pctx, &p, cfg, t)
 			cancel()
@@ -912,8 +934,8 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			return state.Plan{}, perr
 		}
 		p = planUpgrade(c, t, plan)
-		if b.opts.AllowChanges && p.Blocked == "" {
-			b.planUpgradeLive(t, plan)
+		if allowed && p.Blocked == "" {
+			b.planUpgradeLive(t, plan, id)
 			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again for real", Note: "insights may refresh first; a changed plan asks before it runs"})
 		}
 	case state.ActionRollback:
@@ -924,9 +946,11 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			return state.Plan{}, perr
 		}
 		p = planRollback(c, t, plan)
-		if b.opts.AllowChanges && p.Blocked == "" {
+		if allowed && p.Blocked == "" {
 			b.mu.Lock()
-			b.acceptedRollbacks[t] = acceptedUpgrade{target: plan.TargetVersion, steps: rollbackSteps(plan)}
+			if b.claimAccept(rollbackKey(t), id) {
+				b.acceptedRollbacks[t] = acceptedUpgrade{target: plan.TargetVersion, steps: rollbackSteps(plan)}
+			}
 			b.mu.Unlock()
 			p.Facts = append(p.Facts, state.Fact{Key: "when you start", Value: "the plan is built again", Note: "a changed plan asks before it runs"})
 		}
@@ -937,6 +961,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 		return state.Plan{}, err
 	}
 	p.Action = a
+	p.ID = id
 	p.Command = b.cliCommand(p.Command)
 	b.mu.Lock()
 	busy := b.busyOf(a.Cluster, c)
@@ -944,10 +969,54 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 	if p.Blocked == "" && busy != "" {
 		p.Blocked = a.Cluster + " is busy: " + busy
 	}
-	if p.Blocked == "" && !b.opts.AllowChanges {
-		p.Blocked = ErrReadOnly.Error()
+	if p.Blocked == "" && !allowed {
+		p.Blocked, p.ReadOnly = ErrReadOnly.Error(), true
 	}
 	return p, nil
+}
+
+// claimAccept reports whether dry run id may record its acceptance under
+// key: no newer dry run has. It records id. The caller holds b.mu.
+func (b *Backend) claimAccept(key string, id uint64) bool {
+	if b.acceptedBy[key] > id {
+		return false
+	}
+	b.acceptedBy[key] = id
+	return true
+}
+
+// confirmedNewest returns an error unless key's acceptance is dry run id:
+// the user confirmed a dry run that a newer one replaced. The TUI always
+// names the dry run; an id of 0 (a caller that does not) means the newest.
+// The caller holds b.mu.
+func (b *Backend) confirmedNewest(key string, id uint64) error {
+	if got, ok := b.acceptedBy[key]; ok && id != 0 && got != id {
+		return errors.New("a newer dry run replaced the one on screen: close it and open the dry run again")
+	}
+	return nil
+}
+
+func addonsKey(t target) string   { return "addons/" + t.region + "/" + t.name }
+func upgradeKey(t target) string  { return "upgrade/" + t.region + "/" + t.name }
+func rollbackKey(t target) string { return "rollback/" + t.region + "/" + t.name }
+
+// changesAllowed reports whether the UI may change clusters.
+func (b *Backend) changesAllowed() bool { return b.allow.Load() }
+
+// ChangesAllowed reports whether the UI may change clusters.
+func (b *Backend) ChangesAllowed() bool { return b.changesAllowed() }
+
+// AllowChanges allows changes for the rest of the session, as
+// --allow-changes does from the start. Each change still needs its dry run
+// and its gates. A dry run made while read-only must run again: it skipped
+// the live gates.
+func (b *Backend) AllowChanges() {
+	if b.allow.Swap(true) {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.emit(state.Event{Source: state.SourceAWS, Level: state.LevelWarn, Subject: "session", Text: "changes allowed", Detail: "y in a dry run now changes the real cluster"})
 }
 
 // Start implements state.Backend. With AllowChanges it starts a nodegroup
@@ -956,7 +1025,7 @@ func (b *Backend) Start(ctx context.Context, a state.Action) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !b.opts.AllowChanges {
+	if !b.changesAllowed() {
 		return ErrReadOnly
 	}
 	if err := b.checkNotBusy(ctx, a.Cluster); err != nil {
@@ -977,7 +1046,7 @@ func (b *Backend) Start(ctx context.Context, a state.Action) error {
 // StopAfterCurrent implements state.Backend: the upgrade stops before its
 // next phase or nodegroup roll. An EKS update in flight is never cancelled.
 func (b *Backend) StopAfterCurrent(_ context.Context, key string) error {
-	if !b.opts.AllowChanges {
+	if !b.changesAllowed() {
 		return ErrReadOnly
 	}
 	b.mu.Lock()
@@ -997,7 +1066,7 @@ func (b *Backend) StopAfterCurrent(_ context.Context, key string) error {
 // TogglePause implements state.Backend: the upgrade holds before its next
 // phase.
 func (b *Backend) TogglePause(_ context.Context, key string) error {
-	if !b.opts.AllowChanges {
+	if !b.changesAllowed() {
 		return ErrReadOnly
 	}
 	b.mu.Lock()
@@ -1016,7 +1085,7 @@ func (b *Backend) TogglePause(_ context.Context, key string) error {
 
 // Answer implements state.Backend.
 func (b *Backend) Answer(_ context.Context, key string, yes bool) error {
-	if !b.opts.AllowChanges {
+	if !b.changesAllowed() {
 		return ErrReadOnly
 	}
 	b.mu.Lock()
