@@ -152,3 +152,46 @@ func TestBuildPlan_ScopeKeepsHardAddonBlockers(t *testing.T) {
 		t.Fatal("a control-plane-only plan hid the add-on blocker")
 	}
 }
+
+// Two control-plane-only runs in a row: the first leaves vpc-cni on a build
+// the new control plane cannot run, so the second is blocked until the
+// add-ons catch up, instead of leaving vpc-cni two versions behind.
+func TestBuildPlan_SecondControlPlaneOnlyRunWaitsForTheAddons(t *testing.T) {
+	w := newWorld()
+	m := newWorldMock(w)
+	svc := newTestService(m)
+	ctx := context.Background()
+	cpOnly := PlanOptions{Only: []Part{PartControlPlane}}
+
+	plan, err := svc.BuildPlan(ctx, "prod-east", "1.32", cpOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Execute(ctx, plan, ExecuteOptions{Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = svc.BuildPlan(ctx, "prod-east", "1.33", PlanOptions{Only: []Part{PartControlPlane, PartNodegroups}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := strings.Join(plan.Blockers(), "\n")
+	if !strings.Contains(b, "vpc-cni") || !strings.Contains(b, "--only addons") {
+		t.Fatalf("blockers = %q, want vpc-cni to catch up first", b)
+	}
+
+	// The add-ons catch up; the next control-plane-only run goes ahead.
+	plan, err = svc.BuildPlan(ctx, "prod-east", "1.32", PlanOptions{Only: []Part{PartAddons}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Execute(ctx, plan, ExecuteOptions{Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = svc.BuildPlan(ctx, "prod-east", "1.33", cpOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := plan.Blockers(); len(b) > 0 {
+		t.Fatalf("blockers after the add-ons caught up = %v", b)
+	}
+}
