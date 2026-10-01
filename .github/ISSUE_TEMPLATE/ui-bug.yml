@@ -1,0 +1,65 @@
+name: refresh ui bug
+description: Report a problem with the full-screen terminal UI (refresh ui)
+title: "ui: "
+labels: ["bug", "ui"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying `refresh ui`. It is experimental, and reports like this one decide when it is stable.
+        This repository is public: remove account IDs, cluster names, ARNs, and endpoints you do not want to share.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `refresh version`
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Read-only (no --allow-changes)
+        - --allow-changes
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      options:
+        - Fleet screen
+        - Cluster (readiness) screen
+        - Rolls screen
+        - Upgrade or rollback screen
+        - A dry run or a started change
+        - Drawing, colors, or keys
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what the UI did. A screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: If a change was involved
+      description: The CLI command the dry run showed (`c` copies it), and whether the EKS update itself succeeded (the AWS console or `aws eks list-updates`).
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      description: OS, terminal app, tmux or not, size (columns × rows), and `echo $TERM $COLORTERM`
+      placeholder: macOS 26, Ghostty, no tmux, 160x42, xterm-ghostty truecolor
+    validations:
+      required: true
+  - type: input
+    id: fleet
+    attributes:
+      label: Fleet size
+      description: Roughly how many clusters and regions the UI sweeps, and the flags you passed (-A, -r, --interval)
