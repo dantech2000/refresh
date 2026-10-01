@@ -377,8 +377,8 @@ type Action struct {
 type Plan struct {
 	Action Action
 	// ID names this dry run; Start passes it back in Action.PlanID.
-	ID uint64
-	Title  string
+	ID    uint64
+	Title string
 	// Changes are before/after pairs ("AMI release", from, to).
 	Changes []Change
 	// Facts are plain key/value lines (nodes, estimate).
