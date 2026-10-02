@@ -33,7 +33,7 @@ func (m Model) upgradeHeader(u state.Upgrade, w int) Block {
 	// run's status stay on the line.
 	label := u.Label
 	if limit := max(16, w/4); width(label) > limit {
-		label = Line{tx(label)}.Fit(limit - 1).Plain() + "…"
+		label = Line{tx(label)}.Fit(limit-1).Plain() + "…"
 	}
 	switch {
 	case u.Label != "" && u.From == u.To:
