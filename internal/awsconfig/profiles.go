@@ -86,13 +86,13 @@ func SSOLoginProfile(ctx context.Context, profile string) string {
 	// The SDK resolves the source_profile chain into Source (a repeated
 	// profile keeps only its own credentials) and takes credentials from
 	// the end of it, in this order: keys, credential_source,
-	// credential_process, then SSO.
+	// web_identity_token_file, then SSO (credential_process comes after).
 	c := &sc
 	for i := 0; c.Source != nil && i < 64; i++ {
 		c = c.Source
 	}
 	switch {
-	case c.Source != nil, c.Credentials.HasKeys(), c.CredentialSource != "", c.CredentialProcess != "":
+	case c.Source != nil, c.Credentials.HasKeys(), c.CredentialSource != "", c.WebIdentityTokenFile != "":
 		return ""
 	case c.SSOSessionName != "" || c.SSOStartURL != "":
 		return c.Profile

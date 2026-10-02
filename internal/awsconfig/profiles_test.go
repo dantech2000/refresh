@@ -138,6 +138,11 @@ role_arn = arn:aws:iam::111122223333:role/other
 source_profile = admin
 [profile keys]
 region = us-east-1
+[profile sso-process]
+sso_session = acme
+sso_account_id = 111122223333
+sso_role_name = R
+credential_process = /bin/false
 [profile both]
 role_arn = arn:aws:iam::111122223333:role/both
 source_profile = sso-base
@@ -162,7 +167,7 @@ sso_region = us-east-1
 	}
 	t.Setenv("AWS_CONFIG_FILE", cfg)
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "none"))
-	for profile, want := range map[string]string{"sso-base": "sso-base", "admin": "sso-base", "chained": "sso-base", "keys": "", "missing": "", "both": "sso-base", "loop-target": "loop-a"} {
+	for profile, want := range map[string]string{"sso-base": "sso-base", "admin": "sso-base", "chained": "sso-base", "keys": "", "missing": "", "both": "sso-base", "loop-target": "loop-a", "sso-process": "sso-process"} {
 		if got := SSOLoginProfile(t.Context(), profile); got != want {
 			t.Errorf("%s: got %q, want %q", profile, got, want)
 		}
