@@ -96,8 +96,10 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		if startAgain {
 			startAgain = false
 			startErr = start()
-			if startErr == nil {
-				rejected = nil
+			// The latest refusal, before Describe can use up the wait.
+			rejected = nil
+			if apiCode(startErr) == "InvalidRequestException" {
+				rejected = startErr
 			}
 		}
 		out, err := common.WithRetry(wctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeInsightsRefreshOutput, error) {
@@ -111,7 +113,7 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		case startErr != nil:
 			switch {
 			case err == nil && out.Status == ekstypes.InsightsRefreshStatusInProgress:
-				startErr = nil // another refresh is running; wait on it
+				startErr, rejected = nil, nil // another refresh is running; wait on it
 				progress("an insights refresh is already running for %s; waiting on it", clusterName)
 			case apiCode(startErr) == "InvalidRequestException" && apiCode(err) == "ResourceNotFoundException":
 				// EKS runs a scheduled refresh: Start says one is in

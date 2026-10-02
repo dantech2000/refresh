@@ -443,3 +443,57 @@ func TestOneLineReasonDropsCarriageReturns(t *testing.T) {
 		}
 	}
 }
+
+// The refusal named at the end of the wait is Start's latest one, and a
+// refresh adopted while waiting clears it.
+func TestReadiness_LatestRefusalIsNamed(t *testing.T) {
+	m := oneHopBuilder().Build()
+	starts := 0
+	m.StartInsightsRefreshFn = func(context.Context, *eks.StartInsightsRefreshInput, ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error) {
+		starts++
+		if starts == 1 {
+			return nil, &ekstypes.InvalidRequestException{Message: aws.String("A scheduled cluster insights refresh is already in progress.")}
+		}
+		return nil, &ekstypes.InvalidRequestException{Message: aws.String("Cluster is in DELETING state")}
+	}
+	m.DescribeInsightsRefreshFn = func(ctx context.Context, _ *eks.DescribeInsightsRefreshInput, _ ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error) {
+		if starts >= 2 {
+			<-ctx.Done() // Describe uses up the wait
+			return nil, ctx.Err()
+		}
+		return nil, &ekstypes.ResourceNotFoundException{Message: aws.String("No insights refresh found.")}
+	}
+	svc := newStrictTestService(m)
+	svc.InsightsRefreshTimeout = 50 * time.Millisecond
+	plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "DELETING") {
+		t.Fatalf("blockers = %q, want the latest refusal", b)
+	}
+}
+
+func TestReadiness_AdoptedRefreshClearsTheRefusal(t *testing.T) {
+	m := oneHopBuilder().Build()
+	m.StartInsightsRefreshFn = func(context.Context, *eks.StartInsightsRefreshInput, ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error) {
+		return nil, &ekstypes.InvalidRequestException{Message: aws.String("A scheduled cluster insights refresh is already in progress.")}
+	}
+	describes := 0
+	m.DescribeInsightsRefreshFn = func(context.Context, *eks.DescribeInsightsRefreshInput, ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error) {
+		describes++
+		if describes == 1 {
+			return nil, &ekstypes.ResourceNotFoundException{Message: aws.String("No insights refresh found.")}
+		}
+		return &eks.DescribeInsightsRefreshOutput{Status: ekstypes.InsightsRefreshStatusInProgress}, nil
+	}
+	svc := newStrictTestService(m)
+	svc.InsightsRefreshTimeout = 50 * time.Millisecond
+	plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if b := strings.Join(plan.Blockers(), "\n"); strings.Contains(b, "scheduled cluster insights refresh") || !strings.Contains(b, "did not finish in time") {
+		t.Fatalf("blockers = %q, want a timeout of the adopted refresh", b)
+	}
+}
