@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.15.0](https://github.com/dantech2000/refresh/compare/v0.14.0...v0.15.0) (2026-10-02)
+
+
+### Features
+
+* report the node launches Auto Scaling failed during a roll ([#479](https://github.com/dantech2000/refresh/issues/479)) ([93a3827](https://github.com/dantech2000/refresh/commit/93a382701fd4477a90676f802a674ec8b0246280))
+* **ui:** allow changes from inside the UI with ctrl+u ([#466](https://github.com/dantech2000/refresh/issues/466)) ([4e924aa](https://github.com/dantech2000/refresh/commit/4e924aa6001a914dc534998ce76c01774c482af7))
+* **upgrade:** roll one nodegroup to the control plane's version ([#469](https://github.com/dantech2000/refresh/issues/469)) ([743e186](https://github.com/dantech2000/refresh/commit/743e186612bdee695337d3d7b29026e58390d086))
+* **upgrade:** upgrade the control plane, add-ons, and nodegroups separately ([#468](https://github.com/dantech2000/refresh/issues/468)) ([9930be1](https://github.com/dantech2000/refresh/commit/9930be15969fee24ff37cd399c11bd9b0c45d389))
+
+
+### Bug Fixes
+
+* a denied update is listed as not started, with the IAM action to grant ([#477](https://github.com/dantech2000/refresh/issues/477)) ([4bdcf08](https://github.com/dantech2000/refresh/commit/4bdcf081333e29e87ff8678d9582e34719f4bd6d))
+* a missing profile says to pick the SSO profile, not to raise --timeout ([#470](https://github.com/dantech2000/refresh/issues/470)) ([44a9431](https://github.com/dantech2000/refresh/commit/44a9431189cca23117402a0ee1384acc0a57af2a))
+* name the real cause of a failed AWS login ([#474](https://github.com/dantech2000/refresh/issues/474)) ([543fa90](https://github.com/dantech2000/refresh/commit/543fa90a49c9e5b09b3d575274d981d0830910f8))
+* **nodegroup:** a scale refused by another nodegroup's roll prints the AWS CLI way out ([#475](https://github.com/dantech2000/refresh/issues/475)) ([a236227](https://github.com/dantech2000/refresh/commit/a2362275ab2ff07762443588e4683d6469196bdd))
+* **nodegroup:** warn before a roll to the release a nodegroup already runs ([#478](https://github.com/dantech2000/refresh/issues/478)) ([398b00e](https://github.com/dantech2000/refresh/commit/398b00e74468286c568d7e9a5248b3deedf1b438))
+* **ui,upgrade:** a catch-up reads "on 1.36", not "1.36 → 1.36"; "1 node" ([#476](https://github.com/dantech2000/refresh/issues/476)) ([4df112f](https://github.com/dantech2000/refresh/commit/4df112f44828dceb93e7b55ddf0beea83fc24e39))
+* **ui:** a nodegroup the upgrade or rollback finished rolling is done as the next starts ([#482](https://github.com/dantech2000/refresh/issues/482)) ([96f04a8](https://github.com/dantech2000/refresh/commit/96f04a830ae547fcaa6a3960f158a58f70eccac0))
+* **ui:** read a long question or failure in full ([#480](https://github.com/dantech2000/refresh/issues/480)) ([c6d99b5](https://github.com/dantech2000/refresh/commit/c6d99b50df2d4b5d3914f6f84aed77ad27bbb50a))
+* **ui:** wrap dialog text and name a limited run in the Upgrade header ([#472](https://github.com/dantech2000/refresh/issues/472)) ([ebadbf7](https://github.com/dantech2000/refresh/commit/ebadbf76fd4eb5dccc09f99b7c70471fe9eda6a9))
+* **upgrade:** review fixes for --only and --nodegroup ([#471](https://github.com/dantech2000/refresh/issues/471)) ([2562b0e](https://github.com/dantech2000/refresh/commit/2562b0e5a5d4f0decbccf17583c1cc91e2a06aae))
+* **upgrade:** wait out EKS's scheduled insights refresh; say when a new cluster's insights are ready ([#473](https://github.com/dantech2000/refresh/issues/473)) ([4a116ac](https://github.com/dantech2000/refresh/commit/4a116acc0dbff6be39b43a5bf99a7334f197cbf3))
+
 ## [0.14.0](https://github.com/dantech2000/refresh/compare/v0.13.0...v0.14.0) (2026-10-01)
 
 
