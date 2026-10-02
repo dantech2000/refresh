@@ -2,6 +2,8 @@ package nodegroup
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -93,6 +95,7 @@ func TestScale_BusyClusterExitsThree(t *testing.T) {
 	if !strings.Contains(err.Error(), "aws eks update-nodegroup-config --cluster-name prod --nodegroup-name ng-a --scaling-config desiredSize=2") {
 		t.Errorf("error = %v, want the scale command outside refresh", err)
 	}
+
 	if calledPath(srv, "/update-config") || *asked != 0 {
 		t.Errorf("a busy cluster must not prompt (asked %d) or scale", *asked)
 	}
@@ -194,5 +197,24 @@ func TestScale_BusyHintOnlyWhenItHelps(t *testing.T) {
 				t.Fatalf("exit %d, err = %v", code, err)
 			}
 		})
+	}
+}
+
+// The hint's command runs in the account refresh used: it names the profile.
+func TestScale_BusyHintNamesTheProfile(t *testing.T) {
+	withScalePrompt(t, true, "y")
+	fakeaws.New(t, prodCluster(
+		&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5},
+		&fakeaws.Nodegroup{Name: "ng-b", Version: "1.31", Status: "UPDATING"},
+	))
+	cfg := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(cfg, []byte("[profile team prod]\nregion = us-east-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", cfg)
+	t.Setenv("AWS_PROFILE", "team prod")
+	_, _, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2")
+	if err == nil || !strings.Contains(err.Error(), "--profile 'team prod'") {
+		t.Fatalf("error = %v, want the profile", err)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/common"
@@ -199,6 +200,11 @@ func (r *scaleRun) rollingHint(changes []string) string {
 		common.ShellQuote(r.cluster), common.ShellQuote(r.nodegroup), strings.Join(sizes, ","))
 	if r.region != "" {
 		command += " --region " + common.ShellQuote(r.region)
+	}
+	// The profile refresh used (a flag, a context, or AWS_PROFILE), so the
+	// command runs in the same account.
+	if profile, _, err := awsconfig.EffectiveProfile(r.cmd); err == nil && profile != "" {
+		command += " --profile " + common.ShellQuote(profile)
 	}
 	return "If the roll waits for capacity, scale this nodegroup outside refresh (EKS allows it during a roll):\n  " + command
 }
