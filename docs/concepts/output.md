@@ -250,7 +250,8 @@ three come from the same list, so they always agree:
     instead. When AWS denied the call, the section names the IAM action to
     grant. A change whose call got no clear answer (`NetworkError`,
     `Timeout`, `ServiceError`) may have started, so it stays under
-    `INCOMPLETE DATA`.
+    `INCOMPLETE DATA`. An item that Ctrl+C or SIGTERM stopped (`Interrupted`) is listed
+    under `INTERRUPTED`.
 - **The exit code.** A run with failures exits `4` (incomplete data), unless
   a code that wins over `4` also applies. Each command's order is in
   [Exit codes](exit-codes.md). The error message counts the failures by kind, for

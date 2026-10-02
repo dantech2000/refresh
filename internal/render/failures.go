@@ -42,7 +42,8 @@ func FailureText(f diag.Failure) string {
 // FailureSection returns the failure sections of a human table view, each a
 // blank line, a title, and one line per failure in diag.Sort order: NOT
 // STARTED for a change AWS rejected (diag.Failure.NotStarted), with the IAM
-// action to grant when it was denied, then INCOMPLETE DATA for a read. It
+// action to grant when it was denied, INTERRUPTED for what Ctrl+C or
+// SIGTERM stopped, then INCOMPLETE DATA for the rest. It
 // returns nil when fs is empty. The table views list their failures here
 // instead of on stderr; fs is not changed.
 func (t *Theme) FailureSection(fs []diag.Failure) []string {
@@ -51,11 +52,15 @@ func (t *Theme) FailureSection(fs []diag.Failure) []string {
 	}
 	sorted := slices.Clone(fs)
 	diag.Sort(sorted)
-	var changes, reads []diag.Failure
+	var changes, stopped, reads []diag.Failure
 	for _, f := range sorted {
-		if f.NotStarted() {
+		switch {
+		case f.NotStarted():
 			changes = append(changes, f)
-		} else {
+		case f.Reason == diag.ReasonInterrupted:
+			// The user stopped it: no data is missing.
+			stopped = append(stopped, f)
+		default:
 			reads = append(reads, f)
 		}
 	}
@@ -71,6 +76,12 @@ func (t *Theme) FailureSection(fs []diag.Failure) []string {
 		}
 		for _, op := range denied {
 			out = append(out, "  "+t.Paint(t.Pal.Yellow, "Grant "+op+" to this identity; see "+awserr.PermissionsDocURL))
+		}
+	}
+	if len(stopped) > 0 {
+		out = append(out, "", t.Bold(t.Pal.Yellow, "INTERRUPTED"))
+		for _, f := range stopped {
+			out = append(out, t.Glyph(Warn)+" "+t.Paint(t.Pal.Yellow, FailureText(f)))
 		}
 	}
 	if len(reads) > 0 {

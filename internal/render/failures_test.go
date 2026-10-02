@@ -63,7 +63,11 @@ func TestFailureSectionSplitsChangesFromReads(t *testing.T) {
 	got := strings.Join(th.FailureSection([]diag.Failure{
 		{Kind: diag.KindNodegroup, Cluster: "prod", Name: "web", Operation: diag.OpDescribeNodegroup, Reason: diag.ReasonThrottled},
 		{Kind: diag.KindAddon, Cluster: "prod", Name: "coredns", Operation: diag.OpUpdateAddon, Reason: diag.ReasonAccessDenied},
+		{Kind: diag.KindCluster, Name: "prod", Reason: diag.ReasonInterrupted},
 	}), "\n")
+	if st := strings.Index(got, "INTERRUPTED"); st < 0 || !strings.Contains(got[st:], "cluster prod: Interrupted") || strings.Index(got, "INCOMPLETE DATA") < st {
+		t.Errorf("an interrupt is not in its own section:\n%s", got)
+	}
 	ns, id := strings.Index(got, "NOT STARTED"), strings.Index(got, "INCOMPLETE DATA")
 	if ns < 0 || id < ns || !strings.Contains(got, "Grant eks:UpdateAddon") || strings.Index(got, "coredns") > id || strings.Index(got, "prod/web") < id {
 		t.Fatalf("sections:\n%s", got)
