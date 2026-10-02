@@ -287,8 +287,8 @@ func (m Model) nowCard(u state.Upgrade, w int) Block {
 					failed = append(failed, Line{sp(2), fg(colRed, s)})
 				}
 			}
-			body := append(failed, append(bar(w-18, u.Progress(), 0), sp(2), sub(fmt.Sprintf("overall %3.0f%%", u.Progress()*100))))
-			return box(Line{bold(colMauve, "Now")}, body, w, colRed)
+			failed = append(failed, append(bar(w-18, u.Progress(), 0), sp(2), sub(fmt.Sprintf("overall %3.0f%%", u.Progress()*100))))
+			return box(Line{bold(colMauve, "Now")}, failed, w, colRed)
 		}
 	case cur < 0:
 		what = Line{sub("waiting before the next phase")}
