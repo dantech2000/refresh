@@ -651,3 +651,18 @@ func TestUpgradeOfOneNodegroup(t *testing.T) {
 	}
 	rig.b.Close()
 }
+
+// A nodegroup the engine finished rolling is done as the next one starts,
+// not pending until the phase ends.
+func TestStartItemMarksTheRollBeforeDone(t *testing.T) {
+	u := &liveUpgrade{st: state.Upgrade{Phases: []state.Phase{
+		{Name: "Plan", Status: state.PhaseDone},
+		{Name: "Nodegroups 1.35", Status: state.PhaseRunning, Items: []state.PhaseItem{{Name: "ng-a"}, {Name: "ng-b"}}},
+	}}}
+	startItem(u, "ng-a")
+	startItem(u, "ng-b")
+	items := u.st.Phases[1].Items
+	if items[0].Status != state.PhaseDone || items[0].Progress != 1 || items[1].Status != state.PhaseRunning {
+		t.Fatalf("items = %+v", items)
+	}
+}
