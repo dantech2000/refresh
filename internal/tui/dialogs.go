@@ -99,7 +99,7 @@ func (m Model) confirmParts(w int) dialogParts {
 		if f.Note != "" {
 			text += " (" + f.Note + ")"
 		}
-		for i, s := range wrap(text, max(10, inner-keyW)) {
+		for i, s := range wrapExact(text, max(10, inner-keyW)) {
 			key := sp(keyW)
 			if i == 0 {
 				key = sub(padRight(f.Key, keyW))
@@ -113,7 +113,7 @@ func (m Model) confirmParts(w int) dialogParts {
 		if g.Note != "" {
 			text += " · " + g.Note
 		}
-		for i, s := range wrap(text, max(10, inner-2)) {
+		for i, s := range wrapExact(text, max(10, inner-2)) {
 			l := Line{sp(2)}
 			if i == 0 {
 				l = Line{levelGlyph(checkLevel(g.Status)), sp(1)}
@@ -123,7 +123,7 @@ func (m Model) confirmParts(w int) dialogParts {
 	}
 	body = append(body, Line{})
 	const cmdKey = "CLI equivalent  "
-	for i, s := range wrap(p.Command, max(10, inner-width(cmdKey))) {
+	for i, s := range wrapExact(p.Command, max(10, inner-width(cmdKey))) {
 		key := sp(width(cmdKey))
 		if i == 0 {
 			key = dimS(cmdKey)

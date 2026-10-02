@@ -1346,3 +1346,38 @@ func TestUpgradeHeaderNamesALimitedRun(t *testing.T) {
 		}
 	}
 }
+
+// wrapExact keeps every character: spaces inside quoted values survive, and
+// the lines rejoin to the original text.
+func TestWrapExactKeepsQuotedSpaces(t *testing.T) {
+	cmd := "refresh cluster upgrade -c prod --kubeconfig '/tmp/prod  kubeconfig' --kube-context \"a  b\" --only nodegroups"
+	for _, w := range []int{12, 20, 40, 200} {
+		lines := wrapExact(cmd, w)
+		for _, l := range lines {
+			if width(l) > w {
+				t.Fatalf("w=%d: line %q is %d cells", w, l, width(l))
+			}
+		}
+		if got := strings.Join(lines, " "); got != cmd && w >= 30 {
+			t.Fatalf("w=%d: rejoined %q", w, got)
+		}
+		joined := strings.Join(lines, "")
+		if !strings.Contains(joined, "/tmp/prod  kubeconfig") && w >= 30 {
+			t.Fatalf("w=%d: the quoted spaces are lost: %q", w, lines)
+		}
+	}
+}
+
+// A long nodegroup label is cut, not the cluster or the run's status.
+func TestUpgradeHeaderCutsALongLabel(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	long := strings.Repeat("ng", 31) + "x"
+	u := state.Upgrade{Cluster: "prod-api", From: "1.35", To: "1.35", Label: "Roll nodegroup " + long, Failed: "the roll failed"}
+	got := ""
+	for _, l := range m.upgradeHeader(u, 100) {
+		got += l.Plain()
+	}
+	if !strings.Contains(got, "prod-api on 1.35") || !strings.Contains(got, "failed") {
+		t.Fatalf("header = %q", got)
+	}
+}

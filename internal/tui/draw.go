@@ -279,6 +279,45 @@ func overlay(base, top Block, x, y int) Block {
 }
 
 // wrap breaks text into lines at most w cells wide, on spaces.
+// wrapExact breaks text into lines of at most w cells and keeps every
+// character as it is: it breaks only at a space outside single or double
+// quotes (dropping that one space), so a shell command keeps the spaces
+// inside its quoted values. A part with no such space is split by cells.
+func wrapExact(text string, w int) []string {
+	if w <= 0 {
+		return nil
+	}
+	var out []string
+	rest := text
+	for width(rest) > w {
+		cut, cells := -1, 0
+		var quote rune
+		for i, r := range rest {
+			if cells > w {
+				break
+			}
+			switch {
+			case quote == 0 && (r == '\'' || r == '"'):
+				quote = r
+			case quote != 0 && r == quote:
+				quote = 0
+			case quote == 0 && r == ' ' && cells <= w && i > 0:
+				cut = i
+			}
+			cells += width(string(r))
+		}
+		if cut <= 0 {
+			head, tail := splitCells(rest, w)
+			out = append(out, head)
+			rest = tail
+			continue
+		}
+		out = append(out, rest[:cut])
+		rest = rest[cut+1:]
+	}
+	return append(out, rest)
+}
+
 func wrap(text string, w int) []string {
 	if w <= 0 {
 		return nil
