@@ -9,6 +9,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/common"
 )
 
@@ -50,14 +51,17 @@ type VersionUpdateOptions struct {
 //
 // StartNodegroupRoll pins one idempotency token across the request's
 // retries; a later run (or a fleet revisit) gets a new token.
+//
+// Its error is tagged with the call that failed (diag.OperationOf): the
+// read of the nodegroup or the update itself.
 func (s *ServiceImpl) StartVersionUpdate(ctx context.Context, clusterName, nodegroupName string, opts VersionUpdateOptions) (*ekstypes.Update, error) {
 	ng, err := s.DescribeNodegroup(ctx, clusterName, nodegroupName)
 	if err != nil {
-		return nil, err
+		return nil, diag.WithOperation(diag.OpDescribeNodegroup, err)
 	}
 	update, err := StartNodegroupRoll(ctx, s.eksClient, clusterName, nodegroupName, aws.ToString(ng.Version), opts.Force)
 	if err != nil {
-		return nil, awsinternal.FormatAWSError(err, fmt.Sprintf("starting the version update for nodegroup %s/%s", clusterName, nodegroupName))
+		return nil, diag.WithOperation(diag.OpUpdateNodegroupVersion, awsinternal.FormatAWSError(err, fmt.Sprintf("starting the version update for nodegroup %s/%s", clusterName, nodegroupName)))
 	}
 	return update, nil
 }

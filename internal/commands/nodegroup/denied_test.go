@@ -23,3 +23,4 @@ func TestUpdate_DeniedStartSaysWhatToGrant(t *testing.T) {
 		t.Fatalf("stdout:\n%s", out)
 	}
 }
+

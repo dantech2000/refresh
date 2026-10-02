@@ -39,3 +39,18 @@ func IsChange(op string) bool {
 	}
 	return false
 }
+
+// NotStarted reports whether f is a change (IsChange) that AWS rejected, so
+// it did not start. A change whose call got no clear answer (a network
+// error, a timeout, an AWS-side failure) may have started: it is not one.
+func (f Failure) NotStarted() bool {
+	if !IsChange(f.Operation) {
+		return false
+	}
+	switch f.Reason {
+	case ReasonAccessDenied, ReasonCredentialError, ReasonThrottled, ReasonNotFound,
+		ReasonRegionUnavailable, ReasonInvalidRequest, ReasonNotAttempted:
+		return true
+	}
+	return false
+}

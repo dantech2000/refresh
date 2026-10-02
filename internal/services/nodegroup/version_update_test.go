@@ -10,6 +10,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/smithy-go"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
@@ -146,5 +147,26 @@ func TestStartVersionUpdate_DescribeFailureStartsNothing(t *testing.T) {
 	}
 	if m.Calls.UpdateNodegroupVersion != 0 {
 		t.Errorf("UpdateNodegroupVersion calls = %d, want 0", m.Calls.UpdateNodegroupVersion)
+	}
+}
+
+// The error names the call that failed: the read of the nodegroup or the
+// update, so a denial names the action to grant.
+func TestStartVersionUpdate_TagsTheFailedCall(t *testing.T) {
+	denied := func() error { return mocks.AccessDenied() }
+	read := &mocks.EKSAPI{DescribeNodegroupFn: func(context.Context, *eks.DescribeNodegroupInput, ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+		return nil, denied()
+	}}
+	if _, err := newTestService(read).StartVersionUpdate(context.Background(), "prod", "ng-a", VersionUpdateOptions{}); diag.OperationOf(err) != diag.OpDescribeNodegroup {
+		t.Errorf("read: operation = %q (err %v)", diag.OperationOf(err), err)
+	}
+	update := &mocks.EKSAPI{
+		DescribeNodegroupFn: describeNodegroupAt("1.31"),
+		UpdateNodegroupVersionFn: func(context.Context, *eks.UpdateNodegroupVersionInput, ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error) {
+			return nil, denied()
+		},
+	}
+	if _, err := newTestService(update).StartVersionUpdate(context.Background(), "prod", "ng-a", VersionUpdateOptions{}); diag.OperationOf(err) != diag.OpUpdateNodegroupVersion {
+		t.Errorf("update: operation = %q (err %v)", diag.OperationOf(err), err)
 	}
 }

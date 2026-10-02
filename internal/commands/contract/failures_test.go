@@ -287,7 +287,9 @@ func cloneWorld(world []*fakeaws.Cluster) []*fakeaws.Cluster {
 // tableSection is the table view's section that lists tc's failure: NOT
 // STARTED for a change that could not start, else INCOMPLETE DATA.
 func tableSection(tc contractCase) string {
-	if op, _ := tc.failure["operation"].(string); diag.IsChange(op) {
+	op, _ := tc.failure["operation"].(string)
+	reason, _ := tc.failure["reason"].(string)
+	if (diag.Failure{Operation: op, Reason: diag.Reason(reason)}).NotStarted() {
 		return "NOT STARTED"
 	}
 	return "INCOMPLETE DATA"

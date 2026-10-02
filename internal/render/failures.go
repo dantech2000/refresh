@@ -41,7 +41,7 @@ func FailureText(f diag.Failure) string {
 
 // FailureSection returns the failure sections of a human table view, each a
 // blank line, a title, and one line per failure in diag.Sort order: NOT
-// STARTED for a change that failed to start (diag.IsChange), with the IAM
+// STARTED for a change AWS rejected (diag.Failure.NotStarted), with the IAM
 // action to grant when it was denied, then INCOMPLETE DATA for a read. It
 // returns nil when fs is empty. The table views list their failures here
 // instead of on stderr; fs is not changed.
@@ -53,7 +53,7 @@ func (t *Theme) FailureSection(fs []diag.Failure) []string {
 	diag.Sort(sorted)
 	var changes, reads []diag.Failure
 	for _, f := range sorted {
-		if diag.IsChange(f.Operation) {
+		if f.NotStarted() {
 			changes = append(changes, f)
 		} else {
 			reads = append(reads, f)

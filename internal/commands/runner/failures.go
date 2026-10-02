@@ -52,7 +52,7 @@ func WriteFailures(format string, out, errOut io.Writer, fs []diag.Failure) {
 //
 //	incomplete data: 3 failure(s) (1 cluster, 2 nodegroups)
 //
-// When every failure is a change that did not start (diag.IsChange), it
+// When every failure is a change AWS rejected (diag.Failure.NotStarted), it
 // says so instead: "2 update(s) could not start (2 addons)".
 //
 // Print the document and call ReportFailures first. Wrap the result with
@@ -80,7 +80,7 @@ func IncompleteExit(fs []diag.Failure) error {
 	}
 	changes := 0
 	for _, f := range fs {
-		if diag.IsChange(f.Operation) {
+		if f.NotStarted() {
 			changes++
 		}
 	}
