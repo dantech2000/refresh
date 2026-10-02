@@ -106,7 +106,7 @@ func readinessChecks(r *clustersvc.UpgradeReport, to, cli string) []state.Check 
 		add(state.Check{Group: "CONTROL PLANE", Name: "health", Status: healthStatus(*hr), Summary: hr.Message, Detail: hr.Details})
 	}
 	skew := state.Check{Group: "CONTROL PLANE", Name: "version skew", Status: state.CheckPass,
-		Summary: r.Skew.ControlPlaneVersion + " → " + to, Detail: r.Skew.Findings}
+		Summary: state.VersionMove(r.Skew.ControlPlaneVersion, to), Detail: r.Skew.Findings}
 	add(skew)
 
 	for _, in := range r.Insights {
@@ -286,7 +286,7 @@ func planAddons(c state.Cluster, t target) state.Plan {
 func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan, a state.Action) state.Plan {
 	scope := a.Scope
 	p := state.Plan{
-		Title:   fmt.Sprintf("%s · %s %s → %s", upgradeTitle(scope), c.Name, plan.CurrentVersion, plan.TargetVersion),
+		Title:   fmt.Sprintf("%s · %s %s", upgradeTitle(scope), c.Name, state.VersionMove(plan.CurrentVersion, plan.TargetVersion)),
 		Command: regionFlag(t) + "cluster upgrade -c " + t.name + " --to " + plan.TargetVersion,
 	}
 	if a.Nodegroup != "" {

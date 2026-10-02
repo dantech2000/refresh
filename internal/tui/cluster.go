@@ -187,8 +187,5 @@ func tableBlock(t *state.Table, w int) Block {
 // readinessTitle names the cluster and the versions checked: "on 1.36"
 // when the control plane is already there (a catch-up).
 func readinessTitle(cluster, from, to string) string {
-	if from == to {
-		return fmt.Sprintf("Readiness · %s on %s", cluster, to)
-	}
-	return fmt.Sprintf("Readiness · %s %s → %s", cluster, from, to)
+	return fmt.Sprintf("Readiness · %s %s", cluster, state.VersionMove(from, to))
 }

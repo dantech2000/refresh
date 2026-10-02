@@ -79,3 +79,12 @@ func TestRollReplacedAndUpgradeProgress(t *testing.T) {
 		t.Fatal("empty upgrade")
 	}
 }
+
+func TestVersionMove(t *testing.T) {
+	if got := VersionMove("1.36", "1.36"); got != "on 1.36" {
+		t.Errorf("catch-up = %q", got)
+	}
+	if got := VersionMove("1.35", "1.36"); got != "1.35 → 1.36" {
+		t.Errorf("hop = %q", got)
+	}
+}

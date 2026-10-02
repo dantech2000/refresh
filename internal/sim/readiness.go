@@ -104,7 +104,7 @@ func (r *readiness) step() {
 	case wn > 0:
 		lvl, text = state.LevelWarn, "readiness: "+plural(wn, "warning")
 	}
-	r.w.emit(state.Event{Cluster: r.c.Name, Source: state.SourceCheck, Level: lvl, Subject: r.st.From + " → " + r.st.To, Text: text})
+	r.w.emit(state.Event{Cluster: r.c.Name, Source: state.SourceCheck, Level: lvl, Subject: state.VersionMove(r.st.From, r.st.To), Text: text})
 	if r.done != nil {
 		r.done(b, wn)
 	}
