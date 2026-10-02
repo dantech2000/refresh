@@ -163,19 +163,27 @@ func (r *scaleRun) refuse(busy *runner.Busy) error {
 	return busy.Exit
 }
 
-// rollingHint is the way out when another nodegroup's roll makes the
+// rollingHint is the way out when only other nodegroups' rolls make the
 // cluster busy: a roll that waits for capacity (a vCPU quota, for one)
 // frees none itself, and refresh will not scale until it ends. EKS takes a
 // scaling change on a different nodegroup during a roll, so the hint is the
-// same change made outside refresh. Empty when no other nodegroup rolls.
+// same change made outside refresh, with the sizes the nodegroup would
+// have. Empty when anything else is changing (the cluster, an add-on, the
+// target, a nodegroup being created or deleted) or the sizes are ones EKS
+// rejects. The command is one row, not wrapped, so it pastes as one line.
 func (r *scaleRun) rollingHint(changes []string) string {
-	other := false
+	if len(changes) == 0 || r.doc.After == nil {
+		return ""
+	}
 	for _, c := range changes {
-		if rest, ok := strings.CutPrefix(c, clustersvc.ChangeNodegroup+" "); ok && !strings.HasPrefix(rest, r.nodegroup+" ") {
-			other = true
+		rest, ok := strings.CutPrefix(c, clustersvc.ChangeNodegroup+" ")
+		name, status, _ := strings.Cut(rest, " ")
+		if !ok || name == r.nodegroup || status != string(ekstypes.NodegroupStatusUpdating) {
+			return ""
 		}
 	}
-	if !other {
+	after := *r.doc.After
+	if after.Min < 0 || after.Max < 1 || after.Min > after.Max || after.Desired < after.Min || after.Desired > after.Max {
 		return ""
 	}
 	var sizes []string

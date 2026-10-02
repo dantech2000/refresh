@@ -170,14 +170,29 @@ func TestBusyRefusalsPrintADocument(t *testing.T) {
 	})
 }
 
-// The target itself is changing: no way around that, so no hint.
-func TestScale_BusyTargetHasNoHint(t *testing.T) {
-	withScalePrompt(t, true, "y")
-	fakeaws.New(t, prodCluster(
-		&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5, Status: "UPDATING"},
-	))
-	_, _, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2")
-	if code := exitCodeOf(err); code != 3 || strings.Contains(err.Error(), "update-nodegroup-config") {
-		t.Fatalf("exit %d, err = %v", code, err)
+// No hint when scaling outside refresh is no way out: the target is
+// changing too, something other than a nodegroup roll is, or EKS would
+// reject the sizes.
+func TestScale_BusyHintOnlyWhenItHelps(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		a, b string // the nodegroups' statuses
+		args []string
+	}{
+		{"target and another rolling", "UPDATING", "UPDATING", []string{"--desired", "2"}},
+		{"another being deleted", "ACTIVE", "DELETING", []string{"--desired", "2"}},
+		{"desired below min", "ACTIVE", "UPDATING", []string{"--desired", "0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withScalePrompt(t, true, "y")
+			fakeaws.New(t, prodCluster(
+				&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5, Status: tc.a},
+				&fakeaws.Nodegroup{Name: "ng-b", Version: "1.31", Status: tc.b},
+			))
+			_, _, err := runNodegroup(t, append([]string{"scale", "prod", "ng-a"}, tc.args...)...)
+			if code := exitCodeOf(err); code != 3 || strings.Contains(err.Error(), "update-nodegroup-config") {
+				t.Fatalf("exit %d, err = %v", code, err)
+			}
+		})
 	}
 }
