@@ -101,7 +101,7 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 			switch {
 			case apiCode(startErr) == "InvalidRequestException":
 				rejected = startErr
-			case wctx.Err() == nil:
+			case startErr == nil, wctx.Err() == nil:
 				rejected = nil
 			}
 		}
