@@ -71,6 +71,11 @@ func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 // name came from, the profiles that are there, and how to create it.
 func profileNotFound(cmd *cli.Command, name string, err error) error {
 	requested, _, _ := EffectiveProfile(cmd)
+	if requested == "" {
+		// The SDK reads [default] when nothing names a profile, and a
+		// missing [default] is no error: the name came from its chain.
+		requested = "default"
+	}
 	var from string
 	switch {
 	case requested != "" && requested != name:

@@ -138,12 +138,19 @@ role_arn = arn:aws:iam::111122223333:role/other
 source_profile = admin
 [profile keys]
 region = us-east-1
+[profile both]
+role_arn = arn:aws:iam::111122223333:role/both
+source_profile = sso-base
+sso_session = other
+[sso-session other]
+sso_start_url = https://other.awsapps.com/start
+sso_region = us-east-1
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AWS_CONFIG_FILE", cfg)
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "none"))
-	for profile, want := range map[string]string{"sso-base": "sso-base", "admin": "sso-base", "chained": "sso-base", "keys": "", "missing": ""} {
+	for profile, want := range map[string]string{"sso-base": "sso-base", "admin": "sso-base", "chained": "sso-base", "keys": "", "missing": "", "both": "sso-base"} {
 		if got := SSOLoginProfile(t.Context(), profile); got != want {
 			t.Errorf("%s: got %q, want %q", profile, got, want)
 		}
@@ -169,6 +176,15 @@ func TestMissingSourceProfileAndCredentialsSections(t *testing.T) {
 	_, err := Load(t.Context(), nil)
 	if err == nil || !strings.Contains(err.Error(), `the source_profile of profile "target"`) || strings.Contains(err.Error(), "context") {
 		t.Fatalf("err = %v", err)
+	}
+	// With no profile named, the SDK reads [default], and its chain named
+	// the missing profile.
+	if err := os.WriteFile(cfg, []byte("[default]\nrole_arn = arn:aws:iam::111122223333:role/x\nsource_profile = typo-base\nregion = us-east-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_PROFILE", "")
+	if _, err := Load(t.Context(), nil); err == nil || !strings.Contains(err.Error(), `the source_profile of profile "default"`) {
+		t.Fatalf("no profile: err = %v", err)
 	}
 	var names []string
 	for _, p := range Profiles() {

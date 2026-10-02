@@ -86,10 +86,17 @@ func SSOLoginProfile(ctx context.Context, profile string) string {
 		if err != nil {
 			return ""
 		}
+		// The SDK takes a profile's credentials from its source_profile
+		// before its own settings, so the chain is followed first. A
+		// profile that names itself uses its own keys.
+		if src := sc.SourceProfileName; src != "" && src != p {
+			p = src
+			continue
+		}
 		if sc.SSOSessionName != "" || sc.SSOStartURL != "" {
 			return p
 		}
-		p = sc.SourceProfileName
+		return ""
 	}
 	return ""
 }
