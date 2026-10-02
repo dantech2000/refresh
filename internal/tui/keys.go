@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"slices"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -72,6 +73,7 @@ func globalBindings() []binding {
 			return nil
 		}},
 		{keys: []string{"w"}, label: "w", desc: "warnings and errors only", do: func(m *Model) tea.Cmd { m.warnOnly = !m.warnOnly; return nil }},
+		{keys: []string{"e"}, label: "e", desc: "export this session's log to a file: the timeline, Kube events, AWS API calls, or all", do: func(m *Model) tea.Cmd { return m.pickExport() }},
 		{keys: []string{"ctrl+r"}, label: "ctrl+r", desc: "read the fleet from AWS now",
 			when: func(m Model) bool { _, ok := m.b.(refresher); return ok },
 			do: func(m *Model) tea.Cmd {
@@ -456,6 +458,32 @@ func (m *Model) planUpgrade() tea.Cmd {
 	return nil
 }
 
+// pickExport offers the session's logs to export, as the log tabs name
+// them, each with its event count.
+func (m *Model) pickExport() tea.Cmd {
+	if m.journal == nil {
+		return nil
+	}
+	var items []pickItem
+	for _, k := range []exportKind{exportTimeline, exportKube, exportAWS, exportAll} {
+		n := len(m.journal.of(k))
+		items = append(items, pickItem{name: exportNames[k], level: state.LevelInfo, note: plural(n, "event"),
+			do: func(m *Model) tea.Cmd {
+				dir, err := exportDir()
+				if err != nil {
+					m.say(state.LevelError, "export failed: %v", err)
+					return nil
+				}
+				return exportCmd(dir, k, m.journal.of(k), m.st, m.journal.dropped, time.Now())
+			}})
+	}
+	m.openPicker(&picker{title: "Export which log of this session?", items: items})
+	return nil
+}
+
+// exportNames are the export choices, named as the log tabs are.
+var exportNames = map[exportKind]string{exportTimeline: "Timeline", exportKube: "Kube events", exportAWS: "AWS API", exportAll: "All"}
+
 // pickerBindings apply while the nodegroup picker is open.
 func pickerBindings() []binding {
 	move := func(d int) func(*Model) tea.Cmd {
@@ -468,12 +496,17 @@ func pickerBindings() []binding {
 	choose := func(m *Model) tea.Cmd {
 		p := m.pick
 		m.pick = nil
+		if it := p.items[p.sel]; it.do != nil {
+			return it.do(m)
+		}
 		return m.plan(p.items[p.sel].action)
 	}
+	exporting := func(m Model) bool { return m.pick.items[m.pick.sel].do != nil }
 	bs := []binding{
 		{keys: keysUp, label: "↑↓", desc: "choose", do: move(-1)},
 		{keys: keysDown, do: move(1)},
-		{keys: []string{"enter"}, label: "enter", desc: "dry-run it", do: choose},
+		{keys: []string{"enter"}, label: "enter", desc: "dry-run it", when: func(m Model) bool { return !exporting(m) }, do: choose},
+		{keys: []string{"enter"}, label: "enter", desc: "export it", when: exporting, do: choose},
 		{keys: []string{"esc", "q"}, label: "esc", desc: "close", do: func(m *Model) tea.Cmd { m.pick = nil; return nil }},
 	}
 	for i := range 9 {

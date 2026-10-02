@@ -46,6 +46,8 @@ const (
 
 // Model is the Bubble Tea model.
 type Model struct {
+	// journal keeps the session's events for an export (e).
+	journal *journal
 	// noColor turns off color and the background (see Run).
 	noColor  bool
 	ctx      context.Context
@@ -106,7 +108,7 @@ func New(ctx context.Context, b state.Backend, interval time.Duration) Model {
 	if interval <= 0 {
 		interval = 100 * time.Millisecond
 	}
-	return Model{ctx: ctx, b: b, interval: interval, feedAll: true}
+	return Model{ctx: ctx, b: b, interval: interval, feedAll: true, journal: newJournal()}
 }
 
 // Messages from backend calls.
@@ -223,6 +225,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.fetch() // fetch bumps m.fetchID; take it before m is copied out
 		m.focusAfter, m.focusFrom = &a, m.fetchID
 		return m, cmd
+	case exportMsg:
+		if msg.err != nil {
+			m.say(state.LevelError, "export failed: %v", msg.err)
+		} else {
+			m.say(state.LevelOK, "exported %d event(s) to %s", msg.n, tildePath(msg.path))
+		}
+		return m, nil
 	case doneMsg:
 		if msg.err != nil {
 			m.say(state.LevelError, "%v", msg.err)
@@ -258,6 +267,9 @@ func (m Model) applyState(msg stateMsg) (tea.Model, tea.Cmd) {
 	upK, hasUp := m.upgradeKey()
 	m.st = msg.st
 	m.loaded = true
+	if m.journal != nil {
+		m.journal.add(m.st)
+	}
 	for i, c := range m.st.Clusters {
 		if c.Name == selName {
 			m.sel = i
@@ -435,4 +447,6 @@ type pickItem struct {
 	name, why, note string
 	level           state.Level
 	action          state.Action
+	// do, when set, runs instead of a dry run of action (an export).
+	do func(*Model) tea.Cmd
 }

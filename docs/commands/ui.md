@@ -102,6 +102,7 @@ nodegroup picker), only the dialog's own keys work.
 | `y` / `n` | Upgrade | When the upgrade asks a question: go on, or stop after this step |
 | `f` | Fleet | Feed: all clusters, or the selected one |
 | `w` | Any | Feed: warnings and errors only |
+| `e` | Any | Export a log of this session to a file: the timeline, Kube events, AWS API calls, or all (see [Export a session log](#export-a-session-log)) |
 | `space` | Any | Freeze the live panes, or follow them again |
 | `tab` `←` `→` | Rolls, Upgrade | Switch the log source of a live pane |
 | `[` `]` | Rolls, Upgrade | Page through rolls or upgrades |
@@ -161,6 +162,37 @@ with the same `--to`, or the same `cluster rollback`. Each continues from
 the cluster's live state. `U` in the UI plans the next
 version from the version the cluster is on, so after the control plane
 moved it offers the version after that.
+
+## Export a session log
+
+Press `e` to save a log of this session for a later review. Choose what it
+holds, named as the log tabs are:
+
+| Choice | Holds |
+|---|---|
+| Timeline | The changes and checks: upgrade and rollback phases, roll lifecycle, add-on updates, readiness, questions and answers |
+| Kube events | The Kubernetes events of rolls |
+| AWS API | The AWS API calls the UI made |
+| All | Everything |
+
+The UI keeps every event it saw since it started (up to 100,000), so the
+log covers the whole session, also the lines a pane no longer shows. It
+writes a new file in `$XDG_STATE_HOME/refresh/sessions/`
+(`~/.local/state/refresh/sessions/` by default), named
+`refresh-ui-<date>-<time>-<choice>.tsv`, and shows the path. The file is
+readable only by you, because it names accounts and resources.
+
+The file starts with two `#` lines (the choice, the time, the profile and
+context, and the event count), then a header row and one tab-separated line
+per event:
+
+```text
+TIME	CLUSTER	SOURCE	LEVEL	SUBJECT	TEXT	DETAIL
+2026-10-02T01:14:27-07:00	prod	upgrade	progress	phase	Control plane 1.36	-
+```
+
+`SOURCE` is `upgrade`, `roll`, `check`, `addon`, `kube`, or `aws`. An empty
+field is `-`.
 
 ## Terminal
 
