@@ -204,7 +204,7 @@ func (b *Backend) runUpgrade(ctx context.Context, cfg aws.Config, u *liveUpgrade
 
 	// The real plan: not a preview, so it refreshes insights and blocks
 	// until EKS has evaluated them, as `cluster upgrade` does.
-	opts := upgradeOptions(state.Action{Scope: acc.scope, Nodegroup: acc.nodegroup})
+	opts := b.upgradeOptions(state.Action{Scope: acc.scope, Nodegroup: acc.nodegroup}, u.t)
 	opts.Progress = progress
 	plan, err := svc.BuildPlan(ctx, u.t.name, acc.target, opts)
 	if err != nil {

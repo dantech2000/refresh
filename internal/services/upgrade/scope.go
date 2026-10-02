@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/dantech2000/refresh/internal/common"
 )
 
 // Part is one part of a cluster upgrade that --only selects.
@@ -137,41 +139,90 @@ func applyScope(plan *Plan, o PlanOptions) {
 	}
 	target := plan.TargetVersion
 	if len(incompatible) > 0 {
-		plan.Notices = append(plan.Notices, fmt.Sprintf("add-on(s) %s may not run on Kubernetes %s: update them right after the control plane: refresh addon update --all -c %s", strings.Join(incompatible, ", "), target, plan.ClusterName))
+		plan.Notices = append(plan.Notices, fmt.Sprintf("add-on(s) %s may not run on Kubernetes %s: update them right after the control plane: %s", strings.Join(incompatible, ", "), target, followUp(plan, o, PartAddons, target)))
 	} else if len(addonsLeft) > 0 {
-		plan.Notices = append(plan.Notices, fmt.Sprintf("add-on(s) %s stay where they are; update them later: refresh addon update --all -c %s", strings.Join(addonsLeft, ", "), plan.ClusterName))
+		plan.Notices = append(plan.Notices, fmt.Sprintf("add-on(s) %s stay where they are; update them later: %s", strings.Join(addonsLeft, ", "), followUp(plan, o, PartAddons, target)))
 	}
 	if len(nodegroupsLeft) > 0 {
-		plan.Notices = append(plan.Notices, fmt.Sprintf("nodegroup(s) %s stay on their version; roll them later: refresh cluster upgrade -c %s --to %s --only nodegroups", strings.Join(nodegroupsLeft, ", "), plan.ClusterName, target))
+		plan.Notices = append(plan.Notices, fmt.Sprintf("nodegroup(s) %s stay on their version; roll them later: %s", strings.Join(nodegroupsLeft, ", "), followUp(plan, o, PartNodegroups, target)))
 	}
+}
+
+// followUp is the command that runs part later, to version: the same
+// account and region (o.CommandPrefix), and the same --skip or
+// --skip-nodegroup exclusions, so following it never changes what the user
+// left out.
+func followUp(plan *Plan, o PlanOptions, part Part, version string) string {
+	prefix := o.CommandPrefix
+	if prefix == "" {
+		prefix = "refresh"
+	}
+	parts := []string{prefix, "cluster", "upgrade", "-c", common.ShellQuote(plan.ClusterName), "--to", common.ShellQuote(version), "--only", string(part)}
+	// Both exclusion lists, whatever the part: a skipped add-on with no
+	// usable version would otherwise block a later nodegroup run.
+	for _, s := range o.SkipAddons {
+		parts = append(parts, "--skip", common.ShellQuote(s))
+	}
+	for _, s := range o.SkipNodegroups {
+		parts = append(parts, "--skip-nodegroup", common.ShellQuote(s))
+	}
+	if s := strings.TrimSpace(o.CommandSuffix); s != "" {
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, " ")
 }
 
 // blockOnLaggingAddons blocks the plan's first control-plane move when
 // add-ons left out of it already cannot run on the live control plane (an
 // earlier --only run left them): moving the control plane again would leave
-// them two versions behind. It fails closed: an add-on whose versions for
-// the live control plane could not be read (unread) blocks too.
-func blockOnLaggingAddons(plan *Plan, lagging, unread []string, live string) {
-	if len(lagging) == 0 && len(unread) == 0 {
+// them two versions behind. It fails closed in every scope: an add-on whose
+// versions for the live control plane could not be read (unread) blocks
+// too, and its failure is on the plan.
+func blockOnLaggingAddons(plan *Plan, o PlanOptions, lag addonLag, live string) {
+	if len(lag.incompatible) == 0 && len(lag.empty) == 0 && len(lag.unread) == 0 {
 		return
 	}
+	// Each kind names its own remedy: updating the add-ons fixes the first
+	// only.
 	var why []string
-	if len(lagging) > 0 {
-		why = append(why, fmt.Sprintf("add-on(s) %s do not run on the live control plane %s", strings.Join(lagging, ", "), live))
+	if len(lag.incompatible) > 0 {
+		why = append(why, fmt.Sprintf("add-on(s) %s do not run on the live control plane %s: update them first (%s), or add addons to --only",
+			strings.Join(lag.incompatible, ", "), live, followUp(plan, o, PartAddons, live)))
 	}
-	if len(unread) > 0 {
-		why = append(why, fmt.Sprintf("the versions of add-on(s) %s for %s could not be read", strings.Join(unread, ", "), live))
+	if len(lag.empty) > 0 {
+		why = append(why, fmt.Sprintf("EKS lists no version of add-on(s) %s for %s: if they are managed outside EKS add-ons, leave them out with %s",
+			strings.Join(lag.empty, ", "), live, skipFlags(lag.empty)))
+	}
+	if len(lag.unread) > 0 {
+		why = append(why, fmt.Sprintf("the versions of add-on(s) %s for %s could not be read: rerun to retry (the failures name the cause)",
+			strings.Join(lag.unread, ", "), live))
 	}
 	for h := range plan.Hops {
 		for i := range plan.Hops[h].Steps {
 			st := &plan.Hops[h].Steps[i]
 			if st.Type == StepControlPlane && st.Status == StatusPending {
 				st.Status = StatusBlocked
-				st.Reason = fmt.Sprintf("%s: update the add-ons first (refresh cluster upgrade -c %s --to %s --only addons), or add addons to --only", strings.Join(why, "; "), plan.ClusterName, live)
+				st.Reason = strings.Join(why, "; ")
 				return
 			}
 		}
 	}
+}
+
+// addonLag is what blocks a control-plane move on the add-ons: installed
+// versions the live control plane cannot run (when the add-ons are left
+// out), add-ons with no version listed for it (likewise), and add-ons whose
+// versions could not be read (in any scope).
+type addonLag struct {
+	incompatible, empty, unread []string
+}
+
+func skipFlags(names []string) string {
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = "--skip " + common.ShellQuote(n)
+	}
+	return strings.Join(parts, " ")
 }
 
 // checkNodegroups refuses a --nodegroup name the cluster does not have.

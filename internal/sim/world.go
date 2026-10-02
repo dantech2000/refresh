@@ -97,7 +97,7 @@ func New(opts Options) *World {
 	w.clusters = fleet(start)
 	w.schedule()
 	if opts.Warmup > 0 {
-		_ = w.startUpgrade("prod-eu")
+		_ = w.startUpgrade("prod-eu", 0, "")
 		w.Advance(opts.Warmup)
 	}
 	return w
@@ -340,7 +340,7 @@ func (w *World) plan(a state.Action) (state.Plan, error) {
 	case state.ActionAddons:
 		return w.planAddons(c)
 	case state.ActionUpgrade:
-		return w.planUpgrade(c)
+		return w.planUpgrade(c, a)
 	case state.ActionRollback:
 		return state.Plan{}, errors.New("a cluster rollback is not simulated")
 	default:
@@ -376,7 +376,7 @@ func (w *World) Start(ctx context.Context, a state.Action) error {
 	case state.ActionRollback:
 		return errors.New("a cluster rollback is not simulated")
 	default:
-		return w.startUpgrade(a.Cluster)
+		return w.startUpgrade(a.Cluster, a.Scope, a.Nodegroup)
 	}
 }
 

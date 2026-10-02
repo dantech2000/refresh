@@ -15,6 +15,7 @@ import (
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/common"
 	appconfig "github.com/dantech2000/refresh/internal/config"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/flagcanon"
@@ -209,6 +210,10 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		Preview:    cmd.Bool("dry-run"),
 		Only:       only,
 		Nodegroups: cmd.StringSlice("nodegroup"),
+		// The commands the plan names reach the same account and region,
+		// and keep the Kubernetes access of this run.
+		CommandPrefix: commandPrefix(cmd),
+		CommandSuffix: kubeFlags(cmd),
 	}
 	healthGate := newNodegroupHealthGate(cmd, awsCfg, clusterName)
 
@@ -352,14 +357,7 @@ func executeOptions(cmd *cli.Command, gate *nodegroupHealthGate) upgrade.Execute
 // an unattended run's command stays unattended and an attended one still
 // confirms each phase. Values are shell-quoted.
 func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) string {
-	parts := []string{"refresh"}
-	for _, name := range []string{"profile", "region"} {
-		if cmd.IsSet(name) {
-			if v := strings.TrimSpace(cmd.String(name)); v != "" {
-				parts = append(parts, "--"+name, shellQuote(v))
-			}
-		}
-	}
+	parts := []string{commandPrefix(cmd)}
 	parts = append(parts, "cluster", "upgrade", "-c", shellQuote(clusterName), "--to", shellQuote(plan.TargetVersion))
 	// The resume runs the same parts: --only and --nodegroup must carry
 	// over, or a resumed control-plane-only run would roll the nodegroups
@@ -369,10 +367,8 @@ func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) str
 			parts = append(parts, "--"+name, shellQuote(v))
 		}
 	}
-	for _, name := range []string{"kubeconfig", "kube-context"} {
-		if v := strings.TrimSpace(cmd.String(name)); v != "" {
-			parts = append(parts, "--"+name, shellQuote(v))
-		}
+	if k := kubeFlags(cmd); k != "" {
+		parts = append(parts, k)
 	}
 	// A wait timeout the user chose (also through the deprecated local
 	// --timeout) carries over as --wait-timeout.
@@ -400,24 +396,34 @@ func shortDuration(d time.Duration) string {
 	return s
 }
 
-// shellQuote returns s as one POSIX shell word: unchanged when it holds only
-// safe characters, else single-quoted.
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for _, r := range s {
-		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("-_./:=,@%+", r) {
-			safe = false
-			break
+// commandPrefix is "refresh" with the --profile and --region the user set,
+// so a command refresh prints for later reaches the same account and region.
+func commandPrefix(cmd *cli.Command) string {
+	parts := []string{"refresh"}
+	for _, name := range []string{"profile", "region"} {
+		if cmd.IsSet(name) {
+			if v := strings.TrimSpace(cmd.String(name)); v != "" {
+				parts = append(parts, "--"+name, shellQuote(v))
+			}
 		}
 	}
-	if safe {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return strings.Join(parts, " ")
 }
+
+// kubeFlags is the --kubeconfig and --kube-context the user set, for a
+// command refresh prints for later.
+func kubeFlags(cmd *cli.Command) string {
+	var parts []string
+	for _, name := range []string{"kubeconfig", "kube-context"} {
+		if v := strings.TrimSpace(cmd.String(name)); v != "" {
+			parts = append(parts, "--"+name, shellQuote(v))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// shellQuote returns s as one POSIX shell word (common.ShellQuote).
+func shellQuote(s string) string { return common.ShellQuote(s) }
 
 // runUpgradeMachine is the -o json/yaml path. Stdout gets exactly one
 // document: the bare plan for --dry-run or a blocked plan, else

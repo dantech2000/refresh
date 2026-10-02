@@ -23,7 +23,7 @@ func TestUpgrade_OnlyRunsEachPartSeparately(t *testing.T) {
 		t.Fatalf("dry run: %v\nstderr:\n%s", err, stderr)
 	}
 	out := ui.StripANSI(stdout + stderr)
-	for _, want := range []string{"--only nodegroups", "refresh addon update --all -c prod", "kube-proxy"} {
+	for _, want := range []string{"--only nodegroups", "cluster upgrade -c prod --to 1.32 --only addons", "kube-proxy"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry run lacks %q:\n%s", want, out)
 		}
@@ -96,5 +96,18 @@ func TestUpgrade_OneNodegroup(t *testing.T) {
 	}
 	if got := strings.Join(mutations(srv.Calls()), ","); got != "ng batch" {
 		t.Fatalf("mutations = %s, want ng batch", got)
+	}
+}
+
+// The plan's follow-up commands carry the --region the user gave.
+func TestUpgrade_FollowUpsCarryTheRegion(t *testing.T) {
+	fakeaws.New(t, orderWorld())
+	stdout, stderr, err := runCluster(t, "--region", "us-east-1", "upgrade", "prod", "--to", "1.32", "--only", "control-plane", "--skip-nodegroup", "web", "--kube-context", "prod-ctx", "--dry-run")
+	if err != nil {
+		t.Fatalf("dry run: %v\nstderr:\n%s", err, stderr)
+	}
+	out := ui.StripANSI(stdout + stderr)
+	if !strings.Contains(out, "refresh --region us-east-1 cluster upgrade -c prod --to 1.32 --only addons --skip-nodegroup web --kube-context prod-ctx") {
+		t.Fatalf("follow-up lacks the region, the exclusion, or the kube context:\n%s", out)
 	}
 }
