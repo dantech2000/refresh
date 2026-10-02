@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/dantech2000/refresh/internal/mocks"
 )
@@ -338,5 +339,76 @@ func TestBuildPlan_InterruptDuringRefreshIsAnError(t *testing.T) {
 	// The execution-time re-gate reports the interrupt the same way.
 	if err := svc.checkHopReadiness(ctx, "prod-east", "1.32", false, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("checkHopReadiness err = %v, want context.Canceled", err)
+	}
+}
+
+// What EKS did on a real cluster: during a scheduled refresh, Start says one
+// is in progress, and Describe, which sees only refreshes started with
+// Start, finds none. The gate waits and starts its own once that one ends,
+// instead of blocking the upgrade.
+func TestReadiness_WaitsOutAScheduledRefresh(t *testing.T) {
+	m := oneHopBuilder().
+		WithInsight("prod-east", "Kubelet version skew", ekstypes.InsightStatusValuePassing, "1.32").
+		Build()
+	starts, started := 0, false
+	m.StartInsightsRefreshFn = func(context.Context, *eks.StartInsightsRefreshInput, ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error) {
+		starts++
+		if starts < 3 {
+			return nil, &ekstypes.InvalidRequestException{Message: aws.String("A scheduled cluster insights refresh is already in progress.")}
+		}
+		started = true
+		return &eks.StartInsightsRefreshOutput{Status: ekstypes.InsightsRefreshStatusInProgress}, nil
+	}
+	m.DescribeInsightsRefreshFn = func(context.Context, *eks.DescribeInsightsRefreshInput, ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error) {
+		if !started {
+			return nil, &ekstypes.ResourceNotFoundException{Message: aws.String("No insights refresh found.")}
+		}
+		return &eks.DescribeInsightsRefreshOutput{Status: ekstypes.InsightsRefreshStatusCompleted}, nil
+	}
+	svc := newStrictTestService(m)
+	plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if plan.Blocked() || starts != 3 {
+		t.Fatalf("blocked=%v (%v), starts=%d, want a plan after the third start", plan.Blocked(), plan.Blockers(), starts)
+	}
+}
+
+// A new cluster: EKS has no insights for it yet (up to 15 minutes after
+// creation). The blocker says so in one line, not as a permission problem.
+func TestReadiness_NewClusterSaysWhenToRetry(t *testing.T) {
+	m := oneHopBuilder().Build()
+	m.StartInsightsRefreshFn = func(context.Context, *eks.StartInsightsRefreshInput, ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error) {
+		return nil, &ekstypes.ResourceNotFoundException{Message: aws.String("The cluster isn't available yet for cluster insights. Wait up to 15 minutes and try again.")}
+	}
+	m.DescribeInsightsRefreshFn = func(context.Context, *eks.DescribeInsightsRefreshInput, ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error) {
+		return nil, &ekstypes.ResourceNotFoundException{Message: aws.String("The cluster isn't available yet for cluster insights.")}
+	}
+	plan, err := newStrictTestService(m).BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	b := strings.Join(plan.Blockers(), "\n")
+	if !strings.Contains(b, "has not made cluster insights available") || !strings.Contains(b, "run again later") || strings.Contains(b, "Permissions refresh uses") {
+		t.Fatalf("blockers = %q", b)
+	}
+}
+
+// A denied refresh blocks with a one-line reason that names the denied
+// action, not the whole IAM permission list: a plan step is one line, and
+// the UI shows it in a header.
+func TestReadiness_DeniedRefreshIsOneLine(t *testing.T) {
+	m := oneHopBuilder().Build()
+	m.StartInsightsRefreshFn = func(context.Context, *eks.StartInsightsRefreshInput, ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error) {
+		return nil, &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "User: u is not authorized to perform: eks:StartInsightsRefresh"}
+	}
+	plan, err := newStrictTestService(m).BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	b := strings.Join(plan.Blockers(), "\n")
+	if strings.Contains(b, "\n") || !strings.Contains(b, "eks:StartInsightsRefresh") {
+		t.Fatalf("blockers = %q, want one line naming the action", b)
 	}
 }
