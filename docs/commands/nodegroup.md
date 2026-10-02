@@ -362,6 +362,13 @@ nodegroups that match. `--quiet` does not skip them.
     `--reroll`. `--force` also rolls it, but EKS then evicts pods even when a
     PodDisruptionBudget blocks the drain.
 
+    EKS can end an update to the release a nodegroup already runs without
+    replacing any node: on a test cluster, the update ended `Successful`
+    after 15 seconds and the old node still served. Before such a roll,
+    `nodegroup update` warns that the nodegroup already runs the latest
+    release. To replace nodes on the same release, publish a new
+    launch-template version, or drain and terminate the nodes yourself.
+
 ### Fleet mode
 
 `--all-clusters` discovers clusters across regions (scope with `-r`) and rolls

@@ -66,7 +66,7 @@ func DecideAMIUpdate(ctx context.Context, ng *ekstypes.Nodegroup, opts AMIUpdate
 			d.Reason = "--reroll rolls it whatever its AMI"
 		}
 	case d.CurrentAMI == d.LatestAMI && opts.Reroll:
-		d.Action, d.Reason = types.ActionUpdate, "already on latest AMI; --reroll rolls it anyway"
+		d.Action, d.Reason = types.ActionUpdate, "already on latest AMI; --reroll asks EKS to roll it anyway (EKS may replace no node)"
 	case d.CurrentAMI == d.LatestAMI:
 		d.Action, d.Reason = types.ActionSkipLatest, "already on latest AMI"
 	default:
