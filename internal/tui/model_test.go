@@ -1295,3 +1295,18 @@ func TestPatchKeyRollsALaggingNodegroupToTheControlPlane(t *testing.T) {
 		t.Fatalf("AMI item = %+v", items[1])
 	}
 }
+
+// A catch-up (the control plane already on the target) is "on 1.36", not
+// "1.36 → 1.36"; one node is "1 node".
+func TestCatchUpAndCountTexts(t *testing.T) {
+	if got := readinessTitle("prod", "1.36", "1.36"); got != "Readiness · prod on 1.36" {
+		t.Errorf("readinessTitle = %q", got)
+	}
+	if got := readinessTitle("prod", "1.35", "1.36"); got != "Readiness · prod 1.35 → 1.36" {
+		t.Errorf("readinessTitle = %q", got)
+	}
+	items := patchItems(state.Cluster{Version: "1.36", Nodegroups: []state.Nodegroup{{Name: "ng-b", Version: "1.35", Nodes: 1}}})
+	if len(items) != 1 || items[0].note != "1 node" {
+		t.Errorf("items = %+v", items)
+	}
+}

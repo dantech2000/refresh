@@ -106,7 +106,7 @@ func (p *Plan) Blockers() []string {
 	for _, hop := range p.Hops {
 		for _, s := range hop.Steps {
 			if s.Status == StatusBlocked {
-				out = append(out, fmt.Sprintf("%s → %s: %s: %s", hop.From, hop.To, s.Description, s.Reason))
+				out = append(out, fmt.Sprintf("%s: %s: %s", hop.label(), s.Description, s.Reason))
 			}
 		}
 	}
@@ -121,11 +121,20 @@ func (p *Plan) ManualSteps() []string {
 	for _, hop := range p.Hops {
 		for _, s := range hop.Steps {
 			if s.Status == StatusManual {
-				out = append(out, fmt.Sprintf("%s → %s: %s: %s", hop.From, hop.To, s.Description, s.Reason))
+				out = append(out, fmt.Sprintf("%s: %s: %s", hop.label(), s.Description, s.Reason))
 			}
 		}
 	}
 	return out
+}
+
+// label names the hop in a step's line: "1.35 → 1.36", or "on 1.36" for a
+// catch-up, where the control plane does not move.
+func (h Hop) label() string {
+	if h.From == h.To {
+		return "on " + h.To
+	}
+	return h.From + " → " + h.To
 }
 
 // Blocked reports whether any step in the plan is blocked.
