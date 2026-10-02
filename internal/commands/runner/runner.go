@@ -77,7 +77,7 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 			profile, _, _ := awsconfig.EffectiveProfile(cmd)
 			err = fmt.Errorf("AWS credential validation failed: %w", awserr.FormatSSONotLoggedIn(err, profile))
 		}
-		return nil, nil, aws.Config{}, err
+		return nil, nil, aws.Config{}, awsinternal.NoteKeysShadowProfile(checkCtx, cfg, err)
 	}
 	return ctx, cancel, cfg, nil
 }

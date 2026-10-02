@@ -69,7 +69,7 @@ func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, err
 		case diag.ReasonCredentialError:
 			// FormatAWSError adds the setup help, or returns an error that
 			// already carries it unchanged.
-			return fmt.Errorf("AWS credential validation failed: %w", awsinternal.FormatAWSError(err, "listing clusters"))
+			return awsinternal.NoteKeysShadowProfile(ctx, cfg, fmt.Errorf("AWS credential validation failed: %w", awsinternal.FormatAWSError(err, "listing clusters")))
 		case diag.ReasonRegionUnavailable:
 			lookalike = true
 			if closed == nil {
@@ -95,7 +95,7 @@ func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, err
 	err := awsinternal.CheckAWSCredentials(ctx, stsCfg)
 	switch {
 	case err != nil && awserr.IsCredentialError(err):
-		return err
+		return awsinternal.NoteKeysShadowProfile(ctx, cfg, err)
 	case err == nil && closed != nil:
 		// STS took the keys, so the region, not the keys, refused them. The
 		// region's own error would print the credential setup help.

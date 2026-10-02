@@ -16,7 +16,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -313,6 +312,14 @@ func FormatAWSError(err error, operation string) error {
 	if IsNoCredentials(err) {
 		return FormatNoCredentials(err, nil)
 	}
+	// Before the API error switch: an expired SSO session comes back as an
+	// SSO OIDC API error (InvalidGrantException) that says nothing useful.
+	if IsSSONotLoggedIn(err) {
+		return FormatSSONotLoggedIn(err, "")
+	}
+	if isSSOEndpointNotFound(err) {
+		return formatSSORegionError(err)
+	}
 	// A connect timeout also reports itself as context.DeadlineExceeded,
 	// but a longer --timeout does not help an endpoint that cannot be
 	// reached (#418). A DNS failure keeps its own path below (an invalid
@@ -330,7 +337,7 @@ func FormatAWSError(err error, operation string) error {
 		switch {
 		case permissionErrorCodes[ae.ErrorCode()] && isAssumeRole(err):
 			return formatAssumeRoleError(err)
-		case isSSORoleCall(err) && (ae.ErrorCode() == "ForbiddenException" || ae.ErrorCode() == "UnauthorizedException"):
+		case isSSORoleCall(err) && ae.ErrorCode() == "ForbiddenException":
 			return formatSSORoleError(err)
 		case permissionErrorCodes[ae.ErrorCode()]:
 			return formatPermissionError(err, operation)
@@ -344,14 +351,17 @@ func FormatAWSError(err error, operation string) error {
 		}
 	}
 
-	// The region first: an AssumeRole profile with no region fails inside
-	// the credential chain, and its text matches the credential fallback
-	// patterns too, but the region is what to fix.
-	if IsRegionError(err) {
+	// A missing region first: an AssumeRole profile with no region fails
+	// inside the credential chain, and its text matches the credential
+	// fallback patterns too, but the region is what to fix.
+	if isMissingRegion(err) {
 		return formatRegionError(err, operation)
 	}
 	if IsCredentialError(err) {
 		return formatCredentialError(err)
+	}
+	if IsRegionError(err) {
+		return formatRegionError(err, operation)
 	}
 	if IsNetworkError(err) {
 		return formatNetworkError(err, operation)
@@ -423,27 +433,72 @@ Set up credentials in one of these ways:
   aws configure            an access key in a profile
   AWS_ACCESS_KEY_ID        with AWS_SECRET_ACCESS_KEY, as environment variables
   an IAM role              when refresh runs on EC2, EKS, or Lambda`, Summary(err))
-	if keysShadowProfile() {
-		msg += `
-
-Note:
-  AWS_ACCESS_KEY_ID        is set, and the SDK uses it before AWS_PROFILE: unset it, or pass --profile`
-	}
 	return &formattedError{msg: msg, err: err}
 }
 
-// keysShadowProfile reports access keys in the environment next to
-// AWS_PROFILE: the SDK uses the keys, as the AWS CLI does, so AWS_PROFILE
-// has no effect (--profile does win over them).
-func keysShadowProfile() bool {
-	return strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) != "" && strings.TrimSpace(os.Getenv("AWS_PROFILE")) != ""
+// KeysShadowProfileNote is the note a credential error gets when the keys
+// came from the environment while AWS_PROFILE is set: the SDK uses the keys,
+// as the AWS CLI does, so AWS_PROFILE has no effect. The caller decides
+// that from the resolved credentials' source.
+const KeysShadowProfileNote = `
+
+Note:
+  AWS_ACCESS_KEY_ID        is set, and the SDK uses it before AWS_PROFILE: unset it, or pass --profile`
+
+// WithNote appends note to a formatted error's message, keeping the chain.
+func WithNote(err error, note string) error {
+	return &formattedError{msg: err.Error() + note, err: err}
+}
+
+// findOperation returns the first operation error in err's chain that match
+// accepts, looking inside each one errors.As finds: an STS or SSO call can
+// sit inside an EKS call that needed the credentials.
+func findOperation(err error, match func(*smithy.OperationError) bool) *smithy.OperationError {
+	for e := err; e != nil; {
+		var op *smithy.OperationError
+		if !errors.As(e, &op) {
+			return nil
+		}
+		if match(op) {
+			return op
+		}
+		e = op.Err
+	}
+	return nil
+}
+
+// isMissingRegion reports a call made with no region at all (not a region
+// whose endpoint does not resolve).
+func isMissingRegion(err error) bool {
+	var missing *aws.MissingRegionError
+	return errors.As(err, &missing) || containsAny(err.Error(), regionFallbackPatterns)
+}
+
+// isSSOEndpointNotFound reports an IAM Identity Center endpoint that does
+// not resolve: a wrong sso_region in the profile or sso-session.
+func isSSOEndpointNotFound(err error) bool {
+	var dns *net.DNSError
+	if !errors.As(err, &dns) || !dns.IsNotFound {
+		return false
+	}
+	h := strings.ToLower(dns.Name)
+	return strings.HasPrefix(h, "portal.sso.") || strings.HasPrefix(h, "oidc.")
+}
+
+func formatSSORegionError(err error) error {
+	return formatted(err, `the IAM Identity Center endpoint does not resolve
+Cause: %s
+
+Check the AWS config:
+  sso_region               the Region of your IAM Identity Center, in the profile or its sso-session`, Summary(err))
 }
 
 // isAssumeRole reports an error from an STS AssumeRole call: the credential
 // chain of a profile with role_arn.
 func isAssumeRole(err error) bool {
-	var op *smithy.OperationError
-	return errors.As(err, &op) && op.ServiceID == "STS" && strings.HasPrefix(op.OperationName, "AssumeRole")
+	return findOperation(err, func(op *smithy.OperationError) bool {
+		return op.ServiceID == "STS" && strings.HasPrefix(op.OperationName, "AssumeRole")
+	}) != nil
 }
 
 func formatAssumeRoleError(err error) error {
@@ -459,8 +514,9 @@ Check:
 // isSSORoleCall reports an error from IAM Identity Center's
 // GetRoleCredentials: an SSO profile's role lookup.
 func isSSORoleCall(err error) bool {
-	var op *smithy.OperationError
-	return errors.As(err, &op) && op.ServiceID == "SSO" && op.OperationName == "GetRoleCredentials"
+	return findOperation(err, func(op *smithy.OperationError) bool {
+		return op.ServiceID == "SSO" && op.OperationName == "GetRoleCredentials"
+	}) != nil
 }
 
 func formatSSORoleError(err error) error {
@@ -480,8 +536,22 @@ func IsSSONotLoggedIn(err error) bool {
 	if errors.As(err, &tokenErr) {
 		return true
 	}
-	if containsAny(err.Error(), ssoLoginFallbackPatterns) {
+	// A refresh IAM Identity Center refused (the session ended), or a role
+	// lookup with a token it no longer takes.
+	if findOperation(err, func(op *smithy.OperationError) bool {
+		return op.ServiceID == "SSO OIDC" && op.OperationName == "CreateToken"
+	}) != nil {
 		return true
+	}
+	var ae smithy.APIError
+	if errors.As(err, &ae) && ae.ErrorCode() == "UnauthorizedException" && isSSORoleCall(err) {
+		return true
+	}
+	// Each error in the chain: a formatted error's own text drops the SDK's.
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if containsAny(e.Error(), ssoLoginFallbackPatterns) {
+			return true
+		}
 	}
 	var pathErr *fs.PathError
 	return errors.As(err, &pathErr) && errors.Is(pathErr.Err, fs.ErrNotExist) &&

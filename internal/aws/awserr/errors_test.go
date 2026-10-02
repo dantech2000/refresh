@@ -371,17 +371,6 @@ func TestFormatAWSErrorLoginCases(t *testing.T) {
 	if msg := FormatAWSError(unreadable, "listing clusters").Error(); !strings.HasPrefix(msg, "AWS refused the request (HTTP 403)") || !strings.Contains(msg, "secret access key") {
 		t.Errorf("unreadable 403: %q", msg)
 	}
-
-	bad := &smithy.GenericAPIError{Code: "InvalidClientTokenId", Message: "invalid"}
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")
-	t.Setenv("AWS_PROFILE", "")
-	if msg := FormatAWSError(bad, "x").Error(); strings.Contains(msg, "AWS_PROFILE: unset it") {
-		t.Errorf("note without AWS_PROFILE: %q", msg)
-	}
-	t.Setenv("AWS_PROFILE", "prod")
-	if msg := FormatAWSError(bad, "x").Error(); !strings.Contains(msg, "the SDK uses it before AWS_PROFILE") {
-		t.Errorf("no note on keys hiding AWS_PROFILE: %q", msg)
-	}
 }
 
 // The SSO login cases: no saved login, a login that cannot be renewed (both
@@ -411,5 +400,35 @@ func TestFormatAWSErrorSSOCases(t *testing.T) {
 	role := &smithy.OperationError{ServiceID: "SSO", OperationName: "GetRoleCredentials", Err: &smithy.GenericAPIError{Code: "ForbiddenException", Message: "No access"}}
 	if msg := FormatAWSError(role, "loading AWS credentials").Error(); !strings.HasPrefix(msg, "IAM Identity Center gives this user no access") || !strings.Contains(msg, "sso_role_name") {
 		t.Errorf("SSO role forbidden: %q", msg)
+	}
+}
+
+// The SSO cases a formatted error must still be recognized in: an expired
+// session (InvalidGrantException from the SSO OIDC refresh), and a role
+// lookup with a revoked token. A role or SSO call nested in an EKS call
+// keeps its own help.
+func TestFormatAWSErrorNestedLoginCases(t *testing.T) {
+	grant := fmt.Errorf("refresh cached SSO token failed, unable to refresh SSO token, %w", &smithy.OperationError{
+		ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: &smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"}})
+	formatted := FormatAWSError(grant, "loading AWS credentials")
+	if !IsSSONotLoggedIn(formatted) || !strings.Contains(formatted.Error(), "aws sso login --profile") {
+		t.Errorf("expired session: %q", formatted)
+	}
+	revoked := &smithy.OperationError{ServiceID: "SSO", OperationName: "GetRoleCredentials", Err: &smithy.GenericAPIError{Code: "UnauthorizedException", Message: "Session token not found or invalid"}}
+	if msg := FormatAWSError(revoked, "x").Error(); !strings.HasPrefix(msg, "not logged in to IAM Identity Center") {
+		t.Errorf("revoked token: %q", msg)
+	}
+	inEKS := &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: fmt.Errorf("get identity: %w", &smithy.OperationError{
+		ServiceID: "STS", OperationName: "AssumeRole", Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "not authorized to perform: sts:AssumeRole"}})}
+	if msg := FormatAWSError(inEKS, "listing clusters").Error(); !strings.HasPrefix(msg, "cannot assume the role") {
+		t.Errorf("AssumeRole inside EKS: %q", msg)
+	}
+	ssoDNS := fmt.Errorf("operation error SSO: GetRoleCredentials, %w", &net.DNSError{Name: "portal.sso.us-esat-1.amazonaws.com", Err: "no such host", IsNotFound: true})
+	if msg := FormatAWSError(ssoDNS, "x").Error(); !strings.HasPrefix(msg, "the IAM Identity Center endpoint does not resolve") || !strings.Contains(msg, "sso_region") {
+		t.Errorf("bad sso_region: %q", msg)
+	}
+	eksDNS := &net.DNSError{Name: "eks.us-esat-1.amazonaws.com", Err: "no such host", IsNotFound: true}
+	if msg := FormatAWSError(eksDNS, "x").Error(); !strings.HasPrefix(msg, "AWS region configuration issue") {
+		t.Errorf("bad region: %q", msg)
 	}
 }

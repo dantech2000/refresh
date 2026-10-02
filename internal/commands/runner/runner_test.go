@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -11,10 +12,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/smithy-go"
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 )
 
 // ── setupAWS context propagation ──────────────────────────────────────────────
@@ -470,11 +473,17 @@ func TestSetupAWS_SSONotLoggedInNamesTheProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	expired := errors.New("failed to refresh cached credentials, refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed")
-	_, _, _, err := setupAWS(context.Background(), captured, 0, func(context.Context, aws.Config) error { return expired })
-	if err == nil || !strings.Contains(err.Error(), "not logged in to IAM Identity Center") || !strings.Contains(err.Error(), "aws sso login --profile work-sso") {
-		t.Fatalf("err = %v", err)
-	}
-	if !errors.Is(err, expired) {
-		t.Fatal("the cause is not wrapped")
+	grant := fmt.Errorf("refresh cached SSO token failed, unable to refresh SSO token, %w", &smithy.OperationError{
+		ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: &smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"}})
+	for name, cause := range map[string]error{"expired": expired, "session ended": grant} {
+		// As checkCredentials returns it: already formatted.
+		formatted := fmt.Errorf("AWS credential validation failed: %w", awsinternal.FormatAWSError(cause, "loading AWS credentials"))
+		_, _, _, err := setupAWS(context.Background(), captured, 0, func(context.Context, aws.Config) error { return formatted })
+		if err == nil || !strings.Contains(err.Error(), "not logged in to IAM Identity Center") || !strings.Contains(err.Error(), "aws sso login --profile work-sso") {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+		if !errors.Is(err, cause) {
+			t.Fatalf("%s: the cause is not wrapped", name)
+		}
 	}
 }
