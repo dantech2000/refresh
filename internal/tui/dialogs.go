@@ -24,7 +24,7 @@ func (m Model) openDialog() (dialogParts, bool) {
 	case m.unlocking:
 		return m.unlockParts(dialogWidth(m.w, 80)), true
 	case m.pick != nil:
-		return m.pickerParts(dialogWidth(m.w, 72)), true
+		return m.pickerParts(dialogWidth(m.w, 96)), true
 	case m.confirm != nil:
 		return m.confirmParts(dialogWidth(m.w, 116)), true // fits the longest CLI command
 	case m.help:
@@ -92,22 +92,44 @@ func (m Model) confirmParts(w int) dialogParts {
 			Line{sub(padRight(c.Field, keyW)), fg(colRed, "- "+c.From)},
 			Line{sp(keyW), fg(colGreen, "+ "+c.To)})
 	}
+	// Long lines wrap under their own column instead of running off the
+	// dialog's edge: a notice names a command to run later.
 	for _, f := range p.Facts {
-		l := Line{sub(padRight(f.Key, keyW)), tx(f.Value)}
+		text := f.Value
 		if f.Note != "" {
-			l = append(l, sp(1), dimS("("+f.Note+")"))
+			text += " (" + f.Note + ")"
 		}
-		body = append(body, l)
+		for i, s := range wrapExact(text, max(10, inner-keyW)) {
+			key := sp(keyW)
+			if i == 0 {
+				key = sub(padRight(f.Key, keyW))
+			}
+			body = append(body, Line{key, tx(s)})
+		}
 	}
 	body = append(body, Line{}, Line{Seg{Text: "PRE-FLIGHT GATES", FG: colDim, Bold: true}})
 	for _, g := range p.Gates {
-		l := Line{levelGlyph(checkLevel(g.Status)), sp(1), tx(g.Text)}
+		text := g.Text
 		if g.Note != "" {
-			l = append(l, dimS(" · "+g.Note))
+			text += " · " + g.Note
 		}
-		body = append(body, l)
+		for i, s := range wrapExact(text, max(10, inner-2)) {
+			l := Line{sp(2)}
+			if i == 0 {
+				l = Line{levelGlyph(checkLevel(g.Status)), sp(1)}
+			}
+			body = append(body, append(l, tx(s)))
+		}
 	}
-	body = append(body, Line{}, Line{dimS("CLI equivalent  "), sub(p.Command)})
+	body = append(body, Line{})
+	const cmdKey = "CLI equivalent  "
+	for i, s := range wrapExact(p.Command, max(10, inner-width(cmdKey))) {
+		key := sp(width(cmdKey))
+		if i == 0 {
+			key = dimS(cmdKey)
+		}
+		body = append(body, Line{key, sub(s)})
+	}
 
 	// The verdict and the keys stay on screen however the body scrolls.
 	// Each message gets at most two footer lines; a longer one is cut there
@@ -137,7 +159,7 @@ func (m Model) confirmParts(w int) dialogParts {
 		// Cancel would only hide the dialog; the change may still start.
 		buttons = Line{chip("c"), sp(1), sub("Copy command"), sp(3), tok(state.LevelProgress, "starting… the result shows here")}
 	case p.Blocked == "":
-		buttons = append(buttons, sp(3), Seg{Text: " y ", FG: colCrust, BG: colMauve, Bold: true}, sp(1), bold(colMauve, startLabel(p.Action.Kind)))
+		buttons = append(buttons, sp(3), Seg{Text: " y ", FG: colCrust, BG: colMauve, Bold: true}, sp(1), bold(colMauve, startLabel(p.Action)))
 	case p.ReadOnly && m.canUnlock():
 		buttons = append(buttons, sp(3), Seg{Text: " ctrl+u ", FG: colCrust, BG: colMauve, Bold: true}, sp(1), bold(colMauve, "Allow changes"))
 	}
@@ -156,11 +178,14 @@ func blockedText(reason string) string {
 	return "blocked: " + reason
 }
 
-func startLabel(k state.ActionKind) string {
-	switch k {
+func startLabel(a state.Action) string {
+	switch a.Kind {
 	case state.ActionRoll:
 		return "Start roll and watch"
 	case state.ActionUpgrade:
+		if a.Nodegroup != "" {
+			return "Start roll and watch" // one nodegroup to the control plane's version
+		}
 		return "Start upgrade and watch"
 	case state.ActionRollback:
 		return "Start rollback and watch"

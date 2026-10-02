@@ -281,7 +281,10 @@ type Upgrade struct {
 	// control-plane change EKS reports, and cannot be paused or stopped here.
 	StartedElsewhere bool
 	// Rollback marks a version rollback (To is one minor below From).
-	Rollback  bool
+	Rollback bool
+	// Label names a run limited to some parts ("Upgrade control plane",
+	// "Roll nodegroup ng-b"); "" for a whole upgrade.
+	Label     string
 	Cluster   string
 	From, To  string
 	StartedAt time.Time

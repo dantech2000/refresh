@@ -164,7 +164,13 @@ func buildFleet(rng *rand.Rand, n int, regions []string) []*fakeaws.Cluster {
 			if rng.IntN(3) == 0 {
 				cur = "v" + v + ".1-eksbuild.1" // behind
 			}
-			c.Addons = append(c.Addons, &fakeaws.Addon{Name: a, Version: cur, Status: "ACTIVE", Available: []string{latest, "v" + v + ".1-eksbuild.1"}})
+			// The catalog by Kubernetes version, as EKS lists it: a 1.34
+			// cluster never sees a build for 1.36.
+			catalog := map[string][]string{}
+			for _, kv := range []string{"1.31", "1.32", "1.33", "1.34", "1.35", "1.36"} {
+				catalog[kv] = []string{"v" + kv + ".2-eksbuild.1", "v" + kv + ".1-eksbuild.1"}
+			}
+			c.Addons = append(c.Addons, &fakeaws.Addon{Name: a, Version: cur, Status: "ACTIVE", AvailableFor: catalog})
 		}
 		out = append(out, c)
 	}

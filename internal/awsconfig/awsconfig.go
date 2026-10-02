@@ -6,6 +6,7 @@ package awsconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -58,8 +59,71 @@ func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 		opts = append(opts, config.WithRegion(region))
 	}
 
-	return config.LoadDefaultConfig(ctx, opts...)
+	cfg, err := config.LoadDefaultConfig(ctx, opts...)
+	var missing config.SharedConfigProfileNotExistError
+	if errors.As(err, &missing) {
+		return cfg, profileNotFound(cmd, missing.Profile, err)
+	}
+	return cfg, err
 }
+
+// profileNotFound explains a profile that is in neither AWS file: where the
+// name came from, the profiles that are there, and how to create it.
+func profileNotFound(cmd *cli.Command, name string, err error) error {
+	requested, _, _ := EffectiveProfile(cmd)
+	if requested == "" {
+		// The SDK reads [default] when nothing names a profile, and a
+		// missing [default] is no error: the name came from its chain.
+		requested = "default"
+	}
+	var from string
+	switch {
+	case requested != "" && requested != name:
+		// The SDK followed a source_profile to a profile that is not there.
+		from = fmt.Sprintf("the source_profile of profile %q (or a profile it refers to)", requested)
+	case flagOrEmpty(cmd, "profile") == name:
+		from = "--profile"
+	case strings.TrimSpace(os.Getenv("AWS_PROFILE")) == name:
+		from = "AWS_PROFILE"
+	case strings.TrimSpace(os.Getenv("AWS_DEFAULT_PROFILE")) == name:
+		from = "AWS_DEFAULT_PROFILE"
+	default:
+		from = "the active refresh context"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "AWS profile %q not found\nCause: %s names it, and it is in neither %s nor %s", name, from, tildePath(ConfigFile()), tildePath(CredentialsFile()))
+	if ps := Profiles(); len(ps) > 0 {
+		b.WriteString("\n\nProfiles there:")
+		for _, p := range ps {
+			if p.SSO {
+				fmt.Fprintf(&b, "\n  %-28s  SSO", p.Name)
+			} else {
+				fmt.Fprintf(&b, "\n  %s", p.Name)
+			}
+		}
+	}
+	fmt.Fprintf(&b, "\n\nCreate it:\n  aws configure sso --profile %[1]s    an SSO profile (IAM Identity Center)\n  aws configure --profile %[1]s        an access key", name)
+	return &profileError{msg: b.String(), err: err}
+}
+
+// tildePath shows a path under the home directory as ~/...
+func tildePath(p string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rest, ok := strings.CutPrefix(p, home+string(os.PathSeparator)); ok {
+			return "~/" + rest
+		}
+	}
+	return p
+}
+
+// profileError carries the help text and still unwraps to the SDK error.
+type profileError struct {
+	msg string
+	err error
+}
+
+func (e *profileError) Error() string { return e.msg }
+func (e *profileError) Unwrap() error { return e.err }
 
 // sweepDial bounds dial by timeout when the context is a region sweep's
 // (common.FailFastOnDial), and leaves every other dial as it is.

@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -10,10 +12,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/smithy-go"
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	awsinternal "github.com/dantech2000/refresh/internal/aws"
 )
 
 // ── setupAWS context propagation ──────────────────────────────────────────────
@@ -444,6 +448,42 @@ func TestEncodeStdout_RejectsNonObject(t *testing.T) {
 		})
 		if out != "" {
 			t.Errorf("%s: wrote %q", format, out)
+		}
+	}
+}
+
+// An SSO profile with no usable login says to log in with that profile: the
+// check only sees the config, so setupAWS names the profile.
+func TestSetupAWS_SSONotLoggedInNamesTheProfile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("REFRESH_CONFIG_HOME", dir)
+	t.Setenv("AWS_CONFIG_FILE", dir+"/config")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", dir+"/credentials")
+	t.Setenv("AWS_PROFILE", "")
+	if err := os.WriteFile(dir+"/config", []byte("[profile work-sso]\nsso_session = x\nsso_account_id = 111122223333\nsso_role_name = R\nregion = us-east-1\n[sso-session x]\nsso_start_url = https://example.awsapps.com/start\nsso_region = us-east-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var captured *cli.Command
+	cmd := &cli.Command{
+		Name:   "test",
+		Flags:  []cli.Flag{&cli.DurationFlag{Name: "timeout", Value: time.Minute}, &cli.StringFlag{Name: "profile"}},
+		Action: func(_ context.Context, c *cli.Command) error { captured = c; return nil },
+	}
+	if err := cmd.Run(context.Background(), []string{"test", "--profile", "work-sso"}); err != nil {
+		t.Fatal(err)
+	}
+	expired := errors.New("failed to refresh cached credentials, refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed")
+	grant := fmt.Errorf("refresh cached SSO token failed, unable to refresh SSO token, %w", &smithy.OperationError{
+		ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: &smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"}})
+	for name, cause := range map[string]error{"expired": expired, "session ended": grant} {
+		// As checkCredentials returns it: already formatted.
+		formatted := fmt.Errorf("AWS credential validation failed: %w", awsinternal.FormatAWSError(cause, "loading AWS credentials"))
+		_, _, _, err := setupAWS(context.Background(), captured, 0, func(context.Context, aws.Config) error { return formatted })
+		if err == nil || !strings.Contains(err.Error(), "not logged in to IAM Identity Center") || !strings.Contains(err.Error(), "aws sso login --profile work-sso") {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+		if !errors.Is(err, cause) {
+			t.Fatalf("%s: the cause is not wrapped", name)
 		}
 	}
 }

@@ -10,8 +10,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/smithy-go"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
 )
@@ -56,11 +58,29 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 
 	progress("refreshing cluster insights for %s (waits up to %s)", clusterName, timeout)
 	started := time.Now()
-	_, startErr := common.WithRetry(wctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.StartInsightsRefreshOutput, error) {
-		return s.eksClient.StartInsightsRefresh(rc, &eks.StartInsightsRefreshInput{ClusterName: aws.String(clusterName)})
-	})
+	start := func() error {
+		_, err := common.WithRetry(wctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.StartInsightsRefreshOutput, error) {
+			return s.eksClient.StartInsightsRefresh(rc, &eks.StartInsightsRefreshInput{ClusterName: aws.String(clusterName)})
+		})
+		return err
+	}
+	startErr := start()
+	// startAgain is set while EKS runs a scheduled refresh this call cannot
+	// see: Start is tried again on each poll until that one ends.
+	startAgain, scheduledNoted := false, false
 	// Every error below is about the refresh, from the call that failed.
 	onRefresh := func(op string, err error) error { return onItem(diag.KindCluster, clusterName, op, err) }
+	// rejected is Start's last refusal while it is read as a scheduled
+	// refresh. InvalidRequestException also means other cluster states, so
+	// a wait that ends with Start still refusing reports why.
+	var rejected error
+	timedOut := func() error {
+		if rejected != nil {
+			return onRefresh(diag.OpStartInsightsRefresh, awsinternal.FormatAWSError(rejected,
+				fmt.Sprintf("starting an insights refresh for cluster %s (still refused after %s)", clusterName, timeout)))
+		}
+		return onRefresh(diag.OpDescribeInsightsRefresh, fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout))
+	}
 	// A start error can mean a refresh is already running (another tool or
 	// an earlier run). Check once before giving up: if a refresh is in
 	// flight, wait on it instead.
@@ -73,6 +93,18 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 	defer ticker.Stop()
 
 	for {
+		if startAgain {
+			startAgain = false
+			startErr = start()
+			// The latest refusal, before Describe can use up the wait. A
+			// Start cut off by the end of the wait keeps the one before.
+			switch {
+			case apiCode(startErr) == "InvalidRequestException":
+				rejected = startErr
+			case startErr == nil, wctx.Err() == nil:
+				rejected = nil
+			}
+		}
 		out, err := common.WithRetry(wctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeInsightsRefreshOutput, error) {
 			return s.eksClient.DescribeInsightsRefresh(rc, &eks.DescribeInsightsRefreshInput{ClusterName: aws.String(clusterName)})
 		})
@@ -80,13 +112,28 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		case ctx.Err() != nil:
 			return ctx.Err()
 		case wctx.Err() != nil:
-			return onRefresh(diag.OpDescribeInsightsRefresh, fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout))
+			return timedOut()
 		case startErr != nil:
-			if err != nil || out.Status != ekstypes.InsightsRefreshStatusInProgress {
+			switch {
+			case err == nil && out.Status == ekstypes.InsightsRefreshStatusInProgress:
+				startErr, rejected = nil, nil // another refresh is running; wait on it
+				progress("an insights refresh is already running for %s; waiting on it", clusterName)
+			case apiCode(startErr) == "InvalidRequestException" && apiCode(err) == "ResourceNotFoundException":
+				// EKS runs a scheduled refresh: Start says one is in
+				// progress, and Describe, which sees only refreshes started
+				// with Start, finds none. Start again once it ends.
+				if !scheduledNoted {
+					scheduledNoted = true
+					progress("EKS is running a scheduled insights refresh for %s; waiting for it to end", clusterName)
+				}
+				rejected, startAgain = startErr, true
+			case apiCode(startErr) == "ResourceNotFoundException":
+				// A new cluster: EKS makes insights available up to 15
+				// minutes after it is created.
+				return onRefresh(diag.OpStartInsightsRefresh, fmt.Errorf("EKS has not made cluster insights available for %s yet (a new cluster can take 15 minutes); run again later: %w", clusterName, startErr))
+			default:
 				return onRefresh(diag.OpStartInsightsRefresh, awsinternal.FormatAWSError(startErr, fmt.Sprintf("starting an insights refresh for cluster %s", clusterName)))
 			}
-			startErr = nil // another refresh is running; wait on it
-			progress("an insights refresh is already running for %s; waiting on it", clusterName)
 		case err != nil:
 			if common.IsPermanentAPIError(err) {
 				return onRefresh(diag.OpDescribeInsightsRefresh, awsinternal.FormatAWSError(err, fmt.Sprintf("checking the insights refresh for cluster %s", clusterName)))
@@ -114,7 +161,7 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-wctx.Done():
-			return onRefresh(diag.OpDescribeInsightsRefresh, fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout))
+			return timedOut()
 		case <-ticker.C:
 		}
 	}
@@ -209,4 +256,28 @@ func (s *Service) previewInsights(ctx context.Context, clusterName, hopTo string
 	}
 	plan.Notices = append(plan.Notices, step.Reason)
 	return step, nil
+}
+
+// apiCode is err's AWS error code, or "".
+func apiCode(err error) string {
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		return ae.ErrorCode()
+	}
+	return ""
+}
+
+// oneLineReason is err for a plan step, which is one line: its first line,
+// with AWS's own one-line summary (which names a denied action) when the
+// rest of the message, such as the IAM permission list, is left out.
+func oneLineReason(err error) string {
+	msg := strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r\n", "\n"), "\r", "\n")
+	first, rest, multi := strings.Cut(msg, "\n")
+	if !multi {
+		return first
+	}
+	if sum := awserr.Summary(err); sum != "" && !strings.Contains(first, sum) && strings.TrimSpace(rest) != "" {
+		return first + " (" + sum + ")"
+	}
+	return first
 }

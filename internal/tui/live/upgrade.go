@@ -148,7 +148,7 @@ func (b *Backend) startUpgrade(ctx context.Context, a state.Action) error {
 	delete(b.acceptedUpgrades, t)
 	b.claimed[t] = "upgrading"
 	u := &liveUpgrade{t: t, answers: make(chan bool, 1), wake: make(chan struct{}, 1)}
-	u.st = state.Upgrade{Cluster: a.Cluster, From: c.Version, To: acc.target, StartedAt: b.now(),
+	u.st = state.Upgrade{Cluster: a.Cluster, From: c.Version, To: acc.target, StartedAt: b.now(), Label: upgradeLabel(a),
 		Phases: []state.Phase{{Name: "Plan", Weight: 0.05, Status: state.PhaseRunning, StartedAt: b.now()}}}
 	b.upgrades = append(b.upgrades, u)
 	b.upgradeEvent(u, state.LevelProgress, "plan", "building the plan for "+acc.target, "insights may refresh first")

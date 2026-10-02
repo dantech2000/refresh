@@ -427,7 +427,7 @@ func (s *Service) readinessStep(ctx context.Context, clusterName, liveVersion, h
 			return step, ctx.Err()
 		}
 		step.Status = StatusBlocked
-		step.Reason = fmt.Sprintf("could not refresh cluster insights for %s: %v; %s", hopTo, err, skipInsightsHint)
+		step.Reason = fmt.Sprintf("could not refresh cluster insights for %s: %s; %s", hopTo, oneLineReason(err), skipInsightsHint)
 		plan.addFailure(itemFailure(clusterName, err))
 		return step, nil
 	}
