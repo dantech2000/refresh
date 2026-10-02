@@ -116,3 +116,65 @@ func TestLoadExplainsAMissingProfile(t *testing.T) {
 		t.Error("the SDK error is not wrapped")
 	}
 }
+
+// A role profile logs in through its SSO source_profile: the command must
+// name that profile, which has the SSO settings.
+func TestSSOLoginProfile(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config")
+	if err := os.WriteFile(cfg, []byte(`[profile sso-base]
+sso_session = acme
+sso_account_id = 111122223333
+sso_role_name = R
+region = us-east-1
+[sso-session acme]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+[profile admin]
+role_arn = arn:aws:iam::111122223333:role/admin
+source_profile = sso-base
+[profile chained]
+role_arn = arn:aws:iam::111122223333:role/other
+source_profile = admin
+[profile keys]
+region = us-east-1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", cfg)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "none"))
+	for profile, want := range map[string]string{"sso-base": "sso-base", "admin": "sso-base", "chained": "sso-base", "keys": "", "missing": ""} {
+		if got := SSOLoginProfile(t.Context(), profile); got != want {
+			t.Errorf("%s: got %q, want %q", profile, got, want)
+		}
+	}
+}
+
+// A source_profile that is not there names the role profile that refers to
+// it, not a context; [profile x] in the credentials file is not listed,
+// since the SDK does not read it there.
+func TestMissingSourceProfileAndCredentialsSections(t *testing.T) {
+	dir := t.TempDir()
+	cfg, creds := filepath.Join(dir, "config"), filepath.Join(dir, "credentials")
+	if err := os.WriteFile(cfg, []byte("[profile target]\nrole_arn = arn:aws:iam::111122223333:role/x\nsource_profile = typo-base\nregion = us-east-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(creds, []byte("[real]\naws_access_key_id = AKIAEXAMPLE\n[profile wrong]\naws_access_key_id = AKIAEXAMPLE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", cfg)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", creds)
+	t.Setenv("AWS_PROFILE", "target")
+	t.Setenv("REFRESH_CONFIG_HOME", dir)
+	_, err := Load(t.Context(), nil)
+	if err == nil || !strings.Contains(err.Error(), `the source_profile of profile "target"`) || strings.Contains(err.Error(), "context") {
+		t.Fatalf("err = %v", err)
+	}
+	var names []string
+	for _, p := range Profiles() {
+		names = append(names, p.Name)
+	}
+	if slices.Contains(names, "profile wrong") || !slices.Contains(names, "real") {
+		t.Fatalf("profiles = %v", names)
+	}
+}

@@ -70,11 +70,16 @@ func Load(ctx context.Context, cmd *cli.Command) (aws.Config, error) {
 // profileNotFound explains a profile that is in neither AWS file: where the
 // name came from, the profiles that are there, and how to create it.
 func profileNotFound(cmd *cli.Command, name string, err error) error {
-	from := "AWS_PROFILE"
+	requested, _, _ := EffectiveProfile(cmd)
+	var from string
 	switch {
+	case requested != "" && requested != name:
+		// The SDK followed a source_profile to a profile that is not there.
+		from = fmt.Sprintf("the source_profile of profile %q (or a profile it refers to)", requested)
 	case flagOrEmpty(cmd, "profile") == name:
 		from = "--profile"
 	case strings.TrimSpace(os.Getenv("AWS_PROFILE")) == name:
+		from = "AWS_PROFILE"
 	case strings.TrimSpace(os.Getenv("AWS_DEFAULT_PROFILE")) == name:
 		from = "AWS_DEFAULT_PROFILE"
 	default:

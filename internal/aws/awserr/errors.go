@@ -65,8 +65,17 @@ var (
 	// sso-session login: the SDK's SSO token provider returns plain fmt
 	// errors with these SDK-authored prefixes, and no typed error.
 	ssoLoginFallbackPatterns = []string{
-		"refresh cached sso token failed",
-		"unable to refresh sso token",
+		"cached sso token is expired, or not present, and cannot be refreshed",
+	}
+
+	// ssoLoginRejections are the SSO OIDC CreateToken codes that mean the
+	// saved login can no longer be renewed: log in again.
+	ssoLoginRejections = map[string]bool{
+		"InvalidGrantException":       true,
+		"ExpiredTokenException":       true,
+		"AccessDeniedException":       true,
+		"UnauthorizedClientException": true,
+		"InvalidClientException":      true,
 	}
 
 	// regionFallbackPatterns is the string fallback for endpoint resolution
@@ -314,11 +323,11 @@ func FormatAWSError(err error, operation string) error {
 	}
 	// Before the API error switch: an expired SSO session comes back as an
 	// SSO OIDC API error (InvalidGrantException) that says nothing useful.
-	if IsSSONotLoggedIn(err) {
-		return FormatSSONotLoggedIn(err, "")
-	}
 	if isSSOEndpointNotFound(err) {
 		return formatSSORegionError(err)
+	}
+	if IsSSONotLoggedIn(err) {
+		return FormatSSONotLoggedIn(err, "")
 	}
 	// A connect timeout also reports itself as context.DeadlineExceeded,
 	// but a longer --timeout does not help an endpoint that cannot be
@@ -467,6 +476,13 @@ func findOperation(err error, match func(*smithy.OperationError) bool) *smithy.O
 	return nil
 }
 
+// isTransportFailure reports an error that never got an answer from AWS: a
+// DNS failure, a dial failure, or a timeout.
+func isTransportFailure(err error) bool {
+	var dns *net.DNSError
+	return errors.As(err, &dns) || common.IsDialFailure(err) || errors.Is(err, context.DeadlineExceeded)
+}
+
 // isMissingRegion reports a call made with no region at all (not a region
 // whose endpoint does not resolve).
 func isMissingRegion(err error) bool {
@@ -536,12 +552,19 @@ func IsSSONotLoggedIn(err error) bool {
 	if errors.As(err, &tokenErr) {
 		return true
 	}
+	// A refresh that never reached IAM Identity Center (DNS, a dial, a
+	// timeout) or that it failed on its side is not an expired login: its
+	// own error says what to fix.
+	if isTransportFailure(err) {
+		return false
+	}
 	// A refresh IAM Identity Center refused (the session ended), or a role
 	// lookup with a token it no longer takes.
-	if findOperation(err, func(op *smithy.OperationError) bool {
+	if op := findOperation(err, func(op *smithy.OperationError) bool {
 		return op.ServiceID == "SSO OIDC" && op.OperationName == "CreateToken"
-	}) != nil {
-		return true
+	}); op != nil {
+		var ae smithy.APIError
+		return errors.As(op, &ae) && ssoLoginRejections[ae.ErrorCode()]
 	}
 	var ae smithy.APIError
 	if errors.As(err, &ae) && ae.ErrorCode() == "UnauthorizedException" && isSSORoleCall(err) {

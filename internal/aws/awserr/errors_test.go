@@ -432,3 +432,29 @@ func TestFormatAWSErrorNestedLoginCases(t *testing.T) {
 		t.Errorf("bad region: %q", msg)
 	}
 }
+
+// A token refresh that never got an answer (DNS, timeout) or that IAM
+// Identity Center failed on its side is not an expired login; a wrong
+// sso_region gets its own help even when the token expired first.
+func TestSSORefreshFailuresAreNotExpiredLogins(t *testing.T) {
+	refresh := func(inner error) error {
+		return fmt.Errorf("refresh cached SSO token failed, unable to refresh SSO token, %w",
+			&smithy.OperationError{ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: inner})
+	}
+	dns := &net.DNSError{Name: "oidc.us-esat-1.amazonaws.com", Err: "no such host", IsNotFound: true}
+	for name, err := range map[string]error{
+		"bad sso_region": refresh(dns),
+		"timeout":        refresh(context.DeadlineExceeded),
+		"server error":   refresh(&smithy.GenericAPIError{Code: "InternalServerException", Message: "boom"}),
+	} {
+		if IsSSONotLoggedIn(err) {
+			t.Errorf("%s: classified as an expired login", name)
+		}
+	}
+	if msg := FormatAWSError(refresh(dns), "x").Error(); !strings.Contains(msg, "sso_region") {
+		t.Errorf("bad sso_region: %q", msg)
+	}
+	if !IsSSONotLoggedIn(refresh(&smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"})) {
+		t.Error("a rejected refresh is not an expired login")
+	}
+}

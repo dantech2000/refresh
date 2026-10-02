@@ -2,9 +2,12 @@ package awsconfig
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/config"
 )
 
 // Profile is one profile in the AWS config or credentials file.
@@ -63,6 +66,34 @@ func Profiles() []Profile {
 	return out
 }
 
+// SSOLoginProfile is the profile to log in with for profile ("" for the
+// default): profile itself when it signs in with IAM Identity Center, else
+// the first profile with SSO settings in its source_profile chain (a role
+// profile whose source is an SSO profile). It returns "" when there is
+// none, or the files cannot be read.
+func SSOLoginProfile(ctx context.Context, profile string) string {
+	if profile == "" {
+		profile = "default"
+	}
+	files := func(o *config.LoadSharedConfigOptions) {
+		o.ConfigFiles = []string{ConfigFile()}
+		o.CredentialsFiles = []string{CredentialsFile()}
+	}
+	seen := map[string]bool{}
+	for p := profile; p != "" && !seen[p] && len(seen) < 16; {
+		seen[p] = true
+		sc, err := config.LoadSharedConfigProfile(ctx, p, files)
+		if err != nil {
+			return ""
+		}
+		if sc.SSOSessionName != "" || sc.SSOStartURL != "" {
+			return p
+		}
+		p = sc.SourceProfileName
+	}
+	return ""
+}
+
 // SSOProfiles lists the profiles in the AWS config file (AWS_CONFIG_FILE,
 // else ~/.aws/config) that sign in with IAM Identity Center: those with an
 // sso_session or sso_start_url. It reads names only and returns nil when the
@@ -109,6 +140,8 @@ func scanProfiles(sc *bufio.Scanner, config bool) []Profile {
 			// As the SDK reads it: the name keeps its inner spaces.
 			name := strings.TrimSpace(line[1:end])
 			switch {
+			case !config && strings.HasPrefix(name, "profile "):
+				continue // the SDK reads [profile x] only in the config file
 			case !config && name != "":
 			case name == "default":
 			case strings.HasPrefix(name, "profile") && len(name) > len("profile") && (name[len("profile")] == ' ' || name[len("profile")] == '\t'):

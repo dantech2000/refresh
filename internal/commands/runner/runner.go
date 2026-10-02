@@ -74,7 +74,11 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 		cancel()
 		if awserr.IsSSONotLoggedIn(err) {
 			// Name the profile to log in with: the check only has the config.
+			// A role profile logs in through its SSO source_profile.
 			profile, _, _ := awsconfig.EffectiveProfile(cmd)
+			if login := awsconfig.SSOLoginProfile(checkCtx, profile); login != "" {
+				profile = login
+			}
 			err = fmt.Errorf("AWS credential validation failed: %w", awserr.FormatSSONotLoggedIn(err, profile))
 		}
 		return nil, nil, aws.Config{}, awsinternal.NoteKeysShadowProfile(checkCtx, cfg, err)
