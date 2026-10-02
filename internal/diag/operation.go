@@ -28,3 +28,29 @@ const (
 	OpDescribeLaunchTemplateVersions = "ec2:DescribeLaunchTemplateVersions"
 	OpDescribeAutoScalingGroups      = "autoscaling:DescribeAutoScalingGroups"
 )
+
+// IsChange reports whether op is a call that changes the cluster (an
+// update). Its failure means the change did not start, not that data is
+// missing.
+func IsChange(op string) bool {
+	switch op {
+	case OpUpdateClusterVersion, OpUpdateNodegroupVersion, OpUpdateNodegroupConfig, OpUpdateAddon:
+		return true
+	}
+	return false
+}
+
+// NotStarted reports whether f is a change (IsChange) that AWS rejected, so
+// it did not start. A change whose call got no clear answer (a network
+// error, a timeout, an AWS-side failure) may have started: it is not one.
+func (f Failure) NotStarted() bool {
+	if !IsChange(f.Operation) {
+		return false
+	}
+	switch f.Reason {
+	case ReasonAccessDenied, ReasonCredentialError, ReasonThrottled, ReasonNotFound,
+		ReasonRegionUnavailable, ReasonInvalidRequest, ReasonNotAttempted:
+		return true
+	}
+	return false
+}

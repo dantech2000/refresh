@@ -535,8 +535,8 @@ ended, and `report.failure` says why it stopped:
 | `Aborted` | You declined a phase confirmation |
 
 The top-level `failures` lists the plan's failures and the report's
-failure. Each is also named once: on stderr, or under `INCOMPLETE DATA` in
-the table view.
+failure. Each is also named once: on stderr, or in the table view under
+`NOT STARTED` (a change AWS rejected) or `INCOMPLETE DATA`.
 
 !!! note "Kubernetes access for the live roll view"
     The nodegroup phase renders the same live per-node roll panel as

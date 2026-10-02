@@ -131,9 +131,10 @@ update exits `1`. With `--all`, a failed add-on update exits `4`. With
 `--all --parallel`, an add-on that was not started before the deadline or
 Ctrl+C has the status `NotAttempted`. The command exits `4` after a deadline
 and `1` after Ctrl+C. Every add-on with a failure is named once (see
-[Failures](../concepts/output.md#failures)): under `INCOMPLETE DATA` in the
-table view, or on a `warning:` line on stderr with `-o json`, `yaml`, or
-`plain`. Health issues are named on stderr. The table and `-o plain` show
+[Failures](../concepts/output.md#failures)): in the table view under `NOT
+STARTED` when AWS rejected the update (with the IAM action to grant when it
+was denied) and under `INCOMPLETE DATA` otherwise, or on a `warning:` line on
+stderr with `-o json`, `yaml`, or `plain`. Health issues are named on stderr. The table and `-o plain` show
 the status in the `STATUS` column.
 
 `--all` can't be combined with an add-on name or version. The command rejects

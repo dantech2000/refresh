@@ -929,7 +929,8 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 		// keeps it from rolling the nodegroup again.
 		update, err := ngSvc.StartVersionUpdate(ctx, clusterName, ng, nodegroupsvc.VersionUpdateOptions{Force: flags.force})
 		if err != nil {
-			run.nodegroups[i] = run.failed(ng, diag.OpUpdateNodegroupVersion, err)
+			// The operation err is tagged with: the read or the update.
+			run.nodegroups[i] = run.failed(ng, "", err)
 			continue
 		}
 		if update == nil || update.Id == nil {

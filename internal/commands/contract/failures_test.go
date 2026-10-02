@@ -17,6 +17,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/nodegroup"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/commands/statuscmd"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 	"github.com/dantech2000/refresh/internal/ui"
 	"github.com/dantech2000/refresh/internal/ui/plaintest"
@@ -38,7 +39,8 @@ type contractCase struct {
 	failure map[string]any
 	// stderr is the failure line, which must appear exactly once on stderr
 	// with -o json, yaml, or plain. The table view lists the same text,
-	// without "warning: ", once under INCOMPLETE DATA instead.
+	// without "warning: ", once under INCOMPLETE DATA (NOT STARTED for a
+	// change) instead.
 	stderr string
 	// formats are the -o values to run: "" is the default table view,
 	// "json" and "yaml" check the one document, "plain" checks pure TSV
@@ -191,11 +193,13 @@ func TestFailureContract(t *testing.T) {
 				}
 				if format == "" {
 					// The table view lists the failure in its INCOMPLETE DATA
-					// section on stdout, not on stderr.
+					// section on stdout, not on stderr; a change that could
+					// not start goes under NOT STARTED.
 					text := strings.TrimPrefix(tc.stderr, "warning: ")
 					out := ui.StripANSI(stdout)
-					if !strings.Contains(out, "INCOMPLETE DATA") || strings.Count(out, text) != 1 || strings.Contains(stderr, tc.stderr) {
-						t.Errorf("the table view does not list the failure once under INCOMPLETE DATA:\n  %s\nstdout:\n%s\nstderr:\n%s", text, out, stderr)
+					section := tableSection(tc)
+					if !strings.Contains(out, section) || strings.Count(out, text) != 1 || strings.Contains(stderr, tc.stderr) {
+						t.Errorf("the table view does not list the failure once under %s:\n  %s\nstdout:\n%s\nstderr:\n%s", section, text, out, stderr)
 					}
 				} else if n := strings.Count(stderr, tc.stderr+"\n"); n != 1 {
 					t.Errorf("stderr has the failure line %d time(s), want once:\n  %s\nstderr:\n%s", n, tc.stderr, stderr)
@@ -278,4 +282,15 @@ func cloneWorld(world []*fakeaws.Cluster) []*fakeaws.Cluster {
 		out = append(out, &cc)
 	}
 	return out
+}
+
+// tableSection is the table view's section that lists tc's failure: NOT
+// STARTED for a change that could not start, else INCOMPLETE DATA.
+func tableSection(tc contractCase) string {
+	op, _ := tc.failure["operation"].(string)
+	reason, _ := tc.failure["reason"].(string)
+	if (diag.Failure{Operation: op, Reason: diag.Reason(reason)}).NotStarted() {
+		return "NOT STARTED"
+	}
+	return "INCOMPLETE DATA"
 }
