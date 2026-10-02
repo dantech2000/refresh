@@ -55,7 +55,8 @@ func TestExportWritesTheSessionLog(t *testing.T) {
 	h := newHarness(t, 140, 40, 3*time.Minute)
 	h.advance(2 * time.Minute)
 	h.keys("e")
-	h.contains("Export which log of this session?", "Timeline", "Kube events", "AWS API", "All")
+	h.contains("Export which log of this session?", "Timeline", "Kube events", "AWS API", "All", "enter  export")
+	h.lacks("enter  dry run")
 	h.keys("4") // All
 	files, _ := filepath.Glob(filepath.Join(dir, "refresh", "sessions", "refresh-ui-*-all.tsv"))
 	if len(files) != 1 {

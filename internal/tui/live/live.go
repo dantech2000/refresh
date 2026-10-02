@@ -392,8 +392,11 @@ func (b *Backend) stamp(e state.Event) state.Event {
 func (b *Backend) emit(e state.Event) { b.feed = appendCapped(b.feed, b.stamp(e), feedCap) }
 
 // api records a fleet-level AWS call in the log.
-func (b *Backend) api(op, text string, lvl state.Level) {
-	b.log = appendCapped(b.log, b.stamp(state.Event{Source: state.SourceAWS, Level: lvl, Subject: op, Text: text}), logCap)
+func (b *Backend) api(op, text string, lvl state.Level) { b.apiOn("", op, text, lvl) }
+
+// apiOn records an AWS call on one cluster (a fleet key) in the log.
+func (b *Backend) apiOn(cluster, op, text string, lvl state.Level) {
+	b.log = appendCapped(b.log, b.stamp(state.Event{Cluster: cluster, Source: state.SourceAWS, Level: lvl, Subject: op, Text: text}), logCap)
 }
 
 func appendCapped(list []state.Event, e state.Event, max int) []state.Event {
