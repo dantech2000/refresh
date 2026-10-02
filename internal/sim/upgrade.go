@@ -93,7 +93,13 @@ func (w *World) planUpgrade(c *cluster, a state.Action) (state.Plan, error) {
 		{Key: "nodes", Value: strconv.Itoa(nodes) + " replaced", Note: "one nodegroup at a time"},
 		{Key: "estimate", Value: "~" + roundMinutes(est)},
 	}
-	checks := w.evaluate(c)
+	// The next version's readiness gates a control-plane move only: a
+	// catch-up keeps the version, as the live planner skips the insights of
+	// a same-version hop.
+	var checks []state.Check
+	if a.Scope.Has(state.ScopeControlPlane) {
+		checks = w.evaluate(c)
+	}
 	var blockers []string
 	passed := 0
 	for _, ch := range checks {
@@ -220,6 +226,10 @@ func (u *upgrade) begin() {
 	u.c.Busy = "upgrading · " + strings.ToLower(p.Name)
 	switch u.phase {
 	case phasePreflight:
+		if !u.scope.Has(state.ScopeControlPlane) {
+			u.complete("the control plane stays on " + u.st.To + ": no readiness checks needed")
+			return
+		}
 		u.event(state.LevelProgress, "pre-flight", "running readiness checks", "")
 		u.w.newReadiness(u.c, func(b, wn int) {
 			if b > 0 {

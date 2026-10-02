@@ -487,3 +487,25 @@ func TestScopedUpgradeMovesOnlyItsParts(t *testing.T) {
 		t.Fatalf("after the -n roll: %s on %s, %s on %s", c.Nodegroups[0].Name, c.Nodegroups[0].Version, c.Nodegroups[1].Name, c.Nodegroups[1].Version)
 	}
 }
+
+// A catch-up keeps the control plane, so the next version's readiness does
+// not block it: prod-api's deprecated-API finding gates only a move to the
+// next minor.
+func TestCatchUpIsNotBlockedByNextVersionReadiness(t *testing.T) {
+	w := New(Options{Seed: 1})
+	if p, _ := w.Plan(t.Context(), state.Action{Kind: state.ActionUpgrade, Cluster: "prod-api"}); p.Blocked == "" {
+		t.Fatal("precondition: a full upgrade of prod-api is blocked")
+	}
+	a := state.Action{Kind: state.ActionUpgrade, Cluster: "prod-api", Scope: state.ScopeAddons}
+	p, err := w.Plan(t.Context(), a)
+	if err != nil || p.Blocked != "" {
+		t.Fatalf("catch up add-ons = %+v, %v", p, err)
+	}
+	if err := w.Start(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	st := advanceUntil(t, w, 30*time.Minute, func(s state.State) bool { return !s.Upgrades[len(s.Upgrades)-1].Running() })
+	if u := st.Upgrades[len(st.Upgrades)-1]; u.Failed != "" {
+		t.Fatalf("catch-up failed: %s", u.Failed)
+	}
+}
