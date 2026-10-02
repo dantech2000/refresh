@@ -368,7 +368,7 @@ the data incomplete.
 | Action | Used by |
 |---|---|
 | `sts:GetCallerIdentity` | Region sweeps in which no region answered (credential check) |
-| `eks:ListClusters` | `status`, `cluster list`, `nodegroup update --all-clusters`, partial cluster names |
+| `eks:ListClusters` | `status`, `cluster list`, `nodegroup update --all-clusters`, and every command that takes a cluster name (the name is matched against the list) |
 | `eks:DescribeCluster` | Every cluster command |
 | `eks:ListNodegroups`, `eks:DescribeNodegroup` | `status`, `nodegroup *`, `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, health checks, the busy check of `addon update` |
 | `eks:ListAddons` | `status`, `addon *` (also to resolve a partial add-on name), `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, the busy check of `nodegroup update`/`scale` |
