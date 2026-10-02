@@ -1007,15 +1007,23 @@ func updateClusterAndNodegroupPatterns(cmd *cli.Command) (string, string) {
 // every interval, from a minute before the update started (clock skew).
 func scalingWatcher(awsCfg aws.Config, clusterName string, updates []refreshTypes.UpdateProgress, interval time.Duration, report func(string)) func(context.Context) {
 	svc := factory.NewNodegroupService(awsCfg, false, nil)
+	// Copied now: the monitor writes to the updates while the watch runs.
+	type roll struct {
+		nodegroup string
+		since     time.Time
+	}
+	rolls := make([]roll, len(updates))
+	for i, u := range updates {
+		rolls[i] = roll{u.NodegroupName, u.StartTime.Add(-time.Minute)}
+	}
 	return func(ctx context.Context) {
 		var wg sync.WaitGroup
-		for _, u := range updates {
-			since := u.StartTime.Add(-time.Minute)
+		for _, r := range rolls {
 			wg.Go(func() {
 				nodegroupsvc.WatchScalingFailures(ctx, interval, func(ctx context.Context) ([]nodegroupsvc.ScalingFailure, error) {
-					return svc.ScalingFailures(ctx, clusterName, u.NodegroupName, since)
+					return svc.ScalingFailures(ctx, clusterName, r.nodegroup, r.since)
 				}, func(f nodegroupsvc.ScalingFailure) {
-					report(fmt.Sprintf("Auto Scaling could not launch a node for %s: %s", u.NodegroupName, f.Message))
+					report(fmt.Sprintf("Auto Scaling could not launch a node for %s: %s", r.nodegroup, f.Message))
 				})
 			})
 		}
