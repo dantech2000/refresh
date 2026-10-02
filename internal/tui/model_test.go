@@ -1295,3 +1295,54 @@ func TestPatchKeyRollsALaggingNodegroupToTheControlPlane(t *testing.T) {
 		t.Fatalf("AMI item = %+v", items[1])
 	}
 }
+
+// A dry run's long lines wrap inside the dialog: the follow-up command of a
+// notice and the CLI command stay readable to their last word.
+func TestDryRunDialogWrapsLongLines(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 42})
+	m = next.(Model)
+	long := "refresh --profile prod-admin --region eu-west-1 cluster upgrade -c payments-prod --to 1.35 --only nodegroups --skip-nodegroup protected --kube-context prod-ctx"
+	m.confirm = &state.Plan{
+		Action:  state.Action{Kind: state.ActionUpgrade, Cluster: "payments-prod", Scope: state.ScopeNodegroups, Nodegroup: "ng-b"},
+		Title:   "Roll nodegroup · payments-prod/ng-b → 1.35",
+		Facts:   []state.Fact{{Key: "ng-b", Value: "roll to 1.35"}},
+		Gates:   []state.PlanGate{{Status: state.CheckWarn, Text: "nodegroup(s) ng-a stay on their version; roll them later: " + long}},
+		Command: long + " -n ng-b",
+	}
+	var txt strings.Builder
+	for _, l := range m.frame() {
+		txt.WriteString(l.Plain())
+		txt.WriteByte('\n')
+	}
+	out := txt.String()
+	if n := strings.Count(out, "prod-ctx"); n < 2 {
+		t.Fatalf("the command ends are cut (%d of 2 shown):\n%s", n, out)
+	}
+	if !strings.Contains(out, "Start roll and watch") {
+		t.Fatalf("a one-nodegroup roll says another start label:\n%s", out)
+	}
+	checkFrame(t, "wrapped dry run", m)
+}
+
+// A run limited to some parts names them in the Upgrade header; a catch-up
+// (the control plane does not move) says where it catches up to.
+func TestUpgradeHeaderNamesALimitedRun(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	for _, tc := range []struct {
+		u    state.Upgrade
+		want string
+	}{
+		{state.Upgrade{Cluster: "a", From: "1.34", To: "1.35"}, "Upgrade a 1.34 → 1.35"},
+		{state.Upgrade{Cluster: "a", From: "1.34", To: "1.35", Label: "Upgrade control plane"}, "Upgrade control plane · a 1.34 → 1.35"},
+		{state.Upgrade{Cluster: "a", From: "1.35", To: "1.35", Label: "Roll nodegroup ng-b"}, "Roll nodegroup ng-b · a on 1.35"},
+	} {
+		got := ""
+		for _, l := range m.upgradeHeader(tc.u, 160) {
+			got += l.Plain()
+		}
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("header = %q, want %q", got, tc.want)
+		}
+	}
+}

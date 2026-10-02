@@ -366,6 +366,18 @@ func planUpgrade(c state.Cluster, t target, plan *upgrade.Plan, a state.Action) 
 	return p
 }
 
+// upgradeLabel names a run limited to some parts, for the Upgrade screen;
+// "" for a whole upgrade.
+func upgradeLabel(a state.Action) string {
+	switch {
+	case a.Nodegroup != "":
+		return "Roll nodegroup " + a.Nodegroup
+	case a.Scope != 0:
+		return upgradeTitle(a.Scope)
+	}
+	return ""
+}
+
 // upgradeTitle names the parts of an upgrade.
 func upgradeTitle(s state.Scope) string {
 	switch s {

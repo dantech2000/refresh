@@ -28,7 +28,15 @@ func (m Model) upgradeHeader(u state.Upgrade, w int) Block {
 	if u.Rollback {
 		what = "Rollback"
 	}
-	title := Line{sp(1), bold(colMauve, heading(fmt.Sprintf("%s %s %s → %s", what, u.Cluster, u.From, u.To))), sp(2)}
+	text := fmt.Sprintf("%s %s %s → %s", what, u.Cluster, u.From, u.To)
+	switch {
+	case u.Label != "" && u.From == u.To:
+		// A catch-up: the control plane does not move.
+		text = fmt.Sprintf("%s · %s on %s", u.Label, u.Cluster, u.To)
+	case u.Label != "":
+		text = fmt.Sprintf("%s · %s %s → %s", u.Label, u.Cluster, u.From, u.To)
+	}
+	title := Line{sp(1), bold(colMauve, heading(text)), sp(2)}
 	cur := u.Current()
 	switch {
 	case u.Failed != "":
