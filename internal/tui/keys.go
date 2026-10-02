@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
@@ -387,7 +386,7 @@ func (m *Model) planRoll() tea.Cmd {
 func patchItems(c state.Cluster) []pickItem {
 	var items []pickItem
 	for _, ng := range c.StaleNodegroups() {
-		it := pickItem{name: ng.Name, level: state.LevelWarn, note: fmt.Sprintf("%d nodes", ng.Nodes),
+		it := pickItem{name: ng.Name, level: state.LevelWarn, note: plural(ng.Nodes, "node"),
 			action: state.Action{Kind: state.ActionRoll, Cluster: c.Name, Nodegroup: ng.Name}}
 		switch {
 		case state.Minor(ng.Version) >= 0 && state.Minor(ng.Version) < state.Minor(c.Version):

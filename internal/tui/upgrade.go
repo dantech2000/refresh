@@ -51,7 +51,7 @@ func (m Model) upgradeHeader(u state.Upgrade, w int) Block {
 		index = Line{dimS(fmt.Sprintf("upgrade %d/%d · [ ]", m.upIdx+1, len(m.st.Upgrades))), sp(2)}
 	}
 	short := append(append(Line(nil), index...), sub("elapsed "), tx(dur(elapsed)), sp(1))
-	text := fmt.Sprintf("%s %s %s → %s", what, u.Cluster, u.From, u.To)
+	text := fmt.Sprintf("%s %s %s", what, u.Cluster, state.VersionMove(u.From, u.To))
 	if u.Label != "" {
 		rest := fmt.Sprintf(" · %s %s → %s", u.Cluster, u.From, u.To)
 		if u.From == u.To {

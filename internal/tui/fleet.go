@@ -363,7 +363,7 @@ func (m Model) activeCards(w int) Block {
 		if cur >= 0 {
 			phase = strings.ToLower(u.Phases[cur].Name)
 		}
-		title := Line{levelGlyph(state.LevelProgress), sp(1), bold(colText, u.Cluster), sp(1), sub(u.From + " → " + u.To)}
+		title := Line{levelGlyph(state.LevelProgress), sp(1), bold(colText, u.Cluster), sp(1), sub(state.VersionMove(u.From, u.To))}
 		body := Block{
 			joinRight(Line{sub("upgrade · " + phase)}, Line{dimS("4 to watch")}, w-4),
 			append(bar(w-12, u.Progress(), 0), sp(1), tx(fmt.Sprintf("%3.0f%%", u.Progress()*100))),

@@ -55,7 +55,7 @@ func (w *World) planUpgrade(c *cluster, a state.Action) (state.Plan, error) {
 	}
 	p := state.Plan{
 		Action:  a,
-		Title:   "Upgrade cluster · " + c.Name + " " + c.Version + " → " + to,
+		Title:   "Upgrade cluster · " + c.Name + " " + state.VersionMove(c.Version, to),
 		Command: "refresh cluster upgrade -c " + c.Name + " --to " + to + scopeFlags(a),
 	}
 	if a.Scope.Has(state.ScopeControlPlane) && c.Version == c.Latest {
@@ -145,8 +145,8 @@ func (w *World) startUpgrade(name string, scope state.Scope, only string) error 
 		u.st.Phases = append(u.st.Phases, state.Phase{Name: ph.name, Weight: ph.weight})
 	}
 	c.Busy = "upgrading"
-	u.event(state.LevelInfo, "plan", fmt.Sprintf("%s → %s · %d add-ons · %d nodegroups", u.st.From, u.st.To, len(c.Addons), len(c.Nodegroups)), "")
-	w.emit(state.Event{Cluster: name, Source: state.SourceUpgrade, Level: state.LevelProgress, Subject: "upgrade", Text: "started " + u.st.From + " → " + u.st.To})
+	u.event(state.LevelInfo, "plan", fmt.Sprintf("%s · %d add-ons · %d nodegroups", state.VersionMove(u.st.From, u.st.To), len(c.Addons), len(c.Nodegroups)), "")
+	w.emit(state.Event{Cluster: name, Source: state.SourceUpgrade, Level: state.LevelProgress, Subject: "upgrade", Text: "started " + state.VersionMove(u.st.From, u.st.To)})
 	w.upgrades = append(w.upgrades, u)
 	return nil
 }

@@ -560,3 +560,12 @@ func (r Readiness) count(s CheckStatus) int {
 	}
 	return n
 }
+
+// VersionMove names a version change: "1.35 → 1.36", or "on 1.36" when the
+// control plane does not move (a catch-up).
+func VersionMove(from, to string) string {
+	if from == to {
+		return "on " + to
+	}
+	return from + " → " + to
+}

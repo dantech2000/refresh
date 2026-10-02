@@ -15,7 +15,7 @@ func (m Model) clusterScreen(w, h int) Block {
 	if !ok {
 		return Block{{}, append(Line{sp(1)}, section("Readiness · "+c.Name)...), {}, {sp(1), dimS("No readiness run yet. Press R to run the checks.")}}
 	}
-	head := Line{sp(1), bold(colMauve, heading(fmt.Sprintf("Readiness · %s %s → %s", c.Name, r.From, r.To))), sp(2)}
+	head := Line{sp(1), bold(colMauve, heading(readinessTitle(c.Name, r.From, r.To))), sp(2)}
 	switch {
 	case r.Running:
 		head = append(head, tok(state.LevelProgress, "checking"))
@@ -182,4 +182,10 @@ func tableBlock(t *state.Table, w int) Block {
 		out = append(out, l)
 	}
 	return out
+}
+
+// readinessTitle names the cluster and the versions checked: "on 1.36"
+// when the control plane is already there (a catch-up).
+func readinessTitle(cluster, from, to string) string {
+	return fmt.Sprintf("Readiness · %s %s", cluster, state.VersionMove(from, to))
 }

@@ -152,7 +152,7 @@ func (b *Backend) startUpgrade(ctx context.Context, a state.Action) error {
 		Phases: []state.Phase{{Name: "Plan", Weight: 0.05, Status: state.PhaseRunning, StartedAt: b.now()}}}
 	b.upgrades = append(b.upgrades, u)
 	b.upgradeEvent(u, state.LevelProgress, "plan", "building the plan for "+acc.target, "insights may refresh first")
-	b.emit(state.Event{Cluster: a.Cluster, Source: state.SourceUpgrade, Level: state.LevelProgress, Subject: "upgrade", Text: "started " + c.Version + " → " + acc.target})
+	b.emit(state.Event{Cluster: a.Cluster, Source: state.SourceUpgrade, Level: state.LevelProgress, Subject: "upgrade", Text: "started " + state.VersionMove(c.Version, acc.target)})
 	runCtx := b.runCtx
 	b.mu.Unlock()
 	if runCtx == nil {

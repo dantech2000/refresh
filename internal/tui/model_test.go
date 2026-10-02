@@ -1296,6 +1296,29 @@ func TestPatchKeyRollsALaggingNodegroupToTheControlPlane(t *testing.T) {
 	}
 }
 
+// A catch-up (the control plane already on the target) is "on 1.36", not
+// "1.36 → 1.36"; one node is "1 node".
+func TestCatchUpAndCountTexts(t *testing.T) {
+	if got := readinessTitle("prod", "1.36", "1.36"); got != "Readiness · prod on 1.36" {
+		t.Errorf("readinessTitle = %q", got)
+	}
+	if got := readinessTitle("prod", "1.35", "1.36"); got != "Readiness · prod 1.35 → 1.36" {
+		t.Errorf("readinessTitle = %q", got)
+	}
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	got := ""
+	for _, l := range m.upgradeHeader(state.Upgrade{Cluster: "prod", From: "1.31", To: "1.31"}, 120) {
+		got += l.Plain()
+	}
+	if !strings.Contains(got, "Upgrade prod on 1.31") {
+		t.Errorf("header without a label = %q", got)
+	}
+	items := patchItems(state.Cluster{Version: "1.36", Nodegroups: []state.Nodegroup{{Name: "ng-b", Version: "1.35", Nodes: 1}}})
+	if len(items) != 1 || items[0].note != "1 node" {
+		t.Errorf("items = %+v", items)
+	}
+}
+
 // A dry run's long lines wrap inside the dialog: the follow-up command of a
 // notice and the CLI command stay readable to their last word.
 func TestDryRunDialogWrapsLongLines(t *testing.T) {
