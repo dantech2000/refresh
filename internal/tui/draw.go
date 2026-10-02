@@ -282,40 +282,70 @@ func overlay(base, top Block, x, y int) Block {
 // wrapExact breaks text into lines of at most w cells and keeps every
 // character as it is: it breaks only at a space outside single or double
 // quotes (dropping that one space), so a shell command keeps the spaces
-// inside its quoted values. A part with no such space is split by cells.
+// inside its quoted values. A part with no such space is split by cells,
+// and the quoting carries over to the next line.
 func wrapExact(text string, w int) []string {
 	if w <= 0 {
 		return nil
 	}
 	var out []string
+	var q shellQuote
 	rest := text
 	for width(rest) > w {
-		cut, cells := -1, 0
-		var quote rune
-		for i, r := range rest {
+		cut, cells, scan := -1, 0, q
+		for i, st, r := 0, -1, rest; r != ""; {
+			var g string
+			g, r, _, st = uniseg.FirstGraphemeClusterInString(r, st)
 			if cells > w {
 				break
 			}
-			switch {
-			case quote == 0 && (r == '\'' || r == '"'):
-				quote = r
-			case quote != 0 && r == quote:
-				quote = 0
-			case quote == 0 && r == ' ' && cells <= w && i > 0:
+			if g == " " && i > 0 && scan.outside() {
 				cut = i
 			}
-			cells += width(string(r))
+			scan.step(g)
+			cells += width(g)
+			i += len(g)
 		}
 		if cut <= 0 {
 			head, tail := splitCells(rest, w)
+			for st, r := -1, head; r != ""; {
+				var g string
+				g, r, _, st = uniseg.FirstGraphemeClusterInString(r, st)
+				q.step(g)
+			}
 			out = append(out, head)
 			rest = tail
 			continue
 		}
+		// A break is outside quotes, after an unescaped space.
+		q = shellQuote{}
 		out = append(out, rest[:cut])
 		rest = rest[cut+1:]
 	}
 	return append(out, rest)
+}
+
+// shellQuote follows POSIX shell quoting one grapheme at a time: a
+// backslash escapes the next character outside single quotes, and nothing
+// is special inside them.
+type shellQuote struct {
+	quote   string
+	escaped bool
+}
+
+func (s shellQuote) outside() bool { return s.quote == "" && !s.escaped }
+
+func (s *shellQuote) step(g string) {
+	switch {
+	case s.escaped:
+		s.escaped = false
+	case g == "\\" && s.quote != "'":
+		s.escaped = true
+	case s.quote == "" && (g == "'" || g == "\""):
+		s.quote = g
+	case s.quote != "" && g == s.quote:
+		s.quote = ""
+	}
 }
 
 func wrap(text string, w int) []string {

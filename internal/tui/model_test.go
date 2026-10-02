@@ -1381,3 +1381,45 @@ func TestUpgradeHeaderCutsALongLabel(t *testing.T) {
 		t.Fatalf("header = %q", got)
 	}
 }
+
+// wrapExact keeps the quoting across a line split by cells, and knows a
+// backslash-escaped quote (as shellWord writes it) is not a quote.
+func TestWrapExactFollowsShellQuoting(t *testing.T) {
+	for _, tc := range []struct {
+		text, keep string
+		w          int
+	}{
+		{"x '" + strings.Repeat("a", 79) + "  b  c' y", "  b  c' y", 80},
+		{"refresh x --kube-context 'it'\\''s  a  b' --only nodegroups", "'it'\\''s  a  b'", 20},
+	} {
+		lines := wrapExact(tc.text, tc.w)
+		if got := strings.Join(lines, ""); !strings.Contains(got, tc.keep) {
+			t.Errorf("w=%d: lines %q lose %q", tc.w, lines, tc.keep)
+		}
+	}
+}
+
+// wrapExact measures graphemes, not runes: an emoji with a variation
+// selector is two cells.
+func TestWrapExactMeasuresGraphemes(t *testing.T) {
+	text := strings.Repeat("❤️", 60) + " and more text"
+	for _, l := range wrapExact(text, 80) {
+		if width(l) > 80 {
+			t.Fatalf("line %q is %d cells", l, width(l))
+		}
+	}
+}
+
+// The status stays on the header with a long cluster name and label.
+func TestUpgradeHeaderKeepsTheStatus(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	u := state.Upgrade{Cluster: strings.Repeat("c", 60), From: "1.35", To: "1.35",
+		Label: "Roll nodegroup " + strings.Repeat("n", 60), Failed: "x"}
+	got := ""
+	for _, l := range m.upgradeHeader(u, 100) {
+		got += l.Plain()
+	}
+	if !strings.Contains(got, "failed") {
+		t.Fatalf("header = %q", got)
+	}
+}
