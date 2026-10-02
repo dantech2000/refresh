@@ -210,19 +210,16 @@ func (m Model) upgradeFeed(u state.Upgrade, w, h int) Block {
 		evs = m.visible(all, func(e state.Event) bool { return m.src == logAll || e.Source == state.SourceKube })
 	}
 	cols := kubeColumns(evs, w)
-	for i := 0; i < len(evs) && i < feedH; i++ {
+	for i, rows := 0, 0; i < len(evs) && rows < feedH; i++ {
 		e := evs[i]
 		if e.Source == state.SourceUpgrade {
-			l := Line{sp(1), dimS(clock(e.At)), sp(1)}
-			l = append(l, Line{fg(colBlue, e.Subject)}.Fit(13)...)
-			l = append(l, sp(1), levelGlyph(e.Level), sp(1), tx(e.Text))
-			if e.Detail != "" {
-				l = append(l, sp(2), dimS(e.Detail))
-			}
-			out = append(out, l)
+			lines := upgradeEventLines(e, w)
+			out = append(out, lines...)
+			rows += len(lines)
 			continue
 		}
 		out = append(out, eventLine(e, cols)...)
+		rows++
 	}
 	switch {
 	case m.pausedSeq != 0 && m.upgradeEvents(u) == nil:
@@ -232,6 +229,35 @@ func (m Model) upgradeFeed(u state.Upgrade, w, h int) Block {
 	}
 	out = out.fit(w, h-len(now))
 	return append(out, now.indent(1)...)
+}
+
+// upgradeEventLines draws one upgrade event: its time, subject, and level,
+// then its text, wrapped under the text, not cut: a question or a failure
+// is read in full. The detail follows, dim and whole, on the last line or
+// its own.
+func upgradeEventLines(e state.Event, w int) Block {
+	head := Line{sp(1), dimS(clock(e.At)), sp(1)}
+	head = append(head, Line{fg(colBlue, e.Subject)}.Fit(13)...)
+	head = append(head, sp(1), levelGlyph(e.Level), sp(1))
+	indent := head.Width()
+	textW := max(8, w-indent)
+	var out Block
+	for i, s := range wrap(e.Text, textW) {
+		l := Line{sp(indent)}
+		if i == 0 {
+			l = append(Line(nil), head...)
+		}
+		out = append(out, append(l, tx(s)))
+	}
+	if e.Detail != "" {
+		last := out[len(out)-1]
+		if last.Width()+2+width(e.Detail) <= w {
+			out[len(out)-1] = append(last, sp(2), dimS(e.Detail))
+		} else {
+			out = append(out, append(Line{sp(indent)}, Line{dimS(e.Detail)}.Fit(textW)...))
+		}
+	}
+	return out
 }
 
 func sortByTime(evs []state.Event) {
@@ -251,6 +277,19 @@ func (m Model) nowCard(u state.Upgrade, w int) Block {
 		what = Line{tok(state.LevelOK, ""+u.Cluster+" runs "+u.To)}
 	case !u.Running():
 		what = Line{sub("ended · " + clock(u.EndedAt))}
+		if u.Failed != "" {
+			// The header has room for the start of the reason only.
+			failed := Block{what}
+			for i, s := range wrap("failed · "+u.Failed, w-8) {
+				if i == 0 {
+					failed = append(failed, Line{tok(state.LevelError, s)})
+				} else {
+					failed = append(failed, Line{sp(2), fg(colRed, s)})
+				}
+			}
+			failed = append(failed, append(bar(w-18, u.Progress(), 0), sp(2), sub(fmt.Sprintf("overall %3.0f%%", u.Progress()*100))))
+			return box(Line{bold(colMauve, "Now")}, failed, w, colRed)
+		}
 	case cur < 0:
 		what = Line{sub("waiting before the next phase")}
 	default:
