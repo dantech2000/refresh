@@ -67,10 +67,10 @@ func Profiles() []Profile {
 }
 
 // SSOLoginProfile is the profile to log in with for profile ("" for the
-// default): profile itself when it signs in with IAM Identity Center, else
-// the first profile with SSO settings in its source_profile chain (a role
-// profile whose source is an SSO profile). It returns "" when there is
-// none, or the files cannot be read.
+// default): the profile at the end of its source_profile chain, as the SDK
+// resolves it, when that profile signs in with IAM Identity Center (profile
+// itself when it has no source_profile). It returns "" when the SDK takes
+// the credentials from something else, or the files cannot be read.
 func SSOLoginProfile(ctx context.Context, profile string) string {
 	if profile == "" {
 		profile = "default"
@@ -79,24 +79,23 @@ func SSOLoginProfile(ctx context.Context, profile string) string {
 		o.ConfigFiles = []string{ConfigFile()}
 		o.CredentialsFiles = []string{CredentialsFile()}
 	}
-	seen := map[string]bool{}
-	for p := profile; p != "" && !seen[p] && len(seen) < 16; {
-		seen[p] = true
-		sc, err := config.LoadSharedConfigProfile(ctx, p, files)
-		if err != nil {
-			return ""
-		}
-		// The SDK takes a profile's credentials from its source_profile
-		// before its own settings, so the chain is followed first. A
-		// profile that names itself uses its own keys.
-		if src := sc.SourceProfileName; src != "" && src != p {
-			p = src
-			continue
-		}
-		if sc.SSOSessionName != "" || sc.SSOStartURL != "" {
-			return p
-		}
+	sc, err := config.LoadSharedConfigProfile(ctx, profile, files)
+	if err != nil {
 		return ""
+	}
+	// The SDK resolves the source_profile chain into Source (a repeated
+	// profile keeps only its own credentials) and takes credentials from
+	// the end of it, in this order: keys, credential_source,
+	// credential_process, then SSO.
+	c := &sc
+	for i := 0; c.Source != nil && i < 64; i++ {
+		c = c.Source
+	}
+	switch {
+	case c.Source != nil, c.Credentials.HasKeys(), c.CredentialSource != "", c.CredentialProcess != "":
+		return ""
+	case c.SSOSessionName != "" || c.SSOStartURL != "":
+		return c.Profile
 	}
 	return ""
 }
