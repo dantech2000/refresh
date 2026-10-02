@@ -52,6 +52,9 @@ func WriteFailures(format string, out, errOut io.Writer, fs []diag.Failure) {
 //
 //	incomplete data: 3 failure(s) (1 cluster, 2 nodegroups)
 //
+// When every failure is a change that did not start (diag.IsChange), it
+// says so instead: "2 update(s) could not start (2 addons)".
+//
 // Print the document and call ReportFailures first. Wrap the result with
 // UnlessInterrupted, so a run cut short by Ctrl+C exits 1.
 func IncompleteExit(fs []diag.Failure) error {
@@ -75,5 +78,19 @@ func IncompleteExit(fs []diag.Failure) error {
 		}
 		parts = append(parts, fmt.Sprintf("%d %s", counts[k], noun))
 	}
-	return cli.Exit(fmt.Sprintf("incomplete data: %d failure(s) (%s)", len(fs), strings.Join(parts, ", ")), ExitIncomplete)
+	changes := 0
+	for _, f := range fs {
+		if diag.IsChange(f.Operation) {
+			changes++
+		}
+	}
+	what := "incomplete data"
+	switch {
+	case changes == len(fs):
+		// Every failure is a change that did not start: no data is missing.
+		return cli.Exit(fmt.Sprintf("%d update(s) could not start (%s)", len(fs), strings.Join(parts, ", ")), ExitIncomplete)
+	case changes > 0:
+		what = fmt.Sprintf("%d update(s) could not start, incomplete data", changes)
+	}
+	return cli.Exit(fmt.Sprintf("%s: %d failure(s) (%s)", what, len(fs), strings.Join(parts, ", ")), ExitIncomplete)
 }

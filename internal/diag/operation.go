@@ -28,3 +28,14 @@ const (
 	OpDescribeLaunchTemplateVersions = "ec2:DescribeLaunchTemplateVersions"
 	OpDescribeAutoScalingGroups      = "autoscaling:DescribeAutoScalingGroups"
 )
+
+// IsChange reports whether op is a call that changes the cluster (an
+// update). Its failure means the change did not start, not that data is
+// missing.
+func IsChange(op string) bool {
+	switch op {
+	case OpUpdateClusterVersion, OpUpdateNodegroupVersion, OpUpdateNodegroupConfig, OpUpdateAddon:
+		return true
+	}
+	return false
+}

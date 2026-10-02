@@ -2,6 +2,7 @@ package render
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/diag"
@@ -52,5 +53,19 @@ func TestFailureSection(t *testing.T) {
 	}
 	if fs[0].Kind != diag.KindNodegroup {
 		t.Error("FailureSection reordered the caller's slice")
+	}
+}
+
+// A change that did not start and a read that failed go in their own
+// sections; a denied change names the action to grant.
+func TestFailureSectionSplitsChangesFromReads(t *testing.T) {
+	th := New(ColorNone, false)
+	got := strings.Join(th.FailureSection([]diag.Failure{
+		{Kind: diag.KindNodegroup, Cluster: "prod", Name: "web", Operation: diag.OpDescribeNodegroup, Reason: diag.ReasonThrottled},
+		{Kind: diag.KindAddon, Cluster: "prod", Name: "coredns", Operation: diag.OpUpdateAddon, Reason: diag.ReasonAccessDenied},
+	}), "\n")
+	ns, id := strings.Index(got, "NOT STARTED"), strings.Index(got, "INCOMPLETE DATA")
+	if ns < 0 || id < ns || !strings.Contains(got, "Grant eks:UpdateAddon") || strings.Index(got, "coredns") > id || strings.Index(got, "prod/web") < id {
+		t.Fatalf("sections:\n%s", got)
 	}
 }

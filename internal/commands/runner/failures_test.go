@@ -83,3 +83,16 @@ func TestWriteFailures(t *testing.T) {
 		t.Errorf("no failures wrote %q / %q", out.String(), errOut.String())
 	}
 }
+
+// Only changes that did not start: the message does not call it missing
+// data. Mixed with a failed read, it names both.
+func TestIncompleteExitNamesChangesThatDidNotStart(t *testing.T) {
+	change := diag.Failure{Kind: diag.KindAddon, Name: "a", Operation: diag.OpUpdateAddon}
+	read := diag.Failure{Kind: diag.KindNodegroup, Name: "n", Operation: diag.OpDescribeNodegroup}
+	if got := IncompleteExit([]diag.Failure{change}).Error(); got != "1 update(s) could not start (1 addon)" {
+		t.Errorf("changes only: %q", got)
+	}
+	if got := IncompleteExit([]diag.Failure{change, read}).Error(); got != "1 update(s) could not start, incomplete data: 2 failure(s) (1 addon, 1 nodegroup)" {
+		t.Errorf("mixed: %q", got)
+	}
+}

@@ -41,6 +41,10 @@ type Nodegroup struct {
 	AmiType string
 	// FailUpdate makes UpdateNodegroupVersion fail with InvalidRequestException.
 	FailUpdate bool
+	// UpdateError, when set, makes UpdateNodegroupVersion fail with that API
+	// error code (HTTP 403 for AccessDenied*, else 400), as AWS words a
+	// denied action.
+	UpdateError string
 	// UpdateStatus is the final DescribeUpdate status of an
 	// UpdateNodegroupVersion update: "" or "Successful" applies the new
 	// version; "Failed" or "Cancelled" leaves the nodegroup as it is.
@@ -85,6 +89,9 @@ type Addon struct {
 	// DescribeAddonError, when set, makes DescribeAddon for this add-on fail
 	// with that API error code (HTTP 403 for AccessDenied*, else 400).
 	DescribeAddonError string
+	// UpdateError, when set, makes UpdateAddon for this add-on fail with
+	// that API error code (HTTP 403 for AccessDenied*, else 400).
+	UpdateError string
 	// DescribeAddonErrorAfter delays DescribeAddonError: that many
 	// DescribeAddon calls succeed first (a check that reads the add-on
 	// before the step under test).
@@ -490,6 +497,12 @@ func unsupported(w http.ResponseWriter, r *http.Request, service string) {
 
 // writeCodeError writes the API error code with HTTP 403 for AccessDenied*
 // codes and 400 for the others.
+// deniedMessage is how AWS words a denied action on resource.
+func deniedMessage(action, resource string) string {
+	return "User: arn:aws:sts::111122223333:assumed-role/ReadOnly/test is not authorized to perform: " + action +
+		" on resource: arn:aws:eks:us-east-1:111122223333:" + resource + " because no identity-based policy allows the " + action + " action"
+}
+
 func writeCodeError(w http.ResponseWriter, code, msg string) {
 	status := http.StatusBadRequest
 	if strings.HasPrefix(code, "AccessDenied") {
@@ -776,6 +789,10 @@ func (s *Server) serveNodegroups(w http.ResponseWriter, r *http.Request, c *Clus
 			writeError(w, http.StatusBadRequest, "InvalidRequestException", "fake update failure for "+ng.Name)
 			return
 		}
+		if ng.UpdateError != "" {
+			writeCodeError(w, ng.UpdateError, deniedMessage("eks:UpdateNodegroupVersion", "nodegroup/"+c.Name+"/"+ng.Name))
+			return
+		}
 		var in struct {
 			Version string `json:"version"`
 			Force   bool   `json:"force"`
@@ -859,6 +876,10 @@ func (s *Server) serveAddons(w http.ResponseWriter, r *http.Request, c *Cluster,
 		a := findAddon(c, rest[0])
 		if a == nil {
 			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No addon: "+rest[0])
+			return
+		}
+		if a.UpdateError != "" {
+			writeCodeError(w, a.UpdateError, deniedMessage("eks:UpdateAddon", "addon/"+c.Name+"/"+a.Name))
 			return
 		}
 		var in struct {
