@@ -268,17 +268,8 @@ func (m Model) applyState(msg stateMsg) (tea.Model, tea.Cmd) {
 	selName := m.cluster().Name
 	rollK, hasRoll := m.rollKey()
 	upK, hasUp := m.upgradeKey()
-	// Another program can write to the terminal (a real session showed a
-	// klog line from outside refresh), and the renderer only redraws the
-	// cells that change: such text would stay. A finished fleet sweep
-	// redraws the whole screen, at most once per minRedraw. With
-	// synchronized output (Ghostty, WezTerm, kitty, ...) the erase and the
-	// redraw are one frame, so nothing flashes. ctrl+l redraws at once.
-	if prev := m.st.SyncedAt; m.loaded && !prev.IsZero() && msg.st.SyncedAt.After(prev) {
-		if now := time.Now(); now.Sub(m.redrawnAt) >= minRedraw {
-			m.redrawnAt = now
-			next = tea.Batch(next, tea.ClearScreen)
-		}
+	if m.redrawAfter(msg.st) {
+		next = tea.Batch(next, tea.ClearScreen)
 	}
 	m.st = msg.st
 	m.loaded = true
@@ -464,6 +455,27 @@ type pickItem struct {
 	action          state.Action
 	// do, when set, runs instead of a dry run of action (an export).
 	do func(*Model) tea.Cmd
+}
+
+// redrawAfter reports whether st, the next state, finishes a fleet sweep
+// that should redraw the whole screen, and records the redraw. Another
+// program can write to the terminal (a real session showed a klog line
+// from outside refresh), and the renderer only redraws the cells that
+// change: such text would stay. A finished sweep redraws the screen, at
+// most once per minRedraw. With synchronized output (Ghostty, WezTerm,
+// kitty, ...) the erase and the redraw are one frame, so nothing flashes.
+// ctrl+l redraws at once.
+func (m *Model) redrawAfter(st state.State) bool {
+	prev := m.st.SyncedAt
+	if !m.loaded || prev.IsZero() || !st.SyncedAt.After(prev) {
+		return false
+	}
+	now := time.Now()
+	if now.Sub(m.redrawnAt) < minRedraw {
+		return false
+	}
+	m.redrawnAt = now
+	return true
 }
 
 // minRedraw is the least time between two full redraws after sweeps.
