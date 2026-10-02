@@ -329,22 +329,26 @@ func wrapExact(text string, w int) []string {
 // backslash escapes the next character outside single quotes, and nothing
 // is special inside them.
 type shellQuote struct {
-	quote   string
+	quote   rune
 	escaped bool
 }
 
-func (s shellQuote) outside() bool { return s.quote == "" && !s.escaped }
+func (s shellQuote) outside() bool { return s.quote == 0 && !s.escaped }
 
+// step takes a grapheme rune by rune: a quote can share one with a
+// combining mark.
 func (s *shellQuote) step(g string) {
-	switch {
-	case s.escaped:
-		s.escaped = false
-	case g == "\\" && s.quote != "'":
-		s.escaped = true
-	case s.quote == "" && (g == "'" || g == "\""):
-		s.quote = g
-	case s.quote != "" && g == s.quote:
-		s.quote = ""
+	for _, r := range g {
+		switch {
+		case s.escaped:
+			s.escaped = false
+		case r == '\\' && s.quote != '\'':
+			s.escaped = true
+		case s.quote == 0 && (r == '\'' || r == '"'):
+			s.quote = r
+		case s.quote != 0 && r == s.quote:
+			s.quote = 0
+		}
 	}
 }
 

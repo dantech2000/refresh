@@ -71,7 +71,11 @@ func (m Model) upgradeHeader(u state.Upgrade, w int) Block {
 	// A cluster name too long for the line is cut too, before the status.
 	head := heading(text)
 	if limit := max(8, w-(1+2+status.Width()+1+short.Width())); width(head) > limit {
+		// One ellipsis, when the cut falls right after the label's.
 		head = Line{tx(head)}.Fit(limit).Plain()
+		for strings.HasSuffix(head, "……") {
+			head = strings.TrimSuffix(head, "…")
+		}
 	}
 	title := append(Line{sp(1), bold(colMauve, head), sp(2)}, status...)
 	note := "safe to quit · a rerun resumes from live cluster state"

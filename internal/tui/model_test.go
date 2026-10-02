@@ -1423,3 +1423,27 @@ func TestUpgradeHeaderKeepsTheStatus(t *testing.T) {
 		t.Fatalf("header = %q", got)
 	}
 }
+
+// A quote that shares a grapheme with a combining mark still opens the
+// quoted value; a heading cut right after the label's ellipsis has one.
+func TestWrapExactAndHeaderEdgeCases(t *testing.T) {
+	text := "x '́" + strings.Repeat("a", 70) + "  b  c' y"
+	if got := strings.Join(wrapExact(text, 76), ""); !strings.Contains(got, "  b  c'") {
+		t.Errorf("lines lose the quoted spaces: %q", got)
+	}
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, cluster := range []string{strings.Repeat("c", 40), strings.Repeat("c", 45), strings.Repeat("c", 50)} {
+		u := state.Upgrade{Cluster: cluster, From: "1.35", To: "1.35", StartedAt: start, EndedAt: start.Add(time.Minute),
+			Label: "Roll nodegroup " + strings.Repeat("n", 60), Failed: "nodegroup roll failed: two nodes remain NotReady after 5m00s"}
+		for w := 90; w <= 110; w++ {
+			got := ""
+			for _, l := range m.upgradeHeader(u, w) {
+				got += l.Plain()
+			}
+			if strings.Contains(got, "……") {
+				t.Fatalf("w=%d: header = %q", w, got)
+			}
+		}
+	}
+}
