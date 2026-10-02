@@ -96,10 +96,13 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		if startAgain {
 			startAgain = false
 			startErr = start()
-			// The latest refusal, before Describe can use up the wait.
-			rejected = nil
-			if apiCode(startErr) == "InvalidRequestException" {
+			// The latest refusal, before Describe can use up the wait. A
+			// Start cut off by the end of the wait keeps the one before.
+			switch {
+			case apiCode(startErr) == "InvalidRequestException":
 				rejected = startErr
+			case wctx.Err() == nil:
+				rejected = nil
 			}
 		}
 		out, err := common.WithRetry(wctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeInsightsRefreshOutput, error) {
