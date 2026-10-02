@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/mocks"
 )
 
@@ -51,7 +52,7 @@ func TestExecute_ControlPlaneThenNodegroupsSeparately(t *testing.T) {
 		t.Fatalf("addon step = %+v, want manual", s)
 	}
 	notices := strings.Join(plan.Notices, "\n")
-	if !strings.Contains(notices, "--only nodegroups") || !strings.Contains(notices, "refresh addon update --all -c prod-east") {
+	if !strings.Contains(notices, "--only nodegroups") || !strings.Contains(notices, "refresh cluster upgrade -c prod-east --to 1.32 --only addons") {
 		t.Fatalf("notices = %q, want the next commands", notices)
 	}
 	if len(plan.Blockers()) > 0 {
@@ -214,12 +215,25 @@ func TestBuildPlan_ControlPlaneOnlyBlocksOnUnreadAddonVersions(t *testing.T) {
 		}
 		return inner(ctx, in, opts...)
 	}
-	plan, err := newTestService(m).BuildPlan(context.Background(), "prod-east", "1.33", PlanOptions{Only: []Part{PartControlPlane}})
-	if err != nil {
-		t.Fatalf("BuildPlan: %v", err)
-	}
-	if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "vpc-cni") || !strings.Contains(b, "could not be read") {
-		t.Fatalf("blockers = %q, want the unread vpc-cni versions", b)
+	// In every scope, add-ons included or not, and with the read on the
+	// plan's failures.
+	for _, only := range [][]Part{{PartControlPlane}, {PartControlPlane, PartAddons}, nil} {
+		plan, err := newTestService(m).BuildPlan(context.Background(), "prod-east", "1.33", PlanOptions{Only: only})
+		if err != nil {
+			t.Fatalf("%v: BuildPlan: %v", only, err)
+		}
+		if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "vpc-cni") || !strings.Contains(b, "could not be read") {
+			t.Fatalf("%v: blockers = %q, want the unread vpc-cni versions", only, b)
+		}
+		found := false
+		for _, f := range plan.Failures {
+			if f.Name == "vpc-cni" && f.Operation == diag.OpDescribeAddonVersions && f.Reason == diag.ReasonAccessDenied {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%v: failures = %+v, want the vpc-cni read", only, plan.Failures)
+		}
 	}
 }
 
@@ -270,5 +284,31 @@ func TestBuildPlan_NodegroupSelectionStillGatesTheSkew(t *testing.T) {
 	}
 	if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "workers-old") {
 		t.Fatalf("blockers = %q, want workers-old's kubelet skew", b)
+	}
+}
+
+// The commands the plan names keep the run's account, region, and
+// exclusions: following them never changes what the user left out.
+func TestBuildPlan_FollowUpsKeepExclusionsAndTarget(t *testing.T) {
+	w := newWorld()
+	w.ngVersions = map[string]string{"workers-a": "1.31", "protected": "1.31"}
+	svc := newTestService(newWorldMock(w))
+	plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{
+		Only:           []Part{PartControlPlane},
+		SkipAddons:     []string{"kube-proxy"},
+		SkipNodegroups: []string{"protected"},
+		CommandPrefix:  "refresh --profile 'prod admin' --region eu-west-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices := strings.Join(plan.Notices, "\n")
+	for _, want := range []string{
+		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only addons --skip kube-proxy",
+		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only nodegroups --skip-nodegroup protected",
+	} {
+		if !strings.Contains(notices, want) {
+			t.Fatalf("notices lack %q:\n%s", want, notices)
+		}
 	}
 }

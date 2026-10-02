@@ -440,3 +440,50 @@ func TestStateHonorsCancelWhileWaitingForTheLock(t *testing.T) {
 		t.Fatalf("State = %v, want context.Canceled", err)
 	}
 }
+
+// A scoped upgrade moves only its parts: the control plane alone, then one
+// nodegroup caught up to it, as `cluster upgrade --only` and -n do.
+func TestScopedUpgradeMovesOnlyItsParts(t *testing.T) {
+	w := New(Options{Seed: 2})
+	before := findCluster(w.Snapshot(), "prod-batch")
+	cp := state.Action{Kind: state.ActionUpgrade, Cluster: "prod-batch", Scope: state.ScopeControlPlane}
+	p, err := w.Plan(t.Context(), cp)
+	if err != nil || p.Blocked != "" || len(p.Changes) != 1 || p.Changes[0].Field != "control plane" || !strings.HasSuffix(p.Command, "--only control-plane") {
+		t.Fatalf("control-plane plan = %+v, %v", p, err)
+	}
+	if err := w.Start(t.Context(), cp); err != nil {
+		t.Fatal(err)
+	}
+	st := advanceUntil(t, w, 60*time.Minute, func(s state.State) bool { return !s.Upgrades[0].Running() })
+	c := findCluster(st, "prod-batch")
+	if u := st.Upgrades[0]; u.Failed != "" || c.Version != "1.33" {
+		t.Fatalf("upgrade failed=%q, cluster on %s", u.Failed, c.Version)
+	}
+	for i, ng := range c.Nodegroups {
+		if ng.Version != before.Nodegroups[i].Version {
+			t.Fatalf("nodegroup %s moved %s → %s in a control-plane-only run", ng.Name, before.Nodegroups[i].Version, ng.Version)
+		}
+	}
+	for i, a := range c.Addons {
+		if a.Version != before.Addons[i].Version {
+			t.Fatalf("add-on %s moved in a control-plane-only run", a.Name)
+		}
+	}
+
+	if len(c.Nodegroups) < 2 {
+		t.Fatalf("prod-batch has %d nodegroups, want 2 or more", len(c.Nodegroups))
+	}
+	one := c.Nodegroups[0].Name
+	ng := state.Action{Kind: state.ActionUpgrade, Cluster: "prod-batch", Scope: state.ScopeNodegroups, Nodegroup: one}
+	if p, err := w.Plan(t.Context(), ng); err != nil || p.Blocked != "" || len(p.Changes) != 1 || p.Changes[0].Field != one {
+		t.Fatalf("nodegroup plan = %+v, %v", p, err)
+	}
+	if err := w.Start(t.Context(), ng); err != nil {
+		t.Fatal(err)
+	}
+	st = advanceUntil(t, w, 60*time.Minute, func(s state.State) bool { return !s.Upgrades[len(s.Upgrades)-1].Running() })
+	c = findCluster(st, "prod-batch")
+	if c.Nodegroups[0].Version != "1.33" || c.Nodegroups[1].Version == "1.33" {
+		t.Fatalf("after the -n roll: %s on %s, %s on %s", c.Nodegroups[0].Name, c.Nodegroups[0].Version, c.Nodegroups[1].Name, c.Nodegroups[1].Version)
+	}
+}

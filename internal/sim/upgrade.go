@@ -36,32 +36,56 @@ type upgrade struct {
 	cpID                   string
 	ngs                    []string
 	ngIdx                  int
-	roll                   *roll
-	verifyDue              time.Time
+	// scope and only are the parts the upgrade runs (zero: every part)
+	// and the one nodegroup it rolls ("" for all), as `cluster upgrade
+	// --only` and `--nodegroup`.
+	scope     state.Scope
+	only      string
+	roll      *roll
+	verifyDue time.Time
 }
 
-func (w *World) planUpgrade(c *cluster) (state.Plan, error) {
-	to := state.NextMinor(c.Version)
-	p := state.Plan{
-		Action:  state.Action{Kind: state.ActionUpgrade, Cluster: c.Name},
-		Title:   "Upgrade cluster · " + c.Name + " " + c.Version + " → " + to,
-		Command: "refresh cluster upgrade -c " + c.Name + " --to " + to,
+// planUpgrade dry-runs a, an upgrade of c limited to a.Scope (and to
+// a.Nodegroup, when set): with the control plane, to the next version;
+// without it, the parts catch up to the version c runs.
+func (w *World) planUpgrade(c *cluster, a state.Action) (state.Plan, error) {
+	to := c.Version
+	if a.Scope.Has(state.ScopeControlPlane) {
+		to = state.NextMinor(c.Version)
 	}
-	if c.Version == c.Latest {
+	p := state.Plan{
+		Action:  a,
+		Title:   "Upgrade cluster · " + c.Name + " " + c.Version + " → " + to,
+		Command: "refresh cluster upgrade -c " + c.Name + " --to " + to + scopeFlags(a),
+	}
+	if a.Scope.Has(state.ScopeControlPlane) && c.Version == c.Latest {
 		p.Title = "Upgrade cluster · " + c.Name
 		p.Blocked = c.Name + " already runs " + c.Latest + ", the newest version"
 		return p, nil
 	}
-	p.Changes = append(p.Changes, state.Change{Field: "control plane", From: c.Version, To: to})
-	for _, a := range c.Addons {
-		if t := addonLatest(a.Name, to); t != "" && t != a.Version {
-			p.Changes = append(p.Changes, state.Change{Field: a.Name, From: a.Version, To: t})
+	if a.Scope.Has(state.ScopeControlPlane) {
+		p.Changes = append(p.Changes, state.Change{Field: "control plane", From: c.Version, To: to})
+	}
+	if a.Scope.Has(state.ScopeAddons) {
+		for _, ad := range c.Addons {
+			if t := addonLatest(ad.Name, to); t != "" && t != ad.Version {
+				p.Changes = append(p.Changes, state.Change{Field: ad.Name, From: ad.Version, To: t})
+			}
 		}
 	}
 	nodes := 0
-	for _, ng := range c.Nodegroups {
-		nodes += ng.Nodes
-		p.Changes = append(p.Changes, state.Change{Field: ng.Name, From: ng.Version, To: to})
+	if a.Scope.Has(state.ScopeNodegroups) {
+		for _, ng := range c.Nodegroups {
+			if (a.Nodegroup != "" && ng.Name != a.Nodegroup) || ng.Version == to {
+				continue
+			}
+			nodes += ng.Nodes
+			p.Changes = append(p.Changes, state.Change{Field: ng.Name, From: ng.Version, To: to})
+		}
+	}
+	if len(p.Changes) == 0 {
+		p.Blocked = "nothing to catch up: every part in scope already runs " + to
+		return p, nil
 	}
 	est := 9*time.Minute + time.Duration(len(c.Addons))*50*time.Second + time.Duration(nodes)*perNodeEstimate
 	p.Facts = []state.Fact{
@@ -93,15 +117,21 @@ func (w *World) planUpgrade(c *cluster) (state.Plan, error) {
 	return p, nil
 }
 
-// startUpgrade begins an upgrade of name to the next minor. The caller holds
-// w.mu, and has checked the plan (the warmup skips the check).
-func (w *World) startUpgrade(name string) error {
+// startUpgrade begins an upgrade of name limited to scope (zero: every
+// part) and, when only is set, to that nodegroup: to the next minor with the
+// control plane, else to the version name runs. The caller holds w.mu, and
+// has checked the plan (the warmup skips the check).
+func (w *World) startUpgrade(name string, scope state.Scope, only string) error {
 	c := w.cluster(name)
 	if c == nil {
 		return fmt.Errorf("cluster %q not found", name)
 	}
-	u := &upgrade{w: w, c: c}
-	u.st = state.Upgrade{Cluster: name, From: c.Version, To: state.NextMinor(c.Version), StartedAt: w.now}
+	u := &upgrade{w: w, c: c, scope: scope, only: only}
+	to := c.Version
+	if scope.Has(state.ScopeControlPlane) {
+		to = state.NextMinor(c.Version)
+	}
+	u.st = state.Upgrade{Cluster: name, From: c.Version, To: to, StartedAt: w.now}
 	for _, ph := range []struct {
 		name   string
 		weight float64
@@ -113,6 +143,36 @@ func (w *World) startUpgrade(name string) error {
 	w.emit(state.Event{Cluster: name, Source: state.SourceUpgrade, Level: state.LevelProgress, Subject: "upgrade", Text: "started " + u.st.From + " → " + u.st.To})
 	w.upgrades = append(w.upgrades, u)
 	return nil
+}
+
+// phasePart is the part of an upgrade each phase belongs to; pre-flight and
+// verify run in every scope.
+var phasePart = map[int]state.Scope{
+	phaseControlPlane: state.ScopeControlPlane,
+	phaseNodegroups:   state.ScopeNodegroups,
+	phaseAddons:       state.ScopeAddons,
+}
+
+// scopeFlags are the --only and --nodegroup flags of a, as the live backend
+// shows them.
+func scopeFlags(a state.Action) string {
+	var parts []string
+	for _, p := range []struct {
+		s    state.Scope
+		name string
+	}{{state.ScopeControlPlane, "control-plane"}, {state.ScopeAddons, "addons"}, {state.ScopeNodegroups, "nodegroups"}} {
+		if a.Scope != 0 && a.Scope&p.s != 0 {
+			parts = append(parts, p.name)
+		}
+	}
+	out := ""
+	if len(parts) > 0 {
+		out = " --only " + strings.Join(parts, ",")
+	}
+	if a.Nodegroup != "" {
+		out += " -n " + a.Nodegroup
+	}
+	return out
 }
 
 func (u *upgrade) event(lvl state.Level, subject, text, detail string) {
@@ -153,6 +213,10 @@ func (u *upgrade) begin() {
 	p.Status = state.PhaseRunning
 	p.StartedAt = u.w.now
 	p.Summary = ""
+	if part, ok := phasePart[u.phase]; ok && !u.scope.Has(part) {
+		u.complete("left out of this run")
+		return
+	}
 	u.c.Busy = "upgrading · " + strings.ToLower(p.Name)
 	switch u.phase {
 	case phasePreflight:
@@ -204,7 +268,7 @@ func (u *upgrade) begin() {
 		}
 	case phaseNodegroups:
 		for _, ng := range u.c.Nodegroups {
-			if ng.NeedsPatch(u.c.Version) {
+			if ng.NeedsPatch(u.c.Version) && (u.only == "" || ng.Name == u.only) {
 				u.ngs = append(u.ngs, ng.Name)
 				p.Items = append(p.Items, state.PhaseItem{Name: ng.Name, Text: "queued"})
 			}

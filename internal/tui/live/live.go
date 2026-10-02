@@ -873,9 +873,10 @@ func (b *Backend) RunReadiness(ctx context.Context, key string) error {
 	return nil
 }
 
-// upgradeOptions are the planner's --only and --nodegroup for a.
-func upgradeOptions(a state.Action) upgrade.PlanOptions {
-	o := upgrade.PlanOptions{Only: scopeParts(a.Scope)}
+// upgradeOptions are the planner's --only and --nodegroup for a, and the
+// command prefix (profile and region) of the commands its notices name.
+func (b *Backend) upgradeOptions(a state.Action, t target) upgrade.PlanOptions {
+	o := upgrade.PlanOptions{Only: scopeParts(a.Scope), CommandPrefix: strings.TrimSpace(b.cliCommand(regionFlag(t)))}
 	if a.Nodegroup != "" {
 		o.Nodegroups = []string{a.Nodegroup}
 	}
@@ -960,7 +961,7 @@ func (b *Backend) Plan(ctx context.Context, a state.Action) (state.Plan, error) 
 			}
 		}
 		pctx, cancel := context.WithTimeout(ctx, b.opts.SweepTimeout)
-		plan, perr := b.svc.buildPlan(pctx, cfg, t.name, to, upgradeOptions(a))
+		plan, perr := b.svc.buildPlan(pctx, cfg, t.name, to, b.upgradeOptions(a, t))
 		cancel()
 		if perr != nil {
 			return state.Plan{}, perr
