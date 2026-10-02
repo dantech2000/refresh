@@ -1501,3 +1501,15 @@ func TestUpgradeShowsLongReasonsInFull(t *testing.T) {
 		t.Fatalf("now card:\n%s", got)
 	}
 }
+
+// ctrl+l redraws the whole screen, after another program wrote over it.
+func TestCtrlLRedraws(t *testing.T) {
+	h := newHarness(t, 120, 30, 0)
+	_, cmd := h.m.key("ctrl+l")
+	if cmd == nil {
+		t.Fatal("ctrl+l returned no command")
+	}
+	if got, want := fmt.Sprintf("%T", cmd()), fmt.Sprintf("%T", tea.ClearScreen()); got != want {
+		t.Fatalf("ctrl+l = %s, want %s", got, want)
+	}
+}

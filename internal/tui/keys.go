@@ -73,6 +73,7 @@ func globalBindings() []binding {
 			return nil
 		}},
 		{keys: []string{"w"}, label: "w", desc: "warnings and errors only", do: func(m *Model) tea.Cmd { m.warnOnly = !m.warnOnly; return nil }},
+		{keys: []string{"ctrl+l"}, label: "ctrl+l", desc: "redraw the whole screen (if another program wrote over it)", do: func(*Model) tea.Cmd { return tea.ClearScreen }},
 		{keys: []string{"e"}, label: "e", desc: "export this session's log to a file: the timeline, Kube events, AWS API calls, or all", do: func(m *Model) tea.Cmd { return m.pickExport() }},
 		{keys: []string{"ctrl+r"}, label: "ctrl+r", desc: "read the fleet from AWS now",
 			when: func(m Model) bool { _, ok := m.b.(refresher); return ok },

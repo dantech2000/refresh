@@ -157,16 +157,24 @@ type stdio struct{ in *os.File }
 // detachStdio points os.Stdin and os.Stderr at /dev/null and returns the
 // original stdin for the TUI. restore puts both back. Code that captures
 // them while the TUI runs (client-go's exec authenticator, klog) gets
-// /dev/null.
+// /dev/null. On Unix, file descriptor 2 itself points at /dev/null too, so
+// a child process or an earlier handle cannot write over the TUI either: a
+// real session showed a credential plugin's klog line on the screen.
 func detachStdio() (stdio, func(), error) {
 	null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
+		return stdio{}, nil, err
+	}
+	saved, err := detachStderrFD(null)
+	if err != nil {
+		_ = null.Close()
 		return stdio{}, nil, err
 	}
 	in, errOut := os.Stdin, os.Stderr
 	os.Stdin, os.Stderr = null, null
 	return stdio{in: in}, func() {
 		os.Stdin, os.Stderr = in, errOut
+		restoreStderrFD(saved)
 		_ = null.Close()
 	}, nil
 }
