@@ -16,10 +16,13 @@ import (
 	"github.com/urfave/cli/v3"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
+	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -155,7 +158,57 @@ func (r *scaleRun) refuse(busy *runner.Busy) error {
 			return err
 		}
 	}
+	if hint := r.rollingHint(busy.Changes); hint != "" {
+		return cli.Exit(busy.Exit.Error()+"\n\n"+hint, runner.ExitBlocked)
+	}
 	return busy.Exit
+}
+
+// rollingHint is the way out when only other nodegroups' rolls make the
+// cluster busy: a roll that waits for capacity (a vCPU quota, for one)
+// frees none itself, and refresh will not scale until it ends. EKS takes a
+// scaling change on a different nodegroup during a roll, so the hint is the
+// same change made outside refresh, with the sizes the nodegroup would
+// have. Empty when anything else is changing (the cluster, an add-on, the
+// target, a nodegroup being created or deleted) or the sizes are ones EKS
+// rejects. The command is one row, not wrapped, so it pastes as one line.
+func (r *scaleRun) rollingHint(changes []string) string {
+	if len(changes) == 0 || r.doc.After == nil {
+		return ""
+	}
+	for _, c := range changes {
+		rest, ok := strings.CutPrefix(c, clustersvc.ChangeNodegroup+" ")
+		name, status, _ := strings.Cut(rest, " ")
+		if !ok || name == r.nodegroup || status != string(ekstypes.NodegroupStatusUpdating) {
+			return ""
+		}
+	}
+	after := *r.doc.After
+	if after.Min < 0 || after.Max < 1 || after.Min > after.Max || after.Desired < after.Min || after.Desired > after.Max {
+		return ""
+	}
+	var sizes []string
+	for _, f := range []struct {
+		key string
+		v   *int32
+	}{{"minSize", r.minSize}, {"maxSize", r.maxSize}, {"desiredSize", r.desired}} {
+		if f.v != nil {
+			sizes = append(sizes, fmt.Sprintf("%s=%d", f.key, *f.v))
+		}
+	}
+	command := fmt.Sprintf("aws eks update-nodegroup-config --cluster-name %s --nodegroup-name %s --scaling-config %s",
+		common.ShellQuote(r.cluster), common.ShellQuote(r.nodegroup), strings.Join(sizes, ","))
+	if r.region != "" {
+		command += " --region " + common.ShellQuote(r.region)
+	}
+	// The profile refresh was told to use (--profile or a context), so the
+	// command runs in the same account. A profile from AWS_PROFILE is left
+	// to the environment: there, as for refresh, exported access keys win.
+	// "--profile=" keeps a name that starts with "-" a value.
+	if profile, explicit, err := awsconfig.EffectiveProfile(r.cmd); err == nil && explicit && profile != "" {
+		command += " --profile=" + common.ShellQuote(profile)
+	}
+	return "If the roll waits for capacity, scale this nodegroup outside refresh (EKS allows it during a roll):\n  " + command
 }
 
 // newScaleService builds the nodegroup service for a scale. Only the health

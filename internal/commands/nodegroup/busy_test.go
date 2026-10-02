@@ -2,6 +2,8 @@ package nodegroup
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -88,6 +90,12 @@ func TestScale_BusyClusterExitsThree(t *testing.T) {
 	if !strings.Contains(err.Error(), "prod is busy (nodegroup ng-b UPDATING)") {
 		t.Errorf("error = %v", err)
 	}
+	// Another nodegroup's roll: the refusal says how to scale outside
+	// refresh, since a roll waiting for capacity frees none itself.
+	if !strings.Contains(err.Error(), "aws eks update-nodegroup-config --cluster-name prod --nodegroup-name ng-a --scaling-config desiredSize=2") {
+		t.Errorf("error = %v, want the scale command outside refresh", err)
+	}
+
 	if calledPath(srv, "/update-config") || *asked != 0 {
 		t.Errorf("a busy cluster must not prompt (asked %d) or scale", *asked)
 	}
@@ -163,4 +171,56 @@ func TestBusyRefusalsPrintADocument(t *testing.T) {
 			}
 		}
 	})
+}
+
+// No hint when scaling outside refresh is no way out: the target is
+// changing too, something other than a nodegroup roll is, or EKS would
+// reject the sizes.
+func TestScale_BusyHintOnlyWhenItHelps(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		a, b string // the nodegroups' statuses
+		args []string
+	}{
+		{"target and another rolling", "UPDATING", "UPDATING", []string{"--desired", "2"}},
+		{"another being deleted", "ACTIVE", "DELETING", []string{"--desired", "2"}},
+		{"desired below min", "ACTIVE", "UPDATING", []string{"--desired", "0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withScalePrompt(t, true, "y")
+			fakeaws.New(t, prodCluster(
+				&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5, Status: tc.a},
+				&fakeaws.Nodegroup{Name: "ng-b", Version: "1.31", Status: tc.b},
+			))
+			_, _, err := runNodegroup(t, append([]string{"scale", "prod", "ng-a"}, tc.args...)...)
+			if code := exitCodeOf(err); code != 3 || strings.Contains(err.Error(), "update-nodegroup-config") {
+				t.Fatalf("exit %d, err = %v", code, err)
+			}
+		})
+	}
+}
+
+// The hint's command runs in the account refresh used: it names the profile.
+func TestScale_BusyHintNamesTheProfile(t *testing.T) {
+	withScalePrompt(t, true, "y")
+	fakeaws.New(t, prodCluster(
+		&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5},
+		&fakeaws.Nodegroup{Name: "ng-b", Version: "1.31", Status: "UPDATING"},
+	))
+	cfg := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(cfg, []byte("[profile team prod]\nregion = us-east-1\naws_access_key_id = AKIDTEST\naws_secret_access_key = test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", cfg)
+	_, _, err := fakeaws.Run(t, fakeaws.App(Command()), "refresh", "--profile", "team prod", "nodegroup", "scale", "prod", "ng-a", "--desired", "2")
+	if err == nil || !strings.Contains(err.Error(), "--profile='team prod'") {
+		t.Fatalf("error = %v, want the profile", err)
+	}
+	// AWS_PROFILE is left to the environment, where exported keys win for
+	// refresh and the AWS CLI alike.
+	t.Setenv("AWS_PROFILE", "team prod")
+	_, _, err = runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2")
+	if err == nil || strings.Contains(err.Error(), "--profile") || !strings.Contains(err.Error(), "update-nodegroup-config") {
+		t.Fatalf("AWS_PROFILE: error = %v, want the hint without --profile", err)
+	}
 }
