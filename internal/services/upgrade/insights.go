@@ -70,6 +70,17 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 	startAgain, scheduledNoted := false, false
 	// Every error below is about the refresh, from the call that failed.
 	onRefresh := func(op string, err error) error { return onItem(diag.KindCluster, clusterName, op, err) }
+	// rejected is Start's last refusal while it is read as a scheduled
+	// refresh. InvalidRequestException also means other cluster states, so
+	// a wait that ends with Start still refusing reports why.
+	var rejected error
+	timedOut := func() error {
+		if rejected != nil {
+			return onRefresh(diag.OpStartInsightsRefresh, awsinternal.FormatAWSError(rejected,
+				fmt.Sprintf("starting an insights refresh for cluster %s (still refused after %s)", clusterName, timeout)))
+		}
+		return onRefresh(diag.OpDescribeInsightsRefresh, fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout))
+	}
 	// A start error can mean a refresh is already running (another tool or
 	// an earlier run). Check once before giving up: if a refresh is in
 	// flight, wait on it instead.
@@ -85,6 +96,9 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		if startAgain {
 			startAgain = false
 			startErr = start()
+			if startErr == nil {
+				rejected = nil
+			}
 		}
 		out, err := common.WithRetry(wctx, common.DefaultRetryConfig, func(rc context.Context) (*eks.DescribeInsightsRefreshOutput, error) {
 			return s.eksClient.DescribeInsightsRefresh(rc, &eks.DescribeInsightsRefreshInput{ClusterName: aws.String(clusterName)})
@@ -93,7 +107,7 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		case ctx.Err() != nil:
 			return ctx.Err()
 		case wctx.Err() != nil:
-			return onRefresh(diag.OpDescribeInsightsRefresh, fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout))
+			return timedOut()
 		case startErr != nil:
 			switch {
 			case err == nil && out.Status == ekstypes.InsightsRefreshStatusInProgress:
@@ -107,7 +121,7 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 					scheduledNoted = true
 					progress("EKS is running a scheduled insights refresh for %s; waiting for it to end", clusterName)
 				}
-				startAgain = true
+				rejected, startAgain = startErr, true
 			case apiCode(startErr) == "ResourceNotFoundException":
 				// A new cluster: EKS makes insights available up to 15
 				// minutes after it is created.
@@ -142,7 +156,7 @@ func (s *Service) refreshInsights(ctx context.Context, clusterName, liveVersion 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-wctx.Done():
-			return onRefresh(diag.OpDescribeInsightsRefresh, fmt.Errorf("%w after %s", errInsightsRefreshTimeout, timeout))
+			return timedOut()
 		case <-ticker.C:
 		}
 	}
@@ -252,7 +266,7 @@ func apiCode(err error) string {
 // with AWS's own one-line summary (which names a denied action) when the
 // rest of the message, such as the IAM permission list, is left out.
 func oneLineReason(err error) string {
-	msg := err.Error()
+	msg := strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r\n", "\n"), "\r", "\n")
 	first, rest, multi := strings.Cut(msg, "\n")
 	if !multi {
 		return first

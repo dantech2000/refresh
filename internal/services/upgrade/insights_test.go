@@ -412,3 +412,34 @@ func TestReadiness_DeniedRefreshIsOneLine(t *testing.T) {
 		t.Fatalf("blockers = %q, want one line naming the action", b)
 	}
 }
+
+// InvalidRequestException also means a cluster state (deleting, for one).
+// When the wait for a scheduled refresh ends with Start still refusing,
+// the blocker names Start's refusal, not only a timeout.
+func TestReadiness_StillRefusedNamesTheRefusal(t *testing.T) {
+	m := oneHopBuilder().Build()
+	m.StartInsightsRefreshFn = func(context.Context, *eks.StartInsightsRefreshInput, ...func(*eks.Options)) (*eks.StartInsightsRefreshOutput, error) {
+		return nil, &ekstypes.InvalidRequestException{Message: aws.String("Cluster is in DELETING state")}
+	}
+	m.DescribeInsightsRefreshFn = func(context.Context, *eks.DescribeInsightsRefreshInput, ...func(*eks.Options)) (*eks.DescribeInsightsRefreshOutput, error) {
+		return nil, &ekstypes.ResourceNotFoundException{Message: aws.String("No insights refresh found.")}
+	}
+	svc := newStrictTestService(m)
+	svc.InsightsRefreshTimeout = 30 * time.Millisecond
+	plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "DELETING") {
+		t.Fatalf("blockers = %q, want Start's refusal", b)
+	}
+}
+
+// A carriage return is a line break too.
+func TestOneLineReasonDropsCarriageReturns(t *testing.T) {
+	for _, msg := range []string{"cannot scan\r\nmore details", "cannot scan\rmore"} {
+		if got := oneLineReason(errors.New(msg)); got != "cannot scan" {
+			t.Errorf("%q: got %q", msg, got)
+		}
+	}
+}
