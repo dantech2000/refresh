@@ -193,7 +193,7 @@ func (b *Backend) runAddons(ctx context.Context, cfg aws.Config, t target, chang
 		}
 		b.mu.Lock()
 		b.claimed[t] = fmt.Sprintf("updating add-ons · %s (%d/%d)", ch.name, i+1, len(changes))
-		b.api("UpdateAddon", fmt.Sprintf("%s %s → %s", ch.name, ch.from, ch.to), state.LevelProgress)
+		b.apiOn(b.keyOf(t), "UpdateAddon", fmt.Sprintf("%s %s → %s", ch.name, ch.from, ch.to), state.LevelProgress)
 		b.mu.Unlock()
 
 		res, err := b.addon.update(ctx, cfg, t.name, ch.name, ch.to, b.opts.WaitTimeout)

@@ -729,6 +729,12 @@ func TestAddonUpdateAgainstFakeAWS(t *testing.T) {
 	if !strings.Contains(strings.Join(srv.Calls(), "\n"), "/addons/vpc-cni/update") {
 		t.Fatalf("no UpdateAddon call:\n%s", strings.Join(srv.Calls(), "\n"))
 	}
+	// The call log names the cluster, so an export of it does too.
+	for _, e := range st.Log {
+		if e.Subject == "UpdateAddon" && e.Cluster != "prod" {
+			t.Errorf("UpdateAddon log line cluster = %q, want prod", e.Cluster)
+		}
+	}
 }
 
 func TestNoRegionAnsweredIsExplained(t *testing.T) {

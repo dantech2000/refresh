@@ -288,6 +288,10 @@ func (m Model) pickerParts(w int) dialogParts {
 		}
 		body = append(body, l)
 	}
-	foot := Block{{}, joinRight(nil, Line{chip("↑↓"), sp(1), sub("choose"), sp(3), chip("enter"), sp(1), sub("dry run"), sp(3), chip("esc"), sp(1), sub("close")}, inner)}
+	verb := "dry run"
+	if len(p.items) > 0 && p.items[p.sel].do != nil {
+		verb = "export"
+	}
+	foot := Block{{}, joinRight(nil, Line{chip("↑↓"), sp(1), sub("choose"), sp(3), chip("enter"), sp(1), sub(verb), sp(3), chip("esc"), sp(1), sub("close")}, inner)}
 	return dialogParts{head: head, body: body, foot: foot, border: colMauve, w: w}
 }
