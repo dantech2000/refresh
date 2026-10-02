@@ -304,11 +304,30 @@ func TestBuildPlan_FollowUpsKeepExclusionsAndTarget(t *testing.T) {
 	}
 	notices := strings.Join(plan.Notices, "\n")
 	for _, want := range []string{
-		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only addons --skip kube-proxy",
-		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only nodegroups --skip-nodegroup protected",
+		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only addons --skip kube-proxy --skip-nodegroup protected",
+		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only nodegroups --skip kube-proxy --skip-nodegroup protected",
 	} {
 		if !strings.Contains(notices, want) {
 			t.Fatalf("notices lack %q:\n%s", want, notices)
 		}
+	}
+}
+
+// An add-on with no version at all for the live control plane blocks a
+// control-plane move that leaves the add-ons out: nothing in that plan
+// would update it.
+func TestBuildPlan_ControlPlaneOnlyBlocksOnAnEmptyLiveCatalogue(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithAddon("legacy", "v1.0.0-eksbuild.1", ekstypes.AddonStatusActive).
+		WithNodegroup("workers-a", "1.32", ekstypes.AMITypesAl2023X8664Standard).
+		Build()
+	catalogues(m, map[string]map[string][]string{"legacy": {"1.32": {}, "1.33": {"v2.0.0-eksbuild.1"}}})
+	plan, err := newTestService(m).BuildPlan(context.Background(), "prod-east", "1.33", PlanOptions{Only: []Part{PartControlPlane}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "legacy") {
+		t.Fatalf("blockers = %q, want legacy", b)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -164,10 +165,12 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		if opts.includes(PartNodegroups) {
 			preRoll = preRollNodegroups(rollable, currentVersion, hops[0], opts.SkipNodegroups)
 		}
-		lagging, unread := s.addonsIncompatible(ctx, addonsSvc, plan, addonList, currentVersion, opts.SkipAddons)
+		lagging, empty, unread := s.addonsIncompatible(ctx, addonsSvc, plan, addonList, currentVersion, opts.SkipAddons)
 		addonLag := opts.includes(PartAddons) && len(lagging) > 0
 		if !opts.includes(PartAddons) {
-			laggingLeftOut = lagging
+			// No version for the live control plane: it cannot run there
+			// either, and nothing in this plan would update it.
+			laggingLeftOut = slices.Concat(lagging, empty)
 		}
 		unreadLive = unread
 		if addonLag || len(preRoll) > 0 {
@@ -249,18 +252,20 @@ func preRollNodegroups(nodegroups []nodegroupState, cpVersion, nextVersion strin
 // before that hop's addon phase finished.
 //
 // An addon that is merely not the newest compatible build does not count;
-// the next hop's addon phase moves it anyway. An empty catalogue is left to
-// the hop's own add-on step. unread lists the addons whose
+// the next hop's addon phase moves it anyway. empty lists the addons with
+// no version at all for the live control plane: a plan with the add-ons
+// leaves them to the hop's own add-on step, one without them blocks.
+// unread lists the addons whose
 // versions could not be read; each gets a failure on the plan, and the
 // plan blocks its next control-plane move on them (blockOnLaggingAddons).
-func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImpl, plan *Plan, addonList []addons.AddonSummary, cpVersion string, skip []string) (incompatible, unread []string) {
+func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImpl, plan *Plan, addonList []addons.AddonSummary, cpVersion string, skip []string) (incompatible, empty, unread []string) {
 	for _, a := range addonList {
 		if isSkippedAddon(a.Name, skip) {
 			continue
 		}
 		versions, err := svc.GetAvailableVersions(ctx, a.Name, cpVersion)
 		if errors.Is(err, addons.ErrNoVersionsFound) {
-			// Read, but empty: the hop's own add-on step blocks on that.
+			empty = append(empty, a.Name)
 			continue
 		}
 		if err != nil {
@@ -274,7 +279,7 @@ func (s *Service) addonsIncompatible(ctx context.Context, svc *addons.ServiceImp
 			incompatible = append(incompatible, a.Name)
 		}
 	}
-	return incompatible, unread
+	return incompatible, empty, unread
 }
 
 // catchUpHop builds a same-version hop that runs before the next

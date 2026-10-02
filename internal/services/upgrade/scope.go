@@ -158,15 +158,13 @@ func followUp(plan *Plan, o PlanOptions, part Part, version string) string {
 		prefix = "refresh"
 	}
 	parts := []string{prefix, "cluster", "upgrade", "-c", common.ShellQuote(plan.ClusterName), "--to", common.ShellQuote(version), "--only", string(part)}
-	switch part {
-	case PartAddons:
-		for _, s := range o.SkipAddons {
-			parts = append(parts, "--skip", common.ShellQuote(s))
-		}
-	case PartNodegroups:
-		for _, s := range o.SkipNodegroups {
-			parts = append(parts, "--skip-nodegroup", common.ShellQuote(s))
-		}
+	// Both exclusion lists, whatever the part: a skipped add-on with no
+	// usable version would otherwise block a later nodegroup run.
+	for _, s := range o.SkipAddons {
+		parts = append(parts, "--skip", common.ShellQuote(s))
+	}
+	for _, s := range o.SkipNodegroups {
+		parts = append(parts, "--skip-nodegroup", common.ShellQuote(s))
 	}
 	return strings.Join(parts, " ")
 }
