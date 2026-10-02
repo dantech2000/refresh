@@ -13,7 +13,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
+	"github.com/aws/smithy-go"
 
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
 )
 
@@ -117,8 +119,13 @@ func TestResolveAWSCredentials_SourceFailureCarriesHelpOnce(t *testing.T) {
 			if err == nil {
 				t.Fatal("ResolveAWSCredentials passed with no credentials")
 			}
-			if n := strings.Count(err.Error(), credentialHelp); n != 1 {
-				t.Errorf("credential help appears %d times in the error, want 1:\n%v", n, err)
+			// An SSO login gets its own help: log in with the profile.
+			help := credentialHelp
+			if name == "expired SSO token" {
+				help = "aws sso login --profile"
+			}
+			if n := strings.Count(err.Error(), help); n != 1 {
+				t.Errorf("%q appears %d times in the error, want 1:\n%v", help, n, err)
 			}
 			if stdout != "" || stderr != "" {
 				t.Errorf("ResolveAWSCredentials printed output: stdout=%q stderr=%q", stdout, stderr)
@@ -156,4 +163,29 @@ func captureOutput(t *testing.T, fn func()) (stdout, stderr string) {
 	o, _ := io.ReadAll(outR)
 	e, _ := io.ReadAll(errR)
 	return string(o), string(e)
+}
+
+// The note about AWS_ACCESS_KEY_ID hiding AWS_PROFILE appears only when the
+// credentials really came from the environment: a profile given with
+// --profile or a context wins over the keys.
+func TestNoteKeysShadowProfile(t *testing.T) {
+	bad := awserr.FormatAWSError(&smithy.GenericAPIError{Code: "InvalidClientTokenId", Message: "invalid"}, "x")
+	t.Setenv("AWS_PROFILE", "prod")
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")
+	fromEnv := aws.Config{Credentials: aws.NewCredentialsCache(aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+		return aws.Credentials{AccessKeyID: "AKIAEXAMPLE", SecretAccessKey: "x", Source: config.CredentialsSourceName}, nil
+	}))}
+	fromProfile := aws.Config{Credentials: aws.NewCredentialsCache(aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+		return aws.Credentials{AccessKeyID: "AKIAOTHER", SecretAccessKey: "x", Source: "SharedConfigCredentials: prod"}, nil
+	}))}
+	if got := NoteKeysShadowProfile(t.Context(), fromEnv, bad); !strings.Contains(got.Error(), "the SDK uses it before AWS_PROFILE") || !errors.Is(got, bad) {
+		t.Errorf("keys from the environment: %v", got)
+	}
+	if got := NoteKeysShadowProfile(t.Context(), fromProfile, bad); strings.Contains(got.Error(), "before AWS_PROFILE") {
+		t.Errorf("a profile that won over the keys got the note: %v", got)
+	}
+	t.Setenv("AWS_PROFILE", "")
+	if got := NoteKeysShadowProfile(t.Context(), fromEnv, bad); strings.Contains(got.Error(), "before AWS_PROFILE") {
+		t.Errorf("no AWS_PROFILE, but the note: %v", got)
+	}
 }

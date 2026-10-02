@@ -12,9 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -57,6 +59,23 @@ var (
 		"failed to refresh cached credentials",
 		"failed to retrieve credentials",
 		"no ec2 imds role found",
+	}
+
+	// ssoLoginFallbackPatterns is the string fallback for an expired
+	// sso-session login: the SDK's SSO token provider returns plain fmt
+	// errors with these SDK-authored prefixes, and no typed error.
+	ssoLoginFallbackPatterns = []string{
+		"cached sso token is expired, or not present, and cannot be refreshed",
+	}
+
+	// ssoLoginRejections are the SSO OIDC CreateToken codes that mean the
+	// saved login can no longer be renewed: log in again.
+	ssoLoginRejections = map[string]bool{
+		"InvalidGrantException":       true,
+		"ExpiredTokenException":       true,
+		"AccessDeniedException":       true,
+		"UnauthorizedClientException": true,
+		"InvalidClientException":      true,
 	}
 
 	// regionFallbackPatterns is the string fallback for endpoint resolution
@@ -302,6 +321,14 @@ func FormatAWSError(err error, operation string) error {
 	if IsNoCredentials(err) {
 		return FormatNoCredentials(err, nil)
 	}
+	// Before the API error switch: an expired SSO session comes back as an
+	// SSO OIDC API error (InvalidGrantException) that says nothing useful.
+	if isSSOEndpointNotFound(err) {
+		return formatSSORegionError(err)
+	}
+	if IsSSONotLoggedIn(err) {
+		return FormatSSONotLoggedIn(err, "")
+	}
 	// A connect timeout also reports itself as context.DeadlineExceeded,
 	// but a longer --timeout does not help an endpoint that cannot be
 	// reached (#418). A DNS failure keeps its own path below (an invalid
@@ -317,6 +344,10 @@ func FormatAWSError(err error, operation string) error {
 	var ae smithy.APIError
 	if errors.As(err, &ae) {
 		switch {
+		case permissionErrorCodes[ae.ErrorCode()] && isAssumeRole(err):
+			return formatAssumeRoleError(err)
+		case isSSORoleCall(err) && ae.ErrorCode() == "ForbiddenException":
+			return formatSSORoleError(err)
 		case permissionErrorCodes[ae.ErrorCode()]:
 			return formatPermissionError(err, operation)
 		case credentialErrorCodes[ae.ErrorCode()]:
@@ -329,6 +360,12 @@ func FormatAWSError(err error, operation string) error {
 		}
 	}
 
+	// A missing region first: an AssumeRole profile with no region fails
+	// inside the credential chain, and its text matches the credential
+	// fallback patterns too, but the region is what to fix.
+	if isMissingRegion(err) {
+		return formatRegionError(err, operation)
+	}
 	if IsCredentialError(err) {
 		return formatCredentialError(err)
 	}
@@ -337,6 +374,9 @@ func FormatAWSError(err error, operation string) error {
 	}
 	if IsNetworkError(err) {
 		return formatNetworkError(err, operation)
+	}
+	if isUnreadable403(err) {
+		return formatUnreadable403(err, operation)
 	}
 	if IsPermissionError(err) {
 		return formatPermissionError(err, operation)
@@ -394,7 +434,7 @@ Set a valid region:
 }
 
 func formatCredentialError(err error) error {
-	return formatted(err, `AWS credentials not configured or invalid
+	msg := fmt.Sprintf(`AWS credentials not configured or invalid
 Cause: %s
 
 Set up credentials in one of these ways:
@@ -402,6 +442,180 @@ Set up credentials in one of these ways:
   aws configure            an access key in a profile
   AWS_ACCESS_KEY_ID        with AWS_SECRET_ACCESS_KEY, as environment variables
   an IAM role              when refresh runs on EC2, EKS, or Lambda`, Summary(err))
+	return &formattedError{msg: msg, err: err}
+}
+
+// KeysShadowProfileNote is the note a credential error gets when the keys
+// came from the environment while AWS_PROFILE is set: the SDK uses the keys,
+// as the AWS CLI does, so AWS_PROFILE has no effect. The caller decides
+// that from the resolved credentials' source.
+const KeysShadowProfileNote = `
+
+Note:
+  AWS_ACCESS_KEY_ID        is set, and the SDK uses it before AWS_PROFILE: unset it, or pass --profile`
+
+// WithNote appends note to a formatted error's message, keeping the chain.
+func WithNote(err error, note string) error {
+	return &formattedError{msg: err.Error() + note, err: err}
+}
+
+// findOperation returns the first operation error in err's chain that match
+// accepts, looking inside each one errors.As finds: an STS or SSO call can
+// sit inside an EKS call that needed the credentials.
+func findOperation(err error, match func(*smithy.OperationError) bool) *smithy.OperationError {
+	for e := err; e != nil; {
+		var op *smithy.OperationError
+		if !errors.As(e, &op) {
+			return nil
+		}
+		if match(op) {
+			return op
+		}
+		e = op.Err
+	}
+	return nil
+}
+
+// isTransportFailure reports an error that never got an answer from AWS: a
+// DNS failure, a dial failure, or a timeout.
+func isTransportFailure(err error) bool {
+	var dns *net.DNSError
+	return errors.As(err, &dns) || common.IsDialFailure(err) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// isMissingRegion reports a call made with no region at all (not a region
+// whose endpoint does not resolve).
+func isMissingRegion(err error) bool {
+	var missing *aws.MissingRegionError
+	return errors.As(err, &missing) || containsAny(err.Error(), regionFallbackPatterns)
+}
+
+// isSSOEndpointNotFound reports an IAM Identity Center endpoint that does
+// not resolve: a wrong sso_region in the profile or sso-session.
+func isSSOEndpointNotFound(err error) bool {
+	var dns *net.DNSError
+	if !errors.As(err, &dns) || !dns.IsNotFound {
+		return false
+	}
+	h := strings.ToLower(dns.Name)
+	return strings.HasPrefix(h, "portal.sso.") || strings.HasPrefix(h, "oidc.")
+}
+
+func formatSSORegionError(err error) error {
+	return formatted(err, `the IAM Identity Center endpoint does not resolve
+Cause: %s
+
+Check the AWS config:
+  sso_region               the Region of your IAM Identity Center, in the profile or its sso-session`, Summary(err))
+}
+
+// isAssumeRole reports an error from an STS AssumeRole call: the credential
+// chain of a profile with role_arn.
+func isAssumeRole(err error) bool {
+	return findOperation(err, func(op *smithy.OperationError) bool {
+		return op.ServiceID == "STS" && strings.HasPrefix(op.OperationName, "AssumeRole")
+	}) != nil
+}
+
+func formatAssumeRoleError(err error) error {
+	return formatted(err, `cannot assume the role of the AWS profile
+AWS: %s
+
+Check:
+  the role's trust policy  it must let the source identity (source_profile or credential_source) assume it
+  the source identity      its policy must allow sts:AssumeRole on the role
+  role_arn                 the role ARN in the profile`, Summary(err))
+}
+
+// isSSORoleCall reports an error from IAM Identity Center's
+// GetRoleCredentials: an SSO profile's role lookup.
+func isSSORoleCall(err error) bool {
+	return findOperation(err, func(op *smithy.OperationError) bool {
+		return op.ServiceID == "SSO" && op.OperationName == "GetRoleCredentials"
+	}) != nil
+}
+
+func formatSSORoleError(err error) error {
+	return formatted(err, `IAM Identity Center gives this user no access to the profile's role
+AWS: %s
+
+Check the profile in the AWS config:
+  sso_account_id           the account the role is in
+  sso_role_name            a permission set assigned to you in that account; the AWS access portal lists yours`, Summary(err))
+}
+
+// IsSSONotLoggedIn reports an SSO profile with no usable login: no cached
+// token (never logged in, or logged in with another profile style), or an
+// expired one that could not be refreshed.
+func IsSSONotLoggedIn(err error) bool {
+	var tokenErr *ssocreds.InvalidTokenError
+	if errors.As(err, &tokenErr) {
+		return true
+	}
+	// A refresh that never reached IAM Identity Center (DNS, a dial, a
+	// timeout) or that it failed on its side is not an expired login: its
+	// own error says what to fix.
+	if isTransportFailure(err) {
+		return false
+	}
+	// A refresh IAM Identity Center refused (the session ended), or a role
+	// lookup with a token it no longer takes.
+	if op := findOperation(err, func(op *smithy.OperationError) bool {
+		return op.ServiceID == "SSO OIDC" && op.OperationName == "CreateToken"
+	}); op != nil {
+		var ae smithy.APIError
+		return errors.As(op, &ae) && ssoLoginRejections[ae.ErrorCode()]
+	}
+	var ae smithy.APIError
+	if errors.As(err, &ae) && ae.ErrorCode() == "UnauthorizedException" && isSSORoleCall(err) {
+		return true
+	}
+	// Each error in the chain: a formatted error's own text drops the SDK's.
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if containsAny(e.Error(), ssoLoginFallbackPatterns) {
+			return true
+		}
+	}
+	var pathErr *fs.PathError
+	return errors.As(err, &pathErr) && errors.Is(pathErr.Err, fs.ErrNotExist) &&
+		strings.Contains(filepath.ToSlash(pathErr.Path), "/.aws/sso/cache/")
+}
+
+// FormatSSONotLoggedIn says to log in to IAM Identity Center for profile
+// ("" when it is not known). err may already be formatted: the cause comes
+// from the SSO error inside it.
+func FormatSSONotLoggedIn(err error, profile string) error {
+	name := profile
+	if name == "" {
+		name = "<name>"
+	}
+	cause := "no SSO login is saved for this profile"
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		cause = "the SSO login expired and could not be renewed"
+	}
+	return &formattedError{msg: fmt.Sprintf(`not logged in to IAM Identity Center (SSO), or the login expired
+Cause: %s
+
+Log in, then run refresh again:
+  aws sso login --profile %s`, cause, name), err: err}
+}
+
+// isUnreadable403 reports an HTTP 403 whose body the SDK could not decode:
+// AWS refused the request, but the reply does not say whether the keys or a
+// permission is wrong. A wrong secret access key gets this from EKS.
+func isUnreadable403(err error) bool {
+	var de *smithy.DeserializationError
+	return httpStatus(err) == http.StatusForbidden && errors.As(err, &de)
+}
+
+func formatUnreadable403(err error, operation string) error {
+	return formatted(err, `AWS refused the request (HTTP 403) while %s, and its reply could not be read
+Cause: %s
+
+Check:
+  the secret access key    a wrong secret is refused this way; aws sts get-caller-identity tells
+  the permissions          refresh's IAM actions are listed at %s`, operation, Summary(err), PermissionsDocURL)
 }
 
 // FormatNoCredentials explains a credential chain that found nothing

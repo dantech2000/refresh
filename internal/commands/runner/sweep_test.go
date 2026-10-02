@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/mocks/fakeaws"
@@ -87,8 +89,13 @@ func TestNoRegionAnswered_KeepsOriginalCredentialError(t *testing.T) {
 					if !tc.target(got) {
 						t.Errorf("%s: errors.As does not find the original error type in %v", layout, got)
 					}
-					if n := strings.Count(got.Error(), help); n != 1 {
-						t.Errorf("%s: setup help appears %d times, want 1:\n%v", layout, n, got)
+					// An SSO login gets its own help: log in with the profile.
+					want := help
+					if name == "credential source error" {
+						want = "aws sso login --profile"
+					}
+					if n := strings.Count(got.Error(), want); n != 1 {
+						t.Errorf("%s: %q appears %d times, want 1:\n%v", layout, want, n, got)
 					}
 				}
 			})
@@ -123,6 +130,16 @@ func TestNoRegionAnswered(t *testing.T) {
 		{name: "unavailable, bad credentials", badCreds: true, failed: unavailable, wantErr: true, stsCalls: 1},
 		{name: "skipped, valid credentials", skipped: []string{"us-east-1"}, stsCalls: 1},
 		{name: "throttled only", badCreds: true, failed: throttled},
+		// A wrong secret gets an unreadable 403 from EKS, which reads as a
+		// permission denial; STS tells the keys are bad.
+		{name: "denied everywhere, bad credentials", badCreds: true, failed: []error{apiErr("AccessDeniedException")}, wantErr: true, stsCalls: 1},
+		{name: "denied everywhere, valid credentials", failed: []error{apiErr("AccessDeniedException")}, stsCalls: 1},
+		// What a wrong secret actually gets from EKS: a 403 the SDK cannot
+		// decode.
+		{name: "unreadable 403 everywhere, bad credentials", badCreds: true, failed: []error{&smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: &smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusForbidden}},
+			Err:      &smithy.DeserializationError{Err: errors.New("invalid character")},
+		}}}, wantErr: true, stsCalls: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := fakeaws.New(t)

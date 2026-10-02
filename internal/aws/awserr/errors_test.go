@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -341,5 +342,119 @@ func TestFormatAWSErrorNoCredentials(t *testing.T) {
 	msg := FormatNoCredentials(errors.New("x"), []string{"prod-admin", "dev"}).Error()
 	if !strings.Contains(msg, "SSO profiles in your AWS config:\n  prod-admin\n  dev") {
 		t.Fatalf("profiles not listed: %q", msg)
+	}
+}
+
+// The messages name what to fix: the role for a denied AssumeRole, the
+// region for a profile with none, the keys or permissions for an
+// unreadable 403, and AWS_ACCESS_KEY_ID when it hides AWS_PROFILE.
+func TestFormatAWSErrorLoginCases(t *testing.T) {
+	assume := &smithy.OperationError{ServiceID: "STS", OperationName: "AssumeRole",
+		Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "User: u is not authorized to perform: sts:AssumeRole"}}
+	if msg := FormatAWSError(fmt.Errorf("failed to refresh cached credentials, %w", assume), "loading AWS credentials").Error(); !strings.HasPrefix(msg, "cannot assume the role") || !strings.Contains(msg, "trust policy") {
+		t.Errorf("assume role denied: %q", msg)
+	}
+	other := &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "no"}}
+	if msg := FormatAWSError(other, "listing clusters").Error(); !strings.HasPrefix(msg, "insufficient AWS permissions") {
+		t.Errorf("EKS denial: %q", msg)
+	}
+
+	noRegion := errors.New("failed to refresh cached credentials, operation error STS: AssumeRole, failed to resolve service endpoint, endpoint rule error, Invalid Configuration: Missing Region")
+	if msg := FormatAWSError(noRegion, "loading AWS credentials").Error(); !strings.HasPrefix(msg, "AWS region configuration issue") {
+		t.Errorf("AssumeRole without a region: %q", msg)
+	}
+
+	unreadable := &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusForbidden}},
+		Err:      &smithy.DeserializationError{Err: errors.New("invalid character")},
+	}}
+	if msg := FormatAWSError(unreadable, "listing clusters").Error(); !strings.HasPrefix(msg, "AWS refused the request (HTTP 403)") || !strings.Contains(msg, "secret access key") {
+		t.Errorf("unreadable 403: %q", msg)
+	}
+}
+
+// The SSO login cases: no saved login, a login that cannot be renewed (both
+// profile styles), and a role the user has no access to.
+func TestFormatAWSErrorSSOCases(t *testing.T) {
+	missing := fmt.Errorf("failed to refresh cached credentials, failed to read cached SSO token file, %w",
+		&fs.PathError{Op: "open", Path: "/home/u/.aws/sso/cache/abc.json", Err: fs.ErrNotExist})
+	legacy := fmt.Errorf("failed to refresh cached credentials, %w", &ssocreds.InvalidTokenError{Err: errors.New("expired")})
+	expired := errors.New("failed to refresh cached credentials, refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed")
+	for name, err := range map[string]error{"missing": missing, "legacy": legacy, "expired": expired} {
+		if !IsSSONotLoggedIn(err) {
+			t.Errorf("%s: not classified as not logged in", name)
+		}
+		msg := FormatSSONotLoggedIn(err, "work").Error()
+		if !strings.Contains(msg, "aws sso login --profile work") {
+			t.Errorf("%s: %q", name, msg)
+		}
+	}
+	if !strings.Contains(FormatSSONotLoggedIn(missing, "").Error(), "no SSO login is saved") {
+		t.Error("a missing login reads as expired")
+	}
+	other := &fs.PathError{Op: "open", Path: "/etc/x", Err: fs.ErrNotExist}
+	if IsSSONotLoggedIn(other) {
+		t.Error("an unrelated missing file reads as an SSO login")
+	}
+
+	role := &smithy.OperationError{ServiceID: "SSO", OperationName: "GetRoleCredentials", Err: &smithy.GenericAPIError{Code: "ForbiddenException", Message: "No access"}}
+	if msg := FormatAWSError(role, "loading AWS credentials").Error(); !strings.HasPrefix(msg, "IAM Identity Center gives this user no access") || !strings.Contains(msg, "sso_role_name") {
+		t.Errorf("SSO role forbidden: %q", msg)
+	}
+}
+
+// The SSO cases a formatted error must still be recognized in: an expired
+// session (InvalidGrantException from the SSO OIDC refresh), and a role
+// lookup with a revoked token. A role or SSO call nested in an EKS call
+// keeps its own help.
+func TestFormatAWSErrorNestedLoginCases(t *testing.T) {
+	grant := fmt.Errorf("refresh cached SSO token failed, unable to refresh SSO token, %w", &smithy.OperationError{
+		ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: &smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"}})
+	formatted := FormatAWSError(grant, "loading AWS credentials")
+	if !IsSSONotLoggedIn(formatted) || !strings.Contains(formatted.Error(), "aws sso login --profile") {
+		t.Errorf("expired session: %q", formatted)
+	}
+	revoked := &smithy.OperationError{ServiceID: "SSO", OperationName: "GetRoleCredentials", Err: &smithy.GenericAPIError{Code: "UnauthorizedException", Message: "Session token not found or invalid"}}
+	if msg := FormatAWSError(revoked, "x").Error(); !strings.HasPrefix(msg, "not logged in to IAM Identity Center") {
+		t.Errorf("revoked token: %q", msg)
+	}
+	inEKS := &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: fmt.Errorf("get identity: %w", &smithy.OperationError{
+		ServiceID: "STS", OperationName: "AssumeRole", Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "not authorized to perform: sts:AssumeRole"}})}
+	if msg := FormatAWSError(inEKS, "listing clusters").Error(); !strings.HasPrefix(msg, "cannot assume the role") {
+		t.Errorf("AssumeRole inside EKS: %q", msg)
+	}
+	ssoDNS := fmt.Errorf("operation error SSO: GetRoleCredentials, %w", &net.DNSError{Name: "portal.sso.us-esat-1.amazonaws.com", Err: "no such host", IsNotFound: true})
+	if msg := FormatAWSError(ssoDNS, "x").Error(); !strings.HasPrefix(msg, "the IAM Identity Center endpoint does not resolve") || !strings.Contains(msg, "sso_region") {
+		t.Errorf("bad sso_region: %q", msg)
+	}
+	eksDNS := &net.DNSError{Name: "eks.us-esat-1.amazonaws.com", Err: "no such host", IsNotFound: true}
+	if msg := FormatAWSError(eksDNS, "x").Error(); !strings.HasPrefix(msg, "AWS region configuration issue") {
+		t.Errorf("bad region: %q", msg)
+	}
+}
+
+// A token refresh that never got an answer (DNS, timeout) or that IAM
+// Identity Center failed on its side is not an expired login; a wrong
+// sso_region gets its own help even when the token expired first.
+func TestSSORefreshFailuresAreNotExpiredLogins(t *testing.T) {
+	refresh := func(inner error) error {
+		return fmt.Errorf("refresh cached SSO token failed, unable to refresh SSO token, %w",
+			&smithy.OperationError{ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: inner})
+	}
+	dns := &net.DNSError{Name: "oidc.us-esat-1.amazonaws.com", Err: "no such host", IsNotFound: true}
+	for name, err := range map[string]error{
+		"bad sso_region": refresh(dns),
+		"timeout":        refresh(context.DeadlineExceeded),
+		"server error":   refresh(&smithy.GenericAPIError{Code: "InternalServerException", Message: "boom"}),
+	} {
+		if IsSSONotLoggedIn(err) {
+			t.Errorf("%s: classified as an expired login", name)
+		}
+	}
+	if msg := FormatAWSError(refresh(dns), "x").Error(); !strings.Contains(msg, "sso_region") {
+		t.Errorf("bad sso_region: %q", msg)
+	}
+	if !IsSSONotLoggedIn(refresh(&smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"})) {
+		t.Error("a rejected refresh is not an expired login")
 	}
 }

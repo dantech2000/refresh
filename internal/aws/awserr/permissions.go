@@ -21,7 +21,7 @@ const PermissionsDocURL = "https://drod.dev/refresh/concepts/configuration/#requ
 // API call in the code appears in it.
 var RequiredPermissions = []Permission{
 	{[]string{"sts:GetCallerIdentity"}, "Region sweeps in which no region answered (credential check)"},
-	{[]string{"eks:ListClusters"}, "`status`, `cluster list`, `nodegroup update --all-clusters`, partial cluster names"},
+	{[]string{"eks:ListClusters"}, "`status`, `cluster list`, `nodegroup update --all-clusters`, and every command that takes a cluster name (the name is matched against the list)"},
 	{[]string{"eks:DescribeCluster"}, "Every cluster command"},
 	{[]string{"eks:ListNodegroups", "eks:DescribeNodegroup"}, "`status`, `nodegroup *`, `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, health checks, the busy check of `addon update`"},
 	{[]string{"eks:ListAddons"}, "`status`, `addon *` (also to resolve a partial add-on name), `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, the busy check of `nodegroup update`/`scale`"},

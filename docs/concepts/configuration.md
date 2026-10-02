@@ -57,24 +57,9 @@ SSO session has expired, the command stops with the setup help. Keys that
 resolve but are revoked or expired fail on the first AWS call, with the same
 help.
 
-### After aws sso login
-
-`aws sso login --profile <name>` caches a login for that profile. It does not
-select the profile for other tools. Tell refresh to use it in one of these
-ways:
-
-```bash
-refresh --profile <name> status                 # one command
-export AWS_PROFILE=<name>                       # this shell
-refresh context add prod --profile <name> --cluster prod-eks --region us-east-1
-refresh use prod                                # saved with a cluster and region
-```
-
-Without a profile, keys, or an instance role, the SDK chain ends at the EC2
-instance metadata service, which the SDK gives a few seconds. refresh then
-stops with `no AWS credentials found`, the steps above, and the SSO profiles
-in your AWS config. On EC2 the same message also means a missing instance
-role or an unreachable metadata service.
+For each way of logging in (SSO, access keys, a role to assume,
+`credential_process`, an instance role) and what each login error means, see
+[Logging in to AWS](logging-in.md).
 
 ## Cluster resolution
 
@@ -383,7 +368,7 @@ the data incomplete.
 | Action | Used by |
 |---|---|
 | `sts:GetCallerIdentity` | Region sweeps in which no region answered (credential check) |
-| `eks:ListClusters` | `status`, `cluster list`, `nodegroup update --all-clusters`, partial cluster names |
+| `eks:ListClusters` | `status`, `cluster list`, `nodegroup update --all-clusters`, and every command that takes a cluster name (the name is matched against the list) |
 | `eks:DescribeCluster` | Every cluster command |
 | `eks:ListNodegroups`, `eks:DescribeNodegroup` | `status`, `nodegroup *`, `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, health checks, the busy check of `addon update` |
 | `eks:ListAddons` | `status`, `addon *` (also to resolve a partial add-on name), `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, the busy check of `nodegroup update`/`scale` |
