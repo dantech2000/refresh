@@ -527,3 +527,17 @@ func TestUpgradeNodegroups_OnlyLimitsThePhase(t *testing.T) {
 		t.Fatalf("rolls = %+v, want only nodegroup old", *rolls)
 	}
 }
+
+// A catch-up hop's lines say "on 1.36", not "1.36 → 1.36".
+func TestCatchUpStepLinesNameTheVersion(t *testing.T) {
+	p := Plan{Hops: []Hop{
+		{From: "1.36", To: "1.36", Steps: []Step{{Status: StatusManual, Description: "addon vpc-cni", Reason: "left out"}}},
+		{From: "1.35", To: "1.36", Steps: []Step{{Status: StatusBlocked, Description: "readiness", Reason: "x"}}},
+	}}
+	if got := p.ManualSteps(); len(got) != 1 || got[0] != "on 1.36: addon vpc-cni: left out" {
+		t.Errorf("ManualSteps = %q", got)
+	}
+	if got := p.Blockers(); len(got) != 1 || got[0] != "1.35 → 1.36: readiness: x" {
+		t.Errorf("Blockers = %q", got)
+	}
+}

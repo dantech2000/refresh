@@ -192,7 +192,7 @@ Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json
 			&cli.BoolFlag{Name: "all-clusters", Usage: "Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r."},
 			&cli.StringSliceFlag{Name: "region", Aliases: []string{"r"}, Usage: "Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS)"},
 			&cli.BoolFlag{Name: "force", Usage: "Force the roll: pass the PDB drain gate with a warning, and EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll"},
-			&cli.BoolFlag{Name: "reroll", Usage: "Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored"},
+			&cli.BoolFlag{Name: "reroll", Usage: "Roll nodegroups that are already on the latest AMI instead of skipping them. EKS can end an update to the release a nodegroup already runs without replacing any node; refresh warns before such a roll. PodDisruptionBudgets are honored"},
 			runner.DryRunFlag("Preview changes without executing them"),
 			&cli.BoolFlag{Name: "no-wait", Usage: "Don't wait for update completion (original behavior)"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "Minimal output mode (does not prompt: a run that needs a confirmation, such as warn-level health findings or a nodegroup pattern that is not an exact name, stops unless --yes is given)"},

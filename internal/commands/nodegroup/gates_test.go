@@ -335,3 +335,16 @@ func TestFleetUpdate_HealthVerdictExitCodes(t *testing.T) {
 		})
 	}
 }
+
+// A roll to the release the nodegroup already runs is warned about: EKS
+// can end it without replacing any node (seen on a real cluster).
+func TestUpdate_RerollOnLatestWarns(t *testing.T) {
+	fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31", AmiType: "AL2023_x86_64_STANDARD"}))
+	stdout, stderr, err := runNodegroup(t, "update", "prod", "web", "--reroll", "--yes", "--skip-health-check", "--poll-interval", "5ms")
+	if err != nil {
+		t.Fatalf("update: %v\nstderr:\n%s", err, stderr)
+	}
+	if out := stdout + stderr; !strings.Contains(out, "already runs the latest release (1.31.0-20260101)") {
+		t.Fatalf("no warning:\n%s", out)
+	}
+}

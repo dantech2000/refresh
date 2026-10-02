@@ -868,7 +868,7 @@ func (b *Backend) RunReadiness(ctx context.Context, key string) error {
 		case run.Warnings() > 0:
 			lvl, text = state.LevelWarn, fmt.Sprintf("readiness: %d warning(s)", run.Warnings())
 		}
-		b.emit(state.Event{Cluster: key, Source: state.SourceCheck, Level: lvl, Subject: run.From + " → " + run.To, Text: text})
+		b.emit(state.Event{Cluster: key, Source: state.SourceCheck, Level: lvl, Subject: state.VersionMove(run.From, run.To), Text: text})
 	}()
 	return nil
 }

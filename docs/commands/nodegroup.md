@@ -226,6 +226,16 @@ refresh nodegroup scale [cluster] -n <nodegroup> [flags]
     the outcome `Blocked` and the failed call in `failures`. `--dry-run`
     does not check.
 
+    A roll of another nodegroup can wait for capacity, for example when
+    the EC2 vCPU quota stops the surge nodes. The roll does not free
+    capacity itself, and `scale` refuses until the roll ends. EKS accepts
+    a scaling change on a different nodegroup during a roll, so the
+    refusal then prints that change as an AWS CLI command:
+
+    ```bash
+    aws eks update-nodegroup-config --cluster-name prod --nodegroup-name ng-a --scaling-config desiredSize=1 --region us-east-1
+    ```
+
 With `--wait`, `refresh` follows the EKS update that the scaling request
 starts. If the update fails or is cancelled, the command exits non-zero with
 the update's error details. When the update succeeds, `refresh` reads the
@@ -361,6 +371,13 @@ nodegroups that match. `--quiet` does not skip them.
     A nodegroup already on the latest AMI is skipped. To roll it anyway, pass
     `--reroll`. `--force` also rolls it, but EKS then evicts pods even when a
     PodDisruptionBudget blocks the drain.
+
+    EKS can end an update to the release a nodegroup already runs without
+    replacing any node: on a test cluster, the update ended `Successful`
+    after 15 seconds and the old node still served. Before such a roll,
+    `nodegroup update` warns that the nodegroup already runs the latest
+    release. To replace nodes on the same release, publish a new
+    launch-template version, or drain and terminate the nodes yourself.
 
 ### Fleet mode
 

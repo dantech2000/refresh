@@ -214,7 +214,7 @@ Exit-code contract: https://drod.dev/refresh/concepts/exit-codes/
 | `--all-clusters` | — | — | Fleet mode: roll matching nodegroups across all discovered clusters (serial). Scope with -r. |
 | `--region, -r string` | — | — | Region(s) for --all-clusters discovery (default: partition EKS regions / REFRESH_EKS_REGIONS) |
 | `--force` | — | — | Force the roll: pass the PDB drain gate with a warning, and EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use --reroll |
-| `--reroll` | — | — | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
+| `--reroll` | — | — | Roll nodegroups that are already on the latest AMI instead of skipping them. EKS can end an update to the release a nodegroup already runs without replacing any node; refresh warns before such a roll. PodDisruptionBudgets are honored |
 | `--dry-run, -d` | — | — | Preview changes without executing them |
 | `--no-wait` | — | — | Don't wait for update completion (original behavior) |
 | `--quiet, -q` | — | — | Minimal output mode (does not prompt: a run that needs a confirmation, such as warn-level health findings or a nodegroup pattern that is not an exact name, stops unless --yes is given) |

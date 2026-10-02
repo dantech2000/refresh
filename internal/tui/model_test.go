@@ -1296,6 +1296,29 @@ func TestPatchKeyRollsALaggingNodegroupToTheControlPlane(t *testing.T) {
 	}
 }
 
+// A catch-up (the control plane already on the target) is "on 1.36", not
+// "1.36 → 1.36"; one node is "1 node".
+func TestCatchUpAndCountTexts(t *testing.T) {
+	if got := readinessTitle("prod", "1.36", "1.36"); got != "Readiness · prod on 1.36" {
+		t.Errorf("readinessTitle = %q", got)
+	}
+	if got := readinessTitle("prod", "1.35", "1.36"); got != "Readiness · prod 1.35 → 1.36" {
+		t.Errorf("readinessTitle = %q", got)
+	}
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	got := ""
+	for _, l := range m.upgradeHeader(state.Upgrade{Cluster: "prod", From: "1.31", To: "1.31"}, 120) {
+		got += l.Plain()
+	}
+	if !strings.Contains(got, "Upgrade prod on 1.31") {
+		t.Errorf("header without a label = %q", got)
+	}
+	items := patchItems(state.Cluster{Version: "1.36", Nodegroups: []state.Nodegroup{{Name: "ng-b", Version: "1.35", Nodes: 1}}})
+	if len(items) != 1 || items[0].note != "1 node" {
+		t.Errorf("items = %+v", items)
+	}
+}
+
 // A dry run's long lines wrap inside the dialog: the follow-up command of a
 // notice and the CLI command stay readable to their last word.
 func TestDryRunDialogWrapsLongLines(t *testing.T) {
@@ -1445,5 +1468,36 @@ func TestWrapExactAndHeaderEdgeCases(t *testing.T) {
 				t.Fatalf("w=%d: header = %q", w, got)
 			}
 		}
+	}
+}
+
+// A long question or failure is read in full: an upgrade event wraps under
+// its text, and a failed run's Now card holds the whole reason.
+func TestUpgradeShowsLongReasonsInFull(t *testing.T) {
+	long := strings.Repeat("word ", 40) + "END"
+	lines := upgradeEventLines(state.Event{Source: state.SourceUpgrade, Subject: "question", Level: state.LevelWarn, Text: long, Detail: "y go on · n stop"}, 80)
+	got := ""
+	for _, l := range lines {
+		if l.Width() > 80 {
+			t.Fatalf("line %q is %d cells", l.Plain(), l.Width())
+		}
+		got += l.Plain() + "\n"
+	}
+	if len(lines) < 2 || !strings.Contains(got, "END") || !strings.Contains(got, "y go on · n stop") {
+		t.Fatalf("event:\n%s", got)
+	}
+
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	u := state.Upgrade{Cluster: "prod", From: "1.35", To: "1.36", StartedAt: start, EndedAt: start.Add(time.Minute), Failed: long}
+	got = ""
+	for _, l := range m.nowCard(u, 70) {
+		if l.Width() > 70 {
+			t.Fatalf("card line %q is %d cells", l.Plain(), l.Width())
+		}
+		got += l.Plain() + "\n"
+	}
+	if !strings.Contains(got, "END") || !strings.Contains(got, "failed · word") {
+		t.Fatalf("now card:\n%s", got)
 	}
 }

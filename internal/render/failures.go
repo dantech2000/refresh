@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/diag"
 )
 
@@ -38,8 +39,11 @@ func FailureText(f diag.Failure) string {
 	return b.String()
 }
 
-// FailureSection returns the INCOMPLETE DATA section of a human table view:
-// a blank line, the title, and one line per failure in diag.Sort order. It
+// FailureSection returns the failure sections of a human table view, each a
+// blank line, a title, and one line per failure in diag.Sort order: NOT
+// STARTED for a change AWS rejected (diag.Failure.NotStarted), with the IAM
+// action to grant when it was denied, INTERRUPTED for what Ctrl+C or
+// SIGTERM stopped, then INCOMPLETE DATA for the rest. It
 // returns nil when fs is empty. The table views list their failures here
 // instead of on stderr; fs is not changed.
 func (t *Theme) FailureSection(fs []diag.Failure) []string {
@@ -48,10 +52,43 @@ func (t *Theme) FailureSection(fs []diag.Failure) []string {
 	}
 	sorted := slices.Clone(fs)
 	diag.Sort(sorted)
-	out := make([]string, 0, len(sorted)+2)
-	out = append(out, "", t.Bold(t.Pal.Peach, "INCOMPLETE DATA"))
+	var changes, stopped, reads []diag.Failure
 	for _, f := range sorted {
-		out = append(out, t.Glyph(Unknown)+" "+t.Paint(t.Pal.Peach, FailureText(f)))
+		switch {
+		case f.NotStarted():
+			changes = append(changes, f)
+		case f.Reason == diag.ReasonInterrupted:
+			// The user stopped it: no data is missing.
+			stopped = append(stopped, f)
+		default:
+			reads = append(reads, f)
+		}
+	}
+	var out []string
+	if len(changes) > 0 {
+		out = append(out, "", t.Bold(t.Pal.Red, "NOT STARTED"))
+		var denied []string
+		for _, f := range changes {
+			out = append(out, t.Glyph(Fail)+" "+t.Paint(t.Pal.Red, FailureText(f)))
+			if f.Reason == diag.ReasonAccessDenied && !slices.Contains(denied, f.Operation) {
+				denied = append(denied, f.Operation)
+			}
+		}
+		for _, op := range denied {
+			out = append(out, "  "+t.Paint(t.Pal.Yellow, "Grant "+op+" to this identity; see "+awserr.PermissionsDocURL))
+		}
+	}
+	if len(stopped) > 0 {
+		out = append(out, "", t.Bold(t.Pal.Yellow, "INTERRUPTED"))
+		for _, f := range stopped {
+			out = append(out, t.Glyph(Warn)+" "+t.Paint(t.Pal.Yellow, FailureText(f)))
+		}
+	}
+	if len(reads) > 0 {
+		out = append(out, "", t.Bold(t.Pal.Peach, "INCOMPLETE DATA"))
+		for _, f := range reads {
+			out = append(out, t.Glyph(Unknown)+" "+t.Paint(t.Pal.Peach, FailureText(f)))
+		}
 	}
 	return out
 }

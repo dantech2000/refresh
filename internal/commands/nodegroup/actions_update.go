@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/urfave/cli/v3"
 	"k8s.io/client-go/kubernetes"
 
@@ -875,6 +876,12 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 	decide := ngSvc.AMIUpdateDecider(clusterName, nodegroupsvc.AMIUpdateOptions{Force: flags.force, Reroll: flags.reroll})
 	run := newUpdateRun(clusterName, region)
 	updates := make([]refreshTypes.UpdateProgress, 0, len(nodegroups))
+	// latestRelease is the newest recommended release for a nodegroup's
+	// version and AMI type ("" when unknown): EKS rolls to it.
+	ssmClient := factory.NewSSMClient(awsCfg)
+	latestRelease := func(ctx context.Context, ng *ekstypes.Nodegroup) string {
+		return awsinternal.LatestReleaseVersionForType(ctx, ssmClient, aws.ToString(ng.Version), ng.AmiType)
+	}
 
 	// Decide. A nodegroup to roll holds its place in run.nodegroups (in
 	// selection order) until the start below fills it in.
@@ -890,7 +897,8 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 			run.fail(ng, diag.OpDescribeNodegroup, err)
 			continue
 		}
-		switch decide(ctx, nodegroup).Action {
+		d := decide(ctx, nodegroup)
+		switch d.Action {
 		case refreshTypes.ActionSkipCustom:
 			// EKS doesn't manage the AMI (it lives in the user's launch
 			// template), so UpdateNodegroupVersion can't pick a recommended
@@ -907,6 +915,11 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 			flags.notice(render.Healthy, "Nodegroup %s is already on the latest AMI. Skipping (use --reroll to roll it anyway).", ng)
 			run.skip(ng, skipAlreadyLatest)
 			continue
+		}
+		if release := aws.ToString(nodegroup.ReleaseVersion); release != "" && release == latestRelease(ctx, nodegroup) {
+			// Seen on a real cluster: the update ended Successful in
+			// seconds and the old node still served.
+			flags.notice(render.Warn, "Nodegroup %s already runs the latest release (%s). EKS can end an update to the release a nodegroup runs without replacing any node.", ng, release)
 		}
 		slot[ng] = len(run.nodegroups)
 		run.nodegroups = append(run.nodegroups, nodegroupResult{Name: ng})
@@ -940,7 +953,8 @@ func startNodegroupUpdates(ctx context.Context, awsCfg aws.Config, clusterName, 
 		// keeps it from rolling the nodegroup again.
 		update, err := ngSvc.StartVersionUpdate(ctx, clusterName, ng, nodegroupsvc.VersionUpdateOptions{Force: flags.force})
 		if err != nil {
-			run.nodegroups[i] = run.failed(ng, diag.OpUpdateNodegroupVersion, err)
+			// The operation err is tagged with: the read or the update.
+			run.nodegroups[i] = run.failed(ng, "", err)
 			continue
 		}
 		if update == nil || update.Id == nil {

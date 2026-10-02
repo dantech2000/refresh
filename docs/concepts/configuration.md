@@ -334,6 +334,28 @@ it are **skipped** (with a diagnostic), not failed. The
 `nodegroup scale --check-pdbs` gate is the exception: it refuses the
 scale-down.
 
+### Access entries for the identity
+
+On a cluster that uses EKS access entries, the identity `refresh` runs as
+needs an access entry and an access policy for the Kubernetes reads:
+
+- Associate `AmazonEKSAdminViewPolicy` with cluster scope. It covers every
+  read `refresh` makes. `AmazonEKSViewPolicy` does not cover nodes, so
+  the live roll view and the node checks are refused.
+- For an IAM Identity Center (SSO) role, use the role's ARN with its path:
+  `arn:aws:iam::<account>:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_<permission set>_<id>`.
+  An entry for the ARN without the path does not match the role. The
+  ARN that `aws sts get-caller-identity` shows is the assumed-role ARN,
+  not the role ARN. To find the role ARN, run
+  `aws iam list-roles --path-prefix /aws-reserved/sso.amazonaws.com/`.
+
+```bash
+aws eks create-access-entry --cluster-name prod --principal-arn "$ROLE_ARN"
+aws eks associate-access-policy --cluster-name prod --principal-arn "$ROLE_ARN" \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy \
+  --access-scope type=cluster
+```
+
 ### Matching the kubeconfig to the target cluster
 
 refresh only runs Kubernetes checks against the cluster you target with

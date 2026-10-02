@@ -242,11 +242,22 @@ three come from the same list, so they always agree:
     list`, `addon list`) lists the same lines at the end of its output,
     under `INCOMPLETE DATA`, and does not repeat them on stderr. The table
     view of a mutating command (`nodegroup update`, `nodegroup scale`,
-    `addon update`, `cluster upgrade`) does the same.
+    `addon update`, `cluster upgrade`) does the same. A change that AWS
+    rejected (its `operation` is `eks:UpdateNodegroupVersion`,
+    `eks:UpdateNodegroupConfig`, `eks:UpdateAddon`, or
+    `eks:UpdateClusterVersion`, and its `reason` says AWS answered, such as
+    `AccessDenied` or `InvalidRequest`) is listed under `NOT STARTED`
+    instead. When AWS denied the call, the section names the IAM action to
+    grant. A change whose call got no clear answer (`NetworkError`,
+    `Timeout`, `ServiceError`) may have started, so it stays under
+    `INCOMPLETE DATA`. An item that Ctrl+C or SIGTERM stopped (`Interrupted`) is listed
+    under `INTERRUPTED`.
 - **The exit code.** A run with failures exits `4` (incomplete data), unless
   a code that wins over `4` also applies. Each command's order is in
   [Exit codes](exit-codes.md). The error message counts the failures by kind, for
-  example `incomplete data: 3 failure(s) (1 cluster, 2 nodegroups)`.
+  example `incomplete data: 3 failure(s) (1 cluster, 2 nodegroups)`. When
+  every failure is a change that could not start, it says so:
+  `2 update(s) could not start (2 addons)`.
 
 Failures are not findings. A stale AMI, a blocked upgrade, a health warning,
 or version skew is a finding: it stays in its own field and drives exit `2`,
