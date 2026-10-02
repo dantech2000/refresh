@@ -1513,3 +1513,48 @@ func TestCtrlLRedraws(t *testing.T) {
 		t.Fatalf("ctrl+l = %s, want %s", got, want)
 	}
 }
+
+// A finished sweep redraws the whole screen, so text another program wrote
+// over it goes away; not on the first state, and not more than once per
+// minRedraw.
+func TestSweepRedrawsTheScreen(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	clears := func(cmd tea.Cmd) bool {
+		if cmd == nil {
+			return false
+		}
+		want := fmt.Sprintf("%T", tea.ClearScreen())
+		msg := cmd()
+		if b, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range b {
+				if c != nil && fmt.Sprintf("%T", c()) == want {
+					return true
+				}
+			}
+			return false
+		}
+		return fmt.Sprintf("%T", msg) == want
+	}
+	at := time.Date(2026, 10, 2, 13, 0, 0, 0, time.UTC)
+	apply := func(id int, synced time.Time) bool {
+		next, cmd := m.applyState(stateMsg{id: id, st: state.State{SyncedAt: synced}})
+		m = next.(Model)
+		return clears(cmd)
+	}
+	if apply(1, at) {
+		t.Error("the first state redrew the screen")
+	}
+	if !apply(2, at.Add(time.Minute)) {
+		t.Error("a new sweep did not redraw the screen")
+	}
+	if apply(3, at.Add(2*time.Minute)) {
+		t.Error("a second sweep within minRedraw redrew again")
+	}
+	if apply(4, at.Add(2*time.Minute)) {
+		t.Error("a state without a new sweep redrew the screen")
+	}
+	m.redrawnAt = time.Now().Add(-minRedraw)
+	if !apply(5, at.Add(3*time.Minute)) {
+		t.Error("a sweep after minRedraw did not redraw")
+	}
+}

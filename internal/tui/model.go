@@ -48,6 +48,9 @@ const (
 type Model struct {
 	// journal keeps the session's events for an export (e).
 	journal *journal
+	// redrawnAt is when the screen was last redrawn in full after a sweep
+	// (see applyState); a wall-clock time.
+	redrawnAt time.Time
 	// noColor turns off color and the background (see Run).
 	noColor  bool
 	ctx      context.Context
@@ -265,6 +268,18 @@ func (m Model) applyState(msg stateMsg) (tea.Model, tea.Cmd) {
 	selName := m.cluster().Name
 	rollK, hasRoll := m.rollKey()
 	upK, hasUp := m.upgradeKey()
+	// Another program can write to the terminal (a real session showed a
+	// klog line from outside refresh), and the renderer only redraws the
+	// cells that change: such text would stay. A finished fleet sweep
+	// redraws the whole screen, at most once per minRedraw. With
+	// synchronized output (Ghostty, WezTerm, kitty, ...) the erase and the
+	// redraw are one frame, so nothing flashes. ctrl+l redraws at once.
+	if prev := m.st.SyncedAt; m.loaded && !prev.IsZero() && msg.st.SyncedAt.After(prev) {
+		if now := time.Now(); now.Sub(m.redrawnAt) >= minRedraw {
+			m.redrawnAt = now
+			next = tea.Batch(next, tea.ClearScreen)
+		}
+	}
 	m.st = msg.st
 	m.loaded = true
 	if m.journal != nil {
@@ -450,3 +465,6 @@ type pickItem struct {
 	// do, when set, runs instead of a dry run of action (an export).
 	do func(*Model) tea.Cmd
 }
+
+// minRedraw is the least time between two full redraws after sweeps.
+const minRedraw = 30 * time.Second
