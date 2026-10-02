@@ -1295,3 +1295,155 @@ func TestPatchKeyRollsALaggingNodegroupToTheControlPlane(t *testing.T) {
 		t.Fatalf("AMI item = %+v", items[1])
 	}
 }
+
+// A dry run's long lines wrap inside the dialog: the follow-up command of a
+// notice and the CLI command stay readable to their last word.
+func TestDryRunDialogWrapsLongLines(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 42})
+	m = next.(Model)
+	long := "refresh --profile prod-admin --region eu-west-1 cluster upgrade -c payments-prod --to 1.35 --only nodegroups --skip-nodegroup protected --kube-context prod-ctx"
+	m.confirm = &state.Plan{
+		Action:  state.Action{Kind: state.ActionUpgrade, Cluster: "payments-prod", Scope: state.ScopeNodegroups, Nodegroup: "ng-b"},
+		Title:   "Roll nodegroup · payments-prod/ng-b → 1.35",
+		Facts:   []state.Fact{{Key: "ng-b", Value: "roll to 1.35"}},
+		Gates:   []state.PlanGate{{Status: state.CheckWarn, Text: "nodegroup(s) ng-a stay on their version; roll them later: " + long}},
+		Command: long + " -n ng-b",
+	}
+	var txt strings.Builder
+	for _, l := range m.frame() {
+		txt.WriteString(l.Plain())
+		txt.WriteByte('\n')
+	}
+	out := txt.String()
+	if n := strings.Count(out, "prod-ctx"); n < 2 {
+		t.Fatalf("the command ends are cut (%d of 2 shown):\n%s", n, out)
+	}
+	if !strings.Contains(out, "Start roll and watch") {
+		t.Fatalf("a one-nodegroup roll says another start label:\n%s", out)
+	}
+	checkFrame(t, "wrapped dry run", m)
+}
+
+// A run limited to some parts names them in the Upgrade header; a catch-up
+// (the control plane does not move) says where it catches up to.
+func TestUpgradeHeaderNamesALimitedRun(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	for _, tc := range []struct {
+		u    state.Upgrade
+		want string
+	}{
+		{state.Upgrade{Cluster: "a", From: "1.34", To: "1.35"}, "Upgrade a 1.34 → 1.35"},
+		{state.Upgrade{Cluster: "a", From: "1.34", To: "1.35", Label: "Upgrade control plane"}, "Upgrade control plane · a 1.34 → 1.35"},
+		{state.Upgrade{Cluster: "a", From: "1.35", To: "1.35", Label: "Roll nodegroup ng-b"}, "Roll nodegroup ng-b · a on 1.35"},
+	} {
+		got := ""
+		for _, l := range m.upgradeHeader(tc.u, 160) {
+			got += l.Plain()
+		}
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("header = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// wrapExact keeps every character: spaces inside quoted values survive, and
+// the lines rejoin to the original text.
+func TestWrapExactKeepsQuotedSpaces(t *testing.T) {
+	cmd := "refresh cluster upgrade -c prod --kubeconfig '/tmp/prod  kubeconfig' --kube-context \"a  b\" --only nodegroups"
+	for _, w := range []int{12, 20, 40, 200} {
+		lines := wrapExact(cmd, w)
+		for _, l := range lines {
+			if width(l) > w {
+				t.Fatalf("w=%d: line %q is %d cells", w, l, width(l))
+			}
+		}
+		if got := strings.Join(lines, " "); got != cmd && w >= 30 {
+			t.Fatalf("w=%d: rejoined %q", w, got)
+		}
+		joined := strings.Join(lines, "")
+		if !strings.Contains(joined, "/tmp/prod  kubeconfig") && w >= 30 {
+			t.Fatalf("w=%d: the quoted spaces are lost: %q", w, lines)
+		}
+	}
+}
+
+// A long nodegroup label is cut, not the cluster or the run's status.
+func TestUpgradeHeaderCutsALongLabel(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	long := strings.Repeat("ng", 31) + "x"
+	u := state.Upgrade{Cluster: "prod-api", From: "1.35", To: "1.35", Label: "Roll nodegroup " + long, Failed: "the roll failed"}
+	got := ""
+	for _, l := range m.upgradeHeader(u, 100) {
+		got += l.Plain()
+	}
+	if !strings.Contains(got, "prod-api on 1.35") || !strings.Contains(got, "failed") {
+		t.Fatalf("header = %q", got)
+	}
+}
+
+// wrapExact keeps the quoting across a line split by cells, and knows a
+// backslash-escaped quote (as shellWord writes it) is not a quote.
+func TestWrapExactFollowsShellQuoting(t *testing.T) {
+	for _, tc := range []struct {
+		text, keep string
+		w          int
+	}{
+		{"x '" + strings.Repeat("a", 79) + "  b  c' y", "  b  c' y", 80},
+		{"refresh x --kube-context 'it'\\''s  a  b' --only nodegroups", "'it'\\''s  a  b'", 20},
+	} {
+		lines := wrapExact(tc.text, tc.w)
+		if got := strings.Join(lines, ""); !strings.Contains(got, tc.keep) {
+			t.Errorf("w=%d: lines %q lose %q", tc.w, lines, tc.keep)
+		}
+	}
+}
+
+// wrapExact measures graphemes, not runes: an emoji with a variation
+// selector is two cells.
+func TestWrapExactMeasuresGraphemes(t *testing.T) {
+	text := strings.Repeat("❤️", 60) + " and more text"
+	for _, l := range wrapExact(text, 80) {
+		if width(l) > 80 {
+			t.Fatalf("line %q is %d cells", l, width(l))
+		}
+	}
+}
+
+// The status stays on the header with a long cluster name and label.
+func TestUpgradeHeaderKeepsTheStatus(t *testing.T) {
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	u := state.Upgrade{Cluster: strings.Repeat("c", 60), From: "1.35", To: "1.35",
+		Label: "Roll nodegroup " + strings.Repeat("n", 60), Failed: "x"}
+	got := ""
+	for _, l := range m.upgradeHeader(u, 100) {
+		got += l.Plain()
+	}
+	if !strings.Contains(got, "failed") {
+		t.Fatalf("header = %q", got)
+	}
+}
+
+// A quote that shares a grapheme with a combining mark still opens the
+// quoted value; a heading cut right after the label's ellipsis has one.
+func TestWrapExactAndHeaderEdgeCases(t *testing.T) {
+	text := "x '́" + strings.Repeat("a", 70) + "  b  c' y"
+	if got := strings.Join(wrapExact(text, 76), ""); !strings.Contains(got, "  b  c'") {
+		t.Errorf("lines lose the quoted spaces: %q", got)
+	}
+	m := New(t.Context(), sim.New(sim.Options{}), time.Millisecond)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, cluster := range []string{strings.Repeat("c", 40), strings.Repeat("c", 45), strings.Repeat("c", 50)} {
+		u := state.Upgrade{Cluster: cluster, From: "1.35", To: "1.35", StartedAt: start, EndedAt: start.Add(time.Minute),
+			Label: "Roll nodegroup " + strings.Repeat("n", 60), Failed: "nodegroup roll failed: two nodes remain NotReady after 5m00s"}
+		for w := 90; w <= 110; w++ {
+			got := ""
+			for _, l := range m.upgradeHeader(u, w) {
+				got += l.Plain()
+			}
+			if strings.Contains(got, "……") {
+				t.Fatalf("w=%d: header = %q", w, got)
+			}
+		}
+	}
+}

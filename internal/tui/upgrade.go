@@ -28,34 +28,64 @@ func (m Model) upgradeHeader(u state.Upgrade, w int) Block {
 	if u.Rollback {
 		what = "Rollback"
 	}
-	title := Line{sp(1), bold(colMauve, heading(fmt.Sprintf("%s %s %s → %s", what, u.Cluster, u.From, u.To))), sp(2)}
 	cur := u.Current()
+	var status Line
 	switch {
 	case u.Failed != "":
-		title = append(title, tok(state.LevelError, "failed · "+u.Failed))
+		status = Line{tok(state.LevelError, "failed · "+u.Failed)}
 	case u.Stopped:
-		title = append(title, tok(state.LevelWarn, "stopped"))
+		status = Line{tok(state.LevelWarn, "stopped")}
 	case !u.Running():
-		title = append(title, tok(state.LevelOK, "done in "+dur(u.EndedAt.Sub(u.StartedAt))))
+		status = Line{tok(state.LevelOK, "done in "+dur(u.EndedAt.Sub(u.StartedAt)))}
 	case u.Paused && cur < 0:
-		title = append(title, fg(colYellow, "❚❚ paused"))
+		status = Line{fg(colYellow, "❚❚ paused")}
 	case cur >= 0:
-		title = append(title, tok(state.LevelProgress, fmt.Sprintf("phase %d/%d · %s", cur+1, len(u.Phases), strings.ToLower(u.Phases[cur].Name))))
+		status = Line{tok(state.LevelProgress, fmt.Sprintf("phase %d/%d · %s", cur+1, len(u.Phases), strings.ToLower(u.Phases[cur].Name)))}
 	}
 	elapsed := m.st.Now.Sub(u.StartedAt)
 	if !u.Running() {
 		elapsed = u.EndedAt.Sub(u.StartedAt)
 	}
+	var index Line
+	if len(m.st.Upgrades) > 1 {
+		index = Line{dimS(fmt.Sprintf("upgrade %d/%d · [ ]", m.upIdx+1, len(m.st.Upgrades))), sp(2)}
+	}
+	short := append(append(Line(nil), index...), sub("elapsed "), tx(dur(elapsed)), sp(1))
+	text := fmt.Sprintf("%s %s %s → %s", what, u.Cluster, u.From, u.To)
+	if u.Label != "" {
+		rest := fmt.Sprintf(" · %s %s → %s", u.Cluster, u.From, u.To)
+		if u.From == u.To {
+			// A catch-up: the control plane does not move.
+			rest = fmt.Sprintf(" · %s on %s", u.Cluster, u.To)
+		}
+		// A long label (a nodegroup name) is cut first, so the cluster and
+		// the run's status stay on the line: it gets what the rest of the
+		// title, the status, and the elapsed time leave.
+		fixed := 1 + width(heading(rest)) + 2 + status.Width() + 1 + short.Width()
+		label := u.Label
+		if limit := max(8, w-fixed); width(label) > limit {
+			label = Line{tx(label)}.Fit(limit).Plain()
+		}
+		text = label + rest
+	}
+	// A cluster name too long for the line is cut too, before the status.
+	head := heading(text)
+	if limit := max(8, w-(1+2+status.Width()+1+short.Width())); width(head) > limit {
+		// One ellipsis, when the cut falls right after the label's.
+		head = Line{tx(head)}.Fit(limit).Plain()
+		for strings.HasSuffix(head, "……") {
+			head = strings.TrimSuffix(head, "…")
+		}
+	}
+	title := append(Line{sp(1), bold(colMauve, head), sp(2)}, status...)
 	note := "safe to quit · a rerun resumes from live cluster state"
 	if u.StartedElsewhere {
 		note = "started elsewhere · watch only"
 	}
 	right := Line{sub("elapsed "), tx(dur(elapsed)), sp(2), dimS(note), sp(1)}
+	right = append(append(Line(nil), index...), right...)
 	if title.Width()+right.Width() > w {
-		right = Line{sub("elapsed "), tx(dur(elapsed)), sp(1)}
-	}
-	if len(m.st.Upgrades) > 1 {
-		right = append(Line{dimS(fmt.Sprintf("upgrade %d/%d · [ ]", m.upIdx+1, len(m.st.Upgrades))), sp(2)}, right...)
+		right = short
 	}
 	return Block{{}, joinRight(title, right, w), append(Line{sp(1)}, hrule(w-2)...)}
 }

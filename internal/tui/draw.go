@@ -279,6 +279,79 @@ func overlay(base, top Block, x, y int) Block {
 }
 
 // wrap breaks text into lines at most w cells wide, on spaces.
+// wrapExact breaks text into lines of at most w cells and keeps every
+// character as it is: it breaks only at a space outside single or double
+// quotes (dropping that one space), so a shell command keeps the spaces
+// inside its quoted values. A part with no such space is split by cells,
+// and the quoting carries over to the next line.
+func wrapExact(text string, w int) []string {
+	if w <= 0 {
+		return nil
+	}
+	var out []string
+	var q shellQuote
+	rest := text
+	for width(rest) > w {
+		cut, cells, scan := -1, 0, q
+		for i, st, r := 0, -1, rest; r != ""; {
+			var g string
+			g, r, _, st = uniseg.FirstGraphemeClusterInString(r, st)
+			if cells > w {
+				break
+			}
+			if g == " " && i > 0 && scan.outside() {
+				cut = i
+			}
+			scan.step(g)
+			cells += width(g)
+			i += len(g)
+		}
+		if cut <= 0 {
+			head, tail := splitCells(rest, w)
+			for st, r := -1, head; r != ""; {
+				var g string
+				g, r, _, st = uniseg.FirstGraphemeClusterInString(r, st)
+				q.step(g)
+			}
+			out = append(out, head)
+			rest = tail
+			continue
+		}
+		// A break is outside quotes, after an unescaped space.
+		q = shellQuote{}
+		out = append(out, rest[:cut])
+		rest = rest[cut+1:]
+	}
+	return append(out, rest)
+}
+
+// shellQuote follows POSIX shell quoting one grapheme at a time: a
+// backslash escapes the next character outside single quotes, and nothing
+// is special inside them.
+type shellQuote struct {
+	quote   rune
+	escaped bool
+}
+
+func (s shellQuote) outside() bool { return s.quote == 0 && !s.escaped }
+
+// step takes a grapheme rune by rune: a quote can share one with a
+// combining mark.
+func (s *shellQuote) step(g string) {
+	for _, r := range g {
+		switch {
+		case s.escaped:
+			s.escaped = false
+		case r == '\\' && s.quote != '\'':
+			s.escaped = true
+		case s.quote == 0 && (r == '\'' || r == '"'):
+			s.quote = r
+		case s.quote != 0 && r == s.quote:
+			s.quote = 0
+		}
+	}
+}
+
 func wrap(text string, w int) []string {
 	if w <= 0 {
 		return nil
