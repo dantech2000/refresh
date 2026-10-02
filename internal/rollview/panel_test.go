@@ -189,3 +189,21 @@ func TestRunRoll_AppendModeSkipsUnchangedFrames(t *testing.T) {
 type staticObserver struct{ snap noderoll.Snapshot }
 
 func (o *staticObserver) Snapshot(context.Context) (noderoll.Snapshot, error) { return o.snap, nil }
+
+// The panel shows the newest notes (such as a failed node launch) under
+// its progress line.
+func TestRollPanel_ShowsNewestNotes(t *testing.T) {
+	th := render.New(render.ColorNone, false)
+	notes := &Notes{}
+	for _, n := range []string{"first", "second", "third"} {
+		notes.Add(n)
+	}
+	m := rollMeta{Nodegroup: "ng", Desired: 1, Notes: notes}
+	joined := strings.Join(rollPanelLines(th, noderoll.Snapshot{Total: 1}, nil, m), "\n")
+	if strings.Contains(joined, "first") || !strings.Contains(joined, "second") || !strings.Contains(joined, "third") {
+		t.Fatalf("panel:\n%s", joined)
+	}
+	if (*Notes)(nil).Lines() != nil {
+		t.Error("nil notes have lines")
+	}
+}

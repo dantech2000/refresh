@@ -72,7 +72,7 @@ refresh context.
 |---|---|---|
 | `1` | Fleet | Every cluster: version, stale nodegroups and add-ons, and status. A card for the selected cluster, and a live event feed |
 | `2` | Cluster | Readiness for the next version (`r` runs `cluster upgrade-check`) |
-| `3` | Rolls | Each nodegroup roll: nodes draining, joining, and terminated, the pods left on a draining node, and Kubernetes events |
+| `3` | Rolls | Each nodegroup roll: nodes draining, joining, and terminated, the pods left on a draining node, Kubernetes events, and each node launch Auto Scaling failed (such as the EC2 vCPU quota) |
 | `4` | Upgrade | A cluster upgrade or rollback: its phases, the current step, and its timeline |
 
 `esc` goes back to the fleet. A change in flight keeps running. In a dialog

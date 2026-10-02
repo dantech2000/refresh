@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -41,6 +42,10 @@ type Nodegroup struct {
 	AmiType string
 	// FailUpdate makes UpdateNodegroupVersion fail with InvalidRequestException.
 	FailUpdate bool
+	// ScalingFailures, when not nil, gives the nodegroup an Auto Scaling
+	// group (eks-<name>-asg) whose DescribeScalingActivities answers one
+	// Failed activity per message, started now.
+	ScalingFailures []string
 	// UpdateError, when set, makes UpdateNodegroupVersion fail with that API
 	// error code (HTTP 403 for AccessDenied*, else 400), as AWS words a
 	// denied action.
@@ -417,6 +422,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serveSTS(w)
 	case "ssm":
 		s.serveSSM(w, r, body)
+	case "autoscaling":
+		s.serveAutoScaling(w, r, body)
 	case "eks":
 		if s.stsError != "" {
 			writeError(w, http.StatusForbidden, "UnrecognizedClientException", "The security token included in the request is invalid.")
@@ -470,6 +477,32 @@ func (s *Server) serveSSM(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 	_ = json.NewEncoder(w).Encode(map[string]any{"Parameter": map[string]any{"Name": in.Name, "Value": value, "Type": "String"}})
+}
+
+// serveAutoScaling answers DescribeScalingActivities for the groups of
+// nodegroups with ScalingFailures. Other Auto Scaling calls are not
+// modelled.
+func (s *Server) serveAutoScaling(w http.ResponseWriter, r *http.Request, body []byte) {
+	form, _ := url.ParseQuery(string(body))
+	if form.Get("Action") != "DescribeScalingActivities" {
+		unsupported(w, r, "autoscaling")
+		return
+	}
+	group := form.Get("AutoScalingGroupName")
+	var b strings.Builder
+	for _, c := range s.clusters {
+		for _, ng := range c.Nodegroups {
+			if "eks-"+ng.Name+"-asg" != group {
+				continue
+			}
+			for i, msg := range ng.ScalingFailures {
+				fmt.Fprintf(&b, `<member><ActivityId>%s-%d</ActivityId><AutoScalingGroupName>%s</AutoScalingGroupName><StartTime>%s</StartTime><StatusCode>Failed</StatusCode><StatusMessage>%s</StatusMessage><Cause>fake</Cause><Description>Launching a new EC2 instance</Description><Progress>100</Progress></member>`,
+					group, i, group, time.Now().UTC().Format(time.RFC3339), html.EscapeString(msg))
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	_, _ = fmt.Fprintf(w, `<DescribeScalingActivitiesResponse xmlns="http://autoscaling.amazonaws.com/doc/2011-01-01/"><DescribeScalingActivitiesResult><Activities>%s</Activities></DescribeScalingActivitiesResult><ResponseMetadata><RequestId>fake</RequestId></ResponseMetadata></DescribeScalingActivitiesResponse>`, b.String())
 }
 
 func (s *Server) serveSTS(w http.ResponseWriter) {
@@ -1074,7 +1107,7 @@ func nodegroupJSON(c *Cluster, ng *Nodegroup) map[string]any {
 	if amiType == "" {
 		amiType = "AL2_x86_64"
 	}
-	return map[string]any{
+	out := map[string]any{
 		"nodegroupName":  ng.Name,
 		"clusterName":    c.Name,
 		"version":        ng.Version,
@@ -1086,4 +1119,8 @@ func nodegroupJSON(c *Cluster, ng *Nodegroup) map[string]any {
 		"scalingConfig":  scalingJSON(ng),
 		"health":         map[string]any{"issues": []any{}},
 	}
+	if ng.ScalingFailures != nil {
+		out["resources"] = map[string]any{"autoScalingGroups": []any{map[string]any{"name": "eks-" + ng.Name + "-asg"}}}
+	}
+	return out
 }

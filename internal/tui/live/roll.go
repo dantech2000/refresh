@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -68,6 +69,9 @@ type rollServices struct {
 	findUpdate func(ctx context.Context, cfg aws.Config, cluster, nodegroup string) (*ekstypes.Update, error)
 	// waitCluster polls a cluster-level update until it ends.
 	waitCluster func(ctx context.Context, cfg aws.Config, cluster, updateID string) (ekstypes.UpdateStatus, string, error)
+	// scalingFailures reads the nodegroup's failed Auto Scaling activities
+	// since a time: a launch the vCPU quota refused, for one. nil skips.
+	scalingFailures func(ctx context.Context, cfg aws.Config, cluster, nodegroup string, since time.Time) ([]nodegroupsvc.ScalingFailure, error)
 }
 
 func defaultRollServices(opts Options) rollServices {
@@ -144,6 +148,9 @@ func defaultRollServices(opts Options) rollServices {
 		findUpdate: inProgressUpdate,
 		waitCluster: func(ctx context.Context, cfg aws.Config, cluster, updateID string) (ekstypes.UpdateStatus, string, error) {
 			return waitClusterUpdate(ctx, cfg, cluster, updateID, opts.PollInterval)
+		},
+		scalingFailures: func(ctx context.Context, cfg aws.Config, cluster, nodegroup string, since time.Time) ([]nodegroupsvc.ScalingFailure, error) {
+			return factory.NewNodegroupService(cfg, false, nil).ScalingFailures(ctx, cluster, nodegroup, since)
 		},
 	}
 }
@@ -501,6 +508,37 @@ func (b *Backend) keyOf(t target) string {
 	return t.name
 }
 
+// watchScaling puts each failed Auto Scaling activity of r's nodegroup in
+// its feed, from a minute before the roll began (clock skew), until the
+// returned stop is called; stop waits for the watch to end.
+func (b *Backend) watchScaling(ctx context.Context, r *liveRoll, cfg aws.Config, t target) (stop func()) {
+	if b.roll.scalingFailures == nil {
+		return func() {}
+	}
+	b.mu.Lock()
+	since, nodegroup := r.st.StartedAt, r.st.Nodegroup
+	b.mu.Unlock()
+	if since.IsZero() {
+		since = b.now()
+	}
+	since = since.Add(-time.Minute)
+	sctx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		nodegroupsvc.WatchScalingFailures(sctx, b.opts.PollInterval, func(ctx context.Context) ([]nodegroupsvc.ScalingFailure, error) {
+			return b.roll.scalingFailures(ctx, cfg, t.name, nodegroup, since)
+		}, func(f nodegroupsvc.ScalingFailure) {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			b.rollEvent(r, state.Event{Source: state.SourceAWS, Level: state.LevelError, Subject: "Auto Scaling", Text: "could not launch a node: " + f.Message})
+		})
+	})
+	return func() {
+		cancel()
+		wg.Wait()
+	}
+}
+
 // rollEvent records e in r's feed. The caller holds b.mu.
 func (b *Backend) rollEvent(r *liveRoll, e state.Event) {
 	e.Cluster = b.keyOf(r.t)
@@ -520,6 +558,10 @@ func (b *Backend) watchRoll(ctx context.Context, r *liveRoll, cfg aws.Config, t 
 		s, m, err := b.roll.waitUpdate(ctx, cfg, t.name, r.st.Nodegroup, updateID, b.opts.WaitTimeout)
 		done <- result{s, m, err}
 	}()
+	// A roll that waits on Auto Scaling is only "in progress" to EKS: put
+	// each failed node launch in the feed, until the watch ends.
+	stopScaling := b.watchScaling(ctx, r, cfg, t)
+	defer stopScaling()
 
 	var obs rollObserver
 	if kube != nil {

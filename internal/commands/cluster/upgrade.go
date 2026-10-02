@@ -268,12 +268,10 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	// NO_COLOR runs: there it would append a frame per tick and hold back
 	// the progress lines.
 	var ngObserver upgrade.RollObserver
+	reports := &rollReports{}
 	if !cmd.Bool("quiet") && !ui.PlainOutput() && rollview.Interactive(os.Stdout) {
 		if kube, _ := resolveReadinessKubeClient(ctx, factory.NewEKSClient(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), false); kube != nil {
-			poll := cmd.Duration("poll-interval")
-			ngObserver = func(octx context.Context, ng string) {
-				rollview.LiveRollForUpdate(octx, kube, ng, waitTimeout, poll)
-			}
+			ngObserver = reports.observer(kube, waitTimeout, cmd.Duration("poll-interval"))
 		}
 	}
 
@@ -283,6 +281,10 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	opts.PhaseStart = phaseStart(out, cmd.Bool("quiet"))
 	healthGate.confirm, healthGate.progress = opts.Confirm, progress
 	opts.NodegroupObserver = ngObserver
+	if !cmd.Bool("quiet") {
+		// A roll that waits for capacity is only "in progress" to EKS.
+		opts.ScalingWatch = reports.watch(awsCfg, clusterName, func(msg string) { progress("%s", render.Default(out).Token(render.Warn, msg)) })
+	}
 	report, err := svc.Execute(ctx, plan, opts)
 
 	renderReport(out, report)

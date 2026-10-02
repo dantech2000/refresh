@@ -27,6 +27,7 @@ const (
 	OpDescribeInstances              = "ec2:DescribeInstances"
 	OpDescribeLaunchTemplateVersions = "ec2:DescribeLaunchTemplateVersions"
 	OpDescribeAutoScalingGroups      = "autoscaling:DescribeAutoScalingGroups"
+	OpDescribeScalingActivities      = "autoscaling:DescribeScalingActivities"
 )
 
 // IsChange reports whether op is a call that changes the cluster (an

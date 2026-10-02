@@ -538,6 +538,15 @@ The top-level `failures` lists the plan's failures and the report's
 failure. Each is also named once: on stderr, or in the table view under
 `NOT STARTED` (a change AWS rejected) or `INCOMPLETE DATA`.
 
+!!! note "A roll that waits for capacity"
+    EKS reports a nodegroup roll that waits on Auto Scaling only as an
+    update in progress. During each roll, `cluster upgrade` and `cluster
+    rollback` read the Auto Scaling group's activities
+    (`autoscaling:DescribeScalingActivities`) and report each failed node
+    launch once, such as `VcpuLimitExceeded` when the EC2 vCPU quota is too
+    low for the surge nodes. The report goes in the live panel when it
+    draws, else on its own line. Without the permission, there is no report.
+
 !!! note "Kubernetes access for the live roll view"
     The nodegroup phase renders the same live per-node roll panel as
     [`nodegroup update`](nodegroup.md#update); see that page for the Kubernetes

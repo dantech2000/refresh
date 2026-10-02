@@ -1033,3 +1033,34 @@ func TestAResumedWatchKeepsTheVersionRoll(t *testing.T) {
 	rig.release <- ekstypes.UpdateStatusSuccessful
 	b.Close()
 }
+
+// A roll that waits on Auto Scaling says why in its feed: each failed node
+// launch once.
+func TestRollFeedShowsFailedNodeLaunches(t *testing.T) {
+	rig := newRollRig(t)
+	b := rig.b
+	b.opts.PollInterval = time.Millisecond
+	twice := make(chan struct{})
+	var calls atomic.Int32
+	b.roll.scalingFailures = func(context.Context, aws.Config, string, string, time.Time) ([]nodegroupsvc.ScalingFailure, error) {
+		if calls.Add(1) == 2 {
+			close(twice) // the first read's failure is in the feed
+		}
+		return []nodegroupsvc.ScalingFailure{{ID: "a1", Message: "VcpuLimitExceeded - You have requested more vCPU capacity"}}, nil
+	}
+	if _, err := b.Plan(t.Context(), roll); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Start(t.Context(), roll); err != nil {
+		t.Fatal(err)
+	}
+	<-twice
+	<-rig.atEnd
+	rig.release <- ekstypes.UpdateStatusSuccessful
+	b.Close()
+	st, _ := b.State(t.Context())
+	text := joinText(st.Rolls[0].Events)
+	if n := strings.Count(text, "could not launch a node: VcpuLimitExceeded"); n != 1 {
+		t.Fatalf("the failure is in the feed %d time(s), want once:\n%s", n, text)
+	}
+}

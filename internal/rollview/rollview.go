@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -93,6 +94,40 @@ type rollMeta struct {
 	OldAMI, NewAMI string
 	Desired        int
 	Frame          int // spinner tick, advanced by the driver
+	// Notes are problems found next to the panel, such as a node launch
+	// Auto Scaling failed; nil for none.
+	Notes *Notes
+}
+
+// Notes holds the problems a roll's watchers find while the panel draws
+// (see LiveRollForUpdate). It is safe for concurrent use; the zero value
+// is empty.
+type Notes struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+// maxNotes is how many notes the panel shows: the newest.
+const maxNotes = 2
+
+// Add records a note.
+func (n *Notes) Add(line string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.lines = append(n.lines, line)
+	if len(n.lines) > maxNotes {
+		n.lines = n.lines[len(n.lines)-maxNotes:]
+	}
+}
+
+// Lines returns the newest notes, oldest first.
+func (n *Notes) Lines() []string {
+	if n == nil {
+		return nil
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]string(nil), n.lines...)
 }
 
 var rollSpinner = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -154,8 +189,11 @@ func rollPanelLines(th *render.Theme, snap noderoll.Snapshot, events []noderoll.
 		th.Bar(replaced, m.Desired, rollProgressBarWidth, pal.Green) + "  " +
 			th.Paint(pal.White, fmt.Sprintf("%d/%d replaced", replaced, m.Desired)) +
 			th.Paint(pal.Dim, " · ") + th.Paint(pal.White, fmt.Sprintf("%d new ready", snap.ReadyTarget)),
-		"",
 	}
+	for _, note := range m.Notes.Lines() {
+		out = append(out, th.Token(render.Fail, note))
+	}
+	out = append(out, "")
 
 	tbl := th.NewTable(
 		ui.Column{Title: "", Min: 1},
@@ -339,7 +377,10 @@ func SimulatedRoll(ctx context.Context, nodegroup string) error {
 // error, so it cannot affect the update or its exit code — EKS DescribeUpdate
 // remains authoritative. Old-vs-new is determined by a
 // roll-start baseline (no need to know the target AMI ID up front).
-func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup string, timeout, pollInterval time.Duration) {
+//
+// notes, when not nil, are drawn under the progress line as the roll's
+// watchers add them.
+func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup string, timeout, pollInterval time.Duration, notes *Notes) {
 	if kube == nil {
 		return
 	}
@@ -368,7 +409,7 @@ func LiveRollForUpdate(ctx context.Context, kube kubernetes.Interface, nodegroup
 		defer cancel()
 	}
 
-	m := rollMeta{Nodegroup: nodegroup, OldAMI: "current AMI", NewAMI: "recommended AMI", Desired: desired}
+	m := rollMeta{Nodegroup: nodegroup, OldAMI: "current AMI", NewAMI: "recommended AMI", Desired: desired, Notes: notes}
 	fmt.Println()
 	_ = runRoll(rollCtx, th, os.Stdout, obs, m, poll, rollComplete(desired))
 }

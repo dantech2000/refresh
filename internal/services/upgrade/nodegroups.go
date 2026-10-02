@@ -32,6 +32,17 @@ type NodegroupGate func(ctx context.Context, nodegroupName string) error
 // progress only.
 type RollObserver func(ctx context.Context, nodegroupName string)
 
+// ScalingWatch reports a nodegroup's failed Auto Scaling activities while
+// the phase waits on its roll: a launch the EC2 vCPU quota refused, for
+// one. EKS reports such a roll only as in progress. The command supplies
+// it: Read is the AWS call, and Report decides where a failure is shown.
+type ScalingWatch struct {
+	// Read returns the nodegroup's failures since a time.
+	Read func(ctx context.Context, nodegroup string, since time.Time) ([]nodegroupsvc.ScalingFailure, error)
+	// Report is called once for each failure.
+	Report func(nodegroup string, f nodegroupsvc.ScalingFailure)
+}
+
 // NodegroupRollOptions tunes the nodegroup phase.
 type NodegroupRollOptions struct {
 	// SkipPatterns are substring patterns for nodegroups to leave alone.
@@ -49,6 +60,8 @@ type NodegroupRollOptions struct {
 	Gate NodegroupGate
 	// Observer, when set, renders a live per-node roll view during each roll.
 	Observer RollObserver
+	// ScalingWatch, when set, reports failed node launches during each roll.
+	ScalingWatch *ScalingWatch
 }
 
 // UpgradeNodegroups rolls every managed nodegroup to targetVersion, serially
@@ -99,7 +112,14 @@ func (s *Service) rollNodegroupsTo(ctx context.Context, clusterName, targetVersi
 		// failing the ACTIVE gate, then re-read the version.
 		if ng.Status == ekstypes.NodegroupStatusUpdating {
 			progress("nodegroup %s is UPDATING (in-flight roll from a previous run); attaching and waiting for it to settle", ng.Name)
-			version, err := s.waitForNodegroupSettled(ctx, clusterName, ng.Name, progress)
+			// The roll began before this run: its failed launches since
+			// an hour ago are the ones worth showing.
+			var version string
+			err := common.RunAlongside(ctx, s.scalingObserver(opts.ScalingWatch, ng.Name, time.Now().Add(-time.Hour)), func(ctx context.Context) error {
+				var err error
+				version, err = s.waitForNodegroupSettled(ctx, clusterName, ng.Name, progress)
+				return err
+			})
 			if err != nil {
 				return onItem(diag.KindNodegroup, ng.Name, diag.OpDescribeNodegroup, fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", ng.Name, err))
 			}
@@ -118,7 +138,7 @@ func (s *Service) rollNodegroupsTo(ctx context.Context, clusterName, targetVersi
 			}
 		}
 
-		if err := s.rollNodegroup(ctx, clusterName, ng.Name, targetVersion, opts.Force, opts.Observer, progress); err != nil {
+		if err := s.rollNodegroup(ctx, clusterName, ng.Name, targetVersion, opts.Force, opts.Observer, opts.ScalingWatch, progress); err != nil {
 			return err
 		}
 	}
@@ -137,7 +157,8 @@ func gateFailed(name string, err error) error {
 }
 
 // rollNodegroup starts and watches a single nodegroup version roll.
-func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName, targetVersion string, force bool, observer RollObserver, progress ProgressFunc) error {
+func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName, targetVersion string, force bool, observer RollObserver, watch *ScalingWatch, progress ProgressFunc) error {
+	since := time.Now().Add(-time.Minute) // clock skew
 	// The shared start pins one idempotency token across its retries, so a
 	// retried request can't submit a second update.
 	update, err := nodegroupsvc.StartNodegroupRoll(ctx, s.eksClient, clusterName, nodegroupName, targetVersion, force)
@@ -171,6 +192,18 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 			observer(octx, nodegroupName)
 		}
 	}
+	// The scaling watch runs next to the panel, and ends with the wait.
+	if scaling := s.scalingObserver(watch, nodegroupName, since); scaling != nil {
+		panel := observe
+		observe = func(octx context.Context) {
+			var wg sync.WaitGroup
+			wg.Go(func() { scaling(octx) })
+			if panel != nil {
+				panel(octx)
+			}
+			wg.Wait()
+		}
+	}
 	err = common.RunAlongside(ctx, observe, func(wctx context.Context) error {
 		if updateID == "" {
 			return nil
@@ -186,6 +219,23 @@ func (s *Service) rollNodegroup(ctx context.Context, clusterName, nodegroupName,
 	}
 	progress("nodegroup %s is at %s", nodegroupName, targetVersion)
 	return nil
+}
+
+// scalingObserver returns the watch of nodegroup's failed Auto Scaling
+// activities since a time, for common.RunAlongside; nil without a watch.
+func (s *Service) scalingObserver(watch *ScalingWatch, nodegroup string, since time.Time) func(context.Context) {
+	if watch == nil || watch.Read == nil || watch.Report == nil {
+		return nil
+	}
+	interval := s.PollInterval
+	if interval <= 0 {
+		interval = defaultPollInterval
+	}
+	return func(ctx context.Context) {
+		nodegroupsvc.WatchScalingFailures(ctx, interval, func(ctx context.Context) ([]nodegroupsvc.ScalingFailure, error) {
+			return watch.Read(ctx, nodegroup, since)
+		}, func(f nodegroupsvc.ScalingFailure) { watch.Report(nodegroup, f) })
+	}
 }
 
 // heldProgress buffers progress lines until release, then flushes them to out

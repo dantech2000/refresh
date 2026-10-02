@@ -47,6 +47,9 @@ type ExecuteOptions struct {
 	// NodegroupObserver, when set, renders a live per-node roll view during each
 	// nodegroup roll. Supplied by the command (view) layer; nil → text progress.
 	NodegroupObserver RollObserver
+	// ScalingWatch, when set, reports each nodegroup roll's failed node
+	// launches (see ScalingWatch).
+	ScalingWatch *ScalingWatch
 	// RollbackTimeout is the rollback's RollbackConfig.TimeoutMinutes
 	// (ExecuteRollback only). 0 leaves EKS's default (12h).
 	RollbackTimeout time.Duration
@@ -247,6 +250,7 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 					Force:        opts.Force,
 					Gate:         opts.NodegroupGate,
 					Observer:     opts.NodegroupObserver,
+					ScalingWatch: opts.ScalingWatch,
 				}, opts.Progress)
 			},
 		})
