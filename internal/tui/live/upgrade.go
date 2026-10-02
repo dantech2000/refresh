@@ -273,6 +273,7 @@ func (b *Backend) finishRun(ctx context.Context, u *liveUpgrade, report *upgrade
 		b.mu.Lock()
 		if cur := u.st.Current(); cur >= 0 {
 			u.st.Phases[cur].Status, u.st.Phases[cur].Progress, u.st.Phases[cur].EndedAt = state.PhaseDone, 1, b.now()
+			doneItems(&u.st.Phases[cur])
 		}
 		b.mu.Unlock()
 		b.endUpgrade(u, "", true)
@@ -352,6 +353,7 @@ func (b *Backend) upgradeGate(ctx context.Context, cfg aws.Config, u *liveUpgrad
 func (b *Backend) observeUpgradeRoll(octx context.Context, u *liveUpgrade, ng string) {
 	kube, _, how := b.roll.kubeFor(octx, b.cfgOf(u.t), u.t.name)
 	b.mu.Lock()
+	startItem(u, ng)
 	r := &liveRoll{t: u.t, tracker: noderoll.NewTracker(), warned: map[string]bool{}}
 	r.st = state.Roll{Nodegroup: ng, FromVersion: u.st.From, ToVersion: u.st.To, ToAMI: "latest for " + u.st.To,
 		StartedAt: b.now(), UpgradeOf: b.keyOf(u.t), MaxUnavailableText: "per update config"}
@@ -552,6 +554,26 @@ func poke(ch chan struct{}) {
 	select {
 	case ch <- struct{}{}:
 	default:
+	}
+}
+
+// startItem marks item name of u's running phase running, and the item
+// that ran before it done: the engine starts the next nodegroup only after
+// the last one succeeded. A real rollback showed finished nodegroups as
+// pending until the phase ended. The caller holds b.mu.
+func startItem(u *liveUpgrade, name string) {
+	cur := u.st.Current()
+	if cur < 0 {
+		return
+	}
+	items := u.st.Phases[cur].Items
+	for i := range items {
+		switch {
+		case items[i].Name == name:
+			items[i].Status = state.PhaseRunning
+		case items[i].Status == state.PhaseRunning:
+			items[i].Status, items[i].Progress = state.PhaseDone, 1
+		}
 	}
 }
 
