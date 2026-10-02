@@ -207,8 +207,11 @@ field is `-`.
 - **Other output:** while the UI runs, the standard error of `refresh` and
   of the programs it starts (such as a kubeconfig credential plugin) goes
   to `/dev/null` on macOS and Linux, so their messages cannot write over
-  the screen. If another program writes over it anyway, press `ctrl+l` to
-  redraw it.
+  the screen. Another program can still write to the same terminal. The UI
+  redraws the whole screen after each fleet sweep (at most every 30
+  seconds), which clears such text. In a terminal with synchronized output
+  (Ghostty, WezTerm, kitty, Alacritty, Windows Terminal), the redraw does
+  not flash. Press `ctrl+l` to redraw at once.
 
 ## Exit codes
 
