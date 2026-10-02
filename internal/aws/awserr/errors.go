@@ -12,10 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -58,6 +60,14 @@ var (
 		"failed to refresh cached credentials",
 		"failed to retrieve credentials",
 		"no ec2 imds role found",
+	}
+
+	// ssoLoginFallbackPatterns is the string fallback for an expired
+	// sso-session login: the SDK's SSO token provider returns plain fmt
+	// errors with these SDK-authored prefixes, and no typed error.
+	ssoLoginFallbackPatterns = []string{
+		"refresh cached sso token failed",
+		"unable to refresh sso token",
 	}
 
 	// regionFallbackPatterns is the string fallback for endpoint resolution
@@ -320,6 +330,8 @@ func FormatAWSError(err error, operation string) error {
 		switch {
 		case permissionErrorCodes[ae.ErrorCode()] && isAssumeRole(err):
 			return formatAssumeRoleError(err)
+		case isSSORoleCall(err) && (ae.ErrorCode() == "ForbiddenException" || ae.ErrorCode() == "UnauthorizedException"):
+			return formatSSORoleError(err)
 		case permissionErrorCodes[ae.ErrorCode()]:
 			return formatPermissionError(err, operation)
 		case credentialErrorCodes[ae.ErrorCode()]:
@@ -442,6 +454,58 @@ Check:
   the role's trust policy  it must let the source identity (source_profile or credential_source) assume it
   the source identity      its policy must allow sts:AssumeRole on the role
   role_arn                 the role ARN in the profile`, Summary(err))
+}
+
+// isSSORoleCall reports an error from IAM Identity Center's
+// GetRoleCredentials: an SSO profile's role lookup.
+func isSSORoleCall(err error) bool {
+	var op *smithy.OperationError
+	return errors.As(err, &op) && op.ServiceID == "SSO" && op.OperationName == "GetRoleCredentials"
+}
+
+func formatSSORoleError(err error) error {
+	return formatted(err, `IAM Identity Center gives this user no access to the profile's role
+AWS: %s
+
+Check the profile in the AWS config:
+  sso_account_id           the account the role is in
+  sso_role_name            a permission set assigned to you in that account; the AWS access portal lists yours`, Summary(err))
+}
+
+// IsSSONotLoggedIn reports an SSO profile with no usable login: no cached
+// token (never logged in, or logged in with another profile style), or an
+// expired one that could not be refreshed.
+func IsSSONotLoggedIn(err error) bool {
+	var tokenErr *ssocreds.InvalidTokenError
+	if errors.As(err, &tokenErr) {
+		return true
+	}
+	if containsAny(err.Error(), ssoLoginFallbackPatterns) {
+		return true
+	}
+	var pathErr *fs.PathError
+	return errors.As(err, &pathErr) && errors.Is(pathErr.Err, fs.ErrNotExist) &&
+		strings.Contains(filepath.ToSlash(pathErr.Path), "/.aws/sso/cache/")
+}
+
+// FormatSSONotLoggedIn says to log in to IAM Identity Center for profile
+// ("" when it is not known). err may already be formatted: the cause comes
+// from the SSO error inside it.
+func FormatSSONotLoggedIn(err error, profile string) error {
+	name := profile
+	if name == "" {
+		name = "<name>"
+	}
+	cause := "no SSO login is saved for this profile"
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		cause = "the SSO login expired and could not be renewed"
+	}
+	return &formattedError{msg: fmt.Sprintf(`not logged in to IAM Identity Center (SSO), or the login expired
+Cause: %s
+
+Log in, then run refresh again:
+  aws sso login --profile %s`, cause, name), err: err}
 }
 
 // isUnreadable403 reports an HTTP 403 whose body the SDK could not decode:

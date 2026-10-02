@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -380,5 +381,35 @@ func TestFormatAWSErrorLoginCases(t *testing.T) {
 	t.Setenv("AWS_PROFILE", "prod")
 	if msg := FormatAWSError(bad, "x").Error(); !strings.Contains(msg, "the SDK uses it before AWS_PROFILE") {
 		t.Errorf("no note on keys hiding AWS_PROFILE: %q", msg)
+	}
+}
+
+// The SSO login cases: no saved login, a login that cannot be renewed (both
+// profile styles), and a role the user has no access to.
+func TestFormatAWSErrorSSOCases(t *testing.T) {
+	missing := fmt.Errorf("failed to refresh cached credentials, failed to read cached SSO token file, %w",
+		&fs.PathError{Op: "open", Path: "/home/u/.aws/sso/cache/abc.json", Err: fs.ErrNotExist})
+	legacy := fmt.Errorf("failed to refresh cached credentials, %w", &ssocreds.InvalidTokenError{Err: errors.New("expired")})
+	expired := errors.New("failed to refresh cached credentials, refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed")
+	for name, err := range map[string]error{"missing": missing, "legacy": legacy, "expired": expired} {
+		if !IsSSONotLoggedIn(err) {
+			t.Errorf("%s: not classified as not logged in", name)
+		}
+		msg := FormatSSONotLoggedIn(err, "work").Error()
+		if !strings.Contains(msg, "aws sso login --profile work") {
+			t.Errorf("%s: %q", name, msg)
+		}
+	}
+	if !strings.Contains(FormatSSONotLoggedIn(missing, "").Error(), "no SSO login is saved") {
+		t.Error("a missing login reads as expired")
+	}
+	other := &fs.PathError{Op: "open", Path: "/etc/x", Err: fs.ErrNotExist}
+	if IsSSONotLoggedIn(other) {
+		t.Error("an unrelated missing file reads as an SSO login")
+	}
+
+	role := &smithy.OperationError{ServiceID: "SSO", OperationName: "GetRoleCredentials", Err: &smithy.GenericAPIError{Code: "ForbiddenException", Message: "No access"}}
+	if msg := FormatAWSError(role, "loading AWS credentials").Error(); !strings.HasPrefix(msg, "IAM Identity Center gives this user no access") || !strings.Contains(msg, "sso_role_name") {
+		t.Errorf("SSO role forbidden: %q", msg)
 	}
 }

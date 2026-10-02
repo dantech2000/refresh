@@ -34,8 +34,15 @@ environment, then the `[default]` profile, then the EC2 instance role.
 3. Run refresh with that profile: `refresh --profile <name> status`, or
    `export AWS_PROFILE=<name>`, or a context.
 
-When the login expires, refresh stops with the setup help. Run
-`aws sso login --profile <name>` again.
+A login lasts as long as the session your administrator set. With an
+`sso-session` profile, the AWS SDK renews an expired login by itself while
+the session's refresh token is still valid. When the login cannot be renewed,
+refresh stops and names the command to run: `aws sso login --profile
+<name>`.
+
+An older-style profile (with `sso_start_url` in the profile and no
+`sso_session`) saves its login apart from the `sso-session` profiles, even
+for the same portal. Log in with that profile itself.
 
 ## Access keys
 
@@ -78,7 +85,9 @@ needs a hop limit of 2 or more.
 |---|---|---|
 | `AWS profile "<name>" not found` | The profile is in neither `~/.aws/config` nor `~/.aws/credentials` | Check the name in the list the error shows, or create the profile |
 | `no AWS credentials found` | No profile, keys, or role gave credentials. Off EC2, this usually means no profile was chosen | Pick the profile with `--profile` or `AWS_PROFILE`. On EC2, check the instance role |
-| `AWS credentials not configured or invalid` | AWS refused the keys, or the SSO login expired | Log in again, or fix the keys. A note says when `AWS_ACCESS_KEY_ID` hides `AWS_PROFILE` |
+| `not logged in to IAM Identity Center (SSO), or the login expired` | The SSO profile has no saved login, or it expired and could not be renewed | Run the `aws sso login --profile <name>` the error shows |
+| `IAM Identity Center gives this user no access to the profile's role` | The profile's `sso_role_name` is not assigned to you in `sso_account_id` | Fix the profile; the AWS access portal lists your accounts and roles |
+| `AWS credentials not configured or invalid` | AWS refused the keys | Fix the keys. A note says when `AWS_ACCESS_KEY_ID` hides `AWS_PROFILE` |
 | `cannot assume the role of the AWS profile` | `sts:AssumeRole` was denied | Fix the role's trust policy, or the source identity's policy |
 | `AWS region configuration issue` | No region for the call, for example a role profile with no `region` | Add `region` to the profile, pass `-r`, or set `AWS_REGION` |
 | `AWS refused the request (HTTP 403) … could not be read` | A wrong secret access key, or a missing permission | Run `aws sts get-caller-identity` to tell which |

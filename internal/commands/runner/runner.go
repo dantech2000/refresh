@@ -24,6 +24,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/commands/clusterview"
 	"github.com/dantech2000/refresh/internal/commands/factory"
@@ -71,6 +72,11 @@ func setupAWS(ctx context.Context, cmd *cli.Command, timeout time.Duration, chec
 	}
 	if err := check(checkCtx, cfg); err != nil {
 		cancel()
+		if awserr.IsSSONotLoggedIn(err) {
+			// Name the profile to log in with: the check only has the config.
+			profile, _, _ := awsconfig.EffectiveProfile(cmd)
+			err = fmt.Errorf("AWS credential validation failed: %w", awserr.FormatSSONotLoggedIn(err, profile))
+		}
 		return nil, nil, aws.Config{}, err
 	}
 	return ctx, cancel, cfg, nil
