@@ -18,7 +18,7 @@ func TestDetachStdioSilencesDescriptorTwo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	real, err := unix.Dup(2)
 	if err != nil {
 		t.Fatal(err)
