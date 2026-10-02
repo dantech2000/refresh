@@ -27,4 +27,5 @@ const (
 	OpDescribeInstances              = "ec2:DescribeInstances"
 	OpDescribeLaunchTemplateVersions = "ec2:DescribeLaunchTemplateVersions"
 	OpDescribeAutoScalingGroups      = "autoscaling:DescribeAutoScalingGroups"
+	OpDescribeScalingActivities      = "autoscaling:DescribeScalingActivities"
 )

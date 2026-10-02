@@ -272,7 +272,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		if kube, _ := resolveReadinessKubeClient(ctx, factory.NewEKSClient(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), false); kube != nil {
 			poll := cmd.Duration("poll-interval")
 			ngObserver = func(octx context.Context, ng string) {
-				rollview.LiveRollForUpdate(octx, kube, ng, waitTimeout, poll)
+				rollview.LiveRollForUpdate(octx, kube, ng, waitTimeout, poll, nil)
 			}
 		}
 	}

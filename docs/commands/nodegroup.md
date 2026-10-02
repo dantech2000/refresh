@@ -442,6 +442,16 @@ nothing was gathered.
     the panel there too, as a snapshot at most every 15s and only when
     something changed.
 
+!!! note "A roll that waits for capacity"
+    EKS reports a roll that waits on Auto Scaling only as an update in
+    progress. While it watches a roll, `refresh` reads the Auto Scaling
+    group's activities (`autoscaling:DescribeScalingActivities`) every
+    `--poll-interval`. It reports each failed node launch once, for example
+    `Auto Scaling could not launch a node for ng-a: ... VcpuLimitExceeded
+    ...` when the EC2 vCPU quota is too low for the surge nodes. The report
+    goes in the live panel when it draws, else on its own line. Without the
+    permission, there is no report and the roll goes on.
+
 ### JSON document
 
 With `-o json` or `-o yaml`, a run prints one document. `nodegroups` has one

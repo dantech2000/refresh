@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,6 +20,7 @@ import (
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/dryrun"
 	"github.com/dantech2000/refresh/internal/health"
@@ -355,6 +358,9 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 	// client is resolved quietly by default; --live makes the fallback reason
 	// explicit when the cluster can't be reached. (REF-126)
 	var livePanel func(context.Context)
+	notes := &rollview.Notes{}
+	// panelOn is set while the panel draws: the notes are seen then only.
+	var panelOn atomic.Bool
 	if showLivePanel(len(updates), quiet, flags.live, render.DetectLevel(os.Stdout) != render.ColorNone) {
 		kube := verifyClient
 		if kube == nil {
@@ -363,21 +369,39 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		if kube != nil {
 			ng := updates[0].NodegroupName
 			livePanel = func(pctx context.Context) {
-				rollview.LiveRollForUpdate(pctx, kube, ng, flags.timeout, flags.pollInterval)
+				panelOn.Store(true)
+				defer panelOn.Store(false)
+				rollview.LiveRollForUpdate(pctx, kube, ng, flags.timeout, flags.pollInterval, notes)
 			}
 		}
 	}
 
 	var monErr error
 	heldBack := false
-	if livePanel == nil {
-		monErr = monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
-	} else {
-		heldBack, monErr = monitorAlongsidePanel(ctx, livePanel, flags.timeout, func(mctx context.Context, q bool) error {
-			config.Quiet = q
-			return monitoring.MonitorUpdates(mctx, eksClient, monitor, config)
+	// A roll that waits on Auto Scaling (a launch the EC2 vCPU quota
+	// refuses) is only "in progress" to EKS: say why, in the panel when it
+	// draws, else on a line of its own. Human output only.
+	var watchScaling func(context.Context)
+	if !quiet {
+		watchScaling = scalingWatcher(awsCfg, clusterName, updates, flags.pollInterval, func(msg string) {
+			if panelOn.Load() {
+				notes.Add(msg)
+				return
+			}
+			render.Notef(os.Stdout, render.Warn, "%s", msg)
 		})
 	}
+	_ = common.RunAlongside(ctx, watchScaling, func(ctx context.Context) error {
+		if livePanel == nil {
+			monErr = monitoring.MonitorUpdates(ctx, eksClient, monitor, config)
+		} else {
+			heldBack, monErr = monitorAlongsidePanel(ctx, livePanel, flags.timeout, func(mctx context.Context, q bool) error {
+				config.Quiet = q
+				return monitoring.MonitorUpdates(mctx, eksClient, monitor, config)
+			})
+		}
+		return nil
+	})
 	if heldBack {
 		// The panel has stopped: print what the quiet monitor held back.
 		config.Quiet = false
@@ -976,4 +1000,25 @@ func updateClusterAndNodegroupPatterns(cmd *cli.Command) (string, string) {
 		nodegroupPattern = args[0]
 	}
 	return env, nodegroupPattern
+}
+
+// scalingWatcher watches the Auto Scaling groups of each started update for
+// failed node launches, and reports each new one with report. It reads
+// every interval, from a minute before the update started (clock skew).
+func scalingWatcher(awsCfg aws.Config, clusterName string, updates []refreshTypes.UpdateProgress, interval time.Duration, report func(string)) func(context.Context) {
+	svc := factory.NewNodegroupService(awsCfg, false, nil)
+	return func(ctx context.Context) {
+		var wg sync.WaitGroup
+		for _, u := range updates {
+			since := u.StartTime.Add(-time.Minute)
+			wg.Go(func() {
+				nodegroupsvc.WatchScalingFailures(ctx, interval, func(ctx context.Context) ([]nodegroupsvc.ScalingFailure, error) {
+					return svc.ScalingFailures(ctx, clusterName, u.NodegroupName, since)
+				}, func(f nodegroupsvc.ScalingFailure) {
+					report(fmt.Sprintf("Auto Scaling could not launch a node for %s: %s", u.NodegroupName, f.Message))
+				})
+			})
+		}
+		wg.Wait()
+	}
 }

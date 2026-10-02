@@ -47,12 +47,12 @@ func captureStdout(t *testing.T, fn func()) string {
 func TestLiveRollForUpdate_DegradesAndBounds(t *testing.T) {
 	_ = captureStdout(t, func() {
 		// nil client → immediate, no panic.
-		LiveRollForUpdate(context.Background(), nil, "ng", time.Second, time.Second)
+		LiveRollForUpdate(context.Background(), nil, "ng", time.Second, time.Second, nil)
 
 		// A fake cluster whose old node never gets replaced → bounded by timeout.
 		client := fake.NewClientset(kn("ip-1", true, false))
 		start := time.Now()
-		LiveRollForUpdate(context.Background(), client, "spot-burst", 40*time.Millisecond, 10*time.Millisecond)
+		LiveRollForUpdate(context.Background(), client, "spot-burst", 40*time.Millisecond, 10*time.Millisecond, nil)
 		if elapsed := time.Since(start); elapsed > 5*time.Second {
 			t.Fatalf("LiveRollForUpdate did not respect timeout bound: %v", elapsed)
 		}
@@ -72,7 +72,7 @@ func TestLiveRollForUpdate_StopsWhenUpdateFails(t *testing.T) {
 	out := captureStdoutNotify(t, "rolling spot-burst", func(painted <-chan struct{}) {
 		start := time.Now()
 		err = common.RunAlongside(context.Background(), func(ctx context.Context) {
-			LiveRollForUpdate(ctx, client, "spot-burst", time.Hour, 10*time.Millisecond)
+			LiveRollForUpdate(ctx, client, "spot-burst", time.Hour, 10*time.Millisecond, nil)
 		}, func(context.Context) error {
 			// Fail the update only once the panel is on screen, so the test
 			// never depends on how fast the panel paints.

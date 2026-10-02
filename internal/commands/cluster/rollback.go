@@ -202,7 +202,7 @@ func runRollback(ctx context.Context, cmd *cli.Command) (err error) {
 	if !cmd.Bool("quiet") && rollview.Interactive(out) {
 		if kube, _ := resolveReadinessKubeClient(ctx, factory.NewEKSClient(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), false); kube != nil {
 			opts.NodegroupObserver = func(octx context.Context, ng string) {
-				rollview.LiveRollForUpdate(octx, kube, ng, waitTimeout, pollInterval)
+				rollview.LiveRollForUpdate(octx, kube, ng, waitTimeout, pollInterval, nil)
 			}
 		}
 	}
