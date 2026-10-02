@@ -107,6 +107,7 @@ nodegroup picker), only the dialog's own keys work.
 | `tab` `←` `→` | Rolls, Upgrade | Switch the log source of a live pane |
 | `[` `]` | Rolls, Upgrade | Page through rolls or upgrades |
 | `ctrl+r` | Any | Sweep the fleet now |
+| `ctrl+l` | Any | Redraw the whole screen |
 | `q` | Any | Quit (in a dialog, close it; a dry run cannot close while its change is starting). Changes in flight keep running in EKS |
 
 ## Read-only and allowing changes
@@ -203,6 +204,11 @@ field is `-`.
   status marks and the selection marker work without color.
 - **Platforms:** tested on macOS and Linux (including tmux). Windows is not
   tested.
+- **Other output:** while the UI runs, the standard error of `refresh` and
+  of the programs it starts (such as a kubeconfig credential plugin) goes
+  to `/dev/null` on macOS and Linux, so their messages cannot write over
+  the screen. If another program writes over it anyway, press `ctrl+l` to
+  redraw it.
 
 ## Exit codes
 
