@@ -197,10 +197,7 @@ func TestFailureContract(t *testing.T) {
 					// not start goes under NOT STARTED.
 					text := strings.TrimPrefix(tc.stderr, "warning: ")
 					out := ui.StripANSI(stdout)
-					section := "INCOMPLETE DATA"
-					if op, _ := tc.failure["operation"].(string); diag.IsChange(op) {
-						section = "NOT STARTED"
-					}
+					section := tableSection(tc)
 					if !strings.Contains(out, section) || strings.Count(out, text) != 1 || strings.Contains(stderr, tc.stderr) {
 						t.Errorf("the table view does not list the failure once under %s:\n  %s\nstdout:\n%s\nstderr:\n%s", section, text, out, stderr)
 					}
@@ -285,4 +282,13 @@ func cloneWorld(world []*fakeaws.Cluster) []*fakeaws.Cluster {
 		out = append(out, &cc)
 	}
 	return out
+}
+
+// tableSection is the table view's section that lists tc's failure: NOT
+// STARTED for a change that could not start, else INCOMPLETE DATA.
+func tableSection(tc contractCase) string {
+	if op, _ := tc.failure["operation"].(string); diag.IsChange(op) {
+		return "NOT STARTED"
+	}
+	return "INCOMPLETE DATA"
 }
