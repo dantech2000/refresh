@@ -153,7 +153,7 @@ func TestStartVersionUpdate_DescribeFailureStartsNothing(t *testing.T) {
 // The error names the call that failed: the read of the nodegroup or the
 // update, so a denial names the action to grant.
 func TestStartVersionUpdate_TagsTheFailedCall(t *testing.T) {
-	denied := func() error { return mocks.AccessDenied() }
+	denied := mocks.AccessDenied
 	read := &mocks.EKSAPI{DescribeNodegroupFn: func(context.Context, *eks.DescribeNodegroupInput, ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
 		return nil, denied()
 	}}
