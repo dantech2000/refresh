@@ -208,13 +208,19 @@ func TestScale_BusyHintNamesTheProfile(t *testing.T) {
 		&fakeaws.Nodegroup{Name: "ng-b", Version: "1.31", Status: "UPDATING"},
 	))
 	cfg := filepath.Join(t.TempDir(), "config")
-	if err := os.WriteFile(cfg, []byte("[profile team prod]\nregion = us-east-1\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfg, []byte("[profile team prod]\nregion = us-east-1\naws_access_key_id = AKIDTEST\naws_secret_access_key = test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AWS_CONFIG_FILE", cfg)
-	t.Setenv("AWS_PROFILE", "team prod")
-	_, _, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2")
-	if err == nil || !strings.Contains(err.Error(), "--profile 'team prod'") {
+	_, _, err := fakeaws.Run(t, fakeaws.App(Command()), "refresh", "--profile", "team prod", "nodegroup", "scale", "prod", "ng-a", "--desired", "2")
+	if err == nil || !strings.Contains(err.Error(), "--profile='team prod'") {
 		t.Fatalf("error = %v, want the profile", err)
+	}
+	// AWS_PROFILE is left to the environment, where exported keys win for
+	// refresh and the AWS CLI alike.
+	t.Setenv("AWS_PROFILE", "team prod")
+	_, _, err = runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2")
+	if err == nil || strings.Contains(err.Error(), "--profile") || !strings.Contains(err.Error(), "update-nodegroup-config") {
+		t.Fatalf("AWS_PROFILE: error = %v, want the hint without --profile", err)
 	}
 }

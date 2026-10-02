@@ -201,10 +201,12 @@ func (r *scaleRun) rollingHint(changes []string) string {
 	if r.region != "" {
 		command += " --region " + common.ShellQuote(r.region)
 	}
-	// The profile refresh used (a flag, a context, or AWS_PROFILE), so the
-	// command runs in the same account.
-	if profile, _, err := awsconfig.EffectiveProfile(r.cmd); err == nil && profile != "" {
-		command += " --profile " + common.ShellQuote(profile)
+	// The profile refresh was told to use (--profile or a context), so the
+	// command runs in the same account. A profile from AWS_PROFILE is left
+	// to the environment: there, as for refresh, exported access keys win.
+	// "--profile=" keeps a name that starts with "-" a value.
+	if profile, explicit, err := awsconfig.EffectiveProfile(r.cmd); err == nil && explicit && profile != "" {
+		command += " --profile=" + common.ShellQuote(profile)
 	}
 	return "If the roll waits for capacity, scale this nodegroup outside refresh (EKS allows it during a roll):\n  " + command
 }
