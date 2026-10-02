@@ -210,8 +210,10 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		Preview:    cmd.Bool("dry-run"),
 		Only:       only,
 		Nodegroups: cmd.StringSlice("nodegroup"),
-		// The commands the plan names reach the same account and region.
+		// The commands the plan names reach the same account and region,
+		// and keep the Kubernetes access of this run.
 		CommandPrefix: commandPrefix(cmd),
+		CommandSuffix: kubeFlags(cmd),
 	}
 	healthGate := newNodegroupHealthGate(cmd, awsCfg, clusterName)
 
@@ -365,10 +367,8 @@ func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) str
 			parts = append(parts, "--"+name, shellQuote(v))
 		}
 	}
-	for _, name := range []string{"kubeconfig", "kube-context"} {
-		if v := strings.TrimSpace(cmd.String(name)); v != "" {
-			parts = append(parts, "--"+name, shellQuote(v))
-		}
+	if k := kubeFlags(cmd); k != "" {
+		parts = append(parts, k)
 	}
 	// A wait timeout the user chose (also through the deprecated local
 	// --timeout) carries over as --wait-timeout.
@@ -405,6 +405,18 @@ func commandPrefix(cmd *cli.Command) string {
 			if v := strings.TrimSpace(cmd.String(name)); v != "" {
 				parts = append(parts, "--"+name, shellQuote(v))
 			}
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// kubeFlags is the --kubeconfig and --kube-context the user set, for a
+// command refresh prints for later.
+func kubeFlags(cmd *cli.Command) string {
+	var parts []string
+	for _, name := range []string{"kubeconfig", "kube-context"} {
+		if v := strings.TrimSpace(cmd.String(name)); v != "" {
+			parts = append(parts, "--"+name, shellQuote(v))
 		}
 	}
 	return strings.Join(parts, " ")

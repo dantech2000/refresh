@@ -876,11 +876,24 @@ func (b *Backend) RunReadiness(ctx context.Context, key string) error {
 // upgradeOptions are the planner's --only and --nodegroup for a, and the
 // command prefix (profile and region) of the commands its notices name.
 func (b *Backend) upgradeOptions(a state.Action, t target) upgrade.PlanOptions {
-	o := upgrade.PlanOptions{Only: scopeParts(a.Scope), CommandPrefix: strings.TrimSpace(b.cliCommand(regionFlag(t)))}
+	o := upgrade.PlanOptions{Only: scopeParts(a.Scope), CommandPrefix: strings.TrimSpace(b.cliCommand(regionFlag(t))), CommandSuffix: b.kubeFlags()}
 	if a.Nodegroup != "" {
 		o.Nodegroups = []string{a.Nodegroup}
 	}
 	return o
+}
+
+// kubeFlags is the UI's --kubeconfig and --kube-context, for the commands
+// a plan names.
+func (b *Backend) kubeFlags() string {
+	var parts []string
+	if b.opts.Kubeconfig != "" {
+		parts = append(parts, "--kubeconfig "+shellWord(b.opts.Kubeconfig))
+	}
+	if b.opts.KubeContext != "" {
+		parts = append(parts, "--kube-context "+shellWord(b.opts.KubeContext))
+	}
+	return strings.Join(parts, " ")
 }
 
 // scopeParts is the --only list of a scope; nil for every part.

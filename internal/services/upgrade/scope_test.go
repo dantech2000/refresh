@@ -222,8 +222,12 @@ func TestBuildPlan_ControlPlaneOnlyBlocksOnUnreadAddonVersions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: BuildPlan: %v", only, err)
 		}
-		if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "vpc-cni") || !strings.Contains(b, "could not be read") {
+		b := strings.Join(plan.Blockers(), "\n")
+		if !strings.Contains(b, "vpc-cni") || !strings.Contains(b, "could not be read: rerun to retry") {
 			t.Fatalf("%v: blockers = %q, want the unread vpc-cni versions", only, b)
+		}
+		if strings.Contains(b, "--only") {
+			t.Fatalf("%v: blockers = %q, advice to change --only cannot fix an unread catalogue", only, b)
 		}
 		found := false
 		for _, f := range plan.Failures {
@@ -298,14 +302,15 @@ func TestBuildPlan_FollowUpsKeepExclusionsAndTarget(t *testing.T) {
 		SkipAddons:     []string{"kube-proxy"},
 		SkipNodegroups: []string{"protected"},
 		CommandPrefix:  "refresh --profile 'prod admin' --region eu-west-1",
+		CommandSuffix:  "--kube-context prod-ctx",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	notices := strings.Join(plan.Notices, "\n")
 	for _, want := range []string{
-		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only addons --skip kube-proxy --skip-nodegroup protected",
-		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only nodegroups --skip kube-proxy --skip-nodegroup protected",
+		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only addons --skip kube-proxy --skip-nodegroup protected --kube-context prod-ctx",
+		"refresh --profile 'prod admin' --region eu-west-1 cluster upgrade -c prod-east --to 1.32 --only nodegroups --skip kube-proxy --skip-nodegroup protected --kube-context prod-ctx",
 	} {
 		if !strings.Contains(notices, want) {
 			t.Fatalf("notices lack %q:\n%s", want, notices)
@@ -327,7 +332,20 @@ func TestBuildPlan_ControlPlaneOnlyBlocksOnAnEmptyLiveCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "legacy") {
-		t.Fatalf("blockers = %q, want legacy", b)
+	// The remedy that works: updating the add-ons cannot, there is no
+	// version for the live control plane.
+	if b := strings.Join(plan.Blockers(), "\n"); !strings.Contains(b, "EKS lists no version of add-on(s) legacy") || !strings.Contains(b, "--skip legacy") {
+		t.Fatalf("blockers = %q, want legacy with --skip", b)
+	}
+	// With the add-ons in the plan, its own add-on step decides: the 1.33
+	// version exists, so nothing blocks.
+	for _, only := range [][]Part{nil, {PartControlPlane, PartAddons}} {
+		plan, err := newTestService(m).BuildPlan(context.Background(), "prod-east", "1.33", PlanOptions{Only: only})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b := plan.Blockers(); len(b) > 0 {
+			t.Fatalf("%v: blockers = %v, want none", only, b)
+		}
 	}
 }

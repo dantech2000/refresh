@@ -166,6 +166,9 @@ func followUp(plan *Plan, o PlanOptions, part Part, version string) string {
 	for _, s := range o.SkipNodegroups {
 		parts = append(parts, "--skip-nodegroup", common.ShellQuote(s))
 	}
+	if s := strings.TrimSpace(o.CommandSuffix); s != "" {
+		parts = append(parts, s)
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -175,27 +178,51 @@ func followUp(plan *Plan, o PlanOptions, part Part, version string) string {
 // them two versions behind. It fails closed in every scope: an add-on whose
 // versions for the live control plane could not be read (unread) blocks
 // too, and its failure is on the plan.
-func blockOnLaggingAddons(plan *Plan, o PlanOptions, lagging, unread []string, live string) {
-	if len(lagging) == 0 && len(unread) == 0 {
+func blockOnLaggingAddons(plan *Plan, o PlanOptions, lag addonLag, live string) {
+	if len(lag.incompatible) == 0 && len(lag.empty) == 0 && len(lag.unread) == 0 {
 		return
 	}
+	// Each kind names its own remedy: updating the add-ons fixes the first
+	// only.
 	var why []string
-	if len(lagging) > 0 {
-		why = append(why, fmt.Sprintf("add-on(s) %s do not run on the live control plane %s", strings.Join(lagging, ", "), live))
+	if len(lag.incompatible) > 0 {
+		why = append(why, fmt.Sprintf("add-on(s) %s do not run on the live control plane %s: update them first (%s), or add addons to --only",
+			strings.Join(lag.incompatible, ", "), live, followUp(plan, o, PartAddons, live)))
 	}
-	if len(unread) > 0 {
-		why = append(why, fmt.Sprintf("the versions of add-on(s) %s for %s could not be read", strings.Join(unread, ", "), live))
+	if len(lag.empty) > 0 {
+		why = append(why, fmt.Sprintf("EKS lists no version of add-on(s) %s for %s: if they are managed outside EKS add-ons, leave them out with %s",
+			strings.Join(lag.empty, ", "), live, skipFlags(lag.empty)))
+	}
+	if len(lag.unread) > 0 {
+		why = append(why, fmt.Sprintf("the versions of add-on(s) %s for %s could not be read: rerun to retry (the failures name the cause)",
+			strings.Join(lag.unread, ", "), live))
 	}
 	for h := range plan.Hops {
 		for i := range plan.Hops[h].Steps {
 			st := &plan.Hops[h].Steps[i]
 			if st.Type == StepControlPlane && st.Status == StatusPending {
 				st.Status = StatusBlocked
-				st.Reason = fmt.Sprintf("%s: update the add-ons first (%s), or add addons to --only", strings.Join(why, "; "), followUp(plan, o, PartAddons, live))
+				st.Reason = strings.Join(why, "; ")
 				return
 			}
 		}
 	}
+}
+
+// addonLag is what blocks a control-plane move on the add-ons: installed
+// versions the live control plane cannot run (when the add-ons are left
+// out), add-ons with no version listed for it (likewise), and add-ons whose
+// versions could not be read (in any scope).
+type addonLag struct {
+	incompatible, empty, unread []string
+}
+
+func skipFlags(names []string) string {
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = "--skip " + common.ShellQuote(n)
+	}
+	return strings.Join(parts, " ")
 }
 
 // checkNodegroups refuses a --nodegroup name the cluster does not have.

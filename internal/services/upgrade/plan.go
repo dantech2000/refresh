@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -45,6 +44,9 @@ type PlanOptions struct {
 	// name: "refresh" with the --profile and --region of the run, so they
 	// reach the same account and region. Empty means "refresh".
 	CommandPrefix string
+	// CommandSuffix ends those commands: the run's --kubeconfig and
+	// --kube-context, so a later nodegroup run keeps its PDB drain check.
+	CommandSuffix string
 	// Nodegroups limits the rolls to these nodegroups, by exact name
 	// (--nodegroup). Empty means every nodegroup. The others are manual
 	// steps, and the readiness gate still checks their kubelet skew.
@@ -152,7 +154,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 	// whose versions for the live control plane could not be read, in any
 	// scope (fail closed: the plan cannot tell whether they need to catch
 	// up first).
-	var laggingLeftOut, unreadLive []string
+	var laggingLeftOut, emptyLeftOut, unreadLive []string
 
 	// Before the next control-plane step, finish work at the live version
 	// that the step depends on: addons an interrupted hop left incompatible
@@ -170,7 +172,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		if !opts.includes(PartAddons) {
 			// No version for the live control plane: it cannot run there
 			// either, and nothing in this plan would update it.
-			laggingLeftOut = slices.Concat(lagging, empty)
+			laggingLeftOut, emptyLeftOut = lagging, empty
 		}
 		unreadLive = unread
 		if addonLag || len(preRoll) > 0 {
@@ -208,7 +210,7 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		return nil, stopped(ctx, "while building the upgrade plan", "", err)
 	}
 	applyScope(plan, opts)
-	blockOnLaggingAddons(plan, opts, laggingLeftOut, unreadLive, currentVersion)
+	blockOnLaggingAddons(plan, opts, addonLag{incompatible: laggingLeftOut, empty: emptyLeftOut, unread: unreadLive}, currentVersion)
 	return plan, nil
 }
 

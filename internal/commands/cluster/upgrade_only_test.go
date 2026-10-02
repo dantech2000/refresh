@@ -102,12 +102,12 @@ func TestUpgrade_OneNodegroup(t *testing.T) {
 // The plan's follow-up commands carry the --region the user gave.
 func TestUpgrade_FollowUpsCarryTheRegion(t *testing.T) {
 	fakeaws.New(t, orderWorld())
-	stdout, stderr, err := runCluster(t, "--region", "us-east-1", "upgrade", "prod", "--to", "1.32", "--only", "control-plane", "--skip-nodegroup", "web", "--dry-run")
+	stdout, stderr, err := runCluster(t, "--region", "us-east-1", "upgrade", "prod", "--to", "1.32", "--only", "control-plane", "--skip-nodegroup", "web", "--kube-context", "prod-ctx", "--dry-run")
 	if err != nil {
 		t.Fatalf("dry run: %v\nstderr:\n%s", err, stderr)
 	}
 	out := ui.StripANSI(stdout + stderr)
-	if !strings.Contains(out, "refresh --region us-east-1 cluster upgrade -c prod --to 1.32 --only addons") {
-		t.Fatalf("follow-up lacks the region:\n%s", out)
+	if !strings.Contains(out, "refresh --region us-east-1 cluster upgrade -c prod --to 1.32 --only addons --skip-nodegroup web --kube-context prod-ctx") {
+		t.Fatalf("follow-up lacks the region, the exclusion, or the kube context:\n%s", out)
 	}
 }

@@ -268,7 +268,14 @@ func (u *upgrade) begin() {
 		}
 	case phaseNodegroups:
 		for _, ng := range u.c.Nodegroups {
-			if ng.NeedsPatch(u.c.Version) && (u.only == "" || ng.Name == u.only) {
+			// A scoped run rolls what its plan listed, as the live planner
+			// does: the nodegroups not on the target version. A full run
+			// also patches the AMIs.
+			rolls := ng.NeedsPatch(u.c.Version)
+			if u.scope != 0 {
+				rolls = ng.Version != u.st.To
+			}
+			if rolls && (u.only == "" || ng.Name == u.only) {
 				u.ngs = append(u.ngs, ng.Name)
 				p.Items = append(p.Items, state.PhaseItem{Name: ng.Name, Text: "queued"})
 			}
