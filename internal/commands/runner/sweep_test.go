@@ -123,6 +123,10 @@ func TestNoRegionAnswered(t *testing.T) {
 		{name: "unavailable, bad credentials", badCreds: true, failed: unavailable, wantErr: true, stsCalls: 1},
 		{name: "skipped, valid credentials", skipped: []string{"us-east-1"}, stsCalls: 1},
 		{name: "throttled only", badCreds: true, failed: throttled},
+		// A wrong secret gets an unreadable 403 from EKS, which reads as a
+		// permission denial; STS tells the keys are bad.
+		{name: "denied everywhere, bad credentials", badCreds: true, failed: []error{apiErr("AccessDeniedException")}, wantErr: true, stsCalls: 1},
+		{name: "denied everywhere, valid credentials", failed: []error{apiErr("AccessDeniedException")}, stsCalls: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := fakeaws.New(t)

@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
+	"github.com/dantech2000/refresh/internal/awsconfig"
 	"github.com/dantech2000/refresh/internal/common"
 )
 
@@ -72,7 +73,7 @@ func ResolveAWSCredentials(ctx context.Context, awsCfg aws.Config) error {
 	}
 	if _, err := awsCfg.Credentials.Retrieve(ctx); err != nil {
 		if awserr.IsNoCredentials(err) {
-			return fmt.Errorf("AWS credential validation failed: %w", awserr.FormatNoCredentials(err, SSOProfiles()))
+			return fmt.Errorf("AWS credential validation failed: %w", awserr.FormatNoCredentials(err, awsconfig.SSOProfiles()))
 		}
 		return fmt.Errorf("AWS credential validation failed: %w", FormatAWSError(err, "loading AWS credentials"))
 	}

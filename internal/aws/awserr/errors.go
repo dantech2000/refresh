@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"syscall"
 
@@ -317,6 +318,8 @@ func FormatAWSError(err error, operation string) error {
 	var ae smithy.APIError
 	if errors.As(err, &ae) {
 		switch {
+		case permissionErrorCodes[ae.ErrorCode()] && isAssumeRole(err):
+			return formatAssumeRoleError(err)
 		case permissionErrorCodes[ae.ErrorCode()]:
 			return formatPermissionError(err, operation)
 		case credentialErrorCodes[ae.ErrorCode()]:
@@ -329,14 +332,20 @@ func FormatAWSError(err error, operation string) error {
 		}
 	}
 
-	if IsCredentialError(err) {
-		return formatCredentialError(err)
-	}
+	// The region first: an AssumeRole profile with no region fails inside
+	// the credential chain, and its text matches the credential fallback
+	// patterns too, but the region is what to fix.
 	if IsRegionError(err) {
 		return formatRegionError(err, operation)
 	}
+	if IsCredentialError(err) {
+		return formatCredentialError(err)
+	}
 	if IsNetworkError(err) {
 		return formatNetworkError(err, operation)
+	}
+	if isUnreadable403(err) {
+		return formatUnreadable403(err, operation)
 	}
 	if IsPermissionError(err) {
 		return formatPermissionError(err, operation)
@@ -394,7 +403,7 @@ Set a valid region:
 }
 
 func formatCredentialError(err error) error {
-	return formatted(err, `AWS credentials not configured or invalid
+	msg := fmt.Sprintf(`AWS credentials not configured or invalid
 Cause: %s
 
 Set up credentials in one of these ways:
@@ -402,6 +411,54 @@ Set up credentials in one of these ways:
   aws configure            an access key in a profile
   AWS_ACCESS_KEY_ID        with AWS_SECRET_ACCESS_KEY, as environment variables
   an IAM role              when refresh runs on EC2, EKS, or Lambda`, Summary(err))
+	if keysShadowProfile() {
+		msg += `
+
+Note:
+  AWS_ACCESS_KEY_ID        is set, and the SDK uses it before AWS_PROFILE: unset it, or pass --profile`
+	}
+	return &formattedError{msg: msg, err: err}
+}
+
+// keysShadowProfile reports access keys in the environment next to
+// AWS_PROFILE: the SDK uses the keys, as the AWS CLI does, so AWS_PROFILE
+// has no effect (--profile does win over them).
+func keysShadowProfile() bool {
+	return strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) != "" && strings.TrimSpace(os.Getenv("AWS_PROFILE")) != ""
+}
+
+// isAssumeRole reports an error from an STS AssumeRole call: the credential
+// chain of a profile with role_arn.
+func isAssumeRole(err error) bool {
+	var op *smithy.OperationError
+	return errors.As(err, &op) && op.ServiceID == "STS" && strings.HasPrefix(op.OperationName, "AssumeRole")
+}
+
+func formatAssumeRoleError(err error) error {
+	return formatted(err, `cannot assume the role of the AWS profile
+AWS: %s
+
+Check:
+  the role's trust policy  it must let the source identity (source_profile or credential_source) assume it
+  the source identity      its policy must allow sts:AssumeRole on the role
+  role_arn                 the role ARN in the profile`, Summary(err))
+}
+
+// isUnreadable403 reports an HTTP 403 whose body the SDK could not decode:
+// AWS refused the request, but the reply does not say whether the keys or a
+// permission is wrong. A wrong secret access key gets this from EKS.
+func isUnreadable403(err error) bool {
+	var de *smithy.DeserializationError
+	return httpStatus(err) == http.StatusForbidden && errors.As(err, &de)
+}
+
+func formatUnreadable403(err error, operation string) error {
+	return formatted(err, `AWS refused the request (HTTP 403) while %s, and its reply could not be read
+Cause: %s
+
+Check:
+  the secret access key    a wrong secret is refused this way; aws sts get-caller-identity tells
+  the permissions          refresh's IAM actions are listed at %s`, operation, Summary(err), PermissionsDocURL)
 }
 
 // FormatNoCredentials explains a credential chain that found nothing

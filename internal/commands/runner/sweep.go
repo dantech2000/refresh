@@ -54,6 +54,9 @@ func ReportSkippedRegions(w io.Writer, skipped []string) {
 //     same codes as a region closed to the account
 //     (UnrecognizedClientException, InvalidClientTokenId), so it asks STS
 //     once.
+//   - a region failed as access denied, and STS rejects the keys: a wrong
+//     secret access key gets an unreadable 403 from EKS, which reads as a
+//     denial. It asks STS once.
 //
 // It returns nil otherwise (valid credentials, another failure, ctx done),
 // and the caller reports its own error.
@@ -72,6 +75,11 @@ func NoRegionAnswered(ctx context.Context, cfg aws.Config, skipped []string, err
 			if closed == nil {
 				closed = err
 			}
+		case diag.ReasonAccessDenied:
+			// Every region denying the call can also be keys AWS refuses
+			// without saying so (a wrong secret gets an unreadable 403 from
+			// EKS): STS tells which.
+			lookalike = true
 		}
 	}
 	select {

@@ -343,3 +343,42 @@ func TestFormatAWSErrorNoCredentials(t *testing.T) {
 		t.Fatalf("profiles not listed: %q", msg)
 	}
 }
+
+// The messages name what to fix: the role for a denied AssumeRole, the
+// region for a profile with none, the keys or permissions for an
+// unreadable 403, and AWS_ACCESS_KEY_ID when it hides AWS_PROFILE.
+func TestFormatAWSErrorLoginCases(t *testing.T) {
+	assume := &smithy.OperationError{ServiceID: "STS", OperationName: "AssumeRole",
+		Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "User: u is not authorized to perform: sts:AssumeRole"}}
+	if msg := FormatAWSError(fmt.Errorf("failed to refresh cached credentials, %w", assume), "loading AWS credentials").Error(); !strings.HasPrefix(msg, "cannot assume the role") || !strings.Contains(msg, "trust policy") {
+		t.Errorf("assume role denied: %q", msg)
+	}
+	other := &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "no"}}
+	if msg := FormatAWSError(other, "listing clusters").Error(); !strings.HasPrefix(msg, "insufficient AWS permissions") {
+		t.Errorf("EKS denial: %q", msg)
+	}
+
+	noRegion := errors.New("failed to refresh cached credentials, operation error STS: AssumeRole, failed to resolve service endpoint, endpoint rule error, Invalid Configuration: Missing Region")
+	if msg := FormatAWSError(noRegion, "loading AWS credentials").Error(); !strings.HasPrefix(msg, "AWS region configuration issue") {
+		t.Errorf("AssumeRole without a region: %q", msg)
+	}
+
+	unreadable := &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusForbidden}},
+		Err:      &smithy.DeserializationError{Err: errors.New("invalid character")},
+	}}
+	if msg := FormatAWSError(unreadable, "listing clusters").Error(); !strings.HasPrefix(msg, "AWS refused the request (HTTP 403)") || !strings.Contains(msg, "secret access key") {
+		t.Errorf("unreadable 403: %q", msg)
+	}
+
+	bad := &smithy.GenericAPIError{Code: "InvalidClientTokenId", Message: "invalid"}
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")
+	t.Setenv("AWS_PROFILE", "")
+	if msg := FormatAWSError(bad, "x").Error(); strings.Contains(msg, "AWS_PROFILE: unset it") {
+		t.Errorf("note without AWS_PROFILE: %q", msg)
+	}
+	t.Setenv("AWS_PROFILE", "prod")
+	if msg := FormatAWSError(bad, "x").Error(); !strings.Contains(msg, "the SDK uses it before AWS_PROFILE") {
+		t.Errorf("no note on keys hiding AWS_PROFILE: %q", msg)
+	}
+}
