@@ -14,6 +14,7 @@ import (
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/noderoll"
+	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
 	"github.com/dantech2000/refresh/internal/tui/state"
 )
@@ -257,6 +258,34 @@ func (b *Backend) engineOptions(ctx context.Context, cfg aws.Config, u *liveUpgr
 		},
 		NodegroupObserver: func(octx context.Context, ng string) {
 			b.observeUpgradeRoll(octx, u, ng)
+		},
+		ScalingWatch: b.upgradeScalingWatch(cfg, u),
+	}
+}
+
+// upgradeScalingWatch puts each failed node launch of u's rolls on its
+// timeline and in the roll's feed: a roll that waits for capacity is only
+// "in progress" to EKS. nil when the backend cannot read them.
+func (b *Backend) upgradeScalingWatch(cfg aws.Config, u *liveUpgrade) *upgrade.ScalingWatch {
+	if b.roll.scalingFailures == nil {
+		return nil
+	}
+	return &upgrade.ScalingWatch{
+		Read: func(ctx context.Context, ng string, since time.Time) ([]nodegroupsvc.ScalingFailure, error) {
+			return b.roll.scalingFailures(ctx, cfg, u.t.name, ng, since)
+		},
+		Report: func(ng string, f nodegroupsvc.ScalingFailure) {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			text := "could not launch a node for " + ng + ": " + f.Message
+			b.upgradeEvent(u, state.LevelError, "Auto Scaling", text, "")
+			key := b.keyOf(u.t)
+			for i := len(b.rolls) - 1; i >= 0; i-- {
+				if r := b.rolls[i]; r.st.UpgradeOf == key && r.st.Nodegroup == ng && r.st.EndedAt.IsZero() {
+					b.rollEvent(r, state.Event{Source: state.SourceAWS, Level: state.LevelError, Subject: "Auto Scaling", Text: "could not launch a node: " + f.Message})
+					break
+				}
+			}
 		},
 	}
 }

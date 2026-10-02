@@ -42,7 +42,7 @@ var RequiredPermissions = []Permission{
 	{[]string{"ec2:DescribeSubnets", "ec2:DescribeInstanceTypeOfferings"}, "Instance-type availability warning in `nodegroup update`/`scale`"},
 	{[]string{"ec2:DescribeVpcs"}, "`cluster describe --detailed`"},
 	{[]string{"autoscaling:DescribeAutoScalingGroups"}, "Health checks, `nodegroup describe`, current AMI lookup"},
-	{[]string{"autoscaling:DescribeScalingActivities"}, "A roll's failed node launches (such as the EC2 vCPU quota): `nodegroup update`, `refresh ui`"},
+	{[]string{"autoscaling:DescribeScalingActivities"}, "A roll's failed node launches (such as the EC2 vCPU quota): `nodegroup update`, `cluster upgrade`, `cluster rollback`, `refresh ui`"},
 	{[]string{"cloudwatch:GetMetricData"}, "Health checks (CPU capacity, control plane, quota usage)"},
 	{[]string{"servicequotas:GetServiceQuota"}, "Health checks (EC2 vCPU quota)"},
 }

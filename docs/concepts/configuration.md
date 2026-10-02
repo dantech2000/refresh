@@ -389,7 +389,7 @@ the data incomplete.
 | `ec2:DescribeSubnets`, `ec2:DescribeInstanceTypeOfferings` | Instance-type availability warning in `nodegroup update`/`scale` |
 | `ec2:DescribeVpcs` | `cluster describe --detailed` |
 | `autoscaling:DescribeAutoScalingGroups` | Health checks, `nodegroup describe`, current AMI lookup |
-| `autoscaling:DescribeScalingActivities` | A roll's failed node launches (such as the EC2 vCPU quota): `nodegroup update`, `refresh ui` |
+| `autoscaling:DescribeScalingActivities` | A roll's failed node launches (such as the EC2 vCPU quota): `nodegroup update`, `cluster upgrade`, `cluster rollback`, `refresh ui` |
 | `cloudwatch:GetMetricData` | Health checks (CPU capacity, control plane, quota usage) |
 | `servicequotas:GetServiceQuota` | Health checks (EC2 vCPU quota) |
 

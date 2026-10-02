@@ -199,12 +199,15 @@ func runRollback(ctx context.Context, cmd *cli.Command) (err error) {
 	opts.Progress = progress
 	opts.PhaseStart = phaseStart(out, cmd.Bool("quiet"))
 	healthGate.progress = progress
+	reports := &rollReports{}
 	if !cmd.Bool("quiet") && rollview.Interactive(out) {
 		if kube, _ := resolveReadinessKubeClient(ctx, factory.NewEKSClient(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), false); kube != nil {
-			opts.NodegroupObserver = func(octx context.Context, ng string) {
-				rollview.LiveRollForUpdate(octx, kube, ng, waitTimeout, pollInterval, nil)
-			}
+			opts.NodegroupObserver = reports.observer(kube, waitTimeout, pollInterval)
 		}
+	}
+	if !cmd.Bool("quiet") {
+		// A roll that waits for capacity is only "in progress" to EKS.
+		opts.ScalingWatch = reports.watch(awsCfg, clusterName, func(msg string) { progress("%s", render.Default(out).Token(render.Warn, msg)) })
 	}
 
 	report, err := svc.ExecuteRollback(ctx, plan, opts)

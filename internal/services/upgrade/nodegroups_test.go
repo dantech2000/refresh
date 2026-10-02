@@ -14,6 +14,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/mocks"
+	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 )
 
 // captureNodegroupRolls records UpdateNodegroupVersion calls in order.
@@ -423,3 +424,43 @@ func TestUpgradeNodegroups_ReleasesProgressWhenObserverReturnsEarly(t *testing.T
 func sprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
 
 func sprintfErr(format string, args ...any) error { return fmt.Errorf(format, args...) }
+
+// A roll that waits for capacity is only "in progress" to EKS: the scaling
+// watch reports its failed node launches while the phase waits, each once.
+func TestUpgradeNodegroups_ReportsFailedNodeLaunches(t *testing.T) {
+	m := mocks.NewEKSAPI().
+		WithCluster("prod-east", "1.32").
+		WithNodegroup("workers-a", "1.31", ekstypes.AMITypesAl2023X8664Standard).
+		Build()
+	_ = captureNodegroupRolls(m)
+	reported := make(chan struct{})
+	var once sync.Once
+	// The roll ends only after the failure was reported.
+	m.DescribeUpdateFn = func(ctx context.Context, in *eks.DescribeUpdateInput, _ ...func(*eks.Options)) (*eks.DescribeUpdateOutput, error) {
+		select {
+		case <-reported:
+			return &eks.DescribeUpdateOutput{Update: &ekstypes.Update{Id: in.UpdateId, Status: ekstypes.UpdateStatusSuccessful}}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	var mu sync.Mutex
+	var reports []string
+	watch := &ScalingWatch{
+		Read: func(context.Context, string, time.Time) ([]nodegroupsvc.ScalingFailure, error) {
+			return []nodegroupsvc.ScalingFailure{{ID: "a1", Message: "VcpuLimitExceeded"}}, nil
+		},
+		Report: func(ng string, f nodegroupsvc.ScalingFailure) {
+			mu.Lock()
+			reports = append(reports, ng+": "+f.Message)
+			mu.Unlock()
+			once.Do(func() { close(reported) })
+		},
+	}
+	if err := newTestService(m).UpgradeNodegroups(context.Background(), "prod-east", "1.32", NodegroupRollOptions{ScalingWatch: watch}, nil); err != nil {
+		t.Fatalf("UpgradeNodegroups: %v", err)
+	}
+	if len(reports) != 1 || reports[0] != "workers-a: VcpuLimitExceeded" {
+		t.Fatalf("reports = %v", reports)
+	}
+}
