@@ -88,6 +88,11 @@ func TestScale_BusyClusterExitsThree(t *testing.T) {
 	if !strings.Contains(err.Error(), "prod is busy (nodegroup ng-b UPDATING)") {
 		t.Errorf("error = %v", err)
 	}
+	// Another nodegroup's roll: the refusal says how to scale outside
+	// refresh, since a roll waiting for capacity frees none itself.
+	if !strings.Contains(err.Error(), "aws eks update-nodegroup-config --cluster-name prod --nodegroup-name ng-a --scaling-config desiredSize=2") {
+		t.Errorf("error = %v, want the scale command outside refresh", err)
+	}
 	if calledPath(srv, "/update-config") || *asked != 0 {
 		t.Errorf("a busy cluster must not prompt (asked %d) or scale", *asked)
 	}
@@ -163,4 +168,16 @@ func TestBusyRefusalsPrintADocument(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The target itself is changing: no way around that, so no hint.
+func TestScale_BusyTargetHasNoHint(t *testing.T) {
+	withScalePrompt(t, true, "y")
+	fakeaws.New(t, prodCluster(
+		&fakeaws.Nodegroup{Name: "ng-a", Version: "1.31", Desired: 3, Min: 1, Max: 5, Status: "UPDATING"},
+	))
+	_, _, err := runNodegroup(t, "scale", "prod", "ng-a", "--desired", "2")
+	if code := exitCodeOf(err); code != 3 || strings.Contains(err.Error(), "update-nodegroup-config") {
+		t.Fatalf("exit %d, err = %v", code, err)
+	}
 }

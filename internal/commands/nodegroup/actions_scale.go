@@ -17,9 +17,11 @@ import (
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
+	"github.com/dantech2000/refresh/internal/common"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/render"
+	clustersvc "github.com/dantech2000/refresh/internal/services/cluster"
 	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 	"github.com/dantech2000/refresh/internal/ui"
 )
@@ -155,7 +157,42 @@ func (r *scaleRun) refuse(busy *runner.Busy) error {
 			return err
 		}
 	}
+	if hint := r.rollingHint(busy.Changes); hint != "" {
+		return cli.Exit(busy.Exit.Error()+"\n\n"+hint, runner.ExitBlocked)
+	}
 	return busy.Exit
+}
+
+// rollingHint is the way out when another nodegroup's roll makes the
+// cluster busy: a roll that waits for capacity (a vCPU quota, for one)
+// frees none itself, and refresh will not scale until it ends. EKS takes a
+// scaling change on a different nodegroup during a roll, so the hint is the
+// same change made outside refresh. Empty when no other nodegroup rolls.
+func (r *scaleRun) rollingHint(changes []string) string {
+	other := false
+	for _, c := range changes {
+		if rest, ok := strings.CutPrefix(c, clustersvc.ChangeNodegroup+" "); ok && !strings.HasPrefix(rest, r.nodegroup+" ") {
+			other = true
+		}
+	}
+	if !other {
+		return ""
+	}
+	var sizes []string
+	for _, f := range []struct {
+		key string
+		v   *int32
+	}{{"minSize", r.minSize}, {"maxSize", r.maxSize}, {"desiredSize", r.desired}} {
+		if f.v != nil {
+			sizes = append(sizes, fmt.Sprintf("%s=%d", f.key, *f.v))
+		}
+	}
+	command := fmt.Sprintf("aws eks update-nodegroup-config --cluster-name %s --nodegroup-name %s --scaling-config %s",
+		common.ShellQuote(r.cluster), common.ShellQuote(r.nodegroup), strings.Join(sizes, ","))
+	if r.region != "" {
+		command += " --region " + common.ShellQuote(r.region)
+	}
+	return "If the roll waits for capacity, scale this nodegroup outside refresh (EKS allows it during a roll):\n  " + command
 }
 
 // newScaleService builds the nodegroup service for a scale. Only the health
