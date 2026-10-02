@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.0](https://github.com/dantech2000/refresh/compare/v0.15.0...v0.16.0) (2026-10-02)
+
+
+### Features
+
+* **ui:** export a log of the session (e): the timeline, Kube events, AWS API calls, or all ([#483](https://github.com/dantech2000/refresh/issues/483)) ([4e44f90](https://github.com/dantech2000/refresh/commit/4e44f90f1577f942f6128adc7a2d62457e049c3c))
+* **ui:** redraw the whole screen after each fleet sweep ([#487](https://github.com/dantech2000/refresh/issues/487)) ([e4f47fd](https://github.com/dantech2000/refresh/commit/e4f47fd235ed4b29c5e34a384cfffdb71df57f36))
+
+
+### Bug Fixes
+
+* **ui:** nothing writes over the TUI; ctrl+l redraws ([#485](https://github.com/dantech2000/refresh/issues/485)) ([3bb7dbf](https://github.com/dantech2000/refresh/commit/3bb7dbf267a85dda86278782b8dddc3ec9882397))
+* **ui:** the export picker says enter exports; the UpdateAddon log line names its cluster ([#486](https://github.com/dantech2000/refresh/issues/486)) ([0d50b72](https://github.com/dantech2000/refresh/commit/0d50b721b1eb2bdbd5c8f8c02023415c6fa00f06))
+
 ## [0.15.0](https://github.com/dantech2000/refresh/compare/v0.14.0...v0.15.0) (2026-10-02)
 
 
