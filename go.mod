@@ -17,7 +17,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/servicequotas v1.43.1
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.78.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.1
-	github.com/aws/smithy-go v1.28.1
+	github.com/aws/smithy-go v1.28.2
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/fatih/color v1.19.0
