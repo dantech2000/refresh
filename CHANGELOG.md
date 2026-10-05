@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.16.1](https://github.com/dantech2000/refresh/compare/v0.16.0...v0.16.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#495](https://github.com/dantech2000/refresh/issues/495)) ([493caf0](https://github.com/dantech2000/refresh/commit/493caf0bc8ff64317b29f3cffa63903698607587))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#492](https://github.com/dantech2000/refresh/issues/492)) ([909894d](https://github.com/dantech2000/refresh/commit/909894d07106d814c2b4c39770acc4944a6c0de0))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#494](https://github.com/dantech2000/refresh/issues/494)) ([5a795d2](https://github.com/dantech2000/refresh/commit/5a795d2a49f773878124eb904a6302e0ae151681))
+* **deps:** bump github.com/aws/smithy-go from 1.28.1 to 1.28.2 ([#488](https://github.com/dantech2000/refresh/issues/488)) ([f8f4c56](https://github.com/dantech2000/refresh/commit/f8f4c566e83a87c1fb9078ad74556c6b701f8d77))
+* **deps:** bump github.com/buger/jsonparser from 1.1.2 to 1.6.1 ([#493](https://github.com/dantech2000/refresh/issues/493)) ([af5507e](https://github.com/dantech2000/refresh/commit/af5507e674ee04d1dbbfc6c07e5b203b6c0e2f67))
+* **deps:** bump github.com/go-openapi/jsonpointer from 1.0.1 to 1.0.2 ([#489](https://github.com/dantech2000/refresh/issues/489)) ([5f7640e](https://github.com/dantech2000/refresh/commit/5f7640e2b64c7c990e8b31b529a5433eb4cc98dc))
+* **deps:** bump github.com/go-openapi/jsonreference from 1.0.2 to 1.0.3 ([#496](https://github.com/dantech2000/refresh/issues/496)) ([9c055ab](https://github.com/dantech2000/refresh/commit/9c055ab2a94ad2748da8149614c037d607cb7c20))
+* **deps:** bump github.com/pb33f/ordered-map/v2 from 2.3.1 to 2.3.2 ([#490](https://github.com/dantech2000/refresh/issues/490)) ([0a8fd8e](https://github.com/dantech2000/refresh/commit/0a8fd8ea45f8500412bb6413dd66aea3ef3d5a5d))
+* **deps:** bump github.com/urfave/cli/v3 from 3.13.0 to 3.14.0 ([#498](https://github.com/dantech2000/refresh/issues/498)) ([0523b18](https://github.com/dantech2000/refresh/commit/0523b18099cb7afd748945c493cd3a58e7bc7752))
+
 ## [0.16.0](https://github.com/dantech2000/refresh/compare/v0.15.0...v0.16.0) (2026-10-02)
 
 
