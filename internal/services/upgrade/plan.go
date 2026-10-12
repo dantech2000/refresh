@@ -166,6 +166,11 @@ func (s *Service) BuildPlan(ctx context.Context, clusterName, targetVersion stri
 		var preRoll []nodegroupState
 		if opts.includes(PartNodegroups) {
 			preRoll = preRollNodegroups(rollable, currentVersion, hops[0], opts.SkipNodegroups)
+			// A nodegroup at the live version that is not settled (a roll
+			// left it DEGRADED, or its update is in flight) is verified
+			// before the control plane moves. No regular hop would look at
+			// it first: its next roll comes after the control-plane step.
+			preRoll = append(preRoll, unsettledAt(rollable, currentVersion, opts.SkipNodegroups)...)
 		}
 		lagging, empty, unread := s.addonsIncompatible(ctx, addonsSvc, plan, addonList, currentVersion, opts.SkipAddons)
 		addonLag := opts.includes(PartAddons) && len(lagging) > 0
@@ -242,6 +247,20 @@ func preRollNodegroups(nodegroups []nodegroupState, cpVersion, nextVersion strin
 			continue
 		}
 		if beyondKubeletSkew(ng.Version, nextVersion) && !beyondKubeletSkew(ng.Version, cpVersion) {
+			out = append(out, ng)
+		}
+	}
+	return out
+}
+
+// unsettledAt returns the nodegroups at the live control-plane version (or
+// above it) that are not settled and not skipped. The catch-up hop keeps
+// them pending, and the nodegroup phase waits for them and verifies them
+// instead of rolling.
+func unsettledAt(nodegroups []nodegroupState, cpVersion string, skip []string) []nodegroupState {
+	var out []nodegroupState
+	for _, ng := range nodegroups {
+		if versionAtLeast(ng.Version, cpVersion) && ng.unsettled() && !matchesAny(ng.Name, skip) {
 			out = append(out, ng)
 		}
 	}
@@ -633,6 +652,9 @@ func nodegroupSteps(nodegroups []nodegroupState, hopTo string, skipPatterns []st
 			Status:      StatusPending,
 		}
 		switch {
+		case versionAtLeast(ng.Version, hopTo) && ng.unsettled() && !matchesAny(ng.Name, skipPatterns):
+			// Not done: the phase waits for it and verifies it.
+			step.Reason = ng.unsettledReason()
 		case versionAtLeast(ng.Version, hopTo):
 			step.Status = StatusCompleted
 			step.Reason = fmt.Sprintf("already at %s", ng.Version)

@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"k8s.io/client-go/kubernetes"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/common"
@@ -43,6 +44,30 @@ type ScalingWatch struct {
 	Report func(nodegroup string, f nodegroupsvc.ScalingFailure)
 }
 
+// PostRollVerify turns on the post-roll verification of each nodegroup roll:
+// nodegroup.VerifyPostRoll, the check `nodegroup update` runs after its
+// rolls. The command supplies it.
+type PostRollVerify struct {
+	// Kube returns the Kubernetes client for the Pending-pod check, or nil
+	// without Kubernetes access (the pod check is then skipped). The phase
+	// calls it before each roll.
+	Kube func(ctx context.Context) kubernetes.Interface
+}
+
+// ErrVerifyFailed is the error of a run that post-roll verification
+// stopped: a roll finished, and the verification found issues. The commands
+// exit 5.
+var ErrVerifyFailed = errors.New("post-roll verification found issues")
+
+// ErrVerifyIncomplete is the error of a run that stopped because post-roll
+// verification could not read a nodegroup after its roll. The nodegroup's
+// state is unknown, not an issue. The commands exit 4.
+var ErrVerifyIncomplete = errors.New("post-roll verification could not read the nodegroup")
+
+// skipAttachedPreroll replaces nodegroup.SkipNoPreroll for a roll the phase
+// attached to: no snapshot was possible, not a failed one.
+const skipAttachedPreroll = "pod verification skipped (the roll started before this run could list the Pending pods)"
+
 // NodegroupRollOptions tunes the nodegroup phase.
 type NodegroupRollOptions struct {
 	// SkipPatterns are substring patterns for nodegroups to leave alone.
@@ -62,6 +87,10 @@ type NodegroupRollOptions struct {
 	Observer RollObserver
 	// ScalingWatch, when set, reports failed node launches during each roll.
 	ScalingWatch *ScalingWatch
+	// Verify, when set, verifies each nodegroup after its roll. Issues stop
+	// the phase with ErrVerifyFailed, and a nodegroup that cannot be read
+	// stops it with ErrVerifyIncomplete.
+	Verify *PostRollVerify
 }
 
 // UpgradeNodegroups rolls every managed nodegroup to targetVersion, serially
@@ -95,6 +124,21 @@ func (s *Service) rollNodegroupsTo(ctx context.Context, clusterName, targetVersi
 			continue
 		}
 		switch {
+		case done(ng.Version) && ng.unsettled() && !matchesAny(ng.Name, opts.SkipPatterns):
+			// At the phase's version, but an update is in flight or a roll
+			// left it not ACTIVE (a rerun after a failed verification). The
+			// version alone does not make it done: wait, then verify it.
+			if ng.Status == ekstypes.NodegroupStatusUpdating || ng.Status == ekstypes.NodegroupStatusCreating {
+				if _, err := s.attachAndWait(ctx, clusterName, ng.Name, opts.ScalingWatch, progress); err != nil {
+					return err
+				}
+			} else {
+				progress("nodegroup %s is at %s but %s; checking it before the run continues", ng.Name, ng.Version, ng.Status)
+			}
+			if err := s.verifyRoll(ctx, clusterName, ng.Name, opts.Verify.begin(ctx, false), progress); err != nil {
+				return err
+			}
+			continue
 		case done(ng.Version):
 			progress("nodegroup %s already at %s, skipping", ng.Name, ng.Version)
 			continue
@@ -111,20 +155,17 @@ func (s *Service) rollNodegroupsTo(ctx context.Context, clusterName, targetVersi
 		// settle (like the control-plane and addon phases do) instead of
 		// failing the ACTIVE gate, then re-read the version.
 		if ng.Status == ekstypes.NodegroupStatusUpdating {
-			progress("nodegroup %s is UPDATING (in-flight roll from a previous run); attaching and waiting for it to settle", ng.Name)
-			// The roll began before this run: its failed launches since
-			// an hour ago are the ones worth showing.
-			var version string
-			err := common.RunAlongside(ctx, s.scalingObserver(opts.ScalingWatch, ng.Name, time.Now().Add(-time.Hour)), func(ctx context.Context) error {
-				var err error
-				version, err = s.waitForNodegroupSettled(ctx, clusterName, ng.Name, progress)
-				return err
-			})
+			version, err := s.attachAndWait(ctx, clusterName, ng.Name, opts.ScalingWatch, progress)
 			if err != nil {
-				return onItem(diag.KindNodegroup, ng.Name, diag.OpDescribeNodegroup, fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", ng.Name, err))
+				return err
 			}
 			if done(version) {
 				progress("nodegroup %s reached %s", ng.Name, version)
+				// The roll began before this run, so there is no Pending-pod
+				// snapshot from before it.
+				if err := s.verifyRoll(ctx, clusterName, ng.Name, opts.Verify.begin(ctx, false), progress); err != nil {
+					return err
+				}
 				continue
 			}
 		}
@@ -138,11 +179,102 @@ func (s *Service) rollNodegroupsTo(ctx context.Context, clusterName, targetVersi
 			}
 		}
 
+		pre := opts.Verify.begin(ctx, true)
 		if err := s.rollNodegroup(ctx, clusterName, ng.Name, targetVersion, opts.Force, opts.Observer, opts.ScalingWatch, progress); err != nil {
+			return err
+		}
+		if err := s.verifyRoll(ctx, clusterName, ng.Name, pre, progress); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// preRoll is what post-roll verification keeps from before a roll. A nil
+// preRoll means no verification.
+type preRoll struct {
+	kube    kubernetes.Interface
+	pending nodegroupsvc.PendingPods
+	// ok is false when the Pending pods were not listed before the roll.
+	ok bool
+	// attached is set for a roll that began before this run.
+	attached bool
+}
+
+// begin resolves the Kubernetes client for a roll's verification and, when
+// snapshot is set, lists the Pending pods before the roll starts. It returns
+// nil when v is nil: the run does not verify.
+func (v *PostRollVerify) begin(ctx context.Context, snapshot bool) *preRoll {
+	if v == nil {
+		return nil
+	}
+	pre := &preRoll{attached: !snapshot}
+	if v.Kube != nil {
+		pre.kube = v.Kube(ctx)
+	}
+	if snapshot {
+		pre.pending, pre.ok = nodegroupsvc.SnapshotPendingPods(ctx, pre.kube)
+	}
+	return pre
+}
+
+// verifyRoll runs nodegroup.VerifyPostRoll on a nodegroup whose roll
+// finished, and reports each check through progress. A run that is stopping
+// is not verified, as in `nodegroup update`: every call would fail and read
+// as an issue. It returns the stop instead.
+func (s *Service) verifyRoll(ctx context.Context, clusterName, nodegroupName string, pre *preRoll, progress ProgressFunc) error {
+	if pre == nil {
+		return nil
+	}
+	var result nodegroupsvc.PostRollVerification
+	var failures []diag.Failure
+	if ctx.Err() == nil {
+		result, failures = nodegroupsvc.VerifyPostRoll(ctx, s.eksClient, pre.kube, clusterName, []string{nodegroupName}, pre.pending, pre.ok)
+	}
+	if ctx.Err() != nil {
+		return &itemError{kind: diag.KindNodegroup, name: nodegroupName, err: fmt.Errorf("post-roll verification of nodegroup %s did not finish: %w", nodegroupName, ctx.Err())}
+	}
+	if pre.attached {
+		result.RenameSkip(nodegroupsvc.SkipNoPreroll, skipAttachedPreroll)
+	}
+	for _, c := range result.Checks {
+		progress("post-roll verification: %s", c)
+	}
+	var unread *diag.Failure
+	if len(failures) > 0 {
+		f := failures[0]
+		f.Cluster = clusterName
+		unread = &f
+	}
+	// Issues come first (exit 5 before exit 4): a nodegroup that could not
+	// be read does not hide the pods the roll left Pending. The error keeps
+	// both.
+	if !result.OK() {
+		return &verifyError{nodegroup: nodegroupName, result: result, failure: unread}
+	}
+	if unread != nil {
+		return &itemError{kind: diag.KindNodegroup, name: nodegroupName, failure: unread,
+			err: fmt.Errorf("%w: nodegroup %s: %s (remaining nodegroups not attempted)", ErrVerifyIncomplete, nodegroupName, unread.Error)}
+	}
+	return nil
+}
+
+// attachAndWait waits for the in-flight update of a nodegroup to settle and
+// returns the nodegroup's version then.
+func (s *Service) attachAndWait(ctx context.Context, clusterName, name string, watch *ScalingWatch, progress ProgressFunc) (string, error) {
+	progress("nodegroup %s is UPDATING (in-flight roll from a previous run); attaching and waiting for it to settle", name)
+	// The roll began before this run: its failed launches since an hour ago
+	// are the ones worth showing.
+	var version string
+	err := common.RunAlongside(ctx, s.scalingObserver(watch, name, time.Now().Add(-time.Hour)), func(ctx context.Context) error {
+		var err error
+		version, err = s.waitForNodegroupSettled(ctx, clusterName, name, progress)
+		return err
+	})
+	if err != nil {
+		return "", onItem(diag.KindNodegroup, name, diag.OpDescribeNodegroup, fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", name, err))
+	}
+	return version, nil
 }
 
 // gateFailed is the error of a pre-roll gate that stopped nodegroup name. A

@@ -10,6 +10,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/diag"
+	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 )
 
 // RunStatus is how an Execute run ended. docs/concepts/output.md documents
@@ -34,6 +35,9 @@ const (
 	RunTimedOut RunStatus = "TimedOut"
 	// RunAborted: the user declined a phase confirmation.
 	RunAborted RunStatus = "Aborted"
+	// RunVerifyFailed: a nodegroup roll finished, and its post-roll
+	// verification found issues. Report.Verification has them.
+	RunVerifyFailed RunStatus = "VerifyFailed"
 )
 
 // EnumValues lists every RunStatus.
@@ -41,6 +45,7 @@ func (RunStatus) EnumValues() []string {
 	return []string{
 		string(RunSucceeded), string(RunFailed), string(RunBlocked),
 		string(RunInterrupted), string(RunTimedOut), string(RunAborted),
+		string(RunVerifyFailed),
 	}
 }
 
@@ -89,6 +94,25 @@ func onItem(kind diag.Kind, name, op string, err error) error {
 	return &itemError{kind: kind, name: name, err: err}
 }
 
+// verifyError is a finished nodegroup roll whose post-roll verification
+// found issues. It unwraps to ErrVerifyFailed.
+type verifyError struct {
+	nodegroup string
+	result    nodegroupsvc.PostRollVerification
+	// failure is the nodegroup read that failed during the verification,
+	// when the other checks still found issues.
+	failure *diag.Failure
+}
+
+func (e *verifyError) Error() string {
+	msg := fmt.Sprintf("%s after the roll of nodegroup %s: %s", ErrVerifyFailed, e.nodegroup, strings.Join(e.result.Issues, "; "))
+	if e.failure != nil {
+		msg += "; the nodegroup could not be read: " + e.failure.Error
+	}
+	return msg + " (remaining nodegroups not attempted)"
+}
+func (e *verifyError) Unwrap() error { return ErrVerifyFailed }
+
 // updateEndedError is an EKS update that ended Failed or Cancelled.
 type updateEndedError struct {
 	what, updateID string
@@ -116,6 +140,10 @@ func stopState(ctx context.Context, cluster string, err error, gate bool) (RunSt
 		f := itemFailure(cluster, err)
 		f.Reason, f.Retryable = reason, reason.Retryable()
 		return status, &f
+	}
+	var ve *verifyError
+	if errors.As(err, &ve) {
+		return RunVerifyFailed, ve.failure
 	}
 	var ge *gateError
 	if errors.As(err, &ge) {

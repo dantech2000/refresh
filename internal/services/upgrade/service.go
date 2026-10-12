@@ -107,6 +107,24 @@ type nodegroupState struct {
 	AL2 bool
 }
 
+// unsettled reports whether the nodegroup is in a state that its version
+// does not vouch for: an update is in flight, or it is not ACTIVE (DEGRADED
+// after a roll, for one). A nodegroup at the target version in such a state
+// still goes through the nodegroup phase, which waits and verifies it. An
+// unknown status counts as settled.
+func (ng nodegroupState) unsettled() bool {
+	return ng.Status != "" && ng.Status != ekstypes.NodegroupStatusActive
+}
+
+// unsettledReason is the plan's reason for a pending step of an unsettled
+// nodegroup that is already at the version of its phase.
+func (ng nodegroupState) unsettledReason() string {
+	if ng.Status == ekstypes.NodegroupStatusUpdating {
+		return fmt.Sprintf("at %s with an update in progress: refresh attaches, waits for it, and verifies the nodegroup", ng.Version)
+	}
+	return fmt.Sprintf("at %s but %s: refresh verifies the nodegroup before the run continues", ng.Version, ng.Status)
+}
+
 // al2LastVersion is the last Kubernetes minor with EKS-optimized Amazon
 // Linux 2 AMIs.
 // https://docs.aws.amazon.com/eks/latest/userguide/eks-ami-deprecation-faqs.html

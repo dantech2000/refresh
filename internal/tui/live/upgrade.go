@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"k8s.io/client-go/kubernetes"
 
 	awsinternal "github.com/dantech2000/refresh/internal/aws"
 	"github.com/dantech2000/refresh/internal/commands/factory"
@@ -260,6 +261,13 @@ func (b *Backend) engineOptions(ctx context.Context, cfg aws.Config, u *liveUpgr
 			b.observeUpgradeRoll(octx, u, ng)
 		},
 		ScalingWatch: b.upgradeScalingWatch(cfg, u),
+		// The post-roll verification of `cluster upgrade`, with the client
+		// the TUI's own rolls verify with. Issues fail the run before the
+		// next roll, as a standalone roll's verification fails its result.
+		Verify: &upgrade.PostRollVerify{Kube: func(vctx context.Context) kubernetes.Interface {
+			kube, _, _ := b.roll.kubeFor(vctx, cfg, u.t.name)
+			return kube
+		}},
 	}
 }
 

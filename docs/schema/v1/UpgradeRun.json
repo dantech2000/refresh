@@ -154,6 +154,24 @@
       ],
       "description": "Plan is the full ordered upgrade plan for a cluster."
     },
+    "PostRollVerification": {
+      "properties": {
+        "checks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "description": "PostRollVerification is the result of verifying a completed AMI roll."
+    },
     "Report": {
       "properties": {
         "status": {
@@ -177,7 +195,11 @@
         },
         "failure": {
           "$ref": "#/$defs/Failure",
-          "description": "failure is why the run stopped, for Failed, Interrupted, and TimedOut runs, and for a Blocked run whose gate could not read what it needed."
+          "description": "failure is why the run stopped, for Failed, Interrupted, and TimedOut runs, and for a Blocked run whose gate could not read what it needed. A VerifyFailed run has it when the verification also could not read the nodegroup."
+        },
+        "verification": {
+          "$ref": "#/$defs/PostRollVerification",
+          "description": "verification is the post-roll verification that stopped a VerifyFailed run: the checks that ran and the issues they found."
         }
       },
       "type": "object",
@@ -196,7 +218,8 @@
         "Blocked",
         "Interrupted",
         "TimedOut",
-        "Aborted"
+        "Aborted",
+        "VerifyFailed"
       ],
       "description": "RunStatus is how an Execute run ended. docs/concepts/output.md documents the values; later versions may add values."
     },

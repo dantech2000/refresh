@@ -68,6 +68,10 @@ type Nodegroup struct {
 	// once an UpdateNodegroupVersion update has been applied, as for a read
 	// that fails after a roll.
 	DescribeErrorAfterUpdate string
+	// StatusAfterUpdate, when set, is the status DescribeNodegroup reports
+	// once an UpdateNodegroupVersion update has been applied, as for a roll
+	// that leaves the nodegroup DEGRADED.
+	StatusAfterUpdate string
 
 	rolled bool
 }
@@ -1101,6 +1105,9 @@ func clusterJSON(c *Cluster) map[string]any {
 
 func nodegroupJSON(c *Cluster, ng *Nodegroup) map[string]any {
 	status, amiType := ng.Status, ng.AmiType
+	if ng.rolled && ng.StatusAfterUpdate != "" {
+		status = ng.StatusAfterUpdate
+	}
 	if status == "" {
 		status = "ACTIVE"
 	}
