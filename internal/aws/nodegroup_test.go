@@ -146,7 +146,7 @@ func TestConfirmNodegroupSelection_PromptsOnPromptStream(t *testing.T) {
 	if err != nil || len(got) != 2 {
 		t.Fatalf("ConfirmNodegroupSelection = %v, %v; want both matches", got, err)
 	}
-	for _, want := range []string{"Multiple nodegroups match pattern 'web'", "1) web-a", "Update all 2 matching nodegroups?"} {
+	for _, want := range []string{"Multiple nodegroups match pattern 'web'", "1) web-a", "Update all 2 matching nodegroups? [y/N]: "} {
 		if !strings.Contains(prompt.String(), want) {
 			t.Errorf("prompt stream missing %q; got %q", want, prompt.String())
 		}
