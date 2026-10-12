@@ -72,3 +72,29 @@ func TestPromptContinueWithWarningsReadError(t *testing.T) {
 		t.Fatal("expected false on read error")
 	}
 }
+
+// The prompt follows the output contract: it goes to stderr as "[y/N]", and
+// stdout gets nothing.
+func TestPromptContinueWithWarningsWritesToStderr(t *testing.T) {
+	readOut, readErr := fakeStreams(t, false, false)
+	original := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = original })
+	_, _ = w.WriteString("y\n")
+	_ = w.Close()
+
+	if !PromptContinueWithWarnings(t.Context(), []string{"warn"}) {
+		t.Fatal("PromptContinueWithWarnings() = false, want true")
+	}
+	if out := readOut(); out != "" {
+		t.Errorf("stdout = %q, want nothing", out)
+	}
+	want := "\n1 warning(s) reported above.\nProceed with update? [y/N]: "
+	if got := readErr(); got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+}
