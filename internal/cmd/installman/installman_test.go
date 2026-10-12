@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -263,5 +264,59 @@ func TestOutput(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "PASS") && !strings.Contains(string(got), "no tests to run") {
 		t.Errorf("output() = %q, want the output of the test binary", got)
+	}
+}
+
+// A symbolic link at the path of a man page is replaced by the page. The
+// file that it points to keeps its content, and the pages of other tools
+// stay. install-man can run with more rights than the user has, so writing
+// through the link would let another user damage any file.
+func TestRunDoesNotWriteThroughSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("making a symbolic link needs a privilege on Windows")
+	}
+	home := t.TempDir()
+	man1 := filepath.Join(home, ".local", "share", "man", "man1")
+	if err := os.MkdirAll(man1, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	for path, content := range map[string]string{victim: "do not touch", filepath.Join(man1, "other.1"): "another tool"} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(victim, filepath.Join(man1, "refresh.1")); err != nil {
+		t.Fatal(err)
+	}
+	ios, _, _, _ := cmdutiltest.NewIOStreams()
+	o := &options{
+		io: ios, version: "v1.2.3", home: home, goos: "windows",
+		output: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+	}
+
+	if err := o.run(context.Background(), newRoot()); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+
+	if info, err := os.Lstat(filepath.Join(man1, "refresh.1")); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("refresh.1: mode %v, error %v; want a regular file in place of the link", info.Mode(), err)
+	}
+	if b, err := os.ReadFile(victim); err != nil || string(b) != "do not touch" {
+		t.Errorf("link target = %q, %v; want it unchanged", b, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(man1, "other.1")); err != nil || string(b) != "another tool" {
+		t.Errorf("other.1 = %q, %v; want it unchanged", b, err)
+	}
+	entries, err := os.ReadDir(man1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if diff := cmp.Diff([]string{"other.1", "refresh-version.1", "refresh.1"}, names); diff != "" {
+		t.Errorf("man directory (-want +got):\n%s", diff)
 	}
 }

@@ -11,10 +11,17 @@ import (
 // line end and the spaces around it. At the end of the input it returns what
 // it read and no error.
 //
-// When ctx is cancelled first, ReadLine returns the error of ctx. The read
-// itself cannot be stopped: it goes on in the background until the input
-// gives a byte or ends. That is right for a process that is about to exit.
+// A cancelled ctx always wins. When ctx is cancelled before the call,
+// ReadLine reads nothing. When ctx is cancelled during the read, ReadLine
+// returns the error of ctx, also when a line arrived at the same moment.
+//
+// The read itself cannot be stopped. After a cancellation it stays blocked
+// in the background until the input gives a line or ends. On a terminal
+// that is when the process exits, which is what follows an interrupt.
 func ReadLine(ctx context.Context, ios *IOStreams) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	type result struct {
 		line string
 		err  error
@@ -26,6 +33,10 @@ func ReadLine(ctx context.Context, ios *IOStreams) (string, error) {
 	}()
 	select {
 	case r := <-done:
+		// Both cases can be ready; select then picks either one.
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		return strings.TrimSpace(r.line), r.err
 	case <-ctx.Done():
 		return "", ctx.Err()

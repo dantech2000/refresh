@@ -31,7 +31,10 @@ AWS profile. A context with the same name is replaced.`,
   refresh context add stage --cluster stage-eks --use`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			o.name = args[0]
+			var err error
+			if o.name, err = contextName(args[0]); err != nil {
+				return err
+			}
 			return o.run()
 		},
 	}

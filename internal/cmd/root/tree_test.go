@@ -37,7 +37,7 @@ func fromCobra(cmd *cobra.Command) bool {
 func TestCommandsHaveHelpText(t *testing.T) {
 	walk(newTree(), func(cmd *cobra.Command) {
 		path := cmd.CommandPath()
-		if cmd.Short == "" {
+		if strings.TrimSpace(cmd.Short) == "" {
 			t.Errorf("%s: no Short", path)
 		}
 		if strings.HasSuffix(cmd.Short, ".") {
@@ -60,23 +60,30 @@ func TestCommandsHaveHelpText(t *testing.T) {
 	})
 }
 
+// TestRunnableCommandsSetArgs checks structure only: every command but
+// cobra's help command is runnable and has a non-nil Args. It does not run
+// the commands, so it does not show that Args is the right validator.
 func TestRunnableCommandsSetArgs(t *testing.T) {
 	walk(newTree(), func(cmd *cobra.Command) {
-		// The help command takes the path of any command.
+		// Cobra's help command takes the path of any command and sets no Args.
 		if cmd.CommandPath() == "refresh help" {
 			return
 		}
-		if cmd.Runnable() && cmd.Args == nil {
-			t.Errorf("%s: runnable without Args; an extra argument would be ignored", cmd.CommandPath())
+		// Cobra prints help and exits 0 for a group that is not runnable,
+		// whatever follows the group name.
+		if !cmd.Runnable() {
+			t.Errorf("%s: not runnable (no Run or RunE)", cmd.CommandPath())
 		}
-		// A group without RunE prints help and exits 0 for an unknown
-		// subcommand.
-		if cmd.HasSubCommands() && !cmd.Runnable() {
-			t.Errorf("%s: a group without RunE and Args; an unknown subcommand would exit 0", cmd.CommandPath())
+		if cmd.Args == nil {
+			t.Errorf("%s: Args is nil", cmd.CommandPath())
 		}
 	})
 }
 
+// TestFlagShorthands compares flags by name: a shorthand letter belongs to
+// the one long flag name in the table, and a flag with that name carries the
+// letter. It cannot see what a flag does, so a flag with the right name and
+// another purpose passes.
 func TestFlagShorthands(t *testing.T) {
 	// shorthands gives each flag letter its one meaning, from "Global flags" in
 	// CONTRACT.md. A flag with one of these names carries the letter, and no

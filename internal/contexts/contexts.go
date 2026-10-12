@@ -6,8 +6,10 @@
 package contexts
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -35,6 +37,10 @@ type File struct {
 }
 
 // Store reads and writes the context file at Path.
+//
+// Save replaces the file in one step, so a reader sees the old file or the
+// new one. Nothing locks the file: when two commands change it at the same
+// time, the one that saves last wins and the change of the other is lost.
 type Store struct {
 	Path string
 }
@@ -66,7 +72,15 @@ func (s *Store) Load() (*File, error) {
 		return nil, fmt.Errorf("reading %s: %w", s.Path, err)
 	}
 	f := &File{}
-	if err := yaml.Unmarshal(b, f); err != nil {
+	// A key that this version does not know is an error. Dropping it here
+	// would delete it from the file at the next Save.
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(f); err != nil && !errors.Is(err, io.EOF) { // EOF: an empty file
+		var typeErr *yaml.TypeError
+		if errors.As(err, &typeErr) {
+			return nil, fmt.Errorf("parsing %s: %s", s.Path, strings.Join(typeErr.Errors, "; "))
+		}
 		return nil, fmt.Errorf("parsing %s: %w", s.Path, err)
 	}
 	if f.Contexts == nil {
@@ -120,7 +134,8 @@ func (f *File) Names() []string {
 //
 // An override that names no saved context is an error. A fallback to the
 // current context would point every command at the wrong cluster after a
-// typing error.
+// typing error. A current context that is not saved is an error too: the
+// file was edited by hand, and the user must choose a context again.
 func (f *File) Active(override string) (name string, c Context, ok bool, err error) {
 	if override != "" {
 		if c, found := f.Contexts[override]; found {
@@ -132,27 +147,44 @@ func (f *File) Active(override string) (name string, c Context, ok bool, err err
 		}
 		return "", Context{}, false, fmt.Errorf("unknown context %q from %s; known: %s", override, EnvContext, known)
 	}
-	if c, found := f.Contexts[f.Current]; found && f.Current != "" {
-		return f.Current, c, true, nil
+	if f.Current == "" {
+		return "", Context{}, false, nil
 	}
-	return "", Context{}, false, nil
+	c, found := f.Contexts[f.Current]
+	if !found {
+		return "", Context{}, false, fmt.Errorf("the current context %q is not a saved context; choose one with: refresh use <name>", f.Current)
+	}
+	return f.Current, c, true, nil
+}
+
+// has reports whether name is a saved context.
+func (f *File) has(name string) bool {
+	_, ok := f.Contexts[name]
+	return ok
 }
 
 // Use makes name the current context and remembers the one before it. The
 // name "-" swaps the current context with the previous one.
+//
+// A current or previous pointer that names no saved context counts as not
+// set, so Use never keeps or switches to a context that does not exist.
 func (f *File) Use(name string) error {
+	old := f.Current
+	if !f.has(old) {
+		old = ""
+	}
 	if name == "-" {
-		if f.Previous == "" {
+		if !f.has(f.Previous) {
 			return errors.New("no previous context to switch to")
 		}
-		f.Current, f.Previous = f.Previous, f.Current
+		f.Current, f.Previous = f.Previous, old
 		return nil
 	}
-	if _, ok := f.Contexts[name]; !ok {
+	if !f.has(name) {
 		return fmt.Errorf("unknown context %q", name)
 	}
-	if f.Current != name {
-		f.Previous = f.Current
+	if old != name {
+		f.Previous = old
 	}
 	f.Current = name
 	return nil

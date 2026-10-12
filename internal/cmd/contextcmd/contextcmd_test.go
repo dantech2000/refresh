@@ -2,7 +2,9 @@ package contextcmd_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -211,6 +213,60 @@ func TestContextCommands(t *testing.T) {
 			wantFile: twoContexts(),
 		},
 		{
+			name: "spaces around a name are dropped",
+			file: twoContexts(),
+			steps: []step{
+				{args: []string{"context", "add", " new ", "-c", "new-eks"}, wantOut: "Saved context \"new\"\n"},
+				{
+					args:    []string{"use", " new "},
+					wantOut: "Switched to context \"new\" (cluster=new-eks region=- profile=-)\n",
+				},
+				{args: []string{"context", "remove", "\tnew\n"}, wantOut: "Removed context \"new\"\n"},
+				// A name of spaces only would be a context that nothing can select.
+				{args: []string{"context", "add", "   ", "-c", "prod"}, wantErr: "context name is required"},
+				{args: []string{"context", "remove", " "}, wantErr: "context name is required"},
+				{args: []string{"use", " "}, wantErr: "context name is required"},
+			},
+			wantFile: &contexts.File{
+				Previous: "prod",
+				Contexts: twoContexts().Contexts,
+			},
+		},
+		{
+			// A file edited by hand: "previous" names no saved context.
+			name: "dangling previous",
+			file: &contexts.File{Current: "prod", Previous: "gone", Contexts: twoContexts().Contexts},
+			steps: []step{
+				{args: []string{"use", "-"}, wantErr: "no previous context to switch to"},
+				{args: []string{"current"}, wantOut: "prod  cluster=prod-eks  region=us-east-1  profile=prod-admin\n"},
+			},
+			wantFile: &contexts.File{Current: "prod", Previous: "gone", Contexts: twoContexts().Contexts},
+		},
+		{
+			// A file edited by hand: "current" names no saved context.
+			name: "dangling current",
+			file: &contexts.File{Current: "gone", Contexts: twoContexts().Contexts},
+			steps: []step{
+				{
+					args:    []string{"current"},
+					wantErr: `the current context "gone" is not a saved context; choose one with: refresh use <name>`,
+				},
+				{
+					args: []string{"context", "list"},
+					wantOut: "  prod                 cluster=prod-eks region=us-east-1 profile=prod-admin\n" +
+						"  stage                cluster=stage-eks region=- profile=-\n",
+					wantErrOut: "warning: the current context \"gone\" is not a saved context; choose one with: refresh use <name>\n",
+				},
+				{
+					args:    []string{"use", "stage"},
+					wantOut: "Switched to context \"stage\" (cluster=stage-eks region=- profile=-)\n",
+				},
+				// The old pointer did not become the previous context.
+				{args: []string{"use", "-"}, wantErr: "no previous context to switch to"},
+			},
+			wantFile: &contexts.File{Current: "stage", Contexts: twoContexts().Contexts},
+		},
+		{
 			name: "use without a name asks",
 			file: twoContexts(),
 			steps: []step{
@@ -355,33 +411,88 @@ func TestUseInterrupted(t *testing.T) {
 	}
 }
 
+// TestStoreErrors: a file that this version cannot read in full fails every
+// command and is never replaced. An unknown key counts: a save would drop it.
 func TestStoreErrors(t *testing.T) {
+	files := []struct {
+		name    string
+		content string
+		wantErr string // after "parsing <path>: "
+	}{
+		{name: "invalid YAML", content: "contexts: [not, a, map", wantErr: "yaml: "},
+		{
+			name:    "unknown key",
+			content: "current: prod\nowner: platform-team\ncontexts:\n    prod:\n        cluster: prod-eks\n",
+			wantErr: "line 2: field owner not found in type contexts.File",
+		},
+	}
 	commands := [][]string{
-		{"current"}, {"use", "prod"}, {"context", "list"},
+		{"current"}, {"use", "prod"}, {"use", "-"}, {"context", "list"},
 		{"context", "add", "prod", "-c", "x"}, {"context", "remove", "prod"},
 	}
-	for _, args := range commands {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			t.Setenv(contexts.EnvContext, "")
-			f, _, out, _ := cmdutiltest.NewFactory()
-			store := cmdutiltest.NewContextStore(t, f, nil)
-			writeFile(t, store.Path, "contexts: [not, a, map")
-			cmd := root.NewCmdRoot(f)
-			cmd.SetArgs(args)
+	for _, file := range files {
+		for _, args := range commands {
+			t.Run(file.name+"/"+strings.Join(args, " "), func(t *testing.T) {
+				t.Setenv(contexts.EnvContext, "")
+				f, _, out, _ := cmdutiltest.NewFactory()
+				store := cmdutiltest.NewContextStore(t, f, nil)
+				writeFile(t, store.Path, file.content)
+				cmd := root.NewCmdRoot(f)
+				cmd.SetArgs(args)
 
-			err := cmd.ExecuteContext(context.Background())
+				err := cmd.ExecuteContext(context.Background())
 
-			if err == nil || !strings.Contains(err.Error(), "parsing "+store.Path) {
-				t.Errorf("error = %v, want a parse error that names the file", err)
-			}
-			if out.Len() != 0 {
-				t.Errorf("stdout = %q, want nothing", out.String())
-			}
-			// A file that cannot be read is never replaced.
-			if got := readFile(t, store.Path); got != "contexts: [not, a, map" {
-				t.Errorf("file content = %q, want it unchanged", got)
-			}
-		})
+				if want := "parsing " + store.Path + ": " + file.wantErr; err == nil || !strings.HasPrefix(err.Error(), want) {
+					t.Errorf("error = %v, want one that starts with %q", err, want)
+				}
+				if out.Len() != 0 {
+					t.Errorf("stdout = %q, want nothing", out.String())
+				}
+				if got := readFile(t, store.Path); got != file.content {
+					t.Errorf("file content = %q, want it unchanged", got)
+				}
+			})
+		}
+	}
+}
+
+// cancelOnRead cancels the context inside the read that returns the answer,
+// as Ctrl+C does when it arrives together with the line.
+type cancelOnRead struct {
+	cancel context.CancelFunc
+	r      io.Reader
+}
+
+func (c *cancelOnRead) Read(p []byte) (int, error) {
+	c.cancel()
+	return c.r.Read(p)
+}
+
+// TestUseInterruptedWithAnswerReady: an interrupt that comes with the answer
+// to the question still stops the command before it saves.
+func TestUseInterruptedWithAnswerReady(t *testing.T) {
+	t.Setenv(contexts.EnvContext, "")
+	f, _, out, _ := cmdutiltest.NewFactory()
+	store := cmdutiltest.NewContextStore(t, f, twoContexts())
+	ctx, cancel := context.WithCancel(context.Background())
+	f.IOStreams.In = &cancelOnRead{cancel: cancel, r: strings.NewReader("stage\n")}
+	cmd := root.NewCmdRoot(f)
+	cmd.SetArgs([]string{"use"})
+
+	err := cmd.ExecuteContext(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context.Canceled", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", out.String())
+	}
+	got, loadErr := store.Load()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if diff := cmp.Diff(twoContexts(), got); diff != "" {
+		t.Errorf("store after an interrupt (-want +got):\n%s", diff)
 	}
 }
 

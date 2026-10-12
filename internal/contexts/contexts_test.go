@@ -80,6 +80,17 @@ contexts:
 			},
 		},
 		{name: "invalid YAML", content: ptr("contexts: [not, a, map"), wantErr: "parsing "},
+		{
+			name:    "unknown key",
+			content: ptr("current: prod\ndefault-region: us-east-1\ncontexts:\n    prod:\n        cluster: p\n"),
+			wantErr: "line 2: field default-region not found",
+		},
+		{
+			name:    "unknown key in a context",
+			content: ptr("contexts:\n    prod:\n        cluster: p\n        role: admin\n"),
+			wantErr: "line 4: field role not found",
+		},
+		{name: "comments only", content: ptr("# no contexts yet\n"), want: &File{Contexts: map[string]Context{}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -265,6 +276,56 @@ func TestUse(t *testing.T) {
 	}
 }
 
+// TestUseWithDanglingPointers: a pointer that names no saved context, from
+// a file edited by hand, is never switched to and never kept.
+func TestUseWithDanglingPointers(t *testing.T) {
+	saved := map[string]Context{"a": {Cluster: "ca"}, "b": {Cluster: "cb"}}
+	tests := []struct {
+		name         string
+		file         File
+		use          string
+		wantCurrent  string
+		wantPrevious string
+		wantErr      string
+	}{
+		{
+			name: "dash with a dangling previous",
+			file: File{Current: "a", Previous: "gone", Contexts: saved}, use: "-",
+			wantCurrent: "a", wantPrevious: "gone", wantErr: "no previous context to switch to",
+		},
+		{
+			name: "dash with a dangling current",
+			file: File{Current: "gone", Previous: "b", Contexts: saved}, use: "-",
+			wantCurrent: "b",
+		},
+		{
+			name: "name with a dangling current",
+			file: File{Current: "gone", Contexts: saved}, use: "a",
+			wantCurrent: "a",
+		},
+		{
+			name: "name with a dangling current replaces an older previous",
+			file: File{Current: "gone", Previous: "b", Contexts: saved}, use: "a",
+			wantCurrent: "a",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := tt.file
+			err := f.Use(tt.use)
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("Use() error = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || err.Error() != tt.wantErr) {
+				t.Fatalf("Use() error = %v, want %q", err, tt.wantErr)
+			}
+			if f.Current != tt.wantCurrent || f.Previous != tt.wantPrevious {
+				t.Errorf("current = %q, previous = %q; want %q, %q", f.Current, f.Previous, tt.wantCurrent, tt.wantPrevious)
+			}
+		})
+	}
+}
+
 func TestActive(t *testing.T) {
 	saved := map[string]Context{"prod": {Cluster: "p"}, "staging": {Cluster: "s"}}
 	tests := []struct {
@@ -278,7 +339,16 @@ func TestActive(t *testing.T) {
 		{name: "override beats current", file: File{Current: "prod", Contexts: saved}, override: "staging", wantName: "staging"},
 		{name: "override without a current", file: File{Contexts: saved}, override: "staging", wantName: "staging"},
 		{name: "nothing set", file: File{Contexts: saved}},
-		{name: "current names no context", file: File{Current: "missing", Contexts: saved}},
+		{
+			// A file edited by hand. The old pointer is reported, not used
+			// and not read as "no context".
+			name: "current names no context", file: File{Current: "missing", Contexts: saved},
+			wantErr: `the current context "missing" is not a saved context; choose one with: refresh use <name>`,
+		},
+		{
+			name: "override beats a current that names no context",
+			file: File{Current: "missing", Contexts: saved}, override: "prod", wantName: "prod",
+		},
 		{
 			// A typing error must not fall back to the current context:
 			// that would point "stagee" at prod.

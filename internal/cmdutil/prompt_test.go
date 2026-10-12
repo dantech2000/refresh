@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	"go.uber.org/goleak"
@@ -61,16 +62,78 @@ func TestReadLineReadError(t *testing.T) {
 	}
 }
 
-func TestReadLineCancelled(t *testing.T) {
+// A context that is cancelled before the call wins over input that is
+// ready, and the input is not read.
+func TestReadLineCancelledFirst(t *testing.T) {
+	in := strings.NewReader("prod\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := cmdutil.ReadLine(ctx, &cmdutil.IOStreams{In: in})
+
+	if !errors.Is(err, context.Canceled) || got != "" {
+		t.Errorf("ReadLine() = %q, %v; want no line and context.Canceled", got, err)
+	}
+	if in.Len() != len("prod\n") {
+		t.Errorf("ReadLine read %d bytes after the cancellation, want 0", len("prod\n")-in.Len())
+	}
+}
+
+// cancelOnRead cancels the context inside the read that returns the line,
+// so the line and the cancellation are ready together.
+type cancelOnRead struct {
+	cancel context.CancelFunc
+	r      io.Reader
+}
+
+func (c *cancelOnRead) Read(p []byte) (int, error) {
+	c.cancel()
+	return c.r.Read(p)
+}
+
+func TestReadLineCancelledWithInputReady(t *testing.T) {
+	// Each run has the same two ready cases; many runs make a wrong pick
+	// by select show up.
+	for range 200 {
+		ctx, cancel := context.WithCancel(context.Background())
+		in := &cancelOnRead{cancel: cancel, r: strings.NewReader("prod\n")}
+
+		got, err := cmdutil.ReadLine(ctx, &cmdutil.IOStreams{In: in})
+
+		if !errors.Is(err, context.Canceled) || got != "" {
+			t.Fatalf("ReadLine() = %q, %v; want no line and context.Canceled", got, err)
+		}
+	}
+}
+
+// A cancellation ends the wait for input that never comes.
+func TestReadLineCancelledWhileWaiting(t *testing.T) {
 	r, w := io.Pipe()
 	// Closing the input ends the background read, so no goroutine is left.
 	defer func() { _ = w.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	reading := make(chan struct{})
+	in := &signalOnRead{reading: reading, r: r}
+	go func() {
+		<-reading // ReadLine is inside the read
+		cancel()
+	}()
 
-	_, err := cmdutil.ReadLine(ctx, &cmdutil.IOStreams{In: r})
+	_, err := cmdutil.ReadLine(ctx, &cmdutil.IOStreams{In: in})
 
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("ReadLine() error = %v, want context.Canceled", err)
 	}
+}
+
+// signalOnRead closes reading when the first read starts.
+type signalOnRead struct {
+	reading chan struct{}
+	once    sync.Once
+	r       io.Reader
+}
+
+func (s *signalOnRead) Read(p []byte) (int, error) {
+	s.once.Do(func() { close(s.reading) })
+	return s.r.Read(p)
 }

@@ -6,8 +6,10 @@
 package contextcmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -55,6 +57,17 @@ func loadFile(f func() (*contexts.Store, error)) (*contexts.Store, *contexts.Fil
 		return nil, nil, err
 	}
 	return store, file, nil
+}
+
+// contextName returns the context name in the argument arg, without the
+// spaces around it. A name that is empty then is an error: no command could
+// select that context again.
+func contextName(arg string) (string, error) {
+	name := strings.TrimSpace(arg)
+	if name == "" {
+		return "", errors.New("context name is required")
+	}
+	return name, nil
 }
 
 // envContext returns the value of REFRESH_CONTEXT.

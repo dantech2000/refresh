@@ -46,7 +46,10 @@ this command saves.`,
 		ValidArgsFunction: completeNames(f.Contexts),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
-				o.name = args[0]
+				var err error
+				if o.name, err = contextName(args[0]); err != nil {
+					return err
+				}
 			}
 			o.envContext = envContext()
 			return o.run(cmd.Context())
@@ -66,6 +69,10 @@ func (o *useOptions) run(ctx context.Context) error {
 	name := o.name
 	if name == "" {
 		if name, err = o.pick(ctx, file); err != nil {
+			return err
+		}
+		// An interrupt during the question must not change the file.
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 	}

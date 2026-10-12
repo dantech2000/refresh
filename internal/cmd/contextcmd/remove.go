@@ -28,7 +28,10 @@ afterwards.`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeNames(f.Contexts),
 		RunE: func(_ *cobra.Command, args []string) error {
-			o.name = args[0]
+			var err error
+			if o.name, err = contextName(args[0]); err != nil {
+				return err
+			}
 			return o.run()
 		},
 	}

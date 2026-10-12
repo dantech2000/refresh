@@ -67,7 +67,13 @@ func (o *options) run(ctx context.Context, root *cobra.Command) error {
 		Source:  "refresh " + o.version,
 		Manual:  "refresh manual",
 	}
-	if err := doc.GenManTree(root, header, dir); err != nil {
+	// Cobra writes with os.Create, which follows a symbolic link and leaves
+	// part of the pages when it fails. GenerateFiles prevents both, which
+	// matters when the command runs with more rights than the user has.
+	err := cmdutil.GenerateFiles(dir, func(tmp string) error {
+		return doc.GenManTree(root, header, tmp)
+	})
+	if err != nil {
 		return fmt.Errorf("writing the man pages to %s: %w", dir, err)
 	}
 
@@ -76,7 +82,6 @@ func (o *options) run(ctx context.Context, root *cobra.Command) error {
 		return err
 	}
 	base := filepath.Dir(dir) // without man1
-	var err error
 	if o.inManPath(ctx, base) {
 		_, err = fmt.Fprintln(out, "You can now use 'man refresh' to view the documentation.")
 	} else {

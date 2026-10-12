@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -120,5 +121,43 @@ func TestGenDocsErrors(t *testing.T) {
 				t.Errorf("stdout = %q, want nothing", out.String())
 			}
 		})
+	}
+}
+
+// A symbolic link at the path of a page is replaced by the page. The file
+// that it points to keeps its content, and other files stay.
+func TestGenDocsDoesNotWriteThroughSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("making a symbolic link needs a privilege on Windows")
+	}
+	dir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim")
+	for path, content := range map[string]string{victim: "do not touch", filepath.Join(dir, "schemas.md"): "hand-written"} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(victim, filepath.Join(dir, "refresh.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	pages := generate(t, dir)
+
+	if !strings.HasPrefix(pages["refresh.md"], "## refresh\n") {
+		t.Errorf("refresh.md is not the generated page:\n%.200s", pages["refresh.md"])
+	}
+	if info, err := os.Lstat(filepath.Join(dir, "refresh.md")); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("refresh.md: mode %v, error %v; want a regular file in place of the link", info.Mode(), err)
+	}
+	if b, err := os.ReadFile(victim); err != nil || string(b) != "do not touch" {
+		t.Errorf("link target = %q, %v; want it unchanged", b, err)
+	}
+	if pages["schemas.md"] != "hand-written" {
+		t.Errorf("schemas.md = %q, want it unchanged", pages["schemas.md"])
+	}
+	for name := range pages {
+		if strings.HasPrefix(name, ".refresh-tmp-") {
+			t.Errorf("temporary directory %s is still there", name)
+		}
 	}
 }

@@ -46,10 +46,15 @@ func (o *options) run(root *cobra.Command) error {
 	// Cobra ends each page with a line that holds the date of the run.
 	// Without it the pages change only when a command changes.
 	disableAutoGenTag(root)
-	if err := doc.GenMarkdownTree(root, o.out); err != nil {
+	// Cobra writes with os.Create, which follows a symbolic link and leaves
+	// part of the pages when it fails. GenerateFiles prevents both.
+	err := cmdutil.GenerateFiles(o.out, func(tmp string) error {
+		return doc.GenMarkdownTree(root, tmp)
+	})
+	if err != nil {
 		return fmt.Errorf("writing the reference to %s: %w", o.out, err)
 	}
-	_, err := fmt.Fprintf(o.io.Out, "Generated the command reference in %s\n", o.out)
+	_, err = fmt.Fprintf(o.io.Out, "Generated the command reference in %s\n", o.out)
 	return err
 }
 
