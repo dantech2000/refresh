@@ -188,7 +188,7 @@ The network sets most of the wall time. The plan controls the number of calls, t
 | Measure | Value |
 |---|---|
 | `--help`, `current`, `cluster list --help` | 14 ms |
-| `version`, stdout piped (no update check runs) | 89 ms; the cause is unknown and is found in phase 0 |
+| `version`, stdout piped | 28 ms, against 13 ms with `--no-update-check`. The update-check path costs 15 ms before it decides to skip. An earlier 89 ms reading was a cold first run. |
 | Package init, 335 packages | 4 ms |
 | Binary, stripped | 94 MB |
 
@@ -407,7 +407,6 @@ The runner starts each binary as a subprocess, with a PTY where a scenario needs
 3. Settle the drift table. Fix those bugs on `main` and merge, so legacy mutation behaviour is the right reference.
 4. Port `fakeaws` into `fleettest` and `awsxtest` as the fake world. Today it serves EKS, STS, SSM, and Auto Scaling activities; most other calls return 400. Write an operation coverage matrix for every AWS call the product makes: EKS, STS, EC2, Auto Scaling, SSM, CloudWatch, and Service Quotas. For each, prove a success response, access denied, throttling, paging, a delayed response, and clean handler exit after cancellation. Run the Kubernetes spike.
 5. Build the runner in `test/parity`. Record the legacy mutation traces for every mutating scenario.
-6. Find the cause of the slow `version` command.
 
 Exit: legacy is green; the contract is approved; the coverage matrix is complete; every mutating command has scenarios for success, dry run, declined prompt, blocked gate, failed update, failed verification, resume, and interrupt.
 
