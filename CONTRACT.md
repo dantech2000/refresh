@@ -198,9 +198,10 @@ The parity suite found these in the old binary. The new CLI does the stated thin
 | Old behaviour | New behaviour |
 |---|---|
 | `nodegroup update -o json` without `--yes` and without a terminal starts the roll when health is clean | Every changing command refuses without `--yes` in that case |
-| `nodegroup scale -o json` prints no document when the wait fails or a gate refuses, and a refusal exits 1 | One document always; a refusal exits 3 |
+| `nodegroup scale -o json` prints no document when the wait fails, or when the PDB check cannot reach Kubernetes (which also exits 1) | One document always. A gate that refuses exits 3. A gate that cannot read exits 4. |
 | `cluster rollback` interrupted before it starts reports `Failed` | It reports `Interrupted`, as `cluster upgrade` does |
-| `cluster upgrade` starts an insights refresh before it finds that the run is blocked | Checks that need no change run first |
-| `addon update` proceeds on a `DEGRADED` add-on and prints a raw log line | A degraded add-on is a health failure; updating it to repair it is allowed and says so |
+| `addon update` on a `DEGRADED` add-on prints a raw log line | Updating a degraded add-on to repair it stays allowed, and the notice is a normal stderr line |
 | A `DEGRADED` add-on is "Issues" in one document and "Fail" in another | One add-on health value everywhere |
 | `cluster upgrade` has no busy check | Each phase states which in-flight changes it accepts and refuses the others |
+
+One old behaviour is kept on purpose: `cluster upgrade` starts an EKS insights refresh before it decides whether the run is blocked. The decision needs fresh insights. It is the one request a blocked run may send.

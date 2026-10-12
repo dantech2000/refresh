@@ -193,6 +193,33 @@ The network sets most of the wall time. The plan controls the number of calls, t
 | Package init, 335 packages | 4 ms |
 | Binary, stripped | 94 MB |
 
+### Old and new, measured 2026-10-12
+
+Both binaries built with `-trimpath -ldflags='-s -w'`, 40 runs each, on a laptop that was also running tests. The new binary does not link the AWS SDK or client-go yet, so its size, memory, and start time will rise as commands land.
+
+| Command | Old, mean | New, mean | Old memory | New memory |
+|---|---|---|---|---|
+| `--help` | 49 ms | 19 ms | 43 MB | 13 MB |
+| `version` | 34 ms | 16 ms | 43 MB | 13 MB |
+| `current` | 35 ms | 15 ms | 43 MB | 13 MB |
+| `context list` | 33 ms | 12 ms | 43 MB | 13 MB |
+| `completion zsh` | 28 ms | 9 ms | 42 MB | 13 MB |
+| Binary size | 97 MB | 9 MB | | |
+
+Old binary against a fake fleet of 200 clusters in 8 regions. The new binary has no read commands yet; these are the numbers it must beat.
+
+| Command | No latency | Each call waits 0 to 100 ms |
+|---|---|---|
+| `status -A` | 76 ms | 1,990 ms |
+| `cluster list -A` | 37 ms | 790 ms |
+| `cluster list`, one region | 20 ms | 677 ms |
+| `cluster describe` | 17 ms | 394 ms |
+| `nodegroup list` | 17 ms | 315 ms |
+| `addon list` | 17 ms | 224 ms |
+| `cluster upgrade-check` | 22 ms | 769 ms |
+
+What the second table says: local work is already small. With a 50 ms mean call, `cluster list` in one region takes about 13 calls' worth of time and `upgrade-check` about 15. The time goes to calls made one after another. The target for the new read side is fewer sequential round trips per command, and the parity runner's request log measures that directly.
+
 ### Gates
 
 Deterministic gates run on every PR:
