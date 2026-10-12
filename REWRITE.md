@@ -18,6 +18,7 @@ The rewrite is done when the new binary meets the v2 contract, passes the parity
 6. **`main` keeps releasing the old tree.** A user-facing fix goes to `main` first. The rewrite branch merges `main` every week.
 7. **Convention over invention.** The new tree looks like other well-known Go CLIs. It uses the standard layout, cobra as cobra is normally used, and the published Go style guides. The plan adds a rule of its own only where a past bug justifies it, and says which bug.
 8. **Each phase starts with a design note and ends with a review.** The note specifies the phase's types and rules. `/code-review` and Codex review the note before code and the diff after.
+9. **No changing command is built before phase 0 meets its exit criteria.** The phase 1 foundation (the cobra root, `cmdutil`, `apidoc`, `version`, contexts) may start once the contract is approved, because it depends on nothing in phase 0.
 
 ## Why the old design gets replaced
 
