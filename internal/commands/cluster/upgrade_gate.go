@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v3"
 
+	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
 	"github.com/dantech2000/refresh/internal/health"
@@ -27,8 +28,9 @@ type healthGateChecker interface {
 
 // nodegroupHealthGate is the pre-roll gate `cluster upgrade` runs before each
 // nodegroup roll, after the orchestrator's built-in ACTIVE check. It fails
-// the roll when a PodDisruptionBudget allows 0 disruptions or a pod is
-// covered by more than one PDB on the nodegroup (unless --force) or the pre-flight health decision is BLOCK. Warnings
+// the roll when a PodDisruptionBudget allows 0 disruptions, a pod is
+// covered by more than one PDB on the nodegroup, or the PDBs could not be
+// read (each unless --force), or the pre-flight health decision is BLOCK. Warnings
 // follow the phase-confirmation rules: --yes proceeds, otherwise the user is
 // asked. Without Kubernetes access the PDB check is skipped with a warning,
 // as in `nodegroup update`.
@@ -106,12 +108,18 @@ func (g *nodegroupHealthGate) check(ctx context.Context, nodegroup string) error
 	g.progressf("pre-flight health checks for nodegroup %s", nodegroup)
 	if g.hasKube {
 		report, err := g.checker.DrainBlockers(ctx, g.cluster, []string{nodegroup})
-		if err != nil {
-			return fmt.Errorf("checking PodDisruptionBudgets for nodegroup %s: %w (pass --skip-health-check to roll without this check)", nodegroup, err)
+		blockers := report.Names()
+		switch {
+		case err != nil && ctx.Err() != nil:
+			return fmt.Errorf("checking PodDisruptionBudgets for nodegroup %s: %w", nodegroup, err)
+		case err != nil:
+			// Unchecked is not clear: refuse, as for a blocker, unless
+			// --force. `nodegroup update` does the same (drainGate).
+			blockers = []string{"the PodDisruptionBudgets could not be read (" + awserr.Summary(err) + ")"}
 		}
-		if blockers := report.Names(); len(blockers) > 0 {
+		if len(blockers) > 0 {
 			if !g.force {
-				return fmt.Errorf("%d drain blocker(s) would stop draining nodegroup %s: %s; let the workloads recover, relax the PDBs, or narrow PDB selectors so each pod matches one PDB, or pass --force to evict anyway",
+				return fmt.Errorf("%d drain blocker(s) would stop draining nodegroup %s: %s; let the workloads recover, relax the PDBs, or narrow PDB selectors so each pod matches one PDB, fix the access to the PDBs, or pass --force to evict anyway",
 					len(blockers), nodegroup, strings.Join(blockers, "; "))
 			}
 			g.warnf("Warning: --force: rolling nodegroup %s despite these drain blockers: %s\n", nodegroup, strings.Join(blockers, "; "))

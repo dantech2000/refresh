@@ -387,6 +387,10 @@ confirmed `ACTIVE` with no health issues, `refresh` runs the same
   disruptions (including a PDB whose status is not synced), or a pod that
   more than one PDB selects. With `--force` (which lets EKS evict through
   PDBs) it is a warning instead.
+- PodDisruptionBudgets that could not be read (for example, a denied
+  permission) stop the roll in the same way. With `--force` the roll starts
+  and the warning names the failed read. `nodegroup update` has the same
+  rule.
 - A `BLOCK` health decision stops the roll.
 - Health warnings need `--yes` or a confirmation at the prompt.
 

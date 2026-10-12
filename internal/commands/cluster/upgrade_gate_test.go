@@ -3,6 +3,7 @@ package cluster
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -155,17 +156,58 @@ func TestUpgradeGate_MultiPDBPodIsDrainBlocker(t *testing.T) {
 	})
 }
 
-// A PDB list failure is not "no blockers".
+// A PDB list failure is not "no blockers": it stops the roll as a drain
+// blocker does, and the error names --force.
 func TestUpgradeGate_DrainCheckErrorFails(t *testing.T) {
 	m, svc, plan := gateWorld(t)
-	checker := &fakeGateChecker{drainErr: context.DeadlineExceeded}
+	checker := &fakeGateChecker{drainErr: errors.New("poddisruptionbudgets is forbidden")}
 
 	err := runGated(t, svc, plan, newTestGate(checker, true, &bytes.Buffer{}))
-	if err == nil || !strings.Contains(err.Error(), "PodDisruptionBudgets") {
-		t.Fatalf("err = %v, want the PDB check failure", err)
+	if err == nil || !strings.Contains(err.Error(), "PodDisruptionBudgets could not be read") ||
+		!strings.Contains(err.Error(), "is forbidden") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("err = %v, want the unread PDBs, the cause, and the --force hint", err)
 	}
 	if m.Calls.UpdateNodegroupVersion != 0 {
 		t.Fatalf("UpdateNodegroupVersion calls = %d, want 0", m.Calls.UpdateNodegroupVersion)
+	}
+}
+
+// --force rolls past PDBs that could not be read, as `nodegroup update`
+// does, and keeps the warning.
+func TestUpgradeGate_ForceRollsPastUnreadablePDBs(t *testing.T) {
+	m, svc, plan := gateWorld(t)
+	checker := &fakeGateChecker{drainErr: errors.New("poddisruptionbudgets is forbidden")}
+	var warn bytes.Buffer
+	g := newTestGate(checker, true, &warn)
+	g.force = true
+
+	if err := runGated(t, svc, plan, g); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if m.Calls.UpdateNodegroupVersion != 1 {
+		t.Fatalf("UpdateNodegroupVersion calls = %d, want 1", m.Calls.UpdateNodegroupVersion)
+	}
+	if w := warn.String(); !strings.Contains(w, "--force") || !strings.Contains(w, "PodDisruptionBudgets could not be read") ||
+		!strings.Contains(w, "is forbidden") {
+		t.Fatalf("warn = %q, want the --force warning that names the unread PDBs", w)
+	}
+}
+
+// A cancelled run is not an unreadable PDB: --force does not roll past it.
+func TestUpgradeGate_CancelledDrainCheckStopsDespiteForce(t *testing.T) {
+	checker := &fakeGateChecker{drainErr: context.Canceled}
+	var warn bytes.Buffer
+	g := newTestGate(checker, true, &warn)
+	g.force = true
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := g.check(ctx, "web")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if checker.runCalls != 0 || strings.Contains(warn.String(), "--force") {
+		t.Fatalf("health checks ran %d times, warn = %q; want the gate to stop at the cancelled read", checker.runCalls, warn.String())
 	}
 }
 
