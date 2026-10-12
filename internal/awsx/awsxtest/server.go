@@ -55,6 +55,12 @@ type Request struct {
 	Input map[string]any
 }
 
+// clone returns a copy of r that shares no memory with it.
+func (r Request) clone() Request {
+	r.Input = cloneInput(r.Input)
+	return r
+}
+
 // Handler answers AWS API requests from a World. It serves every service
 // and region on one endpoint and tells them apart by the request's SigV4
 // credential scope.
@@ -102,29 +108,34 @@ func (h *Handler) Requests() []Request {
 	defer h.mu.Unlock()
 	out := make([]Request, len(h.requests))
 	for i, r := range h.requests {
-		r.Input = cloneInput(r.Input)
-		out[i] = r
+		out[i] = r.clone()
 	}
 	return out
 }
 
 // PeakConcurrency returns the most requests that were in progress at the
 // same time for a service (an IAM prefix) in a region. An empty service or
-// region means any. A request is in progress from its arrival until its
-// answer is written, so the time a fault holds it counts.
+// region means any. A request is in progress from the moment the handler
+// has read its headers, before it reads the body, until its answer is
+// written. The time a fault or a hook holds it counts.
 func (h *Handler) PeakConcurrency(service, region string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.peak[concurrencyKey{service, region}]
 }
 
-// begin records a request and counts it as in progress. It returns the
-// function that ends it.
-func (h *Handler) begin(r Request) (end func()) {
-	keys := []concurrencyKey{{r.Service, r.Region}, {r.Service, ""}, {"", r.Region}, {"", ""}}
+func (h *Handler) record(r Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.requests = append(h.requests, r)
+}
+
+// begin counts a request as in progress. It returns the function that ends
+// it.
+func (h *Handler) begin(service, region string) (end func()) {
+	keys := []concurrencyKey{{service, region}, {service, ""}, {"", region}, {"", ""}}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for _, k := range keys {
 		h.active[k]++
 		h.peak[k] = max(h.peak[k], h.active[k])
@@ -174,10 +185,6 @@ var credentialScope = regexp.MustCompile(`Credential=[^/]+/[^/]+/([^/]+)/([^/]+)
 
 // ServeHTTP answers one AWS API request.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return // the client went away
-	}
 	m := credentialScope.FindStringSubmatch(r.Header.Get("Authorization"))
 	if m == nil {
 		http.Error(w, "awsxtest: the request is not signed", http.StatusForbidden)
@@ -189,6 +196,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "awsxtest: no service signs as "+m[2], http.StatusBadRequest)
 		return
 	}
+	defer h.begin(svc.name, region)()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		panic(http.ErrAbortHandler) // the client went away
+	}
 
 	action, in, err := svc.protocol.decode(r, body)
 	if err != nil {
@@ -197,10 +209,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	op, known := svc.operations[action]
 	name := fleettest.Operation(svc.name + ":" + action)
-	// The log and the handler get separate copies of the input, so neither
-	// can change what the other reads.
-	req := Request{Operation: name, Service: svc.name, Region: region, Mutates: op.mutates, Input: cloneInput(in)}
-	defer h.begin(req)()
+	// The log, each hook, and the operation get their own copy of the
+	// input, so none can change what another reads.
+	req := Request{Operation: name, Service: svc.name, Region: region, Mutates: op.mutates, Input: in}
+	h.record(req.clone())
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -231,7 +243,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := op.handle(&call{world: h.world, svc: svc, region: region, in: in, pageSize: admission.PageSize})
-	if admission.LoseResponse {
+	if err == nil && h.world.LoseResponse(admission) {
 		// The operation ran. The client never learns the result.
 		panic(http.ErrAbortHandler)
 	}
@@ -249,7 +261,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // hooks runs Latency and Throttle. It reports whether the request goes on.
 func (h *Handler) hooks(ctx context.Context, w http.ResponseWriter, svc *service, req Request) bool {
 	if h.Latency != nil {
-		if d := h.Latency(req); d > 0 {
+		if d := h.Latency(req.clone()); d > 0 {
 			timer := time.NewTimer(d)
 			defer timer.Stop()
 			select {
@@ -259,7 +271,7 @@ func (h *Handler) hooks(ctx context.Context, w http.ResponseWriter, svc *service
 			}
 		}
 	}
-	if h.Throttle != nil && h.Throttle(req) {
+	if h.Throttle != nil && h.Throttle(req.clone()) {
 		svc.writeError(w, svc.faultError(&fleettest.FaultError{Kind: fleettest.Throttled}))
 		return false
 	}

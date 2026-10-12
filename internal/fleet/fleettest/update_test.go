@@ -332,6 +332,69 @@ func TestUpdateTokenScope(t *testing.T) {
 	})
 }
 
+// TestUpdateReplayIgnoresLaterState replays a request that left its fields
+// to the defaults, after the resource those defaults came from changed.
+func TestUpdateReplayIgnoresLaterState(t *testing.T) {
+	w := newWorld()
+	values := "{}"
+	tests := []struct {
+		name string
+		// first is the call to replay. change moves the resource on.
+		first, change func() (fleettest.Update, error)
+		// other is first with one field more, under the same token.
+		other func() (fleettest.Update, error)
+	}{
+		{
+			name: "nodegroup roll with no version",
+			first: func() (fleettest.Update, error) {
+				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Token: token})
+			},
+			change: func() (fleettest.Update, error) {
+				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.32"})
+			},
+			other: func() (fleettest.Update, error) {
+				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.31", Token: token})
+			},
+		},
+		{
+			name: "add-on update with no version",
+			first: func() (fleettest.Update, error) {
+				return w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Token: token})
+			},
+			change: func() (fleettest.Update, error) {
+				return w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+			},
+			other: func() (fleettest.Update, error) {
+				return w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{ConfigurationValues: &values, Token: token})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			first, err := tt.first()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tt.change(); err != nil {
+				t.Fatal(err)
+			}
+			again, err := tt.first()
+			if err != nil {
+				t.Fatalf("the replay: %v", err)
+			}
+			if diff := cmp.Diff(first, again, cmpopts.IgnoreUnexported(fleettest.Update{})); diff != "" {
+				t.Errorf("the replay differs from the first answer (-first +replay):\n%s", diff)
+			}
+			// The field the first call left out now equals the default it
+			// got then. Sending it is still another request.
+			var invalid *fleettest.InvalidError
+			if _, err := tt.other(); !errors.As(err, &invalid) {
+				t.Errorf("the token with one more field returned %v, want an InvalidError", err)
+			}
+		})
+	}
+}
+
 // TestUpdateSharesNoMemory changes everything a caller still holds after it
 // starts an update, and after the update ends. The world must not see it.
 func TestUpdateSharesNoMemory(t *testing.T) {

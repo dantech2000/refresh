@@ -365,6 +365,10 @@ func TestInjectedCodeStatus(t *testing.T) {
 			_, err := c.sts.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 			return err
 		}, wireError{"ExpiredToken", generic}, 403, false},
+		{fleettest.STSGetCallerIdentity, fleettest.Fault{Code: "ExpiredTokenException"}, func(c *clients) error {
+			_, err := c.sts.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+			return err
+		}, wireError{"ExpiredTokenException", generic}, 403, false},
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s/%s/%d", tt.op, tt.fault.Code, tt.fault.Status), func(t *testing.T) {
@@ -578,6 +582,108 @@ func TestLostResponse(t *testing.T) {
 	}
 }
 
+// TestLostResponseNeedsSuccess proves that a request the operation refuses
+// does not use up a lost response: the fault waits for a request that
+// committed.
+func TestLostResponseNeedsSuccess(t *testing.T) {
+	f := newFixture(t)
+	ctx := testContext(t)
+	f.world.SetFault(fleettest.EKSUpdateNodegroupVersion, fleettest.Fault{LoseResponse: 1})
+	roll := func(c *clients, nodegroup string) error {
+		_, err := c.eks.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{ClusterName: aws.String("prod"), NodegroupName: aws.String(nodegroup)})
+		return err
+	}
+
+	checkError(t, roll(f.once, "nope"), wireError{"ResourceNotFoundException", is[*ekstypes.ResourceNotFoundException]})
+	var apiErr smithy.APIError
+	if err := roll(f.once, "ng-a"); err == nil || errors.As(err, &apiErr) {
+		t.Errorf("the first roll that committed returned %v, want a connection error", err)
+	}
+	if err := roll(f.once, "ng-b"); err != nil {
+		t.Errorf("a roll after the lost response: %v", err)
+	}
+}
+
+// TestUpdatePayload proves that every field the legacy product sends in an
+// Update call reaches the world, and that a client request token replays
+// the first answer whatever happened to the resource since.
+func TestUpdatePayload(t *testing.T) {
+	f := newFixture(t)
+	ctx := testContext(t)
+	c := f.clients
+	other := token + "x"
+	configure := func(tok, values string) (*eks.UpdateAddonOutput, error) {
+		return c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{
+			ClusterName: aws.String("prod"), AddonName: aws.String("vpc-cni"), AddonVersion: aws.String("v1.19.0-eksbuild.1"),
+			ConfigurationValues: aws.String(values), ClientRequestToken: aws.String(tok),
+		})
+	}
+	// No version: the roll keeps the nodegroup's own, 1.31.
+	rollB := func() (*eks.UpdateNodegroupVersionOutput, error) {
+		return c.eks.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
+			ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-b"), Force: true, ClientRequestToken: aws.String(token),
+		})
+	}
+
+	if _, err := configure(token, `{"env":{"A":"1"}}`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configure(token, `{"env":{"A":"2"}}`)
+	checkError(t, err, wireError{"InvalidParameterException", is[*ekstypes.InvalidParameterException]})
+
+	first, err := rollB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another update moves ng-b to 1.32. The replay must still answer.
+	if _, err := c.eks.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
+		ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-b"), Version: aws.String("1.32"), ClientRequestToken: aws.String(other),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := rollB()
+	if err != nil {
+		t.Fatalf("the replay after the nodegroup changed: %v", err)
+	}
+	if diff := cmp.Diff(updateOf(first.Update), updateOf(again.Update)); diff != "" {
+		t.Errorf("the replay answered another update (-first +replay):\n%s", diff)
+	}
+
+	if _, err := c.eks.UpdateClusterVersion(ctx, &eks.UpdateClusterVersionInput{
+		Name: aws.String("prod"), Version: aws.String("1.31"), Force: true, ClientRequestToken: aws.String(token),
+		RollbackConfig: &ekstypes.RollbackConfig{TimeoutMinutes: aws.Int32(120)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	type sent struct {
+		Type    fleettest.UpdateType
+		Force   bool
+		Timeout int32
+	}
+	got := map[string]sent{}
+	var configuration string
+	f.world.View(func(s *fleettest.State) {
+		cl := s.Cluster(region, "prod")
+		configuration = cl.Addon("vpc-cni").ConfigurationValues
+		for _, u := range cl.Updates[2:] { // after the two seeded ones
+			got[u.ID[len(u.ID)-1:]+" "+u.Nodegroup+u.Addon] = sent{u.Type, u.Force, u.RollbackTimeoutMinutes}
+		}
+	})
+	want := map[string]sent{
+		"1 vpc-cni": {Type: fleettest.TypeAddonUpdate},
+		"2 ng-b":    {Type: fleettest.TypeVersionUpdate, Force: true},
+		"3 ng-b":    {Type: fleettest.TypeVersionUpdate},
+		"4 ":        {Type: fleettest.TypeVersionRollback, Force: true, Timeout: 120},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("updates in the world (-want +got):\n%s", diff)
+	}
+	if configuration != `{"env":{"A":"1"}}` {
+		t.Errorf("add-on configuration = %s, want the values of the first request", configuration)
+	}
+}
+
 // TestPeakConcurrency holds requests with a delay to give the counters a
 // known peak.
 func TestPeakConcurrency(t *testing.T) {
@@ -714,9 +820,13 @@ func TestHandlerHooks(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		delayed = append(delayed, r.Operation)
+		r.Input["written by"] = "the latency hook"
 		return time.Nanosecond
 	}
-	f.server.Throttle = func(r awsxtest.Request) bool { return r.Service == "ec2" }
+	f.server.Throttle = func(r awsxtest.Request) bool {
+		r.Input["written by"] = "the throttle hook"
+		return r.Service == "ec2"
+	}
 
 	if _, err := f.once.eks.ListClusters(ctx, &eks.ListClustersInput{}); err != nil {
 		t.Errorf("ListClusters: %v", err)
@@ -728,6 +838,11 @@ func TestHandlerHooks(t *testing.T) {
 	defer mu.Unlock()
 	if diff := cmp.Diff([]fleettest.Operation{fleettest.EKSListClusters, fleettest.EC2DescribeVpcs}, delayed); diff != "" {
 		t.Errorf("requests the latency hook saw (-want +got):\n%s", diff)
+	}
+	for _, r := range f.server.Requests() {
+		if len(r.Input) != 0 {
+			t.Errorf("a hook changed the logged input of %s: %v", r.Operation, r.Input)
+		}
 	}
 }
 

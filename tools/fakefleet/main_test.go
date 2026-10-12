@@ -36,7 +36,20 @@ func TestParseFlags(t *testing.T) {
 		{[]string{"-regions", "0"}, true},
 		{[]string{"-regions", "11"}, true},
 		{[]string{"-throttle", "1.5"}, true},
+		{[]string{"-throttle", "-0.1"}, true},
+		{[]string{"-throttle", "NaN"}, true},
 		{[]string{"-nope"}, true},
+		{[]string{"-clusters", "3", "extra"}, true},
+		{[]string{"-clusters", "-1"}, true},
+		{[]string{"-clusters", "0"}, false},
+		{[]string{"-latency", "-1s"}, true},
+		{[]string{"-latency", "2562047h"}, true},
+		{[]string{"-latency", "1h"}, false},
+		{[]string{"-speed", "-1"}, true},
+		{[]string{"-speed", "NaN"}, true},
+		{[]string{"-speed", "+Inf"}, true},
+		{[]string{"-speed", "0"}, false},
+		{[]string{"-speed", "600"}, false},
 	}
 	for _, tt := range tests {
 		if _, err := parseFlags(tt.args, io.Discard); (err != nil) != tt.wantErr {
@@ -105,6 +118,84 @@ func TestWorldFile(t *testing.T) {
 	}
 	if _, _, err := newWorld(options{worldFile: path, regions: 1}); err == nil {
 		t.Error("a file with an unknown field was accepted")
+	}
+}
+
+// TestFollowClock feeds wall-clock ticks to the clock follower and checks
+// the world's time after each. A send on the unbuffered channel returns
+// only when the follower is back at its receive, so the earlier tick has
+// been applied by then.
+func TestFollowClock(t *testing.T) {
+	w, _, err := newWorld(options{clusters: 1, regions: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Edit(func(s *fleettest.State) { s.DefaultUpdate = fleettest.UpdateScript{After: time.Minute} })
+	update, err := w.UpdateClusterVersion("us-east-1", clusterName(w), fleettest.ClusterVersionRequest{Version: "1.99"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := func() fleettest.UpdateStatus {
+		var out fleettest.UpdateStatus
+		w.View(func(s *fleettest.State) { out = s.Clusters[0].Update(update.ID).Status })
+		return out
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	ticks := make(chan time.Time)
+	done := make(chan struct{})
+	wall := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	start := w.Now()
+	go func() {
+		defer close(done)
+		followClock(ctx, w, 60, wall, ticks) // one wall second is one world minute
+	}()
+
+	ticks <- wall.Add(500 * time.Millisecond)
+	ticks <- wall.Add(500 * time.Millisecond) // no time passed: applies the tick before
+	if got := w.Now().Sub(start); got != 30*time.Second {
+		t.Errorf("after half a wall second the world moved %s, want 30s", got)
+	}
+	if got := status(); got != fleettest.UpdateInProgress {
+		t.Errorf("update = %s after 30s of a 1m update, want InProgress", got)
+	}
+	ticks <- wall.Add(400 * time.Millisecond) // a wall clock that steps back moves nothing
+	ticks <- wall.Add(time.Second)
+	ticks <- wall.Add(time.Second)
+	if got := w.Now().Sub(start); got != 66*time.Second {
+		t.Errorf("the world moved %s in all, want 1m6s", got)
+	}
+	if got := status(); got != fleettest.UpdateSuccessful {
+		t.Errorf("update = %s after its minute passed, want Successful", got)
+	}
+
+	cancel()
+	<-done
+}
+
+func clusterName(w *fleettest.World) string {
+	var name string
+	w.View(func(s *fleettest.State) { name = s.Clusters[0].Name })
+	return name
+}
+
+// failAfter is a writer that fails once it has taken n writes.
+type failAfter struct{ n int }
+
+func (f *failAfter) Write(p []byte) (int, error) {
+	if f.n == 0 {
+		return 0, errors.New("the pipe closed")
+	}
+	f.n--
+	return len(p), nil
+}
+
+// TestRunStopsWhenItCannotPrint checks that run gives up, and leaves no
+// listener or goroutine behind, when its output goes away.
+func TestRunStopsWhenItCannotPrint(t *testing.T) {
+	err := run(t.Context(), []string{"-clusters", "1", "-regions", "1", "-dir", t.TempDir()}, &failAfter{n: 2}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "the pipe closed") {
+		t.Errorf("run returned %v, want the write error", err)
 	}
 }
 

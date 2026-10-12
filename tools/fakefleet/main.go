@@ -8,6 +8,10 @@
 //
 // With -world it serves the fleet in a JSON file instead of a generated
 // one. The file holds a fleettest.State.
+//
+// The fleet's clock follows the wall clock, -speed times as fast, so an
+// update that a script gives a duration ends on its own. -speed 0 stops the
+// clock.
 package main
 
 import (
@@ -64,7 +68,19 @@ type options struct {
 	dir          string
 	worldFile    string
 	addr         string
+	speed        float64
 }
+
+// tick is how often the fleet's clock catches up with the wall clock.
+const tick = 100 * time.Millisecond
+
+// maxLatency keeps ten times the latency, which the slow region uses,
+// inside a time.Duration. maxSpeed keeps one tick of the fleet's clock
+// inside one too.
+const (
+	maxLatency = time.Hour
+	maxSpeed   = 1e6
+)
 
 func parseFlags(args []string, stderr io.Writer) (options, error) {
 	var o options
@@ -80,14 +96,24 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.dir, "dir", "", "where to write the empty AWS config and kubeconfig (default: a temp dir)")
 	fs.StringVar(&o.worldFile, "world", "", "a JSON file with the fleet to serve, in place of a generated one")
 	fs.StringVar(&o.addr, "addr", "127.0.0.1:0", "the address to listen on")
+	fs.Float64Var(&o.speed, "speed", 1, "how fast the fleet's clock runs against the wall clock (0 stops it)")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
-	if o.regions < 1 || o.regions > len(allRegions) {
+	// The comparisons are written so that NaN fails them.
+	switch {
+	case fs.NArg() > 0:
+		return o, fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	case o.clusters < 0:
+		return o, errors.New("-clusters must not be negative")
+	case o.regions < 1 || o.regions > len(allRegions):
 		return o, fmt.Errorf("-regions must be 1..%d", len(allRegions))
-	}
-	if o.throttle < 0 || o.throttle > 1 {
+	case !(o.throttle >= 0 && o.throttle <= 1):
 		return o, errors.New("-throttle must be 0..1")
+	case o.latency < 0 || o.latency > maxLatency:
+		return o, fmt.Errorf("-latency must be 0..%s", maxLatency)
+	case !(o.speed >= 0 && o.speed <= maxSpeed):
+		return o, fmt.Errorf("-speed must be 0..%g", float64(maxSpeed))
 	}
 	return o, nil
 }
@@ -126,11 +152,28 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	url := "http://" + listener.Addr().String()
 	for _, kv := range environment(url, dir, empty, regions) {
 		if _, err := fmt.Fprintf(stdout, "export %s=%q\n", kv[0], kv[1]); err != nil {
+			_ = listener.Close()
 			return err
 		}
 	}
-	_, _ = fmt.Fprintf(stderr, "fakefleet: serving %s in %d regions (slow %s, closed %s, %.0f%% throttled); Ctrl+C to stop\n",
-		url, len(regions), orNone(o.slowRegion), orNone(o.closedRegion), o.throttle*100)
+	_, _ = fmt.Fprintf(stderr, "fakefleet: serving %s in %d regions (slow %s, closed %s, %.0f%% throttled, clock x%g); Ctrl+C to stop\n",
+		url, len(regions), orNone(o.slowRegion), orNone(o.closedRegion), o.throttle*100, o.speed)
+
+	// The clock stops before run returns: stopClock ends the goroutine and
+	// waits for it.
+	clockCtx, cancelClock := context.WithCancel(ctx)
+	clockDone := make(chan struct{})
+	go func() {
+		defer close(clockDone)
+		ticker := time.NewTicker(tick)
+		defer ticker.Stop()
+		followClock(clockCtx, world, o.speed, time.Now(), ticker.C)
+	}()
+	stopClock := func() {
+		cancelClock()
+		<-clockDone
+	}
+	defer stopClock()
 
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	served := make(chan error, 1)
@@ -143,11 +186,31 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handler.Close() // release held requests so Shutdown does not wait for them
 	shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := server.Shutdown(shutdown); err != nil {
-		return err
+	err = server.Shutdown(shutdown)
+	if err != nil {
+		// Requests are still open after the grace period. Cut them off.
+		_ = server.Close()
 	}
 	<-served
-	return nil
+	return err
+}
+
+// followClock advances the world's clock by speed times the wall time that
+// passes between ticks, until ctx ends. Each tick carries the wall time it
+// fired at; start is the wall time the world's clock is in step with.
+func followClock(ctx context.Context, w *fleettest.World, speed float64, start time.Time, ticks <-chan time.Time) {
+	last := start
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticks:
+			if elapsed := now.Sub(last); elapsed > 0 {
+				w.Advance(time.Duration(float64(elapsed) * speed))
+			}
+			last = now
+		}
+	}
 }
 
 // environment is what a refresh binary needs to reach the fleet and

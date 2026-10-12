@@ -28,6 +28,12 @@ type operation struct {
 	handle  func(c *call) (any, error)
 }
 
+// The HTTP statuses in this file, and three other wire details, come from
+// the AWS API references and the SDK's decoders as the author knows them.
+// None was compared with a response captured from real AWS. COVERAGE.md
+// lists them under "Not verified against real AWS"; a live check must
+// settle them before a test relies on the difference.
+
 // serverStatuses are the error codes that mean a failure on the AWS side,
 // with the status every service uses for them.
 var serverStatuses = map[string]int{
@@ -81,11 +87,13 @@ func (s *service) faultError(f *fleettest.FaultError) *apiError {
 // The statuses of the query-protocol services for the codes that are not
 // 400. The JSON 1.1 services answer 400 for every client error.
 var queryStatuses = map[string]int{
-	"AccessDenied":          http.StatusForbidden,
-	"InvalidClientTokenId":  http.StatusForbidden,
-	"SignatureDoesNotMatch": http.StatusForbidden,
-	"ExpiredToken":          http.StatusForbidden,
-	"OptInRequired":         http.StatusForbidden,
+	"AccessDenied":               http.StatusForbidden,
+	"InvalidClientTokenId":       http.StatusForbidden,
+	"SignatureDoesNotMatch":      http.StatusForbidden,
+	"MissingAuthenticationToken": http.StatusForbidden,
+	"ExpiredToken":               http.StatusForbidden,
+	"ExpiredTokenException":      http.StatusForbidden,
+	"OptInRequired":              http.StatusForbidden,
 }
 
 // services is keyed by SigV4 signing name. It is read-only.
@@ -98,6 +106,8 @@ var services = map[string]*service{
 		statuses: map[string]int{
 			"AccessDeniedException":       http.StatusForbidden,
 			"UnrecognizedClientException": http.StatusForbidden,
+			"ExpiredTokenException":       http.StatusForbidden,
+			"InvalidSignatureException":   http.StatusForbidden,
 			"ThrottlingException":         http.StatusTooManyRequests,
 			"ResourceNotFoundException":   http.StatusNotFound,
 			"NotFoundException":           http.StatusNotFound,

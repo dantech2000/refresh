@@ -17,8 +17,34 @@ table. To rewrite it, run `go test ./internal/awsx/awsxtest -run TestCoverageDoc
 Not in the table, and proven once per service or protocol in `server_test.go`: the raw
 error envelopes, the HTTP status of injected error codes, modeled not-found and
 bad-token errors, scoped faults, a lost response after a mutation, peak concurrency,
-and the request log's inputs. The fake's wire shapes come from the SDK's decoders and
-the AWS API references. They were not compared with captures from real AWS.
+and the request log's inputs.
+
+## Not verified against real AWS
+
+The tests prove that the SDK decodes what the fake sends. They do not prove that AWS
+sends the same. Nothing below was compared with a captured AWS response. A live check
+must settle each item before a test relies on it.
+
+- **Every HTTP status in `service.go`.** The codes and statuses are from the AWS API
+  references as the author knows them. The least certain: `ExpiredTokenException` and
+  `ExpiredToken` as 403 for the query services and EKS; `OptInRequired` as 401 for EC2 and
+  403 for the query services; `AuthFailure` as 401; EKS `ThrottlingException` as 429;
+  `RequestLimitExceeded` as 503; every client error of SSM and Service Quotas as 400,
+  including `AccessDeniedException` and `UnrecognizedClientException`.
+- **The bad-credentials code per service** (`Fault.Unauthenticated`): `UnrecognizedClientException`
+  for EKS, SSM, and Service Quotas; `InvalidClientTokenId` for STS, Auto Scaling, and
+  CloudWatch; `AuthFailure` for EC2.
+- **The CloudWatch error shape ID.** The fake sends `com.amazonaws.cloudwatch#<code>` in
+  `__type` for every code. That is the modeled form for shapes such as `InvalidNextToken`.
+  For codes with no shape in the model (`AccessDenied`, `Throttling`) the namespace AWS
+  uses is a guess. The SDK reads the code from `X-Amzn-Query-Error` in both cases.
+- **The Service Quotas `__type` prefix** `com.amazonaws.servicequotas#`. SSM sends the bare
+  code in the fake. Both forms decode.
+- **A reused client request token with a different payload** answers
+  `InvalidParameterException`. The EKS reference does not say what EKS answers.
+- **`DescribeUpdate` without `nodegroupName` or `addonName`** for an update of one answers
+  `ResourceNotFoundException`, from the reference's "required if" wording.
+- **`ResourceInUseException`** for a second update of a resource that has one in progress.
 
 | Operation | Service | Protocol | Mutates | success | denied | throttled | paged | delayed | cancelled | region |
 |---|---|---|---|---|---|---|---|---|---|---|

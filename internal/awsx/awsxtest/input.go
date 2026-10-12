@@ -16,6 +16,12 @@ func (in input) str(key string) string {
 	return s
 }
 
+// flag returns the boolean at key, or false.
+func (in input) flag(key string) bool {
+	b, _ := in[key].(bool)
+	return b
+}
+
 // strs returns the strings at key: a JSON or CBOR list, or a single value.
 func (in input) strs(key string) []string {
 	switch v := in[key].(type) {

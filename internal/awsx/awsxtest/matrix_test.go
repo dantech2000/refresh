@@ -30,9 +30,11 @@ var update = flag.Bool("update", false, "rewrite COVERAGE.md from the matrix")
 // client calls it, and what the client must decode from newWorld.
 type opCase struct {
 	op fleettest.Operation
-	// paged is set for an operation whose API pages.
-	paged   bool
-	mutates bool
+	// paged is set for an operation whose API pages. wantPages is the
+	// number of requests it takes to read want one item per page.
+	paged     bool
+	wantPages int
+	mutates   bool
 	// run calls the operation and follows its page tokens to the end. It
 	// returns the decoded items, as a []T, and the number of requests.
 	run func(ctx context.Context, c *clients) (got any, pages int, err error)
@@ -72,7 +74,7 @@ func newCase[T any](op fleettest.Operation, want []T, call request[T]) opCase {
 
 func pagedCase[T any](op fleettest.Operation, want []T, call request[T]) opCase {
 	tc := newCase(op, want, call)
-	tc.paged = true
+	tc.paged, tc.wantPages = true, len(want)
 	return tc
 }
 
@@ -255,8 +257,8 @@ func TestMatrixPaged(t *testing.T) {
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("%s lost items over pages of 1 (-want +got):\n%s", tc.op, diff)
 			}
-			if pages < 2 {
-				t.Errorf("%s made %d request, want one per item", tc.op, pages)
+			if pages != tc.wantPages || pages < 2 {
+				t.Errorf("%s made %d requests, want %d: one per item, and at least 2", tc.op, pages, tc.wantPages)
 			}
 			if n := len(f.requests(tc.op)); n != pages {
 				t.Errorf("the server got %d requests, want %d", n, pages)
@@ -456,8 +458,31 @@ func TestCoverageDoc(t *testing.T) {
 	b.WriteString("Not in the table, and proven once per service or protocol in `server_test.go`: the raw\n")
 	b.WriteString("error envelopes, the HTTP status of injected error codes, modeled not-found and\n")
 	b.WriteString("bad-token errors, scoped faults, a lost response after a mutation, peak concurrency,\n")
-	b.WriteString("and the request log's inputs. The fake's wire shapes come from the SDK's decoders and\n")
-	b.WriteString("the AWS API references. They were not compared with captures from real AWS.\n\n")
+	b.WriteString("and the request log's inputs.\n\n")
+	b.WriteString("## Not verified against real AWS\n\n")
+	b.WriteString("The tests prove that the SDK decodes what the fake sends. They do not prove that AWS\n")
+	b.WriteString("sends the same. Nothing below was compared with a captured AWS response. A live check\n")
+	b.WriteString("must settle each item before a test relies on it.\n\n")
+	b.WriteString("- **Every HTTP status in `service.go`.** The codes and statuses are from the AWS API\n")
+	b.WriteString("  references as the author knows them. The least certain: `ExpiredTokenException` and\n")
+	b.WriteString("  `ExpiredToken` as 403 for the query services and EKS; `OptInRequired` as 401 for EC2 and\n")
+	b.WriteString("  403 for the query services; `AuthFailure` as 401; EKS `ThrottlingException` as 429;\n")
+	b.WriteString("  `RequestLimitExceeded` as 503; every client error of SSM and Service Quotas as 400,\n")
+	b.WriteString("  including `AccessDeniedException` and `UnrecognizedClientException`.\n")
+	b.WriteString("- **The bad-credentials code per service** (`Fault.Unauthenticated`): `UnrecognizedClientException`\n")
+	b.WriteString("  for EKS, SSM, and Service Quotas; `InvalidClientTokenId` for STS, Auto Scaling, and\n")
+	b.WriteString("  CloudWatch; `AuthFailure` for EC2.\n")
+	b.WriteString("- **The CloudWatch error shape ID.** The fake sends `com.amazonaws.cloudwatch#<code>` in\n")
+	b.WriteString("  `__type` for every code. That is the modeled form for shapes such as `InvalidNextToken`.\n")
+	b.WriteString("  For codes with no shape in the model (`AccessDenied`, `Throttling`) the namespace AWS\n")
+	b.WriteString("  uses is a guess. The SDK reads the code from `X-Amzn-Query-Error` in both cases.\n")
+	b.WriteString("- **The Service Quotas `__type` prefix** `com.amazonaws.servicequotas#`. SSM sends the bare\n")
+	b.WriteString("  code in the fake. Both forms decode.\n")
+	b.WriteString("- **A reused client request token with a different payload** answers\n")
+	b.WriteString("  `InvalidParameterException`. The EKS reference does not say what EKS answers.\n")
+	b.WriteString("- **`DescribeUpdate` without `nodegroupName` or `addonName`** for an update of one answers\n")
+	b.WriteString("  `ResourceNotFoundException`, from the reference's \"required if\" wording.\n")
+	b.WriteString("- **`ResourceInUseException`** for a second update of a resource that has one in progress.\n\n")
 	b.WriteString("| Operation | Service | Protocol | Mutates |")
 	for _, p := range proofs {
 		b.WriteString(" " + p + " |")

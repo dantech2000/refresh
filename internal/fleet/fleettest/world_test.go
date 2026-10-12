@@ -266,7 +266,15 @@ func TestScopedFaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got = append(got, a.LoseResponse)
+			got = append(got, w.LoseResponse(a))
+		}
+		// A request that is let through and never asks, as one that the
+		// operation refused, uses nothing up.
+		if _, err := w.Enter(ctx, fleettest.Call{Operation: fleettest.EKSUpdateAddon}); err != nil {
+			t.Fatal(err)
+		}
+		if w.LoseResponse(fleettest.Admission{}) {
+			t.Error("a request with no fault lost its response")
 		}
 		if diff := cmp.Diff([]bool{true, true, false}, got); diff != "" {
 			t.Errorf("LoseResponse per request (-want +got):\n%s", diff)

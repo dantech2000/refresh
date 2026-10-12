@@ -160,6 +160,13 @@ func inEmptyRegion(want any, tc opCase) opCase {
 	return tc
 }
 
+// inPages sets the number of pages of a paged case whose items are not one
+// per page.
+func inPages(n int, tc opCase) opCase {
+	tc.wantPages = n
+	return tc
+}
+
 // seedTimes returns the two times newWorld uses: the world's start, and the
 // day before it.
 func seedTimes() (now, created time.Time) {
@@ -291,7 +298,8 @@ func eksReadCases() []opCase {
 			}}, nil, nil
 		}),
 
-		pagedCase(fleettest.EKSDescribeAddonVersions, []addonVersionOut{
+		// The API pages by add-on: two add-ons, three versions.
+		inPages(2, pagedCase(fleettest.EKSDescribeAddonVersions, []addonVersionOut{
 			{Addon: "vpc-cni", Version: "v1.19.0-eksbuild.1", Compatible: []string{"1.32"}, Default: true},
 			{Addon: "vpc-cni", Version: "v1.18.0-eksbuild.1", Compatible: []string{"1.32"}},
 			{Addon: "coredns", Version: "v1.11.4-eksbuild.2", Compatible: []string{"1.32"}},
@@ -312,7 +320,7 @@ func eksReadCases() []opCase {
 				}
 			}
 			return got, out.NextToken, nil
-		}),
+		})),
 
 		pagedCase(fleettest.EKSDescribeClusterVersions, []clusterVersionOut{
 			{Version: "1.33", Status: "STANDARD_SUPPORT", Standard: created.AddDate(1, 0, 0), Extended: created.AddDate(2, 0, 0)},

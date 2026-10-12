@@ -42,11 +42,18 @@ type Update struct {
 	Params    []UpdateParam
 	CreatedAt time.Time
 	Errors    []UpdateError
+	// Force and RollbackTimeoutMinutes record what the request that started
+	// the update asked for. EKS does not report them back; they are here so
+	// a test can check what the product sent.
+	Force                  bool
+	RollbackTimeoutMinutes int32
 
-	// op and token identify the call that started the update, for a retry
-	// with the same client request token.
-	op    Operation
-	token string
+	// op, token, and request identify the call that started the update,
+	// for a retry with the same client request token. request is the
+	// request as it was sent, before any default was filled in.
+	op      Operation
+	token   string
+	request string
 	// scheduled is set for an update the world started and has not
 	// finished. A seeded InProgress update is not scheduled and never ends.
 	scheduled bool
@@ -118,10 +125,18 @@ func cloneIssues(issues []Issue) []Issue {
 // ClusterVersionRequest is the input of World.UpdateClusterVersion.
 type ClusterVersionRequest struct {
 	Version string
+	// Force is the request's force flag, which a rollback sets to skip the
+	// insights check.
+	Force bool
+	// RollbackTimeoutMinutes is rollbackConfig.timeoutMinutes, or nil when
+	// the request has no rollback config.
+	RollbackTimeoutMinutes *int32
 	// Token is the client request token. A second request for the same
 	// operation and resource with the token of an earlier one returns that
-	// update and starts nothing. If its other fields differ from the
-	// earlier request, it is an *InvalidError.
+	// update and starts nothing, whatever happened to the resource since.
+	// The requests are compared as they were sent, before defaults: if a
+	// field differs, or is set in one and not in the other, the second
+	// request is an *InvalidError.
 	Token string
 }
 
@@ -131,6 +146,9 @@ type NodegroupVersionRequest struct {
 	Version string
 	// ReleaseVersion is the target AMI release. "" means LatestRelease.
 	ReleaseVersion string
+	// Force is the request's force flag: roll even when a pod disruption
+	// budget blocks a drain.
+	Force bool
 	// Token is the client request token. See ClusterVersionRequest.
 	Token string
 }
@@ -147,8 +165,19 @@ type NodegroupConfigRequest struct {
 type AddonRequest struct {
 	// Version is the target add-on version. "" keeps the add-on's.
 	Version string
+	// ConfigurationValues, when not nil, replace the add-on's configuration.
+	ConfigurationValues *string
 	// Token is the client request token. See ClusterVersionRequest.
 	Token string
+}
+
+// sent renders an optional request field, so that a field that was left
+// out differs from one that was sent empty.
+func sent[T any](p *T) string {
+	if p == nil {
+		return "unset"
+	}
+	return fmt.Sprintf("%q", fmt.Sprint(*p))
 }
 
 // target is the resource an update changes.
@@ -178,6 +207,10 @@ func (w *World) UpdateClusterVersion(region, cluster string, req ClusterVersionR
 	if n := len(req.Token); req.Token != "" && (n < 33 || n > 126) {
 		return Update{}, &InvalidError{Message: "The client request token parameter must be between 33 and 126 characters."}
 	}
+	request := fmt.Sprintf("version=%q force=%t rollbackTimeout=%s", req.Version, req.Force, sent(req.RollbackTimeoutMinutes))
+	if u, ok, err := replay(c, EKSUpdateClusterVersion, "", "", req.Token, request); ok {
+		return u, err
+	}
 	kind := TypeVersionUpdate
 	if _, to, ok := parseVersion(req.Version); ok {
 		if _, from, ok := parseVersion(c.Version); ok && to < from {
@@ -185,7 +218,13 @@ func (w *World) UpdateClusterVersion(region, cluster string, req ClusterVersionR
 		}
 	}
 	version := req.Version
-	u := &Update{Type: kind, op: EKSUpdateClusterVersion, token: req.Token, Params: []UpdateParam{{Type: "Version", Value: version}}}
+	u := &Update{
+		Type: kind, op: EKSUpdateClusterVersion, token: req.Token, request: request, Force: req.Force,
+		Params: []UpdateParam{{Type: "Version", Value: version}},
+	}
+	if req.RollbackTimeoutMinutes != nil {
+		u.RollbackTimeoutMinutes = *req.RollbackTimeoutMinutes
+	}
 	t := target{name: c.Name, status: &c.Status, issues: &c.HealthIssues, scripts: &c.UpdateScripts}
 	return w.start(c, u, t, func() { c.Version = version })
 }
@@ -199,10 +238,14 @@ func (w *World) UpdateNodegroupVersion(region, cluster, nodegroup string, req No
 	if err != nil {
 		return Update{}, err
 	}
+	request := fmt.Sprintf("version=%q release=%q force=%t", req.Version, req.ReleaseVersion, req.Force)
+	if u, ok, err := replay(c, EKSUpdateNodegroupVersion, ng.Name, "", req.Token, request); ok {
+		return u, err
+	}
 	version := cmp.Or(req.Version, ng.Version)
 	release := cmp.Or(req.ReleaseVersion, LatestRelease(version))
 	u := &Update{
-		Type: TypeVersionUpdate, Nodegroup: ng.Name, op: EKSUpdateNodegroupVersion, token: req.Token,
+		Type: TypeVersionUpdate, Nodegroup: ng.Name, op: EKSUpdateNodegroupVersion, token: req.Token, request: request, Force: req.Force,
 		Params: []UpdateParam{{Type: "Version", Value: version}, {Type: "ReleaseVersion", Value: release}},
 	}
 	return w.start(c, u, ng.target(), func() { ng.Version, ng.ReleaseVersion = version, release })
@@ -216,6 +259,10 @@ func (w *World) UpdateNodegroupConfig(region, cluster, nodegroup string, req Nod
 	c, ng, err := w.nodegroup(region, cluster, nodegroup)
 	if err != nil {
 		return Update{}, err
+	}
+	request := fmt.Sprintf("desired=%s min=%s max=%s", sent(req.Desired), sent(req.Min), sent(req.Max))
+	if u, ok, err := replay(c, EKSUpdateNodegroupConfig, ng.Name, "", req.Token, request); ok {
+		return u, err
 	}
 	// The sizes are read now: the caller owns the pointers.
 	type size struct {
@@ -233,7 +280,7 @@ func (w *World) UpdateNodegroupConfig(region, cluster, nodegroup string, req Nod
 			sizes = append(sizes, size{s.name, s.field, *s.to})
 		}
 	}
-	u := &Update{Type: TypeConfigUpdate, Nodegroup: ng.Name, op: EKSUpdateNodegroupConfig, token: req.Token}
+	u := &Update{Type: TypeConfigUpdate, Nodegroup: ng.Name, op: EKSUpdateNodegroupConfig, token: req.Token, request: request}
 	for _, s := range sizes {
 		u.Params = append(u.Params, UpdateParam{Type: s.name, Value: fmt.Sprint(s.to)})
 	}
@@ -257,13 +304,27 @@ func (w *World) UpdateAddon(region, cluster, addon string, req AddonRequest) (Up
 	if a == nil {
 		return Update{}, &NotFoundError{Kind: "addon", Name: addon}
 	}
+	request := fmt.Sprintf("version=%q configuration=%s", req.Version, sent(req.ConfigurationValues))
+	if u, ok, err := replay(c, EKSUpdateAddon, "", a.Name, req.Token, request); ok {
+		return u, err
+	}
 	version := cmp.Or(req.Version, a.Version)
 	u := &Update{
-		Type: TypeAddonUpdate, Addon: a.Name, op: EKSUpdateAddon, token: req.Token,
+		Type: TypeAddonUpdate, Addon: a.Name, op: EKSUpdateAddon, token: req.Token, request: request,
 		Params: []UpdateParam{{Type: "AddonVersion", Value: version}},
 	}
+	// The configuration is read now: the caller owns the pointer.
+	configure := func() {}
+	if req.ConfigurationValues != nil {
+		values := *req.ConfigurationValues
+		u.Params = append(u.Params, UpdateParam{Type: "ConfigurationValues", Value: values})
+		configure = func() { a.ConfigurationValues = values }
+	}
 	t := target{name: a.Name, status: &a.Status, issues: &a.HealthIssues, scripts: &a.UpdateScripts, modified: &a.ModifiedAt}
-	return w.start(c, u, t, func() { a.Version = version })
+	return w.start(c, u, t, func() {
+		a.Version = version
+		configure()
+	})
 }
 
 // StartInsightsRefresh starts an insights refresh of the cluster. It stays
@@ -304,21 +365,37 @@ func (ng *Nodegroup) target() target {
 	return target{name: ng.Name, status: &ng.Status, issues: &ng.HealthIssues, scripts: &ng.UpdateScripts, modified: &ng.ModifiedAt}
 }
 
+// replay answers a request that repeats an earlier one: the same client
+// request token for the same operation on the same resource. It returns the
+// update the first call started, as that call saw it, and ok. A request
+// that reuses the token with other fields is an *InvalidError. It runs
+// before any default is resolved, so the answer does not depend on what
+// happened to the resource since the first call.
+func replay(c *Cluster, op Operation, nodegroup, addon, token, request string) (u Update, ok bool, err error) {
+	if token == "" {
+		return Update{}, false, nil
+	}
+	for _, old := range c.Updates {
+		if old.token != token || old.op != op || old.Nodegroup != nodegroup || old.Addon != addon {
+			continue
+		}
+		if old.request != request {
+			return Update{}, true, &InvalidError{Message: "The client request token was used before with different parameters."}
+		}
+		started := old.snapshot()
+		started.Status, started.Errors = UpdateInProgress, nil
+		return started, true, nil
+	}
+	return Update{}, false, nil
+}
+
 // start records u as an update of t and returns it as InProgress. apply is
-// the change a Successful update makes. The caller holds w.mu.
+// the change a Successful update makes. The caller holds w.mu and has
+// called replay.
 func (w *World) start(c *Cluster, u *Update, t target, apply func()) (Update, error) {
 	for _, old := range c.Updates {
 		if old.Nodegroup != u.Nodegroup || old.Addon != u.Addon {
 			continue
-		}
-		// A token names one call: the same operation on the same resource.
-		if u.token != "" && old.token == u.token && old.op == u.op {
-			if !slices.Equal(old.Params, u.Params) {
-				return Update{}, &InvalidError{Message: "The client request token was used before with different parameters."}
-			}
-			started := old.snapshot()
-			started.Status, started.Errors = UpdateInProgress, nil
-			return started, nil
 		}
 		if old.Status == UpdateInProgress {
 			return Update{}, &InUseError{Name: t.name, UpdateID: old.ID}
@@ -365,6 +442,7 @@ func (u *Update) snapshot() Update {
 	return Update{
 		ID: u.ID, Type: u.Type, Status: u.Status, Nodegroup: u.Nodegroup, Addon: u.Addon,
 		Params: slices.Clone(u.Params), CreatedAt: u.CreatedAt, Errors: cloneErrors(u.Errors),
+		Force: u.Force, RollbackTimeoutMinutes: u.RollbackTimeoutMinutes,
 	}
 }
 

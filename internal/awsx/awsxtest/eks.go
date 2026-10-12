@@ -304,6 +304,7 @@ func eksUpdateNodegroupVersion(c *call) (any, error) {
 	u, err := c.world.UpdateNodegroupVersion(c.region, c.clusterName(), c.in.str("nodegroupName"), fleettest.NodegroupVersionRequest{
 		Version:        c.in.str("version"),
 		ReleaseVersion: c.in.str("releaseVersion"),
+		Force:          c.in.flag("force"),
 		Token:          c.in.str("clientRequestToken"),
 	})
 	return updateResult(u, err)
@@ -356,18 +357,21 @@ func eksDescribeAddon(c *call) (any, error) {
 }
 
 func eksUpdateAddon(c *call) (any, error) {
-	u, err := c.world.UpdateAddon(c.region, c.clusterName(), c.in.str("addonName"), fleettest.AddonRequest{
-		Version: c.in.str("addonVersion"),
-		Token:   c.in.str("clientRequestToken"),
-	})
+	req := fleettest.AddonRequest{Version: c.in.str("addonVersion"), Token: c.in.str("clientRequestToken")}
+	if values, ok := c.in["configurationValues"].(string); ok {
+		req.ConfigurationValues = &values
+	}
+	u, err := c.world.UpdateAddon(c.region, c.clusterName(), c.in.str("addonName"), req)
 	return updateResult(u, err)
 }
 
 func eksUpdateClusterVersion(c *call) (any, error) {
-	u, err := c.world.UpdateClusterVersion(c.region, c.clusterName(), fleettest.ClusterVersionRequest{
-		Version: c.in.str("version"),
-		Token:   c.in.str("clientRequestToken"),
-	})
+	req := fleettest.ClusterVersionRequest{Version: c.in.str("version"), Force: c.in.flag("force"), Token: c.in.str("clientRequestToken")}
+	if n, ok := c.in.obj("rollbackConfig").num("timeoutMinutes"); ok {
+		minutes := int32(n) //nolint:gosec // a rollback timeout from a test fits int32
+		req.RollbackTimeoutMinutes = &minutes
+	}
+	u, err := c.world.UpdateClusterVersion(c.region, c.clusterName(), req)
 	return updateResult(u, err)
 }
 

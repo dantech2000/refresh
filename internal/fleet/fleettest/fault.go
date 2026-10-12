@@ -84,9 +84,11 @@ type Fault struct {
 	// Reset drops the connection of every request without an answer, as a
 	// network failure does. Nothing in the world changes.
 	Reset bool
-	// LoseResponse lets this many requests run, then drops the connection
-	// in place of the answer. The change the request made stays, so the
-	// client retries a call that already took effect.
+	// LoseResponse drops the connection in place of the answer for this
+	// many requests that ran and succeeded. The change the request made
+	// stays, so the client retries a call that already took effect. A
+	// request that the operation itself refuses is answered as usual and
+	// does not count.
 	LoseResponse int
 	// Delay holds each request until the world's clock has advanced by it.
 	Delay time.Duration
@@ -185,9 +187,22 @@ func (e *FaultError) Error() string {
 type Admission struct {
 	// PageSize is the page size a fault forces, or 0.
 	PageSize int
-	// LoseResponse tells the server to run the request and then drop the
-	// connection in place of the answer.
-	LoseResponse bool
+	// rule is the fault that let the request through, for LoseResponse.
+	rule *rule
+}
+
+// LoseResponse reports whether the server must drop the connection in place
+// of the answer to the request that a was given for. The server calls it
+// once, after the operation succeeded, and each true result uses up one of
+// the fault's lost responses.
+func (w *World) LoseResponse(a Admission) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if a.rule == nil || a.rule.lost >= a.rule.LoseResponse {
+		return false
+	}
+	a.rule.lost++
+	return true
 }
 
 // Enter applies the fault that matches a request. A server calls it before
@@ -218,12 +233,7 @@ func (w *World) Enter(ctx context.Context, c Call) (Admission, error) {
 	case f.Code != "":
 		return Admission{}, &FaultError{Kind: Coded, Code: f.Code, Status: f.Status}
 	}
-	a := Admission{PageSize: f.PageSize}
-	if f.lost < f.LoseResponse {
-		f.lost++
-		a.LoseResponse = true
-	}
-	return a, nil
+	return Admission{PageSize: f.PageSize, rule: f}, nil
 }
 
 // block waits until the clock reaches until, or forever when hang is set,
