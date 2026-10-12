@@ -147,9 +147,12 @@ Precedence is `1`, then `5`, then `3`, then `4`. A failed read in a readiness ga
 also blocks the plan, so it exits `3`, and the document lists the read under
 `failures`.
 
-The verification is the one [`nodegroup update`](#nodegroup-update) runs. A
-run that it stops is resumed with the same command: the plan skips the
-nodegroup that is already at the target version.
+The verification is the one [`nodegroup update`](#nodegroup-update) runs.
+When it also could not read the nodegroup, the run still exits `5`, and the
+read is in `failures`. A run that it stops is resumed with the same command.
+The rerun checks the nodegroup again: a nodegroup at the target version that
+is not `ACTIVE`, or that has an update in progress, is not done. The rerun
+exits `5` again while the nodegroup is not `ACTIVE`.
 
 A `--wait-timeout` that runs out is a timeout, not an interrupt: the error
 says `timed out` and names `--wait-timeout`. After a failure, an interrupt,

@@ -39,6 +39,26 @@ type fakeUpgrader struct {
 	duringRoll func()
 	// only is the --only scope of the last real plan.
 	only []upgrade.Part
+	// degraded, when set, is a nodegroup the post-roll verification finds
+	// DEGRADED. sawKube is set when the Verify hook gave a client.
+	degraded string
+	sawKube  bool
+}
+
+// verifyAfterRoll plays the engine's post-roll verification: with the Verify
+// hook it asks for the Kubernetes client, and a nodegroup named degraded
+// fails the run as ErrVerifyFailed. Without the hook nothing is verified.
+func verifyAfterRoll(ctx context.Context, opts upgrade.ExecuteOptions, ng, degraded string, sawKube *bool) error {
+	if opts.Verify == nil {
+		return nil
+	}
+	if opts.Verify.Kube(ctx) != nil {
+		*sawKube = true
+	}
+	if ng == degraded {
+		return fmt.Errorf("%w after the roll of nodegroup %s: nodegroup %s status is DEGRADED (expected ACTIVE)", upgrade.ErrVerifyFailed, ng, ng)
+	}
+	return nil
 }
 
 func (f *fakeUpgrader) BuildPlan(_ context.Context, _, _ string, o upgrade.PlanOptions) (*upgrade.Plan, error) {
@@ -121,6 +141,9 @@ func (f *fakeUpgrader) Execute(ctx context.Context, plan *upgrade.Plan, opts upg
 					f.mu.Lock()
 					f.rolled = append(f.rolled, ng)
 					f.mu.Unlock()
+					if err := verifyAfterRoll(ctx, opts, ng, f.degraded, &f.sawKube); err != nil {
+						return &upgrade.Report{Status: upgrade.RunVerifyFailed}, fmt.Errorf("%s failed: %w", ph, err)
+					}
 				}
 			}
 		}
@@ -664,5 +687,29 @@ func TestStartItemMarksTheRollBeforeDone(t *testing.T) {
 	items := u.st.Phases[1].Items
 	if items[0].Status != state.PhaseDone || items[0].Progress != 1 || items[1].Status != state.PhaseRunning {
 		t.Fatalf("items = %+v", items)
+	}
+}
+
+// The TUI's upgrade gives the engine the post-roll verification, with the
+// cluster's Kubernetes client: a nodegroup that is DEGRADED after its roll
+// stops the run before the next roll and the later phases.
+func TestUpgradeStopsWhenPostRollVerificationFindsIssues(t *testing.T) {
+	rig := newUpgradeRig(t)
+	rig.f.degraded = "ng-a"
+	rig.start(t)
+	rig.b.Close()
+	st, _ := rig.b.State(t.Context())
+	u := st.Upgrades[0]
+	if u.Running() || u.Stopped || !strings.Contains(u.Failed, "post-roll verification found issues") || !strings.Contains(u.Failed, "ng-a status is DEGRADED") {
+		t.Fatalf("upgrade = %+v, want failed by the verification", u)
+	}
+	if got := strings.Join(rig.f.rolled, ","); got != "ng-a" {
+		t.Errorf("rolled = %s, want ng-a only: ng-b must not roll", got)
+	}
+	if got := strings.Join(rig.f.phases, ","); strings.Contains(got, "addons for 1.32 (1 update(s), dependency order)") {
+		t.Errorf("phases = %s, want no add-on phase after the failed verification", got)
+	}
+	if !rig.f.sawKube {
+		t.Error("the Verify hook gave no Kubernetes client")
 	}
 }

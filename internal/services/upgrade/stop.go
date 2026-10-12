@@ -99,11 +99,17 @@ func onItem(kind diag.Kind, name, op string, err error) error {
 type verifyError struct {
 	nodegroup string
 	result    nodegroupsvc.PostRollVerification
+	// failure is the nodegroup read that failed during the verification,
+	// when the other checks still found issues.
+	failure *diag.Failure
 }
 
 func (e *verifyError) Error() string {
-	return fmt.Sprintf("%s after the roll of nodegroup %s: %s (remaining nodegroups not attempted)",
-		ErrVerifyFailed, e.nodegroup, strings.Join(e.result.Issues, "; "))
+	msg := fmt.Sprintf("%s after the roll of nodegroup %s: %s", ErrVerifyFailed, e.nodegroup, strings.Join(e.result.Issues, "; "))
+	if e.failure != nil {
+		msg += "; the nodegroup could not be read: " + e.failure.Error
+	}
+	return msg + " (remaining nodegroups not attempted)"
 }
 func (e *verifyError) Unwrap() error { return ErrVerifyFailed }
 
@@ -137,7 +143,7 @@ func stopState(ctx context.Context, cluster string, err error, gate bool) (RunSt
 	}
 	var ve *verifyError
 	if errors.As(err, &ve) {
-		return RunVerifyFailed, nil
+		return RunVerifyFailed, ve.failure
 	}
 	var ge *gateError
 	if errors.As(err, &ge) {

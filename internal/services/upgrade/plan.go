@@ -633,6 +633,9 @@ func nodegroupSteps(nodegroups []nodegroupState, hopTo string, skipPatterns []st
 			Status:      StatusPending,
 		}
 		switch {
+		case versionAtLeast(ng.Version, hopTo) && ng.unsettled() && !matchesAny(ng.Name, skipPatterns):
+			// Not done: the phase waits for it and verifies it.
+			step.Reason = ng.unsettledReason()
 		case versionAtLeast(ng.Version, hopTo):
 			step.Status = StatusCompleted
 			step.Reason = fmt.Sprintf("already at %s", ng.Version)

@@ -140,7 +140,9 @@ starts the change. Before the UI starts anything, it checks again:
 - **A cluster upgrade** builds its plan again, for the same parts as the dry
   run (as `cluster upgrade --only`), and asks (`y`/`n`) when the steps
   changed or a nodegroup's health gate warns. A PDB drain blocker before a
-  roll stops the run.
+  roll stops the run. After each roll, the post-roll verification of
+  `cluster upgrade` runs: an issue fails the run before the next roll. A
+  rollback does the same.
 - **A rollback** follows the rules of [`cluster rollback`](cluster.md): within
   the rollback window, nodegroups first, then add-ons, then the control plane.
 

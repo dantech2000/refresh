@@ -271,3 +271,215 @@ func TestUpgradeNodegroups_VerifiesAttachedRoll(t *testing.T) {
 		})
 	}
 }
+
+// statusOf makes DescribeNodegroup report status(name, call) for the
+// nodegroups it names; "" keeps the mock's answer. call counts the
+// describes of that nodegroup, from 1.
+func statusOf(m *mocks.EKSAPI, status func(name string, call int) ekstypes.NodegroupStatus) {
+	var mu sync.Mutex
+	calls := map[string]int{}
+	describe := m.DescribeNodegroupFn
+	m.DescribeNodegroupFn = func(ctx context.Context, in *eks.DescribeNodegroupInput, optFns ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+		out, err := describe(ctx, in, optFns...)
+		if err != nil {
+			return out, err
+		}
+		name := aws.ToString(in.NodegroupName)
+		mu.Lock()
+		calls[name]++
+		n := calls[name]
+		mu.Unlock()
+		if s := status(name, n); s != "" {
+			out.Nodegroup.Status = s
+		}
+		return out, nil
+	}
+}
+
+// resumeWorld is a cluster at 1.32 where workers-a is already at 1.32 and
+// workers-b is still to roll: the state a rerun finds.
+func resumeWorld() *mocks.EKSAPI {
+	return mocks.NewEKSAPI().
+		WithCluster("prod", "1.32").
+		WithNodegroup("workers-a", "1.32", ekstypes.AMITypesAl2023X8664Standard).
+		WithNodegroup("workers-b", "1.31", ekstypes.AMITypesAl2023X8664Standard).
+		WithUpdateStatuses("u-workers-b", ekstypes.UpdateStatusSuccessful).
+		Build()
+}
+
+func pendingTargets(plan *Plan) []string {
+	var out []string
+	for _, hop := range plan.Hops {
+		for _, st := range hop.Steps {
+			if st.Type == StepNodegroup && st.Status == StatusPending {
+				out = append(out, st.Target)
+			}
+		}
+	}
+	return out
+}
+
+// A rerun after a failed verification finds the nodegroup at the target
+// version and still DEGRADED. The version does not make it done: the plan
+// keeps it pending, and the run checks it again before the next roll.
+func TestResume_DegradedNodegroupAtTargetIsVerifiedAgain(t *testing.T) {
+	m := resumeWorld()
+	statusOf(m, func(name string, _ int) ekstypes.NodegroupStatus {
+		if name == "workers-a" {
+			return ekstypes.NodegroupStatusDegraded
+		}
+		return ""
+	})
+	rolls := captureNodegroupRolls(m)
+	svc := newTestService(m)
+	plan, err := svc.BuildPlan(context.Background(), "prod", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if got := pendingTargets(plan); len(got) != 2 || got[0] != "workers-a" {
+		t.Fatalf("pending nodegroups = %v, want workers-a and workers-b", got)
+	}
+
+	report, err := svc.Execute(context.Background(), plan, ExecuteOptions{Yes: true, Verify: verifyWith(nil)})
+	if !errors.Is(err, ErrVerifyFailed) || report.Status != RunVerifyFailed {
+		t.Fatalf("err = %v, report = %+v; want VerifyFailed", err, report)
+	}
+	if len(*rolls) != 0 {
+		t.Errorf("rolls = %d, want 0: workers-b must not roll past a DEGRADED nodegroup", len(*rolls))
+	}
+
+	// --skip-verify (no Verify option) goes on, as before.
+	if _, err := svc.Execute(context.Background(), plan, ExecuteOptions{Yes: true}); err != nil {
+		t.Fatalf("Execute without Verify: %v", err)
+	}
+	if len(*rolls) != 1 {
+		t.Errorf("rolls = %d, want 1 without verification", len(*rolls))
+	}
+}
+
+// A nodegroup that is UPDATING and already reports the target version is
+// not done either: the plan keeps it pending, and the run attaches, waits,
+// and verifies it.
+func TestResume_UpdatingNodegroupAtTargetIsAttachedAndVerified(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		settled ekstypes.NodegroupStatus
+		wantErr error
+		rolls   int
+	}{
+		{"settles ACTIVE", ekstypes.NodegroupStatusActive, nil, 1},
+		{"settles DEGRADED", ekstypes.NodegroupStatusDegraded, ErrVerifyFailed, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := resumeWorld()
+			statusOf(m, func(name string, call int) ekstypes.NodegroupStatus {
+				switch {
+				case name != "workers-a":
+					return ""
+				case call <= 3: // the planner, the phase listing, and one poll
+					return ekstypes.NodegroupStatusUpdating
+				}
+				return tc.settled
+			})
+			rolls := captureNodegroupRolls(m)
+			svc := newTestService(m)
+			plan, err := svc.BuildPlan(context.Background(), "prod", "1.32", PlanOptions{})
+			if err != nil {
+				t.Fatalf("BuildPlan: %v", err)
+			}
+			if got := pendingTargets(plan); len(got) != 2 {
+				t.Fatalf("pending nodegroups = %v, want both: an in-flight update is not done", got)
+			}
+			progress, lines := progressLines()
+
+			_, err = svc.Execute(context.Background(), plan, ExecuteOptions{Yes: true, Verify: verifyWith(nil), Progress: progress})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if !strings.Contains(lines(), "nodegroup workers-a is UPDATING") {
+				t.Errorf("the run did not attach to workers-a:\n%s", lines())
+			}
+			if len(*rolls) != tc.rolls {
+				t.Errorf("rolls = %d, want %d", len(*rolls), tc.rolls)
+			}
+		})
+	}
+}
+
+// The rollback planner and engine follow the same rule: a nodegroup at N-1
+// that is DEGRADED stops the run before the control plane rolls back.
+func TestRollbackResume_DegradedNodegroupAtTargetStopsTheControlPlane(t *testing.T) {
+	w := newRollbackWorld()
+	svc, m := w.service()
+	statusOf(m, func(name string, _ int) ekstypes.NodegroupStatus {
+		if name == "ng-old" { // already at 1.32
+			return ekstypes.NodegroupStatusDegraded
+		}
+		return ""
+	})
+	events := recordMutations(m)
+	plan := buildRollback(t, svc, RollbackOptions{SkipInsightsCheck: true})
+	pending := 0
+	for _, st := range plan.Steps {
+		if st.Type == StepNodegroup && st.Status == StatusPending {
+			pending++
+		}
+	}
+	if pending != 2 {
+		t.Fatalf("pending nodegroup steps = %d, want 2 (ng-new to roll back, ng-old to verify)", pending)
+	}
+
+	report, err := svc.ExecuteRollback(context.Background(), plan, ExecuteOptions{Yes: true, SkipInsightsCheck: true, Verify: verifyWith(nil)})
+	if !errors.Is(err, ErrVerifyFailed) || report.Status != RunVerifyFailed {
+		t.Fatalf("err = %v, report = %+v; want VerifyFailed", err, report)
+	}
+	if got := strings.Join(*events, ","); strings.Contains(got, "cp→") || strings.Contains(got, "addon→") {
+		t.Errorf("mutations = %s, want no add-on downgrade and no control-plane rollback", got)
+	}
+}
+
+// Issues win over a failed read (exit 5 before exit 4), and the report
+// keeps both: the pods the roll left Pending and the nodegroup that could
+// not be described.
+func TestExecute_VerifyIssuesAndUnreadNodegroupKeepBoth(t *testing.T) {
+	m := twoNodegroupWorld()
+	rolls := captureNodegroupRolls(m)
+	kube := fakek8s.NewSimpleClientset()
+	start := m.UpdateNodegroupVersionFn
+	m.UpdateNodegroupVersionFn = func(ctx context.Context, in *eks.UpdateNodegroupVersionInput, optFns ...func(*eks.Options)) (*eks.UpdateNodegroupVersionOutput, error) {
+		_, err := kube.CoreV1().Pods("shop").Create(ctx, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "checkout-0"},
+			Status:     corev1.PodStatus{Phase: corev1.PodPending},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Errorf("creating the pending pod: %v", err)
+		}
+		return start(ctx, in, optFns...)
+	}
+	describe := m.DescribeNodegroupFn
+	m.DescribeNodegroupFn = func(ctx context.Context, in *eks.DescribeNodegroupInput, optFns ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+		if len(*rolls) > 0 {
+			return nil, mocks.AccessDenied()
+		}
+		return describe(ctx, in, optFns...)
+	}
+	svc := newTestService(m)
+	plan, err := svc.BuildPlan(context.Background(), "prod", "1.32", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	report, err := svc.Execute(context.Background(), plan, ExecuteOptions{Yes: true, Verify: verifyWith(kube)})
+	if !errors.Is(err, ErrVerifyFailed) || errors.Is(err, ErrVerifyIncomplete) {
+		t.Fatalf("err = %v, want ErrVerifyFailed", err)
+	}
+	if !strings.Contains(err.Error(), "shop/checkout-0") || !strings.Contains(err.Error(), "could not be read") {
+		t.Errorf("err = %v, want the Pending pod and the failed read", err)
+	}
+	if report.Status != RunVerifyFailed || report.Verification == nil || len(report.Verification.Issues) != 1 {
+		t.Errorf("report = %+v, want VerifyFailed with the issue", report)
+	}
+	if f := report.Failure; f == nil || f.Name != "workers-a" || f.Operation != diag.OpDescribeNodegroup || f.Reason != diag.ReasonAccessDenied {
+		t.Errorf("failure = %+v, want the denied DescribeNodegroup of workers-a", report.Failure)
+	}
+}

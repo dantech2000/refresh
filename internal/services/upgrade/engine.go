@@ -70,6 +70,8 @@ type Report struct {
 	Remaining []string `json:"remaining" yaml:"remaining"`
 	// Failure is why the run stopped, for Failed, Interrupted, and TimedOut
 	// runs, and for a Blocked run whose gate could not read what it needed.
+	// A VerifyFailed run has it when the verification also could not read
+	// the nodegroup.
 	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
 	// Verification is the post-roll verification that stopped a VerifyFailed
 	// run: the checks that ran and the issues they found.

@@ -124,6 +124,21 @@ func (s *Service) rollNodegroupsTo(ctx context.Context, clusterName, targetVersi
 			continue
 		}
 		switch {
+		case done(ng.Version) && ng.unsettled() && !matchesAny(ng.Name, opts.SkipPatterns):
+			// At the phase's version, but an update is in flight or a roll
+			// left it not ACTIVE (a rerun after a failed verification). The
+			// version alone does not make it done: wait, then verify it.
+			if ng.Status == ekstypes.NodegroupStatusUpdating || ng.Status == ekstypes.NodegroupStatusCreating {
+				if _, err := s.attachAndWait(ctx, clusterName, ng.Name, opts.ScalingWatch, progress); err != nil {
+					return err
+				}
+			} else {
+				progress("nodegroup %s is at %s but %s; checking it before the run continues", ng.Name, ng.Version, ng.Status)
+			}
+			if err := s.verifyRoll(ctx, clusterName, ng.Name, opts.Verify.begin(ctx, false), progress); err != nil {
+				return err
+			}
+			continue
 		case done(ng.Version):
 			progress("nodegroup %s already at %s, skipping", ng.Name, ng.Version)
 			continue
@@ -140,17 +155,9 @@ func (s *Service) rollNodegroupsTo(ctx context.Context, clusterName, targetVersi
 		// settle (like the control-plane and addon phases do) instead of
 		// failing the ACTIVE gate, then re-read the version.
 		if ng.Status == ekstypes.NodegroupStatusUpdating {
-			progress("nodegroup %s is UPDATING (in-flight roll from a previous run); attaching and waiting for it to settle", ng.Name)
-			// The roll began before this run: its failed launches since
-			// an hour ago are the ones worth showing.
-			var version string
-			err := common.RunAlongside(ctx, s.scalingObserver(opts.ScalingWatch, ng.Name, time.Now().Add(-time.Hour)), func(ctx context.Context) error {
-				var err error
-				version, err = s.waitForNodegroupSettled(ctx, clusterName, ng.Name, progress)
-				return err
-			})
+			version, err := s.attachAndWait(ctx, clusterName, ng.Name, opts.ScalingWatch, progress)
 			if err != nil {
-				return onItem(diag.KindNodegroup, ng.Name, diag.OpDescribeNodegroup, fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", ng.Name, err))
+				return err
 			}
 			if done(version) {
 				progress("nodegroup %s reached %s", ng.Name, version)
@@ -233,16 +240,41 @@ func (s *Service) verifyRoll(ctx context.Context, clusterName, nodegroupName str
 	for _, c := range result.Checks {
 		progress("post-roll verification: %s", c)
 	}
+	var unread *diag.Failure
 	if len(failures) > 0 {
 		f := failures[0]
 		f.Cluster = clusterName
-		return &itemError{kind: diag.KindNodegroup, name: nodegroupName, failure: &f,
-			err: fmt.Errorf("%w: nodegroup %s: %s (remaining nodegroups not attempted)", ErrVerifyIncomplete, nodegroupName, f.Error)}
+		unread = &f
 	}
+	// Issues come first (exit 5 before exit 4): a nodegroup that could not
+	// be read does not hide the pods the roll left Pending. The error keeps
+	// both.
 	if !result.OK() {
-		return &verifyError{nodegroup: nodegroupName, result: result}
+		return &verifyError{nodegroup: nodegroupName, result: result, failure: unread}
+	}
+	if unread != nil {
+		return &itemError{kind: diag.KindNodegroup, name: nodegroupName, failure: unread,
+			err: fmt.Errorf("%w: nodegroup %s: %s (remaining nodegroups not attempted)", ErrVerifyIncomplete, nodegroupName, unread.Error)}
 	}
 	return nil
+}
+
+// attachAndWait waits for the in-flight update of a nodegroup to settle and
+// returns the nodegroup's version then.
+func (s *Service) attachAndWait(ctx context.Context, clusterName, name string, watch *ScalingWatch, progress ProgressFunc) (string, error) {
+	progress("nodegroup %s is UPDATING (in-flight roll from a previous run); attaching and waiting for it to settle", name)
+	// The roll began before this run: its failed launches since an hour ago
+	// are the ones worth showing.
+	var version string
+	err := common.RunAlongside(ctx, s.scalingObserver(watch, name, time.Now().Add(-time.Hour)), func(ctx context.Context) error {
+		var err error
+		version, err = s.waitForNodegroupSettled(ctx, clusterName, name, progress)
+		return err
+	})
+	if err != nil {
+		return "", onItem(diag.KindNodegroup, name, diag.OpDescribeNodegroup, fmt.Errorf("nodegroup %s: waiting for in-flight update to finish: %w", name, err))
+	}
+	return version, nil
 }
 
 // gateFailed is the error of a pre-roll gate that stopped nodegroup name. A

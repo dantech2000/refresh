@@ -417,8 +417,15 @@ verifies a roll that an earlier run started and this run waited for.
 If the verification finds an issue, the run stops before the next nodegroup
 and exits `5`. `report.status` is `VerifyFailed`, and `report.verification`
 lists the checks and the issues. If the nodegroup cannot be read after its
-roll, the run stops and exits `4`, and the read is in `failures`. Run the
-same command again to continue. `--skip-verify` turns the verification off.
+roll, the run stops and exits `4`, and the read is in `failures`. If both
+occur, the run exits `5` and `failures` has the read.
+
+Run the same command again to continue. A nodegroup that is already at the
+target version is not done while it is not `ACTIVE` or has an update in
+progress: its plan step stays `Pending`, and the run waits for the update
+and verifies the nodegroup before it continues. The run stops again (exit
+`5`) while the nodegroup is not `ACTIVE`. `--skip-verify` turns the
+verification off, and `--skip-nodegroup` leaves the nodegroup out.
 
 ### Nodegroup rolls
 

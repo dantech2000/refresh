@@ -134,3 +134,36 @@ func TestRollback_PostRollVerificationIssuesExitFive(t *testing.T) {
 		t.Errorf("control plane = %s, want 1.34: verification stopped the run before it", got)
 	}
 }
+
+// A rerun after a failed verification does not skip the nodegroup because
+// it is at the target version: while it is DEGRADED the run stops again,
+// and the next nodegroup is not rolled.
+func TestUpgrade_RerunChecksADegradedNodegroupAgain(t *testing.T) {
+	world := func() *fakeaws.Cluster {
+		return &fakeaws.Cluster{Name: "prod", Version: "1.32", Nodegroups: []*fakeaws.Nodegroup{
+			{Name: "web", Version: "1.32", Status: "DEGRADED"},
+			{Name: "api", Version: "1.31"},
+		}}
+	}
+	srv := fakeaws.New(t, world())
+	stdout, stderr, err := runCluster(t, "upgrade", "prod", "--to", "1.32", "--yes", "--skip-health-check", "--poll-interval", "5ms", "-o", "json")
+	if code := runner.ExitCodeOf(err); code != runner.ExitVerifyFailed {
+		t.Fatalf("exit code = %d (err %v), want 5\nstderr:\n%s", code, err, stderr)
+	}
+	report := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)["report"].(map[string]any)
+	if report["status"] != "VerifyFailed" {
+		t.Errorf("report = %v, want VerifyFailed", report)
+	}
+	if got := srv.Cluster("prod").Nodegroups[1].Version; got != "1.31" {
+		t.Errorf("api = %s, want 1.31: it must not roll while web is DEGRADED", got)
+	}
+
+	// --skip-verify goes on without the check.
+	srv = fakeaws.New(t, world())
+	if _, stderr, err := runCluster(t, "upgrade", "prod", "--to", "1.32", "--yes", "--skip-health-check", "--skip-verify", "--poll-interval", "5ms", "-o", "json"); err != nil {
+		t.Fatalf("upgrade --skip-verify: %v\nstderr:\n%s", err, stderr)
+	}
+	if got := srv.Cluster("prod").Nodegroups[1].Version; got != "1.32" {
+		t.Errorf("api = %s, want 1.32 with --skip-verify", got)
+	}
+}

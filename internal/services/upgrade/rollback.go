@@ -575,6 +575,10 @@ func (s *Service) rollbackWorkSteps(ctx context.Context, plan *RollbackPlan, clu
 			Status:      StatusPending,
 		}
 		switch {
+		case versionAtLeast(target, ng.Version) && ng.unsettled() && !matchesAny(ng.Name, opts.SkipNodegroups):
+			// Not done: the phase waits for it and verifies it.
+			step.Description = fmt.Sprintf("nodegroup %s → %s", ng.Name, target)
+			step.Reason = ng.unsettledReason()
 		case versionAtLeast(target, ng.Version):
 			step.Status = StatusCompleted
 			step.Description = fmt.Sprintf("nodegroup %s → %s", ng.Name, target)
