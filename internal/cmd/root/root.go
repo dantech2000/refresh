@@ -13,7 +13,6 @@ import (
 
 	"github.com/dantech2000/refresh/internal/cmd/contextcmd"
 	"github.com/dantech2000/refresh/internal/cmd/gendocs"
-	"github.com/dantech2000/refresh/internal/cmd/installman"
 	versioncmd "github.com/dantech2000/refresh/internal/cmd/version"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
@@ -49,7 +48,7 @@ skip the confirmation prompts.`,
   refresh context add prod --cluster prod-eks --region us-east-1 --use
 
   # Show the active context
-  refresh current`,
+  refresh context current`,
 		Args:          cobra.NoArgs,
 		Version:       f.Build.Version,
 		SilenceErrors: true,
@@ -80,17 +79,14 @@ skip the confirmation prompts.`,
 	cmd.SetVersionTemplate(versioncmd.Format(f.Build))
 
 	cmd.AddGroup(
-		&cobra.Group{ID: groupContext, Title: "Context Commands:"},
+		&cobra.Group{ID: groupCore, Title: "Core Commands:"},
 		&cobra.Group{ID: groupOther, Title: "Other Commands:"},
 	)
-	addCommands(cmd, groupContext,
-		contextcmd.NewCmdUse(f),
-		contextcmd.NewCmdCurrent(f),
+	addCommands(cmd, groupCore,
 		contextcmd.NewCmdContext(f),
 	)
 	addCommands(cmd, groupOther,
 		versioncmd.NewCmdVersion(f),
-		installman.NewCmdInstallMan(f),
 		gendocs.NewCmdGenDocs(f),
 	)
 	// Cobra adds these two commands when the root runs. Adding them now
@@ -110,8 +106,8 @@ skip the confirmation prompts.`,
 
 // The groups of the root help.
 const (
-	groupContext = "context"
-	groupOther   = "other"
+	groupCore  = "core"
+	groupOther = "other"
 )
 
 func addCommands(parent *cobra.Command, groupID string, cmds ...*cobra.Command) {

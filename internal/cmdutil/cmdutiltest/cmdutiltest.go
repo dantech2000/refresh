@@ -8,7 +8,12 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
+
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/build"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/contexts"
@@ -38,6 +43,9 @@ func NewFactory() (f *cmdutil.Factory, in, out, errOut *bytes.Buffer) {
 			return nil, errors.New("this test factory has no context store; set Contexts or use NewContextStore")
 		},
 	}
+	f.AWS = func(context.Context) (*awsx.Provider, error) {
+		return nil, errors.New("this test factory has no AWS; use UseAWS")
+	}
 	return f, in, out, errOut
 }
 
@@ -53,4 +61,20 @@ func NewContextStore(t *testing.T, f *cmdutil.Factory, file *contexts.File) *con
 	}
 	f.Contexts = func() (*contexts.Store, error) { return store, nil }
 	return store
+}
+
+// UseAWS makes f reach AWS through cfg, and returns the provider. A test
+// passes the configuration of a fake server:
+//
+//	srv := awsxtest.NewServer(world)
+//	cmdutiltest.UseAWS(f, srv.Config("us-east-1"))
+//
+// A retry follows its failed attempt at once, so a test of a failure does
+// not wait.
+func UseAWS(f *cmdutil.Factory, cfg aws.Config) *awsx.Provider {
+	provider := awsx.NewProvider(cfg, func(o *awsx.ProviderOptions) {
+		o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
+	})
+	f.AWS = func(context.Context) (*awsx.Provider, error) { return provider, nil }
+	return provider
 }

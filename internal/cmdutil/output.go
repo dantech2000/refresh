@@ -19,7 +19,6 @@ const (
 	FormatJSON  Format = "json"
 	FormatYAML  Format = "yaml"
 	FormatPlain Format = "plain"
-	FormatTree  Format = "tree"
 )
 
 // IsMachine reports whether f is JSON or YAML. Stdout then holds exactly one

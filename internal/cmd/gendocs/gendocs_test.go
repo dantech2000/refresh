@@ -14,17 +14,21 @@ import (
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
 )
 
-// generate runs "refresh gen-docs --out dir" on a new root and returns the
-// content of each file that it wrote.
-func generate(t *testing.T, dir string) map[string]string {
+// generate runs "refresh gen-docs --out dir" on a new root, with more
+// arguments when given, and returns the content of each file in dir.
+func generate(t *testing.T, dir string, args ...string) map[string]string {
 	t.Helper()
 	f, _, out, errOut := cmdutiltest.NewFactory()
 	cmd := root.NewCmdRoot(f)
-	cmd.SetArgs([]string{"gen-docs", "--out", dir})
+	cmd.SetArgs(append([]string{"gen-docs", "--out", dir}, args...))
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("gen-docs: %v", err)
 	}
-	if want := "Generated the command reference in " + dir + "\n"; out.String() != want {
+	what := "the command reference"
+	if len(args) > 0 {
+		what = "the man pages"
+	}
+	if want := "Generated " + what + " in " + dir + "\n"; out.String() != want {
 		t.Errorf("stdout = %q, want %q", out.String(), want)
 	}
 	if errOut.Len() != 0 {
@@ -51,9 +55,9 @@ func TestGenDocs(t *testing.T) {
 	pages := generate(t, filepath.Join(t.TempDir(), "reference"))
 
 	for _, name := range []string{
-		"refresh.md", "refresh_version.md", "refresh_use.md", "refresh_current.md",
+		"refresh.md", "refresh_version.md", "refresh_context_use.md", "refresh_context_current.md",
 		"refresh_context.md", "refresh_context_add.md", "refresh_context_list.md",
-		"refresh_context_remove.md", "refresh_install-man.md", "refresh_completion_zsh.md",
+		"refresh_context_remove.md", "refresh_completion_zsh.md",
 	} {
 		if _, ok := pages[name]; !ok {
 			t.Errorf("no page %s", name)
@@ -100,6 +104,11 @@ func TestGenDocsErrors(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
+		{
+			name:    "unknown format",
+			args:    []string{"gen-docs", "--out", t.TempDir(), "--format", "html"},
+			wantErr: `invalid --format "html": must be one of: markdown, man`,
+		},
 		{name: "no output directory", args: []string{"gen-docs"}, wantErr: `required flag(s) "out" not set`},
 		{name: "argument", args: []string{"gen-docs", "docs"}, wantErr: `unknown command "docs" for "refresh gen-docs"`},
 		{
@@ -159,5 +168,43 @@ func TestGenDocsDoesNotWriteThroughSymlink(t *testing.T) {
 		if strings.HasPrefix(name, ".refresh-tmp-") {
 			t.Errorf("temporary directory %s is still there", name)
 		}
+	}
+}
+
+func TestGenDocsMan(t *testing.T) {
+	// A fixed date makes two runs write the same bytes.
+	t.Setenv("SOURCE_DATE_EPOCH", "1768435200") // the middle of January 2026 in every time zone
+	dir := filepath.Join(t.TempDir(), "man1")
+
+	pages := generate(t, dir, "--format", "man")
+
+	for _, name := range []string{
+		"refresh.1", "refresh-version.1", "refresh-context.1", "refresh-context-use.1",
+		"refresh-context-current.1", "refresh-completion-zsh.1",
+	} {
+		if _, ok := pages[name]; !ok {
+			t.Errorf("no page %s", name)
+		}
+	}
+	for name, content := range pages {
+		if strings.Contains(name, "gen-docs") {
+			t.Errorf("page %s documents a hidden command", name)
+		}
+		if strings.Contains(content, "Auto generated") {
+			t.Errorf("page %s has cobra's footer", name)
+		}
+	}
+	use := pages["refresh-context-use.1"]
+	// The build of the test factory is v1.2.3.
+	for _, want := range []string{`.TH "REFRESH" "1" "Jan 2026" "refresh v1.2.3" "refresh manual"`, ".SH NAME", "refresh-context-use - Switch the active context", ".SH EXAMPLE"} {
+		if !strings.Contains(use, want) {
+			t.Errorf("refresh-context-use.1 does not contain %q", want)
+		}
+	}
+	if t.Failed() {
+		t.Logf("refresh-context-use.1:\n%s", use)
+	}
+	if diff := cmp.Diff(pages, generate(t, t.TempDir(), "--format", "man")); diff != "" {
+		t.Errorf("two runs with one SOURCE_DATE_EPOCH differ (-first +second):\n%s", diff)
 	}
 }

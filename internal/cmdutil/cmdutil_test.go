@@ -143,8 +143,8 @@ func TestAddOutputFlag(t *testing.T) {
 		{name: "any letter case", args: []string{"-o", "JSON"}, want: cmdutil.FormatJSON},
 		{
 			name:    "format that the command does not support",
-			args:    []string{"-o", "tree"},
-			wantErr: `invalid argument "tree" for "-o, --output" flag: must be one of: table, json, yaml`,
+			args:    []string{"-o", "plain"},
+			wantErr: `invalid argument "plain" for "-o, --output" flag: must be one of: table, json, yaml`,
 		},
 		{
 			name:    "unknown format",
@@ -187,7 +187,6 @@ func TestFormatIsMachine(t *testing.T) {
 		cmdutil.FormatJSON:  true,
 		cmdutil.FormatYAML:  true,
 		cmdutil.FormatPlain: false,
-		cmdutil.FormatTree:  false,
 	}
 	for format, machine := range want {
 		if got := format.IsMachine(); got != machine {

@@ -152,13 +152,12 @@ func TestCommandTree(t *testing.T) {
 		"refresh completion zsh",
 		"refresh context",
 		"refresh context add",
+		"refresh context current",
 		"refresh context list",
 		"refresh context remove",
-		"refresh current",
+		"refresh context use",
 		"refresh gen-docs",
 		"refresh help",
-		"refresh install-man",
-		"refresh use",
 		"refresh version",
 	}
 	var got []string

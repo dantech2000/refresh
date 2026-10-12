@@ -58,8 +58,7 @@ func TestLoad(t *testing.T) {
 			want:    &File{Current: "prod", Contexts: map[string]Context{}},
 		},
 		{
-			// A file that refresh 0.x wrote. The keys must not change.
-			name: "file of an earlier release",
+			name: "file with every key",
 			content: ptr(`current: prod
 previous: staging
 contexts:
@@ -144,7 +143,6 @@ func TestSave(t *testing.T) {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	// The exact text is the format that every release reads.
 	want := `current: prod
 previous: staging
 contexts:
@@ -343,7 +341,7 @@ func TestActive(t *testing.T) {
 			// A file edited by hand. The old pointer is reported, not used
 			// and not read as "no context".
 			name: "current names no context", file: File{Current: "missing", Contexts: saved},
-			wantErr: `the current context "missing" is not a saved context; choose one with: refresh use <name>`,
+			wantErr: `the current context "missing" is not a saved context; choose one with: refresh context use <name>`,
 		},
 		{
 			name: "override beats a current that names no context",

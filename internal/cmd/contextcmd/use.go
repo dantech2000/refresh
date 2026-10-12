@@ -20,8 +20,7 @@ type useOptions struct {
 	envContext string
 }
 
-// NewCmdUse returns the "use" command.
-func NewCmdUse(f *cmdutil.Factory) *cobra.Command {
+func newCmdUse(f *cmdutil.Factory) *cobra.Command {
 	o := &useOptions{io: f.IOStreams, store: f.Contexts}
 	return &cobra.Command{
 		Use:   "use [context|-]",
@@ -35,13 +34,13 @@ argument, list the saved contexts and ask for one.
 The flags and the positional of a command still beat the active context.
 REFRESH_CONTEXT selects a context for one shell and beats the context that
 this command saves.`,
-		Example: `  refresh use prod
+		Example: `  refresh context use prod
 
   # Switch back to the context before
-  refresh use -
+  refresh context use -
 
   # Choose from the list
-  refresh use`,
+  refresh context use`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeNames(f.Contexts),
 		RunE: func(cmd *cobra.Command, args []string) error {

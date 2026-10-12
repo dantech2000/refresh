@@ -26,12 +26,14 @@ func main() {
 // run executes the command line in args and returns the exit code of the
 // process.
 func run(ctx context.Context, args []string, streams *cmdutil.IOStreams) int {
-	return execute(ctx, args, &cmdutil.Factory{
+	f := &cmdutil.Factory{
 		IOStreams:     streams,
 		Build:         build.Get(),
 		LatestRelease: latestRelease,
 		Contexts:      contexts.DefaultStore,
-	})
+	}
+	f.AWS = cmdutil.NewAWS(f)
+	return execute(ctx, args, f)
 }
 
 // execute runs the command line in args with the dependencies in f. ctx is

@@ -16,8 +16,7 @@ type currentOptions struct {
 	envContext string
 }
 
-// NewCmdCurrent returns the "current" command.
-func NewCmdCurrent(f *cmdutil.Factory) *cobra.Command {
+func newCmdCurrent(f *cmdutil.Factory) *cobra.Command {
 	o := &currentOptions{io: f.IOStreams, store: f.Contexts}
 	return &cobra.Command{
 		Use:   "current",
@@ -25,13 +24,13 @@ func NewCmdCurrent(f *cmdutil.Factory) *cobra.Command {
 		Long: `Print the active context: its name, cluster, region, and profile.
 
 The active context is the one that REFRESH_CONTEXT names, or else the one
-that "refresh use" selected. A REFRESH_CONTEXT that names no saved context is
+that "refresh context use" selected. A REFRESH_CONTEXT that names no saved context is
 an error. When no context is active, the command prints a hint on stderr and
 nothing on stdout.`,
-		Example: `  refresh current
+		Example: `  refresh context current
 
   # Use another context for one command
-  REFRESH_CONTEXT=stage refresh current`,
+  REFRESH_CONTEXT=stage refresh context current`,
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			o.envContext = envContext()
@@ -51,7 +50,7 @@ func (o *currentOptions) run() error {
 	}
 	if !ok {
 		// A hint, not data: it goes to stderr and stdout stays empty.
-		_, err := fmt.Fprintln(o.io.ErrOut, "No active context. Set one with: refresh use <name>")
+		_, err := fmt.Fprintln(o.io.ErrOut, "No active context. Set one with: refresh context use <name>")
 		return err
 	}
 	_, err = fmt.Fprintf(o.io.Out, "%s  cluster=%s  region=%s  profile=%s\n",

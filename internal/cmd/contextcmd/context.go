@@ -1,5 +1,4 @@
-// Package contextcmd implements the commands for refresh contexts:
-// "refresh context", "refresh use", and "refresh current".
+// Package contextcmd implements "refresh context" and its subcommands.
 //
 // The package is not named context, so that it does not hide the standard
 // library package.
@@ -23,7 +22,7 @@ func NewCmdContext(f *cmdutil.Factory) *cobra.Command {
 		Use:     "context",
 		Aliases: []string{"ctx"},
 		Short:   "Manage saved contexts",
-		Long: `Manage the named contexts that "refresh use" switches between.
+		Long: `Manage the named contexts and choose the active one.
 
 A context gives a name to a cluster, with an optional region and AWS profile.
 Commands use the active context when you do not name a cluster.
@@ -33,7 +32,8 @@ variable is set, otherwise $XDG_CONFIG_HOME/refresh/context.yaml, which is
 ~/.config/refresh/context.yaml by default.`,
 		Example: `  refresh context add prod --cluster prod-eks --region us-east-1 --profile prod
   refresh context list
-  refresh use prod
+  refresh context use prod
+  refresh context current
   refresh context remove prod`,
 		// Without Args and RunE, cobra prints help and exits 0 for
 		// "refresh context nosuchcommand".
@@ -42,7 +42,7 @@ variable is set, otherwise $XDG_CONFIG_HOME/refresh/context.yaml, which is
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newCmdList(f), newCmdAdd(f), newCmdRemove(f))
+	cmd.AddCommand(newCmdList(f), newCmdAdd(f), newCmdRemove(f), newCmdUse(f), newCmdCurrent(f))
 	return cmd
 }
 

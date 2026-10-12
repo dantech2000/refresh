@@ -1,5 +1,6 @@
 // Package gendocs implements the hidden "refresh gen-docs" command, which
-// writes the command reference of the docs site.
+// writes the command reference: the Markdown pages of the docs site, or the
+// man pages of a release archive.
 package gendocs
 
 import (
@@ -12,31 +13,59 @@ import (
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
 
+// The values of --format.
+const (
+	formatMarkdown = "markdown"
+	formatMan      = "man"
+)
+
 type options struct {
-	io  *cmdutil.IOStreams
-	out string
+	io      *cmdutil.IOStreams
+	version string
+
+	out    string
+	format string
 }
 
 // NewCmdGenDocs returns the gen-docs command.
 func NewCmdGenDocs(f *cmdutil.Factory) *cobra.Command {
-	o := &options{io: f.IOStreams}
+	o := &options{io: f.IOStreams, version: f.Build.Version}
 	cmd := &cobra.Command{
 		Use:    "gen-docs --out <directory>",
 		Hidden: true,
-		Short:  "Generate the Markdown command reference",
-		Long: `Write one Markdown page for each command to a directory. The pages come
-from the command tree of this binary, so they match its commands and flags.
-Two runs of the same binary write the same bytes.`,
-		Example: `  refresh gen-docs --out docs/reference`,
-		Args:    cobra.NoArgs,
+		Short:  "Generate the command reference",
+		Long: `Write one page for each command to a directory, as Markdown or as man
+pages. The pages come from the command tree of this binary, so they match
+its commands and flags.
+
+Two runs of the same binary write the same Markdown. A man page holds its
+date, which is the time of the run, or SOURCE_DATE_EPOCH when that is set.`,
+		Example: `  refresh gen-docs --out docs/reference
+
+  # Man pages for a release archive
+  refresh gen-docs --format man --out dist/man/man1`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := o.validate(); err != nil {
+				return err
+			}
 			return o.run(cmd.Root())
 		},
 	}
 	cmd.Flags().StringVar(&o.out, "out", "", "Directory for the generated pages (required)")
-	// The flag was added above, so this cannot fail.
+	cmd.Flags().StringVar(&o.format, "format", formatMarkdown, "Page format: markdown, man")
+	// The flags were added above, so these cannot fail.
 	_ = cmd.MarkFlagRequired("out")
+	_ = cmd.RegisterFlagCompletionFunc("format",
+		cobra.FixedCompletions([]cobra.Completion{formatMarkdown, formatMan}, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
+}
+
+func (o *options) validate() error {
+	if o.format != formatMarkdown && o.format != formatMan {
+		return fmt.Errorf("invalid --format %q: must be one of: %s, %s", o.format, formatMarkdown, formatMan)
+	}
+	return nil
 }
 
 func (o *options) run(root *cobra.Command) error {
@@ -44,17 +73,27 @@ func (o *options) run(root *cobra.Command) error {
 		return fmt.Errorf("creating %s: %w", o.out, err)
 	}
 	// Cobra ends each page with a line that holds the date of the run.
-	// Without it the pages change only when a command changes.
+	// Without it the Markdown pages change only when a command changes.
 	disableAutoGenTag(root)
+
+	generate := func(dir string) error { return doc.GenMarkdownTree(root, dir) }
+	what := "the command reference"
+	if o.format == formatMan {
+		header := &doc.GenManHeader{
+			Title:   "REFRESH",
+			Section: "1",
+			Source:  "refresh " + o.version,
+			Manual:  "refresh manual",
+		}
+		generate = func(dir string) error { return doc.GenManTree(root, header, dir) }
+		what = "the man pages"
+	}
 	// Cobra writes with os.Create, which follows a symbolic link and leaves
 	// part of the pages when it fails. GenerateFiles prevents both.
-	err := cmdutil.GenerateFiles(o.out, func(tmp string) error {
-		return doc.GenMarkdownTree(root, tmp)
-	})
-	if err != nil {
-		return fmt.Errorf("writing the reference to %s: %w", o.out, err)
+	if err := cmdutil.GenerateFiles(o.out, generate); err != nil {
+		return fmt.Errorf("writing %s to %s: %w", what, o.out, err)
 	}
-	_, err = fmt.Fprintf(o.io.Out, "Generated the command reference in %s\n", o.out)
+	_, err := fmt.Fprintf(o.io.Out, "Generated %s in %s\n", what, o.out)
 	return err
 }
 

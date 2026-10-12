@@ -1,8 +1,7 @@
 // Package contexts stores the named refresh contexts: which cluster, region,
 // and AWS profile a name stands for, and which context is active.
 //
-// The store is one YAML file. A user's file from an earlier release of
-// refresh must keep working, so the keys and the location do not change.
+// The store is one YAML file.
 package contexts
 
 import (
@@ -32,7 +31,7 @@ type Context struct {
 // File is the content of the store.
 type File struct {
 	Current  string             `yaml:"current,omitempty"`
-	Previous string             `yaml:"previous,omitempty"` // for "refresh use -"
+	Previous string             `yaml:"previous,omitempty"` // for "refresh context use -"
 	Contexts map[string]Context `yaml:"contexts,omitempty"`
 }
 
@@ -152,7 +151,7 @@ func (f *File) Active(override string) (name string, c Context, ok bool, err err
 	}
 	c, found := f.Contexts[f.Current]
 	if !found {
-		return "", Context{}, false, fmt.Errorf("the current context %q is not a saved context; choose one with: refresh use <name>", f.Current)
+		return "", Context{}, false, fmt.Errorf("the current context %q is not a saved context; choose one with: refresh context use <name>", f.Current)
 	}
 	return f.Current, c, true, nil
 }

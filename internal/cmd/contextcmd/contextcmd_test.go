@@ -53,19 +53,19 @@ func TestContextCommands(t *testing.T) {
 			name: "empty store",
 			steps: []step{
 				{
-					args:       []string{"current"},
-					wantErrOut: "No active context. Set one with: refresh use <name>\n",
+					args:       []string{"context", "current"},
+					wantErrOut: "No active context. Set one with: refresh context use <name>\n",
 				},
 				{
 					args:       []string{"context", "list"},
 					wantErrOut: "No saved contexts. Add one with: refresh context add <name> --cluster <cluster>\n",
 				},
 				{
-					args:    []string{"use", "prod"},
+					args:    []string{"context", "use", "prod"},
 					wantErr: "no contexts saved; add one with: refresh context add <name> --cluster <cluster> [--region <region>] [--profile <profile>]",
 				},
 				{
-					args:    []string{"use"},
+					args:    []string{"context", "use"},
 					wantErr: "no contexts saved; add one with: refresh context add <name> --cluster <cluster> [--region <region>] [--profile <profile>]",
 				},
 				{args: []string{"context", "remove", "prod"}, wantErr: `unknown context "prod"`},
@@ -81,16 +81,16 @@ func TestContextCommands(t *testing.T) {
 				},
 				{
 					// Saving a context does not make it active.
-					args:       []string{"current"},
-					wantErrOut: "No active context. Set one with: refresh use <name>\n",
+					args:       []string{"context", "current"},
+					wantErrOut: "No active context. Set one with: refresh context use <name>\n",
 				},
 				{
 					args:    []string{"context", "add", "stage", "-c", "stage-eks", "--use"},
 					wantOut: "Saved context \"stage\"\n",
 				},
-				{args: []string{"current"}, wantOut: "stage  cluster=stage-eks  region=-  profile=-\n"},
+				{args: []string{"context", "current"}, wantOut: "stage  cluster=stage-eks  region=-  profile=-\n"},
 				{
-					args:    []string{"use", "prod"},
+					args:    []string{"context", "use", "prod"},
 					wantOut: "Switched to context \"prod\" (cluster=prod-eks region=us-east-1 profile=prod-admin)\n",
 				},
 				{
@@ -99,17 +99,17 @@ func TestContextCommands(t *testing.T) {
 						"  stage                cluster=stage-eks region=- profile=-\n",
 				},
 				{
-					args:    []string{"use", "-"},
+					args:    []string{"context", "use", "-"},
 					wantOut: "Switched to context \"stage\" (cluster=stage-eks region=- profile=-)\n",
 				},
 				{
-					args:    []string{"use", "-"},
+					args:    []string{"context", "use", "-"},
 					wantOut: "Switched to context \"prod\" (cluster=prod-eks region=us-east-1 profile=prod-admin)\n",
 				},
 				{args: []string{"context", "remove", "prod"}, wantOut: "Removed context \"prod\"\n"},
 				{
-					args:       []string{"current"},
-					wantErrOut: "No active context. Set one with: refresh use <name>\n",
+					args:       []string{"context", "current"},
+					wantErrOut: "No active context. Set one with: refresh context use <name>\n",
 				},
 			},
 			wantFile: &contexts.File{
@@ -152,7 +152,7 @@ func TestContextCommands(t *testing.T) {
 			name: "REFRESH_CONTEXT selects the context for one shell",
 			file: twoContexts(),
 			steps: []step{
-				{args: []string{"current"}, env: "stage", wantOut: "stage  cluster=stage-eks  region=-  profile=-\n"},
+				{args: []string{"context", "current"}, env: "stage", wantOut: "stage  cluster=stage-eks  region=-  profile=-\n"},
 				{
 					args: []string{"context", "list"}, env: "stage",
 					wantOut: "  prod                 cluster=prod-eks region=us-east-1 profile=prod-admin\n" +
@@ -161,12 +161,12 @@ func TestContextCommands(t *testing.T) {
 				{
 					// "use" saves the new context, and REFRESH_CONTEXT still
 					// wins in this shell. The command says so.
-					args: []string{"use", "prod"}, env: "stage",
+					args: []string{"context", "use", "prod"}, env: "stage",
 					wantOut:    "Switched to context \"prod\" (cluster=prod-eks region=us-east-1 profile=prod-admin)\n",
 					wantErrOut: "warning: REFRESH_CONTEXT=stage overrides the saved context in this shell; unset REFRESH_CONTEXT to use \"prod\" here\n",
 				},
 				{
-					args: []string{"use", "prod"}, env: "prod",
+					args: []string{"context", "use", "prod"}, env: "prod",
 					wantOut: "Switched to context \"prod\" (cluster=prod-eks region=us-east-1 profile=prod-admin)\n",
 				},
 			},
@@ -178,7 +178,7 @@ func TestContextCommands(t *testing.T) {
 			steps: []step{
 				{
 					// Never a silent fallback to prod.
-					args: []string{"current"}, env: "stagee",
+					args: []string{"context", "current"}, env: "stagee",
 					wantErr: `unknown context "stagee" from REFRESH_CONTEXT; known: prod, stage`,
 				},
 				{
@@ -196,10 +196,10 @@ func TestContextCommands(t *testing.T) {
 			name: "errors change nothing",
 			file: twoContexts(),
 			steps: []step{
-				{args: []string{"use", "nope"}, wantErr: `unknown context "nope"`},
-				{args: []string{"use", "-"}, wantErr: "no previous context to switch to"},
-				{args: []string{"use", "prod", "stage"}, wantErr: "accepts at most 1 arg(s), received 2"},
-				{args: []string{"current", "prod"}, wantErr: `unknown command "prod" for "refresh current"`},
+				{args: []string{"context", "use", "nope"}, wantErr: `unknown context "nope"`},
+				{args: []string{"context", "use", "-"}, wantErr: "no previous context to switch to"},
+				{args: []string{"context", "use", "prod", "stage"}, wantErr: "accepts at most 1 arg(s), received 2"},
+				{args: []string{"context", "current", "prod"}, wantErr: `unknown command "prod" for "refresh context current"`},
 				{args: []string{"context", "remove"}, wantErr: "accepts 1 arg(s), received 0"},
 				{args: []string{"context", "remove", "nope"}, wantErr: `unknown context "nope"`},
 				{args: []string{"context", "add", "--cluster", "x"}, wantErr: "accepts 1 arg(s), received 0"},
@@ -218,14 +218,14 @@ func TestContextCommands(t *testing.T) {
 			steps: []step{
 				{args: []string{"context", "add", " new ", "-c", "new-eks"}, wantOut: "Saved context \"new\"\n"},
 				{
-					args:    []string{"use", " new "},
+					args:    []string{"context", "use", " new "},
 					wantOut: "Switched to context \"new\" (cluster=new-eks region=- profile=-)\n",
 				},
 				{args: []string{"context", "remove", "\tnew\n"}, wantOut: "Removed context \"new\"\n"},
 				// A name of spaces only would be a context that nothing can select.
 				{args: []string{"context", "add", "   ", "-c", "prod"}, wantErr: "context name is required"},
 				{args: []string{"context", "remove", " "}, wantErr: "context name is required"},
-				{args: []string{"use", " "}, wantErr: "context name is required"},
+				{args: []string{"context", "use", " "}, wantErr: "context name is required"},
 			},
 			wantFile: &contexts.File{
 				Previous: "prod",
@@ -237,8 +237,8 @@ func TestContextCommands(t *testing.T) {
 			name: "dangling previous",
 			file: &contexts.File{Current: "prod", Previous: "gone", Contexts: twoContexts().Contexts},
 			steps: []step{
-				{args: []string{"use", "-"}, wantErr: "no previous context to switch to"},
-				{args: []string{"current"}, wantOut: "prod  cluster=prod-eks  region=us-east-1  profile=prod-admin\n"},
+				{args: []string{"context", "use", "-"}, wantErr: "no previous context to switch to"},
+				{args: []string{"context", "current"}, wantOut: "prod  cluster=prod-eks  region=us-east-1  profile=prod-admin\n"},
 			},
 			wantFile: &contexts.File{Current: "prod", Previous: "gone", Contexts: twoContexts().Contexts},
 		},
@@ -248,21 +248,21 @@ func TestContextCommands(t *testing.T) {
 			file: &contexts.File{Current: "gone", Contexts: twoContexts().Contexts},
 			steps: []step{
 				{
-					args:    []string{"current"},
-					wantErr: `the current context "gone" is not a saved context; choose one with: refresh use <name>`,
+					args:    []string{"context", "current"},
+					wantErr: `the current context "gone" is not a saved context; choose one with: refresh context use <name>`,
 				},
 				{
 					args: []string{"context", "list"},
 					wantOut: "  prod                 cluster=prod-eks region=us-east-1 profile=prod-admin\n" +
 						"  stage                cluster=stage-eks region=- profile=-\n",
-					wantErrOut: "warning: the current context \"gone\" is not a saved context; choose one with: refresh use <name>\n",
+					wantErrOut: "warning: the current context \"gone\" is not a saved context; choose one with: refresh context use <name>\n",
 				},
 				{
-					args:    []string{"use", "stage"},
+					args:    []string{"context", "use", "stage"},
 					wantOut: "Switched to context \"stage\" (cluster=stage-eks region=- profile=-)\n",
 				},
 				// The old pointer did not become the previous context.
-				{args: []string{"use", "-"}, wantErr: "no previous context to switch to"},
+				{args: []string{"context", "use", "-"}, wantErr: "no previous context to switch to"},
 			},
 			wantFile: &contexts.File{Current: "stage", Contexts: twoContexts().Contexts},
 		},
@@ -271,7 +271,7 @@ func TestContextCommands(t *testing.T) {
 			file: twoContexts(),
 			steps: []step{
 				{
-					args: []string{"use"}, stdin: "2\n",
+					args: []string{"context", "use"}, stdin: "2\n",
 					wantOut: "Switched to context \"stage\" (cluster=stage-eks region=- profile=-)\n",
 					wantErrOut: "Available contexts:\n" +
 						"  * 1) prod                 cluster=prod-eks region=us-east-1\n" +
@@ -279,7 +279,7 @@ func TestContextCommands(t *testing.T) {
 						"Select context [number or name]: ",
 				},
 				{
-					args: []string{"use"}, stdin: "prod\n",
+					args: []string{"context", "use"}, stdin: "prod\n",
 					wantOut: "Switched to context \"prod\" (cluster=prod-eks region=us-east-1 profile=prod-admin)\n",
 					wantErrOut: "Available contexts:\n" +
 						"    1) prod                 cluster=prod-eks region=us-east-1\n" +
@@ -288,7 +288,7 @@ func TestContextCommands(t *testing.T) {
 				},
 				{
 					// The marker follows REFRESH_CONTEXT, as "context list" does.
-					args: []string{"use"}, env: "stage", stdin: "1\n",
+					args: []string{"context", "use"}, env: "stage", stdin: "1\n",
 					wantOut: "Switched to context \"prod\" (cluster=prod-eks region=us-east-1 profile=prod-admin)\n",
 					wantErrOut: "Available contexts:\n" +
 						"    1) prod                 cluster=prod-eks region=us-east-1\n" +
@@ -307,11 +307,11 @@ func TestContextCommands(t *testing.T) {
 			name: "use without a name, bad answers",
 			file: twoContexts(),
 			steps: []step{
-				{args: []string{"use"}, stdin: "\n", wantErr: "no selection made"},
-				{args: []string{"use"}, stdin: "", wantErr: "no selection made"},
-				{args: []string{"use"}, stdin: "99\n", wantErr: "selection 99 out of range"},
-				{args: []string{"use"}, stdin: "0\n", wantErr: "selection 0 out of range"},
-				{args: []string{"use"}, stdin: "nope\n", wantErr: `unknown context "nope"`},
+				{args: []string{"context", "use"}, stdin: "\n", wantErr: "no selection made"},
+				{args: []string{"context", "use"}, stdin: "", wantErr: "no selection made"},
+				{args: []string{"context", "use"}, stdin: "99\n", wantErr: "selection 99 out of range"},
+				{args: []string{"context", "use"}, stdin: "0\n", wantErr: "selection 0 out of range"},
+				{args: []string{"context", "use"}, stdin: "nope\n", wantErr: `unknown context "nope"`},
 			},
 			wantFile: twoContexts(),
 		},
@@ -375,9 +375,10 @@ func runStep(t *testing.T, store *contexts.Store, s step, label string) {
 	}
 }
 
-// isPrompt reports whether args is "use" with no name, which asks on stderr.
+// isPrompt reports whether args is "context use" with no name, which asks
+// on stderr.
 func isPrompt(args []string) bool {
-	return len(args) == 1 && args[0] == "use"
+	return len(args) == 2 && args[1] == "use"
 }
 
 func TestUseInterrupted(t *testing.T) {
@@ -390,7 +391,7 @@ func TestUseInterrupted(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	cmd := root.NewCmdRoot(f)
-	cmd.SetArgs([]string{"use"})
+	cmd.SetArgs([]string{"context", "use"})
 
 	err := cmd.ExecuteContext(ctx)
 	// The end of the input stops the read that the command left behind.
@@ -427,7 +428,7 @@ func TestStoreErrors(t *testing.T) {
 		},
 	}
 	commands := [][]string{
-		{"current"}, {"use", "prod"}, {"use", "-"}, {"context", "list"},
+		{"context", "current"}, {"context", "use", "prod"}, {"context", "use", "-"}, {"context", "list"},
 		{"context", "add", "prod", "-c", "x"}, {"context", "remove", "prod"},
 	}
 	for _, file := range files {
@@ -477,7 +478,7 @@ func TestUseInterruptedWithAnswerReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.IOStreams.In = &cancelOnRead{cancel: cancel, r: strings.NewReader("stage\n")}
 	cmd := root.NewCmdRoot(f)
-	cmd.SetArgs([]string{"use"})
+	cmd.SetArgs([]string{"context", "use"})
 
 	err := cmd.ExecuteContext(ctx)
 
@@ -504,9 +505,9 @@ func TestCompletion(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "use", args: []string{"use", ""}, want: names},
-		{name: "use with a prefix", args: []string{"use", "st"}, want: names}, // the shell filters
-		{name: "use, second argument", args: []string{"use", "prod", ""}, want: ""},
+		{name: "use", args: []string{"context", "use", ""}, want: names},
+		{name: "use with a prefix", args: []string{"context", "use", "st"}, want: names}, // the shell filters
+		{name: "use, second argument", args: []string{"context", "use", "prod", ""}, want: ""},
 		{name: "context remove", args: []string{"context", "remove", ""}, want: names},
 		{name: "context rm", args: []string{"context", "rm", ""}, want: names},
 		{name: "context remove, second argument", args: []string{"context", "remove", "prod", ""}, want: ""},
