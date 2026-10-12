@@ -74,7 +74,7 @@ func promptForNodegroupConfirmation(ctx context.Context, matches []string, patte
 		_, _ = fmt.Fprintf(nodegroupPromptOut, "  %d) %s\n", i+1, ng)
 	}
 
-	_, _ = fmt.Fprintf(nodegroupPromptOut, "Update all %d matching nodegroups? (y/N): ", len(matches))
+	_, _ = fmt.Fprintf(nodegroupPromptOut, "Update all %d matching nodegroups? [y/N]: ", len(matches))
 
 	response, err := promptLine(ctx)
 	if err != nil {

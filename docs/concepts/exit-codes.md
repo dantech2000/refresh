@@ -39,11 +39,11 @@ Rules that apply to every command:
 | `cluster list` | `0`, `1` (also when no region answered), `4` a region failed, or a cluster could not be fully read |
 | `cluster describe` | `0`, `1`, `4` some add-ons or nodegroups could not be read |
 | [`cluster upgrade-check`](#cluster-upgrade-check) | `0` ready, `1`, `2` warnings only, `3` blocked, `4` a nodegroup or add-on could not be read |
-| [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker, `4` the planner could not read something |
-| [`cluster rollback`](../commands/cluster.md#rollback-exit-codes) | `0`, `1` error, failed phase, declined confirmation, interrupt, or timeout, `3` blocked (window, insights, upgrade policy), `4` the planner could not read something |
+| [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker, `4` the planner or a pre-roll gate could not read something, or a nodegroup could not be read after its roll, `5` post-roll verification found issues |
+| [`cluster rollback`](../commands/cluster.md#rollback-exit-codes) | `0`, `1` error, failed phase, declined confirmation, interrupt, or timeout, `3` blocked (window, insights, upgrade policy), `4` the planner or a pre-roll gate could not read something, or a nodegroup could not be read after its rollback, `5` post-roll verification found issues |
 | `nodegroup list` | `0`, `1`, `4` a nodegroup could not be described |
 | `nodegroup describe` | `0`, `1` |
-| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs`, the pre-scaling health check, or a busy cluster, `4` `--force` scaled without being able to check the PDBs, `5` post-scaling health check failed |
+| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs`, the pre-scaling health check, or a busy cluster, `4` `--force` scaled without being able to check the PDBs, or a `--health-check` could not read something, `5` post-scaling health check failed |
 | [`nodegroup update`](#nodegroup-update) | `0`, `1`, `2`, `3`, `4`, `5` |
 | `addon list` | `0`, `1`, `4` an add-on could not be described |
 | `addon describe` | `0`, `1` |
@@ -140,11 +140,19 @@ esac
 | `0` | The plan finished, or there was nothing to do. A `--dry-run` with no blocker |
 | `1` | A phase failed, the run was interrupted, or it timed out |
 | `3` | The plan has a blocker, also with `--dry-run`. Nothing changed |
-| `4` | The planner could not read something: the check that EKS offers the target version, the Cluster Insights, or an add-on's version catalog. A `--dry-run` exits `4`. A real run goes ahead as before and exits `4` when it finishes |
+| `4` | The planner could not read something: the check that EKS offers the target version, the Cluster Insights, or an add-on's version catalog. A `--dry-run` exits `4`. A real run goes ahead as before and exits `4` when it finishes. The same applies to a read the pre-roll gate could not make and the run went past: PodDisruptionBudgets with `--force`, or a health check's read with `--yes`. Also: a nodegroup could not be read after its roll, so its state is unknown. The run stops there |
+| `5` | A nodegroup roll finished, and post-roll verification found issues: the nodegroup is not `ACTIVE`, or pods became `Pending` during the roll. The run stops there. `--skip-verify` turns the verification off |
 
-Precedence is `1`, then `3`, then `4`. A failed read in a readiness gate
+Precedence is `1`, then `5`, then `3`, then `4`. A failed read in a readiness gate
 also blocks the plan, so it exits `3`, and the document lists the read under
 `failures`.
+
+The verification is the one [`nodegroup update`](#nodegroup-update) runs.
+When it also could not read the nodegroup, the run still exits `5`, and the
+read is in `failures`. A run that it stops is resumed with the same command.
+The rerun checks the nodegroup again: a nodegroup at the target version that
+is not `ACTIVE`, or that has an update in progress, is not done. The rerun
+exits `5` again while the nodegroup is not `ACTIVE`.
 
 A `--wait-timeout` that runs out is a timeout, not an interrupt: the error
 says `timed out` and names `--wait-timeout`. After a failure, an interrupt,
@@ -158,7 +166,7 @@ or a timeout, `refresh` prints the command that resumes the upgrade, with the `-
 | `0` | The scaling request was accepted (and, with `--wait`, it settled) |
 | `1` | An error, including a `--check-pdbs` check that could not read the PDBs, a declined confirmation, or a missing `--yes` without a terminal |
 | `3` | Blocked: `--check-pdbs` refused a scale-down, the pre-scaling health check (`--health-check`) blocked it, or EKS was already changing the cluster. Nothing changed. A `--dry-run` with `--check-pdbs` exits `3` or `1` where the real run would |
-| `4` | With `--check-pdbs --force`: the PDBs could not be checked, and the scale went ahead without the check (a `--dry-run` exits `4` too) |
+| `4` | With `--check-pdbs --force`: the PDBs could not be checked, and the scale went ahead without the check (a `--dry-run` exits `4` too). With `--health-check`: a health check could not read something, such as the pods of a critical namespace. The scale went ahead, and the read is in `failures` |
 | `5` | The scale was applied, but the post-scaling health check found blocking issues |
 
 A PDB check that could not read what it needs is a
@@ -174,7 +182,7 @@ See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
 | `1` | An error, an interrupt (Ctrl+C), a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health warnings (with `--health-only` or `--require-healthy`) |
 | `3` | Blocked: a pre-flight check failed, the PDB drain gate found a blocker (without `--force`), or EKS was already changing the cluster. Nothing was rolled. A `--dry-run` exits `3` where the drain gate would refuse |
-| `4` | A failure: a nodegroup could not be read (also in a `--dry-run` preview or after the roll), or its update could not start. With `--health-only`, a pass whose checks could not read everything |
+| `4` | A failure: a nodegroup could not be read (also in a `--dry-run` preview or after the roll), or its update could not start. Also: `--force` rolled past PodDisruptionBudgets that could not be read. With `--health-only`, a pass whose checks could not read everything |
 | `5` | Post-roll verification found issues (nodes not Ready, or newly stuck pods) |
 
 Precedence is `1`, then `4`, then `5`. A health gate that stops the run keeps

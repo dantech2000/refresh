@@ -129,7 +129,7 @@ PDB gate verdict, and the outcome.
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
   refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force --yes
 
-Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs, or a --health-check could not read something; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -197,8 +197,9 @@ Exit codes:
    3  health blocked, a PodDisruptionBudget would block the drain (the PDB
       drain gate; --force rolls anyway, --dry-run exits 3 too), or EKS is
       already changing the cluster; nothing was started
-   4  a failure: a nodegroup that could not be read, or an update that
-      could not start
+   4  a failure: a nodegroup that could not be read, an update that could
+      not start, or PodDisruptionBudgets that could not be read and that
+      --force rolled past
    5  post-roll verification found issues
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json

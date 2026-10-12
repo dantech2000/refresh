@@ -340,7 +340,9 @@ nodegroups that match. `--quiet` does not skip them.
     anyway with a warning on stderr. `--dry-run` shows the blockers and exits
     `3` where the real run would refuse. PDBs that cannot be read (for
     example, no RBAC access to them) count as a blocker: the run refuses,
-    and `--force` rolls anyway with a warning. The gate needs Kubernetes
+    and `--force` rolls anyway with a warning. The failed read is in
+    `failures` in both cases: the refused run exits `3`, and the forced run
+    exits `4`. The gate needs Kubernetes
     access: without it, the gate is skipped with the usual notice.
     `--skip-health-check` skips it too. In fleet mode each cluster is gated on its own, and a
     refused cluster has the status `DrainBlocked`.
@@ -550,7 +552,7 @@ would refuse the plan), or `Failed` (no `plan`; see `failure`).
 | `1` | An error, an interrupt, a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health **warnings** (with `--health-only` or `--require-healthy`) |
 | `3` | **Blocked**: a pre-flight check failed, a PodDisruptionBudget would block the drain (without `--force`), or EKS is already changing the cluster; nothing was rolled. A `--dry-run` exits `3` where the drain gate would refuse |
-| `4` | A **failure**: a nodegroup that could not be read, an update that could not start, or a `--dry-run` preview with a nodegroup it could not read |
+| `4` | A **failure**: a nodegroup that could not be read, an update that could not start, a `--dry-run` preview with a nodegroup it could not read, or PodDisruptionBudgets that could not be read and that `--force` rolled past |
 | `5` | Post-roll **verification** found issues (nodes not Ready / newly-stuck pods) |
 
 See [Exit codes](../concepts/exit-codes.md) for the full reference and a CI

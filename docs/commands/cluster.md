@@ -387,6 +387,14 @@ confirmed `ACTIVE` with no health issues, `refresh` runs the same
   disruptions (including a PDB whose status is not synced), or a pod that
   more than one PDB selects. With `--force` (which lets EKS evict through
   PDBs) it is a warning instead.
+- PodDisruptionBudgets that could not be read (for example, a denied
+  permission) stop the roll in the same way. With `--force` the roll starts
+  and the warning names the failed read. The run then lists the read in
+  `failures` and exits `4` when it finishes. `nodegroup update` has the same
+  rule.
+- A read that a health check could not make, and that the run went past
+  (a warning with `--yes`), is listed in `failures` too, and the run exits
+  `4` when it finishes.
 - A `BLOCK` health decision stops the roll.
 - Health warnings need `--yes` or a confirmation at the prompt.
 
@@ -395,6 +403,33 @@ matches the cluster endpoint, or through the context that you name with
 `--kube-context`. Without one, `refresh` prints a warning, skips the
 PDB check, and continues. `--skip-health-check` turns off these nodegroup
 checks.
+
+**Post-roll verification.** After each nodegroup roll, `refresh` runs the
+verification that [`nodegroup update`](nodegroup.md#update) runs. It also
+verifies a roll that an earlier run started and this run waited for.
+
+- The nodegroup must be `ACTIVE`.
+- No pod may be newly `Pending`. `refresh` lists the `Pending` pods before
+  the roll and compares them after it. This check needs Kubernetes access.
+  Without it, or for a roll that started before this run, the check is
+  skipped and the progress lines say so.
+
+If the verification finds an issue, the run stops before the next nodegroup
+and exits `5`. `report.status` is `VerifyFailed`, and `report.verification`
+lists the checks and the issues. If the nodegroup cannot be read after its
+roll, the run stops and exits `4`, and the read is in `failures`. If both
+occur, the run exits `5` and `failures` has the read.
+
+Run the same command again to continue. A nodegroup that is already at the
+target version is not done while it is not `ACTIVE` or has an update in
+progress: its plan step stays `Pending`, and the run waits for the update
+and verifies the nodegroup before it continues. The run stops again (exit
+`5`) while the nodegroup is not `ACTIVE`. `--skip-verify` turns the
+verification off, and `--skip-nodegroup` leaves the nodegroup out.
+
+In an upgrade over several minor versions, such a nodegroup is checked
+before the next control-plane step: the plan adds a catch-up hop for it at
+the current control-plane version.
 
 ### Nodegroup rolls
 
@@ -457,6 +492,7 @@ CI, and `NO_COLOR` runs print text progress.
 | `--force` | Force nodegroup rolls when pods can't be drained due to PDBs |
 | `--skip-insights-check` | Upgrade without the Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself |
 | `--skip-health-check` | Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
+| `--skip-verify` | Skip post-roll verification (nodes `ACTIVE`, no new stuck pods) |
 | `--kubeconfig` | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
 | `--skip` | Add-on name to skip, exact and case-insensitive (repeatable; for add-ons managed via Helm/GitOps) |
@@ -533,6 +569,7 @@ ended, and `report.failure` says why it stopped:
 | `Interrupted` | Ctrl+C or SIGTERM (`failure.reason` is `Interrupted`). Started EKS updates keep running |
 | `TimedOut` | `--wait-timeout` passed (`failure.reason` is `Timeout`). Started EKS updates keep running |
 | `Aborted` | You declined a phase confirmation |
+| `VerifyFailed` | A nodegroup roll finished, and post-roll verification found issues. `verification` has the `checks` that ran and the `issues`. Exit `5` |
 
 The top-level `failures` lists the plan's failures and the report's
 failure. Each is also named once: on stderr, or in the table view under
@@ -646,6 +683,7 @@ EKS Auto Mode nodes itself, before the control plane.
 | `--force` | Force nodegroup rollbacks when pods can't be drained due to PDBs (the same meaning as in `cluster upgrade`) |
 | `--skip-insights-check` | Roll back despite `ERROR` or `UNKNOWN` rollback-readiness insights. refresh also sets `force` on `UpdateClusterVersion`, so EKS skips them too. Not recommended |
 | `--skip-health-check` | Roll back nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
+| `--skip-verify` | Skip post-roll verification (nodes `ACTIVE`, no new stuck pods) |
 | `--kubeconfig` | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel |
 | `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint |
 | `--skip-nodegroup` | Nodegroup name pattern to leave alone (repeatable). Move it to N-1 yourself |
@@ -665,11 +703,16 @@ refresh asks once before it changes anything. The question lists the
 nodegroups it rolls back, the add-ons it downgrades, and the control-plane
 rollback. Before each nodegroup rollback, the same pre-flight checks as
 [`cluster upgrade`](#nodegroup-rolls) run, including PodDisruptionBudgets
-that would block the drain.
+that would block the drain. After each nodegroup rollback, the same
+post-roll verification runs: issues stop the run with exit `5`, and
+`--skip-verify` turns it off.
 
 The plan is derived from live cluster state on every run. A rerun after a
-failure or Ctrl+C skips nodegroups already at N-1 and add-ons already
-compatible with N-1. A rerun after a finished rollback finds the
+failure or Ctrl+C skips add-ons already compatible with N-1, and nodegroups
+already at N-1 that are `ACTIVE` with no update in progress. A nodegroup at
+N-1 that is not `ACTIVE`, or that has an update in progress, stays
+`Pending`: the run waits for the update and verifies the nodegroup before
+the add-ons and the control plane. A rerun after a finished rollback finds the
 `VersionRollback` update in the history and has nothing to do.
 
 A plan step has the same `type` and `status` values as an
@@ -683,7 +726,8 @@ A plan step has the same `type` and `status` values as an
 | `0` | The rollback finished, or there was nothing to do. A `--dry-run` with no blocker |
 | `1` | A phase failed, you declined the confirmation, the run was interrupted, or it timed out |
 | `3` | Blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking insight, the upgrade policy, or an unsupported target. Also with `--dry-run` |
-| `4` | The planner could not read something, such as the target's support status or an add-on's version catalog |
+| `4` | The planner could not read something, such as the target's support status or an add-on's version catalog. Also: the pre-roll gate could not read something and the run went past it (PodDisruptionBudgets with `--force`, a health check's read with `--yes`), or a nodegroup could not be read after its rollback |
+| `5` | A nodegroup rollback finished, and post-roll verification found issues. The run stops before the next nodegroup. `--skip-verify` turns the verification off |
 
 ### Examples
 

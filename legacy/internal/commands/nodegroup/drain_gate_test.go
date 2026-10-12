@@ -107,7 +107,8 @@ func TestUpdate_DrainGateWithoutKube(t *testing.T) {
 }
 
 // PDBs that cannot be read are not clear: the gate refuses (exit 3), as for
-// a blocker, and --force rolls past it with a warning.
+// a blocker, and --force rolls past it with a warning. The forced run still
+// lacks the read: the document lists it and the run exits 4.
 func TestUpdate_DrainGateReadErrorRefuses(t *testing.T) {
 	withDrainBlockers(t, nil, context.DeadlineExceeded)
 	srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
@@ -121,9 +122,17 @@ func TestUpdate_DrainGateReadErrorRefuses(t *testing.T) {
 
 	withDrainBlockers(t, nil, context.DeadlineExceeded)
 	srv = fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
-	_, stderr, err = runNodegroup(t, "update", "prod", "web", "--yes", "--force", "--poll-interval", "5ms", "-o", "json")
-	if err != nil {
-		t.Fatalf("update --force: %v\nstderr:\n%s", err, stderr)
+	stdout, stderr, err := runNodegroup(t, "update", "prod", "web", "--yes", "--force", "--poll-interval", "5ms", "-o", "json")
+	if code := exitCodeOf(err); code != 4 {
+		t.Fatalf("update --force: exit code = %d (err %v), want 4\nstderr:\n%s", code, err, stderr)
+	}
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	failureWant{kind: "Cluster", name: "prod", reason: "Timeout"}.check(t, "failures[0]", onlyFailure(t, doc))
+	if web := nodegroupEntries(t, doc)["web"]; web["status"] != "Succeeded" {
+		t.Errorf("web = %v, want Succeeded: the forced roll ran", web)
+	}
+	if !strings.Contains(stderr, "warning: cluster prod (us-east-1): ") {
+		t.Errorf("stderr does not report the failed read:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, "--force: rolling prod despite these drain blockers: web: the PodDisruptionBudgets could not be read") {
 		t.Errorf("stderr does not warn:\n%s", stderr)
@@ -207,5 +216,80 @@ func TestFleetUpdate_DrainBlockedCluster(t *testing.T) {
 	}
 	if got := statuses(stdout); got["prod"] != "DrainBlocked" || got["calm"] != "Planned" {
 		t.Errorf("dry-run statuses = %v, want prod DrainBlocked, calm Planned", got)
+	}
+}
+
+// PDBs that could not be read refuse the run (exit 3) without --force. The
+// read is still a failure of the run: the document lists it, also for the
+// previews, and stderr names it. The exit code stays 3.
+func TestUpdate_UnreadPDBsAreListedWhenBlocked(t *testing.T) {
+	want := failureWant{kind: "Cluster", name: "prod", reason: "Timeout"}
+	for _, format := range []string{"json", "yaml"} {
+		for _, tc := range []struct {
+			name string
+			args []string
+		}{
+			{"real run", []string{"update", "prod", "web", "--yes", "--poll-interval", "5ms"}},
+			{"dry run", []string{"update", "prod", "web", "--dry-run"}},
+		} {
+			t.Run(format+" "+tc.name, func(t *testing.T) {
+				withDrainBlockers(t, nil, context.DeadlineExceeded)
+				srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
+				stdout, stderr, err := runNodegroup(t, append(tc.args, "-o", format)...)
+				if code := exitCodeOf(err); code != 3 {
+					t.Fatalf("exit code = %d (err %v), want 3\nstderr:\n%s", code, err, stderr)
+				}
+				doc := fakeaws.RequireOneDocument(t, format, stdout).(map[string]any)
+				want.check(t, "failures[0]", onlyFailure(t, doc))
+				if b, _ := nodegroupEntries(t, doc)["web"]["drainBlockers"].([]any); len(b) != 1 {
+					t.Errorf("web = %v, want its drainBlockers", nodegroupEntries(t, doc)["web"])
+				}
+				if !strings.Contains(stderr, "warning: cluster prod (us-east-1): ") {
+					t.Errorf("stderr does not report the failed read:\n%s", stderr)
+				}
+				if calledPath(srv, "/update-version") {
+					t.Error("a blocked run must not start an update")
+				}
+			})
+		}
+	}
+}
+
+// The fleet preview lists the failed PDB read of a blocked cluster too, and
+// keeps the cluster DrainBlocked (exit 3).
+func TestFleetUpdate_UnreadPDBsAreListedWhenBlocked(t *testing.T) {
+	for _, format := range []string{"json", "yaml"} {
+		for _, extra := range [][]string{{"--dry-run"}, {"--yes", "--poll-interval", "5ms"}} {
+			t.Run(format+" "+extra[0], func(t *testing.T) {
+				withDrainBlockers(t, nil, context.DeadlineExceeded)
+				fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
+				args := append([]string{"update", "--all-clusters", "-r", "us-east-1"}, extra...)
+				stdout, stderr, err := runNodegroup(t, append(args, "-o", format)...)
+				if code := exitCodeOf(err); code != 3 {
+					t.Fatalf("exit code = %d (err %v), want 3\nstderr:\n%s", code, err, stderr)
+				}
+				doc := fakeaws.RequireOneDocument(t, format, stdout).(map[string]any)
+				failureWant{kind: "Cluster", name: "prod", reason: "Timeout"}.check(t, "failures[0]", onlyFailure(t, doc))
+				if c := doc["clusters"].([]any)[0].(map[string]any); c["status"] != "DrainBlocked" {
+					t.Errorf("cluster = %v, want DrainBlocked", c)
+				}
+				if !strings.Contains(stderr, "warning: cluster prod (us-east-1): ") {
+					t.Errorf("stderr does not report the failed read:\n%s", stderr)
+				}
+			})
+		}
+	}
+}
+
+// The human fleet preview keeps exit 3 too, and lists the read.
+func TestFleetUpdate_UnreadPDBsTablePreviewExitsThree(t *testing.T) {
+	withDrainBlockers(t, nil, context.DeadlineExceeded)
+	fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
+	stdout, stderr, err := runNodegroup(t, "update", "--all-clusters", "-r", "us-east-1", "--dry-run")
+	if code := exitCodeOf(err); code != 3 {
+		t.Fatalf("exit code = %d (err %v), want 3\nstderr:\n%s", code, err, stderr)
+	}
+	if !strings.Contains(stdout, "INCOMPLETE DATA") {
+		t.Errorf("stdout does not list the failed read:\n%s", stdout)
 	}
 }

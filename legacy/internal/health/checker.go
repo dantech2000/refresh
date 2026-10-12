@@ -84,9 +84,10 @@ type HealthSummary struct {
 	Decision     Decision       `json:"decision" yaml:"decision"`
 	Warnings     []string       `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 	Errors       []string       `json:"errors,omitempty" yaml:"errors,omitempty"`
-	// Failures are the EKS and Kubernetes reads the node and PDB checks could
-	// not make. The check that needed the data warns or fails instead of
-	// passing, so the Decision already accounts for them. [] when empty.
+	// Failures are the EKS and Kubernetes reads the node, critical workload,
+	// and PDB checks could not make. The check that needed the data warns or
+	// fails instead of passing, so the Decision already accounts for them. []
+	// when empty.
 	Failures diag.List `json:"failures" yaml:"failures"`
 }
 
@@ -169,7 +170,7 @@ func (hc *HealthChecker) RunAllChecks(ctx context.Context, clusterName string) H
 		func() HealthResult { return hc.CheckNodeUtilization(ctx, clusterName) },
 		func() HealthResult { return hc.CheckControlPlaneMetrics(ctx, clusterName) },
 		func() HealthResult { return hc.CheckServiceQuotas(ctx, clusterName) },
-		func() HealthResult { return hc.CheckCriticalWorkloads(ctx) },
+		func() HealthResult { return hc.checkCriticalWorkloads(ctx, clusterName) },
 		func() HealthResult { return hc.checkPodDisruptionBudgets(ctx, clusterName) },
 		func() HealthResult { return hc.checkResourceBalanceWith(ctx, snap) },
 	}

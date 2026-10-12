@@ -23,6 +23,9 @@ type fakeRollbacker struct {
 	built  int
 	phases []string
 	rolled []string
+	// degraded and sawKube are as in fakeUpgrader.
+	degraded string
+	sawKube  bool
 }
 
 func (f *fakeRollbacker) BuildRollbackPlan(context.Context, string, upgrade.RollbackOptions) (*upgrade.RollbackPlan, error) {
@@ -62,6 +65,9 @@ func (f *fakeRollbacker) ExecuteRollback(ctx context.Context, plan *upgrade.Roll
 				f.mu.Lock()
 				f.rolled = append(f.rolled, ng)
 				f.mu.Unlock()
+				if err := verifyAfterRoll(ctx, opts, ng, f.degraded, &f.sawKube); err != nil {
+					return &upgrade.Report{Status: upgrade.RunVerifyFailed}, fmt.Errorf("%s failed: %w", ph, err)
+				}
 			}
 		}
 	}
@@ -195,5 +201,30 @@ func TestRollbackRunsThroughTheEngine(t *testing.T) {
 	}
 	if !strings.Contains(joinText(st.Feed), "rollback done · 1.30") {
 		t.Fatalf("feed:\n%s", joinText(st.Feed))
+	}
+}
+
+// A rollback verifies its nodegroups too: issues stop the run before the
+// add-on downgrades and the control-plane rollback.
+func TestRollbackStopsWhenPostRollVerificationFindsIssues(t *testing.T) {
+	rig, f := newRollbackRig(t)
+	f.degraded = "ng-general"
+	if _, err := rig.b.Plan(t.Context(), rollbackAction); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.b.Start(t.Context(), rollbackAction); err != nil {
+		t.Fatal(err)
+	}
+	rig.b.Close()
+	st, _ := rig.b.State(t.Context())
+	u := st.Upgrades[0]
+	if u.Running() || u.Stopped || !strings.Contains(u.Failed, "post-roll verification found issues") {
+		t.Fatalf("rollback = %+v, want failed by the verification", u)
+	}
+	if got := strings.Join(f.phases, ","); strings.Contains(got, "control plane rollback") || strings.Contains(got, "addon downgrades") {
+		t.Errorf("phases = %s, want the run to stop in the nodegroup phase", got)
+	}
+	if !f.sawKube {
+		t.Error("the Verify hook gave no Kubernetes client")
 	}
 }

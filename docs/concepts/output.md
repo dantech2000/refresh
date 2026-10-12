@@ -77,7 +77,7 @@ top-level list.
 | `addon update` | The result (`addonName`, `previousVersion`, `newVersion`, `updateId`, `status`, `healthIssues`, `warning`, `failure`, `startedAt`) and `failures` |
 | `addon update --all` | `cluster`, `dryRun`, `results` (one result per add-on), and `failures` |
 | `cluster upgrade --dry-run` | The plan: `hops`, `notices` (advisory lines that never change the exit code), and `failures` (the reads the planner could not make) |
-| `cluster upgrade --yes` | `{plan, report, failures}`: the plan the run started from, and what the run did: `status`, `completed`, `stoppedAt`, `remaining`, and `failure` (why it stopped). A blocked plan prints the plan alone and exits `3` |
+| `cluster upgrade --yes` | `{plan, report, failures}`: the plan the run started from, and what the run did: `status`, `completed`, `stoppedAt`, `remaining`, `failure` (why it stopped), and `verification` (for a `VerifyFailed` run). A blocked plan prints the plan alone and exits `3` |
 
 The status values:
 
@@ -87,7 +87,7 @@ The status values:
 | `nodegroup update --all-clusters`, each cluster | `Succeeded`, `Incomplete`, `Failed`, `HealthBlocked`, `HealthWarned`, `VerifyFailed`, `Interrupted`, `TimedOut`, `NotAttempted`, `Busy`, `DrainBlocked`; with `--dry-run`: `Planned`, `Incomplete`, `DrainBlocked`, `Failed` |
 | `nodegroup scale` (`outcome`) | `Planned`, `Requested`, `Completed`, `Blocked`, `CompletedWithIssues`, `Busy` |
 | `addon update`, each add-on | `DryRun`, `UpToDate`, `InProgress`, `Started`, `Completed`, `CompletedWithIssues`, `Unverified`, `WaitFailed`, `Failed`, `NotAttempted`, `Busy` |
-| `cluster upgrade`, the report | `Succeeded`, `Failed`, `Blocked`, `Interrupted`, `TimedOut`, `Aborted` |
+| `cluster upgrade`, the report | `Succeeded`, `Failed`, `Blocked`, `Interrupted`, `TimedOut`, `Aborted`, `VerifyFailed` |
 
 The command pages describe each value:
 [`nodegroup update`](../commands/nodegroup.md#json-document),

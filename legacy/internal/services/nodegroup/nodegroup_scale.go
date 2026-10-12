@@ -61,6 +61,9 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 
 	if options.HealthCheck && s.healthChecker != nil {
 		summary := s.healthChecker.RunAllChecks(ctx, clusterName)
+		if options.OnHealthFailures != nil && len(summary.Failures) > 0 {
+			options.OnHealthFailures(summary.Failures)
+		}
 		if summary.Decision == health.DecisionBlock {
 			return fmt.Errorf("%w: %v", ErrScaleHealthBlocked, summary.Errors)
 		}
@@ -117,6 +120,9 @@ func (s *ServiceImpl) Scale(ctx context.Context, clusterName, nodegroupName stri
 
 	if options.HealthCheck && s.healthChecker != nil {
 		summary := s.healthChecker.RunAllChecks(ctx, clusterName)
+		if options.OnHealthFailures != nil && len(summary.Failures) > 0 {
+			options.OnHealthFailures(summary.Failures)
+		}
 		if summary.Decision == health.DecisionBlock {
 			return fmt.Errorf("%w: %v", ErrScaleVerifyFailed, summary.Errors)
 		}

@@ -269,14 +269,15 @@ func runUpdateDryRun(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clie
 		}
 		toRoll = dryRunToRoll(result.UpdatesNeeded)
 		var checked bool
-		blockers, checked = drainGate(ctx, awsCfg, eksClient, clusterName, toRoll, flags, !flags.quiet)
+		var unread *diag.Failure
+		blockers, checked, unread = drainGate(ctx, awsCfg, eksClient, clusterName, toRoll, flags, !flags.quiet)
 		if checked {
 			printDrainGate(os.Stdout, toRoll, blockers, flags.force)
 		}
 		if !flags.quiet {
 			printChangelogsForNodegroups(ctx, awsCfg, eksClient, clusterName, selected, flags.changelog)
 		}
-		fs = dryRunFailures(clusterName, awsCfg.Region, result.Unreadable)
+		fs = append(dryRunFailures(clusterName, awsCfg.Region, result.Unreadable), unreadPDBs(unread)...)
 	}
 	runner.WriteFailures(flags.format, os.Stdout, ui.Stderr, fs)
 	if len(blockers) > 0 && !flags.force {
@@ -325,11 +326,14 @@ func executeUpdates(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		preroll, prerollOK = snapshotPendingPods(ctx, verifyClient)
 	}
 
+	var gateUnread *diag.Failure
 	gate := func(toRoll []string) drainBlockers {
-		blockers, _ := drainGate(ctx, awsCfg, eksClient, clusterName, toRoll, flags, false)
+		blockers, _, unread := drainGate(ctx, awsCfg, eksClient, clusterName, toRoll, flags, false)
+		gateUnread = unread
 		return blockers
 	}
 	updates, run := startNodegroupUpdates(ctx, awsCfg, clusterName, region, selected, flags, gate)
+	run.readFailures = append(run.readFailures, unreadPDBs(gateUnread)...)
 	if len(updates) == 0 || flags.noWait {
 		return run, false, nil
 	}
@@ -770,6 +774,10 @@ type dryRunPlan struct {
 	Reroll     bool              `json:"reroll,omitempty" yaml:"reroll,omitempty"`
 	Nodegroups []dryRunNodegroup `json:"nodegroups" yaml:"nodegroups"`
 	Failures   diag.List         `json:"failures" yaml:"failures"`
+	// gateUnread is set when Failures has the PodDisruptionBudgets the
+	// drain gate could not read. In a plan the gate refuses, that failure
+	// does not raise the fleet preview's exit code above 3.
+	gateUnread bool
 }
 
 // DocumentKind is NodegroupUpdatePlan.
@@ -847,7 +855,9 @@ func dryRunDocument(ctx context.Context, awsCfg aws.Config, eksClient *eks.Clien
 		plan.Nodegroups = append(plan.Nodegroups, ng)
 	}
 	plan.Failures = dryRunFailures(clusterName, awsCfg.Region, unreadable)
-	blockers, _ := drainGate(ctx, awsCfg, eksClient, clusterName, dryRunToRoll(updates), flags, !flags.quiet)
+	blockers, _, unread := drainGate(ctx, awsCfg, eksClient, clusterName, dryRunToRoll(updates), flags, !flags.quiet)
+	plan.Failures = append(plan.Failures, unreadPDBs(unread)...)
+	plan.gateUnread = unread != nil
 	for i := range plan.Nodegroups {
 		plan.Nodegroups[i].DrainBlockers = blockers[plan.Nodegroups[i].Name]
 	}

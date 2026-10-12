@@ -20,13 +20,13 @@ var exitCodeHelp = map[string]string{
 	"cluster list":          "0 ok; 1 error, or no region answered; 4 incomplete: a region failed, or a cluster could not be fully read",
 	"cluster describe":      "0 ok; 1 error; 4 incomplete: some add-ons or nodegroups could not be read",
 	"cluster upgrade-check": "",
-	"cluster upgrade":       "0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run); 4 the planner could not read something",
-	"cluster rollback":      "0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, declined confirmation, interrupt, or timeout; 3 blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking rollback-readiness insight, or the upgrade policy (also with --dry-run); 4 the planner could not read something",
+	"cluster upgrade":       "0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run); 4 the planner or a pre-roll gate could not read something, or a nodegroup could not be read after its roll; 5 post-roll verification found issues",
+	"cluster rollback":      "0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, declined confirmation, interrupt, or timeout; 3 blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking rollback-readiness insight, or the upgrade policy (also with --dry-run); 4 the planner or a pre-roll gate could not read something, or a nodegroup could not be read after its rollback; 5 post-roll verification found issues",
 
 	"nodegroup":          "",
 	"nodegroup list":     "0 ok; 1 error; 4 incomplete: a nodegroup could not be described",
 	"nodegroup describe": "0 ok; 1 error",
-	"nodegroup scale":    "0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues",
+	"nodegroup scale":    "0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs, or a --health-check could not read something; 5 scaled, but the post-scaling health check found blocking issues",
 	"nodegroup update":   "",
 
 	"addon":            "",

@@ -8,9 +8,12 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/urfave/cli/v3"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/legacy/internal/apidoc"
 	"github.com/dantech2000/refresh/legacy/internal/commands/factory"
@@ -57,6 +60,11 @@ skipped with a warning). A drain
 blocker stops the roll unless --force; health warnings need --yes or a
 confirmation. --skip-health-check turns these checks off.
 
+After each nodegroup roll, refresh verifies it as nodegroup update does: the
+nodegroup is ACTIVE and no pod became Pending during the roll (the pod check
+needs Kubernetes access). Issues stop the run with exit 5, and a nodegroup
+that cannot be read stops it with exit 4. --skip-verify turns this off.
+
 The plan is re-derived from live cluster state on every run, so rerunning the
 same command after a failure (or Ctrl+C) resumes where it left off, and
 rerunning after success is a no-op.
@@ -91,6 +99,7 @@ Examples:
 			&cli.BoolFlag{Name: "force", Usage: "Force nodegroup rolls when pods can't be drained due to PDBs"},
 			&cli.BoolFlag{Name: "skip-insights-check", Usage: "Upgrade without the EKS Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself"},
 			&cli.BoolFlag{Name: "skip-health-check", Usage: "Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended)"},
+			&cli.BoolFlag{Name: "skip-verify", Usage: "Skip post-roll verification (nodes ACTIVE, no new stuck pods)"},
 			runner.KubeconfigFlag("the PDB drain-blocker checks and the live roll panel"),
 			runner.KubeContextFlag(),
 			&cli.StringSliceFlag{Name: "skip", Usage: "Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps)"},
@@ -123,15 +132,38 @@ type upgradeResult struct {
 // DocumentKind is UpgradeRun.
 func (upgradeResult) DocumentKind() apidoc.Kind { return apidoc.KindUpgradeRun }
 
-// runFailures is the plan's failures plus the one that stopped the run,
-// sorted.
-func runFailures(plan *upgrade.Plan, report *upgrade.Report) diag.List {
-	fs := append(diag.List(nil), plan.Failures...)
+// runFailures is the plan's failures, the reads the pre-roll gate could not
+// make, and the failure that stopped the run, each once, sorted.
+func runFailures(planFailures []diag.Failure, gate *nodegroupHealthGate, report *upgrade.Report) diag.List {
+	fs := append(diag.List(nil), planFailures...)
+	for _, f := range gate.failures {
+		if !slices.Contains(fs, f) {
+			fs = append(fs, f)
+		}
+	}
 	if report != nil && report.Failure != nil && !slices.Contains(fs, *report.Failure) {
 		fs = append(fs, *report.Failure)
 	}
 	diag.Sort(fs)
 	return fs
+}
+
+// writeRunFailures names, after a table run, the failures the run added to
+// the plan's: the plan's own were named before the first prompt. It returns
+// every failure of the run, for the exit code.
+func writeRunFailures(format string, out io.Writer, planFailures []diag.Failure, gate *nodegroupHealthGate, report *upgrade.Report, region string) diag.List {
+	if report != nil && report.Failure != nil && report.Failure.Region == "" {
+		report.Failure.Region = region
+	}
+	all := runFailures(planFailures, gate, report)
+	var added []diag.Failure
+	for _, f := range all {
+		if !slices.Contains(planFailures, f) {
+			added = append(added, f)
+		}
+	}
+	runner.WriteFailures(format, out, ui.Stderr, added)
+	return all
 }
 
 // setRegion sets region on each failure that has none: the upgrade service
@@ -224,7 +256,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	setRegion(plan.Failures, awsCfg.Region)
 
 	if runner.IsMachineFormat(format) {
-		return runUpgradeMachine(ctx, cmd, svc, plan, clusterName, awsCfg.Region, format, healthGate)
+		return runUpgradeMachine(ctx, cmd, svc, plan, clusterName, awsCfg.Region, format, healthGate, postRollVerify(cmd, awsCfg, clusterName))
 	}
 	// Switches the UI into plain mode for -o plain.
 	if _, eerr := runner.EncodeStdout(format, plan); eerr != nil {
@@ -275,8 +307,8 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 		}
 	}
 
-	opts := executeOptions(cmd, healthGate)
-	opts.Confirm = func(label string) bool { return promptPhase(ctx, out, label) }
+	opts := executeOptions(cmd, healthGate, postRollVerify(cmd, awsCfg, clusterName))
+	opts.Confirm = func(label string) bool { return promptPhase(ctx, label) }
 	opts.Progress = progress
 	opts.PhaseStart = phaseStart(out, cmd.Bool("quiet"))
 	healthGate.confirm, healthGate.progress = opts.Confirm, progress
@@ -288,21 +320,15 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	report, err := svc.Execute(ctx, plan, opts)
 
 	renderReport(out, report)
-	if report != nil && report.Failure != nil {
-		// The plan's failures are on stderr already; add the one that
-		// stopped the run.
-		stop := []diag.Failure{*report.Failure}
-		setRegion(stop, awsCfg.Region)
-		runner.WriteFailures(format, os.Stdout, ui.Stderr, stop)
-	}
+	fs := writeRunFailures(format, os.Stdout, plan.Failures, healthGate, report, awsCfg.Region)
 	if err != nil {
 		th := render.Default(out)
 		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", th.Paint(th.Pal.Sky, resumeCommand(cmd, clusterName, plan)))
-		return err
+		return verifyExit(report, err)
 	}
 
 	writeUpgradeOutcome(out, clusterName, plan, true)
-	return runner.IncompleteExit(plan.Failures)
+	return runner.IncompleteExit(fs)
 }
 
 // buildUpgradePlan builds the plan behind a spinner. The insights refresh can
@@ -336,11 +362,51 @@ func buildUpgradePlan(ctx context.Context, cmd *cli.Command, svc *upgrade.Servic
 	return plan, nil
 }
 
+// postRollVerify is the engine's post-roll verification for the command, or
+// nil with --skip-verify. The Kubernetes client for the Pending-pod check is
+// resolved once, on the first roll, without a notice: the pre-roll health
+// gate prints the Kubernetes notice.
+func postRollVerify(cmd *cli.Command, awsCfg aws.Config, clusterName string) *upgrade.PostRollVerify {
+	if cmd.Bool("skip-verify") {
+		return nil
+	}
+	var once sync.Once
+	var kube kubernetes.Interface
+	return &upgrade.PostRollVerify{Kube: func(ctx context.Context) kubernetes.Interface {
+		once.Do(func() {
+			kube, _ = resolveReadinessKubeClient(ctx, factory.NewEKSClient(awsCfg), awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), false)
+		})
+		return kube
+	}}
+}
+
+// verifyExit gives the error of a run that post-roll verification stopped
+// its exit code, as in `nodegroup update`: 5 when the verification found
+// issues, 4 when it could not read a nodegroup. Any other error is returned
+// as it is (exit 1).
+//
+// The report decides, not the error alone: a run that was interrupted or
+// timed out during the verification wraps the verification error too, and
+// its report says Interrupted or TimedOut. Such a run exits 1.
+func verifyExit(report *upgrade.Report, err error) error {
+	if report == nil {
+		return err
+	}
+	switch {
+	case report.Status == upgrade.RunVerifyFailed && errors.Is(err, upgrade.ErrVerifyFailed):
+		return cli.Exit(err.Error(), runner.ExitVerifyFailed)
+	case report.Status == upgrade.RunFailed && errors.Is(err, upgrade.ErrVerifyIncomplete):
+		return cli.Exit(err.Error(), runner.ExitIncomplete)
+	}
+	return err
+}
+
 // executeOptions maps the command's flags to the engine options, with gate
-// as the pre-roll health gate. The caller adds the confirm, progress, and
-// observer hooks.
-func executeOptions(cmd *cli.Command, gate *nodegroupHealthGate) upgrade.ExecuteOptions {
+// as the pre-roll health gate and verify as the post-roll verification. The
+// caller adds the confirm, progress, and observer hooks.
+func executeOptions(cmd *cli.Command, gate *nodegroupHealthGate, verify *upgrade.PostRollVerify) upgrade.ExecuteOptions {
 	return upgrade.ExecuteOptions{
+		Verify:            verify,
 		Yes:               cmd.Bool("yes"),
 		SkipAddons:        cmd.StringSlice("skip"),
 		SkipNodegroups:    cmd.StringSlice("skip-nodegroup"),
@@ -354,8 +420,8 @@ func executeOptions(cmd *cli.Command, gate *nodegroupHealthGate) upgrade.Execute
 // repeats every flag that decides what is mutated and where: the root
 // --profile/--region (placed before the subcommand), the resolved cluster
 // name, the target, --skip, --skip-nodegroup, --kubeconfig, --kube-context,
-// --wait-timeout, --force, --skip-insights-check, --skip-health-check, and
-// --yes. Only flags the user set are included, so
+// --wait-timeout, --force, --skip-insights-check, --skip-health-check,
+// --skip-verify, and --yes. Only flags the user set are included, so
 // an unattended run's command stays unattended and an attended one still
 // confirms each phase. Values are shell-quoted.
 func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) string {
@@ -377,7 +443,7 @@ func resumeCommand(cmd *cli.Command, clusterName string, plan *upgrade.Plan) str
 	if cmd.IsSet("wait-timeout") || flagcanon.LocalIsSet(cmd, "timeout") {
 		parts = append(parts, "--wait-timeout", shortDuration(runner.WaitTimeout(cmd, "timeout")))
 	}
-	for _, name := range []string{"force", "skip-insights-check", "skip-health-check", "yes"} {
+	for _, name := range []string{"force", "skip-insights-check", "skip-health-check", "skip-verify", "yes"} {
 		if cmd.Bool(name) {
 			parts = append(parts, "--"+name)
 		}
@@ -433,7 +499,7 @@ func shellQuote(s string) string { return common.ShellQuote(s) }
 // goes to stderr (or nowhere with --quiet); nothing prompts (runUpgrade
 // requires --yes) and there is no live roll panel. Exit codes match the
 // human path.
-func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Service, plan *upgrade.Plan, clusterName, region, format string, healthGate *nodegroupHealthGate) error {
+func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Service, plan *upgrade.Plan, clusterName, region, format string, healthGate *nodegroupHealthGate, verify *upgrade.PostRollVerify) error {
 	if plan.Blocked() || cmd.Bool("dry-run") {
 		if _, err := runner.EncodeStdout(format, plan); err != nil {
 			return err
@@ -445,7 +511,7 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 	report := upgrade.NewReport()
 	var err error
 	if plan.PendingSteps() > 0 {
-		opts := executeOptions(cmd, healthGate)
+		opts := executeOptions(cmd, healthGate, verify)
 		opts.Progress = func(format string, args ...any) {
 			if !cmd.Bool("quiet") {
 				_, _ = fmt.Fprintf(ui.Stderr, "  "+format+"\n", args...)
@@ -463,21 +529,22 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 		}
 	}
 
-	fs := runFailures(plan, report)
+	fs := runFailures(plan.Failures, healthGate, report)
 	if _, eerr := runner.EncodeStdout(format, upgradeResult{Plan: plan, Report: report, Failures: fs}); eerr != nil {
 		return eerr
 	}
 	runner.ReportFailures(ui.Stderr, fs)
 	if err != nil {
-		return fmt.Errorf("%w (resume with: %s)", err, resumeCommand(cmd, clusterName, plan))
+		return verifyExit(report, fmt.Errorf("%w (resume with: %s)", err, resumeCommand(cmd, clusterName, plan)))
 	}
-	return runner.IncompleteExit(plan.Failures)
+	return runner.IncompleteExit(fs)
 }
 
-// promptPhase asks for confirmation before a mutating phase. Bare Enter, a
+// promptPhase asks on stderr for confirmation before a mutating phase, as
+// runner.ConfirmMutation writes its prompt ("[y/N]"). Bare Enter, a
 // read error, or Ctrl+C declines (safe default). Answers come from the shared
 // stdin reader, so piped input for several phases is not lost between prompts.
-func promptPhase(ctx context.Context, w io.Writer, label string) bool {
-	_, _ = fmt.Fprintf(w, "\nProceed with %s? (y/N): ", label)
+func promptPhase(ctx context.Context, label string) bool {
+	_, _ = fmt.Fprintf(ui.Stderr, "\nProceed with %s? [y/N]: ", label)
 	return ui.Confirm(ctx)
 }

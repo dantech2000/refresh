@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,6 +50,73 @@ func TestFleetExit_WorstOutcome(t *testing.T) {
 				results = append(results, clusterUpdateResult{Status: s})
 			}
 			if got := exitCodeOf(fleetExit(results, tc.regions)); got != tc.want {
+				t.Errorf("fleetExit = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFleetExit_Precedence has one case for each pair of different exit
+// codes, in both orders. The winner comes from fleetExitPrecedence, not from
+// the size of the number.
+func TestFleetExit_Precedence(t *testing.T) {
+	if want := []int{5, 4, 3, 2, 1}; !slices.Equal(fleetExitPrecedence, want) {
+		t.Fatalf("fleetExitPrecedence = %v, want %v", fleetExitPrecedence, want)
+	}
+	cases := []struct {
+		name string
+		a, b clusterStatus
+		want int
+	}{
+		{"verify failed over failed", clusterVerifyFailed, clusterFailed, 5},
+		{"verify failed over incomplete", clusterVerifyFailed, clusterIncomplete, 5},
+		{"verify failed over health blocked", clusterVerifyFailed, clusterHealthBlocked, 5},
+		{"verify failed over health warned", clusterVerifyFailed, clusterHealthWarned, 5},
+		{"verify failed over interrupted", clusterVerifyFailed, clusterInterrupted, 5},
+		{"failed over health blocked", clusterFailed, clusterHealthBlocked, 4},
+		{"failed over busy", clusterFailed, clusterBusy, 4},
+		{"incomplete over drain blocked", clusterIncomplete, clusterDrainBlocked, 4},
+		{"failed over health warned", clusterFailed, clusterHealthWarned, 4},
+		{"failed over timed out", clusterFailed, clusterTimedOut, 4},
+		{"health blocked over health warned", clusterHealthBlocked, clusterHealthWarned, 3},
+		{"busy over not attempted", clusterBusy, clusterNotAttempted, 3},
+		{"drain blocked over interrupted", clusterDrainBlocked, clusterInterrupted, 3},
+		{"health warned over interrupted", clusterHealthWarned, clusterInterrupted, 2},
+		{"health warned over timed out", clusterHealthWarned, clusterTimedOut, 2},
+		{"health warned over not attempted", clusterHealthWarned, clusterNotAttempted, 2},
+		{"interrupted over succeeded", clusterInterrupted, clusterSucceeded, 1},
+		{"interrupted over planned", clusterNotAttempted, clusterPlanned, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, statuses := range [][]clusterStatus{{tc.a, tc.b}, {tc.b, tc.a}} {
+				results := []clusterUpdateResult{{Status: statuses[0]}, {Status: statuses[1]}}
+				if got := exitCodeOf(fleetExit(results, nil)); got != tc.want {
+					t.Errorf("fleetExit(%v) = %d, want %d", statuses, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// A region that discovery could not list counts as incomplete data (4) in
+// the same precedence.
+func TestFleetExit_FailedRegionPrecedence(t *testing.T) {
+	denied := []diag.Failure{diag.New(diag.KindRegion, "eu-west-1", diag.ReasonAccessDenied, "denied")}
+	cases := []struct {
+		status clusterStatus
+		want   int
+	}{
+		{clusterVerifyFailed, 5},
+		{clusterFailed, 4},
+		{clusterHealthBlocked, 4},
+		{clusterHealthWarned, 4},
+		{clusterInterrupted, 4},
+		{clusterSucceeded, 4},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.status), func(t *testing.T) {
+			if got := exitCodeOf(fleetExit([]clusterUpdateResult{{Status: tc.status}}, denied)); got != tc.want {
 				t.Errorf("fleetExit = %d, want %d", got, tc.want)
 			}
 		})

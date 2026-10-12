@@ -193,6 +193,11 @@ skipped with a warning). A drain
 blocker stops the roll unless --force; health warnings need --yes or a
 confirmation. --skip-health-check turns these checks off.
 
+After each nodegroup roll, refresh verifies it as nodegroup update does: the
+nodegroup is ACTIVE and no pod became Pending during the roll (the pod check
+needs Kubernetes access). Issues stop the run with exit 5, and a nodegroup
+that cannot be read stops it with exit 4. --skip-verify turns this off.
+
 The plan is re-derived from live cluster state on every run, so rerunning the
 same command after a failure (or Ctrl+C) resumes where it left off, and
 rerunning after success is a no-op.
@@ -220,7 +225,7 @@ Examples:
    # stdout, progress on stderr (-o json/yaml never prompts, so it needs --yes)
    refresh cluster upgrade -c prod-east --to 1.33 --yes -o json
 
-Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run); 4 the planner could not read something. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run); 4 the planner or a pre-roll gate could not read something, or a nodegroup could not be read after its roll; 5 post-roll verification found issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -233,6 +238,7 @@ Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, fail
 | `--force` | — | — | Force nodegroup rolls when pods can't be drained due to PDBs |
 | `--skip-insights-check` | — | — | Upgrade without the EKS Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself |
 | `--skip-health-check` | — | — | Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
+| `--skip-verify` | — | — | Skip post-roll verification (nodes ACTIVE, no new stuck pods) |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--skip string` | — | — | Addon name to skip, exact and case-insensitive (repeatable; for addons managed via Helm/GitOps) |
@@ -282,6 +288,10 @@ Before each nodegroup rollback, the same pre-flight checks as 'cluster
 upgrade' run, including PodDisruptionBudgets that would block the drain. A
 drain blocker stops the rollback unless --force.
 
+After each nodegroup rollback, the same post-roll verification as 'cluster
+upgrade' runs. Issues stop the rollback with exit 5, and a nodegroup that
+cannot be read stops it with exit 4. --skip-verify turns this off.
+
 The plan is derived from live cluster state on every run, so rerunning the
 same command after a failure or Ctrl+C continues where it stopped, and
 rerunning after a finished rollback does nothing.
@@ -296,7 +306,7 @@ Examples:
    # Non-interactive run with a 4h EKS rollback timeout
    refresh cluster rollback prod-east --yes --rollback-timeout 4h -o json
 
-Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, declined confirmation, interrupt, or timeout; 3 blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking rollback-readiness insight, or the upgrade policy (also with --dry-run); 4 the planner could not read something. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, declined confirmation, interrupt, or timeout; 3 blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking rollback-readiness insight, or the upgrade policy (also with --dry-run); 4 the planner or a pre-roll gate could not read something, or a nodegroup could not be read after its rollback; 5 post-roll verification found issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -308,6 +318,7 @@ Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, fail
 | `--force` | — | — | Force nodegroup rollbacks when pods can't be drained due to PDBs |
 | `--skip-insights-check` | — | — | Roll back despite ERROR or UNKNOWN rollback-readiness insights, and tell EKS to skip them too (not recommended) |
 | `--skip-health-check` | — | — | Roll back nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
+| `--skip-verify` | — | — | Skip post-roll verification (nodes ACTIVE, no new stuck pods) |
 | `--kubeconfig string` | — | — | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel (defaults to $KUBECONFIG, then ~/.kube/config) |
 | `--kube-context string` | — | — | Kubeconfig context for Kubernetes checks; trusted even if its server doesn't match the cluster endpoint (proxied or tunnelled API servers). Default: a context whose server matches the endpoint |
 | `--skip-nodegroup string` | — | — | Nodegroup name pattern to leave alone (repeatable); move it to N-1 yourself |
