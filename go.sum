@@ -24,8 +24,8 @@ github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.5 h1:JwchTNw8oqkFWMYrmF
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.5/go.mod h1:8pc+vcibD0We5t3f/LqHxjBPkXXfgcjYQN3upxqz/Nw=
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.5 h1:CNgkOhhgJ1anuboBDmjRLCpVlBKFV9cEvT16d4QNl/w=
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.5/go.mod h1:SS3HIANtO8edxa4QkX+8SvbMxRm+k78QoE6EIRI81tU=
-github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.4 h1:7Wo47d/xn/7KttCSBd8EGYeZ7ULRFRkUHr6vkZPBzVQ=
-github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.4/go.mod h1:tDB2IVC1xC3vX8o+6uRlzhTxP3g1b77CZXFX/oD2FnQ=
+github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.5 h1:rkxirozlOuMs3QuaGsDV3ll5suBdeeH6iSLFPyA5zNk=
+github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.5/go.mod h1:OQjoYoCdNx6tLyZNEuD0HRfHQVStBIfQyigewExdEVU=
 github.com/aws/aws-sdk-go-v2/service/autoscaling v1.78.1 h1:nKss1SHiv0fjLRpgy9RyPT8QsEP8ufj8ZgvG62s2Wdg=
 github.com/aws/aws-sdk-go-v2/service/autoscaling v1.78.1/go.mod h1:4roDw8gYFhAVo1b2ckuzEa0QPtpRXgU4o+dn44IvNF0=
 github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.73.2 h1:qeWf9NqVIWxRYcI6ZGkiY5/+NydRBlYozXvFlBhyjVk=
@@ -48,8 +48,8 @@ github.com/aws/aws-sdk-go-v2/service/sso v1.38.1 h1:Umtl/0YZhng4xndfW3lKJrYYP7NL
 github.com/aws/aws-sdk-go-v2/service/sso v1.38.1/go.mod h1:rRD/dnm7q0HYE/I5TMaPgkWyyUGLcwuxHLABsLnQ3e0=
 github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.3 h1:Glo50xPemPwHaioR66Rl5BTEq62Ohet0dyxzt6L0H1M=
 github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.3/go.mod h1:LaCSuxpt5Z2a8oThoMtWWB71u2MOmylEqHaQdp3J4aw=
-github.com/aws/aws-sdk-go-v2/service/sts v1.51.1 h1:0HOqZXRvMytH6bFHVIc0oJX07sZjfhz0zXtjs6gdE8s=
-github.com/aws/aws-sdk-go-v2/service/sts v1.51.1/go.mod h1:26zA0GhDrLo+yiLI2yXWxqB1PdsShfLikoI7GOEgugM=
+github.com/aws/aws-sdk-go-v2/service/sts v1.51.3 h1:L5w+LXVzMaacz3iotdx2fWtU/O+TIrplsK2JVMNbXeA=
+github.com/aws/aws-sdk-go-v2/service/sts v1.51.3/go.mod h1:8E586vK6OTj+qVzsTygGzw1GlZnOgNjul8toJEdtX5s=
 github.com/aws/smithy-go v1.28.4 h1:vzBmFpcRUtotqGPfmnro2W2Pgg3mk103n9sZhNJY9YU=
 github.com/aws/smithy-go v1.28.4/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
 github.com/aymanbagabas/go-udiff v0.4.1 h1:OEIrQ8maEeDBXQDoGCbbTTXYJMYRCRO1fnodZ12Gv5o=

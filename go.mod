@@ -16,7 +16,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eks v1.104.0
 	github.com/aws/aws-sdk-go-v2/service/servicequotas v1.43.1
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.79.2
-	github.com/aws/aws-sdk-go-v2/service/sts v1.51.1
+	github.com/aws/aws-sdk-go-v2/service/sts v1.51.3
 	github.com/aws/smithy-go v1.28.4
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.9
@@ -48,7 +48,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.1 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.5 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.5 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.4 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.10.1 // indirect
