@@ -82,7 +82,8 @@ kubelet shutdown message confirms the shutdown.
 If the pod list of a namespace fails, the check does not report "no critical
 pods" and does not pass. The check is a warning that names the namespace, and
 the failed read is listed in `failures`. Pods that were read and are not
-healthy still fail the check.
+healthy still fail the check. The check's score is at most 60 while a
+namespace is unread.
 
 ## Pod Disruption Budgets
 

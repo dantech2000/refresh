@@ -48,6 +48,11 @@ type ScaleOptions struct {
 	// "post-scaling"), so the caller can print them where its output goes.
 	// Nil logs them.
 	OnHealthWarnings func(stage string, warnings []string) `json:"-" yaml:"-"`
+	// OnHealthFailures receives the reads the pre- or post-scaling health
+	// check could not make (health.HealthSummary.Failures), whatever the
+	// verdict, so the caller can list them in its failures. It is not
+	// called for a check that read everything.
+	OnHealthFailures func(failures []diag.Failure) `json:"-" yaml:"-"`
 }
 
 // ScalingConfig models the EKS managed nodegroup scaling configuration

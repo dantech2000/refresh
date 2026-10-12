@@ -11,6 +11,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/dantech2000/refresh/internal/diag"
+	"github.com/dantech2000/refresh/internal/mocks"
 )
 
 // failPodLists makes the pod list of each named namespace fail.
@@ -80,16 +81,34 @@ func TestCheckCriticalWorkloads_PartialListFailureKeepsFail(t *testing.T) {
 	}
 }
 
-// The unread pods reach the summary: the decision warns and lists the read.
+// RunAllChecks carries the unread pods to the summary: the check warns, and
+// the failure names the cluster and the checker's region. This fails if
+// RunAllChecks stops passing the cluster name to the check.
 func TestRunAllChecks_UnreadCriticalPodsWarn(t *testing.T) {
 	client := fakek8s.NewSimpleClientset(allReadyPod("kube-public", "ok-1"))
 	failPodLists(client, "kube-system")
+	api := mocks.NewEKSAPI().WithCluster("prod", "1.32").Build()
+	hc := &HealthChecker{eksClient: api, k8sClient: client, region: "eu-west-1"}
 
-	s := aggregateResults([]HealthResult{
-		NewChecker(nil, client, nil, nil).checkCriticalWorkloads(context.Background(), "prod"),
-	})
+	s := hc.RunAllChecks(context.Background(), "prod")
 
-	if s.Decision != DecisionWarn || len(s.Failures) != 1 {
-		t.Errorf("decision = %s with %d failures, want Warn with 1 failure", s.Decision, len(s.Failures))
+	if s.Decision == DecisionProceed {
+		t.Errorf("decision = %s, want a warning or a block", s.Decision)
+	}
+	warned := false
+	for _, w := range s.Warnings {
+		warned = warned || strings.Contains(w, "failed to list pods in kube-system")
+	}
+	if !warned {
+		t.Errorf("warnings = %v, want the Critical Workloads warning", s.Warnings)
+	}
+	var got []diag.Failure
+	for _, f := range s.Failures {
+		if strings.Contains(f.Error, "listing pods in kube-system") {
+			got = append(got, f)
+		}
+	}
+	if len(got) != 1 || got[0].Kind != diag.KindCluster || got[0].Name != "prod" || got[0].Region != "eu-west-1" {
+		t.Errorf("failures = %+v, want one cluster failure for prod in eu-west-1", s.Failures)
 	}
 }
