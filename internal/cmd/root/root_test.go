@@ -20,7 +20,7 @@ import (
 )
 
 // clearEnv gives a test a known environment: no variable that refresh reads
-// is set, and the update check is off so that no test uses the network.
+// is set, and the update check is off.
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{
@@ -387,6 +387,34 @@ func TestGlobalFlags(t *testing.T) {
 			want: with(func(o *cmdutil.GlobalOptions) { o.LogLevel = slog.LevelDebug }),
 		},
 		{
+			name: "verbose hides an invalid environment value",
+			args: []string{"--verbose"},
+			env:  map[string]string{"REFRESH_LOG_LEVEL": "loud"},
+			want: with(func(o *cmdutil.GlobalOptions) { o.LogLevel = slog.LevelDebug }),
+		},
+		{
+			name: "log-level debug hides an invalid environment value",
+			args: []string{"--log-level", "debug"},
+			env:  map[string]string{"REFRESH_LOG_LEVEL": "loud"},
+			want: with(func(o *cmdutil.GlobalOptions) { o.LogLevel = slog.LevelDebug }),
+		},
+		{
+			name: "verbose beats the log-level flag",
+			args: []string{"--verbose", "--log-level", "error"},
+			want: with(func(o *cmdutil.GlobalOptions) { o.LogLevel = slog.LevelDebug }),
+		},
+		{
+			name: "verbose hides an invalid log-level flag",
+			args: []string{"--log-level", "loud", "--verbose"},
+			want: with(func(o *cmdutil.GlobalOptions) { o.LogLevel = slog.LevelDebug }),
+		},
+		{
+			name: "verbose=false keeps the environment",
+			args: []string{"--verbose=false"},
+			env:  map[string]string{"REFRESH_LOG_LEVEL": "error"},
+			want: with(func(o *cmdutil.GlobalOptions) { o.LogLevel = slog.LevelError }),
+		},
+		{
 			name: "log level in capitals",
 			env:  map[string]string{"REFRESH_LOG_LEVEL": "DEBUG"},
 			want: with(func(o *cmdutil.GlobalOptions) { o.LogLevel = slog.LevelDebug }),
@@ -444,7 +472,10 @@ func TestColor(t *testing.T) {
 		{name: "NO_COLOR", noColor: "1"},
 		{name: "NO_COLOR with any value", noColor: "false"},
 		{name: "dumb terminal", term: "dumb"},
-		{name: "the flag beats NO_COLOR", args: []string{"--no-color=false"}, noColor: "1", want: true},
+		{name: "no-color=false alone", args: []string{"--no-color=false"}, want: true},
+		{name: "no-color=false does not undo NO_COLOR", args: []string{"--no-color=false"}, noColor: "1"},
+		{name: "no-color=false does not undo a dumb terminal", args: []string{"--no-color=false"}, term: "dumb"},
+		{name: "NO_COLOR on a dumb terminal", noColor: "1", term: "dumb"},
 		{name: "flag and NO_COLOR", args: []string{"--no-color"}, noColor: "1"},
 	}
 	for _, tt := range tests {

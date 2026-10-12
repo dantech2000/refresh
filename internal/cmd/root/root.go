@@ -88,7 +88,9 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 		{"log-level", "REFRESH_LOG_LEVEL"},
 	} {
 		v := os.Getenv(e.env)
-		if v == "" || flags.Changed(e.flag) {
+		// --verbose sets the level, so the level in the environment is
+		// not used and not checked.
+		if v == "" || flags.Changed(e.flag) || (e.flag == "log-level" && o.verbose) {
 			continue
 		}
 		if err := flags.Set(e.flag, v); err != nil {
@@ -96,22 +98,22 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 		}
 	}
 
+	// Any one of the three turns color off; nothing turns it back on.
 	// NO_COLOR is not parsed as a boolean: no-color.org says that any
-	// non-empty value turns color off.
-	if !flags.Changed("no-color") {
-		o.noColor = os.Getenv("NO_COLOR") != ""
-	}
-	f.IOStreams.NoColor = o.noColor || os.Getenv("TERM") == "dumb"
+	// non-empty value counts.
+	f.IOStreams.NoColor = o.noColor || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb"
 
 	if o.maxConcurrency < 1 {
 		return fmt.Errorf("invalid --max-concurrency %d: must be at least 1", o.maxConcurrency)
 	}
-	level, err := parseLogLevel(o.logLevel)
-	if err != nil {
-		return err
-	}
-	if o.verbose {
-		level = slog.LevelDebug
+	// --verbose is --log-level debug: it wins, and the level it replaces
+	// is not checked.
+	level := slog.LevelDebug
+	if !o.verbose {
+		var err error
+		if level, err = parseLogLevel(o.logLevel); err != nil {
+			return err
+		}
 	}
 
 	f.Global = cmdutil.GlobalOptions{

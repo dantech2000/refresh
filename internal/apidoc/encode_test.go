@@ -56,6 +56,29 @@ type nilPointer struct {
 
 func (nilPointer) Kind() Kind { return "NilPointer" }
 
+type ownKind struct {
+	Name string `json:"name"`
+	Type string `json:"kind"`
+}
+
+func (ownKind) Kind() Kind { return "OwnKind" }
+
+type ownAPIVersion struct {
+	APIVersion string `json:"apiVersion"`
+}
+
+func (ownAPIVersion) Kind() Kind { return "OwnAPIVersion" }
+
+// nestedKind has a kind key below the top level, which is allowed.
+type nestedKind struct {
+	Target struct {
+		Kind       string `json:"kind"`
+		APIVersion string `json:"apiVersion"`
+	} `json:"target"`
+}
+
+func (nestedKind) Kind() Kind { return "NestedKind" }
+
 type list []string
 
 func (list) Kind() Kind { return "List" }
@@ -135,16 +158,82 @@ failures: []
 	}
 }
 
-// TestEncodingsAgree checks that the YAML form carries the same data as the
-// JSON form for strings that YAML could read as another type.
-func TestEncodingsAgree(t *testing.T) {
-	doc := newSample()
-	doc.Labels = map[string]string{
-		"null": "null", "no": "no", "tilde": "~", "empty": "", "number": "010",
-		"date": "2026-01-02", "colon": "a: b", "hash": "a #b", "html": "<a&b>",
-		"quote": `say "hi"`, "unicode": "café  ", "space": " padded ",
-	}
+// numbers is a document with numbers that float64 cannot hold exactly.
+type numbers struct {
+	MaxUint  uint64      `json:"maxUint"`
+	MinInt   int64       `json:"minInt"`
+	Above53  int64       `json:"above53"`
+	Huge     json.Number `json:"huge"`
+	Exponent json.Number `json:"exponent"`
+	Tiny     float64     `json:"tiny"`
+	Large    float64     `json:"large"`
+}
 
+func (numbers) Kind() Kind { return "Numbers" }
+
+func newNumbers() numbers {
+	return numbers{
+		MaxUint:  18446744073709551615,
+		MinInt:   -9223372036854775808,
+		Above53:  9007199254740993, // 2^53 + 1
+		Huge:     "123456789012345678901234567890",
+		Exponent: "1.5e+300",
+		Tiny:     1e-7,
+		Large:    1e21,
+	}
+}
+
+func TestEncodeKeepsNumbersExact(t *testing.T) {
+	var jsonBuf, yamlBuf bytes.Buffer
+	if err := EncodeJSON(&jsonBuf, newNumbers()); err != nil {
+		t.Fatalf("EncodeJSON: %v", err)
+	}
+	if err := EncodeYAML(&yamlBuf, newNumbers()); err != nil {
+		t.Fatalf("EncodeYAML: %v", err)
+	}
+	wantJSON := `{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Numbers",
+  "maxUint": 18446744073709551615,
+  "minInt": -9223372036854775808,
+  "above53": 9007199254740993,
+  "huge": 123456789012345678901234567890,
+  "exponent": 1.5e+300,
+  "tiny": 1e-7,
+  "large": 1e+21
+}
+`
+	wantYAML := `apiVersion: refresh.drod.dev/v2
+kind: Numbers
+maxUint: 18446744073709551615
+minInt: -9223372036854775808
+above53: 9007199254740993
+huge: 123456789012345678901234567890
+exponent: 1.5e+300
+tiny: 1e-7
+large: 1e+21
+`
+	if diff := cmp.Diff(wantJSON, jsonBuf.String()); diff != "" {
+		t.Errorf("EncodeJSON output (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(wantYAML, yamlBuf.String()); diff != "" {
+		t.Errorf("EncodeYAML output (-want +got):\n%s", diff)
+	}
+}
+
+// outOfRange holds a number that is valid JSON and more than float64 holds.
+type outOfRange struct {
+	Value json.Number `json:"value"`
+}
+
+func (outOfRange) Kind() Kind { return "OutOfRange" }
+
+// TestEncodeNumberOutOfFloatRange: the encoder does not convert a number, so
+// one that float64 cannot hold passes through with its text unchanged. It is
+// not in TestEncodingsAgree because yaml.v3 reads this YAML number back as a
+// string; the bytes are what this test checks.
+func TestEncodeNumberOutOfFloatRange(t *testing.T) {
+	doc := outOfRange{Value: "1e400"}
 	var jsonBuf, yamlBuf bytes.Buffer
 	if err := EncodeJSON(&jsonBuf, doc); err != nil {
 		t.Fatalf("EncodeJSON: %v", err)
@@ -152,26 +241,89 @@ func TestEncodingsAgree(t *testing.T) {
 	if err := EncodeYAML(&yamlBuf, doc); err != nil {
 		t.Fatalf("EncodeYAML: %v", err)
 	}
-	var fromJSON, fromYAML any
-	if err := json.Unmarshal(jsonBuf.Bytes(), &fromJSON); err != nil {
-		t.Fatalf("reading the JSON output: %v", err)
+	wantJSON := "{\n  \"apiVersion\": \"refresh.drod.dev/v2\",\n  \"kind\": \"OutOfRange\",\n  \"value\": 1e400\n}\n"
+	if diff := cmp.Diff(wantJSON, jsonBuf.String()); diff != "" {
+		t.Errorf("EncodeJSON output (-want +got):\n%s", diff)
 	}
-	if err := yaml.Unmarshal(yamlBuf.Bytes(), &fromYAML); err != nil {
-		t.Fatalf("reading the YAML output: %v", err)
+	wantYAML := "apiVersion: refresh.drod.dev/v2\nkind: OutOfRange\nvalue: 1e400\n"
+	if diff := cmp.Diff(wantYAML, yamlBuf.String()); diff != "" {
+		t.Errorf("EncodeYAML output (-want +got):\n%s", diff)
 	}
-	// YAML reads whole numbers as int and JSON reads every number as
-	// float64. Compare through JSON to give both the same number type.
-	normalized, err := json.Marshal(fromYAML)
-	if err != nil {
-		t.Fatalf("normalizing the YAML output: %v", err)
+}
+
+// TestEncodingsAgree checks that the YAML form carries the same data as the
+// JSON form: strings that YAML could read as another type stay strings, and
+// every number has the same digits in both.
+func TestEncodingsAgree(t *testing.T) {
+	text := newSample()
+	text.Labels = map[string]string{
+		"null": "null", "no": "no", "tilde": "~", "empty": "", "number": "010",
+		"date": "2026-01-02", "colon": "a: b", "hash": "a #b", "html": "<a&b>",
+		"quote": `say "hi"`, "unicode": "caf\u00e9 \u2028", "space": " padded ",
+		"big": "18446744073709551615", "exponent": "1e400",
 	}
-	var got any
-	if err := json.Unmarshal(normalized, &got); err != nil {
-		t.Fatalf("normalizing the YAML output: %v", err)
+	for name, doc := range map[string]Document{"text": text, "numbers": newNumbers()} {
+		t.Run(name, func(t *testing.T) {
+			var jsonBuf, yamlBuf bytes.Buffer
+			if err := EncodeJSON(&jsonBuf, doc); err != nil {
+				t.Fatalf("EncodeJSON: %v", err)
+			}
+			if err := EncodeYAML(&yamlBuf, doc); err != nil {
+				t.Fatalf("EncodeYAML: %v", err)
+			}
+
+			// Both sides keep a number as its text (json.Number), so the
+			// comparison sees a digit that a float64 would round away.
+			dec := json.NewDecoder(&jsonBuf)
+			dec.UseNumber()
+			var fromJSON any
+			if err := dec.Decode(&fromJSON); err != nil {
+				t.Fatalf("reading the JSON output: %v", err)
+			}
+			var node yaml.Node
+			if err := yaml.Unmarshal(yamlBuf.Bytes(), &node); err != nil {
+				t.Fatalf("reading the YAML output: %v", err)
+			}
+			fromYAML := yamlValue(t, &node)
+
+			if diff := cmp.Diff(fromJSON, fromYAML); diff != "" {
+				t.Errorf("YAML differs from JSON (-json +yaml):\n%s\nYAML output:\n%s", diff, yamlBuf.String())
+			}
+		})
 	}
-	if diff := cmp.Diff(fromJSON, got); diff != "" {
-		t.Errorf("YAML differs from JSON (-json +yaml):\n%s\nYAML output:\n%s", diff, yamlBuf.String())
+}
+
+// yamlValue converts a parsed YAML node to the value that encoding/json
+// gives for the same data with UseNumber: a number is a json.Number that
+// holds the text of the scalar.
+func yamlValue(t *testing.T, n *yaml.Node) any {
+	t.Helper()
+	switch n.Kind {
+	case yaml.DocumentNode:
+		return yamlValue(t, n.Content[0])
+	case yaml.MappingNode:
+		m := map[string]any{}
+		for i := 0; i < len(n.Content); i += 2 {
+			m[n.Content[i].Value] = yamlValue(t, n.Content[i+1])
+		}
+		return m
+	case yaml.SequenceNode:
+		s := []any{}
+		for _, c := range n.Content {
+			s = append(s, yamlValue(t, c))
+		}
+		return s
 	}
+	switch n.Tag {
+	case "!!str":
+		return n.Value
+	case "!!bool":
+		return n.Value == "true"
+	case "!!int", "!!float":
+		return json.Number(n.Value)
+	}
+	t.Fatalf("YAML scalar %q has tag %s, want a string, a boolean, or a number", n.Value, n.Tag)
+	return nil
 }
 
 func TestEncodeEmptyDocument(t *testing.T) {
@@ -214,6 +366,9 @@ func TestEncodeRejectsInvalidDocuments(t *testing.T) {
 		{name: "nil map", doc: nilMap{}, wantErr: `null value near "labels"`},
 		{name: "nil pointer", doc: nilPointer{}, wantErr: `null value near "next"`},
 		{name: "not an object", doc: list{"a"}, wantErr: "does not encode as a JSON object"},
+		{name: "own kind key", doc: ownKind{Name: "prod", Type: "Cluster"}, wantErr: `the OwnKind document has its own "kind" key`},
+		{name: "own apiVersion key", doc: ownAPIVersion{APIVersion: "v1"}, wantErr: `the OwnAPIVersion document has its own "apiVersion" key`},
+		{name: "empty own apiVersion key", doc: ownAPIVersion{}, wantErr: `the OwnAPIVersion document has its own "apiVersion" key`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -231,6 +386,19 @@ func TestEncodeRejectsInvalidDocuments(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEncodeAllowsNestedReservedKeys(t *testing.T) {
+	doc := nestedKind{}
+	doc.Target.Kind, doc.Target.APIVersion = "Deployment", "apps/v1"
+	var buf bytes.Buffer
+	if err := EncodeYAML(&buf, doc); err != nil {
+		t.Fatalf("EncodeYAML: %v", err)
+	}
+	want := "apiVersion: refresh.drod.dev/v2\nkind: NestedKind\ntarget:\n  kind: Deployment\n  apiVersion: apps/v1\n"
+	if diff := cmp.Diff(want, buf.String()); diff != "" {
+		t.Errorf("EncodeYAML output (-want +got):\n%s", diff)
 	}
 }
 

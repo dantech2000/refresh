@@ -75,6 +75,17 @@ func marshal(doc Document) ([]byte, error) {
 	if err := checkNoNull(body); err != nil {
 		return nil, fmt.Errorf("the %s document: %w", doc.Kind(), err)
 	}
+	// The encoder writes apiVersion and kind. A document with a field of
+	// the same name would print the key twice.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, fmt.Errorf("the %s document: %w", doc.Kind(), err)
+	}
+	for _, reserved := range []string{"apiVersion", "kind"} {
+		if _, ok := fields[reserved]; ok {
+			return nil, fmt.Errorf("the %s document has its own %q key; the encoder writes that key", doc.Kind(), reserved)
+		}
+	}
 	out, err := json.Marshal(header{APIVersion: APIVersion, Kind: doc.Kind()})
 	if err != nil {
 		return nil, err
@@ -91,6 +102,9 @@ func marshal(doc Document) ([]byte, error) {
 // empty value or omitempty.
 func checkNoNull(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
+	// Without UseNumber the decoder converts each number to float64 and
+	// fails on a valid number that float64 cannot hold.
+	dec.UseNumber()
 	var lastKey string
 	for {
 		tok, err := dec.Token()

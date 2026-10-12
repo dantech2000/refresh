@@ -33,6 +33,10 @@ const fetchTimeout = 2 * time.Second
 
 // Checker reads the latest release tag. The zero value works: it asks
 // DefaultURL with a new HTTP client and keeps no cache.
+//
+// The limit of one network call a day is best-effort. Nothing locks the
+// cache file, so two runs that start together with an old cache both use the
+// network. A reader never sees a partly written cache.
 type Checker struct {
 	// URL is the releases endpoint. Empty means DefaultURL.
 	URL string
@@ -175,7 +179,23 @@ func (c *Checker) writeCache(cc cache) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(c.CachePath, b, 0o600)
+	// Write a temporary file and rename it over the cache, so another
+	// refresh that reads the cache now sees the old file or the new one,
+	// never a part of one. CreateTemp makes the file private (0600).
+	tmp, err := os.CreateTemp(filepath.Dir(c.CachePath), filepath.Base(c.CachePath)+".*.tmp")
+	if err != nil {
+		return
+	}
+	_, err = tmp.Write(b)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), c.CachePath)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+	}
 }
 
 // UpgradeHint returns a one-line "newer version available" message when latest

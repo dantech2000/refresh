@@ -2,10 +2,13 @@ package updatecheck
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -215,5 +218,85 @@ func TestLatestTagCanceledRunNotRecorded(t *testing.T) {
 	}
 	if _, ok := c.readCache(); ok {
 		t.Fatal("a canceled run wrote the cache; want no record")
+	}
+}
+
+// TestWriteCacheReplacesAtomically: the cache is replaced by a rename, so a
+// reader that opened the old file still reads all of the old content, and no
+// temporary file stays behind.
+func TestWriteCacheReplacesAtomically(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "update-check.json")
+	c := &Checker{CachePath: cachePath}
+	first := cache{LastCheck: time.Unix(1_000_000, 0).UTC(), LatestTag: "v1.0.0"}
+	second := cache{LastCheck: time.Unix(2_000_000, 0).UTC(), LatestTag: "v2.0.0"}
+
+	c.writeCache(first)
+	before, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("the first write made no cache file: %v", err)
+	}
+	if got := before.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
+		t.Errorf("cache file mode = %o, want 600", got)
+	}
+	reader, err := os.Open(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	c.writeCache(second)
+
+	after, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Error("the second write changed the cache file in place; want a new file renamed over it")
+	}
+	var old cache
+	if err := json.NewDecoder(reader).Decode(&old); err != nil {
+		t.Fatalf("reading through the handle opened before the write: %v", err)
+	}
+	if old != first {
+		t.Errorf("old handle read %+v, want %+v", old, first)
+	}
+	if got, ok := c.readCache(); !ok || got != second {
+		t.Errorf("readCache() = %+v, %t; want %+v, true", got, ok, second)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "update-check.json" {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("cache directory holds %v, want only update-check.json", names)
+	}
+}
+
+// TestWriteCacheFailureLeavesNoFile: a cache that cannot be replaced keeps
+// its content, and the temporary file is removed.
+func TestWriteCacheFailureLeavesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	// A directory at the cache path makes the rename fail.
+	cachePath := filepath.Join(dir, "update-check.json")
+	if err := os.Mkdir(cachePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cachePath, "keep"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	(&Checker{CachePath: cachePath}).writeCache(cache{LatestTag: "v1.0.0"})
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("cache directory holds %d entries, want 1: the temporary file was not removed", len(entries))
 	}
 }

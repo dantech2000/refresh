@@ -1,6 +1,7 @@
 package cmdutil_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -60,6 +61,41 @@ func TestExitError(t *testing.T) {
 			}
 			if tt.wantMsg != "" && !errors.Is(tt.err, cause) {
 				t.Errorf("errors.Is(err, cause) = false, want true")
+			}
+		})
+	}
+}
+
+// TestExitCodeOfContextErrors: an interrupt is exit 1 whatever code carries
+// it, and a deadline keeps the code of the partial result.
+func TestExitCodeOfContextErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "cancelled", err: context.Canceled, want: cmdutil.ExitFailure},
+		{
+			name: "cancelled inside incomplete",
+			err:  &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: fmt.Errorf("sweep: %w", context.Canceled)},
+			want: cmdutil.ExitFailure,
+		},
+		{
+			name: "cancelled around verify failed",
+			err:  fmt.Errorf("%w: %w", context.Canceled, &cmdutil.ExitError{Code: cmdutil.ExitVerifyFailed}),
+			want: cmdutil.ExitFailure,
+		},
+		{name: "deadline", err: context.DeadlineExceeded, want: cmdutil.ExitFailure},
+		{
+			name: "deadline inside incomplete",
+			err:  &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: fmt.Errorf("sweep: %w", context.DeadlineExceeded)},
+			want: cmdutil.ExitIncomplete,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cmdutil.ExitCode(tt.err); got != tt.want {
+				t.Errorf("ExitCode() = %d, want %d", got, tt.want)
 			}
 		})
 	}

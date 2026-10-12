@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 type Factory struct {
 	IOStreams *IOStreams
 	Build     build.Info
+
+	// LatestRelease returns the tag of the newest release of refresh. It may
+	// use the network.
+	LatestRelease func(ctx context.Context) (string, error)
 
 	// Global holds the values of the global flags. The root command fills it
 	// before a command runs.

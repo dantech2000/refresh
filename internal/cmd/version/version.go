@@ -30,7 +30,7 @@ type options struct {
 
 // NewCmdVersion returns the version command.
 func NewCmdVersion(f *cmdutil.Factory) *cobra.Command {
-	o := &options{io: f.IOStreams, build: f.Build, latestTag: latestTag}
+	o := &options{io: f.IOStreams, build: f.Build, latestTag: f.LatestRelease}
 	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the version of refresh",
@@ -101,15 +101,6 @@ func (o *options) printUpdateHint(ctx context.Context) {
 		// The hint is a courtesy. A failed write to stderr changes nothing.
 		_, _ = fmt.Fprintln(o.io.ErrOut, hint)
 	}
-}
-
-// latestTag asks GitHub for the newest release tag, at most once a day.
-func latestTag(ctx context.Context) (string, error) {
-	// Without a cache path the checker still works; it then uses the
-	// network on every call.
-	cachePath, _ := updatecheck.DefaultCachePath()
-	checker := updatecheck.Checker{CachePath: cachePath}
-	return checker.LatestTag(ctx)
 }
 
 // envTruthy reports whether v turns an opt-out on. Any value does, except

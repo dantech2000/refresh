@@ -106,12 +106,45 @@ func TestRunHelp(t *testing.T) {
 func TestExitCode(t *testing.T) {
 	cause := errors.New("2 nodegroups are stale")
 	tests := []struct {
-		name       string
-		err        error
-		wantCode   int
-		wantErrOut string
+		name        string
+		err         error
+		interrupted bool // the signal context is cancelled
+		wantCode    int
+		wantErrOut  string
 	}{
 		{name: "success", err: nil, wantCode: 0},
+		{
+			name:       "cancelled inside a result code",
+			err:        &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: fmt.Errorf("status: %w", context.Canceled)},
+			wantCode:   1,
+			wantErrOut: "Error: status: context canceled\n",
+		},
+		{
+			name:       "deadline keeps the result code",
+			err:        &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: fmt.Errorf("status: %w", context.DeadlineExceeded)},
+			wantCode:   4,
+			wantErrOut: "Error: status: context deadline exceeded\n",
+		},
+		{
+			name:        "interrupted, command returned nothing",
+			interrupted: true,
+			wantCode:    1,
+			wantErrOut:  "Error: interrupted\n",
+		},
+		{
+			name:        "interrupted, command returned a result code",
+			err:         &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: cause},
+			interrupted: true,
+			wantCode:    1,
+			wantErrOut:  "Error: 2 nodegroups are stale\n",
+		},
+		{
+			name:        "interrupted, result already printed",
+			err:         &cmdutil.ExitError{Code: cmdutil.ExitVerifyFailed},
+			interrupted: true,
+			wantCode:    1,
+			wantErrOut:  "Error: interrupted\n",
+		},
 		{name: "plain error", err: cause, wantCode: 1, wantErrOut: "Error: 2 nodegroups are stale\n"},
 		{
 			name:       "wrapped plain error",
@@ -157,8 +190,13 @@ func TestExitCode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var errOut bytes.Buffer
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tt.interrupted {
+				cancel()
+			}
 
-			code := exitCode(&errOut, tt.err)
+			code := exitCode(ctx, &errOut, tt.err)
 
 			if code != tt.wantCode {
 				t.Errorf("exit code = %d, want %d", code, tt.wantCode)
@@ -167,5 +205,73 @@ func TestExitCode(t *testing.T) {
 				t.Errorf("stderr (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// TestInterrupt cancels the signal context while the update check of
+// "refresh version" waits on the network. The command hides the failed
+// check, so only the context shows that the run was interrupted.
+func TestInterrupt(t *testing.T) {
+	const jsonDoc = "{\n  \"apiVersion\": \"refresh.drod.dev/v2\",\n  \"kind\": \"Version\",\n  \"version\": \"v1.2.3\",\n" +
+		"  \"commit\": \"abc1234\",\n  \"buildDate\": \"2026-01-02T03:04:05Z\"\n}\n"
+	tests := []struct {
+		name    string
+		args    []string
+		wantOut string
+	}{
+		{
+			name:    "table",
+			args:    []string{"version"},
+			wantOut: "refresh version: v1.2.3\ncommit: abc1234\nbuilt: 2026-01-02T03:04:05Z\n",
+		},
+		{name: "json", args: []string{"version", "-o", "json"}, wantOut: jsonDoc},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("REFRESH_NO_UPDATE_CHECK", "")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			f, _, out, errOut := cmdutiltest.NewFactory()
+			f.IOStreams.OutTTY = true
+			waiting := make(chan struct{})
+			f.LatestRelease = func(ctx context.Context) (string, error) {
+				close(waiting)
+				<-ctx.Done()
+				return "", ctx.Err()
+			}
+
+			done := make(chan int)
+			go func() { done <- execute(ctx, tt.args, f) }()
+			<-waiting // the command is inside the update check
+			cancel()
+			code := <-done
+
+			if code != 1 {
+				t.Errorf("exit code = %d, want 1", code)
+			}
+			if diff := cmp.Diff(tt.wantOut, out.String()); diff != "" {
+				t.Errorf("stdout (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff("Error: interrupted\n", errOut.String()); diff != "" {
+				t.Errorf("stderr (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestInterruptBeforeRun checks that a run that starts after the signal
+// exits 1 even when the command finds nothing wrong.
+func TestInterruptBeforeRun(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f, _, _, errOut := cmdutiltest.NewFactory()
+
+	code := execute(ctx, []string{"version"}, f)
+
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if diff := cmp.Diff("Error: interrupted\n", errOut.String()); diff != "" {
+		t.Errorf("stderr (-want +got):\n%s", diff)
 	}
 }
