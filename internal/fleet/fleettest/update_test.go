@@ -1,0 +1,359 @@
+package fleettest_test
+
+import (
+	"errors"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/dantech2000/refresh/internal/fleet/fleettest"
+)
+
+// token is a client request token of a length EKS accepts.
+const token = "0123456789abcdef0123456789abcdef-1"
+
+func id(n int) string {
+	return "00000000-0000-4000-8000-00000000000" + string(rune('0'+n))
+}
+
+// status returns the status of an update of prod.
+func status(w *fleettest.World, updateID string) fleettest.UpdateStatus {
+	var out fleettest.UpdateStatus
+	w.View(func(s *fleettest.State) { out = s.Cluster(region, "prod").Update(updateID).Status })
+	return out
+}
+
+func TestUpdateScripts(t *testing.T) {
+	tests := []struct {
+		name   string
+		script fleettest.UpdateScript
+		// advance is how far the clock moves before the checks.
+		advance     time.Duration
+		wantStatus  fleettest.UpdateStatus
+		wantVersion string
+		wantNG      string
+		wantErrors  []fleettest.UpdateError
+	}{
+		{name: "the zero script succeeds at once", wantStatus: fleettest.UpdateSuccessful, wantVersion: "1.32", wantNG: "ACTIVE"},
+		{
+			name: "in progress before its duration", script: fleettest.UpdateScript{After: time.Hour}, advance: time.Hour - time.Second,
+			wantStatus: fleettest.UpdateInProgress, wantVersion: "1.31", wantNG: "UPDATING",
+		},
+		{
+			name: "successful at its duration", script: fleettest.UpdateScript{After: time.Hour}, advance: time.Hour,
+			wantStatus: fleettest.UpdateSuccessful, wantVersion: "1.32", wantNG: "ACTIVE",
+		},
+		{
+			name: "failed leaves the nodegroup as it was", script: fleettest.UpdateScript{After: time.Hour, Result: fleettest.UpdateFailed}, advance: time.Hour,
+			wantStatus: fleettest.UpdateFailed, wantVersion: "1.31", wantNG: "ACTIVE",
+			wantErrors: []fleettest.UpdateError{{Code: "Unknown", Message: "the update did not complete"}},
+		},
+		{
+			name:       "cancelled with scripted errors",
+			script:     fleettest.UpdateScript{Result: fleettest.UpdateCancelled, Errors: []fleettest.UpdateError{{Code: "PodEvictionFailure", Message: "pdb"}}},
+			wantStatus: fleettest.UpdateCancelled, wantVersion: "1.31", wantNG: "ACTIVE",
+			wantErrors: []fleettest.UpdateError{{Code: "PodEvictionFailure", Message: "pdb"}},
+		},
+		{
+			name: "never", script: fleettest.UpdateScript{Never: true}, advance: 1000 * time.Hour,
+			wantStatus: fleettest.UpdateInProgress, wantVersion: "1.31", wantNG: "UPDATING",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newWorld()
+			w.Edit(func(s *fleettest.State) { s.DefaultUpdate = tt.script })
+			started, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.32"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := fleettest.Update{
+				ID: id(1), Type: fleettest.TypeVersionUpdate, Status: fleettest.UpdateInProgress, Nodegroup: "ng-a", CreatedAt: w.Now(),
+				Params: []fleettest.UpdateParam{{Type: "Version", Value: "1.32"}, {Type: "ReleaseVersion", Value: "1.32.0-20260101"}},
+			}
+			if diff := cmp.Diff(want, started, cmpopts.IgnoreUnexported(fleettest.Update{})); diff != "" {
+				t.Errorf("started update (-want +got):\n%s", diff)
+			}
+
+			w.Advance(tt.advance)
+			w.View(func(s *fleettest.State) {
+				c := s.Cluster(region, "prod")
+				u, ng := c.Update(id(1)), c.Nodegroup("ng-a")
+				if u.Status != tt.wantStatus || ng.Version != tt.wantVersion || ng.Status != tt.wantNG {
+					t.Errorf("update %s, nodegroup %s %s; want %s, %s %s", u.Status, ng.Version, ng.Status, tt.wantStatus, tt.wantVersion, tt.wantNG)
+				}
+				if diff := cmp.Diff(tt.wantErrors, u.Errors); diff != "" {
+					t.Errorf("update errors (-want +got):\n%s", diff)
+				}
+			})
+		})
+	}
+}
+
+func TestUpdateScriptsAreUsedInOrder(t *testing.T) {
+	w := newWorld()
+	w.Edit(func(s *fleettest.State) {
+		s.Cluster(region, "prod").Addon("coredns").UpdateScripts = []fleettest.UpdateScript{{Result: fleettest.UpdateFailed}}
+	})
+	for i, want := range []fleettest.UpdateStatus{fleettest.UpdateFailed, fleettest.UpdateSuccessful} {
+		u, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := status(w, u.ID); got != want {
+			t.Errorf("update %d = %s, want %s", i+1, got, want)
+		}
+	}
+	w.View(func(s *fleettest.State) {
+		if got := s.Cluster(region, "prod").Addon("coredns").Version; got != "v2" {
+			t.Errorf("add-on version = %q, want v2", got)
+		}
+	})
+}
+
+func TestUpdatesFinishInDueOrder(t *testing.T) {
+	w := newWorld()
+	w.Edit(func(s *fleettest.State) {
+		c := s.Cluster(region, "prod")
+		c.UpdateScripts = []fleettest.UpdateScript{{After: 2 * time.Hour}}
+		c.Addons[0].UpdateScripts = []fleettest.UpdateScript{{After: time.Hour}}
+	})
+	control, err := w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: "1.33"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addon, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if control.ID != id(1) || addon.ID != id(2) {
+		t.Errorf("update IDs = %s, %s; want %s, %s", control.ID, addon.ID, id(1), id(2))
+	}
+
+	w.Advance(time.Hour)
+	if c, a := status(w, control.ID), status(w, addon.ID); c != fleettest.UpdateInProgress || a != fleettest.UpdateSuccessful {
+		t.Errorf("after one hour: control plane %s, add-on %s; want InProgress, Successful", c, a)
+	}
+	w.Advance(time.Hour)
+	w.View(func(s *fleettest.State) {
+		c := s.Cluster(region, "prod")
+		if c.Version != "1.33" || c.Status != "ACTIVE" {
+			t.Errorf("after two hours: cluster %s %s, want 1.33 ACTIVE", c.Version, c.Status)
+		}
+	})
+}
+
+func TestUpdateRequests(t *testing.T) {
+	three := int32(3)
+	tests := []struct {
+		name  string
+		start func(w *fleettest.World) (fleettest.Update, error)
+		// wantErr is a pointer to the error type As must find, or nil.
+		wantErr  any
+		wantType string
+		// state reads what the update changed, and wantState is its value
+		// once the update is done.
+		state     func(c *fleettest.Cluster) string
+		wantState string
+	}{
+		{
+			name: "control plane upgrade",
+			start: func(w *fleettest.World) (fleettest.Update, error) {
+				return w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: "1.33", Token: token})
+			},
+			wantType:  fleettest.TypeVersionUpdate,
+			state:     func(c *fleettest.Cluster) string { return c.Version },
+			wantState: "1.33",
+		},
+		{
+			name: "control plane rollback",
+			start: func(w *fleettest.World) (fleettest.Update, error) {
+				return w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: "1.31"})
+			},
+			wantType: fleettest.TypeVersionRollback,
+		},
+		{
+			name: "client request token of 32 characters",
+			start: func(w *fleettest.World) (fleettest.Update, error) {
+				return w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: "1.33", Token: token[:32]})
+			},
+			wantErr: new(*fleettest.InvalidError),
+		},
+		{
+			name: "scaling keeps the sizes the request leaves out",
+			start: func(w *fleettest.World) (fleettest.Update, error) {
+				return w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &three})
+			},
+			wantType: fleettest.TypeConfigUpdate,
+			state: func(c *fleettest.Cluster) string {
+				ng := c.Nodegroup("ng-a")
+				return fmt.Sprintf("%d/%d/%d", ng.Desired, ng.Min, ng.Max)
+			},
+			wantState: "3/1/3",
+		},
+		{
+			name: "roll with no version keeps the nodegroup's",
+			start: func(w *fleettest.World) (fleettest.Update, error) {
+				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{ReleaseVersion: "1.31.9-20260202"})
+			},
+			wantType: fleettest.TypeVersionUpdate,
+			state: func(c *fleettest.Cluster) string {
+				ng := c.Nodegroup("ng-a")
+				return ng.Version + " " + ng.ReleaseVersion
+			},
+			wantState: "1.31 1.31.9-20260202",
+		},
+		{
+			name: "unknown cluster",
+			start: func(w *fleettest.World) (fleettest.Update, error) {
+				return w.UpdateAddon(region, "nope", "coredns", fleettest.AddonRequest{})
+			},
+			wantErr: new(*fleettest.NotFoundError),
+		},
+		{
+			name: "unknown nodegroup",
+			start: func(w *fleettest.World) (fleettest.Update, error) {
+				return w.UpdateNodegroupConfig(region, "prod", "nope", fleettest.NodegroupConfigRequest{})
+			},
+			wantErr: new(*fleettest.NotFoundError),
+		},
+		{
+			name: "unknown add-on",
+			start: func(w *fleettest.World) (fleettest.Update, error) {
+				return w.UpdateAddon(region, "prod", "nope", fleettest.AddonRequest{})
+			},
+			wantErr: new(*fleettest.NotFoundError),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newWorld()
+			u, err := tt.start(w)
+			if tt.wantErr != nil {
+				if !errors.As(err, tt.wantErr) {
+					t.Fatalf("err = %v, want %T", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if u.Type != tt.wantType {
+				t.Errorf("update type = %s, want %s", u.Type, tt.wantType)
+			}
+			if tt.state != nil {
+				var got string
+				w.View(func(s *fleettest.State) { got = tt.state(s.Cluster(region, "prod")) })
+				if got != tt.wantState {
+					t.Errorf("after the update: %s, want %s", got, tt.wantState)
+				}
+			}
+		})
+	}
+}
+
+func TestUpdateTokenAndBusy(t *testing.T) {
+	w := newWorld()
+	w.Edit(func(s *fleettest.State) { s.DefaultUpdate = fleettest.UpdateScript{After: time.Hour} })
+	roll := func(tok string) (fleettest.Update, error) {
+		return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.32", Token: tok})
+	}
+
+	first, err := roll(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := roll(token)
+	if err != nil || again.ID != first.ID {
+		t.Errorf("the same token returned %q, %v; want the first update %q", again.ID, err, first.ID)
+	}
+	var inUse *fleettest.InUseError
+	if _, err := roll(token + "x"); !errors.As(err, &inUse) || inUse.UpdateID != first.ID {
+		t.Errorf("a second roll returned %v, want an InUseError for %s", err, first.ID)
+	}
+	// Another resource of the cluster is free.
+	if _, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2", Token: token}); err != nil {
+		t.Errorf("an add-on update during the roll: %v", err)
+	}
+
+	w.Advance(time.Hour)
+	// A late retry of the first call still reads as the call that started it.
+	if late, err := roll(token); err != nil || late.ID != first.ID || late.Status != fleettest.UpdateInProgress {
+		t.Errorf("a late retry returned %+v, %v", late, err)
+	}
+	if next, err := roll(token + "x"); err != nil || next.ID == first.ID {
+		t.Errorf("a roll after the first ended returned %q, %v; want a new update", next.ID, err)
+	}
+}
+
+func TestInsightsRefresh(t *testing.T) {
+	w := newWorld()
+	w.Edit(func(s *fleettest.State) { s.InsightsRefresh = time.Minute })
+	refresh := func() string {
+		var out string
+		w.View(func(s *fleettest.State) { out = s.Cluster(region, "prod").InsightsRefresh.Status })
+		return out
+	}
+
+	if got := refresh(); got != "" {
+		t.Errorf("before any refresh: %q, want none", got)
+	}
+	if err := w.StartInsightsRefresh(region, "prod"); err != nil {
+		t.Fatal(err)
+	}
+	w.Advance(59 * time.Second)
+	if got := refresh(); got != "IN_PROGRESS" {
+		t.Errorf("after 59s: %q, want IN_PROGRESS", got)
+	}
+	w.Advance(time.Second)
+	if got := refresh(); got != "COMPLETED" {
+		t.Errorf("after 60s: %q, want COMPLETED", got)
+	}
+	var notFound *fleettest.NotFoundError
+	if err := w.StartInsightsRefresh(region, "nope"); !errors.As(err, &notFound) {
+		t.Errorf("unknown cluster: %v, want a NotFoundError", err)
+	}
+}
+
+// TestConcurrentUse runs every kind of call at once, for the race detector.
+func TestConcurrentUse(t *testing.T) {
+	w := newWorld()
+	ctx := testContext(t)
+	w.SetFault(fleettest.EKSListClusters, fleettest.Fault{Throttle: 50})
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			for range 50 {
+				_, _ = w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+				_, _ = w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{})
+				_, _ = w.Enter(ctx, fleettest.EKSListClusters)
+				w.Advance(time.Second)
+				w.View(func(s *fleettest.State) { _ = len(s.Clusters[0].Updates) })
+				w.Edit(func(s *fleettest.State) { s.Clusters[0].Tags = map[string]string{"n": string(rune('a' + i))} })
+				_ = w.Now()
+			}
+		})
+	}
+	wg.Wait()
+
+	var ids []string
+	w.View(func(s *fleettest.State) {
+		for _, u := range s.Clusters[0].Updates {
+			ids = append(ids, u.ID)
+		}
+	})
+	if len(ids) != 8*50*2 {
+		t.Fatalf("started %d updates, want %d", len(ids), 8*50*2)
+	}
+	seen := map[string]bool{}
+	for _, updateID := range ids {
+		if seen[updateID] {
+			t.Fatalf("update ID %s was given twice", updateID)
+		}
+		seen[updateID] = true
+	}
+}
