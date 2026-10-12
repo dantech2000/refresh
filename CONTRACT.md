@@ -1,6 +1,6 @@
 # refresh v2 contract
 
-Status: draft for owner approval. Nothing in the new tree is built against it yet.
+Status: approved by the owner on 2026-10-12. Frozen until cutover. The three open points keep today's behaviour.
 
 This is the public interface of the rewritten CLI: commands, flags, env vars, output, and exit codes. After approval it is frozen until cutover. `REWRITE.md` is the plan this belongs to.
 
