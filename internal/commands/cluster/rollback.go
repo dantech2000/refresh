@@ -224,7 +224,7 @@ func runRollback(ctx context.Context, cmd *cli.Command) (err error) {
 	if err != nil {
 		th := render.Default(out)
 		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", th.Paint(th.Pal.Sky, rollbackResumeCommand(cmd, clusterName)))
-		return verifyExit(err)
+		return verifyExit(report, err)
 	}
 	writeLines(out, rollbackOutcomeLines(render.Default(out), plan, true))
 	return runner.IncompleteExit(fs)
@@ -269,7 +269,7 @@ func runRollbackMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Serv
 		return cli.Exit(err.Error(), runner.ExitBlocked)
 	}
 	if err != nil {
-		return verifyExit(fmt.Errorf("%w (resume with: %s)", err, rollbackResumeCommand(cmd, plan.ClusterName)))
+		return verifyExit(report, fmt.Errorf("%w (resume with: %s)", err, rollbackResumeCommand(cmd, plan.ClusterName)))
 	}
 	return runner.IncompleteExit(fs)
 }

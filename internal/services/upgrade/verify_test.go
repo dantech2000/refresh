@@ -483,3 +483,38 @@ func TestExecute_VerifyIssuesAndUnreadNodegroupKeepBoth(t *testing.T) {
 		t.Errorf("failure = %+v, want the denied DescribeNodegroup of workers-a", report.Failure)
 	}
 }
+
+// A multi-hop rerun must not move the control plane past a nodegroup the
+// last roll left DEGRADED. The nodegroup is at the live control-plane
+// version, so no regular hop would look at it before the next control-plane
+// step: a catch-up hop verifies it first.
+func TestResume_MultiHopVerifiesDegradedNodegroupBeforeTheControlPlane(t *testing.T) {
+	w := newWorld()
+	w.clusterVersion = "1.32"
+	for name := range w.addonVersions {
+		w.addonVersions[name] = latestFor("1.32")
+	}
+	for name := range w.ngVersions {
+		w.ngVersions[name] = "1.32"
+	}
+	m := newWorldMock(w)
+	statusOf(m, func(string, int) ekstypes.NodegroupStatus { return ekstypes.NodegroupStatusDegraded })
+	events := recordMutations(m)
+	svc := newTestService(m)
+
+	plan, err := svc.BuildPlan(context.Background(), "prod-east", "1.34", PlanOptions{})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if first := plan.Hops[0]; first.From != "1.32" || first.To != "1.32" {
+		t.Fatalf("first hop = %s→%s, want a 1.32 catch-up hop that verifies the nodegroup", first.From, first.To)
+	}
+
+	report, err := svc.Execute(context.Background(), plan, ExecuteOptions{Yes: true, Verify: verifyWith(nil)})
+	if !errors.Is(err, ErrVerifyFailed) || report.Status != RunVerifyFailed {
+		t.Fatalf("err = %v, report = %+v; want VerifyFailed", err, report)
+	}
+	if len(*events) != 0 {
+		t.Errorf("mutations = %v, want none: the control plane must not move", *events)
+	}
+}

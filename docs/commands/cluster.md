@@ -427,6 +427,10 @@ and verifies the nodegroup before it continues. The run stops again (exit
 `5`) while the nodegroup is not `ACTIVE`. `--skip-verify` turns the
 verification off, and `--skip-nodegroup` leaves the nodegroup out.
 
+In an upgrade over several minor versions, such a nodegroup is checked
+before the next control-plane step: the plan adds a catch-up hop for it at
+the current control-plane version.
+
 ### Nodegroup rolls
 
 A nodegroup that lags the control plane normally rolls once per hop, straight
@@ -704,8 +708,11 @@ post-roll verification runs: issues stop the run with exit `5`, and
 `--skip-verify` turns it off.
 
 The plan is derived from live cluster state on every run. A rerun after a
-failure or Ctrl+C skips nodegroups already at N-1 and add-ons already
-compatible with N-1. A rerun after a finished rollback finds the
+failure or Ctrl+C skips add-ons already compatible with N-1, and nodegroups
+already at N-1 that are `ACTIVE` with no update in progress. A nodegroup at
+N-1 that is not `ACTIVE`, or that has an update in progress, stays
+`Pending`: the run waits for the update and verifies the nodegroup before
+the add-ons and the control plane. A rerun after a finished rollback finds the
 `VersionRollback` update in the history and has nothing to do.
 
 A plan step has the same `type` and `status` values as an

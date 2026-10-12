@@ -324,7 +324,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	if err != nil {
 		th := render.Default(out)
 		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", th.Paint(th.Pal.Sky, resumeCommand(cmd, clusterName, plan)))
-		return verifyExit(err)
+		return verifyExit(report, err)
 	}
 
 	writeUpgradeOutcome(out, clusterName, plan, true)
@@ -384,11 +384,18 @@ func postRollVerify(cmd *cli.Command, awsCfg aws.Config, clusterName string) *up
 // its exit code, as in `nodegroup update`: 5 when the verification found
 // issues, 4 when it could not read a nodegroup. Any other error is returned
 // as it is (exit 1).
-func verifyExit(err error) error {
+//
+// The report decides, not the error alone: a run that was interrupted or
+// timed out during the verification wraps the verification error too, and
+// its report says Interrupted or TimedOut. Such a run exits 1.
+func verifyExit(report *upgrade.Report, err error) error {
+	if report == nil {
+		return err
+	}
 	switch {
-	case errors.Is(err, upgrade.ErrVerifyFailed):
+	case report.Status == upgrade.RunVerifyFailed && errors.Is(err, upgrade.ErrVerifyFailed):
 		return cli.Exit(err.Error(), runner.ExitVerifyFailed)
-	case errors.Is(err, upgrade.ErrVerifyIncomplete):
+	case report.Status == upgrade.RunFailed && errors.Is(err, upgrade.ErrVerifyIncomplete):
 		return cli.Exit(err.Error(), runner.ExitIncomplete)
 	}
 	return err
@@ -528,7 +535,7 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 	}
 	runner.ReportFailures(ui.Stderr, fs)
 	if err != nil {
-		return verifyExit(fmt.Errorf("%w (resume with: %s)", err, resumeCommand(cmd, clusterName, plan)))
+		return verifyExit(report, fmt.Errorf("%w (resume with: %s)", err, resumeCommand(cmd, clusterName, plan)))
 	}
 	return runner.IncompleteExit(fs)
 }
