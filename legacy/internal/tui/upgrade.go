@@ -1,0 +1,345 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/dantech2000/refresh/legacy/internal/tui/state"
+)
+
+// upgradeScreen: the orchestrator's phases as a timeline on the left, the
+// live timeline and logs on the right.
+func (m Model) upgradeScreen(w, h int) Block {
+	u, ok := m.upgrade()
+	if !ok {
+		return Block{{}, append(Line{sp(1)}, section("Upgrade")...), {},
+			{sp(1), sub("No cluster upgrade yet.")},
+			{sp(1), dimS("On the fleet screen, select a cluster and press U to plan one.")}}
+	}
+	top := m.upgradeHeader(u, w)
+	bodyH := h - len(top)
+	lw := max(44, w*33/100)
+	rw := w - lw - 1
+	return append(top, hjoin(bodyH, col{m.phaseList(u, lw, bodyH), lw}, vrule(bodyH), col{m.upgradeFeed(u, rw, bodyH), rw})...)
+}
+
+func (m Model) upgradeHeader(u state.Upgrade, w int) Block {
+	what := "Upgrade"
+	if u.Rollback {
+		what = "Rollback"
+	}
+	cur := u.Current()
+	var status Line
+	switch {
+	case u.Failed != "":
+		status = Line{tok(state.LevelError, "failed · "+u.Failed)}
+	case u.Stopped:
+		status = Line{tok(state.LevelWarn, "stopped")}
+	case !u.Running():
+		status = Line{tok(state.LevelOK, "done in "+dur(u.EndedAt.Sub(u.StartedAt)))}
+	case u.Paused && cur < 0:
+		status = Line{fg(colYellow, "❚❚ paused")}
+	case cur >= 0:
+		status = Line{tok(state.LevelProgress, fmt.Sprintf("phase %d/%d · %s", cur+1, len(u.Phases), strings.ToLower(u.Phases[cur].Name)))}
+	}
+	elapsed := m.st.Now.Sub(u.StartedAt)
+	if !u.Running() {
+		elapsed = u.EndedAt.Sub(u.StartedAt)
+	}
+	var index Line
+	if len(m.st.Upgrades) > 1 {
+		index = Line{dimS(fmt.Sprintf("upgrade %d/%d · [ ]", m.upIdx+1, len(m.st.Upgrades))), sp(2)}
+	}
+	short := append(append(Line(nil), index...), sub("elapsed "), tx(dur(elapsed)), sp(1))
+	text := fmt.Sprintf("%s %s %s", what, u.Cluster, state.VersionMove(u.From, u.To))
+	if u.Label != "" {
+		rest := fmt.Sprintf(" · %s %s → %s", u.Cluster, u.From, u.To)
+		if u.From == u.To {
+			// A catch-up: the control plane does not move.
+			rest = fmt.Sprintf(" · %s on %s", u.Cluster, u.To)
+		}
+		// A long label (a nodegroup name) is cut first, so the cluster and
+		// the run's status stay on the line: it gets what the rest of the
+		// title, the status, and the elapsed time leave.
+		fixed := 1 + width(heading(rest)) + 2 + status.Width() + 1 + short.Width()
+		label := u.Label
+		if limit := max(8, w-fixed); width(label) > limit {
+			label = Line{tx(label)}.Fit(limit).Plain()
+		}
+		text = label + rest
+	}
+	// A cluster name too long for the line is cut too, before the status.
+	head := heading(text)
+	if limit := max(8, w-(1+2+status.Width()+1+short.Width())); width(head) > limit {
+		// One ellipsis, when the cut falls right after the label's.
+		head = Line{tx(head)}.Fit(limit).Plain()
+		for strings.HasSuffix(head, "……") {
+			head = strings.TrimSuffix(head, "…")
+		}
+	}
+	title := append(Line{sp(1), bold(colMauve, head), sp(2)}, status...)
+	note := "safe to quit · a rerun resumes from live cluster state"
+	if u.StartedElsewhere {
+		note = "started elsewhere · watch only"
+	}
+	right := Line{sub("elapsed "), tx(dur(elapsed)), sp(2), dimS(note), sp(1)}
+	right = append(append(Line(nil), index...), right...)
+	if title.Width()+right.Width() > w {
+		right = short
+	}
+	return Block{{}, joinRight(title, right, w), append(Line{sp(1)}, hrule(w-2)...)}
+}
+
+func (m Model) phaseList(u state.Upgrade, w, h int) Block {
+	out := Block{{}}
+	pipe := fg(colSurface1, "│")
+	for i, p := range u.Phases {
+		took := ""
+		switch {
+		case p.Status == state.PhaseRunning:
+			took = dur(m.st.Now.Sub(p.StartedAt))
+		case !p.EndedAt.IsZero() && !p.StartedAt.IsZero():
+			took = dur(p.EndedAt.Sub(p.StartedAt))
+		default:
+			took = "—"
+		}
+		nameC := colText
+		if p.Status == state.PhasePending {
+			nameC = colDim
+		}
+		row := joinRight(Line{sp(1), phaseGlyph(p.Status), sp(1), bold(nameC, p.Name)}, Line{fg(levelColor(phaseLevel(p.Status)), took), sp(1)}, w)
+		if p.Status == state.PhaseRunning {
+			row = row.WithBG(colSurface0)
+		}
+		out = append(out, row)
+		last := i == len(u.Phases)-1
+		conn := pipe
+		if last {
+			conn = sp(1)
+		}
+		if p.Summary != "" {
+			out = append(out, Line{sp(2), conn, sp(1), dimS(p.Summary)})
+		} else if h := pendingHint(p.Name); p.Status == state.PhasePending && h != "" {
+			out = append(out, Line{sp(2), conn, sp(1), dimS(h)})
+		}
+		if p.Status == state.PhaseRunning && len(p.Items) == 0 {
+			out = append(out, append(Line{sp(2), conn, sp(1)}, bar(w-12, p.Progress, 0)...))
+		}
+		nameW := 11 // "control plane" is longer: size to the phase's names
+		for _, it := range p.Items {
+			nameW = max(nameW, width(it.Name))
+		}
+		for _, it := range p.Items {
+			l := Line{sp(2), conn, sp(1), phaseGlyph(it.Status), sp(1), tx(padRight(it.Name, nameW)), sp(1)}
+			if it.Status == state.PhaseRunning && it.Progress > 0 && it.Progress < 1 {
+				l = append(l, fg(colTeal, padRight(it.Text, 6)), sp(1))
+				l = append(l, bar(max(4, w-l.Width()-2), it.Progress, 0)...)
+			} else {
+				l = append(l, sub(it.Text))
+			}
+			out = append(out, l)
+		}
+	}
+	stopOn, pauseOn := dimS("off"), dimS("off")
+	if u.StopAfter {
+		stopOn = fg(colYellow, "on")
+	}
+	if u.Paused {
+		pauseOn = fg(colYellow, "on")
+	}
+	var opts Block
+	if u.Running() && u.StartedElsewhere {
+		opts = box(Line{bold(colMauve, "Watching")}, Block{
+			{sub("This " + map[bool]string{false: "upgrade", true: "rollback"}[u.Rollback] + " was started outside this UI. Stop or pause it where it runs.")},
+			{dimS("Its add-on updates and nodegroup rolls show on the Rolls screen.")},
+		}, w-2, colSurface1)
+	} else if u.Running() {
+		opts = box(Line{bold(colMauve, "Stop options")}, Block{
+			{chip("S"), sp(1), sub("stop after the current step "), stopOn},
+			{chip("P"), sp(1), sub("pause before next phase "), pauseOn},
+			{dimS("An in-flight EKS update is never cancelled.")},
+		}, w-2, colSurface1)
+	}
+	out = out.fit(w, h-len(opts))
+	return append(out, opts.indent(1)...)
+}
+
+// pendingHint says what a pending phase will do, by its name: the phase
+// order differs between an upgrade, a rollback, and the simulator.
+func pendingHint(name string) string {
+	switch {
+	case strings.HasPrefix(name, "Plan"), strings.HasPrefix(name, "Pre-flight"):
+		return "readiness checks"
+	case strings.HasPrefix(name, "Control plane"):
+		return "UpdateClusterVersion"
+	case strings.HasPrefix(name, "Required add-ons"):
+		return "add-ons the new control plane needs first"
+	case strings.HasPrefix(name, "Nodegroups"):
+		return "roll each nodegroup"
+	case strings.HasPrefix(name, "Add-ons"):
+		return "update stale add-ons"
+	case strings.HasPrefix(name, "Verify"):
+		return "nodes, pods, add-on health"
+	}
+	return ""
+}
+
+// upgradeFeed shows the upgrade timeline, or the Kubernetes events and AWS
+// calls of its rolls.
+func (m Model) upgradeFeed(u state.Upgrade, w, h int) Block {
+	out := Block{{}, joinRight(m.logTabs("Timeline"), append(m.followToken(), sp(1)), w)}
+	now := m.nowCard(u, w-2)
+	feedH := h - len(out) - len(now)
+	var evs []state.Event
+	switch m.src {
+	case logRoll:
+		evs = m.visible(m.upgradeEvents(u), nil)
+	case logAWS:
+		evs = m.visible(m.feed().Log, func(e state.Event) bool { return e.Cluster == u.Cluster && !e.At.Before(u.StartedAt) })
+	default:
+		var all []state.Event
+		for _, r := range m.feed().Rolls {
+			if r.UpgradeOf == u.Cluster {
+				all = append(all, r.Events...)
+			}
+		}
+		if m.src == logAll {
+			all = append(all, m.upgradeEvents(u)...)
+		}
+		sortByTime(all)
+		evs = m.visible(all, func(e state.Event) bool { return m.src == logAll || e.Source == state.SourceKube })
+	}
+	cols := kubeColumns(evs, w)
+	for i, rows := 0, 0; i < len(evs) && rows < feedH; i++ {
+		e := evs[i]
+		if e.Source == state.SourceUpgrade {
+			lines := upgradeEventLines(e, w)
+			out = append(out, lines...)
+			rows += len(lines)
+			continue
+		}
+		out = append(out, eventLine(e, cols)...)
+		rows++
+	}
+	switch {
+	case m.pausedSeq != 0 && m.upgradeEvents(u) == nil:
+		out = append(out, Line{sp(1), dimS("this upgrade started after the freeze · space to follow")})
+	case len(evs) == 0:
+		out = append(out, Line{sp(1), dimS("nothing yet")})
+	}
+	out = out.fit(w, h-len(now))
+	return append(out, now.indent(1)...)
+}
+
+// upgradeEventLines draws one upgrade event: its time, subject, and level,
+// then its text, wrapped under the text, not cut: a question or a failure
+// is read in full. The detail follows, dim and whole, on the last line or
+// its own.
+func upgradeEventLines(e state.Event, w int) Block {
+	head := Line{sp(1), dimS(clock(e.At)), sp(1)}
+	head = append(head, Line{fg(colBlue, e.Subject)}.Fit(13)...)
+	head = append(head, sp(1), levelGlyph(e.Level), sp(1))
+	indent := head.Width()
+	textW := max(8, w-indent)
+	var out Block
+	for i, s := range wrap(e.Text, textW) {
+		l := Line{sp(indent)}
+		if i == 0 {
+			l = append(Line(nil), head...)
+		}
+		out = append(out, append(l, tx(s)))
+	}
+	if e.Detail != "" {
+		last := out[len(out)-1]
+		if last.Width()+2+width(e.Detail) <= w {
+			out[len(out)-1] = append(last, sp(2), dimS(e.Detail))
+		} else {
+			out = append(out, append(Line{sp(indent)}, Line{dimS(e.Detail)}.Fit(textW)...))
+		}
+	}
+	return out
+}
+
+func sortByTime(evs []state.Event) {
+	// Stable insertion sort: the lists are short and mostly sorted.
+	for i := 1; i < len(evs); i++ {
+		for j := i; j > 0 && evs[j].At.Before(evs[j-1].At); j-- {
+			evs[j], evs[j-1] = evs[j-1], evs[j]
+		}
+	}
+}
+
+func (m Model) nowCard(u state.Upgrade, w int) Block {
+	var what Line
+	cur := u.Current()
+	switch {
+	case !u.Running() && u.Failed == "" && !u.Stopped:
+		what = Line{tok(state.LevelOK, ""+u.Cluster+" runs "+u.To)}
+	case !u.Running():
+		what = Line{sub("ended · " + clock(u.EndedAt))}
+		if u.Failed != "" {
+			// The header has room for the start of the reason only.
+			failed := Block{what}
+			for i, s := range wrap("failed · "+u.Failed, w-8) {
+				if i == 0 {
+					failed = append(failed, Line{tok(state.LevelError, s)})
+				} else {
+					failed = append(failed, Line{sp(2), fg(colRed, s)})
+				}
+			}
+			failed = append(failed, append(bar(w-18, u.Progress(), 0), sp(2), sub(fmt.Sprintf("overall %3.0f%%", u.Progress()*100))))
+			return box(Line{bold(colMauve, "Now")}, failed, w, colRed)
+		}
+	case cur < 0:
+		what = Line{sub("waiting before the next phase")}
+	default:
+		p := u.Phases[cur]
+		what = Line{sub(strings.ToLower(p.Name))}
+		for _, it := range p.Items {
+			if it.Status == state.PhaseRunning {
+				what = append(what, sub(" · "+it.Name+" "+it.Text))
+			}
+		}
+		if m.drainWaitsOnPDB(u.Cluster) {
+			what = append(what, fg(colYellow, " · a drain waits on a PDB"))
+		}
+	}
+	body := Block{
+		what,
+		append(bar(w-18, u.Progress(), 0), sp(2), sub(fmt.Sprintf("overall %3.0f%%", u.Progress()*100))),
+	}
+	border := colSurface1
+	if u.Running() && u.Question != "" {
+		// The run waits on the user: say so where the eye already is.
+		border = colYellow
+		body = append(questionLines(u.Question, w-6), body...)
+	}
+	return box(Line{bold(colMauve, "Now")}, body, w, border)
+}
+
+// questionLines draws a question the upgrade waits on, with its keys.
+func questionLines(q string, w int) Block {
+	var out Block
+	for _, s := range wrap(q, w) {
+		out = append(out, Line{tok(state.LevelWarn, s)})
+	}
+	return append(out, Line{chip("y"), sp(1), sub("go on"), sp(3), chip("n"), sp(1), sub("stop after this step")})
+}
+
+// drainWaitsOnPDB reports whether a roll of cluster's upgrade has a pod a
+// PodDisruptionBudget holds.
+func (m Model) drainWaitsOnPDB(cluster string) bool {
+	for _, r := range m.st.Rolls {
+		if r.UpgradeOf != cluster || !r.Running() {
+			continue
+		}
+		for _, ps := range r.Pods {
+			for _, p := range ps {
+				if p.State == state.PodBlocked {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

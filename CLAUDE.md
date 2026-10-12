@@ -2,6 +2,22 @@
 
 Guidance for AI agents (and humans) working in this repo.
 
+## Rewrite branch
+
+This is the `rewrite` branch. `REWRITE.md` is the plan; read it first.
+
+- The old tree is under `legacy/` (`legacy/main.go`, `legacy/internal/...`). Every
+  path below that starts with `internal/` or `main.go` is under `legacy/` here.
+- The new tree is built at the module root (`cmd/refresh`, `internal/...`, `api/`,
+  `test/`, `tools/`). It must not import `legacy/`, and `legacy/` must not import it.
+- The new tree is conventional Go: the standard project layout, cobra used as gh
+  and kubectl use it (`Factory`, `IOStreams`, options with complete/validate/run),
+  and the published Go style guides. Do not add project-specific abstractions or
+  rules. See "Code standards" in `REWRITE.md`.
+- The rules below describe the old tree. The new tree follows the code standards in
+  `REWRITE.md`.
+- A user-facing fix goes to `main` first, then merges into this branch.
+
 ## What this is
 
 `refresh` — the **EKS upgrade companion**: a Go CLI for the cluster

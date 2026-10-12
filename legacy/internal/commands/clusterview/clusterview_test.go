@@ -1,0 +1,281 @@
+package clusterview
+
+import (
+	"bytes"
+	"io"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/pterm/pterm"
+
+	"github.com/dantech2000/refresh/legacy/internal/health"
+	clustersvc "github.com/dantech2000/refresh/legacy/internal/services/cluster"
+	"github.com/dantech2000/refresh/legacy/internal/ui"
+	"github.com/dantech2000/refresh/legacy/internal/ui/plaintest"
+)
+
+func captureStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	original := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = original })
+	callErr := fn()
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String(), callErr
+}
+
+func sampleSummaries() []clustersvc.ClusterSummary {
+	return []clustersvc.ClusterSummary{
+		{
+			Name:      "prod",
+			Status:    "ACTIVE",
+			Version:   "1.30",
+			Region:    "us-east-1",
+			Health:    &health.HealthSummary{Decision: health.DecisionProceed},
+			NodeCount: clustersvc.NodeCountInfo{Ready: 3, Total: 3},
+		},
+		{
+			Name:      "stage",
+			Status:    "UPDATING",
+			Version:   "1.29",
+			Region:    "",
+			Health:    &health.HealthSummary{Decision: health.DecisionBlock},
+			NodeCount: clustersvc.NodeCountInfo{Ready: 0, Total: 2},
+		},
+	}
+}
+
+// ── SortClusterSummaries ──────────────────────────────────────────────────────
+
+func TestSortClusterSummaries_ByName(t *testing.T) {
+	items := []clustersvc.ClusterSummary{{Name: "zebra"}, {Name: "alpha"}, {Name: "mango"}}
+	got := SortClusterSummaries(items, "name", false)
+	want := []string{"alpha", "mango", "zebra"}
+	for i, w := range want {
+		if got[i].Name != w {
+			t.Errorf("position %d: got %q, want %q", i, got[i].Name, w)
+		}
+	}
+}
+
+func TestSortClusterSummaries_ByNameDesc(t *testing.T) {
+	items := []clustersvc.ClusterSummary{{Name: "alpha"}, {Name: "zebra"}, {Name: "mango"}}
+	got := SortClusterSummaries(items, "name", true)
+	want := []string{"zebra", "mango", "alpha"}
+	for i, w := range want {
+		if got[i].Name != w {
+			t.Errorf("position %d: got %q, want %q", i, got[i].Name, w)
+		}
+	}
+}
+
+func TestSortClusterSummaries_ByVersion(t *testing.T) {
+	items := []clustersvc.ClusterSummary{{Name: "b", Version: "1.29"}, {Name: "a", Version: "1.31"}, {Name: "c", Version: "1.30"}}
+	got := SortClusterSummaries(items, "version", false)
+	if got[0].Version != "1.29" {
+		t.Errorf("first item should be 1.29, got %q", got[0].Version)
+	}
+}
+
+func TestSortClusterSummaries_ByStatus(t *testing.T) {
+	items := []clustersvc.ClusterSummary{{Name: "b", Status: "UPDATING"}, {Name: "a", Status: "ACTIVE"}}
+	got := SortClusterSummaries(items, "status", false)
+	if got[0].Status != "ACTIVE" {
+		t.Errorf("first item should be ACTIVE, got %q", got[0].Status)
+	}
+}
+
+func TestSortClusterSummaries_ByRegion(t *testing.T) {
+	items := []clustersvc.ClusterSummary{{Name: "b", Region: "us-west-2"}, {Name: "a", Region: "ap-southeast-1"}}
+	got := SortClusterSummaries(items, "region", false)
+	if got[0].Region != "ap-southeast-1" {
+		t.Errorf("region asc: first = %q, want ap-southeast-1", got[0].Region)
+	}
+}
+
+func TestSortClusterSummaries_UnknownKeyFallsBackToName(t *testing.T) {
+	items := []clustersvc.ClusterSummary{{Name: "z"}, {Name: "a"}}
+	got := SortClusterSummaries(items, "bogus", false)
+	if got[0].Name != "a" {
+		t.Errorf("unknown key should sort by name, got %q", got[0].Name)
+	}
+}
+
+// REF-66: formatAge must read sensibly for sub-minute and clamp negatives
+// (clock skew) instead of printing "0 minutes" / "-N minutes".
+func TestFormatAge(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{"days", 50 * time.Hour, "2 days"},
+		{"hours", 3 * time.Hour, "3 hours"},
+		{"minutes", 5 * time.Minute, "5 minutes"},
+		{"sub-minute", 30 * time.Second, "just now"},
+		{"zero", 0, "just now"},
+		{"negative clock-skew", -3 * time.Minute, "just now"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatAge(tc.d); got != tc.want {
+				t.Errorf("formatAge(%v) = %q, want %q", tc.d, got, tc.want)
+			}
+		})
+	}
+}
+
+// ── treeStatusWithHealth ──────────────────────────────────────────────────────
+
+// Regression: when the health checker returns a HealthSummary whose Decision
+// is empty/unrecognized, the tree view must NOT mask the underlying cluster
+// status as "UNKNOWN". Show the raw status plus a "(health unknown)" hint
+// so the operator can still tell the cluster is ACTIVE/CREATING/etc.
+func TestTreeStatusWithHealth_UnknownDecisionPreservesClusterStatus(t *testing.T) {
+	h := &health.HealthSummary{Decision: ""} // health checker returned no decision
+	got := treeStatusWithHealth("ACTIVE", h)
+	if got != "ACTIVE (health unknown)" {
+		t.Errorf("got %q, want %q", got, "ACTIVE (health unknown)")
+	}
+}
+
+func TestTreeStatusWithHealth_KnownDecisionReplacesStatus(t *testing.T) {
+	cases := []struct {
+		d    health.Decision
+		want string
+	}{
+		{health.DecisionProceed, "HEALTHY"},
+		{health.DecisionWarn, "WARNING"},
+		{health.DecisionBlock, "CRITICAL"},
+	}
+	for _, c := range cases {
+		got := treeStatusWithHealth("ACTIVE", &health.HealthSummary{Decision: c.d})
+		if got != c.want {
+			t.Errorf("decision %q: got %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+func TestTreeStatusWithHealth_NilSummaryReturnsClusterStatus(t *testing.T) {
+	got := treeStatusWithHealth("CREATING", nil)
+	if got != "CREATING" {
+		t.Errorf("got %q, want CREATING (nil summary should pass through)", got)
+	}
+}
+
+// ── table/tree outputs ────────────────────────────────────────────────────────
+
+func TestOutputClustersTable(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		multiRegion    bool
+		showHealth     bool
+		items          []clustersvc.ClusterSummary
+		headerContains string
+	}{
+		// "No EKS clusters found" is printed via color.Yellow (original stdout handle, not captured).
+		{"empty", false, false, nil, ""},
+		{"single-no-health", false, false, sampleSummaries()[:1], "CLUSTERS  1"},
+		{"single-health", false, true, sampleSummaries(), "CLUSTERS  2"},
+		{"multi-region-health", true, true, sampleSummaries(), "CLUSTERS  2"},
+	} {
+		t.Run("table/"+tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return OutputClustersTable(tc.items, nil, time.Second, tc.multiRegion, tc.showHealth)
+			})
+			if err != nil {
+				t.Fatalf("table error: %v", err)
+			}
+			if tc.headerContains != "" && !strings.Contains(out, tc.headerContains) {
+				t.Errorf("table header missing %q: %q", tc.headerContains, out)
+			}
+		})
+
+		t.Run("tree/"+tc.name, func(t *testing.T) {
+			if _, err := captureStdout(t, func() error {
+				return OutputClustersTree(tc.items, nil, time.Second, tc.multiRegion, tc.showHealth)
+			}); err != nil {
+				t.Fatalf("tree error: %v", err)
+			}
+		})
+	}
+}
+
+func TestOutputClusterDetailsTable(t *testing.T) {
+	details := &clustersvc.ClusterDetails{
+		Name:            "prod",
+		Status:          "ACTIVE",
+		Version:         "1.30",
+		PlatformVersion: "eks.1",
+		Endpoint:        strings.Repeat("x", 140),
+		CreatedAt:       time.Now().Add(-48 * time.Hour),
+		Health:          &health.HealthSummary{Decision: health.DecisionWarn},
+		Networking: clustersvc.NetworkingInfo{
+			VpcID:            "vpc-1",
+			VpcCidr:          "10.0.0.0/16",
+			SubnetIDs:        []string{"subnet-1"},
+			SecurityGroupIDs: []string{"sg-1"},
+		},
+		Security: clustersvc.SecurityInfo{
+			EncryptionEnabled:  true,
+			LoggingEnabled:     []string{"api"},
+			DeletionProtection: true,
+		},
+		Addons:     &[]clustersvc.AddonInfo{{Name: "vpc-cni", Version: "v1.18.3", Status: "ACTIVE"}},
+		Nodegroups: &[]clustersvc.NodegroupSummary{{Name: "ng-workers", Status: "ACTIVE", ReadyNodes: 2}},
+	}
+
+	// Human path (render design system): sectioned detail, no "Cluster
+	// Information" banner.
+	out, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, false) })
+	if err != nil {
+		t.Fatalf("table error: %v", err)
+	}
+	for _, want := range []string{"▸ OVERVIEW", "prod", "1.30", "vpc-1", "vpc-cni"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("detail output missing %q: %q", want, out)
+		}
+	}
+
+	// Plain path (-o plain): FIELD/VALUE TSV only, endpoint untruncated.
+	ui.SetPlainOutput(true)
+	defer ui.SetPlainOutput(false)
+	plain, err := captureStdout(t, func() error { return OutputClusterDetailsTable(details, false) })
+	if err != nil {
+		t.Fatalf("plain error: %v", err)
+	}
+	rows := plaintest.Check(t, plain, "FIELD", "VALUE")
+	if got, _ := plaintest.Field(rows, "endpoint"); got != details.Endpoint {
+		t.Errorf("plain endpoint = %q, want the full %d-char endpoint", got, len(details.Endpoint))
+	}
+}
+
+// The tree's "N nodes" follows the table's NODES cell: the measured Ready
+// count only when readiness was measured, else the desired total. It used to
+// print Ready (0 when unmeasured) for every cluster.
+func TestOutputClustersTree_NodeCount(t *testing.T) {
+	var buf bytes.Buffer
+	pterm.SetDefaultOutput(&buf)
+	t.Cleanup(func() { pterm.SetDefaultOutput(os.Stdout) })
+
+	items := []clustersvc.ClusterSummary{
+		{Name: "unmeasured", Status: "ACTIVE", Region: "us-east-1", NodeCount: clustersvc.NodeCountInfo{Ready: 0, Total: 4}},
+		{Name: "measured", Status: "ACTIVE", Region: "us-east-1", NodeCount: clustersvc.NodeCountInfo{Ready: 2, Total: 4, ReadyKnown: true}},
+	}
+	if _, err := captureStdout(t, func() error { return OutputClustersTree(items, nil, time.Second, false, false) }); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"unmeasured (ACTIVE, 4 nodes)", "measured (ACTIVE, 2 nodes)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("tree lacks %q:\n%s", want, out)
+		}
+	}
+}

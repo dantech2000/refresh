@@ -1,0 +1,224 @@
+package nodegroup
+
+import (
+	"bytes"
+	"errors"
+	"io"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/fatih/color"
+	"github.com/urfave/cli/v3"
+
+	"github.com/dantech2000/refresh/legacy/internal/health"
+)
+
+// captureStdout runs fn and returns everything written to os.Stdout and to
+// fatih/color's writer while it ran. The color library snapshots os.Stdout
+// at package init so we must override color.Output too.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	originalStdout := os.Stdout
+	originalColorOutput := color.Output
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	color.Output = w
+	t.Cleanup(func() {
+		os.Stdout = originalStdout
+		color.Output = originalColorOutput
+	})
+	fn()
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String()
+}
+
+// Regression: --health-only is an explicit request for the health verdict.
+// The success banner must print even when --quiet is also set; --quiet only
+// suppresses noise around an actual update, not the result the user asked for.
+func TestApplyHealthDecision_HealthOnlyPrintsBannerEvenWhenQuiet(t *testing.T) {
+	flags := updateAMIFlags{healthOnly: true, quiet: true}
+	summary := health.HealthSummary{Decision: health.DecisionProceed}
+
+	var done bool
+	var err error
+	out := captureStdout(t, func() {
+		done, err = applyHealthDecision(t.Context(), summary, flags)
+	})
+
+	if !done {
+		t.Error("expected done=true on health-only path")
+	}
+	if err != nil {
+		t.Errorf("expected nil error on PASS, got %v", err)
+	}
+	if !strings.Contains(out, "All health checks passed") {
+		t.Errorf("expected PASS banner in output, got %q", out)
+	}
+	// --health-only checks and stops: the banner must not claim an update.
+	if strings.Contains(out, "Proceeding") {
+		t.Errorf("--health-only banner claims the update proceeds: %q", out)
+	}
+}
+
+// Quiet alone (no --health-only) must suppress the PASS banner during the
+// regular update flow.
+func TestApplyHealthDecision_QuietSuppressesBannerOnRegularUpdate(t *testing.T) {
+	flags := updateAMIFlags{healthOnly: false, quiet: true}
+	summary := health.HealthSummary{Decision: health.DecisionProceed}
+
+	var done bool
+	out := captureStdout(t, func() {
+		done, _ = applyHealthDecision(t.Context(), summary, flags)
+	})
+
+	if done {
+		t.Error("expected done=false so update can proceed")
+	}
+	if strings.Contains(out, "All health checks passed") {
+		t.Errorf("quiet mode should not print PASS banner, got %q", out)
+	}
+}
+
+// Non-quiet PROCEED always prints the banner.
+func TestApplyHealthDecision_NonQuietProceedPrintsBanner(t *testing.T) {
+	flags := updateAMIFlags{healthOnly: false, quiet: false}
+	summary := health.HealthSummary{Decision: health.DecisionProceed}
+
+	out := captureStdout(t, func() {
+		_, _ = applyHealthDecision(t.Context(), summary, flags)
+	})
+
+	if !strings.Contains(out, "All health checks passed. Proceeding with the update.") {
+		t.Errorf("expected PASS banner, got %q", out)
+	}
+}
+
+// BLOCK always prints the fail banner and returns an error.
+func TestApplyHealthDecision_BlockReturnsErrorAndPrintsBanner(t *testing.T) {
+	flags := updateAMIFlags{quiet: true}
+	summary := health.HealthSummary{Decision: health.DecisionBlock}
+
+	var done bool
+	var err error
+	out := captureStdout(t, func() {
+		done, err = applyHealthDecision(t.Context(), summary, flags)
+	})
+
+	if !done {
+		t.Error("expected done=true on BLOCK")
+	}
+	if err == nil {
+		t.Error("expected error on BLOCK")
+	}
+	if !strings.Contains(out, "Critical health issues detected") {
+		t.Errorf("expected FAIL banner, got %q", out)
+	}
+}
+
+// WARN under --health-only short-circuits without prompting the user and
+// exits with code 2 so CI can gate on the verdict.
+func TestApplyHealthDecision_WarnHealthOnlyDoesNotPrompt(t *testing.T) {
+	flags := updateAMIFlags{healthOnly: true, quiet: true}
+	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"something"}}
+
+	// captureStdout also redirects os.Stdout; the prompt would block on stdin if invoked.
+	out := captureStdout(t, func() {
+		done, err := applyHealthDecision(t.Context(), summary, flags)
+		if !done {
+			t.Error("expected done=true on WARN+healthOnly")
+		}
+		var coder cli.ExitCoder
+		if !errors.As(err, &coder) || coder.ExitCode() != 2 {
+			t.Errorf("expected exit code 2 on WARN+healthOnly, got %v", err)
+		}
+	})
+	_ = out
+}
+
+func TestHealthExitError(t *testing.T) {
+	if err := healthExitError(health.HealthSummary{Decision: health.DecisionProceed}); err != nil {
+		t.Fatalf("Proceed should exit 0 (nil error), got %v", err)
+	}
+	var coder cli.ExitCoder
+	if err := healthExitError(health.HealthSummary{Decision: health.DecisionWarn}); !errors.As(err, &coder) || coder.ExitCode() != 2 {
+		t.Fatalf("Warn should exit 2, got %v", err)
+	}
+	if err := healthExitError(health.HealthSummary{Decision: health.DecisionBlock}); !errors.As(err, &coder) || coder.ExitCode() != 3 {
+		t.Fatalf("Block should exit 3, got %v", err)
+	}
+}
+
+func TestMachineHealthOutput(t *testing.T) {
+	cases := []struct {
+		flags updateAMIFlags
+		want  bool
+	}{
+		{updateAMIFlags{healthOnly: true, format: "json"}, true},
+		{updateAMIFlags{healthOnly: true, format: "yaml"}, true},
+		{updateAMIFlags{healthOnly: true, format: "table"}, false},
+		{updateAMIFlags{healthOnly: false, format: "json"}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.flags.machineHealthOutput(); got != tc.want {
+			t.Errorf("machineHealthOutput(healthOnly=%v format=%q) = %v, want %v",
+				tc.flags.healthOnly, tc.flags.format, got, tc.want)
+		}
+	}
+}
+
+// WARN auto-accepted via --yes (the fleet path, or an unattended run) must
+// surface a visible warning so the operator knows health checks reported
+// problems instead of proceeding silently.
+func TestApplyHealthDecision_WarnAutoAcceptedPrintsWarning(t *testing.T) {
+	flags := updateAMIFlags{yes: true, quiet: false, format: "table"}
+	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"capacity"}}
+
+	out := captureStdout(t, func() {
+		done, err := applyHealthDecision(t.Context(), summary, flags)
+		if done {
+			t.Error("expected done=false so update can proceed")
+		}
+		if err != nil {
+			t.Errorf("expected nil error on auto-accepted WARN, got %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "proceeding") {
+		t.Errorf("expected auto-accepted WARN warning, got %q", out)
+	}
+}
+
+// The auto-accepted WARN warning must be suppressed under --quiet so machine
+// consume paths (CI) stay clean.
+func TestApplyHealthDecision_WarnAutoAcceptedQuietSuppressesWarning(t *testing.T) {
+	flags := updateAMIFlags{yes: true, quiet: true, format: "table"}
+	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"capacity"}}
+
+	out := captureStdout(t, func() {
+		_, _ = applyHealthDecision(t.Context(), summary, flags)
+	})
+
+	if strings.Contains(out, "proceeding") {
+		t.Errorf("quiet mode should suppress auto-accepted WARN warning, got %q", out)
+	}
+}
+
+// The auto-accepted WARN warning must never corrupt JSON stdout.
+func TestApplyHealthDecision_WarnAutoAcceptedJsonSuppressesWarning(t *testing.T) {
+	flags := updateAMIFlags{yes: true, quiet: false, format: "json"}
+	summary := health.HealthSummary{Decision: health.DecisionWarn, Warnings: []string{"capacity"}}
+
+	out := captureStdout(t, func() {
+		_, _ = applyHealthDecision(t.Context(), summary, flags)
+	})
+
+	if strings.Contains(out, "proceeding") {
+		t.Errorf("json output should suppress auto-accepted WARN warning, got %q", out)
+	}
+}

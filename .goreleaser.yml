@@ -7,7 +7,7 @@ dist: dist
 
 builds:
   - id: refresh
-    main: ./main.go
+    main: ./legacy
     binary: refresh
     # Reproducible builds: strip local paths and pin the build timestamp to the
     # commit so the same source produces byte-identical binaries. (REF-74)
@@ -23,9 +23,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/dantech2000/refresh/internal/commands.version={{.Version}}
-      - -X github.com/dantech2000/refresh/internal/commands.commit={{.ShortCommit}}
-      - -X github.com/dantech2000/refresh/internal/commands.buildDate={{.Date}}
+      - -X github.com/dantech2000/refresh/legacy/internal/commands.version={{.Version}}
+      - -X github.com/dantech2000/refresh/legacy/internal/commands.commit={{.ShortCommit}}
+      - -X github.com/dantech2000/refresh/legacy/internal/commands.buildDate={{.Date}}
     env:
       - CGO_ENABLED=0
 
