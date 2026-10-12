@@ -53,6 +53,10 @@ Before each nodegroup rollback, the same pre-flight checks as 'cluster
 upgrade' run, including PodDisruptionBudgets that would block the drain. A
 drain blocker stops the rollback unless --force.
 
+After each nodegroup rollback, the same post-roll verification as 'cluster
+upgrade' runs. Issues stop the rollback with exit 5, and a nodegroup that
+cannot be read stops it with exit 4. --skip-verify turns this off.
+
 The plan is derived from live cluster state on every run, so rerunning the
 same command after a failure or Ctrl+C continues where it stopped, and
 rerunning after a finished rollback does nothing.
@@ -73,6 +77,7 @@ Examples:
 			&cli.BoolFlag{Name: "force", Usage: "Force nodegroup rollbacks when pods can't be drained due to PDBs"},
 			&cli.BoolFlag{Name: "skip-insights-check", Usage: "Roll back despite ERROR or UNKNOWN rollback-readiness insights, and tell EKS to skip them too (not recommended)"},
 			&cli.BoolFlag{Name: "skip-health-check", Usage: "Roll back nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended)"},
+			&cli.BoolFlag{Name: "skip-verify", Usage: "Skip post-roll verification (nodes ACTIVE, no new stuck pods)"},
 			runner.KubeconfigFlag("the PDB drain-blocker checks and the live roll panel"),
 			runner.KubeContextFlag(),
 			&cli.StringSliceFlag{Name: "skip-nodegroup", Usage: "Nodegroup name pattern to leave alone (repeatable); move it to N-1 yourself"},
@@ -163,6 +168,7 @@ func runRollback(ctx context.Context, cmd *cli.Command) (err error) {
 		Force:             cmd.Bool("force"),
 		SkipInsightsCheck: cmd.Bool("skip-insights-check"),
 		NodegroupGate:     healthGate.check,
+		Verify:            postRollVerify(cmd, awsCfg, clusterName),
 		RollbackTimeout:   cmd.Duration("rollback-timeout"),
 	}
 
@@ -218,7 +224,7 @@ func runRollback(ctx context.Context, cmd *cli.Command) (err error) {
 	if err != nil {
 		th := render.Default(out)
 		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", th.Paint(th.Pal.Sky, rollbackResumeCommand(cmd, clusterName)))
-		return err
+		return verifyExit(err)
 	}
 	writeLines(out, rollbackOutcomeLines(render.Default(out), plan, true))
 	return runner.IncompleteExit(fs)
@@ -263,7 +269,7 @@ func runRollbackMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Serv
 		return cli.Exit(err.Error(), runner.ExitBlocked)
 	}
 	if err != nil {
-		return fmt.Errorf("%w (resume with: %s)", err, rollbackResumeCommand(cmd, plan.ClusterName))
+		return verifyExit(fmt.Errorf("%w (resume with: %s)", err, rollbackResumeCommand(cmd, plan.ClusterName)))
 	}
 	return runner.IncompleteExit(fs)
 }
@@ -323,7 +329,7 @@ func rollbackResumeCommand(cmd *cli.Command, clusterName string) string {
 			parts = append(parts, "--"+name, shortDuration(cmd.Duration(name)))
 		}
 	}
-	for _, name := range []string{"force", "skip-insights-check", "skip-health-check", "yes"} {
+	for _, name := range []string{"force", "skip-insights-check", "skip-health-check", "skip-verify", "yes"} {
 		if cmd.Bool(name) {
 			parts = append(parts, "--"+name)
 		}

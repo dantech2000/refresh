@@ -755,6 +755,7 @@ func (s *Service) rollbackPhases(plan *RollbackPlan, opts ExecuteOptions) []phas
 					Gate:         opts.NodegroupGate,
 					Observer:     opts.NodegroupObserver,
 					ScalingWatch: opts.ScalingWatch,
+					Verify:       opts.Verify,
 				}, atOrBelow, opts.Progress)
 			},
 		},

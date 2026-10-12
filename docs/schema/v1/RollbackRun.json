@@ -92,6 +92,24 @@
       ],
       "description": "FailureReason is why a Failure happened, from a closed set. Scripts branch on it. Later versions may add reasons; consumers must accept unknown values."
     },
+    "PostRollVerification": {
+      "properties": {
+        "checks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "description": "PostRollVerification is the result of verifying a completed AMI roll."
+    },
     "Report": {
       "properties": {
         "status": {
@@ -116,6 +134,10 @@
         "failure": {
           "$ref": "#/$defs/Failure",
           "description": "failure is why the run stopped, for Failed, Interrupted, and TimedOut runs, and for a Blocked run whose gate could not read what it needed."
+        },
+        "verification": {
+          "$ref": "#/$defs/PostRollVerification",
+          "description": "verification is the post-roll verification that stopped a VerifyFailed run: the checks that ran and the issues they found."
         }
       },
       "type": "object",
@@ -188,7 +210,8 @@
         "Blocked",
         "Interrupted",
         "TimedOut",
-        "Aborted"
+        "Aborted",
+        "VerifyFailed"
       ],
       "description": "RunStatus is how an Execute run ended. docs/concepts/output.md documents the values; later versions may add values."
     },

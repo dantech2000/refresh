@@ -10,6 +10,7 @@ import (
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/diag"
+	nodegroupsvc "github.com/dantech2000/refresh/internal/services/nodegroup"
 )
 
 // ErrAborted is returned by Execute when the user declines a phase
@@ -50,6 +51,9 @@ type ExecuteOptions struct {
 	// ScalingWatch, when set, reports each nodegroup roll's failed node
 	// launches (see ScalingWatch).
 	ScalingWatch *ScalingWatch
+	// Verify, when set, verifies each nodegroup after its roll (see
+	// PostRollVerify). Nil runs no verification.
+	Verify *PostRollVerify
 	// RollbackTimeout is the rollback's RollbackConfig.TimeoutMinutes
 	// (ExecuteRollback only). 0 leaves EKS's default (12h).
 	RollbackTimeout time.Duration
@@ -67,6 +71,9 @@ type Report struct {
 	// Failure is why the run stopped, for Failed, Interrupted, and TimedOut
 	// runs, and for a Blocked run whose gate could not read what it needed.
 	Failure *diag.Failure `json:"failure,omitempty" yaml:"failure,omitempty"`
+	// Verification is the post-roll verification that stopped a VerifyFailed
+	// run: the checks that ran and the issues they found.
+	Verification *nodegroupsvc.PostRollVerification `json:"verification,omitempty" yaml:"verification,omitempty"`
 }
 
 // NewReport returns the report of a run that has not started: status
@@ -83,6 +90,10 @@ func (r *Report) stop(ctx context.Context, cluster, label string, remaining []st
 		r.Remaining = apidoc.List(remaining)
 	}
 	r.Status, r.Failure = stopState(ctx, cluster, err, gate)
+	var ve *verifyError
+	if r.Status == RunVerifyFailed && errors.As(err, &ve) {
+		r.Verification = &ve.result
+	}
 }
 
 // phase is one confirm-gate-execute unit within a hop.
@@ -251,6 +262,7 @@ func (s *Service) phases(plan *Plan, opts ExecuteOptions) []phase {
 					Gate:         opts.NodegroupGate,
 					Observer:     opts.NodegroupObserver,
 					ScalingWatch: opts.ScalingWatch,
+					Verify:       opts.Verify,
 				}, opts.Progress)
 			},
 		})
