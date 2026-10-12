@@ -220,7 +220,7 @@ Examples:
    # stdout, progress on stderr (-o json/yaml never prompts, so it needs --yes)
    refresh cluster upgrade -c prod-east --to 1.33 --yes -o json
 
-Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run); 4 the planner could not read something. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, interrupt, or timeout; 3 the plan has a blocker (also with --dry-run); 4 the planner or a pre-roll gate could not read something. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 
@@ -296,7 +296,7 @@ Examples:
    # Non-interactive run with a 4h EKS rollback timeout
    refresh cluster rollback prod-east --yes --rollback-timeout 4h -o json
 
-Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, declined confirmation, interrupt, or timeout; 3 blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking rollback-readiness insight, or the upgrade policy (also with --dry-run); 4 the planner could not read something. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 done, nothing to do, or a --dry-run with no blocker; 1 error, failed phase, declined confirmation, interrupt, or timeout; 3 blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking rollback-readiness insight, or the upgrade policy (also with --dry-run); 4 the planner or a pre-roll gate could not read something. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 

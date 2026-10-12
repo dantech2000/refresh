@@ -197,8 +197,9 @@ Exit codes:
    3  health blocked, a PodDisruptionBudget would block the drain (the PDB
       drain gate; --force rolls anyway, --dry-run exits 3 too), or EKS is
       already changing the cluster; nothing was started
-   4  a failure: a nodegroup that could not be read, or an update that
-      could not start
+   4  a failure: a nodegroup that could not be read, an update that could
+      not start, or PodDisruptionBudgets that could not be read and that
+      --force rolled past
    5  post-roll verification found issues
 
 Example (cron): refresh nodegroup update -c prod --yes --require-healthy -o json

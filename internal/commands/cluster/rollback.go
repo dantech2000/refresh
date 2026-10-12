@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/urfave/cli/v3"
@@ -212,11 +211,7 @@ func runRollback(ctx context.Context, cmd *cli.Command) (err error) {
 
 	report, err := svc.ExecuteRollback(ctx, plan, opts)
 	renderReport(out, report)
-	if report != nil && report.Failure != nil {
-		stop := []diag.Failure{*report.Failure}
-		setRegion(stop, awsCfg.Region)
-		runner.WriteFailures(format, out, ui.Stderr, stop)
-	}
+	fs := writeRunFailures(format, out, plan.Failures, healthGate, report, awsCfg.Region)
 	if errors.Is(err, upgrade.ErrRollbackBlocked) {
 		return cli.Exit(err.Error(), runner.ExitBlocked) // nothing changed: nothing to resume
 	}
@@ -226,7 +221,7 @@ func runRollback(ctx context.Context, cmd *cli.Command) (err error) {
 		return err
 	}
 	writeLines(out, rollbackOutcomeLines(render.Default(out), plan, true))
-	return runner.IncompleteExit(plan.Failures)
+	return runner.IncompleteExit(fs)
 }
 
 // runRollbackMachine is the -o json/yaml path: one document on stdout (the
@@ -259,11 +254,7 @@ func runRollbackMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Serv
 			report.Failure.Region = region
 		}
 	}
-	fs := append(diag.List(nil), plan.Failures...)
-	if report.Failure != nil && !slices.Contains(fs, *report.Failure) {
-		fs = append(fs, *report.Failure)
-	}
-	diag.Sort(fs)
+	fs := runFailures(plan.Failures, healthGate, report)
 	if _, eerr := runner.EncodeStdout(format, rollbackResult{Plan: plan, Report: report, Failures: fs}); eerr != nil {
 		return eerr
 	}
@@ -274,7 +265,7 @@ func runRollbackMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Serv
 	if err != nil {
 		return fmt.Errorf("%w (resume with: %s)", err, rollbackResumeCommand(cmd, plan.ClusterName))
 	}
-	return runner.IncompleteExit(plan.Failures)
+	return runner.IncompleteExit(fs)
 }
 
 // rollbackQuestion is the confirmation: what the run changes, in order.
