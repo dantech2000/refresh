@@ -11,7 +11,7 @@ The rewrite is done when the new binary meets the v2 contract, passes the parity
 ## Rules
 
 1. **The product does not change.** The loop stays: status, readiness, patch, upgrade. No new feature lands on the branch.
-2. **The contract is redesigned once, in writing, before code.** Phase 0 produces `CONTRACT.md`: the command tree, flags, env vars, documents, and exit codes of the new CLI. The owner approves it. After approval it is frozen for the rest of the rewrite.
+2. **The contract is redesigned once, in writing, before code.** Phase 0 produces `CONTRACT.md`: the command tree, flags, env vars, documents, and exit codes of the new CLI. The owner approves it. After approval it is frozen for the rest of the rewrite. Backwards compatibility with the old CLI is not a goal (owner, 2026-10-12).
 3. **Safety behaviour is the specification.** What the old binary changes in AWS and Kubernetes, in what order, and when it refuses, is what the new binary does. A difference needs a written reason.
 4. **New code cannot import old code.** The old tree moves to `legacy/`. Code enters the new tree only through a deliberate port.
 5. **CI, release, and docs tooling stay at the root.** They are adapted, not rewritten.

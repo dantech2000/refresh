@@ -1,10 +1,10 @@
 # refresh v2 contract
 
-Status: approved by the owner on 2026-10-12. Frozen until cutover. The three open points keep today's behaviour.
+Status: approved by the owner on 2026-10-12, then revised the same day after the owner said backwards compatibility is not a goal: "I rather just have a sane command structure." Changes 12 to 17 below come from that. Frozen until cutover.
 
 This is the public interface of the rewritten CLI: commands, flags, env vars, output, and exit codes. After approval it is frozen until cutover. `REWRITE.md` is the plan this belongs to.
 
-The rule for every choice here: do what `kubectl`, `gh`, `eksctl`, and the AWS CLI do, unless refresh has a safety reason to differ.
+The rule for every choice here: do what `kubectl`, `gh`, `eksctl`, and the AWS CLI do, unless refresh has a safety reason to differ. Compatibility with the old CLI is not a reason to keep anything.
 
 ## Summary of changes from today
 
@@ -23,6 +23,12 @@ Say no to any row and it reverts to today's behaviour.
 | 9 | Deprecated flags and aliases are removed: `--op-timeout`, the per-command `--timeout` aliases, `--tree`, the removed-shorthand errors | A clean start |
 | 10 | Capital-letter shorthands are removed, except `-A` | `-H`, `-R`, `-I`, `-W`, `-T`, `-C` are unusual and easy to forget; `-A` matches `kubectl` |
 | 11 | `-v` no longer prints the version; use `--version` or `refresh version` | `-v` means verbose in most tools, so it is left unused |
+| 12 | Every command is `refresh <noun> <verb>`. `refresh use` and `refresh current` become `refresh context use` and `refresh context current` | One shape for the whole tree, as `kubectl config` and `gh auth` do it |
+| 13 | `--health-only` is removed. `--dry-run` runs the read-only health gate and reports its verdict in the plan | A flag that turns a changing command into a read-only one is confusing; a dry run should show whether the real run would be allowed |
+| 14 | `cluster describe` always shows every section. `--detailed`, `--show-security`, `--no-addons`, and `--no-health` are removed | Four flags for one view, some opt-in and some opt-out |
+| 15 | `-o tree` is removed | One command had it, and it drew a second status vocabulary |
+| 16 | `install-man` is removed. Man pages ship in the release archives and the Homebrew cask | A CLI should not write into system directories; packaging does that |
+| 17 | `cluster upgrade-check --id` becomes `--insight` | It names what the value is |
 
 ## Commands
 
@@ -31,16 +37,13 @@ refresh status
 refresh cluster   list | describe | upgrade-check | upgrade | rollback
 refresh nodegroup list | describe | update | scale
 refresh addon     list | describe | update
-refresh context   list | add | remove
-refresh use [context|-]
-refresh current
+refresh context   list | add | remove | use | current
 refresh ui
 refresh version
 refresh completion <bash|zsh|fish|powershell>
-refresh install-man
 ```
 
-The tree is the same as today. `completion` gains PowerShell from cobra.
+Every command is `refresh <noun> <verb>`, except the four that have no noun: `status` (the fleet overview), `ui`, `version`, and `completion`.
 
 ## Targets
 
@@ -76,7 +79,7 @@ A filter is `key=value`, repeatable, and all filters must match. The value may u
 
 | Flag | Env | Default | Meaning |
 |---|---|---|---|
-| `-o, --output` | | `table` | `table`, `json`, `yaml`, `plain`, and `tree`. Each command registers it with the formats that command supports, so it goes after the command name. |
+| `-o, --output` | | `table` | `table`, `json`, `yaml`, or `plain`. Each command registers it with the formats that command supports, so it goes after the command name. |
 | `-r, --region` | `REFRESH_EKS_REGIONS` for sweeps | from the context or AWS config | Region; repeatable on sweep commands |
 | `--profile` | `AWS_PROFILE` | | AWS shared-config profile |
 | `-t, --timeout` | `REFRESH_TIMEOUT` | `1m` | Budget for the API calls of a read command |
@@ -97,7 +100,7 @@ Flag letters keep one meaning everywhere: `-c` cluster, `-n` nodegroup, `-a` add
 
 | Flag | Meaning |
 |---|---|
-| `-d, --dry-run` | Print the plan. Change nothing. Never prompt. |
+| `-d, --dry-run` | Print the plan and the verdict of the health gate. Change nothing. Never prompt. The exit code is 0 when the real run would be allowed, 2 when it would ask about warnings, and 3 when it would be blocked. |
 | `-y, --yes` | Do not prompt. Required with `-o json|yaml` or without a terminal. |
 | `--no-wait` | Return once AWS accepts the change. Not available for `cluster upgrade` and `cluster rollback`, which have later steps. |
 | `--wait-timeout` | How long to wait for the change. `0` means no limit. Defaults: 40m for a nodegroup update, 5m for a scale, 5m for each add-on, 4h for an upgrade or rollback. |
@@ -115,13 +118,13 @@ Only flags beyond the global and shared sets.
 |---|---|
 | `status` | `-A/--all-regions`, `-f/--filter`, `--sort`, `--desc` |
 | `cluster list` | `-A`, `-f`, `--sort`, `--desc`, `--show-health`, `-w/--watch`, `--watch-interval` |
-| `cluster describe` | `--detailed`, `--no-health`, `--no-addons`, `--show-security`, `--check-readiness`, `--kubeconfig`, `--kube-context` |
-| `cluster upgrade-check` | `--category`, `--status`, `--show-passing`, `--id`, `--exit-zero` |
+| `cluster describe` | `--check-readiness`, `--kubeconfig`, `--kube-context` |
+| `cluster upgrade-check` | `--category`, `--status`, `--show-passing`, `--insight`, `--exit-zero` |
 | `cluster upgrade` | `--to`, `--only`, `-n/--nodegroup`, `--skip-addon`, `--skip-nodegroup`, `--skip-insights-check` |
 | `cluster rollback` | `--skip-nodegroup`, `--skip-insights-check`, `--rollback-timeout` |
 | `nodegroup list` | `-c`, `-f`, `--sort`, `--desc`, `--check-readiness`, `-w`, `--watch-interval`, `--kubeconfig`, `--kube-context` |
 | `nodegroup describe` | `-c`, `--show-instances`, `--show-workloads`, `--kubeconfig`, `--kube-context` |
-| `nodegroup update` | `-c`, `-f`, `--all-clusters`, `--reroll`, `--health-only`, `--require-healthy`, `--skip-verify`, `--changelog`, `--live` |
+| `nodegroup update` | `-c`, `-f`, `--all-clusters`, `--reroll`, `--require-healthy`, `--skip-verify`, `--changelog`, `--live` |
 | `nodegroup scale` | `-c`, `--desired`, `--min`, `--max` |
 | `addon list` | `-c`, `--show-health`, `-w`, `--watch-interval` |
 | `addon describe` | `-c` |
@@ -153,7 +156,7 @@ Unchanged rules:
 | `Cluster` | `ClusterList`, `ClusterDescription`, `FleetStatus`, every plan and run |
 | `Nodegroup` | `NodegroupList`, `NodegroupDescription`, `ClusterDescription`, `FleetStatus`, plans and runs |
 | `Addon` | `AddonList`, `AddonDescription`, `ClusterDescription`, `FleetStatus`, plans and runs |
-| `HealthResult` | `HealthReport`, `ClusterDescription`, plans and runs |
+| `HealthResult` | `ClusterDescription`, plans and runs |
 | `Failure` | Every document's `failures` |
 
 | Kind | Command |
@@ -162,8 +165,7 @@ Unchanged rules:
 | `ClusterList`, `ClusterDescription` | `cluster list`, `cluster describe` |
 | `NodegroupList`, `NodegroupDescription` | `nodegroup list`, `nodegroup describe` |
 | `AddonList`, `AddonDescription` | `addon list`, `addon describe` |
-| `UpgradeCheck`, `InsightDescription` | `cluster upgrade-check`, with `--id` |
-| `HealthReport` | `nodegroup update --health-only` |
+| `UpgradeCheck`, `InsightDescription` | `cluster upgrade-check`, with `--insight` |
 | `Plan` | Every `--dry-run`, and a run that a gate blocked |
 | `Run` | Every finished change: the plan, the result of each step, and failures |
 | `Version` | `version -o json` |
@@ -189,8 +191,16 @@ Unchanged.
 
 When one run has several results, the highest code wins, except that an interrupt is always `1`.
 
-## Open points
+## Behaviour the new CLI does not copy
 
-1. **`refresh use` and `refresh current`** stay top-level, as today. The alternative is `refresh context use` and `refresh context current`, which is how `kubectl config` does it.
-2. **`cluster describe` section flags** (`--detailed`, `--no-health`, `--no-addons`, `--show-security`) stay as today. The alternative is to show every section always and drop all four.
-3. **Change 5 makes `nodegroup scale` run the PDB check on every scale-down.** It needs Kubernetes access. Without it, the check is skipped with a notice, as the other health checks are.
+The parity suite found these in the old binary. The new CLI does the stated thing instead.
+
+| Old behaviour | New behaviour |
+|---|---|
+| `nodegroup update -o json` without `--yes` and without a terminal starts the roll when health is clean | Every changing command refuses without `--yes` in that case |
+| `nodegroup scale -o json` prints no document when the wait fails or a gate refuses, and a refusal exits 1 | One document always; a refusal exits 3 |
+| `cluster rollback` interrupted before it starts reports `Failed` | It reports `Interrupted`, as `cluster upgrade` does |
+| `cluster upgrade` starts an insights refresh before it finds that the run is blocked | Checks that need no change run first |
+| `addon update` proceeds on a `DEGRADED` add-on and prints a raw log line | A degraded add-on is a health failure; updating it to repair it is allowed and says so |
+| A `DEGRADED` add-on is "Issues" in one document and "Fail" in another | One add-on health value everywhere |
+| `cluster upgrade` has no busy check | Each phase states which in-flight changes it accepts and refuses the others |
