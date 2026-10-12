@@ -11,6 +11,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/dantech2000/refresh/internal/cmd/contextcmd"
+	"github.com/dantech2000/refresh/internal/cmd/gendocs"
+	"github.com/dantech2000/refresh/internal/cmd/installman"
 	versioncmd "github.com/dantech2000/refresh/internal/cmd/version"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
@@ -42,6 +45,12 @@ func NewCmdRoot(f *cmdutil.Factory) *cobra.Command {
 
 Commands that change a cluster support --dry-run. Use --yes in scripts to
 skip the confirmation prompts.`,
+		Example: `  # Save a context for a cluster and make it active
+  refresh context add prod --cluster prod-eks --region us-east-1 --use
+
+  # Show the active context
+  refresh current`,
+		Args:          cobra.NoArgs,
 		Version:       f.Build.Version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -70,11 +79,46 @@ skip the confirmation prompts.`,
 	cmd.Flags().Bool("version", false, "Print the version")
 	cmd.SetVersionTemplate(versioncmd.Format(f.Build))
 
-	cmd.AddCommand(versioncmd.NewCmdVersion(f))
-	// Cobra adds this command when the root runs. Adding it now puts it in
-	// the tree for anything that walks the commands first.
+	cmd.AddGroup(
+		&cobra.Group{ID: groupContext, Title: "Context Commands:"},
+		&cobra.Group{ID: groupOther, Title: "Other Commands:"},
+	)
+	addCommands(cmd, groupContext,
+		contextcmd.NewCmdUse(f),
+		contextcmd.NewCmdCurrent(f),
+		contextcmd.NewCmdContext(f),
+	)
+	addCommands(cmd, groupOther,
+		versioncmd.NewCmdVersion(f),
+		installman.NewCmdInstallMan(f),
+		gendocs.NewCmdGenDocs(f),
+	)
+	// Cobra adds these two commands when the root runs. Adding them now
+	// puts them in the tree for anything that walks the commands first.
+	cmd.SetHelpCommandGroupID(groupOther)
+	cmd.SetCompletionCommandGroupID(groupOther)
+	cmd.InitDefaultHelpCmd()
 	cmd.InitDefaultCompletionCmd()
+	// Cobra's completion command prints help and exits 0 for a shell that
+	// it does not know. With Args and RunE that is an error.
+	if completion, _, err := cmd.Find([]string{"completion"}); err == nil && completion != cmd {
+		completion.Args = cobra.NoArgs
+		completion.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+	}
 	return cmd
+}
+
+// The groups of the root help.
+const (
+	groupContext = "context"
+	groupOther   = "other"
+)
+
+func addCommands(parent *cobra.Command, groupID string, cmds ...*cobra.Command) {
+	for _, c := range cmds {
+		c.GroupID = groupID
+		parent.AddCommand(c)
+	}
 }
 
 // complete applies the environment to the global flags that are not on the

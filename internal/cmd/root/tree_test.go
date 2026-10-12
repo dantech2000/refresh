@@ -1,0 +1,172 @@
+package root_test
+
+import (
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
+	"github.com/dantech2000/refresh/internal/cmd/root"
+	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
+)
+
+// walk calls fn for cmd and every command below it.
+func walk(cmd *cobra.Command, fn func(*cobra.Command)) {
+	fn(cmd)
+	for _, c := range cmd.Commands() {
+		walk(c, fn)
+	}
+}
+
+// newTree returns the command tree as main builds it.
+func newTree() *cobra.Command {
+	f, _, _, _ := cmdutiltest.NewFactory()
+	return root.NewCmdRoot(f)
+}
+
+// fromCobra reports whether cobra made cmd: the help command, and the
+// completion command with its shells.
+func fromCobra(cmd *cobra.Command) bool {
+	path := cmd.CommandPath()
+	return path == "refresh help" || strings.HasPrefix(path, "refresh completion")
+}
+
+func TestCommandsHaveHelpText(t *testing.T) {
+	walk(newTree(), func(cmd *cobra.Command) {
+		path := cmd.CommandPath()
+		if cmd.Short == "" {
+			t.Errorf("%s: no Short", path)
+		}
+		if strings.HasSuffix(cmd.Short, ".") {
+			t.Errorf("%s: Short ends with a period: %q", path, cmd.Short)
+		}
+		if fromCobra(cmd) {
+			return
+		}
+		if cmd.Long == "" {
+			t.Errorf("%s: no Long", path)
+		}
+		if cmd.Example == "" {
+			t.Errorf("%s: no Example", path)
+		}
+		for _, line := range strings.Split(cmd.Example, "\n") {
+			if line != "" && !strings.HasPrefix(line, "  ") {
+				t.Errorf("%s: Example line %q is not indented by two spaces", path, line)
+			}
+		}
+	})
+}
+
+func TestRunnableCommandsSetArgs(t *testing.T) {
+	walk(newTree(), func(cmd *cobra.Command) {
+		// The help command takes the path of any command.
+		if cmd.CommandPath() == "refresh help" {
+			return
+		}
+		if cmd.Runnable() && cmd.Args == nil {
+			t.Errorf("%s: runnable without Args; an extra argument would be ignored", cmd.CommandPath())
+		}
+		// A group without RunE prints help and exits 0 for an unknown
+		// subcommand.
+		if cmd.HasSubCommands() && !cmd.Runnable() {
+			t.Errorf("%s: a group without RunE and Args; an unknown subcommand would exit 0", cmd.CommandPath())
+		}
+	})
+}
+
+func TestFlagShorthands(t *testing.T) {
+	// shorthands gives each flag letter its one meaning, from "Global flags" in
+	// CONTRACT.md. A flag with one of these names carries the letter, and no
+	// other flag may use it.
+	shorthands := map[string]string{
+		"c": "cluster",
+		"n": "nodegroup",
+		"a": "addon",
+		"o": "output",
+		"r": "region",
+		"t": "timeout",
+		"d": "dry-run",
+		"y": "yes",
+		"q": "quiet",
+		"w": "watch",
+		"f": "filter",
+		"A": "all-regions",
+		"h": "help",
+	}
+	walk(newTree(), func(cmd *cobra.Command) {
+		check := func(fl *pflag.Flag) {
+			path := cmd.CommandPath()
+			if fl.Shorthand != "" {
+				want, ok := shorthands[fl.Shorthand]
+				switch {
+				case !ok:
+					t.Errorf("%s: --%s uses -%s, which has no meaning in CONTRACT.md", path, fl.Name, fl.Shorthand)
+				case want != fl.Name:
+					t.Errorf("%s: --%s uses -%s, which means --%s", path, fl.Name, fl.Shorthand, want)
+				}
+			}
+			for letter, name := range shorthands {
+				if fl.Name == name && fl.Shorthand != letter {
+					t.Errorf("%s: --%s has shorthand %q, want -%s", path, fl.Name, fl.Shorthand, letter)
+				}
+			}
+		}
+		// Help is not in the flag sets until the command runs.
+		cmd.InitDefaultHelpFlag()
+		cmd.LocalFlags().VisitAll(check)
+		cmd.InheritedFlags().VisitAll(check)
+	})
+}
+
+func TestHiddenCommands(t *testing.T) {
+	var hidden []string
+	walk(newTree(), func(cmd *cobra.Command) {
+		if cmd.Hidden {
+			hidden = append(hidden, cmd.CommandPath())
+		}
+	})
+	if diff := cmp.Diff([]string{"refresh gen-docs"}, hidden); diff != "" {
+		t.Errorf("hidden commands (-want +got):\n%s", diff)
+	}
+}
+
+// TestCommandTree pins the commands of this phase against the tree in
+// CONTRACT.md. A command that appears or disappears must change this list.
+func TestCommandTree(t *testing.T) {
+	want := []string{
+		"refresh",
+		"refresh completion",
+		"refresh completion bash",
+		"refresh completion fish",
+		"refresh completion powershell",
+		"refresh completion zsh",
+		"refresh context",
+		"refresh context add",
+		"refresh context list",
+		"refresh context remove",
+		"refresh current",
+		"refresh gen-docs",
+		"refresh help",
+		"refresh install-man",
+		"refresh use",
+		"refresh version",
+	}
+	var got []string
+	walk(newTree(), func(cmd *cobra.Command) { got = append(got, cmd.CommandPath()) })
+	sort.Strings(got)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("command tree (-want +got):\n%s", diff)
+	}
+}
+
+func TestEveryCommandIsInAHelpGroup(t *testing.T) {
+	tree := newTree()
+	for _, cmd := range tree.Commands() {
+		if !cmd.Hidden && cmd.GroupID == "" {
+			t.Errorf("%s: no help group; it would be listed under \"Additional Commands\"", cmd.CommandPath())
+		}
+	}
+}

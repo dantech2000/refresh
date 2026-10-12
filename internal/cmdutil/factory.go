@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/build"
+	"github.com/dantech2000/refresh/internal/contexts"
 )
 
 // Factory gives a command its dependencies. main builds one for the run, and
@@ -17,6 +18,10 @@ type Factory struct {
 	// LatestRelease returns the tag of the newest release of refresh. It may
 	// use the network.
 	LatestRelease func(ctx context.Context) (string, error)
+
+	// Contexts returns the store of the saved refresh contexts. A command
+	// calls it when it needs the store, not before.
+	Contexts func() (*contexts.Store, error)
 
 	// Global holds the values of the global flags. The root command fills it
 	// before a command runs.

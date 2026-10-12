@@ -41,6 +41,10 @@ and prints a one-line hint on stderr when there is one. The check runs at
 most once a day, and a failed check prints nothing. It does not run when
 stdout is not a terminal. To turn it off, use --no-update-check or set
 REFRESH_NO_UPDATE_CHECK to any value other than 0, false, or no.`,
+		Example: `  refresh version
+
+  # The version as a document, for a script
+  refresh version -o json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o.complete()

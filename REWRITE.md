@@ -91,7 +91,7 @@ internal/
   kube/kubetest/        Kubernetes fakes driven by a world
   cmd/root/             the root cobra command and the global flags
   cmd/cluster/          one package per command group, as gh and kubectl do; also
-  cmd/nodegroup/        cmd/addon, cmd/status, cmd/context, cmd/version, cmd/ui
+  cmd/nodegroup/        cmd/addon, cmd/status, cmd/contextcmd, cmd/version, cmd/ui
   cmdutil/              Factory, IOStreams, exit errors, output-format flags, target resolution
   view/                 theme, columns, human views, plain output
   tui/                  model, state, backend

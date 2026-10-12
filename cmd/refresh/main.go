@@ -12,6 +12,7 @@ import (
 	"github.com/dantech2000/refresh/internal/build"
 	"github.com/dantech2000/refresh/internal/cmd/root"
 	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/contexts"
 	"github.com/dantech2000/refresh/internal/updatecheck"
 )
 
@@ -29,6 +30,7 @@ func run(ctx context.Context, args []string, streams *cmdutil.IOStreams) int {
 		IOStreams:     streams,
 		Build:         build.Get(),
 		LatestRelease: latestRelease,
+		Contexts:      contexts.DefaultStore,
 	})
 }
 
