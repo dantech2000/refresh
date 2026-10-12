@@ -177,7 +177,7 @@
         },
         "failures": {
           "$ref": "#/$defs/FailureList",
-          "description": "failures are the EKS and Kubernetes reads the node and PDB checks could not make. The check that needed the data warns or fails instead of passing, so the Decision already accounts for them. [] when empty."
+          "description": "failures are the EKS and Kubernetes reads the node, critical workload, and PDB checks could not make. The check that needed the data warns or fails instead of passing, so the Decision already accounts for them. [] when empty."
         }
       },
       "type": "object",
