@@ -76,7 +76,7 @@ A filter is `key=value`, repeatable, and all filters must match. The value may u
 
 | Flag | Env | Default | Meaning |
 |---|---|---|---|
-| `-o, --output` | | `table` | `table`, `json`, `yaml`, `plain`, and `tree` where a command supports it |
+| `-o, --output` | | `table` | `table`, `json`, `yaml`, `plain`, and `tree`. Each command registers it with the formats that command supports, so it goes after the command name. |
 | `-r, --region` | `REFRESH_EKS_REGIONS` for sweeps | from the context or AWS config | Region; repeatable on sweep commands |
 | `--profile` | `AWS_PROFILE` | | AWS shared-config profile |
 | `-t, --timeout` | `REFRESH_TIMEOUT` | `1m` | Budget for the API calls of a read command |
@@ -85,7 +85,7 @@ A filter is `key=value`, repeatable, and all filters must match. The value may u
 | `--log-level` | `REFRESH_LOG_LEVEL` | `warn` | `debug`, `info`, `warn`, `error` |
 | `--verbose` | | | Same as `--log-level debug` |
 | `-h, --help` | | | Help |
-| `--version` | | | Print the version |
+| `--version` | | | Print the version. On the root command only. |
 
 Other env vars, unchanged: `REFRESH_CONTEXT`, `REFRESH_CONFIG_HOME`, `REFRESH_NO_UPDATE_CHECK`, `REFRESH_IN_CLUSTER_NAME`.
 

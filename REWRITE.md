@@ -189,7 +189,7 @@ The network sets most of the wall time. The plan controls the number of calls, t
 | Measure | Value |
 |---|---|
 | `--help`, `current`, `cluster list --help` | 14 ms |
-| `version`, stdout piped | 28 ms, against 13 ms with `--no-update-check`. The update-check path costs 15 ms before it decides to skip. An earlier 89 ms reading was a cold first run. |
+| `version`, stdout piped | 13 ms. Higher earlier readings were measurement noise; the skip path is one env read and one TTY check. |
 | Package init, 335 packages | 4 ms |
 | Binary, stripped | 94 MB |
 
