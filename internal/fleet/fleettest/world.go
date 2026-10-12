@@ -19,7 +19,7 @@ type World struct {
 	now        time.Time
 	state      State
 	lastUpdate int
-	faults     map[Operation]*faultState
+	faults     []*rule
 	blocked    int
 	changed    chan struct{} // closed and replaced when the clock or blocked changes
 }
@@ -28,7 +28,6 @@ type World struct {
 func New() *World {
 	return &World{
 		now:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		faults:  map[Operation]*faultState{},
 		changed: make(chan struct{}),
 	}
 }

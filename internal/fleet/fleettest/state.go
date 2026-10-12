@@ -13,6 +13,10 @@ import (
 // After each Edit, empty fields that AWS never leaves empty get a default: a
 // status becomes ACTIVE, a nodegroup with no sizes gets desired 2, min 1,
 // max 3, and so on. The field comments name each default.
+//
+// Everything that lives in a region has a Region field. An empty Region
+// means the item answers in every region, which keeps a one-region test
+// short.
 type State struct {
 	// Account, CallerARN, and UserID answer STS GetCallerIdentity. They
 	// default to account 123456789012 and a user named fake.
@@ -25,9 +29,9 @@ type State struct {
 	AddonVersions []AddonVersion
 	// ClusterVersions are the Kubernetes versions EKS offers.
 	ClusterVersions []ClusterVersion
-	// Parameters are SSM parameters by name. See State.Parameter for the
+	// Parameters are SSM parameters. See State.Parameter for the
 	// EKS-optimized AMI parameters that need no entry.
-	Parameters map[string]string
+	Parameters []Parameter
 
 	Images                 []Image
 	Instances              []Instance
@@ -57,7 +61,7 @@ type Cluster struct {
 	// answers in every region.
 	Region string
 	// Status defaults to ACTIVE.
-	Status string
+	Status ResourceStatus
 	// PlatformVersion defaults to eks.1.
 	PlatformVersion string
 	// CreatedAt defaults to the world's time at the Edit that added the
@@ -107,7 +111,11 @@ type Nodegroup struct {
 	// ReleaseVersion defaults to LatestRelease(Version).
 	ReleaseVersion string
 	// Status defaults to ACTIVE.
-	Status string
+	Status ResourceStatus
+	// CreatedAt and ModifiedAt default to the world's time at the Edit that
+	// added the nodegroup. An update that succeeds sets ModifiedAt.
+	CreatedAt  time.Time
+	ModifiedAt time.Time
 	// AMIType defaults to AL2023_x86_64_STANDARD.
 	AMIType string
 	// CapacityType defaults to ON_DEMAND.
@@ -138,7 +146,11 @@ type Addon struct {
 	Name    string
 	Version string
 	// Status defaults to ACTIVE.
-	Status                string
+	Status ResourceStatus
+	// CreatedAt and ModifiedAt default to the world's time at the Edit that
+	// added the add-on. An update that succeeds sets ModifiedAt.
+	CreatedAt             time.Time
+	ModifiedAt            time.Time
 	ServiceAccountRoleARN string
 	ConfigurationValues   string
 	HealthIssues          []Issue
@@ -159,9 +171,8 @@ type Insight struct {
 	Name string
 	// Category defaults to UPGRADE_READINESS.
 	Category string
-	// Status is PASSING, WARNING, ERROR, or UNKNOWN.
-	Status string
-	Reason string
+	Status   InsightStatus
+	Reason   string
 	// KubernetesVersion is the version the insight is about. "" means the
 	// minor after the cluster's version at the time of the request.
 	KubernetesVersion string
@@ -176,7 +187,7 @@ type Insight struct {
 type InsightResource struct {
 	URI    string
 	ARN    string
-	Status string
+	Status InsightStatus
 	Reason string
 }
 
@@ -198,8 +209,8 @@ type ClientStat struct {
 
 // InsightsRefresh is the state of a cluster's last insights refresh.
 type InsightsRefresh struct {
-	// Status is IN_PROGRESS, COMPLETED, or "" when none was started.
-	Status    string
+	// Status is "" when none was started.
+	Status    RefreshStatus
 	StartedAt time.Time
 	// EndsAt is when an IN_PROGRESS refresh becomes COMPLETED.
 	EndsAt time.Time
@@ -207,6 +218,7 @@ type InsightsRefresh struct {
 
 // AddonVersion is one version of an add-on in the catalog.
 type AddonVersion struct {
+	Region  string
 	Addon   string
 	Version string
 	// ClusterVersions are the Kubernetes versions the build supports.
@@ -218,13 +230,74 @@ type AddonVersion struct {
 
 // ClusterVersion is a Kubernetes version EKS offers.
 type ClusterVersion struct {
+	Region  string
 	Version string
 	// Status defaults to STANDARD_SUPPORT.
-	Status string
+	Status VersionStatus
 	// EndOfStandardSupport and EndOfExtendedSupport are left out of the
 	// answer when zero.
 	EndOfStandardSupport time.Time
 	EndOfExtendedSupport time.Time
+}
+
+// Parameter is an SSM parameter.
+type Parameter struct {
+	Region string
+	Name   string
+	Value  string
+}
+
+// ResourceStatus is the status of a cluster, a nodegroup, or an add-on. The
+// values are the ones EKS defines; the three resources share most of them.
+type ResourceStatus string
+
+// The EKS resource statuses the world sets or that tests commonly seed.
+const (
+	StatusActive       ResourceStatus = "ACTIVE"
+	StatusCreating     ResourceStatus = "CREATING"
+	StatusUpdating     ResourceStatus = "UPDATING"
+	StatusDeleting     ResourceStatus = "DELETING"
+	StatusDegraded     ResourceStatus = "DEGRADED"
+	StatusFailed       ResourceStatus = "FAILED"
+	StatusCreateFailed ResourceStatus = "CREATE_FAILED"
+	StatusUpdateFailed ResourceStatus = "UPDATE_FAILED"
+)
+
+// InsightStatus is the status of an EKS insight.
+type InsightStatus string
+
+// The EKS insight statuses.
+const (
+	InsightPassing InsightStatus = "PASSING"
+	InsightWarning InsightStatus = "WARNING"
+	InsightError   InsightStatus = "ERROR"
+	InsightUnknown InsightStatus = "UNKNOWN"
+)
+
+// RefreshStatus is the status of an insights refresh.
+type RefreshStatus string
+
+// The EKS insights refresh statuses.
+const (
+	RefreshInProgress RefreshStatus = "IN_PROGRESS"
+	RefreshCompleted  RefreshStatus = "COMPLETED"
+	RefreshFailed     RefreshStatus = "FAILED"
+)
+
+// VersionStatus is the support status of a Kubernetes version.
+type VersionStatus string
+
+// The EKS version statuses.
+const (
+	StandardSupport VersionStatus = "STANDARD_SUPPORT"
+	ExtendedSupport VersionStatus = "EXTENDED_SUPPORT"
+	Unsupported     VersionStatus = "UNSUPPORTED"
+)
+
+// Visible reports whether an item with the given Region field answers in
+// region.
+func Visible(itemRegion, region string) bool {
+	return itemRegion == "" || itemRegion == region
 }
 
 // LatestRelease is the newest AMI release version the world knows for a
@@ -245,7 +318,7 @@ func (s *State) Cluster(region, name string) *Cluster {
 
 // InRegion reports whether the cluster answers in region.
 func (c *Cluster) InRegion(region string) bool {
-	return c.Region == "" || c.Region == region
+	return Visible(c.Region, region)
 }
 
 // Nodegroup returns the named nodegroup, or nil.
@@ -288,14 +361,16 @@ func (c *Cluster) NextMinor() string {
 	return fmt.Sprintf("%d.%d", major, minor+1)
 }
 
-// Parameter returns the SSM parameter with the name. A name that is not in
-// Parameters but has a Kubernetes version in its path, as the EKS-optimized
-// AMI parameters do, answers a derived value: LatestRelease for a
-// release_version or image_version parameter, and an image ID such as
-// ami-latest132 for the others.
-func (s *State) Parameter(name string) (string, bool) {
-	if v, ok := s.Parameters[name]; ok {
-		return v, true
+// Parameter returns the value of the SSM parameter with the name in region.
+// A name that is not in Parameters but has a Kubernetes version in its path,
+// as the EKS-optimized AMI parameters do, answers a derived value in every
+// region: LatestRelease for a release_version or image_version parameter,
+// and an image ID such as ami-latest132 for the others.
+func (s *State) Parameter(region, name string) (string, bool) {
+	for _, p := range s.Parameters {
+		if p.Name == name && Visible(p.Region, region) {
+			return p.Value, true
+		}
 	}
 	version := ""
 	for part := range strings.SplitSeq(name, "/") {
@@ -341,7 +416,7 @@ func (s *State) applyDefaults(now time.Time) {
 		s.UserID = "AIDAFAKE"
 	}
 	for i := range s.ClusterVersions {
-		setDefault(&s.ClusterVersions[i].Status, "STANDARD_SUPPORT")
+		setDefault(&s.ClusterVersions[i].Status, StandardSupport)
 	}
 	for _, c := range s.Clusters {
 		c.applyDefaults(now)
@@ -349,19 +424,19 @@ func (s *State) applyDefaults(now time.Time) {
 }
 
 func (c *Cluster) applyDefaults(now time.Time) {
-	setDefault(&c.Status, "ACTIVE")
+	setDefault(&c.Status, StatusActive)
 	setDefault(&c.PlatformVersion, "eks.1")
-	if c.CreatedAt.IsZero() {
-		c.CreatedAt = now
-	}
+	setDefault(&c.CreatedAt, now)
 	if c.Insights == nil {
-		c.Insights = []Insight{{ID: "insight-" + c.Name + "-skew", Name: "Kubelet version skew", Status: "PASSING"}}
+		c.Insights = []Insight{{ID: "insight-" + c.Name + "-skew", Name: "Kubelet version skew", Status: InsightPassing}}
 	}
 	for i := range c.Insights {
 		setDefault(&c.Insights[i].Category, "UPGRADE_READINESS")
 	}
 	for _, ng := range c.Nodegroups {
-		setDefault(&ng.Status, "ACTIVE")
+		setDefault(&ng.Status, StatusActive)
+		setDefault(&ng.CreatedAt, now)
+		setDefault(&ng.ModifiedAt, now)
 		setDefault(&ng.ReleaseVersion, LatestRelease(ng.Version))
 		setDefault(&ng.AMIType, "AL2023_x86_64_STANDARD")
 		setDefault(&ng.CapacityType, "ON_DEMAND")
@@ -373,7 +448,9 @@ func (c *Cluster) applyDefaults(now time.Time) {
 		}
 	}
 	for _, a := range c.Addons {
-		setDefault(&a.Status, "ACTIVE")
+		setDefault(&a.Status, StatusActive)
+		setDefault(&a.CreatedAt, now)
+		setDefault(&a.ModifiedAt, now)
 	}
 	for _, u := range c.Updates {
 		setDefault(&u.Status, UpdateSuccessful)

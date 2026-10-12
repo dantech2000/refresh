@@ -18,7 +18,7 @@ func autoScalingDescribeGroups(c *call) (any, error) {
 	var groups []fleettest.AutoScalingGroup
 	c.world.View(func(s *fleettest.State) {
 		for _, g := range s.AutoScalingGroups {
-			if len(asked) == 0 || slices.Contains(asked, g.Name) {
+			if c.sees(g.Region) && (len(asked) == 0 || slices.Contains(asked, g.Name)) {
 				g.InstanceIDs = slices.Clone(g.InstanceIDs)
 				groups = append(groups, g)
 			}
@@ -44,7 +44,7 @@ func autoScalingDescribeActivities(c *call) (any, error) {
 	var activities []fleettest.ScalingActivity
 	c.world.View(func(s *fleettest.State) {
 		for _, a := range s.ScalingActivities {
-			if group == "" || a.Group == group {
+			if c.sees(a.Region) && (group == "" || a.Group == group) {
 				activities = append(activities, a)
 			}
 		}

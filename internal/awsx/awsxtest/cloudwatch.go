@@ -36,7 +36,7 @@ func cloudWatchGetMetricData(c *call) (any, error) {
 
 			var values []float64
 			for _, m := range s.Metrics {
-				if m.Namespace == metric.str("Namespace") && m.Name == metric.str("MetricName") && maps.Equal(m.Dimensions, dimensions) {
+				if c.sees(m.Region) && m.Namespace == metric.str("Namespace") && m.Name == metric.str("MetricName") && maps.Equal(m.Dimensions, dimensions) {
 					values = m.Values
 				}
 			}

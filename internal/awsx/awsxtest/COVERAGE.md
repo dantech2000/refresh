@@ -6,42 +6,49 @@ table. To rewrite it, run `go test ./internal/awsx/awsxtest -run TestCoverageDoc
 
 | Column | What `TestMatrix<Column>` proves |
 |---|---|
-| success | The SDK decodes the response into the fields refresh reads. |
-| denied | The SDK returns a typed API error with the access-denied code of the service, and does not retry. |
-| throttled | The SDK returns a typed, retryable throttling error, and a client with retries succeeds. |
-| paged | With a forced page size of 1, every item arrives. `-` means the API has no pages. |
+| success | The SDK decodes the response into the fields the legacy product reads (the projections in `operations_test.go`). The request is logged once with its operation, service, region, and mutation flag. A mutating operation changed the world. |
+| denied | The SDK returns the access-denied code of the service, in the modeled Go type where the SDK dispatches one for the operation (EKS, Service Quotas) and as `smithy.GenericAPIError` elsewhere. The call is not retried and changes nothing. |
+| throttled | The SDK returns the throttling code of the service, in the same type rule, and classifies it as retryable throttling. A client with 3 attempts succeeds after 2 more throttles. |
+| paged | With a forced page size of 1, every item arrives, one request per page. `-` means the API has no pages. |
 | delayed | The response waits for the world's clock, then decodes. |
-| cancelled | A call to a hanging handler returns when its context is cancelled, and the handler exits. |
+| cancelled | A call to a hanging handler returns `context.Canceled` when its context is cancelled, the handler exits, and nothing changed. |
+| region | Called from a region that holds nothing, the operation fails with an API error or returns no items, and changes nothing. The success column also runs with a decoy of each kind in a second region. |
 
-| Operation | Service | Protocol | Mutates | success | denied | throttled | paged | delayed | cancelled |
-|---|---|---|---|---|---|---|---|---|---|
-| `sts:GetCallerIdentity` | sts | awsQuery | no | yes | yes | yes | - | yes | yes |
-| `eks:ListClusters` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes |
-| `eks:DescribeCluster` | eks | restJson1 | no | yes | yes | yes | - | yes | yes |
-| `eks:ListNodegroups` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes |
-| `eks:DescribeNodegroup` | eks | restJson1 | no | yes | yes | yes | - | yes | yes |
-| `eks:ListAddons` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes |
-| `eks:DescribeAddon` | eks | restJson1 | no | yes | yes | yes | - | yes | yes |
-| `eks:DescribeAddonVersions` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes |
-| `eks:DescribeClusterVersions` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes |
-| `eks:ListInsights` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes |
-| `eks:DescribeInsight` | eks | restJson1 | no | yes | yes | yes | - | yes | yes |
-| `eks:StartInsightsRefresh` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes |
-| `eks:DescribeInsightsRefresh` | eks | restJson1 | no | yes | yes | yes | - | yes | yes |
-| `eks:UpdateNodegroupVersion` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes |
-| `eks:UpdateNodegroupConfig` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes |
-| `eks:UpdateClusterVersion` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes |
-| `eks:UpdateAddon` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes |
-| `eks:DescribeUpdate` | eks | restJson1 | no | yes | yes | yes | - | yes | yes |
-| `eks:ListUpdates` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes |
-| `ssm:GetParameter` | ssm | awsJson1_1 | no | yes | yes | yes | - | yes | yes |
-| `ec2:DescribeImages` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes |
-| `ec2:DescribeInstances` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes |
-| `ec2:DescribeLaunchTemplateVersions` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes |
-| `ec2:DescribeSubnets` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes |
-| `ec2:DescribeInstanceTypeOfferings` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes |
-| `ec2:DescribeVpcs` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes |
-| `autoscaling:DescribeAutoScalingGroups` | autoscaling | awsQuery | no | yes | yes | yes | yes | yes | yes |
-| `autoscaling:DescribeScalingActivities` | autoscaling | awsQuery | no | yes | yes | yes | yes | yes | yes |
-| `cloudwatch:GetMetricData` | cloudwatch | rpcv2Cbor | no | yes | yes | yes | yes | yes | yes |
-| `servicequotas:GetServiceQuota` | servicequotas | awsJson1_1 | no | yes | yes | yes | - | yes | yes |
+Not in the table, and proven once per service or protocol in `server_test.go`: the raw
+error envelopes, the HTTP status of injected error codes, modeled not-found and
+bad-token errors, scoped faults, a lost response after a mutation, peak concurrency,
+and the request log's inputs. The fake's wire shapes come from the SDK's decoders and
+the AWS API references. They were not compared with captures from real AWS.
+
+| Operation | Service | Protocol | Mutates | success | denied | throttled | paged | delayed | cancelled | region |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `sts:GetCallerIdentity` | sts | awsQuery | no | yes | yes | yes | - | yes | yes | yes |
+| `eks:ListClusters` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes | yes |
+| `eks:DescribeCluster` | eks | restJson1 | no | yes | yes | yes | - | yes | yes | yes |
+| `eks:ListNodegroups` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes | yes |
+| `eks:DescribeNodegroup` | eks | restJson1 | no | yes | yes | yes | - | yes | yes | yes |
+| `eks:ListAddons` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes | yes |
+| `eks:DescribeAddon` | eks | restJson1 | no | yes | yes | yes | - | yes | yes | yes |
+| `eks:DescribeAddonVersions` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes | yes |
+| `eks:DescribeClusterVersions` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes | yes |
+| `eks:ListInsights` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes | yes |
+| `eks:DescribeInsight` | eks | restJson1 | no | yes | yes | yes | - | yes | yes | yes |
+| `eks:StartInsightsRefresh` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes | yes |
+| `eks:DescribeInsightsRefresh` | eks | restJson1 | no | yes | yes | yes | - | yes | yes | yes |
+| `eks:UpdateNodegroupVersion` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes | yes |
+| `eks:UpdateNodegroupConfig` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes | yes |
+| `eks:UpdateClusterVersion` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes | yes |
+| `eks:UpdateAddon` | eks | restJson1 | yes | yes | yes | yes | - | yes | yes | yes |
+| `eks:DescribeUpdate` | eks | restJson1 | no | yes | yes | yes | - | yes | yes | yes |
+| `eks:ListUpdates` | eks | restJson1 | no | yes | yes | yes | yes | yes | yes | yes |
+| `ssm:GetParameter` | ssm | awsJson1_1 | no | yes | yes | yes | - | yes | yes | yes |
+| `ec2:DescribeImages` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
+| `ec2:DescribeInstances` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
+| `ec2:DescribeLaunchTemplateVersions` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
+| `ec2:DescribeSubnets` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
+| `ec2:DescribeInstanceTypeOfferings` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
+| `ec2:DescribeVpcs` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
+| `autoscaling:DescribeAutoScalingGroups` | autoscaling | awsQuery | no | yes | yes | yes | yes | yes | yes | yes |
+| `autoscaling:DescribeScalingActivities` | autoscaling | awsQuery | no | yes | yes | yes | yes | yes | yes | yes |
+| `cloudwatch:GetMetricData` | cloudwatch | rpcv2Cbor | no | yes | yes | yes | yes | yes | yes | yes |
+| `servicequotas:GetServiceQuota` | servicequotas | awsJson1_1 | no | yes | yes | yes | - | yes | yes | yes |

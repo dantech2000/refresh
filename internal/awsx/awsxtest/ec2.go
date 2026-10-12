@@ -48,7 +48,7 @@ func ec2Select[T any](c *call, items []T, idKey, notFound string, id func(T) str
 	}
 	for _, want := range asked {
 		if !slices.ContainsFunc(items, func(it T) bool { return id(it) == want }) {
-			return nil, badRequest(notFound, "The ID '"+want+"' does not exist")
+			return nil, newError(notFound, "The ID '"+want+"' does not exist")
 		}
 	}
 	filters := c.ec2Filters()
@@ -61,7 +61,7 @@ func ec2Select[T any](c *call, items []T, idKey, notFound string, id func(T) str
 		for _, f := range filters {
 			pass, ok := match(it, f)
 			if !ok {
-				return nil, badRequest("InvalidParameterValue", "awsxtest does not model the filter '"+f.name+"'")
+				return nil, newError("InvalidParameterValue", "awsxtest does not model the filter '"+f.name+"'")
 			}
 			keep = keep && pass
 		}
@@ -70,6 +70,17 @@ func ec2Select[T any](c *call, items []T, idKey, notFound string, id func(T) str
 		}
 	}
 	return out, nil
+}
+
+// inRegion returns a copy of the items that answer in the request's region.
+func inRegion[T any](c *call, items []T, region func(T) string) []T {
+	var out []T
+	for _, it := range items {
+		if c.sees(region(it)) {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 func noFilters[T any](T, ec2Filter) (keep, ok bool) { return false, false }
@@ -86,7 +97,9 @@ func ec2Paged[T any](c *call, set string, items []T, item func(T) []node) (any, 
 
 func ec2DescribeImages(c *call) (any, error) {
 	var images []fleettest.Image
-	c.world.View(func(s *fleettest.State) { images = slices.Clone(s.Images) })
+	c.world.View(func(s *fleettest.State) {
+		images = inRegion(c, s.Images, func(i fleettest.Image) string { return i.Region })
+	})
 	images, err := ec2Select(c, images, "ImageId", "InvalidAMIID.NotFound", func(i fleettest.Image) string { return i.ID }, noFilters)
 	if err != nil {
 		return nil, err
@@ -100,6 +113,9 @@ func ec2DescribeInstances(c *call) (any, error) {
 	var instances []fleettest.Instance
 	c.world.View(func(s *fleettest.State) {
 		for _, i := range s.Instances {
+			if !c.sees(i.Region) {
+				continue
+			}
 			i.Tags = cloneMap(i.Tags)
 			instances = append(instances, i)
 		}
@@ -163,7 +179,7 @@ func ec2DescribeLaunchTemplateVersions(c *call) (any, error) {
 	known := false
 	c.world.View(func(s *fleettest.State) {
 		for _, v := range s.LaunchTemplateVersions {
-			if v.TemplateID != template {
+			if !c.sees(v.Region) || v.TemplateID != template {
 				continue
 			}
 			known = true
@@ -173,7 +189,7 @@ func ec2DescribeLaunchTemplateVersions(c *call) (any, error) {
 		}
 	})
 	if !known {
-		return nil, badRequest("InvalidLaunchTemplateId.NotFound", "The specified launch template, with template ID "+template+", does not exist.")
+		return nil, newError("InvalidLaunchTemplateId.NotFound", "The specified launch template, with template ID "+template+", does not exist.")
 	}
 	return ec2Paged(c, "launchTemplateVersionSet", versions, func(v fleettest.LaunchTemplateVersion) []node {
 		number := ""
@@ -190,7 +206,9 @@ func ec2DescribeLaunchTemplateVersions(c *call) (any, error) {
 
 func ec2DescribeSubnets(c *call) (any, error) {
 	var subnets []fleettest.Subnet
-	c.world.View(func(s *fleettest.State) { subnets = slices.Clone(s.Subnets) })
+	c.world.View(func(s *fleettest.State) {
+		subnets = inRegion(c, s.Subnets, func(s fleettest.Subnet) string { return s.Region })
+	})
 	subnets, err := ec2Select(c, subnets, "SubnetId", "InvalidSubnetID.NotFound", func(s fleettest.Subnet) string { return s.ID }, noFilters)
 	if err != nil {
 		return nil, err
@@ -204,10 +222,12 @@ func ec2DescribeSubnets(c *call) (any, error) {
 // location type, which is all the world holds.
 func ec2DescribeInstanceTypeOfferings(c *call) (any, error) {
 	if lt := c.in.str("LocationType"); lt != "availability-zone" {
-		return nil, badRequest("InvalidParameterValue", "awsxtest models LocationType availability-zone only, got '"+lt+"'")
+		return nil, newError("InvalidParameterValue", "awsxtest models LocationType availability-zone only, got '"+lt+"'")
 	}
 	var offerings []fleettest.Offering
-	c.world.View(func(s *fleettest.State) { offerings = slices.Clone(s.Offerings) })
+	c.world.View(func(s *fleettest.State) {
+		offerings = inRegion(c, s.Offerings, func(o fleettest.Offering) string { return o.Region })
+	})
 	offerings, err := ec2Select(c, offerings, "", "", func(fleettest.Offering) string { return "" },
 		func(o fleettest.Offering, f ec2Filter) (keep, ok bool) {
 			switch f.name {
@@ -228,7 +248,7 @@ func ec2DescribeInstanceTypeOfferings(c *call) (any, error) {
 
 func ec2DescribeVpcs(c *call) (any, error) {
 	var vpcs []fleettest.VPC
-	c.world.View(func(s *fleettest.State) { vpcs = slices.Clone(s.VPCs) })
+	c.world.View(func(s *fleettest.State) { vpcs = inRegion(c, s.VPCs, func(v fleettest.VPC) string { return v.Region }) })
 	vpcs, err := ec2Select(c, vpcs, "VpcId", "InvalidVpcID.NotFound", func(v fleettest.VPC) string { return v.ID }, noFilters)
 	if err != nil {
 		return nil, err

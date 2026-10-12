@@ -34,6 +34,7 @@ type clusterOut struct {
 	KeyARN                                         string
 	Issues                                         []string
 	Created                                        time.Time
+	Tags                                           map[string]string
 }
 
 type nodegroupOut struct {
@@ -42,11 +43,14 @@ type nodegroupOut struct {
 	Desired, Min, Max                                          int32
 	TemplateID, TemplateVersion                                string
 	Issues                                                     []string
+	Labels                                                     map[string]string
+	Created, Modified                                          time.Time
 }
 
 type addonOut struct {
 	Name, Version, Status string
 	Issues                []string
+	Created, Modified     time.Time
 }
 
 type addonVersionOut struct {
@@ -67,6 +71,7 @@ type insightOut struct {
 type insightDetail struct {
 	Summary        insightOut
 	Recommendation string
+	Info           map[string]string
 	Resources      []string
 	Usage          string
 	ReplacedWith   string
@@ -142,6 +147,19 @@ func matrix() []opCase {
 	)
 }
 
+// everywhere marks a case whose operation answers the same in every region.
+func everywhere(tc opCase) opCase {
+	tc.elsewhere = tc.want
+	return tc
+}
+
+// inEmptyRegion sets what a case decodes in a region that holds nothing,
+// for an operation that answers there with something other than no items.
+func inEmptyRegion(want any, tc opCase) opCase {
+	tc.elsewhere = want
+	return tc
+}
+
 // seedTimes returns the two times newWorld uses: the world's start, and the
 // day before it.
 func seedTimes() (now, created time.Time) {
@@ -156,14 +174,14 @@ func startedUpdate(kind ekstypes.UpdateType, params ...string) []updateOut {
 
 func identityCases() []opCase {
 	return []opCase{
-		newCase(fleettest.STSGetCallerIdentity, []string{"123456789012", "arn:aws:iam::123456789012:user/fake", "AIDAFAKE"},
+		everywhere(newCase(fleettest.STSGetCallerIdentity, []string{"123456789012", "arn:aws:iam::123456789012:user/fake", "AIDAFAKE"},
 			func(ctx context.Context, c *clients, _ *string) ([]string, *string, error) {
 				out, err := c.sts.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 				if err != nil {
 					return nil, nil, err
 				}
 				return []string{aws.ToString(out.Account), aws.ToString(out.Arn), aws.ToString(out.UserId)}, nil, nil
-			}),
+			})),
 	}
 }
 
@@ -184,7 +202,7 @@ func eksReadCases() []opCase {
 			Platform: "eks.1", Endpoint: "https://prod.eks.fake.invalid", VPC: "vpc-1", Subnets: []string{"subnet-a", "subnet-b"},
 			Support: "EXTENDED", AutoMode: true, DeletionProtection: true, LogTypes: []string{"api", "audit"},
 			KeyARN: "arn:aws:kms:us-east-1:123456789012:key/k", Issues: []string{"Ec2SubnetNotFound: subnet-z is gone"},
-			Created: worldStart,
+			Created: worldStart, Tags: map[string]string{"team": "platform"},
 		}}, func(ctx context.Context, c *clients, _ *string) ([]clusterOut, *string, error) {
 			out, err := c.eks.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String("prod")})
 			if err != nil {
@@ -197,7 +215,7 @@ func eksReadCases() []opCase {
 				VPC: aws.ToString(cl.ResourcesVpcConfig.VpcId), Subnets: cl.ResourcesVpcConfig.SubnetIds,
 				Support: string(cl.UpgradePolicy.SupportType), AutoMode: aws.ToBool(cl.ComputeConfig.Enabled),
 				DeletionProtection: aws.ToBool(cl.DeletionProtection), KeyARN: aws.ToString(cl.EncryptionConfig[0].Provider.KeyArn),
-				Created: aws.ToTime(cl.CreatedAt).UTC(),
+				Created: aws.ToTime(cl.CreatedAt).UTC(), Tags: cl.Tags,
 				Issues: issueCodes(cl.Health.Issues, func(i ekstypes.ClusterIssue) string {
 					return string(i.Code) + ": " + aws.ToString(i.Message)
 				}),
@@ -222,6 +240,7 @@ func eksReadCases() []opCase {
 			AMIType: "AL2023_x86_64_STANDARD", Capacity: "ON_DEMAND", InstanceTypes: []string{"m5.large"},
 			Subnets: []string{"subnet-a"}, Groups: []string{"eks-ng-a"}, Desired: 2, Min: 1, Max: 3,
 			TemplateID: "lt-1", TemplateVersion: "2", Issues: []string{"AsgInstanceLaunchFailures: no capacity"},
+			Labels: map[string]string{"pool": "general"}, Created: created, Modified: worldStart,
 		}}, func(ctx context.Context, c *clients, _ *string) ([]nodegroupOut, *string, error) {
 			out, err := c.eks.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a")})
 			if err != nil {
@@ -234,6 +253,7 @@ func eksReadCases() []opCase {
 				Capacity: string(ng.CapacityType), InstanceTypes: ng.InstanceTypes, Subnets: ng.Subnets,
 				Desired: aws.ToInt32(ng.ScalingConfig.DesiredSize), Min: aws.ToInt32(ng.ScalingConfig.MinSize), Max: aws.ToInt32(ng.ScalingConfig.MaxSize),
 				TemplateID: aws.ToString(ng.LaunchTemplate.Id), TemplateVersion: aws.ToString(ng.LaunchTemplate.Version),
+				Labels: ng.Labels, Created: aws.ToTime(ng.CreatedAt).UTC(), Modified: aws.ToTime(ng.ModifiedAt).UTC(),
 				Issues: issueCodes(ng.Health.Issues, func(i ekstypes.Issue) string {
 					return string(i.Code) + ": " + aws.ToString(i.Message)
 				}),
@@ -255,6 +275,7 @@ func eksReadCases() []opCase {
 
 		newCase(fleettest.EKSDescribeAddon, []addonOut{{
 			Name: "coredns", Version: "v1.11.1-eksbuild.1", Status: "ACTIVE", Issues: []string{"InsufficientNumberOfReplicas: 0 of 2"},
+			Created: created, Modified: worldStart,
 		}}, func(ctx context.Context, c *clients, _ *string) ([]addonOut, *string, error) {
 			out, err := c.eks.DescribeAddon(ctx, &eks.DescribeAddonInput{ClusterName: aws.String("prod"), AddonName: aws.String("coredns")})
 			if err != nil {
@@ -263,6 +284,7 @@ func eksReadCases() []opCase {
 			a := out.Addon
 			return []addonOut{{
 				Name: aws.ToString(a.AddonName), Version: aws.ToString(a.AddonVersion), Status: string(a.Status),
+				Created: aws.ToTime(a.CreatedAt).UTC(), Modified: aws.ToTime(a.ModifiedAt).UTC(),
 				Issues: issueCodes(a.Health.Issues, func(i ekstypes.AddonIssue) string {
 					return string(i.Code) + ": " + aws.ToString(i.Message)
 				}),
@@ -338,6 +360,7 @@ func eksInsightCases() []opCase {
 				Status: "ERROR", Reason: "Deprecated API usage detected",
 			},
 			Recommendation: "Update the manifests", Resources: []string{"/apis/batch/v1beta1/cronjobs/x"},
+			Info:  map[string]string{"EKS update cluster documentation": "https://docs.aws.amazon.com/eks/"},
 			Usage: "/apis/batch/v1beta1/cronjobs", ReplacedWith: "/apis/batch/v1/cronjobs", Clients: []string{"kubectl"}, Requests: 7,
 		}}, func(ctx context.Context, c *clients, _ *string) ([]insightDetail, *string, error) {
 			out, err := c.eks.DescribeInsight(ctx, &eks.DescribeInsightInput{ClusterName: aws.String("prod"), Id: aws.String("in-1")})
@@ -348,6 +371,7 @@ func eksInsightCases() []opCase {
 			got := insightDetail{
 				Summary:        insightOf(in.Id, in.Name, in.Category, in.KubernetesVersion, in.InsightStatus),
 				Recommendation: aws.ToString(in.Recommendation),
+				Info:           in.AdditionalInfo,
 			}
 			for _, r := range in.Resources {
 				got.Resources = append(got.Resources, aws.ToString(r.KubernetesResourceUri))
@@ -362,6 +386,7 @@ func eksInsightCases() []opCase {
 		}),
 
 		mutatingCase(fleettest.EKSStartInsightsRefresh, []string{"IN_PROGRESS"},
+			func(c *fleettest.Cluster) string { return string(c.InsightsRefresh.Status) }, "COMPLETED",
 			func(ctx context.Context, c *clients, _ *string) ([]string, *string, error) {
 				out, err := c.eks.StartInsightsRefresh(ctx, &eks.StartInsightsRefreshInput{ClusterName: aws.String("prod")})
 				if err != nil {
@@ -384,6 +409,10 @@ func eksInsightCases() []opCase {
 func eksUpdateCases() []opCase {
 	return []opCase{
 		mutatingCase(fleettest.EKSUpdateNodegroupVersion, startedUpdate(ekstypes.UpdateTypeVersionUpdate, "Version=1.32", "ReleaseVersion=1.32.0-20260101"),
+			func(c *fleettest.Cluster) string {
+				ng := c.Nodegroup("ng-a")
+				return ng.Version + " " + ng.ReleaseVersion + " " + string(ng.Status)
+			}, "1.32 1.32.0-20260101 ACTIVE",
 			func(ctx context.Context, c *clients, _ *string) ([]updateOut, *string, error) {
 				out, err := c.eks.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
 					ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a"), ClientRequestToken: aws.String(token),
@@ -395,6 +424,10 @@ func eksUpdateCases() []opCase {
 			}),
 
 		mutatingCase(fleettest.EKSUpdateNodegroupConfig, startedUpdate(ekstypes.UpdateTypeConfigUpdate, "DesiredSize=3"),
+			func(c *fleettest.Cluster) string {
+				ng := c.Nodegroup("ng-a")
+				return fmt.Sprintf("%d/%d/%d", ng.Desired, ng.Min, ng.Max)
+			}, "3/1/3",
 			func(ctx context.Context, c *clients, _ *string) ([]updateOut, *string, error) {
 				out, err := c.eks.UpdateNodegroupConfig(ctx, &eks.UpdateNodegroupConfigInput{
 					ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a"), ClientRequestToken: aws.String(token),
@@ -407,6 +440,7 @@ func eksUpdateCases() []opCase {
 			}),
 
 		mutatingCase(fleettest.EKSUpdateClusterVersion, startedUpdate(ekstypes.UpdateTypeVersionUpdate, "Version=1.33"),
+			func(c *fleettest.Cluster) string { return c.Version + " " + string(c.Status) }, "1.33 ACTIVE",
 			func(ctx context.Context, c *clients, _ *string) ([]updateOut, *string, error) {
 				out, err := c.eks.UpdateClusterVersion(ctx, &eks.UpdateClusterVersionInput{
 					Name: aws.String("prod"), Version: aws.String("1.33"), ClientRequestToken: aws.String(token),
@@ -418,6 +452,7 @@ func eksUpdateCases() []opCase {
 			}),
 
 		mutatingCase(fleettest.EKSUpdateAddon, startedUpdate(ekstypes.UpdateTypeAddonUpdate, "AddonVersion=v1.19.0-eksbuild.1"),
+			func(c *fleettest.Cluster) string { return c.Addon("vpc-cni").Version }, "v1.19.0-eksbuild.1",
 			func(ctx context.Context, c *clients, _ *string) ([]updateOut, *string, error) {
 				out, err := c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{
 					ClusterName: aws.String("prod"), AddonName: aws.String("vpc-cni"), AddonVersion: aws.String("v1.19.0-eksbuild.1"),
@@ -452,10 +487,10 @@ func eksUpdateCases() []opCase {
 
 func parameterCases() []opCase {
 	return []opCase{
-		newCase(fleettest.SSMGetParameter, []string{"ami-latest132"},
+		newCase(fleettest.SSMGetParameter, []string{"ami-here"},
 			func(ctx context.Context, c *clients, _ *string) ([]string, *string, error) {
 				out, err := c.ssm.GetParameter(ctx, &ssm.GetParameterInput{
-					Name: aws.String("/aws/service/eks/optimized-ami/1.32/amazon-linux-2023/x86_64/standard/recommended/image_id"),
+					Name: aws.String(parameter),
 				})
 				if err != nil {
 					return nil, nil, err
@@ -611,7 +646,7 @@ func autoScalingCases() []opCase {
 func metricCases() []opCase {
 	worldStart, _ := seedTimes()
 	return []opCase{
-		pagedCase(fleettest.CloudWatchGetMetricData, []metricOut{
+		inEmptyRegion([]metricOut{{ID: "cpu0", Values: []float64{}}, {ID: "cpu1", Values: []float64{}}, {ID: "cpu2", Values: []float64{}}}, pagedCase(fleettest.CloudWatchGetMetricData, []metricOut{
 			{ID: "cpu0", Values: []float64{30, 10}, Stamps: 2},
 			{ID: "cpu1", Values: []float64{50}, Stamps: 1},
 			{ID: "cpu2", Values: []float64{}},
@@ -637,7 +672,7 @@ func metricCases() []opCase {
 				got = append(got, metricOut{ID: aws.ToString(r.Id), Values: r.Values, Stamps: len(r.Timestamps)})
 			}
 			return got, out.NextToken, nil
-		}),
+		})),
 
 		newCase(fleettest.ServiceQuotasGetServiceQuota, []float64{64},
 			func(ctx context.Context, c *clients, _ *string) ([]float64, *string, error) {

@@ -13,9 +13,14 @@ type service struct {
 	// name is the IAM prefix, which Request.Service reports.
 	name     string
 	protocol protocol
-	// denied and throttled are how the service words those two errors.
-	denied, throttled apiError
-	operations        map[string]operation
+	// denied, throttled, and unauthenticated are the codes the service
+	// answers for those faults. badToken is its code for a page token it
+	// did not issue.
+	denied, throttled, unauthenticated, badToken string
+	// statuses holds the HTTP status of each error code the service does
+	// not answer with 400. Codes in serverStatuses need no entry.
+	statuses   map[string]int
+	operations map[string]operation
 }
 
 type operation struct {
@@ -23,77 +28,136 @@ type operation struct {
 	handle  func(c *call) (any, error)
 }
 
+// serverStatuses are the error codes that mean a failure on the AWS side,
+// with the status every service uses for them.
+var serverStatuses = map[string]int{
+	"InternalFailure":             http.StatusInternalServerError,
+	"InternalError":               http.StatusInternalServerError,
+	"InternalServerError":         http.StatusInternalServerError,
+	"InternalServerException":     http.StatusInternalServerError,
+	"InternalServiceError":        http.StatusInternalServerError,
+	"InternalServiceFault":        http.StatusInternalServerError,
+	"ServerException":             http.StatusInternalServerError,
+	"ServiceException":            http.StatusInternalServerError,
+	"ServiceUnavailable":          http.StatusServiceUnavailable,
+	"ServiceUnavailableException": http.StatusServiceUnavailable,
+	"Unavailable":                 http.StatusServiceUnavailable,
+	"RequestLimitExceeded":        http.StatusServiceUnavailable,
+}
+
+// status returns the HTTP status the service answers with an error code.
+func (s *service) status(code string) int {
+	if st, ok := s.statuses[code]; ok {
+		return st
+	}
+	if st, ok := serverStatuses[code]; ok {
+		return st
+	}
+	return http.StatusBadRequest
+}
+
+func (s *service) writeError(w http.ResponseWriter, e *apiError) {
+	status := e.status
+	if status == 0 {
+		status = s.status(e.code)
+	}
+	s.protocol.writeError(w, status, e)
+}
+
+// faultError words a fault as the service does.
 func (s *service) faultError(f *fleettest.FaultError) *apiError {
 	switch f.Kind {
 	case fleettest.Denied:
-		e := s.denied
-		return &e
+		return newError(s.denied, "User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action")
 	case fleettest.Throttled:
-		e := s.throttled
-		return &e
+		return newError(s.throttled, "Rate exceeded")
+	case fleettest.Unauthenticated:
+		return newError(s.unauthenticated, "The security token included in the request is invalid.")
 	default:
-		status := http.StatusBadRequest
-		if strings.HasPrefix(f.Code, "AccessDenied") || f.Code == "UnauthorizedOperation" {
-			status = http.StatusForbidden
-		}
-		return &apiError{status: status, code: f.Code, message: "awsxtest: injected " + f.Code}
+		return &apiError{code: f.Code, message: "awsxtest: injected " + f.Code, status: f.Status}
 	}
+}
+
+// The statuses of the query-protocol services for the codes that are not
+// 400. The JSON 1.1 services answer 400 for every client error.
+var queryStatuses = map[string]int{
+	"AccessDenied":          http.StatusForbidden,
+	"InvalidClientTokenId":  http.StatusForbidden,
+	"SignatureDoesNotMatch": http.StatusForbidden,
+	"ExpiredToken":          http.StatusForbidden,
+	"OptInRequired":         http.StatusForbidden,
 }
 
 // services is keyed by SigV4 signing name. It is read-only.
 var services = map[string]*service{
 	"eks": {
-		name:       "eks",
-		protocol:   restJSON{routes: eksRoutes},
-		denied:     apiError{http.StatusForbidden, "AccessDeniedException", "User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action"},
-		throttled:  apiError{http.StatusTooManyRequests, "ThrottlingException", "Rate exceeded"},
+		name:     "eks",
+		protocol: restJSON{routes: eksRoutes},
+		denied:   "AccessDeniedException", throttled: "ThrottlingException",
+		unauthenticated: "UnrecognizedClientException", badToken: "InvalidParameterException",
+		statuses: map[string]int{
+			"AccessDeniedException":       http.StatusForbidden,
+			"UnrecognizedClientException": http.StatusForbidden,
+			"ThrottlingException":         http.StatusTooManyRequests,
+			"ResourceNotFoundException":   http.StatusNotFound,
+			"NotFoundException":           http.StatusNotFound,
+			"ResourceInUseException":      http.StatusConflict,
+		},
 		operations: eksOperations,
 	},
 	"sts": {
-		name:       "sts",
-		protocol:   awsQuery{namespace: "https://sts.amazonaws.com/doc/2011-06-15/"},
-		denied:     apiError{http.StatusForbidden, "AccessDenied", "User is not authorized to perform this action"},
-		throttled:  apiError{http.StatusBadRequest, "Throttling", "Rate exceeded"},
+		name:     "sts",
+		protocol: awsQuery{namespace: "https://sts.amazonaws.com/doc/2011-06-15/"},
+		denied:   "AccessDenied", throttled: "Throttling",
+		unauthenticated: "InvalidClientTokenId", badToken: "InvalidParameterValue",
+		statuses:   queryStatuses,
 		operations: stsOperations,
 	},
 	"ec2": {
-		name:       "ec2",
-		protocol:   ec2Query{},
-		denied:     apiError{http.StatusForbidden, "UnauthorizedOperation", "You are not authorized to perform this operation."},
-		throttled:  apiError{http.StatusServiceUnavailable, "RequestLimitExceeded", "Request limit exceeded."},
+		name:     "ec2",
+		protocol: ec2Query{},
+		denied:   "UnauthorizedOperation", throttled: "RequestLimitExceeded",
+		unauthenticated: "AuthFailure", badToken: "InvalidParameterValue",
+		statuses: map[string]int{
+			"UnauthorizedOperation": http.StatusForbidden,
+			"AuthFailure":           http.StatusUnauthorized,
+			"OptInRequired":         http.StatusUnauthorized,
+		},
 		operations: ec2Operations,
 	},
 	"autoscaling": {
-		name:       "autoscaling",
-		protocol:   awsQuery{namespace: "http://autoscaling.amazonaws.com/doc/2011-01-01/"},
-		denied:     apiError{http.StatusForbidden, "AccessDenied", "User is not authorized to perform this action"},
-		throttled:  apiError{http.StatusBadRequest, "Throttling", "Rate exceeded"},
+		name:     "autoscaling",
+		protocol: awsQuery{namespace: "http://autoscaling.amazonaws.com/doc/2011-01-01/"},
+		denied:   "AccessDenied", throttled: "Throttling",
+		unauthenticated: "InvalidClientTokenId", badToken: "InvalidNextToken",
+		statuses:   queryStatuses,
 		operations: autoScalingOperations,
 	},
 	"ssm": {
-		name:       "ssm",
-		protocol:   awsJSON{targetPrefix: "AmazonSSM."},
-		denied:     apiError{http.StatusBadRequest, "AccessDeniedException", "User is not authorized to perform this action"},
-		throttled:  apiError{http.StatusBadRequest, "ThrottlingException", "Rate exceeded"},
+		name:     "ssm",
+		protocol: awsJSON{targetPrefix: "AmazonSSM."},
+		denied:   "AccessDeniedException", throttled: "ThrottlingException",
+		unauthenticated: "UnrecognizedClientException", badToken: "ValidationException",
 		operations: ssmOperations,
 	},
 	"monitoring": {
-		name:       "cloudwatch",
-		protocol:   rpcCBOR{},
-		denied:     apiError{http.StatusForbidden, "AccessDenied", "User is not authorized to perform this action"},
-		throttled:  apiError{http.StatusBadRequest, "Throttling", "Rate exceeded"},
+		name:     "cloudwatch",
+		protocol: rpcCBOR{namespace: "com.amazonaws.cloudwatch"},
+		denied:   "AccessDenied", throttled: "Throttling",
+		unauthenticated: "InvalidClientTokenId", badToken: "InvalidNextToken",
+		statuses:   queryStatuses,
 		operations: cloudWatchOperations,
 	},
 	"servicequotas": {
-		name:       "servicequotas",
-		protocol:   awsJSON{targetPrefix: "ServiceQuotasV20190624."},
-		denied:     apiError{http.StatusBadRequest, "AccessDeniedException", "User is not authorized to perform this action"},
-		throttled:  apiError{http.StatusBadRequest, "TooManyRequestsException", "Rate exceeded"},
+		name:     "servicequotas",
+		protocol: awsJSON{targetPrefix: "ServiceQuotasV20190624.", typePrefix: "com.amazonaws.servicequotas#"},
+		denied:   "AccessDeniedException", throttled: "TooManyRequestsException",
+		unauthenticated: "UnrecognizedClientException", badToken: "InvalidPaginationTokenException",
 		operations: serviceQuotasOperations,
 	},
 }
 
-// OperationInfo describes one operation the server answers.
+// OperationInfo describes one operation the fake answers.
 type OperationInfo struct {
 	Operation fleettest.Operation
 	// Service is the IAM prefix of the service.
@@ -104,7 +168,7 @@ type OperationInfo struct {
 	Mutates bool
 }
 
-// Operations returns every operation the server answers, sorted by name.
+// Operations returns every operation the fake answers, sorted by name.
 func Operations() []OperationInfo {
 	var out []OperationInfo
 	for _, svc := range services {

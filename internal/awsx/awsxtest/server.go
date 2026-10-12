@@ -10,19 +10,21 @@
 //
 // The server answers the operations in Operations and nothing else: any
 // other call gets a non-retryable UnsupportedOperation error. Faults set on
-// the world (World.SetFault) decide when an operation fails, waits, or
-// pages. COVERAGE.md lists what the tests prove for each operation.
+// the world (World.SetFault, World.SetScopedFault) decide when a request
+// fails, waits, or pages. COVERAGE.md lists what the tests prove for each
+// operation.
+//
+// A Handler is the same fake as a plain http.Handler, for a program that
+// runs its own listener, as tools/fakefleet does.
 package awsxtest
 
 import (
 	"context"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
-	"slices"
 	"sync"
 	"time"
 
@@ -33,10 +35,10 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
-// Request is one request the server received.
+// Request is one request the fake received.
 type Request struct {
 	// Operation is the operation, such as "eks:ListClusters". For a call
-	// the server does not model, it is the service and what identifies the
+	// the fake does not model, it is the service and what identifies the
 	// call on the wire.
 	Operation fleettest.Operation
 	// Service is the IAM prefix of the service, such as "eks".
@@ -53,26 +55,231 @@ type Request struct {
 	Input map[string]any
 }
 
-// Server is a fake AWS endpoint.
-type Server struct {
-	// URL is the endpoint that answers for every service and region.
-	URL string
+// Handler answers AWS API requests from a World. It serves every service
+// and region on one endpoint and tells them apart by the request's SigV4
+// credential scope.
+type Handler struct {
+	// Latency, when set, holds each request for the time it returns, on the
+	// real clock. Throttle, when set, answers the service's throttling
+	// error for each request it returns true for. Both are for a program
+	// that serves a fake fleet to a person; set them before the first
+	// request. A test uses the world's faults, which follow the virtual
+	// clock and count requests.
+	Latency  func(Request) time.Duration
+	Throttle func(Request) bool
 
 	world  *fleettest.World
-	http   *httptest.Server
-	client *http.Client
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	mu       sync.Mutex
 	requests []Request
+	active   map[concurrencyKey]int
+	peak     map[concurrencyKey]int
+}
+
+// concurrencyKey names a group of requests counted together. An empty
+// field means any.
+type concurrencyKey struct{ service, region string }
+
+// NewHandler returns a handler that answers from w. The caller must call
+// Close when it stops serving.
+func NewHandler(w *fleettest.World) *Handler {
+	h := &Handler{world: w, active: map[concurrencyKey]int{}, peak: map[concurrencyKey]int{}}
+	h.ctx, h.cancel = context.WithCancel(context.Background())
+	return h
+}
+
+// Close releases the requests that a fault still holds, by dropping their
+// connections. Requests that arrive later are served as before.
+func (h *Handler) Close() { h.cancel() }
+
+// Requests returns a copy of every request received so far, in arrival
+// order. A request is recorded before any fault applies to it, so a
+// throttled or hanging request is in the list.
+func (h *Handler) Requests() []Request {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]Request, len(h.requests))
+	for i, r := range h.requests {
+		r.Input = cloneInput(r.Input)
+		out[i] = r
+	}
+	return out
+}
+
+// PeakConcurrency returns the most requests that were in progress at the
+// same time for a service (an IAM prefix) in a region. An empty service or
+// region means any. A request is in progress from its arrival until its
+// answer is written, so the time a fault holds it counts.
+func (h *Handler) PeakConcurrency(service, region string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.peak[concurrencyKey{service, region}]
+}
+
+// begin records a request and counts it as in progress. It returns the
+// function that ends it.
+func (h *Handler) begin(r Request) (end func()) {
+	keys := []concurrencyKey{{r.Service, r.Region}, {r.Service, ""}, {"", r.Region}, {"", ""}}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.requests = append(h.requests, r)
+	for _, k := range keys {
+		h.active[k]++
+		h.peak[k] = max(h.peak[k], h.active[k])
+	}
+	return func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for _, k := range keys {
+			h.active[k]--
+		}
+	}
+}
+
+// call is one request to an operation the fake models.
+type call struct {
+	world  *fleettest.World
+	svc    *service
+	region string
+	in     input
+	// pageSize is the page size a fault forces, or 0.
+	pageSize int
+}
+
+// sees reports whether an item with the given Region field answers in the
+// request's region.
+func (c *call) sees(itemRegion string) bool {
+	return fleettest.Visible(itemRegion, c.region)
+}
+
+// apiError is an AWS API error response.
+type apiError struct {
+	code    string
+	message string
+	// status overrides the HTTP status the service uses for the code.
+	status int
+}
+
+func (e *apiError) Error() string { return e.code + ": " + e.message }
+
+func newError(code, message string) *apiError {
+	return &apiError{code: code, message: message}
+}
+
+// credentialScope reads the region and the signing name from a SigV4
+// Authorization header.
+var credentialScope = regexp.MustCompile(`Credential=[^/]+/[^/]+/([^/]+)/([^/]+)/aws4_request`)
+
+// ServeHTTP answers one AWS API request.
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return // the client went away
+	}
+	m := credentialScope.FindStringSubmatch(r.Header.Get("Authorization"))
+	if m == nil {
+		http.Error(w, "awsxtest: the request is not signed", http.StatusForbidden)
+		return
+	}
+	region := m[1]
+	svc, ok := services[m[2]]
+	if !ok {
+		http.Error(w, "awsxtest: no service signs as "+m[2], http.StatusBadRequest)
+		return
+	}
+
+	action, in, err := svc.protocol.decode(r, body)
+	if err != nil {
+		svc.writeError(w, newError("SerializationException", err.Error()))
+		return
+	}
+	op, known := svc.operations[action]
+	name := fleettest.Operation(svc.name + ":" + action)
+	// The log and the handler get separate copies of the input, so neither
+	// can change what the other reads.
+	req := Request{Operation: name, Service: svc.name, Region: region, Mutates: op.mutates, Input: cloneInput(in)}
+	defer h.begin(req)()
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	defer context.AfterFunc(h.ctx, cancel)()
+
+	if !h.hooks(ctx, w, svc, req) {
+		return
+	}
+	if !known {
+		svc.writeError(w, newError("UnsupportedOperation", "awsxtest does not model "+string(name)))
+		return
+	}
+
+	admission, err := h.world.Enter(ctx, fleettest.Call{
+		Operation: name, Region: region,
+		Cluster: in.clusterName(), Nodegroup: in.str("nodegroupName"), Addon: in.str("addonName"),
+	})
+	var fault *fleettest.FaultError
+	switch {
+	case errors.As(err, &fault) && fault.Kind != fleettest.ConnectionReset:
+		svc.writeError(w, svc.faultError(fault))
+		return
+	case err != nil:
+		// The fault resets the connection, the client left, or the handler
+		// is closing while a fault held the request. A plain return would
+		// answer 200.
+		panic(http.ErrAbortHandler)
+	}
+
+	result, err := op.handle(&call{world: h.world, svc: svc, region: region, in: in, pageSize: admission.PageSize})
+	if admission.LoseResponse {
+		// The operation ran. The client never learns the result.
+		panic(http.ErrAbortHandler)
+	}
+	if err != nil {
+		var apiErr *apiError
+		if !errors.As(err, &apiErr) {
+			apiErr = newError("InternalFailure", err.Error())
+		}
+		svc.writeError(w, apiErr)
+		return
+	}
+	svc.protocol.writeResult(w, action, result)
+}
+
+// hooks runs Latency and Throttle. It reports whether the request goes on.
+func (h *Handler) hooks(ctx context.Context, w http.ResponseWriter, svc *service, req Request) bool {
+	if h.Latency != nil {
+		if d := h.Latency(req); d > 0 {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				panic(http.ErrAbortHandler)
+			}
+		}
+	}
+	if h.Throttle != nil && h.Throttle(req) {
+		svc.writeError(w, svc.faultError(&fleettest.FaultError{Kind: fleettest.Throttled}))
+		return false
+	}
+	return true
+}
+
+// Server is a Handler on a local listener.
+type Server struct {
+	*Handler
+	// URL is the endpoint that answers for every service and region.
+	URL string
+
+	http   *httptest.Server
+	client *http.Client
 }
 
 // NewServer starts a server that answers from w. The caller must call Close.
 func NewServer(w *fleettest.World) *Server {
-	s := &Server{world: w, client: &http.Client{Transport: &http.Transport{}}}
-	s.ctx, s.cancel = context.WithCancel(context.Background())
-	s.http = httptest.NewServer(http.HandlerFunc(s.serve))
+	s := &Server{Handler: NewHandler(w), client: &http.Client{Transport: &http.Transport{}}}
+	s.http = httptest.NewServer(s.Handler)
 	s.URL = s.http.URL
 	return s
 }
@@ -80,7 +287,7 @@ func NewServer(w *fleettest.World) *Server {
 // Close stops the server. Requests that a fault still holds are released
 // first, and the connections of clients built from Config are closed.
 func (s *Server) Close() {
-	s.cancel()
+	s.Handler.Close()
 	s.client.CloseIdleConnections()
 	s.http.Close()
 }
@@ -101,102 +308,4 @@ func (s *Server) Config(region string) aws.Config {
 			})
 		},
 	}
-}
-
-// Requests returns every request received so far, in arrival order. A
-// request is recorded before any fault applies to it, so a throttled or
-// hanging request is in the list.
-func (s *Server) Requests() []Request {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return slices.Clone(s.requests)
-}
-
-// call is one request to an operation the server models.
-type call struct {
-	world  *fleettest.World
-	region string
-	in     input
-	// pageSize is the page size a fault forces, or 0.
-	pageSize int
-}
-
-// apiError is an AWS API error response.
-type apiError struct {
-	status  int
-	code    string
-	message string
-}
-
-func (e *apiError) Error() string { return e.code + ": " + e.message }
-
-func badRequest(code, message string) *apiError {
-	return &apiError{status: http.StatusBadRequest, code: code, message: message}
-}
-
-// credentialScope reads the region and the signing name from a SigV4
-// Authorization header.
-var credentialScope = regexp.MustCompile(`Credential=[^/]+/[^/]+/([^/]+)/([^/]+)/aws4_request`)
-
-func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return // the client went away
-	}
-	m := credentialScope.FindStringSubmatch(r.Header.Get("Authorization"))
-	if m == nil {
-		http.Error(w, "awsxtest: the request is not signed", http.StatusForbidden)
-		return
-	}
-	region := m[1]
-	svc, ok := services[m[2]]
-	if !ok {
-		http.Error(w, "awsxtest: no service signs as "+m[2], http.StatusBadRequest)
-		return
-	}
-
-	action, in, err := svc.protocol.decode(r, body)
-	if err != nil {
-		svc.protocol.writeError(w, badRequest("SerializationException", err.Error()))
-		return
-	}
-	op, known := svc.operations[action]
-	name := fleettest.Operation(svc.name + ":" + action)
-	s.record(Request{Operation: name, Service: svc.name, Region: region, Mutates: op.mutates, Input: maps.Clone(in)})
-	if !known {
-		svc.protocol.writeError(w, badRequest("UnsupportedOperation", "awsxtest does not model "+string(name)))
-		return
-	}
-
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	defer context.AfterFunc(s.ctx, cancel)()
-	pageSize, err := s.world.Enter(ctx, name)
-	var fault *fleettest.FaultError
-	switch {
-	case errors.As(err, &fault):
-		svc.protocol.writeError(w, svc.faultError(fault))
-		return
-	case err != nil:
-		// The client left or the server is closing while a fault held the
-		// request. Drop the connection: a plain return would answer 200.
-		panic(http.ErrAbortHandler)
-	}
-
-	result, err := op.handle(&call{world: s.world, region: region, in: in, pageSize: pageSize})
-	if err != nil {
-		var apiErr *apiError
-		if !errors.As(err, &apiErr) {
-			apiErr = &apiError{status: http.StatusInternalServerError, code: "InternalFailure", message: err.Error()}
-		}
-		svc.protocol.writeError(w, apiErr)
-		return
-	}
-	svc.protocol.writeResult(w, action, result)
-}
-
-func (s *Server) record(r Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.requests = append(s.requests, r)
 }

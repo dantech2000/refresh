@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	sqtypes "github.com/aws/aws-sdk-go-v2/service/servicequotas/types"
 	"github.com/aws/smithy-go"
 	"github.com/google/go-cmp/cmp"
 
@@ -31,9 +34,18 @@ type opCase struct {
 	paged   bool
 	mutates bool
 	// run calls the operation and follows its page tokens to the end. It
-	// returns the number of requests it made and the difference between the
-	// decoded items and the expected ones.
-	run func(ctx context.Context, c *clients) (pages int, diff string, err error)
+	// returns the decoded items, as a []T, and the number of requests.
+	run func(ctx context.Context, c *clients) (got any, pages int, err error)
+	// want is what run returns in region, as a []T.
+	want any
+	// elsewhere is what run returns in a region that holds nothing. Nil
+	// means an API error or no items.
+	elsewhere any
+	// state reads what a mutating operation changes, and wantState is its
+	// value after the call. The default update script ends at once, so the
+	// change is visible when the call returns.
+	state     func(s *fleettest.State) string
+	wantState string
 }
 
 // request is one SDK call: the items read from the output and the token of
@@ -41,17 +53,17 @@ type opCase struct {
 type request[T any] func(ctx context.Context, c *clients, token *string) (items []T, next *string, err error)
 
 func newCase[T any](op fleettest.Operation, want []T, call request[T]) opCase {
-	return opCase{op: op, run: func(ctx context.Context, c *clients) (int, string, error) {
+	return opCase{op: op, want: want, run: func(ctx context.Context, c *clients) (any, int, error) {
 		var got []T
 		var token *string
 		for pages := 1; ; pages++ {
 			items, next, err := call(ctx, c, token)
 			if err != nil {
-				return pages, "", err
+				return nil, pages, err
 			}
 			got = append(got, items...)
 			if aws.ToString(next) == "" {
-				return pages, cmp.Diff(want, got), nil
+				return got, pages, nil
 			}
 			token = next
 		}
@@ -64,86 +76,136 @@ func pagedCase[T any](op fleettest.Operation, want []T, call request[T]) opCase 
 	return tc
 }
 
-func mutatingCase[T any](op fleettest.Operation, want []T, call request[T]) opCase {
+// mutatingCase is a case for an operation that changes the world. state
+// reads the changed part of the prod cluster.
+func mutatingCase[T any](op fleettest.Operation, want []T, state func(c *fleettest.Cluster) string, wantState string, call request[T]) opCase {
 	tc := newCase(op, want, call)
 	tc.mutates = true
+	tc.state = func(s *fleettest.State) string { return state(s.Cluster(region, "prod")) }
+	tc.wantState = wantState
 	return tc
 }
 
-// wireErrors are the codes each service answers for a denied and for a
-// throttled request.
-var wireErrors = map[string]struct{ denied, throttled string }{
-	"eks":           {"AccessDeniedException", "ThrottlingException"},
-	"sts":           {"AccessDenied", "Throttling"},
-	"ec2":           {"UnauthorizedOperation", "RequestLimitExceeded"},
-	"autoscaling":   {"AccessDenied", "Throttling"},
-	"ssm":           {"AccessDeniedException", "ThrottlingException"},
-	"cloudwatch":    {"AccessDenied", "Throttling"},
-	"servicequotas": {"AccessDeniedException", "TooManyRequestsException"},
+// readState returns tc.state of the world, or "" for a case with none.
+func (tc opCase) readState(w *fleettest.World) string {
+	if tc.state == nil {
+		return ""
+	}
+	var out string
+	w.View(func(s *fleettest.State) { out = tc.state(s) })
+	return out
 }
 
-func serviceOf(op fleettest.Operation) string {
-	service, _, _ := strings.Cut(string(op), ":")
-	return service
+// is reports whether err is, or wraps, an error of the concrete type T.
+func is[T error](err error) bool {
+	var target T
+	return errors.As(err, &target)
+}
+
+// wireError is how the SDK must decode one injected error of a service: the
+// code, and the concrete Go type. Where the service's model has a shape for
+// the code and lists it for the operation, the type is that shape, which
+// shows that the SDK dispatched on the error. Elsewhere it is the SDK's
+// generic API error.
+type wireError struct {
+	code    string
+	modeled func(error) bool
+}
+
+var generic = is[*smithy.GenericAPIError]
+
+// wireErrors are the denied and the throttled error of each service.
+var wireErrors = map[string]struct{ denied, throttled wireError }{
+	"eks":           {wireError{"AccessDeniedException", is[*ekstypes.AccessDeniedException]}, wireError{"ThrottlingException", is[*ekstypes.ThrottlingException]}},
+	"sts":           {wireError{"AccessDenied", generic}, wireError{"Throttling", generic}},
+	"ec2":           {wireError{"UnauthorizedOperation", generic}, wireError{"RequestLimitExceeded", generic}},
+	"autoscaling":   {wireError{"AccessDenied", generic}, wireError{"Throttling", generic}},
+	"ssm":           {wireError{"AccessDeniedException", generic}, wireError{"ThrottlingException", generic}},
+	"cloudwatch":    {wireError{"AccessDenied", generic}, wireError{"Throttling", generic}},
+	"servicequotas": {wireError{"AccessDeniedException", is[*sqtypes.AccessDeniedException]}, wireError{"TooManyRequestsException", is[*sqtypes.TooManyRequestsException]}},
+}
+
+// checkError fails t unless err is the API error want describes.
+func checkError(t *testing.T, err error, want wireError) {
+	t.Helper()
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("got %v, want a smithy.APIError", err)
+	}
+	if apiErr.ErrorCode() != want.code {
+		t.Errorf("error code = %q, want %q", apiErr.ErrorCode(), want.code)
+	}
+	if !want.modeled(err) {
+		t.Errorf("the SDK decoded %s as %T, which is not the expected type", want.code, apiErr)
+	}
 }
 
 // proofs are the columns of the matrix. Each is proven by the test named
 // TestMatrix plus the column, for every operation; "paged" only for the
 // operations that page.
-var proofs = []string{"success", "denied", "throttled", "paged", "delayed", "cancelled"}
+var proofs = []string{"success", "denied", "throttled", "paged", "delayed", "cancelled", "region"}
 
 // TestMatrixSuccess proves that the SDK decodes each operation's response
-// into the fields refresh reads, and that the server logs the request.
+// into the fields refresh reads, that the server logs the request, and that
+// a mutating operation changed the world.
 func TestMatrixSuccess(t *testing.T) {
 	for _, tc := range matrix() {
 		t.Run(string(tc.op), func(t *testing.T) {
 			f := newFixture(t)
-			_, diff, err := tc.run(testContext(t), f.clients)
+			before := tc.readState(f.world)
+			got, _, err := tc.run(testContext(t), f.clients)
 			if err != nil {
 				t.Fatalf("%s: %v", tc.op, err)
 			}
-			if diff != "" {
+			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("%s decoded the wrong output (-want +got):\n%s", tc.op, diff)
 			}
 
-			got := f.server.Requests()
-			if len(got) != 1 {
-				t.Fatalf("the server logged %d requests, want 1: %+v", len(got), got)
+			logged := f.server.Requests()
+			if len(logged) != 1 {
+				t.Fatalf("the server logged %d requests, want 1: %+v", len(logged), logged)
 			}
-			want := awsxtest.Request{Operation: tc.op, Service: serviceOf(tc.op), Region: region, Mutates: tc.mutates}
-			got[0].Input = nil // the inputs are checked in TestRequestLog
-			if diff := cmp.Diff(want, got[0]); diff != "" {
+			want := awsxtest.Request{Operation: tc.op, Service: tc.op.Service(), Region: region, Mutates: tc.mutates}
+			logged[0].Input = nil // the inputs are checked in TestRequestLog
+			if diff := cmp.Diff(want, logged[0]); diff != "" {
 				t.Errorf("logged request (-want +got):\n%s", diff)
+			}
+
+			if tc.mutates != (tc.state != nil) {
+				t.Fatalf("%s: a mutating case, and only a mutating case, needs a state check", tc.op)
+			}
+			if after := tc.readState(f.world); after != tc.wantState || after == before && tc.mutates {
+				t.Errorf("state after %s = %q (before: %q), want %q", tc.op, after, before, tc.wantState)
 			}
 		})
 	}
 }
 
-// TestMatrixDenied proves that a denied call returns a typed API error with
-// the service's access-denied code, and is not retried.
+// TestMatrixDenied proves that a denied call returns the access-denied
+// error of the service in the Go type the SDK models it with, is not
+// retried, and changes nothing.
 func TestMatrixDenied(t *testing.T) {
 	for _, tc := range matrix() {
 		t.Run(string(tc.op), func(t *testing.T) {
 			f := newFixture(t)
+			before := tc.readState(f.world)
 			f.world.SetFault(tc.op, fleettest.Fault{Deny: true})
 			_, _, err := tc.run(testContext(t), f.clients)
 
-			var apiErr smithy.APIError
-			if !errors.As(err, &apiErr) {
-				t.Fatalf("%s returned %v, want a smithy.APIError", tc.op, err)
-			}
-			if want := wireErrors[serviceOf(tc.op)].denied; apiErr.ErrorCode() != want {
-				t.Errorf("error code = %q, want %q", apiErr.ErrorCode(), want)
-			}
+			checkError(t, err, wireErrors[tc.op.Service()].denied)
 			if n := len(f.requests(tc.op)); n != 1 {
 				t.Errorf("the client sent %d requests, want 1: a denied call is not retried", n)
+			}
+			if after := tc.readState(f.world); after != before {
+				t.Errorf("a denied %s changed the state from %q to %q", tc.op, before, after)
 			}
 		})
 	}
 }
 
-// TestMatrixThrottled proves that a throttled call returns a typed error the
-// SDK retries, and that a client with retries gets through.
+// TestMatrixThrottled proves that a throttled call returns the throttling
+// error of the service, that the SDK classifies it as retryable throttling,
+// and that a client with retries gets through.
 func TestMatrixThrottled(t *testing.T) {
 	for _, tc := range matrix() {
 		t.Run(string(tc.op), func(t *testing.T) {
@@ -153,13 +215,7 @@ func TestMatrixThrottled(t *testing.T) {
 
 			// One attempt shows the error the SDK decodes.
 			_, _, err := tc.run(ctx, f.once)
-			var apiErr smithy.APIError
-			if !errors.As(err, &apiErr) {
-				t.Fatalf("%s returned %v, want a smithy.APIError", tc.op, err)
-			}
-			if want := wireErrors[serviceOf(tc.op)].throttled; apiErr.ErrorCode() != want {
-				t.Errorf("error code = %q, want %q", apiErr.ErrorCode(), want)
-			}
+			checkError(t, err, wireErrors[tc.op.Service()].throttled)
 			if !retry.NewStandard().IsErrorRetryable(err) {
 				t.Errorf("the SDK does not retry %v", err)
 			}
@@ -168,11 +224,11 @@ func TestMatrixThrottled(t *testing.T) {
 			}
 
 			// Two throttles remain. A client with three attempts gets through.
-			_, diff, err := tc.run(ctx, f.clients)
+			got, _, err := tc.run(ctx, f.clients)
 			if err != nil {
 				t.Fatalf("%s with retries: %v", tc.op, err)
 			}
-			if diff != "" {
+			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("%s decoded the wrong output after retries (-want +got):\n%s", tc.op, diff)
 			}
 			if n := len(f.requests(tc.op)); n != 4 {
@@ -192,11 +248,11 @@ func TestMatrixPaged(t *testing.T) {
 		t.Run(string(tc.op), func(t *testing.T) {
 			f := newFixture(t)
 			f.world.SetFault(tc.op, fleettest.Fault{PageSize: 1})
-			pages, diff, err := tc.run(testContext(t), f.clients)
+			got, pages, err := tc.run(testContext(t), f.clients)
 			if err != nil {
 				t.Fatalf("%s: %v", tc.op, err)
 			}
-			if diff != "" {
+			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("%s lost items over pages of 1 (-want +got):\n%s", tc.op, diff)
 			}
 			if pages < 2 {
@@ -210,8 +266,8 @@ func TestMatrixPaged(t *testing.T) {
 }
 
 type result struct {
-	diff string
-	err  error
+	got any
+	err error
 }
 
 // start runs the case in a goroutine and returns the channel its result
@@ -219,8 +275,8 @@ type result struct {
 func start(ctx context.Context, tc opCase, c *clients) <-chan result {
 	done := make(chan result, 1)
 	go func() {
-		_, diff, err := tc.run(ctx, c)
-		done <- result{diff, err}
+		got, _, err := tc.run(ctx, c)
+		done <- result{got, err}
 	}()
 	return done
 }
@@ -265,8 +321,8 @@ func TestMatrixDelayed(t *testing.T) {
 			if r.err != nil {
 				t.Fatalf("%s after the delay: %v", tc.op, r.err)
 			}
-			if r.diff != "" {
-				t.Errorf("%s decoded the wrong output after the delay (-want +got):\n%s", tc.op, r.diff)
+			if diff := cmp.Diff(tc.want, r.got); diff != "" {
+				t.Errorf("%s decoded the wrong output after the delay (-want +got):\n%s", tc.op, diff)
 			}
 		})
 	}
@@ -278,6 +334,7 @@ func TestMatrixCancelled(t *testing.T) {
 	for _, tc := range matrix() {
 		t.Run(string(tc.op), func(t *testing.T) {
 			f := newFixture(t)
+			before := tc.readState(f.world)
 			f.world.SetFault(tc.op, fleettest.Fault{Hang: true})
 			ctx := testContext(t)
 			callCtx, cancel := context.WithCancel(ctx)
@@ -297,6 +354,42 @@ func TestMatrixCancelled(t *testing.T) {
 			}
 			if n := len(f.requests(tc.op)); n != 1 {
 				t.Errorf("the client sent %d requests, want 1", n)
+			}
+			if after := tc.readState(f.world); after != before {
+				t.Errorf("a cancelled %s changed the state from %q to %q", tc.op, before, after)
+			}
+		})
+	}
+}
+
+// TestMatrixRegion proves that an operation answers only from its own
+// region. The success test already shows that the decoys of otherRegion do
+// not leak into region. This test calls from a region that holds nothing:
+// the call must fail with an API error or return no items.
+func TestMatrixRegion(t *testing.T) {
+	for _, tc := range matrix() {
+		t.Run(string(tc.op), func(t *testing.T) {
+			f := newFixture(t)
+			before := tc.readState(f.world)
+			got, _, err := tc.run(testContext(t), f.in(emptyRegion))
+			switch {
+			case tc.elsewhere != nil:
+				if diff := cmp.Diff(tc.elsewhere, got); diff != "" || err != nil {
+					t.Errorf("%s in %s: err %v (-want +got):\n%s", tc.op, emptyRegion, err, diff)
+				}
+			case err != nil:
+				var apiErr smithy.APIError
+				if !errors.As(err, &apiErr) {
+					t.Errorf("%s in %s: %v, want an API error", tc.op, emptyRegion, err)
+				}
+			case reflect.ValueOf(got).Len() != 0:
+				t.Errorf("%s in %s returned items of %s: %+v", tc.op, emptyRegion, region, got)
+			}
+			if after := tc.readState(f.world); after != before {
+				t.Errorf("%s in %s changed %s from %q to %q", tc.op, emptyRegion, region, before, after)
+			}
+			if logged := f.server.Requests(); len(logged) == 0 || logged[0].Region != emptyRegion {
+				t.Errorf("the server did not log the request for %s: %+v", emptyRegion, logged)
 			}
 		})
 	}
@@ -353,12 +446,18 @@ func TestCoverageDoc(t *testing.T) {
 	b.WriteString("client against the fake server. `TestCoverageDoc` generates this file from their\n")
 	b.WriteString("table. To rewrite it, run `go test ./internal/awsx/awsxtest -run TestCoverageDoc -update`.\n\n")
 	b.WriteString("| Column | What `TestMatrix<Column>` proves |\n|---|---|\n")
-	b.WriteString("| success | The SDK decodes the response into the fields refresh reads. |\n")
-	b.WriteString("| denied | The SDK returns a typed API error with the access-denied code of the service, and does not retry. |\n")
-	b.WriteString("| throttled | The SDK returns a typed, retryable throttling error, and a client with retries succeeds. |\n")
-	b.WriteString("| paged | With a forced page size of 1, every item arrives. `-` means the API has no pages. |\n")
+	b.WriteString("| success | The SDK decodes the response into the fields the legacy product reads (the projections in `operations_test.go`). The request is logged once with its operation, service, region, and mutation flag. A mutating operation changed the world. |\n")
+	b.WriteString("| denied | The SDK returns the access-denied code of the service, in the modeled Go type where the SDK dispatches one for the operation (EKS, Service Quotas) and as `smithy.GenericAPIError` elsewhere. The call is not retried and changes nothing. |\n")
+	b.WriteString("| throttled | The SDK returns the throttling code of the service, in the same type rule, and classifies it as retryable throttling. A client with 3 attempts succeeds after 2 more throttles. |\n")
+	b.WriteString("| paged | With a forced page size of 1, every item arrives, one request per page. `-` means the API has no pages. |\n")
 	b.WriteString("| delayed | The response waits for the world's clock, then decodes. |\n")
-	b.WriteString("| cancelled | A call to a hanging handler returns when its context is cancelled, and the handler exits. |\n\n")
+	b.WriteString("| cancelled | A call to a hanging handler returns `context.Canceled` when its context is cancelled, the handler exits, and nothing changed. |\n")
+	b.WriteString("| region | Called from a region that holds nothing, the operation fails with an API error or returns no items, and changes nothing. The success column also runs with a decoy of each kind in a second region. |\n\n")
+	b.WriteString("Not in the table, and proven once per service or protocol in `server_test.go`: the raw\n")
+	b.WriteString("error envelopes, the HTTP status of injected error codes, modeled not-found and\n")
+	b.WriteString("bad-token errors, scoped faults, a lost response after a mutation, peak concurrency,\n")
+	b.WriteString("and the request log's inputs. The fake's wire shapes come from the SDK's decoders and\n")
+	b.WriteString("the AWS API references. They were not compared with captures from real AWS.\n\n")
 	b.WriteString("| Operation | Service | Protocol | Mutates |")
 	for _, p := range proofs {
 		b.WriteString(" " + p + " |")

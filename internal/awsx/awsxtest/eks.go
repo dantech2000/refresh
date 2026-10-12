@@ -2,6 +2,7 @@ package awsxtest
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -57,7 +58,7 @@ var eksOperations = map[string]operation{
 type object = map[string]any
 
 func eksNotFound(message string) *apiError {
-	return &apiError{status: http.StatusNotFound, code: "ResourceNotFoundException", message: message}
+	return newError("ResourceNotFoundException", message)
 }
 
 // eksError words an error of the world as EKS does.
@@ -75,20 +76,21 @@ func eksError(err error) error {
 		}
 		return eksNotFound("No cluster found for name: " + notFound.Name + ".")
 	case errors.As(err, &inUse):
-		return &apiError{status: http.StatusConflict, code: "ResourceInUseException", message: "Cannot update " + inUse.Name + " because it has update " + inUse.UpdateID + " in progress"}
+		return newError("ResourceInUseException", "Cannot update "+inUse.Name+" because it has update "+inUse.UpdateID+" in progress")
 	case errors.As(err, &invalid):
-		return badRequest("InvalidParameterException", invalid.Message)
+		return newError("InvalidParameterException", invalid.Message)
 	}
 	return err
 }
 
-func (c *call) clusterName() string {
-	return cmp.Or(c.in.str("clusterName"), c.in.str("name"))
-}
+func (c *call) clusterName() string { return c.in.clusterName() }
 
-// inCluster runs f on the request's cluster with the world locked.
+// inCluster runs f on the request's cluster with the world locked, and
+// encodes what f returns before the lock is released. The answer is then
+// bytes: it shares no map or slice with the world, which a concurrent Edit
+// may change while the response is written.
 func (c *call) inCluster(f func(s *fleettest.State, cl *fleettest.Cluster) (any, error)) (any, error) {
-	var out any
+	var out json.RawMessage
 	var err error
 	c.world.View(func(s *fleettest.State) {
 		cl := s.Cluster(c.region, c.clusterName())
@@ -96,7 +98,10 @@ func (c *call) inCluster(f func(s *fleettest.State, cl *fleettest.Cluster) (any,
 			err = eksError(&fleettest.NotFoundError{Kind: "cluster", Name: c.clusterName()})
 			return
 		}
-		out, err = f(s, cl)
+		var v any
+		if v, err = f(s, cl); err == nil {
+			out, err = json.Marshal(v)
+		}
 	})
 	return out, err
 }
@@ -200,7 +205,7 @@ func eksDescribeClusterVersions(c *call) (any, error) {
 	var list []object
 	c.world.View(func(s *fleettest.State) {
 		for _, v := range s.ClusterVersions {
-			if len(asked) > 0 && !slices.Contains(asked, v.Version) {
+			if !c.sees(v.Region) || len(asked) > 0 && !slices.Contains(asked, v.Version) {
 				continue
 			}
 			o := object{"clusterVersion": v.Version, "versionStatus": v.Status}
@@ -224,7 +229,7 @@ func eksDescribeAddonVersions(c *call) (any, error) {
 	versions := map[string][]object{}
 	c.world.View(func(s *fleettest.State) {
 		for _, av := range s.AddonVersions {
-			if addon != "" && av.Addon != addon {
+			if !c.sees(av.Region) || addon != "" && av.Addon != addon {
 				continue
 			}
 			if version != "" && !slices.Contains(av.ClusterVersions, version) {
@@ -275,6 +280,8 @@ func eksDescribeNodegroup(c *call) (any, error) {
 			"subnets":        append([]string{}, ng.Subnets...),
 			"scalingConfig":  object{"minSize": ng.Min, "maxSize": ng.Max, "desiredSize": ng.Desired},
 			"health":         object{"issues": issuesJSON(ng.HealthIssues)},
+			"createdAt":      epoch(ng.CreatedAt),
+			"modifiedAt":     epoch(ng.ModifiedAt),
 		}
 		if len(ng.AutoScalingGroups) > 0 {
 			groups := make([]object, 0, len(ng.AutoScalingGroups))
@@ -335,6 +342,8 @@ func eksDescribeAddon(c *call) (any, error) {
 			"clusterName":  cl.Name,
 			"status":       a.Status,
 			"health":       object{"issues": issuesJSON(a.HealthIssues)},
+			"createdAt":    epoch(a.CreatedAt),
+			"modifiedAt":   epoch(a.ModifiedAt),
 		}
 		if a.ServiceAccountRoleARN != "" {
 			out["serviceAccountRoleArn"] = a.ServiceAccountRoleARN
@@ -426,7 +435,7 @@ func eksListInsights(c *call) (any, error) {
 		for i := range cl.Insights {
 			in := &cl.Insights[i]
 			version := cmp.Or(in.KubernetesVersion, cl.NextMinor())
-			if keep("categories", in.Category) && keep("statuses", in.Status) && keep("kubernetesVersions", version) {
+			if keep("categories", in.Category) && keep("statuses", string(in.Status)) && keep("kubernetesVersions", version) {
 				list = append(list, insightJSON(cl, in))
 			}
 		}
@@ -502,7 +511,7 @@ func eksStartInsightsRefresh(c *call) (any, error) {
 	if err := c.world.StartInsightsRefresh(c.region, c.clusterName()); err != nil {
 		return nil, eksError(err)
 	}
-	return object{"status": "IN_PROGRESS", "message": "Insights refresh started"}, nil
+	return object{"status": fleettest.RefreshInProgress, "message": "Insights refresh started"}, nil
 }
 
 // eksDescribeInsightsRefresh answers COMPLETED for a cluster that never had
@@ -511,7 +520,7 @@ func eksDescribeInsightsRefresh(c *call) (any, error) {
 	return c.inCluster(func(_ *fleettest.State, cl *fleettest.Cluster) (any, error) {
 		r := cl.InsightsRefresh
 		if r.Status == "" {
-			return object{"status": "COMPLETED"}, nil
+			return object{"status": fleettest.RefreshCompleted}, nil
 		}
 		return object{"status": r.Status, "startedAt": epoch(r.StartedAt)}, nil
 	})

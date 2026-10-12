@@ -11,13 +11,13 @@ func serviceQuotasGetServiceQuota(c *call) (any, error) {
 	var out any
 	c.world.View(func(s *fleettest.State) {
 		for _, q := range s.Quotas {
-			if q.ServiceCode == service && q.QuotaCode == code {
+			if c.sees(q.Region) && q.ServiceCode == service && q.QuotaCode == code {
 				out = object{"Quota": object{"ServiceCode": service, "QuotaCode": code, "Value": q.Value}}
 			}
 		}
 	})
 	if out == nil {
-		return nil, badRequest("NoSuchResourceException", "The quota "+code+" of "+service+" does not exist.")
+		return nil, newError("NoSuchResourceException", "The quota "+code+" of "+service+" does not exist.")
 	}
 	return out, nil
 }

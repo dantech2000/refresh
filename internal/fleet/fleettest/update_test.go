@@ -35,7 +35,7 @@ func TestUpdateScripts(t *testing.T) {
 		advance     time.Duration
 		wantStatus  fleettest.UpdateStatus
 		wantVersion string
-		wantNG      string
+		wantNG      fleettest.ResourceStatus
 		wantErrors  []fleettest.UpdateError
 	}{
 		{name: "the zero script succeeds at once", wantStatus: fleettest.UpdateSuccessful, wantVersion: "1.32", wantNG: "ACTIVE"},
@@ -154,7 +154,7 @@ func TestUpdateRequests(t *testing.T) {
 		start func(w *fleettest.World) (fleettest.Update, error)
 		// wantErr is a pointer to the error type As must find, or nil.
 		wantErr  any
-		wantType string
+		wantType fleettest.UpdateType
 		// state reads what the update changed, and wantState is its value
 		// once the update is done.
 		state     func(c *fleettest.Cluster) string
@@ -290,11 +290,159 @@ func TestUpdateTokenAndBusy(t *testing.T) {
 	}
 }
 
+// TestUpdateTokenScope checks that a token names one call: the same
+// operation on the same resource with the same parameters.
+func TestUpdateTokenScope(t *testing.T) {
+	w := newWorld()
+	w.Edit(func(s *fleettest.State) {
+		c := s.Cluster(region, "prod")
+		c.Nodegroups = append(c.Nodegroups, &fleettest.Nodegroup{Name: "ng-b", Version: "1.31"})
+	})
+	three, four := int32(3), int32(4)
+
+	version, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.32", Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same token on another operation of the same nodegroup, and on the
+	// same operation of another nodegroup, starts new updates.
+	config, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &three, Token: token})
+	if err != nil || config.ID == version.ID || config.Type != fleettest.TypeConfigUpdate {
+		t.Errorf("a config update with the token of a version update returned %+v, %v", config, err)
+	}
+	other, err := w.UpdateNodegroupVersion(region, "prod", "ng-b", fleettest.NodegroupVersionRequest{Version: "1.32", Token: token})
+	if err != nil || other.ID == version.ID {
+		t.Errorf("a roll of ng-b with the token of ng-a's roll returned %+v, %v", other, err)
+	}
+
+	var invalid *fleettest.InvalidError
+	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.33", Token: token}); !errors.As(err, &invalid) {
+		t.Errorf("the token with another version returned %v, want an InvalidError", err)
+	}
+	if _, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &four, Token: token}); !errors.As(err, &invalid) {
+		t.Errorf("the token with another size returned %v, want an InvalidError", err)
+	}
+	if again, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &three, Token: token}); err != nil || again.ID != config.ID {
+		t.Errorf("the same config call again returned %+v, %v; want update %s", again, err, config.ID)
+	}
+	w.View(func(s *fleettest.State) {
+		if n := len(s.Cluster(region, "prod").Updates); n != 3 {
+			t.Errorf("the world has %d updates, want 3", n)
+		}
+	})
+}
+
+// TestUpdateSharesNoMemory changes everything a caller still holds after it
+// starts an update, and after the update ends. The world must not see it.
+func TestUpdateSharesNoMemory(t *testing.T) {
+	w := newWorld()
+	script := fleettest.UpdateScript{
+		After: time.Hour, Result: fleettest.UpdateFailed,
+		Errors:         []fleettest.UpdateError{{Code: "NodeCreationFailure", Message: "m", ResourceIDs: []string{"i-1"}}},
+		ResourceIssues: []fleettest.Issue{{Code: "NodeCreationFailure", ResourceIDs: []string{"i-1"}}},
+	}
+	w.Edit(func(s *fleettest.State) {
+		s.DefaultUpdate = fleettest.UpdateScript{After: time.Hour}
+		s.Cluster(region, "prod").Addon("coredns").UpdateScripts = []fleettest.UpdateScript{script}
+	})
+
+	desired := int32(5)
+	scale, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &desired})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addon, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired = 99
+	scale.Params[0].Value = "99"
+	script.Errors[0].ResourceIDs[0] = "changed"
+	script.Errors[0].Code = "changed"
+	script.ResourceIssues[0].ResourceIDs[0] = "changed"
+	w.Advance(time.Hour)
+
+	w.View(func(s *fleettest.State) {
+		c := s.Cluster(region, "prod")
+		if ng := c.Nodegroup("ng-a"); ng.Desired != 5 {
+			t.Errorf("desired size = %d, want the 5 the request held when it was sent", ng.Desired)
+		}
+		if got := c.Update(scale.ID).Params[0].Value; got != "5" {
+			t.Errorf("update parameter = %q, want 5", got)
+		}
+		wantErrors := []fleettest.UpdateError{{Code: "NodeCreationFailure", Message: "m", ResourceIDs: []string{"i-1"}}}
+		if diff := cmp.Diff(wantErrors, c.Update(addon.ID).Errors); diff != "" {
+			t.Errorf("update errors (-want +got):\n%s", diff)
+		}
+		wantIssues := []fleettest.Issue{{Code: "NodeCreationFailure", ResourceIDs: []string{"i-1"}}}
+		if diff := cmp.Diff(wantIssues, c.Addon("coredns").HealthIssues); diff != "" {
+			t.Errorf("add-on issues (-want +got):\n%s", diff)
+		}
+	})
+}
+
+// TestUpdateScriptSetsResource checks that a script decides the status and
+// health the resource is left with, apart from the update's result.
+func TestUpdateScriptSetsResource(t *testing.T) {
+	issues := []fleettest.Issue{{Code: "NodeCreationFailure", Message: "nodes did not join"}}
+	tests := []struct {
+		name        string
+		script      fleettest.UpdateScript
+		wantStatus  fleettest.ResourceStatus
+		wantVersion string
+		wantIssues  []fleettest.Issue
+		wantChanged bool
+	}{
+		{"success", fleettest.UpdateScript{}, fleettest.StatusActive, "v2", nil, true},
+		{"failure restores the status", fleettest.UpdateScript{Result: fleettest.UpdateFailed}, fleettest.StatusCreateFailed, "v1", nil, false},
+		{
+			"failure with a final status",
+			fleettest.UpdateScript{Result: fleettest.UpdateFailed, ResourceStatus: fleettest.StatusUpdateFailed, ResourceIssues: issues},
+			fleettest.StatusUpdateFailed, "v1", issues, false,
+		},
+		{
+			"success that leaves the resource degraded",
+			fleettest.UpdateScript{ResourceStatus: fleettest.StatusDegraded, ResourceIssues: issues},
+			fleettest.StatusDegraded, "v2", issues, true,
+		},
+		{
+			"empty issues clear the health", fleettest.UpdateScript{ResourceIssues: []fleettest.Issue{}},
+			fleettest.StatusActive, "v2", []fleettest.Issue{}, true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newWorld()
+			w.Edit(func(s *fleettest.State) {
+				a := s.Cluster(region, "prod").Addon("coredns")
+				a.Status, a.UpdateScripts = fleettest.StatusCreateFailed, []fleettest.UpdateScript{tt.script}
+			})
+			created := w.Now()
+			w.Advance(time.Minute)
+			if _, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"}); err != nil {
+				t.Fatal(err)
+			}
+			w.View(func(s *fleettest.State) {
+				a := s.Cluster(region, "prod").Addon("coredns")
+				if a.Status != tt.wantStatus || a.Version != tt.wantVersion {
+					t.Errorf("add-on = %s %s, want %s %s", a.Version, a.Status, tt.wantVersion, tt.wantStatus)
+				}
+				if diff := cmp.Diff(tt.wantIssues, a.HealthIssues); diff != "" {
+					t.Errorf("health issues (-want +got):\n%s", diff)
+				}
+				if got := a.ModifiedAt.After(created); got != tt.wantChanged || !a.CreatedAt.Equal(created) {
+					t.Errorf("created %s, modified %s; want modified to move = %t", a.CreatedAt, a.ModifiedAt, tt.wantChanged)
+				}
+			})
+		})
+	}
+}
+
 func TestInsightsRefresh(t *testing.T) {
 	w := newWorld()
 	w.Edit(func(s *fleettest.State) { s.InsightsRefresh = time.Minute })
-	refresh := func() string {
-		var out string
+	refresh := func() fleettest.RefreshStatus {
+		var out fleettest.RefreshStatus
 		w.View(func(s *fleettest.State) { out = s.Cluster(region, "prod").InsightsRefresh.Status })
 		return out
 	}
@@ -330,7 +478,7 @@ func TestConcurrentUse(t *testing.T) {
 			for range 50 {
 				_, _ = w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
 				_, _ = w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{})
-				_, _ = w.Enter(ctx, fleettest.EKSListClusters)
+				_, _ = w.Enter(ctx, fleettest.Call{Operation: fleettest.EKSListClusters})
 				w.Advance(time.Second)
 				w.View(func(s *fleettest.State) { _ = len(s.Clusters[0].Updates) })
 				w.Edit(func(s *fleettest.State) { s.Clusters[0].Tags = map[string]string{"n": string(rune('a' + i))} })

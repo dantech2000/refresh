@@ -1,7 +1,9 @@
 package awsxtest
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strconv"
 )
 
@@ -74,6 +76,38 @@ func (in input) list(prefix string) []string {
 	}
 }
 
+// clusterName returns the cluster an EKS request names. The EKS model calls
+// it "name" in some operations and "clusterName" in others.
+func (in input) clusterName() string {
+	return cmp.Or(in.str("clusterName"), in.str("name"))
+}
+
+// cloneInput returns a copy of in that shares no memory with it.
+func cloneInput(in input) input {
+	out, _ := cloneValue(map[string]any(in)).(map[string]any)
+	return out
+}
+
+func cloneValue(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[k] = cloneValue(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = cloneValue(e)
+		}
+		return out
+	case []byte:
+		return slices.Clone(v)
+	}
+	return v // strings, numbers, booleans, and times are immutable
+}
+
 // page returns one page of items and the token of the next page, or "" on
 // the last. A fault's page size wins over the request's limit, which is
 // read from limitKey.
@@ -82,7 +116,7 @@ func page[T any](c *call, items []T, limitKey, tokenKey string) ([]T, string, er
 	if token := c.in.str(tokenKey); token != "" {
 		n, err := strconv.Atoi(token)
 		if err != nil || n < 0 || n > len(items) {
-			return nil, "", badRequest("InvalidParameterException", fmt.Sprintf("invalid %s %q", tokenKey, token))
+			return nil, "", newError(c.svc.badToken, fmt.Sprintf("invalid %s %q", tokenKey, token))
 		}
 		start = n
 	}

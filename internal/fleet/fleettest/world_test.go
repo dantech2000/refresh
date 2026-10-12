@@ -52,7 +52,7 @@ func TestEditAppliesDefaults(t *testing.T) {
 		t.Errorf("cluster defaults (-want +got):\n%s", diff)
 	}
 	wantNG := fleettest.Nodegroup{
-		Name: "ng-a", Version: "1.31", ReleaseVersion: "1.31.0-20260101", Status: "ACTIVE",
+		Name: "ng-a", Version: "1.31", ReleaseVersion: "1.31.0-20260101", Status: "ACTIVE", CreatedAt: w.Now(), ModifiedAt: w.Now(),
 		AMIType: "AL2023_x86_64_STANDARD", CapacityType: "ON_DEMAND", InstanceTypes: []string{"m5.large"},
 		Desired: 2, Min: 1, Max: 3,
 	}
@@ -88,7 +88,12 @@ func TestClusterRegion(t *testing.T) {
 func TestParameter(t *testing.T) {
 	w := fleettest.New()
 	w.Edit(func(s *fleettest.State) {
-		s.Parameters = map[string]string{"/custom/1.30/image_id": "ami-custom"}
+		s.Parameters = []fleettest.Parameter{
+			{Name: "/custom/1.30/image_id", Value: "ami-custom"},
+			{Region: "us-west-2", Name: "/west", Value: "ami-west"},
+			{Region: "us-west-2", Name: "/both", Value: "ami-west"},
+			{Region: region, Name: "/both", Value: "ami-east"},
+		}
 	})
 	tests := []struct {
 		name   string
@@ -96,6 +101,8 @@ func TestParameter(t *testing.T) {
 		wantOK bool
 	}{
 		{"/custom/1.30/image_id", "ami-custom", true},
+		{"/west", "", false},
+		{"/both", "ami-east", true},
 		{"/aws/service/eks/optimized-ami/1.32/amazon-linux-2023/x86_64/standard/recommended/image_id", "ami-latest132", true},
 		{"/aws/service/eks/optimized-ami/1.32/amazon-linux-2023/x86_64/standard/recommended/release_version", "1.32.0-20260101", true},
 		{"/aws/service/bottlerocket/aws-k8s-1.34-nvidia/x86_64/latest/image_id", "ami-latest134", true},
@@ -105,7 +112,7 @@ func TestParameter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		w.View(func(s *fleettest.State) {
-			got, ok := s.Parameter(tt.name)
+			got, ok := s.Parameter(region, tt.name)
 			if got != tt.want || ok != tt.wantOK {
 				t.Errorf("Parameter(%q) = %q, %t; want %q, %t", tt.name, got, ok, tt.want, tt.wantOK)
 			}
@@ -114,7 +121,7 @@ func TestParameter(t *testing.T) {
 }
 
 func TestEnterFaults(t *testing.T) {
-	const op = fleettest.EKSListClusters
+	op := fleettest.Call{Operation: fleettest.EKSListClusters}
 	ctx := testContext(t)
 	kind := func(err error) fleettest.FaultKind {
 		var f *fleettest.FaultError
@@ -126,55 +133,154 @@ func TestEnterFaults(t *testing.T) {
 
 	t.Run("no fault", func(t *testing.T) {
 		w := fleettest.New()
-		if size, err := w.Enter(ctx, op); size != 0 || err != nil {
-			t.Errorf("Enter = %d, %v; want 0, nil", size, err)
+		if a, err := w.Enter(ctx, op); a != (fleettest.Admission{}) || err != nil {
+			t.Errorf("Enter = %+v, %v; want a zero admission", a, err)
 		}
 	})
 	t.Run("throttle then page size", func(t *testing.T) {
 		w := fleettest.New()
-		w.SetFault(op, fleettest.Fault{Throttle: 2, PageSize: 3})
+		w.SetFault(op.Operation, fleettest.Fault{Throttle: 2, PageSize: 3})
 		for i := range 2 {
 			if _, err := w.Enter(ctx, op); kind(err) != fleettest.Throttled {
 				t.Errorf("request %d: err = %v, want a throttle", i+1, err)
 			}
 		}
-		if size, err := w.Enter(ctx, op); size != 3 || err != nil {
-			t.Errorf("after the throttles: Enter = %d, %v; want 3, nil", size, err)
+		if a, err := w.Enter(ctx, op); a.PageSize != 3 || err != nil {
+			t.Errorf("after the throttles: Enter = %+v, %v; want page size 3", a, err)
 		}
-		if _, err := w.Enter(ctx, fleettest.EKSDescribeCluster); err != nil {
+		if _, err := w.Enter(ctx, fleettest.Call{Operation: fleettest.EKSDescribeCluster}); err != nil {
 			t.Errorf("another operation: %v", err)
 		}
 	})
 	t.Run("deny", func(t *testing.T) {
 		w := fleettest.New()
-		w.SetFault(op, fleettest.Fault{Deny: true})
+		w.SetFault(op.Operation, fleettest.Fault{Deny: true})
 		for range 2 {
 			if _, err := w.Enter(ctx, op); kind(err) != fleettest.Denied {
 				t.Errorf("err = %v, want a denial", err)
 			}
 		}
-		w.SetFault(op, fleettest.Fault{})
+		w.SetFault(op.Operation, fleettest.Fault{})
 		if _, err := w.Enter(ctx, op); err != nil {
 			t.Errorf("after the fault was removed: %v", err)
 		}
 	})
 	t.Run("code", func(t *testing.T) {
 		w := fleettest.New()
-		w.SetFault(op, fleettest.Fault{Code: "InvalidClientTokenId"})
+		w.SetFault(op.Operation, fleettest.Fault{Code: "Teapot", Status: 418})
 		var f *fleettest.FaultError
-		if _, err := w.Enter(ctx, op); !errors.As(err, &f) || f.Kind != fleettest.Coded || f.Code != "InvalidClientTokenId" {
+		if _, err := w.Enter(ctx, op); !errors.As(err, &f) || *f != (fleettest.FaultError{Kind: fleettest.Coded, Code: "Teapot", Status: 418}) {
 			t.Errorf("err = %v, want the coded fault", err)
 		}
 	})
 }
 
+// TestScopedFaults checks which fault applies to a request when several
+// match, and that each fault keeps its own counters.
+func TestScopedFaults(t *testing.T) {
+	ctx := testContext(t)
+	kindOf := func(w *fleettest.World, c fleettest.Call) fleettest.FaultKind {
+		_, err := w.Enter(ctx, c)
+		var f *fleettest.FaultError
+		if errors.As(err, &f) {
+			return f.Kind
+		}
+		return 0
+	}
+	describe := func(region, cluster, nodegroup string) fleettest.Call {
+		return fleettest.Call{Operation: fleettest.EKSDescribeNodegroup, Region: region, Cluster: cluster, Nodegroup: nodegroup}
+	}
+
+	t.Run("the most specific scope wins", func(t *testing.T) {
+		w := fleettest.New()
+		// From general to specific. Each rule answers with its own kind.
+		w.SetScopedFault(fleettest.Scope{}, fleettest.Fault{Reset: true})
+		w.SetScopedFault(fleettest.Scope{Region: "eu-west-1"}, fleettest.Fault{Unauthenticated: true})
+		w.SetScopedFault(fleettest.Scope{Service: "eks"}, fleettest.Fault{Deny: true})
+		w.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSDescribeNodegroup}, fleettest.Fault{Throttle: 100})
+		w.SetScopedFault(fleettest.Scope{Cluster: "prod"}, fleettest.Fault{Code: "ForCluster"})
+		w.SetScopedFault(fleettest.Scope{Nodegroup: "ng-a"}, fleettest.Fault{PageSize: 7})
+
+		tests := []struct {
+			name string
+			call fleettest.Call
+			want fleettest.FaultKind
+		}{
+			{"nothing but the global rule", fleettest.Call{Operation: fleettest.EC2DescribeVpcs, Region: "us-east-1"}, fleettest.ConnectionReset},
+			{"region", fleettest.Call{Operation: fleettest.EC2DescribeVpcs, Region: "eu-west-1"}, fleettest.Unauthenticated},
+			{"service beats region", fleettest.Call{Operation: fleettest.EKSListClusters, Region: "eu-west-1"}, fleettest.Denied},
+			{"operation beats service", describe("eu-west-1", "dev", "ng-z"), fleettest.Throttled},
+			{"cluster beats operation", describe("eu-west-1", "prod", "ng-z"), fleettest.Coded},
+			{"nodegroup beats cluster", describe("eu-west-1", "prod", "ng-a"), 0},
+		}
+		for _, tt := range tests {
+			if got := kindOf(w, tt.call); got != tt.want {
+				t.Errorf("%s: fault kind %d, want %d", tt.name, got, tt.want)
+			}
+		}
+		if a, err := w.Enter(ctx, describe("us-east-1", "prod", "ng-a")); a.PageSize != 7 || err != nil {
+			t.Errorf("the nodegroup rule: Enter = %+v, %v; want page size 7", a, err)
+		}
+	})
+
+	t.Run("each fault counts for itself", func(t *testing.T) {
+		w := fleettest.New()
+		w.SetFault(fleettest.EKSDescribeNodegroup, fleettest.Fault{Throttle: 1})
+		w.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSDescribeNodegroup, Cluster: "prod"}, fleettest.Fault{Throttle: 2})
+		w.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSDescribeNodegroup, Region: "eu-west-1"}, fleettest.Fault{Throttle: 1})
+
+		var got []fleettest.FaultKind
+		for _, c := range []fleettest.Call{
+			describe("us-east-1", "prod", "ng-a"), describe("us-east-1", "prod", "ng-a"), describe("us-east-1", "prod", "ng-a"),
+			describe("us-east-1", "dev", "ng-a"), describe("us-east-1", "dev", "ng-a"),
+			describe("eu-west-1", "dev", "ng-a"), describe("eu-west-1", "dev", "ng-a"),
+		} {
+			got = append(got, kindOf(w, c))
+		}
+		want := []fleettest.FaultKind{fleettest.Throttled, fleettest.Throttled, 0, fleettest.Throttled, 0, fleettest.Throttled, 0}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("fault kinds (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("a zero fault removes only its scope", func(t *testing.T) {
+		w := fleettest.New()
+		closed := fleettest.Scope{Region: "eu-west-1"}
+		w.SetScopedFault(closed, fleettest.Fault{Unauthenticated: true})
+		w.SetFault(fleettest.EKSListClusters, fleettest.Fault{Deny: true})
+		w.SetScopedFault(closed, fleettest.Fault{})
+		if got := kindOf(w, fleettest.Call{Operation: fleettest.EC2DescribeVpcs, Region: "eu-west-1"}); got != 0 {
+			t.Errorf("the removed region fault still answers kind %d", got)
+		}
+		if got := kindOf(w, fleettest.Call{Operation: fleettest.EKSListClusters, Region: "eu-west-1"}); got != fleettest.Denied {
+			t.Errorf("the operation fault answers kind %d, want a denial", got)
+		}
+	})
+
+	t.Run("lost responses are counted", func(t *testing.T) {
+		w := fleettest.New()
+		w.SetFault(fleettest.EKSUpdateAddon, fleettest.Fault{LoseResponse: 2})
+		var got []bool
+		for range 3 {
+			a, err := w.Enter(ctx, fleettest.Call{Operation: fleettest.EKSUpdateAddon})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, a.LoseResponse)
+		}
+		if diff := cmp.Diff([]bool{true, true, false}, got); diff != "" {
+			t.Errorf("LoseResponse per request (-want +got):\n%s", diff)
+		}
+	})
+}
+
 func TestEnterBlocks(t *testing.T) {
-	const op = fleettest.EKSListClusters
+	op := fleettest.Call{Operation: fleettest.EKSListClusters}
 	ctx := testContext(t)
 
 	t.Run("delay ends when the clock advances", func(t *testing.T) {
 		w := fleettest.New()
-		w.SetFault(op, fleettest.Fault{Delay: time.Minute})
+		w.SetFault(op.Operation, fleettest.Fault{Delay: time.Minute})
 		// Three requests, to show that Advance wakes every one of them.
 		var wg sync.WaitGroup
 		errs := make(chan error, 3)
@@ -203,7 +309,7 @@ func TestEnterBlocks(t *testing.T) {
 
 	t.Run("hang ends with the context", func(t *testing.T) {
 		w := fleettest.New()
-		w.SetFault(op, fleettest.Fault{Hang: true})
+		w.SetFault(op.Operation, fleettest.Fault{Hang: true})
 		callCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		done := make(chan error, 1)

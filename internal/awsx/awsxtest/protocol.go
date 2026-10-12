@@ -23,7 +23,7 @@ type protocol interface {
 	// request log.
 	decode(r *http.Request, body []byte) (action string, in input, err error)
 	writeResult(w http.ResponseWriter, action string, result any)
-	writeError(w http.ResponseWriter, e *apiError)
+	writeError(w http.ResponseWriter, status int, e *apiError)
 }
 
 // route maps an HTTP method and path to a REST operation. A path segment in
@@ -92,15 +92,18 @@ func (restJSON) writeResult(w http.ResponseWriter, _ string, result any) {
 	writeJSON(w, "application/json", http.StatusOK, result)
 }
 
-func (restJSON) writeError(w http.ResponseWriter, e *apiError) {
+func (restJSON) writeError(w http.ResponseWriter, status int, e *apiError) {
 	w.Header().Set("X-Amzn-Errortype", e.code)
-	writeJSON(w, "application/json", e.status, map[string]string{"message": e.message})
+	writeJSON(w, "application/json", status, map[string]string{"message": e.message})
 }
 
 // awsJSON is the awsJson1_1 protocol.
 type awsJSON struct {
 	// targetPrefix is what precedes the operation name in X-Amz-Target.
 	targetPrefix string
+	// typePrefix is what the service puts before the error code in __type:
+	// a Smithy namespace and "#", or nothing.
+	typePrefix string
 }
 
 func (awsJSON) name() string { return "awsJson1_1" }
@@ -122,8 +125,8 @@ func (awsJSON) writeResult(w http.ResponseWriter, _ string, result any) {
 	writeJSON(w, "application/x-amz-json-1.1", http.StatusOK, result)
 }
 
-func (awsJSON) writeError(w http.ResponseWriter, e *apiError) {
-	writeJSON(w, "application/x-amz-json-1.1", e.status, map[string]string{"__type": e.code, "message": e.message})
+func (p awsJSON) writeError(w http.ResponseWriter, status int, e *apiError) {
+	writeJSON(w, "application/x-amz-json-1.1", status, map[string]string{"__type": p.typePrefix + e.code, "message": e.message})
 }
 
 func writeJSON(w http.ResponseWriter, contentType string, status int, v any) {
@@ -151,9 +154,9 @@ func (p awsQuery) writeResult(w http.ResponseWriter, action string, result any) 
 	}})
 }
 
-func (p awsQuery) writeError(w http.ResponseWriter, e *apiError) {
-	writeXML(w, e.status, node{name: "ErrorResponse", namespace: p.namespace, kids: []node{
-		tag("Error", leaf("Type", "Sender"), leaf("Code", e.code), leaf("Message", e.message)),
+func (p awsQuery) writeError(w http.ResponseWriter, status int, e *apiError) {
+	writeXML(w, status, node{name: "ErrorResponse", namespace: p.namespace, kids: []node{
+		tag("Error", leaf("Type", faultOf(status)), leaf("Code", e.code), leaf("Message", e.message)),
 		leaf("RequestId", requestID),
 	}})
 }
@@ -176,8 +179,8 @@ func (ec2Query) writeResult(w http.ResponseWriter, action string, result any) {
 	})
 }
 
-func (ec2Query) writeError(w http.ResponseWriter, e *apiError) {
-	writeXML(w, e.status, tag("Response",
+func (ec2Query) writeError(w http.ResponseWriter, status int, e *apiError) {
+	writeXML(w, status, tag("Response",
 		tag("Errors", tag("Error", leaf("Code", e.code), leaf("Message", e.message))),
 		leaf("RequestID", requestID),
 	))
@@ -258,8 +261,22 @@ func xmlTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// rpcCBOR is the Smithy RPC v2 CBOR protocol.
-type rpcCBOR struct{}
+// faultOf says who is at fault for an error with the HTTP status, as the
+// query protocols word it.
+func faultOf(status int) string {
+	if status >= http.StatusInternalServerError {
+		return "Receiver"
+	}
+	return "Sender"
+}
+
+// rpcCBOR is the Smithy RPC v2 CBOR protocol, for a service that also
+// carries the awsQueryCompatible trait: an error names its Smithy shape in
+// the body and its awsQuery code in the X-Amzn-Query-Error header.
+type rpcCBOR struct {
+	// namespace is the Smithy namespace of the service's shapes.
+	namespace string
+}
 
 func (rpcCBOR) name() string { return "rpcv2Cbor" }
 
@@ -292,8 +309,9 @@ func (rpcCBOR) writeResult(w http.ResponseWriter, _ string, result any) {
 	writeCBOR(w, http.StatusOK, m)
 }
 
-func (rpcCBOR) writeError(w http.ResponseWriter, e *apiError) {
-	writeCBOR(w, e.status, cbor.Map{"__type": cbor.String(e.code), "message": cbor.String(e.message)})
+func (p rpcCBOR) writeError(w http.ResponseWriter, status int, e *apiError) {
+	w.Header().Set("X-Amzn-Query-Error", e.code+";"+faultOf(status))
+	writeCBOR(w, status, cbor.Map{"__type": cbor.String(p.namespace + "#" + e.code), "message": cbor.String(e.message)})
 }
 
 func writeCBOR(w http.ResponseWriter, status int, m cbor.Map) {
