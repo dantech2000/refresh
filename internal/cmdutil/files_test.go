@@ -150,3 +150,34 @@ func TestGenerateFilesMissingDirectory(t *testing.T) {
 		t.Error("GenerateFiles() error = nil for a directory that does not exist")
 	}
 }
+
+// A page that cannot be installed stops the run before the first rename, so
+// the pages that sort before it are not replaced.
+func TestGenerateFilesDirectoryAtDestination(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "b.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cmdutil.GenerateFiles(dir, func(tmp string) error {
+		for _, name := range []string{"a.md", "b.md"} {
+			if err := os.WriteFile(filepath.Join(tmp, name), []byte("new"), 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("GenerateFiles() = nil, want an error for the directory at b.md")
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "a.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old" {
+		t.Errorf("a.md = %q, want %q: nothing is installed when one page cannot be", got, "old")
+	}
+}
