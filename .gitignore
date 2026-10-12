@@ -19,7 +19,7 @@ go.work
 
 # Build artifacts
 dist/
-refresh
+/refresh
 coverage.out
 coverage.html
 

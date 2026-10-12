@@ -47,6 +47,20 @@ tasks:
     generates:
       - "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
 
+  build:next:
+    desc: Build the rewrite binary (./cmd/refresh) to dist/refresh-next
+    cmds:
+      - go build -trimpath -ldflags="-s -w -X github.com/dantech2000/refresh/internal/build.version={{.VERSION}} -X github.com/dantech2000/refresh/internal/build.commit={{.COMMIT}} -X github.com/dantech2000/refresh/internal/build.buildDate={{.DATE}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-next ./cmd/refresh
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty
+      COMMIT:
+        sh: git rev-parse --short HEAD
+      DATE:
+        sh: date -u +%Y-%m-%dT%H:%M:%SZ
+    generates:
+      - "{{.BUILD_DIR}}/{{.BINARY_NAME}}-next"
+
   # Development tasks
   dev:
     desc: Build and install locally for development

@@ -17,6 +17,11 @@
 # misspell runs with the DEFAULT locale on purpose: a US locale would rewrite
 # "Cancelled"/"CANCELLED", the literal AWS EKS UpdateStatus enum values this
 # code matches against.
+#
+# Rewrite branch: legacy/ keeps the rules it had before the move. The new
+# tree (everything outside legacy/) also gets revive's default rule set and
+# gocritic without the ifElseChain exception. Both are enabled below for all
+# code, and the exclusions at the end turn the extra checks off for legacy/.
 version: "2"
 
 run:
@@ -64,10 +69,15 @@ linters:
         - name: unreachable-code
         - name: var-declaration
         - name: var-naming # Id -> ID, Url -> URL, ...
+        # The rest of revive's default set. New tree only; see exclusions.
+        - name: empty-block
+        - name: errorf
+        - name: exported
+        - name: package-comments
+        - name: redefines-builtin-id
+        - name: unused-parameter
     gocritic:
       enabled-tags: [diagnostic]
-      disabled-checks:
-        - ifElseChain # style; not worth the churn
     gocyclo:
       min-complexity: 30
     gocognit:
@@ -84,6 +94,15 @@ linters:
       # args, and assert on known types; these findings there are noise.
       - path: _test\.go
         linters: [gosec, unparam, forcetypeassert]
+      # legacy/ keeps the revive rules it had: the default rules added for
+      # the new tree do not apply there.
+      - path: ^legacy/
+        linters: [revive]
+        text: "^(empty-block|errorf|exported|package-comments|redefines-builtin-id|unused-parameter):"
+      # legacy/ keeps its gocritic exception (style; not worth the churn).
+      - path: ^legacy/
+        linters: [gocritic]
+        text: "^ifElseChain:"
 
 formatters:
   enable:
