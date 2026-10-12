@@ -81,6 +81,42 @@ func TestCheckCriticalWorkloads_PartialListFailureKeepsFail(t *testing.T) {
 	}
 }
 
+// The score is at most 60 while a namespace is unread, whatever the pods
+// that were read say. The status of those pods is kept.
+func TestCheckCriticalWorkloads_UnreadNamespaceCapsTheScore(t *testing.T) {
+	healthy := func(n int) []runtime.Object {
+		var out []runtime.Object
+		for i := range n {
+			out = append(out, allReadyPod("kube-public", "ok-"+string(rune('a'+i))))
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name       string
+		pods       []runtime.Object
+		wantStatus HealthStatus
+		wantScore  int
+	}{
+		{"readable pods pass", healthy(10), StatusWarn, 60},
+		{"readable pods warn", append(healthy(9), pendingPod("kube-public", "stuck-1")), StatusWarn, 60},
+		{"readable pods fail", append(healthy(1), pendingPod("kube-public", "stuck-1")), StatusFail, 50},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := fakek8s.NewSimpleClientset(tc.pods...)
+			failPodLists(client, "kube-system")
+
+			r := NewChecker(nil, client, nil, nil).checkCriticalWorkloads(context.Background(), "prod")
+
+			if r.Status != tc.wantStatus || r.Score != tc.wantScore {
+				t.Errorf("status = %s, score = %d; want %s, %d", r.Status, r.Score, tc.wantStatus, tc.wantScore)
+			}
+			if !strings.Contains(r.Message, "failed to list pods in kube-system") || len(r.failures) != 1 {
+				t.Errorf("message = %q with %d failures, want the unread namespace and 1 failure", r.Message, len(r.failures))
+			}
+		})
+	}
+}
+
 // RunAllChecks carries the unread pods to the summary: the check warns, and
 // the failure names the cluster and the checker's region. This fails if
 // RunAllChecks stops passing the cluster name to the check.

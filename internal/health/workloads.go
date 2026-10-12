@@ -167,10 +167,12 @@ func (hc *HealthChecker) checkCriticalWorkloads(ctx context.Context, clusterName
 	if len(unread) > 0 {
 		// The pods that were read say nothing about the unread namespaces: a
 		// pass becomes a warning, and a warning or failure stays as it is.
+		// The score is capped whatever the status, so a namespace with a
+		// problem pod cannot score higher than one where every pod is ready.
 		if result.Status == StatusPass {
 			result.Status = StatusWarn
-			result.Score = min(result.Score, 60)
 		}
+		result.Score = min(result.Score, 60)
 		result.Message += fmt.Sprintf("; failed to list pods in %s", strings.Join(unread, ", "))
 	}
 
