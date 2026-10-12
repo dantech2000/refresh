@@ -59,9 +59,8 @@ func readDrainBlockers(ctx context.Context, awsCfg aws.Config, eksClient *eks.Cl
 // blockers it rolls past. verbose prints the kube notice, for a dry run
 // that has not printed it.
 //
-// unread is the failed PDB read, when there was one. With --force the run
-// goes on without the read, so the caller lists it in its failures (exit 4):
-// see forcedPast.
+// unread is the failed PDB read, when there was one. The caller lists it in
+// its failures (see unreadPDBs).
 func drainGate(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, cluster string, toRoll []string, flags updateAMIFlags, verbose bool) (blockers drainBlockers, checked bool, unread *diag.Failure) {
 	if flags.skipHealthCheck || len(toRoll) == 0 {
 		return nil, false, nil
@@ -92,11 +91,12 @@ func drainGate(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, cl
 	return blockers, true, unread
 }
 
-// forcedPast returns the failures to add to a run that --force took past
-// PDBs that could not be read: unread itself. Without --force the gate
-// refused the run (exit 3), and the blocker text names the read.
-func forcedPast(unread *diag.Failure, force bool) []diag.Failure {
-	if unread == nil || !force {
+// unreadPDBs returns the failure to add to a run whose drain gate could not
+// read the PodDisruptionBudgets: unread itself, with or without --force. The
+// exit code is decided apart from it: a refused run stays exit 3, and a run
+// that --force took past the read exits 4.
+func unreadPDBs(unread *diag.Failure) []diag.Failure {
+	if unread == nil {
 		return nil
 	}
 	return []diag.Failure{*unread}

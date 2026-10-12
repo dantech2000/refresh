@@ -367,7 +367,9 @@ func finishEmptyFleet(ctx context.Context, disc fleetDiscovery, regions int, fla
 // (exit 4).
 func runFleetDryRun(ctx context.Context, targets []clusterTarget, disc fleetDiscovery, nodegroupPattern string, flags updateAMIFlags) error {
 	var fs diag.List
-	blocked := 0
+	// refusedUnread counts the failures that are the unread PDBs of a
+	// cluster the drain gate would refuse.
+	blocked, refusedUnread := 0, 0
 	if flags.machine() {
 		plans, err := fleetDryRunResults(ctx, targets, nodegroupPattern, flags)
 		if err != nil {
@@ -381,21 +383,26 @@ func runFleetDryRun(ctx context.Context, targets []clusterTarget, disc fleetDisc
 		for _, p := range plans {
 			if p.Status == clusterDrainBlocked {
 				blocked++
+				if p.Plan != nil && p.Plan.gateUnread {
+					refusedUnread++
+				}
 			}
 		}
 	} else {
-		clusterFailures, nBlocked, err := fleetDryRun(ctx, targets, nodegroupPattern, flags)
+		clusterFailures, nBlocked, nRefusedUnread, err := fleetDryRun(ctx, targets, nodegroupPattern, flags)
 		if err != nil {
 			return err
 		}
-		blocked = nBlocked
+		blocked, refusedUnread = nBlocked, nRefusedUnread
 		fs = append(diag.List(append([]diag.Failure(nil), disc.failed...)), clusterFailures...)
 		diag.Sort(fs)
 	}
 	runner.WriteFailures(flags.format, os.Stdout, fleetStderr, fs)
 	// The worst code wins: 4 for a failure, then 3 where the real run's
-	// drain gate would refuse a cluster.
-	if len(fs) == 0 && blocked > 0 {
+	// drain gate would refuse a cluster. The PDBs a refused cluster's gate
+	// could not read are listed, but that cluster is refused, as in the
+	// real run: they do not make the preview exit 4.
+	if len(fs) == refusedUnread && blocked > 0 {
 		return runner.UnlessInterrupted(ctx, cli.Exit(fmt.Sprintf("the PDB drain gate would refuse %d cluster(s); see the plan", blocked), runner.ExitBlocked))
 	}
 	return runner.UnlessInterrupted(ctx, runner.IncompleteExit(fs))
@@ -661,29 +668,34 @@ func listRegionClusters(ctx context.Context, cfg aws.Config) ([]string, error) {
 
 // fleetDryRun prints the per-cluster plan without mutating anything and
 // returns the failures of the clusters it could not preview fully, and how
-// many clusters the PDB drain gate would refuse.
-func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]diag.Failure, int, error) {
+// many clusters the PDB drain gate would refuse, and how many of the failures
+// are the unread PDBs of such a cluster.
+func fleetDryRun(ctx context.Context, targets []clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]diag.Failure, int, int, error) {
 	th := render.Default(os.Stdout)
 	fmt.Println(th.Section("FLEET DRY RUN") + th.Paint(th.Pal.Dim, fmt.Sprintf("  %d cluster(s)", len(targets))))
 	var fs []diag.Failure
-	blocked := 0
+	blocked, refusedUnread := 0, 0
 	for _, tgt := range targets {
 		if ctx.Err() != nil {
-			return nil, 0, ctx.Err()
+			return nil, 0, 0, ctx.Err()
 		}
 		printFleetClusterHeader(tgt)
-		cfs, drainBlocked := fleetDryRunCluster(ctx, tgt, nodegroupPattern, flags)
+		cfs, drainBlocked, gateUnread := fleetDryRunCluster(ctx, tgt, nodegroupPattern, flags)
 		fs = append(fs, cfs...)
 		if drainBlocked {
 			blocked++
+			if gateUnread {
+				refusedUnread++
+			}
 		}
 	}
-	return fs, blocked, nil
+	return fs, blocked, refusedUnread, nil
 }
 
 // fleetDryRunCluster previews one cluster under a per-cluster --wait-timeout
-// and returns its failures, and whether the drain gate would refuse it.
-func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]diag.Failure, bool) {
+// and returns its failures, whether the drain gate would refuse it, and
+// whether the failures have the PDBs the gate could not read.
+func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern string, flags updateAMIFlags) ([]diag.Failure, bool, bool) {
 	ctx, cancel := fleetClusterContext(ctx, flags.timeout)
 	defer cancel()
 	eksClient := factory.NewEKSClient(tgt.awsCfg)
@@ -691,14 +703,14 @@ func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern
 	selected, err := selectNodegroupsForUpdate(ctx, eksClient, tgt.cluster, nodegroupPattern, flags)
 	if err != nil {
 		render.Notef(os.Stdout, render.Fail, "could not select nodegroups (see INCOMPLETE DATA)")
-		return []diag.Failure{selectionFailure(tgt.cluster, tgt.region, err)}, false
+		return []diag.Failure{selectionFailure(tgt.cluster, tgt.region, err)}, false, false
 	}
 	result, err := dryrun.PerformDryRun(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.dryRunOptions())
 	if err != nil {
 		render.Notef(os.Stdout, render.Fail, "could not preview the cluster (see INCOMPLETE DATA)")
 		f := diag.FromError(diag.KindCluster, tgt.cluster, diag.OpDescribeCluster, err)
 		f.Region = tgt.region
-		return []diag.Failure{f}, false
+		return []diag.Failure{f}, false, false
 	}
 	toRoll := dryRunToRoll(result.UpdatesNeeded)
 	blockers, checked, unread := drainGate(ctx, tgt.awsCfg, eksClient, tgt.cluster, toRoll, flags, !flags.quiet)
@@ -708,7 +720,7 @@ func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern
 	if !flags.quiet {
 		printChangelogsForNodegroups(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.changelog)
 	}
-	return append(dryRunFailures(tgt.cluster, tgt.region, result.Unreadable), forcedPast(unread, flags.force)...), len(blockers) > 0 && !flags.force
+	return append(dryRunFailures(tgt.cluster, tgt.region, result.Unreadable), unreadPDBs(unread)...), len(blockers) > 0 && !flags.force, unread != nil
 }
 
 // fleetDryRunResults previews every cluster without printing, for the
