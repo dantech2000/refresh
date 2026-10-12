@@ -39,8 +39,8 @@ Rules that apply to every command:
 | `cluster list` | `0`, `1` (also when no region answered), `4` a region failed, or a cluster could not be fully read |
 | `cluster describe` | `0`, `1`, `4` some add-ons or nodegroups could not be read |
 | [`cluster upgrade-check`](#cluster-upgrade-check) | `0` ready, `1`, `2` warnings only, `3` blocked, `4` a nodegroup or add-on could not be read |
-| [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker, `4` the planner could not read something |
-| [`cluster rollback`](../commands/cluster.md#rollback-exit-codes) | `0`, `1` error, failed phase, declined confirmation, interrupt, or timeout, `3` blocked (window, insights, upgrade policy), `4` the planner could not read something |
+| [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker, `4` the planner or a pre-roll gate could not read something |
+| [`cluster rollback`](../commands/cluster.md#rollback-exit-codes) | `0`, `1` error, failed phase, declined confirmation, interrupt, or timeout, `3` blocked (window, insights, upgrade policy), `4` the planner or a pre-roll gate could not read something |
 | `nodegroup list` | `0`, `1`, `4` a nodegroup could not be described |
 | `nodegroup describe` | `0`, `1` |
 | [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs`, the pre-scaling health check, or a busy cluster, `4` `--force` scaled without being able to check the PDBs, `5` post-scaling health check failed |
@@ -140,7 +140,7 @@ esac
 | `0` | The plan finished, or there was nothing to do. A `--dry-run` with no blocker |
 | `1` | A phase failed, the run was interrupted, or it timed out |
 | `3` | The plan has a blocker, also with `--dry-run`. Nothing changed |
-| `4` | The planner could not read something: the check that EKS offers the target version, the Cluster Insights, or an add-on's version catalog. A `--dry-run` exits `4`. A real run goes ahead as before and exits `4` when it finishes |
+| `4` | The planner could not read something: the check that EKS offers the target version, the Cluster Insights, or an add-on's version catalog. A `--dry-run` exits `4`. A real run goes ahead as before and exits `4` when it finishes. The same applies to a read the pre-roll gate could not make and the run went past: PodDisruptionBudgets with `--force`, or a health check's read with `--yes` |
 
 Precedence is `1`, then `3`, then `4`. A failed read in a readiness gate
 also blocks the plan, so it exits `3`, and the document lists the read under
@@ -174,7 +174,7 @@ See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
 | `1` | An error, an interrupt (Ctrl+C), a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
 | `2` | Health warnings (with `--health-only` or `--require-healthy`) |
 | `3` | Blocked: a pre-flight check failed, the PDB drain gate found a blocker (without `--force`), or EKS was already changing the cluster. Nothing was rolled. A `--dry-run` exits `3` where the drain gate would refuse |
-| `4` | A failure: a nodegroup could not be read (also in a `--dry-run` preview or after the roll), or its update could not start. With `--health-only`, a pass whose checks could not read everything |
+| `4` | A failure: a nodegroup could not be read (also in a `--dry-run` preview or after the roll), or its update could not start. Also: `--force` rolled past PodDisruptionBudgets that could not be read. With `--health-only`, a pass whose checks could not read everything |
 | `5` | Post-roll verification found issues (nodes not Ready, or newly stuck pods) |
 
 Precedence is `1`, then `4`, then `5`. A health gate that stops the run keeps

@@ -123,15 +123,38 @@ type upgradeResult struct {
 // DocumentKind is UpgradeRun.
 func (upgradeResult) DocumentKind() apidoc.Kind { return apidoc.KindUpgradeRun }
 
-// runFailures is the plan's failures plus the one that stopped the run,
-// sorted.
-func runFailures(plan *upgrade.Plan, report *upgrade.Report) diag.List {
-	fs := append(diag.List(nil), plan.Failures...)
+// runFailures is the plan's failures, the reads the pre-roll gate could not
+// make, and the failure that stopped the run, each once, sorted.
+func runFailures(planFailures []diag.Failure, gate *nodegroupHealthGate, report *upgrade.Report) diag.List {
+	fs := append(diag.List(nil), planFailures...)
+	for _, f := range gate.failures {
+		if !slices.Contains(fs, f) {
+			fs = append(fs, f)
+		}
+	}
 	if report != nil && report.Failure != nil && !slices.Contains(fs, *report.Failure) {
 		fs = append(fs, *report.Failure)
 	}
 	diag.Sort(fs)
 	return fs
+}
+
+// writeRunFailures names, after a table run, the failures the run added to
+// the plan's: the plan's own were named before the first prompt. It returns
+// every failure of the run, for the exit code.
+func writeRunFailures(format string, out io.Writer, planFailures []diag.Failure, gate *nodegroupHealthGate, report *upgrade.Report, region string) diag.List {
+	if report != nil && report.Failure != nil && report.Failure.Region == "" {
+		report.Failure.Region = region
+	}
+	all := runFailures(planFailures, gate, report)
+	var added []diag.Failure
+	for _, f := range all {
+		if !slices.Contains(planFailures, f) {
+			added = append(added, f)
+		}
+	}
+	runner.WriteFailures(format, out, ui.Stderr, added)
+	return all
 }
 
 // setRegion sets region on each failure that has none: the upgrade service
@@ -288,13 +311,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	report, err := svc.Execute(ctx, plan, opts)
 
 	renderReport(out, report)
-	if report != nil && report.Failure != nil {
-		// The plan's failures are on stderr already; add the one that
-		// stopped the run.
-		stop := []diag.Failure{*report.Failure}
-		setRegion(stop, awsCfg.Region)
-		runner.WriteFailures(format, os.Stdout, ui.Stderr, stop)
-	}
+	fs := writeRunFailures(format, os.Stdout, plan.Failures, healthGate, report, awsCfg.Region)
 	if err != nil {
 		th := render.Default(out)
 		_, _ = fmt.Fprintf(out, "\nResume with: %s\n", th.Paint(th.Pal.Sky, resumeCommand(cmd, clusterName, plan)))
@@ -302,7 +319,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 
 	writeUpgradeOutcome(out, clusterName, plan, true)
-	return runner.IncompleteExit(plan.Failures)
+	return runner.IncompleteExit(fs)
 }
 
 // buildUpgradePlan builds the plan behind a spinner. The insights refresh can
@@ -463,7 +480,7 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 		}
 	}
 
-	fs := runFailures(plan, report)
+	fs := runFailures(plan.Failures, healthGate, report)
 	if _, eerr := runner.EncodeStdout(format, upgradeResult{Plan: plan, Report: report, Failures: fs}); eerr != nil {
 		return eerr
 	}
@@ -471,7 +488,7 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 	if err != nil {
 		return fmt.Errorf("%w (resume with: %s)", err, resumeCommand(cmd, clusterName, plan))
 	}
-	return runner.IncompleteExit(plan.Failures)
+	return runner.IncompleteExit(fs)
 }
 
 // promptPhase asks on stderr for confirmation before a mutating phase, as

@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/mocks"
 	"github.com/dantech2000/refresh/internal/services/upgrade"
@@ -24,6 +25,7 @@ type fakeGateChecker struct {
 	multiPDB   []health.MultiPDBPod
 	drainErr   error
 	decision   health.Decision
+	failures   diag.List
 	targets    []string
 	drainCalls int
 	runCalls   int
@@ -37,7 +39,7 @@ func (f *fakeGateChecker) RunAllChecks(context.Context, string) health.HealthSum
 	if d == "" {
 		d = health.DecisionProceed
 	}
-	s := health.HealthSummary{Decision: d}
+	s := health.HealthSummary{Decision: d, Failures: f.failures}
 	if d != health.DecisionProceed {
 		status := health.StatusWarn
 		if d == health.DecisionBlock {

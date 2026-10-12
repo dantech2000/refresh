@@ -701,14 +701,14 @@ func fleetDryRunCluster(ctx context.Context, tgt clusterTarget, nodegroupPattern
 		return []diag.Failure{f}, false
 	}
 	toRoll := dryRunToRoll(result.UpdatesNeeded)
-	blockers, checked := drainGate(ctx, tgt.awsCfg, eksClient, tgt.cluster, toRoll, flags, !flags.quiet)
+	blockers, checked, unread := drainGate(ctx, tgt.awsCfg, eksClient, tgt.cluster, toRoll, flags, !flags.quiet)
 	if checked {
 		printDrainGate(os.Stdout, toRoll, blockers, flags.force)
 	}
 	if !flags.quiet {
 		printChangelogsForNodegroups(ctx, tgt.awsCfg, eksClient, tgt.cluster, selected, flags.changelog)
 	}
-	return dryRunFailures(tgt.cluster, tgt.region, result.Unreadable), len(blockers) > 0 && !flags.force
+	return append(dryRunFailures(tgt.cluster, tgt.region, result.Unreadable), forcedPast(unread, flags.force)...), len(blockers) > 0 && !flags.force
 }
 
 // fleetDryRunResults previews every cluster without printing, for the

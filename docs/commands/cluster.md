@@ -389,8 +389,12 @@ confirmed `ACTIVE` with no health issues, `refresh` runs the same
   PDBs) it is a warning instead.
 - PodDisruptionBudgets that could not be read (for example, a denied
   permission) stop the roll in the same way. With `--force` the roll starts
-  and the warning names the failed read. `nodegroup update` has the same
+  and the warning names the failed read. The run then lists the read in
+  `failures` and exits `4` when it finishes. `nodegroup update` has the same
   rule.
+- A read that a health check could not make, and that the run went past
+  (a warning with `--yes`), is listed in `failures` too, and the run exits
+  `4` when it finishes.
 - A `BLOCK` health decision stops the roll.
 - Health warnings need `--yes` or a confirmation at the prompt.
 
@@ -687,7 +691,7 @@ A plan step has the same `type` and `status` values as an
 | `0` | The rollback finished, or there was nothing to do. A `--dry-run` with no blocker |
 | `1` | A phase failed, you declined the confirmation, the run was interrupted, or it timed out |
 | `3` | Blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking insight, the upgrade policy, or an unsupported target. Also with `--dry-run` |
-| `4` | The planner could not read something, such as the target's support status or an add-on's version catalog |
+| `4` | The planner could not read something, such as the target's support status or an add-on's version catalog. Also: the pre-roll gate could not read something and the run went past it (PodDisruptionBudgets with `--force`, a health check's read with `--yes`) |
 
 ### Examples
 

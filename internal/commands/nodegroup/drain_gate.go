@@ -13,6 +13,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -57,17 +58,24 @@ func readDrainBlockers(ctx context.Context, awsCfg aws.Config, eksClient *eks.Cl
 // allows no disruption is. With --force it warns on stderr about the
 // blockers it rolls past. verbose prints the kube notice, for a dry run
 // that has not printed it.
-func drainGate(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, cluster string, toRoll []string, flags updateAMIFlags, verbose bool) (blockers drainBlockers, checked bool) {
+//
+// unread is the failed PDB read, when there was one. With --force the run
+// goes on without the read, so the caller lists it in its failures (exit 4):
+// see forcedPast.
+func drainGate(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, cluster string, toRoll []string, flags updateAMIFlags, verbose bool) (blockers drainBlockers, checked bool, unread *diag.Failure) {
 	if flags.skipHealthCheck || len(toRoll) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	blockers, err := drainBlockersFn(ctx, awsCfg, eksClient, cluster, toRoll, flags, verbose)
 	switch {
 	case errors.Is(err, health.ErrNoKubeClient):
-		return nil, false
+		return nil, false, nil
 	case err != nil && ctx.Err() != nil:
-		return nil, false
+		return nil, false, nil
 	case err != nil:
+		f := diag.FromError(diag.KindCluster, cluster, "", fmt.Errorf("listing PodDisruptionBudgets before the roll: %w", err))
+		f.Region = awsCfg.Region
+		unread = &f
 		// Unchecked is not clear: refuse, as for a blocker, unless --force.
 		blockers = drainBlockers{}
 		for _, ng := range toRoll {
@@ -81,7 +89,17 @@ func drainGate(ctx context.Context, awsCfg aws.Config, eksClient *eks.Client, cl
 		}
 		render.Notef(ui.Stderr, render.Warn, "--force: %s %s despite these drain blockers: %s", verb, cluster, blockers.text(toRoll))
 	}
-	return blockers, true
+	return blockers, true, unread
+}
+
+// forcedPast returns the failures to add to a run that --force took past
+// PDBs that could not be read: unread itself. Without --force the gate
+// refused the run (exit 3), and the blocker text names the read.
+func forcedPast(unread *diag.Failure, force bool) []diag.Failure {
+	if unread == nil || !force {
+		return nil
+	}
+	return []diag.Failure{*unread}
 }
 
 // text names the blockers, nodegroup by nodegroup in order:

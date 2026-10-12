@@ -107,7 +107,8 @@ func TestUpdate_DrainGateWithoutKube(t *testing.T) {
 }
 
 // PDBs that cannot be read are not clear: the gate refuses (exit 3), as for
-// a blocker, and --force rolls past it with a warning.
+// a blocker, and --force rolls past it with a warning. The forced run still
+// lacks the read: the document lists it and the run exits 4.
 func TestUpdate_DrainGateReadErrorRefuses(t *testing.T) {
 	withDrainBlockers(t, nil, context.DeadlineExceeded)
 	srv := fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
@@ -121,9 +122,17 @@ func TestUpdate_DrainGateReadErrorRefuses(t *testing.T) {
 
 	withDrainBlockers(t, nil, context.DeadlineExceeded)
 	srv = fakeaws.New(t, prodCluster(&fakeaws.Nodegroup{Name: "web", Version: "1.31"}))
-	_, stderr, err = runNodegroup(t, "update", "prod", "web", "--yes", "--force", "--poll-interval", "5ms", "-o", "json")
-	if err != nil {
-		t.Fatalf("update --force: %v\nstderr:\n%s", err, stderr)
+	stdout, stderr, err := runNodegroup(t, "update", "prod", "web", "--yes", "--force", "--poll-interval", "5ms", "-o", "json")
+	if code := exitCodeOf(err); code != 4 {
+		t.Fatalf("update --force: exit code = %d (err %v), want 4\nstderr:\n%s", code, err, stderr)
+	}
+	doc := fakeaws.RequireOneDocument(t, "json", stdout).(map[string]any)
+	failureWant{kind: "Cluster", name: "prod", reason: "Timeout"}.check(t, "failures[0]", onlyFailure(t, doc))
+	if web := nodegroupEntries(t, doc)["web"]; web["status"] != "Succeeded" {
+		t.Errorf("web = %v, want Succeeded: the forced roll ran", web)
+	}
+	if !strings.Contains(stderr, "warning: cluster prod (us-east-1): ") {
+		t.Errorf("stderr does not report the failed read:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, "--force: rolling prod despite these drain blockers: web: the PodDisruptionBudgets could not be read") {
 		t.Errorf("stderr does not warn:\n%s", stderr)

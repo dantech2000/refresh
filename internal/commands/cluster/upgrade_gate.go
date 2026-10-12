@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/dantech2000/refresh/internal/aws/awserr"
 	"github.com/dantech2000/refresh/internal/commands/factory"
 	"github.com/dantech2000/refresh/internal/commands/runner"
+	"github.com/dantech2000/refresh/internal/diag"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/render"
 	"github.com/dantech2000/refresh/internal/ui"
@@ -36,6 +38,7 @@ type healthGateChecker interface {
 // as in `nodegroup update`.
 type nodegroupHealthGate struct {
 	cluster string
+	region  string
 	skip    bool // --skip-health-check
 	yes     bool
 	force   bool
@@ -55,6 +58,45 @@ type nodegroupHealthGate struct {
 	once    sync.Once
 	checker healthGateChecker
 	hasKube bool
+
+	// failures are the reads the gate could not make: PodDisruptionBudgets
+	// that --force rolled past, and what the health checks could not read.
+	// A roll can go on without them (--force, --yes), so the command lists
+	// them in its document and exits 4 after an otherwise successful run.
+	failures diag.List
+}
+
+// gateConnect builds the gate's checker and reports whether it has a
+// Kubernetes client. A seam for tests.
+var gateConnect = func(ctx context.Context, cmd *cli.Command, awsCfg aws.Config, clusterName string) (healthGateChecker, bool) {
+	kube, sel := runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
+		API:         factory.NewEKSClient(awsCfg),
+		Cluster:     clusterName,
+		Region:      awsCfg.Region,
+		Kubeconfig:  cmd.String("kubeconfig"),
+		KubeContext: cmd.String("kube-context"),
+		Verbose:     !cmd.Bool("quiet"),
+	})
+	var metrics health.NodeMetricsLister
+	if kube != nil {
+		if m, err := health.BuildMetricsClient(sel); err == nil {
+			metrics = m
+		}
+	}
+	return health.NewCheckerForConfig(awsCfg, kube, metrics), kube != nil
+}
+
+// addFailures records reads the gate could not make, each once, with the
+// region set.
+func (g *nodegroupHealthGate) addFailures(fs ...diag.Failure) {
+	for _, f := range fs {
+		if f.Region == "" {
+			f.Region = g.region
+		}
+		if !slices.Contains(g.failures, f) {
+			g.failures = append(g.failures, f)
+		}
+	}
 }
 
 // newNodegroupHealthGate builds the gate from the command's flags. Nothing
@@ -64,27 +106,14 @@ func newNodegroupHealthGate(cmd *cli.Command, awsCfg aws.Config, clusterName str
 	quiet := cmd.Bool("quiet")
 	return &nodegroupHealthGate{
 		cluster: clusterName,
+		region:  awsCfg.Region,
 		skip:    cmd.Bool("skip-health-check"),
 		yes:     cmd.Bool("yes"),
 		force:   cmd.Bool("force"),
 		quiet:   quiet,
 		warn:    ui.Stderr,
 		connect: func(ctx context.Context) (healthGateChecker, bool) {
-			kube, sel := runner.ResolveClusterKubeClient(ctx, runner.KubeRequest{
-				API:         factory.NewEKSClient(awsCfg),
-				Cluster:     clusterName,
-				Region:      awsCfg.Region,
-				Kubeconfig:  cmd.String("kubeconfig"),
-				KubeContext: cmd.String("kube-context"),
-				Verbose:     !quiet,
-			})
-			var metrics health.NodeMetricsLister
-			if kube != nil {
-				if m, err := health.BuildMetricsClient(sel); err == nil {
-					metrics = m
-				}
-			}
-			return health.NewCheckerForConfig(awsCfg, kube, metrics), kube != nil
+			return gateConnect(ctx, cmd, awsCfg, clusterName)
 		},
 	}
 }
@@ -116,6 +145,8 @@ func (g *nodegroupHealthGate) check(ctx context.Context, nodegroup string) error
 			// Unchecked is not clear: refuse, as for a blocker, unless
 			// --force. `nodegroup update` does the same (drainGate).
 			blockers = []string{"the PodDisruptionBudgets could not be read (" + awserr.Summary(err) + ")"}
+			// --force can roll past it, but the read is still missing.
+			g.addFailures(diag.FromError(diag.KindCluster, g.cluster, "", fmt.Errorf("listing PodDisruptionBudgets before the roll of nodegroup %s: %w", nodegroup, err)))
 		}
 		if len(blockers) > 0 {
 			if !g.force {
@@ -129,6 +160,7 @@ func (g *nodegroupHealthGate) check(ctx context.Context, nodegroup string) error
 	}
 
 	summary := g.checker.RunAllChecks(ctx, g.cluster)
+	g.addFailures(summary.Failures...)
 	switch summary.Decision {
 	case health.DecisionBlock:
 		return fmt.Errorf("pre-flight health checks failed before rolling nodegroup %s: %s (pass --skip-health-check to roll anyway, not recommended)",
