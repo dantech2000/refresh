@@ -276,7 +276,7 @@ func runUpgrade(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 
 	opts := executeOptions(cmd, healthGate)
-	opts.Confirm = func(label string) bool { return promptPhase(ctx, out, label) }
+	opts.Confirm = func(label string) bool { return promptPhase(ctx, label) }
 	opts.Progress = progress
 	opts.PhaseStart = phaseStart(out, cmd.Bool("quiet"))
 	healthGate.confirm, healthGate.progress = opts.Confirm, progress
@@ -474,10 +474,11 @@ func runUpgradeMachine(ctx context.Context, cmd *cli.Command, svc *upgrade.Servi
 	return runner.IncompleteExit(plan.Failures)
 }
 
-// promptPhase asks for confirmation before a mutating phase. Bare Enter, a
+// promptPhase asks on stderr for confirmation before a mutating phase, as
+// runner.ConfirmMutation writes its prompt ("[y/N]"). Bare Enter, a
 // read error, or Ctrl+C declines (safe default). Answers come from the shared
 // stdin reader, so piped input for several phases is not lost between prompts.
-func promptPhase(ctx context.Context, w io.Writer, label string) bool {
-	_, _ = fmt.Fprintf(w, "\nProceed with %s? (y/N): ", label)
+func promptPhase(ctx context.Context, label string) bool {
+	_, _ = fmt.Fprintf(ui.Stderr, "\nProceed with %s? [y/N]: ", label)
 	return ui.Confirm(ctx)
 }
