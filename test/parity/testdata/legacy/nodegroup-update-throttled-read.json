@@ -29,7 +29,7 @@
     "servicequotas:GetServiceQuota": 1,
     "ssm:GetParameter": 3
   },
-  "peakConcurrency": 3,
+  "peakConcurrency": 4,
   "world": {
     "version": "1.32",
     "status": "ACTIVE",

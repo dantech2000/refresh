@@ -18,7 +18,7 @@
     "cloudwatch:GetMetricData": 3,
     "eks:DescribeAddon": 4,
     "eks:DescribeAddonVersions": 4,
-    "eks:DescribeCluster": 3,
+    "eks:DescribeCluster": 4,
     "eks:DescribeClusterVersions": 2,
     "eks:DescribeNodegroup": 11,
     "eks:DescribeUpdate": 4,
@@ -29,7 +29,7 @@
     "eks:ListUpdates": 2,
     "servicequotas:GetServiceQuota": 1
   },
-  "peakConcurrency": 4,
+  "peakConcurrency": 3,
   "world": {
     "version": "1.33",
     "status": "ACTIVE",

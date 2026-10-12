@@ -14,7 +14,7 @@
     "eks:ListNodegroups": 4,
     "servicequotas:GetServiceQuota": 1
   },
-  "peakConcurrency": 4,
+  "peakConcurrency": 5,
   "world": {
     "version": "1.32",
     "status": "ACTIVE",
