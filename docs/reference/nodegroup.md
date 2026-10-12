@@ -129,7 +129,7 @@ PDB gate verdict, and the outcome.
   refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
   refresh nodegroup scale my-cluster -n ng-default --desired 1 --check-pdbs --force --yes
 
-Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
+Exit codes: 0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs, or a --health-check could not read something; 5 scaled, but the post-scaling health check found blocking issues. See https://drod.dev/refresh/concepts/exit-codes/
 
 #### Flags
 

@@ -26,7 +26,7 @@ var exitCodeHelp = map[string]string{
 	"nodegroup":          "",
 	"nodegroup list":     "0 ok; 1 error; 4 incomplete: a nodegroup could not be described",
 	"nodegroup describe": "0 ok; 1 error",
-	"nodegroup scale":    "0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs; 5 scaled, but the post-scaling health check found blocking issues",
+	"nodegroup scale":    "0 ok; 1 error, including a PDB check that could not run; 3 blocked by --check-pdbs, the pre-scaling health check, or an update EKS is already running on the cluster, nothing changed; 4 --force scaled without being able to check the PDBs, or a --health-check could not read something; 5 scaled, but the post-scaling health check found blocking issues",
 	"nodegroup update":   "",
 
 	"addon":            "",

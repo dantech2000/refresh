@@ -43,7 +43,7 @@ Rules that apply to every command:
 | [`cluster rollback`](../commands/cluster.md#rollback-exit-codes) | `0`, `1` error, failed phase, declined confirmation, interrupt, or timeout, `3` blocked (window, insights, upgrade policy), `4` the planner or a pre-roll gate could not read something |
 | `nodegroup list` | `0`, `1`, `4` a nodegroup could not be described |
 | `nodegroup describe` | `0`, `1` |
-| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs`, the pre-scaling health check, or a busy cluster, `4` `--force` scaled without being able to check the PDBs, `5` post-scaling health check failed |
+| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs`, the pre-scaling health check, or a busy cluster, `4` `--force` scaled without being able to check the PDBs, or a `--health-check` could not read something, `5` post-scaling health check failed |
 | [`nodegroup update`](#nodegroup-update) | `0`, `1`, `2`, `3`, `4`, `5` |
 | `addon list` | `0`, `1`, `4` an add-on could not be described |
 | `addon describe` | `0`, `1` |
@@ -158,7 +158,7 @@ or a timeout, `refresh` prints the command that resumes the upgrade, with the `-
 | `0` | The scaling request was accepted (and, with `--wait`, it settled) |
 | `1` | An error, including a `--check-pdbs` check that could not read the PDBs, a declined confirmation, or a missing `--yes` without a terminal |
 | `3` | Blocked: `--check-pdbs` refused a scale-down, the pre-scaling health check (`--health-check`) blocked it, or EKS was already changing the cluster. Nothing changed. A `--dry-run` with `--check-pdbs` exits `3` or `1` where the real run would |
-| `4` | With `--check-pdbs --force`: the PDBs could not be checked, and the scale went ahead without the check (a `--dry-run` exits `4` too) |
+| `4` | With `--check-pdbs --force`: the PDBs could not be checked, and the scale went ahead without the check (a `--dry-run` exits `4` too). With `--health-check`: a health check could not read something, such as the pods of a critical namespace. The scale went ahead, and the read is in `failures` |
 | `5` | The scale was applied, but the post-scaling health check found blocking issues |
 
 A PDB check that could not read what it needs is a

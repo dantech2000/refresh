@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,6 +45,13 @@ func staleFailedPod(pod corev1.Pod) bool {
 
 // CheckCriticalWorkloads validates that critical system workloads are running
 func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResult {
+	return hc.checkCriticalWorkloads(ctx, "")
+}
+
+// checkCriticalWorkloads is CheckCriticalWorkloads for clusterName. The
+// cluster name goes on the failure of each namespace whose pods could not be
+// listed.
+func (hc *HealthChecker) checkCriticalWorkloads(ctx context.Context, clusterName string) HealthResult {
 	result := HealthResult{
 		Name:       "Critical Workloads",
 		IsBlocking: true, // Critical workloads are blocking
@@ -65,11 +73,16 @@ func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResul
 	totalPods := 0
 	runningPods := 0
 	var problemPods []string
+	// unread are the namespaces whose pod list failed. Their pods are
+	// unknown, so the check cannot pass and cannot say "no pods".
+	var unread []string
 
 	for _, namespace := range criticalNamespaces {
 		pods, err := hc.k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			result.Details = append(result.Details, fmt.Sprintf("Failed to list pods in %s: %v", namespace, err))
+			result.failures = append(result.failures, clusterFailure(clusterName, "", fmt.Errorf("listing pods in %s: %w", namespace, err)))
+			unread = append(unread, namespace)
 			continue
 		}
 
@@ -122,6 +135,12 @@ func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResul
 	}
 
 	// Calculate score and status
+	if totalPods == 0 && len(unread) > 0 {
+		result.Status = StatusWarn
+		result.Score = 60
+		result.Message = fmt.Sprintf("Failed to list pods in %s", strings.Join(unread, ", "))
+		return result
+	}
 	if totalPods == 0 {
 		result.Status = StatusWarn
 		result.Score = 70
@@ -143,6 +162,18 @@ func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResul
 		result.Status = StatusFail
 		result.Message = fmt.Sprintf("%d/%d critical pods running, %d issues", runningPods, totalPods, len(problemPods))
 		result.Details = append(result.Details, fmt.Sprintf("Problem pods: %v", problemPods))
+	}
+
+	if len(unread) > 0 {
+		// The pods that were read say nothing about the unread namespaces: a
+		// pass becomes a warning, and a warning or failure stays as it is.
+		// The score is capped whatever the status, so a namespace with a
+		// problem pod cannot score higher than one where every pod is ready.
+		if result.Status == StatusPass {
+			result.Status = StatusWarn
+		}
+		result.Score = min(result.Score, 60)
+		result.Message += fmt.Sprintf("; failed to list pods in %s", strings.Join(unread, ", "))
 	}
 
 	return result

@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -211,6 +212,10 @@ func (r *scaleRun) rollingHint(changes []string) string {
 	return "If the roll waits for capacity, scale this nodegroup outside refresh (EKS allows it during a roll):\n  " + command
 }
 
+// scaleKubeClientFn resolves the Kubernetes client of a scale's health check
+// and PDB gate. A seam for tests.
+var scaleKubeClientFn = resolveHealthKubeClient
+
 // newScaleService builds the nodegroup service for a scale. Only the health
 // check and the PDB gate read the cluster API. --wait polls EKS alone, so it
 // needs no Kubernetes client (and no "checks will be skipped" note when the
@@ -222,7 +227,7 @@ func newScaleService(ctx context.Context, cmd *cli.Command, awsCfg aws.Config, e
 	}
 	// Wire a Kubernetes client so workload/PDB checks run against the right
 	// cluster (--kubeconfig), with an actionable diagnostic when unreachable.
-	k8sClient, _ := resolveHealthKubeClient(ctx, eksClient, awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), true)
+	k8sClient, _ := scaleKubeClientFn(ctx, eksClient, awsCfg.Region, clusterName, cmd.String("kubeconfig"), cmd.String("kube-context"), true)
 	return factory.NewNodegroupServiceWithHealth(awsCfg, k8sClient, logger)
 }
 
@@ -322,10 +327,24 @@ func (r *scaleRun) execute(ctx context.Context) error {
 	// stderr, so they don't interleave with the spinner line.
 	var healthWarnings scaleHealthWarnings
 	r.opts.OnHealthWarnings = healthWarnings.add
+	// The reads the health checks could not make are failures of the run
+	// (exit 4), also when the verdict only warned. The pre- and
+	// post-scaling checks often miss the same read: it is listed once.
+	var unread []diag.Failure
+	r.opts.OnHealthFailures = func(fs []diag.Failure) {
+		for _, f := range fs {
+			if !slices.Contains(unread, f) {
+				unread = append(unread, f)
+			}
+		}
+	}
 	err := runner.WithSpinner("nodegroup", "Scaling request submitted", func() error {
 		return r.svc.Scale(ctx, r.cluster, r.nodegroup, r.desired, r.minSize, r.maxSize, r.opts)
 	})
 	healthWarnings.print(ui.Stderr)
+	r.fs = append(r.fs, unread...)
+	r.doc.Failures = append(r.doc.Failures, unread...)
+	runner.WriteFailures(r.format, os.Stdout, ui.Stderr, unread)
 	switch {
 	case errors.Is(err, nodegroupsvc.ErrScaleHealthBlocked):
 		return r.finish(scaleBlocked, scaleExit(err))
