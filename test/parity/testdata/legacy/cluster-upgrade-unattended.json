@@ -1,0 +1,21 @@
+{
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "[X] Error: cluster upgrade -o json does not prompt before each phase; add --yes to execute, or --dry-run to print the plan only\n",
+  "mutations": [],
+  "reads": {},
+  "peakConcurrency": 0,
+  "world": {
+    "version": "1.32",
+    "status": "ACTIVE",
+    "nodegroups": {
+      "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3",
+      "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+    },
+    "addons": {
+      "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+      "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+    },
+    "updates": []
+  }
+}

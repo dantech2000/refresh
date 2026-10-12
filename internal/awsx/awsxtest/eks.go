@@ -300,23 +300,88 @@ func eksDescribeNodegroup(c *call) (any, error) {
 	})
 }
 
+// The four Update handlers model the fields refresh sends and no others. A
+// request with any other field fails, and the error names the field, so a
+// test that sends something new points at the fake and not at the product.
+// COVERAGE.md lists the modeled fields.
+
+// onlyFields returns an error if in has a key that is not in modeled.
+// where names the object for the message: an operation, or a nested member.
+func onlyFields(in input, where string, modeled ...string) error {
+	keys := make([]string, 0, len(in))
+	for key := range in {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		if !slices.Contains(modeled, key) {
+			return newError("InvalidParameterException", "awsxtest does not model field "+key+" of "+where)
+		}
+	}
+	return nil
+}
+
+// optional reads an optional member, keeping whether the request had it.
+func optional[T any](in input, key string) *T {
+	v, ok := in[key].(T)
+	if !ok {
+		return nil
+	}
+	return &v
+}
+
+// optionalInt32 reads an optional integer member.
+func optionalInt32(in input, key string) *int32 {
+	n, ok := in.num(key)
+	if !ok {
+		return nil
+	}
+	v := int32(n) //nolint:gosec // a size or a timeout from a test fits int32
+	return &v
+}
+
+// member returns a nested object member, and whether the request had it.
+func member(in input, key string) (input, bool) {
+	m, ok := in[key].(map[string]any)
+	return m, ok
+}
+
+// The modeled fields of each Update operation, path parameters included.
+var (
+	updateNodegroupVersionFields = []string{"clusterName", "nodegroupName", "version", "releaseVersion", "force", "clientRequestToken"}
+	updateNodegroupConfigFields  = []string{"clusterName", "nodegroupName", "scalingConfig", "clientRequestToken"}
+	scalingConfigFields          = []string{"desiredSize", "minSize", "maxSize"}
+	updateAddonFields            = []string{"clusterName", "addonName", "addonVersion", "configurationValues", "clientRequestToken"}
+	updateClusterVersionFields   = []string{"name", "version", "force", "rollbackConfig", "clientRequestToken"}
+	rollbackConfigFields         = []string{"timeoutMinutes"}
+)
+
 func eksUpdateNodegroupVersion(c *call) (any, error) {
+	if err := onlyFields(c.in, "UpdateNodegroupVersion", updateNodegroupVersionFields...); err != nil {
+		return nil, err
+	}
 	u, err := c.world.UpdateNodegroupVersion(c.region, c.clusterName(), c.in.str("nodegroupName"), fleettest.NodegroupVersionRequest{
-		Version:        c.in.str("version"),
-		ReleaseVersion: c.in.str("releaseVersion"),
-		Force:          c.in.flag("force"),
+		Version:        optional[string](c.in, "version"),
+		ReleaseVersion: optional[string](c.in, "releaseVersion"),
+		Force:          optional[bool](c.in, "force"),
 		Token:          c.in.str("clientRequestToken"),
 	})
 	return updateResult(u, err)
 }
 
 func eksUpdateNodegroupConfig(c *call) (any, error) {
+	if err := onlyFields(c.in, "UpdateNodegroupConfig", updateNodegroupConfigFields...); err != nil {
+		return nil, err
+	}
 	req := fleettest.NodegroupConfigRequest{Token: c.in.str("clientRequestToken")}
-	scaling := c.in.obj("scalingConfig")
-	for key, size := range map[string]**int32{"desiredSize": &req.Desired, "minSize": &req.Min, "maxSize": &req.Max} {
-		if n, ok := scaling.num(key); ok {
-			v := int32(n) //nolint:gosec // a nodegroup size from a test fits int32
-			*size = &v
+	if scaling, ok := member(c.in, "scalingConfig"); ok {
+		if err := onlyFields(scaling, "UpdateNodegroupConfig scalingConfig", scalingConfigFields...); err != nil {
+			return nil, err
+		}
+		req.Scaling = &fleettest.ScalingRequest{
+			Desired: optionalInt32(scaling, "desiredSize"),
+			Min:     optionalInt32(scaling, "minSize"),
+			Max:     optionalInt32(scaling, "maxSize"),
 		}
 	}
 	u, err := c.world.UpdateNodegroupConfig(c.region, c.clusterName(), c.in.str("nodegroupName"), req)
@@ -357,19 +422,31 @@ func eksDescribeAddon(c *call) (any, error) {
 }
 
 func eksUpdateAddon(c *call) (any, error) {
-	req := fleettest.AddonRequest{Version: c.in.str("addonVersion"), Token: c.in.str("clientRequestToken")}
-	if values, ok := c.in["configurationValues"].(string); ok {
-		req.ConfigurationValues = &values
+	if err := onlyFields(c.in, "UpdateAddon", updateAddonFields...); err != nil {
+		return nil, err
 	}
-	u, err := c.world.UpdateAddon(c.region, c.clusterName(), c.in.str("addonName"), req)
+	u, err := c.world.UpdateAddon(c.region, c.clusterName(), c.in.str("addonName"), fleettest.AddonRequest{
+		Version:             optional[string](c.in, "addonVersion"),
+		ConfigurationValues: optional[string](c.in, "configurationValues"),
+		Token:               c.in.str("clientRequestToken"),
+	})
 	return updateResult(u, err)
 }
 
 func eksUpdateClusterVersion(c *call) (any, error) {
-	req := fleettest.ClusterVersionRequest{Version: c.in.str("version"), Force: c.in.flag("force"), Token: c.in.str("clientRequestToken")}
-	if n, ok := c.in.obj("rollbackConfig").num("timeoutMinutes"); ok {
-		minutes := int32(n) //nolint:gosec // a rollback timeout from a test fits int32
-		req.RollbackTimeoutMinutes = &minutes
+	if err := onlyFields(c.in, "UpdateClusterVersion", updateClusterVersionFields...); err != nil {
+		return nil, err
+	}
+	req := fleettest.ClusterVersionRequest{
+		Version: optional[string](c.in, "version"),
+		Force:   optional[bool](c.in, "force"),
+		Token:   c.in.str("clientRequestToken"),
+	}
+	if rollback, ok := member(c.in, "rollbackConfig"); ok {
+		if err := onlyFields(rollback, "UpdateClusterVersion rollbackConfig", rollbackConfigFields...); err != nil {
+			return nil, err
+		}
+		req.Rollback = &fleettest.RollbackRequest{TimeoutMinutes: optionalInt32(rollback, "timeoutMinutes")}
 	}
 	u, err := c.world.UpdateClusterVersion(c.region, c.clusterName(), req)
 	return updateResult(u, err)

@@ -131,7 +131,7 @@ func TestFollowClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.Edit(func(s *fleettest.State) { s.DefaultUpdate = fleettest.UpdateScript{After: time.Minute} })
-	update, err := w.UpdateClusterVersion("us-east-1", clusterName(w), fleettest.ClusterVersionRequest{Version: "1.99"})
+	update, err := w.UpdateClusterVersion("us-east-1", clusterName(w), fleettest.ClusterVersionRequest{Version: new("1.99")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +171,23 @@ func TestFollowClock(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+// TestAdvanceDoesNotOverflow moves the clock by more than a time.Duration
+// holds, as a long gap between ticks at a high speed asks for.
+func TestAdvanceDoesNotOverflow(t *testing.T) {
+	w := fleettest.New()
+	start := w.Now()
+	// Twelve hours of wall time at the highest speed: 4.3e19 ns.
+	advance(w, float64(12*time.Hour)*maxSpeed)
+	got := w.Now().Sub(start) // saturates at the largest Duration
+	if !w.Now().After(start) || got != time.Duration(1<<63-1) {
+		t.Errorf("the clock moved from %s to %s, want forward by more than a Duration holds", start, w.Now())
+	}
+	years := w.Now().Year() - start.Year()
+	if years < 1360 || years > 1380 { // 4.32e19 ns is about 1369 years
+		t.Errorf("the clock moved %d years, want about 1369", years)
+	}
 }
 
 func clusterName(w *fleettest.World) string {

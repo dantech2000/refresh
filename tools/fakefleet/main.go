@@ -195,6 +195,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
+// advance moves the world's clock forward by a number of nanoseconds that
+// may be more than a time.Duration holds, as after a long gap between ticks
+// at a high speed. It moves in steps that fit.
+func advance(w *fleettest.World, nanoseconds float64) {
+	const step = float64(1 << 62)
+	for ; nanoseconds >= step; nanoseconds -= step {
+		w.Advance(time.Duration(1 << 62))
+	}
+	w.Advance(time.Duration(nanoseconds))
+}
+
 // followClock advances the world's clock by speed times the wall time that
 // passes between ticks, until ctx ends. Each tick carries the wall time it
 // fired at; start is the wall time the world's clock is in step with.
@@ -206,7 +217,7 @@ func followClock(ctx context.Context, w *fleettest.World, speed float64, start t
 			return
 		case now := <-ticks:
 			if elapsed := now.Sub(last); elapsed > 0 {
-				w.Advance(time.Duration(float64(elapsed) * speed))
+				advance(w, float64(elapsed)*speed)
 			}
 			last = now
 		}

@@ -1,0 +1,31 @@
+{
+  "exitCode": 1,
+  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupUpdate\",\n  \"cluster\": \"prod\",\n  \"nodegroups\": [],\n  \"health\": {\n    \"results\": [\n      {\n        \"name\": \"Node Health\",\n        \"status\": \"Pass\",\n        \"score\": 90,\n        \"message\": \"4/4 nodes ready (estimated)\",\n        \"details\": [\n          \"Nodegroup ng-a: ACTIVE\",\n          \"Nodegroup ng-b: ACTIVE\",\n          \"Node readiness estimated from nodegroup desired capacity (no Kubernetes API access)\"\n        ],\n        \"isBlocking\": true\n      },\n      {\n        \"name\": \"Cluster Capacity\",\n        \"status\": \"Warn\",\n        \"score\": 70,\n        \"message\": \"Unable to fetch CPU metrics: no CPU metrics available from EC2 instances\",\n        \"details\": [\n          \"EC2 CPU metrics unavailable - check EKS nodegroup status\"\n        ],\n        \"isBlocking\": true\n      },\n      {\n        \"name\": \"Node Utilization\",\n        \"status\": \"Pass\",\n        \"score\": 0,\n        \"message\": \"live utilization unavailable (no metrics client wired for this command)\",\n        \"isBlocking\": false,\n        \"skipped\": true\n      },\n      {\n        \"name\": \"Control Plane\",\n        \"status\": \"Pass\",\n        \"score\": 0,\n        \"message\": \"control-plane metrics unavailable (requires EKS 1.28+ on a supported platform version)\",\n        \"isBlocking\": false,\n        \"skipped\": true\n      },\n      {\n        \"name\": \"Service Quotas\",\n        \"status\": \"Pass\",\n        \"score\": 0,\n        \"message\": \"service-quota usage unavailable (AWS/Usage metric not reported)\",\n        \"isBlocking\": false,\n        \"skipped\": true\n      },\n      {\n        \"name\": \"Critical Workloads\",\n        \"status\": \"Pass\",\n        \"score\": 0,\n        \"message\": \"Kubernetes client not available, skipping workload check\",\n        \"details\": [\n          \"Install kubectl and configure cluster access to enable this check\"\n        ],\n        \"isBlocking\": false,\n        \"skipped\": true\n      },\n      {\n        \"name\": \"Pod Disruption Budgets\",\n        \"status\": \"Pass\",\n        \"score\": 0,\n        \"message\": \"Kubernetes client not available, skipping PDB check\",\n        \"details\": [\n          \"Install kubectl and configure cluster access to enable this check\"\n        ],\n        \"isBlocking\": false,\n        \"skipped\": true\n      },\n      {\n        \"name\": \"Resource Balance\",\n        \"status\": \"Warn\",\n        \"score\": 80,\n        \"message\": \"Unable to fetch detailed metrics: no CPU metrics available from EC2 instances\",\n        \"details\": [\n          \"Node-level EC2 metrics unavailable\"\n        ],\n        \"isBlocking\": false\n      }\n    ],\n    \"overallScore\": 80,\n    \"decision\": \"Warn\",\n    \"warnings\": [\n      \"Unable to fetch CPU metrics: no CPU metrics available from EC2 instances\",\n      \"Unable to fetch detailed metrics: no CPU metrics available from EC2 instances\"\n    ],\n    \"failures\": []\n  },\n  \"failures\": []\n}\n",
+  "stderr": "Warning: skipping Kubernetes checks: the resolved Kubernetes config does not point at EKS cluster prod (https://prod.eks.fake.invalid), and no other kubeconfig context does\n  To add a context for prod, run: aws eks update-kubeconfig --name prod --region us-east-1 (or pass --kube-context)\n  Workload/PDB checks will be skipped; node readiness falls back to an estimate.\n\n\u003e CLUSTER HEALTH ASSESSMENT\n\n  [##################--] Node Health             [OK] PASS\n  [##############------] Cluster Capacity        [!] WARN\n  [--------------------] Node Utilization        - SKIP\n  [--------------------] Control Plane           - SKIP\n  [--------------------] Service Quotas          - SKIP\n  [--------------------] Critical Workloads      - SKIP\n  [--------------------] Pod Disruption Budgets  - SKIP\n  [################----] Resource Balance        [!] WARN\n\nStatus: [!] READY WITH WARNINGS (2 issues found)\n\nWarnings:\n  [!] Unable to fetch CPU metrics: no CPU metrics available from EC2 instances\n  [!] Unable to fetch detailed metrics: no CPU metrics available from EC2 instances\n[X] Error: health checks reported warnings (Cluster Capacity: Unable to fetch CPU metrics: no CPU metrics available from EC2 instances; Resource Balance: Unable to fetch detailed metrics: no CPU metrics available from EC2 instances); re-run with --yes to proceed or --require-healthy to fail (-o json does not prompt)\n",
+  "mutations": [],
+  "reads": {
+    "autoscaling:DescribeAutoScalingGroups": 1,
+    "cloudwatch:GetMetricData": 3,
+    "eks:DescribeAddon": 2,
+    "eks:DescribeCluster": 2,
+    "eks:DescribeNodegroup": 6,
+    "eks:ListAddons": 1,
+    "eks:ListClusters": 1,
+    "eks:ListNodegroups": 4,
+    "servicequotas:GetServiceQuota": 1
+  },
+  "peakConcurrency": 5,
+  "world": {
+    "version": "1.32",
+    "status": "ACTIVE",
+    "nodegroups": {
+      "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3",
+      "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+    },
+    "addons": {
+      "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+      "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+    },
+    "updates": []
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "exitCode": 0,
+  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"AddonUpdate\",\n  \"addonName\": \"vpc-cni\",\n  \"previousVersion\": \"v1.18.0-eksbuild.1\",\n  \"newVersion\": \"v1.19.0-eksbuild.1\",\n  \"updateId\": \"00000000-0000-4000-8000-000000000001\",\n  \"status\": \"Started\",\n  \"startedAt\": \"\u003ctime\u003e\",\n  \"failures\": []\n}\n",
+  "stderr": "",
+  "mutations": [
+    {
+      "operation": "eks:UpdateAddon",
+      "region": "us-east-1",
+      "target": "prod/vpc-cni",
+      "payload": {
+        "addonVersion": "v1.19.0-eksbuild.1",
+        "clientRequestToken": "token-1"
+      }
+    }
+  ],
+  "reads": {
+    "eks:DescribeAddon": 3,
+    "eks:DescribeAddonVersions": 2,
+    "eks:DescribeCluster": 2,
+    "eks:DescribeNodegroup": 2,
+    "eks:ListAddons": 2,
+    "eks:ListClusters": 1,
+    "eks:ListNodegroups": 1
+  },
+  "peakConcurrency": 1,
+  "world": {
+    "version": "1.32",
+    "status": "ACTIVE",
+    "nodegroups": {
+      "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3",
+      "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+    },
+    "addons": {
+      "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+      "vpc-cni": "v1.19.0-eksbuild.1 ACTIVE"
+    },
+    "updates": [
+      "vpc-cni AddonUpdate Successful AddonVersion=v1.19.0-eksbuild.1"
+    ]
+  }
+}

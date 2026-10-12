@@ -1,0 +1,89 @@
+{
+  "exitCode": 1,
+  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"RollbackRun\",\n  \"plan\": {\n    \"clusterName\": \"prod\",\n    \"currentVersion\": \"1.33\",\n    \"targetVersion\": \"1.32\",\n    \"upgradedAt\": \"\u003ctime\u003e\",\n    \"availableUntil\": \"\u003ctime\u003e\",\n    \"steps\": [\n      {\n        \"type\": \"Readiness\",\n        \"description\": \"rollback eligibility\",\n        \"version\": \"1.32\",\n        \"status\": \"Pending\",\n        \"reason\": \"upgraded to 1.33 about \u003ctime\u003e; rollback available until about \u003ctime\u003e\"\n      },\n      {\n        \"type\": \"Readiness\",\n        \"description\": \"rollback readiness insights\",\n        \"version\": \"1.32\",\n        \"status\": \"Pending\",\n        \"reason\": \"none reported yet; EKS evaluates them when the rollback starts\"\n      },\n      {\n        \"type\": \"Nodegroup\",\n        \"description\": \"nodegroup ng-a 1.33 → 1.32\",\n        \"target\": \"ng-a\",\n        \"version\": \"1.32\",\n        \"status\": \"Pending\"\n      },\n      {\n        \"type\": \"Nodegroup\",\n        \"description\": \"nodegroup ng-b 1.33 → 1.32\",\n        \"target\": \"ng-b\",\n        \"version\": \"1.32\",\n        \"status\": \"Pending\"\n      },\n      {\n        \"type\": \"Addon\",\n        \"description\": \"addon vpc-cni v1.20.0-eksbuild.1 → v1.19.0-eksbuild.1 (newest compatible with 1.32)\",\n        \"target\": \"vpc-cni\",\n        \"version\": \"v1.19.0-eksbuild.1\",\n        \"status\": \"Pending\",\n        \"reason\": \"v1.20.0-eksbuild.1 is not compatible with 1.32\"\n      },\n      {\n        \"type\": \"Addon\",\n        \"description\": \"addon coredns v1.12.0-eksbuild.1 → v1.11.4-eksbuild.2 (newest compatible with 1.32)\",\n        \"target\": \"coredns\",\n        \"version\": \"v1.11.4-eksbuild.2\",\n        \"status\": \"Pending\",\n        \"reason\": \"v1.12.0-eksbuild.1 is not compatible with 1.32\"\n      },\n      {\n        \"type\": \"ControlPlane\",\n        \"description\": \"control plane rollback 1.33 → 1.32\",\n        \"version\": \"1.32\",\n        \"status\": \"Pending\"\n      }\n    ],\n    \"notices\": [\n      \"self-managed and hybrid nodes are not rolled back by EKS or refresh: move them to 1.32 yourself before the control plane rolls back. Fargate pods at 1.33 trigger the kubelet skew insight: delete them first, and they come back at 1.32\"\n    ],\n    \"failures\": []\n  },\n  \"report\": {\n    \"status\": \"Failed\",\n    \"completed\": [\n      \"nodegroup rollbacks to 1.32 (2 nodegroup(s))\",\n      \"addon downgrades for 1.32 (2 addon(s), dependency order)\"\n    ],\n    \"stoppedAt\": \"control plane rollback 1.33 → 1.32\",\n    \"remaining\": [],\n    \"failure\": {\n      \"kind\": \"Update\",\n      \"name\": \"prod\",\n      \"region\": \"us-east-1\",\n      \"reason\": \"UpdateFailed\",\n      \"retryable\": false,\n      \"error\": \"control plane rollback to 1.32 failed: instances failed to join the cluster\",\n      \"updateId\": \"00000000-0000-4000-8000-000000000005\"\n    }\n  },\n  \"failures\": [\n    {\n      \"kind\": \"Update\",\n      \"name\": \"prod\",\n      \"region\": \"us-east-1\",\n      \"reason\": \"UpdateFailed\",\n      \"retryable\": false,\n      \"error\": \"control plane rollback to 1.32 failed: instances failed to join the cluster\",\n      \"updateId\": \"00000000-0000-4000-8000-000000000005\"\n    }\n  ]\n}\n",
+  "stderr": "  \u003e nodegroup rollbacks to 1.32 (2 nodegroup(s))\nWarning: skipping Kubernetes checks: the resolved Kubernetes config does not point at EKS cluster prod (https://prod.eks.fake.invalid), and no other kubeconfig context does\n  To add a context for prod, run: aws eks update-kubeconfig --name prod --region us-east-1 (or pass --kube-context)\nWarning: no Kubernetes access to prod: PDB drain-blocker checks before nodegroup rolls are skipped.\n  pre-flight health checks for nodegroup ng-a\n  nodegroup ng-a roll to 1.32 started (update 00000000-0000-4000-8000-000000000001)\n  nodegroup ng-a is at 1.32\n  pre-flight health checks for nodegroup ng-b\n  nodegroup ng-b roll to 1.32 started (update 00000000-0000-4000-8000-000000000002)\n  nodegroup ng-b is at 1.32\n  \u003e addon downgrades for 1.32 (2 addon(s), dependency order)\n  addon vpc-cni: v1.20.0-eksbuild.1 → v1.19.0-eksbuild.1\n  addon vpc-cni is ACTIVE at v1.19.0-eksbuild.1\n  addon coredns: v1.12.0-eksbuild.1 → v1.11.4-eksbuild.2\n  addon coredns is ACTIVE at v1.11.4-eksbuild.2\n  \u003e control plane rollback 1.33 → 1.32\n  control plane rollback to 1.32 started (update 00000000-0000-4000-8000-000000000005); this typically takes ~10 minutes\nwarning: update prod (us-east-1): UpdateFailed: control plane rollback to 1.32 failed: instances failed to join the cluster\n[X] Error: control plane rollback 1.33 → 1.32 failed: control plane rollback to 1.32 failed: instances failed to join the cluster (resume with: refresh cluster rollback -c prod --yes)\n",
+  "mutations": [
+    {
+      "operation": "eks:UpdateNodegroupVersion",
+      "region": "us-east-1",
+      "target": "prod/ng-a",
+      "payload": {
+        "clientRequestToken": "token-1",
+        "version": "1.32"
+      }
+    },
+    {
+      "operation": "eks:UpdateNodegroupVersion",
+      "region": "us-east-1",
+      "target": "prod/ng-b",
+      "payload": {
+        "clientRequestToken": "token-2",
+        "version": "1.32"
+      }
+    },
+    {
+      "operation": "eks:UpdateAddon",
+      "region": "us-east-1",
+      "target": "prod/vpc-cni",
+      "payload": {
+        "addonVersion": "v1.19.0-eksbuild.1",
+        "clientRequestToken": "token-3"
+      }
+    },
+    {
+      "operation": "eks:UpdateAddon",
+      "region": "us-east-1",
+      "target": "prod/coredns",
+      "payload": {
+        "addonVersion": "v1.11.4-eksbuild.2",
+        "clientRequestToken": "token-4"
+      }
+    },
+    {
+      "operation": "eks:UpdateClusterVersion",
+      "region": "us-east-1",
+      "target": "prod",
+      "payload": {
+        "clientRequestToken": "token-5",
+        "version": "1.32"
+      }
+    }
+  ],
+  "reads": {
+    "autoscaling:DescribeAutoScalingGroups": 2,
+    "cloudwatch:GetMetricData": 6,
+    "eks:DescribeAddon": 16,
+    "eks:DescribeAddonVersions": 8,
+    "eks:DescribeCluster": 4,
+    "eks:DescribeClusterVersions": 2,
+    "eks:DescribeNodegroup": 18,
+    "eks:DescribeUpdate": 16,
+    "eks:ListAddons": 3,
+    "eks:ListClusters": 1,
+    "eks:ListInsights": 2,
+    "eks:ListNodegroups": 8,
+    "eks:ListUpdates": 2,
+    "servicequotas:GetServiceQuota": 2
+  },
+  "peakConcurrency": 3,
+  "world": {
+    "version": "1.33",
+    "status": "ACTIVE",
+    "nodegroups": {
+      "ng-a": "1.32 1.32.0-20260101 ACTIVE 2/1/3",
+      "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+    },
+    "addons": {
+      "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+      "vpc-cni": "v1.19.0-eksbuild.1 ACTIVE"
+    },
+    "updates": [
+      "cluster VersionUpdate Successful Version=1.33,PlatformVersion=eks.1",
+      "ng-a VersionUpdate Successful Version=1.32,ReleaseVersion=1.32.0-20260101",
+      "ng-b VersionUpdate Successful Version=1.32,ReleaseVersion=1.32.0-20260101",
+      "vpc-cni AddonUpdate Successful AddonVersion=v1.19.0-eksbuild.1",
+      "coredns AddonUpdate Successful AddonVersion=v1.11.4-eksbuild.2",
+      "cluster VersionRollback Failed Version=1.32"
+    ]
+  }
+}

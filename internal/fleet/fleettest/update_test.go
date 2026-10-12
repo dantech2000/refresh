@@ -67,7 +67,7 @@ func TestUpdateScripts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w := newWorld()
 			w.Edit(func(s *fleettest.State) { s.DefaultUpdate = tt.script })
-			started, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.32"})
+			started, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: new("1.32")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,7 +100,7 @@ func TestUpdateScriptsAreUsedInOrder(t *testing.T) {
 		s.Cluster(region, "prod").Addon("coredns").UpdateScripts = []fleettest.UpdateScript{{Result: fleettest.UpdateFailed}}
 	})
 	for i, want := range []fleettest.UpdateStatus{fleettest.UpdateFailed, fleettest.UpdateSuccessful} {
-		u, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+		u, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: new("v2")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,11 +122,11 @@ func TestUpdatesFinishInDueOrder(t *testing.T) {
 		c.UpdateScripts = []fleettest.UpdateScript{{After: 2 * time.Hour}}
 		c.Addons[0].UpdateScripts = []fleettest.UpdateScript{{After: time.Hour}}
 	})
-	control, err := w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: "1.33"})
+	control, err := w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: new("1.33")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	addon, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+	addon, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: new("v2")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestUpdateRequests(t *testing.T) {
 		{
 			name: "control plane upgrade",
 			start: func(w *fleettest.World) (fleettest.Update, error) {
-				return w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: "1.33", Token: token})
+				return w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: new("1.33"), Token: token})
 			},
 			wantType:  fleettest.TypeVersionUpdate,
 			state:     func(c *fleettest.Cluster) string { return c.Version },
@@ -172,21 +172,21 @@ func TestUpdateRequests(t *testing.T) {
 		{
 			name: "control plane rollback",
 			start: func(w *fleettest.World) (fleettest.Update, error) {
-				return w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: "1.31"})
+				return w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: new("1.31")})
 			},
 			wantType: fleettest.TypeVersionRollback,
 		},
 		{
 			name: "client request token of 32 characters",
 			start: func(w *fleettest.World) (fleettest.Update, error) {
-				return w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: "1.33", Token: token[:32]})
+				return w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: new("1.33"), Token: token[:32]})
 			},
 			wantErr: new(*fleettest.InvalidError),
 		},
 		{
 			name: "scaling keeps the sizes the request leaves out",
 			start: func(w *fleettest.World) (fleettest.Update, error) {
-				return w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &three})
+				return w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Scaling: &fleettest.ScalingRequest{Desired: &three}})
 			},
 			wantType: fleettest.TypeConfigUpdate,
 			state: func(c *fleettest.Cluster) string {
@@ -198,7 +198,7 @@ func TestUpdateRequests(t *testing.T) {
 		{
 			name: "roll with no version keeps the nodegroup's",
 			start: func(w *fleettest.World) (fleettest.Update, error) {
-				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{ReleaseVersion: "1.31.9-20260202"})
+				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{ReleaseVersion: new("1.31.9-20260202")})
 			},
 			wantType: fleettest.TypeVersionUpdate,
 			state: func(c *fleettest.Cluster) string {
@@ -260,7 +260,7 @@ func TestUpdateTokenAndBusy(t *testing.T) {
 	w := newWorld()
 	w.Edit(func(s *fleettest.State) { s.DefaultUpdate = fleettest.UpdateScript{After: time.Hour} })
 	roll := func(tok string) (fleettest.Update, error) {
-		return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.32", Token: tok})
+		return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: new("1.32"), Token: tok})
 	}
 
 	first, err := roll(token)
@@ -276,7 +276,7 @@ func TestUpdateTokenAndBusy(t *testing.T) {
 		t.Errorf("a second roll returned %v, want an InUseError for %s", err, first.ID)
 	}
 	// Another resource of the cluster is free.
-	if _, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2", Token: token}); err != nil {
+	if _, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: new("v2"), Token: token}); err != nil {
 		t.Errorf("an add-on update during the roll: %v", err)
 	}
 
@@ -300,29 +300,29 @@ func TestUpdateTokenScope(t *testing.T) {
 	})
 	three, four := int32(3), int32(4)
 
-	version, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.32", Token: token})
+	version, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: new("1.32"), Token: token})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The same token on another operation of the same nodegroup, and on the
 	// same operation of another nodegroup, starts new updates.
-	config, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &three, Token: token})
+	config, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Scaling: &fleettest.ScalingRequest{Desired: &three}, Token: token})
 	if err != nil || config.ID == version.ID || config.Type != fleettest.TypeConfigUpdate {
 		t.Errorf("a config update with the token of a version update returned %+v, %v", config, err)
 	}
-	other, err := w.UpdateNodegroupVersion(region, "prod", "ng-b", fleettest.NodegroupVersionRequest{Version: "1.32", Token: token})
+	other, err := w.UpdateNodegroupVersion(region, "prod", "ng-b", fleettest.NodegroupVersionRequest{Version: new("1.32"), Token: token})
 	if err != nil || other.ID == version.ID {
 		t.Errorf("a roll of ng-b with the token of ng-a's roll returned %+v, %v", other, err)
 	}
 
 	var invalid *fleettest.InvalidError
-	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.33", Token: token}); !errors.As(err, &invalid) {
+	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: new("1.33"), Token: token}); !errors.As(err, &invalid) {
 		t.Errorf("the token with another version returned %v, want an InvalidError", err)
 	}
-	if _, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &four, Token: token}); !errors.As(err, &invalid) {
+	if _, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Scaling: &fleettest.ScalingRequest{Desired: &four}, Token: token}); !errors.As(err, &invalid) {
 		t.Errorf("the token with another size returned %v, want an InvalidError", err)
 	}
-	if again, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &three, Token: token}); err != nil || again.ID != config.ID {
+	if again, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Scaling: &fleettest.ScalingRequest{Desired: &three}, Token: token}); err != nil || again.ID != config.ID {
 		t.Errorf("the same config call again returned %+v, %v; want update %s", again, err, config.ID)
 	}
 	w.View(func(s *fleettest.State) {
@@ -350,10 +350,10 @@ func TestUpdateReplayIgnoresLaterState(t *testing.T) {
 				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Token: token})
 			},
 			change: func() (fleettest.Update, error) {
-				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.32"})
+				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: new("1.32")})
 			},
 			other: func() (fleettest.Update, error) {
-				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: "1.31", Token: token})
+				return w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: new("1.31"), Token: token})
 			},
 		},
 		{
@@ -362,7 +362,7 @@ func TestUpdateReplayIgnoresLaterState(t *testing.T) {
 				return w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Token: token})
 			},
 			change: func() (fleettest.Update, error) {
-				return w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+				return w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: new("v2")})
 			},
 			other: func() (fleettest.Update, error) {
 				return w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{ConfigurationValues: &values, Token: token})
@@ -395,6 +395,122 @@ func TestUpdateReplayIgnoresLaterState(t *testing.T) {
 	}
 }
 
+// TestUpdateTokenKeepsPresence checks that a field that was left out and
+// one that was sent empty are different requests under one token, for every
+// optional field of the four operations.
+func TestUpdateTokenKeepsPresence(t *testing.T) {
+	no := false
+	zero := int32(0)
+	tests := []struct {
+		name string
+		// call sends the request, with the field left out or sent empty.
+		call func(w *fleettest.World, empty bool) error
+	}{
+		{"nodegroup version", func(w *fleettest.World, empty bool) error {
+			req := fleettest.NodegroupVersionRequest{Token: token}
+			if empty {
+				req.Version = new("")
+			}
+			_, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", req)
+			return err
+		}},
+		{"nodegroup release version", func(w *fleettest.World, empty bool) error {
+			req := fleettest.NodegroupVersionRequest{Token: token}
+			if empty {
+				req.ReleaseVersion = new("")
+			}
+			_, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", req)
+			return err
+		}},
+		{"nodegroup force", func(w *fleettest.World, empty bool) error {
+			req := fleettest.NodegroupVersionRequest{Token: token}
+			if empty {
+				req.Force = &no
+			}
+			_, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", req)
+			return err
+		}},
+		{"scaling config", func(w *fleettest.World, empty bool) error {
+			req := fleettest.NodegroupConfigRequest{Token: token}
+			if empty {
+				req.Scaling = &fleettest.ScalingRequest{}
+			}
+			_, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", req)
+			return err
+		}},
+		{"desired size", func(w *fleettest.World, empty bool) error {
+			req := fleettest.NodegroupConfigRequest{Token: token, Scaling: &fleettest.ScalingRequest{}}
+			if empty {
+				req.Scaling.Desired = &zero
+			}
+			_, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", req)
+			return err
+		}},
+		{"add-on version", func(w *fleettest.World, empty bool) error {
+			req := fleettest.AddonRequest{Token: token}
+			if empty {
+				req.Version = new("")
+			}
+			_, err := w.UpdateAddon(region, "prod", "coredns", req)
+			return err
+		}},
+		{"add-on configuration", func(w *fleettest.World, empty bool) error {
+			req := fleettest.AddonRequest{Token: token}
+			if empty {
+				req.ConfigurationValues = new("")
+			}
+			_, err := w.UpdateAddon(region, "prod", "coredns", req)
+			return err
+		}},
+		{"cluster force", func(w *fleettest.World, empty bool) error {
+			req := fleettest.ClusterVersionRequest{Version: new("1.33"), Token: token}
+			if empty {
+				req.Force = &no
+			}
+			_, err := w.UpdateClusterVersion(region, "prod", req)
+			return err
+		}},
+		{"rollback config", func(w *fleettest.World, empty bool) error {
+			req := fleettest.ClusterVersionRequest{Version: new("1.33"), Token: token}
+			if empty {
+				req.Rollback = &fleettest.RollbackRequest{}
+			}
+			_, err := w.UpdateClusterVersion(region, "prod", req)
+			return err
+		}},
+		{"rollback timeout", func(w *fleettest.World, empty bool) error {
+			req := fleettest.ClusterVersionRequest{Version: new("1.33"), Token: token, Rollback: &fleettest.RollbackRequest{}}
+			if empty {
+				req.Rollback.TimeoutMinutes = &zero
+			}
+			_, err := w.UpdateClusterVersion(region, "prod", req)
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		for _, firstEmpty := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/first sent empty=%t", tt.name, firstEmpty), func(t *testing.T) {
+				w := newWorld()
+				if err := tt.call(w, firstEmpty); err != nil {
+					t.Fatal(err)
+				}
+				if err := tt.call(w, firstEmpty); err != nil {
+					t.Errorf("the same request again: %v", err)
+				}
+				var invalid *fleettest.InvalidError
+				if err := tt.call(w, !firstEmpty); !errors.As(err, &invalid) {
+					t.Errorf("the other form under the same token returned %v, want an InvalidError", err)
+				}
+			})
+		}
+	}
+
+	var invalid *fleettest.InvalidError
+	if _, err := newWorld().UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{}); !errors.As(err, &invalid) {
+		t.Errorf("a cluster update with no version returned %v, want an InvalidError", err)
+	}
+}
+
 // TestUpdateSharesNoMemory changes everything a caller still holds after it
 // starts an update, and after the update ends. The world must not see it.
 func TestUpdateSharesNoMemory(t *testing.T) {
@@ -410,11 +526,11 @@ func TestUpdateSharesNoMemory(t *testing.T) {
 	})
 
 	desired := int32(5)
-	scale, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Desired: &desired})
+	scale, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Scaling: &fleettest.ScalingRequest{Desired: &desired}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	addon, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+	addon, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: new("v2")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +598,7 @@ func TestUpdateScriptSetsResource(t *testing.T) {
 			})
 			created := w.Now()
 			w.Advance(time.Minute)
-			if _, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"}); err != nil {
+			if _, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: new("v2")}); err != nil {
 				t.Fatal(err)
 			}
 			w.View(func(s *fleettest.State) {
@@ -539,7 +655,7 @@ func TestConcurrentUse(t *testing.T) {
 	for i := range 8 {
 		wg.Go(func() {
 			for range 50 {
-				_, _ = w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: "v2"})
+				_, _ = w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: new("v2")})
 				_, _ = w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{})
 				_, _ = w.Enter(ctx, fleettest.Call{Operation: fleettest.EKSListClusters})
 				w.Advance(time.Second)

@@ -73,6 +73,13 @@ type Handler struct {
 	// clock and count requests.
 	Latency  func(Request) time.Duration
 	Throttle func(Request) bool
+	// OnRequest, when set, is called for each request after it is logged
+	// and before a fault or the operation sees it. The request waits until
+	// OnRequest returns. ctx ends when the client gives up on the request or
+	// the handler closes. A harness uses it as a handshake: to advance the
+	// world's clock when a poll arrives, or to act on the Nth request of an
+	// operation. Set it before the first request.
+	OnRequest func(ctx context.Context, r Request)
 
 	world  *fleettest.World
 	ctx    context.Context
@@ -218,6 +225,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	defer context.AfterFunc(h.ctx, cancel)()
 
+	if h.OnRequest != nil {
+		h.OnRequest(ctx, req.clone())
+		if ctx.Err() != nil {
+			panic(http.ErrAbortHandler) // the client left during the hook
+		}
+	}
 	if !h.hooks(ctx, w, svc, req) {
 		return
 	}

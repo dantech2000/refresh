@@ -122,15 +122,20 @@ func cloneIssues(issues []Issue) []Issue {
 	return out
 }
 
+// The request types below keep, for every optional field, whether the
+// request had it: a nil pointer is a field that was left out. A field that
+// is set to its empty value resolves like one that was left out, but it is
+// another request as far as a client request token goes.
+
 // ClusterVersionRequest is the input of World.UpdateClusterVersion.
 type ClusterVersionRequest struct {
-	Version string
+	// Version is the target Kubernetes version. EKS requires it.
+	Version *string
 	// Force is the request's force flag, which a rollback sets to skip the
 	// insights check.
-	Force bool
-	// RollbackTimeoutMinutes is rollbackConfig.timeoutMinutes, or nil when
-	// the request has no rollback config.
-	RollbackTimeoutMinutes *int32
+	Force *bool
+	// Rollback is the request's rollbackConfig.
+	Rollback *RollbackRequest
 	// Token is the client request token. A second request for the same
 	// operation and resource with the token of an earlier one returns that
 	// update and starts nothing, whatever happened to the resource since.
@@ -140,31 +145,42 @@ type ClusterVersionRequest struct {
 	Token string
 }
 
+// RollbackRequest is the rollbackConfig of an UpdateClusterVersion request.
+type RollbackRequest struct {
+	TimeoutMinutes *int32
+}
+
 // NodegroupVersionRequest is the input of World.UpdateNodegroupVersion.
 type NodegroupVersionRequest struct {
-	// Version is the target Kubernetes version. "" keeps the nodegroup's.
-	Version string
-	// ReleaseVersion is the target AMI release. "" means LatestRelease.
-	ReleaseVersion string
+	// Version is the target Kubernetes version. Nil keeps the nodegroup's.
+	Version *string
+	// ReleaseVersion is the target AMI release. Nil means LatestRelease.
+	ReleaseVersion *string
 	// Force is the request's force flag: roll even when a pod disruption
 	// budget blocks a drain.
-	Force bool
+	Force *bool
 	// Token is the client request token. See ClusterVersionRequest.
 	Token string
 }
 
-// NodegroupConfigRequest is the input of World.UpdateNodegroupConfig. A nil
-// size keeps the current one.
+// NodegroupConfigRequest is the input of World.UpdateNodegroupConfig.
 type NodegroupConfigRequest struct {
-	Desired, Min, Max *int32
+	// Scaling is the request's scalingConfig.
+	Scaling *ScalingRequest
 	// Token is the client request token. See ClusterVersionRequest.
 	Token string
+}
+
+// ScalingRequest is the scalingConfig of an UpdateNodegroupConfig request.
+// A nil size keeps the current one.
+type ScalingRequest struct {
+	Desired, Min, Max *int32
 }
 
 // AddonRequest is the input of World.UpdateAddon.
 type AddonRequest struct {
-	// Version is the target add-on version. "" keeps the add-on's.
-	Version string
+	// Version is the target add-on version. Nil keeps the add-on's.
+	Version *string
 	// ConfigurationValues, when not nil, replace the add-on's configuration.
 	ConfigurationValues *string
 	// Token is the client request token. See ClusterVersionRequest.
@@ -178,6 +194,15 @@ func sent[T any](p *T) string {
 		return "unset"
 	}
 	return fmt.Sprintf("%q", fmt.Sprint(*p))
+}
+
+// value returns what an optional request field holds, or the zero value.
+func value[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
 }
 
 // target is the resource an update changes.
@@ -207,23 +232,30 @@ func (w *World) UpdateClusterVersion(region, cluster string, req ClusterVersionR
 	if n := len(req.Token); req.Token != "" && (n < 33 || n > 126) {
 		return Update{}, &InvalidError{Message: "The client request token parameter must be between 33 and 126 characters."}
 	}
-	request := fmt.Sprintf("version=%q force=%t rollbackTimeout=%s", req.Version, req.Force, sent(req.RollbackTimeoutMinutes))
+	if req.Version == nil {
+		return Update{}, &InvalidError{Message: "The version parameter is required."}
+	}
+	rollback := "unset"
+	if req.Rollback != nil {
+		rollback = "{timeoutMinutes=" + sent(req.Rollback.TimeoutMinutes) + "}"
+	}
+	request := fmt.Sprintf("version=%s force=%s rollbackConfig=%s", sent(req.Version), sent(req.Force), rollback)
 	if u, ok, err := replay(c, EKSUpdateClusterVersion, "", "", req.Token, request); ok {
 		return u, err
 	}
 	kind := TypeVersionUpdate
-	if _, to, ok := parseVersion(req.Version); ok {
+	version := *req.Version
+	if _, to, ok := parseVersion(version); ok {
 		if _, from, ok := parseVersion(c.Version); ok && to < from {
 			kind = TypeVersionRollback
 		}
 	}
-	version := req.Version
 	u := &Update{
-		Type: kind, op: EKSUpdateClusterVersion, token: req.Token, request: request, Force: req.Force,
+		Type: kind, op: EKSUpdateClusterVersion, token: req.Token, request: request, Force: value(req.Force),
 		Params: []UpdateParam{{Type: "Version", Value: version}},
 	}
-	if req.RollbackTimeoutMinutes != nil {
-		u.RollbackTimeoutMinutes = *req.RollbackTimeoutMinutes
+	if req.Rollback != nil {
+		u.RollbackTimeoutMinutes = value(req.Rollback.TimeoutMinutes)
 	}
 	t := target{name: c.Name, status: &c.Status, issues: &c.HealthIssues, scripts: &c.UpdateScripts}
 	return w.start(c, u, t, func() { c.Version = version })
@@ -238,14 +270,14 @@ func (w *World) UpdateNodegroupVersion(region, cluster, nodegroup string, req No
 	if err != nil {
 		return Update{}, err
 	}
-	request := fmt.Sprintf("version=%q release=%q force=%t", req.Version, req.ReleaseVersion, req.Force)
+	request := fmt.Sprintf("version=%s releaseVersion=%s force=%s", sent(req.Version), sent(req.ReleaseVersion), sent(req.Force))
 	if u, ok, err := replay(c, EKSUpdateNodegroupVersion, ng.Name, "", req.Token, request); ok {
 		return u, err
 	}
-	version := cmp.Or(req.Version, ng.Version)
-	release := cmp.Or(req.ReleaseVersion, LatestRelease(version))
+	version := cmp.Or(value(req.Version), ng.Version)
+	release := cmp.Or(value(req.ReleaseVersion), LatestRelease(version))
 	u := &Update{
-		Type: TypeVersionUpdate, Nodegroup: ng.Name, op: EKSUpdateNodegroupVersion, token: req.Token, request: request, Force: req.Force,
+		Type: TypeVersionUpdate, Nodegroup: ng.Name, op: EKSUpdateNodegroupVersion, token: req.Token, request: request, Force: value(req.Force),
 		Params: []UpdateParam{{Type: "Version", Value: version}, {Type: "ReleaseVersion", Value: release}},
 	}
 	return w.start(c, u, ng.target(), func() { ng.Version, ng.ReleaseVersion = version, release })
@@ -260,7 +292,11 @@ func (w *World) UpdateNodegroupConfig(region, cluster, nodegroup string, req Nod
 	if err != nil {
 		return Update{}, err
 	}
-	request := fmt.Sprintf("desired=%s min=%s max=%s", sent(req.Desired), sent(req.Min), sent(req.Max))
+	request, scaling := "scalingConfig=unset", ScalingRequest{}
+	if req.Scaling != nil {
+		scaling = *req.Scaling
+		request = fmt.Sprintf("scalingConfig={desiredSize=%s minSize=%s maxSize=%s}", sent(scaling.Desired), sent(scaling.Min), sent(scaling.Max))
+	}
 	if u, ok, err := replay(c, EKSUpdateNodegroupConfig, ng.Name, "", req.Token, request); ok {
 		return u, err
 	}
@@ -275,7 +311,7 @@ func (w *World) UpdateNodegroupConfig(region, cluster, nodegroup string, req Nod
 		name  string
 		field *int32
 		to    *int32
-	}{{"DesiredSize", &ng.Desired, req.Desired}, {"MinSize", &ng.Min, req.Min}, {"MaxSize", &ng.Max, req.Max}} {
+	}{{"DesiredSize", &ng.Desired, scaling.Desired}, {"MinSize", &ng.Min, scaling.Min}, {"MaxSize", &ng.Max, scaling.Max}} {
 		if s.to != nil {
 			sizes = append(sizes, size{s.name, s.field, *s.to})
 		}
@@ -304,11 +340,11 @@ func (w *World) UpdateAddon(region, cluster, addon string, req AddonRequest) (Up
 	if a == nil {
 		return Update{}, &NotFoundError{Kind: "addon", Name: addon}
 	}
-	request := fmt.Sprintf("version=%q configuration=%s", req.Version, sent(req.ConfigurationValues))
+	request := fmt.Sprintf("addonVersion=%s configurationValues=%s", sent(req.Version), sent(req.ConfigurationValues))
 	if u, ok, err := replay(c, EKSUpdateAddon, "", a.Name, req.Token, request); ok {
 		return u, err
 	}
-	version := cmp.Or(req.Version, a.Version)
+	version := cmp.Or(value(req.Version), a.Version)
 	u := &Update{
 		Type: TypeAddonUpdate, Addon: a.Name, op: EKSUpdateAddon, token: req.Token, request: request,
 		Params: []UpdateParam{{Type: "AddonVersion", Value: version}},

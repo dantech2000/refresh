@@ -19,6 +19,20 @@ error envelopes, the HTTP status of injected error codes, modeled not-found and
 bad-token errors, scoped faults, a lost response after a mutation, peak concurrency,
 and the request log's inputs.
 
+## Modeled Update fields
+
+The four Update operations model the fields the legacy product sends, listed here. A
+request with any other field fails with `InvalidParameterException` and the message
+"awsxtest does not model field X of Y" (`TestUnmodeledUpdateFields`). Every modeled
+field, and whether the request had it, is part of what a client request token must match.
+
+| Operation | Modeled fields | What the world does with them |
+|---|---|---|
+| `eks:UpdateClusterVersion` | `version`, `force`, `rollbackConfig.timeoutMinutes`, `clientRequestToken` | Sets the version on success. Records `force` and the timeout on the update. |
+| `eks:UpdateNodegroupVersion` | `version`, `releaseVersion`, `force`, `clientRequestToken` | Sets the version and the release on success. Records `force` on the update. |
+| `eks:UpdateNodegroupConfig` | `scalingConfig.desiredSize`, `.minSize`, `.maxSize`, `clientRequestToken` | Sets the sizes that are present on success. |
+| `eks:UpdateAddon` | `addonVersion`, `configurationValues`, `clientRequestToken` | Sets the version, and the configuration when present, on success. |
+
 ## Not verified against real AWS
 
 The tests prove that the SDK decodes what the fake sends. They do not prove that AWS

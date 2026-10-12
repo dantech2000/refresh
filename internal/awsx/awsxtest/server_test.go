@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -539,6 +540,66 @@ func TestScopedFaults(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("got %q (%v), want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+// TestUnmodeledUpdateFields proves that an Update request with a field the
+// world does not model fails with an error that names the field, so nothing
+// the product starts to send is dropped in silence.
+func TestUnmodeledUpdateFields(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		field string
+		call  func(c *clients) error
+	}{
+		{"launchTemplate of UpdateNodegroupVersion", func(c *clients) error {
+			_, err := c.eks.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
+				ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a"),
+				LaunchTemplate: &ekstypes.LaunchTemplateSpecification{Id: aws.String("lt-1"), Version: aws.String("3")},
+			})
+			return err
+		}},
+		{"labels of UpdateNodegroupConfig", func(c *clients) error {
+			_, err := c.eks.UpdateNodegroupConfig(ctx, &eks.UpdateNodegroupConfigInput{
+				ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a"),
+				Labels: &ekstypes.UpdateLabelsPayload{AddOrUpdateLabels: map[string]string{"a": "b"}},
+			})
+			return err
+		}},
+		{"updateConfig of UpdateNodegroupConfig", func(c *clients) error {
+			_, err := c.eks.UpdateNodegroupConfig(ctx, &eks.UpdateNodegroupConfigInput{
+				ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a"),
+				UpdateConfig: &ekstypes.NodegroupUpdateConfig{MaxUnavailable: aws.Int32(1)},
+			})
+			return err
+		}},
+		{"resolveConflicts of UpdateAddon", func(c *clients) error {
+			_, err := c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{
+				ClusterName: aws.String("prod"), AddonName: aws.String("vpc-cni"), ResolveConflicts: ekstypes.ResolveConflictsOverwrite,
+			})
+			return err
+		}},
+		{"serviceAccountRoleArn of UpdateAddon", func(c *clients) error {
+			_, err := c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{
+				ClusterName: aws.String("prod"), AddonName: aws.String("vpc-cni"), ServiceAccountRoleArn: aws.String("arn:aws:iam::123456789012:role/r"),
+			})
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			f := newFixture(t)
+			err := tt.call(f.once)
+			checkError(t, err, wireError{"InvalidParameterException", is[*ekstypes.InvalidParameterException]})
+			if want := "awsxtest does not model field " + tt.field; err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %v, want it to say %q", err, want)
+			}
+			var updates int
+			f.world.View(func(s *fleettest.State) { updates = len(s.Cluster(region, "prod").Updates) })
+			if updates != 2 { // the two seeded ones
+				t.Errorf("the refused request started an update: the cluster has %d", updates)
 			}
 		})
 	}
