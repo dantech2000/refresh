@@ -839,39 +839,57 @@ func healthProblemsOf(summary *health.HealthSummary) string {
 	return healthProblems(*summary)
 }
 
-// fleetExit returns the worst (highest) exit code across the run:
+// fleetExitPrecedence lists the exit codes a fleet run can end with, from the
+// one that wins to the one that loses. A run with several results exits with
+// the first code in this list that any result has. The order is by what the
+// user must act on first, not by the size of the number.
+var fleetExitPrecedence = []int{
+	// A roll finished and verification found issues: a cluster changed and
+	// may be unhealthy.
+	runner.ExitVerifyFailed,
+	// An update failed or data could not be read: a cluster may be partly
+	// changed, or the result is not known.
+	runner.ExitIncomplete,
+	// A gate stopped a cluster. Nothing changed there.
+	runner.ExitBlocked,
+	// Health warnings stopped a cluster. Nothing changed there.
+	runner.ExitNeedsAttention,
+	// The run was interrupted, timed out, or did not reach a cluster.
+	runner.ExitError,
+}
+
+// fleetExit returns the exit code for the run: the first code in
+// fleetExitPrecedence that a result has, else 0. The codes are
 // 5 verification, 4 a failed or incomplete cluster or a region that
-// discovery could not list, 3 health-blocked or busy, 2 health warnings that stopped
-// a cluster (--health-only or --require-healthy), 1 interrupted, timed out,
-// or not started (as in the single-cluster updateExit), else 0.
+// discovery could not list, 3 health-blocked, drain-blocked, or busy,
+// 2 health warnings that stopped a cluster (--health-only or
+// --require-healthy), 1 interrupted, timed out, or not started (as in the
+// single-cluster updateExit).
 func fleetExit(results []clusterUpdateResult, failedRegions []diag.Failure) error {
-	worst := 0
-	bump := func(code int) {
-		if code > worst {
-			worst = code
-		}
-	}
+	seen := map[int]bool{}
 	if len(failedRegions) > 0 {
-		bump(runner.ExitIncomplete)
+		seen[runner.ExitIncomplete] = true
 	}
 	for _, r := range results {
 		switch r.Status {
 		case clusterFailed, clusterIncomplete:
-			bump(runner.ExitIncomplete)
+			seen[runner.ExitIncomplete] = true
 		case clusterHealthBlocked, clusterBusy, clusterDrainBlocked:
-			bump(runner.ExitBlocked)
+			seen[runner.ExitBlocked] = true
 		case clusterHealthWarned:
-			bump(runner.ExitNeedsAttention)
+			seen[runner.ExitNeedsAttention] = true
 		case clusterInterrupted, clusterTimedOut, clusterNotAttempted:
-			bump(runner.ExitError)
+			seen[runner.ExitError] = true
 		case clusterVerifyFailed:
-			bump(runner.ExitVerifyFailed)
+			seen[runner.ExitVerifyFailed] = true
 		}
 	}
-	if worst == 0 {
-		return nil
+	for _, code := range fleetExitPrecedence {
+		if seen[code] {
+			return cli.Exit(fmt.Sprintf("fleet update finished with issues (worst exit code %d)", code), code)
+		}
 	}
-	return cli.Exit(fmt.Sprintf("fleet update finished with issues (worst exit code %d)", worst), worst)
+	return nil
 }
 
 // promptYesNo asks a yes/no question on stderr; defaults to no.
