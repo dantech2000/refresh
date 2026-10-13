@@ -1,7 +1,7 @@
 CLUSTERS  4
 
 CLUSTER                                     REGION     STATUS        VERSION  HEALTH
-dev                                         us-east-1  [OK] ACTIVE   1.9      [OK] Pass
+dev                                         us-east-1  [OK] ACTIVE   1.9      Skipped
 prod-payments                               us-east-1  [OK] ACTIVE   1.33     [X] Fail
-prod-search                                 us-east-1  [~] UPDATING  1.31     [OK] Pass
-staging-data-platform-shared-services-blue  us-east-1  [OK] ACTIVE   1.10     [OK] Pass
+prod-search                                 us-east-1  [~] UPDATING  1.31     Skipped
+staging-data-platform-shared-services-blue  us-east-1  [OK] ACTIVE   1.10     Skipped

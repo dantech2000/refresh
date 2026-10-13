@@ -237,14 +237,17 @@ func Documents(results []Result) []apidoc.HealthResult {
 	return out
 }
 
-// Doc returns the health part of a describe document: the results
-// and the worst outcome among them, in the order Fail, Unreadable, Warn,
-// Pass. A Skipped check does not count, and a run of Skipped checks only
-// is Pass.
+// Doc returns the health part of a describe document: the results and
+// the worst outcome among them, in the order Fail, Unreadable, Warn, Pass.
+// A Skipped check does not count, and a run in which no check ran is
+// Skipped: what was not measured is not healthy.
 func Doc(results []Result) apidoc.Health {
-	worst := Pass
+	worst := Skipped
 	for _, r := range results {
-		if severity(r.Outcome) > severity(worst) {
+		if r.Outcome == Skipped {
+			continue
+		}
+		if worst == Skipped || severity(r.Outcome) > severity(worst) {
 			worst = r.Outcome
 		}
 	}

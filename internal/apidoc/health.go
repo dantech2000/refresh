@@ -42,7 +42,8 @@ type HealthResult struct {
 // Health is the health part of a describe document.
 type Health struct {
 	// Summary is the worst outcome of the checks: Fail, then Unreadable,
-	// then Warn, then Pass. A Skipped check does not count.
+	// then Warn, then Pass. A Skipped check does not count, and the
+	// summary is Skipped when no check ran.
 	Summary HealthOutcome  `json:"summary"`
 	Checks  []HealthResult `json:"checks"`
 }

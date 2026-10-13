@@ -165,7 +165,9 @@ func TestDoc_Summary(t *testing.T) {
 		want    apidoc.HealthOutcome
 	}{
 		{"all pass", []health.Result{pass}, apidoc.HealthPass},
-		{"only skipped", []health.Result{skipped}, apidoc.HealthPass},
+		{"only skipped", []health.Result{skipped}, apidoc.HealthSkipped},
+		{"nothing", nil, apidoc.HealthSkipped},
+		{"skipped and pass", []health.Result{skipped, pass}, apidoc.HealthPass},
 		{"warn", []health.Result{pass, warn, skipped}, apidoc.HealthWarn},
 		{"unreadable over warn", []health.Result{warn, advUnread}, apidoc.HealthUnreadable},
 		{"fail over unreadable", []health.Result{advUnread, bFail}, apidoc.HealthFail},
