@@ -186,7 +186,10 @@ func faultStatus(f *fleettest.FaultError, kind string) *status {
 	case fleettest.Unauthenticated:
 		return &status{http.StatusUnauthorized, metav1.StatusReasonUnauthorized, "Unauthorized"}
 	case fleettest.Throttled:
-		return &status{http.StatusInternalServerError, metav1.StatusReasonInternalError, "kubetest does not model throttling: client-go would wait on the real clock"}
+		// client-go tries again by itself after the seconds of Retry-After.
+		// One second is the least it accepts: a test of throttling waits
+		// that long on the real clock.
+		return &status{http.StatusTooManyRequests, metav1.StatusReasonTooManyRequests, "kubetest: too many requests"}
 	default:
 		code := f.Status
 		if code == 0 {
@@ -259,25 +262,27 @@ func newSelection(namespace, labelSelector, fieldSelector string) (selection, er
 // snapshot returns the items of the cluster that the selection keeps, with
 // their resource version set, and the world's generation.
 func (h *Handler) snapshot(res collection, sel selection) ([]item, int64, error) {
+	// The items and the generation are read with the world locked once, so
+	// the number is that of the items. The objects are encoded there too:
+	// they share label and selector maps with the world, which an Edit may
+	// change as soon as the lock is gone.
 	var (
 		all       []item
 		noMetrics bool
 	)
-	h.world.View(func(s *fleettest.State) {
+	generation := h.world.ViewAt(func(s *fleettest.State) {
 		if c := s.Cluster(h.region, h.cluster); c != nil {
 			all = res.items(c)
 			noMetrics = c.NoMetricsServer
+		}
+		for i := range all {
+			encoded, _ := json.Marshal(all[i].object) // an API object built here encodes
+			all[i].object, all[i].labels = json.RawMessage(encoded), maps.Clone(all[i].labels)
 		}
 	})
 	if noMetrics && res.list == fleettest.KubeListNodeMetrics {
 		return nil, 0, errNoMetricsServer
 	}
-	// The generation is read after the items. If the world changed in
-	// between, the list carries the newer number with the older items, and
-	// a watch from that number would miss the change. A watch from a
-	// generation that is no longer current is refused, so the client lists
-	// again; see watch.
-	generation := h.world.Generation()
 	var out []item
 	for _, it := range all {
 		if sel.namespace != "" && it.namespace != sel.namespace {
@@ -426,6 +431,9 @@ func withVersion(object any, generation int64) any {
 }
 
 func writeStatus(w http.ResponseWriter, e *status) {
+	if e.code == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", "1") // seconds
+	}
 	writeJSON(w, e.code, metav1.Status{
 		TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"},
 		Status:   metav1.StatusFailure, Message: e.message, Reason: e.reason, Code: int32(e.code), //nolint:gosec // an HTTP status

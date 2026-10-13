@@ -2,7 +2,7 @@ package fleettest
 
 // The Kubernetes requests refresh makes, named as operations so that a
 // Fault can apply to them. Their service is "kube". Deny, Code, Delay,
-// Hang, and Reset apply; kubetest ignores the rest.
+// Hang, Reset, and Throttle apply; kubetest ignores the rest.
 const (
 	KubeListNamespaces  Operation = "kube:ListNamespaces"
 	KubeListNodes       Operation = "kube:ListNodes"
