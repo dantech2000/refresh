@@ -228,7 +228,8 @@ type target struct {
 // call that started it sees it: InProgress.
 //
 // The error is a *NotFoundError, an *InUseError when the control plane has
-// an update in progress, or an *InvalidError.
+// an update in progress, or an *InvalidError. An update of a nodegroup or
+// an add-on is also an *InUseError while the control plane updates.
 func (w *World) UpdateClusterVersion(region, cluster string, req ClusterVersionRequest) (Update, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -468,12 +469,22 @@ func replay(c *Cluster, op Operation, nodegroup, addon, token, request string) (
 // the change a Successful update makes. The caller holds w.mu and has
 // called replay.
 func (w *World) start(c *Cluster, u *Update, t target, apply func()) (Update, error) {
+	// EKS refuses a second update of a resource that has one in progress.
+	// It also refuses to update a nodegroup or an add-on while the control
+	// plane is updating, which the legacy busy check relies on. The reverse
+	// is not modeled: a control-plane update starts while a nodegroup or an
+	// add-on updates, because nothing the product does depends on a
+	// refusal there, and the rule has not been checked against EKS.
 	for _, old := range c.Updates {
-		if old.Nodegroup != u.Nodegroup || old.Addon != u.Addon {
+		if old.Status != UpdateInProgress {
 			continue
 		}
-		if old.Status == UpdateInProgress {
+		controlPlane := old.Nodegroup == "" && old.Addon == ""
+		if old.Nodegroup == u.Nodegroup && old.Addon == u.Addon {
 			return Update{}, &InUseError{Name: t.name, UpdateID: old.ID}
+		}
+		if controlPlane {
+			return Update{}, &InUseError{Name: c.Name, UpdateID: old.ID}
 		}
 	}
 

@@ -58,7 +58,9 @@ must settle each item before a test relies on it.
   `InvalidParameterException`. The EKS reference does not say what EKS answers.
 - **`DescribeUpdate` without `nodegroupName` or `addonName`** for an update of one answers
   `ResourceNotFoundException`, from the reference's "required if" wording.
-- **`ResourceInUseException`** for a second update of a resource that has one in progress.
+- **`ResourceInUseException`** for a second update of a resource that has one in progress,
+  and for an update of a nodegroup or an add-on while the control plane updates. The
+  reverse, a control-plane update while a nodegroup or an add-on updates, is allowed.
 - **An add-on shows its target version while it is UPDATING**, and its old version again
   after an update that failed. The legacy code attaches to an add-on that is UPDATING at
   the target version, which is where the first half comes from.

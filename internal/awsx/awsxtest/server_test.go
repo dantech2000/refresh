@@ -254,6 +254,13 @@ func TestAPIErrors(t *testing.T) {
 		{"second update of a busy nodegroup", func() error { return roll(token+"x", "1.32") },
 			wireError{"ResourceInUseException", is[*ekstypes.ResourceInUseException]}},
 		{"client request token reused with another version", func() error { return roll(token, "1.33") }, invalid},
+		{"add-on update while the control plane updates", func() error {
+			if _, err := c.eks.UpdateClusterVersion(ctx, &eks.UpdateClusterVersionInput{Name: aws.String("staging"), Version: aws.String("1.34")}); err != nil {
+				return fmt.Errorf("starting the control-plane update: %w", err)
+			}
+			_, err := c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{ClusterName: aws.String("staging"), AddonName: aws.String("kube-proxy")})
+			return err
+		}, wireError{"ResourceInUseException", is[*ekstypes.ResourceInUseException]}},
 		{"short client request token", func() error {
 			_, err := c.eks.UpdateClusterVersion(ctx, &eks.UpdateClusterVersionInput{
 				Name: aws.String("prod"), Version: aws.String("1.33"), ClientRequestToken: aws.String("0123456789abcdef0123456789abcdef"),

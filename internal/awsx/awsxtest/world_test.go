@@ -204,7 +204,7 @@ func newWorld() *fleettest.World {
 					},
 				},
 			},
-			{Name: "staging", Version: "1.33", Region: region},
+			{Name: "staging", Version: "1.33", Region: region, Addons: []*fleettest.Addon{{Name: "kube-proxy", Version: "v1.33.0-eksbuild.1"}}},
 			{Name: "elsewhere", Version: "1.33", Region: otherRegion},
 		}
 		s.AddonVersions = []fleettest.AddonVersion{

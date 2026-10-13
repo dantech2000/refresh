@@ -122,16 +122,17 @@ func TestUpdatesFinishInDueOrder(t *testing.T) {
 		c.UpdateScripts = []fleettest.UpdateScript{{After: 2 * time.Hour}}
 		c.Addons[0].UpdateScripts = []fleettest.UpdateScript{{After: time.Hour}}
 	})
-	control, err := w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: new("1.33")})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The add-on first: once the control plane updates, EKS refuses it.
 	addon, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: new("v2")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if control.ID != id(1) || addon.ID != id(2) {
-		t.Errorf("update IDs = %s, %s; want %s, %s", control.ID, addon.ID, id(1), id(2))
+	control, err := w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: new("1.33")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addon.ID != id(1) || control.ID != id(2) {
+		t.Errorf("update IDs = %s, %s; want %s, %s", addon.ID, control.ID, id(1), id(2))
 	}
 
 	w.Advance(time.Hour)
@@ -614,6 +615,47 @@ func TestUpdateScriptSetsResource(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// TestControlPlaneUpdateBlocksTheRest checks that a nodegroup or an add-on
+// cannot start an update while the control plane updates, and can again
+// when it is done. The reverse is allowed.
+func TestControlPlaneUpdateBlocksTheRest(t *testing.T) {
+	w := newWorld()
+	w.Edit(func(s *fleettest.State) { s.DefaultUpdate = fleettest.UpdateScript{After: time.Hour} })
+	three := int32(3)
+	others := map[string]func() error{
+		"nodegroup version": func() error {
+			_, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{})
+			return err
+		},
+		"nodegroup config": func() error {
+			_, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Scaling: &fleettest.ScalingRequest{Desired: &three}})
+			return err
+		},
+		"add-on": func() error {
+			_, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: new("v2")})
+			return err
+		},
+	}
+
+	control, err := w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: new("1.33")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, start := range others {
+		var inUse *fleettest.InUseError
+		if err := start(); !errors.As(err, &inUse) || inUse.UpdateID != control.ID || inUse.Name != "prod" {
+			t.Errorf("%s update while the control plane updates returned %v, want an InUseError for the cluster's update", name, err)
+		}
+	}
+	w.Advance(time.Hour)
+	if err := others["add-on"](); err != nil {
+		t.Errorf("add-on update after the control plane is done: %v", err)
+	}
+	if _, err := w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: new("1.34")}); err != nil {
+		t.Errorf("control-plane update while an add-on updates: %v", err)
 	}
 }
 
