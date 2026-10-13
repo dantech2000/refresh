@@ -92,7 +92,9 @@ func (c *call) clusterName() string { return c.in.clusterName() }
 func (c *call) inCluster(f func(s *fleettest.State, cl *fleettest.Cluster) (any, error)) (any, error) {
 	var out json.RawMessage
 	var err error
-	c.world.View(func(s *fleettest.State) {
+	c.world.ViewReads(func(s *fleettest.State, reads *fleettest.Reads) {
+		c.reads = reads
+		defer func() { c.reads = nil }()
 		cl := s.Cluster(c.region, c.clusterName())
 		if cl == nil {
 			err = eksError(&fleettest.NotFoundError{Kind: "cluster", Name: c.clusterName()})
@@ -142,7 +144,9 @@ func eksListClusters(c *call) (any, error) {
 
 func eksDescribeCluster(c *call) (any, error) {
 	return c.inCluster(func(s *fleettest.State, cl *fleettest.Cluster) (any, error) {
-		return object{"cluster": clusterJSON(s, c.region, cl)}, nil
+		cluster := clusterJSON(s, c.region, cl)
+		cluster["status"] = c.reads.Status(cl, "", cl.Status)
+		return object{"cluster": cluster}, nil
 	})
 }
 
@@ -273,7 +277,7 @@ func eksDescribeNodegroup(c *call) (any, error) {
 			"clusterName":    cl.Name,
 			"version":        ng.Version,
 			"releaseVersion": ng.ReleaseVersion,
-			"status":         ng.Status,
+			"status":         c.reads.Status(cl, ng.Name, ng.Status),
 			"amiType":        ng.AMIType,
 			"capacityType":   ng.CapacityType,
 			"instanceTypes":  ng.InstanceTypes,
@@ -406,7 +410,7 @@ func eksDescribeAddon(c *call) (any, error) {
 			"addonVersion": a.Version,
 			"addonArn":     "arn:aws:eks:" + c.region + ":" + s.Account + ":addon/" + cl.Name + "/" + a.Name + "/fake",
 			"clusterName":  cl.Name,
-			"status":       a.Status,
+			"status":       c.reads.Status(cl, a.Name, a.Status),
 			"health":       object{"issues": issuesJSON(a.HealthIssues)},
 			"createdAt":    epoch(a.CreatedAt),
 			"modifiedAt":   epoch(a.ModifiedAt),
@@ -483,8 +487,9 @@ func updateJSON(u *fleettest.Update) object {
 func eksListUpdates(c *call) (any, error) {
 	return c.inCluster(func(_ *fleettest.State, cl *fleettest.Cluster) (any, error) {
 		var ids []string
+		hide := c.reads.HidesUpdates(cl)
 		for _, u := range cl.Updates {
-			if u.Nodegroup == c.in.str("nodegroupName") && u.Addon == c.in.str("addonName") {
+			if u.Nodegroup == c.in.str("nodegroupName") && u.Addon == c.in.str("addonName") && (!hide || u.Status != fleettest.UpdateInProgress) {
 				ids = append(ids, u.ID)
 			}
 		}

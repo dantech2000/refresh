@@ -209,6 +209,8 @@ type call struct {
 	in     input
 	// pageSize is the page size a fault forces, or 0.
 	pageSize int
+	// reads are the world's scripted reads, inside inCluster.
+	reads *fleettest.Reads
 }
 
 // sees reports whether an item with the given Region field answers in the

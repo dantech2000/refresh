@@ -23,6 +23,7 @@ type World struct {
 	blocked    int
 	changed    chan struct{} // closed and replaced when the clock, the state, or blocked changes
 	generation int64
+	reads      Reads // see ScriptStatus
 }
 
 // New returns an empty world whose clock reads 2026-01-01T00:00:00Z.
