@@ -38,6 +38,11 @@ type window struct {
 
 // calendarRead is the one read of the support calendar of a region in a
 // run. done is closed when live and err are set.
+//
+// It is not a fanout.Memo, for two reasons. A Memo forgets a failure, so
+// each cluster of a region that denies the call would call again. And
+// Memo.Get runs the lookup in its caller, so a cluster would wait for the
+// calendar before its own calls, or start a goroutine to read it.
 type calendarRead struct {
 	done chan struct{}
 	live map[Version]window
