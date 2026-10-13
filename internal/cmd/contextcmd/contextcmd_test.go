@@ -213,6 +213,47 @@ func TestContextCommands(t *testing.T) {
 			wantFile: twoContexts(),
 		},
 		{
+			// Flags work before, between, and after the positionals, and
+			// "--" ends the flags: what follows is a name, also when it
+			// starts with a dash.
+			name: "flag positions and the end-of-flags marker",
+			file: twoContexts(),
+			steps: []step{
+				{args: []string{"context", "add", "one", "-c", "one-eks", "--use"}, wantOut: "Saved context \"one\"\n"},
+				{args: []string{"context", "add", "-c", "two-eks", "two", "-r", "eu-west-1"}, wantOut: "Saved context \"two\"\n"},
+				{args: []string{"--no-color", "context", "add", "--cluster=three-eks", "three"}, wantOut: "Saved context \"three\"\n"},
+				{
+					args:    []string{"context", "use", "two", "--no-color", "--timeout", "5s"},
+					wantOut: "Switched to context \"two\" (cluster=two-eks region=eu-west-1 profile=-)\n",
+				},
+				{args: []string{"context", "add", "-c", "dash-eks", "--", "-dash"}, wantOut: "Saved context \"-dash\"\n"},
+				{
+					args:    []string{"context", "use", "--", "-dash"},
+					wantOut: "Switched to context \"-dash\" (cluster=dash-eks region=- profile=-)\n",
+				},
+				{
+					// After "--" the dash is the name for "the context before".
+					args:    []string{"context", "use", "--", "-"},
+					wantOut: "Switched to context \"two\" (cluster=two-eks region=eu-west-1 profile=-)\n",
+				},
+				{
+					// Without "--" the name is read as flags.
+					args:    []string{"context", "remove", "-dash"},
+					wantErr: "unknown shorthand flag: 'd' in -dash\nRun 'refresh context remove --help' for usage.",
+				},
+				{args: []string{"context", "remove", "--", "-dash"}, wantOut: "Removed context \"-dash\"\n"},
+				{
+					// A flag after "--" is a positional: the flag is missing.
+					args:    []string{"context", "add", "four", "--", "-c", "four-eks"},
+					wantErr: "accepts 1 arg(s), received 3",
+				},
+				{args: []string{"context", "remove", "one"}, wantOut: "Removed context \"one\"\n"},
+				{args: []string{"context", "remove", "three"}, wantOut: "Removed context \"three\"\n"},
+				{args: []string{"context", "remove", "two"}, wantOut: "Removed context \"two\"\n"},
+			},
+			wantFile: &contexts.File{Contexts: twoContexts().Contexts},
+		},
+		{
 			name: "spaces around a name are dropped",
 			file: twoContexts(),
 			steps: []step{

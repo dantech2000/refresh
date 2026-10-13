@@ -5,68 +5,72 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
-// longWait bounds a wait for something that must happen, so that a broken
-// handshake fails the test and does not hang it.
-const longWait = 30 * time.Second
+// The tests that need time to pass run in a synctest bubble: the clock there
+// is fake and moves only when every goroutine of the test is blocked, so a
+// time.Sleep in these tests waits for nothing and always ends the same way.
 
 func TestPausableDeadlineExpires(t *testing.T) {
-	ctx, cancel := newPausableDeadline(t.Context(), 20*time.Millisecond)
-	defer cancel()
-	child, childCancel := context.WithCancel(ctx)
-	defer childCancel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := newPausableDeadline(t.Context(), 20*time.Minute)
+		defer cancel()
+		child, childCancel := context.WithCancel(ctx)
+		defer childCancel()
 
-	select {
-	case <-ctx.Done():
-	case <-time.After(longWait):
-		t.Fatal("the deadline did not expire")
-	}
-	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		t.Errorf("Err() = %v, want DeadlineExceeded", ctx.Err())
-	}
-	<-child.Done()
-	if !errors.Is(child.Err(), context.DeadlineExceeded) {
-		t.Errorf("child Err() = %v, want DeadlineExceeded", child.Err())
-	}
+		time.Sleep(20*time.Minute - time.Nanosecond)
+		synctest.Wait()
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("Err() just before the deadline = %v, want nil", err)
+		}
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Errorf("Err() = %v, want DeadlineExceeded", ctx.Err())
+		}
+		<-child.Done()
+		if !errors.Is(child.Err(), context.DeadlineExceeded) {
+			t.Errorf("child Err() = %v, want DeadlineExceeded", child.Err())
+		}
+	})
 }
 
 func TestPausableDeadlinePauseStopsTheClock(t *testing.T) {
-	// Start with a long timeout, so the timer cannot fire before the pause,
-	// and make the remaining time short while paused. A slow machine can
-	// only make the "still alive while paused" check easier to pass.
-	ctx, cancel := newPausableDeadline(t.Context(), time.Hour)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := newPausableDeadline(t.Context(), time.Hour)
+		defer cancel()
+		time.Sleep(40 * time.Minute) // 20 minutes are left
 
-	resume := ctx.pause()
-	inner := ctx.pause() // pauses nest
-	ctx.mu.Lock()
-	ctx.remaining = 10 * time.Millisecond
-	ctx.mu.Unlock()
-	for start := time.Now(); time.Since(start) < 50*time.Millisecond; {
-		time.Sleep(5 * time.Millisecond) // well past the remaining time
-	}
-	if err := ctx.Err(); err != nil {
-		t.Fatalf("expired while paused: %v", err)
-	}
-	inner()
-	inner() // a second call does nothing
-	for start := time.Now(); time.Since(start) < 50*time.Millisecond; {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if err := ctx.Err(); err != nil {
-		t.Fatalf("expired while the outer pause was still open: %v", err)
-	}
-	resume()
-	select {
-	case <-ctx.Done():
-	case <-time.After(longWait):
-		t.Fatal("the deadline did not expire after the last resume")
-	}
-	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		t.Errorf("Err() = %v, want DeadlineExceeded", ctx.Err())
-	}
+		resume := ctx.pause()
+		inner := ctx.pause() // pauses nest
+		time.Sleep(3 * time.Hour)
+		synctest.Wait()
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("expired while paused: %v", err)
+		}
+		inner()
+		inner() // a second call does nothing
+		time.Sleep(3 * time.Hour)
+		synctest.Wait()
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("expired while the outer pause was still open: %v", err)
+		}
+
+		resume()
+		time.Sleep(20*time.Minute - time.Nanosecond)
+		synctest.Wait()
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("expired before the time that was left had passed: %v", err)
+		}
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Errorf("Err() after the time that was left = %v, want DeadlineExceeded", ctx.Err())
+		}
+	})
 }
 
 func TestPausableDeadlineFollowsParentAndCancel(t *testing.T) {
@@ -74,11 +78,8 @@ func TestPausableDeadlineFollowsParentAndCancel(t *testing.T) {
 	ctx, cancel := newPausableDeadline(parent, time.Hour)
 	defer cancel()
 	stop()
-	select {
-	case <-ctx.Done():
-	case <-time.After(longWait):
-		t.Fatal("the cancellation of the parent did not reach the context")
-	}
+	// The cancellation of the parent closes Done.
+	<-ctx.Done()
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		t.Errorf("Err() = %v, want Canceled", ctx.Err())
 	}
@@ -101,31 +102,28 @@ func TestPausableDeadlineFollowsParentAndCancel(t *testing.T) {
 // A timer that fired while a pause was taking the lock, or just before a
 // resume replaced it, calls expire late. That call must not end the context.
 func TestPausableDeadlineIgnoresAStaleTimer(t *testing.T) {
-	ctx, cancel := newPausableDeadline(t.Context(), time.Hour)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := newPausableDeadline(t.Context(), time.Hour)
+		defer cancel()
 
-	resume := ctx.pause()
-	ctx.expire() // the timer of before the pause
-	if err := ctx.Err(); err != nil {
-		t.Fatalf("a timer that fired during the pause ended the context: %v", err)
-	}
-	resume()
-	ctx.expire() // the timer of before the resume; the deadline is an hour away
-	if err := ctx.Err(); err != nil {
-		t.Fatalf("a timer from before the resume ended the context: %v", err)
-	}
+		resume := ctx.pause()
+		ctx.expire() // the timer of before the pause
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("a timer that fired during the pause ended the context: %v", err)
+		}
+		resume()
+		ctx.expire() // the timer of before the resume; the deadline is an hour away
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("a timer from before the resume ended the context: %v", err)
+		}
 
-	// The real expiry still works: no time is left when the pause ends.
-	resume = ctx.pause()
-	ctx.mu.Lock()
-	ctx.remaining = 0
-	ctx.mu.Unlock()
-	resume()
-	select {
-	case <-ctx.Done():
-	case <-time.After(longWait):
-		t.Fatal("the deadline did not expire after a resume with no time left")
-	}
+		// The real expiry still works.
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Errorf("Err() after the deadline = %v, want DeadlineExceeded", ctx.Err())
+		}
+	})
 }
 
 // Err sees the cancellation of the parent at once, not after the goroutine
@@ -175,30 +173,32 @@ func readAsync(ctx context.Context, in io.Reader) <-chan string {
 // A prompt still waits for its answer when the --timeout deadline has
 // already passed.
 func TestPromptOutlivesDeadline(t *testing.T) {
-	r, w := io.Pipe()
-	t.Cleanup(func() { _ = w.Close() })
+	synctest.Test(t, func(t *testing.T) {
+		r, w := io.Pipe()
+		defer func() { _ = w.Close() }()
 
-	apiCtx, cancel := WithTimeout(t.Context(), time.Nanosecond)
-	defer cancel()
-	<-apiCtx.Done() // the deadline passed before the prompt starts
-	if !errors.Is(apiCtx.Err(), context.DeadlineExceeded) {
-		t.Fatalf("Err() = %v, want DeadlineExceeded", apiCtx.Err())
-	}
+		apiCtx, cancel := WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		<-apiCtx.Done() // the deadline passes before the prompt starts
+		if !errors.Is(apiCtx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("Err() = %v, want DeadlineExceeded", apiCtx.Err())
+		}
 
-	ctx, started := promptStarted(apiCtx)
-	res := readAsync(ctx, r)
-	<-started
-	if _, err := w.Write([]byte("y\n")); err != nil {
-		t.Fatal(err)
-	}
-	if got := <-res; got != "y" {
-		t.Fatalf("ReadLine() = %q, want %q", got, "y")
-	}
+		ctx, started := promptStarted(apiCtx)
+		res := readAsync(ctx, r)
+		<-started
+		time.Sleep(time.Hour) // the user takes a long time
+		if _, err := w.Write([]byte("y\n")); err != nil {
+			t.Fatal(err)
+		}
+		if got := <-res; got != "y" {
+			t.Fatalf("ReadLine() = %q, want %q", got, "y")
+		}
+	})
 }
 
 // The deadline is paused while a prompt waits, so the time to answer is not
-// taken from the --timeout budget. While paused, Deadline moves with the
-// clock; after the prompt it is fixed again.
+// taken from the --timeout budget. A nested wait deadline pauses too.
 func TestPromptPausesDeadline(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -209,55 +209,57 @@ func TestPromptPausesDeadline(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r, w := io.Pipe()
-			t.Cleanup(func() { _ = w.Close() })
+			synctest.Test(t, func(t *testing.T) {
+				r, w := io.Pipe()
+				defer func() { _ = w.Close() }()
 
-			outer, cancel := WithTimeout(t.Context(), time.Hour)
-			defer cancel()
-			deadlines := []context.Context{outer}
-			inner := outer
-			if tt.nested {
-				var cancelInner context.CancelFunc
-				inner, cancelInner = WithTimeout(outer, 2*time.Hour)
-				defer cancelInner()
-				deadlines = append(deadlines, inner)
-			}
-			ctx, started := promptStarted(inner)
-			res := readAsync(ctx, r)
-			<-started
+				outer, cancel := WithTimeout(t.Context(), time.Hour)
+				defer cancel()
+				deadlines := []context.Context{outer}
+				inner := outer
+				if tt.nested {
+					var cancelInner context.CancelFunc
+					inner, cancelInner = WithTimeout(outer, 2*time.Hour)
+					defer cancelInner()
+					deadlines = append(deadlines, inner)
+				}
+				time.Sleep(10 * time.Minute) // 50 minutes of the budget are left
+				ctx, started := promptStarted(inner)
+				res := readAsync(ctx, r)
+				<-started
 
-			for i, d := range deadlines {
-				if !deadlineMoves(d) {
-					t.Errorf("deadline %d kept counting while the prompt waited", i)
+				// The user answers after a day. No deadline counts it.
+				time.Sleep(24 * time.Hour)
+				synctest.Wait()
+				for i, d := range deadlines {
+					if err := d.Err(); err != nil {
+						t.Errorf("deadline %d expired while the prompt waited: %v", i, err)
+					}
+					if until, _ := d.Deadline(); time.Until(until) < 50*time.Minute {
+						t.Errorf("deadline %d is %v away during the prompt, want the time that was left", i, time.Until(until))
+					}
 				}
-			}
-			if _, err := w.Write([]byte("y\n")); err != nil {
-				t.Fatal(err)
-			}
-			if got := <-res; got != "y" {
-				t.Fatalf("ReadLine() = %q, want %q", got, "y")
-			}
-			for i, d := range deadlines {
-				if deadlineMoves(d) {
-					t.Errorf("deadline %d is still paused after the prompt returned", i)
+				if _, err := w.Write([]byte("y\n")); err != nil {
+					t.Fatal(err)
 				}
-				if err := d.Err(); err != nil {
-					t.Errorf("deadline %d: Err() = %v, want nil", i, err)
+				if got := <-res; got != "y" {
+					t.Fatalf("ReadLine() = %q, want %q", got, "y")
 				}
-			}
+
+				// The clock runs again: the budget ends 50 minutes later.
+				time.Sleep(50*time.Minute - time.Nanosecond)
+				synctest.Wait()
+				if err := outer.Err(); err != nil {
+					t.Errorf("the budget ended before the time that was left had passed: %v", err)
+				}
+				time.Sleep(time.Nanosecond)
+				synctest.Wait()
+				if !errors.Is(outer.Err(), context.DeadlineExceeded) {
+					t.Errorf("Err() of the budget = %v, want DeadlineExceeded", outer.Err())
+				}
+			})
 		})
 	}
-}
-
-// deadlineMoves reports whether the deadline of ctx changes as the clock
-// advances, which is true only while a pausable deadline is paused.
-func deadlineMoves(ctx context.Context) bool {
-	d1, _ := ctx.Deadline()
-	for start := time.Now(); time.Since(start) < time.Millisecond; {
-		time.Sleep(100 * time.Microsecond)
-	}
-	d2, _ := ctx.Deadline()
-	return !d2.Equal(d1)
 }
 
 // Ctrl+C (the signal context) still ends a prompt under a deadline, with or
@@ -303,20 +305,19 @@ func TestWithTimeoutZeroMeansNoDeadline(t *testing.T) {
 // The credential setup runs under context.WithTimeout of the command's
 // context: the earlier deadline ends it, and its end is a deadline error.
 func TestSetupDeadlineNestsInside(t *testing.T) {
-	wait, cancel := WithTimeout(t.Context(), time.Hour) // --wait-timeout
-	defer cancel()
-	setup, cancelSetup := context.WithTimeout(wait, 20*time.Millisecond) // --timeout
-	defer cancelSetup()
+	synctest.Test(t, func(t *testing.T) {
+		wait, cancel := WithTimeout(t.Context(), time.Hour) // --wait-timeout
+		defer cancel()
+		setup, cancelSetup := context.WithTimeout(wait, time.Minute) // --timeout
+		defer cancelSetup()
 
-	select {
-	case <-setup.Done():
-	case <-time.After(longWait):
-		t.Fatal("the setup deadline did not expire")
-	}
-	if !errors.Is(setup.Err(), context.DeadlineExceeded) {
-		t.Errorf("setup Err() = %v, want DeadlineExceeded", setup.Err())
-	}
-	if err := wait.Err(); err != nil {
-		t.Errorf("the wait deadline ended with the setup: %v", err)
-	}
+		<-setup.Done()
+
+		if !errors.Is(setup.Err(), context.DeadlineExceeded) {
+			t.Errorf("setup Err() = %v, want DeadlineExceeded", setup.Err())
+		}
+		if err := wait.Err(); err != nil {
+			t.Errorf("the wait deadline ended with the setup: %v", err)
+		}
+	})
 }

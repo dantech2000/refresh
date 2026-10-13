@@ -568,14 +568,16 @@ func TestLoadIsBoundedWithAStalledCredentialProcess(t *testing.T) {
 	isolateAWS(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
-	// The process outlives the 20 ms of the context and ends soon after,
-	// so that no goroutine of the SDK is left when the tests end.
+	// The process outlives the context, which has ended when Load starts,
+	// and ends soon after, so that no goroutine of the SDK is left when the
+	// tests end.
 	config := "[profile slow]\nregion = us-east-1\ncredential_process = sleep 0.3\n"
 	if err := os.WriteFile(os.Getenv("AWS_CONFIG_FILE"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
+	<-ctx.Done()
 
 	_, err := Load(ctx, Options{Profile: "slow"})
 

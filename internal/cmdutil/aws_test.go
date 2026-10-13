@@ -145,40 +145,41 @@ func TestNewAWSUnreadableContextStore(t *testing.T) {
 // deadline, and a failed load is tried again by the next call.
 func TestNewAWSLoadIsBoundedByTimeout(t *testing.T) {
 	isolateAWS(t)
-	// A credential source that never answers: the container credentials
-	// endpoint, served here by a handler that holds every request.
+	// A credential source that stalls: the container credentials endpoint,
+	// served here by a handler that holds each request until the test
+	// releases it, and then answers with credentials.
+	arrived := make(chan struct{}, 8)
 	release := make(chan struct{})
-	stalled := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		select {
-		case <-r.Context().Done():
-		case <-release:
-		}
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		arrived <- struct{}{}
+		<-release
+		_, _ = w.Write([]byte(`{"AccessKeyId":"AKIDFAKEFAKEFAKE","SecretAccessKey":"fake-secret","Token":"t","Expiration":"2099-01-01T00:00:00Z"}`))
 	}))
-	defer stalled.Close()
-	defer close(release)
+	defer source.Close()
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
-	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", stalled.URL)
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", source.URL)
 	f, _, _, _ := cmdutiltest.NewFactory()
 	cmdutiltest.NewContextStore(t, f, nil)
-	f.Global = cmdutil.GlobalOptions{Regions: []string{"us-east-1"}, Timeout: 50 * time.Millisecond}
+	// A timeout that has passed when the load starts: the test waits for no
+	// timer. The context of the command has no deadline, so the deadline
+	// error can only come from --timeout.
+	f.Global = cmdutil.GlobalOptions{Regions: []string{"us-east-1"}, Timeout: time.Nanosecond}
 	f.AWS = cmdutil.NewAWS(f)
 
-	start := time.Now()
 	_, err := f.AWS(context.Background())
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("AWS() error = %v, want the --timeout deadline", err)
 	}
-	if d := time.Since(start); d > 30*time.Second {
-		t.Errorf("AWS() took %v, want about the 50ms timeout", d)
-	}
 
-	// Without the stalled source the next call succeeds: the failure was
-	// not kept.
-	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "")
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIDFAKEFAKEFAKE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "fake-secret")
+	// The SDK goes on with the request that it started. Let it end, so
+	// that it leaves nothing behind.
+	<-arrived
+	close(release)
+
+	// The next call succeeds: the failure was not kept.
+	f.Global.Timeout = time.Minute
 	if _, err := f.AWS(context.Background()); err != nil {
 		t.Errorf("AWS() after a failed load: %v", err)
 	}
