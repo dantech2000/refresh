@@ -132,7 +132,7 @@ func IsRetryable(err error) bool {
 		return false
 	}
 	var ae smithy.APIError
-	if errors.As(err, &ae) && (retryableErrorCodes()[ae.ErrorCode()] || ae.ErrorFault() == smithy.FaultServer) {
+	if errors.As(err, &ae) && (retryableErrorCodes[ae.ErrorCode()] || ae.ErrorFault() == smithy.FaultServer) {
 		return true
 	}
 	// The SDK's own classification: errors that declare themselves
@@ -151,21 +151,19 @@ func IsRetryable(err error) bool {
 
 // retryableErrorCodes are the API error codes of a transient condition,
 // next to the SDK's default retryable and throttle codes.
-func retryableErrorCodes() map[string]bool {
-	return map[string]bool{
-		"ThrottlingException":         true,
-		"Throttling":                  true,
-		"TooManyRequestsException":    true,
-		"RequestLimitExceeded":        true,
-		"RequestThrottled":            true,
-		"RequestThrottledException":   true,
-		"SlowDown":                    true,
-		"PriorRequestNotComplete":     true,
-		"ServiceUnavailableException": true,
-		"InternalServerException":     true,
-		"InternalFailure":             true,
-		"ServerException":             true,
-	}
+var retryableErrorCodes = map[string]bool{
+	"ThrottlingException":         true,
+	"Throttling":                  true,
+	"TooManyRequestsException":    true,
+	"RequestLimitExceeded":        true,
+	"RequestThrottled":            true,
+	"RequestThrottledException":   true,
+	"SlowDown":                    true,
+	"PriorRequestNotComplete":     true,
+	"ServiceUnavailableException": true,
+	"InternalServerException":     true,
+	"InternalFailure":             true,
+	"ServerException":             true,
 }
 
 // IsDialFailure reports whether err is a connection that could not be
