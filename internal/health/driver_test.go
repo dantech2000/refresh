@@ -2,8 +2,12 @@ package health_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/health"
@@ -36,6 +40,66 @@ func (d *driver) phaseGate(ctx context.Context, targets ...string) (health.Verdi
 	d.t.Helper()
 	results := health.Run(ctx, health.Preflight(), d.h.input(ctx, targets...))
 	return health.Gate(results, d.policy), health.Worse(d.plan, results)
+}
+
+// phase is what a command does before a phase: the gate again, the question
+// of the pre-phase table when something got worse, then the submit. It
+// returns whether the phase ran.
+func (d *driver) phase(ctx context.Context, confirm func(question string) bool, submit func(), targets ...string) bool {
+	d.t.Helper()
+	v, worse := d.phaseGate(ctx, targets...)
+	switch {
+	case v.Decision == health.Block:
+		return false
+	case len(worse) > 0 && !d.policy.Yes:
+		var parts []string
+		for _, r := range worse {
+			parts = append(parts, r.String())
+		}
+		if !confirm("health got worse since the plan (" + strings.Join(parts, "; ") + "); proceed?") {
+			return false
+		}
+	}
+	submit()
+	return true
+}
+
+// Something gets worse between the plan step and the phase: the gate asks
+// again with the Worse reasons. No stops the phase and submits nothing;
+// yes submits.
+func TestDriver_AsksAgainBeforeThePhase(t *testing.T) {
+	h := newHarness(t)
+	ctx := testContext(t)
+	d := &driver{t: t, h: h}
+	if v := d.planStep(ctx, "ng-a"); v.Decision != health.Go {
+		t.Fatalf("plan step: %+v", v)
+	}
+	h.world.Edit(func(s *fleettest.State) { nodeNotReady("b-1")(s, s.Cluster(east, "prod")) })
+	submitted := 0
+	submit := func() {
+		if _, err := h.provider.Clients(east).EKS.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
+			ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		submitted++
+	}
+	var question string
+	if ran := d.phase(ctx, func(q string) bool { question = q; return false }, submit, "ng-a"); ran || submitted != 0 {
+		t.Errorf("declined: ran = %v, submitted = %d", ran, submitted)
+	}
+	if !strings.Contains(question, "Nodes: 3/4 nodes ready") {
+		t.Errorf("question = %q, want the Worse reason", question)
+	}
+	if n := countAWS(h.aws, fleettest.EKSUpdateNodegroupVersion); n != 0 {
+		t.Errorf("updates after a no = %d", n)
+	}
+	if ran := d.phase(ctx, func(string) bool { return true }, submit, "ng-a"); !ran || submitted != 1 {
+		t.Errorf("accepted: ran = %v, submitted = %d", ran, submitted)
+	}
+	if n := countAWS(h.aws, fleettest.EKSUpdateNodegroupVersion); n != 1 {
+		t.Errorf("updates after a yes = %d", n)
+	}
 }
 
 // A budget tightens after the dry run: the plan step passes, and the gate

@@ -50,6 +50,8 @@ func TestGate(t *testing.T) {
 		accepted []health.Reason
 		forced   []health.Reason
 		failures int
+		reasons  []health.Reason
+		blockers []health.Reason
 	}
 	tests := []struct {
 		row     int
@@ -57,49 +59,49 @@ func TestGate(t *testing.T) {
 		policy  health.Policy
 		want    want
 	}{
-		{1, []health.Result{pass, skipped}, none, want{health.Go, 0, nil, nil, 0}},
-		{1, []health.Result{pass, skipped}, requireHealthy, want{health.Go, 0, nil, nil, 0}},
-		{2, []health.Result{bFail}, health.Policy{Skip: true}, want{health.Go, 0, nil, nil, 0}},
-		{3, []health.Result{pass, warn}, none, want{health.Ask, 2, nil, nil, 0}},
-		{4, []health.Result{pass, warn}, yes, want{health.Go, 2, reasons(warn), nil, 0}},
-		{5, []health.Result{pass, warn}, requireHealthy, want{health.Block, 2, nil, nil, 0}},
-		{6, []health.Result{pass, warn}, health.Policy{Yes: true, RequireHealthy: true}, want{health.Block, 2, nil, nil, 0}},
-		{7, []health.Result{advFail}, none, want{health.Ask, 2, nil, nil, 0}},
-		{8, []health.Result{advFail}, yes, want{health.Go, 2, reasons(advFail), nil, 0}},
-		{9, []health.Result{advFail}, requireHealthy, want{health.Block, 2, nil, nil, 0}},
-		{10, []health.Result{advUnread}, none, want{health.Ask, 4, nil, nil, 1}},
-		{11, []health.Result{advUnread}, yes, want{health.Go, 4, reasons(advUnread), nil, 1}},
-		{12, []health.Result{advUnread}, requireHealthy, want{health.Block, 4, nil, nil, 1}},
-		{13, []health.Result{capUnread}, none, want{health.Ask, 4, nil, nil, 1}},
-		{14, []health.Result{capUnread}, yes, want{health.Go, 4, reasons(capUnread), nil, 1}},
-		{15, []health.Result{capUnread}, requireHealthy, want{health.Block, 4, nil, nil, 1}},
-		{16, []health.Result{pass, kubeWarn}, none, want{health.Ask, 2, nil, nil, 0}},
-		{17, []health.Result{pass, kubeWarn}, yes, want{health.Go, 2, reasons(kubeWarn), nil, 0}},
-		{18, []health.Result{pass, kubeWarn}, requireHealthy, want{health.Block, 2, nil, nil, 0}},
-		{19, []health.Result{bFail, warn}, none, want{health.Block, 3, nil, nil, 0}},
-		{19, []health.Result{bFail, warn}, yes, want{health.Block, 3, nil, nil, 0}},
-		{19, []health.Result{bFail}, force, want{health.Block, 3, nil, nil, 0}},
-		{20, []health.Result{bFail, advUnread}, yes, want{health.Block, 4, nil, nil, 1}},
-		{21, []health.Result{fcUnread}, yes, want{health.Block, 4, nil, nil, 1}},
-		{21, []health.Result{fcUnread}, force, want{health.Block, 4, nil, nil, 1}},
-		{22, []health.Result{drainFail}, none, want{health.Block, 3, nil, nil, 0}},
-		{22, []health.Result{drainFail}, yes, want{health.Block, 3, nil, nil, 0}},
-		{23, []health.Result{drainFail}, force, want{health.Ask, 2, nil, reasons(drainFail), 0}},
-		{24, []health.Result{drainFail}, health.Policy{Force: true, Yes: true}, want{health.Go, 2, reasons(drainFail), reasons(drainFail), 0}},
-		{25, []health.Result{drainFail}, health.Policy{Force: true, RequireHealthy: true}, want{health.Block, 2, nil, reasons(drainFail), 0}},
-		{26, []health.Result{drainUnr}, none, want{health.Block, 4, nil, nil, 1}},
-		{26, []health.Result{drainUnr}, yes, want{health.Block, 4, nil, nil, 1}},
-		{27, []health.Result{drainUnr}, force, want{health.Ask, 4, nil, reasons(drainUnr), 1}},
-		{28, []health.Result{drainUnr}, health.Policy{Force: true, Yes: true}, want{health.Go, 4, reasons(drainUnr), reasons(drainUnr), 1}},
-		{29, []health.Result{drainUnr}, health.Policy{Force: true, RequireHealthy: true}, want{health.Block, 4, nil, reasons(drainUnr), 1}},
-		{30, []health.Result{drainFail, bFail}, force, want{health.Block, 3, nil, reasons(drainFail), 0}},
-		{31, []health.Result{warn, capUnread}, yes, want{health.Go, 4, reasons(warn, capUnread), nil, 1}},
-		{32, []health.Result{pass, warn}, force, want{health.Ask, 2, nil, nil, 0}},
-		{32, []health.Result{capUnread}, force, want{health.Ask, 4, nil, nil, 1}},
+		{1, []health.Result{pass, skipped}, none, want{health.Go, 0, nil, nil, 0, nil, nil}},
+		{1, []health.Result{pass, skipped}, requireHealthy, want{health.Go, 0, nil, nil, 0, nil, nil}},
+		{2, []health.Result{bFail}, health.Policy{Skip: true}, want{health.Go, 0, nil, nil, 0, nil, nil}},
+		{3, []health.Result{pass, warn}, none, want{health.Ask, 2, nil, nil, 0, reasons(warn), nil}},
+		{4, []health.Result{pass, warn}, yes, want{health.Go, 2, reasons(warn), nil, 0, reasons(warn), nil}},
+		{5, []health.Result{pass, warn}, requireHealthy, want{health.Block, 2, nil, nil, 0, reasons(warn), nil}},
+		{6, []health.Result{pass, warn}, health.Policy{Yes: true, RequireHealthy: true}, want{health.Block, 2, nil, nil, 0, reasons(warn), nil}},
+		{7, []health.Result{advFail}, none, want{health.Ask, 2, nil, nil, 0, reasons(advFail), nil}},
+		{8, []health.Result{advFail}, yes, want{health.Go, 2, reasons(advFail), nil, 0, reasons(advFail), nil}},
+		{9, []health.Result{advFail}, requireHealthy, want{health.Block, 2, nil, nil, 0, reasons(advFail), nil}},
+		{10, []health.Result{advUnread}, none, want{health.Ask, 4, nil, nil, 1, reasons(advUnread), nil}},
+		{11, []health.Result{advUnread}, yes, want{health.Go, 4, reasons(advUnread), nil, 1, reasons(advUnread), nil}},
+		{12, []health.Result{advUnread}, requireHealthy, want{health.Block, 4, nil, nil, 1, reasons(advUnread), nil}},
+		{13, []health.Result{capUnread}, none, want{health.Ask, 4, nil, nil, 1, reasons(capUnread), nil}},
+		{14, []health.Result{capUnread}, yes, want{health.Go, 4, reasons(capUnread), nil, 1, reasons(capUnread), nil}},
+		{15, []health.Result{capUnread}, requireHealthy, want{health.Block, 4, nil, nil, 1, reasons(capUnread), nil}},
+		{16, []health.Result{pass, kubeWarn}, none, want{health.Ask, 2, nil, nil, 0, reasons(kubeWarn), nil}},
+		{17, []health.Result{pass, kubeWarn}, yes, want{health.Go, 2, reasons(kubeWarn), nil, 0, reasons(kubeWarn), nil}},
+		{18, []health.Result{pass, kubeWarn}, requireHealthy, want{health.Block, 2, nil, nil, 0, reasons(kubeWarn), nil}},
+		{19, []health.Result{bFail, warn}, none, want{health.Block, 3, nil, nil, 0, reasons(bFail, warn), reasons(bFail)}},
+		{19, []health.Result{bFail, warn}, yes, want{health.Block, 3, nil, nil, 0, reasons(bFail, warn), reasons(bFail)}},
+		{19, []health.Result{bFail}, force, want{health.Block, 3, nil, nil, 0, reasons(bFail), reasons(bFail)}},
+		{20, []health.Result{bFail, advUnread}, yes, want{health.Block, 4, nil, nil, 1, reasons(bFail, advUnread), reasons(bFail)}},
+		{21, []health.Result{fcUnread}, yes, want{health.Block, 4, nil, nil, 1, reasons(fcUnread), reasons(fcUnread)}},
+		{21, []health.Result{fcUnread}, force, want{health.Block, 4, nil, nil, 1, reasons(fcUnread), reasons(fcUnread)}},
+		{22, []health.Result{drainFail}, none, want{health.Block, 3, nil, nil, 0, reasons(drainFail), reasons(drainFail)}},
+		{22, []health.Result{drainFail}, yes, want{health.Block, 3, nil, nil, 0, reasons(drainFail), reasons(drainFail)}},
+		{23, []health.Result{drainFail}, force, want{health.Ask, 2, nil, reasons(drainFail), 0, reasons(drainFail), nil}},
+		{24, []health.Result{drainFail}, health.Policy{Force: true, Yes: true}, want{health.Go, 2, reasons(drainFail), reasons(drainFail), 0, reasons(drainFail), nil}},
+		{25, []health.Result{drainFail}, health.Policy{Force: true, RequireHealthy: true}, want{health.Block, 2, nil, reasons(drainFail), 0, reasons(drainFail), nil}},
+		{26, []health.Result{drainUnr}, none, want{health.Block, 4, nil, nil, 1, reasons(drainUnr), reasons(drainUnr)}},
+		{26, []health.Result{drainUnr}, yes, want{health.Block, 4, nil, nil, 1, reasons(drainUnr), reasons(drainUnr)}},
+		{27, []health.Result{drainUnr}, force, want{health.Ask, 4, nil, reasons(drainUnr), 1, reasons(drainUnr), nil}},
+		{28, []health.Result{drainUnr}, health.Policy{Force: true, Yes: true}, want{health.Go, 4, reasons(drainUnr), reasons(drainUnr), 1, reasons(drainUnr), nil}},
+		{29, []health.Result{drainUnr}, health.Policy{Force: true, RequireHealthy: true}, want{health.Block, 4, nil, reasons(drainUnr), 1, reasons(drainUnr), nil}},
+		{30, []health.Result{drainFail, bFail}, force, want{health.Block, 3, nil, reasons(drainFail), 0, reasons(bFail, drainFail), reasons(bFail)}},
+		{31, []health.Result{warn, capUnread}, yes, want{health.Go, 4, reasons(warn, capUnread), nil, 1, reasons(warn, capUnread), nil}},
+		{32, []health.Result{pass, warn}, force, want{health.Ask, 2, nil, nil, 0, reasons(warn), nil}},
+		{32, []health.Result{capUnread}, force, want{health.Ask, 4, nil, nil, 1, reasons(capUnread), nil}},
 	}
 	for _, tt := range tests {
 		v := health.Gate(tt.results, tt.policy)
-		got := want{v.Decision, v.Exit, v.Accepted, v.Forced, len(v.Failures)}
+		got := want{v.Decision, v.Exit, v.Accepted, v.Forced, len(v.Failures), v.Reasons, v.Blockers}
 		if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(want{})); diff != "" {
 			t.Errorf("row %d, policy %+v (-want +got):\n%s", tt.row, tt.policy, diff)
 		}
