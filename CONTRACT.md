@@ -114,7 +114,7 @@ Flag letters keep one meaning everywhere: `-c` cluster, `-n` nodegroup, `-a` add
 | Flag | Meaning |
 |---|---|
 | `-d, --dry-run` | Print the plan and the verdict of the health gate. Change nothing. Never prompt. The exit code comes from the findings alone, whatever `--yes` says: 4 when a check could not read what it needs, else 3 when the real run would be blocked, else 2 when it would ask about warnings, else 0. |
-| `-y, --yes` | Do not prompt. Required with `-o json|yaml` or without a terminal. |
+| `-y, --yes` | Do not prompt. Required with `-o json|yaml` or without a terminal. A warning that `--yes` or an answer accepted does not change the exit code of a run that then succeeds; a dry run still reports it with exit 2. |
 | `--no-wait` | Return once AWS accepts the change. Not available for `cluster upgrade` and `cluster rollback`, which have later steps. |
 | `--wait-timeout` | How long to wait for the change. `0` means no limit. Defaults: 40m for a nodegroup update, 5m for a scale, 5m for each add-on, 4h for an upgrade or rollback. |
 | `--poll-interval` | How often to poll. Default 15s. |
