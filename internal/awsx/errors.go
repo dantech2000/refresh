@@ -431,6 +431,12 @@ Set up credentials in one of these ways:
   aws configure            an access key in a profile
   AWS_ACCESS_KEY_ID        with AWS_SECRET_ACCESS_KEY, as environment variables
   an IAM role              when refresh runs on EC2, EKS, or Lambda`, Summary(err))
+	// A call of a client from Load says when the rejected keys came from
+	// the environment although AWS_PROFILE is set.
+	var shadow *keysShadowError
+	if errors.As(err, &shadow) {
+		msg += keysShadowProfileNote
+	}
 	return &formattedError{msg: msg, err: err}
 }
 
@@ -656,3 +662,12 @@ type ssoLoginError struct {
 
 func (e *ssoLoginError) Error() string { return e.err.Error() }
 func (e *ssoLoginError) Unwrap() error { return e.err }
+
+// keysShadowError is a credential failure of an API call whose keys came
+// from the environment while AWS_PROFILE is set.
+type keysShadowError struct {
+	err error
+}
+
+func (e *keysShadowError) Error() string { return e.err.Error() }
+func (e *keysShadowError) Unwrap() error { return e.err }

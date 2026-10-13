@@ -113,7 +113,11 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 	// from this configuration then names the profile to log in with. The
 	// profile is looked up once, when the first such failure needs it.
 	login := sync.OnceValue(func() string { return opts.ssoLoginProfile(context.WithoutCancel(ctx)) })
-	cfg.APIOptions = append(cfg.APIOptions, nameSSOLoginProfile(login))
+	// Keys from the environment resolve also when AWS has revoked them, so
+	// only the first API call rejects them. That error then says that the
+	// keys were used in place of AWS_PROFILE, as an error of Load does.
+	shadow := sync.OnceValue(func() bool { return keysShadowProfile(context.WithoutCancel(ctx), cfg.Credentials) })
+	cfg.APIOptions = append(cfg.APIOptions, addCredentialHints(login, shadow))
 	// resolveCredentials formats its error, with a headline of its own: a
 	// prefix here would put two headlines on the first line.
 	if err := opts.resolveCredentials(ctx, cfg, login); err != nil {
@@ -325,19 +329,37 @@ func (o Options) ssoLoginProfile(ctx context.Context) string {
 	return profile
 }
 
-// nameSSOLoginProfile adds a step to each call that marks an SSO login
-// failure with the profile to log in with, for FormatAWSError.
-func nameSSOLoginProfile(profile func() string) func(*middleware.Stack) error {
+// addCredentialHints adds a step to each call that marks a credential
+// failure with what only Load knows, for FormatAWSError: an SSO login
+// failure gets the profile to log in with, and keys that AWS rejects get a
+// mark when they came from the environment in place of AWS_PROFILE.
+func addCredentialHints(profile func() string, keysShadow func() bool) func(*middleware.Stack) error {
 	return func(stack *middleware.Stack) error {
-		return stack.Initialize.Add(middleware.InitializeMiddlewareFunc("refresh:SSOLoginProfile",
+		return stack.Initialize.Add(middleware.InitializeMiddlewareFunc("refresh:CredentialHints",
 			func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
 				out, metadata, err := next.HandleInitialize(ctx, in)
-				if err != nil && IsSSONotLoggedIn(err) {
+				switch {
+				case err == nil:
+				case IsSSONotLoggedIn(err):
 					err = &ssoLoginError{profile: profile(), err: err}
+				case IsCredentialError(err) && keysShadow():
+					err = &keysShadowError{err: err}
 				}
 				return out, metadata, err
 			}), middleware.Before)
 	}
+}
+
+// keysShadowProfile reports whether the credentials of provider are keys
+// from the environment while AWS_PROFILE is set. The SDK uses the keys
+// first, as the AWS CLI does, so the profile that the user chose has no
+// effect.
+func keysShadowProfile(ctx context.Context, provider aws.CredentialsProvider) bool {
+	if provider == nil || strings.TrimSpace(os.Getenv("AWS_PROFILE")) == "" || strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) == "" {
+		return false
+	}
+	creds, err := provider.Retrieve(ctx)
+	return err == nil && creds.Source == config.CredentialsSourceName
 }
 
 // NoteKeysShadowProfile adds a note to a credential error when the keys of
@@ -345,12 +367,12 @@ func nameSSOLoginProfile(profile func() string) func(*middleware.Stack) error {
 // keys first, as the AWS CLI does, so the profile that the user chose has no
 // effect. Any other error comes back as it is.
 func NoteKeysShadowProfile(ctx context.Context, cfg aws.Config, err error) error {
-	if err == nil || !IsCredentialError(err) || cfg.Credentials == nil ||
-		strings.TrimSpace(os.Getenv("AWS_PROFILE")) == "" || strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) == "" {
+	if err == nil || !IsCredentialError(err) || !keysShadowProfile(ctx, cfg.Credentials) {
 		return err
 	}
-	creds, rerr := cfg.Credentials.Retrieve(ctx)
-	if rerr != nil || creds.Source != config.CredentialsSourceName {
+	// An error of a client from Load already has the note.
+	var marked *keysShadowError
+	if errors.As(err, &marked) {
 		return err
 	}
 	return &formattedError{msg: err.Error() + keysShadowProfileNote, err: err}

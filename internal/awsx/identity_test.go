@@ -209,3 +209,62 @@ func TestCredentialRefreshIsNotRetriedByTheOperation(t *testing.T) {
 		})
 	}
 }
+
+// TestRejectedEnvironmentKeysGetTheProfileNote: keys from the environment
+// resolve although AWS has revoked them, so Load succeeds and the first API
+// call is refused. The error of that call says that the keys were used in
+// place of AWS_PROFILE, once.
+func TestRejectedEnvironmentKeysGetTheProfileNote(t *testing.T) {
+	const note = "the SDK uses it before AWS_PROFILE"
+	tests := []struct {
+		name     string
+		profile  string // AWS_PROFILE
+		opts     Options
+		wantNote bool
+	}{
+		{name: "keys of the environment with AWS_PROFILE", profile: "env-profile", wantNote: true},
+		{name: "keys of the environment, no AWS_PROFILE"},
+		// A profile that refresh names beats the keys of the environment,
+		// so the rejected keys are the profile's.
+		{name: "profile flag", profile: "env-profile", opts: Options{Profile: "flag-profile"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateAWS(t)
+			refuse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Amzn-Errortype", "UnrecognizedClientException")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"message":"The security token included in the request is invalid."}`))
+			}))
+			defer refuse.Close()
+			t.Setenv("AWS_ENDPOINT_URL", refuse.URL)
+			t.Setenv("AWS_PROFILE", tt.profile)
+			tt.opts.Region = "us-east-1"
+			cfg, err := load(context.Background(), tt.opts, NewHTTPClient(8), zeroBackoff{})
+			if err != nil {
+				t.Fatalf("load() error = %v: keys that resolve must load", err)
+			}
+			provider := NewProvider(cfg, func(o *ProviderOptions) { o.Backoff = zeroBackoff{} })
+
+			_, err = provider.Clients("").EKS.ListClusters(context.Background(), &eks.ListClustersInput{})
+
+			if !IsCredentialError(err) {
+				t.Fatalf("ListClusters error = %v, want the rejection of the keys", err)
+			}
+			formatted := FormatAWSError(err, "listing clusters")
+			if got := strings.Count(formatted.Error(), note); (got == 1) != tt.wantNote || got > 1 {
+				t.Errorf("the note appears %d times, want it: %t\n%v", got, tt.wantNote, formatted)
+			}
+			// Formatting again, and the helper for errors from elsewhere,
+			// add no second note.
+			again := NoteKeysShadowProfile(context.Background(), cfg, FormatAWSError(formatted, "listing clusters"))
+			if got := strings.Count(again.Error(), note); got > 1 {
+				t.Errorf("the note appears %d times after a second formatting", got)
+			}
+			if !errors.Is(formatted, err) {
+				t.Error("the formatted error does not wrap the error of the call")
+			}
+		})
+	}
+}
