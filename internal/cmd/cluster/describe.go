@@ -43,7 +43,9 @@ security configuration, its nodegroups, its add-ons, and its health.
 
 The HEALTH section runs the checks that a change runs before it starts.
 The checks that read the Kubernetes API run with --check-readiness;
-without it they are skipped.
+without it they are skipped. The summary does not change the exit code:
+describe reads and reports, and "status" and "cluster upgrade-check" are
+the commands that judge.
 
 Without an argument the cluster comes from REFRESH_CLUSTER, then the active
 refresh context, then the current kubeconfig context. The name is exact. For

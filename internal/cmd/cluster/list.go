@@ -94,7 +94,9 @@ region that these credentials cannot use is skipped with one note on stderr.
 A region that you name is never skipped.
 
 With -w the command reads again every --watch-interval and redraws the
-table, until Ctrl+C.
+table, until Ctrl+C. With --show-health the command runs the health checks
+that need no Kubernetes access on every cluster and adds a HEALTH column;
+the column does not change the exit code.
 
 A cluster or a region that could not be read is listed under INCOMPLETE
 DATA, or in "failures" with -o json or -o yaml, and the command exits 4.
