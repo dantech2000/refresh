@@ -94,6 +94,8 @@ A filter is `key=value`, repeatable, and all filters must match. The value may u
 | `--no-color` | `NO_COLOR` | | Disable color |
 | `--log-level` | `REFRESH_LOG_LEVEL` | `warn` | `debug`, `info`, `warn`, `error` |
 | `--verbose` | | | Same as `--log-level debug` |
+| `--kubeconfig` | `KUBECONFIG` | `~/.kube/config` | Kubeconfig file, for the cluster of a read command and for the Kubernetes checks |
+| `--kube-context` | | | Kubeconfig context to use. It is trusted even when its server does not match the cluster endpoint. |
 | `-h, --help` | | | Help |
 | `--version` | | | Print the version. On the root command only. |
 
@@ -115,7 +117,6 @@ Flag letters keep one meaning everywhere: `-c` cluster, `-n` nodegroup, `-a` add
 | `--skip-health-check` | Skip the pre-flight health gate. |
 | `--force` | Proceed past drain blockers, with a warning. |
 | `-q, --quiet` | Minimal progress output. |
-| `--kubeconfig`, `--kube-context` | Kubernetes access for the workload checks and the live node view. |
 
 ## Command flags
 
@@ -125,19 +126,19 @@ Only flags beyond the global and shared sets.
 |---|---|
 | `status` | `-A/--all-regions`, `-f/--filter`, `--sort`, `--desc` |
 | `cluster list` | `-A`, `-f`, `--sort`, `--desc`, `--show-health`, `-w/--watch`, `--watch-interval` |
-| `cluster describe` | `--check-readiness`, `--kubeconfig`, `--kube-context` |
+| `cluster describe` | `--check-readiness` |
 | `cluster upgrade-check` | `--category`, `--status`, `--show-passing`, `--insight`, `--exit-zero` |
 | `cluster upgrade` | `--to`, `--only`, `-n/--nodegroup`, `--skip-addon`, `--skip-nodegroup`, `--skip-insights-check` |
 | `cluster rollback` | `--skip-nodegroup`, `--skip-insights-check`, `--rollback-timeout` |
-| `nodegroup list` | `-c`, `-f`, `--sort`, `--desc`, `--check-readiness`, `-w`, `--watch-interval`, `--kubeconfig`, `--kube-context` |
-| `nodegroup describe` | `-c`, `--show-instances`, `--show-workloads`, `--kubeconfig`, `--kube-context` |
+| `nodegroup list` | `-c`, `-f`, `--sort`, `--desc`, `--check-readiness`, `-w`, `--watch-interval` |
+| `nodegroup describe` | `-c`, `--show-instances`, `--show-workloads` |
 | `nodegroup update` | `-c`, `-f`, `--all-clusters`, `--reroll`, `--require-healthy`, `--skip-verify`, `--changelog`, `--live` |
 | `nodegroup scale` | `-c`, `--desired`, `--min`, `--max` |
 | `addon list` | `-c`, `-w`, `--watch-interval` |
 | `addon describe` | `-c` |
 | `addon update` | `-c`, `--version`, `--all`, `--skip-addon` |
 | `context add` | `-c`, `-r`, `--profile`, `--use` |
-| `ui` | `-A`, `-r`, `--interval`, `--allow-changes`, `--wait-timeout`, `--kubeconfig`, `--kube-context` |
+| `ui` | `-A`, `-r`, `--interval`, `--allow-changes`, `--wait-timeout` |
 | `version` | `--no-update-check` |
 
 Renames inside this table: `cluster upgrade --skip` becomes `--skip-addon`, and `addon update --skip` becomes `--skip-addon`. `addon update` takes its version from `--version` only, not from a third positional. `nodegroup scale` loses `--health-check` and `--check-pdbs`, because the gate is on by default (change 5).
@@ -149,7 +150,7 @@ Unchanged rules:
 - `-o json|yaml` prints exactly one document on stdout. Everything human goes to stderr.
 - A document starts with `apiVersion` and `kind`.
 - No `null`. An empty list is `[]`, an empty map is `{}`, and a key with no collected data is left out.
-- A partial result has a top-level `failures` list and exits 4.
+- A partial result has a top-level `failures` list and exits 4. This holds for a describe command too: it prints what it read.
 - `-o plain` is TSV: one header row, then one row per item, `-` for an empty cell.
 - A run with `-o json|yaml` never prompts.
 - refresh's own enum values are PascalCase. AWS values pass through unchanged.
