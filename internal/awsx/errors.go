@@ -310,7 +310,13 @@ func FormatAWSError(err error, operation string) error {
 		return formatSSORegionError(err)
 	}
 	if IsSSONotLoggedIn(err) {
-		return FormatSSONotLoggedIn(err, "")
+		// A call of a client from Load carries the profile to log in with.
+		var login *ssoLoginError
+		profile := ""
+		if errors.As(err, &login) {
+			profile = login.profile
+		}
+		return FormatSSONotLoggedIn(err, profile)
 	}
 	// A connect timeout also reports itself as context.DeadlineExceeded,
 	// but a longer --timeout does not help an endpoint that cannot be
@@ -639,3 +645,14 @@ Permissions refresh uses (grant the ones for the commands you run):
 %s
 See %s`, operation, Summary(err), permissionHint(), PermissionsDocURL)
 }
+
+// ssoLoginError is an SSO login failure of an API call, with the profile to
+// log in with. The failure itself does not name a profile, and the code that
+// formats it has only the error.
+type ssoLoginError struct {
+	profile string
+	err     error
+}
+
+func (e *ssoLoginError) Error() string { return e.err.Error() }
+func (e *ssoLoginError) Unwrap() error { return e.err }

@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/smithy-go/middleware"
 )
 
 // Options are the settings of one run that decide the AWS profile and
@@ -105,7 +107,12 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 	if buildable, ok := cfg.HTTPClient.(*awshttp.BuildableClient); ok {
 		cfg.HTTPClient = buildable.Freeze()
 	}
-	if err := opts.resolveCredentials(ctx, cfg); err != nil {
+	// An SSO login can expire in the middle of a run. Every client built
+	// from this configuration then names the profile to log in with. The
+	// profile is looked up once, when the first such failure needs it.
+	login := sync.OnceValue(func() string { return opts.ssoLoginProfile(context.WithoutCancel(ctx)) })
+	cfg.APIOptions = append(cfg.APIOptions, nameSSOLoginProfile(login))
+	if err := opts.resolveCredentials(ctx, cfg, login); err != nil {
 		return aws.Config{}, fmt.Errorf("AWS credential validation failed: %w", err)
 	}
 	return cfg, nil
@@ -284,7 +291,7 @@ func tildePath(p string) string {
 // resolveCredentials retrieves the credentials of cfg and returns one error
 // for the caller to report. It catches missing credentials, a credential
 // source that fails, and an SSO login that expired.
-func (o Options) resolveCredentials(ctx context.Context, cfg aws.Config) error {
+func (o Options) resolveCredentials(ctx context.Context, cfg aws.Config, login func() string) error {
 	if cfg.Credentials == nil {
 		return nil // anonymous: nothing to resolve
 	}
@@ -296,15 +303,35 @@ func (o Options) resolveCredentials(ctx context.Context, cfg aws.Config) error {
 	case IsNoCredentials(err):
 		return FormatNoCredentials(err, SSOProfiles())
 	case IsSSONotLoggedIn(err):
-		// Name the profile to log in with. A role profile logs in through
-		// the SSO profile at the end of its source_profile chain.
-		profile, _, _ := o.EffectiveProfile()
-		if login := SSOLoginProfile(ctx, profile); login != "" {
-			profile = login
-		}
-		return FormatSSONotLoggedIn(err, profile)
+		return FormatSSONotLoggedIn(err, login())
 	}
 	return NoteKeysShadowProfile(ctx, cfg, FormatAWSError(err, "loading AWS credentials"))
+}
+
+// ssoLoginProfile returns the profile to log in with when the SSO login of
+// this run is missing or expired. A role profile logs in through the SSO
+// profile at the end of its source_profile chain.
+func (o Options) ssoLoginProfile(ctx context.Context) string {
+	profile, _, _ := o.EffectiveProfile()
+	if login := SSOLoginProfile(ctx, profile); login != "" {
+		return login
+	}
+	return profile
+}
+
+// nameSSOLoginProfile adds a step to each call that marks an SSO login
+// failure with the profile to log in with, for FormatAWSError.
+func nameSSOLoginProfile(profile func() string) func(*middleware.Stack) error {
+	return func(stack *middleware.Stack) error {
+		return stack.Initialize.Add(middleware.InitializeMiddlewareFunc("refresh:SSOLoginProfile",
+			func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
+				out, metadata, err := next.HandleInitialize(ctx, in)
+				if err != nil && IsSSONotLoggedIn(err) {
+					err = &ssoLoginError{profile: profile(), err: err}
+				}
+				return out, metadata, err
+			}), middleware.Before)
+	}
 }
 
 // NoteKeysShadowProfile adds a note to a credential error when the keys of
