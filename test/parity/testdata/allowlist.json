@@ -5,30 +5,22 @@
     "reason": "The old command starts the roll without --yes when no terminal is attached and health is clean. The new command refuses, so it sends no update.",
     "source": "`nodegroup update -o json` without `--yes`",
     "ownerApproved": true,
-    "expect": null
-  },
-  {
-    "scenario": "nodegroup-update-no-yes",
-    "field": "preconditions",
-    "reason": "The new command refuses before it sends an update, so there is no update to have preconditions.",
-    "source": "`nodegroup update -o json` without `--yes`",
-    "ownerApproved": true,
-    "expect": null
-  },
-  {
-    "scenario": "nodegroup-update-no-yes",
-    "field": "postconditions",
-    "reason": "The new command changes nothing, so it has nothing to verify afterwards.",
-    "source": "`nodegroup update -o json` without `--yes`",
-    "ownerApproved": true,
-    "expect": null
+    "expect": []
   },
   {
     "scenario": "nodegroup-update-no-yes",
     "field": "world",
-    "reason": "The new command refuses, so the nodegroup keeps its AMI release.",
+    "reason": "The new command refuses, so the nodegroup keeps its AMI release and the cluster has no update.",
     "source": "`nodegroup update -o json` without `--yes`",
-    "ownerApproved": true
+    "ownerApproved": true,
+    "expect": {
+      "us-east-1/prod": {
+        "nodegroups": {
+          "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3"
+        },
+        "updates": []
+      }
+    }
   },
   {
     "scenario": "nodegroup-update-no-yes",
@@ -53,5 +45,359 @@
     "source": "`nodegroup scale -o json` prints no document",
     "ownerApproved": true,
     "expect": 4
+  },
+  {
+    "scenario": "nodegroup-update-verify-node-not-ready",
+    "field": "exitCode",
+    "reason": "The old verification ignores the condition of the new nodes and exits 0. The new one reports nodes that are not Ready as an issue.",
+    "source": "Post-roll verification does not read node readiness",
+    "ownerApproved": true,
+    "expect": 5
+  },
+  {
+    "scenario": "nodegroup-update-verify-pods-unreadable",
+    "field": "exitCode",
+    "reason": "The old verification skips the pod check when the list fails and exits 0. In the new contract a verification that cannot read is incomplete data.",
+    "source": "If the pod list fails after a roll",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "cluster-rollback-pdb-blocked",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when a PodDisruptionBudget blocks the drain. A gate that refuses exits 3 in every command.",
+    "source": "A drain-gate refusal exits 3 in `nodegroup update`",
+    "ownerApproved": true,
+    "expect": 3
+  },
+  {
+    "scenario": "cluster-rollback-pdb-blocks-second-nodegroup",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when a PodDisruptionBudget blocks the drain. A gate that refuses exits 3 in every command.",
+    "source": "A drain-gate refusal exits 3 in `nodegroup update`",
+    "ownerApproved": true,
+    "expect": 3
+  },
+  {
+    "scenario": "cluster-upgrade-pdb-blocked",
+    "field": "mutations",
+    "reason": "The old command upgrades the control plane and the add-ons before it reads the budgets. The new plan step runs every gate first, so it sends the insights refresh and nothing else.",
+    "source": "`cluster upgrade` reads PDBs only",
+    "ownerApproved": true,
+    "expect": [
+      {
+        "operation": "eks:StartInsightsRefresh",
+        "target": "prod"
+      }
+    ]
+  },
+  {
+    "scenario": "cluster-upgrade-pdb-blocked",
+    "field": "settlement",
+    "reason": "The new command stops before any update, so it last sees the cluster on the old version.",
+    "source": "`cluster upgrade` reads PDBs only",
+    "ownerApproved": true,
+    "expect": {
+      "includes": [
+        "settlement: cluster prod: version=1.32"
+      ]
+    }
+  },
+  {
+    "scenario": "cluster-upgrade-pdb-blocked",
+    "field": "world",
+    "reason": "The new command stops before any update: the cluster stays on 1.32 and has no update.",
+    "source": "`cluster upgrade` reads PDBs only",
+    "ownerApproved": true,
+    "expect": {
+      "us-east-1/prod": {
+        "cluster": "1.32 ACTIVE",
+        "updates": []
+      }
+    }
+  },
+  {
+    "scenario": "cluster-upgrade-pdb-blocked",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when a PodDisruptionBudget blocks the drain. A gate that refuses exits 3 in every command.",
+    "source": "A drain-gate refusal exits 3 in `nodegroup update`",
+    "ownerApproved": true,
+    "expect": 3
+  },
+  {
+    "scenario": "cluster-upgrade-pdb-blocks-second-nodegroup",
+    "field": "mutations",
+    "reason": "The old command upgrades the control plane and the add-ons before it reads the budgets. The new plan step runs every gate first, so it sends the insights refresh and nothing else.",
+    "source": "`cluster upgrade` reads PDBs only",
+    "ownerApproved": true,
+    "expect": [
+      {
+        "operation": "eks:StartInsightsRefresh",
+        "target": "prod"
+      }
+    ]
+  },
+  {
+    "scenario": "cluster-upgrade-pdb-blocks-second-nodegroup",
+    "field": "settlement",
+    "reason": "The new command stops before any update, so it last sees the cluster on the old version.",
+    "source": "`cluster upgrade` reads PDBs only",
+    "ownerApproved": true,
+    "expect": {
+      "includes": [
+        "settlement: cluster prod: version=1.32"
+      ]
+    }
+  },
+  {
+    "scenario": "cluster-upgrade-pdb-blocks-second-nodegroup",
+    "field": "world",
+    "reason": "The new command stops before any update: the cluster stays on 1.32 and has no update.",
+    "source": "`cluster upgrade` reads PDBs only",
+    "ownerApproved": true,
+    "expect": {
+      "us-east-1/prod": {
+        "cluster": "1.32 ACTIVE",
+        "updates": []
+      }
+    }
+  },
+  {
+    "scenario": "cluster-upgrade-pdb-blocks-second-nodegroup",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when a PodDisruptionBudget blocks the drain. A gate that refuses exits 3 in every command.",
+    "source": "A drain-gate refusal exits 3 in `nodegroup update`",
+    "ownerApproved": true,
+    "expect": 3
+  },
+  {
+    "scenario": "cluster-upgrade-pdbs-unreadable",
+    "field": "mutations",
+    "reason": "The old command upgrades the control plane and the add-ons before it reads the budgets. The new plan step runs every gate first, so it sends the insights refresh and nothing else.",
+    "source": "`cluster upgrade` reads PDBs only",
+    "ownerApproved": true,
+    "expect": [
+      {
+        "operation": "eks:StartInsightsRefresh",
+        "target": "prod"
+      }
+    ]
+  },
+  {
+    "scenario": "cluster-upgrade-pdbs-unreadable",
+    "field": "settlement",
+    "reason": "The new command stops before any update, so it last sees the cluster on the old version.",
+    "source": "`cluster upgrade` reads PDBs only",
+    "ownerApproved": true,
+    "expect": {
+      "includes": [
+        "settlement: cluster prod: version=1.32"
+      ]
+    }
+  },
+  {
+    "scenario": "cluster-upgrade-pdbs-unreadable",
+    "field": "world",
+    "reason": "The new command stops before any update: the cluster stays on 1.32 and has no update.",
+    "source": "`cluster upgrade` reads PDBs only",
+    "ownerApproved": true,
+    "expect": {
+      "us-east-1/prod": {
+        "cluster": "1.32 ACTIVE",
+        "updates": []
+      }
+    }
+  },
+  {
+    "scenario": "cluster-upgrade-pdbs-unreadable",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when it cannot list the budgets. A drain-blocker check that cannot read blocks, and the run exits 4.",
+    "source": "A check that cannot read its data",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "cluster-rollback-pdbs-unreadable",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when it cannot list the budgets. A drain-blocker check that cannot read blocks, and the run exits 4.",
+    "source": "A check that cannot read its data",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "nodegroup-update-pdbs-unreadable",
+    "field": "exitCode",
+    "reason": "The old command exits 3 when it cannot list the budgets. A drain-blocker check that cannot read blocks, and the run exits 4.",
+    "source": "A check that cannot read its data",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "nodegroup-scale-pdbs-unreadable",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when it cannot list the budgets. A drain-blocker check that cannot read blocks, and the run exits 4.",
+    "source": "A check that cannot read its data",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "addon-update-deadline",
+    "field": "exitCode",
+    "reason": "The change may still be running in AWS when the wait gives up, so the result is incomplete: exit 4.",
+    "source": "A wait that reaches `--wait-timeout` exits 1",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "nodegroup-scale-deadline",
+    "field": "exitCode",
+    "reason": "The change may still be running in AWS when the wait gives up, so the result is incomplete: exit 4.",
+    "source": "A wait that reaches `--wait-timeout` exits 1",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "nodegroup-update-deadline",
+    "field": "exitCode",
+    "reason": "The change may still be running in AWS when the wait gives up, so the result is incomplete: exit 4.",
+    "source": "A wait that reaches `--wait-timeout` exits 1",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "cluster-upgrade-deadline",
+    "field": "exitCode",
+    "reason": "The change may still be running in AWS when the wait gives up, so the result is incomplete: exit 4.",
+    "source": "A wait that reaches `--wait-timeout` exits 1",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "cluster-rollback-deadline",
+    "field": "exitCode",
+    "reason": "The change may still be running in AWS when the wait gives up, so the result is incomplete: exit 4.",
+    "source": "A wait that reaches `--wait-timeout` exits 1",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "nodegroup-update-busy",
+    "field": "exitCode",
+    "reason": "The old command exits 0 for a target that is already updating. The new command lists it as a Busy failure and exits 4.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "nodegroup-scale-busy",
+    "field": "exitCode",
+    "reason": "The old command exits 3 for a target that is already updating. The new command lists it as a Busy failure and exits 4.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "addon-update-busy",
+    "field": "exitCode",
+    "reason": "The old command exits 0 for a target that is already updating. The new command lists it as a Busy failure and exits 4.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "nodegroup-update-changed-at-the-prompt",
+    "field": "exitCode",
+    "reason": "The old command exits 0 for a target that is already updating. The new command lists it as a Busy failure and exits 4.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "addon-update-attach",
+    "field": "decision",
+    "reason": "The old command waits for the update that someone else started. The new command does not attach to it, so the last it sees of the add-on is UPDATING.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": {
+      "includes": [
+        "decision: addon prod/vpc-cni: status=UPDATING"
+      ]
+    }
+  },
+  {
+    "scenario": "addon-update-attach",
+    "field": "world",
+    "reason": "The new command does not wait for the other update, which is still in progress when it exits.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": {
+      "us-east-1/prod": {
+        "updates": [
+          "vpc-cni AddonUpdate InProgress AddonVersion=v1.19.0-eksbuild.1"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "addon-update-attach",
+    "field": "exitCode",
+    "reason": "The old command exits 0 after it waited for the other update. The new command lists the add-on as a Busy failure and exits 4.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "addon-update-attach-failed",
+    "field": "decision",
+    "reason": "The old command waits for the update that someone else started. The new command does not attach to it, so the last it sees of the add-on is UPDATING.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": {
+      "includes": [
+        "decision: addon prod/vpc-cni: status=UPDATING"
+      ]
+    }
+  },
+  {
+    "scenario": "addon-update-attach-failed",
+    "field": "world",
+    "reason": "The new command does not wait for the other update, which is still in progress when it exits.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": {
+      "us-east-1/prod": {
+        "updates": [
+          "vpc-cni AddonUpdate InProgress AddonVersion=v1.19.0-eksbuild.1"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "addon-update-attach-failed",
+    "field": "exitCode",
+    "reason": "The old command exits 1 after it waited for the other update. The new command lists the add-on as a Busy failure and exits 4.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "nodegroup-update-force-up-to-date",
+    "field": "mutations",
+    "reason": "The old command rolls a nodegroup that is on the latest AMI when --force is set. In the new command --force only goes past drain blockers.",
+    "source": "`--force` also re-rolls a nodegroup",
+    "ownerApproved": true,
+    "expect": []
+  },
+  {
+    "scenario": "nodegroup-update-force-up-to-date",
+    "field": "world",
+    "reason": "The new command does not roll the nodegroup, so the cluster has no update.",
+    "source": "`--force` also re-rolls a nodegroup",
+    "ownerApproved": true,
+    "expect": {
+      "us-east-1/prod": {
+        "updates": []
+      }
+    }
   }
 ]

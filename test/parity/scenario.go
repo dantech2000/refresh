@@ -63,6 +63,15 @@ type Scenario struct {
 	// Moves change the world while the binary runs, between two of its
 	// requests.
 	Moves []Move
+	// Holds keep requests from being answered until something else has
+	// happened, to fix the order of two things the binary does at once.
+	Holds []Hold
+	// V2Require are facts the v2 binary must have seen at some point of the
+	// run, where the contract asks more of it than the old binary did.
+	// V2Checks are further assertions on the v2 trace alone, such as a
+	// notice the contract requires. The legacy trace is not held to either.
+	V2Require []Fact
+	V2Checks  []Check
 	// LegacyPreview and V2Preview are a command line to run first on the
 	// same world, such as the dry run of the change. AfterPreview then
 	// changes the world, and the trace is that of the main run alone.
@@ -78,13 +87,84 @@ type Scenario struct {
 	UnstableReads []fleettest.Operation
 }
 
-// Move changes the world at a fixed point of the run: when request number
-// Nth of the operation Before arrives, counted from 1, and before it is
-// answered. The operation is an AWS one or a Kubernetes one.
+// Move changes the world once, at a point of the run that both binaries
+// reach whatever they read on the way there.
 type Move struct {
-	Before fleettest.Operation
-	Nth    int
-	Do     func(w *fleettest.World) error
+	When Anchor
+	Do   func(w *fleettest.World) error
+}
+
+// Anchor is a point of a run. The points are things every correct binary
+// does or sees, and never "the Nth read", which is how one binary happens to
+// be written.
+type Anchor struct {
+	kind   anchorKind
+	op     fleettest.Operation
+	target string
+	update int
+	status fleettest.UpdateStatus
+	prompt int
+}
+
+type anchorKind int
+
+const (
+	beforeRequest anchorKind = iota + 1
+	afterAccepted
+	updateStatus
+	promptAnswered
+)
+
+// BeforeMutation is when the first mutating request of the operation for
+// the target ("cluster", "cluster/nodegroup", "cluster/addon") has arrived
+// and is not answered yet: the binary has decided, and the fake has not
+// acted. The move runs before the fake does.
+func BeforeMutation(op fleettest.Operation, target string) Anchor {
+	return Anchor{kind: beforeRequest, op: op, target: target}
+}
+
+// AfterMutation is when the fake has accepted the first such request, and
+// before the binary has the answer.
+func AfterMutation(op fleettest.Operation, target string) Anchor {
+	return Anchor{kind: afterAccepted, op: op, target: target}
+}
+
+// WhenUpdate is when the nth update the world started has the status, and
+// before any request is answered that could show it.
+func WhenUpdate(nth int, status fleettest.UpdateStatus) Anchor {
+	return Anchor{kind: updateStatus, update: nth, status: status}
+}
+
+// AfterPrompt is when the nth prompt of a terminal run has appeared, and
+// before the reply is typed.
+func AfterPrompt(nth int) Anchor { return Anchor{kind: promptAnswered, prompt: nth} }
+
+// matches reports whether the request is the one the anchor names.
+func (a Anchor) matches(r awsxtest.Request) bool {
+	target, _ := observe(r, awsxtest.Answer{Dropped: true})
+	return r.Operation == a.op && target == a.target
+}
+
+func (a Anchor) String() string {
+	switch a.kind {
+	case beforeRequest:
+		return fmt.Sprintf("before %s %s", a.op, a.target)
+	case afterAccepted:
+		return fmt.Sprintf("after %s %s was accepted", a.op, a.target)
+	case updateStatus:
+		return fmt.Sprintf("when update %d is %s", a.update, a.status)
+	case promptAnswered:
+		return fmt.Sprintf("after prompt %d", a.prompt)
+	}
+	return "nowhere"
+}
+
+// Hold keeps each request that Request accepts from being answered until
+// Until accepts a request of the run. answered says whether that request
+// has its answer.
+type Hold struct {
+	Request func(r awsxtest.Request) bool
+	Until   func(r awsxtest.Request, answered bool) bool
 }
 
 // Signal says when to interrupt the binary.
@@ -159,7 +239,8 @@ const (
 type Check struct {
 	// Field is the part of the trace the check is about. A paired run skips
 	// the check when the allowlist lets that field of the scenario differ:
-	// the check then describes the old binary only.
+	// the check then describes the old binary only. A check with no field
+	// always runs.
 	Field Field
 	// Run returns what is wrong, or nil.
 	Run func(t Trace) error
@@ -168,7 +249,7 @@ type Check struct {
 // The checks that take no argument.
 var (
 	fails                    = Check{Field: FieldExitCode, Run: failsIn}
-	noRequests               = Check{Field: FieldPreconditions, Run: noRequestsIn}
+	noRequests               = Check{Field: FieldDecision, Run: noRequestsIn}
 	noMutations              = Check{Field: FieldMutations, Run: noMutationsIn}
 	noUpdates                = Check{Field: FieldMutations, Run: noUpdatesIn}
 	changes                  = Check{Field: FieldMutations, Run: changesIn}
@@ -176,7 +257,7 @@ var (
 	refusedByEKS             = Check{Field: FieldMutations, Run: refusedByEKSIn}
 	nothingAfterSignal       = Check{Field: FieldMutations, Run: nothingAfterSignalIn}
 	oneUpdatePerLostResponse = Check{Field: FieldMutations, Run: oneUpdatePerLostResponseIn}
-	sawThrottle              = Check{Field: FieldPreconditions, Run: sawThrottleIn}
+	sawThrottle              = Check{Run: sawThrottleIn}
 	noRolls                  = Check{Field: FieldMutations, Run: noRollsIn}
 	rolls                    = Check{Field: FieldMutations, Run: rollsIn}
 	anUpdateFailed           = Check{Field: FieldWorld, Run: anUpdateFailedIn}
@@ -195,7 +276,7 @@ var behaviourChecks = map[Behaviour][]Check{
 	Busy:            {noUpdates},
 	Attach:          {exits(0), noUpdates},
 	AttachFailed:    {},
-	Deadline:        {fails, changes},
+	Deadline:        {fails, changes, waited(deadlineArg)},
 	Interrupt:       {exits(1), changes, nothingAfterSignal},
 	LostResponse:    {exits(0), oneUpdatePerLostResponse},
 	ThrottledRead:   {exits(0), changes, sawThrottle},
@@ -243,19 +324,49 @@ func (sc Scenario) check(t Trace, skip func(Field) bool) error {
 	return errors.Join(errs...)
 }
 
+// checkV2 runs what the scenario asks of the v2 binary alone.
+func (sc Scenario) checkV2(t Trace) error {
+	var errs []error
+	for _, f := range sc.V2Require {
+		errs = append(errs, saw(f).Run(t))
+	}
+	for _, c := range sc.V2Checks {
+		errs = append(errs, c.Run(t))
+	}
+	return errors.Join(errs...)
+}
+
 // sawRead: the binary made the read at least once and got an answer.
 func sawRead(op fleettest.Operation) Check {
-	return Check{Field: FieldPreconditions, Run: func(t Trace) error {
-		for _, s := range t.Steps {
-			for _, r := range s.Reads {
-				if r.Operation == op && !strings.HasPrefix(r.Observed, "error=") && r.Observed != "dropped" {
-					return nil
-				}
+	return Check{Run: func(t Trace) error {
+		for _, r := range t.Requests {
+			if r.Operation == op && r.Completed != 0 && !strings.HasPrefix(r.Observed, "error=") && r.Observed != "dropped" {
+				return nil
 			}
 		}
 		return fmt.Errorf("the binary never read %s", op)
 	}}
 }
+
+// waited: the binary ran for at least this long on the real clock. A
+// command that gives up before its deadline has not waited for it.
+func waited(d time.Duration) Check {
+	return Check{Run: func(t Trace) error {
+		if t.Elapsed < d {
+			return fmt.Errorf("the binary ran for %s, want at least the wait timeout of %s", t.Elapsed, d)
+		}
+		return nil
+	}}
+}
+
+// worldMoved: the binary polled while it waited, so the world's clock
+// moved. It is for the commands whose poll interval the scenario sets.
+var worldMoved = Check{Run: func(t Trace) error {
+	if t.WorldElapsed <= 0 {
+		return errors.New("the world's clock did not move: the binary did not poll while it waited")
+	}
+	return nil
+}}
 
 // updates returns the Update requests of a trace, as "Operation target".
 func updates(t Trace) []string {
@@ -286,8 +397,8 @@ func failsIn(t Trace) error {
 
 // noRequests: the binary decided before it called AWS at all.
 func noRequestsIn(t Trace) error {
-	if len(t.Steps) != 0 {
-		return fmt.Errorf("the binary sent requests: %d step(s)", len(t.Steps))
+	if len(t.Requests) != 0 {
+		return fmt.Errorf("the binary sent %d request(s), first %s", len(t.Requests), t.Requests[0].Operation)
 	}
 	return nil
 }
@@ -397,11 +508,9 @@ func oneUpdatePerLostResponseIn(t Trace) error {
 }
 
 func sawThrottleIn(t Trace) error {
-	for _, s := range t.Steps {
-		for _, r := range s.Reads {
-			if strings.HasPrefix(r.Observed, "error=") && strings.Contains(r.Observed, "hrottl") {
-				return nil
-			}
+	for _, r := range t.Requests {
+		if r.Mutation == nil && strings.HasPrefix(r.Observed, "error=") && strings.Contains(r.Observed, "hrottl") {
+			return nil
 		}
 	}
 	return errors.New("no read was throttled")
@@ -410,12 +519,10 @@ func sawThrottleIn(t Trace) error {
 // sawAnswer: at some point of the run, an answer to the read contained the
 // text.
 func sawAnswer(op fleettest.Operation, text string) Check {
-	return Check{Field: FieldPreconditions, Run: func(t Trace) error {
-		for _, s := range t.Steps {
-			for _, r := range s.Reads {
-				if r.Operation == op && strings.Contains(r.Observed, text) {
-					return nil
-				}
+	return Check{Run: func(t Trace) error {
+		for _, r := range t.Requests {
+			if r.Operation == op && r.Completed != 0 && strings.Contains(r.Observed, text) {
+				return nil
 			}
 		}
 		return fmt.Errorf("no %s answer with %q", op, text)
@@ -434,9 +541,9 @@ func isRoll(m *Mutation) bool {
 // upgrade may have updated the control plane and the add-ons before its
 // gate for the first nodegroup.
 func noRollsIn(t Trace) error {
-	for _, s := range t.Steps {
-		if isRoll(s.Mutation) {
-			return fmt.Errorf("%s %s was sent, want no nodegroup change", s.Mutation.Operation, s.Mutation.Target)
+	for _, m := range t.Mutations() {
+		if isRoll(&m) {
+			return fmt.Errorf("%s %s was sent, want no nodegroup change", m.Operation, m.Target)
 		}
 	}
 	return nil
@@ -461,32 +568,72 @@ func worldSays(text string) Check {
 	}}
 }
 
-// sawKubeAnswer: the binary made the Kubernetes request before it first
-// changed a nodegroup, or without changing one, and an answer to it
-// contained the text. It is how a scenario shows that a gate read the state
+// sawKubeAnswer: the binary had an answer to the Kubernetes request that
+// contained the text before it first sent a change to a nodegroup, or
+// without sending one. It is how a scenario shows that a gate read the state
 // it then decided on.
 func sawKubeAnswer(op fleettest.Operation, text string) Check {
-	return Check{Field: FieldPreconditions, Run: func(t Trace) error {
-		for _, s := range t.Steps {
-			for _, r := range s.Reads {
-				if r.Operation == op && strings.Contains(r.Observed, text) {
-					return nil
-				}
-			}
-			if isRoll(s.Mutation) {
+	return Check{Field: FieldEvidence, Run: func(t Trace) error {
+		roll := 0
+		for _, r := range t.Requests {
+			if isRoll(r.Mutation) {
+				roll = r.Arrived
 				break
+			}
+		}
+		for _, r := range t.Requests {
+			if r.Operation == op && r.Completed != 0 && (roll == 0 || r.Completed < roll) && strings.Contains(r.Observed, text) {
+				return nil
 			}
 		}
 		return fmt.Errorf("no %s answer with %q before the first nodegroup change", op, text)
 	}}
 }
 
-// called: the binary made the request at least once, at any point. It is
-// for the requests a trace keeps out of its steps.
+// called: the binary made the request at least once, at any point.
 func called(op fleettest.Operation) Check {
-	return Check{Field: FieldPreconditions, Run: func(t Trace) error {
-		if !slices.Contains(t.UnstableReads, op) {
-			return fmt.Errorf("%s was not called (called outside the steps: %v)", op, t.UnstableReads)
+	return Check{Run: func(t Trace) error {
+		if !slices.Contains(t.Operations, op) {
+			return fmt.Errorf("%s was not called (called: %v)", op, t.Operations)
+		}
+		return nil
+	}}
+}
+
+// saw: the binary saw the fact at some point of the run.
+func saw(f Fact) Check {
+	return Check{Run: func(t Trace) error {
+		for _, r := range t.Requests {
+			if r.Completed != 0 && slices.Contains(r.Facts, f) {
+				return nil
+			}
+		}
+		return fmt.Errorf("the binary never saw %s %s=%s", f.Subject, f.Attribute, f.Value)
+	}}
+}
+
+// sawAfterPrompt: the binary saw the fact in an answer to a request it sent
+// after the user answered its last prompt.
+func sawAfterPrompt(f Fact) Check {
+	return Check{Run: func(t Trace) error {
+		if len(t.Confirmations) == 0 {
+			return errors.New("no prompt was answered")
+		}
+		for _, r := range t.Requests {
+			if r.Completed != 0 && r.Arrived > t.Confirmations[len(t.Confirmations)-1] && slices.Contains(r.Facts, f) {
+				return nil
+			}
+		}
+		return fmt.Errorf("the binary did not see %s %s=%s after the prompt was answered", f.Subject, f.Attribute, f.Value)
+	}}
+}
+
+// says: the binary printed the text, on stdout, on stderr, or on its
+// terminal.
+func says(text string) Check {
+	return Check{Run: func(t Trace) error {
+		if !strings.Contains(t.Stdout+t.Stderr+t.Terminal, text) {
+			return fmt.Errorf("the binary did not print %q", text)
 		}
 		return nil
 	}}

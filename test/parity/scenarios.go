@@ -43,11 +43,6 @@ const noDrain = "an add-on update drains no node, and the legacy command reads n
 
 // matrix says, for every command and behaviour, which scenario shows it or
 // why none does. TestMatrix holds it to the scenarios.
-//
-// No scenario of any command shows what needs a Kubernetes API, which the
-// suite does not fake yet: a PDB that blocks a drain and --force past it,
-// the critical-workload and PDB health checks, post-roll pod verification,
-// and the live per-node view.
 var matrix = map[Command]map[Behaviour]cell{
 	AddonUpdate: {
 		Success: by("addon-update-yes"), DryRun: by("addon-update-dry-run"), Unattended: by("addon-update-unattended"),
@@ -177,7 +172,7 @@ func addonUpdate() []Scenario {
 			// The control plane starts to update just before the command
 			// sends its update. EKS refuses it.
 			Name: "addon-update-cluster-starts-updating", Seed: fleet(scripts(never)), Legacy: with("--yes"),
-			Moves:  []Move{{Before: fleettest.EKSUpdateAddon, Nth: 1, Do: startControlPlaneUpdate}},
+			Moves:  []Move{{When: BeforeMutation(fleettest.EKSUpdateAddon, "prod/vpc-cni"), Do: startControlPlaneUpdate}},
 			Checks: []Check{fails, refusedByEKS, resourceIs("vpc-cni", "v1.18.0-eksbuild.1 ACTIVE")},
 		},
 		{
@@ -187,6 +182,13 @@ func addonUpdate() []Scenario {
 		{
 			Name: "addon-update-throttled-read", Behaviour: ThrottledRead, Seed: fleet(), Legacy: with("--yes"),
 			Prepare: fault(on(fleettest.EKSDescribeAddonVersions), fleettest.Fault{Throttle: 1}),
+		},
+		{
+			// ListAddons answers one name per page. The second add-on is on
+			// the second page.
+			Name: "addon-update-all-paged", Seed: fleet(bothBehind), Legacy: all("--yes"),
+			Prepare: fault(on(fleettest.EKSListAddons), fleettest.Fault{PageSize: 1}),
+			Checks:  []Check{exits(0), updatesAre("UpdateAddon prod/vpc-cni", "UpdateAddon prod/coredns")},
 		},
 		{
 			Name: "addon-update-all", Seed: fleet(bothBehind), Legacy: all("--yes"),
@@ -254,6 +256,17 @@ func nodegroupScale() []Scenario {
 			Signal: interruptWait(1, 1), Checks: []Check{one},
 		},
 		{
+			// Someone else is scaling the nodegroup, and the describes still
+			// say ACTIVE, as EKS can for a moment. The command cannot know.
+			// It sends its update, EKS refuses it, and that is a failure.
+			Name: "nodegroup-scale-busy-status-lags", Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Prepare: func(w *fleettest.World) error {
+				w.ScriptStatus(Region, "prod", "ng-a", slices.Repeat([]fleettest.ResourceStatus{fleettest.StatusActive}, 50)...)
+				return scaleElsewhere(w)
+			},
+			Checks: []Check{fails, refusedByEKS, resourceIs("ng-a", "UPDATING")},
+		},
+		{
 			Name: "nodegroup-scale-lost-response", Behaviour: LostResponse, Seed: fleet(), Legacy: with("--yes"),
 			Prepare: fault(on(fleettest.EKSUpdateNodegroupConfig), fleettest.Fault{LoseResponse: 1}),
 		},
@@ -282,27 +295,28 @@ func nodegroupUpdate() []Scenario {
 		},
 		{
 			// Someone else starts to scale the nodegroup while the command
-			// prepares, just before the read the command decides on. The
-			// command must see it and leave the nodegroup alone. A command
-			// that decided on an earlier read would send its update, and
-			// the trace would show the request.
-			Name: "nodegroup-update-changed-before-the-gate", Seed: fleet(scripts(never)), Legacy: with("--yes"),
-			Moves:  []Move{{Before: fleettest.EKSDescribeNodegroup, Nth: lastReadBeforeRoll - 1, Do: scaleElsewhere}},
-			Checks: []Check{exits(0), noMutations, sawAnswer(fleettest.EKSDescribeNodegroup, "UPDATING")},
+			// waits at its prompt. The health checks it showed the user are
+			// stale by the time the user says yes. A command that reads the
+			// nodegroup again after the answer sees the change and leaves
+			// the nodegroup alone, as the legacy command does. One that does
+			// not sends its update.
+			Name: "nodegroup-update-changed-at-the-prompt", Seed: fleet(noMetrics, scripts(never)), Legacy: onTerminal(), Terminal: sayYes,
+			Moves:  []Move{{When: AfterPrompt(1), Do: scaleElsewhere}},
+			Checks: []Check{exits(0), noMutations, sawAfterPrompt(Fact{Subject: "nodegroup prod/ng-a", Attribute: "status", Value: "UPDATING"})},
 		},
 		{
-			// The same, one read later: after the command has decided. The
-			// legacy command reads the nodegroup as UPDATING, sends its
-			// update all the same, and EKS refuses it.
+			// The same, at the last moment: the command has decided and its
+			// update is on the way. EKS refuses the update, and the command
+			// must report that as a failure.
 			Name: "nodegroup-update-changed-under-the-gate", Seed: fleet(scripts(never)), Legacy: with("--yes"),
-			Moves:  []Move{{Before: fleettest.EKSDescribeNodegroup, Nth: lastReadBeforeRoll, Do: scaleElsewhere}},
-			Checks: []Check{fails, refusedByEKS, sawAnswer(fleettest.EKSDescribeNodegroup, "UPDATING")},
+			Moves:  []Move{{When: BeforeMutation(fleettest.EKSUpdateNodegroupVersion, "prod/ng-a"), Do: scaleElsewhere}},
+			Checks: []Check{fails, refusedByEKS, resourceIs("ng-a", "1.32.0-20250101 UPDATING")},
 		},
 		{
 			// The control plane starts to update just before the command
 			// sends its roll. EKS refuses the roll.
 			Name: "nodegroup-update-cluster-starts-updating", Seed: fleet(scripts(never)), Legacy: with("--yes"),
-			Moves:  []Move{{Before: fleettest.EKSUpdateNodegroupVersion, Nth: 1, Do: startControlPlaneUpdate}},
+			Moves:  []Move{{When: BeforeMutation(fleettest.EKSUpdateNodegroupVersion, "prod/ng-a"), Do: startControlPlaneUpdate}},
 			Checks: []Check{fails, refusedByEKS, resourceIs("ng-a", "1.32.0-20250101 ACTIVE")},
 		},
 		{
@@ -311,7 +325,9 @@ func nodegroupUpdate() []Scenario {
 		},
 		{
 			// The legacy command does not refuse without --yes when health is clean.
+			// The new command must refuse before it calls AWS at all.
 			Name: "nodegroup-update-no-yes", Seed: fleet(scripts(slow)), Legacy: with(), Checks: []Check{exits(0), updatesAre(a)},
+			V2Checks: []Check{noRequests},
 		},
 		{Name: "nodegroup-update-warnings-unattended", Seed: fleet(noMetrics), Legacy: with(), Checks: []Check{fails, noMutations}},
 		{Name: "nodegroup-update-require-healthy", Seed: fleet(noMetrics), Legacy: with("--yes", "--require-healthy"), Checks: []Check{exits(2), noMutations}},
@@ -346,7 +362,7 @@ func nodegroupUpdate() []Scenario {
 			Name: "nodegroup-update-busy", Behaviour: Busy, Legacy: with("--yes"), Checks: []Check{exits(0)},
 			Seed: fleet(func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodegroup("ng-a").Status = fleettest.StatusUpdating }),
 		},
-		{Name: "nodegroup-update-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a)}},
+		{Name: "nodegroup-update-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a), worldMoved}},
 		{
 			Name: "nodegroup-update-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes"),
 			Signal: interruptWait(1, 2), Checks: []Check{updatesAre(a)},
@@ -377,6 +393,19 @@ func nodegroupUpdate() []Scenario {
 		{
 			// Without --reroll a nodegroup on the latest AMI is not rolled.
 			Name: "nodegroup-update-up-to-date", Seed: fleet(), Legacy: every("-n", "ng-b", "--yes"), Checks: []Check{exits(0), noMutations},
+		},
+		{
+			// --force on a nodegroup that is on the latest AMI. The legacy
+			// command rolls it.
+			Name: "nodegroup-update-force-up-to-date", Seed: fleet(scripts(slow)), Legacy: every("-n", "ng-b", "--yes", "--force"),
+			Checks: []Check{exits(0), updatesAre(b)},
+		},
+		{
+			// ListNodegroups answers one name per page. The second stale
+			// nodegroup is on the second page.
+			Name: "nodegroup-update-paged", Seed: fleet(bothStale, scripts(slow)), Legacy: every("--yes"),
+			Prepare: fault(on(fleettest.EKSListNodegroups), fleettest.Fault{PageSize: 1}),
+			Checks:  []Check{exits(0), updatesAre(a, b)},
 		},
 		{
 			Name: "nodegroup-update-custom-ami", Legacy: with("--yes"), Checks: []Check{noMutations},
@@ -422,6 +451,15 @@ func clusterUpgrade() []Scenario {
 		{Name: "cluster-upgrade-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(), Legacy: onTerminal(), Terminal: ctrlC},
 		{Name: "cluster-upgrade-blocked", Behaviour: Blocked, Seed: fleet(blockingInsight), Legacy: with("--yes"), Checks: []Check{exits(3)}},
 		{
+			// ListInsights answers one insight per page. The one that blocks
+			// is on the second page.
+			Name: "cluster-upgrade-blocked-on-second-page", Legacy: with("--yes"), Checks: []Check{exits(3), noUpdates},
+			Seed: fleet(blockingInsight, func(_ *fleettest.State, c *fleettest.Cluster) {
+				c.Insights = append([]fleettest.Insight{{ID: "in-0", Name: "Kubelet version skew", Status: fleettest.InsightPassing}}, c.Insights...)
+			}),
+			Prepare: fault(on(fleettest.EKSListInsights), fleettest.Fault{PageSize: 1}),
+		},
+		{
 			Name: "cluster-upgrade-skip-insights", Seed: fleet(blockingInsight, scripts(slow)), Legacy: with("--yes", "--skip-insights-check"),
 			Checks: []Check{exits(0), whole},
 		},
@@ -452,11 +490,25 @@ func clusterUpgrade() []Scenario {
 			Legacy: with("--yes"), Checks: []Check{exits(0), updatesAre(cni, dns, a, b)},
 		},
 		{
+			// The control plane is updating, and ListUpdates does not list
+			// the update yet, as EKS can for a moment.
+			Name: "cluster-upgrade-attach-update-not-listed", Seed: fleet(scripts(slow)), Clock: clusterClock,
+			Prepare: func(w *fleettest.World) error {
+				w.HideUpdates(Region, "prod", 1)
+				return inFlight(long)(w)
+			},
+			Legacy: with("--yes", "--only", "control-plane"), Checks: []Check{exits(0), noUpdates, resourceIs("ng-a", "1.32 ")},
+		},
+		{
 			// The in-flight update fails. The legacy command then starts its own.
 			Name: "cluster-upgrade-attach-failed", Behaviour: AttachFailed, Seed: fleet(scripts(slow)), Prepare: inFlight(longFailing), Clock: clusterClock,
 			Legacy: with("--yes", "--only", "control-plane"), Checks: []Check{exits(0), updatesAre(control), anUpdateFailed},
+			// The new command must have seen the attached update fail, and
+			// must say so before it starts its own.
+			V2Require: []Fact{{Subject: "update prod 1", Attribute: "status", Value: "Failed"}},
+			V2Checks:  []Check{says(updateID(1)), says("failed")},
 		},
-		{Name: "cluster-upgrade-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(control)}},
+		{Name: "cluster-upgrade-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(control), worldMoved}},
 		{
 			Name: "cluster-upgrade-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes"),
 			Signal: interruptWait(1, 2), Checks: []Check{updatesAre(control)},
@@ -560,7 +612,7 @@ func clusterRollback() []Scenario {
 			Name: "cluster-rollback-attach-failed", Behaviour: AttachFailed, Seed: fleet(upgraded, rolledBackNodes), Prepare: inFlight(longFailing), Clock: clusterClock,
 			Legacy: with("--yes"), Checks: []Check{exits(0), updatesAre(control), anUpdateFailed},
 		},
-		{Name: "cluster-rollback-deadline", Behaviour: Deadline, Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a)}},
+		{Name: "cluster-rollback-deadline", Behaviour: Deadline, Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a), worldMoved}},
 		{
 			// The signal lands while the plan is checked again, before any update.
 			Name: "cluster-rollback-interrupt-before-start", Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes"),

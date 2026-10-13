@@ -117,8 +117,9 @@ func kubeNodegroupUpdate() []Scenario {
 			// the nodegroup's status and the Pending pods, not the nodes, so
 			// it passes.
 			Name: "nodegroup-update-verify-node-not-ready", Kube: true, Legacy: with("--yes"),
-			Seed:   fleet(workloads, rollOf("ng-a", fleettest.RollScript{NodesNeverReady: true})),
-			Checks: []Check{exits(0), updatesAre(a), worldSays("ng-a NotReady")},
+			Seed:      fleet(workloads, rollOf("ng-a", fleettest.RollScript{NodesNeverReady: true})),
+			Checks:    []Check{exits(0), updatesAre(a), worldSays("ng-a NotReady")},
+			V2Require: []Fact{{Subject: "node prod/ng-a-u1-1", Attribute: "condition", Value: "NotReady"}},
 		},
 		{
 			Name: "nodegroup-update-verify-pending-pods", Kube: true, Legacy: with("--yes"),
@@ -140,15 +141,26 @@ func kubeNodegroupUpdate() []Scenario {
 			// The pod list is refused once the roll has started. The legacy
 			// verification then skips the pod check, and passes.
 			Name: "nodegroup-update-verify-pods-unreadable", Kube: true, Seed: fleet(workloads, scripts(slow)), Legacy: with("--yes"),
-			Moves:  []Move{{Before: fleettest.EKSDescribeUpdate, Nth: 1, Do: deny(fleettest.KubeListPods)}},
-			Checks: []Check{exits(0), updatesAre(a)},
+			Moves:     []Move{{When: AfterMutation(fleettest.EKSUpdateNodegroupVersion, "prod/ng-a"), Do: deny(fleettest.KubeListPods)}},
+			Checks:    []Check{exits(0), updatesAre(a)},
+			V2Require: []Fact{{Subject: "pods prod", Attribute: "read", Value: "error=Forbidden"}},
 		},
 		{
 			// DescribeNodegroup is refused once the update has ended, so the
 			// state of the nodegroup after the roll is unknown.
 			Name: "nodegroup-update-verify-unreadable", Kube: true, Seed: fleet(workloads, scripts(slow)), Legacy: with("--yes"),
-			Moves:  []Move{{Before: fleettest.EKSDescribeUpdate, Nth: 4, Do: fault(on(fleettest.EKSDescribeNodegroup), fleettest.Fault{Deny: true})}},
+			Moves:  []Move{{When: WhenUpdate(1, fleettest.UpdateSuccessful), Do: fault(on(fleettest.EKSDescribeNodegroup), fleettest.Fault{Deny: true})}},
 			Checks: []Check{exits(4), updatesAre(a)},
+		},
+		{
+			// The update has ended, and the next describe of the nodegroup
+			// still says UPDATING, as EKS can for a moment.
+			Name: "nodegroup-update-verify-status-lags", Kube: true, Seed: fleet(workloads, scripts(slow)), Legacy: with("--yes"),
+			Moves: []Move{{When: WhenUpdate(1, fleettest.UpdateSuccessful), Do: func(w *fleettest.World) error {
+				w.ScriptStatus(Region, "prod", "ng-a", fleettest.StatusUpdating)
+				return nil
+			}}},
+			Checks: []Check{exits(5), updatesAre(a), sawAnswer(fleettest.EKSDescribeNodegroup, "1.32.0-20260101 UPDATING")},
 		},
 		{
 			Name: "nodegroup-update-stuck-drain", Kube: true, Legacy: with("--yes"),
@@ -234,7 +246,8 @@ func kubeClusterUpgrade() []Scenario {
 			// The legacy command reads the budgets only when it reaches the
 			// nodegroup, after the control plane and the add-ons are done.
 			Name: "cluster-upgrade-pdb-blocked", Behaviour: DrainBlocked, Kube: true, Seed: fleet(workloads, tight("web"), scripts(slow)), Legacy: with("--yes"),
-			Checks: []Check{updatesAre(control, cni, dns)},
+			Checks:    []Check{updatesAre(control, cni, dns)},
+			V2Require: []Fact{{Subject: "pdb prod/default/web", Attribute: "allowed", Value: "0"}},
 		},
 		{
 			Name: "cluster-upgrade-pdb-forced", Behaviour: DrainForced, Kube: true, Seed: fleet(workloads, tight("web"), scripts(slow)),
@@ -243,11 +256,13 @@ func kubeClusterUpgrade() []Scenario {
 		{
 			// The budget of the second nodegroup's pods allows nothing.
 			Name: "cluster-upgrade-pdb-blocks-second-nodegroup", Kube: true, Seed: fleet(workloads, tight("api"), scripts(slow)), Legacy: with("--yes"),
-			Checks: []Check{fails, updatesAre(control, cni, dns, a), resourceIs("ng-a", "1.33 "), resourceIs("ng-b", "1.32 ")},
+			Checks:    []Check{fails, updatesAre(control, cni, dns, a), resourceIs("ng-a", "1.33 "), resourceIs("ng-b", "1.32 ")},
+			V2Require: []Fact{{Subject: "pdb prod/default/api", Attribute: "allowed", Value: "0"}},
 		},
 		{
 			Name: "cluster-upgrade-pdbs-unreadable", Behaviour: GateUnreadable, Kube: true, Seed: fleet(workloads, scripts(slow)),
 			Prepare: deny(fleettest.KubeListPDBs), Legacy: with("--yes"), Checks: []Check{updatesAre(control, cni, dns)},
+			V2Require: []Fact{{Subject: "pdbs prod", Attribute: "read", Value: "error=Forbidden"}},
 		},
 		{
 			Name: "cluster-upgrade-pdbs-unreadable-forced", Behaviour: GateUnreadableForced, Kube: true, Seed: fleet(workloads, scripts(slow)),
@@ -257,7 +272,7 @@ func kubeClusterUpgrade() []Scenario {
 			// While the first nodegroup rolls, the second one degrades and its
 			// nodes stop being Ready.
 			Name: "cluster-upgrade-nodegroup-degrades-mid-run", Kube: true, Seed: fleet(workloads, scripts(slow)), Legacy: with("--yes"),
-			Moves: []Move{{Before: fleettest.EKSUpdateNodegroupVersion, Nth: 1, Do: func(w *fleettest.World) error {
+			Moves: []Move{{When: AfterMutation(fleettest.EKSUpdateNodegroupVersion, "prod/ng-a"), Do: func(w *fleettest.World) error {
 				w.Edit(func(s *fleettest.State) {
 					c := s.Cluster(Region, "prod")
 					ng := c.Nodegroup("ng-b")
@@ -281,7 +296,7 @@ func kubeClusterUpgrade() []Scenario {
 			// command waits for it and sends no update of its own.
 			Name: "cluster-upgrade-addon-updated-elsewhere", Kube: true, Seed: fleet(workloads, scripts(slow), script("vpc-cni", long)), Legacy: with("--yes"),
 			Clock: []fleettest.Operation{fleettest.EKSDescribeUpdate, fleettest.EKSDescribeInsightsRefresh, fleettest.EKSDescribeAddon},
-			Moves: []Move{{Before: fleettest.EKSUpdateClusterVersion, Nth: 1, Do: func(w *fleettest.World) error {
+			Moves: []Move{{When: BeforeMutation(fleettest.EKSUpdateClusterVersion, "prod"), Do: func(w *fleettest.World) error {
 				_, err := w.UpdateAddon(Region, "prod", "vpc-cni", fleettest.AddonRequest{Version: new("v1.20.0-eksbuild.1")})
 				return err
 			}}},

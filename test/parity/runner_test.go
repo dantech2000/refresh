@@ -125,8 +125,11 @@ func TestStallIsReported(t *testing.T) {
 func TestStubbornChildIsKilled(t *testing.T) {
 	t.Parallel()
 	r, args := stand("stubborn")
+	// The world has an update that only the clock can end, and the child
+	// sends nothing more. That is no stall: the child waits for an answer.
+	r.Stall = 300 * time.Millisecond
 	sc := Scenario{
-		Seed:   fleet(),
+		Seed: fleet(scripts(slow)), Prepare: startControlPlaneUpdate,
 		Signal: &Signal{Signal: syscall.SIGINT, Nth: 1, Match: func(r awsxtest.Request) bool { return r.Operation == fleettest.EKSListClusters }},
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
@@ -137,6 +140,9 @@ func TestStubbornChildIsKilled(t *testing.T) {
 	var runErr *RunError
 	if !errors.As(err, &runErr) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Run returned %v, want a RunError for the deadline", err)
+	}
+	if errors.Is(err, errStalled) {
+		t.Errorf("a run whose request the runner holds was reported as a stall: %v", err)
 	}
 	if took := time.Since(started); took > 20*time.Second {
 		t.Errorf("Run took %s to give up on a child with a 2s deadline and a 200ms grace", took)
@@ -239,28 +245,5 @@ func TestNormaliserMutation(t *testing.T) {
 	wantAll := []Mutation{want("token-1", "lost"), want("token-2", "accepted update 1"), want("token-1", "error=ThrottlingException")}
 	if diff := cmp.Diff(wantAll, got); diff != "" {
 		t.Errorf("mutations (-want +got):\n%s", diff)
-	}
-}
-
-// TestPreconditions checks which reads of a step count for its mutation.
-func TestPreconditions(t *testing.T) {
-	t.Parallel()
-	reads := []Read{
-		{Operation: "cloudwatch:GetMetricData", Region: Region},
-		{Operation: "eks:DescribeAddon", Region: Region, Target: "prod/coredns", Observed: "v1 ACTIVE"},
-		{Operation: "eks:DescribeCluster", Region: Region, Target: "prod", Observed: "1.33 ACTIVE"},
-		{Operation: "eks:DescribeNodegroup", Region: Region, Target: "prod/ng-a", Observed: "1.32 r1 ACTIVE 2/1/3"},
-		{Operation: "eks:DescribeNodegroup", Region: Region, Target: "prod/ng-b", Observed: "1.32 r1 ACTIVE 2/1/3"},
-		{Operation: "eks:DescribeNodegroup", Region: Region, Target: "staging/ng-a", Observed: "1.32 r1 ACTIVE 2/1/3"},
-		{Operation: "eks:DescribeUpdate", Region: Region, Target: "prod/vpc-cni", Observed: "update 3 AddonUpdate Successful"},
-	}
-	got := preconditions(reads, "prod/ng-a", "prod/vpc-cni")
-	want := []string{
-		"eks:DescribeCluster prod: 1.33 ACTIVE",
-		"eks:DescribeNodegroup prod/ng-a: 1.32 r1 ACTIVE 2/1/3",
-		"eks:DescribeUpdate prod/vpc-cni: update 3 AddonUpdate Successful",
-	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("preconditions of a roll of prod/ng-a after an update of prod/vpc-cni (-want +got):\n%s", diff)
 	}
 }

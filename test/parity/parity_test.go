@@ -6,9 +6,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,11 +20,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"go.uber.org/goleak"
-
-	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden traces in testdata")
@@ -44,7 +47,9 @@ var legacy Runner
 const helperArg = "parity-helper"
 
 // TestMain builds the legacy binary once. Set REFRESH_PARITY_LEGACY to the
-// path of a binary to test that one and skip the build.
+// path of a binary to test that one and skip the build. Set
+// REFRESH_PARITY_RACE=1 to build it with the race detector: a data race in
+// the binary then fails its run with exit code 66.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == helperArg {
 		helper(os.Args[2])
@@ -59,7 +64,11 @@ func TestMain(m *testing.M) {
 	legacy.Binary = os.Getenv("REFRESH_PARITY_LEGACY")
 	if legacy.Binary == "" {
 		legacy.Binary = filepath.Join(dir, "refresh-legacy")
-		build := exec.Command("go", "build", "-o", legacy.Binary, "../../legacy") //nolint:gosec,noctx // fixed arguments; nothing to cancel it
+		buildArgs := []string{"build", "-o", legacy.Binary, "../../legacy"}
+		if os.Getenv("REFRESH_PARITY_RACE") == "1" {
+			buildArgs = slices.Insert(buildArgs, 1, "-race")
+		}
+		build := exec.Command("go", buildArgs...) //nolint:gosec,noctx // fixed arguments; nothing to cancel it
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {
 			fmt.Fprintln(os.Stderr, "building the legacy binary:", err)
@@ -99,6 +108,8 @@ func helper(mode string) {
 		}
 		_ = resp.Body.Close()
 		fmt.Printf("the fake: status %d\n", resp.StatusCode)
+	case "careful", "eager":
+		os.Exit(changeNodegroup(mode == "eager"))
 	case "prompt":
 		fmt.Print("Continue? [y/N] ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -129,8 +140,39 @@ func helper(mode string) {
 	os.Exit(0)
 }
 
+// changeNodegroup is a small binary that reads ng-a and then rolls it, with
+// a real EKS client. The careful one waits for the answer to its read
+// before it sends the roll. The eager one sends the roll as soon as the read
+// is on the wire, so the roll arrives while the read is still unanswered. It
+// returns the exit code.
+func changeNodegroup(eager bool) int {
+	client := eks.New(eks.Options{
+		Region: os.Getenv("AWS_REGION"), BaseEndpoint: aws.String(os.Getenv("AWS_ENDPOINT_URL")),
+		Credentials: credentials.NewStaticCredentialsProvider(os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY"), ""),
+	})
+	ctx := context.Background()
+	read, sent := make(chan error, 1), make(chan struct{})
+	describe := func() {
+		onWire := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) { close(sent) }})
+		_, err := client.DescribeNodegroup(onWire, &eks.DescribeNodegroupInput{ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a")})
+		read <- err
+	}
+	if eager {
+		go describe()
+		<-sent
+	} else {
+		describe()
+	}
+	_, err := client.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a")})
+	if err = errors.Join(err, <-read); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
 // outputOnly are the trace fields no golden file holds.
-var outputOnly = cmp.Options{cmpopts.IgnoreFields(Trace{}, "Terminal", "PeakConcurrency"), cmpopts.IgnoreFields(Step{}, "Requests")}
+var outputOnly = cmpopts.IgnoreFields(Trace{}, "Terminal", "PeakConcurrency", "Requests", "Confirmations", "Elapsed", "WorldElapsed")
 
 // TestLegacyTraces runs every scenario's legacy command line, checks what
 // the scenario means, and compares the trace with its golden file. Run with
@@ -235,27 +277,6 @@ func roundTrip(t *testing.T, trace Trace) Trace {
 		t.Fatal(err)
 	}
 	return out
-}
-
-// TestLastReadBeforeRoll holds the constant that times the move of the
-// scenario nodegroup-update-changed-under-the-gate to what the legacy
-// binary does: the number of DescribeNodegroup requests it makes before it
-// sends the roll.
-func TestLastReadBeforeRoll(t *testing.T) {
-	t.Parallel()
-	var sc Scenario
-	for _, s := range scenarios() {
-		if s.Name == "nodegroup-update-yes" {
-			sc = s
-		}
-	}
-	trace := run(t, sc)
-	if len(trace.Steps) == 0 || trace.Steps[0].Mutation == nil {
-		t.Fatalf("the run sent no roll: %s", brief(trace))
-	}
-	if got := trace.Steps[0].Requests[fleettest.EKSDescribeNodegroup]; got != lastReadBeforeRoll {
-		t.Errorf("the legacy binary reads the nodegroups %d times before the roll, and lastReadBeforeRoll is %d", got, lastReadBeforeRoll)
-	}
 }
 
 // TestMatrix holds the behaviour matrix to the scenarios: every cell names

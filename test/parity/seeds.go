@@ -204,10 +204,8 @@ func startControlPlaneUpdate(w *fleettest.World) error {
 	return err
 }
 
-// lastReadBeforeRoll is which DescribeNodegroup request of the legacy
-// "nodegroup update -n ng-a --yes" on the seeded fleet is the last before
-// it sends its update. TestLastReadBeforeRoll holds it to the binary.
-const lastReadBeforeRoll = 9
+// deadlineArg is the --wait-timeout of the deadline scenarios.
+const deadlineArg = 300 * time.Millisecond
 
 // fault sets one fault on the world.
 func fault(scope fleettest.Scope, f fleettest.Fault) func(*fleettest.World) error {

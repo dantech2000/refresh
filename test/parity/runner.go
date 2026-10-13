@@ -2,13 +2,13 @@
 
 // Package parity runs a refresh binary as a subprocess against a fake fleet
 // and records what it did to the fleet: the requests that change state, what
-// the binary had read about a resource before each of them, and the state of
-// the fleet afterwards.
+// the binary had seen when it sent each of them, and the state of the fleet
+// afterwards.
 //
 // The old and the new CLI have different commands, flags, documents, and
 // messages, so their output is not compared. What the old binary remains the
 // reference for is safety: which changes it makes, in what order, after
-// which reads, and when it refuses. A Scenario pairs a legacy command line
+// which evidence, and when it refuses. A Scenario pairs a legacy command line
 // with its v2 equivalent on the same world, and Compare holds the two traces
 // to each other on those points. See "Parity suite" in REWRITE.md.
 //
@@ -25,6 +25,15 @@
 // part of a scenario waits for wall-clock time except the binary's own poll
 // ticker and deadlines, which the scenario sets as low as the command
 // allows.
+//
+// # Order
+//
+// The runner answers one request at a time, and numbers each request twice
+// in one sequence: when it arrives, and when its answer is ready. A request
+// "came before" a change only if its answer was ready before the change
+// arrived. The clock moves and the scenario's moves run between two
+// requests, never under one. A scenario with a Hold keeps a request
+// unanswered until another has arrived or was answered.
 //
 // # Signals and terminals
 //
@@ -49,7 +58,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -75,11 +83,12 @@ type Runner struct {
 	Grace time.Duration
 	// Stall is how long, on the real clock, the world may wait for the
 	// binary: an update is in progress that ends when the clock advances,
-	// and the binary sends no request that advances it. The run then fails
-	// with an error that says so, long before the run's own deadline. It
-	// happens when a wait polls an operation that is not among the
-	// scenario's clock operations. Zero means fifteen seconds, which is
-	// three polls of the commands whose poll interval is fixed.
+	// the binary sends no request that advances it, and it waits for no
+	// answer. The run then fails with an error that says so, long before
+	// the run's own deadline. It happens when a wait polls an operation
+	// that is not among the scenario's clock operations. Zero means fifteen
+	// seconds, which is three polls of the commands whose poll interval is
+	// fixed.
 	Stall time.Duration
 }
 
@@ -125,10 +134,10 @@ func (r Runner) RunAfter(ctx context.Context, sc Scenario, preview, args []strin
 	// the order: a hook reads cmd.Process only after Start returned.
 	started := make(chan struct{})
 	cmd := exec.Command(r.Binary, args...) //nolint:gosec,noctx // the binary under test; run stops it with its own grace period
-	rec := &recorder{sc: sc, world: world, signal: func(sig os.Signal) error {
+	rec := newRecorder(sc, world, func(sig os.Signal) error {
 		<-started
 		return cmd.Process.Signal(sig)
-	}}
+	})
 	rec.paused = preview != nil
 	handler := awsxtest.NewHandler(world)
 	handler.OnRequest, handler.OnAnswer = rec.onRequest, rec.onAnswer
@@ -159,7 +168,7 @@ func (r Runner) RunAfter(ctx context.Context, sc Scenario, preview, args []strin
 		dry := exec.Command(r.Binary, preview...) //nolint:gosec,noctx // the binary under test
 		dry.Dir, dry.Env = dir, env
 		previewStarted := make(chan struct{})
-		if out, err := r.run(ctx, dry, Scenario{}, previewStarted); err != nil {
+		if out, err := r.run(ctx, dry, Scenario{}, previewStarted, nil); err != nil {
 			return Trace{}, &RunError{Err: fmt.Errorf("preview %s %s: %w", r.Binary, strings.Join(preview, " "), err), Stdout: out.stdout, Stderr: out.stderr}
 		}
 		if sc.AfterPreview != nil {
@@ -171,7 +180,7 @@ func (r Runner) RunAfter(ctx context.Context, sc Scenario, preview, args []strin
 	}
 	cmd.Dir = dir
 	cmd.Env = env
-	startedAt := time.Now()
+	startedAt, worldStartedAt := time.Now(), world.Now()
 
 	runCtx, stop := context.WithCancelCause(ctx)
 	watched := make(chan struct{})
@@ -179,7 +188,8 @@ func (r Runner) RunAfter(ctx context.Context, sc Scenario, preview, args []strin
 		defer close(watched)
 		r.watchForStall(runCtx, stop, world, rec)
 	}()
-	out, err := r.run(runCtx, cmd, sc, started)
+	out, err := r.run(runCtx, cmd, sc, started, rec.confirmed)
+	elapsed := time.Since(startedAt)
 	stalled := context.Cause(runCtx)
 	stop(nil)
 	<-watched
@@ -198,6 +208,7 @@ func (r Runner) RunAfter(ctx context.Context, sc Scenario, preview, args []strin
 	trace.ExitCode = cmd.ProcessState.ExitCode()
 	trace.RefusedBeforeMutation = trace.ExitCode != 0 && len(trace.Mutations()) == 0
 	trace.PeakConcurrency = handler.PeakConcurrency("", "")
+	trace.Elapsed, trace.WorldElapsed = elapsed, world.Now().Sub(worldStartedAt)
 	// The output is normalised after the requests, so a token it prints has
 	// the name its request gave it.
 	trace.Stdout, trace.Stderr, trace.Terminal = n.text(out.stdout), n.text(out.stderr), n.text(out.terminal)
@@ -220,8 +231,10 @@ func (r Runner) watchForStall(ctx context.Context, stop context.CancelCauseFunc,
 			return
 		case <-ticker.C:
 		}
-		idle, last := rec.idle()
-		if world.Pending() > 0 && idle > limit {
+		// A binary that waits for an answer is not idle: the request is
+		// held by the scenario, or the fake is slow.
+		idle, waiting, last := rec.idle()
+		if world.Pending() > 0 && idle > limit && !waiting {
 			stop(fmt.Errorf("%w: an update in the world ends only when the clock advances, and for %s the binary has sent no request "+
 				"that advances it (the scenario's clock operations are %v). Its last requests were %v. If its wait polls another operation, add it to the scenario's Clock",
 				errStalled, idle.Round(time.Second), rec.clock(), last))
@@ -239,7 +252,10 @@ type output struct {
 // run starts cmd, waits for it, and stops it when ctx ends. The binary runs
 // in its own process group, and whatever is left of the group is killed
 // before run returns.
-func (r Runner) run(ctx context.Context, cmd *exec.Cmd, sc Scenario, started chan<- struct{}) (output, error) {
+//
+// onReply, when set, is called before each reply to a prompt is typed, with
+// the number of the prompt from 1.
+func (r Runner) run(ctx context.Context, cmd *exec.Cmd, sc Scenario, started chan<- struct{}, onReply func(n int)) (output, error) {
 	grace := r.Grace
 	if grace == 0 {
 		grace = 5 * time.Second
@@ -251,6 +267,7 @@ func (r Runner) run(ctx context.Context, cmd *exec.Cmd, sc Scenario, started cha
 		if term, err = openTerminal(cmd, *sc.Terminal); err != nil {
 			return output{}, err
 		}
+		term.onReply = onReply
 	} else {
 		cmd.Stdin = strings.NewReader(sc.Stdin)
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -371,6 +388,7 @@ type terminal struct {
 	done     chan struct{}
 	text     bytes.Buffer
 	answered int
+	onReply  func(n int)
 	err      error
 }
 
@@ -423,6 +441,9 @@ func (t *terminal) reply() {
 	for strings.Count(t.text.String(), t.script.Expect) > t.answered {
 		reply := t.script.Replies[min(t.answered, len(t.script.Replies)-1)]
 		t.answered++
+		if t.onReply != nil {
+			t.onReply(t.answered)
+		}
 		if _, err := io.WriteString(t.ptmx, reply); err != nil && t.err == nil {
 			t.err = fmt.Errorf("typing a reply: %w", err)
 		}
@@ -439,221 +460,4 @@ func (t *terminal) finish() string {
 	}
 	// A terminal turns "\n" into "\r\n".
 	return strings.ReplaceAll(t.text.String(), "\r\n", "\n")
-}
-
-// defaultClock are the operations only a wait loop calls.
-var defaultClock = []fleettest.Operation{fleettest.EKSDescribeUpdate, fleettest.EKSDescribeInsightsRefresh}
-
-// event is one request of the run, to AWS or to Kubernetes, in the order
-// the two servers received them.
-type event struct {
-	aws  *awsxtest.Request
-	kube *kubetest.Request
-	// answered and the answer fields are set when the request ends.
-	answered   bool
-	awsAnswer  awsxtest.Answer
-	kubeAnswer kubetest.Answer
-}
-
-// operation returns the operation of the event's request.
-func (e *event) operation() fleettest.Operation {
-	if e.aws != nil {
-		return e.aws.Operation
-	}
-	return e.kube.Operation
-}
-
-// recorder moves the world's clock, sends the scenario's signal, makes the
-// scenario's moves, and keeps the requests and their answers, as they
-// arrive.
-type recorder struct {
-	sc     Scenario
-	world  *fleettest.World
-	signal func(os.Signal) error
-
-	mu sync.Mutex
-	// paused is set while the scenario's preview runs: its requests move
-	// the clock and are not recorded.
-	paused bool
-	events []*event
-	// byAWS and byKube find the event of a request by its ID.
-	byAWS, byKube map[int]*event
-	// seen counts the requests of each operation, for the moves.
-	seen map[fleettest.Operation]int
-	// progressed is when, on the real clock, the binary last did something
-	// that the world's pending updates depend on: a poll of a clock
-	// operation, or a mutation. recent are its last few requests.
-	progressed time.Time
-	recent     []fleettest.Operation
-	// polled holds what the binary has polled since the clock last moved.
-	polled    map[string]bool
-	mutations int // mutating requests that arrived
-	matched   int // requests the scenario's Signal matched
-	// signalAfter is the number of mutating requests that had arrived when
-	// the signal was sent, or nil when none was sent.
-	signalAfter *int
-	failure     error
-}
-
-// clock returns the scenario's clock operations.
-func (rec *recorder) clock() []fleettest.Operation {
-	if rec.sc.Clock != nil {
-		return rec.sc.Clock
-	}
-	return defaultClock
-}
-
-// idle returns how long ago the binary last polled a clock operation or
-// sent a mutation, and its most recent requests.
-func (rec *recorder) idle() (time.Duration, []fleettest.Operation) {
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if rec.progressed.IsZero() {
-		rec.progressed = time.Now()
-	}
-	return time.Since(rec.progressed), slices.Clone(rec.recent)
-}
-
-func (rec *recorder) onRequest(ctx context.Context, r awsxtest.Request) {
-	clock := rec.clock()
-	rec.mu.Lock()
-	rec.recent = append(rec.recent, r.Operation)
-	rec.recent = rec.recent[max(0, len(rec.recent)-8):]
-	if r.Mutates || slices.Contains(clock, r.Operation) {
-		rec.progressed = time.Now()
-	}
-	paused := rec.paused
-	if !paused {
-		rec.add(&event{aws: &r})
-		if r.Mutates {
-			rec.mutations++
-		}
-	}
-	if slices.Contains(clock, r.Operation) {
-		poll := fmt.Sprint(r.Operation, r.Region, r.Input["name"], r.Input["clusterName"], r.Input["nodegroupName"], r.Input["addonName"], r.Input["updateId"])
-		if rec.polled[poll] {
-			// A second poll of the same thing: a new round. The clock moves
-			// under the lock, so no other poll of the round overtakes it.
-			rec.world.Advance(cmp.Or(rec.sc.Step, time.Minute))
-			rec.polled = nil
-		}
-		if rec.polled == nil {
-			rec.polled = map[string]bool{}
-		}
-		rec.polled[poll] = true
-	}
-	rec.mu.Unlock()
-	if paused {
-		return
-	}
-	rec.move(r.Operation)
-
-	s := rec.sc.Signal
-	if s == nil || !s.Match(r) {
-		return
-	}
-	rec.mu.Lock()
-	rec.matched++
-	send := rec.matched == s.Nth
-	if send {
-		n := rec.mutations
-		rec.signalAfter = &n
-	}
-	rec.mu.Unlock()
-	if !send {
-		return
-	}
-	if err := rec.signal(s.Signal); err != nil {
-		rec.mu.Lock()
-		rec.failure = fmt.Errorf("sending %s: %w", s.Signal, err)
-		rec.mu.Unlock()
-		return
-	}
-	// Hold the request until the binary gives it up, so the signal always
-	// lands with this request unanswered.
-	<-ctx.Done()
-}
-
-func (rec *recorder) onAnswer(r awsxtest.Request, a awsxtest.Answer) {
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if e := rec.byAWS[r.ID]; e != nil {
-		e.answered, e.awsAnswer = true, a
-	}
-}
-
-func (rec *recorder) onKubeRequest(_ context.Context, r kubetest.Request) {
-	rec.mu.Lock()
-	paused := rec.paused
-	if !paused {
-		rec.add(&event{kube: &r})
-	}
-	rec.mu.Unlock()
-	if !paused {
-		rec.move(r.Operation)
-	}
-}
-
-func (rec *recorder) onKubeAnswer(r kubetest.Request, a kubetest.Answer) {
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if e := rec.byKube[r.ID]; e != nil {
-		e.answered, e.kubeAnswer = true, a
-	}
-}
-
-// add records an event. The caller holds rec.mu.
-func (rec *recorder) add(e *event) {
-	if rec.byAWS == nil {
-		rec.byAWS, rec.byKube, rec.seen = map[int]*event{}, map[int]*event{}, map[fleettest.Operation]int{}
-	}
-	rec.events = append(rec.events, e)
-	if e.aws != nil {
-		rec.byAWS[e.aws.ID] = e
-	} else {
-		rec.byKube[e.kube.ID] = e
-	}
-	rec.seen[e.operation()]++
-}
-
-// resume ends the preview: from here on the requests are recorded.
-func (rec *recorder) resume() {
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	rec.paused, rec.polled = false, nil
-}
-
-// move makes the scenario's moves that are due at this request of op,
-// before the request is answered.
-func (rec *recorder) move(op fleettest.Operation) {
-	rec.mu.Lock()
-	n := rec.seen[op]
-	rec.mu.Unlock()
-	for _, m := range rec.sc.Moves {
-		if m.Before != op || m.Nth != n {
-			continue
-		}
-		if err := m.Do(rec.world); err != nil {
-			rec.mu.Lock()
-			rec.failure = fmt.Errorf("the move before request %d of %s: %w", n, op, err)
-			rec.mu.Unlock()
-		}
-	}
-}
-
-func (rec *recorder) err() error {
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if rec.failure != nil {
-		return rec.failure
-	}
-	if s := rec.sc.Signal; s != nil && rec.matched < s.Nth {
-		return fmt.Errorf("the signal was never sent: %d matching requests arrived, want %d", rec.matched, s.Nth)
-	}
-	for _, m := range rec.sc.Moves {
-		if rec.seen[m.Before] < m.Nth {
-			return fmt.Errorf("a move was never made: %s arrived %d times, want %d", m.Before, rec.seen[m.Before], m.Nth)
-		}
-	}
-	return nil
 }
