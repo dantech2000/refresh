@@ -183,7 +183,7 @@ func describeView(doc apidoc.ClusterDescription) view.Description {
 		item := view.Item{Name: n.Name, Fields: []view.Field{
 			{Name: "status", Value: orUnknownText(n.Incomplete, n.Status), Status: view.StatusOf(n.Status)},
 			{Name: "version", Value: orUnknownText(n.Incomplete, n.Version), Status: behindMark(n)},
-			{Name: "instance", Value: strings.Join(n.InstanceTypes, ",")},
+			{Name: "instance", Value: orUnknownText(n.Incomplete, strings.Join(n.InstanceTypes, ","))},
 			{Name: "nodes", Value: nodesCell(n)},
 		}}
 		nodegroups.Items = append(nodegroups.Items, item)

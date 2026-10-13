@@ -29,7 +29,7 @@ ISSUES  1
 
 NODEGROUPS  2
   NAME  STATUS       VERSION  INSTANCE            NODES
-  old   [?] unknown  unknown  -                   unknown
+  old   [?] unknown  unknown  unknown             unknown
   web   [OK] ACTIVE  1.33     m5.large,m5a.large  6
 
 HEALTH  9
