@@ -23,6 +23,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -426,20 +427,13 @@ func serveKube(w *fleettest.World, defaultRegion string) *kubeServers {
 	w.View(func(s *fleettest.State) {
 		for _, c := range s.Clusters {
 			ks.names = append(ks.names, c.Name)
-			ks.regions = append(ks.regions, cmpOr(c.Region, defaultRegion))
+			ks.regions = append(ks.regions, cmp.Or(c.Region, defaultRegion))
 		}
 	})
 	for i, name := range ks.names {
 		ks.servers = append(ks.servers, kubetest.NewServer(w, ks.regions[i], name))
 	}
 	return &ks
-}
-
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // Close stops every server.

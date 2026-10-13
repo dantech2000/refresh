@@ -73,11 +73,13 @@ var situations = []situation{
 		w.Advance(d.roll)
 		return nil
 	}},
-	{name: "addon-degraded", what: "the coredns add-on is DEGRADED (InsufficientNumberOfReplicas)", apply: func(_ *generator, c *fleettest.Cluster) {
+	{name: "addon-degraded", what: "the coredns add-on is DEGRADED (InsufficientNumberOfReplicas); an update repairs it", apply: func(g *generator, c *fleettest.Cluster) {
 		for _, a := range c.Addons {
 			if a.Name == "coredns" {
 				a.Status = fleettest.StatusDegraded
 				a.HealthIssues = []fleettest.Issue{{Code: "InsufficientNumberOfReplicas", Message: "The add-on is unhealthy because it doesn't have the desired number of replicas."}}
+				// The next update clears the issue, as a repair does.
+				a.UpdateScripts = []fleettest.UpdateScript{{After: g.d.addon, ResourceIssues: []fleettest.Issue{}}}
 			}
 		}
 	}},
@@ -238,7 +240,7 @@ func generate(rng *rand.Rand, n int, regions []string, now time.Time, d duration
 			if ami == "AL2_x86_64" && ngMinor > 32 {
 				ami = "AL2023_x86_64_STANDARD"
 			}
-			stale := rng.IntN(3) == 0 || (sit != nil && j == 0)
+			stale := rng.IntN(4) == 0 || (sit != nil && j == 0)
 			g.nodegroup(c, fmt.Sprintf("ng-%c", 'a'+j), version(ngMinor), ami, stale)
 		}
 		if sit == nil && rng.IntN(20) == 0 {
@@ -246,7 +248,7 @@ func generate(rng *rand.Rand, n int, regions []string, now time.Time, d duration
 		}
 		for _, a := range addons {
 			build := 2
-			if rng.IntN(3) == 0 {
+			if rng.IntN(5) == 0 {
 				build = 1 // behind
 			}
 			c.Addons = append(c.Addons, &fleettest.Addon{Name: a, Version: fmt.Sprintf("v%s.%d-eksbuild.1", version(minor), build)})
