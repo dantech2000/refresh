@@ -980,4 +980,19 @@ Nothing is open.
 
 ## 16. Changes made while building
 
-Empty until code changes the design.
+The code is the reference where it and the sections above differ. This table covers build steps 1 and 2: the command, the read-only Fleet screen, the sweep backend, the Cluster screen, and the readiness run.
+
+| Section | Note | Built |
+|---|---|---|
+| 1 | `Backend` has `Plan`, `Start`, `Answer`, `Pause`, `Resume`, `Stop` | The model's interface has `Next`, `Refresh`, and `Readiness`: what the two screens need. `backend.Live.Start` exists with the `ErrReadOnly` check first and `ErrNotBuilt` after it, so the one place that refuses a start exists and is tested before any change screen does. `state.ProposalID` exists for its signature. |
+| 5 | `Cluster.Latest`, `Cluster.Change`, `Cluster.Rollback`, `State.Changes`, `state.Change`, `state.Action`, `state.Proposal` | Not built. The sweep does not read the newest version EKS offers, so a row has no `Latest`; the card shows the next hop as the minor above the version. The rest arrives with step 3. |
+| 5 | The feed line of a sweep: "17 of 20 clusters need attention, 2 changing" | "20 clusters: 17 need attention, 2 changing, 1 incomplete". The arrow of a status change is `->`, so the feed reads the same without Unicode. |
+| 6 | `Options.WaitTimeout` and `Set`, `limits(kind)` | Not built; `--wait-timeout` is registered, validated, and says that it has no effect yet. |
+| 6 | `New(ctx, f, o)` | `New(ctx, provider, o)`: the command resolves the provider first, so a credential error prints before the alternate screen opens. `Run()` takes no context: the session's context is the one `New` got. `Readiness` of a cluster that the fleet does not have is `ErrUnknownCluster`. |
+| 6 | `health.CheckReadiness` returns the readiness, the reasons, the checks, the insights, and the rollback window | It also returns the snapshot and the rollback insights, which `cluster upgrade-check`'s document needs. The command builds its document from the report. |
+| 7 | Lip Gloss paints a `Seg` in `Line.Render` | No Lip Gloss in `tui`. A style per segment made a frame at 200 clusters 17,000 allocations; the theme now gives the SGR codes of a role once (`view.Theme.SGR`), a `painter` holds them, and `Render` writes them. A frame is 2,551 allocations and 0.57 ms. Bubble Tea still draws the program. |
+| 7 | Two screens of three: Fleet and Cluster | Built. The Change screen comes with step 3. The `CHANGE` column of the fleet table waits for it. |
+| 7 | ASCII terminals: borders, marks, bars, `...` for a cut | The cut marker is one cell in both sets (`…` and `~`), so a cut line keeps its width. The labels and texts that hold `·`, arrows, and `×` are replaced at render time, one ASCII cell each; the frame's cells are the same in both sets. |
+| 7 | The model ticks while a change runs, a readiness runs, or a sweep runs | Built for a readiness run and a sweep. A tick never reschedules itself when nothing needs it; the test asserts it. |
+| 9 | `slog.DiscardHandler` for the run | Nothing to do: the new tree sets no default `slog` handler. klog is routed by the root command already. The crash output goes to the saved descriptor with `debug.SetCrashOutput`. |
+| 11 | The harness runs the command that every message returns | It skips the commands after a state and after a tick: the wait for the next state would block, and the tick would sleep a second and come back for ever while a sweep runs. |
