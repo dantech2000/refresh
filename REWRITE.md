@@ -488,7 +488,8 @@ Exit: mutation parity for every scenario from phase 0.
 
 ### Phase 5: TUI
 
-- State, backend, model. The simulator switch runs the real backend on the fake world.
+- State, backend, model, and the handle over the synchronous executor. See `docs/design/phase-5-tui.md`.
+- No simulator in the product. For demos and manual testing, `tools/fakefleet` serves the fake fleet with its clock and its Kubernetes API, and the unchanged binary runs against it (`task run:tui:sim`).
 - Exit: the exact-fill screen tests pass; scripted runs complete a roll, an add-on update, an upgrade, a rollback, and an adopted change.
 
 ### Phase 6: cutover
