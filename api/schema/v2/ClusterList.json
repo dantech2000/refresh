@@ -230,6 +230,7 @@
             "UpdateCancelled",
             "NotMonitored",
             "NotAttempted",
+            "Busy",
             "Unknown"
           ]
         },
@@ -285,7 +286,7 @@
       "properties": {
         "summary": {
           "$ref": "#/$defs/HealthOutcome",
-          "description": "summary is the worst outcome of the checks: Fail, then Unreadable, then Warn, then Pass. A Skipped check does not count."
+          "description": "summary is the worst outcome of the checks: Fail, then Unreadable, then Warn, then Pass. A Skipped check does not count, and the summary is Skipped when no check ran."
         },
         "checks": {
           "items": {

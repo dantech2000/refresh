@@ -102,6 +102,12 @@ func addonUpdate() []Scenario {
 	with := args("addon", "update", "-c", "prod", "-a", "vpc-cni", "-o", "json")
 	all := args("addon", "update", "-c", "prod", "--all", "-o", "json")
 	onTerminal := args("addon", "update", "-c", "prod", "-a", "vpc-cni")
+	// The new command line: the add-on is a positional, a run waits unless
+	// --no-wait says otherwise, and the order of --all is always the
+	// dependency order. The poll interval keeps a wait short.
+	v2 := args("addon", "update", "vpc-cni", "-c", "prod", "--poll-interval", pollArg, "-o", "json")
+	v2All := args("addon", "update", "--all", "-c", "prod", "--poll-interval", pollArg, "-o", "json")
+	v2OnTerminal := args("addon", "update", "vpc-cni", "-c", "prod", "--poll-interval", pollArg, "--no-wait")
 	const target = "v1.19.0-eksbuild.1"
 	one := updatesAre("UpdateAddon prod/vpc-cni")
 	inFlight := func(script fleettest.UpdateScript) func(w *fleettest.World) error {
@@ -116,24 +122,25 @@ func addonUpdate() []Scenario {
 	// The wait for an add-on that is already UPDATING polls DescribeAddon.
 	addonClock := []fleettest.Operation{fleettest.EKSDescribeAddon}
 	return []Scenario{
-		{Name: "addon-update-yes", Behaviour: Success, Seed: fleet(), Legacy: with("--yes"), Checks: []Check{one, resourceIs("vpc-cni", target+" ACTIVE")}},
-		{Name: "addon-update-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), Checks: []Check{exits(0)}},
-		{Name: "addon-update-unattended", Behaviour: Unattended, Seed: fleet(), Legacy: with()},
-		{Name: "addon-update-prompt-yes", Behaviour: PromptYes, Seed: fleet(), Legacy: onTerminal(), Terminal: sayYes, Checks: []Check{exits(0), one}},
-		{Name: "addon-update-prompt-no", Behaviour: PromptNo, Seed: fleet(), Legacy: onTerminal(), Terminal: sayNo},
-		{Name: "addon-update-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(), Legacy: onTerminal(), Terminal: ctrlC},
-		{Name: "addon-update-wait", Behaviour: Success, Seed: fleet(scripts(oneTick)), Legacy: with("--yes", "--wait"), Checks: []Check{one}},
+		{Name: "addon-update-yes", Behaviour: Success, Seed: fleet(), Legacy: with("--yes"), V2: v2("--yes", "--no-wait"), Checks: []Check{one, resourceIs("vpc-cni", target+" ACTIVE")}},
+		{Name: "addon-update-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), V2: v2("--dry-run"), Checks: []Check{exits(0)}},
+		{Name: "addon-update-unattended", Behaviour: Unattended, Seed: fleet(), Legacy: with(), V2: v2()},
+		{Name: "addon-update-prompt-yes", Behaviour: PromptYes, Seed: fleet(), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayYes, Checks: []Check{exits(0), one}},
+		{Name: "addon-update-prompt-no", Behaviour: PromptNo, Seed: fleet(), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayNo},
+		{Name: "addon-update-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: ctrlC},
+		{Name: "addon-update-wait", Behaviour: Success, Seed: fleet(scripts(oneTick)), Legacy: with("--yes", "--wait"), V2: v2("--yes"), Checks: []Check{one}},
 		{
-			Name: "addon-update-failed", Behaviour: Failed, Seed: fleet(scripts(failsInOneTick)), Legacy: with("--yes", "--wait"),
+			Name: "addon-update-failed", Behaviour: Failed, Seed: fleet(scripts(failsInOneTick)), Legacy: with("--yes", "--wait"), V2: v2("--yes"),
 			Checks: []Check{one, resourceIs("vpc-cni", "v1.18.0-eksbuild.1")},
 		},
 		{
 			Name: "addon-update-incompatible", Behaviour: Blocked, Seed: fleet(),
 			Legacy: with("--yes", "--health-check", "--version", "v1.20.0-eksbuild.1"),
+			V2:     v2("--yes", "--no-wait", "--version", "v1.20.0-eksbuild.1"),
 		},
 		{
 			// The legacy command repairs a degraded add-on: it warns and updates.
-			Name: "addon-update-degraded", Legacy: with("--yes", "--health-check"), Checks: []Check{exits(0), one},
+			Name: "addon-update-degraded", Legacy: with("--yes", "--health-check"), V2: v2("--yes", "--no-wait"), Checks: []Check{exits(0), one},
 			Seed: fleet(func(_ *fleettest.State, c *fleettest.Cluster) {
 				c.Addon("vpc-cni").Status = fleettest.StatusDegraded
 				c.Addon("vpc-cni").HealthIssues = []fleettest.Issue{{Code: "InsufficientNumberOfReplicas", Message: "0 of 2 replicas are ready"}}
@@ -141,72 +148,75 @@ func addonUpdate() []Scenario {
 		},
 		{
 			// UPDATING at the target version, with no update to follow.
-			Name: "addon-update-busy", Behaviour: Busy, Legacy: with("--yes"), Checks: []Check{exits(0), resourceIs("vpc-cni", target+" UPDATING")},
+			Name: "addon-update-busy", Behaviour: Busy, Legacy: with("--yes"), V2: v2("--yes", "--no-wait"), Checks: []Check{exits(0), resourceIs("vpc-cni", target+" UPDATING")},
 			Seed: fleet(func(_ *fleettest.State, c *fleettest.Cluster) {
 				c.Addon("vpc-cni").Status, c.Addon("vpc-cni").Version = fleettest.StatusUpdating, target
 			}),
 		},
 		{
 			Name: "addon-update-attach", Behaviour: Attach, Seed: fleet(), Prepare: inFlight(fleettest.UpdateScript{After: 4 * time.Minute}), Clock: addonClock,
-			Legacy: with("--yes", "--wait"), Checks: []Check{resourceIs("vpc-cni", target+" ACTIVE")},
+			Legacy: with("--yes", "--wait"), V2: v2("--yes"), Checks: []Check{resourceIs("vpc-cni", target+" ACTIVE")},
 		},
 		{
-			Name: "addon-update-attach-failed", Behaviour: AttachFailed, Seed: fleet(), Clock: addonClock, Legacy: with("--yes", "--wait"),
+			Name: "addon-update-attach-failed", Behaviour: AttachFailed, Seed: fleet(), Clock: addonClock, Legacy: with("--yes", "--wait"), V2: v2("--yes"),
 			Checks: []Check{fails, noUpdates},
+			// The wait follows the add-on and looks up no update, so the
+			// output has no update ID to name.
+			V2Checks: []Check{says("failed")},
 			Prepare: inFlight(fleettest.UpdateScript{
 				After: 4 * time.Minute, Result: fleettest.UpdateFailed, ResourceStatus: fleettest.StatusUpdateFailed,
 				ResourceIssues: []fleettest.Issue{{Code: "AdmissionRequestDenied", Message: "the webhook denied the request"}},
 			}),
 		},
-		{Name: "addon-update-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait", "--wait-timeout", "300ms"), Checks: []Check{one}},
+		{Name: "addon-update-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait", "--wait-timeout", "300ms"), V2: v2("--yes", "--wait-timeout", "300ms"), Checks: []Check{one}},
 		{
-			Name: "addon-update-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait"),
+			Name: "addon-update-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait"), V2: v2("--yes"),
 			Signal: interruptWait(1, 1), Checks: []Check{one},
 		},
 		{
 			// The control plane is updating. The command's busy check sees it.
-			Name: "addon-update-cluster-updating", Seed: fleet(scripts(never)), Prepare: startControlPlaneUpdate, Legacy: with("--yes"),
+			Name: "addon-update-cluster-updating", Seed: fleet(scripts(never)), Prepare: startControlPlaneUpdate, Legacy: with("--yes"), V2: v2("--yes", "--no-wait"),
 			Checks: []Check{fails, noMutations, sawAnswer(fleettest.EKSDescribeCluster, "UPDATING")},
 		},
 		{
 			// The control plane starts to update just before the command
 			// sends its update. EKS refuses it.
-			Name: "addon-update-cluster-starts-updating", Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Name: "addon-update-cluster-starts-updating", Seed: fleet(scripts(never)), Legacy: with("--yes"), V2: v2("--yes", "--no-wait"),
 			Moves:  []Move{{When: BeforeMutation(fleettest.EKSUpdateAddon, "prod/vpc-cni"), Do: startControlPlaneUpdate}},
 			Checks: []Check{fails, refusedByEKS, resourceIs("vpc-cni", "v1.18.0-eksbuild.1 ACTIVE")},
 		},
 		{
-			Name: "addon-update-lost-response", Behaviour: LostResponse, Seed: fleet(), Legacy: with("--yes"),
+			Name: "addon-update-lost-response", Behaviour: LostResponse, Seed: fleet(), Legacy: with("--yes"), V2: v2("--yes", "--no-wait"),
 			Prepare: fault(on(fleettest.EKSUpdateAddon), fleettest.Fault{LoseResponse: 1}),
 		},
 		{
-			Name: "addon-update-throttled-read", Behaviour: ThrottledRead, Seed: fleet(), Legacy: with("--yes"),
+			Name: "addon-update-throttled-read", Behaviour: ThrottledRead, Seed: fleet(), Legacy: with("--yes"), V2: v2("--yes", "--no-wait"),
 			Prepare: fault(on(fleettest.EKSDescribeAddonVersions), fleettest.Fault{Throttle: 1}),
 		},
 		{
 			// ListAddons answers one name per page. The second add-on is on
 			// the second page.
-			Name: "addon-update-all-paged", Seed: fleet(bothBehind), Legacy: all("--yes"),
+			Name: "addon-update-all-paged", Seed: fleet(bothBehind), Legacy: all("--yes"), V2: v2All("--yes", "--no-wait"),
 			Prepare: fault(on(fleettest.EKSListAddons), fleettest.Fault{PageSize: 1}),
 			Checks:  []Check{exits(0), updatesAre("UpdateAddon prod/vpc-cni", "UpdateAddon prod/coredns")},
 		},
 		{
-			Name: "addon-update-all", Seed: fleet(bothBehind), Legacy: all("--yes"),
+			Name: "addon-update-all", Seed: fleet(bothBehind), Legacy: all("--yes"), V2: v2All("--yes", "--no-wait"),
 			Checks: []Check{exits(0), updatesAre("UpdateAddon prod/vpc-cni", "UpdateAddon prod/coredns")},
 		},
 		{
 			// coredns is listed first; the order flag puts vpc-cni before it.
-			Name: "addon-update-all-dependency-order", Legacy: all("--yes", "--dependency-order"),
+			Name: "addon-update-all-dependency-order", Legacy: all("--yes", "--dependency-order"), V2: v2All("--yes", "--no-wait"),
 			Seed:   fleet(bothBehind, func(_ *fleettest.State, c *fleettest.Cluster) { slices.Reverse(c.Addons) }),
 			Checks: []Check{exits(0), updatesAre("UpdateAddon prod/vpc-cni", "UpdateAddon prod/coredns")},
 		},
 		{
-			Name: "addon-update-all-skip", Seed: fleet(bothBehind), Legacy: all("--yes", "--skip", "coredns"),
+			Name: "addon-update-all-skip", Seed: fleet(bothBehind), Legacy: all("--yes", "--skip", "coredns"), V2: v2All("--yes", "--no-wait", "--skip-addon", "coredns"),
 			Checks: []Check{exits(0), one, resourceIs("coredns", "v1.11.3-eksbuild.1")},
 		},
 		{
 			Name: "addon-update-all-partial-failure", Seed: fleet(bothBehind, scripts(oneTick), script("vpc-cni", failsInOneTick)),
-			Legacy: all("--yes", "--wait"),
+			Legacy: all("--yes", "--wait"), V2: v2All("--yes"),
 			Checks: []Check{fails, updatesAre("UpdateAddon prod/vpc-cni", "UpdateAddon prod/coredns"), resourceIs("vpc-cni", "v1.18.0-eksbuild.1"), resourceIs("coredns", "v1.11.4-eksbuild.2")},
 		},
 	}
@@ -218,48 +228,58 @@ func nodegroupScale() []Scenario {
 	}
 	with := to("3")
 	onTerminal := args("nodegroup", "scale", "-c", "prod", "-n", "ng-a", "--desired", "3")
+	// The new command line: the nodegroup is a positional, and a run waits
+	// unless --no-wait says otherwise. The poll interval keeps a wait
+	// short.
+	v2To := func(desired string) func(extra ...string) []string {
+		return args("nodegroup", "scale", "ng-a", "-c", "prod", "--desired", desired, "--poll-interval", pollArg, "-o", "json")
+	}
+	v2 := v2To("3")
+	v2OnTerminal := args("nodegroup", "scale", "ng-a", "-c", "prod", "--desired", "3", "--poll-interval", pollArg, "--no-wait")
 	one := updatesAre("UpdateNodegroupConfig prod/ng-a")
 	return []Scenario{
-		{Name: "nodegroup-scale-yes", Behaviour: Success, Seed: fleet(), Legacy: with("--yes"), Checks: []Check{one, resourceIs("ng-a", "ACTIVE 3/1/3")}},
-		{Name: "nodegroup-scale-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), Checks: []Check{exits(0)}},
-		{Name: "nodegroup-scale-unattended", Behaviour: Unattended, Seed: fleet(), Legacy: with()},
-		{Name: "nodegroup-scale-prompt-yes", Behaviour: PromptYes, Seed: fleet(), Legacy: onTerminal(), Terminal: sayYes, Checks: []Check{exits(0), one}},
-		{Name: "nodegroup-scale-prompt-no", Behaviour: PromptNo, Seed: fleet(), Legacy: onTerminal(), Terminal: sayNo},
-		{Name: "nodegroup-scale-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(), Legacy: onTerminal(), Terminal: ctrlC},
-		{Name: "nodegroup-scale-wait", Behaviour: Success, Seed: fleet(scripts(oneTick)), Legacy: with("--yes", "--wait"), Checks: []Check{one}},
-		{Name: "nodegroup-scale-down", Behaviour: Success, Seed: fleet(), Legacy: to("1")("--yes"), Checks: []Check{one, resourceIs("ng-a", "ACTIVE 1/1/3")}},
+		{Name: "nodegroup-scale-yes", Behaviour: Success, Seed: fleet(), Legacy: with("--yes"), V2: v2("--yes", "--no-wait"), Checks: []Check{one, resourceIs("ng-a", "ACTIVE 3/1/3")}},
+		{Name: "nodegroup-scale-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), V2: v2("--dry-run"), Checks: []Check{exits(0)}},
+		{Name: "nodegroup-scale-unattended", Behaviour: Unattended, Seed: fleet(), Legacy: with(), V2: v2()},
+		{Name: "nodegroup-scale-prompt-yes", Behaviour: PromptYes, Seed: fleet(), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayYes, Checks: []Check{exits(0), one}},
+		{Name: "nodegroup-scale-prompt-no", Behaviour: PromptNo, Seed: fleet(), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayNo},
+		{Name: "nodegroup-scale-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: ctrlC},
+		{Name: "nodegroup-scale-wait", Behaviour: Success, Seed: fleet(scripts(oneTick)), Legacy: with("--yes", "--wait"), V2: v2("--yes"), Checks: []Check{one}},
+		{Name: "nodegroup-scale-down", Behaviour: Success, Seed: fleet(), Legacy: to("1")("--yes"), V2: v2To("1")("--yes", "--no-wait"), Checks: []Check{one, resourceIs("ng-a", "ACTIVE 1/1/3")}},
 		{
-			Name: "nodegroup-scale-failed", Behaviour: Failed, Seed: fleet(scripts(failsInOneTick)), Legacy: with("--yes", "--wait"),
+			Name: "nodegroup-scale-failed", Behaviour: Failed, Seed: fleet(scripts(failsInOneTick)), Legacy: with("--yes", "--wait"), V2: v2("--yes"),
 			Checks: []Check{one, resourceIs("ng-a", "ACTIVE 2/1/3")},
 		},
 		{
 			// The PDBs cannot be read without a Kubernetes API, and the gate fails closed.
 			Name: "nodegroup-scale-check-pdbs-no-kube", Seed: fleet(), Legacy: to("1")("--check-pdbs", "--yes"),
+			// --check-pdbs meant that the check must run: --require-healthy.
+			V2:     v2To("1")("--yes", "--no-wait", "--require-healthy"),
 			Checks: []Check{fails, noMutations},
 		},
 		{
 			// The legacy command does not check the sizes itself. EKS refuses.
-			Name: "nodegroup-scale-above-max", Seed: fleet(), Legacy: to("9")("--yes"),
+			Name: "nodegroup-scale-above-max", Seed: fleet(), Legacy: to("9")("--yes"), V2: v2To("9")("--yes", "--no-wait"),
 			Checks: []Check{fails, refusedByEKS, resourceIs("ng-a", "ACTIVE 2/1/3")},
 		},
 		{
-			Name: "nodegroup-scale-min-above-max", Seed: fleet(), Legacy: with("--yes", "--min", "5", "--max", "2"),
+			Name: "nodegroup-scale-min-above-max", Seed: fleet(), Legacy: with("--yes", "--min", "5", "--max", "2"), V2: v2("--yes", "--no-wait", "--min", "5", "--max", "2"),
 			Checks: []Check{fails, refusedByEKS, resourceIs("ng-a", "ACTIVE 2/1/3")},
 		},
 		{
-			Name: "nodegroup-scale-busy", Behaviour: Busy, Legacy: with("--yes"), Checks: []Check{fails},
+			Name: "nodegroup-scale-busy", Behaviour: Busy, Legacy: with("--yes"), V2: v2("--yes", "--no-wait"), Checks: []Check{fails},
 			Seed: fleet(func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodegroup("ng-a").Status = fleettest.StatusUpdating }),
 		},
-		{Name: "nodegroup-scale-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait", "--wait-timeout", "300ms"), Checks: []Check{one}},
+		{Name: "nodegroup-scale-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait", "--wait-timeout", "300ms"), V2: v2("--yes", "--wait-timeout", "300ms"), Checks: []Check{one}},
 		{
-			Name: "nodegroup-scale-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait"),
+			Name: "nodegroup-scale-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait"), V2: v2("--yes"),
 			Signal: interruptWait(1, 1), Checks: []Check{one},
 		},
 		{
 			// Someone else is scaling the nodegroup, and the describes still
 			// say ACTIVE, as EKS can for a moment. The command cannot know.
 			// It sends its update, EKS refuses it, and that is a failure.
-			Name: "nodegroup-scale-busy-status-lags", Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Name: "nodegroup-scale-busy-status-lags", Seed: fleet(scripts(never)), Legacy: with("--yes"), V2: v2("--yes", "--no-wait"),
 			Prepare: func(w *fleettest.World) error {
 				w.ScriptStatus(Region, "prod", "ng-a", slices.Repeat([]fleettest.ResourceStatus{fleettest.StatusActive}, 50)...)
 				return scaleElsewhere(w)
@@ -267,11 +287,11 @@ func nodegroupScale() []Scenario {
 			Checks: []Check{fails, refusedByEKS, resourceIs("ng-a", "UPDATING")},
 		},
 		{
-			Name: "nodegroup-scale-lost-response", Behaviour: LostResponse, Seed: fleet(), Legacy: with("--yes"),
+			Name: "nodegroup-scale-lost-response", Behaviour: LostResponse, Seed: fleet(), Legacy: with("--yes"), V2: v2("--yes", "--no-wait"),
 			Prepare: fault(on(fleettest.EKSUpdateNodegroupConfig), fleettest.Fault{LoseResponse: 1}),
 		},
 		{
-			Name: "nodegroup-scale-throttled-read", Behaviour: ThrottledRead, Seed: fleet(), Legacy: with("--yes"),
+			Name: "nodegroup-scale-throttled-read", Behaviour: ThrottledRead, Seed: fleet(), Legacy: with("--yes"), V2: v2("--yes", "--no-wait"),
 			Prepare: fault(on(fleettest.EKSDescribeNodegroup), fleettest.Fault{Throttle: 1}),
 		},
 	}

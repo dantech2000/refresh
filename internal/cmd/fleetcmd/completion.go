@@ -107,6 +107,18 @@ func CompleteAddons(f *cmdutil.Factory, clusterFlag *string) cobra.CompletionFun
 	})
 }
 
+// CompleteAddonNames is CompleteAddons for a command that takes several
+// add-ons: it offers names for every argument.
+func CompleteAddonNames(f *cmdutil.Factory, clusterFlag *string) cobra.CompletionFunc {
+	return complete(f, -1, func(ctx context.Context, fetcher *fleet.Fetcher, c *awsx.Clients) ([]string, error) {
+		cluster, err := completionCluster(f, *clusterFlag)
+		if err != nil {
+			return nil, err
+		}
+		return fetcher.AddonNames(ctx, c, cluster)
+	})
+}
+
 // completionCluster returns the cluster for a completion. It resolves as a
 // command that changes something does: without the kubeconfig. A
 // completion that guessed the cluster from the kubeconfig would offer the

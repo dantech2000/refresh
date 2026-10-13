@@ -1,0 +1,42 @@
+exit: 0
+error: 
+--- stdout ---
+apiVersion: refresh.drod.dev/v2
+kind: Plan
+operation: NodegroupScale
+clusters:
+  - cluster: prod
+    region: us-east-1
+    version: "1.33"
+    decision: Proceed
+    steps:
+      - phase: Scale
+        kind: Scale
+        name: web
+        action: Submit
+        sizes:
+          before:
+            desired: 2
+            min: 1
+            max: 3
+          after:
+            desired: 3
+            min: 1
+            max: 3
+    gate:
+      decision: Go
+      reasons: []
+      accepted: []
+      forced: []
+      checks:
+        - name: Quotas
+          outcome: Pass
+          blocking: false
+          message: 31% of the vCPU quota in use (40 of 128)
+          details:
+            - 'EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)'
+          findings: []
+    blockers: []
+    notices: []
+failures: []
+--- stderr ---

@@ -1,0 +1,78 @@
+exit: 2
+error: dry run: a real run would ask about health warnings
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Plan",
+  "operation": "NodegroupScale",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.33",
+      "decision": "Ask",
+      "steps": [
+        {
+          "phase": "Scale",
+          "kind": "Scale",
+          "name": "web",
+          "action": "Submit",
+          "sizes": {
+            "before": {
+              "desired": 2,
+              "min": 1,
+              "max": 3
+            },
+            "after": {
+              "desired": 1,
+              "min": 1,
+              "max": 3
+            }
+          }
+        }
+      ],
+      "gate": {
+        "decision": "Go",
+        "reasons": [
+          "Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run"
+        ],
+        "accepted": [
+          "Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run"
+        ],
+        "forced": [],
+        "checks": [
+          {
+            "name": "Nodes",
+            "outcome": "Pass",
+            "blocking": true,
+            "message": "4/4 nodes ready (estimated)",
+            "details": [
+              "estimated from the desired size of the nodegroups (no Kubernetes access)"
+            ],
+            "findings": []
+          },
+          {
+            "name": "DrainBlockers",
+            "outcome": "Skipped",
+            "blocking": true,
+            "message": "no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined",
+            "details": [],
+            "findings": []
+          },
+          {
+            "name": "Kubernetes",
+            "outcome": "Warn",
+            "blocking": false,
+            "message": "no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run",
+            "details": [],
+            "findings": []
+          }
+        ]
+      },
+      "blockers": [],
+      "notices": []
+    }
+  ],
+  "failures": []
+}
+--- stderr ---

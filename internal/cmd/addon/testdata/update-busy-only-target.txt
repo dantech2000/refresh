@@ -1,0 +1,21 @@
+exit: 4
+error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1; it was not changed. Run the command again once that finishes
+--- stdout ---
+Plan   - NothingToDo   AddonUpdate
+
+PLAN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   - NothingToDo
+
+STEPS  1
+  NAME     KIND   ACTION  REASON    FROM                TO
+  vpc-cni  Addon  Skip    InFlight  v1.19.5-eksbuild.1  v1.20.0-eksbuild.1
+
+INCOMPLETE DATA
+[?] addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1; it was not changed. Run the command again once that finishes
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  skip, at v1.19.5-eksbuild.1 (InFlight)

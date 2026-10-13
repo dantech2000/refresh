@@ -1,0 +1,83 @@
+exit: 3
+error: blocked by 1 health check: DrainBlockers: 1 PDB could lose more pods than allowed when 1 node leave web; nothing was started
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Plan",
+  "operation": "NodegroupScale",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.33",
+      "decision": "Blocked",
+      "steps": [
+        {
+          "phase": "Scale",
+          "kind": "Scale",
+          "name": "web",
+          "action": "Submit",
+          "sizes": {
+            "before": {
+              "desired": 2,
+              "min": 1,
+              "max": 3
+            },
+            "after": {
+              "desired": 1,
+              "min": 1,
+              "max": 3
+            }
+          }
+        }
+      ],
+      "gate": {
+        "decision": "Block",
+        "reasons": [
+          "DrainBlockers: 1 PDB could lose more pods than allowed when 1 node leave web"
+        ],
+        "accepted": [],
+        "forced": [],
+        "checks": [
+          {
+            "name": "Nodes",
+            "outcome": "Pass",
+            "blocking": true,
+            "message": "2/2 nodes ready",
+            "details": [],
+            "findings": []
+          },
+          {
+            "name": "DrainBlockers",
+            "outcome": "Fail",
+            "blocking": true,
+            "message": "1 PDB could lose more pods than allowed when 1 node leave web",
+            "details": [
+              "drain blocker: default/shop (2/2 pods healthy, 0 allowed; covered pods run on 2 of the nodes, so removing 1 can take down 1)"
+            ],
+            "findings": [
+              "default/shop"
+            ]
+          },
+          {
+            "name": "Kubernetes",
+            "outcome": "Pass",
+            "blocking": false,
+            "message": "Kubernetes API reachable",
+            "details": [],
+            "findings": []
+          }
+        ]
+      },
+      "blockers": [],
+      "notices": []
+    }
+  ],
+  "failures": []
+}
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 1, min 1, max 3
+  [OK] Nodes          2/2 nodes ready
+  [X]  DrainBlockers  1 PDB could lose more pods than allowed when 1 node leave web
+  [OK] Kubernetes     Kubernetes API reachable

@@ -1,0 +1,24 @@
+exit: 2
+error: dry run: a real run would ask about health warnings
+--- stdout ---
+FIELD	VALUE
+plan.operation	NodegroupScale
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.33
+plan.decision	Ask
+steps.web.kind	Scale
+steps.web.action	Submit
+steps.web.reason	-
+steps.web.from	desired 2, min 1, max 3
+steps.web.to	desired 1, min 1, max 3
+health_gate.decision	Go
+health_gate.reasons	Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
+health_gate.accepted	Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
+checks.Nodes.outcome	Pass
+checks.Nodes.message	4/4 nodes ready (estimated)
+checks.DrainBlockers.outcome	Skipped
+checks.DrainBlockers.message	no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
+checks.Kubernetes.outcome	Warn
+checks.Kubernetes.message	no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
+--- stderr ---

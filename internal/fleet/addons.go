@@ -67,8 +67,8 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 	for i := range names {
 		tasks = append(tasks, task{index: i})
 	}
-	if need.LatestAddons {
-		for i := range names {
+	for i, name := range names {
+		if need.LatestAddons || slices.Contains(need.LatestFor, name) {
 			tasks = append(tasks, task{index: i, newest: true})
 		}
 	}
@@ -128,7 +128,7 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 		}
 	}
 	for i, l := range results[len(names):] {
-		a := &res.addons[i]
+		a := &res.addons[tasks[len(names)+i].index]
 		if a.State != Collected || l.skipped {
 			continue
 		}
@@ -161,6 +161,41 @@ func addonNames(ctx context.Context, c *awsx.Clients, cluster string) ([]string,
 	)
 }
 
+// AddonVersions returns the versions of an add-on that a Kubernetes version
+// can run, newest first. It is empty when EKS publishes none. A change
+// reads it to check a version that the user named.
+func (f *Fetcher) AddonVersions(ctx context.Context, c *awsx.Clients, addon string, version Version) ([]string, error) {
+	infos, err := addonCatalogue(ctx, c, addon, version)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, info := range infos {
+		for _, v := range info.AddonVersions {
+			out = append(out, aws.ToString(v.AddonVersion))
+		}
+	}
+	slices.SortFunc(out, func(a, b string) int { return CompareAddonVersions(b, a) })
+	return slices.Compact(out), nil
+}
+
+// addonCatalogue reads the catalogue entries of an add-on for a Kubernetes
+// version.
+func addonCatalogue(ctx context.Context, c *awsx.Clients, addon string, version Version) ([]ekstypes.AddonInfo, error) {
+	return awsx.ListAll(ctx,
+		func(ctx context.Context, token *string) (*eks.DescribeAddonVersionsOutput, error) {
+			return c.EKS.DescribeAddonVersions(ctx, &eks.DescribeAddonVersionsInput{
+				AddonName:         aws.String(addon),
+				KubernetesVersion: aws.String(version.String()),
+				NextToken:         token,
+			})
+		},
+		func(out *eks.DescribeAddonVersionsOutput) ([]ekstypes.AddonInfo, *string) {
+			return out.Addons, out.NextToken
+		},
+	)
+}
+
 // latestAddon returns the newest version of an add-on that is compatible
 // with a Kubernetes version, or "" when EKS publishes none. Every cluster
 // of the run in the same region and on the same version shares one call
@@ -169,18 +204,7 @@ func addonNames(ctx context.Context, c *awsx.Clients, cluster string) ([]string,
 func (f *Fetcher) latestAddon(ctx context.Context, c *awsx.Clients, addon string, version Version) (string, error) {
 	key := addonKey{region: c.Region, addon: addon, version: version}
 	return f.latestAddons.Get(ctx, key, func(ctx context.Context) (string, error) {
-		infos, err := awsx.ListAll(ctx,
-			func(ctx context.Context, token *string) (*eks.DescribeAddonVersionsOutput, error) {
-				return c.EKS.DescribeAddonVersions(ctx, &eks.DescribeAddonVersionsInput{
-					AddonName:         aws.String(addon),
-					KubernetesVersion: aws.String(version.String()),
-					NextToken:         token,
-				})
-			},
-			func(out *eks.DescribeAddonVersionsOutput) ([]ekstypes.AddonInfo, *string) {
-				return out.Addons, out.NextToken
-			},
-		)
+		infos, err := addonCatalogue(ctx, c, addon, version)
 		if err != nil {
 			return "", err
 		}

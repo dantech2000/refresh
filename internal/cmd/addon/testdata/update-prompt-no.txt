@@ -1,0 +1,26 @@
+exit: 1
+error: declined; nothing was changed
+--- stdout ---
+Run   [!] Declined   AddonUpdate
+
+RUN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  status     [!] Declined
+
+RESULTS  1
+  NAME     KIND   STATUS            FROM                TO                  UPDATE  NOTE  STARTED  FINISHED  FAILURE
+  vpc-cni  Addon  [?] NotAttempted  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  -       -     -        -         -
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  1
+  NAME    OUTCOME    MESSAGE
+  Addons  [OK] Pass  1 add-on ACTIVE
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)
+Update add-on vpc-cni in prod from v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1? [y/N]: 

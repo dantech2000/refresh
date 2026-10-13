@@ -1,0 +1,29 @@
+exit: 3
+error: prod is busy (nodegroup api UPDATING); nothing was started. Run it again once that finishes
+--- stdout ---
+Plan   [X] Blocked   NodegroupScale
+
+PLAN
+  operation  NodegroupScale
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   [X] Blocked
+
+STEPS  1
+  NAME  KIND   ACTION  REASON  FROM                     TO
+  web   Scale  Submit  -       desired 2, min 1, max 3  desired 3, min 1, max 3
+
+BLOCKERS  1
+  NAME  KIND      STEP  MESSAGE
+  1     [X] Busy  -     prod is busy (nodegroup api UPDATING); nothing was started. Run it again once that finishes
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  1
+  NAME    OUTCOME    MESSAGE
+  Quotas  [OK] Pass  31% of the vCPU quota in use (40 of 128)
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 3, min 1, max 3

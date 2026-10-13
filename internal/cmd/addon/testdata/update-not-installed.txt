@@ -1,0 +1,7 @@
+exit: 1
+error: add-on "vpc-cn" not found in cluster prod
+Did you mean:
+  vpc-cni
+List the add-ons with: refresh addon list -c prod
+--- stdout ---
+--- stderr ---

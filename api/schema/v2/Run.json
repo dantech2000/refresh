@@ -1,0 +1,664 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v2/Run.json",
+  "$defs": {
+    "Blocker": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/BlockerKind"
+        },
+        "step": {
+          "$ref": "#/$defs/StepID",
+          "description": "step is the step that the blocker is about. It is left out when the blocker is about the cluster."
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "message"
+      ],
+      "description": "Blocker is one reason a plan cannot run."
+    },
+    "BlockerKind": {
+      "type": "string",
+      "enum": [
+        "Busy",
+        "NotReady",
+        "Unavailable",
+        "Unread"
+      ],
+      "description": "BlockerKind is why a plan cannot run."
+    },
+    "ClusterRun": {
+      "properties": {
+        "cluster": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "description": "version is the Kubernetes version of the control plane, and TargetVersion the version that an upgrade or a rollback moves to."
+        },
+        "targetVersion": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/PlanDecision"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/PlanStep"
+          },
+          "type": "array"
+        },
+        "gate": {
+          "$ref": "#/$defs/Gate",
+          "description": "gate is the verdict of the health gate. It is left out when no gate ran: nothing would be submitted, or --skip-health-check."
+        },
+        "blockers": {
+          "items": {
+            "$ref": "#/$defs/Blocker"
+          },
+          "type": "array"
+        },
+        "notices": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rollback": {
+          "$ref": "#/$defs/Rollback",
+          "description": "rollback is the upgrade that a rollback undoes."
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/StepResult"
+          },
+          "type": "array",
+          "description": "results has one entry for each step of the plan, in plan order."
+        },
+        "verification": {
+          "items": {
+            "$ref": "#/$defs/HealthResult"
+          },
+          "type": "array",
+          "description": "verification are the checks that ran after the change."
+        }
+      },
+      "type": "object",
+      "required": [
+        "cluster",
+        "region",
+        "decision",
+        "steps",
+        "blockers",
+        "notices",
+        "status",
+        "results",
+        "verification"
+      ],
+      "description": "ClusterRun is the plan for one cluster and what the run did with it."
+    },
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For a Region failure it is the region."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "cluster is the cluster that the item belongs to."
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "type": "string",
+          "examples": [
+            "AccessDenied",
+            "CredentialError",
+            "Throttled",
+            "NotFound",
+            "RegionUnavailable",
+            "InvalidRequest",
+            "ServiceError",
+            "NetworkError",
+            "Timeout",
+            "Interrupted",
+            "UpdateFailed",
+            "UpdateCancelled",
+            "NotMonitored",
+            "NotAttempted",
+            "Busy",
+            "Unknown"
+          ]
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether the same command, run again with no other change, may succeed."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of text for people. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the AWS API error code, such as AccessDeniedException, when AWS answered."
+        },
+        "updateId": {
+          "type": "string",
+          "description": "updateId is the EKS update ID, for a failure of a started update."
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item that refresh could not read, or one action that it tried and that did not complete."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "Failures": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "Failures is the failure list of a document. A nil list encodes as [], so a document always has its failures key as a list."
+    },
+    "Gate": {
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/GateDecision"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "reasons are the checks behind the decision, worst first, as \"check: message\"."
+        },
+        "accepted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "accepted are the reasons that --yes went past."
+        },
+        "forced": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "forced are the reasons that --force went past."
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/HealthResult"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "decision",
+        "reasons",
+        "accepted",
+        "forced",
+        "checks"
+      ],
+      "description": "Gate is the verdict of the health gate in a plan or a run."
+    },
+    "GateDecision": {
+      "type": "string",
+      "enum": [
+        "Go",
+        "Ask",
+        "Block"
+      ],
+      "description": "GateDecision is the verdict of the health gate of a change."
+    },
+    "HealthOutcome": {
+      "type": "string",
+      "enum": [
+        "Pass",
+        "Warn",
+        "Fail",
+        "Skipped",
+        "Unreadable"
+      ],
+      "description": "HealthOutcome is what a health check found."
+    },
+    "HealthResult": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/HealthOutcome"
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "blocking is true when a Fail of this check blocks a change."
+        },
+        "message": {
+          "type": "string",
+          "description": "message is one line about what the check found."
+        },
+        "details": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "findings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "findings name the things behind a Warn or a Fail, such as the nodes that are not ready."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "outcome",
+        "blocking",
+        "message",
+        "details",
+        "findings"
+      ],
+      "description": "HealthResult is the result of one health check."
+    },
+    "InsightCounts": {
+      "properties": {
+        "passing": {
+          "type": "integer"
+        },
+        "warning": {
+          "type": "integer"
+        },
+        "error": {
+          "type": "integer"
+        },
+        "unknown": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "passing",
+        "warning",
+        "error",
+        "unknown"
+      ],
+      "description": "InsightCounts counts insights by status."
+    },
+    "Operation": {
+      "type": "string",
+      "enum": [
+        "AddonUpdate",
+        "NodegroupScale",
+        "NodegroupUpdate",
+        "ClusterUpgrade",
+        "ClusterRollback"
+      ],
+      "description": "Operation is the change that a plan or a run is about."
+    },
+    "PhaseKind": {
+      "type": "string",
+      "enum": [
+        "ControlPlane",
+        "AddonsBefore",
+        "Nodegroups",
+        "AddonsAfter",
+        "Addons",
+        "Roll",
+        "Scale"
+      ],
+      "description": "PhaseKind names a phase of a change."
+    },
+    "PlanDecision": {
+      "type": "string",
+      "enum": [
+        "Proceed",
+        "Ask",
+        "Blocked",
+        "NothingToDo"
+      ],
+      "description": "PlanDecision is what a real run of a plan would do first."
+    },
+    "PlanStep": {
+      "properties": {
+        "phase": {
+          "$ref": "#/$defs/PhaseKind"
+        },
+        "hop": {
+          "type": "string",
+          "description": "hop is the Kubernetes version that the phase of an upgrade moves to."
+        },
+        "kind": {
+          "$ref": "#/$defs/StepKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name is the nodegroup or the add-on. It is left out for the control plane."
+        },
+        "action": {
+          "$ref": "#/$defs/StepAction"
+        },
+        "reason": {
+          "$ref": "#/$defs/StepReason"
+        },
+        "from": {
+          "type": "string",
+          "description": "from and To are the versions: the Kubernetes version for a roll and the control plane, the add-on version for an add-on."
+        },
+        "to": {
+          "type": "string"
+        },
+        "toRelease": {
+          "type": "string",
+          "description": "toRelease is the AMI release that a roll expects."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "force is true when the request carries the force flag."
+        },
+        "sizes": {
+          "$ref": "#/$defs/ScaleSizes"
+        }
+      },
+      "type": "object",
+      "required": [
+        "phase",
+        "kind",
+        "action"
+      ],
+      "description": "PlanStep is one step of a plan."
+    },
+    "Rollback": {
+      "properties": {
+        "previousVersion": {
+          "type": "string"
+        },
+        "upgradedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "upgradedAt is when the upgrade to the current version started. EKS counts the window from when it finished, so the dates are approximate."
+        },
+        "availableUntil": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "insights": {
+          "$ref": "#/$defs/InsightCounts",
+          "description": "insights counts the ROLLBACK_READINESS insights by status. It is left out when they could not be read."
+        }
+      },
+      "type": "object",
+      "required": [
+        "previousVersion",
+        "upgradedAt",
+        "availableUntil"
+      ],
+      "description": "Rollback says that the cluster can roll back to its previous minor version, and until when."
+    },
+    "RunStatus": {
+      "type": "string",
+      "enum": [
+        "Succeeded",
+        "NothingToDo",
+        "Started",
+        "Refused",
+        "Declined",
+        "Stopped",
+        "Blocked",
+        "Failed",
+        "VerifyFailed",
+        "Incomplete",
+        "Interrupted"
+      ],
+      "description": "RunStatus is how a run, or the part of it for one cluster, ended."
+    },
+    "ScaleSizes": {
+      "properties": {
+        "before": {
+          "$ref": "#/$defs/Sizes"
+        },
+        "after": {
+          "$ref": "#/$defs/Sizes"
+        }
+      },
+      "type": "object",
+      "required": [
+        "before",
+        "after"
+      ],
+      "description": "ScaleSizes are the sizes of a nodegroup before and after a scale."
+    },
+    "Sizes": {
+      "properties": {
+        "desired": {
+          "type": "integer"
+        },
+        "min": {
+          "type": "integer"
+        },
+        "max": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "desired",
+        "min",
+        "max"
+      ],
+      "description": "Sizes are the scaling sizes of a nodegroup."
+    },
+    "StepAction": {
+      "type": "string",
+      "enum": [
+        "Submit",
+        "Attach",
+        "Verify",
+        "Skip",
+        "Manual",
+        "Blocked"
+      ],
+      "description": "StepAction is what a run does with a step."
+    },
+    "StepID": {
+      "properties": {
+        "phase": {
+          "$ref": "#/$defs/PhaseKind"
+        },
+        "hop": {
+          "type": "string",
+          "description": "hop is the Kubernetes version that the phase of an upgrade moves to."
+        },
+        "kind": {
+          "$ref": "#/$defs/StepKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name is the nodegroup or the add-on. It is left out for the control plane."
+        }
+      },
+      "type": "object",
+      "required": [
+        "phase",
+        "kind"
+      ],
+      "description": "StepID identifies a step within its cluster: phase, hop, kind, and name together. No field is a composite ID to parse."
+    },
+    "StepKind": {
+      "type": "string",
+      "enum": [
+        "ControlPlane",
+        "Addon",
+        "Nodegroup",
+        "Scale"
+      ],
+      "description": "StepKind names what a step changes."
+    },
+    "StepReason": {
+      "type": "string",
+      "enum": [
+        "AMIOutdated",
+        "AMIUnknown",
+        "Reroll",
+        "VersionBehind",
+        "PreRoll",
+        "Repair",
+        "Unsettled",
+        "InFlight",
+        "AlreadyLatest",
+        "AlreadyAtTarget",
+        "NewerThanLatest",
+        "CustomAMI",
+        "SkippedByFlag",
+        "OutOfScope",
+        "NoChange"
+      ],
+      "description": "StepReason is why a step has its action."
+    },
+    "StepResult": {
+      "properties": {
+        "phase": {
+          "$ref": "#/$defs/PhaseKind"
+        },
+        "hop": {
+          "type": "string",
+          "description": "hop is the Kubernetes version that the phase of an upgrade moves to."
+        },
+        "kind": {
+          "$ref": "#/$defs/StepKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name is the nodegroup or the add-on. It is left out for the control plane."
+        },
+        "status": {
+          "$ref": "#/$defs/StepStatus"
+        },
+        "attached": {
+          "type": "boolean",
+          "description": "attached is true when the run waited for a change that it did not start."
+        },
+        "updateId": {
+          "type": "string"
+        },
+        "inFlight": {
+          "type": "string",
+          "description": "inFlight is the type of the update that made a Busy step busy: VersionUpdate, ConfigUpdate, or AddonUpdate. It is left out when the update was not found."
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "failure": {
+          "$ref": "#/$defs/Failure",
+          "description": "failure is why the step did not succeed. It is also in the failures list of the document."
+        }
+      },
+      "type": "object",
+      "required": [
+        "phase",
+        "kind",
+        "status"
+      ],
+      "description": "StepResult is what a run did with one step of the plan."
+    },
+    "StepStatus": {
+      "type": "string",
+      "enum": [
+        "NotAttempted",
+        "Started",
+        "Succeeded",
+        "Failed",
+        "Cancelled",
+        "InProgress",
+        "Busy",
+        "Skipped",
+        "Blocked"
+      ],
+      "description": "StepStatus is what a run did with one step."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v2",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "Run",
+      "description": "The type of the document."
+    },
+    "operation": {
+      "$ref": "#/$defs/Operation"
+    },
+    "status": {
+      "$ref": "#/$defs/RunStatus"
+    },
+    "clusters": {
+      "items": {
+        "$ref": "#/$defs/ClusterRun"
+      },
+      "type": "array"
+    },
+    "failures": {
+      "$ref": "#/$defs/Failures",
+      "description": "Every failure of the run: the items that refresh could not read and the actions that did not complete. The list is sorted by kind, region, cluster, name, and operation. It is [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "operation",
+    "status",
+    "clusters",
+    "failures"
+  ],
+  "title": "Run",
+  "description": "The document that `refresh addon update -o json` prints. -o yaml prints the same structure."
+}

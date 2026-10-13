@@ -9,6 +9,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
@@ -49,6 +50,21 @@ func NewFake(t *testing.T, world *fleettest.World, region string) *Fake {
 	cmdutiltest.NewContextStore(t, f, nil)
 	cmdutiltest.UseAWS(f, srv.Config(region))
 	return &Fake{World: world, Server: srv, Factory: f, Out: out, Err: errOut}
+}
+
+// UseWorldClock makes the clock of the world the clock of the command:
+// the factory reads the time of the world, and a pause of the command
+// moves the world forward by that long and ends at once. A command that
+// waits for an update then makes its polls as fast as the fake answers,
+// and the updates of the world progress as if the time had passed.
+func (e *Fake) UseWorldClock() {
+	e.Factory.Now = e.World.Now
+	e.Factory.After = func(d time.Duration) <-chan time.Time {
+		e.World.Advance(d)
+		done := make(chan time.Time, 1)
+		done <- e.World.Now()
+		return done
+	}
 }
 
 // Run executes the refresh command line in args and returns the error of

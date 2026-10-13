@@ -1,0 +1,33 @@
+exit: 0
+error: 
+--- stdout ---
+Run   [OK] Succeeded   AddonUpdate
+
+RUN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  status     [OK] Succeeded
+
+RESULTS  3
+  NAME        KIND   STATUS          FROM                TO                  UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  vpc-cni     Addon  [OK] Succeeded  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:15 UTC  -
+  coredns     Addon  [OK] Succeeded  v1.11.3-eksbuild.2  v1.11.4-eksbuild.2  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:15 UTC  2026-01-01 00:00:30 UTC  -
+  kube-proxy  Addon  - Skipped       v1.33.0-eksbuild.2  v1.33.0-eksbuild.2  -                                     -     -                        -                        -
+
+VERIFICATION  2
+  NAME         OUTCOME    MESSAGE
+  AddonHealth  [OK] Pass  vpc-cni is ACTIVE at v1.20.0-eksbuild.1
+  AddonHealth  [OK] Pass  coredns is ACTIVE at v1.11.4-eksbuild.2
+
+HEALTH GATE
+  decision  [OK] Go
+  reasons   Addons: coredns is DEGRADED; the update will try to repair it
+  accepted  Addons: coredns is DEGRADED; the update will try to repair it
+
+CHECKS  1
+  NAME    OUTCOME   MESSAGE
+  Addons  [!] Warn  coredns is DEGRADED; the update will try to repair it
+--- stderr ---
+  [!] Addons  coredns is DEGRADED; the update will try to repair it

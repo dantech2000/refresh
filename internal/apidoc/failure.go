@@ -77,6 +77,8 @@ const (
 	ReasonNotMonitored Reason = "NotMonitored"
 	// ReasonNotAttempted: the run stopped before this item started.
 	ReasonNotAttempted Reason = "NotAttempted"
+	// ReasonBusy: the item was already changing, so the run left it alone.
+	ReasonBusy Reason = "Busy"
 	// ReasonUnknown: any other error.
 	ReasonUnknown Reason = "Unknown"
 )
@@ -87,7 +89,7 @@ func Reasons() []Reason {
 		ReasonAccessDenied, ReasonCredentialError, ReasonThrottled, ReasonNotFound,
 		ReasonRegionUnavailable, ReasonInvalidRequest, ReasonServiceError, ReasonNetworkError,
 		ReasonTimeout, ReasonInterrupted, ReasonUpdateFailed, ReasonUpdateCancelled,
-		ReasonNotMonitored, ReasonNotAttempted, ReasonUnknown,
+		ReasonNotMonitored, ReasonNotAttempted, ReasonBusy, ReasonUnknown,
 	}
 }
 
@@ -107,7 +109,7 @@ func (Reason) Values() []string {
 func (r Reason) Retryable() bool {
 	switch r {
 	case ReasonThrottled, ReasonServiceError, ReasonNetworkError, ReasonTimeout,
-		ReasonInterrupted, ReasonNotMonitored, ReasonNotAttempted:
+		ReasonInterrupted, ReasonNotMonitored, ReasonNotAttempted, ReasonBusy:
 		return true
 	}
 	return false

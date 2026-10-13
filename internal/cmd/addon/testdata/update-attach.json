@@ -1,0 +1,61 @@
+exit: 0
+error: 
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Run",
+  "operation": "AddonUpdate",
+  "status": "Succeeded",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.33",
+      "decision": "Proceed",
+      "steps": [
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "vpc-cni",
+          "action": "Attach",
+          "reason": "InFlight",
+          "from": "v1.20.0-eksbuild.1",
+          "to": "v1.20.0-eksbuild.1"
+        }
+      ],
+      "blockers": [],
+      "notices": [],
+      "status": "Succeeded",
+      "results": [
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "vpc-cni",
+          "status": "Succeeded",
+          "attached": true,
+          "startedAt": "2026-01-01T00:00:00Z",
+          "finishedAt": "2026-01-01T00:04:00Z"
+        }
+      ],
+      "verification": [
+        {
+          "name": "AddonHealth",
+          "outcome": "Pass",
+          "blocking": false,
+          "message": "vpc-cni is ACTIVE at v1.20.0-eksbuild.1",
+          "details": [],
+          "findings": []
+        }
+      ]
+    }
+  ],
+  "failures": []
+}
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  wait for the update to v1.20.0-eksbuild.1 that is running (InFlight)
+vpc-cni: UPDATING
+vpc-cni: still UPDATING
+vpc-cni: still UPDATING
+vpc-cni: still UPDATING
+[OK] vpc-cni: Succeeded

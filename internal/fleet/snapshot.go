@@ -200,9 +200,11 @@ type Nodegroup struct {
 	// Status, AMIType, and CapacityType are the EKS values.
 	Status, AMIType, CapacityType string
 	// ReleaseVersion is the AMI release version, such as 1.33.0-20260101.
-	ReleaseVersion    string
-	Version           Version
-	InstanceTypes     []string
+	ReleaseVersion string
+	Version        Version
+	InstanceTypes  []string
+	// Subnets are the IDs of the subnets that the nodes launch in.
+	Subnets           []string
 	Desired, Min, Max int32
 	AutoScalingGroups []string
 	// LaunchTemplate is the zero value when the nodegroup has none.

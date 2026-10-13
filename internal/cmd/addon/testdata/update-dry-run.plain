@@ -1,0 +1,28 @@
+exit: 0
+error: 
+--- stdout ---
+FIELD	VALUE
+plan.operation	AddonUpdate
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.33
+plan.decision	Proceed
+steps.vpc-cni.kind	Addon
+steps.vpc-cni.action	Submit
+steps.vpc-cni.reason	VersionBehind
+steps.vpc-cni.from	v1.19.0-eksbuild.1
+steps.vpc-cni.to	v1.20.0-eksbuild.1
+steps.coredns.kind	Addon
+steps.coredns.action	Submit
+steps.coredns.reason	VersionBehind
+steps.coredns.from	v1.11.3-eksbuild.2
+steps.coredns.to	v1.11.4-eksbuild.2
+steps.kube-proxy.kind	Addon
+steps.kube-proxy.action	Skip
+steps.kube-proxy.reason	AlreadyAtTarget
+steps.kube-proxy.from	v1.33.0-eksbuild.2
+steps.kube-proxy.to	v1.33.0-eksbuild.2
+health_gate.decision	Go
+checks.Addons.outcome	Pass
+checks.Addons.message	2 add-ons ACTIVE
+--- stderr ---

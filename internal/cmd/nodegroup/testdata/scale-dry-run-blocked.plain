@@ -1,0 +1,23 @@
+exit: 3
+error: dry run: a real run would be blocked
+--- stdout ---
+FIELD	VALUE
+plan.operation	NodegroupScale
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.33
+plan.decision	Blocked
+steps.web.kind	Scale
+steps.web.action	Submit
+steps.web.reason	-
+steps.web.from	desired 2, min 1, max 3
+steps.web.to	desired 1, min 1, max 3
+health_gate.decision	Block
+health_gate.reasons	DrainBlockers: 1 PDB could lose more pods than allowed when 1 node leave web
+checks.Nodes.outcome	Pass
+checks.Nodes.message	2/2 nodes ready
+checks.DrainBlockers.outcome	Fail
+checks.DrainBlockers.message	1 PDB could lose more pods than allowed when 1 node leave web
+checks.Kubernetes.outcome	Pass
+checks.Kubernetes.message	Kubernetes API reachable
+--- stderr ---

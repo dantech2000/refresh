@@ -1,0 +1,39 @@
+exit: 4
+error: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+--- stdout ---
+Run   [!] Incomplete   NodegroupScale
+
+RUN
+  operation  NodegroupScale
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  status     [!] Incomplete
+
+RESULTS  1
+  NAME  KIND   STATUS          FROM                     TO                       UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  web   Scale  [OK] Succeeded  desired 2, min 1, max 3  desired 1, min 1, max 3  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+
+HEALTH GATE
+  decision  [OK] Go
+  reasons   DrainBlockers: could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+  accepted  DrainBlockers: could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+  forced    DrainBlockers: could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+
+CHECKS  3
+  NAME           OUTCOME         MESSAGE
+  Nodes          [OK] Pass       2/2 nodes ready
+  DrainBlockers  [?] Unreadable  could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+  Kubernetes     [OK] Pass       Kubernetes API reachable
+
+INCOMPLETE DATA
+[?] cluster prod (us-east-1): AccessDenied: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 1, min 1, max 3
+  [OK] Nodes          2/2 nodes ready
+  [?]  DrainBlockers  could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+  [OK] Kubernetes     Kubernetes API reachable
+warning: --force goes past DrainBlockers: could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+[OK] web: Succeeded

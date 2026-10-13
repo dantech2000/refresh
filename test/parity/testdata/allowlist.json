@@ -41,10 +41,10 @@
   {
     "scenario": "nodegroup-scale-check-pdbs-no-kube",
     "field": "exitCode",
-    "reason": "The old command exits 1 when the PDB check cannot reach Kubernetes. In the new contract a gate that cannot read exits 4.",
-    "source": "`nodegroup scale -o json` prints no document",
+    "reason": "The old command exits 1 when the PDB check cannot reach Kubernetes. The new command asks before it goes on without the Kubernetes checks, and --require-healthy turns that question into a stop: the gate blocks on a warning alone, which is exit 2, and nothing is sent.",
+    "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
     "ownerApproved": true,
-    "expect": 4
+    "expect": 2
   },
   {
     "scenario": "nodegroup-update-verify-node-not-ready",
@@ -297,85 +297,9 @@
     "expect": 4
   },
   {
-    "scenario": "addon-update-busy",
-    "field": "exitCode",
-    "reason": "The old command exits 0 for a target that is already updating. The new command lists it as a Busy failure and exits 4.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
-    "ownerApproved": true,
-    "expect": 4
-  },
-  {
     "scenario": "nodegroup-update-changed-at-the-prompt",
     "field": "exitCode",
     "reason": "The old command exits 0 for a target that is already updating. The new command lists it as a Busy failure and exits 4.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
-    "ownerApproved": true,
-    "expect": 4
-  },
-  {
-    "scenario": "addon-update-attach",
-    "field": "decision",
-    "reason": "The old command waits for the update that someone else started. The new command does not attach to it, so the last it sees of the add-on is UPDATING.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
-    "ownerApproved": true,
-    "expect": {
-      "includes": [
-        "decision: addon prod/vpc-cni: status=UPDATING"
-      ]
-    }
-  },
-  {
-    "scenario": "addon-update-attach",
-    "field": "world",
-    "reason": "The new command does not wait for the other update, which is still in progress when it exits.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
-    "ownerApproved": true,
-    "expect": {
-      "us-east-1/prod": {
-        "updates": [
-          "vpc-cni AddonUpdate InProgress AddonVersion=v1.19.0-eksbuild.1"
-        ]
-      }
-    }
-  },
-  {
-    "scenario": "addon-update-attach",
-    "field": "exitCode",
-    "reason": "The old command exits 0 after it waited for the other update. The new command lists the add-on as a Busy failure and exits 4.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
-    "ownerApproved": true,
-    "expect": 4
-  },
-  {
-    "scenario": "addon-update-attach-failed",
-    "field": "decision",
-    "reason": "The old command waits for the update that someone else started. The new command does not attach to it, so the last it sees of the add-on is UPDATING.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
-    "ownerApproved": true,
-    "expect": {
-      "includes": [
-        "decision: addon prod/vpc-cni: status=UPDATING"
-      ]
-    }
-  },
-  {
-    "scenario": "addon-update-attach-failed",
-    "field": "world",
-    "reason": "The new command does not wait for the other update, which is still in progress when it exits.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
-    "ownerApproved": true,
-    "expect": {
-      "us-east-1/prod": {
-        "updates": [
-          "vpc-cni AddonUpdate InProgress AddonVersion=v1.19.0-eksbuild.1"
-        ]
-      }
-    }
-  },
-  {
-    "scenario": "addon-update-attach-failed",
-    "field": "exitCode",
-    "reason": "The old command exits 1 after it waited for the other update. The new command lists the add-on as a Busy failure and exits 4.",
     "source": "`nodegroup update` skips a nodegroup that is already updating",
     "ownerApproved": true,
     "expect": 4
@@ -399,5 +323,37 @@
         "updates": []
       }
     }
+  },
+  {
+    "scenario": "nodegroup-scale-above-max",
+    "field": "mutations",
+    "reason": "The old command sends a desired size above the max size, and EKS refuses it. The new command checks the sizes against the nodegroup first and sends nothing.",
+    "source": "`nodegroup scale` does no size check of its own",
+    "ownerApproved": true,
+    "expect": []
+  },
+  {
+    "scenario": "nodegroup-scale-above-max",
+    "field": "refusedBeforeMutation",
+    "reason": "The new command refuses sizes that cannot hold before it sends a request.",
+    "source": "`nodegroup scale` does no size check of its own",
+    "ownerApproved": true,
+    "expect": true
+  },
+  {
+    "scenario": "nodegroup-scale-min-above-max",
+    "field": "mutations",
+    "reason": "The old command sends a min size above the max size, and EKS refuses it. The new command checks the sizes before any AWS call and sends nothing.",
+    "source": "`nodegroup scale` does no size check of its own",
+    "ownerApproved": true,
+    "expect": []
+  },
+  {
+    "scenario": "nodegroup-scale-min-above-max",
+    "field": "refusedBeforeMutation",
+    "reason": "The new command refuses sizes that cannot hold before it sends a request.",
+    "source": "`nodegroup scale` does no size check of its own",
+    "ownerApproved": true,
+    "expect": true
   }
 ]

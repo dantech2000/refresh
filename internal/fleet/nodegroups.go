@@ -129,6 +129,7 @@ func newNodegroup(name string, in *ekstypes.Nodegroup) Nodegroup {
 		ReleaseVersion: aws.ToString(in.ReleaseVersion),
 		CapacityType:   string(in.CapacityType),
 		InstanceTypes:  in.InstanceTypes,
+		Subnets:        in.Subnets,
 		CreatedAt:      aws.ToTime(in.CreatedAt),
 		ModifiedAt:     aws.ToTime(in.ModifiedAt),
 	}

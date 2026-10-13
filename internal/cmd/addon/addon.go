@@ -17,18 +17,22 @@ func NewCmdAddon(f *cmdutil.Factory) *cobra.Command {
 		Long: `Work with the EKS add-ons of one cluster.
 
 The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
-refresh context, then the current kubeconfig context.`,
+refresh context. A command that only reads also takes the cluster of the
+current kubeconfig context; "addon update" never does.`,
 		Example: `  # The add-ons of a cluster
   refresh addon list -c prod
 
   # One add-on, with its configuration
-  refresh addon describe vpc-cni -c prod`,
+  refresh addon describe vpc-cni -c prod
+
+  # Update every add-on, in dependency order
+  refresh addon update --all -c prod`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newCmdList(f), newCmdDescribe(f))
+	cmd.AddCommand(newCmdList(f), newCmdDescribe(f), newCmdUpdate(f))
 	return cmd
 }
 

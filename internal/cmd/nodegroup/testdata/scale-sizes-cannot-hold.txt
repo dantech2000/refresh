@@ -1,0 +1,4 @@
+exit: 1
+error: --desired 9 is above the current max size 3; pass --max too
+--- stdout ---
+--- stderr ---

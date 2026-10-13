@@ -27,6 +27,8 @@ const (
 	KindAddonDescription     Kind = "AddonDescription"
 	KindUpgradeCheck         Kind = "UpgradeCheck"
 	KindInsightDescription   Kind = "InsightDescription"
+	KindPlan                 Kind = "Plan"
+	KindRun                  Kind = "Run"
 )
 
 // Kinds returns every kind, in documentation order.
@@ -42,6 +44,8 @@ func Kinds() []Kind {
 		KindAddonDescription,
 		KindUpgradeCheck,
 		KindInsightDescription,
+		KindPlan,
+		KindRun,
 	}
 }
 
@@ -65,6 +69,8 @@ func Documents() []Document {
 		AddonDescription{},
 		UpgradeCheck{},
 		InsightDescription{},
+		Plan{},
+		Run{},
 	}
 }
 
@@ -92,6 +98,12 @@ func (k Kind) Command() string {
 		return "cluster upgrade-check"
 	case KindInsightDescription:
 		return "cluster upgrade-check --insight"
+	case KindPlan:
+		// Every changing command prints a Plan for --dry-run. The schema
+		// names the first one.
+		return "addon update --dry-run"
+	case KindRun:
+		return "addon update"
 	}
 	return ""
 }

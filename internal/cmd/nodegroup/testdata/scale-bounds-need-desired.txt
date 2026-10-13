@@ -1,0 +1,4 @@
+exit: 1
+error: --max 1 is below the current desired size 2; pass --desired too
+--- stdout ---
+--- stderr ---

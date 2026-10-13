@@ -1,0 +1,31 @@
+exit: 1
+error: update 00000000-0000-4000-8000-000000000001 of nodegroup web ended Failed: AsgInstanceLaunchFailures: Could not launch an instance (asg-web)
+--- stdout ---
+Run   [X] Failed   NodegroupScale
+
+RUN
+  operation  NodegroupScale
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  status     [X] Failed
+
+RESULTS  1
+  NAME  KIND   STATUS      FROM                     TO                       UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  web   Scale  [X] Failed  desired 2, min 1, max 3  desired 3, min 1, max 3  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  UpdateFailed: update 00000000-0000-4000-8000-000000000001 of nodegroup web ended Failed: AsgInstanceLaunchFailures: Could not launch an instance (asg-web)
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  1
+  NAME    OUTCOME    MESSAGE
+  Quotas  [OK] Pass  31% of the vCPU quota in use (40 of 128)
+
+INCOMPLETE DATA
+[?] update prod/web (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000001 of nodegroup web ended Failed: AsgInstanceLaunchFailures: Could not launch an instance (asg-web)
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 3, min 1, max 3
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+web: InProgress
+[X] web: Failed: update 00000000-0000-4000-8000-000000000001 of nodegroup web ended Failed: AsgInstanceLaunchFailures: Could not launch an instance (asg-web)

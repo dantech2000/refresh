@@ -50,6 +50,11 @@ type Need struct {
 	// LatestAddons reads the newest compatible version of each add-on. It
 	// implies Addons.
 	LatestAddons bool
+	// LatestFor names the add-ons whose newest compatible version is read,
+	// when not every add-on needs it: a change reads the status of every
+	// add-on and the newest version of its targets only. It implies
+	// Addons. LatestAddons wins over it.
+	LatestFor []string
 	// AMIAge reads when the AMI of each nodegroup with an outdated AMI was
 	// created. It implies AMI.
 	AMIAge bool
@@ -69,7 +74,7 @@ type Need struct {
 // need: anything but the cluster alone.
 func (n Need) wide() bool {
 	return n.Nodegroups || n.AMI || n.AMIAge || n.Instances || n.InstanceIDs || n.Addons || n.LatestAddons || n.Compute || n.Updates ||
-		len(n.OnlyNodegroups) > 0 || len(n.OnlyAddons) > 0
+		len(n.OnlyNodegroups) > 0 || len(n.OnlyAddons) > 0 || len(n.LatestFor) > 0
 }
 
 // The three reads below are advisory. One that fails loses an extra that
@@ -103,6 +108,13 @@ type Fetcher struct {
 	regionTickets map[string]chan struct{}
 	// calendars has the read of the support calendar of each region.
 	calendars map[string]*calendarRead
+}
+
+// Fresh returns a fetcher with the clock of f and nothing remembered. A
+// change that reads the cluster again after a person answered a question
+// uses it: the newest version of an add-on may have changed since.
+func (f *Fetcher) Fresh() *Fetcher {
+	return &Fetcher{Now: f.Now}
 }
 
 // Time returns the time of the fetcher's clock.
@@ -161,7 +173,7 @@ func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, ne
 	if need.Nodegroups || need.AMI || need.AMIAge || need.Instances || need.InstanceIDs || need.Compute || len(need.OnlyNodegroups) > 0 {
 		wg.Go(func() { nodegroups = f.fetchNodegroups(ctx, c, cluster, need) })
 	}
-	if need.Addons || need.LatestAddons || len(need.OnlyAddons) > 0 {
+	if need.Addons || need.LatestAddons || len(need.OnlyAddons) > 0 || len(need.LatestFor) > 0 {
 		wg.Go(func() {
 			addons = f.fetchAddons(ctx, c, cluster, need, func() Version {
 				<-described

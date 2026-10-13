@@ -1,0 +1,75 @@
+exit: 1
+error: nodegroup web is DEGRADED after the scale to 3 nodes
+--- stdout ---
+apiVersion: refresh.drod.dev/v2
+kind: Run
+operation: NodegroupScale
+status: Failed
+clusters:
+  - cluster: prod
+    region: us-east-1
+    version: "1.33"
+    decision: Proceed
+    steps:
+      - phase: Scale
+        kind: Scale
+        name: web
+        action: Submit
+        sizes:
+          before:
+            desired: 2
+            min: 1
+            max: 3
+          after:
+            desired: 3
+            min: 1
+            max: 3
+    gate:
+      decision: Go
+      reasons: []
+      accepted: []
+      forced: []
+      checks:
+        - name: Quotas
+          outcome: Pass
+          blocking: false
+          message: 31% of the vCPU quota in use (40 of 128)
+          details:
+            - 'EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)'
+          findings: []
+    blockers: []
+    notices: []
+    status: Failed
+    results:
+      - phase: Scale
+        kind: Scale
+        name: web
+        status: Failed
+        updateId: 00000000-0000-4000-8000-000000000001
+        startedAt: "2026-01-01T00:00:00Z"
+        finishedAt: "2026-01-01T00:00:30Z"
+        failure:
+          kind: Update
+          name: web
+          cluster: prod
+          region: us-east-1
+          reason: UpdateFailed
+          retryable: false
+          error: nodegroup web is DEGRADED after the scale to 3 nodes
+          updateId: 00000000-0000-4000-8000-000000000001
+    verification: []
+failures:
+  - kind: Update
+    name: web
+    cluster: prod
+    region: us-east-1
+    reason: UpdateFailed
+    retryable: false
+    error: nodegroup web is DEGRADED after the scale to 3 nodes
+    updateId: 00000000-0000-4000-8000-000000000001
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 3, min 1, max 3
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+[X] web: Failed: nodegroup web is DEGRADED after the scale to 3 nodes
+warning: update prod/web (us-east-1): UpdateFailed: nodegroup web is DEGRADED after the scale to 3 nodes

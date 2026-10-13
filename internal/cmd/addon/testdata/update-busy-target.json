@@ -1,0 +1,128 @@
+exit: 4
+error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Run",
+  "operation": "AddonUpdate",
+  "status": "Incomplete",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.33",
+      "decision": "Proceed",
+      "steps": [
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "vpc-cni",
+          "action": "Skip",
+          "reason": "InFlight",
+          "from": "v1.19.5-eksbuild.1",
+          "to": "v1.20.0-eksbuild.1"
+        },
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "coredns",
+          "action": "Submit",
+          "reason": "VersionBehind",
+          "from": "v1.11.3-eksbuild.2",
+          "to": "v1.11.4-eksbuild.2"
+        },
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "kube-proxy",
+          "action": "Skip",
+          "reason": "AlreadyAtTarget",
+          "from": "v1.33.0-eksbuild.2",
+          "to": "v1.33.0-eksbuild.2"
+        }
+      ],
+      "gate": {
+        "decision": "Go",
+        "reasons": [],
+        "accepted": [],
+        "forced": [],
+        "checks": [
+          {
+            "name": "Addons",
+            "outcome": "Pass",
+            "blocking": true,
+            "message": "1 add-on ACTIVE",
+            "details": [],
+            "findings": []
+          }
+        ]
+      },
+      "blockers": [],
+      "notices": [],
+      "status": "Incomplete",
+      "results": [
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "vpc-cni",
+          "status": "Busy",
+          "inFlight": "AddonUpdate",
+          "failure": {
+            "kind": "Addon",
+            "name": "vpc-cni",
+            "cluster": "prod",
+            "region": "us-east-1",
+            "reason": "Busy",
+            "retryable": true,
+            "error": "add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes"
+          }
+        },
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "coredns",
+          "status": "Succeeded",
+          "updateId": "00000000-0000-4000-8000-000000000002",
+          "startedAt": "2026-01-01T00:00:00Z",
+          "finishedAt": "2026-01-01T00:00:15Z"
+        },
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "kube-proxy",
+          "status": "Skipped"
+        }
+      ],
+      "verification": [
+        {
+          "name": "AddonHealth",
+          "outcome": "Pass",
+          "blocking": false,
+          "message": "coredns is ACTIVE at v1.11.4-eksbuild.2",
+          "details": [],
+          "findings": []
+        }
+      ]
+    }
+  ],
+  "failures": [
+    {
+      "kind": "Addon",
+      "name": "vpc-cni",
+      "cluster": "prod",
+      "region": "us-east-1",
+      "reason": "Busy",
+      "retryable": true,
+      "error": "add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes"
+    }
+  ]
+}
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni     skip, at v1.19.5-eksbuild.1 (InFlight)
+  coredns     update v1.11.3-eksbuild.2 to v1.11.4-eksbuild.2 (VersionBehind)
+  kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)
+[!] vpc-cni: Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+[~] coredns: Started (update 00000000-0000-4000-8000-000000000002)
+[OK] coredns: Succeeded
+warning: addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes

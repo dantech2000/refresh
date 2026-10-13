@@ -197,31 +197,36 @@ func kubeNodegroupScale() []Scenario {
 	to := func(desired string) func(extra ...string) []string {
 		return args("nodegroup", "scale", "-c", "prod", "-n", "ng-a", "--desired", desired, "--check-pdbs", "-o", "json")
 	}
+	// The new command line has no --check-pdbs: the gate of a scale-down
+	// always reads the budgets.
+	v2To := func(desired string) func(extra ...string) []string {
+		return args("nodegroup", "scale", "ng-a", "-c", "prod", "--desired", desired, "--poll-interval", pollArg, "--no-wait", "-o", "json")
+	}
 	one := updatesAre("UpdateNodegroupConfig prod/ng-a")
 	return []Scenario{
 		{
-			Name: "nodegroup-scale-pdb-safe", Kube: true, Seed: fleet(workloads), Legacy: to("1")("--yes"),
+			Name: "nodegroup-scale-pdb-safe", Kube: true, Seed: fleet(workloads), Legacy: to("1")("--yes"), V2: v2To("1")("--yes"),
 			Checks: []Check{exits(0), one, sawKube(fleettest.KubeListPDBs)},
 		},
 		{
-			Name: "nodegroup-scale-pdb-blocked", Behaviour: Blocked, Kube: true, Seed: fleet(workloads, tight("web")), Legacy: to("1")("--yes"),
+			Name: "nodegroup-scale-pdb-blocked", Behaviour: Blocked, Kube: true, Seed: fleet(workloads, tight("web")), Legacy: to("1")("--yes"), V2: v2To("1")("--yes"),
 			Checks: []Check{exits(3), noMutations, sawKubeAnswer(fleettest.KubeListPDBs, "default/web=allows0")},
 		},
 		{
 			Name: "nodegroup-scale-pdb-forced", Behaviour: DrainForced, Kube: true, Seed: fleet(workloads, tight("web")),
-			Legacy: to("1")("--yes", "--force"), Checks: []Check{one},
+			Legacy: to("1")("--yes", "--force"), V2: v2To("1")("--yes", "--force"), Checks: []Check{one},
 		},
 		{
 			Name: "nodegroup-scale-pdbs-unreadable", Behaviour: GateUnreadable, Kube: true, Seed: fleet(workloads),
-			Prepare: deny(fleettest.KubeListPDBs), Legacy: to("1")("--yes"),
+			Prepare: deny(fleettest.KubeListPDBs), Legacy: to("1")("--yes"), V2: v2To("1")("--yes"),
 		},
 		{
 			Name: "nodegroup-scale-pdbs-unreadable-forced", Behaviour: GateUnreadableForced, Kube: true, Seed: fleet(workloads),
-			Prepare: deny(fleettest.KubeListPDBs), Legacy: to("1")("--yes", "--force"),
+			Prepare: deny(fleettest.KubeListPDBs), Legacy: to("1")("--yes", "--force"), V2: v2To("1")("--yes", "--force"),
 		},
 		{
 			// A scale-up removes no node, so a tight budget does not matter.
-			Name: "nodegroup-scale-up-ignores-pdbs", Kube: true, Seed: fleet(workloads, tight("web")), Legacy: to("3")("--yes"),
+			Name: "nodegroup-scale-up-ignores-pdbs", Kube: true, Seed: fleet(workloads, tight("web")), Legacy: to("3")("--yes"), V2: v2To("3")("--yes"),
 			Checks: []Check{exits(0), one},
 		},
 	}

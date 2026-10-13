@@ -1,0 +1,29 @@
+exit: 5
+error: add-on vpc-cni ended in status DEGRADED (expected ACTIVE)
+--- stdout ---
+FIELD	VALUE
+run.operation	AddonUpdate
+run.cluster	prod
+run.region	us-east-1
+run.version	1.33
+run.status	VerifyFailed
+results.vpc-cni.kind	Addon
+results.vpc-cni.status	Succeeded
+results.vpc-cni.from	v1.19.0-eksbuild.1
+results.vpc-cni.to	v1.20.0-eksbuild.1
+results.vpc-cni.update	00000000-0000-4000-8000-000000000001
+results.vpc-cni.note	-
+results.vpc-cni.started	2026-01-01 00:00:00 UTC
+results.vpc-cni.finished	2026-01-01 00:00:15 UTC
+results.vpc-cni.failure	-
+verification.AddonHealth.outcome	Fail
+verification.AddonHealth.message	add-on vpc-cni ended in status DEGRADED (expected ACTIVE)
+health_gate.decision	Go
+checks.Addons.outcome	Pass
+checks.Addons.message	1 add-on ACTIVE
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)
+[~] vpc-cni: Started (update 00000000-0000-4000-8000-000000000001)
+  [X] AddonHealth  add-on vpc-cni ended in status DEGRADED (expected ACTIVE)
+[OK] vpc-cni: Succeeded

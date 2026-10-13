@@ -1,0 +1,18 @@
+exit: 0
+error: 
+--- stdout ---
+Plan   - NothingToDo   AddonUpdate
+
+PLAN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   - NothingToDo
+
+STEPS  1
+  NAME        KIND   ACTION  REASON           FROM                TO
+  kube-proxy  Addon  Skip    AlreadyAtTarget  v1.33.0-eksbuild.2  v1.33.0-eksbuild.2
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)

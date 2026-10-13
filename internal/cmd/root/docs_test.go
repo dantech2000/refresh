@@ -53,6 +53,14 @@ func TestGenDocsCoversEveryCommand(t *testing.T) {
 		"refresh_nodegroup_describe.md": {"-c, --cluster string", "--show-instances"},
 		"refresh_addon_list.md":         {"-c, --cluster string", "-w, --watch"},
 		"refresh_addon_describe.md":     {"-c, --cluster string", "-r, --region strings", "--max-concurrency int"},
+		"refresh_addon_update.md": {
+			"-c, --cluster string", "--version string", "--all", "--skip-addon strings", "-d, --dry-run", "-y, --yes", "--no-wait",
+			"--wait-timeout duration", "--poll-interval duration", "--skip-health-check", "--require-healthy", "-q, --quiet", "-o, --output format",
+		},
+		"refresh_nodegroup_scale.md": {
+			"-c, --cluster string", "--desired int32", "--min int32", "--max int32", "-d, --dry-run", "-y, --yes", "--no-wait", "--force",
+			"--wait-timeout duration", "--poll-interval duration", "--skip-health-check", "--require-healthy", "-q, --quiet", "-o, --output format",
+		},
 	} {
 		page, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {

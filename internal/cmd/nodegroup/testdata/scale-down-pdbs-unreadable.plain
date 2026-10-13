@@ -1,0 +1,29 @@
+exit: 4
+error: blocked by 1 health check: DrainBlockers: could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope; nothing was started
+--- stdout ---
+FIELD	VALUE
+plan.operation	NodegroupScale
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.33
+plan.decision	Blocked
+steps.web.kind	Scale
+steps.web.action	Submit
+steps.web.reason	-
+steps.web.from	desired 2, min 1, max 3
+steps.web.to	desired 1, min 1, max 3
+health_gate.decision	Block
+health_gate.reasons	DrainBlockers: could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+checks.Nodes.outcome	Pass
+checks.Nodes.message	2/2 nodes ready
+checks.DrainBlockers.outcome	Unreadable
+checks.DrainBlockers.message	could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+checks.Kubernetes.outcome	Pass
+checks.Kubernetes.message	Kubernetes API reachable
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 1, min 1, max 3
+  [OK] Nodes          2/2 nodes ready
+  [?]  DrainBlockers  could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
+  [OK] Kubernetes     Kubernetes API reachable
+warning: cluster prod (us-east-1): AccessDenied: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope

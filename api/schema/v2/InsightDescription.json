@@ -90,6 +90,7 @@
             "UpdateCancelled",
             "NotMonitored",
             "NotAttempted",
+            "Busy",
             "Unknown"
           ]
         },

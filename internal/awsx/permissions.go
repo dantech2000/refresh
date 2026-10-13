@@ -35,7 +35,7 @@ func RequiredPermissions() []Permission {
 		{[]string{"eks:UpdateClusterVersion"}, "`cluster upgrade`, `cluster rollback`"},
 		{[]string{"eks:UpdateAddon"}, "`addon update`, `cluster upgrade`, `cluster rollback`"},
 		{[]string{"eks:DescribeUpdate"}, "`nodegroup update`, `nodegroup scale`, `addon update` (not with `--no-wait`), `cluster upgrade`, `cluster rollback`, `cluster upgrade-check` (rollback window)"},
-		{[]string{"eks:ListUpdates"}, "`cluster rollback`, `cluster upgrade-check` (rollback window), `ui` (watch a roll or upgrade started elsewhere)"},
+		{[]string{"eks:ListUpdates"}, "`cluster rollback`, `cluster upgrade-check` (rollback window), `addon update` and `nodegroup scale` (the type of the update that keeps a target busy), `ui` (watch a roll or upgrade started elsewhere)"},
 		{[]string{"ssm:GetParameter"}, "Latest recommended AMI: `status`, `cluster describe`, `nodegroup list`/`describe`/`update`"},
 		{[]string{"ec2:DescribeImages"}, "`status` (AMI age)"},
 		{[]string{"ec2:DescribeInstances"}, "`status` (Karpenter detection), `nodegroup describe --show-instances`, current AMI of a nodegroup without a launch-template image (`status`, `cluster describe`, `nodegroup list`/`describe`/`update`)"},

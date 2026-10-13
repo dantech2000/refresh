@@ -1,0 +1,18 @@
+exit: 0
+error: 
+--- stdout ---
+Plan   - NothingToDo   NodegroupScale
+
+PLAN
+  operation  NodegroupScale
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   - NothingToDo
+
+STEPS  1
+  NAME  KIND   ACTION  REASON    FROM                     TO
+  web   Scale  Skip    NoChange  desired 2, min 1, max 3  desired 2, min 1, max 3
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  skip, at desired 2, min 1, max 3 (NoChange)

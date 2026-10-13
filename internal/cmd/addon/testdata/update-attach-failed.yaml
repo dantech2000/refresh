@@ -1,0 +1,54 @@
+exit: 1
+error: the add-on update failed: status UPDATE_FAILED
+--- stdout ---
+apiVersion: refresh.drod.dev/v2
+kind: Run
+operation: AddonUpdate
+status: Failed
+clusters:
+  - cluster: prod
+    region: us-east-1
+    version: "1.33"
+    decision: Proceed
+    steps:
+      - phase: Addons
+        kind: Addon
+        name: vpc-cni
+        action: Attach
+        reason: InFlight
+        from: v1.20.0-eksbuild.1
+        to: v1.20.0-eksbuild.1
+    blockers: []
+    notices: []
+    status: Failed
+    results:
+      - phase: Addons
+        kind: Addon
+        name: vpc-cni
+        status: Failed
+        attached: true
+        startedAt: "2026-01-01T00:00:00Z"
+        finishedAt: "2026-01-01T00:00:30Z"
+        failure:
+          kind: Addon
+          name: vpc-cni
+          cluster: prod
+          region: us-east-1
+          reason: UpdateFailed
+          retryable: false
+          error: 'the add-on update failed: status UPDATE_FAILED'
+    verification: []
+failures:
+  - kind: Addon
+    name: vpc-cni
+    cluster: prod
+    region: us-east-1
+    reason: UpdateFailed
+    retryable: false
+    error: 'the add-on update failed: status UPDATE_FAILED'
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  wait for the update to v1.20.0-eksbuild.1 that is running (InFlight)
+vpc-cni: UPDATING
+[X] vpc-cni: Failed: the add-on update failed: status UPDATE_FAILED
+warning: addon prod/vpc-cni (us-east-1): UpdateFailed: the add-on update failed: status UPDATE_FAILED

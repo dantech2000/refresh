@@ -1,0 +1,51 @@
+exit: 2
+error: dry run: a real run would ask about health warnings
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Plan",
+  "operation": "AddonUpdate",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.33",
+      "decision": "Ask",
+      "steps": [
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "coredns",
+          "action": "Submit",
+          "reason": "VersionBehind",
+          "from": "v1.11.3-eksbuild.2",
+          "to": "v1.11.4-eksbuild.2"
+        }
+      ],
+      "gate": {
+        "decision": "Ask",
+        "reasons": [
+          "Addons: coredns is DEGRADED (InsufficientNumberOfReplicas); the update will try to repair it"
+        ],
+        "accepted": [],
+        "forced": [],
+        "checks": [
+          {
+            "name": "Addons",
+            "outcome": "Warn",
+            "blocking": true,
+            "message": "coredns is DEGRADED (InsufficientNumberOfReplicas); the update will try to repair it",
+            "details": [],
+            "findings": [
+              "coredns"
+            ]
+          }
+        ]
+      },
+      "blockers": [],
+      "notices": []
+    }
+  ],
+  "failures": []
+}
+--- stderr ---

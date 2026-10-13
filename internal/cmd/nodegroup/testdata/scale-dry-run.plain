@@ -1,0 +1,18 @@
+exit: 0
+error: 
+--- stdout ---
+FIELD	VALUE
+plan.operation	NodegroupScale
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.33
+plan.decision	Proceed
+steps.web.kind	Scale
+steps.web.action	Submit
+steps.web.reason	-
+steps.web.from	desired 2, min 1, max 3
+steps.web.to	desired 3, min 1, max 3
+health_gate.decision	Go
+checks.Quotas.outcome	Pass
+checks.Quotas.message	31% of the vCPU quota in use (40 of 128)
+--- stderr ---

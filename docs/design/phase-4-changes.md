@@ -1487,4 +1487,71 @@ Points of `REWRITE.md` that this note changes, with no contract edit: `Run` with
 
 ## 14. Changes made while building
 
-Empty until code changes the design.
+The code is the reference where it and the sections above differ. The first two tables cover build steps 1 to 3: the types, the waits, and `addon update`. The tables after them cover step 4, `nodegroup scale`.
+
+### Where the code departs from the note
+
+| Section | Note | Built |
+|---|---|---|
+| 1 | `Action`, `Reason`, `PhaseKind`, `StepKind`, `BlockerKind`, `RunStatus`, `StepStatus`, and the plan decision are string types of `change` | They are aliases of the `apidoc` enums, so one list of values serves the plan, the result, and the schema. The documents use these enums where the note wrote `string`. |
+| 1 | `Blocker` in a document has `kind`, `step`, `message` | `step` is an object with `phase`, `hop`, `kind`, and `name`, the identity fields of a step. It is left out for a blocker about the cluster. |
+| 1 | Five request types | `AddonUpdateRequest` and `ScaleRequest` are declared. The other three arrive with their build steps, because their fields need types that do not exist yet. `Request` has three unexported methods: `kind`, `base`, and `cluster`. |
+| 1 | `plan(ctx, d, req, refreshInsights)` | `plan(ctx, d, req)`. The fourth argument arrives with the upgrade. Each plan reads with a fresh fetcher (`fleet.Fetcher.Fresh`), because the fetcher of the command remembers the newest add-on version. |
+| 1 | The names `Blocked`, `NothingToDo`, `Sizes` are used twice | Go allows one meaning each. The action is `Blocked`, the decision `DecisionBlocked`, the run status `RunBlocked`. The decision is `DecisionNothingToDo`. The kind of difference is `SizesChanged`, with the value `Sizes`. |
+| 1 | `Diff` has ten kinds | The same ten. A `Submit` step whose target is now changing to another version is `NowInFlight` too, with its own message. `ChangeKind.Effect()` returns `Continue`, `AskAgain`, or `Refuse`. |
+| 1 | A read adds "the latest version of its targets" | `fleet.Need.LatestFor` names the add-ons, so the catalogue reads stay in the wave of the describe calls. `--version` reads the catalogue of its one add-on with `Fetcher.AddonVersions`, one round trip after the snapshot. |
+| 2 | "`WaitSettled` keeps polling while the status changes and hands every other answer to `done`", and "done sees every answer" | `done` sees every answer. The scale confirm needs that. `Settled` has `Issues`, and `UpdateProgress` has `Final` for the poll that ended the wait. |
+| 2 | An add-on confirm is one `DescribeAddon` | After `WaitUpdate`, yes. After an attach the settled answer of `WaitSettled` is the confirm, with no second read. |
+| 3 | "Ours" are the `Submit`, `Attach`, and `Verify` steps | Also a step that the table marked as a busy target (`Skip` with `InFlight`). Without that, the busy rule would refuse the whole run for a target that D4 says to report and pass by. |
+| 3 | Step table rows 5, 6, and 7 | Row 7 takes a `DELETING` add-on at any version, and rows 5 and 6 leave it out. D9 says that every in-flight state but the attach case is busy. `health.Addons` keeps its `DELETING` row for a caller that gets there another way. |
+| 3 | The lookup of the update in flight | It runs for a `Busy` row of a run. A run in which every target is busy has nothing to do: it prints the `Plan` document with the `Busy` failure, exits 4, and makes no lookup. |
+| 4 | `runPhase` has a batch form | Only the serial form is built. `runStep` and `plan` each have one switch that a new kind adds a case to. |
+| 4 | "The context ended before the request: `NotAttempted`" | Built. A request that left and got no answer before the run ended is `InProgress` with the reason `Interrupted` or `Timeout`: EKS may have accepted it. |
+| 4 | A partial failure | Its run status is `Incomplete`, the name of exit code 4. The failed step still says `Failed`. |
+| 5 | `--all` with an add-on that has no version for the cluster | The step is `Manual` with a notice. A named add-on with no version is an error, exit 1, as before. |
+| 5 | `--skip-addon` names | A name that is not installed is an error with the close matches. The old command ignored it. |
+| 7 | `UpdateProgress` is an event kind and a type | The event constant is `UpdatePolled`, with the value `UpdateProgress`. `NodeProgress`, `Event.Nodes`, and `Event.Skipped` arrive with their build steps. |
+| 7 | `Event(PlanReady)` after each plan | For the first plan, and for a later one that differs from the one before. An equal plan would print twice. |
+| 7 | A nil `Ask` | The run asks nothing to confirm its start. It refuses, exit 1, where it needs an answer about warnings or a changed plan. |
+| 7 | `Common.Expect` | A plan with `Expect` counts as confirmed: the run asks no `ConfirmStart`, and asks `PlanChanged` when the first plan differs. With `--yes` the differences are notices. |
+| 7 | `Result.Failures` | The failures that belong to no step. `Result.Document()` adds the failures of the steps. `StepResult.VerifyIssue` marks a step that counts as exit 5. An unexported field of `Result` holds what no step carries: the code of a refusal, an answer of no, an interrupt. |
+| 7 | `Result.Document()` always returns a document | It returns nil for a run with no plan: an invalid request, a name that does not exist, a cluster that cannot be read. `RunChange` then prints the error and nothing on stdout. `ClusterReadError` and `UnsupportedError` are the typed errors. |
+| 7 | `Deps.Kube(ctx, target)` | `Deps.Kube(target)`, the signature of `Factory.Kube`. |
+| 7, 10 | `RunChange`, `PrintPlan`, and `Renderer` are in `cmdutil`, and the renderer is in `view` | They are in `internal/cmd/changecmd`, with `Deps` and `Common`. `cmdutil` may not import the fleet, and `change` imports `health`, which imports `cmdutil`, so `view` cannot import `change` either. `view` has `PlanView`, `RunView`, `PlanLines`, and `StepLine` over the documents. `cmdutil` has `ChangeFlags`, `AddChangeFlags`, and `Validate`. |
+| 8 | The budgets use the injected clock | A budget is a context with a cause. `Run` checks it against `Deps.Now` between two calls and before each pause of a wait, and no goroutine is needed for that. A timer of the real clock ends a call that hangs. `Deps.After` is the pause between two polls. |
+| 8 | `Read` covers the reads up to the first submit | Each plan starts a new read budget. It stops during the wait of a step and runs again for the read and the submit of the next add-on. |
+| 10 | `AddChangeFlags(cmd, f, waitDefault, noWait, force)` | It takes one more argument, the words for what `--wait-timeout` bounds, such as "each add-on". |
+| 10 | "Each command needs a line in the exit-code help" | The new tree has no exit-code help yet. The `Long` text of `addon update` lists its codes. There is no mutating-command-order test yet either; `TestUpdate_UsageErrors` checks the order for this command. |
+| 12 | The fakes get an update answer with no ID | The fake packages were not edited. A test puts an HTTP front before `awsxtest` that answers `{}` for the one request. `cmdtest.Fake.UseWorldClock` is new: it makes the clock of the world the clock of the command. |
+| 12 | No real timers | None. A read that hangs is ended by the timer of the read budget, and nothing else can end it. The test of that holds the timer through an unexported field of `Deps`, and fires it once the fake reports that the read hangs. |
+
+### Where `internal/health` differs from what the note assumed
+
+| Assumed | Real |
+|---|---|
+| `health.Addons(targets)` has three rows | It has two more rows. A target that is `CREATING` or `UPDATING` fails like `DELETING`. A target that the snapshot did not read is `Unreadable`, and the check fails closed. |
+| A check is an interface (`REWRITE.md`) | `health.Check` is a struct with a `Run` function, so `Addons` returns a value. |
+| The gate of a skipped check set | `health.Gate(nil, Policy{Skip: true})` returns `Go` with `Skipped` set. The plan keeps no gate in its document then, and adds a notice. |
+| `Verdict.Question()` is the prompt | It starts in lower case. `Run` makes the first letter upper case for the question text. |
+| `health` is below `cmdutil` | `health` imports `cmdutil` for the exit codes. That is why the change front end is in `internal/cmd/changecmd`. |
+| `Worse` orders outcomes as a summary does | Since `18fc312` it ranks `Unreadable` above `Fail`. `Diff` reports what `Worse` returns. |
+| `health.Run` needs a Kubernetes client | A check set with no check that needs Kubernetes adds no `Kubernetes` result, as section 3 says. An add-on update asks nothing about Kubernetes access. |
+
+### Build step 4, `nodegroup scale`: where the code departs from the note
+
+| Section | Note | Built |
+|---|---|---|
+| 1 | A scale step has an action and a reason | A `Submit` scale step has no reason: none of the reasons fits. `From` and `To` are empty, and `Sizes` has the sizes before and after. The views print the sizes in the `from` and `to` columns. |
+| 1 | Instance-type availability "for each roll or scale-up target" | It runs for a scale that raises the desired size and would be submitted, also with `--skip-health-check`: it is beside the gate. It makes one `DescribeSubnets` call and one paged `DescribeInstanceTypeOfferings` call with every type in the filter. The old code made one offerings call per type. `fleet.Nodegroup` has `Subnets` for it. |
+| 2 | The scale confirm: "`ACTIVE` is done and `DEGRADED` or a failed status is an error" | `DEGRADED`, `CREATE_FAILED`, `DELETE_FAILED`, and `DELETING` are errors. `UPDATING` and `CREATING` go on. |
+| 3 | The gate of a kind uses the Kubernetes client of the command | `change` resolves it from `Deps.Kube` itself, and only for a scale that lowers the desired size. It does not use `fleetcmd.ConnectKube`, which is in the command layer. The `Kubernetes` result of the gate carries the reason, so the hint of a kubeconfig mismatch is not printed. |
+| 3 | The busy rule | A target that is already changing is `Busy` before its sizes are checked. Sizes that cannot hold against a nodegroup that is changing are not an error: the sizes are not settled. |
+| 4 | The submit table has no row for a scale | Two rows. The fresh read shows the sizes of the plan's goal: `Skipped`, with a notice, and no request. The fresh read shows other sizes than the plan started from: `Failed`, "changed to ... since the plan", and no request, because the gate ran for another direction. |
+| 5 | Validation before any AWS call | One more check: `--max` must be 1 or more, the limit of EKS. `change.ValidateSizes` is the one function for the command and for the request. |
+| 5 | The messages of the plan checks | A size that does not fit a bound that was not given names the flag to add: "--desired 9 is above the current max size 3; pass --max too". |
+| 7 | "`--force` goes past a scale-down blocker with a warning" | The line renderer prints `warning: --force goes past <check>: <message>` for each reason in `Verdict.Forced`, for every command, also with `--quiet`. |
+| 7 | The start question | "Scale nodegroup web in prod from desired 2, min 1, max 3 to desired 3, min 1, max 3?" |
+| 8 | `Limits.StepWait` | A scale has one step, so the command leaves it false. |
+| 10 | Exit-code help, and the command-order test | As for `addon update`: the `Long` text lists the codes, and `TestScale_UsageErrors` checks the order of complete, validate, and the `--yes` check. |
+| 11 | "The first paired run of each command settles" the allowlist | Run for the 24 `addon-update-*` and the 24 `nodegroup-scale-*` scenarios. Every `V2` command line also has `--poll-interval 20ms`, so a wait is short. Seven entries were removed: the ones for `addon-update-attach`, `addon-update-attach-failed`, and `addon-update-busy` were written before D9 and expected a `Busy` result where the command now attaches. Four entries were added for `nodegroup-scale-above-max` and `nodegroup-scale-min-above-max` (`mutations` `[]`, `refusedBeforeMutation` true), under the contract row "`nodegroup scale` does no size check of its own". `nodegroup-scale-check-pdbs-no-kube` runs with `--yes --no-wait --require-healthy` and expects exit 2, under the row "Without Kubernetes access". `nodegroup-scale-pdbs-unreadable-forced` needs no entry: both binaries exit 4. `addon-update-attach-failed` has a `V2Checks` entry for the word "failed" only: the wait follows the add-on, so no update ID is known on that path. |
+| 12 | The fakes | No fake package was edited for the scale. |

@@ -174,6 +174,7 @@ func TestCommandTree(t *testing.T) {
 		"refresh addon",
 		"refresh addon describe",
 		"refresh addon list",
+		"refresh addon update",
 		"refresh cluster",
 		"refresh cluster describe",
 		"refresh cluster list",
@@ -194,6 +195,7 @@ func TestCommandTree(t *testing.T) {
 		"refresh nodegroup",
 		"refresh nodegroup describe",
 		"refresh nodegroup list",
+		"refresh nodegroup scale",
 		"refresh status",
 		"refresh version",
 	}

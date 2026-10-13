@@ -1,0 +1,69 @@
+exit: 1
+error: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Failed: ConfigurationConflict: Conflicts found when trying to apply (kube-system/aws-node)
+--- stdout ---
+apiVersion: refresh.drod.dev/v2
+kind: Run
+operation: AddonUpdate
+status: Failed
+clusters:
+  - cluster: prod
+    region: us-east-1
+    version: "1.33"
+    decision: Proceed
+    steps:
+      - phase: Addons
+        kind: Addon
+        name: vpc-cni
+        action: Submit
+        reason: VersionBehind
+        from: v1.19.0-eksbuild.1
+        to: v1.20.0-eksbuild.1
+    gate:
+      decision: Go
+      reasons: []
+      accepted: []
+      forced: []
+      checks:
+        - name: Addons
+          outcome: Pass
+          blocking: true
+          message: 1 add-on ACTIVE
+          details: []
+          findings: []
+    blockers: []
+    notices: []
+    status: Failed
+    results:
+      - phase: Addons
+        kind: Addon
+        name: vpc-cni
+        status: Failed
+        updateId: 00000000-0000-4000-8000-000000000001
+        startedAt: "2026-01-01T00:00:00Z"
+        finishedAt: "2026-01-01T00:00:30Z"
+        failure:
+          kind: Update
+          name: vpc-cni
+          cluster: prod
+          region: us-east-1
+          reason: UpdateFailed
+          retryable: false
+          error: 'update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Failed: ConfigurationConflict: Conflicts found when trying to apply (kube-system/aws-node)'
+          updateId: 00000000-0000-4000-8000-000000000001
+    verification: []
+failures:
+  - kind: Update
+    name: vpc-cni
+    cluster: prod
+    region: us-east-1
+    reason: UpdateFailed
+    retryable: false
+    error: 'update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Failed: ConfigurationConflict: Conflicts found when trying to apply (kube-system/aws-node)'
+    updateId: 00000000-0000-4000-8000-000000000001
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)
+[~] vpc-cni: Started (update 00000000-0000-4000-8000-000000000001)
+vpc-cni: InProgress
+[X] vpc-cni: Failed: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Failed: ConfigurationConflict: Conflicts found when trying to apply (kube-system/aws-node)
+warning: update prod/vpc-cni (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Failed: ConfigurationConflict: Conflicts found when trying to apply (kube-system/aws-node)
