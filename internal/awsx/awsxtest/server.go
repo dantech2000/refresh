@@ -350,13 +350,26 @@ type Server struct {
 
 	http   *httptest.Server
 	client *http.Client
+	// multiplexed is the client of MultiplexedConfig.
+	multiplexed *http.Client
 }
 
 // NewServer starts a server that answers from w. The caller must call Close.
 func NewServer(w *fleettest.World) *Server {
 	s := &Server{Handler: NewHandler(w), client: &http.Client{Transport: &http.Transport{}}}
-	s.http = httptest.NewServer(s.Handler)
+	// The server speaks HTTP/1.1 and HTTP/2 without TLS. A program that
+	// reaches it by its URL, such as the old binary, gets HTTP/1.1.
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	s.http = httptest.NewUnstartedServer(s.Handler)
+	s.http.Config.Protocols = protocols
+	s.http.Start()
 	s.URL = s.http.URL
+
+	only2 := new(http.Protocols)
+	only2.SetUnencryptedHTTP2(true)
+	s.multiplexed = &http.Client{Transport: &http.Transport{Protocols: only2}}
 	return s
 }
 
@@ -365,6 +378,7 @@ func NewServer(w *fleettest.World) *Server {
 func (s *Server) Close() {
 	s.Handler.Close()
 	s.client.CloseIdleConnections()
+	s.multiplexed.CloseIdleConnections()
 	s.http.Close()
 }
 
@@ -384,4 +398,19 @@ func (s *Server) Config(region string) aws.Config {
 			})
 		},
 	}
+}
+
+// MultiplexedConfig is Config with a client that speaks HTTP/2: its
+// requests share a connection, as they do against the AWS endpoints that
+// offer HTTP/2. A test with some hundred requests in flight uses it. With
+// HTTP/1.1 such a test opens a connection for each of them to this one
+// host, where AWS has a host for each region, and a few runs use up the
+// ephemeral ports of the loopback interface.
+//
+// A test of a dropped connection uses Config: with HTTP/2 a drop resets
+// one stream and not the connection.
+func (s *Server) MultiplexedConfig(region string) aws.Config {
+	cfg := s.Config(region)
+	cfg.HTTPClient = s.multiplexed
+	return cfg
 }

@@ -374,6 +374,8 @@ func checkPeak(t *testing.T, e *cmdtest.Fake, region string) {
 // and every region reaches the request limit and does not pass it.
 func TestStatus_LargeFleetCallsAndLimit(t *testing.T) {
 	e := cmdtest.NewFake(t, bigFleet(200, eightRegions), east)
+	// 256 requests in flight to one host: over HTTP/2, as against AWS.
+	cmdutiltest.UseAWS(e.Factory, e.Server.MultiplexedConfig(east))
 	holdUntilFull(e, eightRegions, 32)
 	if err := e.Run(cmdutiltest.Context(t), "status", "-r", strings.Join(eightRegions, ","), "-o", "json"); err != nil {
 		t.Fatalf("run: %v", err)
@@ -396,6 +398,8 @@ func TestStatus_LargeFleetCallsAndLimit(t *testing.T) {
 // the run completes with no failure.
 func TestStatus_ThrottledAtTheLimit(t *testing.T) {
 	e := cmdtest.NewFake(t, bigFleet(200, eightRegions), east)
+	// 256 requests in flight to one host: over HTTP/2, as against AWS.
+	cmdutiltest.UseAWS(e.Factory, e.Server.MultiplexedConfig(east))
 	holdUntilFull(e, eightRegions, 32)
 	var (
 		mu        sync.Mutex
