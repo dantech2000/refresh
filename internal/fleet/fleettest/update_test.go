@@ -657,6 +657,13 @@ func TestControlPlaneUpdateBlocksTheRest(t *testing.T) {
 	if _, err := w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: new("1.34")}); err != nil {
 		t.Errorf("control-plane update while an add-on updates: %v", err)
 	}
+	if got := w.Pending(); got != 2 {
+		t.Errorf("Pending = %d with an add-on and a control-plane update in progress, want 2", got)
+	}
+	w.Advance(time.Hour)
+	if got := w.Pending(); got != 0 {
+		t.Errorf("Pending = %d after both ended, want 0", got)
+	}
 }
 
 func TestInsightsRefresh(t *testing.T) {

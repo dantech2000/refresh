@@ -538,6 +538,27 @@ func (u *Update) snapshot() Update {
 	}
 }
 
+// Pending returns how many updates and insights refreshes are waiting for
+// the clock: in progress, and due to end when it has advanced far enough.
+// An update that never ends does not count. A harness uses it to tell a
+// binary that waits for the world from a world that waits for the binary.
+func (w *World) Pending() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := 0
+	for _, c := range w.state.Clusters {
+		if c.InsightsRefresh.Status == RefreshInProgress {
+			n++
+		}
+		for _, u := range c.Updates {
+			if u.scheduled {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // settle finishes every update and insights refresh that is due, in the
 // order they are due. The caller holds w.mu.
 func (w *World) settle() {
