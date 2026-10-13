@@ -3,30 +3,19 @@
   "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupScale\",\n  \"cluster\": \"prod\",\n  \"nodegroup\": \"ng-a\",\n  \"region\": \"us-east-1\",\n  \"outcome\": \"Planned\",\n  \"dryRun\": true,\n  \"before\": {\n    \"desired\": 2,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"after\": {\n    \"desired\": 3,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"waited\": false,\n  \"failures\": []\n}\n",
   "stderr": "",
   "refusedBeforeMutation": false,
-  "steps": [
-    {
-      "reads": [
-        {
-          "operation": "ec2:DescribeInstanceTypeOfferings",
-          "region": "us-east-1"
-        },
-        {
-          "operation": "ec2:DescribeSubnets",
-          "region": "us-east-1"
-        },
-        {
-          "operation": "eks:DescribeNodegroup",
-          "region": "us-east-1",
-          "target": "prod/ng-a",
-          "observed": "1.32 1.32.0-20250101 ACTIVE 2/1/3"
-        },
-        {
-          "operation": "eks:ListClusters",
-          "region": "us-east-1",
-          "observed": "[prod]"
-        }
-      ]
-    }
+  "changes": [],
+  "decision": [
+    "decision: nodegroup prod/ng-a: issues=none",
+    "decision: nodegroup prod/ng-a: release=1.32.0-20250101",
+    "decision: nodegroup prod/ng-a: size=2/1/3",
+    "decision: nodegroup prod/ng-a: status=ACTIVE",
+    "decision: nodegroup prod/ng-a: version=1.32"
+  ],
+  "operations": [
+    "ec2:DescribeInstanceTypeOfferings",
+    "ec2:DescribeSubnets",
+    "eks:DescribeNodegroup",
+    "eks:ListClusters"
   ],
   "world": {
     "us-east-1/prod": {

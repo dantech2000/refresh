@@ -3,85 +3,39 @@
   "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"RollbackPlan\",\n  \"clusterName\": \"prod\",\n  \"currentVersion\": \"1.32\",\n  \"targetVersion\": \"1.31\",\n  \"steps\": [\n    {\n      \"type\": \"Readiness\",\n      \"description\": \"rollback eligibility\",\n      \"version\": \"1.31\",\n      \"status\": \"Blocked\",\n      \"reason\": \"the update history has no in-place upgrade to 1.32: a cluster created at its version cannot roll back\"\n    },\n    {\n      \"type\": \"Readiness\",\n      \"description\": \"rollback readiness insights\",\n      \"version\": \"1.31\",\n      \"status\": \"Pending\",\n      \"reason\": \"none reported yet; EKS evaluates them when the rollback starts\"\n    },\n    {\n      \"type\": \"Nodegroup\",\n      \"description\": \"nodegroup ng-a 1.32 → 1.31\",\n      \"target\": \"ng-a\",\n      \"version\": \"1.31\",\n      \"status\": \"Pending\"\n    },\n    {\n      \"type\": \"Nodegroup\",\n      \"description\": \"nodegroup ng-b 1.32 → 1.31\",\n      \"target\": \"ng-b\",\n      \"version\": \"1.31\",\n      \"status\": \"Pending\"\n    },\n    {\n      \"type\": \"Addon\",\n      \"description\": \"addon vpc-cni → compatible with 1.31\",\n      \"target\": \"vpc-cni\",\n      \"version\": \"v1.18.0-eksbuild.1\",\n      \"status\": \"Completed\",\n      \"reason\": \"v1.18.0-eksbuild.1 is compatible with 1.31\"\n    },\n    {\n      \"type\": \"Addon\",\n      \"description\": \"addon coredns → compatible with 1.31\",\n      \"target\": \"coredns\",\n      \"version\": \"v1.11.4-eksbuild.2\",\n      \"status\": \"Completed\",\n      \"reason\": \"v1.11.4-eksbuild.2 is compatible with 1.31\"\n    },\n    {\n      \"type\": \"ControlPlane\",\n      \"description\": \"control plane rollback 1.32 → 1.31\",\n      \"version\": \"1.31\",\n      \"status\": \"Pending\"\n    }\n  ],\n  \"notices\": [\n    \"1.31 is in extended support: extended support charges apply after the rollback\",\n    \"self-managed and hybrid nodes are not rolled back by EKS or refresh: move them to 1.31 yourself before the control plane rolls back. Fargate pods at 1.32 trigger the kubelet skew insight: delete them first, and they come back at 1.31\"\n  ],\n  \"failures\": []\n}\n",
   "stderr": "rollback blocked: resolve the blockers in the plan and re-run\n",
   "refusedBeforeMutation": true,
-  "steps": [
-    {
-      "reads": [
-        {
-          "operation": "eks:DescribeAddon",
-          "region": "us-east-1",
-          "target": "prod/coredns",
-          "observed": "v1.11.4-eksbuild.2 ACTIVE"
-        },
-        {
-          "operation": "eks:DescribeAddon",
-          "region": "us-east-1",
-          "target": "prod/vpc-cni",
-          "observed": "v1.18.0-eksbuild.1 ACTIVE"
-        },
-        {
-          "operation": "eks:DescribeAddonVersions",
-          "region": "us-east-1",
-          "observed": "for 1.31: [coredns@v1.11.4-eksbuild.2 coredns@v1.11.3-eksbuild.1]"
-        },
-        {
-          "operation": "eks:DescribeAddonVersions",
-          "region": "us-east-1",
-          "observed": "for 1.31: [vpc-cni@v1.19.0-eksbuild.1 vpc-cni@v1.18.0-eksbuild.1]"
-        },
-        {
-          "operation": "eks:DescribeCluster",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "1.32 ACTIVE"
-        },
-        {
-          "operation": "eks:DescribeClusterVersions",
-          "region": "us-east-1",
-          "observed": "[1.31=EXTENDED_SUPPORT]"
-        },
-        {
-          "operation": "eks:DescribeNodegroup",
-          "region": "us-east-1",
-          "target": "prod/ng-a",
-          "observed": "1.32 1.32.0-20250101 ACTIVE 2/1/3"
-        },
-        {
-          "operation": "eks:DescribeNodegroup",
-          "region": "us-east-1",
-          "target": "prod/ng-b",
-          "observed": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
-        },
-        {
-          "operation": "eks:ListAddons",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "[vpc-cni coredns]"
-        },
-        {
-          "operation": "eks:ListClusters",
-          "region": "us-east-1",
-          "observed": "[prod]"
-        },
-        {
-          "operation": "eks:ListInsights",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "[]"
-        },
-        {
-          "operation": "eks:ListNodegroups",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "[ng-a ng-b]"
-        },
-        {
-          "operation": "eks:ListUpdates",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "[]"
-        }
-      ]
-    }
+  "changes": [],
+  "decision": [
+    "decision: addon prod/coredns: issues=none",
+    "decision: addon prod/coredns: status=ACTIVE",
+    "decision: addon prod/coredns: version=v1.11.4-eksbuild.2",
+    "decision: addon prod/vpc-cni: issues=none",
+    "decision: addon prod/vpc-cni: status=ACTIVE",
+    "decision: addon prod/vpc-cni: version=v1.18.0-eksbuild.1",
+    "decision: cluster prod: issues=none",
+    "decision: cluster prod: status=ACTIVE",
+    "decision: cluster prod: version=1.32",
+    "decision: nodegroup prod/ng-a: issues=none",
+    "decision: nodegroup prod/ng-a: release=1.32.0-20250101",
+    "decision: nodegroup prod/ng-a: size=2/1/3",
+    "decision: nodegroup prod/ng-a: status=ACTIVE",
+    "decision: nodegroup prod/ng-a: version=1.32",
+    "decision: nodegroup prod/ng-b: issues=none",
+    "decision: nodegroup prod/ng-b: release=1.32.0-20260101",
+    "decision: nodegroup prod/ng-b: size=2/1/3",
+    "decision: nodegroup prod/ng-b: status=ACTIVE",
+    "decision: nodegroup prod/ng-b: version=1.32"
+  ],
+  "operations": [
+    "eks:DescribeAddon",
+    "eks:DescribeAddonVersions",
+    "eks:DescribeCluster",
+    "eks:DescribeClusterVersions",
+    "eks:DescribeNodegroup",
+    "eks:ListAddons",
+    "eks:ListClusters",
+    "eks:ListInsights",
+    "eks:ListNodegroups",
+    "eks:ListUpdates"
   ],
   "world": {
     "us-east-1/prod": {

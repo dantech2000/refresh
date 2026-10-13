@@ -3,7 +3,8 @@
   "stdout": "",
   "stderr": "[X] Error: cluster upgrade -o json does not prompt before each phase; add --yes to execute, or --dry-run to print the plan only\n",
   "refusedBeforeMutation": true,
-  "steps": [],
+  "changes": [],
+  "operations": null,
   "world": {
     "us-east-1/prod": {
       "cluster": "1.32 ACTIVE",

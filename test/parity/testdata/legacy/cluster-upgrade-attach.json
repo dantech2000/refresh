@@ -3,72 +3,8 @@
   "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"UpgradeRun\",\n  \"plan\": {\n    \"clusterName\": \"prod\",\n    \"currentVersion\": \"1.32\",\n    \"targetVersion\": \"1.33\",\n    \"hops\": [\n      {\n        \"from\": \"1.32\",\n        \"to\": \"1.33\",\n        \"steps\": [\n          {\n            \"type\": \"Readiness\",\n            \"description\": \"readiness for 1.33 (insights + version skew)\",\n            \"version\": \"1.33\",\n            \"status\": \"Pending\",\n            \"reason\": \"1 insight(s) passing; skew OK\"\n          },\n          {\n            \"type\": \"ControlPlane\",\n            \"description\": \"control plane → 1.33\",\n            \"version\": \"1.33\",\n            \"status\": \"Pending\",\n            \"reason\": \"an update is already in progress; the orchestrator will attach and watch\"\n          },\n          {\n            \"type\": \"Addon\",\n            \"description\": \"addon vpc-cni → v1.20.0-eksbuild.1 (compatible with 1.33)\",\n            \"target\": \"vpc-cni\",\n            \"version\": \"v1.20.0-eksbuild.1\",\n            \"status\": \"Manual\",\n            \"reason\": \"left out by --only control-plane\",\n            \"beforeNodegroups\": true\n          },\n          {\n            \"type\": \"Addon\",\n            \"description\": \"addon coredns → v1.12.0-eksbuild.1 (compatible with 1.33)\",\n            \"target\": \"coredns\",\n            \"version\": \"v1.12.0-eksbuild.1\",\n            \"status\": \"Manual\",\n            \"reason\": \"left out by --only control-plane\",\n            \"beforeNodegroups\": true\n          },\n          {\n            \"type\": \"Nodegroup\",\n            \"description\": \"nodegroup ng-a → 1.33\",\n            \"target\": \"ng-a\",\n            \"version\": \"1.33\",\n            \"status\": \"Manual\",\n            \"reason\": \"left out by --only control-plane\"\n          },\n          {\n            \"type\": \"Nodegroup\",\n            \"description\": \"nodegroup ng-b → 1.33\",\n            \"target\": \"ng-b\",\n            \"version\": \"1.33\",\n            \"status\": \"Manual\",\n            \"reason\": \"left out by --only control-plane\"\n          }\n        ]\n      }\n    ],\n    \"notices\": [\n      \"add-on(s) vpc-cni, coredns may not run on Kubernetes 1.33: update them right after the control plane: refresh cluster upgrade -c prod --to 1.33 --only addons\",\n      \"nodegroup(s) ng-a, ng-b stay on their version; roll them later: refresh cluster upgrade -c prod --to 1.33 --only nodegroups\"\n    ],\n    \"failures\": []\n  },\n  \"report\": {\n    \"status\": \"Succeeded\",\n    \"completed\": [\n      \"control plane 1.32 → 1.33\"\n    ],\n    \"remaining\": []\n  },\n  \"failures\": []\n}\n",
   "stderr": "  refreshing cluster insights for prod (waits up to 5m0s)\n  readiness for 1.33: 1 insight(s) passing; skew OK\n  \u003e control plane 1.32 → 1.33\n  cluster is already UPDATING; attaching to the in-flight update\n  control plane reached 1.33\n",
   "refusedBeforeMutation": false,
-  "steps": [
+  "changes": [
     {
-      "reads": [
-        {
-          "operation": "eks:DescribeAddon",
-          "region": "us-east-1",
-          "target": "prod/coredns",
-          "observed": "v1.11.4-eksbuild.2 ACTIVE"
-        },
-        {
-          "operation": "eks:DescribeAddon",
-          "region": "us-east-1",
-          "target": "prod/vpc-cni",
-          "observed": "v1.18.0-eksbuild.1 ACTIVE"
-        },
-        {
-          "operation": "eks:DescribeAddonVersions",
-          "region": "us-east-1",
-          "observed": "for 1.32: [coredns@v1.11.4-eksbuild.2 coredns@v1.11.3-eksbuild.1]"
-        },
-        {
-          "operation": "eks:DescribeAddonVersions",
-          "region": "us-east-1",
-          "observed": "for 1.32: [vpc-cni@v1.19.0-eksbuild.1 vpc-cni@v1.18.0-eksbuild.1]"
-        },
-        {
-          "operation": "eks:DescribeCluster",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "1.32 UPDATING"
-        },
-        {
-          "operation": "eks:DescribeClusterVersions",
-          "region": "us-east-1",
-          "observed": "[1.33=STANDARD_SUPPORT]"
-        },
-        {
-          "operation": "eks:DescribeNodegroup",
-          "region": "us-east-1",
-          "target": "prod/ng-a",
-          "observed": "1.32 1.32.0-20250101 ACTIVE 2/1/3"
-        },
-        {
-          "operation": "eks:DescribeNodegroup",
-          "region": "us-east-1",
-          "target": "prod/ng-b",
-          "observed": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
-        },
-        {
-          "operation": "eks:ListAddons",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "[vpc-cni coredns]"
-        },
-        {
-          "operation": "eks:ListClusters",
-          "region": "us-east-1",
-          "observed": "[prod]"
-        },
-        {
-          "operation": "eks:ListNodegroups",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "[ng-a ng-b]"
-        }
-      ],
       "mutation": {
         "operation": "eks:StartInsightsRefresh",
         "region": "us-east-1",
@@ -76,68 +12,60 @@
         "payload": {},
         "outcome": "accepted IN_PROGRESS"
       },
-      "preconditions": [
-        "eks:DescribeCluster prod: 1.32 UPDATING",
-        "eks:ListAddons prod: [vpc-cni coredns]",
-        "eks:ListNodegroups prod: [ng-a ng-b]"
-      ]
-    },
-    {
-      "reads": [
-        {
-          "operation": "eks:DescribeAddonVersions",
-          "region": "us-east-1",
-          "observed": "for 1.33: [coredns@v1.12.0-eksbuild.1]"
-        },
-        {
-          "operation": "eks:DescribeAddonVersions",
-          "region": "us-east-1",
-          "observed": "for 1.33: [vpc-cni@v1.20.0-eksbuild.1 vpc-cni@v1.19.0-eksbuild.1]"
-        },
-        {
-          "operation": "eks:DescribeCluster",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "1.32 UPDATING"
-        },
-        {
-          "operation": "eks:DescribeCluster",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "1.33 ACTIVE"
-        },
-        {
-          "operation": "eks:DescribeInsightsRefresh",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "COMPLETED"
-        },
-        {
-          "operation": "eks:DescribeNodegroup",
-          "region": "us-east-1",
-          "target": "prod/ng-a",
-          "observed": "1.32 1.32.0-20250101 ACTIVE 2/1/3"
-        },
-        {
-          "operation": "eks:DescribeNodegroup",
-          "region": "us-east-1",
-          "target": "prod/ng-b",
-          "observed": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
-        },
-        {
-          "operation": "eks:ListInsights",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "[insight-prod-skew=PASSING]"
-        },
-        {
-          "operation": "eks:ListNodegroups",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "[ng-a ng-b]"
-        }
+      "evidence": [
+        "gate: addon prod/coredns: issues=none",
+        "gate: addon prod/coredns: status=ACTIVE",
+        "gate: addon prod/coredns: version=v1.11.4-eksbuild.2",
+        "gate: addon prod/vpc-cni: issues=none",
+        "gate: addon prod/vpc-cni: status=ACTIVE",
+        "gate: addon prod/vpc-cni: version=v1.18.0-eksbuild.1",
+        "target: cluster prod: issues=none",
+        "target: cluster prod: status=UPDATING",
+        "target: cluster prod: version=1.32",
+        "gate: nodegroup prod/ng-a: issues=none",
+        "gate: nodegroup prod/ng-a: release=1.32.0-20250101",
+        "gate: nodegroup prod/ng-a: size=2/1/3",
+        "gate: nodegroup prod/ng-a: status=ACTIVE",
+        "gate: nodegroup prod/ng-a: version=1.32",
+        "gate: nodegroup prod/ng-b: issues=none",
+        "gate: nodegroup prod/ng-b: release=1.32.0-20260101",
+        "gate: nodegroup prod/ng-b: size=2/1/3",
+        "gate: nodegroup prod/ng-b: status=ACTIVE",
+        "gate: nodegroup prod/ng-b: version=1.32"
       ]
     }
+  ],
+  "settlement": [
+    "settlement: cluster prod: issues=none",
+    "settlement: cluster prod: status=ACTIVE",
+    "settlement: cluster prod: version=1.33",
+    "settlement: insights prod: refresh=COMPLETED"
+  ],
+  "verification": [
+    "verification: insight prod/insight-prod-skew: status=PASSING",
+    "verification: nodegroup prod/ng-a: issues=none",
+    "verification: nodegroup prod/ng-a: release=1.32.0-20250101",
+    "verification: nodegroup prod/ng-a: size=2/1/3",
+    "verification: nodegroup prod/ng-a: status=ACTIVE",
+    "verification: nodegroup prod/ng-a: version=1.32",
+    "verification: nodegroup prod/ng-b: issues=none",
+    "verification: nodegroup prod/ng-b: release=1.32.0-20260101",
+    "verification: nodegroup prod/ng-b: size=2/1/3",
+    "verification: nodegroup prod/ng-b: status=ACTIVE",
+    "verification: nodegroup prod/ng-b: version=1.32"
+  ],
+  "operations": [
+    "eks:DescribeAddon",
+    "eks:DescribeAddonVersions",
+    "eks:DescribeCluster",
+    "eks:DescribeClusterVersions",
+    "eks:DescribeInsightsRefresh",
+    "eks:DescribeNodegroup",
+    "eks:ListAddons",
+    "eks:ListClusters",
+    "eks:ListInsights",
+    "eks:ListNodegroups",
+    "eks:StartInsightsRefresh"
   ],
   "world": {
     "us-east-1/prod": {

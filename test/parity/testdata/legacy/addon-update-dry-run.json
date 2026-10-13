@@ -3,39 +3,21 @@
   "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"AddonUpdate\",\n  \"addonName\": \"vpc-cni\",\n  \"previousVersion\": \"v1.18.0-eksbuild.1\",\n  \"newVersion\": \"v1.19.0-eksbuild.1\",\n  \"updateId\": \"dry-run\",\n  \"status\": \"DryRun\",\n  \"startedAt\": \"\u003cnow\u003e\",\n  \"failures\": []\n}\n",
   "stderr": "",
   "refusedBeforeMutation": false,
-  "steps": [
-    {
-      "reads": [
-        {
-          "operation": "eks:DescribeAddon",
-          "region": "us-east-1",
-          "target": "prod/vpc-cni",
-          "observed": "v1.18.0-eksbuild.1 ACTIVE"
-        },
-        {
-          "operation": "eks:DescribeAddonVersions",
-          "region": "us-east-1",
-          "observed": "for 1.32: [vpc-cni@v1.19.0-eksbuild.1 vpc-cni@v1.18.0-eksbuild.1]"
-        },
-        {
-          "operation": "eks:DescribeCluster",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "1.32 ACTIVE"
-        },
-        {
-          "operation": "eks:ListAddons",
-          "region": "us-east-1",
-          "target": "prod",
-          "observed": "[vpc-cni coredns]"
-        },
-        {
-          "operation": "eks:ListClusters",
-          "region": "us-east-1",
-          "observed": "[prod]"
-        }
-      ]
-    }
+  "changes": [],
+  "decision": [
+    "decision: addon prod/vpc-cni: issues=none",
+    "decision: addon prod/vpc-cni: status=ACTIVE",
+    "decision: addon prod/vpc-cni: version=v1.18.0-eksbuild.1",
+    "decision: cluster prod: issues=none",
+    "decision: cluster prod: status=ACTIVE",
+    "decision: cluster prod: version=1.32"
+  ],
+  "operations": [
+    "eks:DescribeAddon",
+    "eks:DescribeAddonVersions",
+    "eks:DescribeCluster",
+    "eks:ListAddons",
+    "eks:ListClusters"
   ],
   "world": {
     "us-east-1/prod": {
