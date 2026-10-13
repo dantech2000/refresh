@@ -1,17 +1,24 @@
 // Command fakefleet serves a fake EKS fleet for trying refresh with no AWS
-// account: many clusters over many regions, slow and throttled calls, and a
-// region closed to the credentials. It prints the environment that points
-// refresh at it, then serves until interrupted.
+// account: many clusters over many regions, each with a Kubernetes API of
+// its own, slow and throttled calls, a region closed to the credentials,
+// and a mix of scripted situations (a PDB that blocks a drain, a roll that
+// gets stuck, a degraded add-on, ...) that the tool names on stderr. It
+// prints the environment that points refresh at it, then serves until
+// interrupted.
 //
 //	go run ./tools/fakefleet -clusters 60 -regions 8 > fleet.env
 //	source fleet.env && refresh status -A
 //
+// Or in one step, with the binary built: task run:sim -- status -A, and
+// task run:tui:sim for the UI.
+//
 // With -world it serves the fleet in a JSON file instead of a generated
 // one. The file holds a fleettest.State.
 //
-// The fleet's clock follows the wall clock, -speed times as fast, so an
-// update that a script gives a duration ends on its own. -speed 0 stops the
-// clock.
+// The fleet's clock starts at the wall clock and follows it, -speed times
+// as fast, so an update that a script gives a duration ends on its own: a
+// roll in -roll, an add-on update in -addon, a control-plane upgrade in
+// -upgrade. -speed 0 stops the clock.
 package main
 
 import (
@@ -28,13 +35,18 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
+	"github.com/dantech2000/refresh/internal/kube/kubetest"
 )
 
 func main() { os.Exit(exitCode()) }
@@ -69,6 +81,14 @@ type options struct {
 	worldFile    string
 	addr         string
 	speed        float64
+	kube         bool
+	situations   string
+	d            durations
+
+	// mix is situations, parsed.
+	mix []situation
+	// now is the start of the fleet's clock. Zero means the wall clock.
+	now time.Time
 }
 
 // tick is how often the fleet's clock catches up with the wall clock.
@@ -93,10 +113,15 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.closedRegion, "closed-region", "me-central-1", "a region closed to the credentials (\"\" for none)")
 	fs.Float64Var(&o.throttle, "throttle", 0.03, "the share of EKS calls answered with a throttling error")
 	fs.Uint64Var(&o.seed, "seed", 1, "the random seed for the fleet and the delays")
-	fs.StringVar(&o.dir, "dir", "", "where to write the empty AWS config and kubeconfig (default: a temp dir)")
+	fs.StringVar(&o.dir, "dir", "", "where to write the empty AWS config and the kubeconfig (default: a temp dir)")
 	fs.StringVar(&o.worldFile, "world", "", "a JSON file with the fleet to serve, in place of a generated one")
 	fs.StringVar(&o.addr, "addr", "127.0.0.1:0", "the address to listen on")
 	fs.Float64Var(&o.speed, "speed", 1, "how fast the fleet's clock runs against the wall clock (0 stops it)")
+	fs.BoolVar(&o.kube, "kube", true, "serve a Kubernetes API for each cluster and write a kubeconfig (-kube=false for a fleet with no Kubernetes)")
+	fs.StringVar(&o.situations, "situations", "all", "the scripted situations to place on the first clusters: all, none, or names separated by commas ("+strings.Join(situationNames(), ", ")+")")
+	fs.DurationVar(&o.d.roll, "roll", 2*time.Minute, "how long a nodegroup roll takes on the fleet's clock")
+	fs.DurationVar(&o.d.addon, "addon", 30*time.Second, "how long an add-on update takes on the fleet's clock")
+	fs.DurationVar(&o.d.upgrade, "upgrade", 3*time.Minute, "how long a control-plane upgrade takes on the fleet's clock")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
@@ -114,6 +139,12 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 		return o, fmt.Errorf("-latency must be 0..%s", maxLatency)
 	case !(o.speed >= 0 && o.speed <= maxSpeed):
 		return o, fmt.Errorf("-speed must be 0..%g", float64(maxSpeed))
+	case o.d.roll <= 0 || o.d.addon <= 0 || o.d.upgrade <= 0:
+		return o, errors.New("-roll, -addon, and -upgrade must be above 0")
+	}
+	var err error
+	if o.mix, err = parseSituations(o.situations); err != nil {
+		return o, err
 	}
 	return o, nil
 }
@@ -125,7 +156,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	world, regions, err := newWorld(o)
+	world, regions, placements, err := newWorld(o)
 	if err != nil {
 		return err
 	}
@@ -138,10 +169,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		defer func() { _ = os.RemoveAll(dir) }()
+	} else if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
 	}
 	empty := filepath.Join(dir, "empty")
 	if err := os.WriteFile(empty, nil, 0o600); err != nil {
 		return err
+	}
+	kubeconfig := filepath.Join(dir, "no-kubeconfig")
+	if o.kube {
+		servers := serveKube(world, regions[0])
+		defer servers.Close()
+		kubeconfig = filepath.Join(dir, "kubeconfig")
+		if err := servers.writeKubeconfig(kubeconfig); err != nil {
+			return err
+		}
 	}
 
 	var lc net.ListenConfig
@@ -150,14 +192,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	url := "http://" + listener.Addr().String()
-	for _, kv := range environment(url, dir, empty, regions) {
+	// A closed region that the fleet does not use is still worth a sweep:
+	// named in REFRESH_EKS_REGIONS it fails the sweep (exit 4), and with
+	// the variable unset a default sweep skips it.
+	swept := regions
+	if o.closedRegion != "" && !slices.Contains(regions, o.closedRegion) {
+		swept = append(slices.Clone(regions), o.closedRegion)
+	}
+	for _, kv := range environment(url, dir, empty, kubeconfig, swept) {
 		if _, err := fmt.Fprintf(stdout, "export %s=%q\n", kv[0], kv[1]); err != nil {
 			_ = listener.Close()
 			return err
 		}
 	}
-	_, _ = fmt.Fprintf(stderr, "fakefleet: serving %s in %d regions (slow %s, closed %s, %.0f%% throttled, clock x%g); Ctrl+C to stop\n",
-		url, len(regions), orNone(o.slowRegion), orNone(o.closedRegion), o.throttle*100, o.speed)
+	_, _ = fmt.Fprintf(stderr, "fakefleet: serving %s in %d regions (slow %s, closed %s, %.0f%% throttled, clock x%g, roll %s, add-on %s, upgrade %s); Ctrl+C to stop\n",
+		url, len(regions), orNone(o.slowRegion), orNone(o.closedRegion), o.throttle*100, o.speed, o.d.roll, o.d.addon, o.d.upgrade)
+	describe(stderr, placements, o)
 
 	// The clock stops before run returns: stopClock ends the goroutine and
 	// waits for it.
@@ -195,6 +245,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
+// describe tells the tester which cluster shows which situation, and what
+// the flags of the fleet add.
+func describe(stderr io.Writer, placements []placement, o options) {
+	if len(placements) == 0 && len(o.mix) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(stderr, "fakefleet: situations:")
+	for _, p := range placements {
+		_, _ = fmt.Fprintf(stderr, "  %-24s %-16s %-20s %s\n", p.cluster, p.region, p.situation.name, p.situation.what)
+	}
+	if n := len(o.mix) - len(placements); n > 0 {
+		_, _ = fmt.Fprintf(stderr, "  (%d situations not placed: the fleet has only %d clusters)\n", n, len(placements))
+	}
+	if !o.kube {
+		_, _ = fmt.Fprintln(stderr, "  (no Kubernetes: the situations that need an API server show as no Kubernetes access)")
+	}
+}
+
 // advance moves the world's clock forward by a number of nanoseconds that
 // may be more than a time.Duration holds, as after a long gap between ticks
 // at a high speed. It moves in steps that fit.
@@ -225,8 +293,10 @@ func followClock(ctx context.Context, w *fleettest.World, speed float64, start t
 }
 
 // environment is what a refresh binary needs to reach the fleet and
-// nothing else: no real credentials, profile, or kubeconfig.
-func environment(url, dir, emptyFile string, regions []string) [][2]string {
+// nothing else: no real credentials or profile, and the kubeconfig of the
+// fleet's own API servers. regions are the regions a sweep reads; the
+// first is the home region.
+func environment(url, dir, emptyFile, kubeconfig string, regions []string) [][2]string {
 	return [][2]string{
 		{"AWS_ENDPOINT_URL", url},
 		{"AWS_ACCESS_KEY_ID", "AKIDFAKEFAKEFAKE"},
@@ -237,7 +307,7 @@ func environment(url, dir, emptyFile string, regions []string) [][2]string {
 		{"AWS_SHARED_CREDENTIALS_FILE", emptyFile},
 		{"AWS_EC2_METADATA_DISABLED", "true"},
 		{"AWS_PROFILE", ""},
-		{"KUBECONFIG", filepath.Join(dir, "no-kubeconfig")},
+		{"KUBECONFIG", kubeconfig},
 		{"REFRESH_CONFIG_HOME", dir},
 		{"REFRESH_EKS_REGIONS", strings.Join(regions, ",")},
 	}
@@ -250,35 +320,49 @@ func orNone(s string) string {
 	return s
 }
 
-// newWorld returns the fleet to serve and the regions it uses: the one in
-// the -world file, or a generated one. The closed region rejects the
-// credentials for every service.
-func newWorld(o options) (*fleettest.World, []string, error) {
-	var state fleettest.State
+// newWorld returns the fleet to serve, the regions it uses, and where its
+// situations are: the fleet in the -world file, or a generated one. The
+// closed region rejects the credentials for every service.
+func newWorld(o options) (*fleettest.World, []string, []placement, error) {
+	var (
+		state      fleettest.State
+		placements []placement
+	)
+	now := o.now
+	if now.IsZero() {
+		now = time.Now()
+	}
 	regions := allRegions[:o.regions]
 	if o.worldFile != "" {
 		data, err := os.ReadFile(o.worldFile)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		dec := json.NewDecoder(bytes.NewReader(data))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&state); err != nil {
-			return nil, nil, fmt.Errorf("reading %s: %w", o.worldFile, err)
+			return nil, nil, nil, fmt.Errorf("reading %s: %w", o.worldFile, err)
 		}
 		if regions = clusterRegions(&state); len(regions) == 0 {
 			regions = allRegions[:1]
 		}
 	} else {
 		rng := rand.New(rand.NewPCG(o.seed, o.seed^0x9e3779b97f4a7c15)) //nolint:gosec // a repeatable fake fleet, not a secret
-		state = generate(rng, o.clusters, regions)
+		state, placements = generate(rng, o.clusters, regions, now, o.d, o.mix, o.kube)
 	}
-	w := fleettest.New()
+	w := fleettest.NewAt(now)
 	w.Edit(func(s *fleettest.State) { *s = state })
 	if o.closedRegion != "" {
 		w.SetScopedFault(fleettest.Scope{Region: o.closedRegion}, fleettest.Fault{Unauthenticated: true})
 	}
-	return w, regions, nil
+	for _, p := range placements {
+		if p.situation.start != nil {
+			if err := p.situation.start(w, p.region, p.cluster, o.d); err != nil {
+				return nil, nil, nil, fmt.Errorf("starting the situation %s on %s: %w", p.situation.name, p.cluster, err)
+			}
+		}
+	}
+	return w, regions, placements, nil
 }
 
 // clusterRegions returns the regions the clusters of s name, in order of
@@ -326,68 +410,62 @@ func newHandler(w *fleettest.World, o options) *awsxtest.Handler {
 	return h
 }
 
-// generate makes n clusters spread over regions: a mix of versions (some
-// in extended support), one to four nodegroups each (some a minor behind, a
-// few UPDATING), and the usual add-ons (some behind).
-func generate(rng *rand.Rand, n int, regions []string) fleettest.State {
-	const oldest, newest = 31, 36
-	minors := []int{31, 32, 33, 34, 34, 35, 35, 36}
-	teams := []string{"payments", "search", "checkout", "identity", "data", "ml", "edge", "platform", "billing", "catalog", "orders", "notify"}
-	envs := []string{"prod", "staging", "dev"}
-	amiTypes := []string{"AL2023_x86_64_STANDARD", "AL2023_ARM_64_STANDARD", "BOTTLEROCKET_x86_64", "AL2_x86_64"}
-	addons := []string{"vpc-cni", "coredns", "kube-proxy", "eks-pod-identity-agent"}
-	version := func(minor int) string { return fmt.Sprintf("1.%d", minor) }
+// kubeServers are the Kubernetes API servers of a fleet, one per cluster.
+type kubeServers struct {
+	servers []*kubetest.Server
+	// names and regions are the clusters, in the order of the servers.
+	names, regions []string
+}
 
-	var s fleettest.State
-	for minor := oldest; minor <= newest; minor++ {
-		cv := fleettest.ClusterVersion{Version: version(minor)}
-		if minor <= oldest+1 {
-			cv.Status = fleettest.ExtendedSupport
+// serveKube starts one API server for each cluster of w, which sets the
+// cluster's EKS endpoint to that server, so the product matches the
+// kubeconfig to the cluster. A cluster with no region answers in
+// defaultRegion.
+func serveKube(w *fleettest.World, defaultRegion string) *kubeServers {
+	var ks kubeServers
+	w.View(func(s *fleettest.State) {
+		for _, c := range s.Clusters {
+			ks.names = append(ks.names, c.Name)
+			ks.regions = append(ks.regions, cmpOr(c.Region, defaultRegion))
 		}
-		s.ClusterVersions = append(s.ClusterVersions, cv)
-		// The catalog by Kubernetes version, as EKS lists it: a 1.34
-		// cluster never sees a build for 1.36.
-		for _, a := range addons {
-			for build := 2; build >= 1; build-- {
-				s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{
-					Addon: a, Version: fmt.Sprintf("v%s.%d-eksbuild.1", version(minor), build),
-					ClusterVersions: []string{version(minor)}, Default: build == 2,
-				})
-			}
+	})
+	for i, name := range ks.names {
+		ks.servers = append(ks.servers, kubetest.NewServer(w, ks.regions[i], name))
+	}
+	return &ks
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// Close stops every server.
+func (ks *kubeServers) Close() {
+	for _, s := range ks.servers {
+		s.Close()
+	}
+}
+
+// writeKubeconfig writes one kubeconfig with a context per cluster, named
+// after the cluster, as "aws eks update-kubeconfig" would name it with
+// --alias. The first cluster is the current context.
+func (ks *kubeServers) writeKubeconfig(path string) error {
+	cfg := clientcmdapi.NewConfig()
+	for i, s := range ks.servers {
+		name := ks.names[i]
+		cfg.Clusters[name] = &clientcmdapi.Cluster{Server: s.URL}
+		cfg.AuthInfos[name] = &clientcmdapi.AuthInfo{Token: "fake-token"}
+		cfg.Contexts[name] = &clientcmdapi.Context{Cluster: name, AuthInfo: name}
+		if i == 0 {
+			cfg.CurrentContext = name
 		}
 	}
-	for i := range n {
-		minor := minors[rng.IntN(len(minors))]
-		c := &fleettest.Cluster{
-			Name:    fmt.Sprintf("%s-%s-%02d", envs[i%len(envs)], teams[rng.IntN(len(teams))], i),
-			Version: version(minor), Region: regions[i%len(regions)],
-		}
-		for j := range 1 + rng.IntN(4) {
-			ngMinor := minor
-			if rng.IntN(4) == 0 {
-				ngMinor-- // a nodegroup left behind
-			}
-			ami := amiTypes[rng.IntN(len(amiTypes))]
-			if ami == "AL2_x86_64" && ngMinor > 32 {
-				ami = "AL2023_x86_64_STANDARD"
-			}
-			ng := &fleettest.Nodegroup{
-				Name: fmt.Sprintf("ng-%c", 'a'+j), Version: version(ngMinor), AMIType: ami,
-				Desired: 2 + rng.Int32N(8), Min: 1, Max: 12,
-			}
-			if rng.IntN(20) == 0 {
-				ng.Status = fleettest.StatusUpdating
-			}
-			c.Nodegroups = append(c.Nodegroups, ng)
-		}
-		for _, a := range addons {
-			build := 2
-			if rng.IntN(3) == 0 {
-				build = 1 // behind
-			}
-			c.Addons = append(c.Addons, &fleettest.Addon{Name: a, Version: fmt.Sprintf("v%s.%d-eksbuild.1", version(minor), build)})
-		}
-		s.Clusters = append(s.Clusters, c)
+	data, err := clientcmd.Write(*cfg)
+	if err != nil {
+		return fmt.Errorf("encoding the kubeconfig: %w", err)
 	}
-	return s
+	return os.WriteFile(path, data, 0o600)
 }
