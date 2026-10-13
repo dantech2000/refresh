@@ -219,12 +219,31 @@ tasks:
     cmds:
       - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} version
 
-  run:tui:sim:
-    desc: Open the experimental TUI on the simulated fleet (no AWS; SPEED=n sets sim seconds per second)
-    deps: [build]
+  build:fakefleet:
+    desc: Build the fake fleet server (no AWS) to dist/fakefleet
+    cmds:
+      - go build -o {{.BUILD_DIR}}/fakefleet ./tools/fakefleet
+    sources:
+      - tools/fakefleet/*.go
+      - internal/awsx/awsxtest/*.go
+      - internal/fleet/fleettest/*.go
+      - internal/kube/kubetest/*.go
+    generates:
+      - "{{.BUILD_DIR}}/fakefleet"
+
+  run:sim:
+    desc: "Run the rewrite binary against the fake fleet: task run:sim -- status -A (FAKEFLEET_FLAGS adds flags, such as -speed 10)"
+    deps: [build:next, build:fakefleet]
     interactive: true
     cmds:
-      - REFRESH_DEV_SIMULATE=1 REFRESH_DEV_SIM_SPEED={{.SPEED | default "8"}} ./{{.BUILD_DIR}}/{{.BINARY_NAME}} ui
+      - tools/fakefleet/run.sh {{.BUILD_DIR}}/fakefleet {{.BUILD_DIR}}/{{.BINARY_NAME}}-next {{.CLI_ARGS}}
+
+  run:tui:sim:
+    desc: Open the experimental TUI of the rewrite binary on the fake fleet (no AWS; FAKEFLEET_FLAGS adds flags, such as -speed 10)
+    deps: [build:next, build:fakefleet]
+    interactive: true
+    cmds:
+      - tools/fakefleet/run.sh {{.BUILD_DIR}}/fakefleet {{.BUILD_DIR}}/{{.BINARY_NAME}}-next ui -A --allow-changes
 
   run:help:
     desc: Show help
