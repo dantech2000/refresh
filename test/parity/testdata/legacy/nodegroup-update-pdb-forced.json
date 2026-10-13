@@ -230,9 +230,9 @@
       "pods": {
         "default/api-1": "Running@b-1",
         "default/api-2": "Running@b-2",
-        "default/web-1": "Running@ng-a-u1-2",
-        "default/web-2": "Running@ng-a-u1-1",
-        "kube-system/coredns-1": "Running@ng-a-u1-1",
+        "default/web-1-u1": "Running@ng-a-u1-2",
+        "default/web-2-u1": "Running@ng-a-u1-1",
+        "kube-system/coredns-1-u1": "Running@ng-a-u1-1",
         "kube-system/coredns-2": "Running@b-1"
       },
       "updates": [

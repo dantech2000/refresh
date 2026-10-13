@@ -494,7 +494,7 @@
           "operation": "kube:ListPods",
           "region": "us-east-1",
           "target": "prod",
-          "observed": "[default] default/web-1=Running@ng-a-u4-2 default/web-2=Running@ng-a-u4-1 default/api-1=Running@b-1 default/api-2=Running@b-2"
+          "observed": "[default] default/web-1-u4=Running@ng-a-u4-2 default/web-2-u4=Running@ng-a-u4-1 default/api-1=Running@b-1 default/api-2=Running@b-2"
         },
         {
           "operation": "kube:ListPods",
@@ -512,7 +512,7 @@
           "operation": "kube:ListPods",
           "region": "us-east-1",
           "target": "prod",
-          "observed": "[kube-system] kube-system/coredns-1=Running@ng-a-u4-1 kube-system/coredns-2=Running@b-1"
+          "observed": "[kube-system] kube-system/coredns-1-u4=Running@ng-a-u4-1 kube-system/coredns-2=Running@b-1"
         },
         {
           "operation": "kube:ListPods",
@@ -549,10 +549,10 @@
         "kube:ListNodes prod: [eks.amazonaws.com/nodegroup in (ng-b)] b-1=Ready b-2=Ready",
         "kube:ListNodes prod: b-1=Ready b-2=Ready ng-a-u4-1=Ready ng-a-u4-2=Ready",
         "kube:ListPodDisruptionBudgets prod: default/web=allows0 default/api=allows1",
-        "kube:ListPods prod: [default] default/web-1=Running@ng-a-u4-2 default/web-2=Running@ng-a-u4-1 default/api-1=Running@b-1 default/api-2=Running@b-2",
+        "kube:ListPods prod: [default] default/web-1-u4=Running@ng-a-u4-2 default/web-2-u4=Running@ng-a-u4-1 default/api-1=Running@b-1 default/api-2=Running@b-2",
         "kube:ListPods prod: [kube-node-lease]",
         "kube:ListPods prod: [kube-public]",
-        "kube:ListPods prod: [kube-system] kube-system/coredns-1=Running@ng-a-u4-1 kube-system/coredns-2=Running@b-1",
+        "kube:ListPods prod: [kube-system] kube-system/coredns-1-u4=Running@ng-a-u4-1 kube-system/coredns-2=Running@b-1",
         "kube:ListPods prod: [status.phase=Pending]"
       ]
     },
@@ -609,12 +609,12 @@
         "ng-b-u5-2": "ng-b Ready"
       },
       "pods": {
-        "default/api-1": "Running@ng-b-u5-2",
-        "default/api-2": "Running@ng-b-u5-1",
-        "default/web-1": "Running@ng-a-u4-2",
-        "default/web-2": "Running@ng-a-u4-1",
-        "kube-system/coredns-1": "Running@ng-a-u4-1",
-        "kube-system/coredns-2": "Running@ng-b-u5-1"
+        "default/api-1-u5": "Running@ng-b-u5-2",
+        "default/api-2-u5": "Running@ng-b-u5-1",
+        "default/web-1-u4": "Running@ng-a-u4-2",
+        "default/web-2-u4": "Running@ng-a-u4-1",
+        "kube-system/coredns-1-u4": "Running@ng-a-u4-1",
+        "kube-system/coredns-2-u5": "Running@ng-b-u5-1"
       },
       "updates": [
         "cluster VersionUpdate Successful Version=1.33",

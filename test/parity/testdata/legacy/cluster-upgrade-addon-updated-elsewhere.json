@@ -1,7 +1,7 @@
 {
   "exitCode": 0,
   "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"UpgradeRun\",\n  \"plan\": {\n    \"clusterName\": \"prod\",\n    \"currentVersion\": \"1.32\",\n    \"targetVersion\": \"1.33\",\n    \"hops\": [\n      {\n        \"from\": \"1.32\",\n        \"to\": \"1.33\",\n        \"steps\": [\n          {\n            \"type\": \"Readiness\",\n            \"description\": \"readiness for 1.33 (insights + version skew)\",\n            \"version\": \"1.33\",\n            \"status\": \"Pending\",\n            \"reason\": \"1 insight(s) passing; skew OK\"\n          },\n          {\n            \"type\": \"ControlPlane\",\n            \"description\": \"control plane → 1.33\",\n            \"version\": \"1.33\",\n            \"status\": \"Pending\"\n          },\n          {\n            \"type\": \"Addon\",\n            \"description\": \"addon vpc-cni → v1.20.0-eksbuild.1 (compatible with 1.33)\",\n            \"target\": \"vpc-cni\",\n            \"version\": \"v1.20.0-eksbuild.1\",\n            \"status\": \"Pending\",\n            \"reason\": \"v1.18.0-eksbuild.1 is not compatible with 1.33: updated before the nodegroup rolls\",\n            \"beforeNodegroups\": true\n          },\n          {\n            \"type\": \"Addon\",\n            \"description\": \"addon coredns → v1.12.0-eksbuild.1 (compatible with 1.33)\",\n            \"target\": \"coredns\",\n            \"version\": \"v1.12.0-eksbuild.1\",\n            \"status\": \"Pending\",\n            \"reason\": \"v1.11.4-eksbuild.2 is not compatible with 1.33: updated before the nodegroup rolls\",\n            \"beforeNodegroups\": true\n          },\n          {\n            \"type\": \"Nodegroup\",\n            \"description\": \"nodegroup ng-a → 1.33\",\n            \"target\": \"ng-a\",\n            \"version\": \"1.33\",\n            \"status\": \"Pending\"\n          },\n          {\n            \"type\": \"Nodegroup\",\n            \"description\": \"nodegroup ng-b → 1.33\",\n            \"target\": \"ng-b\",\n            \"version\": \"1.33\",\n            \"status\": \"Pending\"\n          }\n        ]\n      }\n    ],\n    \"failures\": []\n  },\n  \"report\": {\n    \"status\": \"Succeeded\",\n    \"completed\": [\n      \"control plane 1.32 → 1.33\",\n      \"required addons for 1.33 (2 update(s), before nodegroup rolls)\",\n      \"nodegroup rolls to 1.33 (2 nodegroup(s))\"\n    ],\n    \"remaining\": []\n  },\n  \"failures\": []\n}\n",
-  "stderr": "  refreshing cluster insights for prod (waits up to 5m0s)\n  readiness for 1.33: 1 insight(s) passing; skew OK\n  \u003e control plane 1.32 → 1.33\n  control plane upgrade to 1.33 started (update 00000000-0000-4000-8000-000000000002); this typically takes ~10 minutes\n  control plane is ACTIVE at 1.33\n  \u003e required addons for 1.33 (2 update(s), before nodegroup rolls)\n  addon vpc-cni already at v1.20.0-eksbuild.1 (latest compatible with 1.33), skipping\n  addon coredns: v1.11.4-eksbuild.2 → v1.12.0-eksbuild.1\n  addon coredns is ACTIVE at v1.12.0-eksbuild.1\n  \u003e nodegroup rolls to 1.33 (2 nodegroup(s))\n  pre-flight health checks for nodegroup ng-a\n  nodegroup ng-a roll to 1.33 started (update 00000000-0000-4000-8000-000000000004)\n  nodegroup ng-a is at 1.33\n  post-roll verification: nodegroup ng-a is ACTIVE\n  post-roll verification: no new Pending pods\n  pre-flight health checks for nodegroup ng-b\n  nodegroup ng-b roll to 1.33 started (update 00000000-0000-4000-8000-000000000005)\n  nodegroup ng-b is at 1.33\n  post-roll verification: nodegroup ng-b is ACTIVE\n  post-roll verification: no new Pending pods\n",
+  "stderr": "  refreshing cluster insights for prod (waits up to 5m0s)\n  readiness for 1.33: 1 insight(s) passing; skew OK\n  \u003e control plane 1.32 → 1.33\n  control plane upgrade to 1.33 started (update 00000000-0000-4000-8000-000000000002); this typically takes ~10 minutes\n  control plane is ACTIVE at 1.33\n  \u003e required addons for 1.33 (2 update(s), before nodegroup rolls)\n  addon vpc-cni is UPDATING (in-flight update from a previous run); attaching and waiting for it to settle\n  addon vpc-cni already at v1.20.0-eksbuild.1 (latest compatible with 1.33), skipping\n  addon coredns: v1.11.4-eksbuild.2 → v1.12.0-eksbuild.1\n  addon coredns is ACTIVE at v1.12.0-eksbuild.1\n  \u003e nodegroup rolls to 1.33 (2 nodegroup(s))\n  pre-flight health checks for nodegroup ng-a\n  nodegroup ng-a roll to 1.33 started (update 00000000-0000-4000-8000-000000000004)\n  nodegroup ng-a is at 1.33\n  post-roll verification: nodegroup ng-a is ACTIVE\n  post-roll verification: no new Pending pods\n  pre-flight health checks for nodegroup ng-b\n  nodegroup ng-b roll to 1.33 started (update 00000000-0000-4000-8000-000000000005)\n  nodegroup ng-b is at 1.33\n  post-roll verification: nodegroup ng-b is ACTIVE\n  post-roll verification: no new Pending pods\n",
   "refusedBeforeMutation": false,
   "steps": [
     {
@@ -161,6 +161,12 @@
           "region": "us-east-1",
           "target": "prod/vpc-cni",
           "observed": "v1.20.0-eksbuild.1 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeAddon",
+          "region": "us-east-1",
+          "target": "prod/vpc-cni",
+          "observed": "v1.20.0-eksbuild.1 UPDATING"
         },
         {
           "operation": "eks:DescribeAddonVersions",
@@ -449,7 +455,7 @@
           "operation": "kube:ListPods",
           "region": "us-east-1",
           "target": "prod",
-          "observed": "[default] default/web-1=Running@ng-a-u4-2 default/web-2=Running@ng-a-u4-1 default/api-1=Running@b-1 default/api-2=Running@b-2"
+          "observed": "[default] default/web-1-u4=Running@ng-a-u4-2 default/web-2-u4=Running@ng-a-u4-1 default/api-1=Running@b-1 default/api-2=Running@b-2"
         },
         {
           "operation": "kube:ListPods",
@@ -467,7 +473,7 @@
           "operation": "kube:ListPods",
           "region": "us-east-1",
           "target": "prod",
-          "observed": "[kube-system] kube-system/coredns-1=Running@ng-a-u4-1 kube-system/coredns-2=Running@b-1"
+          "observed": "[kube-system] kube-system/coredns-1-u4=Running@ng-a-u4-1 kube-system/coredns-2=Running@b-1"
         },
         {
           "operation": "kube:ListPods",
@@ -503,10 +509,10 @@
         "kube:ListNodes prod: [eks.amazonaws.com/nodegroup in (ng-b)] b-1=Ready b-2=Ready",
         "kube:ListNodes prod: b-1=Ready b-2=Ready ng-a-u4-1=Ready ng-a-u4-2=Ready",
         "kube:ListPodDisruptionBudgets prod: default/web=allows1 default/api=allows1",
-        "kube:ListPods prod: [default] default/web-1=Running@ng-a-u4-2 default/web-2=Running@ng-a-u4-1 default/api-1=Running@b-1 default/api-2=Running@b-2",
+        "kube:ListPods prod: [default] default/web-1-u4=Running@ng-a-u4-2 default/web-2-u4=Running@ng-a-u4-1 default/api-1=Running@b-1 default/api-2=Running@b-2",
         "kube:ListPods prod: [kube-node-lease]",
         "kube:ListPods prod: [kube-public]",
-        "kube:ListPods prod: [kube-system] kube-system/coredns-1=Running@ng-a-u4-1 kube-system/coredns-2=Running@b-1",
+        "kube:ListPods prod: [kube-system] kube-system/coredns-1-u4=Running@ng-a-u4-1 kube-system/coredns-2=Running@b-1",
         "kube:ListPods prod: [status.phase=Pending]"
       ]
     },
@@ -563,12 +569,12 @@
         "ng-b-u5-2": "ng-b Ready"
       },
       "pods": {
-        "default/api-1": "Running@ng-b-u5-2",
-        "default/api-2": "Running@ng-b-u5-1",
-        "default/web-1": "Running@ng-a-u4-2",
-        "default/web-2": "Running@ng-a-u4-1",
-        "kube-system/coredns-1": "Running@ng-a-u4-1",
-        "kube-system/coredns-2": "Running@ng-b-u5-1"
+        "default/api-1-u5": "Running@ng-b-u5-2",
+        "default/api-2-u5": "Running@ng-b-u5-1",
+        "default/web-1-u4": "Running@ng-a-u4-2",
+        "default/web-2-u4": "Running@ng-a-u4-1",
+        "kube-system/coredns-1-u4": "Running@ng-a-u4-1",
+        "kube-system/coredns-2-u5": "Running@ng-b-u5-1"
       },
       "updates": [
         "vpc-cni AddonUpdate Successful AddonVersion=v1.20.0-eksbuild.1",

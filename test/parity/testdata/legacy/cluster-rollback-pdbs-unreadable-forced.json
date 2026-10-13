@@ -251,7 +251,7 @@
           "operation": "kube:ListPods",
           "region": "us-east-1",
           "target": "prod",
-          "observed": "[kube-system] kube-system/coredns-1=Running@ng-a-u1-1 kube-system/coredns-2=Running@b-1"
+          "observed": "[kube-system] kube-system/coredns-1-u1=Running@ng-a-u1-1 kube-system/coredns-2=Running@b-1"
         },
         {
           "operation": "kube:ListPods",
@@ -287,7 +287,7 @@
         "kube:ListPodDisruptionBudgets prod: error=Forbidden",
         "kube:ListPods prod: [kube-node-lease]",
         "kube:ListPods prod: [kube-public]",
-        "kube:ListPods prod: [kube-system] kube-system/coredns-1=Running@ng-a-u1-1 kube-system/coredns-2=Running@b-1",
+        "kube:ListPods prod: [kube-system] kube-system/coredns-1-u1=Running@ng-a-u1-1 kube-system/coredns-2=Running@b-1",
         "kube:ListPods prod: [status.phase=Pending]"
       ]
     },
@@ -520,12 +520,12 @@
         "ng-b-u2-2": "ng-b Ready"
       },
       "pods": {
-        "default/api-1": "Running@ng-b-u2-2",
-        "default/api-2": "Running@ng-b-u2-1",
-        "default/web-1": "Running@ng-a-u1-2",
-        "default/web-2": "Running@ng-a-u1-1",
-        "kube-system/coredns-1": "Running@ng-a-u1-1",
-        "kube-system/coredns-2": "Running@ng-b-u2-1"
+        "default/api-1-u2": "Running@ng-b-u2-2",
+        "default/api-2-u2": "Running@ng-b-u2-1",
+        "default/web-1-u1": "Running@ng-a-u1-2",
+        "default/web-2-u1": "Running@ng-a-u1-1",
+        "kube-system/coredns-1-u1": "Running@ng-a-u1-1",
+        "kube-system/coredns-2-u2": "Running@ng-b-u2-1"
       },
       "updates": [
         "cluster VersionUpdate Successful Version=1.33,PlatformVersion=eks.1",
