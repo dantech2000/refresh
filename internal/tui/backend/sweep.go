@@ -4,10 +4,12 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/view"
@@ -155,7 +157,7 @@ func (b *Live) sayFirstSweep() {
 // failText says why a row has failed.
 func failText(c state.Cluster) string {
 	var parts []string
-	if c.Support != "" && c.Support != "STANDARD" && c.Support != "UNKNOWN" {
+	if c.Support == apidoc.SupportExtended || c.Support == apidoc.SupportUnsupported {
 		parts = append(parts, strings.ToLower(string(c.Support))+" support")
 	}
 	if c.Snapshot != nil {
@@ -194,7 +196,7 @@ func (b *Live) sayChanges() {
 		if before.version != now.version && !now.version.IsZero() && !before.version.IsZero() {
 			b.say(c.Key, view.Neutral, "control plane "+before.version.String()+" -> "+now.version.String())
 		}
-		for _, name := range slices.Sorted(keys(now.statuses)) {
+		for _, name := range slices.Sorted(maps.Keys(now.statuses)) {
 			if old, had := before.statuses[name]; had && old != now.statuses[name] {
 				status := view.StatusOf(now.statuses[name])
 				if status == view.Neutral {
@@ -204,22 +206,11 @@ func (b *Live) sayChanges() {
 			}
 		}
 	}
-	for _, key := range slices.SortedFunc(keys(b.previous), func(a, c state.Key) int {
+	for _, key := range slices.SortedFunc(maps.Keys(b.previous), func(a, c state.Key) int {
 		return cmp.Or(cmp.Compare(a.Region, c.Region), cmp.Compare(a.Name, c.Name))
 	}) {
 		if !seen[key] {
 			b.say(key, view.Unknown, "no longer listed")
-		}
-	}
-}
-
-// keys returns an iterator over the keys of m.
-func keys[K comparable, V any](m map[K]V) func(yield func(K) bool) {
-	return func(yield func(K) bool) {
-		for k := range m {
-			if !yield(k) {
-				return
-			}
 		}
 	}
 }
