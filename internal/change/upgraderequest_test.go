@@ -51,13 +51,19 @@ func TestRollbackRequestDiffers(t *testing.T) {
 		"--skip-nodegroup":      func(r *RollbackRequest) { r.SkipNodegroups = []string{"a"} },
 		"--skip-insights-check": func(r *RollbackRequest) { r.SkipInsights = true },
 		"--rollback-timeout":    func(r *RollbackRequest) { r.RollbackTimeout = 3 * time.Hour },
-		"--yes":                 func(r *RollbackRequest) { r.Policy.Yes = true },
+		"--require-healthy":     func(r *RollbackRequest) { r.Policy.RequireHealthy = true },
 	} {
 		other := base
 		edit(&other)
 		if err := sameRequest(reviewed, other); !errors.Is(err, ErrOtherRequest) || !strings.Contains(err.Error(), field+" differs") {
 			t.Errorf("%s: err = %v, want ErrOtherRequest that names it", field, err)
 		}
+	}
+	// --yes is how consent is given, not part of what was reviewed.
+	withYes := base
+	withYes.Policy.Yes = true
+	if err := sameRequest(reviewed, withYes); err != nil {
+		t.Errorf("--yes: err = %v, want the same request", err)
 	}
 }
 
