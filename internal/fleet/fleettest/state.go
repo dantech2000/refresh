@@ -404,7 +404,14 @@ func (s *State) Parameter(region, name string) (string, bool) {
 	if strings.HasSuffix(name, "/release_version") || strings.HasSuffix(name, "/image_version") {
 		return LatestRelease(version), true
 	}
-	return "ami-latest" + strings.ReplaceAll(version, ".", ""), true
+	return LatestImage(version), true
+}
+
+// LatestImage is the newest AMI the world knows for a Kubernetes version:
+// what the derived SSM parameters recommend, and what a rolled nodegroup
+// runs.
+func LatestImage(version string) string {
+	return "ami-latest" + strings.ReplaceAll(version, ".", "")
 }
 
 // parseVersion reads a "major.minor" Kubernetes version.

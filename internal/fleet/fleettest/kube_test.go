@@ -62,8 +62,8 @@ func TestRollMovesNodesAndPods(t *testing.T) {
 		before  = "a-1 a-2 api-1=Running@b-1 b-1 web-1=Running@a-1 web-2=Running@a-2"
 		joined  = "a-1 a-2 api-1=Running@b-1 b-1 ng-a-u1-1(NotReady) ng-a-u1-2(NotReady) web-1=Running@a-1 web-2=Running@a-2"
 		ready   = "a-1(cordoned) a-2(cordoned) api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1=Running@a-1 web-2=Running@a-2"
-		drained = "a-1(cordoned) a-2(cordoned) api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1=Running@ng-a-u1-1 web-2=Running@ng-a-u1-2"
-		done    = "api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1=Running@ng-a-u1-1 web-2=Running@ng-a-u1-2"
+		drained = "a-1(cordoned) a-2(cordoned) api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1-u1=Running@ng-a-u1-1 web-2-u1=Running@ng-a-u1-2"
+		done    = "api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1-u1=Running@ng-a-u1-1 web-2-u1=Running@ng-a-u1-2"
 	)
 	tests := []struct {
 		name string
@@ -79,18 +79,18 @@ func TestRollMovesNodesAndPods(t *testing.T) {
 			[5]string{
 				joined,
 				strings.NewReplacer("ng-a-u1-1", "ng-a-u1-1(NotReady)", "ng-a-u1-2", "ng-a-u1-2(NotReady)").Replace(ready),
-				"a-1(cordoned) a-2(cordoned) api-1=Running@b-1 b-1 ng-a-u1-1(NotReady) ng-a-u1-2(NotReady) web-1=Running@ng-a-u1-1 web-2=Running@ng-a-u1-2",
-				"api-1=Running@b-1 b-1 ng-a-u1-1(NotReady) ng-a-u1-2(NotReady) web-1=Running@ng-a-u1-1 web-2=Running@ng-a-u1-2",
-				"api-1=Running@b-1 b-1 ng-a-u1-1(NotReady) ng-a-u1-2(NotReady) web-1=Running@ng-a-u1-1 web-2=Running@ng-a-u1-2",
+				"a-1(cordoned) a-2(cordoned) api-1=Running@b-1 b-1 ng-a-u1-1(NotReady) ng-a-u1-2(NotReady) web-1-u1=Running@ng-a-u1-1 web-2-u1=Running@ng-a-u1-2",
+				"api-1=Running@b-1 b-1 ng-a-u1-1(NotReady) ng-a-u1-2(NotReady) web-1-u1=Running@ng-a-u1-1 web-2-u1=Running@ng-a-u1-2",
+				"api-1=Running@b-1 b-1 ng-a-u1-1(NotReady) ng-a-u1-2(NotReady) web-1-u1=Running@ng-a-u1-1 web-2-u1=Running@ng-a-u1-2",
 			},
 		},
 		{
 			"pods that stay Pending", fleettest.RollScript{PendingPods: true},
 			[5]string{
 				joined, ready,
-				"a-1(cordoned) a-2(cordoned) api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1=Pending@ web-2=Pending@",
-				"api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1=Pending@ web-2=Pending@",
-				"api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1=Pending@ web-2=Pending@",
+				"a-1(cordoned) a-2(cordoned) api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1-u1=Pending@ web-2-u1=Pending@",
+				"api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1-u1=Pending@ web-2-u1=Pending@",
+				"api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1-u1=Pending@ web-2-u1=Pending@",
 			},
 		},
 	}
@@ -126,7 +126,7 @@ func TestRollWithNoDurationOrNoNodes(t *testing.T) {
 	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-b", fleettest.NodegroupVersionRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := kubeState(w), "a-1 a-2 api-1=Running@ng-b-u1-1 ng-b-u1-1 web-1=Running@a-1 web-2=Running@a-2"; got != want {
+	if got, want := kubeState(w), "a-1 a-2 api-1-u1=Running@ng-b-u1-1 ng-b-u1-1 web-1=Running@a-1 web-2=Running@a-2"; got != want {
 		t.Errorf("after an instant roll of ng-b: %s, want %s", got, want)
 	}
 	// A config update is not a roll.
@@ -161,4 +161,63 @@ func TestChangesWakesOnEveryChange(t *testing.T) {
 			t.Errorf("%s did not grow the generation", name)
 		}
 	}
+}
+
+// TestRollReplacesInstances checks the EC2 side of a roll: the instances of
+// the nodegroup's Auto Scaling group are replaced by new ones on the image
+// SSM recommends, which the new nodes carry too, and each launch and
+// termination is a scaling activity.
+func TestRollReplacesInstances(t *testing.T) {
+	w := kubeWorld(fleettest.UpdateScript{After: 4 * time.Minute})
+	w.Edit(func(s *fleettest.State) {
+		c := s.Cluster(region, "prod")
+		c.Nodegroup("ng-a").AutoScalingGroups = []string{"eks-ng-a"}
+		s.AutoScalingGroups = []fleettest.AutoScalingGroup{{Name: "eks-ng-a", InstanceIDs: []string{"i-old-1", "i-old-2"}}, {Name: "other", InstanceIDs: []string{"i-x"}}}
+		s.Instances = []fleettest.Instance{
+			{ID: "i-old-1", ImageID: "ami-old", Type: "m5.large", AvailabilityZone: "us-east-1a", Tags: map[string]string{"k": "v"}},
+			{ID: "i-old-2", ImageID: "ami-old", Type: "m5.large"}, {ID: "i-x", ImageID: "ami-x"},
+		}
+		s.Metrics = []fleettest.Metric{{Namespace: "AWS/EC2", Name: "CPUUtilization", Dimensions: map[string]string{"InstanceId": "i-old-1"}, Values: []float64{40}}}
+	})
+	ec2 := func() string {
+		var parts []string
+		w.View(func(s *fleettest.State) {
+			parts = append(parts, "group="+strings.Join(s.AutoScalingGroups[0].InstanceIDs, ","))
+			for _, in := range s.Instances {
+				parts = append(parts, in.ID+":"+in.ImageID+":"+in.Type)
+			}
+			for _, m := range s.Metrics {
+				parts = append(parts, "cpu:"+m.Dimensions["InstanceId"])
+			}
+			for _, a := range s.ScalingActivities {
+				parts = append(parts, a.Description)
+			}
+		})
+		return strings.Join(parts, " | ")
+	}
+
+	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: new("1.33")}); err != nil {
+		t.Fatal(err)
+	}
+	const during = "group=i-old-1,i-old-2,i-ng-a-u1-1,i-ng-a-u1-2 | i-old-1:ami-old:m5.large | i-old-2:ami-old:m5.large | i-x:ami-x: | " +
+		"i-ng-a-u1-1:ami-latest133:m5.large | i-ng-a-u1-2:ami-latest133:m5.large | cpu:i-old-1 | cpu:i-ng-a-u1-1 | " +
+		"Launching a new EC2 instance: i-ng-a-u1-2 | Launching a new EC2 instance: i-ng-a-u1-1"
+	if got := ec2(); got != during {
+		t.Errorf("at the start of the roll:\n got %s\nwant %s", got, during)
+	}
+	w.Advance(4 * time.Minute)
+	const after = "group=i-ng-a-u1-1,i-ng-a-u1-2 | i-x:ami-x: | i-ng-a-u1-1:ami-latest133:m5.large | i-ng-a-u1-2:ami-latest133:m5.large | cpu:i-ng-a-u1-1 | " +
+		"Terminating EC2 instance: i-old-2 | Terminating EC2 instance: i-old-1 | " +
+		"Launching a new EC2 instance: i-ng-a-u1-2 | Launching a new EC2 instance: i-ng-a-u1-1"
+	if got := ec2(); got != after {
+		t.Errorf("after the roll:\n got %s\nwant %s", got, after)
+	}
+	w.View(func(s *fleettest.State) {
+		image, _ := s.Parameter(region, "/aws/service/eks/optimized-ami/1.33/amazon-linux-2023/x86_64/standard/recommended/image_id")
+		for _, n := range s.Cluster(region, "prod").Nodes {
+			if n.Nodegroup == "ng-a" && n.ImageID != image {
+				t.Errorf("node %s runs %s, and SSM recommends %s", n.Name, n.ImageID, image)
+			}
+		}
+	})
 }

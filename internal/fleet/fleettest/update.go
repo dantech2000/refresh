@@ -291,7 +291,7 @@ func (w *World) UpdateNodegroupVersion(region, cluster, nodegroup string, req No
 	}
 	t := ng.target()
 	// The roll is planned once the update has its script and its number.
-	t.begin = func() { u.roll = w.startRoll(c, ng, u, release) }
+	t.begin = func() { u.roll = w.startRoll(c, ng, u, version) }
 	return w.start(c, u, t, func() { ng.Version, ng.ReleaseVersion = version, release })
 }
 
@@ -537,7 +537,7 @@ func (w *World) settle() {
 		}
 		for _, u := range c.Updates {
 			if u.roll != nil && u.Status == UpdateInProgress {
-				u.roll.advance(c, u.Nodegroup, w.now)
+				u.roll.advance(&w.state, c, w.now)
 			}
 			if u.scheduled && !u.ends.After(w.now) {
 				due = append(due, u)
