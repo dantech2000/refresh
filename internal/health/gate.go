@@ -201,7 +201,9 @@ func plural(n int, noun string) string {
 
 // Worse returns the checks of cur that are worse than in prev: a worse
 // outcome, a finding that prev did not have, or a check that ran in prev
-// and is Skipped in cur. A check that measures a number and keeps its
+// and is Skipped in cur. The outcomes rank Pass, Warn, Fail, Unreadable:
+// a check that could judge and now cannot is worse, also when --force
+// went past it both times. A check that measures a number and keeps its
 // outcome is not worse, whatever its numbers. A check that is new in cur
 // is not worse either.
 func Worse(prev, cur []Result) []Reason {
@@ -218,13 +220,28 @@ func Worse(prev, cur []Result) []Reason {
 		switch {
 		case r.Outcome == Skipped && p.Outcome != Skipped:
 			out = append(out, Reason{r.Name, r.Outcome, "did not run this time: " + r.Message})
-		case severity(r.Outcome) > severity(p.Outcome):
+		case worseRank(r.Outcome) > worseRank(p.Outcome):
 			out = append(out, Reason{r.Name, r.Outcome, r.Message})
-		case severity(r.Outcome) == severity(p.Outcome) && newFinding(p.Findings, r.Findings):
+		case worseRank(r.Outcome) == worseRank(p.Outcome) && newFinding(p.Findings, r.Findings):
 			out = append(out, Reason{r.Name, r.Outcome, r.Message})
 		}
 	}
 	return out
+}
+
+// worseRank orders the outcomes for Worse. It is not the order of a
+// summary, where a Fail outranks an Unreadable: for a second run, a check
+// that cannot judge any more is the worse news.
+func worseRank(o Outcome) int {
+	switch o {
+	case Warn:
+		return 1
+	case Fail:
+		return 2
+	case Unreadable:
+		return 3
+	}
+	return 0
 }
 
 // newFinding reports whether cur has a finding that prev does not.
