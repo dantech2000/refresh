@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -17,7 +18,16 @@ import (
 )
 
 type listOptions struct {
-	f *cmdutil.Factory
+	ios    *cmdutil.IOStreams
+	global *cmdutil.GlobalOptions
+	// now returns the time that a snapshot records.
+	now func() time.Time
+	// resolve returns the cluster of the run, from the flag or the
+	// defaults, and clients the AWS clients of its region.
+	resolve func(cluster string) (cmdutil.Target, error)
+	clients func(ctx context.Context) (*awsx.Clients, error)
+	// after is the pause between two reads of a watch.
+	after func(time.Duration) <-chan time.Time
 
 	cluster  string
 	watch    bool
@@ -29,7 +39,12 @@ type listOptions struct {
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
-	o := &listOptions{f: f}
+	o := &listOptions{
+		ios: f.IOStreams, global: &f.Global, now: f.Now,
+		resolve: func(cluster string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, cluster, true) },
+		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
+		after:   f.After,
+	}
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -54,11 +69,11 @@ An add-on that could not be read is listed under INCOMPLETE DATA, or in
 			if err := o.complete(); err != nil {
 				return err
 			}
-			if err := cmdutil.ValidateWatch(o.f.IOStreams, o.output, o.watch, o.interval); err != nil {
+			if err := o.validate(); err != nil {
 				return err
 			}
 			if o.watch {
-				return cmdutil.Watch(cmd.Context(), o.f.IOStreams, o.interval, o.f.After, o.run)
+				return cmdutil.Watch(cmd.Context(), o.ios, o.interval, o.after, o.run)
 			}
 			return o.run(cmd.Context())
 		},
@@ -71,20 +86,24 @@ An add-on that could not be read is listed under INCOMPLETE DATA, or in
 }
 
 func (o *listOptions) complete() error {
-	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
+	target, err := o.resolve(o.cluster)
 	o.target = target
 	return err
 }
 
+func (o *listOptions) validate() error {
+	return cmdutil.ValidateWatch(o.ios, o.output, o.watch, o.interval)
+}
+
 func (o *listOptions) run(ctx context.Context) error {
-	ios := o.f.IOStreams
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
+	ios := o.ios
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
 	defer cancel()
-	clients, err := cmdutil.ClusterClients(ctx, o.f)
+	clients, err := o.clients(ctx)
 	if err != nil {
 		return err
 	}
-	fetcher := fleet.Fetcher{Now: o.f.Now}
+	fetcher := fleet.Fetcher{Now: o.now}
 	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{Addons: true})
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)

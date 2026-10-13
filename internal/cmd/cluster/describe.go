@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -23,7 +24,17 @@ import (
 )
 
 type describeOptions struct {
-	f *cmdutil.Factory
+	ios    *cmdutil.IOStreams
+	global *cmdutil.GlobalOptions
+	// now returns the time that a snapshot records.
+	now func() time.Time
+	// resolve returns the cluster of the run, from the flag or the
+	// defaults, and clients the AWS clients of its region.
+	resolve func(cluster string) (cmdutil.Target, error)
+	clients func(ctx context.Context) (*awsx.Clients, error)
+	// kube returns the Kubernetes client of a cluster, for
+	// --check-readiness.
+	kube func(target kube.Target) (*kube.Client, error)
 
 	cluster        string
 	checkReadiness bool
@@ -34,7 +45,12 @@ type describeOptions struct {
 }
 
 func newCmdDescribe(f *cmdutil.Factory) *cobra.Command {
-	o := &describeOptions{f: f}
+	o := &describeOptions{
+		ios: f.IOStreams, global: &f.Global, now: f.Now,
+		resolve: func(cluster string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, cluster, true) },
+		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
+		kube:    f.Kube,
+	}
 	cmd := &cobra.Command{
 		Use:   "describe [cluster]",
 		Short: "Describe one cluster with its nodegroups and add-ons",
@@ -84,7 +100,7 @@ func (o *describeOptions) complete(args []string) error {
 	if len(args) > 0 {
 		o.cluster = args[0]
 	}
-	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
+	target, err := o.resolve(o.cluster)
 	o.target = target
 	return err
 }
@@ -95,18 +111,18 @@ func (o *describeOptions) validate() error {
 	if !o.checkReadiness {
 		return nil
 	}
-	return kube.CheckContext(o.f.Global.Kubeconfig, o.f.Global.KubeContext)
+	return kube.CheckContext(o.global.Kubeconfig, o.global.KubeContext)
 }
 
 func (o *describeOptions) run(ctx context.Context) error {
-	ios := o.f.IOStreams
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
+	ios := o.ios
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
 	defer cancel()
-	clients, err := cmdutil.ClusterClients(ctx, o.f)
+	clients, err := o.clients(ctx)
 	if err != nil {
 		return err
 	}
-	fetcher := fleet.Fetcher{Now: o.f.Now}
+	fetcher := fleet.Fetcher{Now: o.now}
 	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{Nodegroups: true, InstanceIDs: true, Addons: true, Support: true, VPC: true})
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
@@ -115,7 +131,7 @@ func (o *describeOptions) run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	merge := func() {}
 	if o.checkReadiness {
-		access, err := fleetcmd.ConnectKube(o.f.Kube, snap)
+		access, err := fleetcmd.ConnectKube(o.kube, snap)
 		if err != nil {
 			return err
 		}
@@ -284,7 +300,7 @@ func supportMark(s *apidoc.Support) view.Status {
 	if s == nil {
 		return view.NoStatus
 	}
-	return fleetcmd.SupportStatus(s)
+	return supportStatus(s)
 }
 
 // endpointAccess says how the API server endpoint can be reached.

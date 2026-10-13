@@ -457,7 +457,7 @@ func upgradeCheckView(doc apidoc.UpgradeCheck) view.Description {
 		subtitle += " · " + doc.Version
 	}
 	if doc.Support != nil {
-		subtitle += " · " + fleetcmd.SupportText(doc.Support)
+		subtitle += " · " + supportText(doc.Support)
 	}
 	d := view.Description{Title: doc.Cluster, Status: status, Label: label, Subtitle: subtitle, Failures: doc.Failures}
 

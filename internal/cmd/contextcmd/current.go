@@ -34,6 +34,9 @@ nothing on stdout.`,
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			o.complete()
+			if err := o.validate(); err != nil {
+				return err
+			}
 			return o.run()
 		},
 	}
@@ -42,6 +45,10 @@ nothing on stdout.`,
 func (o *currentOptions) complete() {
 	o.envContext = envContext()
 }
+
+// validate has nothing to reject: the command takes no argument and no flag
+// of its own.
+func (o *currentOptions) validate() error { return nil }
 
 func (o *currentOptions) run() error {
 	_, file, err := loadFile(o.store)

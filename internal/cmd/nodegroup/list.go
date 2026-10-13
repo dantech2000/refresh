@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -30,7 +31,19 @@ const (
 )
 
 type listOptions struct {
-	f *cmdutil.Factory
+	ios    *cmdutil.IOStreams
+	global *cmdutil.GlobalOptions
+	// now returns the time that a snapshot records.
+	now func() time.Time
+	// resolve returns the cluster of the run, from the flag or the
+	// defaults, and clients the AWS clients of its region.
+	resolve func(cluster string) (cmdutil.Target, error)
+	clients func(ctx context.Context) (*awsx.Clients, error)
+	// after is the pause between two reads of a watch.
+	after func(time.Duration) <-chan time.Time
+	// kube returns the Kubernetes client of a cluster, for
+	// --check-readiness.
+	kube func(target kube.Target) (*kube.Client, error)
 
 	cluster        string
 	rawFilters     []string
@@ -47,7 +60,12 @@ type listOptions struct {
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
-	o := &listOptions{f: f}
+	o := &listOptions{
+		ios: f.IOStreams, global: &f.Global, now: f.Now,
+		resolve: func(cluster string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, cluster, true) },
+		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
+		after:   f.After, kube: f.Kube,
+	}
 	filterKeys := []string{keyName, keyStatus, keyInstanceType, keyAMIStatus, keyVersion}
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -84,7 +102,7 @@ the command exits 4.`,
 				return err
 			}
 			if o.watch {
-				return cmdutil.Watch(cmd.Context(), o.f.IOStreams, o.interval, o.f.After, o.run)
+				return cmdutil.Watch(cmd.Context(), o.ios, o.interval, o.after, o.run)
 			}
 			return o.run(cmd.Context())
 		},
@@ -105,37 +123,37 @@ func (o *listOptions) complete(filterKeys []string) error {
 		return err
 	}
 	o.filters = filters
-	o.target, err = cmdutil.ResolveCluster(o.f, o.cluster, true)
+	o.target, err = o.resolve(o.cluster)
 	return err
 }
 
 // validate checks the watch flags, and a --kube-context that the
 // kubeconfig does not have, before any AWS call.
 func (o *listOptions) validate() error {
-	if err := cmdutil.ValidateWatch(o.f.IOStreams, o.output, o.watch, o.interval); err != nil {
+	if err := cmdutil.ValidateWatch(o.ios, o.output, o.watch, o.interval); err != nil {
 		return err
 	}
 	if !o.checkReadiness {
 		return nil
 	}
-	return kube.CheckContext(o.f.Global.Kubeconfig, o.f.Global.KubeContext)
+	return kube.CheckContext(o.global.Kubeconfig, o.global.KubeContext)
 }
 
 func (o *listOptions) run(ctx context.Context) error {
-	ios := o.f.IOStreams
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
+	ios := o.ios
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
 	defer cancel()
-	clients, err := cmdutil.ClusterClients(ctx, o.f)
+	clients, err := o.clients(ctx)
 	if err != nil {
 		return err
 	}
-	fetcher := fleet.Fetcher{Now: o.f.Now}
+	fetcher := fleet.Fetcher{Now: o.now}
 	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{AMI: true})
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
 	}
 	if o.checkReadiness {
-		access, err := fleetcmd.ConnectKube(o.f.Kube, snap)
+		access, err := fleetcmd.ConnectKube(o.kube, snap)
 		if err != nil {
 			return err
 		}

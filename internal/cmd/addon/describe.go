@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -16,7 +17,14 @@ import (
 )
 
 type describeOptions struct {
-	f *cmdutil.Factory
+	ios    *cmdutil.IOStreams
+	global *cmdutil.GlobalOptions
+	// now returns the time that a snapshot records.
+	now func() time.Time
+	// resolve returns the cluster of the run, from the flag or the
+	// defaults, and clients the AWS clients of its region.
+	resolve func(cluster string) (cmdutil.Target, error)
+	clients func(ctx context.Context) (*awsx.Clients, error)
 
 	cluster string
 	addon   string
@@ -27,7 +35,11 @@ type describeOptions struct {
 }
 
 func newCmdDescribe(f *cmdutil.Factory) *cobra.Command {
-	o := &describeOptions{f: f}
+	o := &describeOptions{
+		ios: f.IOStreams, global: &f.Global, now: f.Now,
+		resolve: func(cluster string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, cluster, true) },
+		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
+	}
 	cmd := &cobra.Command{
 		Use:   "describe <addon>",
 		Short: "Describe one add-on of a cluster",
@@ -46,6 +58,9 @@ add-ons whose names are close.`,
 			if err := o.complete(args); err != nil {
 				return err
 			}
+			if err := o.validate(); err != nil {
+				return err
+			}
 			return o.run(cmd.Context())
 		},
 	}
@@ -57,19 +72,23 @@ add-ons whose names are close.`,
 
 func (o *describeOptions) complete(args []string) error {
 	o.addon = args[0]
-	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
+	target, err := o.resolve(o.cluster)
 	o.target = target
 	return err
 }
 
+// validate has nothing to reject: the name is exact, and the output flag
+// is checked as it is parsed.
+func (o *describeOptions) validate() error { return nil }
+
 func (o *describeOptions) run(ctx context.Context) error {
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
 	defer cancel()
-	clients, err := cmdutil.ClusterClients(ctx, o.f)
+	clients, err := o.clients(ctx)
 	if err != nil {
 		return err
 	}
-	fetcher := fleet.Fetcher{Now: o.f.Now}
+	fetcher := fleet.Fetcher{Now: o.now}
 	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{OnlyAddons: []string{o.addon}})
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
@@ -84,7 +103,7 @@ func (o *describeOptions) run(ctx context.Context) error {
 		Region:  snap.Cluster.Region,
 		Addon:   fleet.AddonDoc(addon),
 	}
-	return cmdutil.Print(o.f.IOStreams, o.output, doc, describeView(doc))
+	return cmdutil.Print(o.ios, o.output, doc, describeView(doc))
 }
 
 // addonError returns the error for an add-on that could not be read. One
@@ -101,7 +120,7 @@ func (o *describeOptions) addonError(ctx context.Context, fetcher *fleet.Fetcher
 		}
 		return errors.New("could not read " + view.FailureLine(failure))
 	}
-	clients, err := cmdutil.ClusterClients(ctx, o.f)
+	clients, err := o.clients(ctx)
 	if err != nil {
 		return err
 	}

@@ -28,6 +28,9 @@ the active context.`,
 		Args:    cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			o.complete()
+			if err := o.validate(); err != nil {
+				return err
+			}
 			return o.run()
 		},
 	}
@@ -36,6 +39,10 @@ the active context.`,
 func (o *listOptions) complete() {
 	o.envContext = envContext()
 }
+
+// validate has nothing to reject: the command takes no argument and no flag
+// of its own.
+func (o *listOptions) validate() error { return nil }
 
 func (o *listOptions) run() error {
 	_, file, err := loadFile(o.store)

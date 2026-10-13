@@ -46,6 +46,7 @@ date, which is the time of the run, or SOURCE_DATE_EPOCH when that is set.`,
   refresh gen-docs --format man --out dist/man/man1`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.complete()
 			if err := o.validate(); err != nil {
 				return err
 			}
@@ -60,6 +61,10 @@ date, which is the time of the run, or SOURCE_DATE_EPOCH when that is set.`,
 		cobra.FixedCompletions([]cobra.Completion{formatMarkdown, formatMan}, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }
+
+// complete fills nothing: both values come from flags, and neither has a
+// default from the environment.
+func (o *options) complete() {}
 
 func (o *options) validate() error {
 	if o.format != formatMarkdown && o.format != formatMan {

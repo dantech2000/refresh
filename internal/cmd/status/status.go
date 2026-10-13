@@ -98,7 +98,7 @@ Exit codes, for a script. When several apply, the highest wins.
 			if err := o.complete(filterKeys); err != nil {
 				return err
 			}
-			if err := fleetcmd.ValidateSweepFlags(o.global, o.allRegions); err != nil {
+			if err := o.validate(); err != nil {
 				return err
 			}
 			return o.run(cmd.Context())
@@ -119,6 +119,10 @@ func (o *options) complete(filterKeys []string) error {
 
 // need is what the command reads of each cluster.
 var need = fleet.Need{AMI: true, AMIAge: true, LatestAddons: true, Support: true, Compute: true}
+
+func (o *options) validate() error {
+	return fleetcmd.ValidateSweepFlags(o.global, o.allRegions)
+}
 
 func (o *options) run(ctx context.Context) error {
 	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
@@ -356,7 +360,7 @@ func (o *options) view(doc apidoc.FleetStatus, regions int) view.List[apidoc.Clu
 			{Title: "CLUSTER", MinWidth: 12, Value: func(c apidoc.Cluster) string { return c.Name }, Status: overall},
 			{Title: "REGION", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return c.Region }},
 			{Title: "VERSION", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, c.Version) }},
-			{Title: "SUPPORT", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, fleetcmd.SupportText(c.Support)) }},
+			{Title: "SUPPORT", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, supportText(c.Support)) }},
 			{Title: "COMPUTE", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, computeText(c)) }},
 			{Title: "STALE AMI", MinWidth: 9, Value: func(c apidoc.Cluster) string { return orUnknown(c, staleText(c, now)) }},
 			{Title: "ADDONS", MinWidth: 6, MaxWidth: 32, Value: func(c apidoc.Cluster) string { return orUnknown(c, addonsText(c)) }},
@@ -513,4 +517,22 @@ func plural(n int, noun string) string {
 		return "1 " + noun
 	}
 	return strconv.Itoa(n) + " " + noun + "s"
+}
+
+// supportText returns the support of a cluster as a short cell: the tier,
+// and the days left while a window is open, such as "standard (61d)". A
+// "*" marks dates that refresh ships with, because EKS did not report
+// them. It returns "" when the support was not read.
+func supportText(s *apidoc.Support) string {
+	if s == nil {
+		return ""
+	}
+	text := strings.ToLower(string(s.Tier))
+	if s.DaysRemaining > 0 {
+		text += " (" + strconv.Itoa(s.DaysRemaining) + "d)"
+	}
+	if s.BuiltIn {
+		text += "*"
+	}
+	return text
 }
