@@ -210,5 +210,10 @@ The parity suite found these in the old binary. The new CLI does the stated thin
 | `addon update` on a `DEGRADED` add-on prints a raw log line | Updating a degraded add-on to repair it stays allowed, and the notice is a normal stderr line |
 | A `DEGRADED` add-on is "Issues" in one document and "Fail" in another | One add-on health value everywhere |
 | `cluster upgrade` has no busy check | Each phase states which in-flight changes it accepts and refuses the others |
+| Post-roll verification does not read node readiness, so new nodes that stay `NotReady` pass with exit 0 | Verification reads node readiness. New nodes that are not `Ready` are an issue, exit 5. |
+| If the pod list fails after a roll, the pod check is skipped and the run exits 0 | A verification that cannot read is incomplete data, exit 4 |
+| A drain-gate refusal exits 3 in `nodegroup update` and `nodegroup scale`, and 1 in `cluster upgrade` and `cluster rollback` | A gate that refuses exits 3 in every command |
+| `cluster upgrade` reads PDBs only when it reaches the nodegroup phase, after the control plane and add-ons are upgraded | The plan step runs every gate once before any change, so a blocker is known up front. Each gate runs again right before its own phase. |
+| `cluster upgrade` attaches to an in-flight update, and when that update fails it starts its own without a word | It says that the attached update failed before it continues |
 
 One old behaviour is kept on purpose: `cluster upgrade` starts an EKS insights refresh before it decides whether the run is blocked. The decision needs fresh insights. It is the one request a blocked run may send.
