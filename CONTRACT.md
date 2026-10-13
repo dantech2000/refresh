@@ -29,6 +29,13 @@ Say no to any row and it reverts to today's behaviour.
 | 15 | `-o tree` is removed | One command had it, and it drew a second status vocabulary |
 | 16 | `install-man` is removed. Man pages ship in the release archives and the Homebrew cask | A CLI should not write into system directories; packaging does that |
 | 17 | `cluster upgrade-check --id` becomes `--insight` | It names what the value is |
+| 18 | `cluster list` has no NODES column | The column cost two calls plus one per nodegroup for every cluster. `status` and `cluster describe` show nodegroups. |
+| 19 | `--max-concurrency` limits AWS requests in flight in one region; default 32 | The old default of 8 nested, so the real number was far higher. The default drops to 16 if the throttle test or the live check fails at 32. |
+| 20 | `addon list --show-health` is removed | Health comes from the status the command already reads, so the column is always shown |
+| 21 | `-A` with `-r` is a usage error | They contradict each other |
+| 22 | `--watch` needs `-o table` and a terminal; `--timeout` applies to each refresh | A watch of a machine format is a stream of documents, which breaks "one document" |
+| 23 | `status --sort cluster` becomes `--sort name` | The other list commands call it `name` |
+| 24 | A failed AMI lookup makes `nodegroup list` exit 4 | One rule for a row that is only partly read |
 
 ## Commands
 
@@ -83,7 +90,7 @@ A filter is `key=value`, repeatable, and all filters must match. The value may u
 | `-r, --region` | `REFRESH_EKS_REGIONS` for sweeps | from the context or AWS config | Region; repeatable on sweep commands |
 | `--profile` | `AWS_PROFILE` | | AWS shared-config profile |
 | `-t, --timeout` | `REFRESH_TIMEOUT` | `1m` | Budget for the API calls of a read command |
-| `--max-concurrency` | `REFRESH_MAX_CONCURRENCY` | `8` | Limit for parallel calls |
+| `--max-concurrency` | `REFRESH_MAX_CONCURRENCY` | `32` | Limit for AWS requests in flight in one region |
 | `--no-color` | `NO_COLOR` | | Disable color |
 | `--log-level` | `REFRESH_LOG_LEVEL` | `warn` | `debug`, `info`, `warn`, `error` |
 | `--verbose` | | | Same as `--log-level debug` |
@@ -126,7 +133,7 @@ Only flags beyond the global and shared sets.
 | `nodegroup describe` | `-c`, `--show-instances`, `--show-workloads`, `--kubeconfig`, `--kube-context` |
 | `nodegroup update` | `-c`, `-f`, `--all-clusters`, `--reroll`, `--require-healthy`, `--skip-verify`, `--changelog`, `--live` |
 | `nodegroup scale` | `-c`, `--desired`, `--min`, `--max` |
-| `addon list` | `-c`, `--show-health`, `-w`, `--watch-interval` |
+| `addon list` | `-c`, `-w`, `--watch-interval` |
 | `addon describe` | `-c` |
 | `addon update` | `-c`, `--version`, `--all`, `--skip-addon` |
 | `context add` | `-c`, `-r`, `--profile`, `--use` |
@@ -189,7 +196,7 @@ Unchanged.
 | `4` | Incomplete data or partial failure |
 | `5` | The change was applied and the check after it found issues |
 
-When one run has several results, the highest code wins, except that an interrupt is always `1`.
+When one run has several results, the highest code wins, except that an interrupt is always `1`. This holds for `status` too: incomplete data (4) outranks an unsupported cluster (3). One exception to the interrupt rule: stopping `--watch` with Ctrl+C exits `0`, because that is the normal way to end a watch.
 
 ## Behaviour the new CLI does not copy
 
