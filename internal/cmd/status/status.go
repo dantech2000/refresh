@@ -477,6 +477,11 @@ func notes(th view.Theme, clusters []apidoc.Cluster) []string {
 	counts := map[view.Status]int{}
 	for _, c := range clusters {
 		counts[overall(c)]++
+		// A row with something that was not read is incomplete, whatever
+		// else it shows: a row that needs attention can be both.
+		if c.Incomplete && overall(c) != view.Unknown {
+			counts[view.Unknown]++
+		}
 	}
 	parts := []string{th.Token(view.Healthy, strconv.Itoa(counts[view.Healthy])+" current")}
 	for _, p := range []struct {
