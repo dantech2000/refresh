@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 )
@@ -55,16 +56,26 @@ type Context struct {
 // configuration. Load cannot tell that keys which resolve are revoked: the
 // first API call reports that.
 func Load(ctx context.Context, opts Options) (aws.Config, error) {
-	return load(ctx, opts, NewHTTPClient(opts.MaxConcurrency))
+	return load(ctx, opts, NewHTTPClient(opts.MaxConcurrency), nil)
 }
 
-// load is Load with the HTTP client given by the caller.
-func load(ctx context.Context, opts Options, client *awshttp.BuildableClient) (aws.Config, error) {
+// load is Load with the HTTP client given by the caller, and with the delay
+// between the attempts of a credential call when backoff is not nil.
+func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, backoff retry.BackoffDelayer) (aws.Config, error) {
 	profile, region, err := opts.resolve()
 	if err != nil {
 		return aws.Config{}, err
 	}
-	loadOpts := []func(*config.LoadOptions) error{config.WithHTTPClient(client)}
+	loadOpts := []func(*config.LoadOptions) error{
+		config.WithHTTPClient(client),
+		// The credential chain builds its own clients from the loaded
+		// configuration: STS for a role profile, SSO, and IMDS. They follow
+		// the Standard policy too, so no call has a second set of retry
+		// rules. Setting the attempt count here keeps AWS_MAX_ATTEMPTS and
+		// max_attempts from replacing it.
+		config.WithRetryer(func() aws.Retryer { return newRetryer(Standard, backoff) }),
+		config.WithRetryMaxAttempts(maxAttempts),
+	}
 	if profile != "" {
 		loadOpts = append(loadOpts, config.WithSharedConfigProfile(profile))
 	}
@@ -85,6 +96,12 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient) (a
 	// own copy with another dialer, which would end the sharing of
 	// connections and drop the dial timeout of a sweep. The SDK has
 	// already applied AWS_CA_BUNDLE to the client at this point.
+	//
+	// The clients of the credential chain were built before this point and
+	// keep the buildable client: the SDK adds the CA bundle only to a
+	// buildable one, so a frozen client cannot go into LoadDefaultConfig.
+	// Under a defaults mode they therefore dial on a transport of their
+	// own. Those are a few calls for each run.
 	if buildable, ok := cfg.HTTPClient.(*awshttp.BuildableClient); ok {
 		cfg.HTTPClient = buildable.Freeze()
 	}

@@ -459,7 +459,7 @@ func TestLoadSharesOneTransportUnderADefaultsMode(t *testing.T) {
 		}
 	})
 
-	cfg, err := load(context.Background(), Options{Region: "us-east-1"}, client)
+	cfg, err := load(context.Background(), Options{Region: "us-east-1"}, client, nil)
 	if err != nil {
 		t.Fatalf("load() error = %v", err)
 	}
