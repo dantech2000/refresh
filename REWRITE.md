@@ -443,7 +443,7 @@ Exit: legacy is green; the contract is approved; the coverage matrix is complete
 ### Phase 1: foundation
 
 - `cmd/refresh`, `cmd/root`, `cmdutil`, `apidoc`, `awsx`, `kube`, `view` core, `tools/genschema` writing `api/schema/v2`, the lint configuration.
-- Commands: `version` with the update check, `context`, `use`, `current`, `completion`, `install-man`, `gen-docs`.
+- Commands: `version` with the update check, `context list|add|remove|use|current`, `completion`, and the hidden `gen-docs`.
 - Exit: goldens pass; the lint configuration is in place; the command-order test passes; the deterministic gates run in CI.
 
 ### Phase 2: read side
@@ -481,7 +481,7 @@ Exit: mutation parity for every scenario from phase 0.
   - Every build path in the Taskfile, the workflows, and GoReleaser targets `./cmd/refresh` and `./tools/...`.
   - The three `-X` symbols (`version`, `commit`, `buildDate`) name the new package. A release-style build prints all three, and the update hint works.
   - MkDocs publishes `api/schema`, and the docs freshness check covers `docs/reference` and `api/schema`.
-  - `completion` and `install-man` work from the release binary.
+  - `completion` works from the release binary, and the man pages are in the release archives and the Homebrew cask.
 - Run `task test:live` and a manual upgrade on a test cluster.
 - Delete `legacy/`. Run `go mod tidy`. Merge to `main`. Release with a migration note that lists every contract change.
 
