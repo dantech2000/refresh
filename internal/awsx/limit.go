@@ -63,13 +63,31 @@ func (l *limiter) add(stack *middleware.Stack) error {
 	return stack.Finalize.Insert(middleware.FinalizeMiddlewareFunc("refresh:RequestLimit", l.attempt), "Retry", middleware.After)
 }
 
-// first waits for the slot of the first attempt and runs the call. A call
-// that gets no slot before the context ends was never sent.
-func (l *limiter) first(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
+// acquire takes a slot, or returns the error of ctx when it ends first. A
+// context that has ended never gets a slot: when a slot is free at the
+// moment that the context ends, select may pick either case, so the context
+// is checked before the wait and again after it.
+func (l *limiter) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case l.slots <- struct{}{}:
 	case <-ctx.Done():
-		return middleware.InitializeOutput{}, middleware.Metadata{}, fmt.Errorf("%w: %w", ErrNotSent, ctx.Err())
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		<-l.slots
+		return err
+	}
+	return nil
+}
+
+// first waits for the slot of the first attempt and runs the call. A call
+// that gets no slot before the context ends was never sent.
+func (l *limiter) first(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
+	if err := l.acquire(ctx); err != nil {
+		return middleware.InitializeOutput{}, middleware.Metadata{}, fmt.Errorf("%w: %w", ErrNotSent, err)
 	}
 	state := &callState{held: true}
 	// A call that fails before its first attempt, such as one whose input
@@ -90,14 +108,10 @@ func (l *limiter) attempt(ctx context.Context, in middleware.FinalizeInput, next
 	state, _ := ctx.Value(callStateKey{}).(*callState)
 	if state != nil && state.held {
 		state.held = false
-	} else {
-		select {
-		case l.slots <- struct{}{}:
-		case <-ctx.Done():
-			// The first attempt did reach AWS, so this is not a call that
-			// was never sent: it ends with the error of the context.
-			return middleware.FinalizeOutput{}, middleware.Metadata{}, ctx.Err()
-		}
+	} else if err := l.acquire(ctx); err != nil {
+		// The first attempt did reach AWS, so this is not a call that was
+		// never sent: it ends with the error of the context.
+		return middleware.FinalizeOutput{}, middleware.Metadata{}, err
 	}
 	defer func() { <-l.slots }()
 	return next.HandleFinalize(ctx, in)
