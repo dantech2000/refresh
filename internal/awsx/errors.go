@@ -155,10 +155,36 @@ func IsRegionError(err error) bool {
 	return containsAny(err.Error(), regionFallbackPatterns)
 }
 
-// isAWSHost reports whether host is an AWS service endpoint.
+// awsDNSSuffixes are the DNS suffixes of the AWS partitions, for the
+// standard and for the dual-stack endpoints, as the SDK has them in its
+// partition data (internal/endpoints/awsrulesfn/partitions.json).
+var awsDNSSuffixes = []string{
+	".amazonaws.com",                // aws, aws-us-gov
+	".api.aws",                      // their dual-stack endpoints
+	".amazonaws.com.cn",             // aws-cn
+	".api.amazonwebservices.com.cn", //
+	".amazonaws.eu",                 // aws-eusc
+	".api.amazonwebservices.eu",     //
+	".c2s.ic.gov",                   // aws-iso
+	".api.aws.ic.gov",               //
+	".sc2s.sgov.gov",                // aws-iso-b
+	".api.aws.scloud",               //
+	".cloud.adc-e.uk",               // aws-iso-e
+	".api.cloud-aws.adc-e.uk",       //
+	".csp.hci.ic.gov",               // aws-iso-f
+	".api.aws.hci.ic.gov",           //
+}
+
+// isAWSHost reports whether host is an AWS service endpoint, in any
+// partition.
 func isAWSHost(host string) bool {
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	return strings.HasSuffix(host, ".amazonaws.com") || strings.HasSuffix(host, ".amazonaws.com.cn")
+	for _, suffix := range awsDNSSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsNetworkError reports whether err is a transport failure that never got an
