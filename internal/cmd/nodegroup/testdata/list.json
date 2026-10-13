@@ -1,0 +1,166 @@
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "NodegroupList",
+  "cluster": "prod",
+  "region": "us-east-1",
+  "nodegroups": [
+    {
+      "name": "api",
+      "status": "ACTIVE",
+      "version": "1.33",
+      "versionBehind": false,
+      "amiType": "AL2023_x86_64_STANDARD",
+      "releaseVersion": "1.33.0-20260101",
+      "capacityType": "SPOT",
+      "instanceTypes": [
+        "m5.large"
+      ],
+      "scaling": {
+        "desired": 3,
+        "min": 3,
+        "max": 3
+      },
+      "ami": {
+        "status": "Latest",
+        "current": "ami-latest133",
+        "latest": "ami-latest133"
+      },
+      "healthIssues": [],
+      "createdAt": "2026-01-01T00:00:00Z",
+      "modifiedAt": "2026-01-01T00:00:00Z"
+    },
+    {
+      "name": "batch",
+      "status": "UPDATING",
+      "version": "1.33",
+      "versionBehind": false,
+      "amiType": "AL2023_x86_64_STANDARD",
+      "releaseVersion": "1.33.0-20260101",
+      "capacityType": "ON_DEMAND",
+      "instanceTypes": [
+        "m5.large"
+      ],
+      "scaling": {
+        "desired": 10,
+        "min": 0,
+        "max": 40
+      },
+      "ami": {
+        "status": "Updating",
+        "current": "ami-stale",
+        "latest": "ami-latest133"
+      },
+      "healthIssues": [],
+      "createdAt": "2026-01-01T00:00:00Z",
+      "modifiedAt": "2026-01-01T00:00:00Z"
+    },
+    {
+      "name": "empty",
+      "status": "ACTIVE",
+      "version": "1.33",
+      "versionBehind": false,
+      "amiType": "AL2023_x86_64_STANDARD",
+      "releaseVersion": "1.33.0-20260101",
+      "capacityType": "ON_DEMAND",
+      "instanceTypes": [
+        "m5.large"
+      ],
+      "scaling": {
+        "desired": 0,
+        "min": 0,
+        "max": 5
+      },
+      "ami": {
+        "status": "Unknown",
+        "latest": "ami-latest133"
+      },
+      "healthIssues": [],
+      "createdAt": "2026-01-01T00:00:00Z",
+      "modifiedAt": "2026-01-01T00:00:00Z"
+    },
+    {
+      "name": "gpu",
+      "status": "ACTIVE",
+      "version": "1.33",
+      "versionBehind": false,
+      "amiType": "CUSTOM",
+      "releaseVersion": "1.33.0-20260101",
+      "capacityType": "ON_DEMAND",
+      "instanceTypes": [
+        "g5.xlarge"
+      ],
+      "scaling": {
+        "desired": 1,
+        "min": 0,
+        "max": 2
+      },
+      "ami": {
+        "status": "Custom",
+        "current": "ami-custom"
+      },
+      "healthIssues": [],
+      "createdAt": "2026-01-01T00:00:00Z",
+      "modifiedAt": "2026-01-01T00:00:00Z"
+    },
+    {
+      "name": "old",
+      "status": "ACTIVE",
+      "version": "1.32",
+      "versionBehind": true,
+      "amiType": "AL2023_x86_64_STANDARD",
+      "releaseVersion": "1.32.0-20260101",
+      "capacityType": "ON_DEMAND",
+      "instanceTypes": [
+        "m5.large"
+      ],
+      "scaling": {
+        "desired": 2,
+        "min": 1,
+        "max": 3
+      },
+      "ami": {
+        "status": "Latest",
+        "current": "ami-latest132",
+        "latest": "ami-latest132"
+      },
+      "healthIssues": [],
+      "createdAt": "2026-01-01T00:00:00Z",
+      "modifiedAt": "2026-01-01T00:00:00Z"
+    },
+    {
+      "name": "web",
+      "status": "ACTIVE",
+      "version": "1.33",
+      "versionBehind": false,
+      "amiType": "AL2023_x86_64_STANDARD",
+      "releaseVersion": "1.33.0-20260101",
+      "capacityType": "ON_DEMAND",
+      "instanceTypes": [
+        "m5.large",
+        "m5a.large"
+      ],
+      "scaling": {
+        "desired": 6,
+        "min": 2,
+        "max": 12
+      },
+      "ami": {
+        "status": "Outdated",
+        "current": "ami-stale",
+        "latest": "ami-latest133"
+      },
+      "healthIssues": [
+        {
+          "code": "AsgInstanceLaunchFailures",
+          "message": "Could not launch an instance",
+          "resourceIds": [
+            "asg-web"
+          ]
+        }
+      ],
+      "createdAt": "2026-01-01T00:00:00Z",
+      "modifiedAt": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "failures": []
+}

@@ -8,6 +8,18 @@ import "github.com/dantech2000/refresh/internal/apidoc"
 func (s *Snapshot) ClusterDoc() apidoc.Cluster {
 	c := s.Cluster
 	doc := apidoc.Cluster{Name: c.Name, Region: c.Region, Incomplete: s.Incomplete()}
+	if s.Have.Nodegroups == Collected || s.Have.Nodegroups == Partial {
+		doc.Nodegroups = make([]apidoc.Nodegroup, len(s.Nodegroups))
+		for i, n := range s.Nodegroups {
+			doc.Nodegroups[i] = s.NodegroupDoc(n)
+		}
+	}
+	if s.Have.Addons == Collected || s.Have.Addons == Partial {
+		doc.Addons = make([]apidoc.Addon, len(s.Addons))
+		for i, a := range s.Addons {
+			doc.Addons[i] = AddonDoc(a)
+		}
+	}
 	if s.Have.Cluster != Collected {
 		return doc
 	}
@@ -54,4 +66,76 @@ func list[T any](s []T) []T {
 		return []T{}
 	}
 	return s
+}
+
+// AddonDoc returns the document form of an add-on. One that was not read
+// has its name and incomplete.
+func AddonDoc(a Addon) apidoc.Addon {
+	if a.State != Collected {
+		return apidoc.Addon{Name: a.Name, Incomplete: true}
+	}
+	issues := make([]apidoc.Issue, len(a.Issues))
+	for i, issue := range a.Issues {
+		issues[i] = apidoc.Issue{Code: issue.Code, Message: issue.Message, ResourceIDs: list(issue.ResourceIDs)}
+	}
+	return apidoc.Addon{
+		Name:                  a.Name,
+		Version:               a.Version,
+		Status:                a.Status,
+		Health:                a.Health(),
+		ARN:                   a.ARN,
+		ServiceAccountRoleARN: a.ServiceAccountRoleARN,
+		Configuration:         a.Configuration,
+		Issues:                issues,
+		CreatedAt:             a.CreatedAt,
+		ModifiedAt:            a.ModifiedAt,
+	}
+}
+
+// NodegroupDoc returns the document form of a nodegroup of the snapshot.
+// One that was not described has its name and incomplete. A group that was
+// not read is left out: the AMI, the instances. A group whose read failed
+// also marks the nodegroup incomplete.
+func (s *Snapshot) NodegroupDoc(n Nodegroup) apidoc.Nodegroup {
+	if n.State != Collected {
+		return apidoc.Nodegroup{Name: n.Name, Incomplete: true}
+	}
+	doc := apidoc.Nodegroup{
+		Name:           n.Name,
+		Status:         n.Status,
+		Version:        n.Version.String(),
+		AMIType:        n.AMIType,
+		ReleaseVersion: n.ReleaseVersion,
+		CapacityType:   n.CapacityType,
+		InstanceTypes:  list(n.InstanceTypes),
+		Scaling:        &apidoc.Scaling{Desired: n.Desired, Min: n.Min, Max: n.Max},
+		HealthIssues:   make([]apidoc.Issue, len(n.HealthIssues)),
+		CreatedAt:      n.CreatedAt,
+		ModifiedAt:     n.ModifiedAt,
+	}
+	for i, issue := range n.HealthIssues {
+		doc.HealthIssues[i] = apidoc.Issue{Code: issue.Code, Message: issue.Message, ResourceIDs: list(issue.ResourceIDs)}
+	}
+	if behind, known := s.VersionBehind(n); known {
+		doc.VersionBehind = &behind
+	}
+	if status, known := n.AMIStatus(); known && n.AMI.State != NotRequested {
+		doc.AMI = &apidoc.NodegroupAMI{Status: status, Current: n.AMI.Current, Latest: n.AMI.Latest}
+	}
+	if n.InstancesState == Collected {
+		doc.Instances = make([]apidoc.Instance, len(n.Instances))
+		for i, inst := range n.Instances {
+			doc.Instances[i] = apidoc.Instance{
+				ID: inst.ID, Type: inst.Type, State: inst.State, Lifecycle: inst.Lifecycle,
+				AvailabilityZone: inst.AvailabilityZone, ImageID: inst.ImageID, LaunchTime: inst.LaunchTime,
+			}
+		}
+	}
+	doc.Incomplete = failed(n.AMI.State) || failed(n.InstancesState)
+	return doc
+}
+
+// failed reports whether the read of a group failed or never started.
+func failed(s State) bool {
+	return s == Failed || s == NotAttempted
 }

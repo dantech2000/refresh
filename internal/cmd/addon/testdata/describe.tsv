@@ -1,0 +1,9 @@
+FIELD	VALUE
+overview.version	v1.19.0-eksbuild.1
+overview.status	ACTIVE
+overview.health	Healthy
+overview.arn	arn:aws:eks:us-east-1:123456789012:addon/prod/vpc-cni/fake
+overview.service_account_role	arn:aws:iam::123456789012:role/vpc-cni
+overview.created	2026-01-01 00:00 UTC
+overview.modified	2026-01-01 00:00 UTC
+configuration.values	env: ENABLE_PREFIX_DELEGATION: "true" WARM_PREFIX_TARGET: "1"

@@ -29,6 +29,8 @@ func TestParseFilters(t *testing.T) {
 		{name: "a key twice", raw: []string{"name=a*", "name=*b"}, want: cmdutil.Filters{{Key: "name", Pattern: "a*"}, {Key: "name", Pattern: "*b"}}},
 		{name: "no equals sign", raw: []string{"prod"}, wantErr: `invalid filter "prod": want key=value, with one of the keys name, instanceType`},
 		{name: "no key", raw: []string{"=prod"}, wantErr: `invalid filter "=prod": want key=value, with one of the keys name, instanceType`},
+		{name: "spaces around the pattern", raw: []string{"name= prod* "}, want: cmdutil.Filters{{Key: "name", Pattern: "prod*"}}},
+		{name: "a value of spaces", raw: []string{"name=  "}, wantErr: `invalid filter "name=  ": want key=value, with one of the keys name, instanceType`},
 		{name: "no value", raw: []string{"name="}, wantErr: `invalid filter "name=": want key=value, with one of the keys name, instanceType`},
 		{name: "unknown key", raw: []string{"nam=prod"}, wantErr: `invalid filter "nam=prod": unknown key "nam"; the keys are name, instanceType`},
 	}
@@ -153,57 +155,6 @@ func TestSortFlags(t *testing.T) {
 				t.Errorf("key = %q, desc = %v, want %q, %v", key, desc, tt.wantKey, tt.wantDesc)
 			}
 		})
-	}
-}
-
-func TestSweepRegions(t *testing.T) {
-	tests := []struct {
-		name        string
-		flag        []string
-		env         string
-		home        string
-		all         bool
-		wantNames   []string
-		wantDefault bool
-		wantCount   int // when wantNames is nil
-	}{
-		{name: "the home region", home: "eu-west-1", wantNames: []string{"eu-west-1"}},
-		{name: "-r wins over the home region", flag: []string{"us-east-1", " us-west-2 ", "us-east-1", ""}, home: "eu-west-1", wantNames: []string{"us-east-1", "us-west-2"}},
-		{name: "-r wins over the environment", flag: []string{"us-east-1"}, env: "eu-west-1", wantNames: []string{"us-east-1"}},
-		{name: "the environment does not apply without -A", env: "us-east-1,us-west-2", home: "eu-west-1", wantNames: []string{"eu-west-1"}},
-		{name: "-A reads the environment, as named regions", env: "us-east-1, us-west-2,", home: "eu-west-1", all: true, wantNames: []string{"us-east-1", "us-west-2"}},
-		{name: "-A alone is a default sweep", home: "eu-west-1", all: true, wantDefault: true, wantCount: 16},
-		{name: "no home region is a sweep", wantDefault: true, wantCount: 16},
-		{name: "no home region reads the environment", env: "us-east-1", wantNames: []string{"us-east-1"}},
-		{name: "the partition of the home region", home: "us-gov-east-1", all: true, wantDefault: true, wantCount: 2},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(cmdutil.EnvRegions, tt.env)
-			got := cmdutil.SweepRegions(&cmdutil.GlobalOptions{Regions: tt.flag}, tt.home, tt.all)
-			if got.Default != tt.wantDefault {
-				t.Errorf("Default = %v, want %v", got.Default, tt.wantDefault)
-			}
-			if tt.wantNames == nil {
-				if len(got.Names) != tt.wantCount {
-					t.Errorf("regions = %v, want %d of them", got.Names, tt.wantCount)
-				}
-				return
-			}
-			if diff := cmp.Diff(tt.wantNames, got.Names); diff != "" {
-				t.Errorf("regions (-want +got):\n%s", diff)
-			}
-		})
-	}
-
-	if err := cmdutil.ValidateSweepFlags(&cmdutil.GlobalOptions{Regions: []string{"us-east-1"}}, true); err == nil {
-		t.Error("-A with -r: no error")
-	}
-	if err := cmdutil.ValidateSweepFlags(&cmdutil.GlobalOptions{Regions: []string{"us-east-1"}}, false); err != nil {
-		t.Errorf("-r alone: %v", err)
-	}
-	if err := cmdutil.ValidateSweepFlags(&cmdutil.GlobalOptions{}, true); err != nil {
-		t.Errorf("-A alone: %v", err)
 	}
 }
 

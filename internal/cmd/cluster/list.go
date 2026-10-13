@@ -13,6 +13,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/view"
@@ -80,7 +81,7 @@ When no region answers, the command fails with exit 1.`,
 			return o.run(cmd.Context())
 		},
 	}
-	cmdutil.AddAllRegionsFlag(cmd, &o.allRegions)
+	fleetcmd.AddAllRegionsFlag(cmd, &o.allRegions)
 	cmdutil.AddFilterFlag(cmd, &o.rawFilters, keyName, keyRegion, keyStatus, keyVersion)
 	cmdutil.AddSortFlags(cmd, &o.sortKey, &o.desc, keyName, keyRegion, keyStatus, keyVersion)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
@@ -94,7 +95,7 @@ func (o *listOptions) complete() error {
 }
 
 func (o *listOptions) validate() error {
-	return cmdutil.ValidateSweepFlags(o.global, o.allRegions)
+	return fleetcmd.ValidateSweepFlags(o.global, o.allRegions)
 }
 
 func (o *listOptions) run(ctx context.Context) error {
@@ -104,7 +105,7 @@ func (o *listOptions) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	regions := cmdutil.SweepRegions(o.global, provider.Region(), o.allRegions)
+	regions := fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions)
 
 	// The name and the region are known before any describe call, so
 	// those filters save the calls for the clusters they drop.
@@ -123,10 +124,10 @@ func (o *listOptions) run(ctx context.Context) error {
 		OnRegion: progress.add,
 	})
 	progress.clear()
-	if err := cmdutil.SweepError(ctx, provider, res); err != nil {
+	if err := fleetcmd.SweepError(ctx, provider, res); err != nil {
 		return err
 	}
-	cmdutil.ReportSkippedRegions(o.io, res.Skipped)
+	fleetcmd.ReportSkippedRegions(o.io, res.Skipped)
 
 	doc := o.document(res)
 	if err := cmdutil.Print(o.io, o.output, doc, o.view(doc, len(res.Answered))); err != nil {

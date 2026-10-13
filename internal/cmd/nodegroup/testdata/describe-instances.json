@@ -1,0 +1,61 @@
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "NodegroupDescription",
+  "cluster": "prod",
+  "region": "us-east-1",
+  "nodegroup": {
+    "name": "web",
+    "status": "ACTIVE",
+    "version": "1.33",
+    "versionBehind": false,
+    "amiType": "AL2023_x86_64_STANDARD",
+    "releaseVersion": "1.33.0-20260101",
+    "capacityType": "ON_DEMAND",
+    "instanceTypes": [
+      "m5.large",
+      "m5a.large"
+    ],
+    "scaling": {
+      "desired": 6,
+      "min": 2,
+      "max": 12
+    },
+    "ami": {
+      "status": "Outdated",
+      "current": "ami-stale",
+      "latest": "ami-latest133"
+    },
+    "healthIssues": [
+      {
+        "code": "AsgInstanceLaunchFailures",
+        "message": "Could not launch an instance",
+        "resourceIds": [
+          "asg-web"
+        ]
+      }
+    ],
+    "instances": [
+      {
+        "id": "i-0web1",
+        "type": "m5.large",
+        "state": "running",
+        "lifecycle": "on-demand",
+        "availabilityZone": "us-east-1a",
+        "imageId": "ami-stale",
+        "launchTime": "2026-03-04T05:06:00Z"
+      },
+      {
+        "id": "i-0web2",
+        "type": "m5a.large",
+        "state": "pending",
+        "lifecycle": "spot",
+        "availabilityZone": "us-east-1b",
+        "imageId": "ami-stale",
+        "launchTime": "2026-03-04T05:06:00Z"
+      }
+    ],
+    "createdAt": "2026-01-01T00:00:00Z",
+    "modifiedAt": "2026-01-01T00:00:00Z"
+  },
+  "failures": []
+}

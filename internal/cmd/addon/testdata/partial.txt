@@ -1,0 +1,9 @@
+ADD-ONS  prod, 3
+
+NAME        VERSION             STATUS        HEALTH
+coredns     unknown             [?] unknown   [?] unknown
+kube-proxy  v1.33.0-eksbuild.2  [~] UPDATING  [~] InProgress
+vpc-cni     v1.19.0-eksbuild.1  [OK] ACTIVE   [OK] Healthy
+
+INCOMPLETE DATA
+[?] addon prod/coredns (us-east-1): Throttled: ThrottlingException: Rate exceeded

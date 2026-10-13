@@ -19,7 +19,11 @@ const schemaBaseURL = "https://drod.dev/refresh/schema/v2/"
 const failuresDescription = "Every failure of the run: the items that refresh could not read and the actions that did not complete. " +
 	"The list is sorted by kind, region, cluster, name, and operation. It is [] when there are no failures."
 
-var enumType = reflect.TypeFor[apidoc.Enum]()
+var (
+	enumType = reflect.TypeFor[apidoc.Enum]()
+	// openEnum is the one enum whose list of values is not closed.
+	openEnum = reflect.TypeFor[apidoc.Reason]()
+)
 
 // generate returns the JSON Schema (draft 2020-12) of doc, indented, with a
 // line break at the end. The rules of the schema are the rules of the
@@ -118,6 +122,21 @@ func (g *generator) name(t reflect.Type) string {
 func (g *generator) mapEnum(t reflect.Type) *jsonschema.Schema {
 	if t.Kind() == reflect.Pointer || !t.Implements(enumType) {
 		return nil
+	}
+	if t == openEnum {
+		// A later release may add a reason, and a consumer must accept
+		// one that it does not know. A closed list would make a consumer
+		// that validates reject the next release.
+		values := reflect.Zero(t).Interface().(apidoc.Enum).Values() //nolint:forcetypeassert // t implements Enum
+		examples := make([]any, len(values))
+		for i, v := range values {
+			examples[i] = v
+		}
+		return &jsonschema.Schema{
+			Type:        "string",
+			Description: g.docs.lookup(t, "") + " The examples are the values of this release.",
+			Examples:    examples,
+		}
 	}
 	name := g.name(t)
 	g.enums[name] = t

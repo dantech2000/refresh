@@ -3,7 +3,6 @@ package cluster_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,14 +11,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/santhosh-tekuri/jsonschema/v6"
-	"gopkg.in/yaml.v3"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
-	"github.com/dantech2000/refresh/internal/cmd/root"
+	"github.com/dantech2000/refresh/internal/cmd/cmdtest"
+	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
@@ -56,8 +54,9 @@ func newWorld() *fleettest.World {
 	return world
 }
 
-// env is one fake AWS and a factory that reaches it.
+// env is the fake AWS of one test.
 type env struct {
+	*cmdtest.Fake
 	world *fleettest.World
 	srv   *awsxtest.Server
 	f     *cmdutil.Factory
@@ -67,120 +66,29 @@ type env struct {
 
 func newEnv(t *testing.T, world *fleettest.World) *env {
 	t.Helper()
-	// Nothing in the environment of the developer changes a test.
-	for _, name := range []string{"REFRESH_TIMEOUT", "REFRESH_MAX_CONCURRENCY", "REFRESH_LOG_LEVEL", "NO_COLOR", cmdutil.EnvRegions} {
-		t.Setenv(name, "")
-	}
-	srv := awsxtest.NewServer(world)
-	t.Cleanup(srv.Close)
-	f, _, out, errOut := cmdutiltest.NewFactory()
-	cmdutiltest.NewContextStore(t, f, nil)
-	cmdutiltest.UseAWS(f, srv.Config(east))
-	return &env{world: world, srv: srv, f: f, out: out, err: errOut}
+	fake := cmdtest.NewFake(t, world, east)
+	return &env{Fake: fake, world: world, srv: fake.Server, f: fake.Factory, out: fake.Out, err: fake.Err}
 }
 
 // run executes "refresh cluster list" with args and returns the error of
 // the run.
 func (e *env) run(ctx context.Context, args ...string) error {
-	cmd := root.NewCmdRoot(e.f)
-	cmd.SetArgs(append([]string{"cluster", "list"}, args...))
-	return cmd.ExecuteContext(ctx)
+	return e.Run(ctx, append([]string{"cluster", "list"}, args...)...)
 }
 
 func testContext(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	t.Cleanup(cancel)
-	return ctx
+	return cmdutiltest.Context(t)
 }
 
-// golden compares got with the file in testdata, or writes the file with
-// -update.
 func golden(t *testing.T, name, got string) {
 	t.Helper()
-	path := filepath.Join("testdata", name)
-	if *update {
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("%v; run the test with -update to write it", err)
-	}
-	if diff := cmp.Diff(string(want), got); diff != "" {
-		t.Errorf("%s (-golden +got):\n%s", name, diff)
-	}
+	cmdutiltest.Golden(t, name, got, *update)
 }
 
-// validate checks a JSON document against the committed schema of
-// ClusterList. The schema is closed first: a key that it does not list
-// fails, so a field that the generator missed cannot hide.
 func validate(t *testing.T, document []byte) {
 	t.Helper()
-	const id = "https://drod.dev/refresh/schema/v2/ClusterList.json"
-	f, err := os.Open(filepath.Join("..", "..", "..", "api", "schema", "v2", "ClusterList.json"))
-	if err != nil {
-		t.Fatalf("%v; run: go run ./tools/genschema", err)
-	}
-	defer func() { _ = f.Close() }()
-	schema, err := jsonschema.UnmarshalJSON(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := jsonschema.NewCompiler()
-	c.DefaultDraft(jsonschema.Draft2020)
-	c.AssertFormat()
-	if err := c.AddResource(id, closeObjects(schema)); err != nil {
-		t.Fatal(err)
-	}
-	compiled, err := c.Compile(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(document))
-	if err != nil {
-		t.Fatalf("the document is not JSON: %v", err)
-	}
-	if err := compiled.Validate(instance); err != nil {
-		t.Errorf("the document does not match its schema: %v", err)
-	}
-}
-
-// closeObjects sets additionalProperties to false on every object of a
-// schema that lists properties.
-func closeObjects(v any) any {
-	switch x := v.(type) {
-	case map[string]any:
-		for k, val := range x {
-			x[k] = closeObjects(val)
-		}
-		if _, ok := x["properties"]; ok {
-			if _, set := x["additionalProperties"]; !set {
-				x["additionalProperties"] = false
-			}
-		}
-	case []any:
-		for i, val := range x {
-			x[i] = closeObjects(val)
-		}
-	}
-	return v
-}
-
-// yamlToJSON converts a YAML document to JSON, to validate it.
-func yamlToJSON(t *testing.T, doc []byte) []byte {
-	t.Helper()
-	var v any
-	if err := yaml.Unmarshal(doc, &v); err != nil {
-		t.Fatalf("the document is not YAML: %v", err)
-	}
-	out, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return out
+	cmdutiltest.ValidateJSON(t, apidoc.KindClusterList, document)
 }
 
 var threeRegions = []string{"-r", east, "-r", eu, "-r", west}
@@ -202,7 +110,7 @@ func TestList_Formats(t *testing.T) {
 			case "json":
 				validate(t, e.out.Bytes())
 			case "yaml":
-				validate(t, yamlToJSON(t, e.out.Bytes()))
+				cmdutiltest.ValidateYAML(t, apidoc.KindClusterList, e.out.Bytes())
 			}
 		})
 	}
@@ -268,14 +176,7 @@ func TestList_Empty(t *testing.T) {
 	}
 }
 
-// operations returns the operation of every request, in arrival order.
-func operations(srv *awsxtest.Server) []string {
-	var out []string
-	for _, r := range srv.Requests() {
-		out = append(out, string(r.Operation)+" "+r.Region)
-	}
-	return out
-}
+func operations(e *env) []string { return e.Operations() }
 
 // The command makes one list call for each region and one describe call
 // for each cluster, and nothing else.
@@ -292,7 +193,7 @@ func TestList_ExactCalls(t *testing.T) {
 		"eks:DescribeCluster us-east-1",
 		"eks:DescribeCluster us-east-1",
 	}
-	if diff := cmp.Diff(want, operations(e.srv)); diff != "" {
+	if diff := cmp.Diff(want, operations(e)); diff != "" {
 		t.Errorf("requests (-want +got):\n%s", diff)
 	}
 }
@@ -305,7 +206,7 @@ func TestList_NameFilterSavesCalls(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	if got := len(e.srv.Requests()); got != 3 {
-		t.Errorf("requests = %v, want one list call and two describe calls", operations(e.srv))
+		t.Errorf("requests = %v, want one list call and two describe calls", operations(e))
 	}
 	want := "CLUSTER\tREGION\tSTATUS\tVERSION\nprod-payments\tus-east-1\tACTIVE\t1.33\n"
 	if diff := cmp.Diff(want, e.out.String()); diff != "" {
@@ -448,7 +349,7 @@ func TestList_InvalidInput(t *testing.T) {
 				t.Errorf("exit code = %d, want %d", got, cmdutil.ExitFailure)
 			}
 			if n := len(e.srv.Requests()); n != 0 {
-				t.Errorf("requests = %v, want none", operations(e.srv))
+				t.Errorf("requests = %v, want none", operations(e))
 			}
 			if e.out.Len() != 0 {
 				t.Errorf("stdout = %q, want nothing", e.out.String())
@@ -493,7 +394,7 @@ func TestList_DefaultSweepSkipsAClosedRegion(t *testing.T) {
 // skipped.
 func TestList_RegionsFromTheEnvironmentAreNamed(t *testing.T) {
 	e := newEnv(t, newWorld())
-	t.Setenv(cmdutil.EnvRegions, east+", "+eu)
+	t.Setenv(fleetcmd.EnvRegions, east+", "+eu)
 	e.world.SetScopedFault(fleettest.Scope{Region: eu}, fleettest.Fault{Unauthenticated: true})
 	err := e.run(testContext(t), "-A", "-o", "plain")
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
@@ -541,7 +442,7 @@ func TestList_NoRegionAnswers(t *testing.T) {
 			name:  "AWS does not accept the credentials",
 			args:  []string{"-r", east, "-r", eu},
 			fault: func(w *fleettest.World) { w.SetScopedFault(fleettest.Scope{}, fleettest.Fault{Unauthenticated: true}) },
-			want:  "AWS credential validation failed",
+			want:  "AWS credentials not configured or invalid\nCause: InvalidClientTokenId",
 		},
 		{
 			name: "every region of a default sweep is closed, and STS accepts the credentials",
@@ -598,12 +499,21 @@ func TestList_Interrupt(t *testing.T) {
 	}
 }
 
-// The --timeout deadline is a partial result: the rows that were read are
-// complete, the rest are failures, and the run exits 4.
+// A deadline is a partial result: the rows that were read are complete,
+// the rest are failures, and the run exits 4. The deadline here passes at
+// the moment the third cluster is at the server, so no test waits for a
+// clock.
 func TestList_Deadline(t *testing.T) {
 	e := newEnv(t, newWorld())
-	e.world.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSDescribeCluster, Cluster: "prod-search"}, fleettest.Fault{Hang: true})
-	err := e.run(testContext(t), "--timeout", "300ms", "--max-concurrency", "1", "-o", "json")
+	ctx, expire := cmdutiltest.Deadline(testContext(t))
+	e.srv.OnRequest = func(hctx context.Context, r awsxtest.Request) {
+		if r.Operation == fleettest.EKSDescribeCluster && r.Input["name"] == "prod-search" {
+			expire()
+			<-hctx.Done()
+		}
+	}
+	// One slot: the clusters before prod-search in name order are read.
+	err := e.run(ctx, "--max-concurrency", "1", "-o", "json")
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
 		t.Fatalf("exit code = %d (%v), want %d", got, err, cmdutil.ExitIncomplete)
 	}

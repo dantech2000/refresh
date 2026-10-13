@@ -17,8 +17,12 @@ type Kind string
 
 // The document kinds.
 const (
-	KindVersion     Kind = "Version"
-	KindClusterList Kind = "ClusterList"
+	KindVersion              Kind = "Version"
+	KindClusterList          Kind = "ClusterList"
+	KindNodegroupList        Kind = "NodegroupList"
+	KindNodegroupDescription Kind = "NodegroupDescription"
+	KindAddonList            Kind = "AddonList"
+	KindAddonDescription     Kind = "AddonDescription"
 )
 
 // Kinds returns every kind, in documentation order.
@@ -26,6 +30,10 @@ func Kinds() []Kind {
 	return []Kind{
 		KindVersion,
 		KindClusterList,
+		KindNodegroupList,
+		KindNodegroupDescription,
+		KindAddonList,
+		KindAddonDescription,
 	}
 }
 
@@ -41,6 +49,10 @@ func Documents() []Document {
 	return []Document{
 		Version{},
 		ClusterList{},
+		NodegroupList{},
+		NodegroupDescription{},
+		AddonList{},
+		AddonDescription{},
 	}
 }
 
@@ -52,6 +64,14 @@ func (k Kind) Command() string {
 		return "version"
 	case KindClusterList:
 		return "cluster list"
+	case KindNodegroupList:
+		return "nodegroup list"
+	case KindNodegroupDescription:
+		return "nodegroup describe"
+	case KindAddonList:
+		return "addon list"
+	case KindAddonDescription:
+		return "addon describe"
 	}
 	return ""
 }

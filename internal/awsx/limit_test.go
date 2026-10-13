@@ -165,9 +165,9 @@ func TestRequestLimit_NotSent(t *testing.T) {
 	}
 }
 
-// A retry that gets no slot reports what AWS answered to the attempt before
-// it, not "not sent": the call did reach AWS.
-func TestRequestLimit_RetryWithoutSlotKeepsItsError(t *testing.T) {
+// A retry that gets no slot before the context ends reports the context
+// error and not "not sent": the first attempt did reach AWS.
+func TestRequestLimit_RetryWithoutSlotIsNotUnsent(t *testing.T) {
 	world, srv, _ := newServer(t)
 	world.SetFault(fleettest.EKSDescribeCluster, fleettest.Fault{Throttle: 1})
 
@@ -188,11 +188,11 @@ func TestRequestLimit_RetryWithoutSlotKeepsItsError(t *testing.T) {
 	if errors.Is(err, awsx.ErrNotSent) {
 		t.Fatalf("error = %v: a call whose first attempt was answered is not \"not sent\"", err)
 	}
-	if !awsx.IsThrottling(err) {
-		t.Fatalf("error = %v, want the throttling error of the first attempt", err)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want the deadline of the context", err)
 	}
-	if got := awsx.Classify(err); got != awsx.ClassThrottled {
-		t.Errorf("Classify = %s, want %s", got, awsx.ClassThrottled)
+	if got := awsx.Classify(err); got != awsx.ClassTimeout {
+		t.Errorf("Classify = %s, want %s", got, awsx.ClassTimeout)
 	}
 }
 

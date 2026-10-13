@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -12,18 +14,41 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/fanout"
 )
 
 // Need says what Fetch reads beyond the cluster itself. The zero value
-// reads the cluster alone. Later phases of the read side add its fields:
-// nodegroups, add-ons, AMIs, and the support window.
-type Need struct{}
+// reads the cluster alone. Later steps of the read side add fields for the
+// nodegroups, the AMIs, and the support window.
+type Need struct {
+	// Nodegroups reads the nodegroups: the list, and every nodegroup of
+	// it.
+	Nodegroups bool
+	// AMI reads the AMI that each nodegroup runs and the latest
+	// recommended one. It implies Nodegroups.
+	AMI bool
+	// Instances reads the EC2 instances of each nodegroup. It implies
+	// Nodegroups.
+	Instances bool
+	// OnlyNodegroups names the nodegroups to read. Fetch describes these
+	// by name and makes no list call. It implies Nodegroups.
+	OnlyNodegroups []string
+	// Addons reads the add-ons: the list, and every add-on of it.
+	Addons bool
+	// OnlyAddons names the add-ons to read. Fetch describes these by name
+	// and makes no list call. It implies Addons.
+	OnlyAddons []string
+}
 
 // Fetcher reads clusters. Use one Fetcher for one run of a command. The
 // zero value is ready.
 type Fetcher struct {
 	// Now returns the time that a snapshot records. Nil means time.Now.
 	Now func() time.Time
+
+	// latestAMIs shares the latest recommended AMI between the nodegroups
+	// and the clusters of the run. A lookup that failed is not kept.
+	latestAMIs fanout.Memo[amiKey, string]
 }
 
 func (f *Fetcher) now() time.Time {
@@ -50,27 +75,71 @@ var errEmptyAnswer = errors.New("empty answer")
 
 // Fetch reads one cluster. The snapshot is never nil. The error is the
 // error of DescribeCluster: when it is set, the snapshot holds the name,
-// the region, and the failure, which is the row that a sweep prints.
-func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, _ Need) (*Snapshot, error) {
+// the region, and the failure, which is the row that a sweep prints. Any
+// other read that fails is a failure in the snapshot and a state on its
+// group, and no error.
+//
+// The calls that need nothing from one another start together: the cluster
+// and each list.
+func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, need Need) (*Snapshot, error) {
 	snap := &Snapshot{Cluster: Cluster{Name: cluster, Region: c.Region}}
+	if err := ctx.Err(); err != nil {
+		// The SDK returns the bare context error for a call that it did
+		// not send. Nothing was attempted, and the row says so.
+		err = fmt.Errorf("%w: %w", awsx.ErrNotSent, err)
+		snap.Failures = []apidoc.Failure{inRegion(c, FailureFromError(apidoc.FailureCluster, cluster, err))}
+		snap.Have.Cluster = NotAttempted
+		return snap, err
+	}
+	var (
+		wg         sync.WaitGroup
+		addons     addonsResult
+		nodegroups nodegroupsResult
+	)
+	if need.Nodegroups || need.AMI || need.Instances || len(need.OnlyNodegroups) > 0 {
+		wg.Go(func() { nodegroups = f.fetchNodegroups(ctx, c, cluster, need) })
+	}
+	if need.Addons || len(need.OnlyAddons) > 0 {
+		wg.Go(func() { addons = fetchAddons(ctx, c, cluster, need.OnlyAddons) })
+	}
 	out, err := c.EKS.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(cluster)})
 	if err == nil && out.Cluster == nil {
 		err = fmt.Errorf("describing cluster %s: %w", cluster, errEmptyAnswer)
 	}
+	wg.Wait()
 	snap.FetchedAt = f.now()
+	snap.Addons, snap.Have.Addons = addons.addons, addons.state
+	snap.Nodegroups, snap.Have.Nodegroups = nodegroups.nodegroups, nodegroups.state
+	rest := slices.Concat(nodegroups.failures, addons.failures)
+
 	if err != nil {
-		failure := FailureFromError(apidoc.FailureCluster, cluster, err)
-		failure.Region = c.Region
-		snap.Failures = append(snap.Failures, failure)
-		snap.Have.Cluster = Failed
-		if errors.Is(err, awsx.ErrNotSent) {
-			snap.Have.Cluster = NotAttempted
+		snap.Failures = append(snap.Failures, inRegion(c, FailureFromError(apidoc.FailureCluster, cluster, err)))
+		snap.Have.Cluster = stateOf(err)
+		// A cluster that does not exist fails every call the same way.
+		// One failure says it.
+		if !awsx.IsNotFound(err) {
+			snap.Failures = append(snap.Failures, rest...)
 		}
 		return snap, err
 	}
 	fillCluster(&snap.Cluster, out.Cluster)
 	snap.Have.Cluster = Collected
+	snap.Failures = append(snap.Failures, rest...)
 	return snap, nil
+}
+
+// stateOf returns the state of a group whose read failed with err.
+func stateOf(err error) State {
+	if errors.Is(err, awsx.ErrNotSent) {
+		return NotAttempted
+	}
+	return Failed
+}
+
+// inRegion sets the region of a failure to the region of c.
+func inRegion(c *awsx.Clients, f apidoc.Failure) apidoc.Failure {
+	f.Region = c.Region
+	return f
 }
 
 // fillCluster copies what DescribeCluster returned into c.

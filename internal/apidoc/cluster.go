@@ -23,6 +23,11 @@ type Cluster struct {
 	HealthIssues []Issue   `json:"healthIssues,omitzero"`
 	Network      *Network  `json:"network,omitzero"`
 	Security     *Security `json:"security,omitzero"`
+	// Nodegroups are the managed nodegroups, in a document that reads
+	// them.
+	Nodegroups []Nodegroup `json:"nodegroups,omitzero"`
+	// Addons are the installed add-ons, in a document that reads them.
+	Addons []Addon `json:"addons,omitzero"`
 	// Incomplete is true when part of the row could not be read. The
 	// failures of the row are in the failures list of the document.
 	Incomplete bool `json:"incomplete,omitzero"`

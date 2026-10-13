@@ -1,4 +1,7 @@
-package cmdutil
+// Package fleetcmd holds what the commands that read the fleet share: which
+// regions a sweep reads, what a sweep that got no answer reports, and the
+// error for a cluster that does not exist.
+package fleetcmd
 
 import (
 	"context"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleetdata"
 )
@@ -31,7 +35,7 @@ func AddAllRegionsFlag(cmd *cobra.Command, p *bool) {
 
 // ValidateSweepFlags rejects -A together with -r: one names every region
 // and the other names some.
-func ValidateSweepFlags(global *GlobalOptions, allRegions bool) error {
+func ValidateSweepFlags(global *cmdutil.GlobalOptions, allRegions bool) error {
 	if allRegions && len(regionNames(global.Regions)) > 0 {
 		return errors.New("-A/--all-regions and -r/--region cannot be used together: name the regions, or sweep all of them")
 	}
@@ -47,7 +51,7 @@ func ValidateSweepFlags(global *GlobalOptions, allRegions bool) error {
 //  3. The home region.
 //
 // home is the region of the AWS configuration, or "".
-func SweepRegions(global *GlobalOptions, home string, allRegions bool) fleet.Regions {
+func SweepRegions(global *cmdutil.GlobalOptions, home string, allRegions bool) fleet.Regions {
 	if named := regionNames(global.Regions); len(named) > 0 {
 		return fleet.Regions{Names: named}
 	}
@@ -76,7 +80,7 @@ func regionNames(raw []string) []string {
 
 // ReportSkippedRegions writes the one notice of a default sweep that
 // skipped regions closed to the credentials. They are not failures.
-func ReportSkippedRegions(ios *IOStreams, skipped []string) {
+func ReportSkippedRegions(ios *cmdutil.IOStreams, skipped []string) {
 	if len(skipped) == 0 {
 		return
 	}
@@ -125,7 +129,10 @@ func SweepError(ctx context.Context, p *awsx.Provider, res *fleet.SweepResult) e
 	for i, err := range res.Errs {
 		switch res.Failures[i].Reason {
 		case apidoc.ReasonCredentialError:
-			return fmt.Errorf("AWS credential validation failed: %w", awsx.FormatAWSError(err, "listing clusters"))
+			// FormatAWSError writes the headline and the help for a
+			// credential error. Another headline before it would say
+			// the same thing twice.
+			return awsx.FormatAWSError(err, "listing clusters")
 		case apidoc.ReasonRegionUnavailable:
 			lookalike = true
 			if closed == nil {
@@ -142,7 +149,7 @@ func SweepError(ctx context.Context, p *awsx.Provider, res *fleet.SweepResult) e
 		_, err := p.Clients(region).STS.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 		switch {
 		case err != nil && awsx.IsCredentialError(err):
-			return fmt.Errorf("AWS credential validation failed: %w", awsx.FormatAWSError(err, "checking the credentials"))
+			return awsx.FormatAWSError(err, "checking the credentials")
 		case err == nil && closed != nil:
 			return &RegionsClosedError{STSRegion: region, Err: closed}
 		}
@@ -158,4 +165,17 @@ func SweepError(ctx context.Context, p *awsx.Provider, res *fleet.SweepResult) e
 	}
 	return fmt.Errorf("could not list clusters in any of %d region(s); the first error, for %s: %w",
 		regions, res.Failures[0].Name, first)
+}
+
+// ClusterError returns the error of a command whose cluster could not be
+// read. err is the error of fleet.Fetcher.Fetch. A cluster that does not
+// exist gets the names of the clusters that are close to it, which costs
+// one list call; any other error gets the AWS help text.
+func ClusterError(ctx context.Context, fetcher *fleet.Fetcher, c *awsx.Clients, cluster string, err error) error {
+	if !awsx.IsNotFound(err) {
+		return awsx.FormatAWSError(err, "describing cluster "+cluster)
+	}
+	// Without the list the error still says what is wrong.
+	names, _ := fetcher.Clusters(ctx, c)
+	return cmdutil.NotFoundError("cluster", cluster, c.Region, names, "refresh cluster list -r "+c.Region)
 }

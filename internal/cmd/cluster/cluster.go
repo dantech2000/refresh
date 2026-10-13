@@ -11,7 +11,7 @@ import (
 func NewCmdCluster(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cluster",
-		Short: "List EKS clusters",
+		Short: "Work with EKS clusters",
 		Long: `Work with EKS clusters.
 
 "refresh cluster list" reads one region, the regions you name with -r, or

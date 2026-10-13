@@ -35,7 +35,8 @@ type Status int
 
 // The statuses.
 const (
-	Neutral  Status = iota // no judgement
+	NoStatus Status = iota // nothing to draw: no glyph
+	Neutral                // a state with no judgement
 	Healthy                // active, current, passed
 	Warn                   // stale, needs attention
 	Fail                   // failed, blocked
@@ -78,6 +79,9 @@ func (s Status) parts() (glyph, ascii string, c rgb) {
 
 // Glyph returns the glyph of s in its color.
 func (t Theme) Glyph(s Status) string {
+	if s == NoStatus {
+		return ""
+	}
 	glyph, ascii, c := s.parts()
 	if !t.Unicode {
 		glyph = ascii
@@ -88,8 +92,8 @@ func (t Theme) Glyph(s Status) string {
 // Token returns the glyph of s, a space, and label. The label keeps the
 // default color of the terminal.
 func (t Theme) Token(s Status, label string) string {
-	if label == "" {
-		return t.Glyph(s)
+	if label == "" || s == NoStatus {
+		return t.Glyph(s) + label
 	}
 	return t.Glyph(s) + " " + label
 }

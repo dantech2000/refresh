@@ -11,9 +11,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	addoncmd "github.com/dantech2000/refresh/internal/cmd/addon"
 	clustercmd "github.com/dantech2000/refresh/internal/cmd/cluster"
 	"github.com/dantech2000/refresh/internal/cmd/contextcmd"
 	"github.com/dantech2000/refresh/internal/cmd/gendocs"
+	nodegroupcmd "github.com/dantech2000/refresh/internal/cmd/nodegroup"
 	versioncmd "github.com/dantech2000/refresh/internal/cmd/version"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
@@ -66,7 +68,7 @@ skip the confirmation prompts.`,
 	cmd.SetErr(f.IOStreams.ErrOut)
 
 	pf := cmd.PersistentFlags()
-	pf.StringArrayVarP(&o.regions, "region", "r", nil, "AWS region; repeatable on commands that sweep regions")
+	pf.StringSliceVarP(&o.regions, "region", "r", nil, "AWS region; a command that sweeps regions takes several, repeated or separated by commas")
 	pf.StringVar(&o.profile, "profile", "", "AWS shared-config profile")
 	pf.DurationVarP(&o.timeout, "timeout", "t", time.Minute, "Budget for the API calls of a read command (env: REFRESH_TIMEOUT)")
 	pf.IntVar(&o.maxConcurrency, "max-concurrency", 32, "Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY)")
@@ -85,6 +87,8 @@ skip the confirmation prompts.`,
 	)
 	addCommands(cmd, groupCore,
 		clustercmd.NewCmdCluster(f),
+		nodegroupcmd.NewCmdNodegroup(f),
+		addoncmd.NewCmdAddon(f),
 		contextcmd.NewCmdContext(f),
 	)
 	addCommands(cmd, groupOther,
@@ -145,6 +149,11 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 	// non-empty value counts.
 	f.IOStreams.NoColor = o.noColor || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb"
 
+	for _, r := range o.regions {
+		if strings.TrimSpace(r) == "" {
+			return fmt.Errorf("invalid --region %q: an empty region name", strings.Join(o.regions, ","))
+		}
+	}
 	if o.maxConcurrency < 1 {
 		return fmt.Errorf("invalid --max-concurrency %d: must be at least 1", o.maxConcurrency)
 	}

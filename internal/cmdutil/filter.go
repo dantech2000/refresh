@@ -32,13 +32,13 @@ func AddFilterFlag(cmd *cobra.Command, p *[]string, keys ...string) {
 
 // ParseFilters reads the values of the filter flag. Each is key=pattern.
 // The key must be one of keys, in any case, and the pattern must not be
-// empty. A value that does not parse is an error and never a filter that
+// empty. Spaces around the key and around the pattern do not count. A value that does not parse is an error and never a filter that
 // matches nothing.
 func ParseFilters(raw []string, keys ...string) (Filters, error) {
 	filters := make(Filters, 0, len(raw))
 	for _, r := range raw {
 		key, pattern, ok := strings.Cut(r, "=")
-		key = strings.TrimSpace(key)
+		key, pattern = strings.TrimSpace(key), strings.TrimSpace(pattern)
 		if !ok || key == "" || pattern == "" {
 			return nil, fmt.Errorf("invalid filter %q: want key=value, with one of the keys %s", r, strings.Join(keys, ", "))
 		}

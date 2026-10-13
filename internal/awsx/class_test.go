@@ -25,7 +25,7 @@ func TestClassify(t *testing.T) {
 	}{
 		{"nil", nil, awsx.ClassUnknown},
 		{"interrupt", fmt.Errorf("call: %w", context.Canceled), awsx.ClassInterrupted},
-		{"interrupt before the request left", fmt.Errorf("%w: %w", awsx.ErrNotSent, context.Canceled), awsx.ClassInterrupted},
+		{"interrupt before the request left", fmt.Errorf("%w: %w", awsx.ErrNotSent, context.Canceled), awsx.ClassNotAttempted},
 		{"deadline before the request left", fmt.Errorf("%w: %w", awsx.ErrNotSent, context.DeadlineExceeded), awsx.ClassNotAttempted},
 		{"deadline", context.DeadlineExceeded, awsx.ClassTimeout},
 		{"dial failure", dial, awsx.ClassNetworkError},

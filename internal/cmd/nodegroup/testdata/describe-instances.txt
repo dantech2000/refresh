@@ -1,0 +1,30 @@
+web   [OK] ACTIVE   prod in us-east-1
+
+OVERVIEW
+  status          [OK] ACTIVE
+  version         1.33
+  instance types  m5.large, m5a.large
+  capacity        ON_DEMAND
+  created         2026-01-01 00:00 UTC
+  modified        2026-01-01 00:00 UTC
+
+AMI
+  type     AL2023_x86_64_STANDARD
+  release  1.33.0-20260101
+  status   [!] Outdated
+  current  ami-stale
+  latest   ami-latest133
+
+SCALING
+  desired  6
+  min      2
+  max      12
+
+ISSUES  1
+  NAME                       MESSAGE
+  AsgInstanceLaunchFailures  Could not launch an instance
+
+INSTANCES  2
+  NAME     STATE         TYPE       LIFECYCLE  ZONE        AMI        LAUNCHED
+  i-0web1  [OK] running  m5.large   on-demand  us-east-1a  ami-stale  2026-03-04 05:06 UTC
+  i-0web2  [!] pending   m5a.large  spot       us-east-1b  ami-stale  2026-03-04 05:06 UTC

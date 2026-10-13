@@ -177,6 +177,11 @@ func TestUsageErrors(t *testing.T) {
 			wantErr: `invalid REFRESH_MAX_CONCURRENCY: invalid argument "many" for "--max-concurrency" flag: strconv.ParseInt: parsing "many": invalid syntax`,
 		},
 		{
+			name:    "an empty region",
+			args:    []string{"-r", "us-east-1,,eu-west-1", "version"},
+			wantErr: `invalid --region "us-east-1,,eu-west-1": an empty region name`,
+		},
+		{
 			name:    "concurrency below one",
 			args:    []string{"--max-concurrency", "0", "version"},
 			wantErr: "invalid --max-concurrency 0: must be at least 1",
@@ -428,9 +433,9 @@ func TestGlobalFlags(t *testing.T) {
 			}),
 		},
 		{
-			name: "a region value keeps its commas",
-			args: []string{"-r", "us-east-1,eu-west-1"},
-			want: with(func(o *cmdutil.GlobalOptions) { o.Regions = []string{"us-east-1,eu-west-1"} }),
+			name: "regions separated by commas",
+			args: []string{"-r", "us-east-1,eu-west-1", "-r", "us-west-2"},
+			want: with(func(o *cmdutil.GlobalOptions) { o.Regions = []string{"us-east-1", "eu-west-1", "us-west-2"} }),
 		},
 	}
 	for _, tt := range tests {

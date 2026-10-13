@@ -1,6 +1,6 @@
 # Phase 2 design note: the read side
 
-Status: draft 3. Steps 1 to 3 of section 10 are built, and section 13 lists what the code changed in this note.
+Status: draft 4. Steps 1 to 5 of section 10 are built. Sections 13 and 14 list what the code and its reviews changed in this note. Where a section above and those two differ, they are right.
 
 Draft 2: It applies the review of draft 1 and the owner's decisions, which section 11 records. It belongs to `REWRITE.md` and stays inside `CONTRACT.md`.
 
@@ -1223,3 +1223,39 @@ Measured on the fake fleet of 200 clusters in 8 regions, 8 runs after one warm-u
 | `cluster list -r us-east-1 -o json` | 19 ms | 10 ms | 704 ms | 151 ms |
 
 The model of section 8 gave 100 ms for one region at the limit 32. The measured 151 ms is two waves whose slowest call is near 100 ms each: the model used the mean latency, and a wave ends with its slowest call.
+
+## 14. Changes made while building steps 4 and 5
+
+| Section | Before | Built |
+|---|---|---|
+| 2 | A retry that gets no slot returns the error of the attempt before it | It returns the error of the context. Only a first attempt that got no slot is `ErrNotSent`. The wrapper type and its rule in `IsRetryable` are gone: with the real backoff a deadline lands in the backoff sleep and reports the context error anyway. |
+| 2 | `Fetch` starts its calls whatever the context | `Fetch` returns a `NotAttempted` row at once when the context has ended. The SDK returns the bare context error for a call that it did not send, and that would read as a timeout of a call that never left. |
+| 2 | The latest AMI falls back to the version of the cluster | A nodegroup whose own version is not known gets no lookup, and its status is `Unknown`. EKS always reports the version, and the fallback would need the cluster before the nodegroups. |
+| 2 | The read of the instances fails every nodegroup with a group | It fails the nodegroups that had an instance to read. A group with no instance has nothing in that call. |
+| 2 | Target resolution names the three ways | The kubeconfig step is `kube.CurrentCluster`: the cluster ARN, then `--cluster-name` of the exec plugin, then an eksctl name or a plain name. It does not guess from the server URL, as the old code did: the first label of an EKS endpoint is not the cluster name. |
+| 2 | `Suggest` uses containment and edit distance | It also compares the start of a longer name, so `prd` finds `prod-eu`. |
+| 3 | The sweep policy is in `cmdutil` | It is in `internal/cmd/fleetcmd`: the region choice, the skipped-region notice, `SweepError`, `RegionsClosedError`, and `ClusterError`. `cmdutil` imports neither `fleet` nor an AWS service package, and a test holds that. |
+| 3 | `-r` is repeatable | It is a slice flag: repeats and commas both work, and an empty element is an error. |
+| 4 | `Classify` tests the interrupt before `ErrNotSent` | `ErrNotSent` first. A request that never left is `NotAttempted`, also after Ctrl+C. |
+| 4 | Every enum of a document is closed in its schema | `reason` is an open string with the known values as examples. A consumer must accept a reason that a later release adds. |
+| 4 | A credential error of a sweep gets the headline "AWS credential validation failed" | `FormatAWSError` writes the headline. A second one before it said the same thing twice. |
+| 5 | `nodegroup describe` and `addon describe` read one item or fail | `nodegroup describe` can be partial: the nodegroup is read and its AMI or its instances are not. It prints the nodegroup, names the failure, and exits 4. |
+| 6 | `Status` has `Neutral` as its zero value | The zero value is `NoStatus`, which draws no glyph. A column or a field then marks only the rows that need a mark, such as a version behind the control plane. |
+| 7 | Filters keep the pattern as typed | Spaces around the pattern do not count, and a pattern of spaces is an error. |
+| 9 | Whole-command tests build their own fake | `internal/cmd/cmdtest` runs a command against a fake AWS, and `cmdutiltest` has `Golden`, `ValidateJSON`, and `Deadline`. `Deadline` is a context that the test expires in a handshake, so no deadline test waits for a clock. |
+| 9 | The limit test uses `cluster list` | A cluster of `cluster list` is one call, so the cluster bound and the request limit cannot be told apart there. A sweep whose clusters make five calls each shows that the limit counts requests. |
+
+Open check: the built-in region list has no `ap-northeast-3`, as the old list. `TestLiveRegions` (`-tags livecheck`) compares the list with EC2 and EKS. The list stays as it is until that test has run against a real account.
+
+Measured, same method as section 13, with the 0 to 100 ms latency:
+
+| Command | Old | New |
+|---|---|---|
+| `cluster list -A` | 757 ms | 210 ms |
+| `cluster list`, one region | 726 ms | 168 ms |
+| `addon list` | 237 ms | 136 ms |
+| `addon describe` | 164 ms | 96 ms |
+| `nodegroup list` | 273 ms | 165 ms |
+| `nodegroup describe` | 255 ms | 138 ms |
+
+The nodegroups of the fake fleet have no Auto Scaling group, so `nodegroup list` is three waves there and not four.

@@ -36,7 +36,7 @@ type Column[T any] struct {
 	// Value returns the text of the cell. "" means an empty cell.
 	Value func(row T) string
 	// Status, when set, returns the status whose glyph stands before the
-	// text in the table.
+	// text in the table. NoStatus draws no glyph for that row.
 	Status   func(row T) Status
 	MinWidth int
 	// MaxWidth is the widest the column gets on a terminal. 0 means no
@@ -98,6 +98,9 @@ func (l List[T]) Render(th Theme, width int) []string {
 
 // table returns the header line and one line for each row.
 func (l List[T]) table(th Theme, width int) []string {
+	if len(l.Columns) == 0 {
+		return nil
+	}
 	// The text of every cell, and the cells that a status glyph takes
 	// before it.
 	text := make([][]string, len(l.Rows))

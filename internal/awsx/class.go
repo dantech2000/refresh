@@ -61,10 +61,12 @@ func Classify(err error) ErrorClass {
 	switch {
 	case err == nil:
 		return ClassUnknown
-	case errors.Is(err, context.Canceled):
-		return ClassInterrupted
+	// A request that never left was not attempted, whatever ended the
+	// run: nothing of it reached AWS.
 	case errors.Is(err, ErrNotSent):
 		return ClassNotAttempted
+	case errors.Is(err, context.Canceled):
+		return ClassInterrupted
 	// A connect timeout also matches context.DeadlineExceeded, but the
 	// request never reached AWS: a network error, not the deadline of the
 	// run. A DNS failure keeps its own path below (an invalid region).

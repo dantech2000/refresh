@@ -145,6 +145,9 @@ func TestHiddenCommands(t *testing.T) {
 func TestCommandTree(t *testing.T) {
 	want := []string{
 		"refresh",
+		"refresh addon",
+		"refresh addon describe",
+		"refresh addon list",
 		"refresh cluster",
 		"refresh cluster list",
 		"refresh completion",
@@ -160,6 +163,9 @@ func TestCommandTree(t *testing.T) {
 		"refresh context use",
 		"refresh gen-docs",
 		"refresh help",
+		"refresh nodegroup",
+		"refresh nodegroup describe",
+		"refresh nodegroup list",
 		"refresh version",
 	}
 	var got []string

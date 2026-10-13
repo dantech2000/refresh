@@ -1,0 +1,31 @@
+apiVersion: refresh.drod.dev/v2
+kind: NodegroupDescription
+cluster: prod
+region: us-east-1
+nodegroup:
+  name: web
+  status: ACTIVE
+  version: "1.33"
+  versionBehind: false
+  amiType: AL2023_x86_64_STANDARD
+  releaseVersion: 1.33.0-20260101
+  capacityType: ON_DEMAND
+  instanceTypes:
+    - m5.large
+    - m5a.large
+  scaling:
+    desired: 6
+    min: 2
+    max: 12
+  ami:
+    status: Outdated
+    current: ami-stale
+    latest: ami-latest133
+  healthIssues:
+    - code: AsgInstanceLaunchFailures
+      message: Could not launch an instance
+      resourceIds:
+        - asg-web
+  createdAt: "2026-01-01T00:00:00Z"
+  modifiedAt: "2026-01-01T00:00:00Z"
+failures: []

@@ -1,0 +1,6 @@
+ADD-ONS  prod, 3
+
+NAME        VERSION             STATUS        HEALTH
+coredns     v1.11.3-eksbuild.2  [X] DEGRADED  [X] Failed
+kube-proxy  v1.33.0-eksbuild.2  [~] UPDATING  [~] InProgress
+vpc-cni     v1.19.0-eksbuild.1  [OK] ACTIVE   [OK] Healthy

@@ -100,7 +100,11 @@ func ec2DescribeImages(c *call) (any, error) {
 	c.world.View(func(s *fleettest.State) {
 		images = inRegion(c, s.Images, func(i fleettest.Image) string { return i.Region })
 	})
-	images, err := ec2Select(c, images, "ImageId", "InvalidAMIID.NotFound", func(i fleettest.Image) string { return i.ID }, noFilters)
+	images, err := ec2Select(c, images, "ImageId", "InvalidAMIID.NotFound", func(i fleettest.Image) string { return i.ID },
+		func(i fleettest.Image, f ec2Filter) (keep, ok bool) {
+			// As with instances, the filter leaves out an ID with no image.
+			return slices.Contains(f.values, i.ID), f.name == "image-id"
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +161,10 @@ func matchInstance(i fleettest.Instance, f ec2Filter) (keep, ok bool) {
 		return has && slices.Contains(f.values, value), true
 	}
 	switch f.name {
+	case "instance-id":
+		// Unlike the InstanceId list, the filter leaves out an ID that
+		// has no instance and fails nothing.
+		return slices.Contains(f.values, i.ID), true
 	case "tag-key":
 		return slices.ContainsFunc(f.values, func(k string) bool { _, has := i.Tags[k]; return has }), true
 	case "instance-state-name":

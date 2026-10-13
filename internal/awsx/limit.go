@@ -26,20 +26,10 @@ func newLimiter(n int) *limiter {
 // callState is what the limiter remembers about one call between its
 // attempts.
 type callState struct {
-	sent    bool  // an attempt got a slot
-	lastErr error // the error of the last attempt that ran
+	sent bool // an attempt got a slot
 }
 
 type callStateKey struct{}
-
-// unsentRetryError is the error of an attempt after the first that got no
-// slot before the context ended. It carries the error of the attempt before
-// it, so the call reports what AWS answered. The retryer does not try again
-// after it.
-type unsentRetryError struct{ err error }
-
-func (e *unsentRetryError) Error() string { return e.err.Error() }
-func (e *unsentRetryError) Unwrap() error { return e.err }
 
 // add puts the two steps of the limiter on the stack of a call. The first
 // step runs once for the call and gives it a state. The second step runs
@@ -69,19 +59,15 @@ func (l *limiter) attempt(ctx context.Context, in middleware.FinalizeInput, next
 	select {
 	case l.slots <- struct{}{}:
 	case <-ctx.Done():
-		var out middleware.FinalizeOutput
-		var md middleware.Metadata
-		switch {
-		case !state.sent:
-			return out, md, fmt.Errorf("%w: %w", ErrNotSent, ctx.Err())
-		case state.lastErr != nil:
-			return out, md, &unsentRetryError{err: state.lastErr}
+		// Only a call whose first attempt got no slot was never sent. A
+		// retry that gets none ends with the error of the context.
+		err := ctx.Err()
+		if !state.sent {
+			err = fmt.Errorf("%w: %w", ErrNotSent, err)
 		}
-		return out, md, ctx.Err()
+		return middleware.FinalizeOutput{}, middleware.Metadata{}, err
 	}
 	defer func() { <-l.slots }()
 	state.sent = true
-	out, md, err := next.HandleFinalize(ctx, in)
-	state.lastErr = err
-	return out, md, err
+	return next.HandleFinalize(ctx, in)
 }

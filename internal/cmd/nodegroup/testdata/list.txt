@@ -1,0 +1,9 @@
+NODEGROUPS  prod, 6
+
+NAME      STATUS        INSTANCE            VERSION   AMI           NODES
+api       [OK] ACTIVE   m5.large            1.33      [OK] Latest       3
+batch     [~] UPDATING  m5.large            1.33      [~] Updating     10
+empty     [OK] ACTIVE   m5.large            1.33      [?] Unknown       0
+gpu       [OK] ACTIVE   g5.xlarge           1.33      - Custom          1
+old       [OK] ACTIVE   m5.large            [!] 1.32  [OK] Latest       2
+web       [OK] ACTIVE   m5.large,m5a.large  1.33      [!] Outdated      6

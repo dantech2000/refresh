@@ -122,13 +122,6 @@ func IsRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
-	// A retry that got no slot of the request limit before the context
-	// ended carries the error of the attempt before it. That error may be
-	// a transient one, and the call is over all the same.
-	var unsent *unsentRetryError
-	if errors.As(err, &unsent) {
-		return false
-	}
 	// A connection that could not be opened is transient, also when it is
 	// a connect timeout (which matches context.DeadlineExceeded below). A
 	// name that does not exist (an invalid region) is permanent.

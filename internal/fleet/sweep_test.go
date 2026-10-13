@@ -234,56 +234,50 @@ func TestSweep_ClusterThatFailsIsARow(t *testing.T) {
 }
 
 // When the run is cut short, the rows that were done stay complete, the
-// rows in work fail, and the rows that never started are marked so. The
+// row in work fails, and the rows that never started are marked so. The
 // sweep works on as many clusters at once as the request limit, in name
-// order, so the three groups follow one another.
+// order, so the three groups follow one another. The limit is 1 here, which
+// makes the groups exact.
 func TestSweep_CancelKeepsFinishedRowsAndMarksTheRest(t *testing.T) {
-	const limit = 2
+	const done = 2 // the clusters that are read before the run stops
 	clusters := make([]string, 10)
 	for i := range clusters {
 		clusters[i] = fmt.Sprintf("%s/c%02d", east, i)
 	}
-	_, srv, provider := newFleet(t, limit, clusters...)
+	_, srv, provider := newFleet(t, 1, clusters...)
 
 	ctx, cancel := context.WithCancel(testContext(t))
 	defer cancel()
 	var describes atomic.Int32
 	srv.OnRequest = func(hctx context.Context, r awsxtest.Request) {
-		if r.Operation != fleettest.EKSDescribeCluster || describes.Add(1) <= limit {
+		if r.Operation != fleettest.EKSDescribeCluster || describes.Add(1) <= done {
 			return
 		}
-		// The first two clusters were answered. Stop the run while the
-		// next ones are at the server, and hold them until they give up.
+		// The clusters before this one were answered. Stop the run while
+		// this one is at the server, and hold it until it gives up.
 		cancel()
 		<-hctx.Done()
 	}
 
 	var fetcher fleet.Fetcher
 	res := fetcher.Sweep(ctx, provider, fleet.Regions{Names: []string{east}}, fleet.SweepOptions{})
-	if len(res.Snapshots) != len(clusters) {
-		t.Fatalf("Snapshots = %d, want one row for each of the %d clusters", len(res.Snapshots), len(clusters))
-	}
 	var states []fleet.State
-	counts := map[fleet.State]int{}
 	for _, snap := range res.Snapshots {
 		states = append(states, snap.Have.Cluster)
-		counts[snap.Have.Cluster]++
 	}
-	if counts[fleet.Collected] != limit || states[0] != fleet.Collected || states[1] != fleet.Collected {
-		t.Errorf("states = %v, want the first %d rows collected and no other", states, limit)
+	want := []fleet.State{fleet.Collected, fleet.Collected, fleet.Failed}
+	for len(want) < len(clusters) {
+		want = append(want, fleet.NotAttempted)
 	}
-	if n := counts[fleet.Failed]; n < 1 || n > limit {
-		t.Errorf("states = %v, want 1 to %d rows that failed in work", states, limit)
+	if diff := cmp.Diff(want, states); diff != "" {
+		t.Fatalf("states of the rows (-want +got):\n%s", diff)
 	}
-	if n := counts[fleet.NotAttempted]; n < len(clusters)-2*limit {
-		t.Errorf("states = %v, want at least %d rows not attempted", states, len(clusters)-2*limit)
+	if f := res.Snapshots[done].Failures; len(f) != 1 || f[0].Reason != apidoc.ReasonInterrupted {
+		t.Errorf("failures of the row in work = %+v, want one Interrupted failure", f)
 	}
 	last := res.Snapshots[len(clusters)-1]
 	if len(last.Failures) != 1 || last.Failures[0].Reason != apidoc.ReasonNotAttempted || last.Failures[0].Region != east {
 		t.Errorf("failures of the last row = %+v, want one NotAttempted failure in %s", last.Failures, east)
-	}
-	if got := srv.PeakConcurrency("", east); got > limit {
-		t.Errorf("peak requests in flight = %d, want at most %d", got, limit)
 	}
 }
 
@@ -338,5 +332,180 @@ func TestErrorClassesAreReasons(t *testing.T) {
 		if !reasons[string(c)] {
 			t.Errorf("the error class %s is not a failure reason", c)
 		}
+	}
+}
+
+// addonWorld returns a fleet with one cluster that has three add-ons.
+func addonWorld(t *testing.T) (*fleettest.World, *awsxtest.Server, *awsx.Provider) {
+	t.Helper()
+	world, srv, provider := newFleet(t, 8, east+"/prod")
+	world.Edit(func(s *fleettest.State) {
+		s.Clusters[0].Addons = []*fleettest.Addon{
+			{Name: "vpc-cni", Version: "v1.19.0-eksbuild.1"},
+			{Name: "coredns", Version: "v1.11.3-eksbuild.2", Status: fleettest.StatusDegraded,
+				HealthIssues: []fleettest.Issue{{Code: "InsufficientNumberOfReplicas", Message: "no replicas"}}},
+			{Name: "kube-proxy", Version: "v1.33.0-eksbuild.2", Status: fleettest.StatusUpdating},
+		}
+	})
+	return world, srv, provider
+}
+
+func TestFetch_Addons(t *testing.T) {
+	_, srv, provider := addonWorld(t)
+	var fetcher fleet.Fetcher
+	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{Addons: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Have.Addons != fleet.Collected || snap.Incomplete() {
+		t.Errorf("Have.Addons = %v, failures = %v", snap.Have.Addons, snap.Failures)
+	}
+	type row struct {
+		Name, Version, Status string
+		Health                apidoc.AddonHealth
+	}
+	var got []row
+	for _, a := range snap.Addons {
+		got = append(got, row{a.Name, a.Version, a.Status, a.Health()})
+	}
+	want := []row{
+		{"coredns", "v1.11.3-eksbuild.2", "DEGRADED", apidoc.AddonFailed},
+		{"kube-proxy", "v1.33.0-eksbuild.2", "UPDATING", apidoc.AddonInProgress},
+		{"vpc-cni", "v1.19.0-eksbuild.1", "ACTIVE", apidoc.AddonHealthy},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("add-ons (-want +got):\n%s", diff)
+	}
+	if n := len(srv.Requests()); n != 5 {
+		t.Errorf("requests = %d, want 5: the cluster, the list, and three add-ons", n)
+	}
+}
+
+// One add-on that cannot be described stays in the list with its name, and
+// the list is partial.
+func TestFetch_OneAddonFails(t *testing.T) {
+	world, _, provider := addonWorld(t)
+	world.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSDescribeAddon, Addon: "coredns"}, fleettest.Fault{Deny: true})
+	var fetcher fleet.Fetcher
+	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{Addons: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Have.Addons != fleet.Partial || len(snap.Addons) != 3 || snap.Addons[0].State != fleet.Failed || snap.Addons[1].State != fleet.Collected {
+		t.Errorf("Have.Addons = %v, add-ons = %+v", snap.Have.Addons, snap.Addons)
+	}
+	want := []apidoc.Failure{{
+		Kind: apidoc.FailureAddon, Name: "coredns", Cluster: "prod", Region: east,
+		Operation: "eks:DescribeAddon", Reason: apidoc.ReasonAccessDenied,
+	}}
+	if diff := cmp.Diff(want, snap.Failures, cmpopts.IgnoreFields(apidoc.Failure{}, "Error", "AWSErrorCode")); diff != "" {
+		t.Errorf("Failures (-want +got):\n%s", diff)
+	}
+	doc := snap.ClusterDoc()
+	if !doc.Incomplete || len(doc.Addons) != 3 || !doc.Addons[0].Incomplete || doc.Addons[0].Status != "" || doc.Addons[1].Health != apidoc.AddonInProgress {
+		t.Errorf("document = %+v", doc.Addons)
+	}
+}
+
+// The list call fails: no add-on is known, and the failure names the
+// cluster.
+func TestFetch_AddonListFails(t *testing.T) {
+	world, _, provider := addonWorld(t)
+	world.SetFault(fleettest.EKSListAddons, fleettest.Fault{Deny: true})
+	var fetcher fleet.Fetcher
+	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{Addons: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Have.Addons != fleet.Failed || len(snap.Addons) != 0 {
+		t.Errorf("Have.Addons = %v, add-ons = %+v", snap.Have.Addons, snap.Addons)
+	}
+	if diff := cmp.Diff([]string{"Cluster prod AccessDenied eks:ListAddons"}, failureKeys(snap.Failures)); diff != "" {
+		t.Errorf("Failures (-want +got):\n%s", diff)
+	}
+	if doc := snap.ClusterDoc(); doc.Addons != nil || !doc.Incomplete {
+		t.Errorf("document: addons = %v, incomplete = %v, want no addons key and incomplete", doc.Addons, doc.Incomplete)
+	}
+}
+
+// Named add-ons are described without a list call, and one that does not
+// exist is a failure of that add-on.
+func TestFetch_OnlyAddons(t *testing.T) {
+	_, srv, provider := addonWorld(t)
+	var fetcher fleet.Fetcher
+	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{OnlyAddons: []string{"vpc-cni", "nope"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range srv.Requests() {
+		if r.Operation == fleettest.EKSListAddons {
+			t.Error("a list call for add-ons that were named")
+		}
+	}
+	if diff := cmp.Diff([]string{"Addon nope NotFound eks:DescribeAddon"}, failureKeys(snap.Failures)); diff != "" {
+		t.Errorf("Failures (-want +got):\n%s", diff)
+	}
+}
+
+// A cluster that does not exist is one failure, not one for each call.
+func TestFetch_MissingClusterIsOneFailure(t *testing.T) {
+	_, _, provider := addonWorld(t)
+	var fetcher fleet.Fetcher
+	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "nope", fleet.Need{Addons: true})
+	if !awsx.IsNotFound(err) {
+		t.Fatalf("error = %v, want not found", err)
+	}
+	if diff := cmp.Diff([]string{"Cluster nope NotFound eks:DescribeCluster"}, failureKeys(snap.Failures)); diff != "" {
+		t.Errorf("Failures (-want +got):\n%s", diff)
+	}
+}
+
+// The request limit counts requests, not clusters: a sweep whose clusters
+// make several calls each has as many requests in flight as the limit, and
+// not that many for each cluster.
+func TestSweep_RequestLimitCountsRequests(t *testing.T) {
+	const limit = 4
+	var clusters []string
+	for i := range 12 {
+		clusters = append(clusters, fmt.Sprintf("%s/c%02d", east, i))
+	}
+	world, srv, provider := newFleet(t, limit, clusters...)
+	world.Edit(func(s *fleettest.State) {
+		for _, c := range s.Clusters {
+			c.Addons = []*fleettest.Addon{{Name: "a", Version: "v1"}, {Name: "b", Version: "v1"}, {Name: "c", Version: "v1"}}
+		}
+	})
+	var (
+		mu       sync.Mutex
+		inFlight int
+	)
+	reached := make(chan struct{})
+	srv.OnRequest = func(ctx context.Context, r awsxtest.Request) {
+		if r.Operation == fleettest.EKSListClusters {
+			return
+		}
+		mu.Lock()
+		inFlight++
+		if inFlight == limit {
+			close(reached)
+		}
+		mu.Unlock()
+		// Hold the calls until the limit is reached. A lower real limit
+		// would stop the sweep here.
+		select {
+		case <-reached:
+		case <-ctx.Done():
+		}
+	}
+	var fetcher fleet.Fetcher
+	res := fetcher.Sweep(testContext(t), provider, fleet.Regions{Names: []string{east}}, fleet.SweepOptions{Need: fleet.Need{Addons: true}})
+	if len(res.Snapshots) != 12 || len(res.Failures) != 0 {
+		t.Fatalf("snapshots = %d, failures = %v", len(res.Snapshots), res.Failures)
+	}
+	// Each cluster makes five calls, two of them at once at first. With
+	// four clusters in work, a limit on clusters alone would let eight
+	// requests through.
+	if got := srv.PeakConcurrency("", east); got != limit {
+		t.Errorf("peak requests in flight = %d, want %d", got, limit)
 	}
 }

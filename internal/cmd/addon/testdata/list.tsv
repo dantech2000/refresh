@@ -1,0 +1,4 @@
+NAME	VERSION	STATUS	HEALTH
+coredns	v1.11.3-eksbuild.2	DEGRADED	Failed
+kube-proxy	v1.33.0-eksbuild.2	UPDATING	InProgress
+vpc-cni	v1.19.0-eksbuild.1	ACTIVE	Healthy

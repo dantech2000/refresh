@@ -1,0 +1,7 @@
+NAME	STATUS	INSTANCE	VERSION	AMI	NODES
+api	ACTIVE	m5.large	1.33	Latest	3
+batch	UPDATING	m5.large	1.33	Updating	10
+empty	ACTIVE	m5.large	1.33	Unknown	0
+gpu	ACTIVE	g5.xlarge	1.33	Custom	1
+old	ACTIVE	m5.large	1.32	Latest	2
+web	ACTIVE	m5.large,m5a.large	1.33	Outdated	6
