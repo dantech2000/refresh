@@ -47,8 +47,13 @@ type State struct {
 	Quotas            []Quota
 
 	// DefaultUpdate scripts every update whose resource has no UpdateScripts
-	// left. The zero value succeeds at once.
-	DefaultUpdate UpdateScript
+	// left. The zero value succeeds at once. DefaultNodegroupUpdate and
+	// DefaultAddonUpdate, when set, script the updates of nodegroups and
+	// of add-ons in its place, so a fleet can give a roll, an add-on
+	// update, and a control-plane upgrade each its own duration.
+	DefaultUpdate          UpdateScript
+	DefaultNodegroupUpdate *UpdateScript
+	DefaultAddonUpdate     *UpdateScript
 	// InsightsRefresh is how long an insights refresh stays IN_PROGRESS.
 	InsightsRefresh time.Duration
 }

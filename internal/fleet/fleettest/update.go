@@ -492,6 +492,12 @@ func (w *World) start(c *Cluster, u *Update, t target, apply func()) (Update, er
 	u.ID = fmt.Sprintf("00000000-0000-4000-8000-%012d", w.lastUpdate)
 	u.Status, u.CreatedAt = UpdateInProgress, w.now
 	u.script = w.state.DefaultUpdate.clone()
+	switch {
+	case u.Nodegroup != "" && w.state.DefaultNodegroupUpdate != nil:
+		u.script = w.state.DefaultNodegroupUpdate.clone()
+	case u.Addon != "" && w.state.DefaultAddonUpdate != nil:
+		u.script = w.state.DefaultAddonUpdate.clone()
+	}
 	if len(*t.scripts) > 0 {
 		u.script, *t.scripts = (*t.scripts)[0].clone(), (*t.scripts)[1:]
 	}

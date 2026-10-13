@@ -28,8 +28,16 @@ type World struct {
 
 // New returns an empty world whose clock reads 2026-01-01T00:00:00Z.
 func New() *World {
+	return NewAt(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+}
+
+// NewAt returns an empty world whose clock reads now. A tool that serves a
+// fleet to a binary on the real clock starts the world at the wall clock,
+// so the ages and the windows the binary computes from its own clock make
+// sense.
+func NewAt(now time.Time) *World {
 	return &World{
-		now:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		now:     now,
 		changed: make(chan struct{}),
 	}
 }
