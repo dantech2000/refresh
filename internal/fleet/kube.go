@@ -186,6 +186,10 @@ func kubeFailure(kind apidoc.FailureKind, name, what string, err error) apidoc.F
 		case apierrors.IsTimeout(err):
 			reason = apidoc.ReasonTimeout
 		}
+	case errors.As(err, &netErr) && netErr.Timeout():
+		// The client's own timeout: the server was reached and did not
+		// answer in time.
+		reason = apidoc.ReasonTimeout
 	case errors.As(err, &netErr):
 		reason = apidoc.ReasonNetworkError
 	}

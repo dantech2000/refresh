@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"errors"
+	"net"
 	"sync"
 	"sync/atomic"
 
@@ -38,12 +39,13 @@ type reads struct {
 	mu   sync.Mutex
 	pods map[string]func() (*corev1.PodList, error)
 
-	// attempted and answered count the Kubernetes reads that were sent
-	// and those that got an answer from the API, an error answer included.
-	// A run with reads and no answer could not connect.
-	attempted, answered atomic.Int32
-	// connectErr is the error of the first read that did not connect, for
-	// the message of the access result.
+	// attempted counts the Kubernetes reads that were sent, answered the
+	// ones that got an answer from the API, an error answer included, and
+	// refused the ones that could not connect at all. A run whose reads
+	// all could not connect did not reach the API.
+	attempted, answered, refused atomic.Int32
+	// connectErr is the error of the first read that could not connect,
+	// for the message of the access result.
 	connectErr atomic.Pointer[error]
 }
 
@@ -106,9 +108,11 @@ func once[T any](r *reads, read func() (T, error)) func() (T, error) {
 	return sync.OnceValues(func() (T, error) {
 		v, err := read()
 		r.attempted.Add(1)
-		if err == nil || isAPIAnswer(err) {
+		switch {
+		case err == nil || isAPIAnswer(err):
 			r.answered.Add(1)
-		} else {
+		case connectFailure(err):
+			r.refused.Add(1)
 			r.connectErr.CompareAndSwap(nil, &err)
 		}
 		return v, err
@@ -122,15 +126,35 @@ func isAPIAnswer(err error) bool {
 	return errors.As(err, &status)
 }
 
+// connectFailure reports whether err is a failure to reach the API server
+// at all: a refused or reset connection, a host that does not resolve. A
+// timeout is not one: the client's own timeout fires after the connection
+// was made, and the deadline of the run is the user's, not the server's.
+func connectFailure(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || isAPIAnswer(err) {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return false
+	}
+	return true
+}
+
 // access returns the result about the Kubernetes access of the run, and
-// whether the API could not be reached at all.
+// whether the API could not be reached at all. "Unreachable" is strict:
+// the run's context has not ended, no read got an answer, and every read
+// that failed could not connect. A timeout, a read that failed after
+// another answered, or any answer of the server, 5xx included, leaves the
+// checks Unreadable with their failures.
 func (r *reads) access() (Result, bool) {
 	res := Result{Name: AccessCheck}
+	attempted, answered, refused := r.attempted.Load(), r.answered.Load(), r.refused.Load()
 	switch {
 	case r.in.Kube == nil:
 		res.Outcome = Warn
 		res.Message = "no Kubernetes access: " + r.in.NoKube + "; the Kubernetes checks did not run"
-	case r.attempted.Load() > 0 && r.answered.Load() == 0:
+	case r.ctx.Err() == nil && attempted > 0 && answered == 0 && refused == attempted:
 		res.Outcome = Warn
 		res.Message = "Kubernetes API unreachable: " + (*r.connectErr.Load()).Error() + "; the Kubernetes checks did not run"
 		return res, true

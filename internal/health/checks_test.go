@@ -16,6 +16,7 @@ import (
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
+	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/health"
@@ -597,6 +598,9 @@ func TestRun(t *testing.T) {
 	t.Run("the whole set passes", testRunWholeSet)
 	t.Run("no Kubernetes", testRunNoKube)
 	t.Run("an unreachable API", testRunUnreachable)
+	t.Run("the run's deadline", testRunDeadline)
+	t.Run("the client's timeout on one list", testRunClientTimeout)
+	t.Run("a server error", testRunServerError)
 	t.Run("a forbidden API", testRunForbidden)
 	t.Run("a cancelled context", testRunCancelled)
 }
@@ -653,14 +657,12 @@ func testRunNoKube(t *testing.T) {
 }
 
 func testRunUnreachable(t *testing.T) {
+	// The API server is gone: every read is refused at the connection, and
+	// nothing waits on a clock.
 	h := newHarness(t)
 	ctx := testContext(t)
 	in := h.input(ctx, "ng-a")
-	// client-go retries a reset connection until the context ends, so
-	// the run gets a short one.
-	h.world.SetScopedFault(fleettest.Scope{Service: "kube"}, fleettest.Fault{Reset: true})
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
+	h.kube.Close()
 	results := health.Run(ctx, health.Preflight(), in)
 	for _, r := range results {
 		switch r.Name {
@@ -674,6 +676,80 @@ func testRunUnreachable(t *testing.T) {
 	}
 	if v := health.Gate(results, health.Policy{}); v.Decision != health.Ask {
 		t.Errorf("verdict = %+v, want Ask", v)
+	}
+}
+
+// The run's deadline passes while the reads are in flight: that is not an
+// unreachable API. The checks stay Unreadable with their failures, and a
+// fail-closed check blocks.
+func testRunDeadline(t *testing.T) {
+	h := newHarness(t)
+	ctx, expire := cmdutiltest.Deadline(testContext(t))
+	in := h.input(ctx, "ng-a")
+	h.kube.OnRequest = func(hctx context.Context, _ kubetest.Request) {
+		expire()
+		<-hctx.Done()
+	}
+	results := health.Run(ctx, health.Preflight(), in)
+	for _, r := range results {
+		switch r.Name {
+		case "Nodes", "Workloads", "DrainBlockers", "PDBCoverage", "Utilization":
+			if r.Outcome != health.Unreadable || len(r.Failures) == 0 || r.Failures[0].Reason != apidoc.ReasonTimeout {
+				t.Errorf("%s: %s %+v, want Unreadable with a Timeout failure", r.Name, r.Outcome, r.Failures)
+			}
+		case health.AccessCheck:
+			check(t, r, want{outcome: health.Pass})
+		}
+	}
+	if v := health.Gate(results, health.Policy{Yes: true}); v.Decision != health.Block || v.Exit != 4 {
+		t.Errorf("verdict = %+v, want Block with exit 4", v)
+	}
+}
+
+// The client's own timeout on one list, after another list answered: the
+// check that needed it is Unreadable with a Timeout failure, and the API
+// is not unreachable.
+func testRunClientTimeout(t *testing.T) {
+	h := newHarness(t)
+	ctx := testContext(t)
+	in := h.input(ctx, "ng-a")
+	cfg := h.kube.Config()
+	cfg.Timeout = 100 * time.Millisecond
+	client, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Kube = client
+	h.world.SetFault(fleettest.KubeListPDBs, fleettest.Fault{Hang: true})
+	results := health.Run(ctx, []health.Check{health.Nodes(), health.DrainBlockers()}, in)
+	check(t, results[0], want{outcome: health.Pass})
+	if r := results[1]; r.Outcome != health.Unreadable || len(r.Failures) != 1 || r.Failures[0].Reason != apidoc.ReasonTimeout {
+		t.Errorf("DrainBlockers = %s %+v, want Unreadable with a Timeout failure", r.Outcome, r.Failures)
+	}
+	check(t, results[2], want{outcome: health.Pass, message: "reachable"})
+	if v := health.Gate(results, health.Policy{Yes: true}); v.Decision != health.Block || v.Exit != 4 {
+		t.Errorf("verdict = %+v, want Block with exit 4", v)
+	}
+}
+
+// A server error on every read is an answer: Unreadable, not unreachable.
+func testRunServerError(t *testing.T) {
+	h := newHarness(t)
+	h.world.SetScopedFault(fleettest.Scope{Service: "kube"}, fleettest.Fault{Code: "InternalError", Status: 500})
+	ctx := testContext(t)
+	results := health.Run(ctx, health.Preflight(), h.input(ctx, "ng-a"))
+	for _, r := range results {
+		switch r.Name {
+		case "Nodes", "Workloads", "DrainBlockers", "PDBCoverage", "Utilization":
+			if r.Outcome != health.Unreadable || len(r.Failures) == 0 || r.Failures[0].Reason != apidoc.ReasonServiceError {
+				t.Errorf("%s: %s %+v, want Unreadable with a ServiceError failure", r.Name, r.Outcome, r.Failures)
+			}
+		case health.AccessCheck:
+			check(t, r, want{outcome: health.Pass, message: "reachable"})
+		}
+	}
+	if v := health.Gate(results, health.Policy{Yes: true}); v.Decision != health.Block {
+		t.Errorf("verdict = %+v, want Block", v)
 	}
 }
 

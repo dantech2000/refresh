@@ -125,9 +125,12 @@ const AccessCheck = "Kubernetes"
 //
 // When a check of the run needs Kubernetes, a result named AccessCheck
 // follows the others: a warning without a client, or when a client is set
-// and every Kubernetes read of the run failed to connect. The Kubernetes
-// checks are then Skipped: an unreachable API is one question, not a
-// block.
+// and the API could not be reached at all: no read got an answer, every
+// read that failed could not connect, and the run's context has not
+// ended. The Kubernetes checks are then Skipped: an unreachable API is one
+// question, not a block. A timeout, the user's own deadline, or a read
+// that failed after another answered keeps the checks Unreadable, with
+// their failures, so a fail-closed check blocks.
 func Run(ctx context.Context, checks []Check, in *Input) []Result {
 	run := *in
 	run.reads = newReads(ctx, &run)
@@ -174,13 +177,14 @@ func Run(ctx context.Context, checks []Check, in *Input) []Result {
 }
 
 // kubeConnectFailures reports whether every failure is a Kubernetes read
-// that did not connect: no IAM action, and a network error or a timeout.
+// that did not connect: no IAM action, and a network error. A timeout is
+// not a connection failure.
 func kubeConnectFailures(fs []apidoc.Failure) bool {
 	if len(fs) == 0 {
 		return false
 	}
 	for _, f := range fs {
-		if f.Operation != "" || (f.Reason != apidoc.ReasonNetworkError && f.Reason != apidoc.ReasonTimeout) {
+		if f.Operation != "" || f.Reason != apidoc.ReasonNetworkError {
 			return false
 		}
 	}
