@@ -76,7 +76,7 @@ func TestUpdateHint(t *testing.T) {
 			ios.OutTTY = tt.outTTY
 			calls := 0
 			o := &options{
-				io:    ios,
+				ios:   ios,
 				build: build.Info{Version: "v1.2.3"},
 				latestTag: func(context.Context) (string, error) {
 					calls++

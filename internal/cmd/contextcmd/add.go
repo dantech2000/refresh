@@ -10,7 +10,7 @@ import (
 )
 
 type addOptions struct {
-	io    *cmdutil.IOStreams
+	ios   *cmdutil.IOStreams
 	store func() (*contexts.Store, error)
 
 	name    string
@@ -19,7 +19,7 @@ type addOptions struct {
 }
 
 func newCmdAdd(f *cmdutil.Factory) *cobra.Command {
-	o := &addOptions{io: f.IOStreams, store: f.Contexts}
+	o := &addOptions{ios: f.IOStreams, store: f.Contexts}
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add or update a saved context",
@@ -31,8 +31,8 @@ AWS profile. A context with the same name is replaced.`,
   refresh context add stage --cluster stage-eks --use`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			var err error
-			if o.name, err = contextName(args[0]); err != nil {
+			o.complete(args)
+			if err := o.validate(); err != nil {
 				return err
 			}
 			return o.run()
@@ -47,6 +47,14 @@ AWS profile. A context with the same name is replaced.`,
 	// The flag was added above, so this cannot fail.
 	_ = cmd.MarkFlagRequired("cluster")
 	return cmd
+}
+
+func (o *addOptions) complete(args []string) {
+	o.name = contextName(args[0])
+}
+
+func (o *addOptions) validate() error {
+	return validateName(o.name)
 }
 
 func (o *addOptions) run() error {
@@ -65,6 +73,6 @@ func (o *addOptions) run() error {
 	if err := store.Save(file); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(o.io.Out, "Saved context %q\n", o.name)
+	_, err = fmt.Fprintf(o.ios.Out, "Saved context %q\n", o.name)
 	return err
 }

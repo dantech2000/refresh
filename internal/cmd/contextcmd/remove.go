@@ -10,14 +10,14 @@ import (
 )
 
 type removeOptions struct {
-	io    *cmdutil.IOStreams
+	ios   *cmdutil.IOStreams
 	store func() (*contexts.Store, error)
 
 	name string
 }
 
 func newCmdRemove(f *cmdutil.Factory) *cobra.Command {
-	o := &removeOptions{io: f.IOStreams, store: f.Contexts}
+	o := &removeOptions{ios: f.IOStreams, store: f.Contexts}
 	return &cobra.Command{
 		Use:     "remove <name>",
 		Aliases: []string{"rm", "delete"},
@@ -28,13 +28,21 @@ afterwards.`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeNames(f.Contexts),
 		RunE: func(_ *cobra.Command, args []string) error {
-			var err error
-			if o.name, err = contextName(args[0]); err != nil {
+			o.complete(args)
+			if err := o.validate(); err != nil {
 				return err
 			}
 			return o.run()
 		},
 	}
+}
+
+func (o *removeOptions) complete(args []string) {
+	o.name = contextName(args[0])
+}
+
+func (o *removeOptions) validate() error {
+	return validateName(o.name)
 }
 
 func (o *removeOptions) run() error {
@@ -48,6 +56,6 @@ func (o *removeOptions) run() error {
 	if err := store.Save(file); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(o.io.Out, "Removed context %q\n", o.name)
+	_, err = fmt.Fprintf(o.ios.Out, "Removed context %q\n", o.name)
 	return err
 }

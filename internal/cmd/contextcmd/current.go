@@ -10,14 +10,14 @@ import (
 )
 
 type currentOptions struct {
-	io    *cmdutil.IOStreams
+	ios   *cmdutil.IOStreams
 	store func() (*contexts.Store, error)
 
 	envContext string
 }
 
 func newCmdCurrent(f *cmdutil.Factory) *cobra.Command {
-	o := &currentOptions{io: f.IOStreams, store: f.Contexts}
+	o := &currentOptions{ios: f.IOStreams, store: f.Contexts}
 	return &cobra.Command{
 		Use:   "current",
 		Short: "Print the active context",
@@ -33,10 +33,14 @@ nothing on stdout.`,
   REFRESH_CONTEXT=stage refresh context current`,
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			o.envContext = envContext()
+			o.complete()
 			return o.run()
 		},
 	}
+}
+
+func (o *currentOptions) complete() {
+	o.envContext = envContext()
 }
 
 func (o *currentOptions) run() error {
@@ -50,10 +54,10 @@ func (o *currentOptions) run() error {
 	}
 	if !ok {
 		// A hint, not data: it goes to stderr and stdout stays empty.
-		_, err := fmt.Fprintln(o.io.ErrOut, "No active context. Set one with: refresh context use <name>")
+		_, err := fmt.Fprintln(o.ios.ErrOut, "No active context. Set one with: refresh context use <name>")
 		return err
 	}
-	_, err = fmt.Fprintf(o.io.Out, "%s  cluster=%s  region=%s  profile=%s\n",
+	_, err = fmt.Fprintf(o.ios.Out, "%s  cluster=%s  region=%s  profile=%s\n",
 		name, c.Cluster, orDash(c.Region), orDash(c.Profile))
 	return err
 }

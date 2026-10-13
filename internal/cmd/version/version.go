@@ -19,7 +19,7 @@ import (
 const envNoUpdateCheck = "REFRESH_NO_UPDATE_CHECK"
 
 type options struct {
-	io    *cmdutil.IOStreams
+	ios   *cmdutil.IOStreams
 	build build.Info
 	// latestTag returns the tag of the newest release.
 	latestTag func(ctx context.Context) (string, error)
@@ -30,7 +30,7 @@ type options struct {
 
 // NewCmdVersion returns the version command.
 func NewCmdVersion(f *cmdutil.Factory) *cobra.Command {
-	o := &options{io: f.IOStreams, build: f.Build, latestTag: f.LatestRelease}
+	o := &options{ios: f.IOStreams, build: f.Build, latestTag: f.LatestRelease}
 	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the version of refresh",
@@ -80,10 +80,10 @@ func (o *options) complete() {
 func (o *options) run(ctx context.Context) error {
 	if o.output.IsMachine() {
 		doc := apidoc.Version{Version: o.build.Version, Commit: o.build.Commit, BuildDate: o.build.Date}
-		if err := cmdutil.PrintDocument(o.io, o.output, doc); err != nil {
+		if err := cmdutil.PrintDocument(o.ios, o.output, doc); err != nil {
 			return err
 		}
-	} else if _, err := fmt.Fprint(o.io.Out, Format(o.build)); err != nil {
+	} else if _, err := fmt.Fprint(o.ios.Out, Format(o.build)); err != nil {
 		return err
 	}
 	o.printUpdateHint(ctx)
@@ -94,7 +94,7 @@ func (o *options) run(ctx context.Context) error {
 // does nothing when the check is turned off or stdout is not a terminal, and
 // it prints nothing when the check fails.
 func (o *options) printUpdateHint(ctx context.Context) {
-	if o.noUpdateCheck || !o.io.OutTTY {
+	if o.noUpdateCheck || !o.ios.OutTTY {
 		return
 	}
 	latest, err := o.latestTag(ctx)
@@ -103,7 +103,7 @@ func (o *options) printUpdateHint(ctx context.Context) {
 	}
 	if hint := updatecheck.UpgradeHint(o.build.Version, latest); hint != "" {
 		// The hint is a courtesy. A failed write to stderr changes nothing.
-		_, _ = fmt.Fprintln(o.io.ErrOut, hint)
+		_, _ = fmt.Fprintln(o.ios.ErrOut, hint)
 	}
 }
 

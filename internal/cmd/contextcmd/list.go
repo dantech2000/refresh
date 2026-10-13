@@ -10,14 +10,14 @@ import (
 )
 
 type listOptions struct {
-	io    *cmdutil.IOStreams
+	ios   *cmdutil.IOStreams
 	store func() (*contexts.Store, error)
 
 	envContext string
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
-	o := &listOptions{io: f.IOStreams, store: f.Contexts}
+	o := &listOptions{ios: f.IOStreams, store: f.Contexts}
 	return &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -27,10 +27,14 @@ the active context.`,
 		Example: `  refresh context list`,
 		Args:    cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			o.envContext = envContext()
+			o.complete()
 			return o.run()
 		},
 	}
+}
+
+func (o *listOptions) complete() {
+	o.envContext = envContext()
 }
 
 func (o *listOptions) run() error {
@@ -40,14 +44,14 @@ func (o *listOptions) run() error {
 	}
 	if len(file.Contexts) == 0 {
 		// A hint, not data: it goes to stderr and stdout stays empty.
-		_, err := fmt.Fprintln(o.io.ErrOut, "No saved contexts. Add one with: refresh context add <name> --cluster <cluster>")
+		_, err := fmt.Fprintln(o.ios.ErrOut, "No saved contexts. Add one with: refresh context add <name> --cluster <cluster>")
 		return err
 	}
 	// The list is how a user finds the right name, so an unknown
 	// REFRESH_CONTEXT is a warning here and not an error.
 	active, _, _, err := file.Active(o.envContext)
 	if err != nil {
-		if _, err := fmt.Fprintf(o.io.ErrOut, "warning: %v\n", err); err != nil {
+		if _, err := fmt.Fprintf(o.ios.ErrOut, "warning: %v\n", err); err != nil {
 			return err
 		}
 	}
@@ -56,7 +60,7 @@ func (o *listOptions) run() error {
 		if name == active {
 			marker = "*"
 		}
-		if _, err := fmt.Fprintf(o.io.Out, "%s %-20s %s\n", marker, name, describe(file.Contexts[name])); err != nil {
+		if _, err := fmt.Fprintf(o.ios.Out, "%s %-20s %s\n", marker, name, describe(file.Contexts[name])); err != nil {
 			return err
 		}
 	}

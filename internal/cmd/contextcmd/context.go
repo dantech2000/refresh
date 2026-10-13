@@ -60,14 +60,18 @@ func loadFile(f func() (*contexts.Store, error)) (*contexts.Store, *contexts.Fil
 }
 
 // contextName returns the context name in the argument arg, without the
-// spaces around it. A name that is empty then is an error: no command could
-// select that context again.
-func contextName(arg string) (string, error) {
-	name := strings.TrimSpace(arg)
+// spaces around it.
+func contextName(arg string) string {
+	return strings.TrimSpace(arg)
+}
+
+// validateName rejects an empty context name: no command could select that
+// context again.
+func validateName(name string) error {
 	if name == "" {
-		return "", errors.New("context name is required")
+		return errors.New("context name is required")
 	}
-	return name, nil
+	return nil
 }
 
 // envContext returns the value of REFRESH_CONTEXT.

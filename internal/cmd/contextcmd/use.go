@@ -13,15 +13,17 @@ import (
 )
 
 type useOptions struct {
-	io    *cmdutil.IOStreams
+	ios   *cmdutil.IOStreams
 	store func() (*contexts.Store, error)
 
-	name       string // empty means ask
+	name string // empty means ask
+
+	named      bool // a name was given, also when it is blank
 	envContext string
 }
 
 func newCmdUse(f *cmdutil.Factory) *cobra.Command {
-	o := &useOptions{io: f.IOStreams, store: f.Contexts}
+	o := &useOptions{ios: f.IOStreams, store: f.Contexts}
 	return &cobra.Command{
 		Use:   "use [context|-]",
 		Short: "Switch the active context",
@@ -44,16 +46,27 @@ this command saves.`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeNames(f.Contexts),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 {
-				var err error
-				if o.name, err = contextName(args[0]); err != nil {
-					return err
-				}
+			o.complete(args)
+			if err := o.validate(); err != nil {
+				return err
 			}
-			o.envContext = envContext()
 			return o.run(cmd.Context())
 		},
 	}
+}
+
+func (o *useOptions) complete(args []string) {
+	if len(args) == 1 {
+		o.name, o.named = contextName(args[0]), true
+	}
+	o.envContext = envContext()
+}
+
+func (o *useOptions) validate() error {
+	if o.named {
+		return validateName(o.name)
+	}
+	return nil
 }
 
 func (o *useOptions) run(ctx context.Context) error {
@@ -81,13 +94,13 @@ func (o *useOptions) run(ctx context.Context) error {
 	if err := store.Save(file); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(o.io.Out, "Switched to context %q (%s)\n", file.Current, describe(file.Contexts[file.Current])); err != nil {
+	if _, err := fmt.Fprintf(o.ios.Out, "Switched to context %q (%s)\n", file.Current, describe(file.Contexts[file.Current])); err != nil {
 		return err
 	}
 	// REFRESH_CONTEXT beats the saved context, so commands in this shell
 	// still use the context it names. Say so; "Switched" alone misleads.
 	if o.envContext != "" && o.envContext != file.Current {
-		_, err = fmt.Fprintf(o.io.ErrOut,
+		_, err = fmt.Fprintf(o.ios.ErrOut,
 			"warning: %s=%s overrides the saved context in this shell; unset %s to use %q here\n",
 			contexts.EnvContext, o.envContext, contexts.EnvContext, file.Current)
 	}
@@ -100,7 +113,7 @@ func (o *useOptions) pick(ctx context.Context, file *contexts.File) (string, err
 	// Mark the context that commands use now, as "context list" does. An
 	// unknown REFRESH_CONTEXT marks none; that error is not for this step.
 	active, _, _, _ := file.Active(o.envContext) //nolint:dogsled // only the name matters for the marker
-	if _, err := fmt.Fprintln(o.io.ErrOut, "Available contexts:"); err != nil {
+	if _, err := fmt.Fprintln(o.ios.ErrOut, "Available contexts:"); err != nil {
 		return "", err
 	}
 	for i, name := range names {
@@ -109,14 +122,14 @@ func (o *useOptions) pick(ctx context.Context, file *contexts.File) (string, err
 			marker = "*"
 		}
 		c := file.Contexts[name]
-		if _, err := fmt.Fprintf(o.io.ErrOut, "  %s %d) %-20s cluster=%s region=%s\n", marker, i+1, name, c.Cluster, orDash(c.Region)); err != nil {
+		if _, err := fmt.Fprintf(o.ios.ErrOut, "  %s %d) %-20s cluster=%s region=%s\n", marker, i+1, name, c.Cluster, orDash(c.Region)); err != nil {
 			return "", err
 		}
 	}
-	if _, err := fmt.Fprint(o.io.ErrOut, "Select context [number or name]: "); err != nil {
+	if _, err := fmt.Fprint(o.ios.ErrOut, "Select context [number or name]: "); err != nil {
 		return "", err
 	}
-	line, err := cmdutil.ReadLine(ctx, o.io)
+	line, err := cmdutil.ReadLine(ctx, o.ios)
 	if err != nil {
 		return "", err
 	}

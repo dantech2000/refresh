@@ -20,7 +20,7 @@ const (
 )
 
 type options struct {
-	io      *cmdutil.IOStreams
+	ios     *cmdutil.IOStreams
 	version string
 
 	out    string
@@ -29,7 +29,7 @@ type options struct {
 
 // NewCmdGenDocs returns the gen-docs command.
 func NewCmdGenDocs(f *cmdutil.Factory) *cobra.Command {
-	o := &options{io: f.IOStreams, version: f.Build.Version}
+	o := &options{ios: f.IOStreams, version: f.Build.Version}
 	cmd := &cobra.Command{
 		Use:    "gen-docs --out <directory>",
 		Hidden: true,
@@ -93,7 +93,7 @@ func (o *options) run(root *cobra.Command) error {
 	if err := generateFiles(o.out, generate); err != nil {
 		return fmt.Errorf("writing %s to %s: %w", what, o.out, err)
 	}
-	_, err := fmt.Fprintf(o.io.Out, "Generated %s in %s\n", what, o.out)
+	_, err := fmt.Fprintf(o.ios.Out, "Generated %s in %s\n", what, o.out)
 	return err
 }
 

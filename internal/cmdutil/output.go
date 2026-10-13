@@ -68,12 +68,12 @@ func (v *formatValue) Set(s string) error {
 }
 
 // PrintDocument writes doc to the output stream as JSON or YAML.
-func PrintDocument(io *IOStreams, format Format, doc apidoc.Document) error {
+func PrintDocument(ios *IOStreams, format Format, doc apidoc.Document) error {
 	switch format {
 	case FormatJSON:
-		return apidoc.EncodeJSON(io.Out, doc)
+		return apidoc.EncodeJSON(ios.Out, doc)
 	case FormatYAML:
-		return apidoc.EncodeYAML(io.Out, doc)
+		return apidoc.EncodeYAML(ios.Out, doc)
 	default:
 		return fmt.Errorf("cannot print the %s document as %q", doc.Kind(), format)
 	}
