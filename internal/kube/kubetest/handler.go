@@ -72,14 +72,12 @@ func route(path string) (res collection, namespace string, ok bool) {
 	return res, namespace, ok && res.items != nil
 }
 
-// status is a Kubernetes error.
+// status is the Kubernetes Status answer for a failed request.
 type status struct {
 	code    int
 	reason  metav1.StatusReason
 	message string
 }
-
-func (e *status) Error() string { return string(e.reason) + ": " + e.message }
 
 func (h *Handler) record(r Request) int {
 	h.mu.Lock()
