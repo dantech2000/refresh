@@ -1,35 +1,32 @@
 # Phase 4 design note: changes
 
-Status: draft 1, for review. It belongs to `REWRITE.md` and stays inside `CONTRACT.md`, except for the contract edits that section 14 proposes. Phase 3 (`docs/design/phase-3-health.md`) is the source for the gate, the verdict, and the verification checks that this phase calls. Section 15 is empty until code changes the design.
+Status: draft 2. Draft 1 was reviewed twice against the old code and the parity traces: one reject with five blockers, one approve with changes and three blockers. This draft applies the findings and the owner's decisions on draft 1 (section 13). It belongs to `REWRITE.md` and stays inside `CONTRACT.md`. Phase 3 (`docs/design/phase-3-health.md`) is the source for the gate, the verdict, and the verification checks. Section 14 is empty until code changes the design.
 
-Scope: `internal/change` (plans, waits, the batch, add-on update, scale, the upgrade engine, rollback, the `Operation` handle, claims, the busy rule), `internal/noderoll` and the roll panel in `internal/view`, the `Plan` and `Run` documents, and the commands `addon update`, `nodegroup scale`, `nodegroup update` (with `--all-clusters`), `cluster upgrade`, and `cluster rollback`.
+Scope: `internal/change` (plans, waits, the batch, add-on update, scale, the upgrade engine, rollback, the busy rule), `internal/noderoll` and the roll panel in `internal/view`, the `Plan` and `Run` documents, and the commands `addon update`, `nodegroup scale`, `nodegroup update` (with `--all-clusters`), `cluster upgrade`, and `cluster rollback`.
 
-Out of scope: the TUI. `Operation` is specified in full here so that phase 5 needs no change to it.
+Out of scope: the TUI and everything only the TUI needs. The executor is synchronous. The handle with an event log, question IDs, pause and stop intent, claims, and the watching of a change started elsewhere is phase 5, built as an adapter over the hooks of section 7.
 
-How the old behaviour was read: the old code under `legacy/`, and the 152 recorded traces in `test/parity/testdata/legacy`. A claim about the old binary names a file and line, or a trace. I could not run the new binary, so every statement about a v2 trace is a prediction from the design. Section 11 marks the predictions that the first paired run must confirm.
+A claim about the old binary names a file and line, or a trace in `test/parity/testdata/legacy`. The new binary does not exist yet, so a statement about a v2 trace is a prediction.
 
 ## Summary of the decisions
 
 | # | Decision |
 |---|---|
-| 1 | One function builds a plan. `NewPlan` returns it for a dry run. `Start` calls the same function inside the operation. There is no dry-run code path. |
-| 2 | `Start` takes the request, not a plan. A plan that a person reviewed earlier is an optional input (`StartOptions.Expect`) that the operation compares against. A CLI run with `--yes` reads the cluster once. This departs from the `Start(ctx, plan)` signature in `REWRITE.md`. |
-| 3 | One exported way to run a change: the `Operation` handle. Inside it the executors are plain synchronous functions on one goroutine. The CLI and the TUI use the same handle. |
-| 4 | Every change is a list of phases, and every phase is a batch: recheck each step, submit in order, wait together, confirm. `nodegroup update` is one batch of N. `cluster upgrade` is a sequence of batches of one. |
-| 5 | Two waits. `WaitUpdate` polls `DescribeUpdate` and nothing else. `WaitSettled` polls the resource. A separate confirm read follows a successful wait. |
-| 6 | One busy rule for every phase of every command: nothing else in the cluster is changing. A phase attaches to an in-flight change of its own target. |
-| 7 | Each phase starts with one read of the whole cluster. The busy rule, the step recheck, attach detection, and the gate input all come from that read. |
-| 8 | Attach follows the resource status (`WaitSettled`), as the old engine does. Only `Observe` looks up an update ID. |
-| 9 | A wait deadline exits 4 and an interrupt exits 1. A batch with some steps done and some failed exits 4. A run in which every attempted step failed exits 1. |
-| 10 | The operation owns its deadline and pauses it while a question is open or the run is paused. |
-| 11 | The node observer and the Auto Scaling watch publish events into the operation log. The CLI draws the panel from events. Nothing below the command layer writes to the terminal. |
-| 12 | `StartNodegroupRoll`, the `DecideAMIUpdate` table, `noderoll.Tracker`, the upgrade planner, and the rollback planner are ported with their behaviour and tests frozen. |
+| 1 | One function builds a plan. `NewPlan` returns it for a dry run, and `Run` calls the same function. There is no dry-run code path. |
+| 2 | `Run(ctx, deps, request, hooks)` executes on the caller's goroutine and returns a `Result`. It starts no goroutine of its own beyond the polls of one wait and the best-effort observers, which it joins. |
+| 3 | The hooks are three functions: an event, a question, a checkpoint. The CLI implements them in a few lines. |
+| 4 | Every change is a list of phases. A phase runs its steps as one batch (`nodegroup update`) or one after another (add-ons, the nodegroups of an upgrade). |
+| 5 | Two waits. `WaitUpdate` polls `DescribeUpdate` only. `WaitSettled` polls the resource and returns what it settled at; the caller decides what that means. |
+| 6 | The steps are derived first. The busy rule then treats every step of the plan as "ours". |
+| 7 | After every question and every pause the run reads the cluster again and derives the plan again before it submits anything. |
+| 8 | A step has one code. Among independent targets, a failed step beside a step that changed something is a partial failure, exit 4. The highest code wins, and an interrupt is always 1. |
+| 9 | A wait that outlasts `--wait-timeout`, and a change that was accepted and could not be followed, exit 4. |
+| 10 | The node observer and the Auto Scaling watch report through the event hook. Nothing below the command layer writes to the terminal. |
+| 11 | `StartNodegroupRoll`, the `DecideAMIUpdate` table less its `--force` row, `noderoll.Tracker`, the upgrade planner, and the rollback planner are ported with their behaviour and tests frozen. |
 
 ## 1. Plans
 
 ### Requests
-
-A request says what the user asked for. Each command builds one in `complete`.
 
 ```go
 package change
@@ -56,15 +53,16 @@ type Target struct {
 // Common holds what every request carries.
 type Common struct {
 	Policy     health.Policy // --yes, --require-healthy, --force, --skip-health-check
-	NoWait     bool          // --no-wait
-	SkipVerify bool          // --skip-verify
+	NoWait     bool
+	SkipVerify bool
+	Limits     Limits // section 8
 }
 
 type AddonUpdateRequest struct {
 	Common
 	Target
 	Addons  []string // exact names; empty with All
-	All     bool     // --all
+	All     bool
 	Version string   // --version; only with exactly one add-on
 	Skip    []string // --skip-addon; only with All
 }
@@ -80,15 +78,13 @@ type RollRequest struct {
 	Common
 	Target
 	Nodegroups []string       // exact names; empty means every nodegroup
-	Filters    []fleet.Filter // -f; applied to nodegroup names
-	Reroll     bool           // --reroll
-	// Fleet is set for --all-clusters. Target is then empty.
-	Fleet *FleetScope
+	Filters    []fleet.Filter // -f
+	Reroll     bool
+	Fleet      *FleetScope // --all-clusters; Target is then empty
 }
 
 type FleetScope struct {
-	Regions []string       // -r; empty means the default sweep
-	Filters []fleet.Filter // -f keys that name clusters
+	Regions []string // -r; empty means the default sweep
 }
 
 type UpgradeRequest struct {
@@ -96,10 +92,11 @@ type UpgradeRequest struct {
 	Target
 	To             fleet.Version // --to, required
 	Only           []Part        // --only: ControlPlane, Addons, Nodegroups
-	Nodegroups     []string      // -n, exact names
-	SkipAddons     []string      // --skip-addon
-	SkipNodegroups []string      // --skip-nodegroup, exact names
-	SkipInsights   bool          // --skip-insights-check
+	Nodegroups     []string      // -n
+	SkipAddons     []string
+	SkipNodegroups []string
+	SkipInsights   bool
+	ConfirmPhases  bool // ask before each phase; the CLI sets it without --yes
 }
 
 type RollbackRequest struct {
@@ -107,104 +104,91 @@ type RollbackRequest struct {
 	Target
 	SkipNodegroups  []string
 	SkipInsights    bool
-	RollbackTimeout time.Duration // --rollback-timeout; 0 leaves the EKS default
+	RollbackTimeout time.Duration // 0 leaves the EKS default
 }
 ```
 
 ### The plan
 
+Identity is typed. A string form exists for display and for the documents, and no code parses it.
+
 ```go
-// Plan is what a change would do, computed from one read of live state.
+type PhaseKind string // ControlPlane, AddonsBefore, Nodegroups, AddonsAfter, Addons, Roll, Scale
+
+// PhaseRef identifies a phase in a run. Two clusters of a fleet have
+// different refs for their Roll phase, because Target differs.
+type PhaseRef struct {
+	Target Target
+	Kind   PhaseKind
+	Hop    fleet.Version // the hop target of an upgrade phase; zero otherwise
+}
+
+type StepKind string // ControlPlane, Addon, Nodegroup, Scale
+
+// StepRef identifies a step in a run.
+type StepRef struct {
+	Phase PhaseRef
+	Kind  StepKind
+	Name  string // nodegroup or add-on; empty for the control plane
+}
+
+func (r PhaseRef) String() string // "prod/1.33/nodegroups"
+func (r StepRef) String() string  // "prod/1.33/nodegroups/ng-a"
+
 type Plan struct {
-	Kind     Kind
-	Request  Request
-	Clusters []ClusterPlan // one entry, except in fleet mode
-	// SkippedRegions are the regions a default sweep left out (fleet mode).
-	SkippedRegions []string
+	Kind           Kind
+	Request        Request
+	Clusters       []ClusterPlan // one, except in fleet mode
+	SkippedRegions []string      // a default sweep left these out
 	Failures       []apidoc.Failure
 	At             time.Time
 }
 
 type ClusterPlan struct {
 	Target
-	// From and To are the control-plane versions of an upgrade or a
-	// rollback. Both are zero for the other kinds.
-	From, To fleet.Version
+	From, To fleet.Version // upgrade and rollback only
 	Phases   []Phase
-	// Gate is the verdict of the health gate, and Checks the results it
-	// was computed from. Both are zero when the plan has no step to run.
-	Gate   health.Verdict
-	Checks []health.Result
-	// Blockers are the refusals that do not come from the gate: a busy
-	// cluster, a blocked readiness step, a rollback that is not available.
+	Gate     health.Verdict
+	Checks   []health.Result
 	Blockers []Blocker
 	Notices  []string
 	Failures []apidoc.Failure
-	// Rollback is the rollback window, for a rollback plan.
+	// Rollback is the upgrade this rollback undoes: UpgradedAt and
+	// AvailableUntil. It is set whenever the upgrade was found, also when
+	// the window has closed.
 	Rollback *fleet.Rollback
 
-	snapshot *fleet.Snapshot // what the plan was computed from
+	snapshot *fleet.Snapshot
 }
 
-type BlockerKind string
-
-const (
-	Busy        BlockerKind = "Busy"        // another change is in flight
-	NotReady    BlockerKind = "NotReady"    // insights, version skew
-	Unavailable BlockerKind = "Unavailable" // no rollback window, AL2 past 1.32
-	Unread      BlockerKind = "Unread"      // a read the plan needs failed
-)
+type BlockerKind string // Busy, NotReady, Unavailable, Unread
 
 type Blocker struct {
 	Kind    BlockerKind
-	Step    StepID // zero when the blocker is about the cluster
+	Step    *StepRef // nil when the blocker is about the cluster
 	Message string
 }
 
-// PhaseID names a phase within one cluster plan. It is stable between two
-// plans of the same request: "roll", "addons", "scale",
-// "1.33/control-plane", "1.33/addons-before", "1.33/nodegroup/ng-a",
-// "1.33/addons-after", "rollback/nodegroup/ng-a", "rollback/addons",
-// "rollback/control-plane".
-type PhaseID string
-
-type PhaseKind string
-
-const (
-	ControlPlanePhase PhaseKind = "ControlPlane"
-	AddonsPhase       PhaseKind = "Addons"
-	RollPhase         PhaseKind = "Roll"
-	ScalePhase        PhaseKind = "Scale"
-)
-
 type Phase struct {
-	ID    PhaseID
-	Kind  PhaseKind
-	Hop   fleet.Version // the hop target of an upgrade phase; zero otherwise
-	Steps []Step
+	Ref PhaseRef
+	// Serial runs the steps one after another, each with its own recheck,
+	// gate, wait, and verification. Otherwise the phase is one batch.
+	Serial bool
+	// StopOnFailure ends the phase and the run at the first step that does
+	// not succeed. The engines set it. addon update --all does not.
+	StopOnFailure bool
+	Steps         []Step
 }
-
-// StepID is the phase and the resource: "roll/ng-a",
-// "1.33/addons-before/vpc-cni", "1.33/control-plane/prod".
-type StepID string
-
-type StepKind string
-
-const (
-	ControlPlaneStep StepKind = "ControlPlane"
-	AddonStep        StepKind = "Addon"
-	RollStep         StepKind = "Nodegroup"
-	ScaleStep        StepKind = "Scale"
-)
 
 type Action string
 
 const (
-	Run     Action = "Run"     // submit an update
-	Attach  Action = "Attach"  // the target is already changing; wait for it
-	Skip    Action = "Skip"    // nothing to do; Reason says why
-	Manual  Action = "Manual"  // left to the operator; Reason says why
-	Blocked Action = "Blocked" // cannot run; the plan has a Blocker for it
+	Submit  Action = "Submit"  // send an update
+	Attach  Action = "Attach"  // the target is already changing towards the goal; wait for it
+	Verify  Action = "Verify"  // at the goal but not settled or not ACTIVE: wait if needed, then verify
+	Skip    Action = "Skip"    // nothing to do
+	Manual  Action = "Manual"  // left to the operator
+	Blocked Action = "Blocked" // cannot run; the plan has a Blocker
 )
 
 type Reason string
@@ -213,128 +197,117 @@ const (
 	AMIOutdated     Reason = "AMIOutdated"
 	AMIUnknown      Reason = "AMIUnknown"
 	Reroll          Reason = "Reroll"
-	Forced          Reason = "Forced"
 	VersionBehind   Reason = "VersionBehind"
-	PreRoll         Reason = "PreRoll"         // kubelet skew catch-up
-	Repair          Reason = "Repair"          // DEGRADED or a failed state at the target version
-	Unsettled       Reason = "Unsettled"       // at the target, not ACTIVE: wait and verify
+	PreRoll         Reason = "PreRoll" // kubelet skew catch-up
+	Repair          Reason = "Repair"  // not healthy at the target version
+	Unsettled       Reason = "Unsettled"
+	InFlight        Reason = "InFlight"
 	AlreadyLatest   Reason = "AlreadyLatest"
 	AlreadyAtTarget Reason = "AlreadyAtTarget"
-	AlreadyUpdating Reason = "AlreadyUpdating"
+	NewerThanLatest Reason = "NewerThanLatest"
 	CustomAMI       Reason = "CustomAMI"
 	SkippedByFlag   Reason = "SkippedByFlag"
-	OutOfScope      Reason = "OutOfScope" // --only, -n
-	NoChange        Reason = "NoChange"   // scale to the current sizes
+	OutOfScope      Reason = "OutOfScope"
+	NoChange        Reason = "NoChange"
 )
 
 type Step struct {
-	ID     StepID
-	Kind   StepKind
-	Target string // nodegroup or add-on name; the cluster name for the control plane
+	Ref    StepRef
 	Action Action
 	Reason Reason
-	// From and To are the pinned versions. A roll pins the Kubernetes
-	// version in To and records the AMI release it expects in ToRelease.
-	// An add-on pins the add-on version. The control plane pins the minor.
+	// From and To are the pinned versions: the Kubernetes version for a
+	// roll and the control plane, the add-on version for an add-on.
+	// ToRelease is the AMI release a roll expects.
 	From, To  string
 	ToRelease string
-	// Sizes are the sizes of a scale step.
-	Sizes *ScaleSizes
-	// Force is sent to UpdateNodegroupVersion (roll) or UpdateClusterVersion
-	// (rollback with --skip-insights-check).
+	Sizes     *ScaleSizes // Before, After, and the fields the request sends
+	// Force is sent to UpdateNodegroupVersion (--force) or to
+	// UpdateClusterVersion (a rollback with --skip-insights-check).
 	Force bool
-}
-
-type ScaleSizes struct {
-	Before, After Sizes // Desired, Min, Max
-	// Sent are the fields the request carries: only the ones the user gave.
-	Sent struct{ Desired, Min, Max *int32 }
 }
 ```
 
-`Plan.Decision()` folds the parts into what the run would do:
+`Plan.Decision()`:
 
 | Condition, first match | Decision | Exit of a dry run |
 |---|---|---|
-| A `Blocker`, or `Gate.Decision` is `Block` | `Blocked` | 4 when the plan or the gate has a failure, else 3 |
-| No step with `Run` or `Attach` | `NothingToDo` | 4 with a failure, else 0 |
-| `Gate.Decision` is `Ask`, or the gate went past reasons with `--yes` or `--force` | `Ask` | `Gate.Exit`: 4 or 2 |
+| A `Blocker`, or the gate decides `Block` | `Blocked` | 4 when the plan or the gate has a failure, else 3, else `Gate.Exit` for `--require-healthy` over warnings (2) |
+| No step with `Submit`, `Attach`, or `Verify` | `NothingToDo` | 4 with a failure, else 0 |
+| The gate decides `Ask`, or went past reasons with `--yes` or `--force` | `Ask` | `Gate.Exit`: 4 or 2 |
 | Otherwise | `Proceed` | 4 with a failure, else 0 |
 
-The exit of a dry run is `max(Gate.Exit, 3 if blocked, 4 if failures)`. It ignores `--yes`, as phase 3 requires.
+The code ignores `--yes`, as phase 3 requires.
 
 ### One function
 
 ```go
-// Deps is what the package needs from the command. Tests point it at the
-// fake world.
+// Deps is what the package needs from the command.
 type Deps struct {
-	AWS    *awsx.Provider
-	Fetch  *fleet.Fetcher
-	Kube   func(ctx context.Context, t kube.Target) (*kube.Client, error)
-	Now    func() time.Time
-	After  func(time.Duration) <-chan time.Time
-	Claims *Claims // nil in the CLI: one process, one operation
+	AWS   *awsx.Provider
+	Fetch *fleet.Fetcher
+	Kube  func(ctx context.Context, t kube.Target) (*kube.Client, error)
+	Now   func() time.Time
+	After func(time.Duration) <-chan time.Time
 }
 
 // NewPlan reads live state and returns the plan for req. It sends no
-// mutating request. A dry run prints the result.
+// mutating request.
 func NewPlan(ctx context.Context, d Deps, req Request) (*Plan, error)
 ```
 
-`NewPlan` and the `Preparing` state of an operation call the same unexported `plan(ctx, d, req, mode)`. The one difference between the two callers is `mode.refreshInsights`: a real `cluster upgrade` starts an insights refresh and a dry run does not. That is the old behaviour (`insights.go:220-259`) and the one request `CONTRACT.md` lets a blocked run send.
+`NewPlan` and `Run` call the same unexported `plan(ctx, d, req, refreshInsights)`. A real `cluster upgrade` starts an insights refresh and a dry run does not (`insights.go:220-259`). That is the only difference.
 
-What `plan` does for one cluster, in order:
+`plan` for one cluster, in order:
 
-1. Fetch the snapshot. `Need{Nodegroups: true, Addons: true}` for every kind, because the busy rule reads all three resource types. A roll adds `AMI` and `InstanceIDs`. An add-on update adds the latest version of its target add-ons. An upgrade adds `InstanceIDs`, `Support`, and the add-on versions for the live version and for each hop. A rollback adds `InstanceIDs`, `Updates`, and the add-on versions for the target.
-2. Apply the busy rule (section 3). A busy cluster is a `Busy` blocker.
-3. Derive the steps (sections 4 to 6).
-4. Run the gate with the check set of the kind (section 3) and the targets of the steps with `Run`. A plan with no such step runs no gate.
-5. For a nodegroup step with `Run`, read instance-type availability (`DescribeSubnets`, `DescribeInstanceTypeOfferings`). A problem is a notice. A failed read is dropped, as in the old command (`availability.go:36-115`).
+1. **Read.** One snapshot with `Need{Nodegroups: true, Addons: true}`. A roll adds `AMI` and `InstanceIDs`. An add-on update adds the latest version of its targets. An upgrade adds `InstanceIDs`, `Support`, and the add-on catalogues of the live version and of each hop. A rollback adds `InstanceIDs`, `Updates`, and the catalogue of the target.
+2. **Eligibility.** The rollback window, the scale bounds, the version catalogue of `--version`.
+3. **Steps.** Sections 4 to 6.
+4. **Busy rule**, with every `Submit`, `Attach`, and `Verify` step of the plan as "ours" (section 3).
+5. **Gate**, with the check set of the kind and the targets of the `Submit` steps. A plan with no such step runs no gate.
+6. Beside the gate: instance-type availability for each roll or scale-up target (`availability.go:36-115`). A problem is a notice; a failed read is dropped.
 
-Steps 4 and 5 start together.
+### When the plan is computed again
 
-### Revalidation
+Time passes at a prompt and at a pause. The old code re-read after both: the scale re-checked its bounds and its direction after the prompt (`nodegroup_scale.go:81,419`), and the rollback rebuilt its plan before it started (`rollback.go:653`). The rule here is one sentence: **after every question that a person answered, and after every checkpoint that waited, `Run` calls `plan` again and compares before it submits anything.**
 
-`Preparing` computes a plan and compares it with the previous one whenever a previous one exists: the plan in `StartOptions.Expect`, or the plan this operation showed before a person answered a question. A run with `--yes` and no `Expect` has no previous plan and compares nothing.
+A run with `--yes` asks nothing, so it computes the plan once, immediately before its first submit, and has nothing older to compare. A later phase of an upgrade or a rollback always re-reads (section 4), whatever the flags.
 
 ```go
 // Diff compares the plan a person saw with the plan computed now.
 func Diff(prev, cur *Plan) []Change
 
 type Change struct {
-	Step    StepID
+	Step    StepRef
 	Kind    ChangeKind
-	Message string // "ng-a: AMI release 1.32.0-20260101, was 1.32.0-20251201"
+	Message string
 }
 ```
 
-| `ChangeKind` | What changed, by `StepID` | Effect |
+| `ChangeKind` | What changed | Effect |
 |---|---|---|
-| `Done` | `Run` or `Attach` became `Skip` | Go on, with a notice |
-| `InFlight` | `Run` became `Attach` | Go on, with a notice |
-| `RollTarget` | A roll step's `To` or `ToRelease` differs, or its `Reason` moved between `AMIOutdated` and `Reroll` | Refuse: `Refused`, exit 3 |
-| `Version` | An add-on step's `To` differs, or the control-plane target differs | Ask |
-| `Added` | A step with `Run` that the previous plan did not have, or a `Skip` that became `Run` | Ask |
-| `Removed` | A step that is gone and is not `Done` | Ask |
-| `NowBlocked` | A new `Blocker`, or a step became `Blocked` | Refuse: `Refused`, exit 3 or 4 |
+| `Done` | A `Submit`, `Attach`, or `Verify` step is now `Skip` | Go on, with a notice |
+| `NowInFlight` | A `Submit` step is now `Attach` | Go on, with a notice |
+| `KubernetesVersion` | A roll step's `To` differs | Refuse, exit 3 |
+| `RollbackTarget` | The rollback's `To` differs | Refuse, exit 3. No answer and no `--yes` accepts it. |
+| `Release` | A roll step's `ToRelease` differs: AWS published a new AMI | Ask |
+| `Version` | An add-on step's `To` differs, or the upgrade's next hop differs | Ask |
+| `Sizes` | A scale step's `Before` differs | Ask, after the gate of the new direction has run |
+| `Added`, `Removed` | A step with work appeared or went away without being done | Ask |
+| `NowBlocked` | A new `Blocker`, or a step became `Blocked` | Refuse, exit 3 or 4 |
 | `GateWorse` | `health.Worse(prev.Checks, cur.Checks)` is not empty | The pre-phase table of phase 3, section 4 |
 
-The roll row is the rule in `REWRITE.md`: a changed nodegroup version refuses. The old TUI did the same (`tui/live/roll.go:387-392`). The ask rows are what the old TUI did for upgrade steps (`upgrade.go:220-225`). The old `cluster rollback` refused on any changed step (`rollback.go:698-727`); it now asks, like the upgrade. When several rows apply, a refuse wins over an ask.
+The `KubernetesVersion` row is the rule of `REWRITE.md` and of the old TUI, which compared the version only (`tui/live/roll.go:387-392`). A refuse wins over an ask.
 
-How an ask is answered: a person answers through `Answer`. With `--yes` the policy accepts, and the changes go in the run's notices. Without a way to ask, the operation refuses.
+How an ask is answered: the question hook, or `--yes`, which accepts and records the changes as notices. After a person answers, the plan is computed once more. When three plans in a row each need a new question the run refuses: "the cluster keeps changing".
 
-After a person answers, `Preparing` plans again, because the answer took time. It stops asking when a plan equals the one before it. After three plans in a row that each need a new question, the operation refuses with "the cluster keeps changing".
+The scale case from the review, as a check of the rule: the plan says 2 to 3, a scale-up, and the gate ran `Quotas`. Someone raises the desired size to 5 while the prompt waits. The new plan says 5 to 3, a scale-down. Its gate runs `ScaleDownBlockers`, `Diff` reports `Sizes`, and the person is asked about the new plan or the gate blocks.
 
 ### Documents
-
-One `Plan` kind and one `Run` kind for all five commands and for fleet mode.
 
 ```go
 package apidoc
 
-type Operation string // AddonUpdate, NodegroupScale, NodegroupUpdate, ClusterUpgrade, ClusterRollback
-
+type Operation string    // AddonUpdate, NodegroupScale, NodegroupUpdate, ClusterUpgrade, ClusterRollback
 type PlanDecision string // Proceed, Ask, Blocked, NothingToDo
 
 type Plan struct {
@@ -352,36 +325,26 @@ type ClusterPlan struct {
 	Decision      PlanDecision `json:"decision"`
 	Steps         []PlanStep   `json:"steps"`
 	Gate          *Gate        `json:"gate,omitzero"`
-	Blockers      []Blocker    `json:"blockers"`
+	Blockers      []Blocker    `json:"blockers"` // kind, step, message
 	Notices       []string     `json:"notices"`
 	Rollback      *Rollback    `json:"rollback,omitzero"`
 }
 
-type Blocker struct {
-	Kind    string `json:"kind"` // Busy, NotReady, Unavailable, Unread
-	Step    string `json:"step,omitzero"`
-	Message string `json:"message"`
-}
-
 type PlanStep struct {
-	ID        string      `json:"id"`
-	Phase     string      `json:"phase"`
+	Phase     string      `json:"phase"`  // ControlPlane, AddonsBefore, ...
+	Hop       string      `json:"hop,omitzero"`
 	Kind      string      `json:"kind"`   // ControlPlane, Addon, Nodegroup, Scale
-	Target    string      `json:"target"`
-	Action    string      `json:"action"` // Run, Attach, Skip, Manual, Blocked
+	Name      string      `json:"name,omitzero"`
+	Action    string      `json:"action"` // Submit, Attach, Verify, Skip, Manual, Blocked
 	Reason    string      `json:"reason,omitzero"`
 	From      string      `json:"from,omitzero"`
 	To        string      `json:"to,omitzero"`
 	ToRelease string      `json:"toRelease,omitzero"`
 	Force     bool        `json:"force,omitzero"`
 	Sizes     *ScaleSizes `json:"sizes,omitzero"` // before, after: desired, min, max
-	// Nodegroup and Addon are the resource as the plan read it, in the
-	// shared shapes.
-	Nodegroup *Nodegroup `json:"nodegroup,omitzero"`
-	Addon     *Addon     `json:"addon,omitzero"`
 }
 
-type RunStatus string // see section 7
+type RunStatus string // section 7
 
 type Run struct {
 	Operation Operation    `json:"operation"`
@@ -393,258 +356,233 @@ type Run struct {
 type ClusterRun struct {
 	ClusterPlan
 	Status       RunStatus      `json:"status"`
-	Results      []StepResult   `json:"results"`
+	Results      []StepResult   `json:"results"` // one per step, in plan order
 	Verification []HealthResult `json:"verification"`
-	// Resume is the command line that goes on from here, for a run that
-	// stopped early.
-	Resume string `json:"resume,omitzero"`
 }
 
-type StepStatus string // NotAttempted, Started, Succeeded, Failed, Cancelled, InProgress, Skipped, Blocked
+type StepStatus string // NotAttempted, Started, Succeeded, Failed, Cancelled, InProgress, Busy, Skipped, Blocked
 
 type StepResult struct {
-	Step       string     `json:"step"` // PlanStep.ID
+	Phase      string     `json:"phase"`
+	Hop        string     `json:"hop,omitzero"`
+	Kind       string     `json:"kind"`
+	Name       string     `json:"name,omitzero"`
 	Status     StepStatus `json:"status"`
 	Attached   bool       `json:"attached,omitzero"`
 	UpdateID   string     `json:"updateId,omitzero"`
-	StartedAt  time.Time  `json:"startedAt,omitzero"`
-	FinishedAt time.Time  `json:"finishedAt,omitzero"`
-	Failure    *Failure   `json:"failure,omitzero"`
-	// Nodegroup and Addon are the resource as the confirm read saw it.
-	Nodegroup *Nodegroup `json:"nodegroup,omitzero"`
-	Addon     *Addon     `json:"addon,omitzero"`
+	// InFlight is the type of the update that made a Busy step busy:
+	// VersionUpdate, ConfigUpdate, AddonUpdate, or "" when it was not found.
+	InFlight   string    `json:"inFlight,omitzero"`
+	StartedAt  time.Time `json:"startedAt,omitzero"`
+	FinishedAt time.Time `json:"finishedAt,omitzero"`
+	Failure    *Failure  `json:"failure,omitzero"`
 }
 ```
 
-Rules:
+A step is identified in a document by `cluster`, `region`, `phase`, `hop`, `kind`, and `name` together. The documents do not embed the `Nodegroup` and `Addon` shapes; a reader who wants the resource reads it with the describe command. `CONTRACT.md` lists both shapes under "plans and runs", and contract edit 10 removes that.
 
-- A dry run prints `Plan`. A run that was refused before any update was submitted prints `Plan` too, with the blockers. Every other run prints `Run`. `CONTRACT.md` says the same.
-- `ClusterRun.Results` has one entry for each step of the plan, in plan order. A step that was never reached is `NotAttempted`.
-- `Gate.Accepted` and `Gate.Forced` record what `--yes` and `--force` went past, as phase 3 defines them.
-- `Run.Failures` is the union of the plan failures, the gate failures, and the step failures.
-- The mappers allocate every list, so an empty one encodes as `[]`.
-
-The human view of both documents is a `view.Description`, so `-o plain` is `FIELD`/`VALUE` rows from the same sections. Field names are `steps.<id>.action`, `results.<id>.status`, `gate.decision`, and so on.
+Rules: a dry run prints `Plan`. A run that was refused before any update was submitted prints `Plan` with the blockers. Every other run prints `Run`. A step that was never reached is `NotAttempted`. There is no "resume" field: running the same command again derives the plan from live state, and the summary line says so. The human view of both documents is a `view.Description`, so `-o plain` is `FIELD`/`VALUE` rows from the same sections.
 
 ## 2. Waits
 
-Two functions. Neither prints. Both take `awsx.PollClients`, so each call is one attempt and the loop owns the retry.
+Both functions take `awsx.PollClients`, so each call is one attempt and the loop owns the retry. Neither prints.
 
 ```go
 type WaitOptions struct {
 	Interval time.Duration                        // --poll-interval
 	After    func(time.Duration) <-chan time.Time // Deps.After
-	// Progress receives one call per poll per resource. It may be nil.
-	Progress func(UpdateProgress)
+	Progress func(UpdateProgress)                 // may be nil
 }
 
 type Resource struct {
 	Target
-	Kind StepKind // ControlPlaneStep, AddonStep, RollStep, ScaleStep
-	Name string   // nodegroup or add-on; empty for the control plane
+	Kind StepKind
+	Name string
 }
 
 type UpdateProgress struct {
 	Resource  Resource
 	UpdateID  string
-	Status    string // the EKS update status, or the resource status in WaitSettled
-	Polls     int
+	Status    string
 	PollError string // the last transient poll error, or ""
 }
 
 // WaitUpdate polls DescribeUpdate for one update until it ends.
 func WaitUpdate(ctx context.Context, c awsx.PollClients, r Resource, updateID string, o WaitOptions) error
 
-// Settled is what WaitSettled found.
+// Settled is the state a resource stopped changing in.
 type Settled struct {
 	Status  string
 	Version string // the Kubernetes version, or the add-on version
-	// Met says that the postcondition holds: the resource is at the wanted
-	// version and healthy.
-	Met bool
+	Sizes   Sizes  // nodegroups only
 }
 
-// WaitSettled polls the resource until it no longer changes.
-func WaitSettled(ctx context.Context, c awsx.PollClients, r Resource, want string, o WaitOptions) (Settled, error)
+// WaitSettled polls the resource until done reports true. done sees every
+// answer. It returns an error to end the wait as failed.
+func WaitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(Settled) (bool, error), o WaitOptions) (Settled, error)
 ```
 
 ### Rules for both
 
 | Point | Rule |
 |---|---|
-| First poll | At once. Then one poll after each `Interval`, timed by `After`. |
-| A poll error that `awsx.IsPermanentAPIError` reports (access denied, not found, validation) | Stop. Return `*UnobservedError` wrapping it. The update may still be running. |
-| Any other poll error (throttling, 5xx, network, an attempt timeout) | Keep polling. Call `Progress` with `PollError` set. |
-| A response with no update or no resource in it | The same as a transient error (`monitor.go:273-276`). |
-| The context ends | Return `ctx.Err()` wrapped with the last status seen. The function does not decide between deadline and interrupt. The operation does (section 8). |
-| Events | The functions emit none. The batch turns `Progress` calls into `UpdateProgress` events, which the log coalesces by resource. |
+| First poll | After one `Interval`, as the old monitor (`monitor.go:78-96`). A fresh update ID can answer not-found for a moment. |
+| `ResourceNotFoundException` from `DescribeUpdate` before the update was seen once | Transient |
+| A poll error that `awsx.IsPermanentAPIError` reports | Stop with `*UnobservedError`. The change may still be running. |
+| Any other poll error, or a response with no update or resource in it (`monitor.go:273-276`) | Keep polling; report it through `Progress` |
+| The context ends | Return `ctx.Err()` wrapped with the last status. The caller tells a deadline from an interrupt (section 8). |
 | Reads | `WaitUpdate` calls `DescribeUpdate` only. `WaitSettled` calls the describe of its resource only. |
-
-The last row is a parity rule. The suite compares the distinct answers a binary saw after its last mutation. The old waits for an update ID never describe the resource while the update is in flight (trace `nodegroup-update-yes`: two `DescribeUpdate` answers, then one `DescribeNodegroup`). A wait that also polled the resource would add an `UPDATING` answer to the trace.
 
 ### `WaitUpdate`
 
 | Update status | Result |
 |---|---|
-| `InProgress` | Keep polling |
+| `InProgress`, or a status this build does not know | Keep polling |
 | `Successful` | `nil` |
-| `Failed` | `*UpdateError{Status, Errors}` with the error codes, messages, and resource IDs of the update |
-| `Cancelled` | `*UpdateError` with `Status: Cancelled` |
-| A status this build does not know | Keep polling, and report it through `Progress` |
+| `Failed`, `Cancelled` | `*UpdateError{Status, Errors}` with the codes, messages, and resource IDs |
 
-### `WaitSettled`
+### `WaitSettled` and its callers
 
-| Resource | Keep polling | Settled, `Met` true | Settled, `Met` false | Terminal error |
-|---|---|---|---|---|
-| Control plane | `UPDATING`, `CREATING`, `PENDING` | `ACTIVE` at `want` | `ACTIVE` at another version | `FAILED`, `DELETING`, not found |
-| Add-on | `UPDATING`, `CREATING` | `ACTIVE` at `want` | `ACTIVE` at another version | `DEGRADED`, `UPDATE_FAILED`, `CREATE_FAILED`, `DELETE_FAILED`, `DELETING`, not found |
-| Nodegroup (roll) | `UPDATING`, `CREATING` | `ACTIVE` at `want` or newer | `ACTIVE` at an older version, `DEGRADED`, `CREATE_FAILED`, `DELETE_FAILED` | `DELETING`, not found |
-| Nodegroup (scale) | `UPDATING`, `CREATING` | `ACTIVE` | `DEGRADED`, `CREATE_FAILED`, `DELETE_FAILED` | `DELETING`, not found |
+`WaitSettled` has no table of its own. It keeps polling while the status is one that changes (`UPDATING`, `CREATING`, and `PENDING` for a cluster) and hands every other answer to `done`. The old nodegroup wait did exactly that and returned the version (`nodegroups.go:443-470`): `DELETING` and `DEGRADED` end it like `ACTIVE`, and the caller judges. The callers:
 
-Sources: `controlplane.go` `waitForClusterActive`, `version_analyzer.go:222-256` `WaitUntilActive`, and the nodegroup wait in `nodegroups.go` (`waitForNodegroupSettled`).
+| Caller | Wants | `done` says |
+|---|---|---|
+| Control plane, after `WaitUpdate` or on attach | `ACTIVE` | `FAILED` or `DELETING`: error (`controlplane.go`, `waitForClusterActive`). `ACTIVE`: done. The engine then compares the version by direction. |
+| Add-on, on attach | `ACTIVE` | `DEGRADED`, `CREATE_FAILED`, `UPDATE_FAILED`, `DELETE_FAILED`: error "addon update failed: status X" (`version_analyzer.go:222-256`). `ACTIVE`: done. |
+| Nodegroup, on attach or for a `Verify` step | Settled | Any status but `UPDATING` and `CREATING`: done |
+| Scale, after `WaitUpdate` | The sizes and `ACTIVE` | Below |
 
-A nodegroup that settles in `DEGRADED` is not an error of the wait. The caller gets `Met: false`, and the gate before the roll judges the nodegroup: the `Nodes` check fails a target that is not `ACTIVE` (phase 3). Trace `cluster-upgrade-nodegroup-degrades-mid-run` pins this.
+**Direction.** The engine compares the settled version, never the wait. An upgrade step is at its goal when the version is at or above `To`. A rollback step is at its goal when the version is at or below `To` (`rollback.go:749`, `atOrBelow`; `controlplane.go`, the `done` argument of `moveControlPlane`). Draft 1 said "at want or newer" for both, which would have marked a rollback done on a nodegroup that was never rolled back.
 
-A terminal error is `*SettleError{Status, Issues}`.
+**Version first.** After a nodegroup settles, the engine branches on the version, then on the status:
 
-### After a wait
+| Settled version | Status | Next |
+|---|---|---|
+| At the goal | Any | Verification with no baseline. A nodegroup that is not `ACTIVE` is a verification issue, exit 5 (`nodegroups.go:127-141`). |
+| Not at the goal | `ACTIVE` | A notice, then the gate and a roll |
+| Not at the goal | Not `ACTIVE` | The gate refuses: the `Nodes` check fails a target that is not `ACTIVE`. Exit 3. This covers `DELETING` too, as the old built-in gate did ("is DELETING, not ACTIVE", `nodegroups.go`, `defaultNodegroupGate`). |
 
-The step's confirm read follows a wait that succeeded. It is one describe of the resource through the read clients.
+### After `WaitUpdate` succeeds
 
-| Step | Confirm read | Postcondition | Not met |
-|---|---|---|---|
-| Add-on | `DescribeAddon` | Version equals `To` | The step fails: "reported Successful, but the add-on is at X" (`version_analyzer.go:318`) |
-| | | Status `ACTIVE` and no health issue | The step succeeds and the run has a verification issue: exit 5 (old `CompletedWithIssues`) |
-| | The read fails | | The step succeeds with a failure: exit 4 (old `Unverified`) |
-| Control plane | `WaitSettled`, which polls `DescribeCluster` | `ACTIVE` at `To` | The step fails: "control plane reports version X" (`controlplane.go`) |
-| Scale | `DescribeNodegroup` | Each size that was sent equals the request | The step fails (`nodegroup_scale.go:229-231`) |
-| | | Status `ACTIVE` when a desired size was sent | `WaitSettled` until it settles |
-| Roll | None in the wait. The `NodegroupActive` check of the verification reads the nodegroup. | | |
+| Step | Confirm | Not met |
+|---|---|---|
+| Add-on | One `DescribeAddon`: the version equals `To` | The step fails: "reported Successful, but the add-on is at X" (`version_analyzer.go:318`) |
+| | The status is `ACTIVE` with no health issue | The step succeeds with a verification issue, exit 5 (old `CompletedWithIssues`) |
+| | The read fails | The step succeeds with a failure, exit 4 (old `Unverified`) |
+| Control plane | `WaitSettled` to `ACTIVE`, then the version by direction | The step fails: "control plane reports version X" |
+| Scale | `WaitSettled` with a `done` that checks every answer: a size that was sent and does not match is an error at once; with no desired size sent, the first answer is done; otherwise `ACTIVE` is done and `DEGRADED` or a failed status is an error | The step fails (`nodegroup_scale.go:213-235`; `TestScaleWait_SuccessfulButConfigMismatchErrors`, `TestScaleWait_DesiredWaitsForActive`). The old code polled a `DEGRADED` nodegroup until the timeout; failing at once is the same exit code sooner. |
+| Roll | None in the wait. The `NodegroupActive` check of the verification reads the nodegroup. | |
 
-No confirm read follows a wait that failed, timed out, or was interrupted. The old traces show none (`nodegroup-scale-failed`, `nodegroup-update-deadline`).
+No confirm follows a wait that failed, timed out, or was interrupted.
 
-### A missing update ID
+### A submit with no update ID
 
-A submit that EKS accepts without an update ID in the answer goes to `WaitSettled` with the step's `To`. The old code had three answers: an error for add-ons and scale (`version_analyzer.go:264`, `nodegroup_scale.go:156`), a failed row in `nodegroup update` (`actions_update.go:970-973`), and "treat as done" in the upgrade engine (`nodegroups.go`, `updateID == ""`). The fake world always returns an ID, so no trace decides this.
+A request that EKS accepts with no update ID in the answer cannot be followed. The step is `InProgress` with the failure reason `NotMonitored`, and the run exits 4 (owner decision D3). The same holds for a wait that ends with `*UnobservedError`.
 
-## 3. The busy rule, claims, and the gate set
+Draft 1 sent such a step to `WaitSettled`. That is wrong for a roll: its goal version equals its starting version, and a first read can still show the old `ACTIVE` before EKS flips to `UPDATING`, so a roll that never ran would be marked done. I propose no reconciliation in this run. A bounded one would need a signal that the change began, and without the update ID there is none that a stale read cannot fake. The next run derives its plan from live state: it finds the nodegroup `UPDATING`, or finds the AMI still outdated. The old `scale` and `addon update` treated a missing ID as an error too (`TestScaleWait_MissingUpdateIDErrors`, `version_analyzer.go:264`).
+
+## 3. The busy rule and the gate set
 
 ### Busy
 
-One rule, applied to the phase read before every phase of every command.
+The steps are derived before the rule runs. Draft 1 ran it first, which made a resumed upgrade refuse its own work: after an interrupt during the roll of `ng-a`, the cluster is `ACTIVE` at 1.33 with `ng-a` `UPDATING`, and the old engine attaches to `ng-a` and then rolls `ng-b` (`nodegroups.go:157-171`).
 
 ```go
-// InFlight is one change the cluster has in progress.
-type InFlight struct {
-	Resource Resource
-	Status   string
-}
-
-// Busy returns the changes in flight that are not on a target of the
-// phase. An empty result means the phase may go on.
-func Busy(snap *fleet.Snapshot, targets []Resource) []InFlight
+// Busy returns the refusals and the notices for a set of steps: the steps
+// of the whole plan in the plan step, the steps of the phase before a phase.
+func Busy(snap *fleet.Snapshot, kind Kind, ours []Step) (refuse []Blocker, notices []string)
 ```
 
-| Resource | In flight when its status is | It is a target of the phase | It is not a target |
-|---|---|---|---|
-| Cluster | Anything but `ACTIVE` | Control-plane phase and `UPDATING`: attach. Other statuses: refuse. | Refuse |
-| Nodegroup | Anything but `ACTIVE` and `DEGRADED` | `UPDATING` or `CREATING`: the step becomes `Attach` (upgrade, rollback) or `Skip` with `AlreadyUpdating` (`nodegroup update`). `DELETING`: refuse. | Refuse |
-| Add-on | `CREATING`, `UPDATING`, `DELETING` | `UPDATING` or `CREATING`: attach. `DELETING`: refuse. | Refuse |
+In flight means: a cluster that is not `ACTIVE`; a nodegroup that is neither `ACTIVE` nor `DEGRADED`; an add-on that is `CREATING`, `UPDATING`, or `DELETING` (`services/cluster/busy.go:64-121`).
 
-A `DEGRADED` nodegroup is not busy. The gate judges it.
-
-The statuses are the old `CheckBusy` (`services/cluster/busy.go:64-121`). `nodegroup scale` has no attach: its target counts as busy, as before (`actions_scale.go:104-112`, trace `nodegroup-scale-busy`).
-
-A snapshot whose cluster, nodegroup, or add-on group is not `Collected` cannot prove that nothing is changing. It is an `Unread` blocker, exit 4.
-
-What a refusal is, by where it happens:
-
-| Where | Result | Exit |
+| Resource in flight | `cluster upgrade`, `cluster rollback` | `nodegroup update`, `nodegroup scale`, `addon update` |
 |---|---|---|
-| In `Preparing`, before any update | `Refused` with a `Busy` blocker; the document is a `Plan` | 3 |
-| Before a later phase of an upgrade or a rollback | The phase is `Blocked`, the run stops with status `Blocked`; the document is a `Run` | 3 |
+| The cluster | Refuse every phase. One exception: `UPDATING` with a control-plane step that is `Attach`. | Refuse |
+| One of ours, in a status the step can attach to or verify (`UPDATING`, `CREATING`) | The step is `Attach` or `Verify`; no refusal | An add-on that is `UPDATING` or `CREATING` at the step's own target version: `Attach`. Anything else: the step is `Busy` (below). |
+| One of ours, `DELETING` | Refuse the phase | The step is `Busy` |
+| Not one of ours | A notice. The run goes on. | Refuse |
 
-The message keeps the old wording: "prod is busy (nodegroup ng-a UPDATING); nothing was started. Run it again once that finishes".
+The right column keeps the old `CheckBusy`, which refused when anything else in the cluster was changing (traces `addon-update-cluster-updating`, exit 3). The left column is the old engine: it had no check, attached to its own targets, and let EKS decide the rest (`addons.go:92-104`, `nodegroups.go:157`). The contract's new busy check for the upgrade is therefore the first row: a control plane that someone else is changing stops the run before it starts a phase. `cluster rollback` uses the same column. Its old planner already refused a cluster that is not `ACTIVE` and any in-flight version update, except a rollback to the same target, which it attached to (`rollback.go:397-431`); its nodegroup phase shared the upgrade's attach code (`rollNodegroupsTo`).
 
-This closes two rows of `CONTRACT.md`: "`cluster upgrade` has no busy check", and the differing exit codes of the same refusal.
+A snapshot whose cluster, nodegroups, or add-ons are not `Collected` cannot show that nothing is changing. That is an `Unread` blocker, exit 4.
 
-### Claims
+A refusal before any update is the result `Refused` with a `Busy` blocker and a `Plan` document, exit 3. Before a later phase it is `Blocked`, exit 3, with a `Run` document. The message keeps the old words: "prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes".
 
-```go
-// Claims records which clusters this process is changing. The TUI shares
-// one value among its operations. The CLI passes nil.
-type Claims struct { /* a mutex and a map */ }
+### A busy target in a standalone command (owner decision D4)
 
-func NewClaims() *Claims
+When the plan, or the last read before a submit, shows a target of `nodegroup update`, `nodegroup scale`, or `addon update` in flight, that target is neither changed nor attached to. The update in flight may be of another kind: a scale, where this run wants a roll.
 
-// Holder returns the kind of the operation that holds the cluster.
-func (c *Claims) Holder(t Target) (Kind, bool)
-```
+- The step's result is `Busy`. `InFlight` names the type of the update, found with `ListUpdates` and `DescribeUpdate` for that resource; these two reads happen only in this case.
+- The run's `failures` gets a failure with reason `Busy` for the resource.
+- The other targets go on.
+- The run exits 4.
 
-An operation claims each cluster as it starts work on it, at the top of `Preparing`, before the first read. A second operation on a claimed cluster finishes at once with `Refused` and a `Busy` blocker that names the holder. The operation releases its claims at `Finished`. A claim is process-local. Two processes are kept apart by the busy rule and by EKS (`ResourceInUseException`), as today.
+One case is not busy (owner decision D9): an add-on whose in-flight update is already to the version this run wants, that is, `UPDATING` or `CREATING` and reporting that version. It is the change the user asked for, so the command attaches to it, as the old one did (`service.go:415`, `TestUpdate_UpdatingAtTargetWaits`; traces `addon-update-attach`, `addon-update-busy`, `addon-update-attach-failed`). Every other in-flight state of an add-on target is `Busy`.
+
+Old behaviour this replaces: `nodegroup update` skipped an `UPDATING` target with exit 0 (trace `nodegroup-update-busy`), and sent the roll anyway when only its last read showed `UPDATING` (trace `nodegroup-update-changed-under-the-gate`, where EKS refused it). `nodegroup scale` refused with exit 3 (trace `nodegroup-scale-busy`).
 
 ### The check set of each kind
 
 | Kind | Checks | Targets |
 |---|---|---|
-| `NodegroupUpdate`, and each nodegroup phase of an upgrade or a rollback | `health.Preflight()` | The nodegroups with `Run` |
-| `ClusterUpgrade`, `ClusterRollback`, in the plan | `health.Preflight()`, plus `Insights` and `VersionSkew` as blockers of the readiness step (section 6) | Every nodegroup the plan would roll |
-| `NodegroupScale`, desired size goes down | `Nodes`, `health.ScaleDownBlockers(nodegroup, remove)` | The nodegroup |
+| `NodegroupUpdate`; each nodegroup step of an upgrade or a rollback | `health.Preflight()` | The nodegroups with `Submit` |
+| `ClusterUpgrade`, `ClusterRollback`, in the plan | `health.Preflight()`; `Insights` and `VersionSkew` feed the readiness blockers (section 6) | Every nodegroup the plan would roll |
+| `NodegroupScale`, the desired size goes down | `Nodes`, `health.ScaleDownBlockers(nodegroup, remove)` | The nodegroup |
 | `NodegroupScale`, otherwise | `Quotas` | The nodegroup |
-| `AddonUpdate` | `health.Addons(targets)`, new in this phase | The add-ons with `Run` |
+| `AddonUpdate` | `health.Addons(targets)`, new in this phase | The add-ons with `Submit` |
 
-`health.Addons` is one more check value in `internal/health`, blocking, not fail-closed, with no call of its own. It reads the add-ons in the snapshot.
+`health.Addons` is one more check value in `internal/health`: blocking, no call of its own, it reads the add-ons of the snapshot.
 
 | Target add-on | Outcome |
 |---|---|
 | `ACTIVE` | `Pass` |
-| `DEGRADED`, `UPDATE_FAILED`, `CREATE_FAILED` | `Warn`: "vpc-cni is DEGRADED (InsufficientNumberOfReplicas); the update will try to repair it" |
-| `DELETING`, `DELETE_FAILED` | `Fail` |
-| Not `Collected` | `Unreadable` |
+| `DEGRADED`, `UPDATE_FAILED`, `CREATE_FAILED`, `DELETE_FAILED` | `Warn`: "vpc-cni is DEGRADED (InsufficientNumberOfReplicas); the update will try to repair it" |
+| `DELETING` | `Fail` |
 
-This replaces the raw log line of the old command (`health_check.go:43`, trace `addon-update-degraded`). `--yes` accepts the warning and the result records it.
+The old gate let all four failed states through so that a broken add-on can be repaired, and refused `DELETING` (`health_check.go:34-45`). The warning replaces its raw log line (trace `addon-update-degraded`). An add-on that the snapshot could not read never reaches the check: the plan has an `Unread` blocker for it.
 
-Two changes that phase 3 has to take:
+Phase 3's `health.Run` adds the `Kubernetes` access result only when a check of the set needs Kubernetes. A scale-up and an add-on update therefore ask nothing about Kubernetes access. That is a line for phase 3's change log, not a request.
 
-1. `health.Run` appends the `Kubernetes` access result only when a check in the set has `Needs.Kube`. A scale-up and an add-on update then ask nothing about Kubernetes access.
-2. `health.Addons` joins the package.
-
-## 4. The batch
+## 4. Phases, the batch, and rolls
 
 ### One phase
 
-Every phase runs through one unexported function. A phase of an upgrade is a batch of one.
-
 ```go
-// runBatch runs the steps of one phase and returns one result per step.
-func (r *run) runBatch(ctx context.Context, cp *ClusterPlan, ph Phase) []StepResult
+// runPhase runs the steps of one phase and returns one result per step.
+func (r *runner) runPhase(ctx context.Context, cp *ClusterPlan, ph Phase) ([]StepResult, error)
 ```
 
-The order, with the phase state of section 7 in brackets:
+The order:
 
-1. **Read** [`Checking`]. One snapshot of the whole cluster. The first phase of an operation uses the snapshot that `Preparing` holds, unless `Preparing` waited for an insights refresh after it.
-2. **Busy rule** [`Checking`]. A refusal ends the phase as `Blocked`.
-3. **Recheck** [`Checking`]. Derive each step again from the snapshot. A step that is now done becomes `Skip`. A step whose target is now changing becomes `Attach`.
-4. **Gate** [`Checking`]. For a phase that rolls nodes or scales down: the check set, with the targets of the phase. It is skipped in the first phase when `Preparing` ran it and nothing came between (phase 3, section 4, rule 3). The pre-phase table of phase 3 decides.
-5. **Checkpoint**. Pause, stop, and the per-phase confirmation of an interactive upgrade happen here (section 7).
-6. **Baseline** [`Submitting`]. For a roll phase with verification: `health.TakeBaseline`, once, right before the first submit.
-7. **Submit** [`Submitting`]. For each step with `Run`, in order: one fresh describe of the target, then the update request. For each step with `Attach`: nothing.
-8. **Wait** [`Waiting`]. All accepted and attached steps together.
-9. **Confirm** [`Waiting`]. The confirm read of each step whose wait succeeded.
-10. **Verify** [`Verifying`]. For a roll phase.
+1. **Read.** One snapshot of the whole cluster. The first phase uses the snapshot of the plan when nothing waited since: no person answered, no checkpoint waited, no insights refresh ran.
+2. **Recheck.** Derive the phase's steps again from the snapshot.
+3. **Nothing to do.** No step with `Submit`, `Attach`, or `Verify`: the phase is skipped. The busy rule does not run.
+4. **Busy rule**, with the phase's steps as "ours".
+5. **Gate**, for a phase that rolls nodes or scales down, with the phase's `Submit` steps as targets, by the pre-phase table of phase 3. In a serial phase it runs before each step. In the first phase it is the gate of the plan when nothing waited since.
+6. **Checkpoint** (section 7). When it waited, go back to step 1.
+7. **Run the steps**: as one batch, or one after another.
+
+A batch:
+
+1. **Baseline**, for a roll with verification: `health.TakeBaseline`, once. It is taken after the health checks, as the old command did (`actions_update.go:320-327`); here that is after the whole gate, right before the first submit.
+2. **Submit** each `Submit` step in order: one fresh describe of the target, then the request.
+3. **Wait together** for every accepted and attached step.
+4. **Confirm** each step whose wait succeeded.
+5. **Verify**, for a roll.
+
+A serial phase runs the same five for each step alone: the step's read is its fresh describe, and for a nodegroup the gate (step 5 above) and the baseline come before its submit. With `StopOnFailure`, the first step that does not end `Succeeded` ends the phase, and the later steps are `NotAttempted`.
+
+"Fresh" means since the gate's read. Two submits of one batch need no cluster read between them; each has its own describe of its own target.
 
 ### Submit
 
-The fresh describe in step 7 is the read the request is built from. It is the rule "a mutation re-reads what it is about to change".
-
 | The fresh describe shows | Result |
 |---|---|
-| The status the step was planned on | Submit |
-| A nodegroup that is now `UPDATING` | No request. `nodegroup update`: `Skipped` with `AlreadyUpdating`. Upgrade: the step becomes `Attach`. |
-| A nodegroup whose Kubernetes version differs from the step's `From` | No request. `Failed`: "ng-a changed to 1.33 since the plan". |
+| The state the step was planned on | Send the request |
+| The target in flight, in a standalone command | `Busy` (section 3). No request. |
+| The target in flight, in an engine | The step becomes `Attach` |
+| A nodegroup whose Kubernetes version is not the step's `From` | `Failed`: "ng-a changed to 1.33 since the plan". No request. |
 | The read fails | `Failed` with the read failure |
-
-The old command read the nodegroup as `UPDATING` in this describe and sent the roll anyway. EKS refused it (trace `nodegroup-update-changed-under-the-gate`, exit 4). The new command acts on its last read. Contract edit 4.
 
 `StartNodegroupRoll` is ported frozen from `version_update.go:86-105`:
 
@@ -655,53 +593,59 @@ The old command read the nodegroup as `UPDATING` in this describe and sent the r
 func StartNodegroupRoll(ctx context.Context, c *awsx.Clients, t Target, nodegroup, version string, force bool) (updateID string, err error)
 ```
 
-The request carries `clusterName`, `nodegroupName`, `version`, and `force` only when true. It carries no `releaseVersion` and no launch template, as the traces show: `{"clientRequestToken":"token-1","version":"1.32"}`. The SDK sets the idempotency token once per call, and the `Mutate` retry policy reuses it. Trace `nodegroup-update-lost-response` shows two requests with one token and one update.
+The request carries the version, and `force` only when true. It carries no release version and no launch template (trace `nodegroup-update-yes`: `{"clientRequestToken":"token-1","version":"1.32"}`). The SDK sets the token once per call and the `Mutate` policy reuses it for the retries (`TestStartNodegroupRoll_RetriesKeepOneToken`, `TestStartNodegroupRoll_NewTokenPerCall`; trace `nodegroup-update-lost-response`).
 
-| Submit outcome | Result | Next step |
+| Submit outcome | Step | Then |
 |---|---|---|
-| Accepted with an update ID | `Started` | Submit the next step |
-| Accepted with no update ID | `Started`; the wait is `WaitSettled` | Submit the next step |
-| Refused or failed | `Failed` with the failure | Submit the next step |
-| The context ended before the request | `NotAttempted` | Stop: every later step is `NotAttempted` |
+| Accepted with an update ID | `Started` | The next step |
+| Accepted with no update ID | `InProgress`, `NotMonitored` | The next step |
+| Refused or failed | `Failed` | The next step, unless the phase has `StopOnFailure` |
+| The context ended before the request | `NotAttempted` | Stop; the later steps are `NotAttempted` |
 
-A batch goes on after a submit failure. The old command did (`actions_update.go:965-973`), and so did `addon update --all` (`service.go:549-562`). A batch of one makes the question moot for the upgrade engine: its next phase does not start after a failed step.
-
-`Accepted(phase)` returns one row per step as soon as step 7 ends: the target with its update ID or its error. With `--no-wait` the batch ends there. Each accepted step is `Started`, the run status is `Started`, and nothing is waited for or verified.
+A batch goes on after a submit failure, as the old command did (`actions_update.go:965-973`). With `--no-wait` the phase ends after the submits: each accepted step is `Started`, an `Attach` step is `InProgress` with no failure, and nothing is waited for or verified.
 
 ### Wait together
 
-One ticker for the phase. On each tick every unsettled step polls at once (`fanout.ForEach`, limit the number of steps). A step with an update ID uses `WaitUpdate`. An attached step, and a step with no ID, uses `WaitSettled`.
+One ticker for the batch. On each tick every unsettled step polls at once (`fanout.ForEach`).
 
 | Wait outcome | Step status | Failure reason |
 |---|---|---|
-| `nil` and the confirm holds | `Succeeded` | |
-| `*UpdateError`, status `Failed` | `Failed` | `UpdateFailed` |
-| `*UpdateError`, status `Cancelled` | `Cancelled` | `UpdateCancelled` |
-| `*SettleError` | `Failed` | `UpdateFailed` |
+| `nil`, and the confirm holds | `Succeeded` | |
+| `*UpdateError`, `Failed` | `Failed` | `UpdateFailed` |
+| `*UpdateError`, `Cancelled` | `Cancelled` | `UpdateCancelled` |
+| An error from `done` | `Failed` | `UpdateFailed` |
 | `*UnobservedError` | `InProgress` | `NotMonitored` |
-| The deadline passed | `InProgress` | `Timeout` |
+| The wait deadline passed | `InProgress` | `Timeout` |
 | Interrupted | `InProgress` | `Interrupted` |
 
-One step that ends does not stop the wait for the others. A permanent poll error settles only its own step (`monitor.go:212-218`).
+One step that ends does not stop the wait for the others, and a permanent poll error settles only its own step (`monitor.go:212-218`).
 
 ### Verification
 
-For a roll phase, after the wait.
-
 | Condition | Verification |
 |---|---|
-| `--skip-verify`, `--no-wait`, or no step was started or attached | None |
-| Any started step is not `Succeeded` | None. The old command verified only when the monitor returned no error (`actions_update.go:428`). A failed roll leaves Pending pods by design, and reporting them as a second problem hides the first. |
+| `--skip-verify`, `--no-wait`, or nothing was started or attached | None |
+| Any started step of the batch is not `Succeeded` | None. The old command verified only on a clean monitor (`actions_update.go:428`). |
 | The context ended | None |
-| Otherwise | `health.Verify(nodegroups, baseline, wait)` over every step that succeeded, against the one baseline of the batch |
+| Otherwise | `health.Verify(nodegroups, baseline, wait)` over the steps that succeeded |
 
-An attached step has no baseline for its own roll, because the roll began before this run. In a batch of one that was attached, `TakeBaseline` is not called, `Baseline.Taken` is false, and `NodesReady` and `NewPendingPods` are `Skipped`. `NodegroupActive` still runs. This is the old `skipAttachedPreroll` (`nodegroups.go`).
+An attached roll and a `Verify` step have no baseline of their own roll, since it began before this run. `Baseline.Taken` is false, so `NodesReady` and `NewPendingPods` are `Skipped` and `NodegroupActive` runs (`TestUpgradeNodegroups_VerifiesAttachedRoll`). `health.VerifyExit` gives 5 for an issue and 4 for a verification that could not read.
 
-`health.VerifyExit` gives the code: 5 for an issue, 4 for a verification that could not read.
+### The `Verify` action
+
+A nodegroup that is already at the goal version but is `UPDATING`, `CREATING`, or not `ACTIVE` gets a `Verify` step with the reason `Unsettled`. The step sends nothing and runs no gate. It waits with `WaitSettled` when the nodegroup is changing, then runs the verification with no baseline.
+
+| Outcome | Step | Exit |
+|---|---|---|
+| `ACTIVE` | `Succeeded` | 0 |
+| Settled and not `ACTIVE` | `Failed`, with the `NodegroupActive` issue | 5 |
+| The nodegroup cannot be read | `Failed`, with the failure | 4 |
+
+`Skip` would hide a degraded nodegroup, and `Submit` would gate it or roll it. The old engine had this case in both engines and in the catch-up hop (`nodegroups.go:127-141`, `plan.go:260-268`; `TestResume_DegradedNodegroupAtTargetIsVerifiedAgain`, `TestResume_UpdatingNodegroupAtTargetIsAttachedAndVerified`, `TestResume_MultiHopVerifiesDegradedNodegroupBeforeTheControlPlane`, `TestRollbackResume_DegradedNodegroupAtTargetStopsTheControlPlane`).
 
 ### The roll plan
 
-`DecideAMIUpdate` is ported frozen from `ami_update.go:46-76`, as a pure function over the snapshot:
+`DecideAMIUpdate` is ported from `ami_update.go:46-76` as a pure function over the snapshot, less one row.
 
 ```go
 type RollDecision struct {
@@ -709,113 +653,128 @@ type RollDecision struct {
 	Reason Reason
 }
 
-// DecideAMIUpdate says what a patch roll does with one nodegroup.
-func DecideAMIUpdate(ng fleet.Nodegroup, force, reroll bool) RollDecision
+func DecideAMIUpdate(ng fleet.Nodegroup, reroll bool) RollDecision
 ```
 
 | # | Condition, first match | Action | Reason |
 |---|---|---|---|
-| 1 | AMI type `CUSTOM`, with `--force` too | `Manual` | `CustomAMI` |
-| 2 | Status `UPDATING` | `Skip` | `AlreadyUpdating` |
-| 3 | `--force` | `Run` | `Forced` |
-| 4 | The current or the latest AMI is unknown | `Run` | `AMIUnknown` |
-| 5 | Current equals latest, with `--reroll` | `Run` | `Reroll` |
-| 6 | Current equals latest | `Skip` | `AlreadyLatest` |
-| 7 | Otherwise | `Run` | `AMIOutdated` |
+| 1 | AMI type `CUSTOM` | `Manual` | `CustomAMI` |
+| 2 | Status `UPDATING` | `Skip` in the plan, with a `Busy` failure, so a dry run exits 4; the result row is `Busy` (section 3) | `InFlight` |
+| 3 | The current or the latest AMI is unknown | `Submit` | `AMIUnknown` |
+| 4 | Current equals latest, with `--reroll` | `Submit` | `Reroll` |
+| 5 | Current equals latest | `Skip` | `AlreadyLatest` |
+| 6 | Otherwise | `Submit` | `AMIOutdated` |
 
-Rows 3 and 4 keep two old behaviours that deserve a second look, and section 14 asks about the first. `--force` rolls a nodegroup that is already on the latest AMI. A nodegroup whose AMI could not be read is rolled.
+The old row "`--force`: roll, whatever the AMI" is gone (owner decision D5). `--force` means what the contract says: go past drain blockers. The frozen test's row for it changes. The old real run with `--reroll` skipped the AMI lookup (`ami_update.go:57`); the snapshot now always has the AMI, so the plan can say `Reroll` or `AMIOutdated`.
 
-One change in how the table is fed: the old real run with `--reroll` or `--force` skipped the AMI lookup and always landed on row 3 or 4 (`ami_update.go:57`). The snapshot now always has the AMI, so `--reroll` lands on row 5 or 7 and the plan can say which. The action is `Run` either way.
-
-What each flag does to a roll:
-
-| Flag | Effect |
+| Flag | Effect on a roll |
 |---|---|
-| `--reroll` | Row 5: roll a nodegroup that is on the latest AMI. PDBs are honoured. |
-| `--force` | Row 3. The `DrainBlockers` check becomes a warning (phase 3). The request carries `force: true`, so EKS evicts past PDBs. |
-| `--no-wait` | Stop after the submits. |
-| `--skip-verify` | No baseline and no verification. |
-| `--require-healthy` | Any gate warning blocks. |
+| `--reroll` | Row 4. PDBs are honoured. |
+| `--force` | The `DrainBlockers` check becomes a warning (phase 3). The request carries `force: true`. |
+| `--no-wait` | Stop after the submits |
+| `--skip-verify` | No baseline and no verification |
+| `--require-healthy` | Any gate warning blocks |
 | `--skip-health-check` | No gate. The busy rule still applies. |
 
-Targets: no positional and no `-f` means every nodegroup. Positionals are exact names, and one that does not exist is an error that lists the close matches. `-f name=web-*` selects by pattern; the command then lists the matches and asks, or needs `--yes` (`CONTRACT.md`, "Targets").
+Targets: no positional and no `-f` means every nodegroup. A positional is an exact name. `-f name=web-*` selects by pattern, and the confirmation question lists the matches.
 
-### One exit code for mixed outcomes
+### One exit code
 
-Each step result has a code. The run takes the highest, except that an interrupt is always 1.
+One rule for every command (owner decision D6). Fleet mode pools the steps of all its clusters. In three moves:
+
+1. Give each step its code from the first table, and each failure that belongs to no step its code from the second.
+2. Partial failure, for independent targets only: the clusters of a fleet, the targets of a multi-target `nodegroup update`, and the add-ons of `addon update --all`. When at least one step has code 1 and at least one step is `Succeeded` or `Started`, the steps with code 1 count as 4. The move does not apply to `cluster upgrade` and `cluster rollback`: their phases are a sequence, and a phase that fails has failed the operation, whatever the earlier phases did.
+3. The run exits with the highest code. An interrupt is always 1.
 
 | Step result | Code |
 |---|---|
-| `Succeeded`, `Skipped`, `Started` | 0 |
-| `Failed`, `Cancelled`, and no step of the run succeeded | 1 |
-| `Failed`, `Cancelled`, and at least one step of the run succeeded | 4 |
+| `Succeeded`, `Skipped`, `Started`; `InProgress` from an attach under `--no-wait` | 0 |
+| `Failed`, `Cancelled`: the update ended badly, EKS refused the request, or the fresh read failed | 1 |
+| `Blocked`: the busy rule, the gate, or a plan blocker stopped it | 3; 4 when the gate or the plan could not read |
 | `InProgress` with `Timeout` or `NotMonitored` | 4 |
-| `InProgress` with `Interrupted`, or `NotAttempted` after an interrupt | 1, and it wins |
-| `Blocked` | 3, or 4 when the gate could not read |
-| Verification issue | 5 |
-| Verification unreadable, or any failure in the run | 4 |
+| `Busy` | 4 |
+| `Failed` from a verification issue; an add-on that is updated and not healthy | 5 |
+| `NotAttempted` | None. The step that stopped the run has the code. |
 
-The second and third rows are one rule for every command: all failed is an error, some failed is a partial failure. The old commands disagreed. `addon update --all` exited 4 for a partial failure, `nodegroup update` exited 1 (`updateExit`, `actions_update.go:475-494`), and a submit that EKS refused exited 4 in `nodegroup update` and 1 everywhere else. Contract edit 5.
+| Not a step | Code |
+|---|---|
+| A failure in the plan, the gate (`Verdict.Failures`), a region of the sweep, or the verification reads | 4 |
+| A question answered no; the hook error of section 7 | 1 |
+| The read budget ran out before anything was submitted | 1 when nothing was read, else 4 |
+| Interrupt | 1, whatever else happened |
+
+A failed step's own failure does not also count under "a failure in the plan". Move 2 turns on a change that was made or is running: a `Skipped` step changed nothing and does not make a failure partial.
+
+The table a test copies:
+
+| Steps of the run | Exit |
+|---|---|
+| All `Succeeded` | 0 |
+| All `Started` (`--no-wait`) | 0 |
+| All attempted steps `Failed` | 1 |
+| Independent targets: one `Failed`, one `Succeeded` | 4 |
+| Independent targets: one `Failed`, one `Started` | 4 |
+| `cluster upgrade`: the control plane `Succeeded`, an add-on `Failed` | 1 |
+| `cluster upgrade`: the control plane and the add-ons `Succeeded`, a nodegroup `Failed` | 1 |
+| `cluster rollback`: the nodegroups and the add-ons `Succeeded`, the control plane `Failed` | 1 |
+| One `Failed`, one `Skipped` as already current | 1 |
+| One `Failed`, one `Blocked` | 3 |
+| Independent targets: one `Failed`, one `Blocked`, one `Succeeded` | 4 |
+| One verification issue, one `Failed` | 5 |
+| One verification issue, the rest `Succeeded` | 5 |
+| One `Busy`, the rest `Succeeded` | 4 |
+| One `InProgress` with `Timeout`, the rest `Succeeded` | 4 |
+| One `Blocked`, the rest `Succeeded` | 3 |
+| All `Succeeded`, and a gate read that `--yes` went past | 4 |
+| Any of the rows above, interrupted | 1 |
+
+A failed upgrade or rollback exits 1, as the old binary does (traces `cluster-upgrade-addon-failed`, `cluster-upgrade-nodegroup-failed`, `cluster-rollback-failed`). Its result still lists the phases that completed, and the summary names the command that goes on from there. Against the old binary the rule changes two codes. A multi-target `nodegroup update` with one failed roll exited 1 and exits 4, as `addon update --all` and the fleet already did (`fleet.go:887-888`). A roll that EKS refuses, with nothing else done, exited 4 in `nodegroup update` and exits 1, as in the other commands.
 
 ### Fleet mode
 
-`nodegroup update --all-clusters` is one operation over many clusters.
+1. **Discover.** A region sweep of `ListClusters` under `--timeout`. A default sweep skips the regions it cannot reach. A region that fails is a failure. No listable region is an error, exit 1.
+2. **Plan.** One `ClusterPlan` per cluster, with bounded fan-out, in sweep order. A dry run stops here.
+3. **Confirm.** One question for the fleet, with every cluster's decision above it. The old prompt came before any cluster was read (`fleet.go:296-304`).
+4. **Run.** One cluster after another. Each has its own budgets (section 8). Before each cluster there is a checkpoint, and each cluster's plan is computed again when its turn comes, because the clusters before it took time. `Diff` against the confirmed plan decides: `--yes` accepts an ask, a person is asked again, a refuse marks that cluster's steps `Blocked`.
 
-1. **Discover.** A region sweep of `ListClusters` with the sweep clients, under `--timeout`. A default sweep skips the regions it cannot reach (`Plan.SkippedRegions`). A region that fails is a failure, exit 4. No listable region is an error, exit 1.
-2. **Plan.** One `ClusterPlan` per cluster, built with bounded fan-out. The clusters stay in sweep order: regions in input order, clusters in `ListClusters` order. A dry run stops here.
-3. **Confirm.** One question for the fleet, with the per-cluster decisions above it. The old prompt came before any cluster was read (`fleet.go:296-304`).
-4. **Run.** One cluster after another. Each cluster gets its own wait deadline (section 8). Each cluster is planned again when its turn comes, because time passed, and compared with the plan that was confirmed. The revalidation table applies: `--yes` accepts an ask, a person is asked again, a refuse marks that cluster `Refused`.
+A cluster that is refused, fails, times out, or fails verification does not stop the next one. An interrupt, or a stop from the checkpoint, does: the steps of every later cluster are `NotAttempted`.
 
-| Cluster outcome | Effect on the rest |
-|---|---|
-| `Refused` (busy, gate, changed roll target), `Failed`, `Partial`, `TimedOut`, `VerifyFailed`, `Incomplete` | None. The next cluster runs. |
-| `Interrupted`, or the parent context ended | Stop. Every later cluster is `NotAttempted`. |
-| `Stopped` (`Stop()` was called) | Stop after the current cluster. Later clusters are `NotAttempted`. |
-
-The exit code is the highest cluster code, and an interrupt is 1. The old `fleetExit` took the numeric maximum over 5, 4, 3, 2, 1 (`fleet.go:858-905`), which is the same order. The drift table in `REWRITE.md` asks for a test of each mixed pair.
-
-Fleet mode ignores `REFRESH_CLUSTER` and the active context. `-c`, positionals, and `--kube-context` are usage errors with `--all-clusters`. A kubeconfig context is matched for each cluster by its endpoint.
-
-### A batch of one in the upgrade
-
-Each nodegroup of an upgrade or a rollback is its own phase, so the list above runs once per nodegroup: a fresh read, the busy rule, the gate with that nodegroup as the target, a baseline, one submit, one wait, one verification. The old engine did the same in one loop (`nodegroups.go`, `UpgradeNodegroups`). A nodegroup that fails stops the run, and the later nodegroups are `NotAttempted`.
+Fleet mode ignores `REFRESH_CLUSTER` and the active context. A kubeconfig context is matched for each cluster by its endpoint.
 
 ## 5. Add-on update and scale
 
-Both are one phase on the machinery of section 4.
-
 ### `addon update`
-
-The plan:
 
 | Input | Steps |
 |---|---|
 | One or more names | One step per name. A name that is not installed is an error that lists the close matches. |
 | `--all` | One step per installed add-on, less `--skip-addon`, in dependency order |
-| `--version` | Only with exactly one name. The step's `To` is that version. |
+| `--version` | Only with exactly one name |
 
-Dependency order is always on for `--all` (contract change 7). The table and the sort are ported from `addon_dependencies.go:13-101`: Kahn's algorithm, stable by list position, an edge to an add-on that is not installed or is skipped is dropped. `kube-proxy`, `coredns`, and `aws-guardduty-agent` follow `vpc-cni`. The three CSI drivers follow `vpc-cni` and `coredns`. `amazon-cloudwatch-observability` and `adot` follow `coredns`.
+The phase is `Serial`, without `StopOnFailure`: a failed add-on does not stop the rest, and its dependents are still attempted (`service.go:549-562`; trace `addon-update-all-partial-failure`, both updates sent).
 
-The step of one add-on, from the snapshot with `Need.LatestAddons`. This is the old `versionGuard` (`service.go:403-434`):
+Dependency order is always on for `--all`. The table and the sort are ported from `addon_dependencies.go:13-101`.
 
-| Condition, first match | Action | Reason |
-|---|---|---|
-| `--version` names a version that is not compatible with the cluster version | The plan fails with a usage-style error, exit 1, that lists the supported versions (`health_check.go:151`) | |
-| The latest compatible version could not be read | `Blocked`, with an `Unread` blocker | |
-| `ACTIVE` at the target, or newer than the latest with no `--version` | `Skip` | `AlreadyAtTarget` |
-| `UPDATING` or `CREATING` | `Attach` | `AlreadyUpdating` |
-| `DEGRADED` or a failed status | `Run` | `Repair` |
-| Otherwise | `Run` | `VersionBehind` |
+The step of one add-on is the old `versionGuard` (`service.go:403-434`, `TestUpdate_VersionGuardHonorsStatus`). "At target" means the installed version equals the target, or is newer than it when the target was resolved as the latest.
 
-A `--version` older than the installed one runs, with the notice "downgrading vpc-cni from X to Y" (`service.go:430`).
+| # | Condition, first match | Action | Reason |
+|---|---|---|---|
+| 1 | `--version` names a version the cluster's Kubernetes version cannot run | The plan fails, exit 1, with the supported versions (`health_check.go:151`) | |
+| 2 | The latest compatible version could not be read | `Blocked`, an `Unread` blocker | |
+| 3 | At target and `ACTIVE` | `Skip` | `AlreadyAtTarget` |
+| 4 | At target and `UPDATING` or `CREATING` | `Attach` | `InFlight` |
+| 5 | Newer than the latest, no `--version`, any other status | `Skip`, with the notice "vpc-cni is DEGRADED at X, newer than the latest catalogue version Y; not re-applied" | `NewerThanLatest` |
+| 6 | At target, in any other status (`DEGRADED`, a failed state) | `Submit` at the same version | `Repair` |
+| 7 | `UPDATING`, `CREATING`, or `DELETING`, not at target | `Skip` in the plan, with a `Busy` failure; the result row is `Busy` (section 3) | `InFlight` |
+| 8 | Otherwise | `Submit` | `VersionBehind` |
 
-The request is `UpdateAddon` with `addonVersion` and the token. It sets no `resolveConflicts`, no configuration values, and no service account role, as the old one (`service.go:353-363`).
+Row 5 comes before row 6 so that a degraded add-on that is ahead of the catalogue is never downgraded by a repair (`service.go:418-424`). A `--version` older than the installed one is row 8, with the notice "downgrading vpc-cni from X to Y".
 
-The phase submits in dependency order and waits for each add-on before it submits the next. That is a batch per add-on inside one phase: `runBatch` takes a `serial` flag that turns steps 7 to 9 into a loop. A failed add-on does not stop the rest (`service.go:549-562`). Its dependents are still attempted.
+An attached add-on (row 4) waits with `WaitSettled`. A failed wait fails the step. A settled version other than the target fails the step: "addon vpc-cni settled at X, not Y" (`service.go:450-458`). In neither case does the command send an update of its own (trace `addon-update-attach-failed`: no mutation, exit 1).
 
-With `--no-wait` the phase submits every add-on in dependency order and returns. The old default did the same (trace `addon-update-all`).
+The request is `UpdateAddon` with the version and the token, and nothing else (`service.go:353-363`).
 
-`--wait-timeout` is the limit for each add-on (`CONTRACT.md`: "5m for each add-on"). Section 8.
+With `--no-wait` every add-on is submitted in dependency order with no wait between (trace `addon-update-all`). `--wait-timeout` bounds each add-on on its own.
 
 ### `nodegroup scale`
 
@@ -824,460 +783,246 @@ With `--no-wait` the phase submits every add-on in dependency order and returns.
 | Input | Error |
 |---|---|
 | None of `--desired`, `--min`, `--max` | "give at least one of --desired, --min, --max" |
-| A negative size | "--min must be 0 or more" |
-| `--min` above `--max` | "--min 5 is above --max 2" |
-| `--desired` outside `--min` and `--max`, when both sides of the comparison were given | "--desired 9 is above --max 3" |
+| A negative size | "--min must be 0 or more" (the old command checked this, `actions_scale.go:632-642`) |
+| `--min` above `--max`; `--desired` outside a bound that was given | "--min 5 is above --max 2" |
 
-The plan, after the read, fills the sizes that were not given from the nodegroup and checks again:
+The plan fills the sizes that were not given from the nodegroup and checks the result:
 
-| Check against the nodegroup | Result |
+| Check | Result |
 |---|---|
-| The resulting min is above the resulting max | The plan fails, exit 1, no request |
-| The resulting desired is outside the resulting min and max | The plan fails, exit 1, no request |
-| Every resulting size equals the current one | The step is `Skip` with `NoChange`; nothing is sent |
+| `--min` or `--max` given without `--desired`, and the current desired size falls outside | The plan fails, exit 1: "--max 2 is below the current desired size 3; pass --desired too". The old command had this check and this hint (`CheckScaleBounds`, `nodegroup_scale.go:454-469`; `TestScale_MaxOnlyBelowCurrentFails`). |
+| The resulting min is above the resulting max, or the resulting desired is outside them | The plan fails, exit 1, no request. New: the old command sent these and EKS refused (traces `nodegroup-scale-above-max`, `nodegroup-scale-min-above-max`). |
+| Every resulting size equals the current one | `Skip` with `NoChange`. New: the old command sent the request. |
 
-The old command checked none of this and let EKS refuse (traces `nodegroup-scale-above-max` and `nodegroup-scale-min-above-max`: `InvalidParameterException`). It also sent a request that changed nothing. Contract edit 3.
-
-The request is `UpdateNodegroupConfig` with a `scalingConfig` that holds only the sizes the user gave. Trace `nodegroup-scale-yes` shows `{"scalingConfig":{"desiredSize":3}}`. The filled values are for validation and for the plan's `after`, not for the request.
-
-The gate follows section 3: a scale-down runs `Nodes` and `ScaleDownBlockers(nodegroup, current - desired)`. `--force` goes past a blocker with a warning. Any other scale runs `Quotas`. The instance-type availability notice stays for a scale-up.
-
-The wait is `WaitUpdate`, then the confirm read of section 2.
+The request is `UpdateNodegroupConfig` with a `scalingConfig` of only the sizes the user gave (trace `nodegroup-scale-yes`: `{"scalingConfig":{"desiredSize":3}}`). The gate follows section 3, and `--force` goes past a scale-down blocker with a warning. The wait is `WaitUpdate`, then the scale confirm of section 2.
 
 ## 6. The upgrade engine and rollback
 
-### What is ported as it is
+### Ported as it is
 
-| Part | Source | Note |
-|---|---|---|
-| Hop expansion, the `maxHops` cap, the same-version catch-up hop | `types.go:184-211`, `plan.go:101-107,163-187` | Frozen |
-| Step derivation for the control plane, add-ons, and nodegroups | `plan.go:542-679` | Frozen; the output is `Step` values with typed actions and reasons |
-| The kubelet skew rule (3 minors, every nodegroup counts) | `plan.go:393-417` | It becomes the `VersionSkew` check of phase 3 with the hop target |
-| "Before" and "after" add-ons by compatibility with the hop target | `plan.go:571-629` | Frozen |
-| `--only`, `-n`, `--skip-addon`, `--skip-nodegroup` scope rules and errors | `scope.go` | Frozen, except that `--skip-nodegroup` is an exact name (contract change 3) |
-| The insights refresh: reuse within 10 minutes, a 5 minute wait, the start-failure cases | `insights.go:24-150` | Frozen; it polls through `WaitOptions` |
-| The insights verdict | `insights.go:174-213` | It becomes the `Insights` check of phase 3 with `ForVersion` |
-| The rollback planner: the window, the 2 hour slack, eligibility, the step order | `rollback.go:359-636` | Frozen; the window comes from `fleet.RollbackWindow` |
-| The rollback request: `force` from `--skip-insights-check`, `rollbackConfig.timeoutMinutes` | `rollback.go:789-795` | Frozen (trace `cluster-rollback-force-and-timeout`) |
-| Resume by planning again from live state | `engine.go` | Frozen. No state file. |
-| Attach to an in-flight change of the phase's own target | `controlplane.go`, `nodegroups.go`, `addons.go` | Frozen, through `WaitSettled` |
+| Part | Source |
+|---|---|
+| Hop expansion, the `maxHops` cap, the same-version catch-up hop | `types.go:184-211`, `plan.go:101-107,163-187` |
+| Step derivation for the control plane, add-ons, and nodegroups; the output is `Step` values | `plan.go:542-679` |
+| The kubelet skew rule: 3 minors, every nodegroup counts, also skipped ones | `plan.go:393-417`; it becomes the `VersionSkew` check with the hop target |
+| "Before" and "after" add-ons by compatibility with the hop target | `plan.go:571-629` |
+| `--only` and `-n` rules and errors | `scope.go` |
+| The insights refresh: reuse within 10 minutes, a 5 minute wait, the start-failure cases | `insights.go:24-150` |
+| The insights verdict | `insights.go:174-213`; it becomes the `Insights` check with `ForVersion` |
+| The rollback planner: eligibility, the step order, the request | `rollback.go:359-636,789-795` |
+| Resume by planning again from live state; no state file | `engine.go` |
+| Add-on steps stop the run at the first failure | `addons.go:123` |
 
 ### What changes
 
 | Old | New |
 |---|---|
-| A phase is a label string. The TUI matched phases by label prefix (`tui/live/upgrade.go:468-502`). | `PhaseID` and `StepID`. Labels are made in `view`. |
-| `ExecuteOptions` with seven hooks | No hooks. The engine calls the operation's `run` for events, questions, and checkpoints. |
-| One nodegroup phase per hop with a loop inside | One phase per nodegroup |
-| The health gate ran when the run reached each nodegroup, and nowhere before | The plan runs the gate once for every nodegroup it would roll. Each nodegroup phase runs it again. |
-| No busy check | The busy rule before every phase |
-| An attached update that failed was followed by a new one in silence | A notice first (below) |
+| A phase is a label string, and the TUI matched phases by label prefix | `PhaseRef` and `StepRef`. Labels are made in `view`. |
+| `ExecuteOptions` with seven hooks | The three hooks of section 7 |
+| The health gate ran when the run reached each nodegroup | The plan runs the gate once for every nodegroup it would roll. Each nodegroup step runs it again. |
+| No busy check | The cluster row of the busy rule |
+| A control-plane update that was attached to and did not reach the target was followed by a new one in silence | A notice first |
 | A gate refusal was a plain error, exit 1 | `Blocked`, exit 3, or 4 when the gate could not read |
-| Verification through an optional hook | Always, unless `--skip-verify`; issues exit 5, an unreadable one exits 4 |
-| `cluster rollback` refused any changed step | It asks, by the revalidation table |
-| `cluster rollback` interrupted before it starts reports `Failed` | `Interrupted` (`CONTRACT.md`) |
+| `cluster rollback` refused any changed step | It asks, by the table of section 1; a changed target still refuses |
+| `cluster rollback` interrupted before it starts reports `Failed` | `Interrupted` |
 
-### Phases of an upgrade
+### Phases
 
-For each hop, in order:
+An upgrade, for each hop:
 
-| Phase | ID | Steps | Before the submit |
-|---|---|---|---|
-| Control plane | `1.33/control-plane` | One | The busy rule. The readiness of the hop: insights refresh (unless `--skip-insights-check`), the `Insights` and `VersionSkew` checks. |
-| Add-ons the new control plane cannot run | `1.33/addons-before` | One per add-on, dependency order, serial | The busy rule |
-| Each nodegroup | `1.33/nodegroup/<name>` | One | The busy rule, the gate, the baseline |
-| The other add-ons | `1.33/addons-after` | One per add-on, dependency order, serial | The busy rule |
+| Phase | Steps | Before the submit |
+|---|---|---|
+| `ControlPlane` | One | The readiness of the hop: the insights refresh (unless `--skip-insights-check`), the `Insights` and `VersionSkew` checks |
+| `AddonsBefore`: the add-ons the new control plane cannot run | Serial, dependency order, `StopOnFailure` | |
+| `Nodegroups` | Serial, listing order, `StopOnFailure` | Per step: the gate and the baseline |
+| `AddonsAfter` | Serial, dependency order, `StopOnFailure` | |
 
-A catch-up hop has no control-plane phase to run. A phase with no step that has `Run` or `Attach` is `Skipped`.
+A rollback:
 
-The readiness of a hop is judged twice, as before: in the plan, and live before that hop's control plane moves (`checkHopReadiness`, `plan.go:477-518`). For the hop right after the live version the live check refreshes the insights first. Trace `cluster-upgrade-two-hops` shows the second `StartInsightsRefresh` before the second `UpdateClusterVersion`.
+| Phase | Steps | Before the submit |
+|---|---|---|
+| `Nodegroups` | Serial, `StopOnFailure` | Per step: the gate and the baseline |
+| `Addons`: the add-ons the target version cannot run | Serial, dependency order, `StopOnFailure` | |
+| `ControlPlane` | One | Every managed nodegroup in the phase read is at or below the target (`rollback.go:803`). A nodegroup above it blocks the phase. A nodegroup group that could not be read is an `Unread` blocker, exit 4. |
 
-A readiness check that blocks before a later hop ends the run as `Blocked`, exit 3, with the completed phases listed.
+Every phase begins with the read, the recheck, and the busy rule of section 4. A catch-up hop has no control-plane step to run.
 
-### Phases of a rollback
+The nodegroups of a hop are one phase, as in the old engine, and not one phase each. An interactive `cluster upgrade` therefore asks three times in trace `cluster-upgrade-prompt-yes`, as the old one: control plane, add-ons, nodegroups.
 
-| Phase | ID | Steps | Before the submit |
-|---|---|---|---|
-| Each nodegroup | `rollback/nodegroup/<name>` | One | The busy rule, the gate, the baseline |
-| Add-ons | `rollback/addons` | One per add-on that the target version cannot run, dependency order, serial | The busy rule |
-| Control plane | `rollback/control-plane` | One | The busy rule. Every managed nodegroup is at or below the target (`rollback.go:803`). |
+The readiness of a hop is judged twice, as before: in the plan, and live before that hop's control plane moves (`plan.go:477-518`; `TestExecute_PerHopReadinessBlocksLaterHop`). For the hop right after the live version the live check refreshes the insights first (trace `cluster-upgrade-two-hops`: a second `StartInsightsRefresh` before the second `UpdateClusterVersion`). A readiness check that blocks a later hop ends the run as `Blocked`, exit 3.
 
-The plan has the eligibility blockers of `rollback.go:397-431` and the `ROLLBACK_READINESS` insights of `:507-555`. `--skip-insights-check` turns an insight blocker into a notice and sets `force` on the request. No refresh is started for a rollback.
-
-### The readiness step in the plan
-
-The upgrade plan runs `health.Insights(InsightsOptions{ForVersion: hop})` and `VersionSkew` for the first hop above the live version. A `Fail` or an `Unreadable` of either is a `NotReady` or `Unread` blocker on the control-plane step. A `Warn` is a notice.
+### Insights in the plan
 
 | Run | Insights |
 |---|---|
-| Dry run | No refresh. Read what EKS has. An `ERROR` blocks. A missing or `UNKNOWN` insight is a notice. A failed read is a failure, exit 4, and does not block (`insights.go:220-259`). |
-| Real run | `StartInsightsRefresh`, wait up to 5 minutes, `ListInsights`. An empty list, `ERROR`, or `UNKNOWN` blocks. A refresh or read that fails blocks, with a failure. |
+| Dry run | No refresh. An `ERROR` blocks. A missing or `UNKNOWN` insight is a notice. A failed read is a failure, exit 4, and does not block. |
+| Real run | `StartInsightsRefresh`, a wait of up to 5 minutes, `ListInsights`. An empty list, `ERROR`, or `UNKNOWN` blocks. A refresh or read that fails blocks, with a failure. |
 | `--skip-insights-check` | No refresh, no read, a notice |
 
-The refresh comes before the block decision, so a blocked real run has sent one request (`CONTRACT.md`, last paragraph; trace `cluster-upgrade-blocked`).
+The refresh comes before the block decision, so a blocked real run has sent that one request (trace `cluster-upgrade-blocked`). A rollback reads the `ROLLBACK_READINESS` insights and starts no refresh. `--skip-insights-check` turns its insight blocker into a notice and sets `force` on the request.
 
-### Attach, and the notice when it fails
+### The rollback window
 
-| Target of the phase | State in the phase read | What the phase does |
+The planner keeps the old three cases (`rollback.go:411-419`):
+
+| Now | Result |
+|---|---|
+| Before `UpgradedAt` + 7 days | Eligible |
+| Up to 2 hours after that | Eligible, with the notice "the 7-day rollback window may have just closed; EKS decides" |
+| Later | An `Unavailable` blocker, exit 3 (trace `cluster-rollback-expired`) |
+
+`fleet.RollbackWindow` reports an open window only. The planner needs `UpgradedAt` in the second and third case too, so phase 4 adds `fleet.LastUpgrade(snap) (Rollback, bool)`, which finds the upgrade whatever the clock says, and `RollbackWindow` is built on it.
+
+### Attach in the engines
+
+| Step | State in the phase read | What happens |
 |---|---|---|
-| Control plane | `UPDATING` | `WaitSettled(want: hop)`. `Met`: the step is `Succeeded`, `Attached`. Not met: notice, then submit. |
-| Add-on | `UPDATING` or `CREATING` | `WaitSettled(want: To)`. `Met`: done. A terminal error: notice, then submit (a repair). Settled at another version: notice, then submit. |
-| Nodegroup | `UPDATING` or `CREATING` | `WaitSettled(want: hop)`. `Met`: verify with no baseline, then done. Not met and `ACTIVE`: notice, then the gate and a roll. Not met and not `ACTIVE`: the gate blocks. |
+| Control plane | `UPDATING` | `WaitSettled` to `ACTIVE`. At the goal: `Succeeded`, `Attached`. Not at the goal: a notice, then the step submits its own update (`controlplane.go`, `moveControlPlane`; trace `cluster-upgrade-attach-failed`). |
+| Add-on | `UPDATING` or `CREATING`, at any version | `WaitSettled`. A failed wait fails the step and the run; no update is sent (`addons.go:92-100`). Settled `ACTIVE` and compatible with the hop: done. Settled `ACTIVE` and not compatible: the step submits (`addons.go:102-107`, where `keep` is false). |
+| Nodegroup | `UPDATING` or `CREATING` | `WaitSettled`, then the version-first table of section 2 |
 
-The notice is a lifecycle event of kind `Notice`, never dropped, and the CLI prints it on stderr:
+The notice of the first row, on stderr:
 
 ```text
-warning: the update of the control plane that was already running did not reach 1.33 (cluster is ACTIVE at 1.32); starting a new one
+warning: the control-plane update that was already running did not reach 1.33 (the cluster is ACTIVE at 1.32); starting a new one
 ```
 
-The old engine printed "attaching to the in-flight update" and then "upgrade started" with nothing between (trace `cluster-upgrade-attach-failed`).
+The contract's row "it says that the attached update failed before it continues" covers the control plane only. Draft 1 extended it to add-ons, which the old engine never followed with an update of its own after a failure.
 
-`WaitSettled` cannot name the error of the foreign update, because it has no update ID. Looking the ID up costs `ListUpdates` and one `DescribeUpdate` per update. The engine does not do it. `Observe` does (section 7).
+The engine waits by resource status and looks up no update ID, as the old engine. The notice cannot quote the error of the foreign update.
 
 ### Flags
 
 | Flag | Effect on the plan |
 |---|---|
-| `--to` | Required. One hop per minor from the live version to it. Equal to the live version: a catch-up plan for laggards. Older: an error. |
-| `--only` | `control-plane`, `addons`, `nodegroups`, repeatable or comma-separated. A step of a part that is left out is `Manual` with `OutOfScope`. Without `control-plane` the target must equal the live version. Without `addons` the plan may span one hop only. |
-| `-n` | Exact nodegroup names. The others are `Manual` with `OutOfScope`. The skew rule still counts every nodegroup. |
-| `--skip-addon` | Exact add-on names. `Manual` with `SkippedByFlag`. An add-on that the new control plane cannot run stays a blocker. |
-| `--skip-nodegroup` | Exact nodegroup names. `Manual` with `SkippedByFlag`. |
-| `--skip-insights-check` | As above |
-| `--rollback-timeout` | `0`, or whole minutes from 2h to 168h (`rollback.go:52-60`). Validated before any call. |
+| `--to` | Required. One hop per minor. Equal to the live version: a catch-up plan. Older: an error. |
+| `--only` | A step of a part that is left out is `Manual` with `OutOfScope`. Without `control-plane` the target must equal the live version. Without `addons` the plan spans one hop, and an add-on that the new control plane cannot run blocks the control-plane step (`scope.go:122-123,181-210`). |
+| `-n` | Exact nodegroup names. The others are `Manual`. The skew rule still counts every nodegroup. |
+| `--skip-addon` | Exact names. The step is `Manual` with `SkippedByFlag`, decided before the catalogue is read (`plan.go:580-584`). A skipped add-on is never a blocker, compatible or not (trace `cluster-upgrade-skip-addon`). |
+| `--skip-nodegroup` | Exact names. `Manual`. |
+| `--rollback-timeout` | `0`, or whole minutes from 2h to 168h (`rollback.go:52-60`), validated before any call |
 
-A run that ends with `Manual` steps is `Succeeded` and says in a notice what is left, with the command that does it.
+A run that ends with `Manual` steps succeeded, and a notice says what is left and the command that does it.
 
-## 7. The operation handle
+## 7. `Run` and its hooks
 
-### Shape
-
-`REWRITE.md` describes a handle that `Start` returns at once. The assignment for this note asked whether a simpler shape would serve both front ends: a synchronous `Execute(ctx, plan, hooks)` for the CLI, wrapped by a small handle for the TUI. I looked at the evidence for each and chose a layered form of the handle.
-
-What the evidence says:
-
-- The executors want to be synchronous. The old engine is a straight loop over phases (`engine.go`, `runPhases`), and the old TUI ran it unchanged on one goroutine (`tui/live/upgrade.go:231`). Nothing in the 152 scenarios needs two executor steps at once, apart from the polls of one wait.
-- Hooks were not enough for the TUI. Around the seven hooks of `ExecuteOptions` the old TUI kept a mutex taken by every hook, a capped event log, an `answers` channel with clear-before-send, a `wake` channel with `Paused` and `StopAfter` flags, `Confirm` reused as the pause point, two sentinel errors to tell a stop from a failure, and phase matching by label prefix (`upgrade.go:36-48,177-196,333-350,468-502`). Rolls and add-on updates had no engine at all and were written a second time by hand (`roll.go:550-626`, `addons.go:182-231`). Adoption of a change started elsewhere has no plan to execute, so no hook fits it (`observed.go`).
-- A second entry point for the CLI would bring back two forks. A CLI on a synchronous `Execute` answers questions inside a callback on the executor's goroutine. The TUI answers them from another goroutine. That is two implementations of the question, of the deadline pause, and of cancel waking a prompt. The scenarios `*-prompt-interrupt` and `cluster-rollback-interrupt-before-start` show that cancel must wake a pending question in the CLI too.
-- The CLI's cost of using the handle is small: about 25 lines (below).
-
-So: one exported API, the handle. Inside it, each executor is a synchronous function that receives a `*run` and calls three methods on it: `emit`, `ask`, `checkpoint`. A unit test of an executor passes a `run` that records the calls and needs no goroutine. `Start` runs the executor on one goroutine. The handle itself is the log, the question table, and the control flags: about 300 lines.
-
-### API
+### The entry point
 
 ```go
-// Start begins a change and returns at once. The context owns the run:
-// cancelling it is an interrupt.
-func Start(ctx context.Context, d Deps, req Request, opts StartOptions) *Operation
+// Run executes the change on the caller's goroutine and returns when it
+// has ended. Cancelling ctx is an interrupt. The error is non-nil only
+// when Run could not do its job as a program: a hook returned an error, or
+// the request is invalid. A change that failed is a Result, not an error.
+func Run(ctx context.Context, d Deps, req Request, h Hooks) (Result, error)
 
-// Observe returns an operation that watches a change started elsewhere.
-// It has no controls and claims nothing.
-func Observe(ctx context.Context, d Deps, r Resource, opts ObserveOptions) *Operation
-
-type StartOptions struct {
-	// Expect is a plan that a person reviewed before this call, such as
-	// the TUI's dry run. Preparing compares its own plan with it.
-	Expect *Plan
-	// CanAsk says that a caller will answer questions. When it is false a
-	// question that the policy cannot answer refuses the run.
-	CanAsk bool
-	// ConfirmStart asks "proceed?" once before the first submit.
-	// ConfirmPhases asks before each later phase too.
-	ConfirmStart  bool
-	ConfirmPhases bool
-	Limits        Limits // section 8
-	// Nodes starts a node observer for each roll and publishes NodeProgress
-	// events.
-	Nodes bool
+type Hooks struct {
+	// Event receives every event, one call at a time. It must not block
+	// for long: the polls of a wait go through it.
+	Event func(Event)
+	// Ask asks a person and returns the answer. It returns ctx.Err() when
+	// ctx ends first, and any other error when the question could not be
+	// asked or read.
+	Ask func(ctx context.Context, q Question) (yes bool, err error)
+	// Checkpoint is called before each phase after the first and before
+	// each cluster of a fleet after the first. It may block: that is a
+	// pause. It returns when the run may go on or must stop.
+	Checkpoint func(ctx context.Context, next PhaseRef) (Checkpoint, error)
 }
 
-type ObserveOptions struct {
-	Limits Limits
-	Nodes  bool
+type Checkpoint struct {
+	Stop   bool // end the run here; nothing more is submitted
+	Waited bool // time passed in the hook; the run reads the cluster again
 }
-
-type Operation struct{ /* unexported */ }
-
-// Status returns the current state. It makes no call and is cheap enough
-// for every TUI frame.
-func (o *Operation) Status() Status
-
-// Next returns the events after the cursor and the cursor to pass next.
-// It blocks until there is one. It returns io.EOF once the log is closed
-// and read to the end, and ctx.Err() when ctx ends.
-func (o *Operation) Next(ctx context.Context, after Cursor) ([]Event, Cursor, error)
-
-// Answer answers the open question with that ID.
-func (o *Operation) Answer(id QuestionID, yes bool) error
-
-func (o *Operation) Pause() error
-func (o *Operation) Resume() error
-
-// Stop asks the operation to stop after the current phase.
-func (o *Operation) Stop() error
-
-// Accepted returns one row per step of the phase once its submits are
-// done, and nil before that.
-func (o *Operation) Accepted(phase PhaseID) []Acceptance
-
-// Done is closed at Finished.
-func (o *Operation) Done() <-chan struct{}
-
-// Result blocks until Finished. It can be called again.
-func (o *Operation) Result() Result
-
-// Controls says what the caller may do now.
-func (o *Operation) Controls() Controls
-
-type Controls struct {
-	Answer, Pause, Resume, Stop bool
-}
-
-type Acceptance struct {
-	Step     StepID
-	Resource Resource
-	UpdateID string
-	Err      error
-}
-
-var (
-	ErrStaleQuestion = errors.New("change: the question is closed")
-	ErrNoControl     = errors.New("change: the operation does not accept this control")
-)
 ```
 
-There is no `Cancel` method. The caller cancels the context it gave to `Start`.
+A nil `Event` drops events. A nil `Checkpoint` means go on. A nil `Ask` means nobody can be asked, and a question that the policy cannot answer refuses the run: "health warnings need an answer; pass --yes or --require-healthy".
+
+`Common` gains two fields that a front end sets:
 
 ```go
-type State string
+	// Expect is a plan that a person reviewed before this call. Run
+	// compares its first plan with it, by the table of section 1.
+	Expect *Plan
+	// Nodes starts a node observer for each roll (section 9).
+	Nodes bool
+```
+
+`Run` starts goroutines in three places and joins each before it goes on: the checks of one gate (`health.Run`), the polls of one tick (`fanout.ForEach`), and the observers beside a wait (`fanout.RunAlongside`). It calls `Event` under a mutex, so the front end needs no lock even while observers report. `internal/change` gets a `goleak.VerifyTestMain`.
+
+### What `Run` does
+
+1. `plan`. With `Expect`: `Diff`, and its effect.
+2. `Event(PlanReady)`. A blocked plan ends here as `Refused`; a plan with nothing to do as `NothingToDo`.
+3. At most one question before the first submit:
+
+| Gate decision | Policy | Question |
+|---|---|---|
+| `Go` | `--yes` | None |
+| `Go` | no `--yes` | `ConfirmStart`: "Roll 2 nodegroups in prod?" Every changing command asks it once (owner decision D7). |
+| `Ask` | `--yes` | None. Phase 3 turned it into `Go` with the reasons in `Accepted`. |
+| `Ask` | no `--yes` | `GateWarnings`. A yes also confirms the start. |
+
+4. After a yes from a person: back to step 1, with the plan just shown as the one to compare with.
+5. The phases in order, each by section 4. Between two phases: the `Checkpoint` hook, and with `ConfirmPhases` the question `ConfirmPhase`.
+6. The result.
+
+Nothing is submitted before step 5. A refusal, a declined question, and an interrupt before then leave the cluster untouched, with one exception: the `StartInsightsRefresh` of an upgrade plan.
+
+### Events and questions
+
+```go
+type EventKind string
 
 const (
-	Preparing State = "Preparing"
-	Running   State = "Running"
-	Paused    State = "Paused"
-	Asking    State = "Asking"
-	Finished  State = "Finished"
+	PlanReady      EventKind = "PlanReady"      // Plan
+	GateReport     EventKind = "GateReport"     // Checks, Verdict
+	PhaseStarted   EventKind = "PhaseStarted"   // Phase
+	PhaseEnded     EventKind = "PhaseEnded"     // Phase, Skipped
+	StepChanged    EventKind = "StepChanged"    // Step, Result
+	Notice         EventKind = "Notice"         // Text
+	VerifyReport   EventKind = "VerifyReport"   // Checks
+	UpdateProgress EventKind = "UpdateProgress" // Step, Update; one per poll
+	NodeProgress   EventKind = "NodeProgress"   // Step, Nodes
 )
 
-type PhaseState string
+type Event struct {
+	At    time.Time
+	Kind  EventKind
+	Phase PhaseRef
+	Step  StepRef
 
-const (
-	PhasePending    PhaseState = "Pending"
-	PhaseChecking   PhaseState = "Checking"
-	PhaseSubmitting PhaseState = "Submitting"
-	PhaseWaiting    PhaseState = "Waiting"
-	PhaseVerifying  PhaseState = "Verifying"
-	PhaseDone       PhaseState = "Done"
-	PhaseFailed     PhaseState = "Failed"
-	PhaseBlocked    PhaseState = "Blocked"
-	PhaseSkipped    PhaseState = "Skipped"
-)
-
-type Status struct {
-	State State
-	// Plan is nil until Preparing has computed one.
-	Plan     *Plan
-	Phases   []PhaseStatus // plan order, across clusters
-	Question *Question     // the open question, or nil
-	// PauseRequested and StopRequested are the stored intents.
-	PauseRequested, StopRequested bool
-	StartedElsewhere               bool // an Observe operation
-	Cursor                         Cursor
+	Plan    *Plan
+	Verdict *health.Verdict
+	Checks  []health.Result
+	Result  *StepResult
+	Skipped bool
+	Text    string
+	Update  *UpdateProgress
+	Nodes   *NodeProgress
 }
 
-type PhaseStatus struct {
-	Target
-	ID    PhaseID
-	State PhaseState
-	Steps []StepResult
-}
-
-type QuestionID uint64
-
-type QuestionKind string
-
-const (
-	ConfirmStart QuestionKind = "ConfirmStart" // proceed with the plan?
-	ConfirmPhase QuestionKind = "ConfirmPhase" // proceed with this phase?
-	GateWarnings QuestionKind = "GateWarnings" // proceed despite the warnings?
-	PlanChanged  QuestionKind = "PlanChanged"  // the plan changed; proceed?
-)
+type QuestionKind string // ConfirmStart, ConfirmPhase, GateWarnings, PlanChanged
 
 type Question struct {
-	ID      QuestionID
 	Kind    QuestionKind
-	Phase   PhaseID
-	Text    string   // "Proceed despite 2 warnings (Nodes: 5/6 ready; ...)?"
+	Phase   PhaseRef
+	Text    string
 	Reasons []string // the gate reasons or the plan changes behind it
 }
 ```
 
-`PhaseChecking` and `PhaseBlocked` are not in the list in `REWRITE.md`. `Checking` covers the phase read, the busy rule, and the gate, which the TUI has to show and which take seconds. `Blocked` keeps a gate refusal apart from a failure, because the two have different exit codes.
+`StepResult` here is the typed form of the document's: a `StepRef`, the status, the update ID, the times, the failure.
 
-### Operation states
+How a question ends:
 
-| From | Event | To |
-|---|---|---|
-| (start) | `Start` returns | `Preparing` |
-| `Preparing` | The plan is ready, nothing needs a question, the first phase begins | `Running` |
-| `Preparing` | A question is needed (`ConfirmStart`, `GateWarnings`, `PlanChanged`) | `Asking` |
-| `Preparing` | The plan is blocked, has nothing to do, or failed to build; a claim is held by another operation | `Finished` |
-| `Preparing` | Pause is requested and the plan is ready | `Paused` |
-| `Asking` | Answered yes while in preparation, and the plan must be computed again | `Preparing` |
-| `Asking` | Answered yes, no pause requested | `Running` |
-| `Asking` | Answered yes, pause requested | `Paused` |
-| `Asking` | Answered no | `Finished` (`Declined`) |
-| `Running` | A checkpoint, pause requested | `Paused` |
-| `Running` | A checkpoint, a question is needed (`ConfirmPhase`, a pre-phase `GateWarnings`) | `Asking` |
-| `Running` | The last phase ended, a phase failed or was blocked, or a checkpoint found stop requested | `Finished` |
-| `Paused` | `Resume` | `Running` |
-| `Paused` | `Stop` | `Finished` (`Stopped`) |
-| Any but `Finished` | The context is cancelled | `Finished` (`Interrupted`) |
-| Any but `Finished` | The operation deadline passes | `Finished` (`TimedOut`) |
-| `Asking`, `Paused` | `Stop` | `Finished` (`Stopped`) |
-| `Finished` | | none |
-
-A checkpoint is the one place where pause and stop take effect: after `Preparing` and before the first phase, and between two phases. In fleet mode the boundary between two clusters is a checkpoint too. There is no checkpoint inside a batch. A change that EKS has accepted is never abandoned by a pause.
-
-### Phase states
-
-| From | Event | To |
-|---|---|---|
-| `Pending` | The phase's turn comes | `Checking` |
-| `Pending` | The run ended before its turn | stays `Pending`; its steps are `NotAttempted` |
-| `Checking` | The recheck leaves no step with `Run` or `Attach` | `Skipped` |
-| `Checking` | The busy rule or the gate refuses, or the phase question is declined | `Blocked` |
-| `Checking` | The phase read fails | `Failed` |
-| `Checking` | Everything passes, and the checkpoint lets the run go on | `Submitting` |
-| `Submitting` | The submits are done, at least one step is accepted or attached, the run waits | `Waiting` |
-| `Submitting` | The submits are done, `--no-wait` | `Done` |
-| `Submitting` | No step was accepted or attached | `Failed` |
-| `Waiting` | Every step succeeded, the phase verifies | `Verifying` |
-| `Waiting` | Every step succeeded, no verification | `Done` |
-| `Waiting` | A step failed, timed out, or was interrupted | `Failed` |
-| `Verifying` | The verification passed | `Done` |
-| `Verifying` | An issue, or the verification could not read | `Failed` |
-| `Done`, `Failed`, `Blocked`, `Skipped` | | none |
-
-An upgrade enters `Submitting` once per phase, after the phase before it is `Done` or `Skipped`. A batch whose steps partly failed is `Failed` as a phase. Its step results carry the detail, and the exit code table of section 4 reads the steps.
-
-### Preparing, in order
-
-1. Claim the cluster (the clusters, in fleet mode: each as its turn comes).
-2. `plan(ctx, d, req, mode{refreshInsights: true})`: the snapshot, the busy rule, the steps, the insights refresh for an upgrade, the gate.
-3. If `opts.Expect` or an earlier plan of this operation exists: `Diff`, and the effect from the revalidation table.
-4. Publish `PlanReady` with the plan.
-5. If the plan is blocked: `Finished`, `Refused`. If nothing is to do: `Finished`, `NothingToDo`.
-6. Decide the question. At most one is open before the first submit:
-
-| Gate decision | Policy | Question |
-|---|---|---|
-| `Go` | `ConfirmStart` set | `ConfirmStart` |
-| `Go` | `ConfirmStart` not set | none |
-| `Ask` | `--yes` | none; phase 3 turned it into `Go` with `Accepted` |
-| `Ask` | `CanAsk` | `GateWarnings`; a yes also confirms the start |
-| `Ask` | cannot ask | `Finished`, `Refused`: "health warnings need an answer; pass --yes or --require-healthy" |
-
-7. After a yes from a person, go to step 2. The loop ends when the new plan needs no new question.
-
-The refusal boundary is "before any update is submitted". Every `Finished` that leaves `Preparing` has no accepted row. One request can come before the boundary: `StartInsightsRefresh`, which is not an update.
-
-### The event log
-
-```go
-type Cursor uint64
-
-type EventKind string
-
-const (
-	StateChanged   EventKind = "StateChanged"   // lifecycle
-	PlanReady      EventKind = "PlanReady"      // lifecycle; Plan is set
-	GateReport     EventKind = "GateReport"     // lifecycle; Checks and Verdict
-	QuestionAsked  EventKind = "QuestionAsked"  // lifecycle; Question
-	QuestionClosed EventKind = "QuestionClosed" // lifecycle; Question and Outcome
-	PhaseChanged   EventKind = "PhaseChanged"   // lifecycle; Phase and PhaseState
-	StepChanged    EventKind = "StepChanged"    // lifecycle; Result
-	Notice         EventKind = "Notice"         // lifecycle; Text
-	VerifyReport   EventKind = "VerifyReport"   // lifecycle; Checks
-	UpdateProgress EventKind = "UpdateProgress" // progress; coalesced by step
-	NodeProgress   EventKind = "NodeProgress"   // progress; coalesced by step
-)
-
-type Event struct {
-	Seq    Cursor
-	At     time.Time
-	Kind   EventKind
-	Target Target
-	Phase  PhaseID
-	Step   StepID
-
-	State      State
-	PhaseState PhaseState
-	Plan       *Plan
-	Verdict    *health.Verdict
-	Checks     []health.Result
-	Question   *Question
-	Outcome    QuestionOutcome // Yes, No, Stopped, Cancelled, TimedOut
-	Result     *StepResult
-	Text       string
-	Update     *UpdateProgress
-	Nodes      *NodeProgress // section 9
-}
-```
-
-Rules:
-
-- The log is a slice of lifecycle events and a map from `StepID` and kind to the latest progress event. Both are guarded by the operation's mutex. Every event gets the next `Seq`.
-- `emit` appends, or replaces the map entry, and wakes the readers. It never waits for a reader. A slow reader, or none, costs the executor nothing.
-- `Next(after)` returns the lifecycle events with `Seq > after` and the progress entries with `Seq > after`, merged in `Seq` order. A reader that falls behind sees the latest progress of each step and every lifecycle event.
-- Lifecycle events and questions are never dropped. Their number is bounded by the plan: a few per step, plus notices. A scaling-failure notice is published once per activity ID.
-- The log closes at `Finished`. The last event is `StateChanged` to `Finished`. `Next` then returns the rest and `io.EOF`.
-- Any number of readers may call `Next`, each with its own cursor.
-
-### Questions
-
-- `ask` registers the question in the operation, sets the state to `Asking`, and then publishes `QuestionAsked`. A reader that sees the event can answer at once.
-- At most one question is open.
-- `Answer(id, yes)` takes the mutex, checks that `id` is the open question, records the answer, and clears it. One caller wins. Any other call, and any call with an old ID, returns `ErrStaleQuestion`.
-- An unattended run answers before the question is ever published: the gate policy turns `Ask` into `Go`, and `Diff` asks are accepted under `--yes`. Those go in the log as `Notice` events with the reasons.
-- While a question is open the operation deadline is paused (section 8).
-
-### Pause, stop, cancel
-
-Pause intent and stop intent are two booleans in the operation, apart from the question table.
-
-| Call | Effect |
+| `Ask` returns | The run |
 |---|---|
-| `Pause()` | Sets the pause intent. The run holds at the next checkpoint. |
-| `Resume()` | Clears the pause intent and wakes a held checkpoint. |
-| `Stop()` | Sets the stop intent. Wakes a held checkpoint and an open question. The run finishes at the next checkpoint with `Stopped`. A phase that is submitting or waiting ends first. |
-| Cancel of the context | Wakes everything. A wait returns. The run finishes with `Interrupted`. |
+| yes | Goes on, after the plan is computed again |
+| no | Ends as `Declined`, exit 1. Nothing more is submitted. |
+| `ctx.Err()` | Ends as `Interrupted`, or as timed out when a budget ran out |
+| Any other error, such as a read error on stdin (`cmdutil/prompt.go`) | Ends at once. Nothing more is submitted. `Run` returns the error and a `Result` with status `Failed` that lists what was done: before the first submit every step is `NotAttempted`; at a later phase the finished steps keep their results and the rest are `NotAttempted`. Exit 1. |
 
-Precedence when several hold at a checkpoint or while a question is open: cancel, then stop, then pause, then the answer.
-
-| Situation | Outcome |
-|---|---|
-| A question is open and the context is cancelled | The question closes with `Cancelled`. `Finished`, `Interrupted`. |
-| A question is open and `Stop()` is called | The question closes with `Stopped`. `Finished`, `Stopped`. |
-| A question is open and `Pause()` is called | The question stays open. After a yes the run is `Paused`. |
-| Paused, a question was answered yes earlier | Stays `Paused` until `Resume`. |
-| `Answer` and `Stop` race | Whichever takes the mutex first. If the answer wins, the stop intent holds at the next checkpoint, which comes before any submit. Either way nothing is submitted. |
-| `Answer` and cancel race | The same, and the run is `Interrupted`. |
-| `Stop()` during `Waiting` | The phase ends, then `Finished`. The status is `Stopped` when the phase succeeded, and the phase's own failure status otherwise. |
-
-Only a stop intent or a declined question gives `Stopped` or `Declined`. A failure after a stop request is still a failure, as the old TUI held (`upgrade.go:305-318`).
-
-`Controls()`:
-
-| Operation | `Answer` | `Pause`, `Resume` | `Stop` |
-|---|---|---|---|
-| From `Start`, a question is open | yes | by state | yes |
-| From `Start`, more than one phase or cluster left | no | yes | yes |
-| From `Start`, in its last phase | no | no | no |
-| From `Observe` | no | no | no |
-| `Finished` | no | no | no |
-
-A call that `Controls` does not allow returns `ErrNoControl`.
+The budgets of section 8 do not run while `Run` is inside `Ask` or `Checkpoint`.
 
 ### Result
 
@@ -1287,113 +1032,56 @@ type RunStatus string
 const (
 	Succeeded    RunStatus = "Succeeded"
 	NothingToDo  RunStatus = "NothingToDo"
-	Started      RunStatus = "Started"      // --no-wait: accepted, not followed
+	Started      RunStatus = "Started"      // --no-wait
 	Refused      RunStatus = "Refused"      // nothing was submitted; the plan says why
 	Declined     RunStatus = "Declined"     // a question was answered no
-	Stopped      RunStatus = "Stopped"      // Stop() between phases
+	Stopped      RunStatus = "Stopped"      // a checkpoint returned Stop
 	Blocked      RunStatus = "Blocked"      // a later phase was refused
-	Failed       RunStatus = "Failed"       // every attempted step failed, or a sequence stopped on a failure
-	Partial      RunStatus = "Partial"      // a batch or a fleet with some done and some not
-	VerifyFailed RunStatus = "VerifyFailed" // the change was applied; verification found issues
-	Incomplete   RunStatus = "Incomplete"   // done, but something could not be read
-	TimedOut     RunStatus = "TimedOut"
+	Failed       RunStatus = "Failed"
+	VerifyFailed RunStatus = "VerifyFailed"
+	Incomplete   RunStatus = "Incomplete"   // something is unread, unfollowed, busy, or timed out
 	Interrupted  RunStatus = "Interrupted"
 )
 
 type Result struct {
 	Status   RunStatus
-	Plan     *Plan // the last plan Preparing computed; nil if none
-	Clusters []ClusterResult
+	Plan     *Plan // the last plan computed; nil if none
+	Clusters []ClusterResult // Target, Status, Steps []StepResult, Verification []health.Result
 	Failures []apidoc.Failure
-	// Err is the one-line error for the user, or nil.
-	Err error
+	Err      error // the one-line message for the user, or nil
 }
 
-type ClusterResult struct {
-	Target
-	Status       RunStatus
-	Phases       []PhaseStatus
-	Verification []health.Result
-}
-
-// ExitCode maps the result to the exit code of CONTRACT.md.
+// ExitCode applies the tables of section 4.
 func (r Result) ExitCode() int
 
-// Document returns the Plan document for a Refused or NothingToDo result
-// and the Run document for every other one.
+// Document returns the Plan document for Refused and NothingToDo, and the
+// Run document otherwise.
 func (r Result) Document() apidoc.Document
 ```
 
-| `RunStatus` | Exit |
-|---|---|
-| `Succeeded`, `NothingToDo`, `Started` | 0, or 4 when `Failures` is not empty |
-| `Refused` | The plan's dry-run code: 3, or 4 when unread, or 2 for `--require-healthy` over warnings; 1 for "cannot ask" |
-| `Declined`, `Stopped` | 1 |
-| `Blocked` | 3, or 4 when the gate could not read |
-| `Failed` | 1 |
-| `Partial` | 4, or the highest cluster code in fleet mode |
-| `VerifyFailed` | 5 |
-| `Incomplete` | 4 |
-| `TimedOut` | 4 |
-| `Interrupted` | 1, whatever else happened |
-
-`ExitCode` lives in `change`, so the CLI and the TUI report the same outcome for the same run.
-
-### Finished
-
-At `Finished`, in this order, on the executor goroutine: join the observers and the waiters of the last phase (they are already joined, because every phase joins its own), close any open question, release the claims, publish the last event, close the log, close `Done`. After `Done` is closed the operation owns no goroutine.
-
-### Goroutines
-
-| Goroutine | Started by | Ends | Joined by |
-|---|---|---|---|
-| The executor, one per operation | `Start`, `Observe` | When the run is `Finished` | Nobody waits for it; `Done` reports it |
-| The deadline timer | `Start` | At `Finished` | The executor (`timer.Stop`) |
-| The polls of one tick | `fanout.ForEach` in the batch wait | When each poll returns | `ForEach`, before the next tick |
-| The node observer and the scaling watch of a roll | `fanout.RunAlongside` in the batch wait | When the wait returns and their context is cancelled | `RunAlongside`, before the phase ends |
-| The informers of a node observer | `noderoll.Attach` | `Observer.Close` | The node observer goroutine |
-| The checks of one gate run | `health.Run` | When each check returns | `health.Run` |
-
-`Next` starts no goroutine. A reader blocks on a channel that `emit` closes and replaces.
-
-`internal/change` gets a `goleak.VerifyTestMain`.
+`Status` is a label for people: the name of the outcome with the highest code. `ExitCode` does not read it; it reads the steps and the failures. `Stopped` comes only from a checkpoint and `Declined` only from an answer, so a failure after a stop request is still `Failed`, as the old TUI held (`tui/live/upgrade.go:305-318`).
 
 ### The CLI front end
 
-One function in `cmdutil` drives every changing command. It needs no knowledge of the kind.
-
 ```go
-// RunChange starts the change, renders its events, asks its questions,
-// and returns the exit error.
-func RunChange(ctx context.Context, ios *IOStreams, format Format, d change.Deps, req change.Request, o change.StartOptions, r Renderer) error {
-	op := change.Start(ctx, d, req, o)
-	var cur change.Cursor
-	for {
-		events, next, err := op.Next(ctx, cur)
-		cur = next
-		for _, ev := range events {
-			r.Render(ev) // stderr for a machine format; the roll panel on NodeProgress
-			if ev.Kind != change.QuestionAsked {
-				continue
-			}
-			yes, cerr := Confirm(ctx, ios, ev.Question.Text)
-			if cerr != nil {
-				continue // ctx ended: the operation closes the question itself
-			}
-			if aerr := op.Answer(ev.Question.ID, yes); aerr != nil && !errors.Is(aerr, change.ErrStaleQuestion) {
-				return aerr
-			}
-		}
-		if err != nil {
-			break // io.EOF at Finished, or ctx ended
-		}
-	}
-	res := op.Result() // returns soon after ctx ends: the executor sees the same ctx
+// RunChange runs the change with the terminal as its front end.
+func RunChange(ctx context.Context, ios *IOStreams, format Format, d change.Deps, req change.Request, r Renderer) error {
+	res, err := change.Run(ctx, d, req, change.Hooks{
+		Event: r.Render, // stderr for a machine format; the roll panel on NodeProgress
+		Ask: func(ctx context.Context, q change.Question) (bool, error) {
+			r.Pause() // take the panel down while the prompt shows
+			defer r.Resume()
+			return Confirm(ctx, ios, q.Text)
+		},
+	})
 	r.Close()
 	if perr := Print(ios, format, res.Document(), r.View(res)); perr != nil {
 		return perr
 	}
 	ReportFailures(ios, res.Failures)
+	if err != nil {
+		return err // exit 1
+	}
 	if code := res.ExitCode(); code != 0 {
 		return &ExitError{Code: code, Err: res.Err}
 	}
@@ -1401,144 +1089,98 @@ func RunChange(ctx context.Context, ios *IOStreams, format Format, d change.Deps
 }
 ```
 
-`Confirm` is `cmdutil.Confirm(ctx, ios, question) (bool, error)` from `REWRITE.md`. It writes "question [y/N] " on stderr, reads one line through the shared reader, and returns `ctx.Err()` when the context ends. `RequireYes` ran before `Start`, so `Confirm` is only reached where a prompt can show. `Renderer` is an interface of three methods in `cmdutil`, implemented in `view`: `Render(change.Event)`, `Close()`, `View(change.Result) HumanView`.
+`Confirm` runs under the context of the run, so Ctrl+C wakes the prompt (traces `*-prompt-interrupt`). `RequireYes` ran before `RunChange`, so `Ask` is only reached where a prompt can show, and with `--yes` no question arises. `Renderer` is a small interface in `cmdutil` that `view` implements: `Render`, `Pause`, `Resume`, `Close`, `View`. A human run and a machine run are the same call with another renderer.
 
-A human run and a machine run are the same loop. They differ in the renderer's writer and in whether the panel is on.
+A dry run is `change.NewPlan`, `Print`, and the plan's exit code.
 
-A dry run does not call `RunChange`:
+### What phase 5 will need
 
-```go
-plan, err := change.NewPlan(ctx, d, req)
-// print the Plan document or its view, report failures, exit with plan.ExitCode()
-```
+The TUI's handle is an adapter that calls `Run` on a goroutine of its own. This table is the check that three hooks are enough. Each row is something the old TUI built by hand around the engine (`tui/live/upgrade.go`, `roll.go`, `addons.go`, `observed.go`).
 
-### The TUI front end (phase 5)
-
-- The backend keeps a map from cluster to `*Operation` and one `Claims`.
-- `State()` calls `op.Status()` for each. It copies a small struct under the operation's mutex and makes no AWS call.
-- One `tea.Cmd` per operation blocks in `op.Next` and returns the events as a message. The model appends lifecycle events to its feed and replaces progress by step.
-- Keys map to `op.Pause`, `op.Resume`, `op.Stop`, and `op.Answer(status.Question.ID, yes)`. `op.Controls()` says which keys are live.
-- A dry run is `change.NewPlan`. A start passes that plan as `StartOptions.Expect` with `CanAsk: true`. Read-only mode never calls `Start`.
-- An `UPDATING` resource that no operation of this process holds becomes `change.Observe`.
-- Quitting cancels the backend context. Every operation finishes as `Interrupted`, and the backend waits on each `Done`.
-
-### `Observe`
-
-`Observe` serves a change that this process did not start.
-
-1. No claim. `Status.StartedElsewhere` is true. `Controls()` is all false.
-2. Find the update: `ListUpdates` for the resource, `DescribeUpdate` for each, the newest `InProgress` one (`observed.go:32-64`).
-3. The plan has one phase with one `Attach` step. `From` and `To` come from the update's parameters when it was found.
-4. With an update ID: `WaitUpdate`. Without one: `WaitSettled` with an empty `want`, so `Met` only means settled.
-5. For a nodegroup with `Nodes` set: a node observer with `Identity.StartedAt` from the update's creation time.
-6. For a nodegroup whose update succeeded: `health.Verify` with no baseline. `NodegroupActive` runs and the pod checks are `Skipped`.
-7. `Finished` with `Succeeded`, `Failed`, `VerifyFailed`, `TimedOut`, or `Interrupted`.
-
-A cluster's own update is observed as one control-plane step. The rolls and add-on updates that the foreign run starts later show up as separate observed operations, as today (`observed.go:251-308`).
+| Old TUI need | Served by |
+|---|---|
+| A feed of what happened, and the state of each phase and step | `Event`. The adapter appends to its own log, keeps the latest progress per `StepRef`, and gives readers a cursor. |
+| Phases matched by label prefix | `PhaseRef` and `StepRef` on every event |
+| The outcome of each roll inside an upgrade, which the hooks never reported | `StepChanged` with the result |
+| A question that exactly one answer closes | `Ask`. The adapter registers the question under an ID and blocks on a channel and on the context. |
+| Pause, and stop after the current phase | `Checkpoint`. The adapter blocks while paused and returns `Stop`. |
+| A stop that is not a failure | `Result.Status` |
+| The dry run first, then "the plan changed" | `NewPlan`, then `Common.Expect` |
+| Standalone rolls and add-on updates, written a second time | `Run` with the same requests as the CLI |
+| The node view | `Common.Nodes` and `NodeProgress` |
+| The deadline not running while paused or asking | Section 8 |
+| One change per cluster in the UI | The adapter's own map, taken before it calls `Run`. Phase 4 has no claim type. |
+| Watching a change that was started elsewhere | Not `Run`: there is no plan to execute. Phase 5 builds it from the exported `WaitUpdate`, `WaitSettled`, `noderoll.Attach`, and `health.Verify`. |
 
 ## 8. Deadlines
 
-The old tree had three calculators (`scaleSetupTimeout`, `fleetClusterContext`, `monitorContext`), and more timeouts beside them: the root deadline of `nodegroup update`, one inside `waitForScaleCompletion`, one in the live panel. One model replaces them.
+The old tree had three calculators (`scaleSetupTimeout`, `fleetClusterContext`, `monitorContext`) and more timeouts beside them. One model replaces them.
 
 ```go
 type Limits struct {
-	// Prepare bounds the reads of one cluster before its first submit.
-	// It is --timeout. Zero means no limit.
-	Prepare time.Duration
-	// Wait bounds one cluster's run from its first submit to its end:
-	// the waits, the reads of later phases, and verification. It is
-	// --wait-timeout. Zero means no limit.
-	Wait time.Duration
-	// StepWait bounds the wait of each step on its own. Only addon update
-	// sets it, to --wait-timeout, and leaves Wait at zero.
-	StepWait time.Duration
+	Read     time.Duration // --timeout; zero means no limit
+	Wait     time.Duration // --wait-timeout; zero means no limit
+	StepWait bool          // Wait applies to each step alone (addon update)
 	Poll     time.Duration // --poll-interval
 }
-
-// LimitsFor returns the limits of a command from its flags.
-func LimitsFor(kind Kind, timeout, waitTimeout, poll time.Duration, noWait bool) Limits
 ```
 
-| Budget | Starts | Covers | Pauses |
+| Budget | Starts | Covers | Does not run |
 |---|---|---|---|
-| `Prepare` | When a cluster's `Preparing` starts, and again for each new plan after a person's answer | The snapshot, the gate, the baseline | While a question is open; while the insights refresh is waited for, which has its own 5 minute limit |
-| `Wait` | At the first submit of a cluster | Everything after it, for that cluster | While a question is open; while the run is `Paused` |
-| `StepWait` | At each step's submit | That step's wait and confirm read | never |
-| The plan of a dry run | In the command, `cmdutil.WithTimeout(ctx, --timeout)` | `NewPlan` | A dry run never asks |
+| `Read` | At each `plan` of a cluster | The reads up to the first submit or attachment. With `--no-wait`: every read and submit of the run. | Inside `Ask` and `Checkpoint`; while an insights refresh is waited for, which has its own 5 minute limit |
+| `Wait` | At the first submit or the first attachment of a cluster, whichever comes first | Everything after it for that cluster: the waits, the reads and submits of later phases, verification | Inside `Ask` and `Checkpoint` |
+| `Wait` with `StepWait` | At each step's submit or attachment | That step's wait and confirm | |
+| A dry run | In the command: `cmdutil.WithTimeout(ctx, --timeout)` | `NewPlan` | |
 
-Defaults, from `CONTRACT.md`: `--timeout` 1m; `--wait-timeout` 40m for `nodegroup update`, 5m for a scale, 5m for each add-on, 4h for an upgrade or a rollback; `--poll-interval` 15s. With `--no-wait`, `Wait` and `StepWait` are not used. In fleet mode every cluster has its own `Prepare` and its own `Wait`, and discovery runs under `--timeout`.
+An attach starts the wait budget. Trace `addon-update-attach` follows an update that it did not start for four minutes; under the read budget alone it would time out after one.
 
-`Wait` starts at the first submit and not at the start of the command. The old `nodegroup update` put one deadline over the reads and the wait (`actions_update.go:164`). A short `--wait-timeout` on a slow day could then expire during the reads and look like a timeout of a roll that never started.
+Defaults, from `CONTRACT.md`: `--timeout` 1m; `--wait-timeout` 40m for `nodegroup update`, 5m for a scale, 5m for each add-on, 4h for an upgrade or a rollback; `--poll-interval` 15s. In fleet mode every cluster has its own budgets and discovery runs under `--timeout`.
 
-The operation owns the timers. It derives one context per cluster from the context given to `Start`, and cancels it with a cause when a budget runs out. The executor tells the two ends apart with `context.Cause`: the operation's own cause is a deadline, and anything else is an interrupt. The pause is the same technique as `cmdutil`'s pausable deadline (`deadline.go`), applied inside the operation, because the operation is what knows that a question is open or that the run is paused.
+`Wait` starts at the first submit and not at the start of the command. The old `nodegroup update` put one deadline over the reads and the wait (`actions_update.go:164`), so a short `--wait-timeout` could expire during the reads.
 
-| Ending | Status | Exit | What the result says |
-|---|---|---|---|
-| `Prepare` ran out | `Failed`, with a `Timeout` failure | 1 | "timed out reading prod before anything was started (increase --timeout); nothing was changed" |
-| `Wait` or `StepWait` ran out | `TimedOut` | 4 | Each step that was accepted and has not ended is `InProgress` with its update ID and a `Timeout` failure: "--wait-timeout passed before the update finished; it is still running in EKS" |
-| The context was cancelled before any submit | `Interrupted` | 1 | "interrupted before anything was started; nothing was changed" |
-| The context was cancelled after a submit | `Interrupted` | 1 | The same rows with an `Interrupted` failure, and `Resume`: the command line that attaches and goes on |
+`Run` derives one context per cluster and cancels it with a cause when a budget runs out. `context.Cause` tells a deadline from an interrupt (`TestExecute_DeadlineSaysTimedOut`, `TestExecute_CancelSaysInterrupted`).
 
-A deadline or an interrupt cancels nothing in EKS. The next run finds the resource `UPDATING` and attaches (upgrade, rollback, add-on update), or skips it as `AlreadyUpdating` (`nodegroup update`), or refuses it as busy (`nodegroup scale`). Those are the old behaviours (traces `cluster-upgrade-attach`, `nodegroup-update-busy`, `nodegroup-scale-busy`).
+| Ending | Steps | Exit |
+|---|---|---|
+| `Read` ran out and nothing had been read | All `NotAttempted`; "timed out reading prod (increase --timeout); nothing was changed" | 1 |
+| `Read` ran out after something was read | All `NotAttempted`, or `Started` under `--no-wait`; the document has what was read and a `Timeout` failure | 4, as in the read commands |
+| `Wait` ran out | Each step that was accepted or attached and has not ended is `InProgress` with a `Timeout` failure: "--wait-timeout passed before the update finished; it may still be running" | 4 |
+| Interrupt | The same rows with an `Interrupted` failure | 1 |
 
-The old binary exits 1 for a wait deadline in all five commands (traces `*-deadline`). Exit 4 is contract edit 2.
+A deadline or an interrupt cancels nothing in EKS. The next run derives its plan from live state. The old binary exits 1 for a wait deadline in all five commands (traces `*-deadline`); the 4 is owner decision D2.
 
 ## 9. The node observer and the roll panel
 
-### `internal/noderoll`
-
-The package imports client-go and nothing of refresh. It is a port of `legacy/internal/noderoll`.
-
-| New file | From `observer.go` lines | Content |
-|---|---|---|
-| `noderoll.go` | 24-97 | `Phase`, `NodeView`, `PodView`, `Snapshot`, `WarnEvent`, the label constants |
-| `observer.go` | 99-267 | The observer struct, the node list, `Snapshot` |
-| `classify.go` | 549-638 | `classify`, the kubelet minor, pressure, readiness, drain taints |
-| `pods.go` | 368-458, 531-547 | Pod counts of draining nodes, the evictable rule |
-| `warnings.go` | 269-366, 460-529 | Warning events, their scope and dedupe |
-| `informer.go` | `informer.go` | The node and event informers, the 10 s sync limit |
-| `tracker.go` | `tracker.go` | Frozen: `Tracker`, `Event`, `EventKind` |
-| `attach.go` | new | `Attach`, `Identity` |
-
-`scripted.go` and `DemoTimeline` are not ported. They served the hidden `--simulate` flag, which `CONTRACT.md` does not have. The fake world rolls nodes.
+`internal/noderoll` imports client-go and nothing of refresh. It is a port of the old package: `Tracker` frozen, the 638-line observer split by subject into the observer, the classifier, the pod counts of draining nodes, the warning events, and the informers. `scripted.go` is not ported; it served the hidden `--simulate` flag, which `CONTRACT.md` does not have.
 
 ```go
 // Identity says how to tell the old nodes of a roll from the new ones.
 type Identity struct {
-	// TargetVersion is the Kubernetes minor the roll moves to. It is set
-	// for an upgrade or a rollback roll and empty for an AMI roll.
-	TargetVersion string
-	// TargetAMI is the AMI the roll moves to, or "" when it is not known.
-	TargetAMI string
-	// StartedAt is when the roll began. The zero value means now.
-	StartedAt time.Time
+	TargetVersion string    // the Kubernetes minor of an upgrade or rollback roll; "" for an AMI roll
+	TargetAMI     string    // "" when it is not known
+	StartedAt     time.Time // zero means now
 }
 
 // Attach returns an observer for the nodes of one nodegroup. It starts
-// the informers, and falls back to a list per snapshot when they do not
+// the informers and falls back to a list per snapshot when they do not
 // sync in 10 seconds. It fails only when the first node list fails.
 func Attach(ctx context.Context, kube kubernetes.Interface, nodegroup string, id Identity) (*Observer, error)
 
 func (o *Observer) Snapshot(ctx context.Context) (Snapshot, error)
-func (o *Observer) Watching() bool // informer-backed
+func (o *Observer) Watching() bool
 func (o *Observer) Close()
 ```
 
-`Attach` picks the mode once, where the old code had three setters and a precedence that the caller had to know (`observer.go:226-238,562-565`):
+`Attach` picks the mode once. The old code had three setters and a precedence the caller had to know (`observer.go:226-238,562-565`).
 
-| Condition, first match | Mode | A node is new when |
-|---|---|---|
-| `TargetVersion` is set and a node of the nodegroup has another kubelet minor | Version | Its kubelet minor equals `TargetVersion` |
-| The first node list succeeded | Baseline | It is not among the nodes created before `StartedAt`; with a zero `StartedAt`, not among the nodes present at `Attach` |
-| `TargetAMI` is set | Image label | Its `eks.amazonaws.com/nodegroup-image` label equals `TargetAMI` |
+| Condition, first match | A node is new when |
+|---|---|
+| `TargetVersion` is set and a node has another kubelet minor | Its kubelet minor equals `TargetVersion` |
+| Otherwise | It is not among the nodes created before `StartedAt`; with a zero `StartedAt`, not among the nodes present at `Attach` |
 
-The third row cannot be reached today, since `Attach` fails without the first list. It stays in `classify` because the frozen tests cover it.
+The image-label rule stays in the classifier for its frozen tests; `Attach` never selects it. Everything else is unchanged: nodes by the nodegroup label, `Draining` by cordon or drain taint, `Joining` when not Ready, pods listed only for draining nodes with a `spec.nodeName` selector. One goroutine drives an observer.
 
-The rest is unchanged: nodes are selected by the `eks.amazonaws.com/nodegroup` label, a node is `Draining` when it is cordoned or carries a drain taint, `Joining` when it is not Ready, else `Ready`. Pods are listed only for draining nodes, with a `spec.nodeName` field selector. An `Observer` is driven from one goroutine.
-
-### Running it
-
-A roll phase with `StartOptions.Nodes` set runs two best-effort observers beside the authoritative wait:
+### Beside the wait
 
 ```go
 err := fanout.RunAlongside(ctx, observe, func(ctx context.Context) error {
@@ -1546,88 +1188,56 @@ err := fanout.RunAlongside(ctx, observe, func(ctx context.Context) error {
 })
 ```
 
-`observe` starts one goroutine per accepted roll step. Each calls `Attach`, then takes a snapshot every second when the observer is watching and every `min(Poll, 3s)` when it lists, feeds the snapshot to a `Tracker`, and emits a `NodeProgress` event:
+With `Common.Nodes`, `observe` runs one goroutine per accepted roll. Each calls `Attach`, takes a snapshot every second when the observer watches and every `min(Poll, 3s)` when it lists, feeds a `Tracker`, and sends `NodeProgress{Nodegroup, Snapshot, Recent, Watching}` through `Event`. `observe` also runs the Auto Scaling watch (`scaling.go`, `WatchScalingFailures`): `DescribeScalingActivities` every `Poll`, and a `Notice` for each failed launch since the roll began, once per activity.
 
-```go
-type NodeProgress struct {
-	Nodegroup string
-	Snapshot  noderoll.Snapshot
-	Recent    []noderoll.Event // the tracker's last six
-	Watching  bool
-}
-```
-
-The second observer is the Auto Scaling watch (`scaling.go`, `WatchScalingFailures`): `DescribeScalingActivities` for the nodegroup's groups every `Poll`, and a `Notice` for each failed launch since the roll began. It runs whenever the phase waits.
-
-Neither observer can change the result. `RunAlongside` cancels and joins both when the wait returns. A failed `Attach`, or five snapshot errors in a row, ends the node observer with one `Notice`, and the wait goes on.
-
-The baseline is taken in `Attach`, after the submit, as in the old code (`rollview.go:394`). A node that EKS launches between the submit and the first list counts as old until it is replaced in the view. That affects the panel only.
+Neither can change the result. `RunAlongside` cancels and joins both when the wait returns. A failed `Attach`, or five snapshot errors in a row, ends the node observer with one `Notice`.
 
 ### The panel
 
-```go
-package view
-
-// RollPanel draws the live view of one roll: a header with the old and
-// new version, a bar of replaced nodes, the node table with the drain
-// progress of each node, the last tracker events, and the warnings.
-func RollPanel(th Theme, p change.NodeProgress, desired int, elapsed time.Duration) []string
-```
-
-It is a port of `rollview.go:166-286`. The CLI renderer draws it through `view.Live` on each `NodeProgress` event. Progress lines of the wait are held while the panel is up and printed when it closes, which the old engine did with `heldProgress` (`nodegroups.go`). The renderer is the one consumer of the event stream, so it orders the two without a lock.
+`view.RollPanel(th, progress, desired, elapsed) []string` is a port of `rollview.go:166-286`: the header with old and new version, the bar of replaced nodes, the node table with drain progress, the last tracker events, the warnings. The renderer draws it through `view.Live` on each `NodeProgress` and holds the wait's progress lines while it is up. The old engine needed a locked buffer for that (`heldProgress`); the renderer gets its events one at a time.
 
 | Condition | Output during the wait |
 |---|---|
-| Table output, stderr is a terminal, not `--quiet`, exactly one roll is in flight, Kubernetes access | The panel, redrawn in place |
-| `--live` and stderr is not a terminal | Panel frames appended, at most one each 15 s, and only when the frame changed |
-| `--live` and no Kubernetes access | One warning line, then the lines of the next row |
-| More than one roll in flight, or no Kubernetes access | One line per status change of each update, and a line per minute while nothing changes |
-| `--quiet` | Nothing. Questions, warnings, and the final summary still print. |
+| Table output, stderr is a terminal, no `--quiet`, exactly one roll in flight, Kubernetes access | The panel, redrawn in place |
+| `--live`, stderr is not a terminal | Panel frames appended, at most one each 15 s, only when the frame changed |
+| `--live`, no Kubernetes access | One warning, then the lines of the next row |
+| Several rolls in flight, or no Kubernetes access | A line per status change of each update, and one per minute while nothing changes |
+| `--quiet` | Nothing. Questions, warnings, and the summary still print. |
 | `-o json` or `-o yaml` | The progress lines on stderr. `--live` is a usage error. |
 
-`StartOptions.Nodes` is set when the panel can show: the first two rows. `cluster upgrade` and `cluster rollback` roll one nodegroup at a time, so they get the panel on a terminal without a flag, as today (`commands/cluster/upgrade.go:304`). `--live` exists on `nodegroup update` only.
+The command sets `Common.Nodes` for the first two rows. `cluster upgrade` and `cluster rollback` roll one nodegroup at a time and get the panel on a terminal without a flag, as today. `--live` exists on `nodegroup update` only.
 
 ## 10. Commands
 
-### Shared flags
+### Shared
 
 ```go
 package cmdutil
 
-// ChangeFlags are the flags every changing command has.
 type ChangeFlags struct {
-	DryRun, Yes, NoWait, Quiet               bool
-	SkipHealthCheck, RequireHealthy, Force   bool
-	WaitTimeout, PollInterval                time.Duration
+	DryRun, Yes, NoWait, Quiet           bool
+	SkipHealthCheck, RequireHealthy      bool
+	Force                                bool
+	WaitTimeout, PollInterval            time.Duration
 }
 
-// AddChangeFlags registers them. waitDefault is the command's default for
-// --wait-timeout. noWait is false for cluster upgrade and cluster rollback,
-// which then have no --no-wait flag.
-func AddChangeFlags(cmd *cobra.Command, f *ChangeFlags, waitDefault time.Duration, noWait bool)
+// AddChangeFlags registers the shared flags. noWait is false for cluster
+// upgrade and cluster rollback. force is false for addon update.
+func AddChangeFlags(cmd *cobra.Command, f *ChangeFlags, waitDefault time.Duration, noWait, force bool)
 
-// Validate rejects the combinations that are wrong for every command.
-func (f *ChangeFlags) Validate(format Format) error
+func (f *ChangeFlags) Validate() error
 
 // RequireYes returns the --yes error when the run would need a prompt it
-// cannot show: a machine format or no terminal, without --yes or --dry-run.
-// It reads nothing.
+// cannot show. It reads nothing.
 func RequireYes(ios *IOStreams, format Format, yes, dryRun bool) error
 
 // Confirm asks on stderr and reads one line.
 func Confirm(ctx context.Context, ios *IOStreams, question string) (bool, error)
 ```
 
-`Validate`:
+`Validate` rejects `--dry-run` with `--no-wait`, a `--poll-interval` of zero or less, a negative `--wait-timeout`, and `--skip-health-check` with `--require-healthy`.
 
-| Combination | Error |
-|---|---|
-| `--dry-run` with `--no-wait` | "--no-wait has no effect on a dry run" |
-| `--poll-interval` of zero or less | "--poll-interval must be above 0" |
-| A negative `--wait-timeout` | "--wait-timeout must be 0 or more" |
-| `--skip-health-check` with `--require-healthy` | "they contradict each other" |
-
-Every changing command has the same `RunE`:
+Every changing command has this `RunE` and this `run`:
 
 ```go
 RunE: func(cmd *cobra.Command, args []string) error {
@@ -1642,13 +1252,9 @@ RunE: func(cmd *cobra.Command, args []string) error {
 	}
 	return o.run(cmd.Context())
 },
-```
 
-and the same `run`:
-
-```go
 func (o *updateOptions) run(ctx context.Context) error {
-	d, err := o.deps(ctx) // AWS provider, fetcher, kube, clock: the first network use
+	d, err := o.deps(ctx) // the first use of the network
 	if err != nil {
 		return err
 	}
@@ -1656,352 +1262,229 @@ func (o *updateOptions) run(ctx context.Context) error {
 	if o.change.DryRun {
 		return cmdutil.PrintPlan(ctx, o.io, o.format, d, req, o.timeout)
 	}
-	return cmdutil.RunChange(ctx, o.io, o.format, d, req, o.startOptions(), view.NewChangeRenderer(o.io, o.format, o.change.Quiet))
+	return cmdutil.RunChange(ctx, o.io, o.format, d, req, view.NewChangeRenderer(o.io, o.format, o.change.Quiet))
 }
 ```
 
-`complete` resolves the cluster the mutation-safe way: the explicit value, `REFRESH_CLUSTER`, the active context, and never the kubeconfig. `startOptions` sets `CanAsk` and `ConfirmStart` to "no `--yes`", and `Limits` from `change.LimitsFor`.
+`complete` resolves the cluster the mutation-safe way: the explicit value, `REFRESH_CLUSTER`, the active context, never the kubeconfig. The options struct of a command holds the streams, the `deps` function, the format, `ChangeFlags`, and its own flags.
 
-One event stream gives both outputs. For a human run the renderer writes progress to stderr and the final view to stdout. For a machine run it writes the same progress lines to stderr, and `Print` writes the one document to stdout.
-
-### The five commands
+### The five
 
 | | `addon update` | `nodegroup scale` |
 |---|---|---|
 | `Use` | `update [addon...]` | `scale <nodegroup>` |
 | Args | Any number; none needs `--all` | Exactly 1 |
 | Own flags | `-c`, `--version`, `--all`, `--skip-addon` | `-c`, `--desired`, `--min`, `--max` |
-| `--wait-timeout` default | 5m, for each add-on | 5m |
-| Output | `-o table\|json\|yaml\|plain` | the same |
-| `validate` | Names and `--all` exclude each other; one of them is needed. `--version` needs exactly one name. `--skip-addon` needs `--all`. `--force` is a usage error: an add-on update drains nothing. | The size rules of section 5 |
-| Request | `AddonUpdateRequest` | `ScaleRequest` |
+| `--wait-timeout` | 5m, for each add-on | 5m |
+| `validate` | Names and `--all` exclude each other, and one is needed. `--version` needs exactly one name. `--skip-addon` needs `--all`. There is no `--force`. | The size rules of section 5 |
 
 | | `nodegroup update` | `cluster upgrade` | `cluster rollback` |
 |---|---|---|---|
 | `Use` | `update [nodegroup...]` | `upgrade [cluster]` | `rollback [cluster]` |
 | Args | Any number; none means all | At most 1 | At most 1 |
 | Own flags | `-c`, `-f`, `--all-clusters`, `--reroll`, `--skip-verify`, `--changelog`, `--live` | `--to`, `--only`, `-n`, `--skip-addon`, `--skip-nodegroup`, `--skip-insights-check`, `--skip-verify` | `--skip-nodegroup`, `--skip-insights-check`, `--rollback-timeout`, `--skip-verify` |
-| `--wait-timeout` default | 40m | 4h | 4h |
+| `--wait-timeout` | 40m | 4h | 4h |
 | `--no-wait` | yes | no | no |
-| `validate` | `--all-clusters` excludes `-c`, positionals, and `--kube-context`. `--changelog` needs `--dry-run`. `--live` needs `-o table` and excludes `--quiet`. `--reroll` with `--force` is allowed. | `--to` is required and parses as `1.<minor>`. `--only` values are known. `-n` excludes `--skip-nodegroup` of the same name. | `--rollback-timeout` is 0 or whole minutes from 2h to 168h |
-| Request | `RollRequest` | `UpgradeRequest` | `RollbackRequest` |
-| Extra in `startOptions` | `Nodes` by the panel rule | `ConfirmPhases` when there is no `--yes`; `Nodes` | `Nodes` |
+| `validate` | `--all-clusters` excludes `-c`, positionals, and `--kube-context`. `--changelog` needs `--dry-run`. `--live` needs `-o table` and excludes `--quiet`. | `--to` is required and parses as `1.<minor>`. `--only` values are known. | `--rollback-timeout` is 0, or whole minutes from 2h to 168h |
+| Asks, without `--yes` | Once | Before each phase | Once, with the whole order in the question (`rollback.go:278-305`) |
 
-Notes:
+All five print `-o table|json|yaml|plain`. `--require-healthy` is a shared flag. `--changelog` stays in the command layer: it fetches the AMI release notes for the roll steps of a dry-run plan, and a failed fetch is a warning (trace `nodegroup-update-dry-run-changelog`).
 
-- `--require-healthy` is in the shared set (contract edit 1).
-- `nodegroup update -f` selects by pattern. The plan lists the matches, and the `ConfirmStart` question names them. With `--yes` the notice lists them.
-- `--changelog` stays in the command layer. It fetches the AMI release notes for the plan's roll steps and prints them under a dry-run plan. A failed fetch is a warning (trace `nodegroup-update-dry-run-changelog`).
-- `cluster upgrade` on a terminal asks before each phase, as today (`upgrade.go:547`). `cluster rollback` asks once, with the whole order in the question (`rollback.go:278-305`).
-- `cluster upgrade` and `cluster rollback` gain `-o plain` for the plan and the run through the shared view. The old rollback had none.
-
-The options struct of each command holds the streams, the factory functions it needs, `cmdutil.ChangeFlags`, the output format, and its own flags. `nodegroup update` as the example:
-
-```go
-type updateOptions struct {
-	io   *cmdutil.IOStreams
-	deps func(ctx context.Context) (change.Deps, error)
-
-	format  cmdutil.Format
-	timeout time.Duration
-	change  cmdutil.ChangeFlags
-
-	target      cmdutil.Target // region and cluster, from complete
-	nodegroups  []string
-	filters     []string
-	allClusters bool
-	regions     []string
-	reroll      bool
-	skipVerify  bool
-	changelog   bool
-	live        bool
-}
-```
-
-### Exit codes
-
-Every command uses `Result.ExitCode()` (section 7) for a run and the plan's code (section 1) for a dry run. Before either:
-
-| Case | Exit |
-|---|---|
-| A usage error, a name that does not exist, a `--version` the cluster cannot run, sizes that cannot hold | 1, stdout empty |
-| The `--yes` error | 1, stdout empty |
-| No cluster resolves | 1, stdout empty |
-
-Every command needs a line in the exit-code help, which the ported exit-code-help test checks.
+Exit codes: `Result.ExitCode()` for a run and the plan's code for a dry run. Before either, a usage error, a name that does not exist, a `--version` the cluster cannot run, sizes that cannot hold, the `--yes` error, and an unresolved cluster all exit 1 with stdout empty. Each command needs a line in the exit-code help.
 
 ## 11. Calls, order, and parity
 
-### How the suite constrains the design
-
-`test/parity/compare.go` compares six fields for equality: the mutations with their payloads and token names, the preconditions of each mutation, the postconditions of the last one, the final world, whether the run was refused before any mutation, and the exit code. Three points follow.
-
-1. A precondition is every distinct answer the binary saw, since its previous mutation, about the target, about the cluster, and about the previous target. Equality means the new binary may not read more about them, nor less.
-2. Only EKS and Kubernetes reads name a target. Reads of EC2, Auto Scaling, SSM, CloudWatch, and Service Quotas are in no precondition.
-3. `StartInsightsRefresh` counts as a mutation.
-
-The command lines map as follows. A mapping is not a difference.
+### The command lines
 
 | Old | New |
 |---|---|
-| `-n ng-a`, `-a vpc-cni`, `-c prod` on a cluster command | The positional |
+| `-n ng-a`, `-a vpc-cni`; `-c prod` on a cluster command | The positional |
 | `addon update` and `nodegroup scale` without `--wait` | `--no-wait` |
-| `--wait` | Nothing: the default |
+| `--wait` | Nothing |
 | `--skip coredns` | `--skip-addon coredns` |
-| `--dependency-order`, `--health-check` | Nothing |
-| `--check-pdbs` | Nothing, or `--require-healthy` where the scenario means "must check" |
-| `-o json` | `-o json` |
+| `--dependency-order`, `--health-check`, `--check-pdbs` | Nothing; `--require-healthy` where the scenario means "the check must run" |
 
-### `addon update`
+### The main path of each command
 
-| # | New | Old (`addon-update-wait`) |
-|---|---|---|
-| 1 | `DescribeCluster`, `ListNodegroups`, `ListAddons` | `ListClusters`, `ListAddons` (name lookup), then the busy check: `DescribeCluster`, `ListNodegroups`, `ListAddons` |
-| 2 | `DescribeNodegroup` × N, `DescribeAddon` × M, `DescribeAddonVersions` for each target | `DescribeNodegroup` × N, `DescribeAddon` × M, then `DescribeCluster`, `DescribeAddonVersions`, `DescribeAddon` in the service |
-| 3 | The busy rule and the `Addons` check: no call | |
-| 4 | `DescribeAddon` (the fresh read) | |
-| 5 | **`UpdateAddon`** `{addonVersion, clientRequestToken}` | the same |
-| 6 | `DescribeUpdate` until it ends | the same, every 5 s |
-| 7 | `DescribeAddon` (confirm) | the same |
+Requests in bold are mutations. Calls on one line start together.
 
-Predicted: the preconditions and postconditions are equal. Round trips before the update: 3, against about 8.
-
-### `nodegroup scale`
-
-| # | New | Old (`nodegroup-scale-wait`, `nodegroup-scale-pdb-safe`) |
-|---|---|---|
-| 1 | `DescribeCluster`, `ListNodegroups`, `ListAddons` | `ListClusters`; `DescribeNodegroup`, `DescribeSubnets`, `DescribeInstanceTypeOfferings` (availability) |
-| 2 | `DescribeNodegroup` × N, `DescribeAddon` × M | The busy check: `DescribeCluster`, `ListNodegroups`, `DescribeNodegroup` × N, `ListAddons`, `DescribeAddon` × M |
-| 3 | The gate. Scale-up: `GetServiceQuota`, `GetMetricData`, and the availability reads. Scale-down: `list nodes`, `list poddisruptionbudgets`, then `list pods` of the namespaces at risk. | With `--check-pdbs`: `DescribeNodegroup`, `list namespaces` (probe), `list poddisruptionbudgets`, `list nodes` with a label selector, `list pods` per namespace |
-| 4 | `DescribeNodegroup` (the fresh read) | `DescribeNodegroup` for the before sizes, and again in `CheckScaleBounds` |
-| 5 | **`UpdateNodegroupConfig`** `{scalingConfig: the given sizes, clientRequestToken}` | the same |
-| 6 | `DescribeUpdate` until it ends | the same, every 5 s |
-| 7 | `DescribeNodegroup` (confirm) | the same |
-
-Predicted: the EKS preconditions are equal. The Kubernetes ones differ in every `Kube: true` scenario that sends an update (class K below).
-
-### `nodegroup update`
-
-| # | New | Old (`nodegroup-update-kube-yes`) |
-|---|---|---|
-| 1 | `DescribeCluster`, `ListNodegroups`, `ListAddons` | `ListClusters`; the busy check (the same five operations, in series) |
-| 2 | `DescribeNodegroup` × N, `DescribeAddon` × M | |
-| 3 | `DescribeAutoScalingGroups`, `GetParameter` × 2 per AMI type, then `DescribeInstances` | In the health check and again in the decide step |
-| 4 | The gate: `GetMetricData` × 3, `GetServiceQuota`, `list nodes`, `list poddisruptionbudgets`, `list deployments`, `list nodes` (metrics), `list pods` × 3, then `list pods` of the namespaces at risk; beside it `DescribeSubnets`, `DescribeInstanceTypeOfferings` | `DescribeCluster` (kube target), `list namespaces` (probe), the health checks, the Pending-pod baseline, `ListNodegroups`, `DescribeNodegroup` per target (decide), the drain gate (`list poddisruptionbudgets`, `list nodes` with a selector, `list pods`) |
-| 5 | The baseline: `list nodes`, `list pods` (Pending) | Taken before the gate |
-| 6 | Per target, in order: `DescribeNodegroup` (the fresh read), **`UpdateNodegroupVersion`** `{version, clientRequestToken}`, plus `force: true` with `--force` | The same pair (`StartVersionUpdate`) |
-| 7 | `DescribeUpdate` for every update, each tick | the same |
-| 8 | Verification: `DescribeNodegroup` per rolled nodegroup, `list nodes`, `list pods` (Pending) | the same, without the node readiness rule |
-
-Predicted: the EKS preconditions are equal, for one target and for several (`nodegroup-update-several`: the second mutation's only precondition is the fresh `DescribeNodegroup` of `ng-b`). The postconditions are equal. Round trips before the first update: 5, against about 14.
-
-Fleet mode (`nodegroup-update-all-clusters`): `ListClusters` per region; rows 1 to 4 for every cluster, in parallel; then rows 1 to 8 for each cluster in turn.
-
-### `cluster upgrade`
-
-`cluster-upgrade-yes`, one hop, two add-ons that the new control plane cannot run, two nodegroups.
+**`addon update`** (old: trace `addon-update-wait`)
 
 | # | New | Old |
 |---|---|---|
-| 1 | The plan read: `DescribeCluster`, `ListNodegroups`, `ListAddons`, `DescribeClusterVersions`, then `DescribeNodegroup` × N, `DescribeAddon` × M, `DescribeAddonVersions` per add-on for 1.32 and 1.33, `DescribeAutoScalingGroups` | The same reads in series, without the Auto Scaling one |
-| 2 | **`StartInsightsRefresh`**, `DescribeInsightsRefresh` until done, `ListInsights` | the same |
-| 3 | The gate, for both nodegroups | Not here. Per nodegroup, at row 8. |
-| 4 | Control-plane phase: the phase read (as row 1 without the version catalogues), the busy rule, `DescribeCluster` (the fresh read) | `DescribeCluster`, `ListNodegroups`, `DescribeNodegroup` × N (readiness), `DescribeCluster` |
-| 5 | **`UpdateClusterVersion`** `{version}`, `DescribeUpdate` until done, `DescribeCluster` until `ACTIVE` at 1.33 | the same |
-| 6 | Add-on phase: the phase read, the busy rule. Per add-on: `DescribeAddon`, **`UpdateAddon`**, `DescribeUpdate` until done, `DescribeAddon` | `ListAddons`, `DescribeAddon` × M, `DescribeAddonVersions`, then the same per add-on |
-| 7 | Phase of `ng-a`: the phase read, the busy rule, the gate, the baseline, `DescribeNodegroup` | `DescribeCluster`, `ListNodegroups`, `DescribeNodegroup` × N, the built-in gate (`DescribeNodegroup`), the command's gate with the PDB check |
-| 8 | **`UpdateNodegroupVersion`** `{version: 1.33}`, `DescribeUpdate` until done, verification | the same |
-| 9 | Phase of `ng-b`: rows 7 and 8 | `ListNodegroups`, `DescribeNodegroup`, the gates, the roll |
+| 1 | `DescribeCluster`, `ListNodegroups`, `ListAddons` | `ListClusters`, `ListAddons` (name lookup), then the busy check in series |
+| 2 | `DescribeNodegroup` × N, `DescribeAddon` × M, `DescribeAddonVersions` per target | The same, then `DescribeCluster`, `DescribeAddonVersions`, `DescribeAddon` again in the service |
+| 3 | `DescribeAddon` (fresh), **`UpdateAddon`** `{addonVersion}` | **`UpdateAddon`**, the same payload |
+| 4 | `DescribeUpdate` until it ends, `DescribeAddon` | The same |
 
-Mutations: equal, in order, with the same payloads. Preconditions: not equal. Every phase read adds answers about the cluster that the old phase did not have: `ListAddons` before the control plane and the nodegroups, `ListNodegroups` before the add-ons, `DescribeCluster` before the second nodegroup. That is the busy rule at work, and class P below.
-
-### `cluster rollback`
-
-`cluster-rollback-yes`.
+**`nodegroup scale`** (old: traces `nodegroup-scale-wait`, `nodegroup-scale-pdb-safe`)
 
 | # | New | Old |
 |---|---|---|
-| 1 | The plan read: as row 1 of the upgrade, with `ListUpdates`, `DescribeUpdate` per update, `ListInsights` (`ROLLBACK_READINESS`), and the catalogues for 1.32 | the same, in series |
-| 2 | The gate, for both nodegroups | Not here |
-| 3 | No second plan with `--yes` | A second full plan (`ExecuteRollback`, `rollback.go:643-686`) |
-| 4 | Per nodegroup: the phase read, the busy rule, the gate, the baseline, `DescribeNodegroup`, **`UpdateNodegroupVersion`** `{version: 1.32}`, the wait, verification | `ListNodegroups`, `DescribeNodegroup`, the gates, the roll |
-| 5 | Add-on phase, as in the upgrade | the same |
-| 6 | Control-plane phase: the phase read, the busy rule, the nodegroups-at-or-below check from that read, `DescribeCluster`, **`UpdateClusterVersion`** `{version: 1.32}`, plus `force` and `rollbackConfig` when asked, `DescribeUpdate` until done, `DescribeCluster` | `DescribeCluster`, `ListNodegroups`, `DescribeNodegroup` × N, the same request |
+| 1 | The same two waves as above, without the add-on versions | The availability reads, then the busy check in series |
+| 2 | The gate. Up: `GetServiceQuota`, `GetMetricData`, the availability reads. Down: `list nodes`, `list poddisruptionbudgets`, then `list pods` of the namespaces at risk. | Only with `--check-pdbs`: a namespace probe, the PDB list, a node list by label, pod lists per namespace |
+| 3 | `DescribeNodegroup` (fresh), **`UpdateNodegroupConfig`** `{scalingConfig: the given sizes}` | `DescribeNodegroup` twice, the same request |
+| 4 | `DescribeUpdate` until it ends, `DescribeNodegroup` until the sizes hold and it is `ACTIVE` | The same |
+
+**`nodegroup update`** (old: trace `nodegroup-update-kube-yes`)
+
+| # | New | Old |
+|---|---|---|
+| 1 | The two waves, plus `DescribeAutoScalingGroups`, `GetParameter` per AMI type, `DescribeInstances` | The busy check in series; the AMI reads in the health check and again in the decide step |
+| 2 | The gate: `GetMetricData` × 3, `GetServiceQuota`, `list nodes`, `list poddisruptionbudgets`, `list deployments`, node metrics, `list pods` × 3, then `list pods` of the namespaces at risk; beside it the availability reads | A namespace probe, the health checks, the Pending-pod baseline, `DescribeNodegroup` per target, the drain gate |
+| 3 | The baseline: `list nodes`, `list pods` (Pending) | Taken between the health checks and the drain gate |
+| 4 | Per target: `DescribeNodegroup` (fresh), **`UpdateNodegroupVersion`** `{version}`, with `force` under `--force` | The same pair |
+| 5 | `DescribeUpdate` for every update each tick | The same |
+| 6 | Verification: `DescribeNodegroup` per rolled nodegroup, `list nodes`, `list pods` (Pending) | The same, without the node readiness rule |
+
+Fleet (trace `nodegroup-update-all-clusters`): `ListClusters` per region, rows 1 and 2 for every cluster in parallel, then rows 1 to 6 for each cluster in turn.
+
+**`cluster upgrade`** (old: trace `cluster-upgrade-yes`)
+
+| # | New | Old |
+|---|---|---|
+| 1 | The plan read with `DescribeClusterVersions` and the add-on catalogues of 1.32 and 1.33 | The same reads in series |
+| 2 | **`StartInsightsRefresh`**, `DescribeInsightsRefresh` until done, `ListInsights` | The same |
+| 3 | The gate, for both nodegroups | Not here |
+| 4 | The phase read, `DescribeCluster` (fresh), **`UpdateClusterVersion`** `{version}`, `DescribeUpdate` until done, `DescribeCluster` until `ACTIVE` | `DescribeCluster`, the nodegroups (readiness), the same request and waits |
+| 5 | The phase read; per add-on: `DescribeAddon`, **`UpdateAddon`**, `DescribeUpdate` until done, `DescribeAddon`. The first failure ends the run. | The same per add-on |
+| 6 | The phase read; per nodegroup: `DescribeNodegroup`, the gate, the baseline, **`UpdateNodegroupVersion`** `{version: 1.33}`, `DescribeUpdate` until done, verification | `ListNodegroups`, `DescribeNodegroup`, the built-in gate, the command's gate with the PDB check, the roll, verification |
+
+**`cluster rollback`** (old: trace `cluster-rollback-yes`): the plan read with `ListUpdates`, `DescribeUpdate` per update, and `ListInsights` (`ROLLBACK_READINESS`); the gate; then the nodegroups as row 6, the add-ons as row 5, and the control plane as row 4 with **`UpdateClusterVersion`** `{version: 1.32}`, plus `force` and `rollbackConfig` when asked (trace `cluster-rollback-force-and-timeout`). The old command built its plan a second time before it started; the new one does that only after a prompt.
+
+Mutations, payloads, and their order are the same as the old binary's on every main path.
 
 ### Intended differences and their allowlist entries
 
-Each entry needs `scenario`, `field`, `reason`, `source`, `ownerApproved`, and `expect`. `source` must quote a row of "Behaviour the new CLI does not copy". The classes marked E1 to E6 need the new row that the contract edit of that number adds. The counts are predictions; the first paired run of each command settles them. The `expect` value of a `preconditions` or `postconditions` entry is recorded from the v2 trace and reviewed once.
+The owner decided that the comparator checks safety obligations and no longer compares preconditions for equality (D8). Draft 1's two largest classes, 55 entries for reads that differ, are gone with that. The comparator in this checkout is still the old one; the new one is on a branch and lands before phase 4 code starts. The count below is an estimate for it, over `mutations`, `world`, `refusedBeforeMutation`, and `exitCode`, and the first paired run of each command settles it.
 
-| Class | Scenarios | Fields, with `expect` | Source row | Entries |
+| Class | Scenarios | Fields and `expect` | Contract row | Entries |
 |---|---|---|---|---|
-| Exists today | `nodegroup-update-no-yes` | All six | "`nodegroup update -o json` without `--yes`" | 6, no change |
-| Exists today, changes | `nodegroup-scale-check-pdbs-no-kube`, run with `--yes --require-healthy` | `exitCode`: 2 (the entry says 4 now) | "Without Kubernetes access" | 1 |
-| V: verification | `nodegroup-update-verify-node-not-ready` | `exitCode`: 5 | "Post-roll verification does not read node readiness" | 1 |
-| | `nodegroup-update-verify-pods-unreadable` | `exitCode`: 4 | "If the pod list fails after a roll" | 1 |
-| G: the gate runs before any change | `cluster-upgrade-pdb-blocked`, `cluster-upgrade-pdb-blocks-second-nodegroup`, `cluster-upgrade-pdbs-unreadable` | `mutations`: only `StartInsightsRefresh`; `preconditions`; `postconditions`; `world`: nothing upgraded; `exitCode`: 3, 3, 4 | "`cluster upgrade` reads PDBs only when it reaches the nodegroup phase" | 15 |
-| | `cluster-rollback-pdb-blocks-second-nodegroup` | `mutations`: `[]`; `preconditions`: `[]`; `postconditions`; `world`; `refusedBeforeMutation`: true; `exitCode`: 3 | the same | 6 |
-| | `cluster-rollback-pdb-blocked`, `cluster-rollback-pdbs-unreadable` | `exitCode`: 3, 4 | "A drain-gate refusal exits 3" | 2 |
-| | `cluster-upgrade-nodegroup-degrades-mid-run` | `exitCode`: 3 | the same | 1 |
-| U: an unreadable gate | `nodegroup-update-pdbs-unreadable` | `exitCode`: 4 (was 3) | "A check that cannot read its data" | 1 |
-| | `nodegroup-scale-pdbs-unreadable` | `exitCode`: 4 (was 1) | "`nodegroup scale -o json` prints no document" | 1 |
-| D: a dry run without Kubernetes access | `nodegroup-update-dry-run`, `nodegroup-update-dry-run-changelog`, `cluster-upgrade-dry-run`, `cluster-rollback-dry-run` | `exitCode`: 2 | "Without Kubernetes access" | 4 |
-| K: the gate's Kubernetes reads | Every `Kube: true` scenario that still sends an update: 12 of `nodegroup update`, 4 of `nodegroup scale` | `preconditions`: no namespace probe, one node list without a selector, one deployment list | E6 | 16 |
-| P: one read of the cluster before each phase | Every `cluster upgrade` and `cluster rollback` scenario that still sends an update: 43 less the 4 of class G | `preconditions`: the phase read's answers | "`cluster upgrade` has no busy check" | 39 |
-| E2: deadline | `addon-update-deadline`, `nodegroup-scale-deadline`, `nodegroup-update-deadline`, `cluster-upgrade-deadline`, `cluster-rollback-deadline` | `exitCode`: 4 | E2 | 5 |
-| E3: sizes | `nodegroup-scale-above-max`, `nodegroup-scale-min-above-max` | `mutations`: `[]`; `preconditions`: `[]`; `refusedBeforeMutation`: true | E3 | 6 |
-| E4: the last read | `nodegroup-update-changed-under-the-gate` | `mutations`: `[]`; `preconditions`: `[]`; `exitCode`: 0 | E4 | 3 |
-| E5: one rule for mixed results | `nodegroup-update-partial-failure` | `exitCode`: 4 (was 1) | E5 | 1 |
-| | `nodegroup-update-cluster-starts-updating` | `exitCode`: 1 (was 4) | E5 | 1 |
+| `--yes` is required | `nodegroup-update-no-yes` | `mutations` `[]`, `world`, `refusedBeforeMutation` true, `exitCode` 1 | "`nodegroup update -o json` without `--yes`" | 4, exist |
+| No Kubernetes access | `nodegroup-scale-check-pdbs-no-kube`, run with `--yes --require-healthy` | `exitCode` 2 (the entry says 4 today) | "Without Kubernetes access" | 1 |
+| | `nodegroup-update-dry-run`, `nodegroup-update-dry-run-changelog`, `cluster-upgrade-dry-run`, `cluster-rollback-dry-run` | `exitCode` 2 | the same | 4 |
+| Verification | `nodegroup-update-verify-node-not-ready` | `exitCode` 5 | "Post-roll verification does not read node readiness" | 1 |
+| | `nodegroup-update-verify-pods-unreadable` | `exitCode` 4 | "If the pod list fails after a roll" | 1 |
+| The gate runs before any change | `cluster-upgrade-pdb-blocked`, `cluster-upgrade-pdb-blocks-second-nodegroup`, `cluster-upgrade-pdbs-unreadable` | `mutations`: `StartInsightsRefresh` only; `world`: nothing upgraded; `exitCode` 3, 3, 4 | "`cluster upgrade` reads PDBs only when it reaches the nodegroup phase" | 9 |
+| | `cluster-rollback-pdb-blocks-second-nodegroup` | `mutations` `[]`, `world`, `refusedBeforeMutation` true, `exitCode` 3 | the same | 4 |
+| A gate refusal exits 3 | `cluster-rollback-pdb-blocked` (3), `cluster-rollback-pdbs-unreadable` (4), `cluster-upgrade-nodegroup-degrades-mid-run` (3) | `exitCode` | "A drain-gate refusal exits 3" | 3 |
+| An unreadable gate exits 4 | `nodegroup-update-pdbs-unreadable` (was 3), `nodegroup-scale-pdbs-unreadable` (was 1) | `exitCode` 4 | "A check that cannot read its data"; "`nodegroup scale -o json` prints no document" | 2 |
+| Deadline (D2) | The five `*-deadline` scenarios | `exitCode` 4 | The row the owner adds for D2 | 5 |
+| A busy target (D4) | `nodegroup-update-busy`, `nodegroup-update-changed-before-the-gate` | `exitCode` 4 (was 0), `refusedBeforeMutation` true | The row for D4 | 4 |
+| | `nodegroup-update-changed-under-the-gate` | `mutations` `[]`, `refusedBeforeMutation` true | the same | 2 |
+| | `nodegroup-scale-busy` | `exitCode` 4 (was 3) | the same | 1 |
+| Sizes | `nodegroup-scale-above-max`, `nodegroup-scale-min-above-max` | `mutations` `[]`, `refusedBeforeMutation` true | Contract edit 3 | 4 |
+| One rule for mixed results (D6) | `nodegroup-update-partial-failure`: one roll succeeded and one failed (was 1) | `exitCode` 4 | Contract edit 5 | 1 |
+| | `nodegroup-update-cluster-starts-updating`: the one submit was refused (was 4) | `exitCode` 1 | the same | 1 |
 
-About 110 entries, 55 of them in classes K and P. Two rows of `CONTRACT.md` need no entry, because only the output changes: the rollback that is interrupted before it starts now reports `Interrupted`, and the notice before an attached update is replaced. The accepted `Kubernetes` reason of every `Kube: false` run with `--yes` changes no compared field either.
+47 entries: 5 exist or change, 42 are new. This is an estimate. If the comparator keeps a field for the reads, `nodegroup-update-no-yes` keeps its two entries for them.
 
-One entry written out:
+No entry is needed where only the output changes: the rollback that is interrupted before it starts reports `Interrupted`; the notice before a second control-plane update; the accepted `Kubernetes` reason of a `Kube: false` run with `--yes`; the removed `--force` row, since `nodegroup-update-force` rolls an outdated nodegroup either way; the confirmation on a terminal, since `nodegroup-update-prompt-*` already prompt for warnings.
 
-```json
-{
-  "scenario": "cluster-upgrade-pdb-blocked",
-  "field": "mutations",
-  "reason": "The plan runs the drain gate for every nodegroup before the control plane moves. The blocker stops the run after the insights refresh, the one request a blocked run may send.",
-  "source": "`cluster upgrade` reads PDBs only when it reaches the nodegroup phase",
-  "ownerApproved": true,
-  "expect": [{"operation": "eks:StartInsightsRefresh", "region": "us-east-1", "target": "prod", "payload": {}, "outcome": "accepted IN_PROGRESS"}]
-}
-```
+## 12. Test plan and build order
 
-### Questions that the traces raise
+### Tests
 
-These are in the traces, are not in `CONTRACT.md`, and the design does not reproduce them. Each has a contract edit in section 14, and none is settled until the owner answers.
+**Table tests for pure decisions.** `DecideAMIUpdate` (six rows; the frozen test loses its `--force` row); `Busy` (each status of each resource, ours and not, in both columns, and each unread group); `Plan.Decision` with the dry-run code; `Diff` (one row per `ChangeKind`, refuse over ask); `Result.ExitCode` (every row of both tables of section 4, every pair of step classes, fleet pools, interrupt over all); the add-on step table (eight rows) and the dependency sort; scale validation; the direction rule and the version-first table; the upgrade and rollback planners from their frozen tests, with `Step` values in place of labels; `noderoll.classify`, `Tracker`, and the mode choice of `Attach`.
 
-1. **A wait deadline exits 1** in every command. The design exits 4 (E2).
-2. **`nodegroup scale` sends sizes that EKS refuses.** The design validates first and sends nothing (E3).
-3. **`nodegroup update` sends a roll after its last read showed `UPDATING`.** The design skips the nodegroup, exit 0 (E4).
-4. **Mixed results have a different code in each command.** The design has one rule (E5).
-5. **The old gate's Kubernetes reads** are part of the compared preconditions, and the new gate reads other things (phase 3, decisions 5 and 9). No row of the contract can be cited for it today (E6).
-6. **On a terminal, the old `nodegroup update` starts with no confirmation when health is clean.** The design asks "proceed?" once, as the other four commands do. No scenario covers it. Contract edit 7.
+**Waits.** Against `awsxtest` with update scripts and the virtual clock, with `Deps.After` as the handshake: each terminal status; not-found before the first sighting, then success; a throttled poll, then success; access denied in the middle (`*UnobservedError`); a response with no update; a cancelled context; the request log shows `DescribeUpdate` only. The scale confirm: sizes and `ACTIVE` together, a mismatch, `DEGRADED`.
 
-Two more are about the suite and not the product:
+**`Run` with scripted hooks.** `Run` is synchronous, so these are ordinary tests through the fakes: a hooks value that records events and answers from a script.
 
-7. **`Moves` and `Signal` are placed by the old binary's request count.** `nodegroup-update-changed-before-the-gate` moves the world at the eighth `DescribeNodegroup`, and `cluster-rollback-interrupt-before-start` signals at the second `ListInsights`. The new binary makes other counts: two `DescribeNodegroup` calls for `ng-a` before the roll, and one `ListInsights` with `--yes`. `Scenario` needs `V2Moves` and `V2Signal`, with the same meaning stated in words.
-8. **Fifty-five entries for two classes.** The alternative is an allowance that covers a field for a group of scenarios with no pinned value. I recommend the 55 pinned entries (decision 6).
+- The order of events for each kind of change, as a golden list.
+- Each row of the question table: yes, no, cancel during the question, a hook error before the first submit and at a later phase. Each asserts the mutations in the request log.
+- After a yes, the plan is computed again: the world changes while `Ask` blocks (the scale that turns into a scale-down; a new AMI release; a rollback window that closes; a rollback target that changes), and the test asserts the second question, the block, or the refusal.
+- `Checkpoint`: `Stop` before the second phase submits nothing more and gives `Stopped`; `Waited` causes a new phase read; a failure after a stop is `Failed`.
+- Budgets: the read budget before the first submit; the wait budget from the first submit and from an attachment; neither runs inside `Ask`; deadline against cancel.
+- `goleak` in `TestMain`; `-race`.
 
-## 12. Test plan
+**Whole-command tests.** Through `cmdtest.NewFake` and a `kubetest.Server`, with goldens for stdout, stderr, and the exit code in the four formats. For each command: success, `--no-wait`, a dry run that would proceed, ask, and be blocked, the `--yes` error, a declined prompt, a busy refusal, a busy target, a failed update, a deadline, an interrupt, attach where the command has it, a lost response, an update with no ID. For `nodegroup update` also: several targets with one failed, `--reroll`, `--force` on a current nodegroup (not rolled), a custom AMI, `-f`, a fleet with a blocked cluster and a failed one. For `cluster upgrade` also: two hops, each `--only`, `-n`, both skip flags with an incompatible skipped add-on, resume after each phase with a nodegroup still `UPDATING`, a degraded nodegroup at the target (exit 5), an add-on that fails (the run stops), a control-plane attach that does not reach the target (the notice). Every machine document validates against its schema.
 
-**Table tests for pure decisions.**
+**The command-order test** of `REWRITE.md` gets the five commands.
 
-| Function | Rows |
+**`TestPaired`.** Every scenario gets its `V2` command line. The allowlist follows section 11.
+
+**Old tests that name a past regression in a changing command.** I opened each of these files and name the tests. Every other old test file is triaged in `legacy/PORTING.md` when its code is ported.
+
+| Old test | Protects |
 |---|---|
-| `DecideAMIUpdate` | The seven rows, from the frozen `ami_update_test.go`, plus `--reroll` on an outdated AMI |
-| `Busy` | Each status of each resource type, as a target and not; each snapshot group not `Collected` |
-| `Plan.Decision` and the dry-run exit code | Every row of the table in section 1, crossed with a failure |
-| `Diff` | One row per `ChangeKind`, refuse over ask, a step that vanished because it is done |
-| `Result.ExitCode` | Every `RunStatus`; every row of the mixed-outcome table; each pair of cluster results in fleet mode (the drift table asks for this); interrupt over everything |
-| The add-on step table, the dependency sort | The frozen tests of `addon_dependencies_test.go` and `service_test.go` |
-| Scale validation | Each row of both tables in section 5 |
-| The upgrade and rollback planners | The frozen `plan_test.go`, `scope_test.go`, `rollback_test.go`, with `Step` values in place of labels |
-| `LimitsFor` | Each kind, `--no-wait`, zero values |
-| `noderoll.classify`, `Tracker`, the mode choice of `Attach` | The frozen tests, and one row per mode |
+| `services/nodegroup/start_roll_test.go`: `TestStartNodegroupRoll_RetriesKeepOneToken`, `_RefusesEmptyVersion`, `_NewTokenPerCall`, `TestStartVersionUpdate_NoNodegroupVersionStartsNothing` | One token for the retries of a call, a new one per call; no request without a version |
+| `services/upgrade/verify_test.go`: `TestUpgradeNodegroups_VerifiesAttachedRoll`, `TestResume_DegradedNodegroupAtTargetIsVerifiedAgain`, `TestResume_UpdatingNodegroupAtTargetIsAttachedAndVerified`, `TestResume_MultiHopVerifiesDegradedNodegroupBeforeTheControlPlane`, `TestRollbackResume_DegradedNodegroupAtTargetStopsTheControlPlane`, `TestExecute_VerifyIssuesAndUnreadNodegroupKeepBoth`, `TestExecute_UnreadVerificationIsIncomplete` | The `Verify` action; issues before unread (5 before 4) |
+| `services/upgrade/resume_test.go`: `TestUpgradeNodegroups_AttachesToInFlightRoll`, `TestExecute_PerHopReadinessBlocksLaterHop`, `TestWaitForUpdate_PermanentErrorFailsFast`, `TestWaitForUpdate_NetworkErrorsKeepPolling`, `TestBuildPlan_AddonVersionLookupErrorIsNotIncompatibility`, `TestBuildPlan_CatchUpAddonSkipIsExact` | Resume and attach; the live readiness of a later hop; the transient rule; an unread catalogue is not "incompatible"; exact skip names |
+| `services/upgrade/stopped_test.go`: `TestExecute_DeadlineSaysTimedOut`, `TestExecute_CancelSaysInterrupted`, `TestBuildPlan_DeadlineDuringRefreshSaysTimedOut` | Deadline against interrupt, also during the insights refresh |
+| `services/nodegroup/scale_wait_test.go`: `TestScale_MaxOnlyBelowCurrentFails`, `TestScale_MinOnlyAboveCurrentFails`, `TestScaleWait_SuccessfulButConfigMismatchErrors`, `TestScaleWait_DesiredWaitsForActive`, `TestScaleWait_MissingUpdateIDErrors`, `TestScaleWait_CancelIsNotATimeout` | The bounds check with its hint; sizes and status together; no ID is not success |
+| `services/addons/update_guard_status_test.go`: `TestUpdate_VersionGuardHonorsStatus`, `TestUpdate_UpdatingAtTargetWaits`, `TestUpdateAll_ReappliesDegradedAtTarget` | The eight rows of the add-on step table |
+| `monitoring/monitor_test.go`: `TestMonitorUpdates_ParentCancelReturnsErrCancelled`, `TestMonitorUpdates_CancelledUpdateReturnsError` | A cancelled run is not a cancelled update |
 
-**Waits.** Against `awsxtest` with update scripts and the virtual clock, with `Deps.After` as the handshake: each row of the three tables in section 2; a throttled poll, then success; access denied in the middle of a wait (`*UnobservedError`); a response with no update; a cancelled context; `WaitUpdate` sends `DescribeUpdate` only, checked on the request log.
+**What the fakes still need.** `fleettest`: an update answer with no update ID; an insights refresh that fails and one that never ends; a nodegroup in `DELETING`; an add-on in `DELETING` and in `DELETE_FAILED`; `DescribeUpdate` that answers not-found once for a new ID. `cmdutiltest`: a scripted terminal for whole-command tests. `test/parity`: the `V2` command lines.
 
-**Operation lifecycle.** These tests replace the executor with a scripted function (the unexported seam that `Start` uses) and run inside `testing/synctest`, with `Deps.After` set to `time.After`. The fake HTTP server is kept out of them, because network reads are not durably blocked and a `synctest` bubble would not settle. Run with `-race`; `goleak` in `TestMain`.
+### Build order
 
-- Every row of the operation state table and of the phase state table, as a named subtest that asserts the events in order.
-- The log: a reader that never reads does not block `emit`; 1,000 progress events for one step leave one entry; lifecycle events are never lost; two readers with their own cursors; `Next` returns `io.EOF` after `Finished`; `Next` returns when its own context ends.
-- Questions: two concurrent `Answer` calls give one winner and one `ErrStaleQuestion`; an answer with an old ID; an answer after `Finished`.
-- The races, each as a loop over both orders with `synctest.Wait` between: answer and pause, answer and stop, answer and cancel, pause and stop, pause and cancel, stop and cancel, and all four at once. Each asserts the final status by the precedence rule and that nothing was submitted after the stop or the cancel.
-- Pause holds between phases and never inside one; `Resume` wakes it; `Stop` while paused; a failure after a stop request is `Failed`.
-- Deadlines: `Wait` starts at the first submit; a question pauses `Prepare` and `Wait`; `StepWait` per step; deadline against cancel through `context.Cause`.
-- Cleanup: at `Done` the claim is free, no goroutine is left, `Result` returns the same value twice.
-- `Observe`: with an update ID, without one, a failed update, no controls.
+Each step ends with `task dev:full` green. Where a step has paired scenarios, `TestPaired` passes for every command built so far.
 
-**Whole-command tests.** Through `cmdtest.NewFake` and a `kubetest.Server`, with goldens for stdout, stderr, and the exit code in the four formats, and the request log asserted. For each command: success, `--no-wait`, a dry run that would proceed, ask, and be blocked, the `--yes` error, a declined prompt, a busy refusal, a failed update, a deadline, an interrupt, attach, a lost response. For `nodegroup update` also: several targets with one failed, a submit that EKS refuses, `--reroll`, `--force`, a custom AMI, `-f`, the fleet with a blocked cluster and with a failed one. For `cluster upgrade` also: two hops, `--only` of each part, `-n`, both skip flags, resume after each phase, an attached update that fails (the notice), a busy refusal before the second phase. Every machine document validates against its schema in `TestDocumentsMatchSchemas`.
-
-**The command-order test** of `REWRITE.md` gets the five commands on its list.
-
-**`TestPaired`.** Every scenario gets its `V2` command line, and `V2Preview` where it has a preview. The allowlist grows by the classes of section 11. `TestAllowlistFile` already fails on an entry whose source is not a contract row, and `Unused` fails on an entry that no difference uses.
-
-**Old tests that name a past regression.** Ported, or covered by a named case above. The files are listed by name. The right column is the behaviour of the code they sit beside, as I read it in the code and the traces; I did not read every test. The `PORTING.md` triage of each file confirms or corrects the row.
-
-| Old test file | What it protects |
-|---|---|
-| `services/nodegroup/version_update_test.go`, `start_roll_test.go` | The version is always sent; an empty version is refused before any request; one token for the retries |
-| `services/nodegroup/ami_update_test.go` | The decision table; a custom AMI is never rolled, with `--force` too |
-| `services/nodegroup/scale_request_test.go`, `scale_wait_test.go`, `scale_pdb_gate_test.go` | A size that does not match after the update fails; a transient poll error does not end the wait |
-| `monitoring/monitor_test.go` | A permanent poll error settles one update and not the others; a response with no update is transient; a cancelled monitor is not a timeout |
-| `commands/nodegroup/update_document_test.go`, `machine_output_test.go`, `verify_test.go`, `timeout_scope_test.go` | Row statuses; not-attempted rows after an interrupt; verification is not run after a failed roll |
-| `commands/nodegroup/fleet_test.go`, `fleet_regions_test.go` | One cluster's failure does not stop the rest; the exit order; skipped regions are not failures |
-| `commands/nodegroup/liveroll_test.go`, `rollview/resilience_test.go`, `panel_test.go`, `live_test.go` | The panel never changes the result; a panel that ends early does not end the wait |
-| `services/addons/service_test.go`, `update_wait_test.go`, `update_guard_status_test.go`, `update_errors_test.go`, `update_all_timeout_test.go` | The version guard; `Successful` with the wrong version fails; attach with no update ID; failure reasons |
-| `services/upgrade/engine_test.go`, `nodegroups_test.go`, `controlplane_test.go`, `addons_test.go`, `resume_test.go`, `order_test.go`, `verify_test.go` | Phase order; resume skips what is done; attach; an at-version nodegroup that is not `ACTIVE` is verified, not skipped; "before" add-ons precede the rolls |
-| `services/upgrade/insights_test.go`, `plan_test.go`, `scope_test.go`, `catchup_test.go` | Refresh reuse; the scheduled-refresh retry; an empty insight list blocks a real run; skew counts skipped nodegroups; `--only` errors |
-| `services/upgrade/rollback_test.go`, `stopped_test.go` | The window and its slack; an in-flight rollback to the same target attaches; a stop is not a failure and a failure after a stop is one |
-| `services/cluster/busy_test.go`, `commands/nodegroup/busy_test.go` | The busy statuses; `DEGRADED` is not busy; an unreadable busy check refuses |
-| `noderoll/observer_test.go`, `informer_test.go`, `tracker_test.go`, `podeviction_test.go` | The drain taints; pods only for draining nodes; the informer fallback; the first snapshot emits nothing |
-| `commands/runner/mutate_test.go`, `deadline_test.go` | The `--yes` error before any call; a prompt pauses the deadline |
-| `tui/live/upgrade_test.go`, `roll_test.go`, `rollback_test.go`, `live_test.go` | The cases that concern the handle move to the lifecycle tests: a second answer is refused; a plan change asks; a changed roll version refuses; an adopted change has no controls |
-
-`legacy/PORTING.md` records each file.
-
-**What the fakes still need.**
-
-| Where | Addition |
-|---|---|
-| `test/parity` | `Scenario.V2Moves` and `V2Signal`; the `V2` command lines |
-| `fleettest` | An update answer with no update ID (`Fault{OmitUpdateID: true}`); an insights refresh that fails and one that never ends; a nodegroup in `CREATE_FAILED` and in `DELETING`; an add-on in `DELETING` |
-| `awsxtest` | `ListUpdates` with paging; a `Gate` wave helper that accepts "this wave, in any order, plus these mutations in this order" |
-| `kubetest` | Nothing beyond what phase 3 lists |
-| `cmdutiltest` | A scripted terminal for whole-command tests: answer the nth question, close stdin, send the cancel |
-
-## 13. Build order
-
-The order in `REWRITE.md` holds, with three additions: the documents and the shared command code come first, the node observer is its own step after `nodegroup update` works without it, and `Observe` comes last because only the TUI calls it. Each step ends with `task dev:full` green and `TestPaired` passing for the scenarios of the commands built so far.
-
-1. **Types and the shared command code.** `Plan`, `Step`, the IDs, `Plan.Decision`, `Diff`, `Result`, `ExitCode`; the `Plan` and `Run` documents and their schemas; `cmdutil.ChangeFlags`, `RequireYes`, `Confirm`; the command-order test with an empty list. Table tests only.
-2. **The waits and the handle.** `WaitUpdate`, `WaitSettled`, `Operation`, the log, questions, pause, stop, limits, claims, with the scripted executor. All lifecycle tests.
-3. **`addon update`.** `Busy`, `health.Addons`, the conditional `Kubernetes` result in `health.Run`, `plan` for add-ons, `runBatch` with its serial form, `cmdutil.RunChange`, the renderer without the panel, the plan and run views. Paired: the 23 `addon-update-*` scenarios.
-4. **`nodegroup scale`.** Validation, the scale gate, the confirm read. Paired: the `nodegroup-scale-*` scenarios. The contract edits E2 and E3 must be decided before this step ends, because both first show here.
-5. **The roll batch and `nodegroup update`.** `StartNodegroupRoll`, `DecideAMIUpdate`, the roll plan, the baseline, the wait together, verification, the Auto Scaling watch, `-f`, `--changelog`. Paired: the `nodegroup-update-*` scenarios but two.
-6. **`noderoll` and the panel.** The port, `Attach`, `NodeProgress`, `view.RollPanel`, `--live`. Paired: `nodegroup-update-live-view`, `nodegroup-update-prompt-yes`.
-7. **Fleet mode.** Discovery, the fleet plan, per-cluster limits, the checkpoint between clusters. Paired: `nodegroup-update-all-clusters`.
-8. **The upgrade engine and `cluster upgrade`.** The planner port, the insights refresh, the phases, attach and its notice, per-phase confirmation. Paired: the `cluster-upgrade-*` scenarios.
-9. **`cluster rollback`.** The planner port, the three phases, the request fields. Paired: the `cluster-rollback-*` scenarios.
-10. **`Observe` and close-out.** `Observe`, the benchmarks (`Next` with 10,000 events, `RollPanel` allocations), the livecheck rows, `gen-docs`, the `PORTING.md` rows, and the measurement of round trips for section 15.
-
-Phase 4 ports the hardest command of each kind first within its group, as the risk table of `REWRITE.md` asks: the single add-on before `--all`, one cluster before the fleet, the upgrade before the rollback.
-
-## 14. Decisions for the owner and contract edits
-
-### Decisions
-
-| # | Question | Recommendation |
+| # | Step | Proof |
 |---|---|---|
-| 1 | `Start` takes the request, with the reviewed plan as an option, and not `Start(ctx, plan)`. | Yes. A `--yes` run then reads the cluster once, and the comparison with a reviewed plan is one code path for the TUI and for the CLI after a prompt. |
-| 2 | Exit 4 for a wait deadline (old: 1). | Yes. The change was accepted and its end was not seen. A script can tell that from an error and from Ctrl+C. |
-| 3 | One rule for mixed results: every attempted step failed is 1, some failed is 4 (old: differs by command). | Yes. It is what the words of exit code 4 say. |
-| 4 | Keep row 3 of the roll table: `--force` also rolls a nodegroup that is on the latest AMI. | Keep it for this phase, since the port is frozen. I would remove it later: `--reroll` exists for that, and a flag about PDBs should not start a roll. |
-| 5 | The gate of `addon update` is the `Addons` check alone, and a scale that removes no node runs `Quotas` alone. | Yes. Neither drains a node, so neither should ask about Kubernetes access. |
-| 6 | 55 pinned `preconditions` entries for classes K and P, or a grouped allowance with no pinned value. | The pinned entries. They are recorded by the suite and reviewed in one sitting, and they keep the field checked. |
-| 7 | Attach by resource status inside the engine, with no update ID lookup. | Yes. It is the old behaviour and costs no call. The notice cannot quote the foreign update's error; `refresh cluster describe` can. |
-| 8 | `cluster rollback` asks when its steps changed, where the old command refused. | Yes, one table for both engines. With `--yes` the fresh plan is the plan. |
-| 9 | A `Prepare` timeout exits 1 and a `Wait` timeout exits 4. | Yes. Nothing was changed in the first case. |
+| 1 | Types: `Plan`, `Step`, the refs, `Plan.Decision`, `Diff`, `Result`, `ExitCode`; the two documents and their schemas; `ChangeFlags`, `RequireYes`, `Confirm` | No paired scenario: no command exists. Table tests, the schema test, the prompt tests. |
+| 2 | `WaitUpdate`, `WaitSettled` | No paired scenario. The wait tests against `awsxtest`. |
+| 3 | `addon update`: `Busy`, `health.Addons`, `plan` for add-ons, `Run` with the `Event` and `Ask` hooks, a serial phase, `RunChange`, the renderer without the panel, the views | Paired: the 23 `addon-update-*` scenarios |
+| 4 | `nodegroup scale`: validation, the scale gate, the scale confirm | Paired: the `nodegroup-scale-*` scenarios |
+| 5 | The batch and `nodegroup update`: `StartNodegroupRoll`, `DecideAMIUpdate`, the baseline, the wait together, verification, the Auto Scaling watch, `-f`, `--changelog` | Paired: the `nodegroup-update-*` scenarios but the two of step 6 and the one of step 7 |
+| 6 | `noderoll` and the panel: the port, `Attach`, `NodeProgress`, `view.RollPanel`, `--live` | Paired: `nodegroup-update-live-view`, `nodegroup-update-prompt-yes`. The port's own tests carry most of the proof. |
+| 7 | Fleet mode: discovery, the fleet plan, budgets per cluster, and the first use of the `Checkpoint` hook, between clusters | Paired: `nodegroup-update-all-clusters`, one scenario. The mixed-result and stop cases are whole-command and scripted-hook tests. |
+| 8 | The upgrade engine and `cluster upgrade`: the planner port, the insights refresh, `StopOnFailure`, attach, the `Verify` action, `ConfirmPhases`, the checkpoint between phases | Paired: the `cluster-upgrade-*` scenarios |
+| 9 | `cluster rollback`: the planner port, `fleet.LastUpgrade`, direction, the request fields | Paired: the `cluster-rollback-*` scenarios |
+| 10 | Close-out: benchmarks (`RollPanel` allocations, `Diff` on a 50-step plan), the livecheck rows, `gen-docs`, `PORTING.md`, the round-trip measurement for section 14 | No paired scenario |
 
-### Proposed contract edits
+Steps 3 to 6 build no checkpoint, no pause, and no stop: a single-phase change has no place for one. The hook is first called in step 7. This is the order of `REWRITE.md` with the types first and the node observer as its own step.
 
-1. **Shared flags.** Move `--require-healthy` from `nodegroup update` to the flags of every changing command. Two rows of the contract already assume it. Add `--skip-verify` to `cluster upgrade` and `cluster rollback`, which have it today.
-2. **New row, exit codes.** "A wait that outlasts `--wait-timeout` exits 1, like an error. | It exits 4. The result names each update that is still running. An interrupt stays 1."
-3. **New row, scale.** "`nodegroup scale` sends sizes that EKS will refuse, and sends a request that changes nothing. | It checks the sizes against each other and against the nodegroup first. Sizes that cannot hold are an error, exit 1, with no request. A scale to the current sizes does nothing, exit 0."
-4. **New row, the last read.** "`nodegroup update` sends the roll when its last read shows the nodegroup `UPDATING`, and EKS refuses it. | Every change acts on its last read. The nodegroup is skipped as already updating."
-5. **New row, mixed results.** "A partial failure exits 1 in `nodegroup update` and 4 in `addon update --all`. A submit that EKS refuses exits 4 in `nodegroup update` and 1 elsewhere. | One rule: a run in which every attempted step failed exits 1, and a run with some steps done and some failed exits 4."
-6. **New row, reads.** "The gate probes the Kubernetes API with a namespace list, lists the nodes of each target with a label selector, and lists deployments per namespace. | The gate makes one node list, one PDB list, and one deployment list for a run, and no probe." Phase 3 decided the behaviour; the row lets the allowlist cite it.
-7. **New row, confirmation.** "On a terminal, `nodegroup update` starts without a question when the health checks pass. | Every changing command asks once before its first change, unless `--yes`. `cluster upgrade` asks before each phase."
-8. **`addon update`.** `--version` needs exactly one add-on name. `--skip-addon` needs `--all`. `--force` is not accepted. `--no-wait` with `--all` submits every add-on in dependency order.
-9. **`nodegroup update --all-clusters`** is a usage error with `-c`, a positional, or `--kube-context`.
-10. **Documents.** `Plan` and `Run` have the fields of section 1. `Run.status` and `StepResult.status` have the values of section 7.
-11. **`cluster rollback -o plain`** exists, through the shared view.
-12. **The dry-run exit rule** already in the contract gains one clause: "and 4 when the plan itself could not read something".
+## 13. Decisions and contract edits
 
-Three points of `REWRITE.md` change in this note and need no contract edit: `Start` takes a request (decision 1); the phase states gain `Checking` and `Blocked`; and `--no-wait` is also allowed for `addon update --all`, which waits for nothing between its submits.
+### Decided by the owner on draft 1
 
-## 15. Changes made while building
+| # | Decision |
+|---|---|
+| D1 | The executor is synchronous: `Run` with three hooks. Phase 4 builds no handle. |
+| D2 | A wait that hits `--wait-timeout` exits 4 in all five commands. The read budget running out before anything was submitted exits 1 only when nothing was read, else 4. |
+| D3 | A change that was accepted and could not be followed exits 4. |
+| D4 | A busy target of `nodegroup update`, `nodegroup scale`, or `addon update` is not changed and not attached to; the others go on; exit 4. |
+| D5 | `--force` no longer rolls a nodegroup that is on the latest AMI. |
+| D6 | One rule for mixed results over the steps of the whole run, for independent targets (the clusters of a fleet, the targets of `nodegroup update`, the add-ons of `addon update --all`): a failed step beside a step that changed something is a partial failure, exit 4; a run in which every attempted step failed exits 1. A `cluster upgrade` or `cluster rollback` whose phase fails exits 1. |
+| D7 | `nodegroup update` confirms once on a terminal. |
+| D8 | The parity comparator checks safety obligations; the allowlist is recounted in section 11. |
+| D9 | A standalone `addon update` attaches only when the add-on's in-flight update is already to the requested version. Every other in-flight state of a target is the `Busy` row of D4. The engines keep the old engine's attach rules. |
+
+### Open
+
+Nothing is open.
+
+### Contract edits
+
+Accepted on draft 1 and applied in this draft: `--require-healthy` on every changing command and `--skip-verify` on `cluster upgrade` and `cluster rollback` (1); a busy target, as D4 with the exception of D9 (4); one rule for mixed results, as D6 (5); the confirmation before the first change (7); `addon update` flag rules, with no `--force` (8); `--all-clusters` excludes `-c`, positionals, and `--kube-context` (9); `cluster rollback -o plain` (11); the dry-run exit rule gains "and 4 when the plan itself could not read something" (12). Edit 2 became D2. Edit 6 was dropped.
+
+The text of the two edits still to copy into `CONTRACT.md`:
+
+**Edit 3.** A new row of "Behaviour the new CLI does not copy":
+
+| Old behaviour | New behaviour |
+|---|---|
+| `nodegroup scale` checks only a lone `--min` or `--max` against the current desired size. It sends every other combination to EKS, which refuses sizes that cannot hold, and it sends a request that changes nothing. | `nodegroup scale` checks the sizes before it sends anything: against each other, and against the nodegroup's current sizes for the ones that were not given. Sizes that cannot hold are an error, exit 1, with no request. A lone `--min` or `--max` that excludes the current desired size says to pass `--desired` too. A scale to the current sizes sends nothing and exits 0. |
+
+**Edit 10.** In "Documents", the `Nodegroup` and `Addon` rows of the shapes table lose "plans and runs" from "Used in". After the kinds table, in place of "A plan has an `operation` field and a list of steps per cluster":
+
+> `Plan` has `operation` (`AddonUpdate`, `NodegroupScale`, `NodegroupUpdate`, `ClusterUpgrade`, `ClusterRollback`), `clusters`, `skippedRegions`, and `failures`.
+>
+> Each entry of `clusters` has `cluster`, `region`, `version`, `targetVersion`, `decision` (`Proceed`, `Ask`, `Blocked`, `NothingToDo`), `steps`, `gate`, `blockers` (each with `kind`, `step`, `message`), `notices`, and `rollback`.
+>
+> Each step has `phase` (`ControlPlane`, `AddonsBefore`, `Nodegroups`, `AddonsAfter`, `Addons`, `Roll`, `Scale`), `hop`, `kind` (`ControlPlane`, `Addon`, `Nodegroup`, `Scale`), `name`, `action` (`Submit`, `Attach`, `Verify`, `Skip`, `Manual`, `Blocked`), `reason`, `from`, `to`, `toRelease`, `force`, and `sizes` (`before` and `after`, each with `desired`, `min`, `max`).
+>
+> A step is identified by `region`, `cluster`, `phase`, `hop`, `kind`, and `name` together. No field is a composite ID to parse.
+>
+> `Run` has `operation`, `status`, `clusters`, and `failures`. Each entry of `clusters` has the fields of a plan cluster, and `status`, `results`, and `verification` (a list of `HealthResult`). `results` has one entry for each step of the plan, in plan order, with the six identity fields and `status` (`NotAttempted`, `Started`, `Succeeded`, `Failed`, `Cancelled`, `InProgress`, `Busy`, `Skipped`, `Blocked`), `attached`, `updateId`, `inFlight`, `startedAt`, `finishedAt`, and `failure`.
+>
+> `status` of a run and of a cluster is one of `Succeeded`, `NothingToDo`, `Started`, `Refused`, `Declined`, `Stopped`, `Blocked`, `Failed`, `VerifyFailed`, `Incomplete`, `Interrupted`.
+
+Points of `REWRITE.md` that this note changes, with no contract edit: `Run` with hooks in place of `Start` and an `Operation` (D1); the phase and operation state tables move to phase 5 with the handle; `--no-wait` is also allowed for `addon update --all`, which waits for nothing between its submits; `DecideAMIUpdate` loses its `--force` row (D5).
+
+## 14. Changes made while building
 
 Empty until code changes the design.
