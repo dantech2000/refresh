@@ -128,7 +128,7 @@ func IsRetryable(err error) bool {
 	if IsDialFailure(err) && !errors.Is(err, context.Canceled) && !nameNotFound(err) {
 		return true
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if isContextDeadline(err) || errors.Is(err, context.Canceled) {
 		return false
 	}
 	var ae smithy.APIError
@@ -164,6 +164,35 @@ var retryableErrorCodes = map[string]bool{
 	"InternalServerException":     true,
 	"InternalFailure":             true,
 	"ServerException":             true,
+}
+
+// isContextDeadline reports whether the deadline of a context ended the
+// call: context.DeadlineExceeded itself is in the chain of err.
+//
+// errors.Is is not the test for that. A timeout of the HTTP transport, such
+// as the wait for response headers, also answers errors.Is(err,
+// context.DeadlineExceeded), although the context of the caller is live. It
+// is a network failure, and another attempt can succeed.
+func isContextDeadline(err error) bool {
+	for err != nil {
+		if err == context.DeadlineExceeded { //nolint:errorlint // the identity of the sentinel is the point; see above
+			return true
+		}
+		switch e := err.(type) { //nolint:errorlint // walking the chain link by link
+		case interface{ Unwrap() error }:
+			err = e.Unwrap()
+		case interface{ Unwrap() []error }:
+			for _, inner := range e.Unwrap() {
+				if isContextDeadline(inner) {
+					return true
+				}
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // IsDialFailure reports whether err is a connection that could not be

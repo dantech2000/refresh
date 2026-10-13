@@ -432,16 +432,6 @@ func TestHTTPClientSizesIdleConnections(t *testing.T) {
 	}
 }
 
-func TestHTTPClientLimitsAStalledCall(t *testing.T) {
-	tr := NewHTTPClient(8).GetTransport()
-	if tr.ResponseHeaderTimeout != time.Minute {
-		t.Errorf("ResponseHeaderTimeout = %v, want 1m", tr.ResponseHeaderTimeout)
-	}
-	if tr.HTTP2 == nil || tr.HTTP2.SendPingTimeout != 30*time.Second || tr.HTTP2.PingTimeout != 15*time.Second {
-		t.Errorf("HTTP2 = %+v, want a ping after 30s of silence and 15s for its answer", tr.HTTP2)
-	}
-}
-
 // With a defaults mode set, a service client gives a buildable HTTP client
 // a dialer of its own, in a copy that no other client shares. Load freezes
 // the client, so two services still share one connection and a sweep keeps

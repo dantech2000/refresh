@@ -106,7 +106,7 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 	// Under a defaults mode they therefore dial on a transport of their
 	// own. Those are a few calls for each run.
 	if buildable, ok := cfg.HTTPClient.(*awshttp.BuildableClient); ok {
-		cfg.HTTPClient = buildable.Freeze()
+		cfg.HTTPClient = freeze(buildable, defaultStallLimits().bodyIdle)
 	}
 	// An SSO login can expire in the middle of a run. Every client built
 	// from this configuration then names the profile to log in with. The
@@ -133,11 +133,16 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 // the client gives up when the response headers take longer than a minute,
 // and it closes an HTTP/2 connection that is silent for 30 seconds and then
 // does not answer a ping in 15. Both failures are transient, so the retry
-// policy of the call applies.
+// policy of the call applies. Load adds a limit for a response body that
+// stops coming.
 func NewHTTPClient(maxConcurrency int) *awshttp.BuildableClient {
+	return newHTTPClient(maxConcurrency, defaultStallLimits())
+}
+
+func newHTTPClient(maxConcurrency int, limits stallLimits) *awshttp.BuildableClient {
 	return awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
-		tr.ResponseHeaderTimeout = responseHeaderTimeout
-		tr.HTTP2 = &http.HTTP2Config{SendPingTimeout: http2PingAfter, PingTimeout: http2PingTimeout}
+		tr.ResponseHeaderTimeout = limits.headers
+		tr.HTTP2 = &http.HTTP2Config{SendPingTimeout: limits.pingAfter, PingTimeout: limits.pingTimeout}
 		tr.MaxIdleConnsPerHost = max(tr.MaxIdleConnsPerHost, maxConcurrency)
 		// No limit on the idle connections of all hosts together. A sweep
 		// talks to a few services in each of many regions, and every
@@ -148,13 +153,6 @@ func NewHTTPClient(maxConcurrency int) *awshttp.BuildableClient {
 		tr.DialContext = sweepDial(tr.DialContext, sweepDialTimeout)
 	})
 }
-
-// The limits of the shared transport for a call that stalls.
-const (
-	responseHeaderTimeout = time.Minute
-	http2PingAfter        = 30 * time.Second
-	http2PingTimeout      = 15 * time.Second
-)
 
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 

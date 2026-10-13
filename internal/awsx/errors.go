@@ -170,7 +170,7 @@ func IsNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || isContextDeadline(err) {
 		return false
 	}
 	var urlErr *url.Error
@@ -326,7 +326,7 @@ func FormatAWSError(err error, operation string) error {
 	if IsDialFailure(err) && !errors.As(err, &dns) && !errors.Is(err, context.Canceled) {
 		return formatNetworkError(err, operation)
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	if isContextDeadline(err) {
 		return &formattedError{msg: fmt.Sprintf("timed out while %s %s", operation, deadlineHint(DefaultTimeoutFlag)), err: err}
 	}
 
