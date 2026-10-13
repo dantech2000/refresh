@@ -68,15 +68,18 @@ func nodes(c *fleettest.Cluster) []item {
 		if n.ImageID != "" {
 			labels[labelImage] = n.ImageID
 		}
-		ready, summary := corev1.ConditionTrue, n.Name+"=Ready"
+		ready, reason, summary := corev1.ConditionTrue, "KubeletReady", n.Name+"=Ready"
 		if n.NotReady {
-			ready, summary = corev1.ConditionFalse, n.Name+"=NotReady"
+			ready, reason, summary = corev1.ConditionFalse, "KubeletNotReady", n.Name+"=NotReady"
+		}
+		if n.ReadyReason != "" {
+			reason = n.ReadyReason
 		}
 		node := corev1.Node{
 			TypeMeta: metav1.TypeMeta{Kind: "Node", APIVersion: "v1"}, ObjectMeta: meta("", n.Name, labels, n.CreatedAt),
 			Spec: corev1.NodeSpec{Unschedulable: n.Unschedulable, ProviderID: "aws:///us-east-1a/" + n.Name},
 			Status: corev1.NodeStatus{
-				Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: ready, Reason: "KubeletReady"}},
+				Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: ready, Reason: reason}},
 				Capacity:   capacity(n.MilliCPU, n.MemoryMi), Allocatable: capacity(n.MilliCPU, n.MemoryMi),
 			},
 		}
@@ -110,13 +113,22 @@ func pods(c *fleettest.Cluster) []item {
 			TypeMeta: metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}, ObjectMeta: meta(p.Namespace, p.Name, p.Labels, p.CreatedAt),
 			Spec: corev1.PodSpec{NodeName: p.Node, Containers: []corev1.Container{{Name: "main", Image: "fake"}}},
 			Status: corev1.PodStatus{
-				Phase: phase,
+				Phase: phase, Reason: p.Reason,
 				Conditions: []corev1.PodCondition{
 					{Type: corev1.PodScheduled, Status: condition(p.Node != "")},
 					{Type: corev1.PodReady, Status: condition(ready)},
 				},
 				ContainerStatuses: []corev1.ContainerStatus{{Name: "main", Ready: ready, Started: &running}},
 			},
+		}
+		if p.DisruptionTarget {
+			pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{
+				Type: corev1.DisruptionTarget, Status: corev1.ConditionTrue, Reason: corev1.PodReasonTerminationByKubelet,
+			})
+		}
+		if p.Deleting {
+			now := metav1.NewTime(p.CreatedAt.UTC())
+			pod.DeletionTimestamp = &now
 		}
 		summary := p.Namespace + "/" + p.Name + "=" + p.Phase
 		if running && p.NotReady {
@@ -145,18 +157,33 @@ func pdbs(c *fleettest.Cluster) []item {
 	out := make([]item, 0, len(c.PDBs))
 	for _, p := range c.PDBs {
 		minAvailable := intstr.FromInt32(p.MinAvailable)
+		budget := policyv1.PodDisruptionBudget{
+			TypeMeta:   metav1.TypeMeta{Kind: "PodDisruptionBudget", APIVersion: "policy/v1"},
+			ObjectMeta: withGeneration(meta(p.Namespace, p.Name, nil, c.CreatedAt)),
+			Spec:       policyv1.PodDisruptionBudgetSpec{MinAvailable: &minAvailable, Selector: &metav1.LabelSelector{MatchLabels: p.Selector}},
+			Status: policyv1.PodDisruptionBudgetStatus{
+				ObservedGeneration: 1, DisruptionsAllowed: p.DisruptionsAllowed,
+				CurrentHealthy: p.CurrentHealthy, DesiredHealthy: p.DesiredHealthy, ExpectedPods: p.ExpectedPods,
+				Conditions: []metav1.Condition{{Type: policyv1.DisruptionAllowedCondition, Status: metav1.ConditionTrue, Reason: policyv1.SufficientPodsReason}},
+			},
+		}
+		if p.NoSelector {
+			budget.Spec.Selector = nil
+		}
+		if p.AlwaysAllow {
+			policy := policyv1.AlwaysAllow
+			budget.Spec.UnhealthyPodEvictionPolicy = &policy
+		}
+		if p.Unsynced {
+			budget.Status.ObservedGeneration = 0
+		}
+		if p.SyncFailed {
+			budget.Status.Conditions[0] = metav1.Condition{Type: policyv1.DisruptionAllowedCondition, Status: metav1.ConditionFalse, Reason: policyv1.SyncFailedReason}
+		}
 		out = append(out, item{
 			namespace: p.Namespace, name: p.Name, fields: map[string]string{"metadata.name": p.Name, "metadata.namespace": p.Namespace},
 			summary: fmt.Sprintf("%s/%s=allows%d", p.Namespace, p.Name, p.DisruptionsAllowed),
-			object: policyv1.PodDisruptionBudget{
-				TypeMeta:   metav1.TypeMeta{Kind: "PodDisruptionBudget", APIVersion: "policy/v1"},
-				ObjectMeta: withGeneration(meta(p.Namespace, p.Name, nil, c.CreatedAt)),
-				Spec:       policyv1.PodDisruptionBudgetSpec{MinAvailable: &minAvailable, Selector: &metav1.LabelSelector{MatchLabels: p.Selector}},
-				Status: policyv1.PodDisruptionBudgetStatus{
-					ObservedGeneration: 1, DisruptionsAllowed: p.DisruptionsAllowed,
-					CurrentHealthy: p.CurrentHealthy, DesiredHealthy: p.DesiredHealthy, ExpectedPods: p.ExpectedPods,
-				},
-			},
+			object:  budget,
 		})
 	}
 	return out

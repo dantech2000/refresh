@@ -43,11 +43,27 @@ func newDescribeFake(t *testing.T) *cmdtest.Fake {
 			&fleettest.Cluster{Name: "prod-eu", Region: east, Version: "1.34"},
 		)
 		s.VPCs = []fleettest.VPC{{ID: "vpc-0a1", CIDR: "10.0.0.0/16"}}
+		s.Metrics = controlPlaneMetrics("prod", 1<<30, 48210, 5, 0)
 		s.ClusterVersions = []fleettest.ClusterVersion{
 			{Version: "1.33", EndOfStandardSupport: time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), EndOfExtendedSupport: time.Date(2027, 12, 1, 0, 0, 0, 0, time.UTC)},
 		}
 	})
 	return cmdtest.NewFake(t, world, east)
+}
+
+// controlPlaneMetrics returns the AWS/EKS metrics of a cluster: the etcd
+// size in bytes, and the request, 5xx, and 429 counts of the window.
+func controlPlaneMetrics(cluster string, etcd, requests, errors5xx, throttled float64) []fleettest.Metric {
+	var out []fleettest.Metric
+	for name, value := range map[string]float64{
+		"etcd_mvcc_db_total_size_in_use_in_bytes": etcd, "apiserver_request_total": requests,
+		"apiserver_request_total_5XX": errors5xx, "apiserver_request_total_429": throttled,
+	} {
+		out = append(out, fleettest.Metric{
+			Region: east, Namespace: "AWS/EKS", Name: name, Dimensions: map[string]string{"ClusterName": cluster}, Values: []float64{value},
+		})
+	}
+	return out
 }
 
 func TestDescribe_Formats(t *testing.T) {
@@ -73,7 +89,8 @@ func TestDescribe_Formats(t *testing.T) {
 	}
 }
 
-// "cluster describe" is two round trips, and no call lists clusters.
+// "cluster describe" is three round trips, the third for the health
+// checks, and no call lists clusters.
 func TestDescribe_Waves(t *testing.T) {
 	e := newDescribeFake(t)
 	gate := awsxtest.NewGate(t, e.Server.Handler)
@@ -81,12 +98,16 @@ func TestDescribe_Waves(t *testing.T) {
 	go func() { done <- e.Run(cmdutiltest.Context(t), "cluster", "describe", "prod", "-o", "json") }()
 	gate.Wave(fleettest.EKSDescribeCluster, fleettest.EKSListNodegroups, fleettest.EKSListAddons, fleettest.EKSDescribeClusterVersions)
 	gate.Wave(fleettest.EKSDescribeNodegroup, fleettest.EKSDescribeNodegroup, fleettest.EKSDescribeAddon, fleettest.EKSDescribeAddon, fleettest.EC2DescribeVpcs)
+	// The control-plane metrics, the quota, and its usage. The nodegroups
+	// of this cluster have no Auto Scaling group, so the capacity check
+	// has nothing to read.
+	gate.Wave(fleettest.CloudWatchGetMetricData, fleettest.CloudWatchGetMetricData, fleettest.ServiceQuotasGetServiceQuota)
 	gate.Done()
 	if err := <-done; err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if n := len(e.Server.Requests()); n != 9 {
-		t.Errorf("requests = %v, want 9", e.Operations())
+	if n := len(e.Server.Requests()); n != 12 {
+		t.Errorf("requests = %v, want 12", e.Operations())
 	}
 }
 

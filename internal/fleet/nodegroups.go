@@ -92,7 +92,7 @@ func (f *Fetcher) fetchNodegroups(ctx context.Context, c *awsx.Clients, cluster 
 	}
 	slices.SortFunc(res.nodegroups, func(a, b Nodegroup) int { return cmp.Compare(a.Name, b.Name) })
 
-	if need.AMI || need.AMIAge || need.Instances {
+	if need.AMI || need.AMIAge || need.Instances || need.InstanceIDs {
 		need.AMI = need.AMI || need.AMIAge
 		for _, failure := range f.fetchAMIs(ctx, c, res.nodegroups, need) {
 			fail(failure)
@@ -207,7 +207,10 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 		if n.State != Collected {
 			continue
 		}
-		if len(n.AutoScalingGroups) > 0 {
+		switch {
+		case need.InstanceIDs:
+			groupNames = append(groupNames, n.AutoScalingGroups...)
+		case len(n.AutoScalingGroups) > 0:
 			groupNames = append(groupNames, n.AutoScalingGroups[0])
 		}
 		if !need.AMI {
@@ -265,10 +268,10 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 		case len(n.AutoScalingGroups) == 0:
 		case groupsErr != nil:
 			fromGroupErr = groupsErr
-		case len(members) > 0:
+		case len(members) > 0 && (need.Instances || need.AMI):
 			fromGroupErr = instancesErr
 		}
-		failures = append(failures, n.fill(lookups[i], members, instances, fromGroupErr, need)...)
+		failures = append(failures, n.fill(lookups[i], members, instances, groups, fromGroupErr, need)...)
 	}
 	return failures
 }
@@ -296,8 +299,19 @@ func instancesToRead(nodegroups []Nodegroup, lookups []lookup, groups map[string
 // fill sets the instances and the AMI group of n from what the calls
 // returned, and returns its failures: at most one, also when the instance
 // list and the AMI failed for the same reason.
-func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instance, fromGroupErr error, need Need) []apidoc.Failure {
+func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instance, groups map[string][]string, fromGroupErr error, need Need) []apidoc.Failure {
 	var failures []apidoc.Failure
+	if need.InstanceIDs {
+		n.InstanceIDsState = Collected
+		if fromGroupErr != nil {
+			n.InstanceIDsState = stateOf(fromGroupErr)
+			failures = append(failures, FailureFromError(apidoc.FailureNodegroup, n.Name, fromGroupErr))
+		}
+		n.InstanceIDs = make([]string, 0, len(members))
+		for _, g := range n.AutoScalingGroups {
+			n.InstanceIDs = append(n.InstanceIDs, groups[g]...)
+		}
+	}
 	if need.Instances {
 		n.InstancesState = Collected
 		if fromGroupErr != nil {

@@ -25,6 +25,8 @@ const (
 	KindNodegroupDescription Kind = "NodegroupDescription"
 	KindAddonList            Kind = "AddonList"
 	KindAddonDescription     Kind = "AddonDescription"
+	KindUpgradeCheck         Kind = "UpgradeCheck"
+	KindInsightDescription   Kind = "InsightDescription"
 )
 
 // Kinds returns every kind, in documentation order.
@@ -38,6 +40,8 @@ func Kinds() []Kind {
 		KindNodegroupDescription,
 		KindAddonList,
 		KindAddonDescription,
+		KindUpgradeCheck,
+		KindInsightDescription,
 	}
 }
 
@@ -59,6 +63,8 @@ func Documents() []Document {
 		NodegroupDescription{},
 		AddonList{},
 		AddonDescription{},
+		UpgradeCheck{},
+		InsightDescription{},
 	}
 }
 
@@ -82,6 +88,10 @@ func (k Kind) Command() string {
 		return "addon list"
 	case KindAddonDescription:
 		return "addon describe"
+	case KindUpgradeCheck:
+		return "cluster upgrade-check"
+	case KindInsightDescription:
+		return "cluster upgrade-check --insight"
 	}
 	return ""
 }

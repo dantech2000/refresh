@@ -1,0 +1,55 @@
+prod   [OK] ACTIVE   us-east-1
+
+OVERVIEW
+  status            [OK] ACTIVE
+  version           1.33
+  platform version  eks.1
+  support           [OK] standard until 2026-12-01 (61 days); EKS upgrades the cluster then
+  upgrade policy    STANDARD
+  endpoint          http://kube.fake.invalid
+  arn               arn:aws:eks:us-east-1:123456789012:cluster/prod
+  created           2026-01-01 00:00 UTC
+
+NETWORK
+  vpc              vpc-0a1 (10.0.0.0/16)
+  subnets          subnet-1, subnet-2
+  security groups  sg-1
+  endpoint access  public and private
+  public cidrs     203.0.113.0/24
+
+SECURITY
+  role                 arn:aws:iam::123456789012:role/eks-prod
+  secrets encryption   arn:aws:kms:us-east-1:123456789012:key/k1
+  logging              api, audit
+  deletion protection  enabled
+
+ISSUES  1
+  NAME                           MESSAGE           RESOURCES
+  Ec2SubnetInvalidConfiguration  A subnet is gone  subnet-9
+
+NODEGROUPS  2
+  NAME  STATUS        VERSION   INSTANCE            NODES
+  old   [~] UPDATING  [!] 1.32  m5.large            1/3
+  web   [OK] ACTIVE   1.33      m5.large,m5a.large  2/6
+
+ADD-ONS  2
+  NAME     VERSION             STATUS        HEALTH
+  coredns  v1.11.3-eksbuild.2  [X] DEGRADED  Failed
+  vpc-cni  v1.19.0-eksbuild.1  [OK] ACTIVE   Healthy
+
+HEALTH  9
+  summary  [X] Fail
+  NAME           OUTCOME    MESSAGE
+  Nodes          [!] Warn   3/4 nodes ready; issues: web-3
+  Capacity       Skipped    no managed nodegroup instances
+  ControlPlane   [OK] Pass  etcd 12% of 8 GiB
+  Workloads      [OK] Pass  1/1 pods running in the system namespaces
+  DrainBlockers  [X] Fail   1 PDB allow 0 disruptions; a drain would stall on eviction
+  PDBCoverage    [OK] Pass  every deployment has a PodDisruptionBudget (1)
+  Utilization    [OK] Pass  CPU 0%, memory 0% in use
+  Quotas         Skipped    the EC2 vCPU quota is not reported
+  Kubernetes     [OK] Pass  Kubernetes API reachable
+
+TAGS
+  env   prod
+  team  payments

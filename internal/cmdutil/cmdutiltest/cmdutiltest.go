@@ -51,6 +51,9 @@ func NewFactory() (f *cmdutil.Factory, in, out, errOut *bytes.Buffer) {
 	f.AWS = func(context.Context) (*awsx.Provider, error) {
 		return nil, errors.New("this test factory has no AWS; use UseAWS")
 	}
+	// The real resolution: a test points $KUBECONFIG or --kubeconfig at
+	// the file that a kubetest server wrote.
+	f.Kube = cmdutil.NewKube(f)
 	return f, in, out, errOut
 }
 

@@ -217,6 +217,14 @@
           "type": "array",
           "description": "instances are the EC2 instances of the nodegroup, in a document that reads them."
         },
+        "readyNodes": {
+          "type": "integer",
+          "description": "readyNodes is the number of Ready nodes, from the Kubernetes API, in a document that reads it with --check-readiness."
+        },
+        "workloads": {
+          "$ref": "#/$defs/Workloads",
+          "description": "workloads is what runs on the nodes, from the Kubernetes API, in a document that reads it with --show-workloads."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -280,6 +288,24 @@
         "max"
       ],
       "description": "Scaling is the scaling configuration of a nodegroup."
+    },
+    "Workloads": {
+      "properties": {
+        "pods": {
+          "type": "integer",
+          "description": "pods is the number of pods on the nodes, Succeeded pods left out."
+        },
+        "systemPods": {
+          "type": "integer",
+          "description": "systemPods is the number of them in kube-system."
+        }
+      },
+      "type": "object",
+      "required": [
+        "pods",
+        "systemPods"
+      ],
+      "description": "Workloads is what runs on the nodes of a nodegroup."
     }
   },
   "properties": {

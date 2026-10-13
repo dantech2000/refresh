@@ -36,6 +36,7 @@ func run(ctx context.Context, args []string, streams *cmdutil.IOStreams) int {
 		Contexts:      contexts.DefaultStore,
 	}
 	f.AWS = cmdutil.NewAWS(f)
+	f.Kube = cmdutil.NewKube(f)
 	return execute(ctx, args, f)
 }
 

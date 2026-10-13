@@ -1,0 +1,13 @@
+Deprecated APIs removed in 1.33   [X] ERROR   prod in us-east-1
+
+INSIGHT
+  id              bc8b2f86-1111-4a4a-8b8b-000000000001
+  category        UPGRADE_READINESS
+  version         1.33
+  reason          Deprecated APIs are in use
+  description     Checks for usage of deprecated APIs
+  recommendation  Update the manifests and the clients
+
+DEPRECATED APIS  1
+  NAME                                       REPLACED WITH                         REMOVED IN  CLIENTS
+  /apis/policy/v1beta1/poddisruptionbudgets  /apis/policy/v1/poddisruptionbudgets  1.25        old-controller/v2 (120 requests in 30 days); kubectl/v1.24 (3 requests in 30 days)

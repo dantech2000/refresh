@@ -18,6 +18,10 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
+// errNoMetricsServer is the answer of a cluster without metrics-server: the
+// API server does not know the metrics resource.
+var errNoMetricsServer = errors.New("no metrics-server")
+
 // collection is one kind the server lists.
 type collection struct {
 	list, watch fleettest.Operation
@@ -151,6 +155,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, generation, err := h.snapshot(res, sel)
+	if errors.Is(err, errNoMetricsServer) {
+		fail(&status{http.StatusNotFound, metav1.StatusReasonNotFound, "the server could not find the requested resource"})
+		return
+	}
 	if err != nil {
 		fail(&status{http.StatusBadRequest, metav1.StatusReasonBadRequest, err.Error()})
 		return
@@ -251,12 +259,19 @@ func newSelection(namespace, labelSelector, fieldSelector string) (selection, er
 // snapshot returns the items of the cluster that the selection keeps, with
 // their resource version set, and the world's generation.
 func (h *Handler) snapshot(res collection, sel selection) ([]item, int64, error) {
-	var all []item
+	var (
+		all       []item
+		noMetrics bool
+	)
 	h.world.View(func(s *fleettest.State) {
 		if c := s.Cluster(h.region, h.cluster); c != nil {
 			all = res.items(c)
+			noMetrics = c.NoMetricsServer
 		}
 	})
+	if noMetrics && res.list == fleettest.KubeListNodeMetrics {
+		return nil, 0, errNoMetricsServer
+	}
 	// The generation is read after the items. If the world changed in
 	// between, the list carries the newer number with the older items, and
 	// a watch from that number would miss the change. A watch from a

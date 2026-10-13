@@ -170,6 +170,10 @@
           "type": "array",
           "description": "addons are the installed add-ons, in a document that reads them."
         },
+        "health": {
+          "$ref": "#/$defs/Health",
+          "description": "health is the result of the health checks, in a document that runs them. The Kubernetes checks run with --check-readiness."
+        },
         "incomplete": {
           "type": "boolean",
           "description": "incomplete is true when part of the row could not be read. The failures of the row are in the failures list of the document."
@@ -279,6 +283,78 @@
       },
       "type": "array",
       "description": "Failures is the failure list of a document. A nil list encodes as [], so a document always has its failures key as a list."
+    },
+    "Health": {
+      "properties": {
+        "summary": {
+          "$ref": "#/$defs/HealthOutcome",
+          "description": "summary is the worst outcome of the checks: Fail, then Unreadable, then Warn, then Pass. A Skipped check does not count."
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/HealthResult"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "summary",
+        "checks"
+      ],
+      "description": "Health is the health part of a describe document."
+    },
+    "HealthOutcome": {
+      "type": "string",
+      "enum": [
+        "Pass",
+        "Warn",
+        "Fail",
+        "Skipped",
+        "Unreadable"
+      ],
+      "description": "HealthOutcome is what a health check found."
+    },
+    "HealthResult": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/HealthOutcome"
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "blocking is true when a Fail of this check blocks a change."
+        },
+        "message": {
+          "type": "string",
+          "description": "message is one line about what the check found."
+        },
+        "details": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "findings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "findings name the things behind a Warn or a Fail, such as the nodes that are not ready."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "outcome",
+        "blocking",
+        "message",
+        "details",
+        "findings"
+      ],
+      "description": "HealthResult is the result of one health check."
     },
     "Instance": {
       "properties": {
@@ -442,6 +518,14 @@
           "type": "array",
           "description": "instances are the EC2 instances of the nodegroup, in a document that reads them."
         },
+        "readyNodes": {
+          "type": "integer",
+          "description": "readyNodes is the number of Ready nodes, from the Kubernetes API, in a document that reads it with --check-readiness."
+        },
+        "workloads": {
+          "$ref": "#/$defs/Workloads",
+          "description": "workloads is what runs on the nodes, from the Kubernetes API, in a document that reads it with --show-workloads."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -577,6 +661,24 @@
         "Unknown"
       ],
       "description": "SupportTier is where the Kubernetes version of a cluster is in its EKS support window."
+    },
+    "Workloads": {
+      "properties": {
+        "pods": {
+          "type": "integer",
+          "description": "pods is the number of pods on the nodes, Succeeded pods left out."
+        },
+        "systemPods": {
+          "type": "integer",
+          "description": "systemPods is the number of them in kube-system."
+        }
+      },
+      "type": "object",
+      "required": [
+        "pods",
+        "systemPods"
+      ],
+      "description": "Workloads is what runs on the nodes of a nodegroup."
     }
   },
   "properties": {

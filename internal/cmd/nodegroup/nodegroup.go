@@ -88,12 +88,17 @@ func instanceTypes(n apidoc.Nodegroup) string {
 	return orUnknown(n, strings.Join(n.InstanceTypes, ","))
 }
 
-// nodes returns the desired size of a nodegroup as a cell.
+// nodes returns the desired size of a nodegroup as a cell, with the Ready
+// count before it when it was read: "5/6".
 func nodes(n apidoc.Nodegroup) string {
 	if n.Scaling == nil {
 		return orUnknown(n, "")
 	}
-	return strconv.Itoa(int(n.Scaling.Desired))
+	desired := strconv.Itoa(int(n.Scaling.Desired))
+	if n.ReadyNodes != nil {
+		return strconv.Itoa(*n.ReadyNodes) + "/" + desired
+	}
+	return desired
 }
 
 // dateLayout is how a describe view prints a time.

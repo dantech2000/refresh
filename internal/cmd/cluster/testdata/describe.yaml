@@ -95,4 +95,65 @@ cluster:
       issues: []
       createdAt: "2026-01-01T00:00:00Z"
       modifiedAt: "2026-01-01T00:00:00Z"
+  health:
+    summary: Warn
+    checks:
+      - name: Nodes
+        outcome: Pass
+        blocking: true
+        message: 6/6 nodes ready (estimated)
+        details:
+          - estimated from the desired size of the nodegroups (no Kubernetes access)
+          - 'nodegroups mid-change (not a finding): old (UPDATING)'
+        findings: []
+      - name: Capacity
+        outcome: Skipped
+        blocking: true
+        message: no managed nodegroup instances
+        details: []
+        findings: []
+      - name: ControlPlane
+        outcome: Pass
+        blocking: true
+        message: etcd 12% of 8 GiB
+        details:
+          - etcd database 12.5% of the 8 GiB limit (1.00 GiB in use)
+          - API server 5xx rate 0.01% (5 of 48210 requests)
+        findings: []
+      - name: Workloads
+        outcome: Skipped
+        blocking: true
+        message: pass --check-readiness to run the Kubernetes checks
+        details: []
+        findings: []
+      - name: DrainBlockers
+        outcome: Skipped
+        blocking: true
+        message: pass --check-readiness to run the Kubernetes checks
+        details: []
+        findings: []
+      - name: PDBCoverage
+        outcome: Skipped
+        blocking: false
+        message: pass --check-readiness to run the Kubernetes checks
+        details: []
+        findings: []
+      - name: Utilization
+        outcome: Skipped
+        blocking: false
+        message: pass --check-readiness to run the Kubernetes checks
+        details: []
+        findings: []
+      - name: Quotas
+        outcome: Skipped
+        blocking: false
+        message: the EC2 vCPU quota is not reported
+        details: []
+        findings: []
+      - name: Kubernetes
+        outcome: Warn
+        blocking: false
+        message: 'no Kubernetes access: pass --check-readiness to run the Kubernetes checks; the Kubernetes checks did not run'
+        details: []
+        findings: []
 failures: []

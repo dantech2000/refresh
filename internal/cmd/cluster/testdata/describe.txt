@@ -37,6 +37,19 @@ ADD-ONS  2
   coredns  v1.11.3-eksbuild.2  [X] DEGRADED  Failed
   vpc-cni  v1.19.0-eksbuild.1  [OK] ACTIVE   Healthy
 
+HEALTH  9
+  summary  [!] Warn
+  NAME           OUTCOME    MESSAGE
+  Nodes          [OK] Pass  6/6 nodes ready (estimated)
+  Capacity       Skipped    no managed nodegroup instances
+  ControlPlane   [OK] Pass  etcd 12% of 8 GiB
+  Workloads      Skipped    pass --check-readiness to run the Kubernetes checks
+  DrainBlockers  Skipped    pass --check-readiness to run the Kubernetes checks
+  PDBCoverage    Skipped    pass --check-readiness to run the Kubernetes checks
+  Utilization    Skipped    pass --check-readiness to run the Kubernetes checks
+  Quotas         Skipped    the EC2 vCPU quota is not reported
+  Kubernetes     [!] Warn   no Kubernetes access: pass --check-readiness to run the Kubernetes checks; the Kubernetes checks did not run
+
 TAGS
   env   prod
   team  payments

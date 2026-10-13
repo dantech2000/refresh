@@ -1,0 +1,40 @@
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "InsightDescription",
+  "cluster": "prod",
+  "region": "us-east-1",
+  "insight": {
+    "id": "bc8b2f86-1111-4a4a-8b8b-000000000001",
+    "name": "Deprecated APIs removed in 1.33",
+    "category": "UPGRADE_READINESS",
+    "status": "ERROR",
+    "statusReason": "Deprecated APIs are in use",
+    "kubernetesVersion": "1.33",
+    "description": "Checks for usage of deprecated APIs"
+  },
+  "recommendation": "Update the manifests and the clients",
+  "resources": [
+    ""
+  ],
+  "deprecations": [
+    {
+      "usage": "/apis/policy/v1beta1/poddisruptionbudgets",
+      "replacedWith": "/apis/policy/v1/poddisruptionbudgets",
+      "stopServingVersion": "1.25",
+      "startServingReplacementVersion": "1.21",
+      "clientStats": [
+        {
+          "userAgent": "old-controller/v2",
+          "lastRequestTime": "2026-09-20T00:00:00Z",
+          "numberOfRequestsLast30Days": 120
+        },
+        {
+          "userAgent": "kubectl/v1.24",
+          "lastRequestTime": "2026-09-01T00:00:00Z",
+          "numberOfRequestsLast30Days": 3
+        }
+      ]
+    }
+  ],
+  "failures": []
+}

@@ -16,14 +16,16 @@ import (
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/view"
 )
 
 type describeOptions struct {
 	f *cmdutil.Factory
 
-	cluster string
-	output  cmdutil.Format
+	cluster        string
+	checkReadiness bool
+	output         cmdutil.Format
 
 	// target is the cluster, resolved by complete.
 	target cmdutil.Target
@@ -35,7 +37,11 @@ func newCmdDescribe(f *cmdutil.Factory) *cobra.Command {
 		Use:   "describe [cluster]",
 		Short: "Describe one cluster with its nodegroups and add-ons",
 		Long: `Describe an EKS cluster: its version and support window, its network and
-security configuration, its nodegroups, and its add-ons.
+security configuration, its nodegroups, its add-ons, and its health.
+
+The HEALTH section runs the checks that a change runs before it starts.
+The checks that read the Kubernetes API run with --check-readiness;
+without it they are skipped.
 
 Without an argument the cluster comes from REFRESH_CLUSTER, then the active
 refresh context, then the current kubeconfig context. The name is exact. For
@@ -62,6 +68,7 @@ uses the dates that refresh ships with and says so.`,
 			return o.run(cmd.Context())
 		},
 	}
+	cmd.Flags().BoolVar(&o.checkReadiness, "check-readiness", false, "Read the Kubernetes API too: the Ready nodes of each nodegroup, and the health checks that need it")
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
@@ -84,12 +91,24 @@ func (o *describeOptions) run(ctx context.Context) error {
 		return err
 	}
 	fetcher := fleet.Fetcher{Now: o.f.Now}
-	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{Nodegroups: true, Addons: true, Support: true, VPC: true})
+	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{Nodegroups: true, InstanceIDs: true, Addons: true, Support: true, VPC: true})
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
 	}
-
-	doc := apidoc.ClusterDescription{Cluster: snap.ClusterDoc(), Failures: snap.Failures}
+	in := &health.Input{Snapshot: snap, Clients: clients, Now: snap.FetchedAt, NoKube: "pass --check-readiness to run the Kubernetes checks"}
+	if o.checkReadiness {
+		access := fleetcmd.ConnectKube(o.f.Kube, snap)
+		fleetcmd.ReportKube(ios, access)
+		in.Kube, in.Metrics, in.NoKube = access.Client, access.Metrics, access.NoKube
+		if access.Client != nil {
+			fetcher.FetchKube(ctx, access.Client, snap, fleet.KubeNeed{Ready: true})
+		}
+	}
+	results := health.Run(ctx, health.Preflight(), in)
+	hd := health.Doc(results)
+	doc := apidoc.ClusterDescription{Cluster: snap.ClusterDoc(), Failures: append(snap.Failures, health.Failures(results)...)}
+	doc.Cluster.Health = &hd
+	doc.Cluster.Incomplete = len(doc.Failures) > 0
 	apidoc.SortFailures(doc.Failures)
 	if err := cmdutil.Print(ios, o.output, doc, describeView(doc)); err != nil {
 		return err
@@ -165,7 +184,7 @@ func describeView(doc apidoc.ClusterDescription) view.Description {
 			{Name: "status", Value: orUnknownText(n.Incomplete, n.Status), Status: view.StatusOf(n.Status)},
 			{Name: "version", Value: orUnknownText(n.Incomplete, n.Version), Status: behindMark(n)},
 			{Name: "instance", Value: strings.Join(n.InstanceTypes, ",")},
-			{Name: "nodes", Value: desired(n)},
+			{Name: "nodes", Value: nodesCell(n)},
 		}}
 		nodegroups.Items = append(nodegroups.Items, item)
 	}
@@ -181,8 +200,25 @@ func describeView(doc apidoc.ClusterDescription) view.Description {
 	for _, key := range slices.Sorted(maps.Keys(c.Tags)) {
 		tags.Fields = append(tags.Fields, view.Field{Name: key, Value: c.Tags[key]})
 	}
-	d.Sections = append(d.Sections, issues, nodegroups, addons, tags)
+	d.Sections = append(d.Sections, issues, nodegroups, addons, healthSection(c.Health), tags)
 	return d
+}
+
+// healthSection returns the HEALTH section: the summary, then one item per
+// check with its outcome and message.
+func healthSection(h *apidoc.Health) view.Section {
+	s := view.Section{Title: "HEALTH"}
+	if h == nil {
+		return s
+	}
+	s.Fields = []view.Field{{Name: "summary", Value: string(h.Summary), Status: view.HealthStatus(h.Summary)}}
+	for _, c := range h.Checks {
+		s.Items = append(s.Items, view.Item{Name: c.Name, Fields: []view.Field{
+			{Name: "outcome", Value: string(c.Outcome), Status: view.HealthStatus(c.Outcome)},
+			{Name: "message", Value: c.Message},
+		}})
+	}
+	return s
 }
 
 // supportLine returns the support of a cluster as one line of a describe
@@ -262,12 +298,17 @@ func behindMark(n apidoc.Nodegroup) view.Status {
 	return view.NoStatus
 }
 
-// desired returns the desired size of a nodegroup as a cell.
-func desired(n apidoc.Nodegroup) string {
+// nodesCell returns the desired size of a nodegroup as a cell, with the
+// Ready count before it when it was read: "5/6".
+func nodesCell(n apidoc.Nodegroup) string {
 	if n.Scaling == nil {
 		return orUnknownText(n.Incomplete, "")
 	}
-	return strconv.Itoa(int(n.Scaling.Desired))
+	desired := strconv.Itoa(int(n.Scaling.Desired))
+	if n.ReadyNodes != nil {
+		return strconv.Itoa(*n.ReadyNodes) + "/" + desired
+	}
+	return desired
 }
 
 // formatTime returns t in a layout, or "" for the zero time.

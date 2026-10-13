@@ -103,6 +103,9 @@ type Cluster struct {
 	// value means none was started.
 	InsightsRefresh InsightsRefresh
 
+	// NoMetricsServer makes the metrics API answer 404, as a cluster
+	// without metrics-server does.
+	NoMetricsServer bool
 	// Endpoint is the URL of the cluster's Kubernetes API, which
 	// DescribeCluster reports. It defaults to a host that does not resolve.
 	// A test that serves the cluster's Kubernetes API sets it to that

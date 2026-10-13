@@ -1,0 +1,23 @@
+prod   [OK] READY   us-east-1 · 1.32 · standard (173d)
+
+READINESS
+  verdict  [OK] no finding
+
+INSIGHTS
+  shown  none; pass --show-passing for the passing insights
+
+NODEGROUP SKEW  2
+  NAME       VERSION  BEHIND
+  ng-a       1.32     0
+  ng-legacy  1.32     0
+
+ADD-ON SKEW  2
+  NAME     INSTALLED           LATEST              STATE
+  coredns  v1.11.4-eksbuild.2  v1.11.4-eksbuild.2  current
+  vpc-cni  v1.19.0-eksbuild.1  v1.19.0-eksbuild.1  current
+
+CHECKS  3
+  NAME          OUTCOME    MESSAGE
+  Insights      [OK] Pass  3 insights passing
+  VersionSkew   [OK] Pass  every nodegroup on 1.32 and every add-on at its latest
+  ControlPlane  [OK] Pass  etcd 12% of 8 GiB

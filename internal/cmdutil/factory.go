@@ -8,6 +8,7 @@ import (
 	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/build"
 	"github.com/dantech2000/refresh/internal/contexts"
+	"github.com/dantech2000/refresh/internal/kube"
 )
 
 // Factory gives a command its dependencies. main builds one for the run, and
@@ -28,6 +29,12 @@ type Factory struct {
 	// is about to use AWS, not before: the first call loads the AWS
 	// configuration and resolves the credentials.
 	AWS func(ctx context.Context) (*awsx.Provider, error)
+
+	// Kube returns the Kubernetes client for a target, once per target and
+	// run. It makes no request. A *kube.MismatchError, or any other error,
+	// is returned and not printed: the command says what it does without
+	// Kubernetes.
+	Kube func(target kube.Target) (*kube.Client, error)
 
 	// Now returns the time for what a command computes from the clock:
 	// the days left of a support window, the age of an AMI. Nil means

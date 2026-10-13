@@ -53,12 +53,26 @@ type Nodegroup struct {
 	HealthIssues []Issue `json:"healthIssues,omitzero"`
 	// Instances are the EC2 instances of the nodegroup, in a document that
 	// reads them.
-	Instances  []Instance `json:"instances,omitzero"`
+	Instances []Instance `json:"instances,omitzero"`
+	// ReadyNodes is the number of Ready nodes, from the Kubernetes API, in
+	// a document that reads it with --check-readiness.
+	ReadyNodes *int `json:"readyNodes,omitzero"`
+	// Workloads is what runs on the nodes, from the Kubernetes API, in a
+	// document that reads it with --show-workloads.
+	Workloads  *Workloads `json:"workloads,omitzero"`
 	CreatedAt  time.Time  `json:"createdAt,omitzero"`
 	ModifiedAt time.Time  `json:"modifiedAt,omitzero"`
 	// Incomplete is true when part of the nodegroup could not be read. Its
 	// failures are in the failures list of the document.
 	Incomplete bool `json:"incomplete,omitzero"`
+}
+
+// Workloads is what runs on the nodes of a nodegroup.
+type Workloads struct {
+	// Pods is the number of pods on the nodes, Succeeded pods left out.
+	Pods int `json:"pods"`
+	// SystemPods is the number of them in kube-system.
+	SystemPods int `json:"systemPods"`
 }
 
 // Scaling is the scaling configuration of a nodegroup.

@@ -34,6 +34,11 @@ type Need struct {
 	// Instances reads the EC2 instances of each nodegroup. It implies
 	// Nodegroups.
 	Instances bool
+	// InstanceIDs reads the IDs of the instances of every Auto Scaling
+	// group of each nodegroup, for the health checks. It implies
+	// Nodegroups, and costs no call when AMI is set too: the groups are
+	// read for the AMI already.
+	InstanceIDs bool
 	// OnlyNodegroups names the nodegroups to read. Fetch describes these
 	// by name and makes no list call. It implies Nodegroups.
 	OnlyNodegroups []string
@@ -55,12 +60,15 @@ type Need struct {
 	Compute bool
 	// VPC reads the CIDR block of the VPC of the cluster.
 	VPC bool
+	// Updates reads the update history of the cluster itself, for the
+	// rollback window. The read is advisory.
+	Updates bool
 }
 
 // wide reports whether a cluster makes several calls at once for this
 // need: anything but the cluster alone.
 func (n Need) wide() bool {
-	return n.Nodegroups || n.AMI || n.AMIAge || n.Instances || n.Addons || n.LatestAddons || n.Compute ||
+	return n.Nodegroups || n.AMI || n.AMIAge || n.Instances || n.InstanceIDs || n.Addons || n.LatestAddons || n.Compute || n.Updates ||
 		len(n.OnlyNodegroups) > 0 || len(n.OnlyAddons) > 0
 }
 
@@ -96,6 +104,9 @@ type Fetcher struct {
 	// calendars has the read of the support calendar of each region.
 	calendars map[string]*calendarRead
 }
+
+// Time returns the time of the fetcher's clock.
+func (f *Fetcher) Time() time.Time { return f.now() }
 
 func (f *Fetcher) now() time.Time {
 	if f.Now != nil {
@@ -147,7 +158,7 @@ func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, ne
 		nodegroups nodegroupsResult
 		calendar   *calendarRead
 	)
-	if need.Nodegroups || need.AMI || need.AMIAge || need.Instances || need.Compute || len(need.OnlyNodegroups) > 0 {
+	if need.Nodegroups || need.AMI || need.AMIAge || need.Instances || need.InstanceIDs || need.Compute || len(need.OnlyNodegroups) > 0 {
 		wg.Go(func() { nodegroups = f.fetchNodegroups(ctx, c, cluster, need) })
 	}
 	if need.Addons || need.LatestAddons || len(need.OnlyAddons) > 0 {
@@ -160,6 +171,9 @@ func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, ne
 	}
 	if need.Support {
 		calendar = f.startCalendar(ctx, c)
+	}
+	if need.Updates {
+		wg.Go(func() { snap.Updates, snap.Have.Updates = f.fetchUpdates(ctx, c, cluster) })
 	}
 	out, err := c.EKS.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(cluster)})
 	if err == nil && out.Cluster == nil {

@@ -32,5 +32,24 @@ add-ons.coredns.health	Failed
 add-ons.vpc-cni.version	v1.19.0-eksbuild.1
 add-ons.vpc-cni.status	ACTIVE
 add-ons.vpc-cni.health	Healthy
+health.summary	Warn
+health.Nodes.outcome	Pass
+health.Nodes.message	6/6 nodes ready (estimated)
+health.Capacity.outcome	Skipped
+health.Capacity.message	no managed nodegroup instances
+health.ControlPlane.outcome	Pass
+health.ControlPlane.message	etcd 12% of 8 GiB
+health.Workloads.outcome	Skipped
+health.Workloads.message	pass --check-readiness to run the Kubernetes checks
+health.DrainBlockers.outcome	Skipped
+health.DrainBlockers.message	pass --check-readiness to run the Kubernetes checks
+health.PDBCoverage.outcome	Skipped
+health.PDBCoverage.message	pass --check-readiness to run the Kubernetes checks
+health.Utilization.outcome	Skipped
+health.Utilization.message	pass --check-readiness to run the Kubernetes checks
+health.Quotas.outcome	Skipped
+health.Quotas.message	the EC2 vCPU quota is not reported
+health.Kubernetes.outcome	Warn
+health.Kubernetes.message	no Kubernetes access: pass --check-readiness to run the Kubernetes checks; the Kubernetes checks did not run
 tags.env	prod
 tags.team	payments

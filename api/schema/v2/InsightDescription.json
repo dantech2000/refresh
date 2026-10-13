@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v2/InsightDescription.json",
+  "$defs": {
+    "ClientStat": {
+      "properties": {
+        "userAgent": {
+          "type": "string"
+        },
+        "lastRequestTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "numberOfRequestsLast30Days": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "numberOfRequestsLast30Days"
+      ],
+      "description": "ClientStat is one client that still calls a deprecated API."
+    },
+    "Deprecation": {
+      "properties": {
+        "usage": {
+          "type": "string",
+          "description": "usage is the deprecated API, such as policy/v1beta1 PodDisruptionBudget."
+        },
+        "replacedWith": {
+          "type": "string",
+          "description": "replacedWith is the API to move to."
+        },
+        "stopServingVersion": {
+          "type": "string",
+          "description": "stopServingVersion is the Kubernetes version that removes the API."
+        },
+        "startServingReplacementVersion": {
+          "type": "string",
+          "description": "startServingReplacementVersion is the version that introduced the replacement."
+        },
+        "clientStats": {
+          "items": {
+            "$ref": "#/$defs/ClientStat"
+          },
+          "type": "array",
+          "description": "clientStats are the callers of the API, most active first."
+        }
+      },
+      "type": "object",
+      "required": [
+        "clientStats"
+      ],
+      "description": "Deprecation is one deprecated Kubernetes API and who still calls it."
+    },
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For a Region failure it is the region."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "cluster is the cluster that the item belongs to."
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "type": "string",
+          "examples": [
+            "AccessDenied",
+            "CredentialError",
+            "Throttled",
+            "NotFound",
+            "RegionUnavailable",
+            "InvalidRequest",
+            "ServiceError",
+            "NetworkError",
+            "Timeout",
+            "Interrupted",
+            "UpdateFailed",
+            "UpdateCancelled",
+            "NotMonitored",
+            "NotAttempted",
+            "Unknown"
+          ]
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether the same command, run again with no other change, may succeed."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of text for people. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the AWS API error code, such as AccessDeniedException, when AWS answered."
+        },
+        "updateId": {
+          "type": "string",
+          "description": "updateId is the EKS update ID, for a failure of a started update."
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item that refresh could not read, or one action that it tried and that did not complete."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "Failures": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "Failures is the failure list of a document. A nil list encodes as [], so a document always has its failures key as a list."
+    },
+    "Insight": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is the EKS value: PASSING, WARNING, ERROR, or UNKNOWN."
+        },
+        "statusReason": {
+          "type": "string"
+        },
+        "kubernetesVersion": {
+          "type": "string",
+          "description": "kubernetesVersion is the version that the insight is about."
+        },
+        "lastRefreshTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "category",
+        "status"
+      ],
+      "description": "Insight is one EKS cluster insight."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v2",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "InsightDescription",
+      "description": "The type of the document."
+    },
+    "cluster": {
+      "type": "string"
+    },
+    "region": {
+      "type": "string"
+    },
+    "insight": {
+      "$ref": "#/$defs/Insight"
+    },
+    "recommendation": {
+      "type": "string"
+    },
+    "resources": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "resources are the ARNs or the Kubernetes resource URIs that the insight names."
+    },
+    "additionalInfo": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "deprecations": {
+      "items": {
+        "$ref": "#/$defs/Deprecation"
+      },
+      "type": "array",
+      "description": "deprecations are the deprecated APIs that an upgrade-readiness insight reports, with the clients that still call them."
+    },
+    "failures": {
+      "$ref": "#/$defs/Failures",
+      "description": "Every failure of the run: the items that refresh could not read and the actions that did not complete. The list is sorted by kind, region, cluster, name, and operation. It is [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "cluster",
+    "region",
+    "insight",
+    "resources",
+    "deprecations",
+    "failures"
+  ],
+  "title": "InsightDescription",
+  "description": "The document that `refresh cluster upgrade-check --insight -o json` prints. -o yaml prints the same structure."
+}

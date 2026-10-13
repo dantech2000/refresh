@@ -34,6 +34,9 @@ type Cluster struct {
 	Nodegroups []Nodegroup `json:"nodegroups,omitzero"`
 	// Addons are the installed add-ons, in a document that reads them.
 	Addons []Addon `json:"addons,omitzero"`
+	// Health is the result of the health checks, in a document that runs
+	// them. The Kubernetes checks run with --check-readiness.
+	Health *Health `json:"health,omitzero"`
 	// Incomplete is true when part of the row could not be read. The
 	// failures of the row are in the failures list of the document.
 	Incomplete bool `json:"incomplete,omitzero"`

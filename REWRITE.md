@@ -220,6 +220,14 @@ The read commands against a fake fleet of 200 clusters in 8 regions (`tools/fake
 | `nodegroup describe` | 16 ms | 10 ms | 255 ms | 137 ms | 47 MB | 26 MB |
 | `addon list` | 16 ms | 10 ms | 262 ms | 148 ms | 49 MB | 27 MB |
 | `addon describe` | 16 ms | 10 ms | 172 ms | 88 ms | 47 MB | 26 MB |
+
+The health side, measured 2026-10-12 after phase 3, same fleet and method, through `/usr/bin/time -l` for the peak RSS, which adds about 20 ms of process start to each no-latency number:
+
+| Command | Old, no latency | New, no latency | Old, each call waits 0 to 100 ms | New, each call waits 0 to 100 ms | Old memory | New memory |
+|---|---|---|---|---|---|---|
+| `cluster upgrade-check` | 40 ms | 30 ms | 892 ms | 176 ms | 45 MB | 39 MB |
+| `cluster describe`, now with its health section | 39 ms | 31 ms | 484 ms | 255 ms | 47 MB | 38 MB |
+| `cluster list -A --show-health` | 115 ms | 89 ms | 1,310 ms | 645 ms | 107 MB | 85 MB |
 | `cluster upgrade-check` | 22 ms | phase 3 | 769 ms | phase 3 | | |
 
 What the table says:

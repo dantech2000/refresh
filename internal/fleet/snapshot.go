@@ -52,10 +52,16 @@ type Snapshot struct {
 	// Nodegroups are the managed nodegroups, sorted by name, with the same
 	// rule for one that could not be described.
 	Nodegroups []Nodegroup
-	Have       Have
+	// Updates is the update history of the cluster itself, newest last as
+	// EKS lists it. It is valid when Have.Updates is Collected.
+	Updates []Update
+	Have    Have
 	// Failures are the reads that failed, for this cluster.
 	Failures  []apidoc.Failure
 	FetchedAt time.Time
+	// KubeAt is when FetchKube read the Kubernetes groups. Zero when it
+	// did not run.
+	KubeAt time.Time
 }
 
 // Have holds the state of each cluster-level field group.
@@ -74,6 +80,8 @@ type Have struct {
 	Support State
 	Compute State
 	VPC     State
+	// Updates is the state of Snapshot.Updates. The read is advisory too.
+	Updates State
 }
 
 // Incomplete reports whether a read of the snapshot failed.
@@ -207,6 +215,19 @@ type Nodegroup struct {
 	// They are valid when InstancesState is Collected.
 	Instances      []Instance
 	InstancesState State
+	// InstanceIDs are the IDs of the instances of every Auto Scaling group
+	// of the nodegroup. They are valid when InstanceIDsState is Collected.
+	InstanceIDs      []string
+	InstanceIDsState State
+
+	// ReadyNodes is the number of Ready nodes of the nodegroup, from the
+	// Kubernetes API. It is valid when ReadyState is Collected.
+	ReadyNodes int
+	ReadyState State
+	// Workloads is what runs on the nodes, from the Kubernetes API. It is
+	// valid when WorkloadsState is Collected.
+	Workloads      Workloads
+	WorkloadsState State
 }
 
 // LaunchTemplate names one version of an EC2 launch template.

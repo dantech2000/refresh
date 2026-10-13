@@ -15,7 +15,9 @@ import (
 	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/fanout"
 	"github.com/dantech2000/refresh/internal/fleet"
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/view"
 )
 
@@ -40,12 +42,41 @@ type listOptions struct {
 	rawFilters []string
 	sortKey    string
 	desc       bool
+	showHealth bool
 	watch      bool
 	interval   time.Duration
 	output     cmdutil.Format
 
 	// filters is rawFilters, parsed by complete.
 	filters cmdutil.Filters
+	// health holds the results of --show-health for each cluster, by
+	// region and name, and the failures of its checks.
+	health map[string]clusterHealth
+}
+
+// clusterHealth is what --show-health found for one cluster.
+type clusterHealth struct {
+	doc      apidoc.Health
+	failures []apidoc.Failure
+}
+
+// checkHealth runs the checks that need no Kubernetes access on every
+// cluster that was read, with the clients of its region, all at once.
+func (o *listOptions) checkHealth(ctx context.Context, provider *awsx.Provider, snaps []*fleet.Snapshot) map[string]clusterHealth {
+	results := fanout.ForEach(ctx, snaps, max(len(snaps), 1), func(ctx context.Context, snap *fleet.Snapshot) clusterHealth {
+		if snap.Have.Cluster != fleet.Collected {
+			return clusterHealth{}
+		}
+		rs := health.Run(ctx, health.AWSOnly(), &health.Input{Snapshot: snap, Clients: provider.Clients(snap.Cluster.Region), Now: snap.FetchedAt, NoKube: "cluster list connects to no cluster"})
+		return clusterHealth{doc: health.Doc(rs), failures: health.Failures(rs)}
+	})
+	out := make(map[string]clusterHealth, len(snaps))
+	for i, snap := range snaps {
+		if snap.Have.Cluster == fleet.Collected {
+			out[snap.Cluster.Region+"/"+snap.Cluster.Name] = results[i]
+		}
+	}
+	return out
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
@@ -94,6 +125,7 @@ When no region answers, the command fails with exit 1.`,
 		},
 	}
 	fleetcmd.AddAllRegionsFlag(cmd, &o.allRegions)
+	cmd.Flags().BoolVar(&o.showHealth, "show-health", false, "Run the health checks that need no Kubernetes access on every cluster, and add a HEALTH column")
 	cmdutil.AddFilterFlag(cmd, &o.rawFilters, keyName, keyRegion, keyStatus, keyVersion)
 	cmdutil.AddSortFlags(cmd, &o.sortKey, &o.desc, keyName, keyRegion, keyStatus, keyVersion)
 	cmdutil.AddWatchFlags(cmd, &o.watch, &o.interval)
@@ -134,7 +166,12 @@ func (o *listOptions) run(ctx context.Context) error {
 			return o.view(apidoc.ClusterList{Clusters: o.rows(snaps)}, answered).Render(o.ios.Theme(), width)
 		})
 	fetcher := fleet.Fetcher{Now: o.now}
+	var need fleet.Need
+	if o.showHealth {
+		need = fleet.Need{Nodegroups: true, InstanceIDs: true}
+	}
 	res := fetcher.Sweep(ctx, provider, regions, fleet.SweepOptions{
+		Need: need,
 		Match: func(region, name string) bool {
 			return early.Match(func(key string) []string {
 				if key == keyRegion {
@@ -150,6 +187,9 @@ func (o *listOptions) run(ctx context.Context) error {
 		return err
 	}
 	fleetcmd.ReportSkippedRegions(o.ios, res.Skipped)
+	if o.showHealth {
+		o.health = o.checkHealth(ctx, provider, res.Snapshots)
+	}
 
 	doc := o.document(res)
 	if err := cmdutil.Print(o.ios, o.output, doc, o.view(doc, len(res.Answered))); err != nil {
@@ -172,6 +212,9 @@ func (o *listOptions) document(res *fleet.SweepResult) apidoc.ClusterList {
 	doc := apidoc.ClusterList{
 		Clusters: o.rows(res.Snapshots),
 		Failures: slices.Clone(res.Failures),
+	}
+	for _, h := range o.health {
+		doc.Failures = append(doc.Failures, h.failures...)
 	}
 	if res.Regions.Default {
 		doc.SkippedRegions = append([]string{}, res.Skipped...)
@@ -209,6 +252,11 @@ func (o *listOptions) rows(snaps []*fleet.Snapshot) []apidoc.Cluster {
 	rows := make([]apidoc.Cluster, len(selected))
 	for i, snap := range selected {
 		rows[i] = snap.ClusterDoc()
+		if h, ok := o.health[snap.Cluster.Region+"/"+snap.Cluster.Name]; ok {
+			doc := h.doc
+			rows[i].Health = &doc
+			rows[i].Incomplete = rows[i].Incomplete || len(h.failures) > 0
+		}
 	}
 	return rows
 }
@@ -244,7 +292,7 @@ func (o *listOptions) view(doc apidoc.ClusterList, regions int) view.List[apidoc
 		}
 		return value
 	}
-	return view.List[apidoc.Cluster]{
+	l := view.List[apidoc.Cluster]{
 		Title:    "CLUSTERS",
 		Subtitle: subtitle,
 		Empty:    "No clusters found",
@@ -261,4 +309,22 @@ func (o *listOptions) view(doc apidoc.ClusterList, regions int) view.List[apidoc
 			{Title: "VERSION", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, c.Version) }},
 		},
 	}
+	if o.showHealth {
+		l.Columns = append(l.Columns, view.Column[apidoc.Cluster]{
+			Title: "HEALTH", Truncate: view.TruncateNever,
+			Value: func(c apidoc.Cluster) string {
+				if c.Health == nil {
+					return orUnknown(c, "")
+				}
+				return string(c.Health.Summary)
+			},
+			Status: func(c apidoc.Cluster) view.Status {
+				if c.Health == nil {
+					return view.NoStatus
+				}
+				return view.HealthStatus(c.Health.Summary)
+			},
+		})
+	}
+	return l
 }

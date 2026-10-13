@@ -1,6 +1,6 @@
 # Phase 3 design note: health
 
-Status: draft 2. Draft 1 was reviewed against the old code and the parity traces: approve with changes, three blockers. This draft applies every finding, and the owner's decisions on draft 1's open questions (section 12). It belongs to `REWRITE.md` and stays inside `CONTRACT.md`. Section 13 is empty until code changes the design.
+Status: draft 3. Draft 1 was reviewed against the old code and the parity traces: approve with changes, three blockers. Draft 2 applied every finding, and the owner's decisions on draft 1's open questions (section 12). Draft 3 adds section 13: what the code changed while steps 1 to 7 were built. Where a section above and section 13 differ, section 13 is right. It belongs to `REWRITE.md` and stays inside `CONTRACT.md`.
 
 Scope: `internal/health` (checks, `Gate`, drain blockers, post-roll verification), the production `internal/kube` package, the Kubernetes groups of `fleet.Snapshot` that phase 2 left `NotRequested`, the command `cluster upgrade-check`, the `HEALTH` section of `cluster describe`, `cluster list --show-health`, `cluster describe --check-readiness`, `nodegroup list --check-readiness`, and `nodegroup describe --show-workloads`.
 
@@ -1099,4 +1099,43 @@ Two points of `REWRITE.md` change in this note and need no contract edit: `Check
 
 ## 13. Changes made while building
 
-Empty until code changes the design.
+The code is the reference where it and the sections above differ.
+
+| Section | Note | Built |
+|---|---|---|
+| 1 | `Result` has `Name`, `Blocking`, `FailClosed` from the check | It has `Forceable` too, filled by the runner, so `Gate` reads one value and never the check list. |
+| 1 | The runner adds the `Kubernetes` result to every run | Only to a run with a check that needs Kubernetes. The three readiness checks of `upgrade-check` need none, so its verdict has no access line. |
+| 1 | `Input.reads` memoizes under the context of each caller | `Run` builds the reads under the context of the run, with `sync.OnceValues` over the real call. A check that starts a shared read gives it that context, and every check sees the same answer or error. A check that needs several reads starts them together (`together`), so its reads are one round trip. |
+| 1 | An unreachable API turns the Kubernetes checks into `Skipped` | Also the `Nodes` check, which needs no client but read one: a client that is there and does not answer gives no estimate. The rule is on the failures of the result: every one a Kubernetes read with a network error or a timeout. |
+| 2 | `Nodes` and `Capacity` report `Unreadable` with the snapshot's failures | With no failure of their own: the snapshot's failures are in the document already, and a second copy would print twice. The outcome still decides the exit code. |
+| 2 | `Insights(opts)` reads the list itself; `--status` is an option | `health.ListInsights` reads the list once, the command prints it, and `Insights(InsightsInput{Insights, Err, Category, ForVersion})` judges it. `--status` is the command's own filter on what is shown, as contract change 26 says. |
+| 2 | `Quotas` is `Unreadable` on a failed `GetServiceQuota` | A quota that Service Quotas does not know (`NoSuchResourceException`) is `Skipped`: there is nothing to compare with. `awsx.IsNotFound` learned the code. |
+| 2 | Resource Balance's spread is a detail line | Built: "CPU mean, peak, spread, over N of M instances". |
+| 3 | `Need.InstanceIDs` keeps the IDs of the group that the AMI read reads | It reads every Auto Scaling group of a nodegroup, so a nodegroup with several groups is measured whole. One chunked call either way. |
+| 3 | `Need.Updates` is a read like any other | It is advisory, as the old `RollbackAvailability` was: a failed read leaves the `rollback` key out and adds no failure. `fleet.RollbackWindowOf(snap, now)` is the pure rule. |
+| 3 | `upgrade-check` wave 1 has `GetMetricData` | Built: the `ControlPlane` check runs in wave 1 on a stub snapshot that holds the name and the region of the cluster, which is all it reads. |
+| 3 | `cluster describe` wave 3 is one metrics call | Three calls: `GetMetricData` for the control plane and for the quota usage, and `GetServiceQuota`. The capacity check's call joins them when the cluster has an Auto Scaling group. |
+| 3 | `cluster list --show-health` is 4 + N calls per cluster | 6 + N: the two `GetMetricData` calls and `GetServiceQuota` beside `ListNodegroups`, `DescribeNodegroup` × N, and `DescribeAutoScalingGroups`. |
+| 5 | `TakeBaseline(ctx, kube)` | It takes the cluster name too, for the failures it records. The first node list of `NodesReady` is the shared list of the run; the polls after it list again through the client. |
+| 6 | `Factory.Kube(ctx, target)` | `Factory.Kube(target)`: `Connect` makes no request, so it needs no context. `cmdutil.NewKube` memoizes a failed resolution too. |
+| 6 | The command turns a `MismatchError` into `NoKube` and one warning | `fleetcmd.ConnectKube(f.Kube, snap)` and `fleetcmd.ReportKube(ios, access)` do it for the read commands, so the three flags share the words. |
+| 6 | `Client.Metrics` is `health.MetricsLister` | It is client-go's `NodeMetricsInterface`, and `Input.Metrics` is the same type: `kube` imports no refresh package but `apidoc`, and `cmdutil` can import it. |
+| 7 | `--insight` with a full ID costs one call | One `ListInsights` always, then `DescribeInsight`: a full ID is matched in the list, and a short ID is the start of exactly one. A value shorter than the 8 characters of the table is refused. `--exit-zero` applies to the insight's exit code too. |
+| 7 | The view has one `VERSION SKEW` section with two tables | A section draws one item table, so the view has `NODEGROUP SKEW` and `ADD-ON SKEW`, and a `CHECKS` section with the three readiness checks in place of `CONTROL PLANE`. |
+| 7 | `Readiness` follows the gate verdict | Built so, with one addition: a cluster in extended support or unsupported is a `Review` reason, as the old `SupportPosture` line was a finding. |
+| 8 | `HealthLines` draws the gate's report | Built with its test and benchmark; the first command that draws it is phase 4's dry run. The `HEALTH` section of `cluster describe` is an item table, as section 8 says. |
+| 10 | The fakes gain a CloudWatch validation of the 500-query limit and unique IDs, `MaxUnavailable`, and exported `kubetest` builders | Not built. The capacity check chunks at 500 and names its queries by index, which the tests of the check exercise; the drain rules read the status counts of a budget and never `maxUnavailable`; the check tests run against `kubetest.Server`, so the builders stay private. The rest of the list is built: `Node.ReadyReason`, `Pod.Reason`, `Pod.DisruptionTarget`, `Pod.Deleting`, `PDB.Unsynced`, `PDB.SyncFailed`, `PDB.AlwaysAllow`, `PDB.NoSelector`, `Cluster.NoMetricsServer`, and `kubetest.Gate`. |
+| 10 | The allowlist gains the rows of the table | No row was added: every one names a changing command, and the paired comparison runs only once a v2 changing command exists. Phase 4 adds them with its commands. |
+| 11 | Step 6 builds verification with no caller | Built as `health.Verify`, `TakeBaseline`, `WaitOptions`, and `VerifyExit`, with a test-only driver (`driver_test.go`) that runs the plan gate, the gate before a phase with `Worse`, and the verification against the fakes, with the three moving-world cases of the parity suite: a budget tightened after the dry run, a nodegroup that degrades between two phases, and an add-on updated elsewhere. |
+
+The read commands that phase 2 built keep their shape: `--check-readiness` on `cluster describe` and `nodegroup list` reads the nodes once through `fleet.FetchKube` and shows `ready/desired` in the `NODES` column, and `nodegroup describe --show-workloads` lists the pods of each node of the nodegroup in one wave and shows a `WORKLOADS` section. The `health` key moved from `ClusterDescription` to the `Cluster` shape, so `cluster list --show-health` and `cluster describe` print it the same way.
+
+Measured on the fake fleet of 200 clusters in 8 regions, old binary and new binary in the same run, 8 runs after one warm-up, `-o json`:
+
+| Command | Old, no latency | New, no latency | Old, 0 to 100 ms | New, 0 to 100 ms | Old memory | New memory |
+|---|---|---|---|---|---|---|
+| `cluster upgrade-check` | 40 ms | 30 ms | 892 ms | 176 ms | 45 MB | 39 MB |
+| `cluster describe`, with its health section | 39 ms | 31 ms | 484 ms | 255 ms | 47 MB | 38 MB |
+| `cluster list -A --show-health` | 115 ms | 89 ms | 1,310 ms | 645 ms | 107 MB | 85 MB |
+
+The runs went through `/usr/bin/time -l` for the peak RSS, which adds about 20 ms of process start to every no-latency number; the earlier read-side table did not. The fake fleet ran with `-throttle 0` and no slow region. `upgrade-check` is the two waves of section 3, and the old binary's 892 ms is its 8 + N + 2M round trips. `cluster describe` gained a third wave for the health checks, so it is slower than its phase 2 reading (172 ms) and still half the old binary. `cluster list -A --show-health` is four waves per region, all regions at once.

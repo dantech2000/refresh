@@ -34,6 +34,7 @@ var (
 		"NotFound":                  true,
 		"ParameterNotFound":         true,
 		"NoSuchEntity":              true,
+		"NoSuchResourceException":   true, // Service Quotas
 	}
 
 	// validationErrorCodes are the API error codes for a request the

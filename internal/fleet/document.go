@@ -144,6 +144,13 @@ func (s *Snapshot) NodegroupDoc(n Nodegroup) apidoc.Nodegroup {
 	if status, known := n.AMIStatus(); known && n.AMI.State != NotRequested {
 		doc.AMI = &apidoc.NodegroupAMI{Status: status, Current: n.AMI.Current, Latest: n.AMI.Latest, CurrentCreatedAt: n.AMI.CurrentCreatedAt}
 	}
+	if n.ReadyState == Collected {
+		ready := n.ReadyNodes
+		doc.ReadyNodes = &ready
+	}
+	if n.WorkloadsState == Collected {
+		doc.Workloads = &apidoc.Workloads{Pods: n.Workloads.Pods, SystemPods: n.Workloads.SystemPods}
+	}
 	if n.InstancesState == Collected {
 		doc.Instances = make([]apidoc.Instance, len(n.Instances))
 		for i, inst := range n.Instances {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
+	"github.com/dantech2000/refresh/internal/kube/kubetest"
 )
 
 var update = flag.Bool("update", false, "write the golden files in testdata")
@@ -368,5 +370,83 @@ func TestList_Watch(t *testing.T) {
 	}
 	if !strings.Contains(frames[1], "INCOMPLETE DATA") || !strings.Contains(frames[1], "prod/web (us-east-1): AccessDenied") {
 		t.Errorf("the second read does not name what it could not read:\n%s", frames[1])
+	}
+}
+
+// withKube gives the cluster prod a Kubernetes API and points $KUBECONFIG
+// at a file whose one context names it.
+func withKube(t *testing.T, e *cmdtest.Fake) {
+	t.Helper()
+	e.World.Edit(func(s *fleettest.State) {
+		c := s.Cluster(east, "prod")
+		c.Nodes = []*fleettest.Node{
+			{Name: "web-1", Nodegroup: "web"}, {Name: "web-2", Nodegroup: "web"}, {Name: "web-3", Nodegroup: "web", NotReady: true},
+			{Name: "api-1", Nodegroup: "api"},
+		}
+		c.Pods = []*fleettest.Pod{
+			{Namespace: "kube-system", Name: "coredns-1", Node: "web-1"},
+			{Namespace: "kube-system", Name: "kube-proxy-1", Node: "web-2"},
+			{Namespace: "default", Name: "app-1", Node: "web-1"},
+			{Namespace: "default", Name: "job-1", Node: "web-1", Phase: "Succeeded"},
+			{Namespace: "default", Name: "api-1", Node: "api-1"},
+		}
+	})
+	srv := kubetest.NewServer(e.World, east, "prod")
+	t.Cleanup(srv.Close)
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := srv.WriteKubeconfig(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", path)
+}
+
+// --check-readiness reads the nodes once and shows ready/desired.
+func TestList_CheckReadiness(t *testing.T) {
+	e := newFake(t)
+	withKube(t, e)
+	if err := e.Run(cmdutiltest.Context(t), "nodegroup", "list", "-c", "prod", "--check-readiness", "-o", "plain"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	for _, want := range []string{"web\tACTIVE\tm5.large,m5a.large\t1.33\tOutdated\t2/6\n", "api\tACTIVE\tm5.large\t1.33\tLatest\t1/3\n", "empty\tACTIVE\tm5.large\t1.33\tUnknown\t0/0\n"} {
+		if !strings.Contains(e.Out.String(), want) {
+			t.Errorf("stdout has no %q:\n%s", want, e.Out.String())
+		}
+	}
+	if e.Err.Len() != 0 {
+		t.Errorf("stderr = %q, want nothing", e.Err.String())
+	}
+
+	// Without access the count is not invented: the column shows the
+	// desired size, and stderr says why.
+	e = newFake(t)
+	if err := e.Run(cmdutiltest.Context(t), "nodegroup", "list", "-c", "prod", "--check-readiness", "-o", "json"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if strings.Contains(e.Out.String(), "readyNodes") || !strings.HasPrefix(e.Err.String(), "warning: no Kubernetes access to prod") {
+		t.Errorf("stdout:\n%s\nstderr:\n%s", e.Out.String(), e.Err.String())
+	}
+}
+
+// --show-workloads counts the pods on the nodes of the nodegroup, one pod
+// list per node with the field selector, and no cluster-wide list.
+func TestDescribe_ShowWorkloads(t *testing.T) {
+	e := newFake(t)
+	withKube(t, e)
+	if err := e.Run(cmdutiltest.Context(t), "nodegroup", "describe", "web", "-c", "prod", "--show-workloads", "-o", "plain"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	for _, want := range []string{"workloads.pods\t3\n", "workloads.system_pods\t2\n"} {
+		if !strings.Contains(e.Out.String(), want) {
+			t.Errorf("stdout has no %q:\n%s", want, e.Out.String())
+		}
+	}
+	e = newFake(t)
+	withKube(t, e)
+	if err := e.Run(cmdutiltest.Context(t), "nodegroup", "describe", "web", "-c", "prod", "--show-workloads", "-o", "json"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	validate(t, apidoc.KindNodegroupDescription, "json", e)
+	if !strings.Contains(e.Out.String(), `"workloads": {`) {
+		t.Errorf("stdout:\n%s", e.Out.String())
 	}
 }

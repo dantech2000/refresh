@@ -1,0 +1,10 @@
+FIELD	VALUE
+insight.id	bc8b2f86-1111-4a4a-8b8b-000000000001
+insight.category	UPGRADE_READINESS
+insight.version	1.33
+insight.reason	Deprecated APIs are in use
+insight.description	Checks for usage of deprecated APIs
+insight.recommendation	Update the manifests and the clients
+deprecated_apis./apis/policy/v1beta1/poddisruptionbudgets.replaced_with	/apis/policy/v1/poddisruptionbudgets
+deprecated_apis./apis/policy/v1beta1/poddisruptionbudgets.removed_in	1.25
+deprecated_apis./apis/policy/v1beta1/poddisruptionbudgets.clients	old-controller/v2 (120 requests in 30 days); kubectl/v1.24 (3 requests in 30 days)

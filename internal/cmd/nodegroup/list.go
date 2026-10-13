@@ -31,13 +31,14 @@ const (
 type listOptions struct {
 	f *cmdutil.Factory
 
-	cluster    string
-	rawFilters []string
-	sortKey    string
-	desc       bool
-	watch      bool
-	interval   time.Duration
-	output     cmdutil.Format
+	cluster        string
+	rawFilters     []string
+	sortKey        string
+	desc           bool
+	checkReadiness bool
+	watch          bool
+	interval       time.Duration
+	output         cmdutil.Format
 
 	// filters and target are set by complete.
 	filters cmdutil.Filters
@@ -91,6 +92,7 @@ the command exits 4.`,
 	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
 	cmdutil.AddFilterFlag(cmd, &o.rawFilters, filterKeys...)
 	cmdutil.AddSortFlags(cmd, &o.sortKey, &o.desc, keyName, keyStatus, keyInstanceType, keyNodes, keyVersion, keyAMIStatus)
+	cmd.Flags().BoolVar(&o.checkReadiness, "check-readiness", false, "Read the Ready nodes of each nodegroup from the Kubernetes API; NODES then shows ready/desired")
 	cmdutil.AddWatchFlags(cmd, &o.watch, &o.interval)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
@@ -118,6 +120,13 @@ func (o *listOptions) run(ctx context.Context) error {
 	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{AMI: true})
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
+	}
+	if o.checkReadiness {
+		access := fleetcmd.ConnectKube(o.f.Kube, snap)
+		fleetcmd.ReportKube(ios, access)
+		if access.Client != nil {
+			fetcher.FetchKube(ctx, access.Client, snap, fleet.KubeNeed{Ready: true})
+		}
 	}
 
 	doc := apidoc.NodegroupList{

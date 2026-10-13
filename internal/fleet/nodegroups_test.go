@@ -376,3 +376,51 @@ func TestFetch_OneNodegroupFails(t *testing.T) {
 		t.Errorf("failure = %+v, want the cluster and the region", snap.Failures[0])
 	}
 }
+
+// InstanceIDs keeps every instance of every group of a nodegroup, with no
+// instance call: the group call of the AMI read already returns them.
+func TestFetch_InstanceIDs(t *testing.T) {
+	world, srv, provider := nodegroupWorld(t)
+	world.Edit(func(s *fleettest.State) {
+		s.Clusters[0].Nodegroups[0].AutoScalingGroups = []string{"asg-web", "asg-web-2"}
+		s.AutoScalingGroups = append(s.AutoScalingGroups, fleettest.AutoScalingGroup{Name: "asg-web-2", InstanceIDs: []string{"i-web-3"}})
+	})
+	var fetcher fleet.Fetcher
+	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{InstanceIDs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Incomplete() {
+		t.Fatalf("failures = %+v", snap.Failures)
+	}
+	got := map[string][]string{}
+	for _, n := range snap.Nodegroups {
+		if n.InstanceIDsState != fleet.Collected {
+			t.Errorf("%s: state = %v, want Collected", n.Name, n.InstanceIDsState)
+		}
+		got[n.Name] = n.InstanceIDs
+	}
+	want := map[string][]string{
+		"web": {"i-web-1", "i-web-2", "i-web-3"}, "api": {"i-api-1"}, "gpu": {"i-gpu-1"}, "batch": {"i-batch-1"}, "empty": {}, "old": {"i-old-1"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("instance IDs (-want +got):\n%s", diff)
+	}
+	for op, want := range map[fleettest.Operation]int{
+		fleettest.AutoScalingDescribeAutoScalingGroups: 1, fleettest.EC2DescribeInstances: 0, fleettest.SSMGetParameter: 0,
+	} {
+		if got := count(srv, op); got != want {
+			t.Errorf("%s calls = %d, want %d", op, got, want)
+		}
+	}
+
+	// A denied group call fails the nodegroups that have a group.
+	world.SetFault(fleettest.AutoScalingDescribeAutoScalingGroups, fleettest.Fault{Deny: true})
+	snap, err = fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{InstanceIDs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Failures) != 6 || snap.Nodegroups[0].InstanceIDsState != fleet.Failed {
+		t.Errorf("failures = %d, state = %v, want 6 and Failed", len(snap.Failures), snap.Nodegroups[0].InstanceIDsState)
+	}
+}

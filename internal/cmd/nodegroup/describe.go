@@ -22,6 +22,7 @@ type describeOptions struct {
 	cluster       string
 	nodegroup     string
 	showInstances bool
+	showWorkloads bool
 	output        cmdutil.Format
 
 	// target is the cluster, resolved by complete.
@@ -58,6 +59,7 @@ has, names the failure, and exits 4.`,
 	cmdutil.AddClusterFlag(cmd, &o.cluster)
 	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
 	cmd.Flags().BoolVar(&o.showInstances, "show-instances", false, "List the EC2 instances of the nodegroup")
+	cmd.Flags().BoolVar(&o.showWorkloads, "show-workloads", false, "Count the pods on the nodes of the nodegroup, from the Kubernetes API")
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
@@ -86,10 +88,17 @@ func (o *describeOptions) run(ctx context.Context) error {
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
 	}
-	nodegroup := snap.Nodegroups[0]
-	if nodegroup.State != fleet.Collected {
+	if snap.Nodegroups[0].State != fleet.Collected {
 		return o.nodegroupError(ctx, &fetcher, snap)
 	}
+	if o.showWorkloads {
+		access := fleetcmd.ConnectKube(o.f.Kube, snap)
+		fleetcmd.ReportKube(ios, access)
+		if access.Client != nil {
+			fetcher.FetchKube(ctx, access.Client, snap, fleet.KubeNeed{Workloads: o.nodegroup})
+		}
+	}
+	nodegroup := snap.Nodegroups[0]
 
 	doc := apidoc.NodegroupDescription{
 		Cluster:   snap.Cluster.Name,
@@ -197,6 +206,13 @@ func describeView(doc apidoc.NodegroupDescription) view.Description {
 			{Name: "launched", Value: formatTime(inst.LaunchTime)},
 		}})
 	}
-	d.Sections = append(d.Sections, issues, instances)
+	workloads := view.Section{Title: "WORKLOADS"}
+	if w := n.Workloads; w != nil {
+		workloads.Fields = []view.Field{
+			{Name: "pods", Value: strconv.Itoa(w.Pods)},
+			{Name: "system pods", Value: strconv.Itoa(w.SystemPods)},
+		}
+	}
+	d.Sections = append(d.Sections, issues, instances, workloads)
 	return d
 }

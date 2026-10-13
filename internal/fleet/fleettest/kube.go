@@ -21,9 +21,13 @@ type Node struct {
 	// label carries.
 	ImageID string
 	// NotReady and Unschedulable are the node's Ready condition, inverted,
-	// and its cordon. The zero Node is Ready and schedulable.
+	// and its cordon. The zero Node is Ready and schedulable. ReadyReason
+	// is the reason of the Ready condition: KubeletReady for a Ready node,
+	// and KubeletNotReady for a NotReady one, unless set (a node whose
+	// kubelet stopped posting is NodeStatusUnknown).
 	NotReady      bool
 	Unschedulable bool
+	ReadyReason   string
 	// MilliCPU and MemoryMi are the node's allocatable capacity. They
 	// default to 2000 and 8192. UsedMilliCPU and UsedMemoryMi are what the
 	// metrics API reports as in use.
@@ -43,9 +47,15 @@ type Pod struct {
 	Node   string
 	Labels map[string]string
 	// Phase defaults to Running. NotReady marks a Running pod whose
-	// containers are not ready.
-	Phase    string
-	NotReady bool
+	// containers are not ready. Reason is the status reason of a Failed
+	// pod, such as Evicted, and DisruptionTarget sets the condition of a
+	// pod that the kubelet ended for a node shutdown. Deleting gives the
+	// pod a deletion timestamp.
+	Phase            string
+	NotReady         bool
+	Reason           string
+	DisruptionTarget bool
+	Deleting         bool
 	// CreatedAt defaults to the world's time at the Edit that added the
 	// pod.
 	CreatedAt time.Time
@@ -63,6 +73,15 @@ type PDB struct {
 	// DisruptionsAllowed, CurrentHealthy, DesiredHealthy, and ExpectedPods
 	// are the status. A budget blocks a drain when DisruptionsAllowed is 0.
 	DisruptionsAllowed, CurrentHealthy, DesiredHealthy, ExpectedPods int32
+	// Unsynced leaves the observed generation behind the generation, and
+	// SyncFailed sets the DisruptionAllowed condition to SyncFailed: the
+	// controller could not compute the status. AlwaysAllow sets the
+	// unhealthy pod eviction policy. NoSelector gives the budget no
+	// selector at all, which matches no pod.
+	Unsynced    bool
+	SyncFailed  bool
+	AlwaysAllow bool
+	NoSelector  bool
 }
 
 // Deployment is a Kubernetes deployment, as far as refresh reads one.
