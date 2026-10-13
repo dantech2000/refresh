@@ -89,6 +89,23 @@ func TestRunnableCommandsSetArgs(t *testing.T) {
 	})
 }
 
+// The root's PersistentPreRunE completes the global flags, and cobra runs
+// only the hook nearest to the command. A subcommand with a hook of its own
+// would skip the root's without any error.
+func TestOnlyTheRootHasAPersistentPreRun(t *testing.T) {
+	walk(newTree(), func(cmd *cobra.Command) {
+		if !cmd.HasParent() {
+			if cmd.PersistentPreRunE == nil {
+				t.Error("the root has no PersistentPreRunE; nothing completes the global flags")
+			}
+			return
+		}
+		if cmd.PersistentPreRun != nil || cmd.PersistentPreRunE != nil {
+			t.Errorf("%s: sets a PersistentPreRun hook, which replaces the root's", cmd.CommandPath())
+		}
+	})
+}
+
 // TestFlagShorthands compares flags by name: a shorthand letter belongs to
 // the one long flag name in the table, and a flag with that name carries the
 // letter. It cannot see what a flag does, so a flag with the right name and
