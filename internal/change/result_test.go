@@ -76,16 +76,16 @@ func TestResultExitCode(t *testing.T) {
 		{name: "all Started (--no-wait)", kind: AddonUpdate, steps: []StepResult{stepStarted, stepStarted}, want: 0},
 		{name: "all attempted steps Failed", kind: AddonUpdate, steps: []StepResult{stepFailed, stepFailed, stepNever}, want: 1},
 		{name: "independent targets: one Failed, one Succeeded", kind: AddonUpdate, steps: []StepResult{stepFailed, stepOK}, want: 4},
-		{name: "independent targets: one Failed, one Started", kind: NodegroupUpdate, steps: []StepResult{stepFailed, stepStarted}, want: 4},
-		{name: "cluster upgrade: the control plane Succeeded, an add-on Failed", kind: ClusterUpgrade, steps: []StepResult{stepOK, stepFailed, stepNever}, want: 1},
-		{name: "cluster upgrade: the control plane and the add-ons Succeeded, a nodegroup Failed", kind: ClusterUpgrade, steps: []StepResult{stepOK, stepOK, stepOK, stepFailed}, want: 1},
-		{name: "cluster rollback: the nodegroups and the add-ons Succeeded, the control plane Failed", kind: ClusterRollback, steps: []StepResult{stepOK, stepOK, stepFailed}, want: 1},
+		{name: "independent targets: one Failed, one Started", kind: NodegroupScale, steps: []StepResult{stepFailed, stepStarted}, want: 4},
+		{name: "cluster upgrade: the control plane Succeeded, an add-on Failed", kind: testUpgrade, steps: []StepResult{stepOK, stepFailed, stepNever}, want: 1},
+		{name: "cluster upgrade: the control plane and the add-ons Succeeded, a nodegroup Failed", kind: testUpgrade, steps: []StepResult{stepOK, stepOK, stepOK, stepFailed}, want: 1},
+		{name: "cluster rollback: the nodegroups and the add-ons Succeeded, the control plane Failed", kind: testRollback, steps: []StepResult{stepOK, stepOK, stepFailed}, want: 1},
 		{name: "one Failed, one Skipped as already current", kind: AddonUpdate, steps: []StepResult{stepFailed, stepSkipped}, want: 1},
 		{name: "one Failed, one Blocked", kind: AddonUpdate, steps: []StepResult{stepFailed, stepBlocked}, want: 3},
-		{name: "independent targets: one Failed, one Blocked, one Succeeded", kind: NodegroupUpdate, steps: []StepResult{stepFailed, stepBlocked, stepOK}, want: 4},
-		{name: "one verification issue, one Failed", kind: NodegroupUpdate, steps: []StepResult{stepIssue, stepFailed}, want: 5},
-		{name: "one verification issue, one Failed, in an engine", kind: ClusterUpgrade, steps: []StepResult{stepIssue, stepFailed}, want: 5},
-		{name: "one verification issue, the rest Succeeded", kind: NodegroupUpdate, steps: []StepResult{stepIssue, stepOK, stepOK}, want: 5},
+		{name: "independent targets: one Failed, one Blocked, one Succeeded", kind: NodegroupScale, steps: []StepResult{stepFailed, stepBlocked, stepOK}, want: 4},
+		{name: "one verification issue, one Failed", kind: NodegroupScale, steps: []StepResult{stepIssue, stepFailed}, want: 5},
+		{name: "one verification issue, one Failed, in an engine", kind: testUpgrade, steps: []StepResult{stepIssue, stepFailed}, want: 5},
+		{name: "one verification issue, the rest Succeeded", kind: NodegroupScale, steps: []StepResult{stepIssue, stepOK, stepOK}, want: 5},
 		{name: "one Busy, the rest Succeeded", kind: AddonUpdate, steps: []StepResult{stepBusy, stepOK}, want: 4},
 		{name: "one InProgress with Timeout, the rest Succeeded", kind: AddonUpdate, steps: []StepResult{stepTimeout, stepOK}, want: 4},
 		{name: "one Blocked, the rest Succeeded", kind: AddonUpdate, steps: []StepResult{stepBlocked, stepOK}, want: 3},
@@ -101,7 +101,7 @@ func TestResultExitCode(t *testing.T) {
 		{name: "an attach under --no-wait, one Started", kind: AddonUpdate, steps: []StepResult{stepAttached, stepStarted}, want: 0},
 		{name: "one Failed, one attached and not waited for", kind: AddonUpdate, steps: []StepResult{stepFailed, stepAttached}, want: 1},
 		{name: "all Skipped, and a failure in the plan", kind: AddonUpdate, steps: []StepResult{stepSkipped}, failures: gateRead, want: 4},
-		{name: "a failed read alone, in an engine", kind: ClusterRollback, steps: []StepResult{stepNever}, failures: gateRead, want: 4},
+		{name: "a failed read alone, in an engine", kind: testRollback, steps: []StepResult{stepNever}, failures: gateRead, want: 4},
 		{name: "nothing attempted", kind: AddonUpdate, steps: []StepResult{stepNever}, want: 0},
 	}
 	for _, tt := range tests {
@@ -127,7 +127,7 @@ func TestResultExitCode(t *testing.T) {
 
 // Fleet mode pools the steps of all its clusters.
 func TestResultExitCode_FleetPools(t *testing.T) {
-	res := Result{Plan: &Plan{Kind: NodegroupUpdate}, Clusters: []ClusterResult{
+	res := Result{Plan: &Plan{Kind: NodegroupScale}, Clusters: []ClusterResult{
 		{Target: Target{Cluster: "a"}, Steps: []StepResult{stepFailed}},
 		{Target: Target{Cluster: "b"}, Steps: []StepResult{stepOK}},
 	}}
@@ -178,8 +178,8 @@ func TestStatusOf(t *testing.T) {
 		{"started", AddonUpdate, []StepResult{stepStarted}, Started},
 		{"failed", AddonUpdate, []StepResult{stepFailed}, Failed},
 		{"partial failure", AddonUpdate, []StepResult{stepFailed, stepOK}, Incomplete},
-		{"a failed phase of an upgrade", ClusterUpgrade, []StepResult{stepOK, stepFailed}, Failed},
-		{"blocked", ClusterUpgrade, []StepResult{stepOK, stepBlocked}, RunBlocked},
+		{"a failed phase of an upgrade", testUpgrade, []StepResult{stepOK, stepFailed}, Failed},
+		{"blocked", testUpgrade, []StepResult{stepOK, stepBlocked}, RunBlocked},
 		{"busy", AddonUpdate, []StepResult{stepBusy}, Incomplete},
 		{"verify failed", AddonUpdate, []StepResult{stepUnwell}, VerifyFailed},
 		{"interrupted", AddonUpdate, []StepResult{stepStopped}, Interrupted},
@@ -207,12 +207,12 @@ func TestKinds(t *testing.T) {
 			t.Errorf("%T.cluster() = %v, want %v", req, got, prod)
 		}
 	}
-	for _, kind := range []Kind{AddonUpdate, NodegroupScale, NodegroupUpdate} {
+	for _, kind := range []Kind{AddonUpdate, NodegroupScale} {
 		if !kind.independent() {
 			t.Errorf("%s: the targets are independent", kind)
 		}
 	}
-	for _, kind := range []Kind{ClusterUpgrade, ClusterRollback} {
+	for _, kind := range []Kind{testUpgrade, testRollback} {
 		if kind.independent() {
 			t.Errorf("%s: the phases are a sequence", kind)
 		}

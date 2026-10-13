@@ -21,7 +21,7 @@ func addonStep(name string, action Action, reason Reason, from, to string) Step 
 
 // planOf returns a plan of one cluster with the steps in one phase.
 func planOf(kind Kind, steps ...Step) *Plan {
-	return &Plan{Kind: kind, Clusters: []ClusterPlan{{Target: prod, Phases: []Phase{{Ref: addonPhase, Serial: true, Steps: steps}}}}}
+	return &Plan{Kind: kind, Clusters: []ClusterPlan{{Target: prod, Phases: []Phase{{Ref: addonPhase, Steps: steps}}}}}
 }
 
 // TestPlanDecision is the decision table of a plan with the exit code of
@@ -91,12 +91,12 @@ func TestPlanDecision(t *testing.T) {
 
 // A plan of several clusters has the worst decision and the highest code.
 func TestPlanDecision_Fleet(t *testing.T) {
-	a := planOf(NodegroupUpdate, addonStep("a", Skip, AlreadyAtTarget, "v1", "v1")).Clusters[0]
-	b := planOf(NodegroupUpdate, addonStep("b", Submit, VersionBehind, "v1", "v2")).Clusters[0]
+	a := planOf(NodegroupScale, addonStep("a", Skip, AlreadyAtTarget, "v1", "v1")).Clusters[0]
+	b := planOf(NodegroupScale, addonStep("b", Submit, VersionBehind, "v1", "v2")).Clusters[0]
 	b.Cluster = "dev"
 	c := b
 	c.Cluster, c.Blockers = "test", []Blocker{{Kind: BlockerBusy}}
-	p := &Plan{Kind: NodegroupUpdate, Clusters: []ClusterPlan{a, b}}
+	p := &Plan{Kind: NodegroupScale, Clusters: []ClusterPlan{a, b}}
 	if got := p.Decision(); got != Proceed {
 		t.Errorf("Decision() = %s, want Proceed", got)
 	}
@@ -169,20 +169,13 @@ func TestDiff(t *testing.T) {
 			want: []Change{{Step: ref, Kind: NowInFlight, Message: "add-on vpc-cni is now changing elsewhere"}},
 		},
 		{
-			name: "KubernetesVersion", kind: NodegroupUpdate, prev: []Step{roll},
+			name: "KubernetesVersion", kind: NodegroupScale, prev: []Step{roll},
 			cur:    []Step{with(roll, func(s *Step) { s.To = "1.34" })},
 			want:   []Change{{Step: roll.Ref, Kind: KubernetesVersion, Message: "nodegroup web now goes to 1.34, not 1.33"}},
 			effect: Refuse,
 		},
 		{
-			name: "RollbackTarget", kind: ClusterRollback,
-			prev:   []Step{{Ref: StepRef{Phase: PhaseRef{Target: prod, Kind: PhaseControlPlane}, Kind: StepControlPlane}, Action: Submit, From: "1.33", To: "1.32"}},
-			cur:    []Step{{Ref: StepRef{Phase: PhaseRef{Target: prod, Kind: PhaseControlPlane}, Kind: StepControlPlane}, Action: Submit, From: "1.33", To: "1.31"}},
-			want:   []Change{{Step: StepRef{Phase: PhaseRef{Target: prod, Kind: PhaseControlPlane}, Kind: StepControlPlane}, Kind: RollbackTarget, Message: "the control plane of prod now goes to 1.31, not 1.32"}},
-			effect: Refuse,
-		},
-		{
-			name: "Release", kind: NodegroupUpdate, prev: []Step{roll},
+			name: "Release", kind: NodegroupScale, prev: []Step{roll},
 			cur:    []Step{with(roll, func(s *Step) { s.ToRelease = "1.33.0-20260201" })},
 			want:   []Change{{Step: roll.Ref, Kind: Release, Message: "nodegroup web now gets the AMI release 1.33.0-20260201, not 1.33.0-20260101"}},
 			effect: AskAgain,
@@ -198,7 +191,10 @@ func TestDiff(t *testing.T) {
 			cur: []Step{with(scale, func(s *Step) {
 				s.Sizes = &ScaleSizes{Before: Sizes{Desired: 5, Min: 1, Max: 5}, After: Sizes{Desired: 3, Min: 1, Max: 5}}
 			})},
-			want:   []Change{{Step: scale.Ref, Kind: SizesChanged, Message: "nodegroup web now has desired 5, min 1, max 5"}},
+			want: []Change{
+				{Step: scale.Ref, Kind: SizesChanged, Message: "nodegroup web now has desired 5, min 1, max 5"},
+				{Step: scale.Ref, Kind: SizesChanged, Message: "nodegroup web now goes to desired 3, min 1, max 5, not desired 3, min 1, max 3"},
+			},
 			effect: AskAgain,
 		},
 		{
@@ -253,7 +249,7 @@ func TestDiff(t *testing.T) {
 			edit: func(prev, cur *ClusterPlan) { prev.Checks, cur.Checks = warn, warn },
 		},
 		{
-			name: "a refusal wins over a question", kind: NodegroupUpdate, prev: []Step{roll},
+			name: "a refusal wins over a question", kind: NodegroupScale, prev: []Step{roll},
 			cur: []Step{with(roll, func(s *Step) { s.To, s.ToRelease = "1.34", "1.34.0-20260201" })},
 			want: []Change{
 				{Step: roll.Ref, Kind: KubernetesVersion, Message: "nodegroup web now goes to 1.34, not 1.33"},
@@ -283,8 +279,8 @@ func TestDiff(t *testing.T) {
 func TestChangeKindEffect(t *testing.T) {
 	want := map[ChangeKind]Effect{
 		Done: Continue, NowInFlight: Continue,
-		KubernetesVersion: Refuse, RollbackTarget: Refuse, NowBlocked: Refuse,
-		Release: AskAgain, Version: AskAgain, SizesChanged: AskAgain, Added: AskAgain, Removed: AskAgain, GateWorse: AskAgain,
+		KubernetesVersion: Refuse, NowBlocked: Refuse,
+		Release: AskAgain, Version: AskAgain, SizesChanged: AskAgain, Added: AskAgain, Removed: AskAgain, GateWorse: AskAgain, StepDiffers: AskAgain,
 	}
 	for kind, effect := range want {
 		if got := kind.Effect(); got != effect {

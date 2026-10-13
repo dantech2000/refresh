@@ -1,10 +1,11 @@
 exit: 4
-error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1; it was not changed. Run the command again once that finishes
+error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
 --- stdout ---
 {
   "apiVersion": "refresh.drod.dev/v2",
-  "kind": "Plan",
+  "kind": "Run",
   "operation": "AddonUpdate",
+  "status": "Incomplete",
   "clusters": [
     {
       "cluster": "prod",
@@ -23,7 +24,27 @@ error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1; it was not changed. Run
         }
       ],
       "blockers": [],
-      "notices": []
+      "notices": [],
+      "status": "Incomplete",
+      "results": [
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "vpc-cni",
+          "status": "Busy",
+          "inFlight": "AddonUpdate",
+          "failure": {
+            "kind": "Addon",
+            "name": "vpc-cni",
+            "cluster": "prod",
+            "region": "us-east-1",
+            "reason": "Busy",
+            "retryable": true,
+            "error": "add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes"
+          }
+        }
+      ],
+      "verification": []
     }
   ],
   "failures": [
@@ -34,11 +55,12 @@ error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1; it was not changed. Run
       "region": "us-east-1",
       "reason": "Busy",
       "retryable": true,
-      "error": "add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1; it was not changed. Run the command again once that finishes"
+      "error": "add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes"
     }
   ]
 }
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1
   vpc-cni  skip, at v1.19.5-eksbuild.1 (InFlight)
-warning: addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1; it was not changed. Run the command again once that finishes
+[!] vpc-cni: Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+warning: addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes

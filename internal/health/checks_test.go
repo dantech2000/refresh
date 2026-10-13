@@ -16,7 +16,6 @@ import (
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
-	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/health"
@@ -714,7 +713,7 @@ func testRunUnreachable(t *testing.T) {
 // fail-closed check blocks.
 func testRunDeadline(t *testing.T) {
 	h := newHarness(t)
-	ctx, expire := cmdutiltest.Deadline(testContext(t))
+	ctx, expire := awsxtest.Deadline(testContext(t))
 	in := h.input(ctx, "ng-a")
 	h.kube.OnRequest = func(hctx context.Context, _ kubetest.Request) {
 		expire()

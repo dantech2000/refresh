@@ -349,7 +349,7 @@ func TestInvalidInput(t *testing.T) {
 // It passes at the moment one add-on is at the server.
 func TestList_Deadline(t *testing.T) {
 	e := newFake(t)
-	ctx, expire := cmdutiltest.Deadline(cmdutiltest.Context(t))
+	ctx, expire := awsxtest.Deadline(cmdutiltest.Context(t))
 	e.Server.OnRequest = func(hctx context.Context, r awsxtest.Request) {
 		if r.Operation == fleettest.EKSDescribeAddon {
 			expire()

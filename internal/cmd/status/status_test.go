@@ -439,7 +439,7 @@ func TestStatus_ThrottledAtTheLimit(t *testing.T) {
 // A deadline in the middle of a sweep is a partial result with exit 4.
 func TestStatus_Deadline(t *testing.T) {
 	e := newFake(t)
-	ctx, expire := cmdutiltest.Deadline(cmdutiltest.Context(t))
+	ctx, expire := awsxtest.Deadline(cmdutiltest.Context(t))
 	e.Server.OnRequest = func(hctx context.Context, r awsxtest.Request) {
 		if r.Operation == fleettest.EKSDescribeAddon {
 			expire()

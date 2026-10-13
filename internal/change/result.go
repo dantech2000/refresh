@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/health"
 )
 
@@ -109,28 +109,28 @@ func stepCode(s StepResult) (code int, ok bool) {
 	switch s.Status {
 	case StepSucceeded:
 		if s.VerifyIssue != "" {
-			return cmdutil.ExitVerifyFailed, true
+			return exitcode.VerifyFailed, true
 		}
-		return cmdutil.ExitOK, true
+		return exitcode.OK, true
 	case StepSkipped, StepStarted:
-		return cmdutil.ExitOK, true
+		return exitcode.OK, true
 	case StepFailed:
 		if s.VerifyIssue != "" {
-			return cmdutil.ExitVerifyFailed, true
+			return exitcode.VerifyFailed, true
 		}
-		return cmdutil.ExitFailure, true
+		return exitcode.Failure, true
 	case StepCancelled:
-		return cmdutil.ExitFailure, true
+		return exitcode.Failure, true
 	case StepBlocked:
-		return cmdutil.ExitBlocked, true
+		return exitcode.Blocked, true
 	case StepBusy:
-		return cmdutil.ExitIncomplete, true
+		return exitcode.Incomplete, true
 	case StepInProgress:
 		// An attach under --no-wait is in progress with no failure.
 		if s.Failure == nil {
-			return cmdutil.ExitOK, true
+			return exitcode.OK, true
 		}
-		return cmdutil.ExitIncomplete, true
+		return exitcode.Incomplete, true
 	}
 	return 0, false
 }
@@ -146,11 +146,11 @@ func stepCode(s StepResult) (code int, ok bool) {
 //  3. The highest code wins. An interrupt is always 1.
 func (r Result) ExitCode() int {
 	if r.ended.interrupted || r.interruptedStep() {
-		return cmdutil.ExitFailure
+		return exitcode.Failure
 	}
 	code := r.ended.code
 	if len(r.Failures) > 0 {
-		code = max(code, cmdutil.ExitIncomplete)
+		code = max(code, exitcode.Incomplete)
 	}
 	var failed, changed bool
 	for _, c := range r.Clusters {
@@ -159,7 +159,7 @@ func (r Result) ExitCode() int {
 			if !ok {
 				continue
 			}
-			if sc == cmdutil.ExitFailure {
+			if sc == exitcode.Failure {
 				failed = true
 				continue
 			}
@@ -169,9 +169,9 @@ func (r Result) ExitCode() int {
 	}
 	if failed {
 		if changed && r.kind().independent() {
-			return max(code, cmdutil.ExitIncomplete)
+			return max(code, exitcode.Incomplete)
 		}
-		return max(code, cmdutil.ExitFailure)
+		return max(code, exitcode.Failure)
 	}
 	return code
 }
@@ -205,13 +205,13 @@ func statusOf(kind Kind, steps []StepResult, failures []apidoc.Failure) RunStatu
 		return Interrupted
 	}
 	switch r.ExitCode() {
-	case cmdutil.ExitVerifyFailed:
+	case exitcode.VerifyFailed:
 		return VerifyFailed
-	case cmdutil.ExitIncomplete:
+	case exitcode.Incomplete:
 		return Incomplete
-	case cmdutil.ExitBlocked:
+	case exitcode.Blocked:
 		return RunBlocked
-	case cmdutil.ExitFailure:
+	case exitcode.Failure:
 		return Failed
 	}
 	work := func(s StepResult) bool { return s.Status != StepSkipped && s.Status != StepNotAttempted }

@@ -14,9 +14,11 @@ import (
 
 // runScaleStep runs the step of a scale: a fresh read of the nodegroup,
 // the request, the wait for the update, and the wait for the nodegroup to
-// hold the new sizes. A nodegroup that is already changing is not
-// touched. A nodegroup whose sizes are not the ones of the plan any more
-// is not touched either: the gate ran for another direction.
+// hold the new sizes. Nothing is sent when the fresh read shows a
+// nodegroup that is already changing (Busy), one that is not ACTIVE
+// (Blocked), one whose sizes EKS did not return (Failed, as a read that
+// failed), or one whose sizes are not the ones of the plan any more
+// (Failed): the gate ran for another direction.
 func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	res := StepResult{Ref: s.Ref}
 	resource := Resource{Target: cp.Target, Kind: StepScale, Name: s.Ref.Name}
@@ -32,6 +34,10 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 		return r.unsent(cp, res, err)
 	case nodegroupInFlight(fresh.Status):
 		return r.busyNodegroup(cp, res, clients, fresh.Status)
+	case fresh.Status != string(ekstypes.NodegroupStatusActive):
+		res.Status = StepBlocked
+		res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown, notActive(s.Ref.Name, fresh.Status))
+		return res
 	case fresh.Sizes == s.Sizes.After:
 		r.notice(fmt.Sprintf("nodegroup %s has %s now; nothing was sent", s.Ref.Name, fresh.Sizes))
 		res.Status = StepSkipped
@@ -65,9 +71,8 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 		return res
 	}
 	r.emit(Event{Kind: StepChanged, Phase: s.Ref.Phase, Step: s.Ref, Result: &res})
-	ctx, wait := r.d.budget(r.ctx, r.common.Limits.Wait, ErrWaitTimeout)
+	ctx, wait := r.waitBudget()
 	defer wait.stop()
-	wait.start()
 	poll := r.d.AWS.PollClients(cp.Region)
 	if err := WaitUpdate(ctx, poll, resource, id, r.waitOptions(s, wait)); err != nil {
 		return r.waitFailed(ctx, cp, res, err)
@@ -104,7 +109,9 @@ func submitScale(ctx context.Context, c *awsx.Clients, r Resource, req ScaleRequ
 // the status together.
 //
 //   - A size that was sent and that the nodegroup does not have: an error
-//     at once. The update did not do what it reported.
+//     at once. The update did not do what it reported. Every answer that
+//     reaches this function has all three sizes: describe turns one
+//     without them into a poll that says nothing.
 //   - No desired size was sent: done. Only the bounds changed, and no node
 //     has to come or go.
 //   - ACTIVE: done.
@@ -138,9 +145,8 @@ func scaleSettled(nodegroup, updateID string, req ScaleRequest) func(Settled) (b
 
 // busyNodegroup returns the result of a nodegroup target that is already
 // changing: it is left alone, and its failure names the type of the
-// update in flight. The lookup of that type is two reads that happen only
-// here. status is the status of a fresh read, or "" to use the one of the
-// plan.
+// update in flight. status is the status of a fresh read, or "" to use
+// the one of the plan.
 func (r *runner) busyNodegroup(cp *ClusterPlan, res StepResult, c *awsx.Clients, status string) StepResult {
 	name := res.Ref.Name
 	if status == "" {
@@ -151,8 +157,9 @@ func (r *runner) busyNodegroup(cp *ClusterPlan, res StepResult, c *awsx.Clients,
 		}
 	}
 	res.Status = StepBusy
-	res.InFlight = inFlightUpdate(r.readCtx, c, Resource{Target: cp.Target, Kind: StepScale, Name: name})
-	f := cp.busyNodegroupFailure(name, status, res.InFlight)
+	var note string
+	res.InFlight, note = r.inFlight(c, Resource{Target: cp.Target, Kind: StepScale, Name: name})
+	f := cp.busyNodegroupFailure(name, status, note)
 	res.Failure = &f
 	return res
 }

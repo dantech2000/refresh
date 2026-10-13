@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
 )
@@ -176,7 +175,7 @@ func planAddons(ctx context.Context, d Deps, req AddonUpdateRequest) (*Plan, err
 			cp.Failures = append(cp.Failures, f)
 		}
 	}
-	phase := Phase{Ref: PhaseRef{Target: cp.Target, Kind: PhaseAddons}, Serial: true}
+	phase := Phase{Ref: PhaseRef{Target: cp.Target, Kind: PhaseAddons}}
 	for _, name := range names {
 		step, err := cp.addonStep(phase.Ref, name, req, pinned)
 		if err != nil {
@@ -209,7 +208,7 @@ func addonNames(snap *fleet.Snapshot, req AddonUpdateRequest) ([]string, error) 
 		if !listed || slices.Contains(installed, name) {
 			return nil
 		}
-		return cmdutil.NotFoundError("add-on", name, "cluster "+snap.Cluster.Name, installed, "refresh addon list -c "+snap.Cluster.Name)
+		return &NotFoundError{Target: Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}, Kind: StepAddon, Name: name, Names: slices.Clone(installed)}
 	}
 	if !req.All {
 		var names []string
@@ -277,7 +276,8 @@ func (cp *ClusterPlan) addonStep(phase PhaseRef, name string, req AddonUpdateReq
 }
 
 // busyFailure returns the failure of an add-on target that is already
-// changing. inFlight is the type of the update, when it was looked up.
+// changing. inFlight names the update: its type, or unknownUpdate. It is
+// "" in a plan, which makes no lookup.
 func (cp *ClusterPlan) busyFailure(name, status, version, inFlight string) apidoc.Failure {
 	msg := fmt.Sprintf("add-on %s is %s", name, status)
 	if version != "" && status != "DELETING" {

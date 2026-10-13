@@ -1,18 +1,23 @@
 exit: 4
-error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1; it was not changed. Run the command again once that finishes
+error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
 --- stdout ---
 FIELD	VALUE
-plan.operation	AddonUpdate
-plan.cluster	prod
-plan.region	us-east-1
-plan.version	1.33
-plan.decision	NothingToDo
-steps.vpc-cni.kind	Addon
-steps.vpc-cni.action	Skip
-steps.vpc-cni.reason	InFlight
-steps.vpc-cni.from	v1.19.5-eksbuild.1
-steps.vpc-cni.to	v1.20.0-eksbuild.1
+run.operation	AddonUpdate
+run.cluster	prod
+run.region	us-east-1
+run.version	1.33
+run.status	Incomplete
+results.vpc-cni.kind	Addon
+results.vpc-cni.status	Busy
+results.vpc-cni.from	v1.19.5-eksbuild.1
+results.vpc-cni.to	v1.20.0-eksbuild.1
+results.vpc-cni.update	-
+results.vpc-cni.note	AddonUpdate in flight
+results.vpc-cni.started	-
+results.vpc-cni.finished	-
+results.vpc-cni.failure	Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1
   vpc-cni  skip, at v1.19.5-eksbuild.1 (InFlight)
-warning: addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1; it was not changed. Run the command again once that finishes
+[!] vpc-cni: Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+warning: addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes

@@ -11,7 +11,6 @@ import (
 	metricsv1beta1 "k8s.io/metrics/pkg/client/clientset/versioned/typed/metrics/v1beta1"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/kube"
@@ -105,9 +104,18 @@ func (r ScaleRequest) resolve(cur Sizes) (Sizes, error) {
 }
 
 // nodegroupInFlight reports whether EKS is changing a nodegroup with the
-// status. A DEGRADED nodegroup is not changing.
+// status. A nodegroup that is DEGRADED, or whose create or delete failed,
+// is not changing: nothing will settle it, so there is nothing to wait
+// for.
 func nodegroupInFlight(status string) bool {
-	return status != "ACTIVE" && status != "DEGRADED"
+	return status == "CREATING" || status == "UPDATING" || status == "DELETING"
+}
+
+// notActive is the message of a scale target that is not ACTIVE and not
+// changing. The contract blocks a change of such a target, whatever the
+// direction of the scale and whatever the flags.
+func notActive(nodegroup, status string) string {
+	return fmt.Sprintf("nodegroup %s is %s, not ACTIVE; it was not scaled", nodegroup, status)
 }
 
 // scaleDecision is what the step table of a scale says about a nodegroup.
@@ -115,6 +123,8 @@ type scaleDecision struct {
 	Action Action
 	Reason Reason
 	Sizes  ScaleSizes
+	// NotActive is the message of the blocker of a Blocked step.
+	NotActive string
 	// Err fails the whole plan: the sizes cannot hold.
 	Err error
 }
@@ -122,15 +132,24 @@ type scaleDecision struct {
 // decideScale is the step table of a scale. The first row that matches
 // decides.
 //
-//  1. The nodegroup is already changing: Skip, InFlight. The target is
-//     busy, and its sizes are not settled, so they are not checked.
-//  2. The resulting sizes cannot hold: the plan fails.
-//  3. Every resulting size equals the current one: Skip, NoChange.
-//  4. Otherwise: Submit.
+//  1. The nodegroup is already changing (CREATING, UPDATING, DELETING):
+//     Skip, InFlight. The target is busy, and its sizes are not settled,
+//     so they are not checked.
+//  2. The nodegroup is not ACTIVE (DEGRADED, CREATE_FAILED,
+//     DELETE_FAILED): Blocked, for a scale in any direction and for the
+//     bounds alone. No flag goes past it.
+//  3. The resulting sizes cannot hold: the plan fails.
+//  4. Every resulting size equals the current one: Skip, NoChange.
+//  5. Otherwise: Submit.
+//
+// The fresh read before the submit applies rows 1 and 2 again.
 func decideScale(n fleet.Nodegroup, req ScaleRequest) scaleDecision {
 	cur := Sizes{Desired: n.Desired, Min: n.Min, Max: n.Max}
-	if nodegroupInFlight(n.Status) {
+	switch {
+	case nodegroupInFlight(n.Status):
 		return scaleDecision{Action: Skip, Reason: InFlight, Sizes: ScaleSizes{Before: cur, After: cur}}
+	case n.Status != "ACTIVE":
+		return scaleDecision{Action: Blocked, Sizes: ScaleSizes{Before: cur, After: cur}, NotActive: notActive(n.Name, n.Status)}
 	}
 	after, err := req.resolve(cur)
 	switch {
@@ -144,10 +163,11 @@ func decideScale(n fleet.Nodegroup, req ScaleRequest) scaleDecision {
 
 // planScale builds the plan of a scale: one read of the whole cluster, the
 // step of the nodegroup, the busy rule, and the gate of the direction. A
-// scale that lowers the desired size runs the node check and the
-// scale-down drain check. Any other scale runs the quota check, and a
-// scale-up also looks for instance types that an availability zone of the
-// nodegroup does not offer.
+// target that is not ACTIVE blocks the plan in every direction, in the
+// step table. A scale that lowers the desired size runs the node check
+// and the scale-down drain check. Any other scale runs the quota check,
+// and a scale-up also looks for instance types that an availability zone
+// of the nodegroup does not offer.
 func planScale(ctx context.Context, d Deps, req ScaleRequest) (*Plan, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
@@ -162,7 +182,7 @@ func planScale(ctx context.Context, d Deps, req ScaleRequest) (*Plan, error) {
 		Failures: slices.Clone(snap.Failures),
 		snapshot: snap,
 	}
-	phase := Phase{Ref: PhaseRef{Target: cp.Target, Kind: PhaseScale}, Serial: true}
+	phase := Phase{Ref: PhaseRef{Target: cp.Target, Kind: PhaseScale}}
 	step, err := cp.scaleStep(phase.Ref, req)
 	if err != nil {
 		return nil, err
@@ -192,7 +212,7 @@ func (cp *ClusterPlan) scaleStep(phase PhaseRef, req ScaleRequest) (Step, error)
 		for j, n := range snap.Nodegroups {
 			names[j] = n.Name
 		}
-		return Step{}, cmdutil.NotFoundError("nodegroup", req.Nodegroup, "cluster "+snap.Cluster.Name, names, "refresh nodegroup list -c "+snap.Cluster.Name)
+		return Step{}, &NotFoundError{Target: cp.Target, Kind: StepNodegroup, Name: req.Nodegroup, Names: names}
 	}
 	if i < 0 || snap.Nodegroups[i].State != fleet.Collected {
 		step.Action = Blocked
@@ -200,11 +220,25 @@ func (cp *ClusterPlan) scaleStep(phase PhaseRef, req ScaleRequest) (Step, error)
 		return step, nil
 	}
 	n := snap.Nodegroups[i]
+	// A size that EKS did not return is not 0. Nothing can be planned
+	// from sizes that are not known.
+	if !n.SizesKnown {
+		step.Action = Blocked
+		msg := "EKS did not return every scaling size of nodegroup " + req.Nodegroup
+		cp.Blockers = append(cp.Blockers, Blocker{Kind: BlockerUnread, Step: &step.Ref, Message: msg})
+		f := apidoc.NewFailure(apidoc.FailureNodegroup, req.Nodegroup, apidoc.ReasonUnknown, msg)
+		f.Cluster, f.Region = cp.Cluster, cp.Region
+		cp.Failures = append(cp.Failures, f)
+		return step, nil
+	}
 	d := decideScale(n, req)
 	if d.Err != nil {
 		return Step{}, d.Err
 	}
 	step.Action, step.Reason, step.Sizes = d.Action, d.Reason, &d.Sizes
+	if d.NotActive != "" {
+		cp.Blockers = append(cp.Blockers, Blocker{Kind: BlockerNotReady, Step: &step.Ref, Message: d.NotActive})
+	}
 	if step.busy() {
 		cp.Failures = append(cp.Failures, cp.busyNodegroupFailure(n.Name, n.Status, ""))
 	}
@@ -212,8 +246,8 @@ func (cp *ClusterPlan) scaleStep(phase PhaseRef, req ScaleRequest) (Step, error)
 }
 
 // busyNodegroupFailure returns the failure of a nodegroup target that is
-// already changing. inFlight is the type of the update, when it was
-// looked up.
+// already changing. inFlight names the update: its type, or
+// unknownUpdate. It is "" in a plan, which makes no lookup.
 func (cp *ClusterPlan) busyNodegroupFailure(name, status, inFlight string) apidoc.Failure {
 	msg := fmt.Sprintf("nodegroup %s is %s", name, status)
 	if inFlight != "" {
@@ -225,9 +259,10 @@ func (cp *ClusterPlan) busyNodegroupFailure(name, status, inFlight string) apido
 }
 
 // gateScale runs the health gate of a scale step that would be submitted.
-// The direction picks the checks. A scale that removes nodes reads the
-// nodes and the PodDisruptionBudgets, so it needs Kubernetes access. Any
-// other scale asks nothing of Kubernetes. Beside the gate, a scale-up
+// The step table has blocked a target that is not ACTIVE before it, for
+// every direction. The direction picks the checks. A scale that removes
+// nodes reads the nodes and the PodDisruptionBudgets, so it needs
+// Kubernetes access. Any other scale asks nothing of Kubernetes. Beside the gate, a scale-up
 // reads the instance-type offerings, and what it finds is a notice.
 func (cp *ClusterPlan) gateScale(ctx context.Context, d Deps, policy health.Policy, s Step) {
 	if s.Action != Submit {

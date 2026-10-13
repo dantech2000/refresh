@@ -139,7 +139,7 @@ func (o *updateOptions) validate() error {
 func (o *updateOptions) request() change.AddonUpdateRequest {
 	return change.AddonUpdateRequest{
 		// --wait-timeout bounds each add-on alone.
-		Common:  changecmd.Common(&o.change, o.timeout(), true),
+		Common:  changecmd.Common(&o.change, o.timeout()),
 		Target:  change.Target{Cluster: o.target.Cluster},
 		Addons:  o.addons,
 		All:     o.all,

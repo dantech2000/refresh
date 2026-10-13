@@ -13,6 +13,15 @@ type clock struct{ now time.Time }
 func (c *clock) Now() time.Time          { return c.now }
 func (c *clock) advance(d time.Duration) { c.now = c.now.Add(d) }
 
+// testBudget returns a budget on the clock of the test, with a timer that
+// never fires.
+func testBudget(parent context.Context, t *testing.T, c *clock, limit time.Duration, cause error) (context.Context, *budget) {
+	t.Helper()
+	ctx, b := newBudget(parent, c.Now, limit, cause)
+	b.afterFunc = heldTimer
+	return ctx, b
+}
+
 func newClock() *clock {
 	return &clock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 }
@@ -21,7 +30,7 @@ func newClock() *clock {
 // cause of the budget.
 func TestBudget_RunsOut(t *testing.T) {
 	c := newClock()
-	ctx, b := newBudget(t.Context(), c.Now, time.Hour, ErrWaitTimeout)
+	ctx, b := testBudget(t.Context(), t, c, time.Hour, ErrWaitTimeout)
 	defer b.stop()
 	b.start()
 	c.advance(59 * time.Minute)
@@ -41,7 +50,7 @@ func TestBudget_RunsOut(t *testing.T) {
 // does not count.
 func TestBudget_Pause(t *testing.T) {
 	c := newClock()
-	ctx, b := newBudget(t.Context(), c.Now, time.Hour, ErrReadTimeout)
+	ctx, b := testBudget(t.Context(), t, c, time.Hour, ErrReadTimeout)
 	defer b.stop()
 	b.start()
 	c.advance(40 * time.Minute)
@@ -60,7 +69,7 @@ func TestBudget_Pause(t *testing.T) {
 		t.Fatalf("the budget did not run out; cause = %v", context.Cause(ctx))
 	}
 	// A budget that has run out ends its context when it is started again.
-	ctx2, b2 := newBudget(t.Context(), c.Now, time.Second, ErrReadTimeout)
+	ctx2, b2 := testBudget(t.Context(), t, c, time.Second, ErrReadTimeout)
 	defer b2.stop()
 	b2.start()
 	c.advance(time.Minute)
@@ -75,7 +84,7 @@ func TestBudget_Pause(t *testing.T) {
 func TestBudget_NoLimitAndInterrupt(t *testing.T) {
 	c := newClock()
 	parent, cancel := context.WithCancel(t.Context())
-	ctx, b := newBudget(parent, c.Now, 0, ErrWaitTimeout)
+	ctx, b := testBudget(parent, t, c, 0, ErrWaitTimeout)
 	defer b.stop()
 	b.start()
 	c.advance(1000 * time.Hour)

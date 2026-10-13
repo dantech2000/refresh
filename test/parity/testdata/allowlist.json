@@ -40,11 +40,54 @@
   },
   {
     "scenario": "nodegroup-scale-check-pdbs-no-kube",
-    "field": "exitCode",
-    "reason": "The old command exits 1 when the PDB check cannot reach Kubernetes. The new command asks before it goes on without the Kubernetes checks, and --require-healthy turns that question into a stop: the gate blocks on a warning alone, which is exit 2, and nothing is sent.",
+    "field": "mutations",
+    "reason": "The old command refuses when the PDB check cannot reach Kubernetes. The new command asks before it goes on without the Kubernetes checks, --yes accepts, and the change goes on: it sends the scale.",
     "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
     "ownerApproved": true,
-    "expect": 2
+    "expect": [
+      {
+        "operation": "eks:UpdateNodegroupConfig",
+        "target": "prod/ng-a",
+        "payload": {
+          "scalingConfig": {
+            "desiredSize": 1
+          }
+        }
+      }
+    ]
+  },
+  {
+    "scenario": "nodegroup-scale-check-pdbs-no-kube",
+    "field": "world",
+    "reason": "The new command sends the scale after --yes accepted the missing Kubernetes checks, so the nodegroup has the new desired size and the cluster has one update.",
+    "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
+    "ownerApproved": true,
+    "expect": {
+      "us-east-1/prod": {
+        "nodegroups": {
+          "ng-a": "1.32 1.32.0-20250101 ACTIVE 1/1/3"
+        },
+        "updates": [
+          "ng-a ConfigUpdate Successful DesiredSize=1"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "nodegroup-scale-check-pdbs-no-kube",
+    "field": "refusedBeforeMutation",
+    "reason": "The new command does not refuse: --yes accepts the question about the Kubernetes checks that did not run.",
+    "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
+    "ownerApproved": true,
+    "expect": false
+  },
+  {
+    "scenario": "nodegroup-scale-check-pdbs-no-kube",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when the PDB check cannot reach Kubernetes. The new command goes on with --yes, AWS accepts the scale, and no check failed to read: the missing access is a warning that --yes accepted, and the run document records it. Exit 0. A dry run of the same command exits 2, and --require-healthy blocks with exit 2 (TestScale, down-no-kube-require-healthy).",
+    "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
+    "ownerApproved": true,
+    "expect": 0
   },
   {
     "scenario": "nodegroup-update-verify-node-not-ready",

@@ -5,12 +5,13 @@
 // One function builds the plan of a change. NewPlan returns it for a dry
 // run, and Run calls the same function, so a dry run shows what a real run
 // would do. Run executes on the goroutine of its caller and reports
-// through three hooks: an event, a question, and a checkpoint. Nothing
-// here writes to a terminal.
+// through two hooks: an event and a question. Nothing here writes to a
+// terminal.
 package change
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/dantech2000/refresh/internal/awsx"
@@ -22,25 +23,20 @@ import (
 // Kind names a change.
 type Kind string
 
-// The kinds of change.
+// The kinds of change that this package can plan and run. Each other
+// kind arrives with its planner.
 const (
-	AddonUpdate     Kind = "AddonUpdate"
-	NodegroupScale  Kind = "NodegroupScale"
-	NodegroupUpdate Kind = "NodegroupUpdate"
-	ClusterUpgrade  Kind = "ClusterUpgrade"
-	ClusterRollback Kind = "ClusterRollback"
+	AddonUpdate    Kind = "AddonUpdate"
+	NodegroupScale Kind = "NodegroupScale"
 )
 
 // independent reports whether the steps of a change of kind k are
 // independent targets: one that fails beside one that changed something
-// is a partial failure. The phases of an upgrade and of a rollback are a
-// sequence, so a failed phase has failed the whole operation.
+// is a partial failure. Both kinds that are built are. A kind whose
+// phases are a sequence is not: a failed phase has failed the whole
+// operation.
 func (k Kind) independent() bool {
-	switch k {
-	case AddonUpdate, NodegroupScale, NodegroupUpdate:
-		return true
-	}
-	return false
+	return k == AddonUpdate || k == NodegroupScale
 }
 
 // Request is one of the request types of this package: AddonUpdateRequest
@@ -49,6 +45,10 @@ type Request interface {
 	kind() Kind
 	base() Common
 	cluster() Target
+	// differs names the first field in which the request differs from
+	// reviewed, the request of a plan that a person reviewed, or returns
+	// "" when both ask for the same change. See sameRequest.
+	differs(reviewed Request) string
 }
 
 // Target names one cluster. An empty Region means the home region of the
@@ -67,15 +67,13 @@ type Common struct {
 	Policy health.Policy
 	// NoWait ends the run once AWS accepted the changes.
 	NoWait bool
-	// SkipVerify skips the verification after a roll.
-	SkipVerify bool
-	Limits     Limits
-	// Expect is a plan that a person reviewed before this call. Run
-	// compares its first plan with it, as it compares the plans around a
-	// question, and asks no question to confirm the start.
+	Limits Limits
+	// Expect is a plan that a person reviewed before this call. It is
+	// consent to that plan and to no other: Run returns an error before
+	// it reads anything when Expect is not a plan of this request, and it
+	// compares its first plan with Expect as it compares the plans around
+	// a question. A first plan that matches starts with no question.
 	Expect *Plan
-	// Nodes starts a node observer for each roll.
-	Nodes bool
 }
 
 func (c Common) base() Common { return c }
@@ -120,18 +118,18 @@ type Deps struct {
 	// time.Now and time.After.
 	Now   func() time.Time
 	After func(time.Duration) <-chan time.Time
-
-	// afterFunc starts the timer of a budget, which ends a call that
-	// hangs. Nil means time.AfterFunc. A test holds the timer and fires it
-	// when the call hangs.
-	afterFunc func(time.Duration, func()) (stop func() bool)
+	// AfterFunc starts the timer of a budget, which ends a call that
+	// hangs. It is part of the clock: nil means time.AfterFunc. A test
+	// with a clock of its own sets it, holds the timer, and fires it when
+	// a call hangs.
+	AfterFunc func(time.Duration, func()) (stop func() bool)
 }
 
 // budget returns a context under parent and its budget of limit, on the
 // clock of the run. See newBudget.
 func (d Deps) budget(parent context.Context, limit time.Duration, cause error) (context.Context, *budget) {
 	ctx, b := newBudget(parent, d.now, limit, cause)
-	b.afterFunc = d.afterFunc
+	b.afterFunc = d.AfterFunc
 	return ctx, b
 }
 
@@ -185,4 +183,32 @@ type UnsupportedError struct {
 
 func (e *UnsupportedError) Error() string {
 	return "this build cannot run a " + string(e.Kind) + " change"
+}
+
+// NotFoundError is the error of a plan that names an add-on or a
+// nodegroup that the cluster does not have. A front end suggests the
+// close names from Names.
+type NotFoundError struct {
+	// Target is the cluster that was read.
+	Target
+	// Kind is StepAddon or StepNodegroup.
+	Kind StepKind
+	Name string
+	// Names are the add-ons or the nodegroups that the cluster has.
+	Names []string
+}
+
+func (e *NotFoundError) Error() string {
+	return fmt.Sprintf("%s %q not found in cluster %s", resourceNoun(e.Kind), e.Name, e.Cluster)
+}
+
+// resourceNoun names the kind of resource that a step changes.
+func resourceNoun(k StepKind) string {
+	switch k {
+	case StepAddon:
+		return "add-on"
+	case StepNodegroup, StepScale:
+		return "nodegroup"
+	}
+	return "cluster"
 }

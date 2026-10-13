@@ -1,15 +1,20 @@
 package cmdutil
 
-import "errors"
+import (
+	"errors"
 
-// The exit codes of every command.
+	"github.com/dantech2000/refresh/internal/exitcode"
+)
+
+// The exit codes of every command. The values are the ones of
+// internal/exitcode, which the packages below the command layer use.
 const (
-	ExitOK             = 0 // done, nothing to report
-	ExitFailure        = 1 // an error or an interrupt
-	ExitNeedsAttention = 2 // warnings or stale items
-	ExitBlocked        = 3 // a gate stopped the change, or it is unsupported; nothing changed
-	ExitIncomplete     = 4 // incomplete data or a partial failure
-	ExitVerifyFailed   = 5 // the change was applied and the check after it found issues
+	ExitOK             = exitcode.OK             // done, nothing to report
+	ExitFailure        = exitcode.Failure        // an error or an interrupt
+	ExitNeedsAttention = exitcode.NeedsAttention // warnings or stale items
+	ExitBlocked        = exitcode.Blocked        // a gate stopped the change, or it is unsupported; nothing changed
+	ExitIncomplete     = exitcode.Incomplete     // incomplete data or a partial failure
+	ExitVerifyFailed   = exitcode.VerifyFailed   // the change was applied and the check after it found issues
 )
 
 // ExitError is an error that sets the exit code of the process. main prints

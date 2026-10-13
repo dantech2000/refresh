@@ -93,6 +93,7 @@ internal/
   cmd/cluster/          one package per command group, as gh and kubectl do; also
   cmd/nodegroup/        cmd/addon, cmd/status, cmd/contextcmd, cmd/version, cmd/ui
   cmdutil/              Factory, IOStreams, exit errors, output-format flags, target resolution
+  exitcode/             the six exit codes, for the packages below the command layer
   view/                 theme, columns, human views, plain output
   tui/                  model, state, backend
 api/schema/v2/          the generated JSON Schemas
@@ -150,7 +151,7 @@ The exit check is authoritative: `task dev:full` is green on the branch with no 
 
 ### Dependency direction
 
-`apidoc` and `awsx` import no other refresh package. `fleet` imports them. `health` and `change` import `fleet`. `cmd/...`, `view`, and `tui` import everything below them. A `...test` package is imported only by tests, `test/`, and `tools/`. depguard enforces this.
+`apidoc` and `awsx` import no other refresh package. `fleet` imports them. `health` and `change` import `fleet`. `cmd/...`, `cmdutil`, `view`, and `tui` are on top, and nothing below them reads a flag or writes to a terminal. `exitcode` and `fanout` import nothing of refresh, so any layer may use them. A `...test` package is imported only by tests, `test/`, and `tools/`. An `imports_test.go` in `apidoc`, `awsx`, `fleet`, `health`, `change`, and `cmdutil` enforces this.
 
 ## Code standards
 

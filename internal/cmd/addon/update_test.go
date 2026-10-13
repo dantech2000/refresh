@@ -221,7 +221,7 @@ func TestUpdate_Formats(t *testing.T) {
 		"dry-run-ask": apidoc.KindPlan, "dry-run-blocked": apidoc.KindPlan, "cluster-busy": apidoc.KindPlan,
 		"busy-target": apidoc.KindRun, "attach": apidoc.KindRun, "attach-failed": apidoc.KindRun, "failed": apidoc.KindRun,
 		"partial-failure": apidoc.KindRun, "deadline": apidoc.KindRun, "unhealthy-after": apidoc.KindRun, "up-to-date": apidoc.KindPlan,
-		"busy-only-target": apidoc.KindPlan,
+		"busy-only-target": apidoc.KindRun,
 	}
 	for _, tc := range updateCases() {
 		kind, ok := kinds[tc.name]

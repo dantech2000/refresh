@@ -137,6 +137,7 @@ func newNodegroup(name string, in *ekstypes.Nodegroup) Nodegroup {
 	n.Version, _ = ParseVersion(aws.ToString(in.Version))
 	if sc := in.ScalingConfig; sc != nil {
 		n.Desired, n.Min, n.Max = aws.ToInt32(sc.DesiredSize), aws.ToInt32(sc.MinSize), aws.ToInt32(sc.MaxSize)
+		n.SizesKnown = sc.DesiredSize != nil && sc.MinSize != nil && sc.MaxSize != nil
 	}
 	if in.Resources != nil {
 		for _, g := range in.Resources.AutoScalingGroups {

@@ -506,7 +506,7 @@ func TestList_Interrupt(t *testing.T) {
 // clock.
 func TestList_Deadline(t *testing.T) {
 	e := newEnv(t, newWorld())
-	ctx, expire := cmdutiltest.Deadline(testContext(t))
+	ctx, expire := awsxtest.Deadline(testContext(t))
 	e.srv.OnRequest = func(hctx context.Context, r awsxtest.Request) {
 		if r.Operation == fleettest.EKSDescribeCluster && r.Input["name"] == "prod-search" {
 			expire()

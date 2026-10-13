@@ -184,7 +184,7 @@ func TestDescribe_NotFoundAndTarget(t *testing.T) {
 // A deadline while the nodegroups are read is a partial result, exit 4.
 func TestDescribe_Deadline(t *testing.T) {
 	e := newDescribeFake(t)
-	ctx, expire := cmdutiltest.Deadline(cmdutiltest.Context(t))
+	ctx, expire := awsxtest.Deadline(cmdutiltest.Context(t))
 	e.Server.OnRequest = func(hctx context.Context, r awsxtest.Request) {
 		if r.Operation == fleettest.EKSDescribeNodegroup {
 			expire()

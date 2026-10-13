@@ -85,7 +85,7 @@ func (s *script) kinds() []QuestionKind {
 }
 
 // The limits of the runs of these tests.
-var limits = Limits{Read: time.Minute, Wait: 5 * time.Minute, StepWait: true, Poll: 15 * time.Second}
+var limits = Limits{Read: time.Minute, Wait: 5 * time.Minute, Poll: 15 * time.Second}
 
 func request(names ...string) AddonUpdateRequest {
 	return AddonUpdateRequest{Common: Common{Limits: limits}, Target: Target{Cluster: "prod"}, Addons: names}
@@ -145,9 +145,10 @@ func TestRun_EventOrder(t *testing.T) {
 	if len(s.asked) != 0 {
 		t.Errorf("a run with --yes asked %v", s.kinds())
 	}
-	// With --yes the plan is computed once: one DescribeCluster.
-	if n := e.count(fleettest.EKSDescribeCluster); n != 1 {
-		t.Errorf("%d plans, want 1", n)
+	// With --yes the plan is computed once. The cluster is read once more
+	// before coredns, because the wait for vpc-cni took time.
+	if n := e.count(fleettest.EKSDescribeCluster); n != 2 {
+		t.Errorf("%d reads of the cluster, want 2", n)
 	}
 	doc, ok := res.Document().(apidoc.Run)
 	if !ok || len(doc.Clusters[0].Results) != 3 || len(doc.Clusters[0].Verification) != 2 {
@@ -216,7 +217,10 @@ func TestRun_Questions(t *testing.T) {
 			name: "the hook fails", askErr: hookErr, asked: []QuestionKind{ConfirmStart}, status: Failed, exit: 1,
 			wantErr: hookErr, errText: "nothing was changed",
 		},
-		{name: "nobody to ask: the start needs no answer", noAsk: true, status: Succeeded, updates: 1},
+		{
+			name: "nobody to ask: no answer is not a yes", noAsk: true, status: Refused, exit: 1,
+			errText: "nobody confirmed the change and nobody can be asked; pass --yes; nothing was changed",
+		},
 		{
 			name: "nobody to ask: warnings refuse", seed: degraded, noAsk: true, status: Refused, exit: 1,
 			errText: "health warnings need an answer and nobody can be asked; pass --yes or --require-healthy",
@@ -345,7 +349,7 @@ func TestRun_WorldChangesWhileAsking(t *testing.T) {
 			changes: []func(e *env){func(e *env) {
 				startElsewhere(e.t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
 			}},
-			status: NothingToDo, exit: 4, notice: "Notice add-on vpc-cni is now changing elsewhere",
+			status: Incomplete, exit: 4, notice: "Notice add-on vpc-cni is now changing elsewhere",
 		},
 		{
 			name: "a newer version is published: the run asks again", answers: []bool{true, true},
@@ -477,7 +481,7 @@ func TestRun_Expect(t *testing.T) {
 		}
 		// --yes accepts the change and says so.
 		e2 := newEnv(t, newWorld(nil))
-		reviewed2, err := NewPlan(testContext(t), e2.deps, request("vpc-cni"))
+		reviewed2, err := NewPlan(testContext(t), e2.deps, yes(request("vpc-cni")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -843,7 +847,7 @@ func TestRun_Budgets(t *testing.T) {
 		// timer, and fires it once the read hangs.
 		timers := make(chan func(), 8)
 		deps := e.deps
-		deps.afterFunc = func(_ time.Duration, expire func()) (stop func() bool) {
+		deps.AfterFunc = func(_ time.Duration, expire func()) (stop func() bool) {
 			timers <- expire
 			return func() bool { return true }
 		}
@@ -872,7 +876,9 @@ type unbuiltRequest struct {
 	Target
 }
 
-func (unbuiltRequest) kind() Kind { return ClusterUpgrade }
+func (unbuiltRequest) kind() Kind { return testUpgrade }
+
+func (unbuiltRequest) differs(Request) string { return "" }
 
 // The errors of Run: a request that is invalid, a name that does not
 // exist, a cluster that does not exist, and a kind that is not built.
@@ -941,9 +947,6 @@ func TestNewPlan(t *testing.T) {
 	cp := &p.Clusters[0]
 	if diff := cmp.Diff(want, cp.Steps()); diff != "" {
 		t.Errorf("steps (-want +got):\n%s", diff)
-	}
-	if !cp.Phases[0].Serial || cp.Phases[0].StopOnFailure {
-		t.Errorf("phase = %+v, want serial and no stop on failure", cp.Phases[0])
 	}
 	if diff := cmp.Diff([]string{"EKS publishes no version of add-on my-addon for Kubernetes 1.33; not updated"}, cp.Notices); diff != "" {
 		t.Errorf("notices (-want +got):\n%s", diff)

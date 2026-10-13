@@ -61,7 +61,7 @@ func TestBusy(t *testing.T) {
 		{name: "standalone: cluster CREATING", edit: cluster("CREATING"), kind: NodegroupScale, ours: rollWeb, refuse: busy("cluster CREATING")},
 		{name: "standalone: another add-on UPDATING", edit: addon("UPDATING"), kind: AddonUpdate, ours: submitDNS, refuse: busy("add-on vpc-cni UPDATING")},
 		{name: "standalone: another add-on CREATING", edit: addon("CREATING"), kind: AddonUpdate, ours: submitDNS, refuse: busy("add-on vpc-cni CREATING")},
-		{name: "standalone: another add-on DELETING", edit: addon("DELETING"), kind: NodegroupUpdate, ours: rollWeb, refuse: busy("add-on vpc-cni DELETING")},
+		{name: "standalone: another add-on DELETING", edit: addon("DELETING"), kind: NodegroupScale, ours: rollWeb, refuse: busy("add-on vpc-cni DELETING")},
 		{name: "standalone: another add-on DEGRADED", edit: addon("DEGRADED"), kind: AddonUpdate, ours: submitDNS},
 		{name: "standalone: another add-on UPDATE_FAILED", edit: addon("UPDATE_FAILED"), kind: AddonUpdate, ours: submitDNS},
 		{
@@ -93,44 +93,44 @@ func TestBusy(t *testing.T) {
 		},
 
 		// An engine.
-		{name: "engine: cluster UPDATING, not ours", edit: cluster("UPDATING"), kind: ClusterUpgrade, ours: rollWeb, refuse: busy("cluster UPDATING")},
+		{name: "engine: cluster UPDATING, not ours", edit: cluster("UPDATING"), kind: testUpgrade, ours: rollWeb, refuse: busy("cluster UPDATING")},
 		{
-			name: "engine: cluster UPDATING, the control plane attaches", edit: cluster("UPDATING"), kind: ClusterUpgrade,
+			name: "engine: cluster UPDATING, the control plane attaches", edit: cluster("UPDATING"), kind: testUpgrade,
 			ours: []Step{step(StepControlPlane, "", Attach, InFlight)},
 		},
 		{
-			name: "engine: cluster UPDATING, the control plane submits", edit: cluster("UPDATING"), kind: ClusterUpgrade,
+			name: "engine: cluster UPDATING, the control plane submits", edit: cluster("UPDATING"), kind: testUpgrade,
 			ours: []Step{step(StepControlPlane, "", Submit, VersionBehind)}, refuse: busy("cluster UPDATING"),
 		},
 		{
-			name: "engine: cluster PENDING, the control plane attaches", edit: cluster("PENDING"), kind: ClusterRollback,
+			name: "engine: cluster PENDING, the control plane attaches", edit: cluster("PENDING"), kind: testRollback,
 			ours: []Step{step(StepControlPlane, "", Attach, InFlight)}, refuse: busy("cluster PENDING"),
 		},
 		{
-			name: "engine: a target nodegroup UPDATING", edit: nodegroup("UPDATING"), kind: ClusterUpgrade,
+			name: "engine: a target nodegroup UPDATING", edit: nodegroup("UPDATING"), kind: testUpgrade,
 			ours: []Step{step(StepNodegroup, "web", Attach, InFlight)},
 		},
 		{
-			name: "engine: a target nodegroup DELETING", edit: nodegroup("DELETING"), kind: ClusterUpgrade,
+			name: "engine: a target nodegroup DELETING", edit: nodegroup("DELETING"), kind: testUpgrade,
 			ours: rollWeb, refuse: busy("nodegroup web DELETING"),
 		},
 		{
-			name: "engine: a target add-on DELETING", edit: addon("DELETING"), kind: ClusterRollback,
+			name: "engine: a target add-on DELETING", edit: addon("DELETING"), kind: testRollback,
 			ours: submitCNI, refuse: busy("add-on vpc-cni DELETING"),
 		},
 		{
-			name: "engine: a nodegroup that is not ours", edit: nodegroup("UPDATING"), kind: ClusterUpgrade, ours: submitCNI,
+			name: "engine: a nodegroup that is not ours", edit: nodegroup("UPDATING"), kind: testUpgrade, ours: submitCNI,
 			notices: []string{"nodegroup web is UPDATING; the run does not wait for it"},
 		},
 		{
-			name: "engine: an add-on that is not ours", edit: addon("DELETING"), kind: ClusterUpgrade, ours: rollWeb,
+			name: "engine: an add-on that is not ours", edit: addon("DELETING"), kind: testUpgrade, ours: rollWeb,
 			notices: []string{"add-on vpc-cni is DELETING; the run does not wait for it"},
 		},
 
 		// A group that was not read in full.
 		{name: "unread: the cluster", edit: func(s *fleet.Snapshot) { s.Have.Cluster = fleet.Failed }, kind: AddonUpdate, ours: submitCNI, refuse: unread("the cluster")},
 		{name: "unread: the nodegroups", edit: func(s *fleet.Snapshot) { s.Have.Nodegroups = fleet.Partial }, kind: AddonUpdate, ours: submitCNI, refuse: unread("every nodegroup")},
-		{name: "unread: the add-ons", edit: func(s *fleet.Snapshot) { s.Have.Addons = fleet.NotAttempted }, kind: ClusterUpgrade, ours: submitCNI, refuse: unread("every add-on")},
+		{name: "unread: the add-ons", edit: func(s *fleet.Snapshot) { s.Have.Addons = fleet.NotAttempted }, kind: testUpgrade, ours: submitCNI, refuse: unread("every add-on")},
 		{
 			name: "unread: an add-on, and another one busy", kind: AddonUpdate, ours: submitDNS,
 			edit: func(s *fleet.Snapshot) {

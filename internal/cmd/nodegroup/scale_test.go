@@ -152,6 +152,15 @@ func scaleCases() []scaleCase {
 			}
 		}
 	}
+	// rollElsewhere starts a roll of the nodegroup, as another process
+	// would, so the target of the scale is busy with another kind of
+	// update.
+	rollElsewhere := func(t *testing.T, w *fleettest.World) {
+		t.Helper()
+		if _, err := w.UpdateNodegroupVersion(east, "prod", "web", fleettest.NodegroupVersionRequest{}); err != nil {
+			t.Fatalf("starting the roll of web: %v", err)
+		}
+	}
 	denyBudgets := func(_ *testing.T, w *fleettest.World) {
 		w.SetFault(fleettest.KubeListPDBs, fleettest.Fault{Deny: true})
 	}
@@ -174,7 +183,13 @@ func scaleCases() []scaleCase {
 		{name: "other-nodegroup-busy", args: []string{"--desired", "3", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: func(c *fleettest.Cluster) { c.Nodegroup("api").Status = fleettest.StatusUpdating }},
 		{name: "busy-target", args: []string{"--desired", "3", "--yes"}, exit: cmdutil.ExitIncomplete,
-			seed: func(c *fleettest.Cluster) { web(c).Status = fleettest.StatusUpdating }},
+			seed: script(fleettest.UpdateScript{Never: true}), prepare: rollElsewhere},
+		{name: "busy-target-lookup-failed", args: []string{"--desired", "3", "--yes"}, exit: cmdutil.ExitIncomplete,
+			seed: script(fleettest.UpdateScript{Never: true}), prepare: func(t *testing.T, w *fleettest.World) {
+				t.Helper()
+				rollElsewhere(t, w)
+				w.SetFault(fleettest.EKSListUpdates, fleettest.Fault{Deny: true})
+			}},
 		{name: "dry-run", args: []string{"--desired", "3", "--dry-run"}},
 		{name: "dry-run-down", kube: true, args: []string{"--desired", "1", "--dry-run"}},
 		{name: "dry-run-no-kube", args: []string{"--desired", "1", "--dry-run", "--yes"}, exit: cmdutil.ExitNeedsAttention},
@@ -220,7 +235,7 @@ func TestScale_Formats(t *testing.T) {
 	kinds := map[string]apidoc.Kind{
 		"up": apidoc.KindRun, "down-pdb-safe": apidoc.KindRun, "down-pdb-blocked": apidoc.KindPlan, "down-pdb-forced": apidoc.KindRun,
 		"down-pdbs-unreadable": apidoc.KindPlan, "down-pdbs-unreadable-forced": apidoc.KindRun, "down-no-kube-yes": apidoc.KindRun,
-		"down-no-kube-require-healthy": apidoc.KindPlan, "cluster-busy": apidoc.KindPlan, "busy-target": apidoc.KindPlan,
+		"down-no-kube-require-healthy": apidoc.KindPlan, "cluster-busy": apidoc.KindPlan, "busy-target": apidoc.KindRun,
 		"dry-run": apidoc.KindPlan, "dry-run-down": apidoc.KindPlan, "dry-run-no-kube": apidoc.KindPlan, "dry-run-blocked": apidoc.KindPlan,
 		"no-wait": apidoc.KindRun, "no-change": apidoc.KindPlan, "failed": apidoc.KindRun, "degraded-after": apidoc.KindRun,
 		"deadline": apidoc.KindRun, "not-offered": apidoc.KindRun,

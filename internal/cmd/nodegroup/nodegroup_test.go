@@ -309,7 +309,7 @@ func TestInvalidInput(t *testing.T) {
 // at the moment the group call is at the server.
 func TestList_Deadline(t *testing.T) {
 	e := newFake(t)
-	ctx, expire := cmdutiltest.Deadline(cmdutiltest.Context(t))
+	ctx, expire := awsxtest.Deadline(cmdutiltest.Context(t))
 	e.Server.OnRequest = func(hctx context.Context, r awsxtest.Request) {
 		if r.Operation == fleettest.AutoScalingDescribeAutoScalingGroups {
 			expire()

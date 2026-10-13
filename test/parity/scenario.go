@@ -3,6 +3,7 @@
 package parity
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -625,6 +626,31 @@ func sawAfterPrompt(f Fact) Check {
 			}
 		}
 		return fmt.Errorf("the binary did not see %s %s=%s after the prompt was answered", f.Subject, f.Attribute, f.Value)
+	}}
+}
+
+// gateAccepted: the document of the run records, among the reasons that
+// --yes went past in the gate of its first cluster, one with the text.
+func gateAccepted(text string) Check {
+	return Check{Run: func(t Trace) error {
+		var doc struct {
+			Clusters []struct {
+				Gate struct {
+					Accepted []string `json:"accepted"`
+				} `json:"gate"`
+			} `json:"clusters"`
+		}
+		if err := json.Unmarshal([]byte(t.Stdout), &doc); err != nil {
+			return fmt.Errorf("stdout is not one JSON document: %w", err)
+		}
+		if len(doc.Clusters) == 0 {
+			return errors.New("the document has no cluster")
+		}
+		accepted := doc.Clusters[0].Gate.Accepted
+		if !slices.ContainsFunc(accepted, func(reason string) bool { return strings.Contains(reason, text) }) {
+			return fmt.Errorf("the gate records %q as accepted, want a reason with %q", accepted, text)
+		}
+		return nil
 	}}
 }
 

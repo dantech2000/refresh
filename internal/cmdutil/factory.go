@@ -45,6 +45,12 @@ type Factory struct {
 	// pause between two reads of a watch. Nil means time.After.
 	After func(d time.Duration) <-chan time.Time
 
+	// AfterFunc starts a timer that calls f after a duration, and returns
+	// the function that stops it. A change uses it to end a call that
+	// hangs past a time budget. Nil means time.AfterFunc. A test that sets
+	// a clock of its own sets it too, so no real timer runs.
+	AfterFunc func(d time.Duration, f func()) (stop func() bool)
+
 	// Global holds the values of the global flags. The root command fills it
 	// before a command runs.
 	Global GlobalOptions

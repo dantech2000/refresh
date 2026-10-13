@@ -28,6 +28,9 @@ type WaitOptions struct {
 	After func(time.Duration) <-chan time.Time
 	// Progress is called after each poll. It may be nil.
 	Progress func(UpdateProgress)
+
+	// budget is the wait budget of a run, or nil. See pause and over.
+	budget *budget
 }
 
 func (o WaitOptions) interval() time.Duration {
@@ -37,19 +40,41 @@ func (o WaitOptions) interval() time.Duration {
 	return DefaultPollInterval
 }
 
-// pause waits one interval. It returns false when ctx ended first.
+// pause waits one interval before a poll. It returns false when ctx ended
+// first.
+//
+// Under a budget the pause is never longer than the time that is left, so
+// the last poll is due at the deadline and none comes after it. With no
+// time left there is no pause: the caller makes one poll, and over ends
+// the wait unless that poll ended it.
 func (o WaitOptions) pause(ctx context.Context) bool {
+	d := o.interval()
+	if left, ok := o.budget.left(); ok {
+		d = min(d, left)
+	}
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
 	after := time.After
 	if o.After != nil {
 		after = o.After
 	}
 	select {
-	case <-after(o.interval()):
+	case <-after(d):
 		// Both can be ready, and select then picks either one.
 		return ctx.Err() == nil
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// over reports whether a wait must end after an answer that did not end
+// it: the budget has run out on the clock of the run, or ctx ended. A
+// wait calls it after every such answer. An answer that ends the wait is
+// returned whatever the clock reads: the result of the change is known.
+func (o WaitOptions) over(ctx context.Context) bool {
+	o.budget.check()
+	return ctx.Err() != nil
 }
 
 func (o WaitOptions) progress(p UpdateProgress) {
@@ -158,6 +183,11 @@ func (e *UnobservedError) Unwrap() error { return e.Err }
 // in it.
 var errNoAnswer = errors.New("the answer was empty")
 
+// errNoSizes is the read error of a nodegroup answer that lacks the
+// scaling config, or one of its three sizes. A size that is not in the
+// answer is not known, and it is never taken as 0.
+var errNoSizes = errors.New("the answer did not have every scaling size of the nodegroup")
+
 // ended returns the error of a wait whose context ended.
 func ended(ctx context.Context, what, last string) error {
 	if last != "" {
@@ -171,7 +201,8 @@ func ended(ctx context.Context, what, last string) error {
 // not-found for a moment.
 //
 // It returns nil for a Successful update and an *UpdateError for a Failed
-// or a Cancelled one. A poll error that another poll will not fix ends it
+// or a Cancelled one, also when that answer comes at the deadline of the
+// run: a change that has finished is reported as finished. A poll error that another poll will not fix ends it
 // with an *UnobservedError; a not-found before the update was seen once
 // is not such an error. It polls through every other error, and through
 // an answer with no update, and reports each through Progress. When ctx
@@ -206,6 +237,9 @@ func WaitUpdate(ctx context.Context, c awsx.PollClients, r Resource, updateID st
 				return &UnobservedError{Resource: r, UpdateID: updateID, LastStatus: last, Err: err}
 			}
 			o.progress(UpdateProgress{Resource: r, UpdateID: updateID, Status: last, PollError: awsx.Summary(err)})
+			if o.over(ctx) {
+				return ended(ctx, what, last)
+			}
 			continue
 		}
 		seen, last = true, string(out.Update.Status)
@@ -222,6 +256,9 @@ func WaitUpdate(ctx context.Context, c awsx.PollClients, r Resource, updateID st
 			}
 			return e
 		}
+		if o.over(ctx) {
+			return ended(ctx, what, last)
+		}
 	}
 }
 
@@ -231,7 +268,8 @@ type Settled struct {
 	Status string
 	// Version is the Kubernetes version, or the add-on version.
 	Version string
-	// Sizes are the scaling sizes of a nodegroup.
+	// Sizes are the scaling sizes of a nodegroup, each one as EKS returned
+	// it.
 	Sizes Sizes
 	// Issues are the codes and messages of the health issues that EKS
 	// reports for the resource.
@@ -262,6 +300,9 @@ func WaitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(
 				return state, &UnobservedError{Resource: r, LastStatus: state.Status, Err: err}
 			}
 			o.progress(UpdateProgress{Resource: r, Status: state.Status, PollError: awsx.Summary(err)})
+			if o.over(ctx) {
+				return state, ended(ctx, r.String(), state.Status)
+			}
 			continue
 		}
 		state = got
@@ -270,10 +311,20 @@ func WaitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(
 		if err != nil || ok {
 			return state, err
 		}
+		if o.over(ctx) {
+			return state, ended(ctx, r.String(), state.Status)
+		}
 	}
 }
 
 // describe reads the state of a resource with one describe call.
+//
+// The read of a scale needs every size of the nodegroup. An answer with
+// no scaling config, or with a size missing, is an error and not a
+// nodegroup of size 0: a wait polls through it like through any answer
+// that says nothing, and the fresh read before a submit fails on it, so
+// nothing is sent. A roll reads no size, so StepNodegroup takes the sizes
+// that are there.
 func describe(ctx context.Context, c *awsx.Clients, r Resource) (Settled, error) {
 	switch r.Kind {
 	case StepAddon:
@@ -300,8 +351,13 @@ func describe(ctx context.Context, c *awsx.Clients, r Resource) (Settled, error)
 			return Settled{}, errNoAnswer
 		}
 		s := Settled{Status: string(out.Nodegroup.Status), Version: aws.ToString(out.Nodegroup.Version)}
-		if sc := out.Nodegroup.ScalingConfig; sc != nil {
-			s.Sizes = Sizes{Desired: aws.ToInt32(sc.DesiredSize), Min: aws.ToInt32(sc.MinSize), Max: aws.ToInt32(sc.MaxSize)}
+		sc := out.Nodegroup.ScalingConfig
+		known := sc != nil && sc.DesiredSize != nil && sc.MinSize != nil && sc.MaxSize != nil
+		switch {
+		case known:
+			s.Sizes = Sizes{Desired: *sc.DesiredSize, Min: *sc.MinSize, Max: *sc.MaxSize}
+		case r.Kind == StepScale:
+			return Settled{}, errNoSizes
 		}
 		return s, nil
 	}

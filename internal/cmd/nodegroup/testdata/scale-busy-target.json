@@ -1,10 +1,11 @@
 exit: 4
-error: nodegroup web is UPDATING; it was not changed. Run the command again once that finishes
+error: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes
 --- stdout ---
 {
   "apiVersion": "refresh.drod.dev/v2",
-  "kind": "Plan",
+  "kind": "Run",
   "operation": "NodegroupScale",
+  "status": "Incomplete",
   "clusters": [
     {
       "cluster": "prod",
@@ -33,7 +34,27 @@ error: nodegroup web is UPDATING; it was not changed. Run the command again once
         }
       ],
       "blockers": [],
-      "notices": []
+      "notices": [],
+      "status": "Incomplete",
+      "results": [
+        {
+          "phase": "Scale",
+          "kind": "Scale",
+          "name": "web",
+          "status": "Busy",
+          "inFlight": "VersionUpdate",
+          "failure": {
+            "kind": "Nodegroup",
+            "name": "web",
+            "cluster": "prod",
+            "region": "us-east-1",
+            "reason": "Busy",
+            "retryable": true,
+            "error": "nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes"
+          }
+        }
+      ],
+      "verification": []
     }
   ],
   "failures": [
@@ -44,11 +65,12 @@ error: nodegroup web is UPDATING; it was not changed. Run the command again once
       "region": "us-east-1",
       "reason": "Busy",
       "retryable": true,
-      "error": "nodegroup web is UPDATING; it was not changed. Run the command again once that finishes"
+      "error": "nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes"
     }
   ]
 }
 --- stderr ---
 PLAN  NodegroupScale, prod in us-east-1
   web  skip, at desired 2, min 1, max 3 (InFlight)
-warning: nodegroup prod/web (us-east-1): Busy: nodegroup web is UPDATING; it was not changed. Run the command again once that finishes
+[!] web: Busy: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes
+warning: nodegroup prod/web (us-east-1): Busy: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes

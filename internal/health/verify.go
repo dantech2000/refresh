@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
@@ -144,13 +144,13 @@ func Verify(nodegroups []string, base Baseline, wait WaitOptions) []Check {
 // verification: 5 when a check failed, else 4 when one could not read,
 // else 0.
 func VerifyExit(results []Result) int {
-	code := cmdutil.ExitOK
+	code := exitcode.OK
 	for _, r := range results {
 		switch r.Outcome {
 		case Fail:
-			return cmdutil.ExitVerifyFailed
+			return exitcode.VerifyFailed
 		case Unreadable:
-			code = cmdutil.ExitIncomplete
+			code = exitcode.Incomplete
 		}
 	}
 	return code

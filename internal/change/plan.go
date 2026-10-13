@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
 )
@@ -135,16 +135,12 @@ type Blocker struct {
 	Message string
 }
 
-// Phase is a group of steps that run together.
+// Phase is a group of steps. They run one after another, each with its
+// own fresh read, wait, and confirmation, and a step that does not
+// succeed does not stop the next one.
 type Phase struct {
-	Ref PhaseRef
-	// Serial runs the steps one after another, each with its own fresh
-	// read, wait, and confirmation. Otherwise the phase is one batch.
-	Serial bool
-	// StopOnFailure ends the phase and the run at the first step that
-	// does not succeed. The engines set it. addon update does not.
-	StopOnFailure bool
-	Steps         []Step
+	Ref   PhaseRef
+	Steps []Step
 }
 
 // Action is what a run does with a step. The values are the ones of the
@@ -184,7 +180,8 @@ const (
 	NoChange        = apidoc.ReasonNoChange
 )
 
-// Sizes are the scaling sizes of a nodegroup.
+// Sizes are the scaling sizes of a nodegroup. All three were read: a
+// size that EKS did not return never becomes a 0 here.
 type Sizes struct {
 	Desired, Min, Max int32
 }
@@ -276,18 +273,18 @@ func (cp *ClusterPlan) Decision() Decision {
 // with the code of the gate; and the other two exit 0.
 func (cp *ClusterPlan) ExitCode() int {
 	if len(cp.Failures) > 0 || len(cp.Gate.Failures) > 0 {
-		return cmdutil.ExitIncomplete
+		return exitcode.Incomplete
 	}
 	switch cp.Decision() {
 	case DecisionBlocked:
 		if len(cp.Blockers) > 0 || len(cp.Gate.Blockers) > 0 {
-			return cmdutil.ExitBlocked
+			return exitcode.Blocked
 		}
 		return cp.Gate.Exit
 	case Ask:
 		return cp.Gate.Exit
 	}
-	return cmdutil.ExitOK
+	return exitcode.OK
 }
 
 // decisionRank orders the decisions for a plan of several clusters.
@@ -319,9 +316,9 @@ func (p *Plan) Decision() Decision {
 // ExitCode returns the exit code of a dry run: the highest code of the
 // clusters, and 4 when a read that belongs to no cluster failed.
 func (p *Plan) ExitCode() int {
-	code := cmdutil.ExitOK
+	code := exitcode.OK
 	if len(p.Failures) > 0 {
-		code = cmdutil.ExitIncomplete
+		code = exitcode.Incomplete
 	}
 	for i := range p.Clusters {
 		code = max(code, p.Clusters[i].ExitCode())

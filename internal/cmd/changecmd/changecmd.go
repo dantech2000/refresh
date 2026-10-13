@@ -3,7 +3,10 @@
 // its front end, and the progress lines.
 //
 // It is beside the command packages and not in cmdutil, because cmdutil
-// knows nothing about the fleet and internal/change imports it.
+// knows nothing about the fleet and internal/change imports it. It is the
+// one place that knows both a change and a terminal: internal/change
+// returns typed errors and results, and this package gives them the words
+// of the command line.
 package changecmd
 
 import (
@@ -36,19 +39,19 @@ func Deps(f *cmdutil.Factory) func(ctx context.Context) (change.Deps, error) {
 			return change.Deps{}, err
 		}
 		return change.Deps{
-			AWS:   provider,
-			Fetch: &fleet.Fetcher{Now: f.Now},
-			Kube:  f.Kube,
-			Now:   f.Now,
-			After: f.After,
+			AWS:       provider,
+			Fetch:     &fleet.Fetcher{Now: f.Now},
+			Kube:      f.Kube,
+			Now:       f.Now,
+			After:     f.After,
+			AfterFunc: f.AfterFunc,
 		}, nil
 	}
 }
 
 // Common returns the part of a request that the shared flags fill.
-// timeout is --timeout. stepWait says that --wait-timeout bounds each
-// step alone.
-func Common(flags *cmdutil.ChangeFlags, timeout time.Duration, stepWait bool) change.Common {
+// timeout is --timeout. --wait-timeout bounds each step alone.
+func Common(flags *cmdutil.ChangeFlags, timeout time.Duration) change.Common {
 	return change.Common{
 		Policy: health.Policy{
 			Yes:            flags.Yes,
@@ -57,7 +60,7 @@ func Common(flags *cmdutil.ChangeFlags, timeout time.Duration, stepWait bool) ch
 			Skip:           flags.SkipHealthCheck,
 		},
 		NoWait: flags.NoWait,
-		Limits: change.Limits{Read: timeout, Wait: flags.WaitTimeout, StepWait: stepWait, Poll: flags.PollInterval},
+		Limits: change.Limits{Read: timeout, Wait: flags.WaitTimeout, Poll: flags.PollInterval},
 	}
 }
 
@@ -120,12 +123,22 @@ func planExit(plan *change.Plan) error {
 	return &cmdutil.ExitError{Code: code, Err: errors.New("dry run: " + why)}
 }
 
-// planError returns the error of a plan that could not be computed. A
-// cluster that does not exist gets the names that are close to it.
+// planError returns the error of a plan that could not be computed, in
+// the words of the command line. A cluster, an add-on, or a nodegroup that
+// does not exist gets the names that are close to it and the command that
+// lists them all.
 func planError(ctx context.Context, d change.Deps, err error) error {
 	var read *change.ClusterReadError
 	if errors.As(err, &read) {
 		return fleetcmd.ClusterError(ctx, d.Fetch, d.AWS.Clients(read.Region), read.Cluster, read.Err)
+	}
+	var missing *change.NotFoundError
+	if errors.As(err, &missing) {
+		what, list := "nodegroup", "refresh nodegroup list -c "
+		if missing.Kind == change.StepAddon {
+			what, list = "add-on", "refresh addon list -c "
+		}
+		return cmdutil.NotFoundError(what, missing.Name, "cluster "+missing.Cluster, missing.Names, list+missing.Cluster)
 	}
 	return err
 }
@@ -161,7 +174,7 @@ func RunChange(ctx context.Context, ios *cmdutil.IOStreams, format cmdutil.Forma
 		cmdutil.ReportFailures(ios, failuresOf(doc))
 	}
 	if err != nil {
-		return err
+		return planError(ctx, d, err)
 	}
 	if code := res.ExitCode(); code != cmdutil.ExitOK {
 		return &cmdutil.ExitError{Code: code, Err: res.Err}

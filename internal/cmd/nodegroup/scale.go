@@ -151,7 +151,7 @@ func (o *scaleOptions) validate() error {
 // request returns the change that the flags describe.
 func (o *scaleOptions) request() change.ScaleRequest {
 	return change.ScaleRequest{
-		Common:    changecmd.Common(&o.change, o.timeout(), false),
+		Common:    changecmd.Common(&o.change, o.timeout()),
 		Target:    change.Target{Cluster: o.target.Cluster},
 		Nodegroup: o.nodegroup,
 		Desired:   o.sizes.desired,

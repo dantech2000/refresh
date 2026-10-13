@@ -732,14 +732,11 @@ func TestPairedFindsProblems(t *testing.T) {
 
 // TestPaired compares the v2 binary with the legacy binary on every
 // scenario that has a v2 command line, and runs the scenario's own checks
-// on the v2 trace. Set REFRESH_PARITY_V2 to the v2 binary. Until commands
-// exist no scenario has a v2 command line.
+// on the v2 trace. TestMain builds the v2 binary, so the comparison runs in
+// every test run. A scenario joins it when it gets a v2 command line.
 func TestPaired(t *testing.T) {
 	t.Parallel()
-	v2 := Runner{Binary: os.Getenv("REFRESH_PARITY_V2")}
-	if v2.Binary == "" {
-		t.Skip("REFRESH_PARITY_V2 is not set")
-	}
+	v2 := Runner{Binary: v2Binary}
 	allow, err := LoadAllowlist(allowlistPath)
 	if err != nil {
 		t.Fatal(err)

@@ -56,9 +56,14 @@ func NewFake(t *testing.T, world *fleettest.World, region string) *Fake {
 // the factory reads the time of the world, and a pause of the command
 // moves the world forward by that long and ends at once. A command that
 // waits for an update then makes its polls as fast as the fake answers,
-// and the updates of the world progress as if the time had passed.
+// and the updates of the world progress as if the time had passed. The
+// timer of a time budget never fires: no call of such a test hangs, and
+// the clock of the world decides when a budget runs out.
 func (e *Fake) UseWorldClock() {
 	e.Factory.Now = e.World.Now
+	e.Factory.AfterFunc = func(time.Duration, func()) (stop func() bool) {
+		return func() bool { return true }
+	}
 	e.Factory.After = func(d time.Duration) <-chan time.Time {
 		e.World.Advance(d)
 		done := make(chan time.Time, 1)

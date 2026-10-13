@@ -116,17 +116,27 @@ func TestDecideScale(t *testing.T) {
 		{name: "1: CREATING is busy", status: "CREATING", req: ScaleRequest{Desired: size(3)}, want: scaleDecision{Action: Skip, Reason: InFlight, Sizes: same}},
 		{name: "1: DELETING is busy", status: "DELETING", req: ScaleRequest{Desired: size(1)}, want: scaleDecision{Action: Skip, Reason: InFlight, Sizes: same}},
 		{name: "1: busy comes before the sizes", status: "UPDATING", req: ScaleRequest{Desired: size(9)}, want: scaleDecision{Action: Skip, Reason: InFlight, Sizes: same}},
-		{name: "2: sizes that cannot hold", status: "ACTIVE", req: ScaleRequest{Desired: size(9)}, wantErr: "--desired 9 is above the current max size 3; pass --max too"},
-		{name: "3: the current desired size", status: "ACTIVE", req: ScaleRequest{Desired: size(2)}, want: scaleDecision{Action: Skip, Reason: NoChange, Sizes: same}},
-		{name: "3: every current size", status: "ACTIVE", req: ScaleRequest{Desired: size(2), Min: size(1), Max: size(3)}, want: scaleDecision{Action: Skip, Reason: NoChange, Sizes: same}},
-		{name: "4: a scale-up", status: "ACTIVE", req: ScaleRequest{Desired: size(3)},
+		{name: "3: sizes that cannot hold", status: "ACTIVE", req: ScaleRequest{Desired: size(9)}, wantErr: "--desired 9 is above the current max size 3; pass --max too"},
+		{name: "4: the current desired size", status: "ACTIVE", req: ScaleRequest{Desired: size(2)}, want: scaleDecision{Action: Skip, Reason: NoChange, Sizes: same}},
+		{name: "4: every current size", status: "ACTIVE", req: ScaleRequest{Desired: size(2), Min: size(1), Max: size(3)}, want: scaleDecision{Action: Skip, Reason: NoChange, Sizes: same}},
+		{name: "5: a scale-up", status: "ACTIVE", req: ScaleRequest{Desired: size(3)},
 			want: scaleDecision{Action: Submit, Sizes: ScaleSizes{Before: cur, After: Sizes{Desired: 3, Min: 1, Max: 3}}}},
-		{name: "4: a scale-down", status: "ACTIVE", req: ScaleRequest{Desired: size(1)},
+		{name: "5: a scale-down", status: "ACTIVE", req: ScaleRequest{Desired: size(1)},
 			want: scaleDecision{Action: Submit, Sizes: ScaleSizes{Before: cur, After: Sizes{Desired: 1, Min: 1, Max: 3}}}},
-		{name: "4: the bounds alone", status: "ACTIVE", req: ScaleRequest{Min: size(2), Max: size(6)},
+		{name: "5: the bounds alone", status: "ACTIVE", req: ScaleRequest{Min: size(2), Max: size(6)},
 			want: scaleDecision{Action: Submit, Sizes: ScaleSizes{Before: cur, After: Sizes{Desired: 2, Min: 2, Max: 6}}}},
-		{name: "4: a DEGRADED nodegroup is not changing", status: "DEGRADED", req: ScaleRequest{Desired: size(3)},
-			want: scaleDecision{Action: Submit, Sizes: ScaleSizes{Before: cur, After: Sizes{Desired: 3, Min: 1, Max: 3}}}},
+		{name: "2: DEGRADED blocks a scale-up", status: "DEGRADED", req: ScaleRequest{Desired: size(3)},
+			want: scaleDecision{Action: Blocked, Sizes: same, NotActive: "nodegroup web is DEGRADED, not ACTIVE; it was not scaled"}},
+		{name: "2: DEGRADED blocks a scale-down", status: "DEGRADED", req: ScaleRequest{Desired: size(1)},
+			want: scaleDecision{Action: Blocked, Sizes: same, NotActive: "nodegroup web is DEGRADED, not ACTIVE; it was not scaled"}},
+		{name: "2: DEGRADED blocks the bounds alone", status: "DEGRADED", req: ScaleRequest{Min: size(2), Max: size(6)},
+			want: scaleDecision{Action: Blocked, Sizes: same, NotActive: "nodegroup web is DEGRADED, not ACTIVE; it was not scaled"}},
+		{name: "2: CREATE_FAILED blocks", status: "CREATE_FAILED", req: ScaleRequest{Desired: size(3)},
+			want: scaleDecision{Action: Blocked, Sizes: same, NotActive: "nodegroup web is CREATE_FAILED, not ACTIVE; it was not scaled"}},
+		{name: "2: DELETE_FAILED blocks", status: "DELETE_FAILED", req: ScaleRequest{Desired: size(3)},
+			want: scaleDecision{Action: Blocked, Sizes: same, NotActive: "nodegroup web is DELETE_FAILED, not ACTIVE; it was not scaled"}},
+		{name: "2: not ACTIVE comes before the sizes", status: "DEGRADED", req: ScaleRequest{Desired: size(9)},
+			want: scaleDecision{Action: Blocked, Sizes: same, NotActive: "nodegroup web is DEGRADED, not ACTIVE; it was not scaled"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -328,10 +338,10 @@ func TestPlanScale_Gate(t *testing.T) {
 			checks: []string{"Nodes Pass", "DrainBlockers Skipped", "Kubernetes Warn"}, decision: DecisionBlocked, gate: health.Block, exit: 2,
 		},
 		{
+			// The step table blocks the target before any gate.
 			name: "a target that is not ACTIVE blocks a scale-down", kube: true, req: scaleTo(1), policy: yes,
-			seed:   func(c *fleettest.Cluster) { c.Nodegroup("web").Status = fleettest.StatusDegraded },
-			checks: []string{"Nodes Fail", "DrainBlockers Pass", "Kubernetes Pass"}, decision: DecisionBlocked, gate: health.Block, exit: 3,
-			kubeOps: []string{"kube:ListNodes", "kube:ListPodDisruptionBudgets", "kube:ListPods"},
+			seed:     func(c *fleettest.Cluster) { c.Nodegroup("web").Status = fleettest.StatusDegraded },
+			decision: DecisionBlocked, exit: 3,
 		},
 		{
 			name: "--skip-health-check runs no check", kube: true, req: scaleTo(1), seed: tightBudget, policy: health.Policy{Yes: true, Skip: true},
@@ -381,8 +391,9 @@ func TestPlanScale_Steps(t *testing.T) {
 		req := scaleTo(3)
 		req.Nodegroup = "wbe"
 		_, err := NewPlan(testContext(t), e.deps, req)
-		if err == nil || !strings.Contains(err.Error(), `nodegroup "wbe" not found in cluster prod`) || !strings.Contains(err.Error(), "web") {
-			t.Errorf("error = %v, want not found with the close match", err)
+		var missing *NotFoundError
+		if !errors.As(err, &missing) || err.Error() != `nodegroup "wbe" not found in cluster prod` || !slices.Contains(missing.Names, "web") {
+			t.Errorf("error = %v, want not found with the names of the cluster", err)
 		}
 	})
 	t.Run("sizes that cannot hold after the read", func(t *testing.T) {
@@ -877,19 +888,83 @@ func TestRunScale_FreshReadBeforeSubmit(t *testing.T) {
 			t.Errorf("events = %q, want the notice", s.events)
 		}
 	})
+}
+
+// A target that the plan finds changing already: the step reports it,
+// with the type of the update in flight when the lookup gives one.
+func TestRunScale_BusyTarget(t *testing.T) {
+	// rolling starts a roll of the nodegroup elsewhere, before the plan.
+	rolling := func(t *testing.T) *env {
+		t.Helper()
+		e := newEnv(t, scaleWorld(func(c *fleettest.Cluster) { c.Nodegroup("web").UpdateScripts = []fleettest.UpdateScript{{Never: true}} }))
+		if _, err := e.world.UpdateNodegroupVersion(east, "prod", "web", fleettest.NodegroupVersionRequest{}); err != nil {
+			t.Fatalf("starting the roll: %v", err)
+		}
+		return e
+	}
+	// The only target is busy in the plan already. Its step reports it as
+	// the step of a run with other targets does: nothing is asked, the
+	// update in flight is looked up once, and the document is the run.
 	t.Run("a target that the plan found changing is looked up and left alone", func(t *testing.T) {
-		e := newEnv(t, scaleWorld(func(c *fleettest.Cluster) { c.Nodegroup("web").Status = fleettest.StatusUpdating }))
+		e := rolling(t)
+		req := scaleTo(3)
+		req.Policy.Yes = false
+		sc := &script{t: t}
+		res, err := Run(testContext(t), e.deps, req, sc.hooks())
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := res.Clusters[0].Steps[0]
+		if s.Status != StepBusy || s.InFlight != "VersionUpdate" || s.Failure == nil || s.Failure.Reason != apidoc.ReasonBusy ||
+			s.Failure.Error != "nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes" {
+			t.Errorf("step = %s, in flight %q, failure %+v; want Busy with the type of the update", s.Status, s.InFlight, s.Failure)
+		}
+		if res.Status != Incomplete || res.ExitCode() != 4 || e.count(fleettest.EKSListUpdates) != 1 || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
+			t.Errorf("result = %s, exit %d, %d lookups; want Incomplete, 4, and one", res.Status, res.ExitCode(), e.count(fleettest.EKSListUpdates))
+		}
+		if len(sc.kinds()) != 0 {
+			t.Errorf("questions = %v, want none: nothing would be submitted", sc.kinds())
+		}
+		doc, ok := res.Document().(apidoc.Run)
+		if !ok {
+			t.Fatalf("document = %T, want the run", res.Document())
+		}
+		if got := doc.Clusters[0].Results[0].InFlight; got != "VersionUpdate" || len(doc.Failures) != 1 {
+			t.Errorf("row in flight = %q with failures %+v; want VersionUpdate and the one failure", got, doc.Failures)
+		}
+	})
+	// The lookup has two reads, and either can fail. The target is still
+	// reported as busy, and the failure says that the type is not known.
+	for _, op := range []fleettest.Operation{fleettest.EKSListUpdates, fleettest.EKSDescribeUpdate} {
+		t.Run("the lookup fails at "+string(op), func(t *testing.T) {
+			e := rolling(t)
+			e.world.SetFault(op, fleettest.Fault{Deny: true})
+			res, err := Run(testContext(t), e.deps, scaleTo(3), Hooks{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := res.Clusters[0].Steps[0]
+			if s.Status != StepBusy || s.InFlight != "" || s.Failure == nil || s.Failure.Reason != apidoc.ReasonBusy ||
+				s.Failure.Error != "nodegroup web is UPDATING (an update of unknown type); it was not changed. Run the command again once that finishes" {
+				t.Errorf("step = %s, in flight %q, failure %+v; want Busy with an update of unknown type", s.Status, s.InFlight, s.Failure)
+			}
+			if res.ExitCode() != 4 || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
+				t.Errorf("exit %d with %d requests to scale; want 4 and none", res.ExitCode(), e.count(fleettest.EKSUpdateNodegroupConfig))
+			}
+		})
+	}
+	// EKS lists no update for a nodegroup that it is deleting, so the
+	// failure names the status alone.
+	t.Run("a target with no update in progress", func(t *testing.T) {
+		e := newEnv(t, scaleWorld(func(c *fleettest.Cluster) { c.Nodegroup("web").Status = fleettest.StatusDeleting }))
 		res, err := Run(testContext(t), e.deps, scaleTo(3), Hooks{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Every target is busy: the run has nothing to do, prints the plan,
-		// and makes no lookup.
-		if res.Status != NothingToDo || res.ExitCode() != 4 || e.count(fleettest.EKSListUpdates) != 0 || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
-			t.Errorf("result = %s, exit %d, %d lookups; want NothingToDo, 4, and none", res.Status, res.ExitCode(), e.count(fleettest.EKSListUpdates))
-		}
-		if _, ok := res.Document().(apidoc.Plan); !ok {
-			t.Errorf("document = %T, want the plan", res.Document())
+		s := res.Clusters[0].Steps[0]
+		if s.Status != StepBusy || s.InFlight != "" || s.Failure == nil ||
+			s.Failure.Error != "nodegroup web is DELETING; it was not changed. Run the command again once that finishes" {
+			t.Errorf("step = %s, in flight %q, failure %+v; want Busy with the status alone", s.Status, s.InFlight, s.Failure)
 		}
 	})
 }

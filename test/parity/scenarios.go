@@ -251,11 +251,17 @@ func nodegroupScale() []Scenario {
 			Checks: []Check{one, resourceIs("ng-a", "ACTIVE 2/1/3")},
 		},
 		{
-			// The PDBs cannot be read without a Kubernetes API, and the gate fails closed.
+			// The PDBs cannot be read without a Kubernetes API, and the old
+			// gate fails closed. The new command has the same flags, less
+			// --check-pdbs, which the contract removed: the gate is on by
+			// default. It asks about the checks that could not run, --yes
+			// accepts, and the change goes on (allowlist). The refusal with
+			// --require-healthy is a command test in internal/cmd/nodegroup.
 			Name: "nodegroup-scale-check-pdbs-no-kube", Seed: fleet(), Legacy: to("1")("--check-pdbs", "--yes"),
-			// --check-pdbs meant that the check must run: --require-healthy.
-			V2:     v2To("1")("--yes", "--no-wait", "--require-healthy"),
+			V2:     v2To("1")("--yes", "--no-wait"),
 			Checks: []Check{fails, noMutations},
+			// The result records what --yes went past.
+			V2Checks: []Check{gateAccepted("the Kubernetes checks did not run")},
 		},
 		{
 			// The legacy command does not check the sizes itself. EKS refuses.

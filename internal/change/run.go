@@ -7,10 +7,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/health"
 )
 
@@ -27,18 +26,35 @@ const maxQuestions = 2
 // that failed is a Result, and not an error. With an error, the Result
 // has a plan when one was computed, and then says what was done.
 //
+// Consent is positive. Run submits only when Policy.Yes is set, or
+// Common.Expect is a reviewed plan of the same request that the current
+// plan matches, or Ask returned yes for the plan being executed. A run
+// with none of the three is refused before any change, with exit code 1:
+// that is a run without Policy.Yes and without a matching Expect whose
+// Hooks have no Ask.
+//
 // Run computes the plan, asks at most one question before the first
 // submit, and computes the plan again after every answer of a person: it
 // compares the two with Diff before it submits anything. Nothing is
-// submitted before every question is answered.
+// submitted before every question is answered. An Expect that is not a
+// plan of req is an error before anything is read (ErrOtherRequest).
+//
+// Before each submit Run reads the target again and applies the policy to
+// the health that it finds, so the consent covers what is submitted: see
+// regate.
 func Run(ctx context.Context, d Deps, req Request, h Hooks) (Result, error) {
 	r := &runner{ctx: ctx, d: d, req: req, common: req.base(), hooks: h}
+	if expect := r.common.Expect; expect != nil {
+		if err := sameRequest(expect, req); err != nil {
+			return Result{Status: Failed, Err: err, ended: ending{code: exitcode.Failure}}, err
+		}
+	}
 	p, res, err := r.prepare()
 	if p == nil {
 		return res, err
 	}
 	defer r.read.stop()
-	return r.execute(p), nil
+	return r.execute(p), r.hookErr
 }
 
 // runner is the state of one run.
@@ -65,6 +81,28 @@ type runner struct {
 	failures     []apidoc.Failure
 	// interrupted says that the user stopped the run before a step.
 	interrupted bool
+
+	// accepted are the health results that the consent to the plan
+	// covers: the checks of the gate of the plan, and what a later answer
+	// or --yes accepted. regate compares a fresh read with them.
+	accepted []health.Result
+	// waited says that a step of this cluster has waited, so the read of
+	// the plan is old.
+	waited bool
+	// steps are the steps of the phase that runs, and remaining the ones
+	// from the step that runs on.
+	steps, remaining []Step
+	// stop ends the run before its next step: a question during the run
+	// was answered no, or could not be asked. hookErr is the error of the
+	// hook in the second case, which Run returns.
+	stop    *stop
+	hookErr error
+}
+
+// stop is how a run ended that a question during the run stopped.
+type stop struct {
+	status RunStatus
+	err    error
 }
 
 // emit sends one event to the hook.
@@ -97,6 +135,8 @@ func (r *runner) newRead() {
 func (r *runner) prepare() (*Plan, Result, error) {
 	prev := r.common.Expect
 	// A plan that a person reviewed before the call is confirmed already.
+	// Run has checked that it is a plan of this request, and next compares
+	// the first plan with it.
 	confirmed := prev != nil
 	asked := 0
 	for {
@@ -130,11 +170,11 @@ func (r *runner) prepare() (*Plan, Result, error) {
 			// An interrupt is a result of the run, not an error of Run.
 			return nil, r.stopped(p, "before anything was changed"), nil //nolint:nilerr // see above
 		case err != nil:
-			res := r.unstarted(p, Failed, ending{code: cmdutil.ExitFailure})
+			res := r.unstarted(p, Failed, ending{code: exitcode.Failure})
 			res.Err = fmt.Errorf("could not ask %q: %w; nothing was changed", q.Text, err)
 			return nil, res, err
 		case !yes:
-			res := r.unstarted(p, Declined, ending{code: cmdutil.ExitFailure})
+			res := r.unstarted(p, Declined, ending{code: exitcode.Failure})
 			res.Err = errors.New("declined; nothing was changed")
 			return nil, res, nil
 		}
@@ -170,6 +210,12 @@ func (r *runner) next(p *Plan, diff []Change, confirmed bool, asked int) (*Quest
 		res.Err = errors.New(blockedSummary(p))
 		return nil, &res
 	case DecisionNothingToDo:
+		// A target that is already changing is reported by its step, as
+		// in a run that has other targets too: the step looks up the
+		// update in flight. Nothing is submitted, so nothing is asked.
+		if slices.ContainsFunc(allPlanSteps(p), Step.busy) {
+			return nil, nil
+		}
 		res := r.unstarted(p, NothingToDo, ending{})
 		// The steps were not attempted, which is not what stops a run
 		// with nothing to do: its failures are.
@@ -177,7 +223,7 @@ func (r *runner) next(p *Plan, diff []Change, confirmed bool, asked int) (*Quest
 		return nil, &res
 	}
 	if worstEffect(diff) == Refuse {
-		res := r.unstarted(p, Refused, ending{code: cmdutil.ExitBlocked})
+		res := r.unstarted(p, Refused, ending{code: exitcode.Blocked})
 		res.Err = fmt.Errorf("the plan changed since it was confirmed (%s); nothing was started", messages(diff, Refuse))
 		return nil, &res
 	}
@@ -186,30 +232,45 @@ func (r *runner) next(p *Plan, diff []Change, confirmed bool, asked int) (*Quest
 	case q == nil:
 		return nil, nil
 	case r.hooks.Ask == nil:
-		res := r.unstarted(p, Refused, ending{code: cmdutil.ExitFailure})
-		res.Err = fmt.Errorf("%s need an answer and nobody can be asked; pass --yes or --require-healthy", unanswered(q.Kind))
+		res := r.unstarted(p, Refused, ending{code: exitcode.Failure})
+		res.Err = errors.New(unanswered(q.Kind) + "; nothing was changed")
 		return nil, &res
 	case asked >= maxQuestions:
-		res := r.unstarted(p, Refused, ending{code: cmdutil.ExitBlocked})
+		res := r.unstarted(p, Refused, ending{code: exitcode.Blocked})
 		res.Err = fmt.Errorf("the cluster keeps changing (%s); nothing was started", strings.Join(q.Reasons, "; "))
 		return nil, &res
 	}
 	return q, nil
 }
 
-// unanswered names what a question of kind k is about.
-func unanswered(k QuestionKind) string {
-	if k == PlanChanged {
-		return "changes of the plan"
+// allPlanSteps returns the steps of every cluster of the plan.
+func allPlanSteps(p *Plan) []Step {
+	var out []Step
+	for i := range p.Clusters {
+		out = append(out, p.Clusters[i].Steps()...)
 	}
-	return "health warnings"
+	return out
+}
+
+// unanswered is why a run that needs an answer to a question of kind k
+// is refused when nobody can be asked.
+func unanswered(k QuestionKind) string {
+	switch k {
+	case PlanChanged:
+		return "changes of the plan need an answer and nobody can be asked; pass --yes"
+	case ConfirmStart:
+		return "nobody confirmed the change and nobody can be asked; pass --yes"
+	}
+	return "health warnings need an answer and nobody can be asked; pass --yes or --require-healthy"
 }
 
 // question returns the question that a plan needs before it runs, or nil.
 // --yes answers every question. A plan that is not confirmed yet asks
 // once: about the warnings of the gate when it has some, and else to
-// confirm the start. A confirmed plan asks again only about what changed:
-// the steps, or a health check that is worse than it was.
+// confirm the start. It asks also when nobody can be asked, and next then
+// refuses the run: no answer is not a yes. A confirmed plan asks again
+// only about what changed: the steps, or a health check that is worse
+// than it was.
 func (r *runner) question(p *Plan, diff []Change, confirmed bool) *Question {
 	if r.common.Policy.Yes {
 		return nil
@@ -219,10 +280,6 @@ func (r *runner) question(p *Plan, diff []Change, confirmed bool) *Question {
 			if v := p.Clusters[i].Gate; v.Decision == health.Ask {
 				return &Question{Kind: GateWarnings, Text: capitalize(v.Question()), Reasons: reasonStrings(v.Reasons)}
 			}
-		}
-		// Without a front end that can ask, the start needs no answer.
-		if r.hooks.Ask == nil {
-			return nil
 		}
 		return &Question{Kind: ConfirmStart, Text: startQuestion(p)}
 	}
@@ -329,13 +386,13 @@ func blockedSummary(p *Plan) string {
 // other error is the error of Run.
 func (r *runner) unplanned(prev *Plan, err error) (Result, error) {
 	if r.readCtx.Err() == nil {
-		return Result{Status: Failed, Plan: prev, Err: err, ended: ending{code: cmdutil.ExitFailure}}, err
+		return Result{Status: Failed, Plan: prev, Err: err, ended: ending{code: exitcode.Failure}}, err
 	}
 	res := Result{Status: Interrupted, Plan: prev, ended: ending{interrupted: true}}
 	res.Err = fmt.Errorf("interrupted before anything was changed: %w", context.Canceled)
 	if timedOut(r.readCtx) {
 		// Nothing was read, so there is no document to call incomplete.
-		res.Status, res.ended = Failed, ending{code: cmdutil.ExitFailure}
+		res.Status, res.ended = Failed, ending{code: exitcode.Failure}
 		res.Err = fmt.Errorf("timed out reading %s (increase --timeout); nothing was changed", r.req.cluster().Cluster)
 	}
 	if prev != nil {
@@ -350,7 +407,7 @@ func (r *runner) stopped(p *Plan, when string) Result {
 	res := r.unstarted(p, Interrupted, ending{interrupted: true})
 	res.Err = fmt.Errorf("interrupted %s: %w", when, context.Canceled)
 	if timedOut(r.ctx) {
-		res.Status, res.ended = Failed, ending{code: cmdutil.ExitFailure}
+		res.Status, res.ended = Failed, ending{code: exitcode.Failure}
 		res.Err = fmt.Errorf("timed out %s", when)
 	}
 	return res
@@ -385,6 +442,7 @@ func (r *runner) execute(p *Plan) Result {
 	for i := range p.Clusters {
 		cp := &p.Clusters[i]
 		cr := ClusterResult{Target: cp.Target}
+		r.accepted, r.waited = slices.Clone(cp.Checks), false
 		for _, ph := range cp.Phases {
 			r.emit(Event{Kind: PhaseStarted, Phase: ph.Ref})
 			cr.Steps = append(cr.Steps, r.runPhase(cp, ph)...)
@@ -400,10 +458,15 @@ func (r *runner) execute(p *Plan) Result {
 	res.Failures = append(res.Failures, p.Failures...)
 	res.ended.interrupted = r.interrupted || res.interruptedStep()
 	res.Status = statusOf(p.Kind, allSteps(res.Clusters), res.Failures)
-	if res.ended.interrupted {
-		res.Status = Interrupted
-	}
 	res.Err = summary(res)
+	switch {
+	case res.ended.interrupted:
+		res.Status = Interrupted
+	case r.stop != nil:
+		// The steps keep their results, and the highest code still wins.
+		res.ended.code = exitcode.Failure
+		res.Status, res.Err = r.stop.status, r.stop.err
+	}
 	return res
 }
 
@@ -435,27 +498,28 @@ func allSteps(clusters []ClusterResult) []StepResult {
 
 // runPhase runs the steps of one phase and returns one result per step,
 // in plan order. A step that the run never reaches is NotAttempted: after
-// an interrupt, after the read budget ran out, and with StopOnFailure
-// after a step that did not succeed.
+// an interrupt, after the read budget ran out, and after a question
+// during the run that was answered no or could not be asked.
 //
-// The steps run one after another. A phase that is one batch is built
-// with the first change that has one.
+// The steps run one after another, and a step that fails or is blocked
+// does not stop the next one: the targets are independent. A phase that
+// is one batch, and one that stops at its first failure, are built with
+// the first change that has one.
 func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 	results := make([]StepResult, 0, len(ph.Steps))
 	halted := false
-	for _, s := range ph.Steps {
+	for i, s := range ph.Steps {
 		if !halted && (s.work() || s.busy()) && r.outOfTime(cp) {
 			halted = true
 		}
 		res := StepResult{Ref: s.Ref, Status: StepNotAttempted}
 		if !halted {
+			r.steps, r.remaining = ph.Steps, ph.Steps[i:]
 			res = r.runStep(cp, s)
 			r.emit(Event{Kind: StepChanged, Phase: ph.Ref, Step: s.Ref, Result: &res})
 		}
 		results = append(results, res)
-		if ph.StopOnFailure && s.work() && res.Status != StepSucceeded {
-			halted = true
-		}
+		halted = halted || r.stop != nil
 	}
 	return results
 }
@@ -499,33 +563,42 @@ func (r *runner) runStep(cp *ClusterPlan, s Step) StepResult {
 	return StepResult{Ref: s.Ref, Status: StepFailed, Failure: &f}
 }
 
+// waitBudget starts the wait budget of one step: --wait-timeout from its
+// submit or its attachment on. Its timer has the grace of the last poll.
+func (r *runner) waitBudget() (context.Context, *budget) {
+	ctx, wait := r.d.budget(r.ctx, r.common.Limits.Wait, ErrWaitTimeout)
+	wait.grace = finalPollGrace
+	wait.start()
+	r.waited = true
+	return ctx, wait
+}
+
 // waitOptions returns the options of a wait for step s under the budget
-// wait. Each poll is an event. Before each pause the budget is checked on
-// the clock of the run, so a wait under a virtual clock ends at its
-// deadline and makes no poll after it.
+// wait. Each poll is an event. The wait cuts its last pause to the time
+// that the budget has left and checks the budget after each answer, on
+// the clock of the run: the last poll is due at the deadline, and none
+// comes after it. See budget for the answer of that poll.
 func (r *runner) waitOptions(s Step, wait *budget) WaitOptions {
 	return WaitOptions{
 		Interval: r.common.Limits.Poll,
-		After: func(d time.Duration) <-chan time.Time {
-			wait.check()
-			return r.d.after(d)
-		},
+		After:    r.d.after,
 		Progress: func(p UpdateProgress) {
 			r.emit(Event{Kind: UpdatePolled, Phase: s.Ref.Phase, Step: s.Ref, Update: &p})
 		},
+		budget: wait,
 	}
 }
 
 // summary is the one line for the user about a run that did not end
 // clean, or nil.
 func summary(res Result) error {
-	if res.ExitCode() == cmdutil.ExitOK {
+	if res.ExitCode() == exitcode.OK {
 		return nil
 	}
 	var parts []string
 	for _, s := range allSteps(res.Clusters) {
 		code, ok := stepCode(s)
-		if !ok || code == cmdutil.ExitOK {
+		if !ok || code == exitcode.OK {
 			continue
 		}
 		switch {

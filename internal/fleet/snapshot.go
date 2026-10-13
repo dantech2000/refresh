@@ -206,6 +206,10 @@ type Nodegroup struct {
 	// Subnets are the IDs of the subnets that the nodes launch in.
 	Subnets           []string
 	Desired, Min, Max int32
+	// SizesKnown says that EKS returned all three sizes. Without it they
+	// are not known, and a size of 0 here is not a size of the nodegroup:
+	// a change must not plan from it.
+	SizesKnown        bool
 	AutoScalingGroups []string
 	// LaunchTemplate is the zero value when the nodegroup has none.
 	LaunchTemplate        LaunchTemplate

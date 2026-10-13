@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/exitcode"
 )
 
 // Decision is the verdict of the gate.
@@ -154,16 +154,16 @@ func rankOf(r Result, forced bool) int {
 func exitOf[T any](results []Result, ranked []T, rank func(T) int) int {
 	for _, r := range results {
 		if r.Outcome == Unreadable {
-			return cmdutil.ExitIncomplete
+			return exitcode.Incomplete
 		}
 	}
-	code := cmdutil.ExitOK
+	code := exitcode.OK
 	for _, r := range ranked {
 		switch rank(r) {
 		case rankBlock, rankClosed:
-			return cmdutil.ExitBlocked
+			return exitcode.Blocked
 		case rankWarning:
-			code = cmdutil.ExitNeedsAttention
+			code = exitcode.NeedsAttention
 		}
 	}
 	return code

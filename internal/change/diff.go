@@ -17,18 +17,20 @@ const (
 	// NowInFlight: a Submit step is now Attach, or its target is now
 	// changing elsewhere. The run goes on, with a notice.
 	NowInFlight ChangeKind = "NowInFlight"
-	// KubernetesVersion: the To of a roll step differs. The run refuses.
+	// KubernetesVersion: the To of a nodegroup step differs. The run
+	// refuses.
 	KubernetesVersion ChangeKind = "KubernetesVersion"
-	// RollbackTarget: the To of a rollback differs. The run refuses, and
-	// no answer accepts it.
-	RollbackTarget ChangeKind = "RollbackTarget"
-	// Release: the ToRelease of a roll step differs. The run asks.
+	// Release: the ToRelease of a step differs. The run asks.
 	Release ChangeKind = "Release"
-	// Version: the To of an add-on step differs. The run asks.
+	// Version: the To of any other step differs. The run asks.
 	Version ChangeKind = "Version"
-	// SizesChanged: the sizes that a scale step starts from differ. The
-	// run asks.
+	// SizesChanged: the sizes that a scale step starts from, or the sizes
+	// that it ends at, differ. The run asks.
 	SizesChanged ChangeKind = "Sizes"
+	// StepDiffers: a step with work differs in a field that no other kind
+	// names: what the run does with it and why, the version that it
+	// starts from, or the force that is sent with it. The run asks.
+	StepDiffers ChangeKind = "Step"
 	// Added and Removed: a step with work appeared, or went away without
 	// being done. The run asks.
 	Added   ChangeKind = "Added"
@@ -59,7 +61,7 @@ func (k ChangeKind) Effect() Effect {
 	switch k {
 	case Done, NowInFlight:
 		return Continue
-	case KubernetesVersion, RollbackTarget, NowBlocked:
+	case KubernetesVersion, NowBlocked:
 		return Refuse
 	}
 	return AskAgain
@@ -76,6 +78,17 @@ type Change struct {
 // Diff compares the plan that a person saw with the plan computed now and
 // returns the differences that matter, in the order of cur and then of
 // the steps that went away.
+//
+// It compares everything that a step submits or acts on. The steps are
+// matched by their ref, so a target that is new or gone is Added or
+// Removed. For a step with work in both plans, every field of Step is
+// compared: the action, the reason, From, To, ToRelease, Force, and the
+// sizes before and after. The reason and From are not compared for a step
+// that now attaches to a change in flight: they are the ones of that
+// change. It also compares the blockers and the health
+// checks of each cluster. Diff does not compare the requests of the two
+// plans: Run checks that with sameRequest before it takes a reviewed plan
+// as consent.
 func Diff(prev, cur *Plan) []Change {
 	var out []Change
 	before := map[StepRef]Step{}
@@ -97,7 +110,7 @@ func Diff(prev, cur *Plan) []Change {
 		for _, s := range cp.Steps() {
 			seen[s.Ref] = true
 			old, ok := before[s.Ref]
-			out = append(out, diffStep(cur.Kind, old, ok, s)...)
+			out = append(out, diffStep(old, ok, s)...)
 		}
 		for _, b := range cp.Blockers {
 			if blockers[blockerKey(cp.Target, b)] {
@@ -137,8 +150,11 @@ func blockerKey(t Target, b Blocker) string {
 }
 
 // diffStep compares one step of the new plan with the step of the same
-// ref in the plan before, when there was one.
-func diffStep(kind Kind, old Step, had bool, cur Step) []Change {
+// ref in the plan before, when there was one. For two steps with work it
+// reads every field of Step but Ref, which matched already: a field that
+// is added to Step or to ScaleSizes needs a comparison here, and
+// TestDiff_EveryStepField fails without one.
+func diffStep(old Step, had bool, cur Step) []Change {
 	name := stepName(cur.Ref)
 	change := func(k ChangeKind, format string, args ...any) []Change {
 		return []Change{{Step: cur.Ref, Kind: k, Message: fmt.Sprintf(format, args...)}}
@@ -163,15 +179,28 @@ func diffStep(kind Kind, old Step, had bool, cur Step) []Change {
 		return change(Removed, "%s is no longer part of the plan", name)
 	}
 	var out []Change
-	if old.Action == Submit && cur.Action == Attach {
+	switch {
+	case old.Action == cur.Action:
+	case old.Action == Submit && cur.Action == Attach:
 		out = append(out, change(NowInFlight, "%s is already changing to %s; waiting for it", name, cur.To)...)
+	default:
+		// A step that waited for the change of someone else and now sends
+		// its own does more than the person saw.
+		out = append(out, change(StepDiffers, "%s is now %s, not %s", name, actionWords(cur.Action), actionWords(old.Action))...)
+	}
+	// A step that now waits for the change of someone else has the reason
+	// and the starting version of that change: NowInFlight says it all.
+	if old.Action == cur.Action {
+		if old.Reason != cur.Reason {
+			out = append(out, change(StepDiffers, "%s is now changed for the reason %s, not %s", name, reasonWords(cur.Reason), reasonWords(old.Reason))...)
+		}
+		if old.From != cur.From {
+			out = append(out, change(StepDiffers, "%s is now at %s, not %s", name, cur.From, old.From)...)
+		}
 	}
 	if old.To != cur.To {
 		k := Version
-		switch {
-		case kind == ClusterRollback:
-			k = RollbackTarget
-		case cur.Ref.Kind == StepNodegroup:
+		if cur.Ref.Kind == StepNodegroup {
 			k = KubernetesVersion
 		}
 		out = append(out, change(k, "%s now goes to %s, not %s", name, cur.To, old.To)...)
@@ -179,10 +208,44 @@ func diffStep(kind Kind, old Step, had bool, cur Step) []Change {
 	if old.ToRelease != cur.ToRelease {
 		out = append(out, change(Release, "%s now gets the AMI release %s, not %s", name, cur.ToRelease, old.ToRelease)...)
 	}
-	if old.Sizes != nil && cur.Sizes != nil && old.Sizes.Before != cur.Sizes.Before {
-		out = append(out, change(SizesChanged, "%s now has %s", name, cur.Sizes.Before)...)
+	if old.Force != cur.Force {
+		with := map[bool]string{true: "with", false: "without"}
+		out = append(out, change(StepDiffers, "%s is now changed %s --force, not %s it", name, with[cur.Force], with[old.Force])...)
+	}
+	switch {
+	case old.Sizes == nil && cur.Sizes == nil:
+	case old.Sizes == nil || cur.Sizes == nil:
+		out = append(out, change(SizesChanged, "the sizes of %s are no longer the ones of the plan", name)...)
+	default:
+		if old.Sizes.Before != cur.Sizes.Before {
+			out = append(out, change(SizesChanged, "%s now has %s", name, cur.Sizes.Before)...)
+		}
+		if old.Sizes.After != cur.Sizes.After {
+			out = append(out, change(SizesChanged, "%s now goes to %s, not %s", name, cur.Sizes.After, old.Sizes.After)...)
+		}
 	}
 	return out
+}
+
+// actionWords says what a run does for a step with the action.
+func actionWords(a Action) string {
+	switch a {
+	case Submit:
+		return "changed by this run"
+	case Attach:
+		return "waited for"
+	case Verify:
+		return "verified"
+	}
+	return string(a)
+}
+
+// reasonWords names a reason in a message. A step can have none.
+func reasonWords(r Reason) string {
+	if r == "" {
+		return "(none)"
+	}
+	return string(r)
 }
 
 // stepName returns the words for a step in a message: "add-on vpc-cni".

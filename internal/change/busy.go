@@ -17,7 +17,8 @@ import (
 //
 // For nodegroup update, nodegroup scale, and addon update: anything in
 // flight that is not a target refuses the run. A target in flight does
-// not: its own step attaches to it or reports it as busy.
+// not: its own step attaches to it, reports it as busy, or is blocked
+// with a blocker of its own.
 //
 // For cluster upgrade and cluster rollback: a cluster in flight refuses,
 // unless it is UPDATING and the control-plane step attaches. A target
@@ -41,7 +42,8 @@ func Busy(snap *fleet.Snapshot, kind Kind, ours []Step) (refuse []Blocker, notic
 	mine := func(k StepKind, name string) (Step, bool) {
 		i := slices.IndexFunc(ours, func(s Step) bool {
 			sameKind := s.Ref.Kind == k || (k == StepNodegroup && s.Ref.Kind == StepScale)
-			return sameKind && s.Ref.Name == name && (s.work() || s.busy())
+			// A Blocked step has its own blocker, which names the target.
+			return sameKind && s.Ref.Name == name && (s.work() || s.busy() || s.Action == Blocked)
 		})
 		if i < 0 {
 			return Step{}, false

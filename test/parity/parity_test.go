@@ -46,8 +46,13 @@ var legacy Runner
 // a child behind, print its environment.
 const helperArg = "parity-helper"
 
-// TestMain builds the legacy binary once. Set REFRESH_PARITY_LEGACY to the
-// path of a binary to test that one and skip the build. Set
+// v2Binary is the path of the binary that TestPaired compares with the
+// legacy one. TestMain sets it before any test runs.
+var v2Binary string
+
+// TestMain builds the legacy binary and the v2 binary once. Set
+// REFRESH_PARITY_LEGACY or REFRESH_PARITY_V2 to the path of a binary to
+// test that one and skip its build. Set
 // REFRESH_PARITY_RACE=1 to build it with the race detector: a data race in
 // the binary then fails its run with exit code 66.
 func TestMain(m *testing.M) {
@@ -72,6 +77,17 @@ func TestMain(m *testing.M) {
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {
 			fmt.Fprintln(os.Stderr, "building the legacy binary:", err)
+			_ = os.RemoveAll(dir)
+			os.Exit(1)
+		}
+	}
+	v2Binary = os.Getenv("REFRESH_PARITY_V2")
+	if v2Binary == "" {
+		v2Binary = filepath.Join(dir, "refresh-v2")
+		build := exec.Command("go", "build", "-o", v2Binary, "../../cmd/refresh") //nolint:gosec,noctx // fixed arguments; nothing to cancel it
+		build.Stderr = os.Stderr
+		if err := build.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "building the v2 binary:", err)
 			_ = os.RemoveAll(dir)
 			os.Exit(1)
 		}
