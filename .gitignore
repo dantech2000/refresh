@@ -49,6 +49,9 @@ Thumbs.db
 *.key
 *.crt
 *credentials*
+# The patterns above must never hide source code: a test file named
+# credentials_test.go was once dropped this way.
+!*.go
 
 # Claude ignore
 .claude/
