@@ -36,6 +36,10 @@ Say no to any row and it reverts to today's behaviour.
 | 22 | `--watch` needs `-o table` and a terminal; `--timeout` applies to each refresh | A watch of a machine format is a stream of documents, which breaks "one document" |
 | 23 | `status --sort cluster` becomes `--sort name` | The other list commands call it `name` |
 | 24 | A failed AMI lookup makes `nodegroup list` exit 4 | One rule for a row that is only partly read |
+| 25 | `cluster upgrade-check --insight` takes the insight ID or the short ID the table shows | Names are exact; the old name-substring match is gone |
+| 26 | `cluster upgrade-check --status` filters what is shown, not what is judged | `--status PASSING` must not report "ready" while an ERROR insight exists |
+| 27 | `cluster upgrade-check -o plain` prints every section as `FIELD`/`VALUE` rows | The old form printed the insight rows and put the rest on stderr |
+| 28 | A blocked `cluster upgrade-check` with an unread item exits 4 | The highest code wins, as for `status` |
 
 ## Commands
 
@@ -109,7 +113,7 @@ Flag letters keep one meaning everywhere: `-c` cluster, `-n` nodegroup, `-a` add
 
 | Flag | Meaning |
 |---|---|
-| `-d, --dry-run` | Print the plan and the verdict of the health gate. Change nothing. Never prompt. The exit code is 0 when the real run would be allowed, 2 when it would ask about warnings, and 3 when it would be blocked. |
+| `-d, --dry-run` | Print the plan and the verdict of the health gate. Change nothing. Never prompt. The exit code comes from the findings alone, whatever `--yes` says: 4 when a check could not read what it needs, else 3 when the real run would be blocked, else 2 when it would ask about warnings, else 0. |
 | `-y, --yes` | Do not prompt. Required with `-o json|yaml` or without a terminal. |
 | `--no-wait` | Return once AWS accepts the change. Not available for `cluster upgrade` and `cluster rollback`, which have later steps. |
 | `--wait-timeout` | How long to wait for the change. `0` means no limit. Defaults: 40m for a nodegroup update, 5m for a scale, 5m for each add-on, 4h for an upgrade or rollback. |
@@ -216,5 +220,8 @@ The parity suite found these in the old binary. The new CLI does the stated thin
 | A drain-gate refusal exits 3 in `nodegroup update` and `nodegroup scale`, and 1 in `cluster upgrade` and `cluster rollback` | A gate that refuses exits 3 in every command |
 | `cluster upgrade` reads PDBs only when it reaches the nodegroup phase, after the control plane and add-ons are upgraded | The plan step runs every gate once before any change, so a blocker is known up front. Each gate runs again right before its own phase. |
 | `cluster upgrade` attaches to an in-flight update, and when that update fails it starts its own without a word | It says that the attached update failed before it continues |
+| A check that cannot read its data is a warning in some checks and a block in others | Nodes, critical workloads, and drain blockers block when they cannot read. Capacity and control-plane metrics ask: `--yes` accepts, `--require-healthy` blocks. Either way the run exits 4. |
+| Without Kubernetes access, `nodegroup update` skips the Kubernetes checks with a warning and `nodegroup scale --check-pdbs` refuses | Every changing command asks before it goes on without the Kubernetes checks. `--yes` accepts and the result records it, `--require-healthy` blocks, and a dry run exits 2. EKS still enforces PDBs during a managed drain. |
+| With Kubernetes present, a degraded nodegroup is only a count of nodes that are not ready | A nodegroup that is not `ACTIVE` is a problem in every mode, and one that is a target blocks |
 
 One old behaviour is kept on purpose: `cluster upgrade` starts an EKS insights refresh before it decides whether the run is blocked. The decision needs fresh insights. It is the one request a blocked run may send.
