@@ -96,6 +96,9 @@ func countNodes(total, ready int, joining, notReady, problems, inProgress []stri
 	switch {
 	case targetFail:
 		r.Outcome, r.Message = Fail, "a target nodegroup is not ACTIVE"+issues()
+	case total == 0 && len(findings) == 0 && len(inProgress) > 0:
+		// The nodes are still coming up: not a failure.
+		r.Outcome, r.Message = Warn, "no nodes yet; nodegroups still scaling: "+strings.Join(inProgress, ", ")
 	case total == 0:
 		r.Outcome, r.Message = Fail, "no nodes found in the cluster"
 	case len(findings) == 0:
@@ -128,6 +131,9 @@ func estimateNodes(total, ready int, problems, inProgress []string, targetFail b
 		r.Outcome, r.Message = Warn, "every nodegroup is mid-change: "+strings.Join(inProgress, ", ")
 	case len(problems) == 0:
 		r.Outcome, r.Message = Pass, fmt.Sprintf("%d/%d nodes ready (estimated)", ready, total)
+	case ready == 0 && len(inProgress) > 0:
+		// A nodegroup that is still coming up may bring the ready nodes.
+		r.Outcome, r.Message = Warn, "no ready nodes yet (estimated); issues: "+strings.Join(problems, ", ")
 	case ready == 0:
 		r.Outcome, r.Message = Fail, "no ready nodes (estimated); issues: "+strings.Join(problems, ", ")
 	default:
