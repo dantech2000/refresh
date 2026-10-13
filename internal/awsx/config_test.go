@@ -269,10 +269,14 @@ func TestLoadReportsCredentialFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() error = nil for a credential source that fails")
 	}
-	for _, want := range []string{"AWS credential validation failed: ", "AWS credentials not configured or invalid", "aws sso login"} {
+	for _, want := range []string{"AWS credentials not configured or invalid\nCause: ", "aws sso login"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not contain %q:\n%v", want, err)
 		}
+	}
+	// One headline: the first line is the formatted one, with no prefix.
+	if first, _, _ := strings.Cut(err.Error(), "\n"); first != "AWS credentials not configured or invalid" {
+		t.Errorf("first line = %q, want the headline alone", first)
 	}
 }
 

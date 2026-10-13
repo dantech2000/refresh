@@ -86,7 +86,7 @@ func TestNewAWS(t *testing.T) {
 		{
 			name:    "profile that does not exist",
 			global:  cmdutil.GlobalOptions{Profile: "nope"},
-			wantErr: "failed to load AWS config: AWS profile \"nope\" not found\nCause: --profile names it",
+			wantErr: "AWS profile \"nope\" not found\nCause: --profile names it",
 		},
 	}
 	for _, tt := range tests {

@@ -89,7 +89,8 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 	if err != nil {
 		var missing config.SharedConfigProfileNotExistError
 		if errors.As(err, &missing) {
-			err = opts.profileNotFound(missing.Profile, err)
+			// A formatted error has its own headline.
+			return aws.Config{}, opts.profileNotFound(missing.Profile, err)
 		}
 		return aws.Config{}, fmt.Errorf("failed to load AWS config: %w", err)
 	}
@@ -112,8 +113,10 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 	// profile is looked up once, when the first such failure needs it.
 	login := sync.OnceValue(func() string { return opts.ssoLoginProfile(context.WithoutCancel(ctx)) })
 	cfg.APIOptions = append(cfg.APIOptions, nameSSOLoginProfile(login))
+	// resolveCredentials formats its error, with a headline of its own: a
+	// prefix here would put two headlines on the first line.
 	if err := opts.resolveCredentials(ctx, cfg, login); err != nil {
-		return aws.Config{}, fmt.Errorf("AWS credential validation failed: %w", err)
+		return aws.Config{}, err
 	}
 	return cfg, nil
 }
