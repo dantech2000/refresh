@@ -56,7 +56,7 @@ func TestPlanDecision(t *testing.T) {
 		{name: "gate blocks", steps: []Step{submit}, checks: []health.Result{fail}, want: DecisionBlocked, exit: 3},
 		{name: "gate blocks, --yes changes nothing", steps: []Step{submit}, checks: []health.Result{fail}, policy: health.Policy{Yes: true}, want: DecisionBlocked, exit: 3},
 		{name: "gate blocks and a read failed", steps: []Step{submit}, checks: []health.Result{fail, unreadable}, want: DecisionBlocked, exit: 4},
-		{name: "--require-healthy over a warning", steps: []Step{submit}, checks: []health.Result{warn}, policy: health.Policy{RequireHealthy: true}, want: DecisionBlocked, exit: 2},
+		{name: "--require-healthy over a warning", steps: []Step{submit}, checks: []health.Result{warn}, policy: health.Policy{RequireHealthy: true}, want: DecisionBlocked, exit: 3},
 		{name: "nothing to do", steps: []Step{skip}, want: DecisionNothingToDo, exit: 0},
 		{name: "nothing to do, with a failure", steps: []Step{skip}, failures: []apidoc.Failure{failure}, want: DecisionNothingToDo, exit: 4},
 		{name: "every target is busy", steps: []Step{busy}, failures: []apidoc.Failure{{Kind: apidoc.FailureAddon, Name: "vpc-cni", Reason: apidoc.ReasonBusy}}, want: DecisionNothingToDo, exit: 4},

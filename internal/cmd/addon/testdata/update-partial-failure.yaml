@@ -76,7 +76,7 @@ clusters:
         name: kube-proxy
         status: Skipped
     verification:
-      - name: AddonHealth
+      - name: AddonHealth/coredns
         outcome: Pass
         blocking: false
         message: coredns is ACTIVE at v1.11.4-eksbuild.2

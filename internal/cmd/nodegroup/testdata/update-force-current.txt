@@ -1,0 +1,18 @@
+exit: 0
+error: 
+--- stdout ---
+Plan   - NothingToDo   NodegroupUpdate
+
+PLAN
+  operation  NodegroupUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.32
+  decision   - NothingToDo
+
+STEPS  1
+  NAME  KIND       ACTION  REASON         FROM  TO    NOTE
+  api   Nodegroup  Skip    AlreadyLatest  1.32  1.32  -
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  api  skip, at 1.32 (AlreadyLatest)

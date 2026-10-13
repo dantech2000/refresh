@@ -388,6 +388,10 @@
         "to": {
           "type": "string"
         },
+        "fromRelease": {
+          "type": "string",
+          "description": "fromRelease is the AMI release version that the nodegroup of a roll ran when the plan read it. A run does not roll a nodegroup that is on another release by the time of its request: it was rolled elsewhere."
+        },
         "toRelease": {
           "type": "string",
           "description": "toRelease is the AMI release that a roll expects."
@@ -398,6 +402,10 @@
         },
         "sizes": {
           "$ref": "#/$defs/ScaleSizes"
+        },
+        "inFlight": {
+          "type": "string",
+          "description": "inFlight is the type of the update that makes a target busy: a step with the action Skip and the reason InFlight. It is VersionUpdate, ConfigUpdate, AddonUpdate, or another type of EKS, and it is left out when the update was not found."
         }
       },
       "type": "object",

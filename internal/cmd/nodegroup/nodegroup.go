@@ -22,12 +22,16 @@ func NewCmdNodegroup(f *cmdutil.Factory) *cobra.Command {
 
 The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
 refresh context. A command that only reads also takes the cluster of the
-current kubeconfig context; "nodegroup scale" never does.`,
+current kubeconfig context; "nodegroup update" and "nodegroup scale" never
+do.`,
 		Example: `  # The nodegroups of a cluster, with the state of their AMIs
   refresh nodegroup list -c prod
 
   # One nodegroup, with its instances
   refresh nodegroup describe web -c prod --show-instances
+
+  # Roll the nodegroups that are behind onto the latest AMI
+  refresh nodegroup update -c prod
 
   # Scale a nodegroup to four nodes
   refresh nodegroup scale web -c prod --desired 4`,
@@ -36,7 +40,7 @@ current kubeconfig context; "nodegroup scale" never does.`,
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newCmdList(f), newCmdDescribe(f), newCmdScale(f))
+	cmd.AddCommand(newCmdList(f), newCmdDescribe(f), newCmdUpdate(f), newCmdScale(f))
 	return cmd
 }
 

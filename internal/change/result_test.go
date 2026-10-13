@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/health"
 )
 
 // The step results of the exit-code tables.
@@ -65,12 +66,16 @@ func TestStepCode(t *testing.T) {
 // row for row, and then the same rows interrupted.
 func TestResultExitCode(t *testing.T) {
 	gateRead := []apidoc.Failure{{Kind: apidoc.FailureCluster, Name: "prod", Reason: apidoc.ReasonThrottled}}
+	// A gate with one warning that --yes went past. Its own code is 2.
+	accepted := health.Gate([]health.Result{{Name: "Addons", Outcome: health.Warn, Message: "coredns is DEGRADED"}}, health.Policy{Yes: true})
 	tests := []struct {
 		name     string
 		kind     Kind
 		steps    []StepResult
 		failures []apidoc.Failure
-		want     int
+		// gate is the gate of the plan of the run.
+		gate health.Verdict
+		want int
 	}{
 		{name: "all Succeeded", kind: AddonUpdate, steps: []StepResult{stepOK, stepOK}, want: 0},
 		{name: "all Started (--no-wait)", kind: AddonUpdate, steps: []StepResult{stepStarted, stepStarted}, want: 0},
@@ -90,6 +95,11 @@ func TestResultExitCode(t *testing.T) {
 		{name: "one InProgress with Timeout, the rest Succeeded", kind: AddonUpdate, steps: []StepResult{stepTimeout, stepOK}, want: 4},
 		{name: "one Blocked, the rest Succeeded", kind: AddonUpdate, steps: []StepResult{stepBlocked, stepOK}, want: 3},
 		{name: "all Succeeded, and a gate read that --yes went past", kind: AddonUpdate, steps: []StepResult{stepOK}, failures: gateRead, want: 4},
+		{name: "all Succeeded, and a gate warning that --yes or an answer accepted", kind: AddonUpdate, steps: []StepResult{stepOK}, gate: accepted, want: 0},
+		{name: "all Started, and a gate warning that was accepted", kind: NodegroupScale, steps: []StepResult{stepStarted}, gate: accepted, want: 0},
+		{name: "one Failed, and a gate warning that was accepted", kind: AddonUpdate, steps: []StepResult{stepFailed}, gate: accepted, want: 1},
+		{name: "one Blocked by --require-healthy over warnings alone, the rest Succeeded", kind: AddonUpdate, steps: []StepResult{stepBlocked, stepOK}, gate: accepted, want: 3},
+		{name: "one Blocked, and a gate read that failed", kind: AddonUpdate, steps: []StepResult{stepBlocked}, failures: gateRead, want: 4},
 
 		// The pairs of step classes that the rows above do not have.
 		{name: "one Cancelled, one Succeeded", kind: AddonUpdate, steps: []StepResult{stepCanceled, stepOK}, want: 4},
@@ -108,6 +118,7 @@ func TestResultExitCode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			res := resultOf(tt.kind, tt.steps...)
 			res.Failures = tt.failures
+			res.Plan.Clusters = []ClusterPlan{{Gate: tt.gate}}
 			if got := res.ExitCode(); got != tt.want {
 				t.Errorf("ExitCode() = %d, want %d", got, tt.want)
 			}
@@ -152,8 +163,13 @@ func TestResultExitCode_NotAStep(t *testing.T) {
 		{name: "a question answered no", res: Result{Plan: plan, ended: ending{code: 1}}, want: 1},
 		{name: "a refused plan", res: Result{Plan: plan, ended: ending{code: 3}}, want: 3},
 		{name: "a refused plan with a failure", res: Result{Plan: plan, ended: ending{code: 3}, Failures: []apidoc.Failure{{Kind: apidoc.FailureAddon}}}, want: 4},
-		{name: "--require-healthy over a warning", res: Result{Plan: plan, ended: ending{code: 2}}, want: 2},
 		{name: "the read budget ran out with nothing read", res: Result{ended: ending{code: 1}}, want: 1},
+		{name: "a stop from the checkpoint, the steps before it Succeeded", want: 1,
+			res: Result{Plan: plan, ended: ending{code: 1}, Clusters: []ClusterResult{{Steps: []StepResult{stepOK, stepNever}}}}},
+		{name: "a stop from the checkpoint after a Blocked step", want: 3,
+			res: Result{Plan: plan, ended: ending{code: 1}, Clusters: []ClusterResult{{Steps: []StepResult{stepBlocked, stepNever}}}}},
+		{name: "a stop from the checkpoint after a verification issue", want: 5,
+			res: Result{Plan: plan, ended: ending{code: 1}, Clusters: []ClusterResult{{Steps: []StepResult{stepIssue, stepNever}}}}},
 		{name: "an interrupt, whatever else happened", res: Result{Plan: plan, ended: ending{code: 3, interrupted: true}, Failures: []apidoc.Failure{{Kind: apidoc.FailureAddon}}}, want: 1},
 	}
 	for _, tt := range tests {

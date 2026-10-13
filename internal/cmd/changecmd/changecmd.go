@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
@@ -38,19 +39,41 @@ func Deps(f *cmdutil.Factory) func(ctx context.Context) (change.Deps, error) {
 		if err != nil {
 			return change.Deps{}, err
 		}
-		return change.Deps{
-			AWS:       provider,
-			Fetch:     &fleet.Fetcher{Now: f.Now},
-			Kube:      f.Kube,
-			Now:       f.Now,
-			After:     f.After,
-			AfterFunc: f.AfterFunc,
-		}, nil
+		return depsOf(f, provider), nil
+	}
+}
+
+// FleetDeps returns the function that builds the dependencies of a change
+// of every cluster of a region sweep. It has no check for one region:
+// the sweep names its regions. Calling that function is the first use of
+// the network.
+func FleetDeps(f *cmdutil.Factory) func(ctx context.Context) (change.Deps, error) {
+	return func(ctx context.Context) (change.Deps, error) {
+		provider, err := f.AWS(ctx)
+		if err != nil {
+			return change.Deps{}, err
+		}
+		return depsOf(f, provider), nil
+	}
+}
+
+// depsOf returns the dependencies of a change from the factory: the
+// clients, the Kubernetes access, and the clock.
+func depsOf(f *cmdutil.Factory, provider *awsx.Provider) change.Deps {
+	return change.Deps{
+		AWS:       provider,
+		Fetch:     &fleet.Fetcher{Now: f.Now},
+		Kube:      f.Kube,
+		Now:       f.Now,
+		After:     f.After,
+		AfterFunc: f.AfterFunc,
+		Tick:      f.Tick,
 	}
 }
 
 // Common returns the part of a request that the shared flags fill.
-// timeout is --timeout. --wait-timeout bounds each step alone.
+// timeout is --timeout. --wait-timeout bounds each step alone, and the
+// steps of a batch together.
 func Common(flags *cmdutil.ChangeFlags, timeout time.Duration) change.Common {
 	return change.Common{
 		Policy: health.Policy{
@@ -83,7 +106,11 @@ type Renderer interface {
 // PrintPlan is a dry run: it reads live state under the --timeout budget,
 // prints the plan, and returns the exit code of the plan. It changes
 // nothing and never prompts.
-func PrintPlan(ctx context.Context, ios *cmdutil.IOStreams, format cmdutil.Format, d change.Deps, req change.Request, timeout time.Duration) error {
+//
+// after, when not nil, runs once the plan is printed, with the plan: a
+// command adds what only it knows how to show, on stderr. A timeout of 0
+// is no limit: the plan of a fleet gives each cluster its own budget.
+func PrintPlan(ctx context.Context, ios *cmdutil.IOStreams, format cmdutil.Format, d change.Deps, req change.Request, timeout time.Duration, after func(ctx context.Context, plan *change.Plan)) error {
 	ctx, cancel := cmdutil.WithTimeout(ctx, timeout)
 	defer cancel()
 	plan, err := change.NewPlan(ctx, d, req)
@@ -96,6 +123,10 @@ func PrintPlan(ctx context.Context, ios *cmdutil.IOStreams, format cmdutil.Forma
 	}
 	if format != cmdutil.FormatTable {
 		cmdutil.ReportFailures(ios, doc.Failures)
+	}
+	fleetcmd.ReportSkippedRegions(ios, doc.SkippedRegions)
+	if after != nil {
+		after(ctx, plan)
 	}
 	// An interrupt is not a partial result.
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -140,6 +171,14 @@ func planError(ctx context.Context, d change.Deps, err error) error {
 		}
 		return cmdutil.NotFoundError(what, missing.Name, "cluster "+missing.Cluster, missing.Names, list+missing.Cluster)
 	}
+	// No region of a fleet answered. The sweep tells bad credentials from
+	// regions that are closed, as the read commands do.
+	var discovery *change.DiscoveryError
+	if errors.As(err, &discovery) {
+		if sweepErr := fleetcmd.SweepError(ctx, d.AWS, discovery.Sweep); sweepErr != nil {
+			return sweepErr
+		}
+	}
 	return err
 }
 
@@ -172,6 +211,9 @@ func RunChange(ctx context.Context, ios *cmdutil.IOStreams, format cmdutil.Forma
 	}
 	if format != cmdutil.FormatTable {
 		cmdutil.ReportFailures(ios, failuresOf(doc))
+	}
+	if res.Plan != nil {
+		fleetcmd.ReportSkippedRegions(ios, res.Plan.SkippedRegions)
 	}
 	if err != nil {
 		return planError(ctx, d, err)

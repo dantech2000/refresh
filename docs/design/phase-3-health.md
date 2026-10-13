@@ -532,10 +532,9 @@ func (v Verdict) Question() string
 func (v Verdict) Summary() string
 
 // Worse returns the checks of cur that are worse than in prev: a worse
-// outcome, a Finding that prev did not have, or a check that ran in prev
-// and is Skipped in cur. A numeric check with the same outcome is not
-// worse. Outcomes rank Pass, Warn, Fail, Unreadable; Skipped ranks with
-// Pass unless prev ran it.
+// outcome, a finding that prev did not have, a check that ran in prev and
+// is Skipped in cur, or a check that prev does not have and that is not a
+// pass (added in phase 4: nobody has seen such a check).
 func Worse(prev, cur []Result) []Reason
 ```
 
@@ -554,12 +553,14 @@ The worst rank decides. Then the policy: `Ask` with `--require-healthy` is `Bloc
 
 ### The exit code
 
-The code is computed from the findings, before the policy, so a dry run with `--yes` and warnings exits 2, as the real run would ask:
+`--yes` does not change the code, so a dry run with `--yes` and warnings exits 2, as the real run would ask. `--require-healthy` does: a `Block` exits 3 at least, whatever made it one.
 
 1. 4 when any result is `Unreadable`, forced or not: something a gate needed was not read.
-2. Else 3 when a rank 1 or rank 2 result is left.
+2. Else 3 when the decision is `Block`: a rank 1 or rank 2 result is left, or `--require-healthy` is set and a rank 3 result is left.
 3. Else 2 when any rank 3 result is left, which includes a forced blocker and an accepted warning.
 4. Else 0.
+
+Exit 2 is therefore the code of a dry run whose real run would ask, and of nothing else.
 
 ### The table
 
@@ -571,11 +572,11 @@ One row per case; the test copies it. "B Fail" is a blocking Fail, "FC Unr" an U
 | 2 | no check ran | `Skip` | Go, `Skipped` | 0 |
 | 3 | a Warn | default | Ask | 2 |
 | 4 | a Warn | `--yes` | Go, in `Accepted` | 2 |
-| 5 | a Warn | `--require-healthy` | Block | 2 |
-| 6 | a Warn | `--yes --require-healthy` | Block | 2 |
+| 5 | a Warn | `--require-healthy` | Block |3 |
+| 6 | a Warn | `--yes --require-healthy` | Block |3 |
 | 7 | Adv Fail | default | Ask | 2 |
 | 8 | Adv Fail | `--yes` | Go | 2 |
-| 9 | Adv Fail | `--require-healthy` | Block | 2 |
+| 9 | Adv Fail | `--require-healthy` | Block |3 |
 | 10 | Adv Unreadable (Quotas, PDBCoverage, Utilization) | default | Ask | 4 |
 | 11 | Adv Unreadable | `--yes` | Go, failures kept | 4 |
 | 12 | Adv Unreadable | `--require-healthy` | Block | 4 |
@@ -584,14 +585,14 @@ One row per case; the test copies it. "B Fail" is a blocking Fail, "FC Unr" an U
 | 15 | Capacity or ControlPlane Unreadable | `--require-healthy` | Block | 4 |
 | 16 | `Kubernetes` Warn (no access or unreachable) | default | Ask | 2 |
 | 17 | `Kubernetes` Warn | `--yes` | Go, in `Accepted` | 2 |
-| 18 | `Kubernetes` Warn | `--require-healthy` | Block | 2 |
+| 18 | `Kubernetes` Warn | `--require-healthy` | Block |3 |
 | 19 | B Fail (Nodes, Capacity, ControlPlane, Workloads) | any | Block | 3 |
 | 20 | B Fail and an Adv Unreadable | any | Block | 4 |
 | 21 | FC Unr (Nodes, Workloads) | any | Block | 4 |
 | 22 | Drain Fail | default or `--yes` | Block | 3 |
 | 23 | Drain Fail | `--force` | Ask, in `Forced` | 2 |
 | 24 | Drain Fail | `--force --yes` | Go, in `Forced` and `Accepted` | 2 |
-| 25 | Drain Fail | `--force --require-healthy` | Block | 2 |
+| 25 | Drain Fail | `--force --require-healthy` | Block |3 |
 | 26 | Drain Unreadable | default or `--yes` | Block | 4 |
 | 27 | Drain Unreadable | `--force` | Ask, in `Forced`, failures kept | 4 |
 | 28 | Drain Unreadable | `--force --yes` | Go, failures kept | 4 |
@@ -600,7 +601,7 @@ One row per case; the test copies it. "B Fail" is a blocking Fail, "FC Unr" an U
 | 31 | a Warn and a Capacity Unreadable | `--yes` | Go | 4 |
 | 32 | `--force` with no Forceable finding | `--force` | as rows 1 to 21 | |
 
-Row 25 is the old binary's behaviour: `--require-healthy` makes every warning a stop, and a forced blocker is a warning. Rows 11, 14, 27, and 28 are why a run that goes on carries `Verdict.Failures` and exits 4 at its end (`exit-codes.md`, `nodegroup update` row 4).
+Row 25 is the old binary's behaviour: `--require-healthy` makes every warning a stop, and a forced blocker is a warning. The stop exits 3, as every `Block` does (owner decision during phase 4; draft rows 5, 6, 9, 18, and 25 said 2). Rows 11, 14, 27, and 28 are why a run that goes on carries `Verdict.Failures` and exits 4 at its end (`exit-codes.md`, `nodegroup update` row 4).
 
 Two differences from the old gate. An unreadable read of nodes, system pods, or PDBs blocks in every command, where the old Node Health warned on a transient error and the old upgrade gate exited 1. And a drain blocker is a blocking check in the summary, not a warning plus a second refusal. The old Capacity check warned on any CloudWatch error; the new one asks, which is the same decision with the failure recorded (owner, finding 5 of the draft 1 review).
 
@@ -639,7 +640,7 @@ The pre-phase policy:
 | `Block` | any | Block, the phase fails, exit by the table | Block | Block |
 | `Go` | empty | proceed | proceed | proceed |
 | `Ask` | empty | proceed: the user already answered these reasons at the plan step | proceed | cannot happen: `Ask` is `Block` |
-| `Ask` or `Go` | not empty | ask again, with the `Worse` reasons as the question | proceed, the reasons go in `Accepted` (old gate: `--yes` proceeds, `upgrade_gate.go:170-174`) | Block, exit 2 |
+| `Ask` or `Go` | not empty | ask again, with the `Worse` reasons as the question | proceed, the reasons go in `Accepted` (old gate: `--yes` proceeds, `upgrade_gate.go:170-174`) | Block, exit 3 |
 
 A run whose prompt cannot show (the TUI without a question channel, a machine run) treats "ask again" as a failure of the phase, exit 1, as the old gate did when `confirm` was nil (`upgrade_gate.go:176-178`).
 

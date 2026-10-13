@@ -401,6 +401,61 @@ func TestCompareBatch(t *testing.T) {
 	}
 }
 
+// TestCompareBaselineRule holds the baseline rule to its words. The old
+// binary reads the baseline before its drain gate, so a run that the gate
+// refuses has read it. A new binary that is refused too owes no baseline.
+// It owes every gate read, and it owes the same list where that list is
+// not a baseline: in a run that was not refused, and after an update that
+// the run followed.
+func TestCompareBaselineRule(t *testing.T) {
+	t.Parallel()
+	tight := read("kube:ListPodDisruptionBudgets", "prod", fact("pdbs prod", "read", "ok"), fact("pdb prod/default/web", "allowed", "0"))
+	refused := func(steps ...step) Trace {
+		tr := build(steps...)
+		tr.RefusedBeforeMutation, tr.ExitCode = true, 3
+		return tr
+	}
+	old := refused(nodegroup, pendingPods, nodesReady, tight)
+	const baseline = "the old binary had seen pods prod pending=none"
+	tests := []struct {
+		name    string
+		old, v2 Trace
+		// says is a text of the one difference, in the decision. Empty
+		// means no difference.
+		says string
+	}{
+		{name: "refused with no baseline", old: old, v2: refused(nodegroup, nodesReady, tight)},
+		{name: "refused with the baseline", old: old, v2: refused(nodegroup, pendingPods, nodesReady, tight)},
+		{name: "refused, and the budgets were not read", old: old, v2: refused(nodegroup, nodesReady),
+			says: "the old binary had seen pdb prod/default/web allowed=0, and the new binary did not read it there"},
+		{name: "refused, and the nodes were not read", old: old, v2: refused(nodegroup, tight),
+			says: "the old binary had seen node prod/a-1 condition=Ready, and the new binary did not read it there"},
+		{name: "a run that was not refused owes the list", old: build(nodegroup, pendingPods), v2: build(nodegroup), says: baseline},
+		{name: "after an update that the run followed, the list is the verification",
+			old: refused(nodegroup, updateIs("prod/ng-a", "1", "Failed"), pendingPods),
+			v2:  refused(nodegroup, updateIs("prod/ng-a", "1", "Failed")), says: baseline},
+	}
+	for _, tt := range tests {
+		var text []string
+		for _, d := range Compare("sample", tt.old, tt.v2, nil) {
+			text = append(text, d.String())
+		}
+		switch all := strings.Join(text, "\n"); {
+		case tt.says == "" && all != "":
+			t.Errorf("%s: want no difference:\n%s", tt.name, all)
+		case tt.says != "" && (len(text) != 1 || !strings.Contains(all, "decision differs") || !strings.Contains(all, tt.says)):
+			t.Errorf("%s: want one difference in the decision that says %q:\n%s", tt.name, tt.says, all)
+		}
+	}
+	// With a mutation in both runs the baseline is evidence of the change,
+	// and the rule does not reach it.
+	roll := change("eks:UpdateNodegroupVersion", "prod/ng-a", "token-1", "accepted")
+	diffs := Compare("sample", build(nodegroup, pendingPods, roll), build(nodegroup, roll), nil)
+	if len(diffs) != 1 || diffs[0].Field != FieldEvidence || !strings.Contains(diffs[0].Detail, baseline) {
+		t.Errorf("a roll with no baseline before it: %v, want one unmet gate obligation for the Pending pods", diffs)
+	}
+}
+
 func TestCompareExitCodeTable(t *testing.T) {
 	t.Parallel()
 	legacyTrace, v2 := sampleTrace(), sampleTrace()
@@ -715,6 +770,25 @@ func TestPairedFindsProblems(t *testing.T) {
 			if !strings.Contains(problems, want) {
 				t.Errorf("the problems lack %q:\n%s", want, problems)
 			}
+		}
+	})
+	t.Run("a refused run that skipped the budgets", func(t *testing.T) {
+		t.Parallel()
+		// The baseline rule excuses the baseline of a refused run, and no
+		// gate read. The scenario's run is refused by its drain gate, after
+		// the baseline and the budgets. The other run is refused too, and
+		// read neither: it has no --yes for a pattern, and no health gate.
+		sc := scenarioNamed(t, "nodegroup-update-pdb-blocked")
+		skipped := []string{"nodegroup", "update", "-c", "prod", "-n", "ng-", "--skip-health-check", "-o", "json"}
+		problems := strings.Join(pair(t, sc, legacy, nil, skipped, nil, false), "\n")
+		if want := "the old binary had seen pdb prod/default/web allowed=0, and the new binary did not read it there"; !strings.Contains(problems, want) {
+			t.Errorf("the problems lack %q:\n%s", want, problems)
+		}
+		if excused := "pods prod pending="; strings.Contains(problems, excused) {
+			t.Errorf("the problems hold the refused run to the baseline (%q):\n%s", excused, problems)
+		}
+		if strings.Contains(problems, "mutations differs") || strings.Contains(problems, "refusedBeforeMutation differs") {
+			t.Errorf("the other run is not a refusal before any mutation:\n%s", problems)
 		}
 	})
 	t.Run("a dry run in place of the change", func(t *testing.T) {

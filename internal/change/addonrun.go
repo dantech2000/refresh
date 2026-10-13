@@ -17,7 +17,9 @@ import (
 )
 
 // addonCheck is the name of the check that confirms an add-on after its
-// update.
+// update. The result of one add-on is named addonCheck/<add-on>: a run
+// of several add-ons has one result for each, and a name must tell them
+// apart, as the FIELD of a plain row does.
 const addonCheck = "AddonHealth"
 
 // runAddonStep runs the step of one add-on: for a Submit step a read of
@@ -27,15 +29,15 @@ const addonCheck = "AddonHealth"
 // of the step: the run then waits for that update and sends none.
 func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 	res := StepResult{Ref: s.Ref}
-	resource := Resource{Target: cp.Target, Kind: StepAddon, Name: s.Ref.Name}
+	resource := s.Ref.Resource()
 	clients := r.d.AWS.Clients(cp.Region)
 	if s.busy() {
-		return r.busyAddon(cp, res, clients, "")
+		return cp.busyResult(s)
 	}
 	if s.Action == Submit {
 		// The steps before this one waited, so the read of the plan is old.
 		if r.waited {
-			if out, ok := r.recheckAddons(cp, res); !ok {
+			if out, ok := r.recheck(cp, res, r.remainingAddons); !ok {
 				return out
 			}
 		}
@@ -58,7 +60,7 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 			return r.unsent(cp, res, err)
 		case id == "":
 			res.Status = StepInProgress
-			res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the update of add-on "+s.Ref.Name+" and returned no update ID; it cannot be followed")
+			res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the update of add-on "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")
 			return res
 		}
 		res.Status, res.UpdateID = StepStarted, id
@@ -106,7 +108,8 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 // DEGRADED now is a warning that nobody accepted. See regate.
 //
 // After a person accepted such a warning it reads again, as Run does
-// after every answer. It returns false when the step ends here, with its
+// after every answer. It asks at most maxQuestions times: a read after
+// that which is worse again fails the step, with no question. It returns false when the step ends here, with its
 // result. Otherwise the decision is Submit or Attach.
 func (r *runner) freshAddon(cp *ClusterPlan, res StepResult, clients *awsx.Clients, resource Resource) (StepResult, addonDecision, bool) {
 	name := res.Ref.Name
@@ -118,7 +121,7 @@ func (r *runner) freshAddon(cp *ClusterPlan, res StepResult, clients *awsx.Clien
 		d := decideAddon(fleet.Addon{Name: name, Version: fresh.Version, Status: fresh.Status}, cp.addonTargets[name], "")
 		switch {
 		case d.Action == Skip && d.Reason == InFlight:
-			return r.busyAddon(cp, res, clients, fresh.Status), d, false
+			return r.busyTarget(cp, res, clients, resource, fresh.Status), d, false
 		case d.Action == Skip:
 			r.notice(fmt.Sprintf("add-on %s is %s at %s now; nothing was sent", name, fresh.Status, fresh.Version))
 			res.Status = StepSkipped
@@ -129,16 +132,15 @@ func (r *runner) freshAddon(cp *ClusterPlan, res StepResult, clients *awsx.Clien
 		case r.common.Policy.Skip:
 			return res, d, true
 		}
-		out, ok, answered := r.regate(cp, res, r.freshAddonHealth(cp, name, fresh))
+		// The budget of questions is checked before one is asked, as
+		// prepare does: a person is not asked for an answer that the step
+		// then throws away.
+		out, ok, answered := r.regate(cp, res, r.freshAddonHealth(cp, name, fresh), asked < maxQuestions)
 		switch {
 		case !ok:
 			return out, d, false
 		case !answered:
 			return res, d, true
-		case asked+1 >= maxQuestions:
-			res.Status, res.FinishedAt = StepFailed, r.d.now()
-			res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown, "add-on "+name+" keeps changing; it was not changed. Run the command again")
-			return res, d, false
 		}
 	}
 }
@@ -284,7 +286,7 @@ func (r *runner) waitFailed(ctx context.Context, cp *ClusterPlan, res StepResult
 func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settled, err error) StepResult {
 	name := s.Ref.Name
 	res.Status, res.FinishedAt = StepSucceeded, r.d.now()
-	check := health.Result{Name: addonCheck, Outcome: health.Pass, Message: fmt.Sprintf("%s is %s at %s", name, got.Status, got.Version)}
+	check := health.Result{Name: addonCheck + "/" + name, Outcome: health.Pass, Message: fmt.Sprintf("%s is %s at %s", name, got.Status, got.Version)}
 	switch {
 	case err != nil:
 		f := fleet.FailureFromError(apidoc.FailureAddon, name, err)
@@ -308,81 +310,4 @@ func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settl
 	r.verification = append(r.verification, check)
 	r.emit(Event{Kind: VerifyReport, Phase: s.Ref.Phase, Step: s.Ref, Checks: []health.Result{check}})
 	return res
-}
-
-// busyAddon returns the result of an add-on target that is already
-// changing: it is left alone, and its failure names the type of the
-// update in flight. status is the status of a fresh read, or "" to use
-// the one of the plan.
-func (r *runner) busyAddon(cp *ClusterPlan, res StepResult, c *awsx.Clients, status string) StepResult {
-	name, version := res.Ref.Name, ""
-	for _, a := range cp.snapshot.Addons {
-		if a.Name == name {
-			version = a.Version
-			if status == "" {
-				status = a.Status
-			}
-		}
-	}
-	res.Status = StepBusy
-	var note string
-	res.InFlight, note = r.inFlight(c, Resource{Target: cp.Target, Kind: StepAddon, Name: name})
-	f := cp.busyFailure(name, status, version, note)
-	res.Failure = &f
-	return res
-}
-
-// unknownUpdate is what a busy failure says when the update in flight
-// could not be looked up.
-const unknownUpdate = "an update of unknown type"
-
-// inFlight looks up the update that makes a target busy. It returns the
-// type for the result of the step, and the words for the failure: the
-// type, unknownUpdate when the lookup failed, and "" when EKS lists no
-// update in progress, as for a resource that it is deleting. The lookup
-// is two reads that happen only for a busy target, at plan time and at
-// the fresh read before a submit alike.
-func (r *runner) inFlight(c *awsx.Clients, res Resource) (kind, note string) {
-	kind, err := inFlightUpdate(r.readCtx, c, res)
-	if err != nil {
-		return "", unknownUpdate
-	}
-	return kind, kind
-}
-
-// inFlightUpdate returns the type of the update of a resource that is in
-// progress, such as AddonUpdate, or "" when EKS lists none. EKS lists the
-// update IDs with no status, so each one is described, newest first.
-func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (string, error) {
-	list := &eks.ListUpdatesInput{Name: aws.String(r.Cluster)}
-	describe := &eks.DescribeUpdateInput{Name: aws.String(r.Cluster)}
-	switch r.Kind {
-	case StepAddon:
-		list.AddonName, describe.AddonName = aws.String(r.Name), aws.String(r.Name)
-	case StepNodegroup, StepScale:
-		list.NodegroupName, describe.NodegroupName = aws.String(r.Name), aws.String(r.Name)
-	}
-	ids, err := awsx.ListAll(ctx,
-		func(ctx context.Context, token *string) (*eks.ListUpdatesOutput, error) {
-			list.NextToken = token
-			return c.EKS.ListUpdates(ctx, list)
-		},
-		func(out *eks.ListUpdatesOutput) ([]string, *string) { return out.UpdateIds, out.NextToken },
-	)
-	if err != nil {
-		return "", err
-	}
-	for i := len(ids) - 1; i >= 0; i-- {
-		describe.UpdateId = aws.String(ids[i])
-		out, err := c.EKS.DescribeUpdate(ctx, describe)
-		switch {
-		case err != nil:
-			return "", err
-		case out.Update == nil:
-			return "", fmt.Errorf("EKS returned no update for %s", ids[i])
-		case out.Update.Status == ekstypes.UpdateStatusInProgress:
-			return string(out.Update.Type), nil
-		}
-	}
-	return "", nil
 }

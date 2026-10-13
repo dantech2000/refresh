@@ -11,8 +11,8 @@ PLAN
   decision   [!] Ask
 
 STEPS  1
-  NAME     KIND   ACTION  REASON         FROM                TO
-  coredns  Addon  Submit  VersionBehind  v1.11.3-eksbuild.2  v1.11.4-eksbuild.2
+  NAME     KIND   ACTION  REASON         FROM                TO                  NOTE
+  coredns  Addon  Submit  VersionBehind  v1.11.3-eksbuild.2  v1.11.4-eksbuild.2  -
 
 HEALTH GATE
   decision  [!] Ask

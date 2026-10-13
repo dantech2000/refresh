@@ -11,10 +11,10 @@ PLAN
   decision   [OK] Proceed
 
 STEPS  3
-  NAME        KIND   ACTION  REASON           FROM                TO
-  vpc-cni     Addon  Submit  VersionBehind    v1.19.0-eksbuild.1  v1.20.0-eksbuild.1
-  coredns     Addon  Submit  VersionBehind    v1.11.3-eksbuild.2  v1.11.4-eksbuild.2
-  kube-proxy  Addon  Skip    AlreadyAtTarget  v1.33.0-eksbuild.2  v1.33.0-eksbuild.2
+  NAME        KIND   ACTION  REASON           FROM                TO                  NOTE
+  vpc-cni     Addon  Submit  VersionBehind    v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  -
+  coredns     Addon  Submit  VersionBehind    v1.11.3-eksbuild.2  v1.11.4-eksbuild.2  -
+  kube-proxy  Addon  Skip    AlreadyAtTarget  v1.33.0-eksbuild.2  v1.33.0-eksbuild.2  -
 
 HEALTH GATE
   decision  [OK] Go

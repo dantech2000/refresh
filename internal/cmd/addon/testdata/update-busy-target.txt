@@ -17,8 +17,8 @@ RESULTS  3
   kube-proxy  Addon  - Skipped       v1.33.0-eksbuild.2  v1.33.0-eksbuild.2  -                                     -                      -                        -                        -
 
 VERIFICATION  1
-  NAME         OUTCOME    MESSAGE
-  AddonHealth  [OK] Pass  coredns is ACTIVE at v1.11.4-eksbuild.2
+  NAME                 OUTCOME    MESSAGE
+  AddonHealth/coredns  [OK] Pass  coredns is ACTIVE at v1.11.4-eksbuild.2
 
 HEALTH GATE
   decision  [OK] Go
@@ -31,7 +31,7 @@ INCOMPLETE DATA
 [?] addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1
-  vpc-cni     skip, at v1.19.5-eksbuild.1 (InFlight)
+  vpc-cni     skip, at v1.19.5-eksbuild.1 (InFlight: AddonUpdate)
   coredns     update v1.11.3-eksbuild.2 to v1.11.4-eksbuild.2 (VersionBehind)
   kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)
 [!] vpc-cni: Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes

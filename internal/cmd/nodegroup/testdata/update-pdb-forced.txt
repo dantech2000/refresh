@@ -1,0 +1,55 @@
+exit: 0
+error: 
+--- stdout ---
+Run   [OK] Succeeded   NodegroupUpdate
+
+RUN
+  operation  NodegroupUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.32
+  status     [OK] Succeeded
+
+RESULTS  1
+  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  web   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+
+VERIFICATION  3
+  NAME             OUTCOME    MESSAGE
+  NodegroupActive  [OK] Pass  web ACTIVE
+  NodesReady       [OK] Pass  2 new nodes ready
+  NewPendingPods   [OK] Pass  no new Pending pods
+
+HEALTH GATE
+  decision  [OK] Go
+  reasons   DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  accepted  DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  forced    DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+
+CHECKS  9
+  NAME           OUTCOME    MESSAGE
+  Nodes          [OK] Pass  4/4 nodes ready
+  Capacity       [OK] Pass  CPU mean 32%, peak 32%, 4 instances
+  ControlPlane   Skipped    control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+  Workloads      [OK] Pass  2/2 pods running in the system namespaces
+  DrainBlockers  [X] Fail   1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  PDBCoverage    [OK] Pass  every deployment has a PodDisruptionBudget (2)
+  Utilization    [OK] Pass  CPU 20%, memory 25% in use
+  Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
+  Kubernetes     [OK] Pass  Kubernetes API reachable
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  roll onto the latest AMI of 1.32, ami-latest132, with --force (AMIOutdated)
+  [OK] Nodes          4/4 nodes ready
+  [OK] Capacity       CPU mean 32%, peak 32%, 4 instances
+       ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+  [OK] Workloads      2/2 pods running in the system namespaces
+  [X]  DrainBlockers  1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  [OK] PDBCoverage    every deployment has a PodDisruptionBudget (2)
+  [OK] Utilization    CPU 20%, memory 25% in use
+  [OK] Quotas         31% of the vCPU quota in use (40 of 128)
+  [OK] Kubernetes     Kubernetes API reachable
+warning: --force goes past DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+web: InProgress
+[OK] web: Succeeded

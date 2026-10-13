@@ -231,11 +231,20 @@ type PlanStep struct {
 	// the control plane, the add-on version for an add-on.
 	From string `json:"from,omitzero"`
 	To   string `json:"to,omitzero"`
+	// FromRelease is the AMI release version that the nodegroup of a roll
+	// ran when the plan read it. A run does not roll a nodegroup that is on
+	// another release by the time of its request: it was rolled elsewhere.
+	FromRelease string `json:"fromRelease,omitzero"`
 	// ToRelease is the AMI release that a roll expects.
 	ToRelease string `json:"toRelease,omitzero"`
 	// Force is true when the request carries the force flag.
 	Force bool        `json:"force,omitzero"`
 	Sizes *ScaleSizes `json:"sizes,omitzero"`
+	// InFlight is the type of the update that makes a target busy: a step
+	// with the action Skip and the reason InFlight. It is VersionUpdate,
+	// ConfigUpdate, AddonUpdate, or another type of EKS, and it is left out
+	// when the update was not found.
+	InFlight string `json:"inFlight,omitzero"`
 }
 
 // ScaleSizes are the sizes of a nodegroup before and after a scale.

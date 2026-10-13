@@ -6,11 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/go-logr/logr"
+	"k8s.io/klog/v2"
 
 	"github.com/dantech2000/refresh/internal/build"
 	"github.com/dantech2000/refresh/internal/cmd/root"
@@ -34,10 +39,30 @@ func run(ctx context.Context, args []string, streams *cmdutil.IOStreams) int {
 		Build:         build.Get(),
 		LatestRelease: latestRelease,
 		Contexts:      contexts.DefaultStore,
+		HTTPClient:    &http.Client{},
 	}
 	f.AWS = cmdutil.NewAWS(f)
 	f.Kube = cmdutil.NewKube(f)
+	f.RouteKubeLogs = routeKubeLogs(streams.ErrOut)
 	return execute(ctx, args, f)
+}
+
+// routeKubeLogs returns the function that routes klog for the process.
+// client-go and its informers log a failed list or watch through klog,
+// which writes to stderr by default: over the roll panel, and into the
+// stderr of a run with a machine format. So the lines are discarded, and
+// shown on errOut only at the debug level (--log-level debug, --verbose).
+//
+// klog has one logger for the process. This is the only place that sets
+// it, and execute puts the default back when the command has ended.
+func routeKubeLogs(errOut io.Writer) func(slog.Level) {
+	return func(level slog.Level) {
+		logger := logr.Discard()
+		if level <= slog.LevelDebug {
+			logger = logr.FromSlogHandler(slog.NewTextHandler(errOut, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		}
+		klog.SetLogger(logger)
+	}
 }
 
 // execute runs the command line in args with the dependencies in f. ctx is
@@ -45,6 +70,10 @@ func run(ctx context.Context, args []string, streams *cmdutil.IOStreams) int {
 func execute(ctx context.Context, args []string, f *cmdutil.Factory) int {
 	cmd := root.NewCmdRoot(f)
 	cmd.SetArgs(args)
+	if f.RouteKubeLogs != nil {
+		// The command has ended, and so has everything that logs.
+		defer klog.ClearLogger()
+	}
 	return exitCode(ctx, f.IOStreams.ErrOut, cmd.ExecuteContext(ctx))
 }
 

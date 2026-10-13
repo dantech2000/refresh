@@ -335,7 +335,7 @@ func TestPlanScale_Gate(t *testing.T) {
 		},
 		{
 			name: "--require-healthy does not", req: scaleTo(1), policy: health.Policy{Yes: true, RequireHealthy: true},
-			checks: []string{"Nodes Pass", "DrainBlockers Skipped", "Kubernetes Warn"}, decision: DecisionBlocked, gate: health.Block, exit: 2,
+			checks: []string{"Nodes Pass", "DrainBlockers Skipped", "Kubernetes Warn"}, decision: DecisionBlocked, gate: health.Block, exit: 3,
 		},
 		{
 			// The step table blocks the target before any gate.
@@ -890,18 +890,20 @@ func TestRunScale_FreshReadBeforeSubmit(t *testing.T) {
 	})
 }
 
+// rolling returns a world in which a roll of the nodegroup web was started
+// elsewhere and does not end.
+func rolling(t *testing.T) *env {
+	t.Helper()
+	e := newEnv(t, scaleWorld(func(c *fleettest.Cluster) { c.Nodegroup("web").UpdateScripts = []fleettest.UpdateScript{{Never: true}} }))
+	if _, err := e.world.UpdateNodegroupVersion(east, "prod", "web", fleettest.NodegroupVersionRequest{}); err != nil {
+		t.Fatalf("starting the roll: %v", err)
+	}
+	return e
+}
+
 // A target that the plan finds changing already: the step reports it,
 // with the type of the update in flight when the lookup gives one.
 func TestRunScale_BusyTarget(t *testing.T) {
-	// rolling starts a roll of the nodegroup elsewhere, before the plan.
-	rolling := func(t *testing.T) *env {
-		t.Helper()
-		e := newEnv(t, scaleWorld(func(c *fleettest.Cluster) { c.Nodegroup("web").UpdateScripts = []fleettest.UpdateScript{{Never: true}} }))
-		if _, err := e.world.UpdateNodegroupVersion(east, "prod", "web", fleettest.NodegroupVersionRequest{}); err != nil {
-			t.Fatalf("starting the roll: %v", err)
-		}
-		return e
-	}
 	// The only target is busy in the plan already. Its step reports it as
 	// the step of a run with other targets does: nothing is asked, the
 	// update in flight is looked up once, and the document is the run.
@@ -1135,6 +1137,96 @@ func TestRunScale_BecomesAScaleDownWhileAsking(t *testing.T) {
 		}
 		if got := e.web(); got != "ACTIVE 5/1/6" {
 			t.Errorf("nodegroup = %s, want ACTIVE 5/1/6: nothing was sent", got)
+		}
+	})
+}
+
+// A confirmed plan asks about the warnings that are new to it. The plan
+// said 2 to 3, a scale-up, and its gate read the quota. Someone raises the
+// desired size to 5, so the plan is now a scale-down, whose gate needs
+// Kubernetes, and there is no access. Nobody has seen that warning: the
+// question names it, and the Run document says that it was accepted.
+func TestRunScale_NewWarningsOfAChangedPlan(t *testing.T) {
+	const noKube = "Kubernetes: "
+	raise := func(e *env) {
+		e.world.Edit(func(s *fleettest.State) { n := s.Cluster(east, "prod").Nodegroup("web"); n.Desired, n.Max = 5, 6 })
+	}
+	check := func(t *testing.T, e *env, s *script, res Result, last int) {
+		t.Helper()
+		q := s.asked[last]
+		if q.Kind != PlanChanged || !strings.Contains(q.Text, "nodegroup web now has desired 5, min 1, max 6") || !strings.Contains(q.Text, noKube) {
+			t.Errorf("question = %s %q; want the changed plan with the new sizes and the Kubernetes warning", q.Kind, q.Text)
+		}
+		if !slices.ContainsFunc(q.Reasons, func(r string) bool { return strings.HasPrefix(r, noKube) }) {
+			t.Errorf("reasons = %q, want the Kubernetes warning among them", q.Reasons)
+		}
+		if res.Status != Succeeded || res.ExitCode() != 0 || e.count(fleettest.EKSUpdateNodegroupConfig) != 1 {
+			t.Fatalf("result = %s, exit %d (%v); want Succeeded", res.Status, res.ExitCode(), res.Err)
+		}
+		doc, ok := res.Document().(apidoc.Run)
+		if !ok || doc.Clusters[0].Gate == nil {
+			t.Fatalf("document = %T with no gate", res.Document())
+		}
+		if !slices.ContainsFunc(doc.Clusters[0].Gate.Accepted, func(r string) bool { return strings.HasPrefix(r, noKube) }) {
+			t.Errorf("accepted = %q, want the Kubernetes warning that the answer accepted", doc.Clusters[0].Gate.Accepted)
+		}
+	}
+	t.Run("after the answer to the start question", func(t *testing.T) {
+		e := newEnv(t, scaleWorld(nil))
+		s := &script{t: t, answers: []bool{true, true}}
+		s.onAsk = func(i int) {
+			if i == 0 {
+				raise(e)
+			}
+		}
+		req := scaleTo(3)
+		req.Policy.Yes = false
+		res, err := Run(testContext(t), e.deps, req, s.hooks())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff([]QuestionKind{ConfirmStart, PlanChanged}, s.kinds()); diff != "" {
+			t.Fatalf("questions (-want +got):\n%s", diff)
+		}
+		check(t, e, s, res, 1)
+	})
+	t.Run("with a reviewed plan", func(t *testing.T) {
+		e := newEnv(t, scaleWorld(nil))
+		req := scaleTo(3)
+		req.Policy.Yes = false
+		reviewed, err := NewPlan(testContext(t), e.deps, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raise(e)
+		req.Expect = reviewed
+		s := &script{t: t, answers: []bool{true}}
+		res, err := Run(testContext(t), e.deps, req, s.hooks())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff([]QuestionKind{PlanChanged}, s.kinds()); diff != "" {
+			t.Fatalf("questions (-want +got):\n%s", diff)
+		}
+		check(t, e, s, res, 0)
+	})
+	// The same change with nobody to ask is refused, and nothing is sent.
+	t.Run("with a reviewed plan and nobody to ask", func(t *testing.T) {
+		e := newEnv(t, scaleWorld(nil))
+		req := scaleTo(3)
+		req.Policy.Yes = false
+		reviewed, err := NewPlan(testContext(t), e.deps, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raise(e)
+		req.Expect = reviewed
+		res, err := Run(testContext(t), e.deps, req, Hooks{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != Refused || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
+			t.Errorf("result = %s with %d requests to scale; want Refused and none", res.Status, e.count(fleettest.EKSUpdateNodegroupConfig))
 		}
 	})
 }

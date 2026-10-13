@@ -105,6 +105,7 @@ func planSections(op apidoc.Operation, c apidoc.ClusterPlan, suffix string) []Se
 			{Name: "reason", Value: string(s.Reason)},
 			{Name: "from", Value: stepOrigin(s)},
 			{Name: "to", Value: stepTarget(s)},
+			{Name: "note", Value: inFlightNote(s.InFlight)},
 		}}
 	}
 	blockers := make([]Item, len(c.Blockers))
@@ -197,6 +198,15 @@ func sizesText(z apidoc.Sizes) string {
 	return "desired " + strconv.Itoa(int(z.Desired)) + ", min " + strconv.Itoa(int(z.Min)) + ", max " + strconv.Itoa(int(z.Max))
 }
 
+// inFlightNote names the update that makes a target busy, such as
+// "VersionUpdate in flight", or returns "" when its type is not known.
+func inFlightNote(updateType string) string {
+	if updateType == "" {
+		return ""
+	}
+	return updateType + " in flight"
+}
+
 // stepOrigin returns where a step starts: its version, or the sizes of a
 // scale.
 func stepOrigin(s apidoc.PlanStep) string {
@@ -260,7 +270,7 @@ func resultItems(c apidoc.ClusterRun) []Item {
 		note, failure := "", ""
 		switch {
 		case r.InFlight != "":
-			note = r.InFlight + " in flight"
+			note = inFlightNote(r.InFlight)
 		case r.Attached:
 			note = "attached"
 		}
@@ -327,6 +337,16 @@ func planStepText(s apidoc.PlanStep) string {
 		switch {
 		case s.Sizes != nil:
 			return "scale from " + stepOrigin(s) + " to " + stepTarget(s) + reason
+		case s.Kind == apidoc.StepNodegroup && s.From == s.To:
+			// A roll keeps the Kubernetes version and moves the AMI.
+			text := "roll onto the latest AMI of " + s.To
+			if s.ToRelease != "" {
+				text += ", " + s.ToRelease
+			}
+			if s.Force {
+				text += ", with --force"
+			}
+			return text + reason
 		case s.From == s.To:
 			return "apply " + s.To + " again" + reason
 		}
@@ -336,6 +356,10 @@ func planStepText(s apidoc.PlanStep) string {
 	case apidoc.ActionVerify:
 		return "verify at " + s.To + reason
 	case apidoc.ActionSkip:
+		if s.InFlight != "" {
+			// The update of someone else that makes the target busy.
+			reason = " (" + string(s.Reason) + ": " + s.InFlight + ")"
+		}
 		return "skip, at " + stepOrigin(s) + reason
 	case apidoc.ActionManual:
 		return "left to you" + reason

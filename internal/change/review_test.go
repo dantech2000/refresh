@@ -95,17 +95,27 @@ func TestRun_ExpectIsConsent(t *testing.T) {
 	}
 }
 
-// stepFieldRows has one row for each field of Step and of ScaleSizes: a
-// change of that field alone, in a step with work. A field without a row
-// fails TestDiff_EveryStepField, so a new field cannot go uncompared.
+// uncomparedStepFields are the fields of Step that Diff does not compare,
+// each with a change of that field alone. InFlight names the update of
+// someone else on a target that the run leaves alone: nothing is submitted
+// for it, so a change of it needs no answer and no notice.
+var uncomparedStepFields = map[string]func(s *Step){
+	"InFlight": func(s *Step) { s.InFlight += "VersionUpdate" },
+}
+
+// stepFieldRows has one row for each field of Step and of ScaleSizes that
+// Diff compares: a change of that field alone, in a step with work. A
+// field with no row here and none in uncomparedStepFields fails
+// TestDiff_EveryStepField, so a new field cannot go uncompared unseen.
 var stepFieldRows = map[string]func(s *Step){
-	"Ref":       func(s *Step) { s.Ref.Name += "-2" },
-	"Action":    func(s *Step) { s.Action = Verify },
-	"Reason":    func(s *Step) { s.Reason = Repair },
-	"From":      func(s *Step) { s.From += "-other" },
-	"To":        func(s *Step) { s.To += "-other" },
-	"ToRelease": func(s *Step) { s.ToRelease += "-other" },
-	"Force":     func(s *Step) { s.Force = !s.Force },
+	"Ref":         func(s *Step) { s.Ref.Name += "-2" },
+	"Action":      func(s *Step) { s.Action = Verify },
+	"Reason":      func(s *Step) { s.Reason = Repair },
+	"From":        func(s *Step) { s.From += "-other" },
+	"To":          func(s *Step) { s.To += "-other" },
+	"FromRelease": func(s *Step) { s.FromRelease += "-other" },
+	"ToRelease":   func(s *Step) { s.ToRelease += "-other" },
+	"Force":       func(s *Step) { s.Force = !s.Force },
 	"Sizes": func(s *Step) {
 		if s.Sizes == nil {
 			s.Sizes = &ScaleSizes{}
@@ -142,12 +152,12 @@ func TestDiff_EveryStepField(t *testing.T) {
 		fields = append(fields, "Sizes."+f.Name)
 	}
 	for _, name := range fields {
-		if stepFieldRows[name] == nil {
-			t.Errorf("the field %s has no row: add one, and compare the field in diffStep", name)
+		if (stepFieldRows[name] == nil) == (uncomparedStepFields[name] == nil) {
+			t.Errorf("the field %s needs one row: compare it in diffStep, or list it as a field that Diff does not compare", name)
 		}
 	}
-	if len(stepFieldRows) != len(fields) {
-		t.Errorf("%d rows for %d fields: a row names a field that is gone", len(stepFieldRows), len(fields))
+	if len(stepFieldRows)+len(uncomparedStepFields) != len(fields) {
+		t.Errorf("%d rows and %d uncompared fields for %d fields: a row names a field that is gone", len(stepFieldRows), len(uncomparedStepFields), len(fields))
 	}
 	steps := map[string]Step{
 		"add-on": addonStep("vpc-cni", Submit, VersionBehind, "v1", "v2"),
@@ -174,6 +184,22 @@ func TestDiff_EveryStepField(t *testing.T) {
 				}
 			})
 		}
+		for field, change := range uncomparedStepFields {
+			cur := base
+			change(&cur)
+			if got := Diff(planOf(kinds[kind], base), planOf(kinds[kind], cur)); len(got) != 0 {
+				t.Errorf("%s: Diff reports a changed %s: %v", kind, field, got)
+			}
+		}
+	}
+	// The field has a value only on a target that is already changing. A
+	// plan that names another update on it is the same plan.
+	busy := addonStep("vpc-cni", Skip, InFlight, "v1", "v2")
+	busy.InFlight = "AddonUpdate"
+	other := busy
+	other.InFlight = ""
+	if got := Diff(planOf(AddonUpdate, busy), planOf(AddonUpdate, other)); len(got) != 0 {
+		t.Errorf("Diff reports another update in flight on a busy target: %v", got)
 	}
 }
 
@@ -214,7 +240,6 @@ var (
 	requestFieldRows = map[string]func(a *AddonUpdateRequest, s *ScaleRequest){
 		"Target.Region":  func(a *AddonUpdateRequest, s *ScaleRequest) { a.Region, s.Region = "eu-west-1", "eu-west-1" },
 		"Target.Cluster": func(a *AddonUpdateRequest, s *ScaleRequest) { a.Cluster, s.Cluster = "dev", "dev" },
-		"Policy.Yes":     func(a *AddonUpdateRequest, s *ScaleRequest) { a.Policy.Yes, s.Policy.Yes = true, true },
 		"Policy.RequireHealthy": func(a *AddonUpdateRequest, s *ScaleRequest) {
 			a.Policy.RequireHealthy, s.Policy.RequireHealthy = true, true
 		},
@@ -229,7 +254,11 @@ var (
 		"Min":          func(_ *AddonUpdateRequest, s *ScaleRequest) { s.Min = size(0) },
 		"Max":          func(_ *AddonUpdateRequest, s *ScaleRequest) { s.Max = size(9) },
 	}
-	ignoredRequestFields = []string{"Common.NoWait", "Common.Limits", "Common.Expect"}
+	// Policy.Yes is how the consent is given, and not a part of the plan.
+	// SkipVerify and Nodes say what the run reads after and beside a roll.
+	// The fields of a roll request have their rows in
+	// TestRollRequest_Differs.
+	ignoredRequestFields = []string{"Common.NoWait", "Common.SkipVerify", "Common.Nodes", "Common.Limits", "Common.Expect", "Policy.Yes"}
 )
 
 // A reviewed plan counts only for its own request: every field that can
@@ -287,6 +316,25 @@ func TestSameRequest(t *testing.T) {
 	if err := sameRequest(reviewed(addons), late); err != nil {
 		t.Errorf("other limits: %v", err)
 	}
+	// --yes is not part of the identity of a plan, in either direction.
+	for _, tt := range []struct {
+		name                string
+		reviewedYes, runYes bool
+	}{
+		{"reviewed without --yes, run with it", false, true},
+		{"reviewed with --yes, run without it", true, false},
+	} {
+		before, now := addons, addons
+		before.Policy.Yes, now.Policy.Yes = tt.reviewedYes, tt.runYes
+		if err := sameRequest(reviewed(before), now); err != nil {
+			t.Errorf("%s: %v", tt.name, err)
+		}
+		// Every other field of the policy still counts beside it.
+		now.Policy.Force = true
+		if err := sameRequest(reviewed(before), now); !errors.Is(err, ErrOtherRequest) {
+			t.Errorf("%s, and --force: error = %v, want ErrOtherRequest", tt.name, err)
+		}
+	}
 	// Another kind of change, and a plan with no request.
 	if err := sameRequest(reviewed(addons), scale); !errors.Is(err, ErrOtherRequest) {
 		t.Errorf("a plan of another kind: error = %v", err)
@@ -315,9 +363,10 @@ func TestRun_ExpectOfAnotherRequest(t *testing.T) {
 		edit func(req *ScaleRequest)
 	}{
 		{"a scale-down", func(req *ScaleRequest) { req.Desired = size(1) }},
-		{"the same sizes with --yes", func(req *ScaleRequest) { req.Policy.Yes = true }},
 		{"the same sizes with --force", func(req *ScaleRequest) { req.Policy.Force = true }},
 		{"the same sizes with --skip-health-check", func(req *ScaleRequest) { req.Policy.Skip = true }},
+		{"the same sizes with --require-healthy", func(req *ScaleRequest) { req.Policy.RequireHealthy = true }},
+		{"the same sizes with --yes and --force", func(req *ScaleRequest) { req.Policy.Yes, req.Policy.Force = true, true }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			req := up
@@ -678,8 +727,31 @@ func TestRun_AddonDegradesBeforeSubmit(t *testing.T) {
 		if f == nil || !strings.Contains(f.Error, "--require-healthy is set") || !strings.Contains(f.Error, "add-on vpc-cni was not changed") {
 			t.Errorf("failure = %+v", f)
 		}
-		if res.ExitCode() != 3 {
-			t.Errorf("exit = %d, want 3", res.ExitCode())
+		// A Block exits 3, also over warnings alone.
+		if res.ExitCode() != 3 || res.Status != RunBlocked {
+			t.Errorf("result = %s, exit %d; want Blocked, 3", res.Status, res.ExitCode())
+		}
+	})
+	t.Run("--require-healthy blocks the only add-on", func(t *testing.T) {
+		e := newEnv(t, newWorld(nil))
+		degrade(e, 4)
+		req := yes(request("vpc-cni"))
+		req.Policy.RequireHealthy = true
+		res, err := Run(testContext(t), e.deps, req, Hooks{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := statuses(res)["vpc-cni"]; got != StepBlocked || res.ExitCode() != 3 || res.Status != RunBlocked {
+			t.Errorf("step = %s, result = %s, exit %d; want Blocked, Blocked, 3", got, res.Status, res.ExitCode())
+		}
+		// The same world at plan time has the same code.
+		planned := newEnv(t, newWorld(func(c *fleettest.Cluster) { c.Addon("vpc-cni").Status = fleettest.StatusDegraded }))
+		p, err := NewPlan(testContext(t), planned.deps, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Decision() != DecisionBlocked || p.ExitCode() != res.ExitCode() {
+			t.Errorf("the plan is %s with exit %d, and the run exits %d; want Blocked and the same code", p.Decision(), p.ExitCode(), res.ExitCode())
 		}
 	})
 	t.Run("--yes goes on and records it", func(t *testing.T) {
@@ -890,6 +962,9 @@ func TestRun_RecheckAfterWait(t *testing.T) {
 		if diff := cmp.Diff([]any{"vpc-cni"}, updated(e)); diff != "" {
 			t.Errorf("updates (-want +got):\n%s", diff)
 		}
+		if res.ExitCode() != 3 || res.Status != RunBlocked {
+			t.Errorf("result = %s, exit %d; want Blocked, 3", res.Status, res.ExitCode())
+		}
 	})
 }
 
@@ -955,22 +1030,76 @@ func TestRun_RecheckAfterWait_GoesOn(t *testing.T) {
 func TestMergeAccepted(t *testing.T) {
 	accepted := []health.Result{{Name: "Addons", Outcome: health.Warn, Message: "coredns is DEGRADED", Findings: []string{"coredns"}}}
 	cur := []health.Result{{Name: "Addons", Outcome: health.Warn, Message: "vpc-cni is DEGRADED", Findings: []string{"vpc-cni"}}}
-	if got := worseThan(accepted, cur); len(got) != 1 {
-		t.Fatalf("worseThan = %v, want the new finding", got)
+	if got := health.Worse(accepted, cur); len(got) != 1 {
+		t.Fatalf("Worse = %v, want the new finding", got)
 	}
 	merged := mergeAccepted(accepted, cur)
-	if got := worseThan(merged, cur); len(got) != 0 {
+	if got := health.Worse(merged, cur); len(got) != 0 {
 		t.Errorf("after the merge, the same result is worse: %v", got)
 	}
-	if got := worseThan(merged, accepted); len(got) != 0 {
+	if got := health.Worse(merged, accepted); len(got) != 0 {
 		t.Errorf("after the merge, the first result is worse: %v", got)
 	}
 	// A check that nobody saw, and that is not a pass, is worse.
 	unseen := []health.Result{{Name: "Quotas", Outcome: health.Warn, Message: "91% in use"}}
-	if got := worseThan(accepted, unseen); len(got) != 1 || got[0].Check != "Quotas" {
-		t.Errorf("worseThan for a new check = %v", got)
+	if got := health.Worse(accepted, unseen); len(got) != 1 || got[0].Check != "Quotas" {
+		t.Errorf("Worse for a new check = %v", got)
 	}
-	if got := worseThan(nil, []health.Result{{Name: "Addons", Outcome: health.Pass}}); len(got) != 0 {
+	if got := health.Worse(nil, []health.Result{{Name: "Addons", Outcome: health.Pass}}); len(got) != 0 {
 		t.Errorf("a new check that passes is worse: %v", got)
+	}
+}
+
+// regate keeps the reads that a check could not make on every path, also
+// when --yes or an answer goes past the check: the run then exits 4. And
+// it asks nobody once the step has used its questions.
+func TestRegate_FailuresAndQuestionBudget(t *testing.T) {
+	e := newEnv(t, newWorld(nil))
+	p, err := NewPlan(testContext(t), e.deps, request("vpc-cni"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := &p.Clusters[0]
+	step := StepResult{Ref: cp.Steps()[0].Ref}
+	unread := apidoc.Failure{Kind: apidoc.FailureCluster, Name: "prod", Reason: apidoc.ReasonAccessDenied, Operation: "servicequotas:GetServiceQuota"}
+	// An advisory check that could not read: the gate asks about it.
+	quota := []health.Result{{Name: "Quotas", Outcome: health.Unreadable, Message: "could not read the vCPU quota", Failures: []apidoc.Failure{unread}}}
+
+	tests := []struct {
+		name    string
+		policy  health.Policy
+		answers []bool
+		mayAsk  bool
+		wantOK  bool
+		status  StepStatus
+		asked   int
+	}{
+		{name: "--yes goes past it", policy: health.Policy{Yes: true}, mayAsk: true, wantOK: true},
+		{name: "an answer goes past it", answers: []bool{true}, mayAsk: true, wantOK: true, asked: 1},
+		{name: "--require-healthy blocks", policy: health.Policy{Yes: true, RequireHealthy: true}, mayAsk: true, status: StepBlocked},
+		{name: "no question is left: failed, and nobody is asked", mayAsk: false, status: StepFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &script{t: t, answers: tt.answers}
+			r := &runner{ctx: testContext(t), d: e.deps, common: Common{Policy: tt.policy}, hooks: s.hooks()}
+			r.newRead(r.common.Limits.Read)
+			defer r.read.stop()
+			out, ok, _ := r.regate(cp, step, quota, tt.mayAsk)
+			if ok != tt.wantOK || out.Status != tt.status || len(s.asked) != tt.asked {
+				t.Errorf("regate = %v, step %q, %d questions; want %v, %q, %d", ok, out.Status, len(s.asked), tt.wantOK, tt.status, tt.asked)
+			}
+			if tt.status == StepFailed && (out.Failure == nil || !strings.Contains(out.Failure.Error, "keeps changing")) {
+				t.Errorf("failure = %+v, want that the target keeps changing", out.Failure)
+			}
+			// The read that failed is a failure of the run on every path.
+			if diff := cmp.Diff([]apidoc.Failure{unread}, r.failures); diff != "" {
+				t.Errorf("failures of the run (-want +got):\n%s", diff)
+			}
+			res := Result{Plan: p, Clusters: []ClusterResult{{Steps: []StepResult{{Ref: step.Ref, Status: StepSucceeded}}}}, Failures: r.failures}
+			if got := res.ExitCode(); got != 4 {
+				t.Errorf("a run that succeeds after it exits %d, want 4", got)
+			}
+		})
 	}
 }

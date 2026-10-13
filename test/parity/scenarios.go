@@ -308,15 +308,22 @@ func nodegroupUpdate() []Scenario {
 	with := func(extra ...string) []string { return every(append([]string{"-n", "ng-a"}, extra...)...) }
 	// On a terminal the command prompts only for health warnings.
 	onTerminal := args("nodegroup", "update", "-c", "prod", "-n", "ng-a", "--poll-interval", pollArg)
+	// The new command takes the nodegroups as arguments, and none means all.
+	v2Every := args("nodegroup", "update", "-c", "prod", "--poll-interval", pollArg, "-o", "json")
+	v2For := func(nodegroup string) func(extra ...string) []string {
+		return args("nodegroup", "update", nodegroup, "-c", "prod", "--poll-interval", pollArg, "-o", "json")
+	}
+	v2 := v2For("ng-a")
+	v2OnTerminal := args("nodegroup", "update", "ng-a", "-c", "prod", "--poll-interval", pollArg)
 	a, b := "UpdateNodegroupVersion prod/ng-a", "UpdateNodegroupVersion prod/ng-b"
 	rolled := resourceIs("ng-a", "1.32.0-20260101 ACTIVE")
 	return []Scenario{
-		{Name: "nodegroup-update-yes", Behaviour: Success, Seed: fleet(scripts(slow)), Legacy: with("--yes"), Checks: []Check{updatesAre(a), rolled}},
-		{Name: "nodegroup-update-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), Checks: []Check{exits(0)}},
+		{Name: "nodegroup-update-yes", Behaviour: Success, Seed: fleet(scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{updatesAre(a), rolled}},
+		{Name: "nodegroup-update-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), V2: v2("--dry-run"), Checks: []Check{exits(0)}},
 		{
 			// The release notes come from api.github.com, which the runner
 			// keeps the binary away from. The dry run must still finish.
-			Name: "nodegroup-update-dry-run-changelog", Seed: fleet(), Legacy: with("--dry-run", "--changelog"),
+			Name: "nodegroup-update-dry-run-changelog", Seed: fleet(), Legacy: with("--dry-run", "--changelog"), V2: v2("--dry-run", "--changelog"),
 			Checks: []Check{exits(0), noMutations, sawRead(fleettest.EKSDescribeNodegroup)},
 		},
 		{
@@ -326,7 +333,7 @@ func nodegroupUpdate() []Scenario {
 			// nodegroup again after the answer sees the change and leaves
 			// the nodegroup alone, as the legacy command does. One that does
 			// not sends its update.
-			Name: "nodegroup-update-changed-at-the-prompt", Seed: fleet(noMetrics, scripts(never)), Legacy: onTerminal(), Terminal: sayYes,
+			Name: "nodegroup-update-changed-at-the-prompt", Seed: fleet(noMetrics, scripts(never)), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayYes,
 			Moves:  []Move{{When: AfterPrompt(1), Do: scaleElsewhere}},
 			Checks: []Check{exits(0), noMutations, sawAfterPrompt(Fact{Subject: "nodegroup prod/ng-a", Attribute: "status", Value: "UPDATING"})},
 		},
@@ -334,39 +341,39 @@ func nodegroupUpdate() []Scenario {
 			// The same, at the last moment: the command has decided and its
 			// update is on the way. EKS refuses the update, and the command
 			// must report that as a failure.
-			Name: "nodegroup-update-changed-under-the-gate", Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Name: "nodegroup-update-changed-under-the-gate", Seed: fleet(scripts(never)), Legacy: with("--yes"), V2: v2("--yes"),
 			Moves:  []Move{{When: BeforeMutation(fleettest.EKSUpdateNodegroupVersion, "prod/ng-a"), Do: scaleElsewhere}},
 			Checks: []Check{fails, refusedByEKS, resourceIs("ng-a", "1.32.0-20250101 UPDATING")},
 		},
 		{
 			// The control plane starts to update just before the command
 			// sends its roll. EKS refuses the roll.
-			Name: "nodegroup-update-cluster-starts-updating", Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Name: "nodegroup-update-cluster-starts-updating", Seed: fleet(scripts(never)), Legacy: with("--yes"), V2: v2("--yes"),
 			Moves:  []Move{{When: BeforeMutation(fleettest.EKSUpdateNodegroupVersion, "prod/ng-a"), Do: startControlPlaneUpdate}},
 			Checks: []Check{fails, refusedByEKS, resourceIs("ng-a", "1.32.0-20250101 ACTIVE")},
 		},
 		{
-			Name: "nodegroup-update-cluster-updating", Seed: fleet(scripts(never)), Prepare: startControlPlaneUpdate, Legacy: with("--yes"),
+			Name: "nodegroup-update-cluster-updating", Seed: fleet(scripts(never)), Prepare: startControlPlaneUpdate, Legacy: with("--yes"), V2: v2("--yes"),
 			Checks: []Check{noMutations, sawAnswer(fleettest.EKSDescribeCluster, "UPDATING")},
 		},
 		{
 			// The legacy command does not refuse without --yes when health is clean.
 			// The new command must refuse before it calls AWS at all.
-			Name: "nodegroup-update-no-yes", Seed: fleet(scripts(slow)), Legacy: with(), Checks: []Check{exits(0), updatesAre(a)},
+			Name: "nodegroup-update-no-yes", Seed: fleet(scripts(slow)), Legacy: with(), V2: v2(), Checks: []Check{exits(0), updatesAre(a)},
 			V2Checks: []Check{noRequests},
 		},
-		{Name: "nodegroup-update-warnings-unattended", Seed: fleet(noMetrics), Legacy: with(), Checks: []Check{fails, noMutations}},
-		{Name: "nodegroup-update-require-healthy", Seed: fleet(noMetrics), Legacy: with("--yes", "--require-healthy"), Checks: []Check{exits(2), noMutations}},
+		{Name: "nodegroup-update-warnings-unattended", Seed: fleet(noMetrics), Legacy: with(), V2: v2(), Checks: []Check{fails, noMutations}},
+		{Name: "nodegroup-update-require-healthy", Seed: fleet(noMetrics), Legacy: with("--yes", "--require-healthy"), V2: v2("--yes", "--require-healthy"), Checks: []Check{exits(2), noMutations}},
 		{
 			// On a terminal the command draws the live roll view.
 			Name: "nodegroup-update-prompt-yes", Behaviour: PromptYes, Live: true, Seed: fleet(noMetrics, scripts(slow)),
-			Legacy: onTerminal(), Terminal: sayYes, Checks: []Check{exits(0), updatesAre(a)},
+			Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayYes, Checks: []Check{exits(0), updatesAre(a)},
 		},
-		{Name: "nodegroup-update-prompt-no", Behaviour: PromptNo, Seed: fleet(noMetrics), Legacy: onTerminal(), Terminal: sayNo},
-		{Name: "nodegroup-update-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(noMetrics), Legacy: onTerminal(), Terminal: ctrlC},
+		{Name: "nodegroup-update-prompt-no", Behaviour: PromptNo, Seed: fleet(noMetrics), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayNo},
+		{Name: "nodegroup-update-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(noMetrics), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: ctrlC},
 		{
 			// Every nodegroup is DEGRADED: no node counts as ready.
-			Name: "nodegroup-update-blocked", Behaviour: Blocked, Legacy: with("--yes"),
+			Name: "nodegroup-update-blocked", Behaviour: Blocked, Legacy: with("--yes"), V2: v2("--yes"),
 			Seed: fleet(func(_ *fleettest.State, c *fleettest.Cluster) {
 				for _, ng := range c.Nodegroups {
 					ng.Status = fleettest.StatusDegraded
@@ -376,70 +383,71 @@ func nodegroupUpdate() []Scenario {
 		},
 		{
 			// One other nodegroup is DEGRADED: a warning, which --yes accepts.
-			Name: "nodegroup-update-degraded-neighbour", Legacy: with("--yes"), Checks: []Check{exits(0), updatesAre(a)},
+			Name: "nodegroup-update-degraded-neighbour", Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(0), updatesAre(a)},
 			Seed: fleet(scripts(slow), func(_ *fleettest.State, c *fleettest.Cluster) {
 				c.Nodegroup("ng-b").Status = fleettest.StatusDegraded
 				c.Nodegroup("ng-b").HealthIssues = []fleettest.Issue{{Code: "AsgInstanceLaunchFailures", Message: "could not launch instances"}}
 			}),
 		},
-		{Name: "nodegroup-update-failed", Behaviour: Failed, Seed: fleet(scripts(failing)), Legacy: with("--yes"), Checks: []Check{updatesAre(a)}},
+		{Name: "nodegroup-update-failed", Behaviour: Failed, Seed: fleet(scripts(failing)), Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{updatesAre(a)}},
 		{
 			// UPDATING, with no update to follow: the legacy command skips it.
-			Name: "nodegroup-update-busy", Behaviour: Busy, Legacy: with("--yes"), Checks: []Check{exits(0)},
+			Name: "nodegroup-update-busy", Behaviour: Busy, Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(0)},
 			Seed: fleet(func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodegroup("ng-a").Status = fleettest.StatusUpdating }),
 		},
-		{Name: "nodegroup-update-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a), worldMoved}},
+		{Name: "nodegroup-update-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), V2: v2("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a), worldMoved}},
 		{
-			Name: "nodegroup-update-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Name: "nodegroup-update-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes"), V2: v2("--yes"),
 			Signal: interruptWait(1, 2), Checks: []Check{updatesAre(a)},
 		},
 		{
-			Name: "nodegroup-update-lost-response", Behaviour: LostResponse, Seed: fleet(scripts(slow)), Legacy: with("--yes"),
+			Name: "nodegroup-update-lost-response", Behaviour: LostResponse, Seed: fleet(scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"),
 			Prepare: fault(on(fleettest.EKSUpdateNodegroupVersion), fleettest.Fault{LoseResponse: 1}),
 		},
 		{
-			Name: "nodegroup-update-throttled-read", Behaviour: ThrottledRead, Seed: fleet(scripts(slow)), Legacy: with("--yes"),
+			Name: "nodegroup-update-throttled-read", Behaviour: ThrottledRead, Seed: fleet(scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"),
 			Prepare: fault(on(fleettest.SSMGetParameter), fleettest.Fault{Throttle: 1}),
 		},
-		{Name: "nodegroup-update-no-wait", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--no-wait"), Checks: []Check{exits(0), updatesAre(a), resourceIs("ng-a", "UPDATING")}},
+		{Name: "nodegroup-update-no-wait", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--no-wait"), V2: v2("--yes", "--no-wait"), Checks: []Check{exits(0), updatesAre(a), resourceIs("ng-a", "UPDATING")}},
 		{
 			// No -n: every nodegroup. ng-b is on the latest AMI and is left alone.
-			Name: "nodegroup-update-all-nodegroups", Seed: fleet(scripts(slow)), Legacy: every("--yes"), Checks: []Check{exits(0), updatesAre(a)},
+			Name: "nodegroup-update-all-nodegroups", Seed: fleet(scripts(slow)), Legacy: every("--yes"), V2: v2Every("--yes"), Checks: []Check{exits(0), updatesAre(a)},
 		},
-		{Name: "nodegroup-update-several", Seed: fleet(bothStale, scripts(slow)), Legacy: every("--yes"), Checks: []Check{exits(0), updatesAre(a, b)}},
+		{Name: "nodegroup-update-several", Seed: fleet(bothStale, scripts(slow)), Legacy: every("--yes"), V2: v2Every("--yes"), Checks: []Check{exits(0), updatesAre(a, b)}},
 		{
-			Name: "nodegroup-update-partial-failure", Seed: fleet(bothStale, scripts(slow), script("ng-b", failing)), Legacy: every("--yes"),
+			Name: "nodegroup-update-partial-failure", Seed: fleet(bothStale, scripts(slow), script("ng-b", failing)), Legacy: every("--yes"), V2: v2Every("--yes"),
 			Checks: []Check{fails, updatesAre(a, b), rolled, resourceIs("ng-b", "1.32.0-20250101")},
 		},
-		{Name: "nodegroup-update-force", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--force"), Checks: []Check{exits(0), updatesAre(a)}},
+		{Name: "nodegroup-update-force", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--force"), V2: v2("--yes", "--force"), Checks: []Check{exits(0), updatesAre(a)}},
 		{
-			Name: "nodegroup-update-reroll", Seed: fleet(scripts(slow)), Legacy: every("-n", "ng-b", "--yes", "--reroll"),
+			Name: "nodegroup-update-reroll", Seed: fleet(scripts(slow)), Legacy: every("-n", "ng-b", "--yes", "--reroll"), V2: v2For("ng-b")("--yes", "--reroll"),
 			Checks: []Check{exits(0), updatesAre(b)},
 		},
 		{
 			// Without --reroll a nodegroup on the latest AMI is not rolled.
-			Name: "nodegroup-update-up-to-date", Seed: fleet(), Legacy: every("-n", "ng-b", "--yes"), Checks: []Check{exits(0), noMutations},
+			Name: "nodegroup-update-up-to-date", Seed: fleet(), Legacy: every("-n", "ng-b", "--yes"), V2: v2For("ng-b")("--yes"), Checks: []Check{exits(0), noMutations},
 		},
 		{
 			// --force on a nodegroup that is on the latest AMI. The legacy
 			// command rolls it.
-			Name: "nodegroup-update-force-up-to-date", Seed: fleet(scripts(slow)), Legacy: every("-n", "ng-b", "--yes", "--force"),
+			Name: "nodegroup-update-force-up-to-date", Seed: fleet(scripts(slow)), Legacy: every("-n", "ng-b", "--yes", "--force"), V2: v2For("ng-b")("--yes", "--force"),
 			Checks: []Check{exits(0), updatesAre(b)},
 		},
 		{
 			// ListNodegroups answers one name per page. The second stale
 			// nodegroup is on the second page.
-			Name: "nodegroup-update-paged", Seed: fleet(bothStale, scripts(slow)), Legacy: every("--yes"),
+			Name: "nodegroup-update-paged", Seed: fleet(bothStale, scripts(slow)), Legacy: every("--yes"), V2: v2Every("--yes"),
 			Prepare: fault(on(fleettest.EKSListNodegroups), fleettest.Fault{PageSize: 1}),
 			Checks:  []Check{exits(0), updatesAre(a, b)},
 		},
 		{
-			Name: "nodegroup-update-custom-ami", Legacy: with("--yes"), Checks: []Check{noMutations},
+			Name: "nodegroup-update-custom-ami", Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{noMutations},
 			Seed: fleet(func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodegroup("ng-a").AMIType = "CUSTOM" }),
 		},
 		{
 			Name: "nodegroup-update-all-clusters", Seed: fleet(staging, scripts(slow)),
 			Legacy: []string{"nodegroup", "update", "--all-clusters", "-r", Region, "--yes", "--poll-interval", pollArg, "-o", "json"},
+			V2:     []string{"nodegroup", "update", "--all-clusters", "-r", Region, "--yes", "--poll-interval", pollArg, "-o", "json"},
 			Checks: []Check{exits(0), updatesAre(a, "UpdateNodegroupVersion staging/ng-s")},
 		},
 	}

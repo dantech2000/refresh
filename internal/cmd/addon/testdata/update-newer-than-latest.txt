@@ -1,0 +1,22 @@
+exit: 0
+error: 
+--- stdout ---
+Plan   - NothingToDo   AddonUpdate
+
+PLAN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   - NothingToDo
+
+STEPS  1
+  NAME     KIND   ACTION  REASON           FROM                TO                  NOTE
+  vpc-cni  Addon  Skip    NewerThanLatest  v1.21.0-eksbuild.1  v1.21.0-eksbuild.1  -
+
+NOTICES
+  1  vpc-cni is DEGRADED at v1.21.0-eksbuild.1, newer than the latest catalogue version v1.20.0-eksbuild.1; not re-applied
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  skip, at v1.21.0-eksbuild.1 (NewerThanLatest)
+warning: vpc-cni is DEGRADED at v1.21.0-eksbuild.1, newer than the latest catalogue version v1.20.0-eksbuild.1; not re-applied

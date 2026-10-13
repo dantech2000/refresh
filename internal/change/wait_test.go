@@ -374,7 +374,8 @@ func TestWaitSettled_NodegroupAndCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff := cmp.Diff(Settled{Status: "ACTIVE", Version: "1.33", Sizes: Sizes{Desired: 4, Min: 2, Max: 6}}, got); diff != "" {
+	want := Settled{Status: "ACTIVE", Version: "1.33", Release: "1.33.0-20260101", AMIType: "AL2023_x86_64_STANDARD", Sizes: Sizes{Desired: 4, Min: 2, Max: 6}}
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("nodegroup (-want +got):\n%s", diff)
 	}
 

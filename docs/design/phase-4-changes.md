@@ -231,7 +231,7 @@ type Step struct {
 
 | Condition, first match | Decision | Exit of a dry run |
 |---|---|---|
-| A `Blocker`, or the gate decides `Block` | `Blocked` | 4 when the plan or the gate has a failure, else 3, else `Gate.Exit` for `--require-healthy` over warnings (2) |
+| A `Blocker`, or the gate decides `Block` | `Blocked` | 4 when the plan or the gate has a failure, else 3, also when `--require-healthy` blocks over warnings alone |
 | No step with `Submit`, `Attach`, or `Verify` | `NothingToDo` | 4 with a failure, else 0 |
 | The gate decides `Ask`, or went past reasons with `--yes` or `--force` | `Ask` | `Gate.Exit`: 4 or 2 |
 | Otherwise | `Proceed` | 4 with a failure, else 0 |
@@ -477,7 +477,7 @@ No confirm follows a wait that failed, timed out, or was interrupted.
 
 ### A submit with no update ID
 
-A request that EKS accepts with no update ID in the answer cannot be followed. The step is `InProgress` with the failure reason `NotMonitored`, and the run exits 4 (owner decision D3). The same holds for a wait that ends with `*UnobservedError`.
+A request that EKS accepts with no update ID in the answer cannot be followed, and its failure says that the change may still be running. The step is `InProgress` with the failure reason `NotMonitored`, and the run exits 4 (owner decision D3). The same holds for a wait that ends with `*UnobservedError`.
 
 Draft 1 sent such a step to `WaitSettled`. That is wrong for a roll: its goal version equals its starting version, and a first read can still show the old `ACTIVE` before EKS flips to `UPDATING`, so a roll that never ran would be marked done. I propose no reconciliation in this run. A bounded one would need a signal that the change began, and without the update ID there is none that a stale read cannot fake. The next run derives its plan from live state: it finds the nodegroup `UPDATING`, or finds the AMI still outdated. The old `scale` and `addon update` treated a missing ID as an error too (`TestScaleWait_MissingUpdateIDErrors`, `version_analyzer.go:264`).
 
@@ -582,6 +582,7 @@ A serial phase runs the same five for each step alone: the step's read is its fr
 | The target in flight, in a standalone command | `Busy` (section 3). No request. |
 | The target in flight, in an engine | The step becomes `Attach` |
 | A nodegroup whose Kubernetes version is not the step's `From` | `Failed`: "ng-a changed to 1.33 since the plan". No request. |
+| A nodegroup of a roll that is `ACTIVE` on another AMI release than the step's `FromRelease`, or that has a custom AMI now | `Skipped`, with a notice: someone rolled it since the plan. No request. The same with `--reroll`. The step of the plan becomes `Skip`. |
 | The read fails | `Failed` with the read failure |
 
 `StartNodegroupRoll` is ported frozen from `version_update.go:86-105`:
@@ -690,7 +691,7 @@ One rule for every command (owner decision D6). Fleet mode pools the steps of al
 |---|---|
 | `Succeeded`, `Skipped`, `Started`; `InProgress` from an attach under `--no-wait` | 0 |
 | `Failed`, `Cancelled`: the update ended badly, EKS refused the request, or the fresh read failed | 1 |
-| `Blocked`: the busy rule, the gate, or a plan blocker stopped it | 3; 4 when the gate or the plan could not read |
+| `Blocked`: the busy rule, the gate, or a plan blocker stopped it | 3; 4 when the gate or the plan could not read. `--require-healthy` over a warning is a block and exits 3, at the plan and during the run alike. |
 | `InProgress` with `Timeout` or `NotMonitored` | 4 |
 | `Busy` | 4 |
 | `Failed` from a verification issue; an add-on that is updated and not healthy | 5 |
@@ -699,7 +700,8 @@ One rule for every command (owner decision D6). Fleet mode pools the steps of al
 | Not a step | Code |
 |---|---|
 | A failure in the plan, the gate (`Verdict.Failures`), a region of the sweep, or the verification reads | 4 |
-| A question answered no; the hook error of section 7 | 1 |
+| A warning of the gate that `--yes` or an answer accepted | None. A run that then succeeds exits 0. A dry run reports it with 2. |
+| A question answered no; a stop from the checkpoint; the hook error of section 7 | 1. A higher code of the steps still wins. |
 | The read budget ran out before anything was submitted | 1 when nothing was read, else 4 |
 | Interrupt | 1, whatever else happened |
 
@@ -725,8 +727,12 @@ The table a test copies:
 | One `Busy`, the rest `Succeeded` | 4 |
 | One `InProgress` with `Timeout`, the rest `Succeeded` | 4 |
 | One `Blocked`, the rest `Succeeded` | 3 |
+| One `Blocked` by `--require-healthy` over warnings alone, the rest `Succeeded` | 3 |
 | All `Succeeded`, and a gate read that `--yes` went past | 4 |
+| All `Succeeded`, and a gate warning that `--yes` or an answer accepted | 0 |
 | Any of the rows above, interrupted | 1 |
+| All attempted steps `Succeeded`, and a checkpoint stopped the run | 1 |
+| One `Blocked`, and a checkpoint stopped the run | 3 |
 
 A failed upgrade or rollback exits 1, as the old binary does (traces `cluster-upgrade-addon-failed`, `cluster-upgrade-nodegroup-failed`, `cluster-rollback-failed`). Its result still lists the phases that completed, and the summary names the command that goes on from there. Against the old binary the rule changes two codes. A multi-target `nodegroup update` with one failed roll exited 1 and exits 4, as `addon update --all` and the fleet already did (`fleet.go:887-888`). A roll that EKS refuses, with nothing else done, exited 4 in `nodegroup update` and exits 1, as in the other commands.
 
@@ -941,9 +947,9 @@ A nil `Event` drops events. A nil `Checkpoint` means go on.
 
 A nil `Ask` means nobody can be asked. It is never a yes. A run with a nil `Ask`, no `Policy.Yes`, and no matching `Expect` is refused before any change: status `Refused`, exit 1, "nobody confirmed the change and nobody can be asked; pass --yes". The same holds for a question about health warnings or about a changed plan: "health warnings need an answer and nobody can be asked; pass --yes or --require-healthy".
 
-`Expect` is consent to one request. Before `Run` reads anything, it compares `Expect.Request` with the request, field by field: the kind, the cluster, the region, the targets, the parameters, and the whole policy (`Yes`, `RequireHealthy`, `Force`, `Skip`). It does not compare `Limits`, `NoWait`, and `Expect`, which cannot change what is submitted. A difference is the error `ErrOtherRequest`, "the reviewed plan is for another request", and nothing is read or changed. `Run` then compares its first plan with `Expect` through `Diff`.
+`Expect` is consent to one request. Before `Run` reads anything, it compares `Expect.Request` with the request, field by field: the kind, the cluster, the region, the targets, the parameters, and the policy fields `RequireHealthy`, `Force`, and `Skip`. It does not compare `Limits`, `NoWait`, and `Expect`, which cannot change what is submitted. It does not compare `Policy.Yes` either: `--yes` is how the consent is given, and no part of the plan. A plan reviewed without `--yes` and run with it matches, and so does the reverse. A difference is the error `ErrOtherRequest`, "the reviewed plan is for another request", and nothing is read or changed. `Run` then compares its first plan with `Expect` through `Diff`.
 
-The consent covers the health that the plan showed. The fresh read before each submit applies the policy to the health that it finds, by the pre-phase table of phase 3: a block blocks the step, nothing worse goes on, something worse asks again, `--yes` goes on with a notice, and `--require-healthy` blocks. When nobody can be asked, the step fails and nothing is sent for it.
+The consent covers the health that the plan showed. The fresh read before each submit applies the policy to the health that it finds, by the pre-phase table of phase 3: a block blocks the step, nothing worse goes on, something worse asks again, `--yes` goes on with a notice, and `--require-healthy` blocks. A step that the gate blocks exits 3, as a plan that the gate blocks, and 4 when something was unread. When nobody can be asked, the step fails and nothing is sent for it.
 
 `Common` gains two fields that a front end sets:
 
@@ -1067,7 +1073,7 @@ func (r Result) ExitCode() int
 func (r Result) Document() apidoc.Document
 ```
 
-`Status` is a label for people: the name of the outcome with the highest code. `ExitCode` does not read it; it reads the steps and the failures. `Stopped` comes only from a checkpoint and `Declined` only from an answer, so a failure after a stop request is still `Failed`, as the old TUI held (`tui/live/upgrade.go:305-318`).
+`Status` is a label for people: the name of the outcome with the highest code. `ExitCode` does not read it; it reads the steps and the failures. A run that a checkpoint stopped did not do what it was asked, so it exits 1 when nothing has a higher code. `Stopped` comes only from a checkpoint and `Declined` only from an answer, so a failure after a stop request is still `Failed`, as the old TUI held (`tui/live/upgrade.go:305-318`).
 
 ### The CLI front end
 
@@ -1514,7 +1520,7 @@ The code is the reference where it and the sections above differ. The first two 
 | 2 | An add-on confirm is one `DescribeAddon` | After `WaitUpdate`, yes. After an attach the settled answer of `WaitSettled` is the confirm, with no second read. |
 | 3 | "Ours" are the `Submit`, `Attach`, and `Verify` steps | Also a step that the table marked as a busy target (`Skip` with `InFlight`). Without that, the busy rule would refuse the whole run for a target that D4 says to report and pass by. |
 | 3 | Step table rows 5, 6, and 7 | Row 7 takes a `DELETING` add-on at any version, and rows 5 and 6 leave it out. D9 says that every in-flight state but the attach case is busy. `health.Addons` keeps its `DELETING` row for a caller that gets there another way. |
-| 3 | The lookup of the update in flight | It runs for a `Busy` row of a run, in one place (`runner.inFlight`), whether the plan or the fresh read before a submit found the target changing. A run in which every target is busy goes through its steps too, with no question: it prints the `Run` document with the `Busy` rows, exits 4, and the row and the failure name the type. When the lookup fails, the failure says "an update of unknown type" and the row has no `inFlight`. When EKS lists no update in progress, as for a resource that it deletes, the failure names the status alone. A dry run makes no lookup: its `Plan` document has the `Busy` failure without the type. |
+| 3 | The lookup of the update in flight | It runs for a `Busy` row of a run, in one place (`runner.inFlight`), whether the plan or the fresh read before a submit found the target changing. A run in which every target is busy goes through its steps too, with no question: it prints the `Run` document with the `Busy` rows, exits 4, and the row and the failure name the type. When the lookup fails, the failure says "an update of unknown type" and the row has no `inFlight`. When EKS lists no update in progress, as for a resource that it deletes, the failure names the status alone. The lookup has moved into the plan since: see "Four decisions after the review pass". |
 | 4 | `runPhase` has a batch form | Only the serial form is built. `runStep` and `plan` each have one switch that a new kind adds a case to. |
 | 4 | "The context ended before the request: `NotAttempted`" | Built. A request that left and got no answer before the run ended is `InProgress` with the reason `Interrupted` or `Timeout`: EKS may have accepted it. |
 | 4 | A partial failure | Its run status is `Incomplete`, the name of exit code 4. The failed step still says `Failed`. |
@@ -1583,15 +1589,101 @@ The code is the reference where it and the sections above differ. The first two 
 | What | Was | Is |
 |---|---|---|
 | Consent | A run with a nil `Ask`, no `--yes`, and no `Expect` started with no answer | It is refused, exit 1. Section 7 has the rule. |
-| `Expect` | Any plan counted as confirmed | `sameRequest` compares its request with the request before any read. A mismatch is `ErrOtherRequest`. |
+| `Expect` | Any plan counted as confirmed | `sameRequest` compares its request with the request before any read. A mismatch is `ErrOtherRequest`. `Policy.Yes` is not compared: see the next table. |
 | `Diff` | It compared the action, `To`, `ToRelease`, and the sizes before | It compares every field of a step with work. A changed goal of a scale is `Sizes` and asks. The new kind `Step` asks for a changed action, reason, `From`, or `Force`. A step that now attaches keeps the one notice `NowInFlight`. `TestDiff_EveryStepField` fails for a field of `Step` or `ScaleSizes` with no row. |
 | A scale target that is not `ACTIVE` | Only a scale-down ran the `Nodes` check, and `DEGRADED` was sent a request | Row 2 of the scale step table blocks it for every direction, with a `NotReady` blocker, exit 3. The fresh read applies the same row: the step is `Blocked`. No flag goes past it, also not `--skip-health-check`. `health.Nodes` was not used for a scale-up: `--skip-health-check` would skip it while the fresh read still blocks, and its estimate says "no Kubernetes access". |
 | In flight, for a scale target | Every status but `ACTIVE` and `DEGRADED` | `CREATING`, `UPDATING`, `DELETING`. `CREATE_FAILED` and `DELETE_FAILED` are not `ACTIVE`, so they block. The busy rule counts a `Blocked` step as one of ours. |
 | The fresh read of an add-on | The step table alone | Also the policy on the health that it finds, by `regate`. After a person answers, the add-on is read again. |
 | A submit after a wait | No read of the cluster | `recheckAddons` reads the snapshot again before each add-on submit that follows a wait. It applies the busy rule with the steps of the phase as ours, and the gate over the add-ons that remain. An add-on that is changing or unread in that snapshot is left to its own fresh read. A blocked or failed add-on does not stop the next one. |
 | A question during the run | None existed | Yes goes on. No ends the run as `Declined`, exit 1, and the later steps are `NotAttempted`. A hook error ends it as `Failed`, and `Run` returns the error. |
-| A step blocked during the run | No such result | `Blocked`, exit 3, with a failure that says why. `--require-healthy` over a warning gives 3 here, the code of a blocked step, and not 2. |
+| A step blocked during the run | No such result | `Blocked`, with a failure that says why. Exit 3, also when `--require-healthy` blocks over a warning: see the next table. |
 | Sizes that EKS did not return | `aws.ToInt32` made them 0 | `describe` returns an error for a scale read with no scaling config or a missing size. A wait polls through it. The fresh read fails, and nothing is sent. `fleet.Nodegroup.SizesKnown` carries the same fact in the snapshot, and the plan has an `Unread` blocker and a failure without it, exit 4. |
 | The last poll of a wait | The pause could pass the deadline, and the answer after it still counted | Section 8. |
 | Not built yet | `NodegroupUpdate`, `ClusterUpgrade`, `ClusterRollback`, `RollbackTarget`, `Common.Nodes`, `Common.SkipVerify`, the `Checkpoint` hook and type, `ConfirmPhase`, `Limits.StepWait`, `Phase.Serial`, `Phase.StopOnFailure` | Removed. Each returns with the change that uses it. `Question.Phase` is `Question.Step`. |
 | Kept | | `Kind.independent`, for the two kinds. The engine column of `Busy`, which a test kind reaches. The aliases of the `apidoc` enums, which are the published values. |
+
+### Decisions after the review pass
+
+| What | Was | Is |
+|---|---|---|
+| The exit code of a `Block` | `health.Gate` took the code from the findings before the policy, so `--require-healthy` over a warning exited 2 in a plan, and 3 during the run | 3, always, and 4 when a gate read failed (owner decision). `health.Gate` raises `Exit` to 3 for a `Block`; `ClusterPlan.ExitCode` and a step that `regate` blocks follow. Exit 2 is left for a dry run whose real run would ask. The help of both commands says so. Phase 3, section 4, has the table. |
+| `Policy.Yes` and `Expect` | `sameRequest` compared the whole policy, so a plan reviewed without `--yes` could not be run with it | `policyDiffers` leaves `Yes` out, and nothing else. `--force`, `--skip-health-check`, `--require-healthy`, and every request field are still compared. A warning that the reviewed plan showed is covered by the consent in both directions. |
+| The update in flight of a busy target | Looked up by the run, in the step. A dry run named no type. | Looked up by `plan`, in `markBusy`, through the same `lookupInFlight` that the fresh read before a submit uses. It is a read, so a dry run makes it. `Step.InFlight` and `PlanStep.inFlight` carry the type, the plan failure names it, and it says "an update of unknown type" when the lookup fails, with no `inFlight`. The step of a run takes the type and the failure from the plan and reads nothing again (`ClusterPlan.busyResult`). `PlanLines` prints `skip, at v1 (InFlight: AddonUpdate)`, and the `STEPS` section of a plan has a `note` column, as `RESULTS` has. |
+| `Diff` and `Step.InFlight` | | Not compared. The field names the update of someone else on a target that the run leaves alone. Nothing is submitted for it, so a change of it needs no answer and no notice: the row of the step says what it is now. `TestDiff_EveryStepField` lists it in `uncomparedStepFields`, and a new field of `Step` still needs a row in one of the two lists. |
+| A warning that `--yes` or an answer accepted | The contract row was new; the code already agreed | `Result.ExitCode` never reads `Gate.Exit`, so an accepted warning has no code and a run that then succeeds exits 0. A read that the gate could not make is in `Verdict.Failures` and still gives 4. A dry run exits with `Gate.Exit`, 2. The table test has both rows. The command tests `prompt-degraded` and `quiet` pin exit 0, and `dry-run-ask` pins 2. |
+| A warning that is new to a confirmed plan | `health.Worse` ignored a check that the plan before did not have. A scale-up that became a scale-down while the prompt was open was sent without the Kubernetes checks, and nothing said so. | `health.Worse` counts a check that is new and not a pass as worse, so `Diff` reports it as `GateWorse` and the question names it. `regate` uses the same function; `worseThan` is gone. |
+| What an answer accepted | `Gate.Accepted` had the reasons that `--yes` went past, and was empty after an answer or with `Expect` | `accept` sets `Accepted` and the decision `Go` on the gate of a plan that is executed with an `Ask` gate, so the `Run` document says what the consent went past. |
+| The questions of a fresh read | The second question was asked, answered, and then thrown away with "keeps changing" | `regate` takes `mayAsk`. `freshAddon` asks at most `maxQuestions` times, and fails the step before a further question. |
+| The failures of a gate during the run | `regate` kept `Verdict.Failures` only when it blocked | On every path: a check that could not read and that `--yes` or an answer went past makes the run exit 4. |
+| The names of the verification of add-ons | Every add-on had a result named `AddonHealth`, so `-o plain` printed one FIELD twice | `AddonHealth/<add-on>`. The format test of `addon update` fails for a FIELD on two rows. |
+| The gate of a plan that the busy rule refuses | It ran, and made its reads | It does not run: `planAddons` and `planScale` skip it, and the availability read with it. |
+| Not done | | Review item 7: one busy function over a resource, `availability.go` as an advisory `health.Check`, and one `recheck` over a kind. They belong with the roll batch, which is their second caller. |
+
+### Build step 5a, the node observer and the roll panel
+
+Built with no caller yet: `internal/noderoll` and `view.RollPanel`. The command wiring, `Common.Nodes`, `NodeProgress`, and the loop beside the wait arrive with `nodegroup update`.
+
+| Section | Note | Built |
+|---|---|---|
+| 9 | `Identity.TargetAMI` | Kept in the struct and passed to the classifier, which does not read it once a baseline exists. `Attach` always has a baseline, so the field changes nothing. `TestAttach_Modes` has a row for that. |
+| 9 | "`TargetVersion` is set and a node has another kubelet minor" | Decided from the first node list of `Attach`, and kept. A node whose kubelet version cannot be read follows the second row. The old observer could switch at any later snapshot; `MarkVersionRoll` has no successor. |
+| 9 | The old/new types had JSON tags | None. No document embeds a snapshot. |
+| 9 | The clock | `attach` takes the clock and the limit of the first sync. `Attach` passes `time.Now` and 10 seconds. The tests pass a clock that they move, and a limit that ends when the fake API refuses a request. |
+| 9 | A pod read that missed a node | Not cached: the next snapshot reads again, as before. |
+| 9 | `view.RollPanel(th, progress, desired, elapsed)` | `RollProgress` has `Nodegroup`, `Snapshot`, `Recent`, `Watching`, `OldVersion`, `NewVersion`. `elapsed` is shown in the header and turns its mark, one frame a second. With 0 the header has no time and the mark does not move, so a frame of a roll that did not change is equal to the one before. A panel that is not watched says "polled". The column of old and new is titled `OLD/NEW`, because a roll can change the version and not only the AMI. Separators are commas, so the panel reads the same without Unicode. |
+| 9 | The old notes under the bar (`rollview.Notes`) | Not ported. A failed launch is a `Notice` event of the run. |
+| 9 | `rollComplete`, `rollRepaintInterval`, `runRoll`, `LiveRollForUpdate` | Not ported: they are the loop beside the wait and its cadence, which section 9 gives to `change` and to the renderer. Their tests come with that code. |
+| 9 | client-go logs a failed list or watch through klog | Unchanged from the old command line. The command that wires the observer decides where klog writes. |
+
+
+### Build step 5b, the roll batch, `nodegroup update`, and fleet mode
+
+Built: the batch phase, `DecideAMIUpdate`, `StartNodegroupRoll`, the gate of a roll, the verification, the observers beside the wait, fleet mode, the command, and the `V2` command lines of the 50 `nodegroup-update-*` scenarios. Not built: the upgrade engine and rollback.
+
+| Section | Note | Built |
+|---|---|---|
+| 1 | `RollRequest.Filters []fleet.Filter` | `RollRequest.Select *Selector`: the text of the selection and a match function. The filters are parsed in the command layer, which `change` may not import. Two requests are the same selection when the text is equal. The keys of `-f` are `name`, `status`, `instanceType`, `amiStatus`, and `version`. |
+| 1 | A filter that matches nothing | For one cluster it is an error, exit 1, with the nodegroups of the cluster (`NoMatchError`). A cluster of a fleet then has no step. A nodegroup that could not be read stays a target, and its step blocks the plan. |
+| 1 | `ToRelease` is the AMI release that a roll expects | It is the ID of the latest recommended AMI. The snapshot reads the image ID from SSM and not the release version. `Diff` reports a new ID as `Release`. |
+| 1 | The plan of a selection | A notice names the nodegroups that `-f` selected. It prints with and without `--yes`, and the question lists them too. |
+| 3 | Review item 7 | Done. `busyFailure` and `busyTarget` serve an add-on and a nodegroup of every standalone change. `health.Availability` is a check that `change` runs beside the gate, for a scale-up and for a roll: a warning is a notice, and a read that fails gives `Skipped`. `recheck` takes the checks of the kind. `Resource` stays the type of a wait, and `StepRef.Resource()` returns it: the ref without its phase. No step builds a `Resource` by hand. |
+| 4 | `DecideAMIUpdate`, row 2: status `UPDATING` | Also `CREATING` and `DELETING`, as D4 says for every in-flight state. |
+| 4 | The roll plan is the table | Two rows follow the table for a step that it would submit. A nodegroup with no Kubernetes version is `Blocked` with an `Unread` blocker and a failure. A nodegroup that is not `ACTIVE` is `Blocked` with a `NotReady` blocker, also with `--skip-health-check`, as a scale target is. |
+| 4 | The submit table: "a nodegroup whose Kubernetes version is not the step's `From`" | It compares with `To`, which equals `From` for a roll, and sends the version of the fresh read. A fresh read that shows a target that is not `ACTIVE` and not changing gives `Blocked`. |
+| 4 | "`Wait` starts at the first submit" and covers the later submits | The fresh reads and the submits of a batch stay under the read budget. The wait budget starts at the first accepted submit and bounds the wait and the verification. A short `--wait-timeout` cannot stop the second submit. |
+| 4 | Wait together: `WaitUpdate` per update | `updatePoll` is one poll of one update, with the rules of `WaitUpdate`. `WaitUpdate` loops over one, and `waitTogether` polls every open one on each tick with `fanout.ForEach` and reports the answers in plan order. |
+| 4 | "`Failed` from a verification issue" | The step stays `Succeeded` and has `VerifyIssue`, as an add-on that is updated and not healthy. The exit code is 5 and the run status `VerifyFailed`. A `NodegroupActive` issue marks the nodegroups that it names. A `NodesReady` or `NewPendingPods` issue marks every roll of the batch: a node or a pod is not traced back to one roll. |
+| 4 | Verification reads | One `DescribeCluster` and one `DescribeNodegroup` per rolled nodegroup, then the checks. Without Kubernetes access the two Kubernetes checks are `Skipped` and the `Kubernetes` result is left out: the gate said it. An API that answered for the baseline and cannot be reached after the roll is a failure, exit 4. |
+| 4 | "The context ended: none" | An interrupt between the last poll and the verification ends the run as `Interrupted`, exit 1. A deadline there adds a `Timeout` failure, exit 4: the rolls ended and were not verified. |
+| 4 | Fleet: "each cluster's plan is computed again when its turn comes" | Every cluster after the first. The first runs the confirmed plan: nothing happened since. A cluster that cannot be read at its turn has its steps `NotAttempted` and a failure, exit 4. A cluster that a refusing difference stops has its steps `Blocked`, with the difference as the failure. |
+| 4 | Fleet budgets | The plan of a fleet has no budget of its own. Discovery has `--timeout`, and so has each cluster, in the plan and at its turn. A dry run of a fleet is the same. |
+| 4 | Fleet: `Plan.Decision` | A blocked cluster does not block the fleet. The fleet asks when a cluster asks, proceeds when one proceeds, and is `Blocked` only when none can run and one is blocked. The exit code of a dry run is still the highest. |
+| 4 | Fleet: the question | One, such as "Roll 2 nodegroup(s) in 2 cluster(s) (prod: ng-a; staging: ng-s), and leave out the blocked dev?". With gate warnings it names them, and a yes accepts them. A question at the turn of a cluster starts with the name of the cluster. |
+| 7 | `Checkpoint` | Called before each cluster of a fleet after the first. `Waited` is not read: the cluster is planned again in any case. `Stop` ends the run as `Stopped`, with exit 1, and a higher code of the steps wins. A hook error ends it as `Failed`, exit 1. |
+| 7 | `Event.Nodes *NodeProgress` | `Event.Nodes` is a `NodeView`: the nodegroup, the `noderoll` snapshot, the last events, whether it is watched, and when the roll started. `change` imports `noderoll` and `fanout`. |
+| 9 | The Auto Scaling watch reads "every `Poll`" on its own | It reads once for each tick of the wait, which sends on a channel without blocking. It has the pace of `--poll-interval` and no clock, so no test waits for it. |
+| 9 | The clock of the node observer | `Deps.Tick`, from `Factory.Tick`. It is apart from `After`, which a test clock moves with every pause of the wait. |
+| 9 | "One goroutine per accepted roll" | The node observer runs for a batch with exactly one roll in flight. With several there is no node view and no warning, as the panel table says. Without Kubernetes access one notice says that the nodes are not shown. |
+| 9 | The renderer of the panel is in `view` | `changecmd.RollRenderer` wraps the line renderer and draws `view.RollPanel`. The number of nodes to replace is the old nodes of the first snapshot. The header names the AMI that the roll moves to. On a terminal the lines are held while the panel is up. |
+| 9 | klog | Routed once, by `cmd/refresh` through `Factory.RouteKubeLogs`, which the root command calls after the global flags: discarded, and written to stderr at `--log-level debug` or `--verbose`. The old command line discarded klog only in the TUI. |
+| 10 | `--changelog` | The plan does not have the release version of the target, so the notes are the amazon-eks-ami releases after the release that the nodegroup runs. They print on stderr after the plan. The client is `Factory.HTTPClient`; without one the command warns. `PrintPlan` takes a function that runs after the plan is printed. |
+| 10 | The progress lines | A line of a fleet names the cluster, as `prod/ng-a`. The checks of a verification print on stderr only when one is not a pass and not skipped. A plan line of a roll says "roll onto the latest AMI of 1.32". |
+| 11 | The allowlist | Nine entries were added, each with a row of the contract: the exit code of `nodegroup-update-partial-failure` (4), of `nodegroup-update-cluster-starts-updating` and `nodegroup-update-changed-under-the-gate` (1), `refusedBeforeMutation` of `nodegroup-update-busy` and `nodegroup-update-changed-at-the-prompt`, the exit code 2 and `refusedBeforeMutation` of the two dry runs without Kubernetes access, and the empty decision evidence of `nodegroup-update-warnings-unattended`. `nodegroup-update-changed-under-the-gate` changes the world when the request has arrived, so no read can show it: the roll is sent and EKS refuses it in both binaries, and the prediction of `mutations` `[]` was wrong. `nodegroup-update-verify-node-not-ready` runs with `--wait-timeout 10s`, which bounds the wait for a new node to be Ready. |
+| 11 | Five scenarios failed with no entry | Fixed in the review pass below: all 50 `nodegroup-update-*` scenarios pass. |
+| 12 | The fakes | `cmdtest.Fake.UseWorldClock` also sets `Factory.Tick` to a clock that never ticks. No other fake package was edited. |
+
+### The review pass after build step 5b
+
+Each row is a change of behaviour, with its test.
+
+| Section | Change | Test |
+|---|---|---|
+| 4, 7 | A run that a checkpoint stopped exits 1, and no longer 0. The status is `Stopped` and the message says where it stopped. A higher code of the steps before the stop wins, with its status. | `TestFleet_InterruptAndStop`, `TestResultExitCode_NotAStep` |
+| 1, 4 | `Step` and `PlanStep` have `FromRelease` (`fromRelease`): the AMI release version of the nodegroup when the plan read it, on a step that submits a roll. `Diff` reports a change of it as `Step`, which asks. | `TestDiff_EveryStepField` |
+| 4 | The fresh read before a roll decides again (`redecideRoll`) with all that `DecideAMIUpdate` read and one `DescribeNodegroup` returns: the status, the AMI type, and the release version. A nodegroup that is `ACTIVE` on another release was rolled elsewhere: `Skipped`, no request, exit 0, also with `--reroll`. One that has a custom AMI now is `Skipped` too. The step of the plan becomes `Skip` (`AlreadyLatest`) or `Manual`, and the plan gets the notice, so the document says why nothing was sent. In a fleet the plan of the turn is the plan: with `--yes` a changed release is accepted there with a notice, as every `Step` difference. | `TestRoll_FreshReadDecidesAgain` |
+| 4 | The interrupt guard at the turn of a cluster stays. Without it the cancelled context stops every read, and still a checkpoint is called and a cluster that the plan blocked gets `Blocked` rows and exit 3. | `TestFleet_InterruptBetweenClusters` |
+| 2, 4 | The failure of a change that EKS accepted with no update ID ends with "it may still be running", for a roll, a scale, and an add-on. | `TestRoll_NoUpdateID` |
+| 9 | klog is routed: see the row of section 9 above. | `TestKubeLogs` |
+| 10 | The long help of `nodegroup update`, `nodegroup scale`, and `addon update` ends with a list of exit codes from `changecmd.ExitCodeHelp`: the shared lines are one text, and each command adds its own cases. | `TestChangeCommandsAgreeOnExitCodes` |
+| 11 | Two allowlist entries, for the exit code 3 of `nodegroup-update-require-healthy` and `nodegroup-update-node-not-ready-require-healthy`, with the contract row "A run that `--require-healthy` stops over a warning exits 2". No add-on or scale scenario uses `--require-healthy`. | `TestPaired` |
+| 11 | The baseline rule of the parity suite (`owedByDecision` in `test/parity/compare.go`): the whole-cluster Pending-pod list of the verification baseline is owed only when a mutation follows it in the new trace. A run that both binaries refuse before any mutation, and that followed no update, owes none. The node list of the baseline gives the same facts as the node list of the gate, so those stay owed, as every gate read does. It fixes `nodegroup-update-pdb-blocked`, `-pdbs-unreadable`, and `-pdb-tightens-after-dry-run` with no allowlist entry. | `TestCompareBaselineRule`, `TestPairedFindsProblems` |

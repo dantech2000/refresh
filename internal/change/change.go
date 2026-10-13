@@ -1,12 +1,12 @@
 // Package change plans and runs the changes that refresh makes to a
-// cluster: an add-on update and a nodegroup scale now, and roll, upgrade,
-// and rollback as they are built.
+// cluster: an add-on update, a nodegroup scale, and a nodegroup roll, for
+// one cluster or for a fleet. Upgrade and rollback come as they are built.
 //
 // One function builds the plan of a change. NewPlan returns it for a dry
 // run, and Run calls the same function, so a dry run shows what a real run
 // would do. Run executes on the goroutine of its caller and reports
-// through two hooks: an event and a question. Nothing here writes to a
-// terminal.
+// through three hooks: an event, a question, and a checkpoint. Nothing
+// here writes to a terminal.
 package change
 
 import (
@@ -26,21 +26,24 @@ type Kind string
 // The kinds of change that this package can plan and run. Each other
 // kind arrives with its planner.
 const (
-	AddonUpdate    Kind = "AddonUpdate"
-	NodegroupScale Kind = "NodegroupScale"
+	AddonUpdate     Kind = "AddonUpdate"
+	NodegroupScale  Kind = "NodegroupScale"
+	NodegroupUpdate Kind = "NodegroupUpdate"
 )
 
 // independent reports whether the steps of a change of kind k are
 // independent targets: one that fails beside one that changed something
-// is a partial failure. Both kinds that are built are. A kind whose
-// phases are a sequence is not: a failed phase has failed the whole
-// operation.
+// is a partial failure. The three kinds that are built are: the add-ons
+// of an update, the nodegroups of a roll, and the clusters of a fleet. A
+// kind whose phases are a sequence is not: a failed phase has failed the
+// whole operation.
 func (k Kind) independent() bool {
-	return k == AddonUpdate || k == NodegroupScale
+	return k == AddonUpdate || k == NodegroupScale || k == NodegroupUpdate
 }
 
-// Request is one of the request types of this package: AddonUpdateRequest
-// or ScaleRequest. The kinds that are not built yet add theirs.
+// Request is one of the request types of this package: AddonUpdateRequest,
+// ScaleRequest, or RollRequest. The kinds that are not built yet add
+// theirs.
 type Request interface {
 	kind() Kind
 	base() Common
@@ -67,6 +70,13 @@ type Common struct {
 	Policy health.Policy
 	// NoWait ends the run once AWS accepted the changes.
 	NoWait bool
+	// SkipVerify leaves out the verification after a roll, and the
+	// baseline before it.
+	SkipVerify bool
+	// Nodes starts a node observer beside the wait of a roll, which
+	// reports through NodeProgress events. It needs Kubernetes access,
+	// and it runs only for a batch with exactly one roll in flight.
+	Nodes  bool
 	Limits Limits
 	// Expect is a plan that a person reviewed before this call. It is
 	// consent to that plan and to no other: Run returns an error before
@@ -106,6 +116,41 @@ type ScaleRequest struct {
 
 func (ScaleRequest) kind() Kind { return NodegroupScale }
 
+// RollRequest rolls nodegroups onto the latest AMI of their own
+// Kubernetes version: the nodegroups of one cluster, or with Fleet the
+// nodegroups of every cluster of a region sweep.
+type RollRequest struct {
+	Common
+	Target
+	// Nodegroups are exact names. Empty means every nodegroup.
+	Nodegroups []string
+	// Select keeps the nodegroups that it matches, of the named ones or
+	// of all. Nil keeps every one.
+	Select *Selector
+	// Reroll also rolls a nodegroup that is on the latest AMI.
+	Reroll bool
+	// Fleet rolls every cluster of a sweep. Target is then empty.
+	Fleet *FleetScope
+}
+
+func (RollRequest) kind() Kind { return NodegroupUpdate }
+
+// Selector picks nodegroups by pattern: the -f flag of the command. The
+// command parses the patterns; this package knows only the result.
+type Selector struct {
+	// Text is the selection as the user wrote it, such as "name=web-*".
+	// A message names it, and two requests with the same Text ask for the
+	// same selection.
+	Text string
+	// Match reports whether the selection takes the nodegroup.
+	Match func(n fleet.Nodegroup) bool
+}
+
+// FleetScope names the regions of a fleet roll.
+type FleetScope struct {
+	Regions fleet.Regions
+}
+
 // Deps is what the package needs from the command.
 type Deps struct {
 	AWS   *awsx.Provider
@@ -123,6 +168,12 @@ type Deps struct {
 	// with a clock of its own sets it, holds the timer, and fires it when
 	// a call hangs.
 	AfterFunc func(time.Duration, func()) (stop func() bool)
+	// Tick is the clock of the node observer beside a wait: the pause
+	// between two of its snapshots. It is apart from After, because the
+	// observer runs on a goroutine of its own, and a test clock that moves
+	// with each pause of the wait must not move for the observer too. Nil
+	// means time.After. Only a run with Common.Nodes calls it.
+	Tick func(time.Duration) <-chan time.Time
 }
 
 // budget returns a context under parent and its budget of limit, on the
@@ -171,6 +222,8 @@ func plan(ctx context.Context, d Deps, req Request) (*Plan, error) {
 		return planAddons(ctx, d, r)
 	case ScaleRequest:
 		return planScale(ctx, d, r)
+	case RollRequest:
+		return planRoll(ctx, d, r)
 	}
 	return nil, &UnsupportedError{Kind: req.kind()}
 }

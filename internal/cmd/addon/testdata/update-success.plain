@@ -16,8 +16,8 @@ results.vpc-cni.note	-
 results.vpc-cni.started	2026-01-01 00:00:00 UTC
 results.vpc-cni.finished	2026-01-01 00:00:30 UTC
 results.vpc-cni.failure	-
-verification.AddonHealth.outcome	Pass
-verification.AddonHealth.message	vpc-cni is ACTIVE at v1.20.0-eksbuild.1
+verification.AddonHealth/vpc-cni.outcome	Pass
+verification.AddonHealth/vpc-cni.message	vpc-cni is ACTIVE at v1.20.0-eksbuild.1
 health_gate.decision	Go
 checks.Addons.outcome	Pass
 checks.Addons.message	1 add-on ACTIVE

@@ -17,8 +17,8 @@ RESULTS  3
   kube-proxy  Addon  - Skipped       v1.33.0-eksbuild.2  v1.33.0-eksbuild.2  -                                     -     -                        -                        -
 
 VERIFICATION  1
-  NAME         OUTCOME    MESSAGE
-  AddonHealth  [OK] Pass  coredns is ACTIVE at v1.11.4-eksbuild.2
+  NAME                 OUTCOME    MESSAGE
+  AddonHealth/coredns  [OK] Pass  coredns is ACTIVE at v1.11.4-eksbuild.2
 
 HEALTH GATE
   decision  [OK] Go

@@ -22,28 +22,36 @@ import (
 // matches decides.
 //
 //  1. The gate blocks, which --require-healthy does for any warning: the
-//     step is Blocked. Nothing is sent for it.
+//     step is Blocked, exit code 3, as a plan that the gate blocks.
+//     Nothing is sent for it.
 //  2. Nothing is worse than what was accepted: the step goes on.
 //  3. Something is worse, with --yes: the step goes on, and a notice
 //     records what --yes went past.
 //  4. Something is worse, and nobody can be asked: the step is Failed.
 //     Nothing is sent for it.
-//  5. Something is worse: the run asks. Yes accepts it for the rest of
+//  5. Something is worse, and the step has asked maxQuestions times
+//     already (mayAsk is false): the step is Failed, and nobody is asked a
+//     question whose answer could not count. The target keeps changing.
+//  6. Something is worse: the run asks. Yes accepts it for the rest of
 //     the run. No ends the run as Declined: this step and the later ones
 //     are NotAttempted.
 //
+// A read that a check could not make is a failure of the run on every
+// row, also when --yes or an answer goes past the check: the run then
+// exits 4.
+//
 // A step that this blocks or fails does not stop the next one, which has
 // its own read.
-func (r *runner) regate(cp *ClusterPlan, res StepResult, checks []health.Result) (out StepResult, ok, asked bool) {
+func (r *runner) regate(cp *ClusterPlan, res StepResult, checks []health.Result, mayAsk bool) (out StepResult, ok, asked bool) {
 	name := stepName(res.Ref)
 	verdict := health.Gate(checks, r.common.Policy)
+	r.addFailures(verdict.Failures)
 	if verdict.Decision == health.Block {
-		r.addFailures(verdict.Failures)
 		res.Status = StepBlocked
 		res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown, verdict.Summary()+"; "+name+" was not changed")
 		return res, false, false
 	}
-	worse := worseThan(r.accepted, checks)
+	worse := health.Worse(r.accepted, checks)
 	if len(worse) == 0 {
 		return res, true, false
 	}
@@ -56,6 +64,10 @@ func (r *runner) regate(cp *ClusterPlan, res StepResult, checks []health.Result)
 		res.Status, res.FinishedAt = StepFailed, r.d.now()
 		res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown,
 			text+", which needs an answer, and nobody can be asked; pass --yes or --require-healthy. "+name+" was not changed")
+		return res, false, false
+	case !mayAsk:
+		res.Status, res.FinishedAt = StepFailed, r.d.now()
+		res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown, name+" keeps changing ("+strings.Join(reasons, "; ")+"); it was not changed. Run the command again")
 		return res, false, false
 	default:
 		q := Question{Kind: GateWarnings, Step: res.Ref, Text: capitalize(text) + ". Continue with " + name + "?", Reasons: reasons}
@@ -80,20 +92,6 @@ func (r *runner) regate(cp *ClusterPlan, res StepResult, checks []health.Result)
 	}
 	r.accepted = mergeAccepted(r.accepted, checks)
 	return res, true, asked
-}
-
-// worseThan returns the checks of cur that are worse than what accepted
-// covers: what health.Worse returns, and a check that accepted does not
-// have and that is not a pass. Nobody has seen such a check.
-func worseThan(accepted, cur []health.Result) []health.Reason {
-	out := health.Worse(accepted, cur)
-	for _, c := range cur {
-		known := slices.ContainsFunc(accepted, func(a health.Result) bool { return a.Name == c.Name })
-		if !known && (c.Outcome == health.Warn || c.Outcome == health.Fail || c.Outcome == health.Unreadable) {
-			out = append(out, health.Reason{Check: c.Name, Outcome: c.Outcome, Message: c.Message})
-		}
-	}
-	return out
 }
 
 // mergeAccepted adds cur to the results that the consent covers. A check
@@ -131,23 +129,22 @@ func (r *runner) addFailures(failures []apidoc.Failure) {
 	}
 }
 
-// recheckAddons reads the cluster again before the submit of an add-on
-// that follows a wait of this run. The wait took time, so the read of the
-// plan says nothing any more about what else is changing, or about the
-// health of the add-ons that are still to come.
+// recheck reads the cluster again before a submit that follows a wait of
+// this run. The wait took time, so the read of the plan says nothing any
+// more about what else is changing, or about the health of the targets
+// that are still to come. It serves every kind of change: the kind of the
+// request picks the column of the busy rule, and checks picks the gate.
 //
 // It applies the busy rule with the steps of the phase as the steps of
 // the run, as the plan did: a cluster that is busy now with a change that
 // is not of this run blocks this step, as it would have blocked the plan.
-// An add-on of this run that is still changing, because its wait timed
-// out, does not. Then it runs the gate of the plan over the targets that
-// remain, and regate decides. A target that is changing now is left
-// out of the gate: its own step reports it as busy or attaches to it. A
-// target that this read could not read is left out too: its own fresh
-// read decides.
+// A target of this run that is still changing, because its wait timed
+// out, does not. Then it runs the checks that checks returns for the new
+// snapshot, over the targets that remain, and regate decides. checks
+// returns nil when no target remains to judge.
 //
 // It returns false when the step must not go on, with its result.
-func (r *runner) recheckAddons(cp *ClusterPlan, res StepResult) (StepResult, bool) {
+func (r *runner) recheck(cp *ClusterPlan, res StepResult, checks func(snap *fleet.Snapshot) []health.Check) (StepResult, bool) {
 	clients := r.d.AWS.Clients(cp.Region)
 	fetch := r.d.Fetch
 	if fetch == nil {
@@ -158,7 +155,7 @@ func (r *runner) recheckAddons(cp *ClusterPlan, res StepResult) (StepResult, boo
 		return r.unsent(cp, res, err), false
 	}
 	name := stepName(res.Ref)
-	if refuse, _ := Busy(snap, AddonUpdate, r.steps); len(refuse) > 0 {
+	if refuse, _ := Busy(snap, r.req.kind(), r.steps); len(refuse) > 0 {
 		reason := apidoc.ReasonBusy
 		parts := make([]string, len(refuse))
 		for i, b := range refuse {
@@ -176,6 +173,21 @@ func (r *runner) recheckAddons(cp *ClusterPlan, res StepResult) (StepResult, boo
 	if r.common.Policy.Skip {
 		return res, true
 	}
+	set := checks(snap)
+	if len(set) == 0 {
+		return res, true
+	}
+	results := health.Run(r.readCtx, set, &health.Input{Snapshot: snap, Clients: clients, Now: snap.FetchedAt})
+	out, ok, _ := r.regate(cp, res, results, true)
+	return out, ok
+}
+
+// remainingAddons returns the gate of an add-on update over the add-ons
+// that remain: the Submit steps from the step that runs on. A target that
+// is changing now is left out: its own step reports it as busy or
+// attaches to it. A target that snap could not read is left out too: its
+// own fresh read decides.
+func (r *runner) remainingAddons(snap *fleet.Snapshot) []health.Check {
 	var targets []string
 	for _, s := range r.remaining {
 		i := slices.IndexFunc(snap.Addons, func(a fleet.Addon) bool { return a.Name == s.Ref.Name })
@@ -184,11 +196,9 @@ func (r *runner) recheckAddons(cp *ClusterPlan, res StepResult) (StepResult, boo
 		}
 	}
 	if len(targets) == 0 {
-		return res, true
+		return nil
 	}
-	checks := health.Run(r.readCtx, []health.Check{health.Addons(targets)}, &health.Input{Snapshot: snap, Clients: clients, Now: snap.FetchedAt})
-	out, ok, _ := r.regate(cp, res, checks)
-	return out, ok
+	return []health.Check{health.Addons(targets)}
 }
 
 // freshAddonHealth returns the result of the add-on check for one target,

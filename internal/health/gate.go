@@ -44,10 +44,12 @@ func (r Reason) String() string { return r.Check + ": " + r.Message }
 // Verdict is what the gate decided and why.
 type Verdict struct {
 	Decision Decision
-	// Exit is the code of the findings, whatever the policy: 4 when a
-	// check is Unreadable, else 3 when a blocking check fails and is not
-	// forced, else 2 when there is any warning, else 0. A dry run exits
-	// with it, and so does a blocked run.
+	// Exit is the code of the verdict: 4 when a check is Unreadable, else
+	// 3 when the decision is Block, else 2 when there is any warning,
+	// else 0. --yes does not change it: a dry run with --yes and warnings
+	// exits 2, as the real run would ask. --require-healthy does: a
+	// warning that it turns into a Block exits 3, as every Block does. A
+	// dry run exits with it, and so does a blocked run.
 	Exit int
 	// Reasons are the results that are not a pass, worst first. Blockers
 	// are the ones that block: a blocking Fail, or an Unreadable of a
@@ -128,6 +130,11 @@ func Gate(results []Result, p Policy) Verdict {
 			v.Decision = Ask
 		}
 	}
+	// A Block exits 3 at least, also when --require-healthy made it one
+	// from warnings alone.
+	if v.Decision == Block {
+		v.Exit = max(v.Exit, exitcode.Blocked)
+	}
 	return v
 }
 
@@ -150,7 +157,8 @@ func rankOf(r Result, forced bool) int {
 	return rankPass
 }
 
-// exitOf returns the exit code of the findings, before the policy.
+// exitOf returns the exit code of the findings, before the policy. Gate
+// raises it to 3 for a Block that the policy made.
 func exitOf[T any](results []Result, ranked []T, rank func(T) int) int {
 	for _, r := range results {
 		if r.Outcome == Unreadable {
@@ -200,12 +208,13 @@ func plural(n int, noun string) string {
 }
 
 // Worse returns the checks of cur that are worse than in prev: a worse
-// outcome, a finding that prev did not have, or a check that ran in prev
-// and is Skipped in cur. The outcomes rank Pass, Warn, Fail, Unreadable:
+// outcome, a finding that prev did not have, a check that ran in prev and
+// is Skipped in cur, or a check that prev does not have and that is not a
+// pass. Nobody has seen such a check: a gate that ran other checks, as
+// for another direction of a scale, did not accept its warning. The outcomes rank Pass, Warn, Fail, Unreadable:
 // a check that could judge and now cannot is worse, also when --force
 // went past it both times. A check that measures a number and keeps its
-// outcome is not worse, whatever its numbers. A check that is new in cur
-// is not worse either.
+// outcome is not worse, whatever its numbers.
 func Worse(prev, cur []Result) []Reason {
 	before := map[string]Result{}
 	for _, r := range prev {
@@ -215,6 +224,9 @@ func Worse(prev, cur []Result) []Reason {
 	for _, r := range cur {
 		p, ok := before[r.Name]
 		if !ok {
+			if worseRank(r.Outcome) > 0 {
+				out = append(out, Reason{r.Name, r.Outcome, r.Message})
+			}
 			continue
 		}
 		switch {

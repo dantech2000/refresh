@@ -217,7 +217,7 @@ func Compare(scenario string, legacy, v2 Trace, allow []Allowance) []Difference 
 		report(FieldSettlement, strings.Join(unmet("after its last change", legacy.Settlement, v2.Settlement), "\n"), v2.Settlement)
 		report(FieldVerification, strings.Join(unmet("after its last update ended", legacy.Verification, v2.Verification), "\n"), v2.Verification)
 	case len(old) == 0 && len(next) == 0:
-		report(FieldDecision, strings.Join(unmet("in the run", legacy.Decision, v2.Decision), "\n"), v2.Decision)
+		report(FieldDecision, strings.Join(unmet("in the run", owedByDecision(legacy, v2), v2.Decision), "\n"), v2.Decision)
 	}
 
 	equal(FieldWorld, legacy.World, v2.World)
@@ -228,6 +228,42 @@ func Compare(scenario string, legacy, v2 Trace, allow []Allowance) []Difference 
 	}
 	equal(FieldExitCode, want, v2.ExitCode)
 	return out
+}
+
+// owedByDecision returns the decision evidence of the old trace that the
+// new trace is held to. It is all of it, less what the baseline rule
+// takes out.
+//
+// The baseline rule: evidence of the verification baseline is owed only
+// when a mutation follows it in the new trace. The baseline is what a roll
+// compares its verification with, so a run that changes nothing has no use
+// for it. The old binary takes it before its drain gate, and so reads it
+// also in a run that the gate then refuses. Those reads create no
+// obligation for a new run that was refused before any mutation too.
+//
+// The rule covers baseline evidence and nothing else (see baselineOnly),
+// and only a run that followed no update: after an update that the run
+// attached to, the same read is the verification, which is owed.
+func owedByDecision(legacy, v2 Trace) []Evidence {
+	if !legacy.RefusedBeforeMutation || !v2.RefusedBeforeMutation {
+		return legacy.Decision
+	}
+	if slices.ContainsFunc(legacy.Decision, func(e Evidence) bool { return e.kind() == "update" }) {
+		return legacy.Decision
+	}
+	return slices.DeleteFunc(slices.Clone(legacy.Decision), func(e Evidence) bool { return e.baselineOnly() })
+}
+
+// baselineOnly reports whether only the read of a verification baseline
+// gives the fact: which pods of the whole cluster are Pending. No gate
+// reads that list. A gate lists the pods of one namespace, and such a list
+// gives no "pending" fact (see kubeFacts).
+//
+// The baseline also lists the nodes. That list gives the same facts as the
+// node list of a gate, so the rule leaves them owed: a refused run must
+// still have read the nodes that its gate judged.
+func (f Fact) baselineOnly() bool {
+	return f.kind() == "pods" && f.Attribute == "pending"
 }
 
 // unmet returns, in words, each piece of the old binary's evidence that the

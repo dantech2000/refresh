@@ -1,0 +1,40 @@
+exit: 3
+error: prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Plan",
+  "operation": "NodegroupUpdate",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.32",
+      "decision": "Blocked",
+      "steps": [
+        {
+          "phase": "Roll",
+          "kind": "Nodegroup",
+          "name": "web",
+          "action": "Submit",
+          "reason": "AMIOutdated",
+          "from": "1.32",
+          "to": "1.32",
+          "fromRelease": "1.32.0-20250101",
+          "toRelease": "ami-latest132"
+        }
+      ],
+      "blockers": [
+        {
+          "kind": "Busy",
+          "message": "prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes"
+        }
+      ],
+      "notices": []
+    }
+  ],
+  "failures": []
+}
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)

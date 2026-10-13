@@ -11,8 +11,8 @@ PLAN
   decision   - NothingToDo
 
 STEPS  1
-  NAME  KIND   ACTION  REASON    FROM                     TO
-  web   Scale  Skip    NoChange  desired 2, min 1, max 3  desired 2, min 1, max 3
+  NAME  KIND   ACTION  REASON    FROM                     TO                       NOTE
+  web   Scale  Skip    NoChange  desired 2, min 1, max 3  desired 2, min 1, max 3  -
 --- stderr ---
 PLAN  NodegroupScale, prod in us-east-1
   web  skip, at desired 2, min 1, max 3 (NoChange)

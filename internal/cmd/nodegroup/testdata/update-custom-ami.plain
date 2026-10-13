@@ -1,0 +1,20 @@
+exit: 0
+error: 
+--- stdout ---
+FIELD	VALUE
+plan.operation	NodegroupUpdate
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.32
+plan.decision	NothingToDo
+steps.web.kind	Nodegroup
+steps.web.action	Manual
+steps.web.reason	CustomAMI
+steps.web.from	1.32
+steps.web.to	1.32
+steps.web.note	-
+notices.1	nodegroup web has a custom AMI (AMI type CUSTOM) and is not rolled; publish a new launch template version to roll it
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  left to you (CustomAMI)
+warning: nodegroup web has a custom AMI (AMI type CUSTOM) and is not rolled; publish a new launch template version to roll it

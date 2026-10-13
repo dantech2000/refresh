@@ -55,7 +55,7 @@ error:
       ],
       "verification": [
         {
-          "name": "AddonHealth",
+          "name": "AddonHealth/vpc-cni",
           "outcome": "Pass",
           "blocking": false,
           "message": "vpc-cni is ACTIVE at v1.20.0-eksbuild.1",

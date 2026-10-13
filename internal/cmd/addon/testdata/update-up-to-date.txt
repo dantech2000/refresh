@@ -11,8 +11,8 @@ PLAN
   decision   - NothingToDo
 
 STEPS  1
-  NAME        KIND   ACTION  REASON           FROM                TO
-  kube-proxy  Addon  Skip    AlreadyAtTarget  v1.33.0-eksbuild.2  v1.33.0-eksbuild.2
+  NAME        KIND   ACTION  REASON           FROM                TO                  NOTE
+  kube-proxy  Addon  Skip    AlreadyAtTarget  v1.33.0-eksbuild.2  v1.33.0-eksbuild.2  -
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1
   kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)

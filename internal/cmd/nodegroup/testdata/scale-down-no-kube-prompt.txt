@@ -15,8 +15,9 @@ RESULTS  1
   web   Scale  [OK] Succeeded  desired 2, min 1, max 3  desired 1, min 1, max 3  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
 
 HEALTH GATE
-  decision  [!] Ask
+  decision  [OK] Go
   reasons   Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
+  accepted  Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
 
 CHECKS  3
   NAME           OUTCOME    MESSAGE

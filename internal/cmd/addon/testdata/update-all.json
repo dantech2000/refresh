@@ -88,7 +88,7 @@ error:
       ],
       "verification": [
         {
-          "name": "AddonHealth",
+          "name": "AddonHealth/vpc-cni",
           "outcome": "Pass",
           "blocking": false,
           "message": "vpc-cni is ACTIVE at v1.20.0-eksbuild.1",
@@ -96,7 +96,7 @@ error:
           "findings": []
         },
         {
-          "name": "AddonHealth",
+          "name": "AddonHealth/coredns",
           "outcome": "Pass",
           "blocking": false,
           "message": "coredns is ACTIVE at v1.11.4-eksbuild.2",

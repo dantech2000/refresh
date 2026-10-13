@@ -22,22 +22,6 @@ error: dry run: a real run would be blocked
           "to": "v1.20.0-eksbuild.1"
         }
       ],
-      "gate": {
-        "decision": "Go",
-        "reasons": [],
-        "accepted": [],
-        "forced": [],
-        "checks": [
-          {
-            "name": "Addons",
-            "outcome": "Pass",
-            "blocking": true,
-            "message": "1 add-on ACTIVE",
-            "details": [],
-            "findings": []
-          }
-        ]
-      },
       "blockers": [
         {
           "kind": "Busy",

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/noderoll"
 )
 
 // Hooks are how a run reports and asks. The zero value reports nothing
@@ -26,6 +27,20 @@ type Hooks struct {
 	// change, and so is a run that would need an answer about health
 	// warnings or a changed plan.
 	Ask func(ctx context.Context, q Question) (yes bool, err error)
+	// Checkpoint is called before each cluster of a fleet after the first.
+	// It may block: that is a pause. It returns when the run may go on or
+	// must stop. Nil means go on.
+	Checkpoint func(ctx context.Context, next PhaseRef) (Checkpoint, error)
+}
+
+// Checkpoint is the answer of the checkpoint hook.
+type Checkpoint struct {
+	// Stop ends the run here. Nothing more is submitted, and the steps
+	// that were not reached are NotAttempted.
+	Stop bool
+	// Waited says that time passed in the hook. A fleet reads each
+	// cluster again at its turn whatever the value.
+	Waited bool
 }
 
 // EventKind names an event.
@@ -50,6 +65,9 @@ const (
 	VerifyReport EventKind = "VerifyReport"
 	// UpdatePolled: Step, Update. One for each poll of a wait.
 	UpdatePolled EventKind = "UpdateProgress"
+	// NodeProgress: Step, Nodes. The nodes of a roll, from the observer
+	// beside its wait.
+	NodeProgress EventKind = "NodeProgress"
 )
 
 // Event is one thing that happened in a run.
@@ -65,6 +83,20 @@ type Event struct {
 	Result  *StepResult
 	Text    string
 	Update  *UpdateProgress
+	Nodes   *NodeView
+}
+
+// NodeView is the nodes of one roll at one moment.
+type NodeView struct {
+	Nodegroup string
+	Snapshot  noderoll.Snapshot
+	// Recent are the last events of the roll, oldest first.
+	Recent []noderoll.Event
+	// Watching says that the snapshot comes from a watch, and not from a
+	// list for each snapshot.
+	Watching bool
+	// StartedAt is when the roll was accepted.
+	StartedAt time.Time
 }
 
 // QuestionKind names a question.

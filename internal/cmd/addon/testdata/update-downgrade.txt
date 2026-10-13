@@ -15,8 +15,8 @@ RESULTS  1
   vpc-cni  Addon  [OK] Succeeded  v1.20.0-eksbuild.1  v1.19.0-eksbuild.1  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:15 UTC  -
 
 VERIFICATION  1
-  NAME         OUTCOME    MESSAGE
-  AddonHealth  [OK] Pass  vpc-cni is ACTIVE at v1.19.0-eksbuild.1
+  NAME                 OUTCOME    MESSAGE
+  AddonHealth/vpc-cni  [OK] Pass  vpc-cni is ACTIVE at v1.19.0-eksbuild.1
 
 HEALTH GATE
   decision  [OK] Go

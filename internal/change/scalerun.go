@@ -21,10 +21,10 @@ import (
 // (Failed): the gate ran for another direction.
 func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	res := StepResult{Ref: s.Ref}
-	resource := Resource{Target: cp.Target, Kind: StepScale, Name: s.Ref.Name}
+	resource := s.Ref.Resource()
 	clients := r.d.AWS.Clients(cp.Region)
 	if s.busy() {
-		return r.busyNodegroup(cp, res, clients, "")
+		return cp.busyResult(s)
 	}
 	req, _ := r.req.(ScaleRequest)
 	// The read is fresh: after the gate.
@@ -33,7 +33,7 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	case err != nil:
 		return r.unsent(cp, res, err)
 	case nodegroupInFlight(fresh.Status):
-		return r.busyNodegroup(cp, res, clients, fresh.Status)
+		return r.busyTarget(cp, res, clients, resource, fresh.Status)
 	case fresh.Status != string(ekstypes.NodegroupStatusActive):
 		res.Status = StepBlocked
 		res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown, notActive(s.Ref.Name, fresh.Status))
@@ -59,7 +59,7 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 		return r.unsent(cp, res, err)
 	case id == "":
 		res.Status = StepInProgress
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the scale of nodegroup "+s.Ref.Name+" and returned no update ID; it cannot be followed")
+		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the scale of nodegroup "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")
 		return res
 	}
 	res.Status, res.UpdateID = StepStarted, id
@@ -141,25 +141,4 @@ func scaleSettled(nodegroup, updateID string, req ScaleRequest) func(Settled) (b
 		}
 		return false, nil
 	}
-}
-
-// busyNodegroup returns the result of a nodegroup target that is already
-// changing: it is left alone, and its failure names the type of the
-// update in flight. status is the status of a fresh read, or "" to use
-// the one of the plan.
-func (r *runner) busyNodegroup(cp *ClusterPlan, res StepResult, c *awsx.Clients, status string) StepResult {
-	name := res.Ref.Name
-	if status == "" {
-		for _, n := range cp.snapshot.Nodegroups {
-			if n.Name == name {
-				status = n.Status
-			}
-		}
-	}
-	res.Status = StepBusy
-	var note string
-	res.InFlight, note = r.inFlight(c, Resource{Target: cp.Target, Kind: StepScale, Name: name})
-	f := cp.busyNodegroupFailure(name, status, note)
-	res.Failure = &f
-	return res
 }

@@ -84,7 +84,7 @@
   {
     "scenario": "nodegroup-scale-check-pdbs-no-kube",
     "field": "exitCode",
-    "reason": "The old command exits 1 when the PDB check cannot reach Kubernetes. The new command goes on with --yes, AWS accepts the scale, and no check failed to read: the missing access is a warning that --yes accepted, and the run document records it. Exit 0. A dry run of the same command exits 2, and --require-healthy blocks with exit 2 (TestScale, down-no-kube-require-healthy).",
+    "reason": "The old command exits 1 when the PDB check cannot reach Kubernetes. The new command goes on with --yes, AWS accepts the scale, and no check failed to read: the missing access is a warning that --yes accepted, and the run document records it. Exit 0. A dry run of the same command exits 2, and --require-healthy blocks with exit 3 (TestScale, down-no-kube-require-healthy).",
     "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
     "ownerApproved": true,
     "expect": 0
@@ -398,5 +398,101 @@
     "source": "`nodegroup scale` does no size check of its own",
     "ownerApproved": true,
     "expect": true
+  },
+  {
+    "scenario": "nodegroup-update-partial-failure",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when one of two rolls fails. One rule for independent targets: a failed roll beside one that succeeded is a partial failure, exit 4.",
+    "source": "Mixed results take the numeric maximum",
+    "ownerApproved": true,
+    "expect": 4
+  },
+  {
+    "scenario": "nodegroup-update-cluster-starts-updating",
+    "field": "exitCode",
+    "reason": "The old command exits 4 when EKS refuses its one roll. One rule for independent targets: every attempted roll failed, so the run exits 1.",
+    "source": "Mixed results take the numeric maximum",
+    "ownerApproved": true,
+    "expect": 1
+  },
+  {
+    "scenario": "nodegroup-update-changed-under-the-gate",
+    "field": "exitCode",
+    "reason": "The nodegroup starts to change after the last read of the command, so the roll is sent and EKS refuses it, in both binaries. The old command exits 4. One rule for independent targets: every attempted roll failed, so the run exits 1.",
+    "source": "Mixed results take the numeric maximum",
+    "ownerApproved": true,
+    "expect": 1
+  },
+  {
+    "scenario": "nodegroup-update-busy",
+    "field": "refusedBeforeMutation",
+    "reason": "The new command leaves the target alone and reports it as a failure, so the run sends nothing and does not exit 0.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": true
+  },
+  {
+    "scenario": "nodegroup-update-changed-at-the-prompt",
+    "field": "refusedBeforeMutation",
+    "reason": "The new command plans again after the answer, finds the target changing, leaves it alone, and reports it as a failure, so the run sends nothing and does not exit 0.",
+    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "ownerApproved": true,
+    "expect": true
+  },
+  {
+    "scenario": "nodegroup-update-dry-run",
+    "field": "exitCode",
+    "reason": "The scenario has no Kubernetes access. The old dry run exits 0 with a warning. The new dry run exits 2: a real run would ask before it goes on without the Kubernetes checks.",
+    "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
+    "ownerApproved": true,
+    "expect": 2
+  },
+  {
+    "scenario": "nodegroup-update-dry-run",
+    "field": "refusedBeforeMutation",
+    "reason": "The new dry run exits 2 and sends nothing, as every dry run.",
+    "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
+    "ownerApproved": true,
+    "expect": true
+  },
+  {
+    "scenario": "nodegroup-update-dry-run-changelog",
+    "field": "exitCode",
+    "reason": "The scenario has no Kubernetes access. The old dry run exits 0 with a warning. The new dry run exits 2: a real run would ask before it goes on without the Kubernetes checks.",
+    "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
+    "ownerApproved": true,
+    "expect": 2
+  },
+  {
+    "scenario": "nodegroup-update-dry-run-changelog",
+    "field": "refusedBeforeMutation",
+    "reason": "The new dry run exits 2 and sends nothing, as every dry run.",
+    "source": "Without Kubernetes access, `nodegroup update` skips the Kubernetes checks",
+    "ownerApproved": true,
+    "expect": true
+  },
+  {
+    "scenario": "nodegroup-update-warnings-unattended",
+    "field": "decision",
+    "reason": "The old command reads the cluster and then fails on the warnings that it cannot ask about. The new command refuses before it reads anything: it has no --yes and no terminal.",
+    "source": "`nodegroup update -o json` without `--yes`",
+    "ownerApproved": true,
+    "expect": []
+  },
+  {
+    "scenario": "nodegroup-update-require-healthy",
+    "field": "exitCode",
+    "reason": "The old command exits 2 when --require-healthy stops the run over warnings. In the new command a gate stopped the change and nothing changed: exit 3.",
+    "source": "A run that `--require-healthy` stops over a warning exits 2",
+    "ownerApproved": true,
+    "expect": 3
+  },
+  {
+    "scenario": "nodegroup-update-node-not-ready-require-healthy",
+    "field": "exitCode",
+    "reason": "The old command exits 2 when --require-healthy stops the run over warnings. In the new command a gate stopped the change and nothing changed: exit 3.",
+    "source": "A run that `--require-healthy` stops over a warning exits 2",
+    "ownerApproved": true,
+    "expect": 3
   }
 ]

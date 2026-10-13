@@ -12,10 +12,8 @@ steps.vpc-cni.action	Submit
 steps.vpc-cni.reason	VersionBehind
 steps.vpc-cni.from	v1.19.0-eksbuild.1
 steps.vpc-cni.to	v1.20.0-eksbuild.1
+steps.vpc-cni.note	-
 blockers.1.kind	Busy
 blockers.1.step	-
 blockers.1.message	prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
-health_gate.decision	Go
-checks.Addons.outcome	Pass
-checks.Addons.message	1 add-on ACTIVE
 --- stderr ---

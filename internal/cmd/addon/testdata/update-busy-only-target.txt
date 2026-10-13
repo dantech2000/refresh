@@ -18,5 +18,5 @@ INCOMPLETE DATA
 [?] addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1
-  vpc-cni  skip, at v1.19.5-eksbuild.1 (InFlight)
+  vpc-cni  skip, at v1.19.5-eksbuild.1 (InFlight: AddonUpdate)
 [!] vpc-cni: Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes

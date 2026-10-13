@@ -11,7 +11,8 @@ import (
 )
 
 // A plan of two clusters: each section names its cluster, a roll shows
-// its AMI release, a scale shows its sizes, and a blocker names its step.
+// its AMI release, a scale shows its sizes, a busy target shows the update
+// in flight, and a blocker names its step.
 func TestPlanView_Plain(t *testing.T) {
 	doc := apidoc.Plan{
 		Operation: apidoc.OperationNodegroupUpdate,
@@ -21,6 +22,7 @@ func TestPlanView_Plain(t *testing.T) {
 				Steps: []apidoc.PlanStep{
 					{Phase: apidoc.PhaseControlPlane, Kind: apidoc.StepControlPlane, Action: apidoc.ActionSubmit, From: "1.33", To: "1.34"},
 					{Phase: apidoc.PhaseRoll, Kind: apidoc.StepNodegroup, Name: "web", Action: apidoc.ActionSubmit, Reason: apidoc.ReasonAMIOutdated, From: "1.33", To: "1.33", ToRelease: "1.33.0-20260101"},
+					{Phase: apidoc.PhaseRoll, Kind: apidoc.StepNodegroup, Name: "batch", Action: apidoc.ActionSkip, Reason: apidoc.ReasonInFlight, From: "1.33", To: "1.33", InFlight: "ConfigUpdate"},
 				},
 				Blockers: []apidoc.Blocker{
 					{Kind: apidoc.BlockerBusy, Message: "prod is busy"},
@@ -64,11 +66,19 @@ func TestPlanView_Plain(t *testing.T) {
 		"steps_prod.control-plane.reason\t-",
 		"steps_prod.control-plane.from\t1.33",
 		"steps_prod.control-plane.to\t1.34",
+		"steps_prod.control-plane.note\t-",
 		"steps_prod.web.kind\tNodegroup",
 		"steps_prod.web.action\tSubmit",
 		"steps_prod.web.reason\tAMIOutdated",
 		"steps_prod.web.from\t1.33",
 		"steps_prod.web.to\t1.33 (1.33.0-20260101)",
+		"steps_prod.web.note\t-",
+		"steps_prod.batch.kind\tNodegroup",
+		"steps_prod.batch.action\tSkip",
+		"steps_prod.batch.reason\tInFlight",
+		"steps_prod.batch.from\t1.33",
+		"steps_prod.batch.to\t1.33",
+		"steps_prod.batch.note\tConfigUpdate in flight",
 		"blockers_prod.1.kind\tBusy",
 		"blockers_prod.1.step\t-",
 		"blockers_prod.1.message\tprod is busy",
@@ -91,6 +101,7 @@ func TestPlanView_Plain(t *testing.T) {
 		"steps_dev.web.reason\t-",
 		"steps_dev.web.from\tdesired 2, min 1, max 3",
 		"steps_dev.web.to\tdesired 3, min 1, max 3",
+		"steps_dev.web.note\t-",
 		"health_gate_dev.decision\tAsk",
 		"health_gate_dev.accepted\tQuotas: 91% in use",
 		"skipped_regions.regions\tap-east-1, me-south-1",
@@ -173,6 +184,8 @@ func TestPlanLinesAndStepLine(t *testing.T) {
 			{Kind: apidoc.StepAddon, Name: "adot", Action: apidoc.ActionAttach, Reason: apidoc.ReasonInFlight, From: "v5", To: "v5"},
 			{Kind: apidoc.StepNodegroup, Name: "web", Action: apidoc.ActionVerify, Reason: apidoc.ReasonUnsettled, To: "1.33"},
 			{Kind: apidoc.StepAddon, Name: "kube-proxy", Action: apidoc.ActionSkip, Reason: apidoc.ReasonAlreadyAtTarget, From: "v4", To: "v4"},
+			{Kind: apidoc.StepAddon, Name: "busy", Action: apidoc.ActionSkip, Reason: apidoc.ReasonInFlight, From: "v6", To: "v7", InFlight: "AddonUpdate"},
+			{Kind: apidoc.StepAddon, Name: "unknown", Action: apidoc.ActionSkip, Reason: apidoc.ReasonInFlight, From: "v6", To: "v7"},
 			{Kind: apidoc.StepAddon, Name: "mine", Action: apidoc.ActionManual},
 			{Kind: apidoc.StepAddon, Name: "broken", Action: apidoc.ActionBlocked},
 		},
@@ -184,6 +197,8 @@ func TestPlanLinesAndStepLine(t *testing.T) {
 		"  adot        wait for the update to v5 that is running (InFlight)",
 		"  web         verify at 1.33 (Unsettled)",
 		"  kube-proxy  skip, at v4 (AlreadyAtTarget)",
+		"  busy        skip, at v6 (InFlight: AddonUpdate)",
+		"  unknown     skip, at v6 (InFlight)",
 		"  mine        left to you",
 		"  [X] broken      blocked",
 	}

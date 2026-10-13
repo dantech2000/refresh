@@ -1,9 +1,17 @@
 package change
 
 import (
+	"context"
+	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+
+	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
@@ -90,4 +98,146 @@ func Busy(snap *fleet.Snapshot, kind Kind, ours []Step) (refuse []Blocker, notic
 // status.
 func addonInFlight(status string) bool {
 	return status == "CREATING" || status == "UPDATING" || status == "DELETING"
+}
+
+// markBusy completes the steps of the targets that are already changing.
+// For each it looks up the update in flight, sets its type on the step,
+// and adds the Busy failure of the target to the plan. The lookup is a
+// read, so the plan of a dry run has the type too.
+func (cp *ClusterPlan) markBusy(ctx context.Context, c *awsx.Clients, steps []Step) {
+	for i := range steps {
+		s := &steps[i]
+		if !s.busy() {
+			continue
+		}
+		res := s.Ref.Resource()
+		kind, note := lookupInFlight(ctx, c, res)
+		s.InFlight = kind
+		status, version := cp.statusOf(res)
+		cp.Failures = append(cp.Failures, cp.busyFailure(res, status, version, note))
+	}
+}
+
+// statusOf returns the status of a target in the snapshot of the plan,
+// and for an add-on the version that it reports.
+func (cp *ClusterPlan) statusOf(res Resource) (status, version string) {
+	if res.Kind == StepAddon {
+		for _, a := range cp.snapshot.Addons {
+			if a.Name == res.Name {
+				return a.Status, a.Version
+			}
+		}
+		return "", ""
+	}
+	for _, n := range cp.snapshot.Nodegroups {
+		if n.Name == res.Name {
+			return n.Status, ""
+		}
+	}
+	return "", ""
+}
+
+// busyFailure returns the failure of a target that is already changing:
+// an add-on or a nodegroup, of any kind of change. version is the version
+// that an add-on reports, and "" for a nodegroup. inFlight names the
+// update: its type, unknownUpdate when the lookup failed, or "" when EKS
+// lists no update in progress.
+func (cp *ClusterPlan) busyFailure(res Resource, status, version, inFlight string) apidoc.Failure {
+	msg := res.String() + " is " + status
+	if version != "" && status != "DELETING" {
+		msg += " to " + version
+	}
+	if inFlight != "" {
+		msg += " (" + inFlight + ")"
+	}
+	ref := StepRef{Kind: res.Kind, Name: res.Name}
+	f := apidoc.NewFailure(resourceKind(ref), res.Name, apidoc.ReasonBusy, msg+"; it was not changed. Run the command again once that finishes")
+	f.Cluster, f.Region = cp.Cluster, cp.Region
+	return f
+}
+
+// busyTarget returns the result of a target that the fresh read before
+// its submit shows changing, with the status of that read: it is left
+// alone, and its failure names the type of the update in flight. It is
+// the one place for a target that turned busy after the plan, for every
+// standalone change.
+func (r *runner) busyTarget(cp *ClusterPlan, res StepResult, c *awsx.Clients, resource Resource, status string) StepResult {
+	res.Status = StepBusy
+	var note string
+	res.InFlight, note = lookupInFlight(r.readCtx, c, resource)
+	_, version := cp.statusOf(resource)
+	f := cp.busyFailure(resource, status, version, note)
+	res.Failure = &f
+	return res
+}
+
+// busyResult returns the result of a target that the plan found changing
+// already: it is left alone. The plan looked up the update in flight, so
+// the step has its type and the plan has its failure, and the run reads
+// nothing again.
+func (cp *ClusterPlan) busyResult(s Step) StepResult {
+	res := StepResult{Ref: s.Ref, Status: StepBusy, InFlight: s.InFlight}
+	i := slices.IndexFunc(cp.Failures, func(f apidoc.Failure) bool {
+		return f.Reason == apidoc.ReasonBusy && f.Kind == resourceKind(s.Ref) && f.Name == s.Ref.Name
+	})
+	if i >= 0 {
+		f := cp.Failures[i]
+		res.Failure = &f
+	}
+	return res
+}
+
+// unknownUpdate is what a busy failure says when the update in flight
+// could not be looked up.
+const unknownUpdate = "an update of unknown type"
+
+// lookupInFlight looks up the update that makes a target busy. It returns
+// the type for the step, and the words for the failure: the type,
+// unknownUpdate when the lookup failed, and "" when EKS lists no update
+// in progress, as for a resource that it is deleting. The lookup is two
+// reads that happen only for a busy target: in the plan, and at the fresh
+// read before a submit that finds a target changing since the plan.
+func lookupInFlight(ctx context.Context, c *awsx.Clients, res Resource) (kind, note string) {
+	kind, err := inFlightUpdate(ctx, c, res)
+	if err != nil {
+		return "", unknownUpdate
+	}
+	return kind, kind
+}
+
+// inFlightUpdate returns the type of the update of a resource that is in
+// progress, such as AddonUpdate, or "" when EKS lists none. EKS lists the
+// update IDs with no status, so each one is described, newest first.
+func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (string, error) {
+	list := &eks.ListUpdatesInput{Name: aws.String(r.Cluster)}
+	describe := &eks.DescribeUpdateInput{Name: aws.String(r.Cluster)}
+	switch r.Kind {
+	case StepAddon:
+		list.AddonName, describe.AddonName = aws.String(r.Name), aws.String(r.Name)
+	case StepNodegroup, StepScale:
+		list.NodegroupName, describe.NodegroupName = aws.String(r.Name), aws.String(r.Name)
+	}
+	ids, err := awsx.ListAll(ctx,
+		func(ctx context.Context, token *string) (*eks.ListUpdatesOutput, error) {
+			list.NextToken = token
+			return c.EKS.ListUpdates(ctx, list)
+		},
+		func(out *eks.ListUpdatesOutput) ([]string, *string) { return out.UpdateIds, out.NextToken },
+	)
+	if err != nil {
+		return "", err
+	}
+	for i := len(ids) - 1; i >= 0; i-- {
+		describe.UpdateId = aws.String(ids[i])
+		out, err := c.EKS.DescribeUpdate(ctx, describe)
+		switch {
+		case err != nil:
+			return "", err
+		case out.Update == nil:
+			return "", fmt.Errorf("EKS returned no update for %s", ids[i])
+		case out.Update.Status == ekstypes.UpdateStatusInProgress:
+			return string(out.Update.Type), nil
+		}
+	}
+	return "", nil
 }

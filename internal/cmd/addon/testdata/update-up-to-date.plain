@@ -12,6 +12,7 @@ steps.kube-proxy.action	Skip
 steps.kube-proxy.reason	AlreadyAtTarget
 steps.kube-proxy.from	v1.33.0-eksbuild.2
 steps.kube-proxy.to	v1.33.0-eksbuild.2
+steps.kube-proxy.note	-
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1
   kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)

@@ -95,6 +95,18 @@ func CompleteNodegroups(f *cmdutil.Factory, clusterFlag *string) cobra.Completio
 	})
 }
 
+// CompleteNodegroupNames is CompleteNodegroups for a command that takes
+// several nodegroups: it offers names for every argument.
+func CompleteNodegroupNames(f *cmdutil.Factory, clusterFlag *string) cobra.CompletionFunc {
+	return complete(f, -1, func(ctx context.Context, fetcher *fleet.Fetcher, c *awsx.Clients) ([]string, error) {
+		cluster, err := completionCluster(f, *clusterFlag)
+		if err != nil {
+			return nil, err
+		}
+		return fetcher.NodegroupNames(ctx, c, cluster)
+	})
+}
+
 // CompleteAddons returns the completion function for the add-on argument
 // of a command.
 func CompleteAddons(f *cmdutil.Factory, clusterFlag *string) cobra.CompletionFunc {

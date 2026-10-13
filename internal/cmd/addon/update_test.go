@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -88,6 +89,9 @@ type updateCase struct {
 	exit   int
 	// updates are the add-ons that UpdateAddon was sent for, in order.
 	updates []string
+	// onUpdate changes the cluster when the first UpdateAddon arrives:
+	// while the run waits for that update.
+	onUpdate func(c *fleettest.Cluster)
 }
 
 // runUpdate runs the case with the extra arguments and returns the fake
@@ -104,6 +108,14 @@ func runUpdate(t *testing.T, tc updateCase, extra ...string) (*cmdtest.Fake, str
 	if tc.answer != "" {
 		e.Factory.IOStreams.InTTY = true
 		e.Factory.IOStreams.In = strings.NewReader(tc.answer)
+	}
+	if tc.onUpdate != nil {
+		var once sync.Once
+		e.Server.OnRequest = func(_ context.Context, r awsxtest.Request) {
+			if r.Operation == fleettest.EKSUpdateAddon {
+				once.Do(func() { world.Edit(func(s *fleettest.State) { tc.onUpdate(s.Cluster(east, "prod")) }) })
+			}
+		}
 	}
 	args := append([]string{"addon", "update", "-c", "prod"}, tc.args...)
 	err := e.Run(cmdutiltest.Context(t), append(args, extra...)...)
@@ -165,7 +177,7 @@ func updateCases() []updateCase {
 		{name: "prompt-no", args: []string{"vpc-cni"}, answer: "n\n", exit: cmdutil.ExitFailure},
 		{name: "prompt-degraded", args: []string{"coredns"}, answer: "yes\n", updates: []string{"coredns"},
 			seed: func(c *fleettest.Cluster) { addon(c, "coredns").Status = fleettest.StatusDegraded }},
-		{name: "require-healthy", args: []string{"coredns", "--yes", "--require-healthy"}, exit: cmdutil.ExitNeedsAttention,
+		{name: "require-healthy", args: []string{"coredns", "--yes", "--require-healthy"}, exit: cmdutil.ExitBlocked,
 			seed: func(c *fleettest.Cluster) { addon(c, "coredns").Status = fleettest.StatusDegraded }},
 		{name: "cluster-busy", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: func(c *fleettest.Cluster) { c.Status = fleettest.StatusUpdating }},
@@ -174,6 +186,9 @@ func updateCases() []updateCase {
 		{name: "busy-target", args: []string{"--all", "--yes"}, exit: cmdutil.ExitIncomplete, updates: []string{"coredns"},
 			prepare: startElsewhere("vpc-cni", cniPatch, never)},
 		{name: "busy-only-target", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitIncomplete,
+			prepare: startElsewhere("vpc-cni", cniPatch, never)},
+		// A dry run names the update in flight too: the lookup is a read.
+		{name: "dry-run-busy-target", args: []string{"vpc-cni", "--dry-run"}, exit: cmdutil.ExitIncomplete,
 			prepare: startElsewhere("vpc-cni", cniPatch, never)},
 		{name: "attach", args: []string{"vpc-cni", "--yes"},
 			prepare: startElsewhere("vpc-cni", cniNew, fleettest.UpdateScript{After: 4 * time.Minute})},
@@ -196,6 +211,26 @@ func updateCases() []updateCase {
 			seed: func(c *fleettest.Cluster) { addon(c, "coredns").Status = fleettest.StatusDegraded }},
 		{name: "skip-health-check", args: []string{"coredns", "--yes", "--skip-health-check"}, updates: []string{"coredns"},
 			seed: func(c *fleettest.Cluster) { addon(c, "coredns").Status = fleettest.StatusDegraded }},
+		// The catalogue cannot be read: nothing shows which version to
+		// move to, so the step is blocked and the plan is incomplete.
+		{name: "catalogue-unread", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitIncomplete,
+			prepare: func(_ *testing.T, w *fleettest.World) {
+				w.SetFault(fleettest.EKSDescribeAddonVersions, fleettest.Fault{Deny: true})
+			}},
+		{name: "deleting", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitIncomplete,
+			seed: func(c *fleettest.Cluster) { addon(c, "vpc-cni").Status = fleettest.StatusDeleting }},
+		{name: "delete-failed", args: []string{"coredns", "--yes"}, updates: []string{"coredns"},
+			seed: func(c *fleettest.Cluster) { addon(c, "coredns").Status = "DELETE_FAILED" }},
+		// Newer than the catalogue and not healthy: a repair would
+		// downgrade it, so it is left alone.
+		{name: "newer-than-latest", args: []string{"vpc-cni", "--yes"},
+			seed: func(c *fleettest.Cluster) {
+				addon(c, "vpc-cni").Version, addon(c, "vpc-cni").Status = cniNext, fleettest.StatusDegraded
+			}},
+		// An add-on that degrades while the run waits for the one before
+		// it is blocked by --require-healthy, and the first one stays done.
+		{name: "blocked-after-wait", args: []string{"--all", "--yes", "--require-healthy"}, exit: cmdutil.ExitBlocked, updates: []string{"vpc-cni"},
+			onUpdate: func(c *fleettest.Cluster) { addon(c, "coredns").Status = fleettest.StatusDegraded }},
 		{name: "downgrade", args: []string{"vpc-cni", "--version", cniOld, "--yes"}, updates: []string{"vpc-cni"},
 			seed: func(c *fleettest.Cluster) { addon(c, "vpc-cni").Version = cniNew }},
 	}
@@ -221,7 +256,7 @@ func TestUpdate_Formats(t *testing.T) {
 		"dry-run-ask": apidoc.KindPlan, "dry-run-blocked": apidoc.KindPlan, "cluster-busy": apidoc.KindPlan,
 		"busy-target": apidoc.KindRun, "attach": apidoc.KindRun, "attach-failed": apidoc.KindRun, "failed": apidoc.KindRun,
 		"partial-failure": apidoc.KindRun, "deadline": apidoc.KindRun, "unhealthy-after": apidoc.KindRun, "up-to-date": apidoc.KindPlan,
-		"busy-only-target": apidoc.KindRun,
+		"busy-only-target": apidoc.KindRun, "dry-run-busy-target": apidoc.KindPlan,
 	}
 	for _, tc := range updateCases() {
 		kind, ok := kinds[tc.name]
@@ -233,6 +268,16 @@ func TestUpdate_Formats(t *testing.T) {
 				e, got := runUpdate(t, tc, "-o", format)
 				cmdutiltest.Golden(t, "update-"+tc.name+"."+format, got, *update)
 				switch format {
+				case "plain":
+					// A script reads a row by its FIELD: no two rows share one.
+					seen := map[string]bool{}
+					for _, line := range strings.Split(e.Out.String(), "\n") {
+						field, _, _ := strings.Cut(line, "\t")
+						if field != "" && seen[field] {
+							t.Errorf("the FIELD %s is on two rows", field)
+						}
+						seen[field] = true
+					}
 				case "json":
 					cmdutiltest.ValidateJSON(t, kind, e.Out.Bytes())
 				case "yaml":

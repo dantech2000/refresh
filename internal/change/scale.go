@@ -162,7 +162,8 @@ func decideScale(n fleet.Nodegroup, req ScaleRequest) scaleDecision {
 }
 
 // planScale builds the plan of a scale: one read of the whole cluster, the
-// step of the nodegroup, the busy rule, and the gate of the direction. A
+// step of the nodegroup, the update in flight of a nodegroup that is
+// already changing, the busy rule, and the gate of the direction. A
 // target that is not ACTIVE blocks the plan in every direction, in the
 // step table. A scale that lowers the desired size runs the node check
 // and the scale-down drain check. Any other scale runs the quota check,
@@ -188,17 +189,23 @@ func planScale(ctx context.Context, d Deps, req ScaleRequest) (*Plan, error) {
 		return nil, err
 	}
 	phase.Steps = []Step{step}
+	cp.markBusy(ctx, clients, phase.Steps)
 	cp.Phases = []Phase{phase}
 
 	refuse, notices := Busy(snap, NodegroupScale, phase.Steps)
 	cp.Blockers = append(cp.Blockers, refuse...)
 	cp.Notices = append(cp.Notices, notices...)
-	cp.gateScale(ctx, d, req.Policy, step)
+	// A plan that the busy rule refuses runs no gate: nothing would be
+	// submitted, so its reads would be for nothing.
+	if len(refuse) == 0 {
+		cp.gateScale(ctx, d, req.Policy, phase.Steps[0])
+	}
 	return &Plan{Kind: NodegroupScale, Request: req, Clusters: []ClusterPlan{cp}, At: d.now()}, nil
 }
 
-// scaleStep returns the step of the nodegroup, and records its blocker or
-// its busy failure in the plan. A name that is not a nodegroup of the
+// scaleStep returns the step of the nodegroup, and records its blocker in
+// the plan. markBusy completes a step whose nodegroup is already changing.
+// A name that is not a nodegroup of the
 // cluster is an error that lists the close matches.
 func (cp *ClusterPlan) scaleStep(phase PhaseRef, req ScaleRequest) (Step, error) {
 	snap := cp.snapshot
@@ -239,23 +246,7 @@ func (cp *ClusterPlan) scaleStep(phase PhaseRef, req ScaleRequest) (Step, error)
 	if d.NotActive != "" {
 		cp.Blockers = append(cp.Blockers, Blocker{Kind: BlockerNotReady, Step: &step.Ref, Message: d.NotActive})
 	}
-	if step.busy() {
-		cp.Failures = append(cp.Failures, cp.busyNodegroupFailure(n.Name, n.Status, ""))
-	}
 	return step, nil
-}
-
-// busyNodegroupFailure returns the failure of a nodegroup target that is
-// already changing. inFlight names the update: its type, or
-// unknownUpdate. It is "" in a plan, which makes no lookup.
-func (cp *ClusterPlan) busyNodegroupFailure(name, status, inFlight string) apidoc.Failure {
-	msg := fmt.Sprintf("nodegroup %s is %s", name, status)
-	if inFlight != "" {
-		msg += " (" + inFlight + ")"
-	}
-	f := apidoc.NewFailure(apidoc.FailureNodegroup, name, apidoc.ReasonBusy, msg+"; it was not changed. Run the command again once that finishes")
-	f.Cluster, f.Region = cp.Cluster, cp.Region
-	return f
 }
 
 // gateScale runs the health gate of a scale step that would be submitted.
@@ -268,22 +259,19 @@ func (cp *ClusterPlan) gateScale(ctx context.Context, d Deps, policy health.Poli
 	if s.Action != Submit {
 		return
 	}
-	i := slices.IndexFunc(cp.snapshot.Nodegroups, func(n fleet.Nodegroup) bool { return n.Name == s.Ref.Name })
 	clients := d.AWS.Clients(cp.Region)
 	// The offerings are read while the checks run, and joined before the
 	// plan is returned.
 	var (
 		wg      sync.WaitGroup
-		offered string
+		offered []string
 	)
 	if s.Sizes.After.Desired > s.Sizes.Before.Desired {
-		wg.Go(func() { offered = availabilityNotice(ctx, clients, cp.snapshot.Nodegroups[i]) })
+		wg.Go(func() { offered = availabilityNotices(ctx, clients, cp.snapshot, []string{s.Ref.Name}) })
 	}
 	defer func() {
 		wg.Wait()
-		if offered != "" {
-			cp.Notices = append(cp.Notices, offered)
-		}
+		cp.Notices = append(cp.Notices, offered...)
 	}()
 	if policy.Skip {
 		cp.Gate = health.Gate(nil, policy)

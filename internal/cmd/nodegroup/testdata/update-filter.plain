@@ -1,0 +1,51 @@
+exit: 0
+error: 
+--- stdout ---
+FIELD	VALUE
+run.operation	NodegroupUpdate
+run.cluster	prod
+run.region	us-east-1
+run.version	1.32
+run.status	Succeeded
+results.web.kind	Nodegroup
+results.web.status	Succeeded
+results.web.from	1.32
+results.web.to	1.32 (ami-latest132)
+results.web.update	00000000-0000-4000-8000-000000000001
+results.web.note	-
+results.web.started	2026-01-01 00:00:00 UTC
+results.web.finished	2026-01-01 00:00:30 UTC
+results.web.failure	-
+verification.NodegroupActive.outcome	Pass
+verification.NodegroupActive.message	web ACTIVE
+verification.NodesReady.outcome	Pass
+verification.NodesReady.message	2 new nodes ready
+verification.NewPendingPods.outcome	Pass
+verification.NewPendingPods.message	no new Pending pods
+health_gate.decision	Go
+checks.Nodes.outcome	Pass
+checks.Nodes.message	4/4 nodes ready
+checks.Capacity.outcome	Pass
+checks.Capacity.message	CPU mean 32%, peak 32%, 4 instances
+checks.ControlPlane.outcome	Skipped
+checks.ControlPlane.message	control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+checks.Workloads.outcome	Pass
+checks.Workloads.message	2/2 pods running in the system namespaces
+checks.DrainBlockers.outcome	Pass
+checks.DrainBlockers.message	no PodDisruptionBudget blocks a drain
+checks.PDBCoverage.outcome	Pass
+checks.PDBCoverage.message	every deployment has a PodDisruptionBudget (2)
+checks.Utilization.outcome	Pass
+checks.Utilization.message	CPU 20%, memory 25% in use
+checks.Quotas.outcome	Pass
+checks.Quotas.message	31% of the vCPU quota in use (40 of 128)
+checks.Kubernetes.outcome	Pass
+checks.Kubernetes.message	Kubernetes API reachable
+notices.1	-f name=w* selects the nodegroups web
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+warning: -f name=w* selects the nodegroups web
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+web: InProgress
+[OK] web: Succeeded

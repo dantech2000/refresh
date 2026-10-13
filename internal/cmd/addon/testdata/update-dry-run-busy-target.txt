@@ -1,0 +1,19 @@
+exit: 4
+error: dry run: the plan is incomplete: something could not be read, or a target is already changing
+--- stdout ---
+Plan   - NothingToDo   AddonUpdate
+
+PLAN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   - NothingToDo
+
+STEPS  1
+  NAME     KIND   ACTION  REASON    FROM                TO                  NOTE
+  vpc-cni  Addon  Skip    InFlight  v1.19.5-eksbuild.1  v1.20.0-eksbuild.1  AddonUpdate in flight
+
+INCOMPLETE DATA
+[?] addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+--- stderr ---

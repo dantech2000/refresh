@@ -15,7 +15,7 @@ import (
 func TestChangeImports(t *testing.T) {
 	const module = "github.com/dantech2000/refresh/"
 	// allowed are the refresh packages that the package may import.
-	allowed := []string{"internal/apidoc", "internal/awsx", "internal/exitcode", "internal/fleet", "internal/health", "internal/kube"}
+	allowed := []string{"internal/apidoc", "internal/awsx", "internal/exitcode", "internal/fleet", "internal/fanout", "internal/health", "internal/kube", "internal/noderoll"}
 	// testOnly are the ones that only its tests may import.
 	testOnly := []string{"internal/awsx/awsxtest", "internal/fleet/fleettest", "internal/kube/kubetest"}
 	pkg, err := build.ImportDir(".", 0)

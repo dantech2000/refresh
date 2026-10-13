@@ -210,7 +210,7 @@ func TestRun_Questions(t *testing.T) {
 		{name: "warnings: --yes", seed: degraded, policy: health.Policy{Yes: true}, status: Succeeded, updates: 1},
 		{
 			name: "warnings: --require-healthy", seed: degraded, policy: health.Policy{RequireHealthy: true},
-			status: Refused, exit: 2, errText: "--require-healthy is set",
+			status: Refused, exit: 3, errText: "--require-healthy is set",
 		},
 		{name: "cancel during the question", cancel: true, asked: []QuestionKind{ConfirmStart}, status: Interrupted, exit: 1, errText: "interrupted before anything was changed"},
 		{
@@ -457,6 +457,40 @@ func TestRun_Expect(t *testing.T) {
 			t.Error("a plan that equals the reviewed one was announced again")
 		}
 	})
+	// --yes is how the consent is given, and no part of the plan: a plan
+	// that was reviewed without it and is run with it matches, and so does
+	// the reverse. A warning that the reviewed plan showed is covered too.
+	degraded := func(c *fleettest.Cluster) { c.Addon("vpc-cni").Status = fleettest.StatusDegraded }
+	for _, tt := range []struct {
+		name                string
+		seed                func(c *fleettest.Cluster)
+		reviewedYes, runYes bool
+	}{
+		{name: "reviewed without --yes, run with --yes", runYes: true},
+		{name: "reviewed with --yes, run without --yes", reviewedYes: true},
+		{name: "a warning, reviewed without --yes, run with --yes", seed: degraded, runYes: true},
+		{name: "a warning, reviewed with --yes, run without --yes", seed: degraded, reviewedYes: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, newWorld(tt.seed))
+			before, req := request("vpc-cni"), request("vpc-cni")
+			before.Policy.Yes, req.Policy.Yes = tt.reviewedYes, tt.runYes
+			reviewed, err := NewPlan(testContext(t), e.deps, before)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Expect = reviewed
+			// No answer is in the script: a question fails the test.
+			s := &script{t: t}
+			res, err := Run(testContext(t), e.deps, req, s.hooks())
+			if err != nil || res.Status != Succeeded || res.ExitCode() != 0 || len(s.asked) != 0 {
+				t.Fatalf("result = %s, exit %d, %v, questions %v; want Succeeded, 0, and no question", res.Status, res.ExitCode(), err, s.kinds())
+			}
+			if n := e.count(fleettest.EKSUpdateAddon); n != 1 {
+				t.Errorf("%d UpdateAddon requests, want 1", n)
+			}
+		})
+	}
 	t.Run("the version changed since", func(t *testing.T) {
 		e := newEnv(t, newWorld(nil))
 		req := request("vpc-cni")
@@ -481,7 +515,8 @@ func TestRun_Expect(t *testing.T) {
 		}
 		// --yes accepts the change and says so.
 		e2 := newEnv(t, newWorld(nil))
-		reviewed2, err := NewPlan(testContext(t), e2.deps, yes(request("vpc-cni")))
+		// The plan was reviewed without --yes, and that is no difference.
+		reviewed2, err := NewPlan(testContext(t), e2.deps, request("vpc-cni"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1092,7 +1127,7 @@ func TestRun_Confirm(t *testing.T) {
 				if got := res.Clusters[0].Steps[0].VerifyIssue; got != want {
 					t.Errorf("issue = %q", got)
 				}
-				if v := res.Clusters[0].Verification; len(v) != 1 || v[0].Outcome != health.Fail || v[0].Name != addonCheck {
+				if v := res.Clusters[0].Verification; len(v) != 1 || v[0].Outcome != health.Fail || v[0].Name != addonCheck+"/vpc-cni" {
 					t.Errorf("verification = %+v", v)
 				}
 			},

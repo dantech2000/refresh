@@ -140,8 +140,8 @@ func (e *ClusterReadError) Unwrap() error { return e.Err }
 
 // planAddons builds the plan of an add-on update: one read of the whole
 // cluster with the latest version of each target, the step of each
-// add-on, the busy rule, and the gate over the add-ons that would be
-// updated.
+// add-on, the update in flight of each add-on that is already changing,
+// the busy rule, and the gate over the add-ons that would be updated.
 func planAddons(ctx context.Context, d Deps, req AddonUpdateRequest) (*Plan, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
@@ -183,12 +183,17 @@ func planAddons(ctx context.Context, d Deps, req AddonUpdateRequest) (*Plan, err
 		}
 		phase.Steps = append(phase.Steps, step)
 	}
+	cp.markBusy(ctx, clients, phase.Steps)
 	cp.Phases = []Phase{phase}
 
 	refuse, notices := Busy(snap, AddonUpdate, phase.Steps)
 	cp.Blockers = append(cp.Blockers, refuse...)
 	cp.Notices = append(cp.Notices, notices...)
-	cp.gateAddons(ctx, d, req.Policy)
+	// A plan that the busy rule refuses runs no gate: nothing would be
+	// submitted, so its reads would be for nothing.
+	if len(refuse) == 0 {
+		cp.gateAddons(ctx, d, req.Policy)
+	}
 	return &Plan{Kind: AddonUpdate, Request: req, Clusters: []ClusterPlan{cp}, At: d.now()}, nil
 }
 
@@ -232,7 +237,8 @@ func addonNames(snap *fleet.Snapshot, req AddonUpdateRequest) ([]string, error) 
 }
 
 // addonStep returns the step of one add-on, and records its target, its
-// notice, its blocker, and its busy failure in the plan.
+// notice, and its blocker in the plan. markBusy completes a step whose
+// add-on is already changing.
 func (cp *ClusterPlan) addonStep(phase PhaseRef, name string, req AddonUpdateRequest, pinned addonTarget) (Step, error) {
 	snap := cp.snapshot
 	step := Step{Ref: StepRef{Phase: phase, Kind: StepAddon, Name: name}}
@@ -269,26 +275,7 @@ func (cp *ClusterPlan) addonStep(phase PhaseRef, name string, req AddonUpdateReq
 	if d.Unread != "" {
 		cp.Blockers = append(cp.Blockers, Blocker{Kind: BlockerUnread, Step: &step.Ref, Message: d.Unread})
 	}
-	if step.busy() {
-		cp.Failures = append(cp.Failures, cp.busyFailure(name, a.Status, a.Version, ""))
-	}
 	return step, nil
-}
-
-// busyFailure returns the failure of an add-on target that is already
-// changing. inFlight names the update: its type, or unknownUpdate. It is
-// "" in a plan, which makes no lookup.
-func (cp *ClusterPlan) busyFailure(name, status, version, inFlight string) apidoc.Failure {
-	msg := fmt.Sprintf("add-on %s is %s", name, status)
-	if version != "" && status != "DELETING" {
-		msg += " to " + version
-	}
-	if inFlight != "" {
-		msg += " (" + inFlight + ")"
-	}
-	f := apidoc.NewFailure(apidoc.FailureAddon, name, apidoc.ReasonBusy, msg+"; it was not changed. Run the command again once that finishes")
-	f.Cluster, f.Region = cp.Cluster, cp.Region
-	return f
 }
 
 // gateAddons runs the health gate over the add-ons that the plan would

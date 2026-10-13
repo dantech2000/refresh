@@ -173,7 +173,7 @@ func scaleCases() []scaleCase {
 		{name: "down-pdbs-unreadable-forced", kube: true, args: []string{"--desired", "1", "--yes", "--force"}, exit: cmdutil.ExitIncomplete, sent: down, prepare: denyBudgets},
 		{name: "down-no-kube-yes", args: []string{"--desired", "1", "--yes"}, sent: down},
 		{name: "down-no-kube-prompt", args: []string{"--desired", "1"}, answer: "y\n", sent: down},
-		{name: "down-no-kube-require-healthy", args: []string{"--desired", "1", "--yes", "--require-healthy"}, exit: cmdutil.ExitNeedsAttention},
+		{name: "down-no-kube-require-healthy", args: []string{"--desired", "1", "--yes", "--require-healthy"}, exit: cmdutil.ExitBlocked},
 		{name: "down-skip-health-check", kube: true, args: []string{"--desired", "1", "--yes", "--skip-health-check"}, sent: down, seed: tightBudget},
 		{name: "bounds", args: []string{"--min", "2", "--max", "6", "--yes"}, sent: map[string]any{"minSize": float64(2), "maxSize": float64(6)}},
 		{name: "all-sizes", args: []string{"--desired", "4", "--min", "0", "--max", "8", "--yes", "--quiet"},

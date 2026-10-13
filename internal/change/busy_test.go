@@ -1,11 +1,14 @@
 package change
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
+	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
 // TestBusy is the table of the busy rule: each status of each resource,
@@ -151,5 +154,126 @@ func TestBusy(t *testing.T) {
 				t.Errorf("notices (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// A plan looks up the update in flight of a target that is already
+// changing: the lookup is a read, so a dry run names the type as a run
+// does. The step, the failure, and the document carry it.
+func TestNewPlan_BusyTarget(t *testing.T) {
+	const again = "; it was not changed. Run the command again once that finishes"
+	// planned returns the one step and the one failure of the plan of req.
+	planned := func(t *testing.T, e *env, req Request) (apidoc.PlanStep, apidoc.Failure) {
+		t.Helper()
+		from := len(e.srv.Requests())
+		p, err := NewPlan(testContext(t), e.deps, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Decision() != DecisionNothingToDo || p.ExitCode() != 4 {
+			t.Errorf("the plan is %s with exit %d; want NothingToDo, 4", p.Decision(), p.ExitCode())
+		}
+		for _, op := range e.operations(from) {
+			if strings.Contains(op, ":Update") {
+				t.Errorf("the plan sent %s", op)
+			}
+		}
+		doc := p.Document()
+		if len(doc.Clusters[0].Steps) != 1 || len(doc.Failures) != 1 {
+			t.Fatalf("document = %+v; want one step and one failure", doc)
+		}
+		if got := p.Clusters[0].Steps()[0].InFlight; got != doc.Clusters[0].Steps[0].InFlight {
+			t.Errorf("the step has %q in flight and its document %q", got, doc.Clusters[0].Steps[0].InFlight)
+		}
+		return doc.Clusters[0].Steps[0], doc.Failures[0]
+	}
+	t.Run("a nodegroup that is rolling", func(t *testing.T) {
+		e := rolling(t)
+		step, f := planned(t, e, scaleTo(3))
+		if step.InFlight != "VersionUpdate" || f.Reason != apidoc.ReasonBusy || f.Error != "nodegroup web is UPDATING (VersionUpdate)"+again {
+			t.Errorf("in flight %q, failure %+v; want VersionUpdate in both", step.InFlight, f)
+		}
+		if lists, describes := e.count(fleettest.EKSListUpdates), e.count(fleettest.EKSDescribeUpdate); lists != 1 || describes != 1 {
+			t.Errorf("%d ListUpdates and %d DescribeUpdate requests, want one of each", lists, describes)
+		}
+	})
+	t.Run("an add-on that is updating to another version", func(t *testing.T) {
+		e := newEnv(t, newWorld(nil))
+		startElsewhere(t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
+		step, f := planned(t, e, request("vpc-cni"))
+		if step.InFlight != "AddonUpdate" || f.Error != "add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate)"+again {
+			t.Errorf("in flight %q, failure %+v; want AddonUpdate in both", step.InFlight, f)
+		}
+	})
+	for _, op := range []fleettest.Operation{fleettest.EKSListUpdates, fleettest.EKSDescribeUpdate} {
+		t.Run("the lookup fails at "+string(op), func(t *testing.T) {
+			e := rolling(t)
+			e.world.SetFault(op, fleettest.Fault{Deny: true})
+			step, f := planned(t, e, scaleTo(3))
+			if step.InFlight != "" || f.Error != "nodegroup web is UPDATING (an update of unknown type)"+again {
+				t.Errorf("in flight %q, failure %+v; want an update of unknown type", step.InFlight, f)
+			}
+		})
+	}
+	t.Run("a target with no update in progress", func(t *testing.T) {
+		e := newEnv(t, scaleWorld(func(c *fleettest.Cluster) { c.Nodegroup("web").Status = fleettest.StatusDeleting }))
+		step, f := planned(t, e, scaleTo(3))
+		if step.InFlight != "" || f.Error != "nodegroup web is DELETING"+again {
+			t.Errorf("in flight %q, failure %+v; want the status alone", step.InFlight, f)
+		}
+	})
+	t.Run("no lookup for a target that is not changing", func(t *testing.T) {
+		e := newEnv(t, scaleWorld(nil))
+		p, err := NewPlan(testContext(t), e.deps, scaleTo(3))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := e.count(fleettest.EKSListUpdates); n != 0 || p.Clusters[0].Steps()[0].InFlight != "" {
+			t.Errorf("%d ListUpdates requests and %q in flight; want none", n, p.Clusters[0].Steps()[0].InFlight)
+		}
+	})
+}
+
+// A plan that the busy rule refuses runs no gate: it makes none of the
+// reads of the checks.
+func TestNewPlan_BusyRuleSkipsTheGate(t *testing.T) {
+	gateReads := func(e *env) []string {
+		var out []string
+		for _, op := range e.operations(0) {
+			if !strings.HasPrefix(op, "eks:") {
+				out = append(out, op)
+			}
+		}
+		return out
+	}
+	// The same scale-up with nothing else changing reads for its gate.
+	free := newEnv(t, scaleWorld(nil))
+	if _, err := NewPlan(testContext(t), free.deps, scaleTo(3)); err != nil {
+		t.Fatal(err)
+	}
+	if len(gateReads(free)) == 0 {
+		t.Fatal("the gate of a scale-up made no read; the test would show nothing")
+	}
+
+	e := newEnv(t, scaleWorld(func(c *fleettest.Cluster) { c.Status = fleettest.StatusUpdating }))
+	srv := e.withKube(t)
+	for name, req := range map[string]Request{"a scale-up": scaleTo(3), "a scale-down": scaleTo(1), "an add-on update": request("vpc-cni")} {
+		p, err := NewPlan(testContext(t), e.deps, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cp := p.Clusters[0]
+		if p.Decision() != DecisionBlocked || p.ExitCode() != 3 || len(cp.Blockers) != 1 || cp.Blockers[0].Kind != BlockerBusy {
+			t.Errorf("%s: the plan is %s with exit %d and blockers %+v; want Blocked, 3, and the busy blocker", name, p.Decision(), p.ExitCode(), cp.Blockers)
+		}
+		if cp.Gate.Decision != "" || len(cp.Checks) != 0 {
+			t.Errorf("%s: the refused plan has a gate: %+v, %+v", name, cp.Gate, cp.Checks)
+		}
+	}
+	if got := gateReads(e); len(got) != 0 {
+		t.Errorf("the refused plans made the reads of a gate: %v", got)
+	}
+	if got := kubeOps(srv); len(got) != 0 {
+		t.Errorf("the refused plans read Kubernetes: %v", got)
 	}
 }

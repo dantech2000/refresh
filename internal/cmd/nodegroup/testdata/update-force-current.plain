@@ -1,0 +1,18 @@
+exit: 0
+error: 
+--- stdout ---
+FIELD	VALUE
+plan.operation	NodegroupUpdate
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.32
+plan.decision	NothingToDo
+steps.api.kind	Nodegroup
+steps.api.action	Skip
+steps.api.reason	AlreadyLatest
+steps.api.from	1.32
+steps.api.to	1.32
+steps.api.note	-
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  api  skip, at 1.32 (AlreadyLatest)

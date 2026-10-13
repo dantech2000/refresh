@@ -196,6 +196,7 @@ func TestCommandTree(t *testing.T) {
 		"refresh nodegroup describe",
 		"refresh nodegroup list",
 		"refresh nodegroup scale",
+		"refresh nodegroup update",
 		"refresh status",
 		"refresh version",
 	}

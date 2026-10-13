@@ -72,12 +72,11 @@ update, for --wait-timeout each; --no-wait returns once AWS accepted them.
 The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
 refresh context. It never comes from the kubeconfig.
 
-Exit codes: 0 done or nothing to do. 1 an update failed, an error, or an
-interrupt. 2 (--dry-run) a real run would ask about warnings. 3 blocked:
-the cluster is busy, or --require-healthy and a warning. 4 incomplete: one
-add-on failed and another was updated, a target was already changing, a
-wait timed out, or something could not be read. 5 an add-on was updated
-and is not healthy.`,
+` + changecmd.ExitCodeHelp(map[int]string{
+			1: "Every update that was sent failed.",
+			4: "An add-on failed and another was updated.",
+			5: "An add-on was updated and is not healthy.",
+		}),
 		Example: `  # Update one add-on to the latest version
   refresh addon update vpc-cni -c prod
 
@@ -155,7 +154,7 @@ func (o *updateOptions) run(ctx context.Context) error {
 	}
 	req := o.request()
 	if o.change.DryRun {
-		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout())
+		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout(), nil)
 	}
 	return changecmd.RunChange(ctx, o.ios, o.output, d, req, changecmd.NewRenderer(o.ios, o.change.Quiet))
 }

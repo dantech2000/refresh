@@ -1,0 +1,22 @@
+exit: 3
+error: prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
+--- stdout ---
+Plan   [X] Blocked   NodegroupUpdate
+
+PLAN
+  operation  NodegroupUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.32
+  decision   [X] Blocked
+
+STEPS  1
+  NAME  KIND       ACTION  REASON       FROM  TO                    NOTE
+  web   Nodegroup  Submit  AMIOutdated  1.32  1.32 (ami-latest132)  -
+
+BLOCKERS  1
+  NAME  KIND      STEP  MESSAGE
+  1     [X] Busy  -     prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)

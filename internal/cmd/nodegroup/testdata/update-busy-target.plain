@@ -1,0 +1,23 @@
+exit: 4
+error: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+--- stdout ---
+FIELD	VALUE
+run.operation	NodegroupUpdate
+run.cluster	prod
+run.region	us-east-1
+run.version	1.32
+run.status	Incomplete
+results.web.kind	Nodegroup
+results.web.status	Busy
+results.web.from	1.32
+results.web.to	1.32
+results.web.update	-
+results.web.note	ConfigUpdate in flight
+results.web.started	-
+results.web.finished	-
+results.web.failure	Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  skip, at 1.32 (InFlight: ConfigUpdate)
+[!] web: Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+warning: nodegroup prod/web (us-east-1): Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes

@@ -75,6 +75,12 @@ func (r StepRef) String() string {
 	return r.Phase.String() + "/" + r.Name
 }
 
+// Resource returns what the step changes, for a read or a wait: the ref
+// without its phase. The cluster is the one of the phase.
+func (r StepRef) Resource() Resource {
+	return Resource{Target: r.Phase.Target, Kind: r.Kind, Name: r.Name}
+}
+
 // Plan is what a change would do, from one read of live state.
 type Plan struct {
 	Kind    Kind
@@ -115,6 +121,21 @@ type ClusterPlan struct {
 	addonTargets map[string]addonTarget
 }
 
+// Nodegroup returns a nodegroup of the cluster as the plan read it, and
+// false when the plan did not read it. A front end uses it for what the
+// plan does not carry, such as the AMI release that a nodegroup runs.
+func (cp *ClusterPlan) Nodegroup(name string) (fleet.Nodegroup, bool) {
+	if cp.snapshot == nil {
+		return fleet.Nodegroup{}, false
+	}
+	for _, n := range cp.snapshot.Nodegroups {
+		if n.Name == name && n.State == fleet.Collected {
+			return n, true
+		}
+	}
+	return fleet.Nodegroup{}, false
+}
+
 // BlockerKind is why a plan cannot run. The values are the ones of the
 // documents.
 type BlockerKind = apidoc.BlockerKind
@@ -135,11 +156,15 @@ type Blocker struct {
 	Message string
 }
 
-// Phase is a group of steps. They run one after another, each with its
-// own fresh read, wait, and confirmation, and a step that does not
-// succeed does not stop the next one.
+// Phase is a group of steps. A step that does not succeed does not stop
+// the next one.
 type Phase struct {
-	Ref   PhaseRef
+	Ref PhaseRef
+	// Batch runs the steps as one batch: every submit first, each after a
+	// fresh read of its target, then one wait for all of them, and one
+	// verification. Without it the steps run one after another, each with
+	// its own fresh read, wait, and confirmation.
+	Batch bool
 	Steps []Step
 }
 
@@ -204,11 +229,19 @@ type Step struct {
 	// From and To are the pinned versions: the Kubernetes version for a
 	// roll and the control plane, the add-on version for an add-on.
 	From, To string
-	// ToRelease is the AMI release that a roll expects.
-	ToRelease string
-	Sizes     *ScaleSizes
+	// FromRelease is the AMI release version that the nodegroup of a roll
+	// ran when the plan read it. The fresh read before the submit compares
+	// with it: a nodegroup on another release was rolled elsewhere since
+	// the plan. ToRelease is the AMI release that a roll expects.
+	FromRelease, ToRelease string
+	Sizes                  *ScaleSizes
 	// Force is sent with the request.
 	Force bool
+	// InFlight is the type of the update that makes a busy target busy,
+	// such as VersionUpdate. It is "" for every other step, and when the
+	// update was not found. The run submits nothing for such a step, so
+	// Diff does not compare the field.
+	InFlight string
 }
 
 // work reports whether a run does something for the step: it submits,
@@ -268,19 +301,18 @@ func (cp *ClusterPlan) Decision() Decision {
 // does not change it: the gate's code comes from the findings alone.
 //
 // A plan with a failure exits 4, whatever its decision. Otherwise a
-// blocked plan exits 3, or with the code of the gate when the gate blocks
-// over warnings alone (2, with --require-healthy); a plan that asks exits
-// with the code of the gate; and the other two exit 0.
+// blocked plan exits 3, also when --require-healthy blocks it over
+// warnings alone; a plan that asks exits with the code of the gate, 2;
+// and the other two exit 0.
 func (cp *ClusterPlan) ExitCode() int {
 	if len(cp.Failures) > 0 || len(cp.Gate.Failures) > 0 {
 		return exitcode.Incomplete
 	}
 	switch cp.Decision() {
 	case DecisionBlocked:
-		if len(cp.Blockers) > 0 || len(cp.Gate.Blockers) > 0 {
-			return exitcode.Blocked
-		}
-		return cp.Gate.Exit
+		// A Block is 3, also when --require-healthy made it one from
+		// warnings alone: health.Gate says so.
+		return max(exitcode.Blocked, cp.Gate.Exit)
 	case Ask:
 		return cp.Gate.Exit
 	}
@@ -300,10 +332,25 @@ func decisionRank(d Decision) int {
 	return 0
 }
 
-// Decision returns the decision of the plan: the one of its cluster, and
-// in fleet mode the worst of them, in the order Blocked, Ask, Proceed,
-// NothingToDo.
+// Decision returns the decision of the plan: the one of its cluster.
+//
+// The clusters of a fleet are independent, so a cluster that is blocked
+// does not block the others: the fleet asks when a cluster asks, proceeds
+// when one proceeds, and is blocked only when no cluster can run and one
+// is blocked. ExitCode still returns the highest code.
 func (p *Plan) Decision() Decision {
+	if p.fleet() {
+		seen := map[Decision]bool{}
+		for i := range p.Clusters {
+			seen[p.Clusters[i].Decision()] = true
+		}
+		for _, d := range []Decision{Ask, Proceed, DecisionBlocked} {
+			if seen[d] {
+				return d
+			}
+		}
+		return DecisionNothingToDo
+	}
 	worst := DecisionNothingToDo
 	for i := range p.Clusters {
 		if d := p.Clusters[i].Decision(); decisionRank(d) > decisionRank(worst) {

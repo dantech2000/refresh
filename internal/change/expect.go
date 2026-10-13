@@ -16,12 +16,14 @@ var ErrOtherRequest = errors.New("the reviewed plan is for another request")
 // of req: the same kind of change, the same cluster and region, the same
 // targets, and the same parameters. A reviewed plan is consent to what it
 // shows and to nothing else, so every field of the request that can
-// change what is submitted must be equal. That includes the whole policy:
-// --yes, --force, --skip-health-check, and --require-healthy each change
-// what a run may do.
+// change what is submitted must be equal. That includes --force,
+// --skip-health-check, and --require-healthy: each changes what a run may
+// do.
 //
-// Three fields are not compared, because they cannot change what is
-// submitted: Limits, NoWait, and Expect itself.
+// Some fields are not compared. Limits, NoWait, SkipVerify, Nodes, and
+// Expect itself cannot change what is submitted. Policy.Yes is how the consent is given, and no
+// part of what is consented to: a plan that was reviewed without --yes and
+// is run with it is the same plan, and so is the reverse.
 func sameRequest(reviewed *Plan, req Request) error {
 	differs := ""
 	switch {
@@ -52,15 +54,15 @@ func (t Target) differs(o Target) string {
 }
 
 // differs names the first field of the policy in which c differs from o.
-// Limits, NoWait, and Expect are not compared: see sameRequest.
+// Limits, NoWait, Expect, and Policy.Yes are not compared: see
+// sameRequest.
 func (c Common) differs(o Common) string {
 	return policyDiffers(c.Policy, o.Policy)
 }
 
+// policyDiffers compares every field of the policy but Yes.
 func policyDiffers(p, o health.Policy) string {
 	switch {
-	case p.Yes != o.Yes:
-		return "--yes"
 	case p.RequireHealthy != o.RequireHealthy:
 		return "--require-healthy"
 	case p.Force != o.Force:
@@ -112,6 +114,41 @@ func (r ScaleRequest) differs(reviewed Request) string {
 		return "--min"
 	case !same(r.Max, o.Max):
 		return "--max"
+	}
+	return r.Common.differs(o.Common)
+}
+
+func (r RollRequest) differs(reviewed Request) string {
+	o, ok := reviewed.(RollRequest)
+	if !ok {
+		return "the kind of change"
+	}
+	if field := r.Target.differs(o.Target); field != "" {
+		return field
+	}
+	text := func(s *Selector) string {
+		if s == nil {
+			return ""
+		}
+		return s.Text
+	}
+	regions := func(f *FleetScope) []string {
+		if f == nil {
+			return nil
+		}
+		return f.Regions.Names
+	}
+	switch {
+	case !slices.Equal(r.Nodegroups, o.Nodegroups):
+		return "the nodegroups"
+	case (r.Select == nil) != (o.Select == nil) || text(r.Select) != text(o.Select):
+		return "the filter"
+	case r.Reroll != o.Reroll:
+		return "--reroll"
+	case (r.Fleet == nil) != (o.Fleet == nil):
+		return "--all-clusters"
+	case !slices.Equal(regions(r.Fleet), regions(o.Fleet)):
+		return "the regions"
 	}
 	return r.Common.differs(o.Common)
 }

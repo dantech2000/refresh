@@ -75,6 +75,8 @@ same value. A `before the prompt` obligation needs evidence from before the
 prompt. A `carried` obligation is met by carried or fresh evidence. A fresh
 obligation needs fresh evidence.
 
+The baseline rule: the verification baseline (the whole-cluster Pending-pod list before a roll) is owed only when a mutation follows it in the new trace, so a run that both binaries refuse before any mutation owes none, and still owes every gate read.
+
 What the new binary read in addition is not a difference. An obligation that
 is not met reads like this:
 

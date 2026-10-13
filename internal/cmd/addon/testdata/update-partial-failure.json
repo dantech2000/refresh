@@ -98,7 +98,7 @@ error: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Faile
       ],
       "verification": [
         {
-          "name": "AddonHealth",
+          "name": "AddonHealth/coredns",
           "outcome": "Pass",
           "blocking": false,
           "message": "coredns is ACTIVE at v1.11.4-eksbuild.2",

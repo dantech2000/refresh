@@ -1,0 +1,52 @@
+exit: 4
+error: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+--- stdout ---
+apiVersion: refresh.drod.dev/v2
+kind: Run
+operation: NodegroupUpdate
+status: Incomplete
+clusters:
+  - cluster: prod
+    region: us-east-1
+    version: "1.32"
+    decision: NothingToDo
+    steps:
+      - phase: Roll
+        kind: Nodegroup
+        name: web
+        action: Skip
+        reason: InFlight
+        from: "1.32"
+        to: "1.32"
+        inFlight: ConfigUpdate
+    blockers: []
+    notices: []
+    status: Incomplete
+    results:
+      - phase: Roll
+        kind: Nodegroup
+        name: web
+        status: Busy
+        inFlight: ConfigUpdate
+        failure:
+          kind: Nodegroup
+          name: web
+          cluster: prod
+          region: us-east-1
+          reason: Busy
+          retryable: true
+          error: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+    verification: []
+failures:
+  - kind: Nodegroup
+    name: web
+    cluster: prod
+    region: us-east-1
+    reason: Busy
+    retryable: true
+    error: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  skip, at 1.32 (InFlight: ConfigUpdate)
+[!] web: Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+warning: nodegroup prod/web (us-east-1): Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes

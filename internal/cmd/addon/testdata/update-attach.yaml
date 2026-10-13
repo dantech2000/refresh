@@ -30,7 +30,7 @@ clusters:
         startedAt: "2026-01-01T00:00:00Z"
         finishedAt: "2026-01-01T00:04:00Z"
     verification:
-      - name: AddonHealth
+      - name: AddonHealth/vpc-cni
         outcome: Pass
         blocking: false
         message: vpc-cni is ACTIVE at v1.20.0-eksbuild.1

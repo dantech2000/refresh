@@ -1,0 +1,37 @@
+exit: 0
+error: 
+--- stdout ---
+Run   [OK] Succeeded   NodegroupUpdate
+
+RUN
+  operation  NodegroupUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.32
+  status     [OK] Succeeded
+
+RESULTS  1
+  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  web   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+
+VERIFICATION  3
+  NAME             OUTCOME    MESSAGE
+  NodegroupActive  [OK] Pass  web ACTIVE
+  NodesReady       [OK] Pass  2 new nodes ready
+  NewPendingPods   [OK] Pass  no new Pending pods
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  9
+  NAME           OUTCOME    MESSAGE
+  Nodes          [OK] Pass  4/4 nodes ready
+  Capacity       [OK] Pass  CPU mean 32%, peak 32%, 4 instances
+  ControlPlane   Skipped    control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+  Workloads      [OK] Pass  2/2 pods running in the system namespaces
+  DrainBlockers  [OK] Pass  no PodDisruptionBudget blocks a drain
+  PDBCoverage    [OK] Pass  every deployment has a PodDisruptionBudget (2)
+  Utilization    [OK] Pass  CPU 20%, memory 25% in use
+  Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
+  Kubernetes     [OK] Pass  Kubernetes API reachable
+--- stderr ---

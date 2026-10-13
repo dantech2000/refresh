@@ -42,7 +42,7 @@ clusters:
         startedAt: "2026-01-01T00:00:00Z"
         finishedAt: "2026-01-01T00:00:15Z"
     verification:
-      - name: AddonHealth
+      - name: AddonHealth/vpc-cni
         outcome: Fail
         blocking: false
         message: add-on vpc-cni ended in status DEGRADED (expected ACTIVE)
@@ -54,5 +54,5 @@ failures: []
 PLAN  AddonUpdate, prod in us-east-1
   vpc-cni  update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)
 [~] vpc-cni: Started (update 00000000-0000-4000-8000-000000000001)
-  [X] AddonHealth  add-on vpc-cni ended in status DEGRADED (expected ACTIVE)
+  [X] AddonHealth/vpc-cni  add-on vpc-cni ended in status DEGRADED (expected ACTIVE)
 [OK] vpc-cni: Succeeded

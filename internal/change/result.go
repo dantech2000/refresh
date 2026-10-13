@@ -96,8 +96,9 @@ type Result struct {
 // ending is an outcome of a run that no step carries.
 type ending struct {
 	// code is the exit code of the outcome: the code of a refused plan, 1
-	// for a question answered no and for a hook error, and for a read
-	// budget that ran out, 1 when nothing was read and 4 otherwise.
+	// for a question answered no, for a stop from the checkpoint, and for
+	// a hook error, and for a read budget that ran out, 1 when nothing was
+	// read and 4 otherwise.
 	code int
 	// interrupted makes the run exit 1, whatever else happened.
 	interrupted bool
@@ -138,7 +139,9 @@ func stepCode(s StepResult) (code int, ok bool) {
 // ExitCode returns the exit code of the run, in three moves.
 //
 //  1. Every step has a code, and a failure that belongs to no step counts
-//     as 4.
+//     as 4. A warning of the gate that --yes or an answer accepted is not
+//     a failure and has no code: a run that then succeeds exits 0. Only a
+//     dry run reports it, with 2.
 //  2. Among independent targets, a step with code 1 beside a step that
 //     succeeded or started counts as 4: a partial failure. The phases of
 //     an upgrade and of a rollback are a sequence, so the move does not

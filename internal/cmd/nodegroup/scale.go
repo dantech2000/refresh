@@ -81,12 +81,9 @@ reports the update done and the nodegroup is ACTIVE at the new sizes;
 The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
 refresh context. It never comes from the kubeconfig.
 
-Exit codes: 0 done or nothing to do. 1 the update failed, sizes that
-cannot hold, an error, or an interrupt. 2 (--dry-run) a real run would ask
-about warnings, or --require-healthy and a warning. 3 blocked: the cluster
-is busy, or a PodDisruptionBudget stops the scale-down. 4 incomplete: the
-nodegroup was already changing, the wait timed out, or something could
-not be read.`,
+` + changecmd.ExitCodeHelp(map[int]string{
+			1: "The update failed, or the sizes cannot hold.",
+		}),
 		Example: `  # Add a node
   refresh nodegroup scale web -c prod --desired 4
 
@@ -167,7 +164,7 @@ func (o *scaleOptions) run(ctx context.Context) error {
 	}
 	req := o.request()
 	if o.change.DryRun {
-		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout())
+		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout(), nil)
 	}
 	return changecmd.RunChange(ctx, o.ios, o.output, d, req, changecmd.NewRenderer(o.ios, o.change.Quiet))
 }

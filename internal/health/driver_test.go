@@ -210,7 +210,7 @@ func TestDriver_WarningsAcrossSteps(t *testing.T) {
 		t.Errorf("phase gate = %+v, worse = %+v; the same warning does not ask again", v, worse)
 	}
 	d.policy.RequireHealthy = true
-	if v, _ := d.phaseGate(ctx, "ng-a"); v.Decision != health.Block || v.Exit != 2 {
-		t.Errorf("--require-healthy = %+v, want Block with exit 2", v)
+	if v, _ := d.phaseGate(ctx, "ng-a"); v.Decision != health.Block || v.Exit != 3 {
+		t.Errorf("--require-healthy = %+v, want Block with exit 3", v)
 	}
 }

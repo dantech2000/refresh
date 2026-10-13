@@ -3,6 +3,7 @@ package cmdutil
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/dantech2000/refresh/internal/awsx"
@@ -50,6 +51,27 @@ type Factory struct {
 	// hangs past a time budget. Nil means time.AfterFunc. A test that sets
 	// a clock of its own sets it too, so no real timer runs.
 	AfterFunc func(d time.Duration, f func()) (stop func() bool)
+
+	// Tick returns a channel that delivers after a duration, for the node
+	// observer beside the wait of a roll. It is apart from After: the
+	// observer runs beside the wait, and a test clock that moves with each
+	// pause of the wait must not move for the observer too. Nil means
+	// time.After.
+	Tick func(d time.Duration) <-chan time.Time
+
+	// HTTPClient is the client for what a command reads from the web: the
+	// AMI release notes of "nodegroup update --changelog". Nil means that
+	// the run has no such access, and the command says so. A test sets a
+	// client for a server of its own, so no test reaches the network.
+	HTTPClient *http.Client
+
+	// RouteKubeLogs routes what client-go and its informers log, once the
+	// log level is known. They log through klog, which is one logger for
+	// the whole process, so the process sets it and no package does: the
+	// root command calls this once, after the global flags. Nil leaves
+	// klog alone, so a test of a command does not change the logger of its
+	// test binary.
+	RouteKubeLogs func(level slog.Level)
 
 	// Global holds the values of the global flags. The root command fills it
 	// before a command runs.

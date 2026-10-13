@@ -5,11 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
 	"go.uber.org/goleak"
+	"k8s.io/klog/v2"
 
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
@@ -328,6 +332,63 @@ func TestUpdateCachePath(t *testing.T) {
 			}
 			if filepath.Dir(store.Path) != filepath.Dir(updateCachePath()) {
 				t.Errorf("the context file is in %s and the update cache in %s", filepath.Dir(store.Path), filepath.Dir(updateCachePath()))
+			}
+		})
+	}
+}
+
+// TestKubeLogs checks where a line goes that client-go logs through klog
+// while a command runs: nowhere by default, and to stderr at the debug
+// level. The update check of "refresh version" stands in for client-go.
+//
+// klog has one logger for the process. The test does not run in parallel,
+// and execute puts the default logger back, so no other test sees the
+// routing of this one.
+func TestKubeLogs(t *testing.T) {
+	const line = "watch of *v1.Node ended"
+	tests := []struct {
+		name string
+		args []string
+		env  string
+		want bool
+	}{
+		{name: "default", args: []string{"version"}},
+		{name: "json", args: []string{"version", "-o", "json"}},
+		{name: "info", args: []string{"version", "--log-level", "info"}},
+		{name: "debug", args: []string{"version", "--log-level", "debug"}, want: true},
+		{name: "verbose", args: []string{"version", "--verbose"}, want: true},
+		{name: "debug from the environment", args: []string{"version"}, env: "debug", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("REFRESH_NO_UPDATE_CHECK", "")
+			t.Setenv("REFRESH_LOG_LEVEL", tt.env)
+			f, _, _, errOut := cmdutiltest.NewFactory()
+			f.IOStreams.OutTTY = true
+			f.RouteKubeLogs = routeKubeLogs(f.IOStreams.ErrOut)
+			// Unrouted, klog writes to the stderr of the process. This
+			// logger stands for that: a line in it was not routed.
+			var unrouted bytes.Buffer
+			klog.SetLogger(logr.FromSlogHandler(slog.NewTextHandler(&unrouted, nil)))
+			t.Cleanup(klog.ClearLogger)
+			logged := false
+			f.LatestRelease = func(context.Context) (string, error) {
+				klog.Info(line)
+				klog.ErrorS(errors.New("connection refused"), line)
+				logged = true
+				return "", errors.New("no network in a test")
+			}
+			if code := execute(context.Background(), tt.args, f); code != 0 {
+				t.Fatalf("exit code = %d, want 0\n%s", code, errOut.String())
+			}
+			if !logged {
+				t.Fatal("the command did not run the update check, so nothing was logged")
+			}
+			if unrouted.Len() != 0 {
+				t.Errorf("klog was not routed: the line went where klog writes by default:\n%s", unrouted.String())
+			}
+			if got := strings.Count(errOut.String(), line); (got == 2) != tt.want || (got != 0 && !tt.want) {
+				t.Errorf("stderr has the klog line %d time(s), want shown = %t:\n%s", got, tt.want, errOut.String())
 			}
 		})
 	}

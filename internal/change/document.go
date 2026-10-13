@@ -40,7 +40,8 @@ func (cp *ClusterPlan) document() apidoc.ClusterPlan {
 		id := stepID(s.Ref)
 		step := apidoc.PlanStep{
 			Phase: id.Phase, Hop: id.Hop, Kind: id.Kind, Name: id.Name,
-			Action: s.Action, Reason: s.Reason, From: s.From, To: s.To, ToRelease: s.ToRelease, Force: s.Force,
+			Action: s.Action, Reason: s.Reason, From: s.From, To: s.To, FromRelease: s.FromRelease, ToRelease: s.ToRelease, Force: s.Force,
+			InFlight: s.InFlight,
 		}
 		if s.Sizes != nil {
 			step.Sizes = &apidoc.ScaleSizes{Before: apidoc.Sizes(s.Sizes.Before), After: apidoc.Sizes(s.Sizes.After)}

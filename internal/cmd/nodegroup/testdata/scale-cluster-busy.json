@@ -31,24 +31,6 @@ error: prod is busy (cluster UPDATING); nothing was started. Run it again once t
           }
         }
       ],
-      "gate": {
-        "decision": "Go",
-        "reasons": [],
-        "accepted": [],
-        "forced": [],
-        "checks": [
-          {
-            "name": "Quotas",
-            "outcome": "Pass",
-            "blocking": false,
-            "message": "31% of the vCPU quota in use (40 of 128)",
-            "details": [
-              "EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)"
-            ],
-            "findings": []
-          }
-        ]
-      },
       "blockers": [
         {
           "kind": "Busy",

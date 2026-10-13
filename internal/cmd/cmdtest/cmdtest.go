@@ -58,9 +58,12 @@ func NewFake(t *testing.T, world *fleettest.World, region string) *Fake {
 // waits for an update then makes its polls as fast as the fake answers,
 // and the updates of the world progress as if the time had passed. The
 // timer of a time budget never fires: no call of such a test hangs, and
-// the clock of the world decides when a budget runs out.
+// the clock of the world decides when a budget runs out. The clock of the
+// node observer never ticks either: an observer takes its first snapshot
+// and no other, so nothing beside the wait depends on real time.
 func (e *Fake) UseWorldClock() {
 	e.Factory.Now = e.World.Now
+	e.Factory.Tick = func(time.Duration) <-chan time.Time { return nil }
 	e.Factory.AfterFunc = func(time.Duration, func()) (stop func() bool) {
 		return func() bool { return true }
 	}

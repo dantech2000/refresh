@@ -82,10 +82,13 @@ type Change struct {
 // It compares everything that a step submits or acts on. The steps are
 // matched by their ref, so a target that is new or gone is Added or
 // Removed. For a step with work in both plans, every field of Step is
-// compared: the action, the reason, From, To, ToRelease, Force, and the
-// sizes before and after. The reason and From are not compared for a step
-// that now attaches to a change in flight: they are the ones of that
-// change. It also compares the blockers and the health
+// compared: the action, the reason, From, FromRelease, To, ToRelease,
+// Force, and the sizes before and after. The reason, From, and FromRelease
+// are not compared for a step that now attaches to a change in flight:
+// they are the ones of that change. InFlight is not compared at all: it names the update of someone
+// else on a target that the run leaves alone, so no change of it needs an
+// answer or a notice, and the row of the step says what it is now. It
+// also compares the blockers and the health
 // checks of each cluster. Diff does not compare the requests of the two
 // plans: Run checks that with sameRequest before it takes a reviewed plan
 // as consent.
@@ -151,9 +154,10 @@ func blockerKey(t Target, b Blocker) string {
 
 // diffStep compares one step of the new plan with the step of the same
 // ref in the plan before, when there was one. For two steps with work it
-// reads every field of Step but Ref, which matched already: a field that
-// is added to Step or to ScaleSizes needs a comparison here, and
-// TestDiff_EveryStepField fails without one.
+// reads every field of Step but Ref, which matched already, and InFlight,
+// which a step with work does not have: a field that is added to Step or
+// to ScaleSizes needs a comparison here, and TestDiff_EveryStepField
+// fails without one.
 func diffStep(old Step, had bool, cur Step) []Change {
 	name := stepName(cur.Ref)
 	change := func(k ChangeKind, format string, args ...any) []Change {
@@ -196,6 +200,9 @@ func diffStep(old Step, had bool, cur Step) []Change {
 		}
 		if old.From != cur.From {
 			out = append(out, change(StepDiffers, "%s is now at %s, not %s", name, cur.From, old.From)...)
+		}
+		if old.FromRelease != cur.FromRelease {
+			out = append(out, change(StepDiffers, "%s now runs the AMI release %s, not %s", name, cur.FromRelease, old.FromRelease)...)
 		}
 	}
 	if old.To != cur.To {

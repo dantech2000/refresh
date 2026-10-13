@@ -188,6 +188,10 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 		}
 	}
 
+	if f.RouteKubeLogs != nil {
+		f.RouteKubeLogs(level)
+	}
+
 	f.Global = cmdutil.GlobalOptions{
 		Regions:        regions,
 		Profile:        o.profile,

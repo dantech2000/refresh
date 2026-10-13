@@ -24,6 +24,12 @@ type LineRenderer struct {
 	quiet bool
 	// polls has the last line of each update, and when it was written.
 	polls map[change.StepRef]pollLine
+	// fleet says that the plan has several clusters: a line about a step
+	// then names the cluster of the step.
+	fleet bool
+	// hold, when set, takes each line in place of stderr. The panel of a
+	// roll holds the lines while it is on the screen.
+	hold func(line string)
 }
 
 type pollLine struct {
@@ -41,7 +47,18 @@ func NewRenderer(ios *cmdutil.IOStreams, quiet bool) *LineRenderer {
 // line writes one line to stderr. Nothing can report a failed write
 // there.
 func (r *LineRenderer) line(s string) {
+	if r.hold != nil {
+		r.hold(s)
+		return
+	}
 	_, _ = fmt.Fprintln(r.ios.ErrOut, s)
+}
+
+// lines writes several lines, each through line.
+func (r *LineRenderer) lines(all []string) {
+	for _, s := range all {
+		r.line(s)
+	}
 }
 
 func (r *LineRenderer) warn(s string) {
@@ -54,8 +71,9 @@ func (r *LineRenderer) Render(e change.Event) {
 	switch e.Kind {
 	case change.PlanReady:
 		doc := e.Plan.Document()
+		r.fleet = len(doc.Clusters) > 1
 		if !r.quiet {
-			_ = cmdutil.WriteLines(r.ios.ErrOut, view.PlanLines(th, doc))
+			r.lines(view.PlanLines(th, doc))
 		}
 		for _, c := range doc.Clusters {
 			for _, notice := range c.Notices {
@@ -64,7 +82,7 @@ func (r *LineRenderer) Render(e change.Event) {
 		}
 	case change.GateReport:
 		if e.Verdict.Decision != health.Go || len(e.Verdict.Reasons) > 0 {
-			_ = cmdutil.WriteLines(r.ios.ErrOut, view.HealthLines(th, health.Documents(e.Checks)))
+			r.lines(view.HealthLines(th, health.Documents(e.Checks)))
 		}
 		// A blocker that --force went past is said in words, also with
 		// --quiet: the change goes on against a check that failed.
@@ -75,18 +93,30 @@ func (r *LineRenderer) Render(e change.Event) {
 		r.warn(e.Text)
 	case change.StepChanged:
 		if !r.quiet && e.Result.Status != change.StepSkipped {
-			r.line(view.StepLine(th, stepDoc(*e.Result)))
+			doc := stepDoc(*e.Result)
+			doc.Name = r.name(e.Result.Ref)
+			r.line(view.StepLine(th, doc))
 		}
 	case change.VerifyReport:
 		for _, c := range e.Checks {
-			if c.Outcome != health.Pass {
-				_ = cmdutil.WriteLines(r.ios.ErrOut, view.HealthLines(th, health.Documents(e.Checks)))
+			// A check that was skipped found nothing: the result lists it.
+			if c.Outcome != health.Pass && c.Outcome != health.Skipped {
+				r.lines(view.HealthLines(th, health.Documents(e.Checks)))
 				break
 			}
 		}
 	case change.UpdatePolled:
 		r.poll(e)
 	}
+}
+
+// name returns the name of a step for a line: the add-on or the
+// nodegroup, with its cluster before it in a fleet.
+func (r *LineRenderer) name(ref change.StepRef) string {
+	if r.fleet {
+		return ref.Phase.Target.Cluster + "/" + ref.Name
+	}
+	return ref.Name
 }
 
 // poll writes the line of a poll when it says something new, or when the
@@ -102,13 +132,14 @@ func (r *LineRenderer) poll(e change.Event) {
 		return
 	}
 	r.polls[e.Step] = pollLine{status: u.Status, pollError: u.PollError, at: e.At}
+	name := r.name(e.Step)
 	switch {
 	case u.PollError != "":
-		r.warn(e.Step.Name + ": could not read the status (" + u.PollError + "); still waiting")
+		r.warn(name + ": could not read the status (" + u.PollError + "); still waiting")
 	case changed:
-		r.line(r.ios.ErrTheme().Dim(e.Step.Name + ": " + u.Status))
+		r.line(r.ios.ErrTheme().Dim(name + ": " + u.Status))
 	default:
-		r.line(r.ios.ErrTheme().Dim(e.Step.Name + ": still " + u.Status))
+		r.line(r.ios.ErrTheme().Dim(name + ": still " + u.Status))
 	}
 }
 

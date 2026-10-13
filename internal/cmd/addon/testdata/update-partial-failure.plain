@@ -34,8 +34,8 @@ results.kube-proxy.note	-
 results.kube-proxy.started	-
 results.kube-proxy.finished	-
 results.kube-proxy.failure	-
-verification.AddonHealth.outcome	Pass
-verification.AddonHealth.message	coredns is ACTIVE at v1.11.4-eksbuild.2
+verification.AddonHealth/coredns.outcome	Pass
+verification.AddonHealth/coredns.message	coredns is ACTIVE at v1.11.4-eksbuild.2
 health_gate.decision	Go
 checks.Addons.outcome	Pass
 checks.Addons.message	2 add-ons ACTIVE

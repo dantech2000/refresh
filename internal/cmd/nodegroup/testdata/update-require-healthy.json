@@ -1,0 +1,132 @@
+exit: 3
+error: health checks reported 1 warning and --require-healthy is set: Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run; nothing was started
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Plan",
+  "operation": "NodegroupUpdate",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.32",
+      "decision": "Blocked",
+      "steps": [
+        {
+          "phase": "Roll",
+          "kind": "Nodegroup",
+          "name": "web",
+          "action": "Submit",
+          "reason": "AMIOutdated",
+          "from": "1.32",
+          "to": "1.32",
+          "fromRelease": "1.32.0-20250101",
+          "toRelease": "ami-latest132"
+        }
+      ],
+      "gate": {
+        "decision": "Block",
+        "reasons": [
+          "Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run"
+        ],
+        "accepted": [],
+        "forced": [],
+        "checks": [
+          {
+            "name": "Nodes",
+            "outcome": "Pass",
+            "blocking": true,
+            "message": "4/4 nodes ready (estimated)",
+            "details": [
+              "estimated from the desired size of the nodegroups (no Kubernetes access)"
+            ],
+            "findings": []
+          },
+          {
+            "name": "Capacity",
+            "outcome": "Pass",
+            "blocking": true,
+            "message": "CPU mean 32%, peak 32%, 4 instances",
+            "details": [
+              "CPU mean 32.5%, peak 32.5%, spread 0.0 points, over 4 of 4 instances"
+            ],
+            "findings": []
+          },
+          {
+            "name": "ControlPlane",
+            "outcome": "Skipped",
+            "blocking": true,
+            "message": "control-plane metrics not emitted (EKS 1.28+ on a supported platform version)",
+            "details": [],
+            "findings": []
+          },
+          {
+            "name": "Workloads",
+            "outcome": "Skipped",
+            "blocking": true,
+            "message": "no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined",
+            "details": [],
+            "findings": []
+          },
+          {
+            "name": "DrainBlockers",
+            "outcome": "Skipped",
+            "blocking": true,
+            "message": "no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined",
+            "details": [],
+            "findings": []
+          },
+          {
+            "name": "PDBCoverage",
+            "outcome": "Skipped",
+            "blocking": false,
+            "message": "no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined",
+            "details": [],
+            "findings": []
+          },
+          {
+            "name": "Utilization",
+            "outcome": "Skipped",
+            "blocking": false,
+            "message": "no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined",
+            "details": [],
+            "findings": []
+          },
+          {
+            "name": "Quotas",
+            "outcome": "Pass",
+            "blocking": false,
+            "message": "31% of the vCPU quota in use (40 of 128)",
+            "details": [
+              "EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)"
+            ],
+            "findings": []
+          },
+          {
+            "name": "Kubernetes",
+            "outcome": "Warn",
+            "blocking": false,
+            "message": "no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run",
+            "details": [],
+            "findings": []
+          }
+        ]
+      },
+      "blockers": [],
+      "notices": []
+    }
+  ],
+  "failures": []
+}
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  [OK] Nodes          4/4 nodes ready (estimated)
+  [OK] Capacity       CPU mean 32%, peak 32%, 4 instances
+       ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+       Workloads      no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
+       DrainBlockers  no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
+       PDBCoverage    no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
+       Utilization    no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
+  [OK] Quotas         31% of the vCPU quota in use (40 of 128)
+  [!]  Kubernetes     no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run

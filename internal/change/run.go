@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/exitcode"
@@ -120,13 +121,23 @@ func (r *runner) notice(text string) {
 	r.emit(Event{Kind: Notice, Text: text})
 }
 
-// newRead starts the read budget of a plan, and ends the one before.
-func (r *runner) newRead() {
+// newRead starts a read budget of limit, and ends the one before. The
+// budget of a plan is --timeout. The plan of a fleet has no budget of its
+// own: planFleet gives one to the discovery and one to each cluster.
+func (r *runner) newRead(limit time.Duration) {
 	if r.read != nil {
 		r.read.stop()
 	}
-	r.readCtx, r.read = r.d.budget(r.ctx, r.common.Limits.Read, ErrReadTimeout)
+	r.readCtx, r.read = r.d.budget(r.ctx, limit, ErrReadTimeout)
 	r.read.start()
+}
+
+// planLimit returns the read budget of one plan of the request.
+func (r *runner) planLimit() time.Duration {
+	if roll, ok := r.req.(RollRequest); ok && roll.Fleet != nil {
+		return 0
+	}
+	return r.common.Limits.Read
 }
 
 // prepare computes the plan and gets it confirmed. It returns the plan to
@@ -140,7 +151,7 @@ func (r *runner) prepare() (*Plan, Result, error) {
 	confirmed := prev != nil
 	asked := 0
 	for {
-		r.newRead()
+		r.newRead(r.planLimit())
 		p, err := plan(r.readCtx, r.d, r.req)
 		if err != nil {
 			res, err := r.unplanned(prev, err)
@@ -160,6 +171,7 @@ func (r *runner) prepare() (*Plan, Result, error) {
 			return nil, *end, nil
 		}
 		if q == nil {
+			accept(p)
 			return p, Result{}, nil
 		}
 		// The budgets do not run while a person answers.
@@ -180,6 +192,25 @@ func (r *runner) prepare() (*Plan, Result, error) {
 		}
 		prev, confirmed = p, true
 		asked++
+	}
+}
+
+// accept records in the gate of each cluster what the consent to the
+// plan went past: the warnings of a gate that asks, which a person
+// accepted with an answer or with the plan in Common.Expect. The gate then
+// reads as the gate of a run with --yes does, and the Run document says
+// what was accepted. A plan reaches this only with every question
+// answered.
+func accept(p *Plan) {
+	for i := range p.Clusters {
+		acceptCluster(&p.Clusters[i])
+	}
+}
+
+// acceptCluster is accept for the plan of one cluster.
+func acceptCluster(cp *ClusterPlan) {
+	if gate := &cp.Gate; gate.Decision == health.Ask {
+		gate.Decision, gate.Accepted = health.Go, slices.Clone(gate.Reasons)
 	}
 }
 
@@ -275,6 +306,9 @@ func (r *runner) question(p *Plan, diff []Change, confirmed bool) *Question {
 	if r.common.Policy.Yes {
 		return nil
 	}
+	if !confirmed && p.fleet() {
+		return fleetQuestion(p)
+	}
 	if !confirmed {
 		for i := range p.Clusters {
 			if v := p.Clusters[i].Gate; v.Decision == health.Ask {
@@ -343,12 +377,17 @@ func startQuestion(p *Plan) string {
 		}
 	}
 	verb, noun := "Change", "target"
-	if p.Kind == AddonUpdate {
+	switch p.Kind {
+	case AddonUpdate:
 		verb, noun = "Update", "add-on"
+	case NodegroupUpdate:
+		verb, noun = "Roll", "nodegroup"
 	}
 	if len(steps) == 1 {
 		s := steps[0]
 		switch {
+		case p.Kind == NodegroupUpdate:
+			return fmt.Sprintf("Roll nodegroup %s in %s onto the latest AMI of Kubernetes %s?", s.Ref.Name, cluster, s.To)
 		case s.Sizes != nil:
 			return fmt.Sprintf("Scale nodegroup %s in %s from %s to %s?", s.Ref.Name, cluster, s.Sizes.Before, s.Sizes.After)
 		case s.Action == Attach:
@@ -363,6 +402,50 @@ func startQuestion(p *Plan) string {
 		names[i] = s.Ref.Name
 	}
 	return fmt.Sprintf("%s %d %ss in %s (%s)?", verb, len(steps), noun, cluster, strings.Join(names, ", "))
+}
+
+// fleetQuestion is the one question of a fleet roll: it names the
+// nodegroups that would be rolled in each cluster, and the clusters that
+// are left out. The plan above it has the decision of every cluster. When
+// the gate of a cluster has warnings, the question is about them too, and
+// a yes accepts them.
+func fleetQuestion(p *Plan) *Question {
+	q := &Question{Kind: ConfirmStart}
+	var rolls, left []string
+	count := 0
+	for i := range p.Clusters {
+		cp := &p.Clusters[i]
+		var names []string
+		for _, s := range cp.Steps() {
+			if s.work() {
+				names = append(names, s.Ref.Name)
+			}
+		}
+		switch {
+		case cp.Decision() == DecisionBlocked:
+			left = append(left, cp.Cluster)
+			continue
+		case len(names) == 0:
+			continue
+		}
+		count += len(names)
+		rolls = append(rolls, cp.Cluster+": "+strings.Join(names, ", "))
+		if v := cp.Gate; v.Decision == health.Ask {
+			q.Kind = GateWarnings
+			for _, reason := range v.Reasons {
+				q.Reasons = append(q.Reasons, cp.Cluster+": "+reason.String())
+			}
+		}
+	}
+	q.Text = fmt.Sprintf("Roll %d nodegroup(s) in %d cluster(s) (%s)", count, len(rolls), strings.Join(rolls, "; "))
+	if len(q.Reasons) > 0 {
+		q.Text += ", despite the health warnings (" + strings.Join(q.Reasons, "; ") + ")"
+	}
+	if len(left) > 0 {
+		q.Text += ", and leave out the blocked " + strings.Join(left, ", ")
+	}
+	q.Text += "?"
+	return q
 }
 
 // blockedSummary is the one line of a plan that cannot run: its blockers,
@@ -393,7 +476,11 @@ func (r *runner) unplanned(prev *Plan, err error) (Result, error) {
 	if timedOut(r.readCtx) {
 		// Nothing was read, so there is no document to call incomplete.
 		res.Status, res.ended = Failed, ending{code: exitcode.Failure}
-		res.Err = fmt.Errorf("timed out reading %s (increase --timeout); nothing was changed", r.req.cluster().Cluster)
+		what := r.req.cluster().Cluster
+		if what == "" {
+			what = "the fleet"
+		}
+		res.Err = fmt.Errorf("timed out reading %s (increase --timeout); nothing was changed", what)
 	}
 	if prev != nil {
 		res.Clusters = notAttempted(prev)
@@ -437,16 +524,38 @@ func notAttempted(p *Plan) []ClusterResult {
 }
 
 // execute runs the phases of a confirmed plan and returns the result.
+//
+// The clusters of a fleet run one after another. Each begins with its
+// turn, which plans it again and can leave it out: see turn. A cluster
+// that is left out, or that fails, does not stop the next one. A run that
+// was halted does: the steps of every later cluster are NotAttempted.
 func (r *runner) execute(p *Plan) Result {
 	res := Result{Plan: p}
+	fleet := p.fleet()
 	for i := range p.Clusters {
+		outcome, why := turnRun, ""
+		if fleet {
+			outcome, why = r.turn(p, i)
+		}
 		cp := &p.Clusters[i]
 		cr := ClusterResult{Target: cp.Target}
 		r.accepted, r.waited = slices.Clone(cp.Checks), false
-		for _, ph := range cp.Phases {
-			r.emit(Event{Kind: PhaseStarted, Phase: ph.Ref})
-			cr.Steps = append(cr.Steps, r.runPhase(cp, ph)...)
-			r.emit(Event{Kind: PhaseEnded, Phase: ph.Ref})
+		switch outcome {
+		case turnRun:
+			for _, ph := range cp.Phases {
+				r.emit(Event{Kind: PhaseStarted, Phase: ph.Ref})
+				cr.Steps = append(cr.Steps, r.runPhase(cp, ph)...)
+				r.emit(Event{Kind: PhaseEnded, Phase: ph.Ref})
+			}
+		case turnBlocked:
+			cr.Steps = r.blockedResults(cp, why)
+			for i := range cr.Steps {
+				r.emit(Event{Kind: StepChanged, Phase: cr.Steps[i].Ref.Phase, Step: cr.Steps[i].Ref, Result: &cr.Steps[i]})
+			}
+		default:
+			for _, s := range cp.Steps() {
+				cr.Steps = append(cr.Steps, StepResult{Ref: s.Ref, Status: StepNotAttempted})
+			}
 		}
 		cr.Verification, r.verification = r.verification, nil
 		failures := slices.Concat(planFailures(cp, cr.Steps), r.failures)
@@ -462,6 +571,17 @@ func (r *runner) execute(p *Plan) Result {
 	switch {
 	case res.ended.interrupted:
 		res.Status = Interrupted
+	case r.stop != nil && r.stop.status == Stopped:
+		// A run that a checkpoint stopped did not do what it was asked to
+		// do, so it is no success: it exits 1, and the highest code of the
+		// steps and the failures still wins. The label is Stopped only
+		// when nothing else went wrong: a failure after a stop request is
+		// still a failure.
+		clean := res.ExitCode() == exitcode.OK
+		res.ended.code = exitcode.Failure
+		if clean {
+			res.Status, res.Err = Stopped, r.stop.err
+		}
 	case r.stop != nil:
 		// The steps keep their results, and the highest code still wins.
 		res.ended.code = exitcode.Failure
@@ -503,9 +623,12 @@ func allSteps(clusters []ClusterResult) []StepResult {
 //
 // The steps run one after another, and a step that fails or is blocked
 // does not stop the next one: the targets are independent. A phase that
-// is one batch, and one that stops at its first failure, are built with
-// the first change that has one.
+// is one batch runs in runBatch. One that stops at its first failure is
+// built with the first change that has one.
 func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
+	if ph.Batch {
+		return r.runBatch(cp, ph)
+	}
 	results := make([]StepResult, 0, len(ph.Steps))
 	halted := false
 	for i, s := range ph.Steps {
@@ -596,18 +719,25 @@ func summary(res Result) error {
 		return nil
 	}
 	var parts []string
-	for _, s := range allSteps(res.Clusters) {
-		code, ok := stepCode(s)
-		if !ok || code == exitcode.OK {
-			continue
+	for _, c := range res.Clusters {
+		// The steps of a fleet say which cluster they are of.
+		where := ""
+		if len(res.Clusters) > 1 {
+			where = c.Cluster + ": "
 		}
-		switch {
-		case s.VerifyIssue != "":
-			parts = append(parts, s.VerifyIssue)
-		case s.Failure != nil:
-			parts = append(parts, s.Failure.Error)
-		default:
-			parts = append(parts, stepName(s.Ref)+" is "+string(s.Status))
+		for _, s := range c.Steps {
+			code, ok := stepCode(s)
+			if !ok || code == exitcode.OK {
+				continue
+			}
+			switch {
+			case s.VerifyIssue != "":
+				parts = append(parts, where+s.VerifyIssue)
+			case s.Failure != nil:
+				parts = append(parts, where+s.Failure.Error)
+			default:
+				parts = append(parts, where+stepName(s.Ref)+" is "+string(s.Status))
+			}
 		}
 	}
 	for _, f := range res.Failures {

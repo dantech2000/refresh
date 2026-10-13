@@ -1,0 +1,33 @@
+exit: 3
+error: dry run: a real run would be blocked
+--- stdout ---
+Plan   [X] Blocked   NodegroupUpdate
+
+PLAN
+  operation  NodegroupUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.32
+  decision   [X] Blocked
+
+STEPS  2
+  NAME  KIND       ACTION  REASON         FROM  TO                    NOTE
+  api   Nodegroup  Skip    AlreadyLatest  1.32  1.32                  -
+  web   Nodegroup  Submit  AMIOutdated    1.32  1.32 (ami-latest132)  -
+
+HEALTH GATE
+  decision  [X] Block
+  reasons   DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+
+CHECKS  9
+  NAME           OUTCOME    MESSAGE
+  Nodes          [OK] Pass  4/4 nodes ready
+  Capacity       [OK] Pass  CPU mean 32%, peak 32%, 4 instances
+  ControlPlane   Skipped    control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+  Workloads      [OK] Pass  2/2 pods running in the system namespaces
+  DrainBlockers  [X] Fail   1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  PDBCoverage    [OK] Pass  every deployment has a PodDisruptionBudget (2)
+  Utilization    [OK] Pass  CPU 20%, memory 25% in use
+  Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
+  Kubernetes     [OK] Pass  Kubernetes API reachable
+--- stderr ---

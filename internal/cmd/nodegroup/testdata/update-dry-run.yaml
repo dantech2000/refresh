@@ -1,0 +1,98 @@
+exit: 0
+error: 
+--- stdout ---
+apiVersion: refresh.drod.dev/v2
+kind: Plan
+operation: NodegroupUpdate
+clusters:
+  - cluster: prod
+    region: us-east-1
+    version: "1.32"
+    decision: Proceed
+    steps:
+      - phase: Roll
+        kind: Nodegroup
+        name: api
+        action: Skip
+        reason: AlreadyLatest
+        from: "1.32"
+        to: "1.32"
+      - phase: Roll
+        kind: Nodegroup
+        name: web
+        action: Submit
+        reason: AMIOutdated
+        from: "1.32"
+        to: "1.32"
+        fromRelease: 1.32.0-20250101
+        toRelease: ami-latest132
+    gate:
+      decision: Go
+      reasons: []
+      accepted: []
+      forced: []
+      checks:
+        - name: Nodes
+          outcome: Pass
+          blocking: true
+          message: 4/4 nodes ready
+          details: []
+          findings: []
+        - name: Capacity
+          outcome: Pass
+          blocking: true
+          message: CPU mean 32%, peak 32%, 4 instances
+          details:
+            - CPU mean 32.5%, peak 32.5%, spread 0.0 points, over 4 of 4 instances
+          findings: []
+        - name: ControlPlane
+          outcome: Skipped
+          blocking: true
+          message: control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+          details: []
+          findings: []
+        - name: Workloads
+          outcome: Pass
+          blocking: true
+          message: 2/2 pods running in the system namespaces
+          details:
+            - 'kube-system: 2/2 pods running'
+            - 'kube-public: 0/0 pods running'
+            - 'kube-node-lease: 0/0 pods running'
+          findings: []
+        - name: DrainBlockers
+          outcome: Pass
+          blocking: true
+          message: no PodDisruptionBudget blocks a drain
+          details: []
+          findings: []
+        - name: PDBCoverage
+          outcome: Pass
+          blocking: false
+          message: every deployment has a PodDisruptionBudget (2)
+          details: []
+          findings: []
+        - name: Utilization
+          outcome: Pass
+          blocking: false
+          message: CPU 20%, memory 25% in use
+          details:
+            - 'live use over 4 nodes: CPU 20.0%, memory 25.0%'
+          findings: []
+        - name: Quotas
+          outcome: Pass
+          blocking: false
+          message: 31% of the vCPU quota in use (40 of 128)
+          details:
+            - 'EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)'
+          findings: []
+        - name: Kubernetes
+          outcome: Pass
+          blocking: false
+          message: Kubernetes API reachable
+          details: []
+          findings: []
+    blockers: []
+    notices: []
+failures: []
+--- stderr ---

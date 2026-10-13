@@ -84,7 +84,8 @@ func (o WaitOptions) progress(p UpdateProgress) {
 }
 
 // Resource names what a wait follows: a control plane, an add-on, or a
-// nodegroup of a cluster.
+// nodegroup of a cluster. It is a StepRef without the phase: see
+// StepRef.Resource.
 type Resource struct {
 	Target
 	Kind StepKind
@@ -212,6 +213,39 @@ func WaitUpdate(ctx context.Context, c awsx.PollClients, r Resource, updateID st
 	if updateID == "" {
 		return &UnobservedError{Resource: r, Err: errors.New("EKS returned no update ID")}
 	}
+	p := newUpdatePoll(r, updateID)
+	for {
+		if !o.pause(ctx) {
+			return p.ended(ctx)
+		}
+		progress, report, done, err := p.poll(ctx, c)
+		if report {
+			o.progress(progress)
+		}
+		if done {
+			return err
+		}
+		if o.over(ctx) {
+			return p.ended(ctx)
+		}
+	}
+}
+
+// updatePoll follows one update, one poll at a time. WaitUpdate polls
+// one, and the wait of a batch polls several on one ticker, so the rules
+// of a poll are in one place.
+type updatePoll struct {
+	r  Resource
+	id string
+	in *eks.DescribeUpdateInput
+	// seen says that a poll has returned the update once. Before that a
+	// not-found answer is one that the next poll may fix.
+	seen bool
+	// last is the last status that a poll saw.
+	last string
+}
+
+func newUpdatePoll(r Resource, updateID string) *updatePoll {
 	in := &eks.DescribeUpdateInput{Name: aws.String(r.Cluster), UpdateId: aws.String(updateID)}
 	switch r.Kind {
 	case StepAddon:
@@ -219,47 +253,49 @@ func WaitUpdate(ctx context.Context, c awsx.PollClients, r Resource, updateID st
 	case StepNodegroup, StepScale:
 		in.NodegroupName = aws.String(r.Name)
 	}
-	what := "update " + updateID + " of " + r.String()
-	seen, last := false, ""
-	for {
-		if !o.pause(ctx) {
-			return ended(ctx, what, last)
-		}
-		out, err := c.EKS.DescribeUpdate(ctx, in)
-		if err == nil && out.Update == nil {
-			err = errNoAnswer
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return ended(ctx, what, last)
-			}
-			if awsx.IsPermanentAPIError(err) && (seen || !awsx.IsNotFound(err)) {
-				return &UnobservedError{Resource: r, UpdateID: updateID, LastStatus: last, Err: err}
-			}
-			o.progress(UpdateProgress{Resource: r, UpdateID: updateID, Status: last, PollError: awsx.Summary(err)})
-			if o.over(ctx) {
-				return ended(ctx, what, last)
-			}
-			continue
-		}
-		seen, last = true, string(out.Update.Status)
-		status := out.Update.Status
-		final := status == ekstypes.UpdateStatusSuccessful || status == ekstypes.UpdateStatusFailed || status == ekstypes.UpdateStatusCancelled
-		o.progress(UpdateProgress{Resource: r, UpdateID: updateID, Status: last, Final: final})
-		switch status {
-		case ekstypes.UpdateStatusSuccessful:
-			return nil
-		case ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusCancelled:
-			e := &UpdateError{Resource: r, UpdateID: updateID, Status: last}
-			for _, d := range out.Update.Errors {
-				e.Issues = append(e.Issues, UpdateIssue{Code: string(d.ErrorCode), Message: aws.ToString(d.ErrorMessage), ResourceIDs: d.ResourceIds})
-			}
-			return e
-		}
-		if o.over(ctx) {
-			return ended(ctx, what, last)
-		}
+	return &updatePoll{r: r, id: updateID, in: in}
+}
+
+// ended returns the error of a wait for the update whose context ended.
+func (p *updatePoll) ended(ctx context.Context) error {
+	return ended(ctx, "update "+p.id+" of "+p.r.String(), p.last)
+}
+
+// poll makes one DescribeUpdate call and judges its answer. done says
+// that the wait for the update is over, with err as its result: nil for a
+// Successful update, an *UpdateError for a Failed or a Cancelled one, an
+// *UnobservedError for a poll error that another poll will not fix, and
+// the error of ctx when ctx ended during the call. Without done the wait
+// goes on. report says that progress is one to show.
+func (p *updatePoll) poll(ctx context.Context, c awsx.PollClients) (progress UpdateProgress, report, done bool, err error) {
+	out, err := c.EKS.DescribeUpdate(ctx, p.in)
+	if err == nil && out.Update == nil {
+		err = errNoAnswer
 	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return UpdateProgress{}, false, true, p.ended(ctx)
+		}
+		if awsx.IsPermanentAPIError(err) && (p.seen || !awsx.IsNotFound(err)) {
+			return UpdateProgress{}, false, true, &UnobservedError{Resource: p.r, UpdateID: p.id, LastStatus: p.last, Err: err}
+		}
+		return UpdateProgress{Resource: p.r, UpdateID: p.id, Status: p.last, PollError: awsx.Summary(err)}, true, false, nil
+	}
+	p.seen, p.last = true, string(out.Update.Status)
+	status := out.Update.Status
+	final := status == ekstypes.UpdateStatusSuccessful || status == ekstypes.UpdateStatusFailed || status == ekstypes.UpdateStatusCancelled
+	progress = UpdateProgress{Resource: p.r, UpdateID: p.id, Status: p.last, Final: final}
+	switch status {
+	case ekstypes.UpdateStatusSuccessful:
+		return progress, true, true, nil
+	case ekstypes.UpdateStatusFailed, ekstypes.UpdateStatusCancelled:
+		e := &UpdateError{Resource: p.r, UpdateID: p.id, Status: p.last}
+		for _, d := range out.Update.Errors {
+			e.Issues = append(e.Issues, UpdateIssue{Code: string(d.ErrorCode), Message: aws.ToString(d.ErrorMessage), ResourceIDs: d.ResourceIds})
+		}
+		return progress, true, true, e
+	}
+	return progress, true, false, nil
 }
 
 // Settled is the state that a poll of a resource saw.
@@ -268,6 +304,10 @@ type Settled struct {
 	Status string
 	// Version is the Kubernetes version, or the add-on version.
 	Version string
+	// Release and AMIType are the AMI release version and the AMI type of
+	// a nodegroup. They are what the fresh read before a roll has of the
+	// input of DecideAMIUpdate.
+	Release, AMIType string
 	// Sizes are the scaling sizes of a nodegroup, each one as EKS returned
 	// it.
 	Sizes Sizes
@@ -350,7 +390,10 @@ func describe(ctx context.Context, c *awsx.Clients, r Resource) (Settled, error)
 		if out.Nodegroup == nil {
 			return Settled{}, errNoAnswer
 		}
-		s := Settled{Status: string(out.Nodegroup.Status), Version: aws.ToString(out.Nodegroup.Version)}
+		s := Settled{
+			Status: string(out.Nodegroup.Status), Version: aws.ToString(out.Nodegroup.Version),
+			Release: aws.ToString(out.Nodegroup.ReleaseVersion), AMIType: string(out.Nodegroup.AmiType),
+		}
 		sc := out.Nodegroup.ScalingConfig
 		known := sc != nil && sc.DesiredSize != nil && sc.MinSize != nil && sc.MaxSize != nil
 		switch {
