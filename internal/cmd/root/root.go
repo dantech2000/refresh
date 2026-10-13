@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -162,9 +163,16 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 	// non-empty value counts.
 	f.IOStreams.NoColor = o.noColor || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb"
 
+	// A region that is named twice is one region. Cobra also parses the
+	// flags of a line twice for a shell completion, which repeats every
+	// value of a list flag.
+	var regions []string
 	for _, r := range o.regions {
 		if strings.TrimSpace(r) == "" {
 			return fmt.Errorf("invalid --region %q: an empty region name", strings.Join(o.regions, ","))
+		}
+		if !slices.Contains(regions, r) {
+			regions = append(regions, r)
 		}
 	}
 	if o.maxConcurrency < 1 {
@@ -181,7 +189,7 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 	}
 
 	f.Global = cmdutil.GlobalOptions{
-		Regions:        o.regions,
+		Regions:        regions,
 		Profile:        o.profile,
 		Timeout:        o.timeout,
 		MaxConcurrency: o.maxConcurrency,

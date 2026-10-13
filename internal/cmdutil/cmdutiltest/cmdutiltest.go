@@ -89,6 +89,10 @@ func UseAWS(f *cmdutil.Factory, cfg aws.Config) {
 		mu.Lock()
 		defer mu.Unlock()
 		if provider == nil {
+			// As in a real run, the first --region is the home region.
+			if len(f.Global.Regions) > 0 {
+				cfg.Region = f.Global.Regions[0]
+			}
 			provider = awsx.NewProvider(cfg, func(o *awsx.ProviderOptions) {
 				o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
 				o.MaxInFlight = f.Global.MaxConcurrency

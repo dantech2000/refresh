@@ -32,6 +32,16 @@ func complete(f *cmdutil.Factory, most int, list lister) cobra.CompletionFunc {
 		if most >= 0 && len(args) >= most {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
+		// Cobra parses the flags of the line for a completion and does not
+		// run the hooks of the command. The root's hook is what applies
+		// the global flags and the environment: without it a completion
+		// would ignore the -r, --profile, and --kubeconfig on the line and
+		// offer the names of another region or account.
+		if pre := cmd.Root().PersistentPreRunE; pre != nil {
+			if err := pre(cmd, args); err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), completionTimeout)
 		defer cancel()
 		// A warning of the AWS setup must not reach the terminal in the

@@ -1,11 +1,13 @@
 package fleetcmd_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/cmdtest"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
@@ -23,6 +25,8 @@ func completionFake(t *testing.T) *cmdtest.Fake {
 				Nodegroups: []*fleettest.Nodegroup{{Name: "web", Version: "1.33"}, {Name: "api", Version: "1.33"}},
 				Addons:     []*fleettest.Addon{{Name: "vpc-cni", Version: "v1"}, {Name: "coredns", Version: "v1"}}},
 			&fleettest.Cluster{Name: "dev", Region: east, Version: "1.33"},
+			&fleettest.Cluster{Name: "prod-eu", Region: "eu-west-1", Version: "1.33",
+				Nodegroups: []*fleettest.Nodegroup{{Name: "eu-web", Version: "1.33"}}},
 		)
 	})
 	return cmdtest.NewFake(t, world, east)
@@ -57,6 +61,11 @@ func TestCompletion(t *testing.T) {
 		{"the cluster flag of describe", []string{"addon", "describe", "--cluster", ""}, "", []string{"dev", "prod"}},
 		{"the nodegroups of the cluster of the flag", []string{"nodegroup", "describe", "-c", "prod", ""}, "", []string{"api", "web"}},
 		{"the add-ons of the cluster of the environment", []string{"addon", "describe", ""}, "prod", []string{"coredns", "vpc-cni"}},
+		// The global flags on the line apply, wherever they stand.
+		{"the clusters of the region of -r", []string{"cluster", "describe", "-r", "eu-west-1", ""}, "", []string{"prod-eu"}},
+		{"-r before the command", []string{"-r", "eu-west-1", "cluster", "describe", ""}, "", []string{"prod-eu"}},
+		{"-r for the cluster flag", []string{"nodegroup", "list", "--region", "eu-west-1", "-c", ""}, "", []string{"prod-eu"}},
+		{"-r and -c for the nodegroups", []string{"nodegroup", "describe", "-r", "eu-west-1", "-c", "prod-eu", ""}, "", []string{"eu-web"}},
 		{"the formats", []string{"cluster", "list", "-o", ""}, "", []string{"table", "json", "yaml", "plain"}},
 		{"the sort keys", []string{"cluster", "list", "--sort", ""}, "", []string{"name", "region", "status", "version"}},
 	}
@@ -104,5 +113,28 @@ func TestCompletion_SilentOnFailure(t *testing.T) {
 				t.Errorf("the completion printed an error: stdout %q, stderr %q", e.Out.String(), e.Err.String())
 			}
 		})
+	}
+}
+
+// The profile on the line is the one that the completion uses, and a
+// global flag that the command would reject offers no names.
+func TestCompletion_AppliesTheGlobalFlags(t *testing.T) {
+	e := completionFake(t)
+	aws := e.Factory.AWS
+	var profile string
+	e.Factory.AWS = func(ctx context.Context) (*awsx.Provider, error) {
+		profile = e.Factory.Global.Profile
+		return aws(ctx)
+	}
+	if got := complete(t, e, "cluster", "describe", "--profile", "audit", ""); len(got) != 2 {
+		t.Errorf("completions = %v, want the two clusters", got)
+	}
+	if profile != "audit" {
+		t.Errorf("the completion built its clients with the profile %q, want audit", profile)
+	}
+
+	e = completionFake(t)
+	if got := complete(t, e, "cluster", "describe", "--max-concurrency", "0", ""); len(got) != 0 {
+		t.Errorf("completions = %v, want none for a global flag that the command rejects", got)
 	}
 }
