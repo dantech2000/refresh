@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -148,42 +147,18 @@ func (o *upgradeCheckOptions) run(ctx context.Context) error {
 		return o.describeInsight(ctx, clients)
 	}
 	fetcher := fleet.Fetcher{Now: o.now}
-
-	// Wave 1: the cluster and its lists, the insights, and the
-	// control-plane metrics, which need only the name of the cluster.
-	var (
-		wg       sync.WaitGroup
-		snap     *fleet.Snapshot
-		fetchErr error
-		insights []apidoc.Insight
-		listErr  error
-		cp       []health.Result
-	)
-	stub := &fleet.Snapshot{Cluster: fleet.Cluster{Name: o.resolved.Cluster, Region: clients.Region}}
-	wg.Go(func() {
-		snap, fetchErr = fetcher.Fetch(ctx, clients, o.resolved.Cluster, fleet.Need{Nodegroups: true, Addons: true, LatestAddons: true, Support: true, Updates: true})
-	})
-	wg.Go(func() { insights, listErr = health.ListInsights(ctx, clients, o.resolved.Cluster, o.category) })
-	wg.Go(func() {
-		cp = health.Run(ctx, []health.Check{health.ControlPlane()}, &health.Input{Snapshot: stub, Clients: clients, Now: fetcher.Time()})
-	})
-	wg.Wait()
-	if fetchErr != nil {
-		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.resolved.Cluster, fetchErr)
+	report, err := health.CheckReadiness(ctx, clients, &fetcher, o.resolved.Cluster, o.category)
+	if err != nil {
+		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.resolved.Cluster, err)
 	}
-
-	// Wave 3: the rollback insights, only inside a rollback window.
 	var rollback *apidoc.Rollback
-	if window, ok := fleet.RollbackWindowOf(snap, snap.FetchedAt); ok {
+	if window := report.Rollback; window != nil {
 		rollback = &apidoc.Rollback{PreviousVersion: window.PreviousVersion.String(), UpgradedAt: window.UpgradedAt, AvailableUntil: window.AvailableUntil}
-		if list, err := health.ListInsights(ctx, clients, o.resolved.Cluster, string(ekstypes.CategoryRollbackReadiness)); err == nil {
-			rollback.Insights = countInsights(list)
+		if report.RollbackInsights != nil {
+			rollback.Insights = countInsights(report.RollbackInsights)
 		}
 	}
-
-	checks := []health.Check{health.Insights(health.InsightsInput{Insights: insights, Err: listErr, Category: o.category}), health.VersionSkew()}
-	results := append(health.Run(ctx, checks, &health.Input{Snapshot: snap, Clients: clients, Now: snap.FetchedAt}), cp...)
-	doc := o.document(snap, results, insights, listErr == nil, rollback)
+	doc := o.document(report, rollback)
 	if err := cmdutil.Print(o.ios, o.output, doc, upgradeCheckView(doc)); err != nil {
 		return err
 	}
@@ -196,20 +171,23 @@ func (o *upgradeCheckOptions) run(ctx context.Context) error {
 	return o.exit(doc)
 }
 
-// document builds the document from what the waves read.
-func (o *upgradeCheckOptions) document(snap *fleet.Snapshot, results []health.Result, insights []apidoc.Insight, evaluated bool, rollback *apidoc.Rollback) apidoc.UpgradeCheck {
+// document builds the document from the report.
+func (o *upgradeCheckOptions) document(report health.ReadinessReport, rollback *apidoc.Rollback) apidoc.UpgradeCheck {
+	snap := report.Snapshot
 	c := snap.ClusterDoc()
 	doc := apidoc.UpgradeCheck{
 		Cluster: c.Name, Region: c.Region, Version: c.Version, Support: c.Support,
-		Insights: []apidoc.Insight{},
-		Checks:   health.Documents(results),
-		Rollback: rollback,
-		Failures: append(slices.Clone(snap.Failures), health.Failures(results)...),
+		Insights:  []apidoc.Insight{},
+		Checks:    health.Documents(report.Checks),
+		Rollback:  rollback,
+		Failures:  append(slices.Clone(snap.Failures), health.Failures(report.Checks)...),
+		Readiness: report.Readiness,
+		Reasons:   report.Reasons,
 	}
-	if evaluated {
-		doc.InsightsEvaluated = new(len(insights) > 0)
+	if report.InsightsEvaluated {
+		doc.InsightsEvaluated = new(len(report.Insights) > 0)
 	}
-	for _, in := range insights {
+	for _, in := range report.Insights {
 		if len(o.statuses) > 0 && !slices.Contains(o.statuses, in.Status) {
 			continue
 		}
@@ -222,38 +200,7 @@ func (o *upgradeCheckOptions) document(snap *fleet.Snapshot, results []health.Re
 	if snap.Have.Cluster == fleet.Collected {
 		doc.Skew = skewOf(snap)
 	}
-	doc.Readiness, doc.Reasons = readinessOf(results, c.Support)
 	return doc
-}
-
-// readinessOf folds the results into the verdict: the gate with an empty
-// policy, where a block from unread data alone is Incomplete. A support
-// window that is not standard is a reason to review.
-func readinessOf(results []health.Result, support *apidoc.Support) (apidoc.Readiness, []string) {
-	v := health.Gate(results, health.Policy{})
-	reasons := make([]string, 0, len(v.Reasons)+1)
-	for _, r := range v.Reasons {
-		reasons = append(reasons, r.String())
-	}
-	readiness := apidoc.ReadinessReady
-	switch v.Decision {
-	case health.Block:
-		readiness = apidoc.ReadinessIncomplete
-		for _, b := range v.Blockers {
-			if b.Outcome == health.Fail {
-				readiness = apidoc.ReadinessBlocked
-			}
-		}
-	case health.Ask:
-		readiness = apidoc.ReadinessReview
-	}
-	if support != nil && support.Tier != apidoc.SupportStandard && support.Tier != apidoc.SupportUnknown {
-		reasons = append(reasons, "Support: the cluster is in "+strings.ToLower(string(support.Tier))+" support")
-		if readiness == apidoc.ReadinessReady {
-			readiness = apidoc.ReadinessReview
-		}
-	}
-	return readiness, reasons
 }
 
 // skewOf returns the version skew of the snapshot for the document.
