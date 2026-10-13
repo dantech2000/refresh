@@ -428,6 +428,22 @@ func TestList_CheckReadiness(t *testing.T) {
 	}
 }
 
+// A --kube-context that the kubeconfig does not have stops both commands
+// before any AWS call.
+func TestKubeContextNotFound(t *testing.T) {
+	for _, args := range [][]string{
+		{"nodegroup", "list", "-c", "prod", "--check-readiness", "--kube-context", "pord"},
+		{"nodegroup", "describe", "web", "-c", "prod", "--show-workloads", "--kube-context", "pord"},
+	} {
+		e := newFake(t)
+		withKube(t, e)
+		err := e.Run(cmdutiltest.Context(t), args...)
+		if err == nil || !strings.Contains(err.Error(), `kubeconfig context "pord" not found in `) || len(e.Server.Requests()) != 0 {
+			t.Errorf("%v: error = %v, requests = %v", args, err, e.Operations())
+		}
+	}
+}
+
 // --show-workloads counts the pods on the nodes of the nodegroup from one
 // pod list of the cluster.
 func TestDescribe_ShowWorkloads(t *testing.T) {

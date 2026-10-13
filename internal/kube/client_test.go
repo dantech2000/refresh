@@ -110,6 +110,7 @@ func TestConnect_Errors(t *testing.T) {
 		target   kube.Target
 		opts     kube.Options
 		mismatch bool
+		noConfig bool
 		want     string
 	}{
 		{
@@ -135,7 +136,7 @@ func TestConnect_Errors(t *testing.T) {
 		{
 			name: "no kubeconfig and no in-cluster config", target: target,
 			opts: kube.Options{InClusterConfig: func() (*rest.Config, error) { return nil, errors.New("not in a pod") }},
-			want: "no kubeconfig found, and no in-cluster config: not in a pod",
+			want: "no kubeconfig found, and no in-cluster config: not in a pod", noConfig: true,
 		},
 		{
 			name: "in-cluster config for another cluster", target: target, mismatch: true,
@@ -155,6 +156,9 @@ func TestConnect_Errors(t *testing.T) {
 			var mm *kube.MismatchError
 			if got := errors.As(err, &mm); got != tt.mismatch {
 				t.Errorf("is a MismatchError = %v, want %v", got, tt.mismatch)
+			}
+			if got := errors.Is(err, kube.ErrNoConfig); got != tt.noConfig {
+				t.Errorf("is ErrNoConfig = %v, want %v", got, tt.noConfig)
 			}
 			if tt.mismatch && !mm.InCluster && !strings.Contains(mm.Hint(), "aws eks update-kubeconfig --name prod --region us-east-1") {
 				t.Errorf("Hint() = %q", mm.Hint())
@@ -218,5 +222,25 @@ func TestNormalizeEndpoint(t *testing.T) {
 	}
 	if kube.SameEndpoint("", "") {
 		t.Error("two empty endpoints are not the same server")
+	}
+}
+
+func TestCheckContext(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "none"))
+	path := writeKubeconfig(t, "config", "prod", map[string]string{"prod": endpoint})
+	if err := kube.CheckContext(path, ""); err != nil {
+		t.Errorf("no context: %v", err)
+	}
+	if err := kube.CheckContext(path, "prod"); err != nil {
+		t.Errorf("a context of the file: %v", err)
+	}
+	if err := kube.CheckContext(path, "pord"); err == nil || !strings.Contains(err.Error(), `context "pord" not found in `+path) {
+		t.Errorf("a missing context: %v", err)
+	}
+	if err := kube.CheckContext("", "prod"); err == nil || !strings.Contains(err.Error(), "no kubeconfig found") {
+		t.Errorf("no kubeconfig: %v", err)
+	}
+	if err := kube.CheckContext(filepath.Join(t.TempDir(), "missing"), "prod"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("a missing file: %v", err)
 	}
 }

@@ -27,19 +27,30 @@ type KubeAccess struct {
 
 // ConnectKube resolves the Kubernetes client of the cluster of snap with
 // connect, which is Factory.Kube. It makes no request. A cluster that
-// cannot be matched to a kubeconfig context gives no client and a warning.
-func ConnectKube(connect func(kube.Target) (*kube.Client, error), snap *fleet.Snapshot) KubeAccess {
+// cannot be matched to a kubeconfig context gives no client and a
+// warning: the command goes on without Kubernetes. Any other failure, such
+// as a --kube-context that is not in the kubeconfig, is an error that
+// stops the command.
+func ConnectKube(connect func(kube.Target) (*kube.Client, error), snap *fleet.Snapshot) (KubeAccess, error) {
 	target := kube.Target{Name: snap.Cluster.Name, Region: snap.Cluster.Region, Endpoint: snap.Cluster.Endpoint}
 	client, err := connect(target)
-	if err != nil {
+	var mm *kube.MismatchError
+	switch {
+	case errors.As(err, &mm):
 		access := KubeAccess{NoKube: err.Error(), Warning: "no Kubernetes access to " + target.Name + ": " + err.Error()}
-		var mm *kube.MismatchError
-		if errors.As(err, &mm) && mm.Hint() != "" {
+		if mm.Hint() != "" {
 			access.Warning += "\n  " + mm.Hint()
 		}
-		return access
+		return access, nil
+	case errors.Is(err, kube.ErrNoConfig):
+		return KubeAccess{
+			NoKube:  err.Error(),
+			Warning: "no Kubernetes access to " + target.Name + ": " + err.Error() + "\n  add one with: " + target.UpdateKubeconfigHint() + ", or pass --kube-context",
+		}, nil
+	case err != nil:
+		return KubeAccess{}, err
 	}
-	return KubeAccess{Client: client.Clientset, Metrics: client.Metrics, Notice: client.Selection.Notice()}
+	return KubeAccess{Client: client.Clientset, Metrics: client.Metrics, Notice: client.Selection.Notice()}, nil
 }
 
 // ReportKube prints the warning or the notice of the access on stderr.

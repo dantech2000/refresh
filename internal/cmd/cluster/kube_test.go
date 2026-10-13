@@ -84,6 +84,21 @@ func TestDescribe_CheckReadinessWithoutAccess(t *testing.T) {
 	}
 }
 
+// A --kube-context that the kubeconfig does not have is an error, before
+// any AWS call: an explicit flag with a typing error must not become a
+// warning.
+func TestDescribe_KubeContextNotFound(t *testing.T) {
+	e := newReadinessFake(t)
+	withKube(t, e)
+	err := e.Run(cmdutiltest.Context(t), "cluster", "describe", "prod", "--check-readiness", "--kube-context", "pord")
+	if err == nil || !strings.Contains(err.Error(), `kubeconfig context "pord" not found in `) {
+		t.Errorf("error = %v, want the context and the file", err)
+	}
+	if n := len(e.Server.Requests()); n != 0 {
+		t.Errorf("AWS requests = %v, want none", e.Operations())
+	}
+}
+
 // A Kubernetes API that answers 403 makes the checks that need it
 // unreadable: a failure in the document, exit 4.
 func TestDescribe_CheckReadinessForbidden(t *testing.T) {

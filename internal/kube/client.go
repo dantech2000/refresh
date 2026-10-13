@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -103,6 +104,11 @@ type Client struct {
 	Selection Selection
 }
 
+// ErrNoConfig says that there is no kubeconfig and no in-cluster config:
+// nothing to match the target against. A command treats it as it treats a
+// MismatchError: a warning, and no Kubernetes.
+var ErrNoConfig = errors.New("no kubeconfig found, and no in-cluster config")
+
 // MismatchError says that no config points at the target. A command
 // prints it as a warning, with Hint, and goes on without Kubernetes.
 type MismatchError struct {
@@ -179,6 +185,32 @@ func Connect(target Target, opts Options) (*Client, error) {
 		return nil, err
 	}
 	return newClient(cfg, sel, opts)
+}
+
+// CheckContext returns an error when name, the value of --kube-context,
+// is not a context of the kubeconfig, or when there is no kubeconfig. A
+// command calls it before any AWS call, so that a typing error in the
+// flag stops the run at once. An empty name needs no check.
+func CheckContext(kubeconfig, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	path, source, err := locate(kubeconfig)
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return fmt.Errorf("--kube-context %q given, but no kubeconfig found", name)
+	}
+	raw, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules(path, source), &clientcmd.ConfigOverrides{}).RawConfig()
+	if err != nil {
+		return fmt.Errorf("loading kubeconfig %s: %w", path, err)
+	}
+	if raw.Contexts[name] == nil {
+		return fmt.Errorf("kubeconfig context %q not found in %s", name, path)
+	}
+	return nil
 }
 
 // locate returns the kubeconfig to load and where it was named:
@@ -286,7 +318,7 @@ func inCluster(target Target, opts Options) (*rest.Config, Selection, error) {
 	}
 	cfg, err := load()
 	if err != nil {
-		return nil, Selection{}, fmt.Errorf("no kubeconfig found, and no in-cluster config: %w", err)
+		return nil, Selection{}, fmt.Errorf("%w: %w", ErrNoConfig, err)
 	}
 	sel := Selection{Source: SourceInCluster, Server: cfg.Host}
 	if SameEndpoint(cfg.Host, target.Endpoint) || (target.Name != "" && strings.TrimSpace(opts.InClusterName) == target.Name) {

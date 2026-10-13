@@ -18,6 +18,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/kube"
 	"github.com/dantech2000/refresh/internal/view"
 )
 
@@ -66,6 +67,9 @@ uses the dates that refresh ships with and says so.`,
 			if err := o.complete(args); err != nil {
 				return err
 			}
+			if err := o.validate(); err != nil {
+				return err
+			}
 			return o.run(cmd.Context())
 		},
 	}
@@ -81,6 +85,15 @@ func (o *describeOptions) complete(args []string) error {
 	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
 	o.target = target
 	return err
+}
+
+// validate rejects a --kube-context that the kubeconfig does not have,
+// before any AWS call.
+func (o *describeOptions) validate() error {
+	if !o.checkReadiness {
+		return nil
+	}
+	return kube.CheckContext(o.f.Global.Kubeconfig, o.f.Global.KubeContext)
 }
 
 func (o *describeOptions) run(ctx context.Context) error {
@@ -100,7 +113,10 @@ func (o *describeOptions) run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	merge := func() {}
 	if o.checkReadiness {
-		access := fleetcmd.ConnectKube(o.f.Kube, snap)
+		access, err := fleetcmd.ConnectKube(o.f.Kube, snap)
+		if err != nil {
+			return err
+		}
 		fleetcmd.ReportKube(ios, access)
 		in.Kube, in.Metrics, in.NoKube = access.Client, access.Metrics, access.NoKube
 		if access.Client != nil {

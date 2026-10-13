@@ -15,6 +15,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
+	"github.com/dantech2000/refresh/internal/kube"
 	"github.com/dantech2000/refresh/internal/view"
 )
 
@@ -79,7 +80,7 @@ the command exits 4.`,
 			if err := o.complete(filterKeys); err != nil {
 				return err
 			}
-			if err := cmdutil.ValidateWatch(o.f.IOStreams, o.output, o.watch, o.interval); err != nil {
+			if err := o.validate(); err != nil {
 				return err
 			}
 			if o.watch {
@@ -108,6 +109,18 @@ func (o *listOptions) complete(filterKeys []string) error {
 	return err
 }
 
+// validate checks the watch flags, and a --kube-context that the
+// kubeconfig does not have, before any AWS call.
+func (o *listOptions) validate() error {
+	if err := cmdutil.ValidateWatch(o.f.IOStreams, o.output, o.watch, o.interval); err != nil {
+		return err
+	}
+	if !o.checkReadiness {
+		return nil
+	}
+	return kube.CheckContext(o.f.Global.Kubeconfig, o.f.Global.KubeContext)
+}
+
 func (o *listOptions) run(ctx context.Context) error {
 	ios := o.f.IOStreams
 	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
@@ -122,7 +135,10 @@ func (o *listOptions) run(ctx context.Context) error {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
 	}
 	if o.checkReadiness {
-		access := fleetcmd.ConnectKube(o.f.Kube, snap)
+		access, err := fleetcmd.ConnectKube(o.f.Kube, snap)
+		if err != nil {
+			return err
+		}
 		fleetcmd.ReportKube(ios, access)
 		if access.Client != nil {
 			fetcher.FetchKube(ctx, access.Client, snap, fleet.KubeNeed{Ready: true})
