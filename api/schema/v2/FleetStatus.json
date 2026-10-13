@@ -1,0 +1,620 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v2/FleetStatus.json",
+  "$defs": {
+    "AMIStatus": {
+      "type": "string",
+      "enum": [
+        "Latest",
+        "Outdated",
+        "Updating",
+        "Custom",
+        "Unknown"
+      ],
+      "description": "AMIStatus compares the AMI that a nodegroup runs with the latest recommended AMI for its Kubernetes version and AMI type."
+    },
+    "Addon": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is the EKS status, such as ACTIVE or DEGRADED."
+        },
+        "health": {
+          "$ref": "#/$defs/AddonHealth",
+          "description": "health is the status as one of a closed set of values."
+        },
+        "arn": {
+          "type": "string"
+        },
+        "serviceAccountRoleArn": {
+          "type": "string"
+        },
+        "latest": {
+          "$ref": "#/$defs/AddonLatest",
+          "description": "latest is the newest compatible version, in a document that reads it."
+        },
+        "configuration": {
+          "type": "string",
+          "description": "configuration is the configuration values of the add-on, as the JSON or YAML text that EKS returns."
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/Issue"
+          },
+          "type": "array",
+          "description": "issues are the health issues that EKS reports for the add-on."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "modifiedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "incomplete": {
+          "type": "boolean",
+          "description": "incomplete is true when the add-on could not be read. Its failure is in the failures list of the document."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "Addon is one installed EKS add-on. A key is left out when its data was not read: an add-on that could not be described has its name and incomplete."
+    },
+    "AddonHealth": {
+      "type": "string",
+      "enum": [
+        "Healthy",
+        "Failed",
+        "InProgress",
+        "Unknown"
+      ],
+      "description": "AddonHealth is the health of an add-on, from its EKS status."
+    },
+    "AddonLatest": {
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "version is left out when EKS publishes no compatible version."
+        },
+        "behind": {
+          "type": "boolean",
+          "description": "behind is true when the installed version is older than Version."
+        }
+      },
+      "type": "object",
+      "required": [
+        "behind"
+      ],
+      "description": "AddonLatest is the newest version of an add-on that is compatible with the Kubernetes version of its cluster."
+    },
+    "Cluster": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "arn": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is the EKS status, such as ACTIVE or UPDATING."
+        },
+        "version": {
+          "type": "string",
+          "description": "version is the Kubernetes minor version, such as \"1.33\"."
+        },
+        "platformVersion": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "upgradePolicy": {
+          "type": "string",
+          "description": "upgradePolicy is the EKS support type, STANDARD or EXTENDED."
+        },
+        "tags": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "healthIssues": {
+          "items": {
+            "$ref": "#/$defs/Issue"
+          },
+          "type": "array",
+          "description": "healthIssues are the control-plane issues that EKS reports."
+        },
+        "network": {
+          "$ref": "#/$defs/Network"
+        },
+        "security": {
+          "$ref": "#/$defs/Security"
+        },
+        "support": {
+          "$ref": "#/$defs/Support",
+          "description": "support is the support window of the Kubernetes version, in a document that reads it."
+        },
+        "compute": {
+          "$ref": "#/$defs/ComputeType",
+          "description": "compute says how the cluster runs its nodes, in a document that reads it. It is left out when that could not be found out."
+        },
+        "nodegroups": {
+          "items": {
+            "$ref": "#/$defs/Nodegroup"
+          },
+          "type": "array",
+          "description": "nodegroups are the managed nodegroups, in a document that reads them."
+        },
+        "addons": {
+          "items": {
+            "$ref": "#/$defs/Addon"
+          },
+          "type": "array",
+          "description": "addons are the installed add-ons, in a document that reads them."
+        },
+        "incomplete": {
+          "type": "boolean",
+          "description": "incomplete is true when part of the row could not be read. The failures of the row are in the failures list of the document."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "region"
+      ],
+      "description": "Cluster is one EKS cluster. A key is left out when its data was not read: a row that could not be read at all has its name, its region, and incomplete."
+    },
+    "ComputeType": {
+      "type": "string",
+      "enum": [
+        "ManagedNodegroups",
+        "AutoMode",
+        "Karpenter",
+        "None"
+      ],
+      "description": "ComputeType says how a cluster runs its nodes."
+    },
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For a Region failure it is the region."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "cluster is the cluster that the item belongs to."
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "type": "string",
+          "examples": [
+            "AccessDenied",
+            "CredentialError",
+            "Throttled",
+            "NotFound",
+            "RegionUnavailable",
+            "InvalidRequest",
+            "ServiceError",
+            "NetworkError",
+            "Timeout",
+            "Interrupted",
+            "UpdateFailed",
+            "UpdateCancelled",
+            "NotMonitored",
+            "NotAttempted",
+            "Unknown"
+          ]
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether the same command, run again with no other change, may succeed."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of text for people. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the AWS API error code, such as AccessDeniedException, when AWS answered."
+        },
+        "updateId": {
+          "type": "string",
+          "description": "updateId is the EKS update ID, for a failure of a started update."
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item that refresh could not read, or one action that it tried and that did not complete."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "Failures": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "Failures is the failure list of a document. A nil list encodes as [], so a document always has its failures key as a list."
+    },
+    "Instance": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "description": "state is the EC2 instance state, such as running."
+        },
+        "lifecycle": {
+          "type": "string",
+          "description": "lifecycle is on-demand or spot."
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "imageId": {
+          "type": "string"
+        },
+        "launchTime": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "state",
+        "lifecycle",
+        "availabilityZone",
+        "imageId"
+      ],
+      "description": "Instance is an EC2 instance of a nodegroup."
+    },
+    "Issue": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "resourceIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "resourceIds"
+      ],
+      "description": "Issue is a health issue that EKS reports for a resource."
+    },
+    "Network": {
+      "properties": {
+        "vpcId": {
+          "type": "string"
+        },
+        "vpcCidr": {
+          "type": "string",
+          "description": "vpcCidr is the CIDR block of the VPC, in a document that reads it."
+        },
+        "subnetIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "securityGroupIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "publicAccess": {
+          "type": "boolean",
+          "description": "publicAccess and PrivateAccess say how the API server endpoint can be reached."
+        },
+        "privateAccess": {
+          "type": "boolean"
+        },
+        "publicAccessCidrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "vpcId",
+        "subnetIds",
+        "securityGroupIds",
+        "publicAccess",
+        "privateAccess",
+        "publicAccessCidrs"
+      ],
+      "description": "Network is the VPC configuration of a cluster."
+    },
+    "Nodegroup": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is the EKS status, such as ACTIVE or UPDATING."
+        },
+        "version": {
+          "type": "string",
+          "description": "version is the Kubernetes minor version of the nodegroup."
+        },
+        "versionBehind": {
+          "type": "boolean",
+          "description": "versionBehind is true when the nodegroup runs an older minor version than the control plane. It is left out when one of the two versions is not known."
+        },
+        "amiType": {
+          "type": "string",
+          "description": "amiType is the EKS AMI type, such as AL2023_x86_64_STANDARD."
+        },
+        "releaseVersion": {
+          "type": "string",
+          "description": "releaseVersion is the AMI release version of the nodegroup."
+        },
+        "capacityType": {
+          "type": "string",
+          "description": "capacityType is the EKS capacity type, such as ON_DEMAND or SPOT."
+        },
+        "instanceTypes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scaling": {
+          "$ref": "#/$defs/Scaling"
+        },
+        "ami": {
+          "$ref": "#/$defs/NodegroupAMI"
+        },
+        "healthIssues": {
+          "items": {
+            "$ref": "#/$defs/Issue"
+          },
+          "type": "array",
+          "description": "healthIssues are the issues that EKS reports for the nodegroup."
+        },
+        "instances": {
+          "items": {
+            "$ref": "#/$defs/Instance"
+          },
+          "type": "array",
+          "description": "instances are the EC2 instances of the nodegroup, in a document that reads them."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "modifiedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "incomplete": {
+          "type": "boolean",
+          "description": "incomplete is true when part of the nodegroup could not be read. Its failures are in the failures list of the document."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "Nodegroup is one EKS managed nodegroup. A key is left out when its data was not read: a nodegroup that could not be described has its name and incomplete."
+    },
+    "NodegroupAMI": {
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AMIStatus"
+        },
+        "current": {
+          "type": "string",
+          "description": "current is the ID of the AMI that the nodes run. It is left out for a nodegroup with no instance to read."
+        },
+        "latest": {
+          "type": "string",
+          "description": "latest is the ID of the latest recommended AMI. It is left out for an AMI type that has none."
+        },
+        "currentCreatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "currentCreatedAt is when the current AMI was created. \"refresh status\" reads it for an outdated AMI."
+        }
+      },
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "description": "NodegroupAMI is the AMI of a nodegroup and how it compares with the latest recommended one."
+    },
+    "Scaling": {
+      "properties": {
+        "desired": {
+          "type": "integer"
+        },
+        "min": {
+          "type": "integer"
+        },
+        "max": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "desired",
+        "min",
+        "max"
+      ],
+      "description": "Scaling is the scaling configuration of a nodegroup."
+    },
+    "Security": {
+      "properties": {
+        "roleArn": {
+          "type": "string"
+        },
+        "kmsKeyArn": {
+          "type": "string",
+          "description": "kmsKeyArn is the key that encrypts secrets. It is left out when secrets are not encrypted with a KMS key."
+        },
+        "logTypes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "logTypes are the enabled control-plane log types."
+        },
+        "deletionProtection": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "roleArn",
+        "logTypes",
+        "deletionProtection"
+      ],
+      "description": "Security is the security configuration of a cluster."
+    },
+    "Support": {
+      "properties": {
+        "tier": {
+          "$ref": "#/$defs/SupportTier"
+        },
+        "standardUntil": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "extendedUntil": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "daysRemaining": {
+          "type": "integer",
+          "description": "daysRemaining is the days until the tier ends, with a part of a day as a whole day. It is left out when no window is open."
+        },
+        "autoUpgrade": {
+          "type": "boolean",
+          "description": "autoUpgrade is true when the upgrade policy of the cluster is STANDARD: EKS upgrades it at the end of standard support, and it never enters extended support."
+        },
+        "builtIn": {
+          "type": "boolean",
+          "description": "builtIn is true when the dates are the ones that refresh ships with, because EKS did not report them."
+        }
+      },
+      "type": "object",
+      "required": [
+        "tier",
+        "autoUpgrade",
+        "builtIn"
+      ],
+      "description": "Support is the support window of the Kubernetes version of a cluster."
+    },
+    "SupportTier": {
+      "type": "string",
+      "enum": [
+        "Standard",
+        "Extended",
+        "Unsupported",
+        "Unknown"
+      ],
+      "description": "SupportTier is where the Kubernetes version of a cluster is in its EKS support window."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v2",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "FleetStatus",
+      "description": "The type of the document."
+    },
+    "clusters": {
+      "items": {
+        "$ref": "#/$defs/Cluster"
+      },
+      "type": "array"
+    },
+    "skippedRegions": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "skippedRegions are the regions of a default sweep that are closed to these credentials. They are not failures. The key is left out when the regions were named."
+    },
+    "failures": {
+      "$ref": "#/$defs/Failures",
+      "description": "Every failure of the run: the items that refresh could not read and the actions that did not complete. The list is sorted by kind, region, cluster, name, and operation. It is [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "clusters",
+    "failures"
+  ],
+  "title": "FleetStatus",
+  "description": "The document that `refresh status -o json` prints. -o yaml prints the same structure."
+}

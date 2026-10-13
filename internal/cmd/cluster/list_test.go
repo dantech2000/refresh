@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -568,5 +569,80 @@ func TestList_TerminalTooShortShowsAStatusLine(t *testing.T) {
 	}
 	if !strings.Contains(e.err.String(), "1 of 1 regions, 4 clusters") {
 		t.Errorf("stderr = %q, want the status line", e.err.String())
+	}
+}
+
+// A watch reads again after each interval and redraws the table. A read
+// with a failure names it and the watch goes on. Ctrl+C ends the watch
+// with ErrStopped, which is exit 0.
+func TestList_Watch(t *testing.T) {
+	e := newEnv(t, newWorld())
+	e.f.IOStreams.OutTTY = true
+	e.f.IOStreams.TermSize = func() (int, int) { return 100, 40 }
+	ctx, cancel := context.WithCancel(testContext(t))
+	defer cancel()
+
+	pauses := 0
+	tick := make(chan time.Time, 1)
+	e.f.After = func(d time.Duration) <-chan time.Time {
+		if d != 5*time.Second {
+			t.Errorf("pause = %s, want the --watch-interval of 5s", d)
+		}
+		pauses++
+		switch pauses {
+		case 1:
+			// The second read cannot describe one cluster.
+			e.world.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSDescribeCluster, Cluster: "dev"}, fleettest.Fault{Deny: true})
+		case 2:
+			e.world.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSDescribeCluster, Cluster: "dev"}, fleettest.Fault{})
+		case 3:
+			cancel()
+			return make(chan time.Time)
+		}
+		tick <- time.Time{}
+		return tick
+	}
+	err := e.run(ctx, "-w", "--watch-interval", "5s")
+	if !errors.Is(err, cmdutil.ErrStopped) {
+		t.Fatalf("error = %v, want ErrStopped", err)
+	}
+	frames := strings.Split(e.out.String(), "\x1b[H\x1b[2J")[1:]
+	if len(frames) != 3 {
+		t.Fatalf("the screen was drawn %d times, want 3:\n%q", len(frames), e.out.String())
+	}
+	if frames[0] != frames[2] || !strings.Contains(frames[0], "dev") || strings.Contains(frames[0], "INCOMPLETE DATA") {
+		t.Errorf("the first and the third read are not the whole table:\n%s\n%s", frames[0], frames[2])
+	}
+	if !strings.Contains(frames[1], "INCOMPLETE DATA") || !strings.Contains(frames[1], "cluster dev (us-east-1): AccessDenied") {
+		t.Errorf("the second read does not name what it could not read:\n%s", frames[1])
+	}
+	if strings.Contains(e.out.String(), "\x1b[J") && strings.Count(e.out.String(), "\x1b[") != 6 {
+		t.Errorf("stdout has cursor codes beyond the three clears:\n%q", e.out.String())
+	}
+}
+
+func TestList_WatchNeedsATableOnATerminal(t *testing.T) {
+	tests := []struct {
+		name string
+		tty  bool
+		args []string
+		want string
+	}{
+		{"json", true, []string{"-w", "-o", "json"}, "--watch cannot be used with -o json"},
+		{"not a terminal", false, []string{"-w"}, "--watch needs a terminal on stdout"},
+		{"a short interval", true, []string{"-w", "--watch-interval", "10ms"}, "must be at least 1s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, newWorld())
+			e.f.IOStreams.OutTTY = tt.tty
+			err := e.run(testContext(t), tt.args...)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want one that contains %q", err, tt.want)
+			}
+			if n := len(e.srv.Requests()); n != 0 {
+				t.Errorf("requests = %v, want none", operations(e))
+			}
+		})
 	}
 }

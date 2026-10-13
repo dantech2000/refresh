@@ -23,6 +23,12 @@ type Cluster struct {
 	HealthIssues []Issue   `json:"healthIssues,omitzero"`
 	Network      *Network  `json:"network,omitzero"`
 	Security     *Security `json:"security,omitzero"`
+	// Support is the support window of the Kubernetes version, in a
+	// document that reads it.
+	Support *Support `json:"support,omitzero"`
+	// Compute says how the cluster runs its nodes, in a document that
+	// reads it. It is left out when that could not be found out.
+	Compute ComputeType `json:"compute,omitzero"`
 	// Nodegroups are the managed nodegroups, in a document that reads
 	// them.
 	Nodegroups []Nodegroup `json:"nodegroups,omitzero"`
@@ -42,7 +48,9 @@ type Issue struct {
 
 // Network is the VPC configuration of a cluster.
 type Network struct {
-	VPCID            string   `json:"vpcId"`
+	VPCID string `json:"vpcId"`
+	// VPCCIDR is the CIDR block of the VPC, in a document that reads it.
+	VPCCIDR          string   `json:"vpcCidr,omitzero"`
 	SubnetIDs        []string `json:"subnetIds"`
 	SecurityGroupIDs []string `json:"securityGroupIds"`
 	// PublicAccess and PrivateAccess say how the API server endpoint can
@@ -75,3 +83,85 @@ type ClusterList struct {
 
 // Kind implements Document.
 func (ClusterList) Kind() Kind { return KindClusterList }
+
+// SupportTier is where the Kubernetes version of a cluster is in its EKS
+// support window.
+type SupportTier string
+
+// The support tiers.
+const (
+	// SupportStandard: in standard support.
+	SupportStandard SupportTier = "Standard"
+	// SupportExtended: in extended support, which costs more.
+	SupportExtended SupportTier = "Extended"
+	// SupportUnsupported: past the end of extended support.
+	SupportUnsupported SupportTier = "Unsupported"
+	// SupportUnknown: the dates are not known.
+	SupportUnknown SupportTier = "Unknown"
+)
+
+// Values implements Enum.
+func (SupportTier) Values() []string {
+	return []string{string(SupportStandard), string(SupportExtended), string(SupportUnsupported), string(SupportUnknown)}
+}
+
+// Support is the support window of the Kubernetes version of a cluster.
+type Support struct {
+	Tier          SupportTier `json:"tier"`
+	StandardUntil time.Time   `json:"standardUntil,omitzero"`
+	ExtendedUntil time.Time   `json:"extendedUntil,omitzero"`
+	// DaysRemaining is the days until the tier ends, with a part of a day
+	// as a whole day. It is left out when no window is open.
+	DaysRemaining int `json:"daysRemaining,omitzero"`
+	// AutoUpgrade is true when the upgrade policy of the cluster is
+	// STANDARD: EKS upgrades it at the end of standard support, and it
+	// never enters extended support.
+	AutoUpgrade bool `json:"autoUpgrade"`
+	// BuiltIn is true when the dates are the ones that refresh ships
+	// with, because EKS did not report them.
+	BuiltIn bool `json:"builtIn"`
+}
+
+// ComputeType says how a cluster runs its nodes.
+type ComputeType string
+
+// The compute types.
+const (
+	// ComputeManagedNodegroups: one or more managed nodegroups.
+	ComputeManagedNodegroups ComputeType = "ManagedNodegroups"
+	// ComputeAutoMode: EKS Auto Mode, where AWS manages the nodes.
+	ComputeAutoMode ComputeType = "AutoMode"
+	// ComputeKarpenter: no managed nodegroup, and instances that
+	// Karpenter started.
+	ComputeKarpenter ComputeType = "Karpenter"
+	// ComputeNone: no managed nodegroup and nothing else that refresh
+	// looks for.
+	ComputeNone ComputeType = "None"
+)
+
+// Values implements Enum.
+func (ComputeType) Values() []string {
+	return []string{string(ComputeManagedNodegroups), string(ComputeAutoMode), string(ComputeKarpenter), string(ComputeNone)}
+}
+
+// ClusterDescription is the document of "refresh cluster describe".
+type ClusterDescription struct {
+	Cluster  Cluster  `json:"cluster"`
+	Failures Failures `json:"failures"`
+}
+
+// Kind implements Document.
+func (ClusterDescription) Kind() Kind { return KindClusterDescription }
+
+// FleetStatus is the document of "refresh status".
+type FleetStatus struct {
+	Clusters []Cluster `json:"clusters"`
+	// SkippedRegions are the regions of a default sweep that are closed to
+	// these credentials. They are not failures. The key is left out when
+	// the regions were named.
+	SkippedRegions []string `json:"skippedRegions,omitzero"`
+	Failures       Failures `json:"failures"`
+}
+
+// Kind implements Document.
+func (FleetStatus) Kind() Kind { return KindFleetStatus }

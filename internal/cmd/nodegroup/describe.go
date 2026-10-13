@@ -22,7 +22,6 @@ type describeOptions struct {
 	cluster       string
 	nodegroup     string
 	showInstances bool
-	kube          cmdutil.KubeFlags
 	output        cmdutil.Format
 
 	// target is the cluster, resolved by complete.
@@ -47,7 +46,8 @@ has, names the failure, and exits 4.`,
 
   # With the EC2 instances
   refresh nodegroup describe web -c prod --show-instances`,
-		Args: cobra.ExactArgs(1),
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: fleetcmd.CompleteNodegroups(f, &o.cluster),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
 				return err
@@ -56,15 +56,15 @@ has, names the failure, and exits 4.`,
 		},
 	}
 	cmdutil.AddClusterFlag(cmd, &o.cluster)
+	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
 	cmd.Flags().BoolVar(&o.showInstances, "show-instances", false, "List the EC2 instances of the nodegroup")
-	cmdutil.AddKubeFlags(cmd, &o.kube)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
 
 func (o *describeOptions) complete(args []string) error {
 	o.nodegroup = args[0]
-	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true, o.kube)
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
 	o.target = target
 	return err
 }
@@ -77,7 +77,7 @@ func (o *describeOptions) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var fetcher fleet.Fetcher
+	fetcher := fleet.Fetcher{Now: o.f.Now}
 	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{
 		OnlyNodegroups: []string{o.nodegroup},
 		AMI:            true,

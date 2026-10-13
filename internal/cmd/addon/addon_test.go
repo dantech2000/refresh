@@ -327,6 +327,7 @@ func TestInvalidInput(t *testing.T) {
 		{"list with an argument", []string{"addon", "list", "prod"}, `unknown command "prod"`},
 		{"two regions", []string{"addon", "list", "-c", "prod", "-r", "us-east-1,eu-west-1"}, "one cluster in one region"},
 		{"an unknown format", []string{"addon", "list", "-c", "prod", "-o", "wide"}, "must be one of: table, json, yaml, plain"},
+		{"a watch of a machine format", []string{"addon", "list", "-c", "prod", "-w", "-o", "json"}, "--watch cannot be used with -o json"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

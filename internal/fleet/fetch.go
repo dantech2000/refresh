@@ -1,14 +1,18 @@
 package fleet
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
@@ -38,7 +42,32 @@ type Need struct {
 	// OnlyAddons names the add-ons to read. Fetch describes these by name
 	// and makes no list call. It implies Addons.
 	OnlyAddons []string
+	// LatestAddons reads the newest compatible version of each add-on. It
+	// implies Addons.
+	LatestAddons bool
+	// AMIAge reads when the AMI of each nodegroup with an outdated AMI was
+	// created. It implies AMI.
+	AMIAge bool
+	// Support reads the support window of the Kubernetes version.
+	Support bool
+	// Compute finds how the cluster runs its nodes: managed nodegroups,
+	// EKS Auto Mode, or Karpenter. It implies Nodegroups.
+	Compute bool
+	// VPC reads the CIDR block of the VPC of the cluster.
+	VPC bool
 }
+
+// The three reads below are advisory. One that fails loses an extra that
+// the output marks as missing, so it sets the state of its group and adds
+// no failure: a user with a narrow IAM policy still gets exit 0 for a
+// fleet that was read.
+//
+//   - the support calendar: the dates then come from the calendar that
+//     refresh ships with, and the output says so
+//   - the Karpenter probe: the compute type is then not known
+//   - the VPC: the CIDR block is then left out
+//
+// The fourth is the age of a stale AMI, in fetchAMIs.
 
 // Fetcher reads clusters. Use one Fetcher for one run of a command. The
 // zero value is ready.
@@ -49,6 +78,11 @@ type Fetcher struct {
 	// latestAMIs shares the latest recommended AMI between the nodegroups
 	// and the clusters of the run. A lookup that failed is not kept.
 	latestAMIs fanout.Memo[amiKey, string]
+	// calendars shares the support calendar of a region.
+	calendars fanout.Memo[string, map[Version]window]
+	// latestAddons shares the newest version of an add-on for a
+	// Kubernetes version. "" is an answer: EKS publishes none.
+	latestAddons fanout.Memo[addonKey, string]
 }
 
 func (f *Fetcher) now() time.Time {
@@ -91,20 +125,42 @@ func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, ne
 		snap.Have.Cluster = NotAttempted
 		return snap, err
 	}
+	// version is closed when the cluster is described. The add-on branch
+	// waits for it: the newest version of an add-on depends on the
+	// Kubernetes version of the cluster.
+	described := make(chan struct{})
 	var (
-		wg         sync.WaitGroup
-		addons     addonsResult
-		nodegroups nodegroupsResult
+		wg          sync.WaitGroup
+		addons      addonsResult
+		nodegroups  nodegroupsResult
+		live        map[Version]window
+		calendarErr error
 	)
-	if need.Nodegroups || need.AMI || need.Instances || len(need.OnlyNodegroups) > 0 {
+	if need.Nodegroups || need.AMI || need.AMIAge || need.Instances || need.Compute || len(need.OnlyNodegroups) > 0 {
 		wg.Go(func() { nodegroups = f.fetchNodegroups(ctx, c, cluster, need) })
 	}
-	if need.Addons || len(need.OnlyAddons) > 0 {
-		wg.Go(func() { addons = fetchAddons(ctx, c, cluster, need.OnlyAddons) })
+	if need.Addons || need.LatestAddons || len(need.OnlyAddons) > 0 {
+		wg.Go(func() {
+			addons = f.fetchAddons(ctx, c, cluster, need, func() Version {
+				<-described
+				return snap.Cluster.Version
+			})
+		})
+	}
+	if need.Support {
+		wg.Go(func() { live, calendarErr = f.calendar(ctx, c) })
 	}
 	out, err := c.EKS.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(cluster)})
 	if err == nil && out.Cluster == nil {
 		err = fmt.Errorf("describing cluster %s: %w", cluster, errEmptyAnswer)
+	}
+	if err == nil {
+		fillCluster(&snap.Cluster, out.Cluster)
+		snap.Have.Cluster = Collected
+	}
+	close(described)
+	if err == nil && need.VPC {
+		snap.Cluster.Network.VPCCIDR, snap.Have.VPC = vpcCIDR(ctx, c, snap.Cluster.Network.VPCID)
 	}
 	wg.Wait()
 	snap.FetchedAt = f.now()
@@ -122,10 +178,114 @@ func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, ne
 		}
 		return snap, err
 	}
-	fillCluster(&snap.Cluster, out.Cluster)
-	snap.Have.Cluster = Collected
 	snap.Failures = append(snap.Failures, rest...)
+	if need.Support {
+		f.setSupport(c, snap, live, calendarErr)
+	}
+	if need.Compute {
+		snap.Cluster.Compute, snap.Have.Compute = compute(ctx, c, snap)
+	}
 	return snap, nil
+}
+
+// setSupport fills the support of the cluster. When EKS did not answer for
+// the calendar, the dates are the ones that refresh ships with, and that is
+// not a failure. A version that neither calendar has is one: the command
+// cannot show the support of the cluster.
+func (f *Fetcher) setSupport(c *awsx.Clients, snap *Snapshot, live map[Version]window, calendarErr error) {
+	support, ok := supportFor(snap.Cluster.Version, live, snap.Cluster.UpgradePolicy, snap.FetchedAt)
+	snap.Cluster.Support, snap.Have.Support = support, Collected
+	if ok {
+		return
+	}
+	snap.Have.Support = Failed
+	failure := apidoc.NewFailure(apidoc.FailureCluster, snap.Cluster.Name, apidoc.ReasonUnknown,
+		"no support dates for Kubernetes "+snap.Cluster.Version.String()+": EKS did not report them, and the built-in calendar ends before this version")
+	if calendarErr != nil {
+		failure = FailureFromError(apidoc.FailureCluster, snap.Cluster.Name, calendarErr)
+		snap.Have.Support = stateOf(calendarErr)
+	}
+	snap.Failures = append(snap.Failures, inRegion(c, failure))
+}
+
+// vpcCIDR returns the CIDR block of a VPC. The read is advisory.
+func vpcCIDR(ctx context.Context, c *awsx.Clients, id string) (string, State) {
+	if id == "" {
+		return "", Collected
+	}
+	out, err := c.EC2.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{
+		VpcIds: []string{id},
+	})
+	if err != nil {
+		slog.DebugContext(ctx, "could not read the VPC", "vpc", id, "operation", awsx.Operation(err), "class", awsx.Classify(err))
+		return "", stateOf(err)
+	}
+	for _, vpc := range out.Vpcs {
+		return aws.ToString(vpc.CidrBlock), Collected
+	}
+	return "", Collected
+}
+
+// The EC2 tags that Karpenter sets on the instances that it starts, now and
+// in its older releases.
+var karpenterTagKeys = []string{"karpenter.sh/nodepool", "karpenter.sh/provisioner-name"}
+
+// compute returns how the cluster runs its nodes. A cluster with no managed
+// nodegroup and without Auto Mode is asked for Karpenter instances, so that
+// it does not read as a cluster with nothing to keep up to date. The probe
+// is advisory: when it fails, the compute type is not known.
+func compute(ctx context.Context, c *awsx.Clients, snap *Snapshot) (apidoc.ComputeType, State) {
+	switch {
+	case snap.Cluster.AutoMode:
+		return apidoc.ComputeAutoMode, Collected
+	case snap.Have.Nodegroups != Collected && snap.Have.Nodegroups != Partial:
+		return "", snap.Have.Nodegroups
+	case len(snap.Nodegroups) > 0:
+		return apidoc.ComputeManagedNodegroups, Collected
+	}
+	// Karpenter tags an instance of a cluster in one of two ways. EC2
+	// combines the filters of one call with "and", so each way is a call
+	// of its own, and the two run together.
+	owners := []ec2types.Filter{
+		{Name: aws.String("tag:kubernetes.io/cluster/" + snap.Cluster.Name), Values: []string{"owned"}},
+		{Name: aws.String("tag:eks:eks-cluster-name"), Values: []string{snap.Cluster.Name}},
+	}
+	type answer struct {
+		ran   bool
+		found bool
+		err   error
+	}
+	answers := fanout.ForEach(ctx, owners, len(owners), func(ctx context.Context, owner ec2types.Filter) answer {
+		out, err := c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+			MaxResults: aws.Int32(5),
+			Filters: []ec2types.Filter{
+				owner,
+				{Name: aws.String("tag-key"), Values: karpenterTagKeys},
+				{Name: aws.String("instance-state-name"), Values: []string{"pending", "running"}},
+			},
+		})
+		if err != nil {
+			return answer{ran: true, err: err}
+		}
+		for _, r := range out.Reservations {
+			if len(r.Instances) > 0 {
+				return answer{ran: true, found: true}
+			}
+		}
+		return answer{ran: true}
+	})
+	var firstErr error
+	for _, a := range answers {
+		if a.found {
+			return apidoc.ComputeKarpenter, Collected
+		}
+		firstErr = cmp.Or(firstErr, chunkError(ctx, a.ran, a.err))
+	}
+	if firstErr != nil {
+		slog.DebugContext(ctx, "could not look for Karpenter instances", "cluster", snap.Cluster.Name, "operation", awsx.Operation(firstErr), "class", awsx.Classify(firstErr))
+		return "", stateOf(firstErr)
+	}
+	return apidoc.ComputeNone, Collected
 }
 
 // stateOf returns the state of a group whose read failed with err.

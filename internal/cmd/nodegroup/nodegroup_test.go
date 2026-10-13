@@ -285,6 +285,7 @@ func TestInvalidInput(t *testing.T) {
 		{"an unknown filter key", []string{"nodegroup", "list", "-c", "prod", "-f", "ami=old"}, `unknown key "ami"; the keys are name, status, instanceType, amiStatus, version`},
 		{"an unknown sort key", []string{"nodegroup", "list", "-c", "prod", "--sort", "age"}, "must be one of: name, status, instanceType, nodes, version, amiStatus"},
 		{"no cluster", []string{"nodegroup", "list"}, "no cluster specified"},
+		{"a watch of a machine format", []string{"nodegroup", "list", "-c", "prod", "-w", "-o", "json"}, "--watch cannot be used with -o json"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

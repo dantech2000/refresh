@@ -228,7 +228,7 @@ func TestUsageErrors(t *testing.T) {
 func TestHelp(t *testing.T) {
 	globalFlags := []string{
 		"-r, --region", "--profile", "-t, --timeout", "--max-concurrency",
-		"--no-color", "--log-level", "--verbose",
+		"--no-color", "--log-level", "--verbose", "--kubeconfig", "--kube-context",
 	}
 	tests := []struct {
 		name string

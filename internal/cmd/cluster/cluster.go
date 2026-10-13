@@ -15,7 +15,7 @@ func NewCmdCluster(f *cmdutil.Factory) *cobra.Command {
 		Long: `Work with EKS clusters.
 
 "refresh cluster list" reads one region, the regions you name with -r, or
-every region with -A.`,
+every region with -A. "refresh cluster describe" reads one cluster.`,
 		Example: `  # The clusters of the configured region
   refresh cluster list
 
@@ -26,6 +26,6 @@ every region with -A.`,
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newCmdList(f))
+	cmd.AddCommand(newCmdList(f), newCmdDescribe(f))
 	return cmd
 }

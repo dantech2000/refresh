@@ -1,0 +1,98 @@
+apiVersion: refresh.drod.dev/v2
+kind: ClusterDescription
+cluster:
+  name: prod
+  region: us-east-1
+  arn: arn:aws:eks:us-east-1:123456789012:cluster/prod
+  status: ACTIVE
+  version: "1.33"
+  platformVersion: eks.1
+  endpoint: https://prod.eks.fake.invalid
+  createdAt: "2026-01-01T00:00:00Z"
+  upgradePolicy: STANDARD
+  tags:
+    env: prod
+    team: payments
+  healthIssues:
+    - code: Ec2SubnetInvalidConfiguration
+      message: A subnet is gone
+      resourceIds:
+        - subnet-9
+  network:
+    vpcId: vpc-0a1
+    vpcCidr: 10.0.0.0/16
+    subnetIds:
+      - subnet-1
+      - subnet-2
+    securityGroupIds:
+      - sg-1
+    publicAccess: true
+    privateAccess: true
+    publicAccessCidrs:
+      - 203.0.113.0/24
+  security:
+    roleArn: arn:aws:iam::123456789012:role/eks-prod
+    kmsKeyArn: arn:aws:kms:us-east-1:123456789012:key/k1
+    logTypes:
+      - api
+      - audit
+    deletionProtection: true
+  support:
+    tier: Standard
+    standardUntil: "2026-12-01T00:00:00Z"
+    extendedUntil: "2027-12-01T00:00:00Z"
+    daysRemaining: 61
+    autoUpgrade: true
+    builtIn: false
+  nodegroups:
+    - name: old
+      status: UPDATING
+      version: "1.32"
+      versionBehind: true
+      amiType: AL2023_x86_64_STANDARD
+      releaseVersion: 1.32.0-20260101
+      capacityType: ON_DEMAND
+      instanceTypes:
+        - m5.large
+      scaling:
+        desired: 3
+        min: 3
+        max: 3
+      healthIssues: []
+      createdAt: "2026-01-01T00:00:00Z"
+      modifiedAt: "2026-01-01T00:00:00Z"
+    - name: web
+      status: ACTIVE
+      version: "1.33"
+      versionBehind: false
+      amiType: AL2023_x86_64_STANDARD
+      releaseVersion: 1.33.0-20260101
+      capacityType: ON_DEMAND
+      instanceTypes:
+        - m5.large
+        - m5a.large
+      scaling:
+        desired: 6
+        min: 2
+        max: 12
+      healthIssues: []
+      createdAt: "2026-01-01T00:00:00Z"
+      modifiedAt: "2026-01-01T00:00:00Z"
+  addons:
+    - name: coredns
+      version: v1.11.3-eksbuild.2
+      status: DEGRADED
+      health: Failed
+      arn: arn:aws:eks:us-east-1:123456789012:addon/prod/coredns/fake
+      issues: []
+      createdAt: "2026-01-01T00:00:00Z"
+      modifiedAt: "2026-01-01T00:00:00Z"
+    - name: vpc-cni
+      version: v1.19.0-eksbuild.1
+      status: ACTIVE
+      health: Healthy
+      arn: arn:aws:eks:us-east-1:123456789012:addon/prod/vpc-cni/fake
+      issues: []
+      createdAt: "2026-01-01T00:00:00Z"
+      modifiedAt: "2026-01-01T00:00:00Z"
+failures: []

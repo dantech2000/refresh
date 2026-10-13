@@ -1,6 +1,6 @@
 # Phase 2 design note: the read side
 
-Status: draft 4. Steps 1 to 5 of section 10 are built. Sections 13 and 14 list what the code and its reviews changed in this note. Where a section above and those two differ, they are right.
+Status: draft 5. Steps 1 to 8 of section 10 are built, and the parts of step 9 that need no AWS account. Sections 13 to 15 list what the code and its reviews changed in this note. Where a section above and those two differ, they are right.
 
 Draft 2: It applies the review of draft 1 and the owner's decisions, which section 11 records. It belongs to `REWRITE.md` and stays inside `CONTRACT.md`.
 
@@ -1259,3 +1259,47 @@ Measured, same method as section 13, with the 0 to 100 ms latency:
 | `nodegroup describe` | 255 ms | 138 ms |
 
 The nodegroups of the fake fleet have no Auto Scaling group, so `nodegroup list` is three waves there and not four.
+
+## 15. Changes made while building steps 6 to 9
+
+| Section | Before | Built |
+|---|---|---|
+| 2 | `DescribeAddonVersions` runs in wave 3 | It runs next to the `DescribeAddon` calls, as soon as the cluster is described: the add-on branch waits for the cluster version through a function that `Fetch` gives it. |
+| 2 | `DescribeVpcs` uses a filter | It names the one VPC with `VpcIds`. A list of one ID has no other ID that can fail the call. |
+| 2 | The Karpenter probes run in wave 3 | They run after the nodegroup list is known to be empty, which is wave 2 for such a cluster. |
+| 4 | A failed Karpenter probe is advisory | Built so. The compute cell shows `unknown`. A failed calendar is advisory only when the built-in calendar has the version. |
+| 5 | `Support` has `daysRemaining` from the clock | The clock is `Factory.Now`, which the fetcher and the `status` view share, so the days and the AMI age are fixed in tests. |
+| 5 | A describe reads one item or fails | A describe can be partial and exit 4. `CONTRACT.md` says so now. |
+| 7 | `--kubeconfig` and `--kube-context` are flags of some commands | They are global flags of the root, and `cmdutil.ResolveCluster` reads them from the factory. |
+| 7 | A cell of `status` shows a count | `STALE AMI` and `ADDONS` show `unknown`, or `N unknown` beside the count, for what could not be read. A `0` there would say that nothing is stale. |
+| 7 | Watch returns nil on Ctrl+C | It returns `cmdutil.ErrStopped`, and `main` exits 0 for it. The pause between two reads is `Factory.After`, so a test drives the reads with a handshake. A watch shows no rows before a read is done. |
+| 8 | The exact-calls test compares the request log | For a large sweep it counts distinct calls. With some hundred connections to one local server, the HTTP transport sends a request again now and then after the server closed an idle connection, and the log has it twice. |
+| 9 | Completion | `fleetcmd.CompleteClusters`, `CompleteNodegroups`, `CompleteAddons`, and the completion of `-c`. Each has a 3 s budget, offers nothing on any failure, writes nothing, and does not read the kubeconfig for a cluster. |
+
+Measured, same method as section 13, in milliseconds. `status -A` makes 2,256 calls for the 200 clusters of the test fleet (two nodegroups and four add-ons each), with 32 requests in flight in each region and 256 in all.
+
+| Command | Old, no latency | New, no latency | Old, 0 to 100 ms | New, 0 to 100 ms |
+|---|---|---|---|---|
+| `cluster list -A` | 37 | 19 | 794 | 220 |
+| `cluster list`, one region | 19 | 11 | 704 | 172 |
+| `cluster describe` | 17 | 9 | 444 | 161 |
+| `nodegroup list` | 15 | 8 | 304 | 205 |
+| `nodegroup describe` | 16 | 9 | 249 | 106 |
+| `addon list` | 16 | 8 | 225 | 156 |
+| `addon describe` | 15 | 8 | 188 | 100 |
+| `status -A` | 66 | 77 to 112 | 1,924 | 651 |
+
+Two findings about `status -A` that are open:
+
+- **Memory.** Its peak is about 125 MB at the limit 32 and about 63 MB at 8. The old binary is at about 75 MB. The memory follows the requests in flight.
+- **No latency.** Alone, a run takes 77 to 112 ms. Right after nine runs of the old binary against the same local server, runs took 1 to 4 s, and one had failures. The cause is not confirmed. The likely one is that 256 dials at once to one local listener fail and are retried with backoff. A real sweep has one endpoint for each region.
+
+The default of 32 under throttling, on the fake fleet with 0 to 100 ms of latency, six runs each:
+
+| Share of EKS calls throttled | Limit 8 | Limit 16 | Limit 32 |
+|---|---|---|---|
+| none | 2,029 ms | 1,102 ms | 672 ms |
+| 3 percent | 2,271 ms | 1,286 ms | 938 ms |
+| 10 percent | 2,672 ms, one run with one failure | 1,896 ms | 1,256 ms |
+
+No run at 32 had a failure, and 32 stayed the fastest. The fake throttles a fixed share of calls whatever the load, so this does not show how EKS answers a burst. The `task test:live` reading is still needed before the default is final.

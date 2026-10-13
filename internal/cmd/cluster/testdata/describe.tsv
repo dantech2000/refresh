@@ -1,0 +1,36 @@
+FIELD	VALUE
+overview.status	ACTIVE
+overview.version	1.33
+overview.platform_version	eks.1
+overview.support	standard until 2026-12-01 (61 days); EKS upgrades the cluster then
+overview.upgrade_policy	STANDARD
+overview.endpoint	https://prod.eks.fake.invalid
+overview.arn	arn:aws:eks:us-east-1:123456789012:cluster/prod
+overview.created	2026-01-01 00:00 UTC
+network.vpc	vpc-0a1 (10.0.0.0/16)
+network.subnets	subnet-1, subnet-2
+network.security_groups	sg-1
+network.endpoint_access	public and private
+network.public_cidrs	203.0.113.0/24
+security.role	arn:aws:iam::123456789012:role/eks-prod
+security.secrets_encryption	arn:aws:kms:us-east-1:123456789012:key/k1
+security.logging	api, audit
+security.deletion_protection	enabled
+issues.Ec2SubnetInvalidConfiguration.message	A subnet is gone
+issues.Ec2SubnetInvalidConfiguration.resources	subnet-9
+nodegroups.old.status	UPDATING
+nodegroups.old.version	1.32
+nodegroups.old.instance	m5.large
+nodegroups.old.nodes	3
+nodegroups.web.status	ACTIVE
+nodegroups.web.version	1.33
+nodegroups.web.instance	m5.large,m5a.large
+nodegroups.web.nodes	6
+add-ons.coredns.version	v1.11.3-eksbuild.2
+add-ons.coredns.status	DEGRADED
+add-ons.coredns.health	Failed
+add-ons.vpc-cni.version	v1.19.0-eksbuild.1
+add-ons.vpc-cni.status	ACTIVE
+add-ons.vpc-cni.health	Healthy
+tags.env	prod
+tags.team	payments

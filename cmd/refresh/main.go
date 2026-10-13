@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,11 +49,17 @@ func execute(ctx context.Context, args []string, f *cmdutil.Factory) int {
 // ExitError sets the code, and any other error is exit 1. An ExitError
 // without a message prints nothing: the command already printed its result.
 //
-// An interrupt is always exit 1, whatever the command returned: a result
+// An interrupt is exit 1, whatever the command returned, with one exception:
+// to stop a watch with Ctrl+C is the normal way to end it, and exits 0.
+// For every other command a result
 // that Ctrl+C cut short is not a partial result. The rule reads the signal
 // context and not the error, because a run that the --timeout deadline cut
 // short keeps its own code.
 func exitCode(ctx context.Context, errOut io.Writer, err error) int {
+	// A watch that the user stopped ended the normal way.
+	if errors.Is(err, cmdutil.ErrStopped) {
+		return cmdutil.ExitOK
+	}
 	interrupted := ctx.Err() != nil
 	msg := ""
 	if err != nil {

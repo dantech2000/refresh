@@ -28,6 +28,9 @@ func NewIOStreams() (ios *cmdutil.IOStreams, in, out, errOut *bytes.Buffer) {
 	return &cmdutil.IOStreams{In: in, Out: out, ErrOut: errOut}, in, out, errOut
 }
 
+// Now is the time of the clock of a test factory.
+var Now = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+
 // NewFactory returns a factory over buffers, and the buffers for stdin,
 // stdout, and stderr. Its build is v1.2.3, commit abc1234, built at
 // 2026-01-02T03:04:05Z, and its newest release is the same v1.2.3, so no
@@ -37,6 +40,7 @@ func NewFactory() (f *cmdutil.Factory, in, out, errOut *bytes.Buffer) {
 	f = &cmdutil.Factory{
 		IOStreams: ios,
 		Build:     build.Info{Version: "v1.2.3", Commit: "abc1234", Date: "2026-01-02T03:04:05Z"},
+		Now:       func() time.Time { return Now },
 		LatestRelease: func(context.Context) (string, error) {
 			return "v1.2.3", nil
 		},

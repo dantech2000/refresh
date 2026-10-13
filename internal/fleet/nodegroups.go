@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
@@ -90,10 +92,14 @@ func (f *Fetcher) fetchNodegroups(ctx context.Context, c *awsx.Clients, cluster 
 	}
 	slices.SortFunc(res.nodegroups, func(a, b Nodegroup) int { return cmp.Compare(a.Name, b.Name) })
 
-	if need.AMI || need.Instances {
+	if need.AMI || need.AMIAge || need.Instances {
+		need.AMI = need.AMI || need.AMIAge
 		for _, failure := range f.fetchAMIs(ctx, c, res.nodegroups, need) {
 			fail(failure)
 		}
+	}
+	if need.AMIAge {
+		imageAges(ctx, c, res.nodegroups)
 	}
 	return res
 }
@@ -453,4 +459,47 @@ func instancesByID(ctx context.Context, c *awsx.Clients, ids []string) (map[stri
 		}
 	}
 	return out, firstErr
+}
+
+// imageAges fills when the AMI of each nodegroup with an outdated AMI was
+// created, in one filtered call for each 100 AMIs. The image-id filter is
+// used and not the ImageIds list: with the list, one AMI that was
+// deregistered fails the whole call. The read is advisory: when it fails,
+// the output shows the stale AMIs without their age.
+func imageAges(ctx context.Context, c *awsx.Clients, nodegroups []Nodegroup) {
+	var ids []string
+	for _, n := range nodegroups {
+		if status, _ := n.AMIStatus(); status == apidoc.AMIOutdated && !slices.Contains(ids, n.AMI.Current) {
+			ids = append(ids, n.AMI.Current)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	created := map[string]time.Time{}
+	for chunk := range slices.Chunk(ids, filterValuesPerCall) {
+		images, err := awsx.ListAll(ctx,
+			func(ctx context.Context, token *string) (*ec2.DescribeImagesOutput, error) {
+				return c.EC2.DescribeImages(ctx, &ec2.DescribeImagesInput{
+					Filters:   []ec2types.Filter{{Name: aws.String("image-id"), Values: chunk}},
+					NextToken: token,
+				})
+			},
+			func(out *ec2.DescribeImagesOutput) ([]ec2types.Image, *string) { return out.Images, out.NextToken },
+		)
+		if err != nil {
+			slog.DebugContext(ctx, "could not read the age of the stale AMIs", "operation", awsx.Operation(err), "class", awsx.Classify(err))
+			return
+		}
+		for _, image := range images {
+			if t, err := time.Parse(time.RFC3339, aws.ToString(image.CreationDate)); err == nil {
+				created[aws.ToString(image.ImageId)] = t
+			}
+		}
+	}
+	for i := range nodegroups {
+		if status, _ := nodegroups[i].AMIStatus(); status == apidoc.AMIOutdated {
+			nodegroups[i].AMI.CurrentCreatedAt = created[nodegroups[i].AMI.Current]
+		}
+	}
 }

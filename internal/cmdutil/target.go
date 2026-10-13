@@ -41,23 +41,10 @@ type Target struct {
 	Source  TargetSource
 }
 
-// KubeFlags are the values of --kubeconfig and --kube-context. The zero
-// value means the kubeconfig that kubectl reads and its current context.
-type KubeFlags struct {
-	Kubeconfig string
-	Context    string
-}
-
 // AddClusterFlag adds -c/--cluster to cmd.
 func AddClusterFlag(cmd *cobra.Command, p *string) {
 	cmd.Flags().StringVarP(p, "cluster", "c", "",
 		"EKS cluster name (env: "+EnvCluster+"; default: the active context, then the current kubeconfig context)")
-}
-
-// AddKubeFlags adds --kubeconfig and --kube-context to cmd.
-func AddKubeFlags(cmd *cobra.Command, p *KubeFlags) {
-	cmd.Flags().StringVar(&p.Kubeconfig, "kubeconfig", "", "Path of the kubeconfig (default: $KUBECONFIG, then ~/.kube/config)")
-	cmd.Flags().StringVar(&p.Context, "kube-context", "", "Kubeconfig context (default: the current context)")
 }
 
 // ResolveCluster returns the cluster that a command acts on. It makes no
@@ -66,12 +53,13 @@ func AddKubeFlags(cmd *cobra.Command, p *KubeFlags) {
 //  1. explicit: the argument, or -c/--cluster.
 //  2. REFRESH_CLUSTER.
 //  3. The active refresh context.
-//  4. For a read-only command: the cluster of the kubeconfig context.
+//  4. For a read-only command: the cluster of the kubeconfig context, which
+//     --kubeconfig and --kube-context choose.
 //
 // A command that changes something passes readOnly false, with or without
 // --dry-run: a kubeconfig that happens to point at production must never
 // choose the target of a change.
-func ResolveCluster(f *Factory, explicit string, readOnly bool, kubeFlags KubeFlags) (Target, error) {
+func ResolveCluster(f *Factory, explicit string, readOnly bool) (Target, error) {
 	if name := strings.TrimSpace(explicit); name != "" {
 		return Target{Cluster: name, Source: TargetExplicit}, nil
 	}
@@ -94,7 +82,7 @@ func ResolveCluster(f *Factory, explicit string, readOnly bool, kubeFlags KubeFl
 		return Target{Cluster: active.Cluster, Source: TargetContext}, nil
 	}
 	if readOnly {
-		name, ok, err := kube.CurrentCluster(kubeFlags.Kubeconfig, kubeFlags.Context)
+		name, ok, err := kube.CurrentCluster(f.Global.Kubeconfig, f.Global.KubeContext)
 		if err != nil {
 			return Target{}, fmt.Errorf("reading the kubeconfig for the cluster: %w", err)
 		}

@@ -1,0 +1,41 @@
+prod   [OK] ACTIVE   us-east-1
+
+OVERVIEW
+  status            [OK] ACTIVE
+  version           1.33
+  platform version  eks.1
+  support           [OK] standard until 2026-12-01 (61 days); EKS upgrades the cluster then
+  upgrade policy    STANDARD
+  endpoint          https://prod.eks.fake.invalid
+  arn               arn:aws:eks:us-east-1:123456789012:cluster/prod
+  created           2026-01-01 00:00 UTC
+
+NETWORK
+  vpc              vpc-0a1 (10.0.0.0/16)
+  subnets          subnet-1, subnet-2
+  security groups  sg-1
+  endpoint access  public and private
+  public cidrs     203.0.113.0/24
+
+SECURITY
+  role                 arn:aws:iam::123456789012:role/eks-prod
+  secrets encryption   arn:aws:kms:us-east-1:123456789012:key/k1
+  logging              api, audit
+  deletion protection  enabled
+
+ISSUES  1
+  NAME                           MESSAGE           RESOURCES
+  Ec2SubnetInvalidConfiguration  A subnet is gone  subnet-9
+
+NODEGROUPS  2
+  NAME  STATUS       VERSION  INSTANCE            NODES
+  old   [?] unknown  unknown  -                   unknown
+  web   [OK] ACTIVE  1.33     m5.large,m5a.large  6
+
+TAGS
+  env   prod
+  team  payments
+
+INCOMPLETE DATA
+[?] cluster prod (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod/old (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action

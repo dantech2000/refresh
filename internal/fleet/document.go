@@ -50,6 +50,22 @@ func (s *Snapshot) ClusterDoc() apidoc.Cluster {
 		PrivateAccess:     c.Network.PrivateAccess,
 		PublicAccessCIDRs: list(c.Network.PublicAccessCIDRs),
 	}
+	if s.Have.VPC == Collected {
+		doc.Network.VPCCIDR = c.Network.VPCCIDR
+	}
+	if s.Have.Support == Collected {
+		doc.Support = &apidoc.Support{
+			Tier:          c.Support.Tier,
+			StandardUntil: c.Support.StandardEnd,
+			ExtendedUntil: c.Support.ExtendedEnd,
+			DaysRemaining: c.Support.DaysRemaining,
+			AutoUpgrade:   c.Support.AutoUpgrade,
+			BuiltIn:       c.Support.BuiltIn,
+		}
+	}
+	if s.Have.Compute == Collected {
+		doc.Compute = c.Compute
+	}
 	doc.Security = &apidoc.Security{
 		RoleARN:            c.Security.RoleARN,
 		KMSKeyARN:          c.Security.KMSKeyARN,
@@ -78,7 +94,7 @@ func AddonDoc(a Addon) apidoc.Addon {
 	for i, issue := range a.Issues {
 		issues[i] = apidoc.Issue{Code: issue.Code, Message: issue.Message, ResourceIDs: list(issue.ResourceIDs)}
 	}
-	return apidoc.Addon{
+	doc := apidoc.Addon{
 		Name:                  a.Name,
 		Version:               a.Version,
 		Status:                a.Status,
@@ -89,7 +105,13 @@ func AddonDoc(a Addon) apidoc.Addon {
 		Issues:                issues,
 		CreatedAt:             a.CreatedAt,
 		ModifiedAt:            a.ModifiedAt,
+		Incomplete:            failed(a.LatestState),
 	}
+	if a.LatestState == Collected {
+		behind, _ := a.Behind()
+		doc.Latest = &apidoc.AddonLatest{Version: a.Latest, Behind: behind}
+	}
+	return doc
 }
 
 // NodegroupDoc returns the document form of a nodegroup of the snapshot.
@@ -120,7 +142,7 @@ func (s *Snapshot) NodegroupDoc(n Nodegroup) apidoc.Nodegroup {
 		doc.VersionBehind = &behind
 	}
 	if status, known := n.AMIStatus(); known && n.AMI.State != NotRequested {
-		doc.AMI = &apidoc.NodegroupAMI{Status: status, Current: n.AMI.Current, Latest: n.AMI.Latest}
+		doc.AMI = &apidoc.NodegroupAMI{Status: status, Current: n.AMI.Current, Latest: n.AMI.Latest, CurrentCreatedAt: n.AMI.CurrentCreatedAt}
 	}
 	if n.InstancesState == Collected {
 		doc.Instances = make([]apidoc.Instance, len(n.Instances))

@@ -24,6 +24,10 @@
         "serviceAccountRoleArn": {
           "type": "string"
         },
+        "latest": {
+          "$ref": "#/$defs/AddonLatest",
+          "description": "latest is the newest compatible version, in a document that reads it."
+        },
         "configuration": {
           "type": "string",
           "description": "configuration is the configuration values of the add-on, as the JSON or YAML text that EKS returns."
@@ -63,6 +67,23 @@
         "Unknown"
       ],
       "description": "AddonHealth is the health of an add-on, from its EKS status."
+    },
+    "AddonLatest": {
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "version is left out when EKS publishes no compatible version."
+        },
+        "behind": {
+          "type": "boolean",
+          "description": "behind is true when the installed version is older than Version."
+        }
+      },
+      "type": "object",
+      "required": [
+        "behind"
+      ],
+      "description": "AddonLatest is the newest version of an add-on that is compatible with the Kubernetes version of its cluster."
     },
     "Failure": {
       "properties": {

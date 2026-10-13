@@ -182,6 +182,13 @@ func TestExitCode(t *testing.T) {
 			wantErrOut: "Error: status: 2 nodegroups are stale\n",
 		},
 		{
+			// To stop a watch is the normal way to end it.
+			name:        "a watch that Ctrl+C stopped",
+			err:         cmdutil.ErrStopped,
+			interrupted: true,
+			wantCode:    0,
+		},
+		{
 			name:     "verify failed, already printed",
 			err:      &cmdutil.ExitError{Code: cmdutil.ExitVerifyFailed},
 			wantCode: 5,

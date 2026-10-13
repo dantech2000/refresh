@@ -40,7 +40,8 @@ add-ons whose names are close.`,
 
   # The configuration values alone
   refresh addon describe coredns -c prod -o json | jq -r .addon.configuration`,
-		Args: cobra.ExactArgs(1),
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: fleetcmd.CompleteAddons(f, &o.cluster),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
 				return err
@@ -49,13 +50,14 @@ add-ons whose names are close.`,
 		},
 	}
 	cmdutil.AddClusterFlag(cmd, &o.cluster)
+	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
 
 func (o *describeOptions) complete(args []string) error {
 	o.addon = args[0]
-	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true, cmdutil.KubeFlags{})
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
 	o.target = target
 	return err
 }
@@ -67,7 +69,7 @@ func (o *describeOptions) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var fetcher fleet.Fetcher
+	fetcher := fleet.Fetcher{Now: o.f.Now}
 	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{OnlyAddons: []string{o.addon}})
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)

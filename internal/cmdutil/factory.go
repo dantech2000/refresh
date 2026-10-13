@@ -29,6 +29,15 @@ type Factory struct {
 	// configuration and resolves the credentials.
 	AWS func(ctx context.Context) (*awsx.Provider, error)
 
+	// Now returns the time for what a command computes from the clock:
+	// the days left of a support window, the age of an AMI. Nil means
+	// time.Now. A test sets a fixed time.
+	Now func() time.Time
+
+	// After returns a channel that delivers after a duration, for the
+	// pause between two reads of a watch. Nil means time.After.
+	After func(d time.Duration) <-chan time.Time
+
 	// Global holds the values of the global flags. The root command fills it
 	// before a command runs.
 	Global GlobalOptions
@@ -42,4 +51,9 @@ type GlobalOptions struct {
 	Timeout        time.Duration
 	MaxConcurrency int
 	LogLevel       slog.Level
+	// Kubeconfig and KubeContext are the values of --kubeconfig and
+	// --kube-context. Empty means the kubeconfig that kubectl reads and
+	// its current context.
+	Kubeconfig  string
+	KubeContext string
 }

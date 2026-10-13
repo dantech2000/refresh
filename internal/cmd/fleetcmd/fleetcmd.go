@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -18,6 +19,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleetdata"
+	"github.com/dantech2000/refresh/internal/view"
 )
 
 // EnvRegions names the regions of a sweep, separated by commas. It applies
@@ -178,4 +180,38 @@ func ClusterError(ctx context.Context, fetcher *fleet.Fetcher, c *awsx.Clients, 
 	// Without the list the error still says what is wrong.
 	names, _ := fetcher.Clusters(ctx, c)
 	return cmdutil.NotFoundError("cluster", cluster, c.Region, names, "refresh cluster list -r "+c.Region)
+}
+
+// SupportText returns the support of a cluster as a short cell: the tier,
+// and the days left while a window is open, such as "standard (61d)". A
+// "*" marks dates that refresh ships with, because EKS did not report
+// them. It returns "" when the support was not read.
+func SupportText(s *apidoc.Support) string {
+	if s == nil {
+		return ""
+	}
+	text := strings.ToLower(string(s.Tier))
+	if s.DaysRemaining > 0 {
+		text += " (" + strconv.Itoa(s.DaysRemaining) + "d)"
+	}
+	if s.BuiltIn {
+		text += "*"
+	}
+	return text
+}
+
+// SupportStatus returns the status that draws the support of a cluster.
+func SupportStatus(s *apidoc.Support) view.Status {
+	if s == nil {
+		return view.Unknown
+	}
+	switch s.Tier {
+	case apidoc.SupportStandard:
+		return view.Healthy
+	case apidoc.SupportExtended:
+		return view.Warn
+	case apidoc.SupportUnsupported:
+		return view.Fail
+	}
+	return view.Unknown
 }

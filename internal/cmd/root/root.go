@@ -16,6 +16,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cmd/contextcmd"
 	"github.com/dantech2000/refresh/internal/cmd/gendocs"
 	nodegroupcmd "github.com/dantech2000/refresh/internal/cmd/nodegroup"
+	statuscmd "github.com/dantech2000/refresh/internal/cmd/status"
 	versioncmd "github.com/dantech2000/refresh/internal/cmd/version"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
@@ -28,6 +29,8 @@ type options struct {
 	noColor        bool
 	logLevel       string
 	verbose        bool
+	kubeconfig     string
+	kubeContext    string
 }
 
 // NewCmdRoot returns the root command with every subcommand attached. It
@@ -75,6 +78,8 @@ skip the confirmation prompts.`,
 	pf.BoolVar(&o.noColor, "no-color", false, "Disable color (env: NO_COLOR)")
 	pf.StringVar(&o.logLevel, "log-level", "warn", "Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL)")
 	pf.BoolVar(&o.verbose, "verbose", false, "Same as --log-level debug")
+	pf.StringVar(&o.kubeconfig, "kubeconfig", "", "Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)")
+	pf.StringVar(&o.kubeContext, "kube-context", "", "Kubeconfig context (default: the current context)")
 
 	// Defining the flag here keeps cobra from adding its own with the -v
 	// shorthand, which the CLI leaves unused.
@@ -86,6 +91,7 @@ skip the confirmation prompts.`,
 		&cobra.Group{ID: groupOther, Title: "Other Commands:"},
 	)
 	addCommands(cmd, groupCore,
+		statuscmd.NewCmdStatus(f),
 		clustercmd.NewCmdCluster(f),
 		nodegroupcmd.NewCmdNodegroup(f),
 		addoncmd.NewCmdAddon(f),
@@ -173,6 +179,8 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 		Timeout:        o.timeout,
 		MaxConcurrency: o.maxConcurrency,
 		LogLevel:       level,
+		Kubeconfig:     o.kubeconfig,
+		KubeContext:    o.kubeContext,
 	}
 	return nil
 }

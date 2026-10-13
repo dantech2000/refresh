@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -34,7 +35,8 @@ type listOptions struct {
 	rawFilters []string
 	sortKey    string
 	desc       bool
-	kube       cmdutil.KubeFlags
+	watch      bool
+	interval   time.Duration
 	output     cmdutil.Format
 
 	// filters and target are set by complete.
@@ -76,13 +78,20 @@ the command exits 4.`,
 			if err := o.complete(filterKeys); err != nil {
 				return err
 			}
+			if err := cmdutil.ValidateWatch(o.f.IOStreams, o.output, o.watch, o.interval); err != nil {
+				return err
+			}
+			if o.watch {
+				return cmdutil.Watch(cmd.Context(), o.f.IOStreams, o.interval, o.f.After, o.run)
+			}
 			return o.run(cmd.Context())
 		},
 	}
 	cmdutil.AddClusterFlag(cmd, &o.cluster)
+	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
 	cmdutil.AddFilterFlag(cmd, &o.rawFilters, filterKeys...)
 	cmdutil.AddSortFlags(cmd, &o.sortKey, &o.desc, keyName, keyStatus, keyInstanceType, keyNodes, keyVersion, keyAMIStatus)
-	cmdutil.AddKubeFlags(cmd, &o.kube)
+	cmdutil.AddWatchFlags(cmd, &o.watch, &o.interval)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
@@ -93,7 +102,7 @@ func (o *listOptions) complete(filterKeys []string) error {
 		return err
 	}
 	o.filters = filters
-	o.target, err = cmdutil.ResolveCluster(o.f, o.cluster, true, o.kube)
+	o.target, err = cmdutil.ResolveCluster(o.f, o.cluster, true)
 	return err
 }
 
@@ -105,7 +114,7 @@ func (o *listOptions) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var fetcher fleet.Fetcher
+	fetcher := fleet.Fetcher{Now: o.f.Now}
 	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{AMI: true})
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)

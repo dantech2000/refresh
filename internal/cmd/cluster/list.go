@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,11 +32,17 @@ type listOptions struct {
 	io     *cmdutil.IOStreams
 	aws    func(ctx context.Context) (*awsx.Provider, error)
 	global *cmdutil.GlobalOptions
+	// now returns the time that a snapshot records.
+	now func() time.Time
+	// after is the pause between two reads of a watch.
+	after func(time.Duration) <-chan time.Time
 
 	allRegions bool
 	rawFilters []string
 	sortKey    string
 	desc       bool
+	watch      bool
+	interval   time.Duration
 	output     cmdutil.Format
 
 	// filters is rawFilters, parsed by complete.
@@ -43,7 +50,7 @@ type listOptions struct {
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
-	o := &listOptions{io: f.IOStreams, aws: f.AWS, global: &f.Global}
+	o := &listOptions{io: f.IOStreams, aws: f.AWS, global: &f.Global, now: f.Now, after: f.After}
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -55,6 +62,9 @@ or more regions, and -A reads every region: the list in REFRESH_EKS_REGIONS,
 or else the regions that every account has enabled. In that last case a
 region that these credentials cannot use is skipped with one note on stderr.
 A region that you name is never skipped.
+
+With -w the command reads again every --watch-interval and redraws the
+table, until Ctrl+C.
 
 A cluster or a region that could not be read is listed under INCOMPLETE
 DATA, or in "failures" with -o json or -o yaml, and the command exits 4.
@@ -78,12 +88,16 @@ When no region answers, the command fails with exit 1.`,
 			if err := o.validate(); err != nil {
 				return err
 			}
+			if o.watch {
+				return cmdutil.Watch(cmd.Context(), o.io, o.interval, o.after, o.run)
+			}
 			return o.run(cmd.Context())
 		},
 	}
 	fleetcmd.AddAllRegionsFlag(cmd, &o.allRegions)
 	cmdutil.AddFilterFlag(cmd, &o.rawFilters, keyName, keyRegion, keyStatus, keyVersion)
 	cmdutil.AddSortFlags(cmd, &o.sortKey, &o.desc, keyName, keyRegion, keyStatus, keyVersion)
+	cmdutil.AddWatchFlags(cmd, &o.watch, &o.interval)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
@@ -95,7 +109,10 @@ func (o *listOptions) complete() error {
 }
 
 func (o *listOptions) validate() error {
-	return fleetcmd.ValidateSweepFlags(o.global, o.allRegions)
+	if err := fleetcmd.ValidateSweepFlags(o.global, o.allRegions); err != nil {
+		return err
+	}
+	return cmdutil.ValidateWatch(o.io, o.output, o.watch, o.interval)
 }
 
 func (o *listOptions) run(ctx context.Context) error {
@@ -111,7 +128,7 @@ func (o *listOptions) run(ctx context.Context) error {
 	// those filters save the calls for the clusters they drop.
 	early := o.filters.Only(keyName, keyRegion)
 	progress := o.newProgress(len(regions.Names))
-	var fetcher fleet.Fetcher
+	fetcher := fleet.Fetcher{Now: o.now}
 	res := fetcher.Sweep(ctx, provider, regions, fleet.SweepOptions{
 		Match: func(region, name string) bool {
 			return early.Match(func(key string) []string {
@@ -256,7 +273,9 @@ type progress struct {
 
 func (o *listOptions) newProgress(regions int) *progress {
 	p := &progress{o: o, regions: regions}
-	if o.output != cmdutil.FormatTable || !o.io.OutTTY {
+	// A watch redraws the whole screen for each read, so it shows no
+	// rows before the read is done.
+	if o.output != cmdutil.FormatTable || !o.io.OutTTY || o.watch {
 		return p
 	}
 	p.table = view.NewLive(o.io.Out, o.io.Size)

@@ -78,6 +78,9 @@ type NodegroupAMI struct {
 	// Latest is the ID of the latest recommended AMI. It is left out for
 	// an AMI type that has none.
 	Latest string `json:"latest,omitzero"`
+	// CurrentCreatedAt is when the current AMI was created. "refresh
+	// status" reads it for an outdated AMI.
+	CurrentCreatedAt time.Time `json:"currentCreatedAt,omitzero"`
 }
 
 // Instance is an EC2 instance of a nodegroup.

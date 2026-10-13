@@ -67,6 +67,13 @@ type Have struct {
 	Addons State
 	// Nodegroups is the state of the nodegroup list, with the same rule.
 	Nodegroups State
+	// Support is the state of Cluster.Support, Compute the state of
+	// Cluster.Compute, and VPC the state of Cluster.Network.VPCCIDR. The
+	// read of these three is advisory: one that fails sets the state and
+	// adds no failure, because the output says that the value is missing.
+	Support State
+	Compute State
+	VPC     State
 }
 
 // Incomplete reports whether a read of the snapshot failed.
@@ -97,6 +104,12 @@ type Cluster struct {
 	HealthIssues []Issue
 	Network      Network
 	Security     Security
+
+	// Support is valid when Have.Support is Collected.
+	Support Support
+	// Compute says how the cluster runs its nodes. It is valid when
+	// Have.Compute is Collected.
+	Compute apidoc.ComputeType
 }
 
 // Issue is a health issue that EKS reports for a resource.
@@ -107,7 +120,9 @@ type Issue struct {
 
 // Network is the VPC configuration of a cluster.
 type Network struct {
-	VPCID                       string
+	VPCID string
+	// VPCCIDR is valid when Have.VPC is Collected.
+	VPCCIDR                     string
 	SubnetIDs, SecurityGroupIDs []string
 	PublicAccess, PrivateAccess bool
 	PublicAccessCIDRs           []string
@@ -136,6 +151,22 @@ type Addon struct {
 	Configuration         string
 	Issues                []Issue
 	CreatedAt, ModifiedAt time.Time
+
+	// Latest is the newest version of the add-on that is compatible with
+	// the Kubernetes version of the cluster, or "" when EKS publishes
+	// none. It is valid when LatestState is Collected.
+	Latest      string
+	LatestState State
+}
+
+// Behind reports whether a newer compatible version of the add-on exists.
+// known is false when the add-on or its latest version was not read, or
+// when EKS publishes no compatible version to compare with.
+func (a Addon) Behind() (behind, known bool) {
+	if a.State != Collected || a.LatestState != Collected || a.Version == "" || a.Latest == "" {
+		return false, false
+	}
+	return CompareAddonVersions(a.Version, a.Latest) < 0, true
 }
 
 // Health returns the health of the add-on, from its status.
@@ -191,6 +222,9 @@ type AMI struct {
 	// read: a nodegroup with no instance, or an AMI type with no
 	// recommended AMI.
 	Current, Latest string
+	// CurrentCreatedAt is when the current AMI was created. Fetch reads it
+	// for a stale AMI, with Need.AMIAge. Zero means that it was not read.
+	CurrentCreatedAt time.Time
 }
 
 // Instance is an EC2 instance of a nodegroup.

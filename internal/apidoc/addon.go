@@ -35,6 +35,9 @@ type Addon struct {
 	Health                AddonHealth `json:"health,omitzero"`
 	ARN                   string      `json:"arn,omitzero"`
 	ServiceAccountRoleARN string      `json:"serviceAccountRoleArn,omitzero"`
+	// Latest is the newest compatible version, in a document that reads
+	// it.
+	Latest *AddonLatest `json:"latest,omitzero"`
 	// Configuration is the configuration values of the add-on, as the
 	// JSON or YAML text that EKS returns.
 	Configuration string `json:"configuration,omitzero"`
@@ -45,6 +48,15 @@ type Addon struct {
 	// Incomplete is true when the add-on could not be read. Its failure is
 	// in the failures list of the document.
 	Incomplete bool `json:"incomplete,omitzero"`
+}
+
+// AddonLatest is the newest version of an add-on that is compatible with
+// the Kubernetes version of its cluster.
+type AddonLatest struct {
+	// Version is left out when EKS publishes no compatible version.
+	Version string `json:"version,omitzero"`
+	// Behind is true when the installed version is older than Version.
+	Behind bool `json:"behind"`
 }
 
 // AddonList is the document of "refresh addon list".

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,8 +19,10 @@ import (
 type listOptions struct {
 	f *cmdutil.Factory
 
-	cluster string
-	output  cmdutil.Format
+	cluster  string
+	watch    bool
+	interval time.Duration
+	output   cmdutil.Format
 
 	// target is the cluster, resolved by complete.
 	target cmdutil.Target
@@ -51,16 +54,24 @@ An add-on that could not be read is listed under INCOMPLETE DATA, or in
 			if err := o.complete(); err != nil {
 				return err
 			}
+			if err := cmdutil.ValidateWatch(o.f.IOStreams, o.output, o.watch, o.interval); err != nil {
+				return err
+			}
+			if o.watch {
+				return cmdutil.Watch(cmd.Context(), o.f.IOStreams, o.interval, o.f.After, o.run)
+			}
 			return o.run(cmd.Context())
 		},
 	}
 	cmdutil.AddClusterFlag(cmd, &o.cluster)
+	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
+	cmdutil.AddWatchFlags(cmd, &o.watch, &o.interval)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
 
 func (o *listOptions) complete() error {
-	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true, cmdutil.KubeFlags{})
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
 	o.target = target
 	return err
 }
@@ -73,7 +84,7 @@ func (o *listOptions) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var fetcher fleet.Fetcher
+	fetcher := fleet.Fetcher{Now: o.f.Now}
 	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{Addons: true})
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)

@@ -18,7 +18,9 @@ type Kind string
 // The document kinds.
 const (
 	KindVersion              Kind = "Version"
+	KindFleetStatus          Kind = "FleetStatus"
 	KindClusterList          Kind = "ClusterList"
+	KindClusterDescription   Kind = "ClusterDescription"
 	KindNodegroupList        Kind = "NodegroupList"
 	KindNodegroupDescription Kind = "NodegroupDescription"
 	KindAddonList            Kind = "AddonList"
@@ -29,7 +31,9 @@ const (
 func Kinds() []Kind {
 	return []Kind{
 		KindVersion,
+		KindFleetStatus,
 		KindClusterList,
+		KindClusterDescription,
 		KindNodegroupList,
 		KindNodegroupDescription,
 		KindAddonList,
@@ -48,7 +52,9 @@ type Document interface {
 func Documents() []Document {
 	return []Document{
 		Version{},
+		FleetStatus{},
 		ClusterList{},
+		ClusterDescription{},
 		NodegroupList{},
 		NodegroupDescription{},
 		AddonList{},
@@ -62,8 +68,12 @@ func (k Kind) Command() string {
 	switch k {
 	case KindVersion:
 		return "version"
+	case KindFleetStatus:
+		return "status"
 	case KindClusterList:
 		return "cluster list"
+	case KindClusterDescription:
+		return "cluster describe"
 	case KindNodegroupList:
 		return "nodegroup list"
 	case KindNodegroupDescription:
