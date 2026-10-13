@@ -119,7 +119,7 @@ Flag letters keep one meaning everywhere: `-c` cluster, `-n` nodegroup, `-a` add
 | `--wait-timeout` | How long to wait for the change. `0` means no limit. Defaults: 40m for a nodegroup update, 5m for a scale, 5m for each add-on, 4h for an upgrade or rollback. |
 | `--poll-interval` | How often to poll. Default 15s. |
 | `--skip-health-check` | Skip the pre-flight health gate. |
-| `--force` | Proceed past drain blockers, with a warning. |
+| `--force` | Proceed past drain blockers, with a warning. Not on `addon update`, which drains nothing. |
 | `-q, --quiet` | Minimal progress output. |
 
 ## Command flags
@@ -223,5 +223,11 @@ The parity suite found these in the old binary. The new CLI does the stated thin
 | A check that cannot read its data is a warning in some checks and a block in others | Nodes, critical workloads, and drain blockers block when they cannot read. Capacity and control-plane metrics ask: `--yes` accepts, `--require-healthy` blocks. Either way the run exits 4. |
 | Without Kubernetes access, `nodegroup update` skips the Kubernetes checks with a warning and `nodegroup scale --check-pdbs` refuses | Every changing command asks before it goes on without the Kubernetes checks. `--yes` accepts and the result records it, `--require-healthy` blocks, and a dry run exits 2. EKS still enforces PDBs during a managed drain. |
 | With Kubernetes present, a degraded nodegroup is only a count of nodes that are not ready | A nodegroup that is not `ACTIVE` is a problem in every mode, and one that is a target blocks |
+| A wait that reaches `--wait-timeout` exits 1 | It exits 4 in every changing command. The change may still be running in AWS, so the result is incomplete, and the output says so. |
+| A change that AWS accepted but that could not be watched exits 4 in `nodegroup update` and 1 elsewhere | It exits 4 in every command |
+| `nodegroup update` skips a nodegroup that is already updating, or submits and lets EKS refuse, depending on timing | A target that the last read before a change shows as already updating is not changed and not attached to in `nodegroup update`, `nodegroup scale`, and `addon update`. Its row names the update in flight, it is listed in `failures`, the other targets go on, and the run exits 4. |
+| `--force` also re-rolls a nodegroup that is already on the latest AMI | `--force` only goes past drain blockers. `--reroll` re-rolls. |
+| `nodegroup update` on a terminal starts an exact-name roll without asking | Every changing command asks once on a terminal, and needs `--yes` when unattended |
+| Mixed results take the numeric maximum in fleet mode and other rules elsewhere | One rule over every step of the run, fleet mode included: the highest code wins, and an interrupt is always 1 |
 
 One old behaviour is kept on purpose: `cluster upgrade` starts an EKS insights refresh before it decides whether the run is blocked. The decision needs fresh insights. It is the one request a blocked run may send.
