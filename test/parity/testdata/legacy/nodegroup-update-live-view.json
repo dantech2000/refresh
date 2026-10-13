@@ -1,0 +1,55 @@
+{
+  "exitCode": 0,
+  "stdout": "",
+  "stderr": "",
+  "refusedBeforeMutation": false,
+  "steps": [
+    {
+      "reads": [],
+      "mutation": {
+        "operation": "eks:UpdateNodegroupVersion",
+        "region": "us-east-1",
+        "target": "prod/ng-a",
+        "payload": {
+          "clientRequestToken": "token-1",
+          "version": "1.32"
+        },
+        "outcome": "accepted update 00000000-0000-4000-8000-000000000001"
+      }
+    }
+  ],
+  "unstableReads": [
+    "kube:WatchEvents",
+    "kube:WatchNodes"
+  ],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20260101 ACTIVE 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "nodes": {
+        "b-1": "ng-b Ready",
+        "b-2": "ng-b Ready",
+        "ng-a-u1-1": "ng-a Ready",
+        "ng-a-u1-2": "ng-a Ready"
+      },
+      "pods": {
+        "default/api-1": "Running@b-1",
+        "default/api-2": "Running@b-2",
+        "default/web-1": "Running@ng-a-u1-2",
+        "default/web-2": "Running@ng-a-u1-1",
+        "kube-system/coredns-1": "Running@ng-a-u1-1",
+        "kube-system/coredns-2": "Running@b-1"
+      },
+      "updates": [
+        "ng-a VersionUpdate Successful Version=1.32,ReleaseVersion=1.32.0-20260101"
+      ]
+    }
+  }
+}

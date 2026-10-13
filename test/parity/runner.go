@@ -59,6 +59,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
+	"github.com/dantech2000/refresh/internal/kube/kubetest"
 )
 
 // Region is the region the scenarios run in.
@@ -92,6 +93,14 @@ func (e *RunError) Unwrap() error { return e.Err }
 // returns the trace. dir is an empty directory for the run's home and
 // config.
 func (r Runner) Run(ctx context.Context, sc Scenario, args []string, dir string) (Trace, error) {
+	return r.RunAfter(ctx, sc, nil, args, dir)
+}
+
+// RunAfter is Run for a scenario with a preview: it first runs the binary
+// with the preview arguments (a dry run), then changes the world as the
+// scenario's AfterPreview says, and then runs it with args. The trace is
+// that of the second run. A nil preview runs args alone.
+func (r Runner) RunAfter(ctx context.Context, sc Scenario, preview, args []string, dir string) (Trace, error) {
 	world := fleettest.New()
 	world.Edit(sc.Seed)
 	if sc.Prepare != nil {
@@ -105,10 +114,11 @@ func (r Runner) Run(ctx context.Context, sc Scenario, args []string, dir string)
 	// the order: a hook reads cmd.Process only after Start returned.
 	started := make(chan struct{})
 	cmd := exec.Command(r.Binary, args...) //nolint:gosec,noctx // the binary under test; run stops it with its own grace period
-	rec := &recorder{sc: sc, world: world, answers: map[int]awsxtest.Answer{}, signal: func(sig os.Signal) error {
+	rec := &recorder{sc: sc, world: world, signal: func(sig os.Signal) error {
 		<-started
 		return cmd.Process.Signal(sig)
 	}}
+	rec.paused = preview != nil
 	handler := awsxtest.NewHandler(world)
 	handler.OnRequest, handler.OnAnswer = rec.onRequest, rec.onAnswer
 	server := httptest.NewServer(handler)
@@ -119,8 +129,37 @@ func (r Runner) Run(ctx context.Context, sc Scenario, args []string, dir string)
 	if err := os.WriteFile(empty, nil, 0o600); err != nil {
 		return Trace{}, err
 	}
+	kubeconfig := empty
+	if sc.Kube {
+		// The cluster's Kubernetes API. NewServer makes it the endpoint the
+		// fake EKS reports, and the kubeconfig names the same server: the
+		// binary uses a kubeconfig context only when the two match.
+		kube := kubetest.NewHandler(world, Region, cmp.Or(sc.Cluster, "prod"))
+		kube.OnRequest, kube.OnAnswer = rec.onKubeRequest, rec.onKubeAnswer
+		kubeServer := kubetest.Serve(kube)
+		defer kubeServer.Close()
+		kubeconfig = filepath.Join(dir, "kubeconfig")
+		if err := kubeServer.WriteKubeconfig(kubeconfig); err != nil {
+			return Trace{}, err
+		}
+	}
+	env := environment(server.URL, dir, empty, kubeconfig)
+	if preview != nil {
+		dry := exec.Command(r.Binary, preview...) //nolint:gosec,noctx // the binary under test
+		dry.Dir, dry.Env = dir, env
+		previewStarted := make(chan struct{})
+		if out, err := r.run(ctx, dry, Scenario{}, previewStarted); err != nil {
+			return Trace{}, &RunError{Err: fmt.Errorf("preview %s %s: %w", r.Binary, strings.Join(preview, " "), err), Stdout: out.stdout, Stderr: out.stderr}
+		}
+		if sc.AfterPreview != nil {
+			if err := sc.AfterPreview(world); err != nil {
+				return Trace{}, fmt.Errorf("changing the world after the preview: %w", err)
+			}
+		}
+		rec.resume()
+	}
 	cmd.Dir = dir
-	cmd.Env = environment(server.URL, dir, empty)
+	cmd.Env = env
 	startedAt := time.Now()
 
 	out, err := r.run(ctx, cmd, sc, started)
@@ -132,13 +171,17 @@ func (r Runner) Run(ctx context.Context, sc Scenario, args []string, dir string)
 	}
 
 	n := newNormaliser(server.URL, dir, startedAt)
-	trace := buildTrace(sc, n, handler.Requests(), rec, world)
+	trace := buildTrace(sc, n, rec, world)
 	trace.ExitCode = cmd.ProcessState.ExitCode()
 	trace.RefusedBeforeMutation = trace.ExitCode != 0 && len(trace.Mutations()) == 0
 	trace.PeakConcurrency = handler.PeakConcurrency("", "")
 	// The output is normalised after the requests, so a token it prints has
 	// the name its request gave it.
 	trace.Stdout, trace.Stderr, trace.Terminal = n.text(out.stdout), n.text(out.stderr), n.text(out.terminal)
+	if sc.Live {
+		// The live view prints a snapshot whenever its polls see a change.
+		trace.Terminal, trace.Stdout, trace.Stderr = trace.Stdout+trace.Stderr, "", ""
+	}
 	return trace, nil
 }
 
@@ -231,7 +274,7 @@ func (r Runner) run(ctx context.Context, cmd *exec.Cmd, sc Scenario, started cha
 // credentials, and empty config. Nothing is inherited, so no AWS_* or
 // REFRESH_* variable, proxy, profile, or kubeconfig of the machine can
 // reach it.
-func environment(url, dir, emptyFile string) []string {
+func environment(url, dir, emptyFile, kubeconfig string) []string {
 	return []string{
 		"HOME=" + dir,
 		"XDG_CONFIG_HOME=" + filepath.Join(dir, "config"),
@@ -251,7 +294,7 @@ func environment(url, dir, emptyFile string) []string {
 		"AWS_CONFIG_FILE=" + emptyFile,
 		"AWS_SHARED_CREDENTIALS_FILE=" + emptyFile,
 		"AWS_EC2_METADATA_DISABLED=true",
-		"KUBECONFIG=" + emptyFile,
+		"KUBECONFIG=" + kubeconfig,
 		"REFRESH_CONFIG_HOME=" + filepath.Join(dir, "refresh"),
 	}
 }
@@ -347,15 +390,42 @@ func (t *terminal) finish() string {
 // defaultClock are the operations only a wait loop calls.
 var defaultClock = []fleettest.Operation{fleettest.EKSDescribeUpdate, fleettest.EKSDescribeInsightsRefresh}
 
-// recorder moves the world's clock, sends the scenario's signal, and keeps
-// the answers, as the binary's requests arrive.
+// event is one request of the run, to AWS or to Kubernetes, in the order
+// the two servers received them.
+type event struct {
+	aws  *awsxtest.Request
+	kube *kubetest.Request
+	// answered and the answer fields are set when the request ends.
+	answered   bool
+	awsAnswer  awsxtest.Answer
+	kubeAnswer kubetest.Answer
+}
+
+// operation returns the operation of the event's request.
+func (e *event) operation() fleettest.Operation {
+	if e.aws != nil {
+		return e.aws.Operation
+	}
+	return e.kube.Operation
+}
+
+// recorder moves the world's clock, sends the scenario's signal, makes the
+// scenario's moves, and keeps the requests and their answers, as they
+// arrive.
 type recorder struct {
 	sc     Scenario
 	world  *fleettest.World
 	signal func(os.Signal) error
 
-	mu      sync.Mutex
-	answers map[int]awsxtest.Answer
+	mu sync.Mutex
+	// paused is set while the scenario's preview runs: its requests move
+	// the clock and are not recorded.
+	paused bool
+	events []*event
+	// byAWS and byKube find the event of a request by its ID.
+	byAWS, byKube map[int]*event
+	// seen counts the requests of each operation, for the moves.
+	seen map[fleettest.Operation]int
 	// polled holds what the binary has polled since the clock last moved.
 	polled    map[string]bool
 	mutations int // mutating requests that arrived
@@ -372,8 +442,12 @@ func (rec *recorder) onRequest(ctx context.Context, r awsxtest.Request) {
 		clock = defaultClock
 	}
 	rec.mu.Lock()
-	if r.Mutates {
-		rec.mutations++
+	paused := rec.paused
+	if !paused {
+		rec.add(&event{aws: &r})
+		if r.Mutates {
+			rec.mutations++
+		}
 	}
 	if slices.Contains(clock, r.Operation) {
 		poll := fmt.Sprint(r.Operation, r.Region, r.Input["name"], r.Input["clusterName"], r.Input["nodegroupName"], r.Input["addonName"], r.Input["updateId"])
@@ -389,6 +463,10 @@ func (rec *recorder) onRequest(ctx context.Context, r awsxtest.Request) {
 		rec.polled[poll] = true
 	}
 	rec.mu.Unlock()
+	if paused {
+		return
+	}
+	rec.move(r.Operation)
 
 	s := rec.sc.Signal
 	if s == nil || !s.Match(r) {
@@ -419,7 +497,68 @@ func (rec *recorder) onRequest(ctx context.Context, r awsxtest.Request) {
 func (rec *recorder) onAnswer(r awsxtest.Request, a awsxtest.Answer) {
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
-	rec.answers[r.ID] = a
+	if e := rec.byAWS[r.ID]; e != nil {
+		e.answered, e.awsAnswer = true, a
+	}
+}
+
+func (rec *recorder) onKubeRequest(_ context.Context, r kubetest.Request) {
+	rec.mu.Lock()
+	paused := rec.paused
+	if !paused {
+		rec.add(&event{kube: &r})
+	}
+	rec.mu.Unlock()
+	if !paused {
+		rec.move(r.Operation)
+	}
+}
+
+func (rec *recorder) onKubeAnswer(r kubetest.Request, a kubetest.Answer) {
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if e := rec.byKube[r.ID]; e != nil {
+		e.answered, e.kubeAnswer = true, a
+	}
+}
+
+// add records an event. The caller holds rec.mu.
+func (rec *recorder) add(e *event) {
+	if rec.byAWS == nil {
+		rec.byAWS, rec.byKube, rec.seen = map[int]*event{}, map[int]*event{}, map[fleettest.Operation]int{}
+	}
+	rec.events = append(rec.events, e)
+	if e.aws != nil {
+		rec.byAWS[e.aws.ID] = e
+	} else {
+		rec.byKube[e.kube.ID] = e
+	}
+	rec.seen[e.operation()]++
+}
+
+// resume ends the preview: from here on the requests are recorded.
+func (rec *recorder) resume() {
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	rec.paused, rec.polled = false, nil
+}
+
+// move makes the scenario's moves that are due at this request of op,
+// before the request is answered.
+func (rec *recorder) move(op fleettest.Operation) {
+	rec.mu.Lock()
+	n := rec.seen[op]
+	rec.mu.Unlock()
+	for _, m := range rec.sc.Moves {
+		if m.Before != op || m.Nth != n {
+			continue
+		}
+		if err := m.Do(rec.world); err != nil {
+			rec.mu.Lock()
+			rec.failure = fmt.Errorf("the move before request %d of %s: %w", n, op, err)
+			rec.mu.Unlock()
+		}
+	}
 }
 
 func (rec *recorder) err() error {
@@ -430,6 +569,11 @@ func (rec *recorder) err() error {
 	}
 	if s := rec.sc.Signal; s != nil && rec.matched < s.Nth {
 		return fmt.Errorf("the signal was never sent: %d matching requests arrived, want %d", rec.matched, s.Nth)
+	}
+	for _, m := range rec.sc.Moves {
+		if rec.seen[m.Before] < m.Nth {
+			return fmt.Errorf("a move was never made: %s arrived %d times, want %d", m.Before, rec.seen[m.Before], m.Nth)
+		}
 	}
 	return nil
 }

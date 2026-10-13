@@ -152,7 +152,7 @@ func clusterJSON(s *fleettest.State, region string, cl *fleettest.Cluster) objec
 		"arn":             "arn:aws:eks:" + region + ":" + s.Account + ":cluster/" + cl.Name,
 		"version":         cl.Version,
 		"status":          cl.Status,
-		"endpoint":        "https://" + cl.Name + ".eks.fake.invalid",
+		"endpoint":        cl.Endpoint,
 		"platformVersion": cl.PlatformVersion,
 		"createdAt":       epoch(cl.CreatedAt),
 		"resourcesVpcConfig": object{

@@ -45,7 +45,7 @@ func TestEditAppliesDefaults(t *testing.T) {
 	})
 
 	want := fleettest.Cluster{
-		Name: "prod", Version: "1.32", Status: "ACTIVE", PlatformVersion: "eks.1", CreatedAt: w.Now(),
+		Name: "prod", Version: "1.32", Status: "ACTIVE", PlatformVersion: "eks.1", CreatedAt: w.Now(), Endpoint: "https://prod.eks.fake.invalid",
 		Insights: []fleettest.Insight{{ID: "insight-prod-skew", Name: "Kubelet version skew", Category: "UPGRADE_READINESS", Status: "PASSING"}},
 	}
 	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(fleettest.Cluster{}, "Nodegroups", "Addons")); diff != "" {

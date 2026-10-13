@@ -26,9 +26,12 @@ import (
 // binary seen this before it made that change?", and not "did it read this
 // before that?" or "how often did it poll?".
 //
-// A run on a terminal records no reads at all: the terminal view polls the
-// nodes and the scaling activities on tickers of its own, and what those
-// polls see depends on timing. Its steps hold the mutations only.
+// A run on a terminal, or one that draws the live node view, records no
+// reads at all: the view polls the nodes and the scaling activities on
+// tickers of its own, and what those polls see depends on timing. Its steps
+// hold the mutations only. Kubernetes requests are reads like the AWS ones,
+// with the cluster as their target; a watch is not in the steps, and is
+// listed in UnstableReads when one was opened.
 type Trace struct {
 	ExitCode int `json:"exitCode"`
 	// Stdout and Stderr are what the binary printed, normalised (see
@@ -111,6 +114,11 @@ type ClusterState struct {
 	Cluster    string            `json:"cluster"`
 	Nodegroups map[string]string `json:"nodegroups"`
 	Addons     map[string]string `json:"addons"`
+	// Nodes and Pods are the Kubernetes side, for a cluster that has one:
+	// each node with its nodegroup and condition, each pod with its phase
+	// and node.
+	Nodes map[string]string `json:"nodes,omitempty"`
+	Pods  map[string]string `json:"pods,omitempty"`
 	// Updates are the cluster's updates, oldest first.
 	Updates []string `json:"updates"`
 }
@@ -128,7 +136,7 @@ func (t Trace) Mutations() []Mutation {
 
 // buildTrace turns the request log and the answers into steps and reads
 // the final state of the world.
-func buildTrace(sc Scenario, n *normaliser, requests []awsxtest.Request, rec *recorder, world *fleettest.World) Trace {
+func buildTrace(sc Scenario, n *normaliser, rec *recorder, world *fleettest.World) Trace {
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	trace := Trace{Steps: []Step{}, SignalAfterMutations: rec.signalAfter}
@@ -150,9 +158,24 @@ func buildTrace(sc Scenario, n *normaliser, requests []awsxtest.Request, rec *re
 		trace.Steps = append(trace.Steps, step)
 		reads = map[Read]bool{}
 	}
-	for _, r := range requests {
-		answer, answered := rec.answers[r.ID]
-		if !answered {
+	cluster := cmp.Or(sc.Cluster, "prod")
+	noReads := sc.Terminal != nil || sc.Live
+	for _, e := range rec.events {
+		if e.kube != nil {
+			switch op := e.kube.Operation; {
+			case op == fleettest.KubeWatchNodes || op == fleettest.KubeWatchEvents:
+				// A watch is a stream, not an answer, and when it opens
+				// depends on the binary's own timing.
+				if !slices.Contains(trace.UnstableReads, op) {
+					trace.UnstableReads = append(trace.UnstableReads, op)
+				}
+			case !noReads:
+				reads[Read{Operation: op, Region: Region, Target: cluster, Observed: observeKube(e)}] = true
+			}
+			continue
+		}
+		r, answer := *e.aws, e.awsAnswer
+		if !e.answered {
 			answer = awsxtest.Answer{Dropped: true} // the binary was gone before the handler got to it
 		}
 		target, observed := observe(r, answer)
@@ -166,7 +189,7 @@ func buildTrace(sc Scenario, n *normaliser, requests []awsxtest.Request, rec *re
 			if !slices.Contains(trace.UnstableReads, r.Operation) {
 				trace.UnstableReads = append(trace.UnstableReads, r.Operation)
 			}
-		case sc.Terminal == nil:
+		case !noReads:
 			reads[Read{Operation: r.Operation, Region: r.Region, Target: target, Observed: observed}] = true
 		}
 	}
@@ -176,6 +199,26 @@ func buildTrace(sc Scenario, n *normaliser, requests []awsxtest.Request, rec *re
 	slices.Sort(trace.UnstableReads)
 	trace.World = worldState(world, slices.Sorted(maps.Keys(touched)))
 	return trace
+}
+
+// observeKube returns what a Kubernetes list returned: the selectors of
+// the request, and one word per item.
+func observeKube(e *event) string {
+	var b strings.Builder
+	for _, part := range []string{e.kube.Namespace, e.kube.LabelSelector, e.kube.FieldSelector} {
+		if part != "" {
+			b.WriteString("[" + part + "] ")
+		}
+	}
+	switch a := e.kubeAnswer; {
+	case !e.answered || a.Dropped:
+		b.WriteString("dropped")
+	case a.Reason != "":
+		b.WriteString("error=" + a.Reason)
+	default:
+		b.WriteString(a.Observed)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // preconditions picks, from the reads of a step, what the binary observed
@@ -320,53 +363,77 @@ func observedIn(r awsxtest.Request, body map[string]any) string {
 // "region/cluster" keys. A cluster that is not in the world is left out.
 func worldState(w *fleettest.World, keys []string) map[string]ClusterState {
 	out := map[string]ClusterState{}
-	issues := func(list []fleettest.Issue) string {
-		if len(list) == 0 {
-			return ""
-		}
-		var codes []string
-		for _, i := range list {
-			codes = append(codes, i.Code)
-		}
-		return " issues=" + strings.Join(codes, ",")
-	}
 	w.View(func(s *fleettest.State) {
 		for _, key := range keys {
 			region, name, _ := strings.Cut(key, "/")
-			c := s.Cluster(region, name)
-			if c == nil {
-				continue
+			if c := s.Cluster(region, name); c != nil {
+				out[key] = stateOf(c)
 			}
-			state := ClusterState{
-				Cluster:    fmt.Sprintf("%s %s%s", c.Version, c.Status, issues(c.HealthIssues)),
-				Nodegroups: map[string]string{}, Addons: map[string]string{}, Updates: []string{},
-			}
-			for _, ng := range c.Nodegroups {
-				state.Nodegroups[ng.Name] = fmt.Sprintf("%s %s %s %d/%d/%d%s", ng.Version, ng.ReleaseVersion, ng.Status, ng.Desired, ng.Min, ng.Max, issues(ng.HealthIssues))
-			}
-			for _, a := range c.Addons {
-				line := fmt.Sprintf("%s %s%s", a.Version, a.Status, issues(a.HealthIssues))
-				if a.ConfigurationValues != "" {
-					line += " config=" + a.ConfigurationValues
-				}
-				state.Addons[a.Name] = line
-			}
-			for _, u := range c.Updates {
-				var params []string
-				for _, p := range u.Params {
-					params = append(params, p.Type+"="+p.Value)
-				}
-				line := fmt.Sprintf("%s %s %s %s", cmp.Or(u.Nodegroup+u.Addon, "cluster"), u.Type, u.Status, strings.Join(params, ","))
-				if u.Force {
-					line += " force"
-				}
-				if u.RollbackTimeoutMinutes != 0 {
-					line += fmt.Sprintf(" rollbackTimeout=%dm", u.RollbackTimeoutMinutes)
-				}
-				state.Updates = append(state.Updates, line)
-			}
-			out[key] = state
 		}
 	})
 	return out
+}
+
+// issueCodes renders the codes of health issues, or nothing for none.
+func issueCodes(list []fleettest.Issue) string {
+	if len(list) == 0 {
+		return ""
+	}
+	var codes []string
+	for _, i := range list {
+		codes = append(codes, i.Code)
+	}
+	return " issues=" + strings.Join(codes, ",")
+}
+
+// stateOf describes one cluster.
+func stateOf(c *fleettest.Cluster) ClusterState {
+	state := ClusterState{
+		Cluster:    fmt.Sprintf("%s %s%s", c.Version, c.Status, issueCodes(c.HealthIssues)),
+		Nodegroups: map[string]string{}, Addons: map[string]string{}, Updates: []string{},
+	}
+	for _, ng := range c.Nodegroups {
+		state.Nodegroups[ng.Name] = fmt.Sprintf("%s %s %s %d/%d/%d%s", ng.Version, ng.ReleaseVersion, ng.Status, ng.Desired, ng.Min, ng.Max, issueCodes(ng.HealthIssues))
+	}
+	for _, n := range c.Nodes {
+		if state.Nodes == nil {
+			state.Nodes = map[string]string{}
+		}
+		line := n.Nodegroup + " Ready"
+		if n.NotReady {
+			line = n.Nodegroup + " NotReady"
+		}
+		if n.Unschedulable {
+			line += " cordoned"
+		}
+		state.Nodes[n.Name] = line
+	}
+	for _, p := range c.Pods {
+		if state.Pods == nil {
+			state.Pods = map[string]string{}
+		}
+		state.Pods[p.Namespace+"/"+p.Name] = strings.TrimSuffix(p.Phase+"@"+p.Node, "@")
+	}
+	for _, a := range c.Addons {
+		line := fmt.Sprintf("%s %s%s", a.Version, a.Status, issueCodes(a.HealthIssues))
+		if a.ConfigurationValues != "" {
+			line += " config=" + a.ConfigurationValues
+		}
+		state.Addons[a.Name] = line
+	}
+	for _, u := range c.Updates {
+		var params []string
+		for _, p := range u.Params {
+			params = append(params, p.Type+"="+p.Value)
+		}
+		line := fmt.Sprintf("%s %s %s %s", cmp.Or(u.Nodegroup+u.Addon, "cluster"), u.Type, u.Status, strings.Join(params, ","))
+		if u.Force {
+			line += " force"
+		}
+		if u.RollbackTimeoutMinutes != 0 {
+			line += fmt.Sprintf(" rollbackTimeout=%dm", u.RollbackTimeoutMinutes)
+		}
+		state.Updates = append(state.Updates, line)
+	}
+	return state
 }

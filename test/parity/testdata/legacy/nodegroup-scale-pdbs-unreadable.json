@@ -1,0 +1,107 @@
+{
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "warning: cluster prod (us-east-1): Unknown: listing PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User \"fake\" cannot list the resource at the cluster scope\nscale refused: the PodDisruptionBudgets could not be checked; fix cluster access with --kubeconfig/--kube-context, or pass --force to scale without the PDB gate\n",
+  "refusedBeforeMutation": true,
+  "steps": [
+    {
+      "reads": [
+        {
+          "operation": "ec2:DescribeInstanceTypeOfferings",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "ec2:DescribeSubnets",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "eks:DescribeAddon",
+          "region": "us-east-1",
+          "target": "prod/coredns",
+          "observed": "v1.11.4-eksbuild.2 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeAddon",
+          "region": "us-east-1",
+          "target": "prod/vpc-cni",
+          "observed": "v1.18.0-eksbuild.1 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeCluster",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "1.32 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeNodegroup",
+          "region": "us-east-1",
+          "target": "prod/ng-a",
+          "observed": "1.32 1.32.0-20250101 ACTIVE 2/1/3"
+        },
+        {
+          "operation": "eks:DescribeNodegroup",
+          "region": "us-east-1",
+          "target": "prod/ng-b",
+          "observed": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+        },
+        {
+          "operation": "eks:ListAddons",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "[vpc-cni coredns]"
+        },
+        {
+          "operation": "eks:ListClusters",
+          "region": "us-east-1",
+          "observed": "[prod]"
+        },
+        {
+          "operation": "eks:ListNodegroups",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "[ng-a ng-b]"
+        },
+        {
+          "operation": "kube:ListNamespaces",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "default kube-node-lease kube-public kube-system"
+        },
+        {
+          "operation": "kube:ListPodDisruptionBudgets",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "error=Forbidden"
+        }
+      ]
+    }
+  ],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "nodes": {
+        "a-1": "ng-a Ready",
+        "a-2": "ng-a Ready",
+        "b-1": "ng-b Ready",
+        "b-2": "ng-b Ready"
+      },
+      "pods": {
+        "default/api-1": "Running@b-1",
+        "default/api-2": "Running@b-2",
+        "default/web-1": "Running@a-1",
+        "default/web-2": "Running@a-2",
+        "kube-system/coredns-1": "Running@a-1",
+        "kube-system/coredns-2": "Running@b-1"
+      },
+      "updates": []
+    }
+  }
+}

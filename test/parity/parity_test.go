@@ -149,9 +149,12 @@ func run(t *testing.T, sc Scenario) Trace {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	trace, err := legacy.Run(ctx, sc, sc.Legacy, t.TempDir())
+	trace, err := legacy.RunAfter(ctx, sc, sc.LegacyPreview, sc.Legacy, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if testing.Verbose() {
+		t.Log(brief(trace))
 	}
 	return trace
 }

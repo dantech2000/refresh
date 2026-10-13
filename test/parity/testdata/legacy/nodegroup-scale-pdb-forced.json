@@ -1,0 +1,143 @@
+{
+  "exitCode": 0,
+  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupScale\",\n  \"cluster\": \"prod\",\n  \"nodegroup\": \"ng-a\",\n  \"region\": \"us-east-1\",\n  \"outcome\": \"Requested\",\n  \"dryRun\": false,\n  \"before\": {\n    \"desired\": 2,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"after\": {\n    \"desired\": 1,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"waited\": false,\n  \"pdbGate\": {\n    \"result\": \"Overridden\",\n    \"blockers\": [\n      \"default/web (2/2 pods healthy, 0 disruption(s) allowed; covered pods run on 2 of the nodegroup's nodes, so removing 1 node(s) can take down 1 pod(s), more than the 0 allowed)\"\n    ],\n    \"scoped\": true\n  },\n  \"failures\": []\n}\n",
+  "stderr": "[!] --force: scaling prod/ng-a down from 2 to 1 despite 1 PodDisruptionBudget(s) it could violate:\n  - default/web (2/2 pods healthy, 0 disruption(s) allowed; covered pods run on 2 of the nodegroup's nodes, so removing 1 node(s) can take down 1 pod(s), more than the 0 allowed)\nEKS terminates the removed nodes without honoring these PDBs; their pods on those nodes go down.\n",
+  "refusedBeforeMutation": false,
+  "steps": [
+    {
+      "reads": [
+        {
+          "operation": "ec2:DescribeInstanceTypeOfferings",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "ec2:DescribeSubnets",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "eks:DescribeAddon",
+          "region": "us-east-1",
+          "target": "prod/coredns",
+          "observed": "v1.11.4-eksbuild.2 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeAddon",
+          "region": "us-east-1",
+          "target": "prod/vpc-cni",
+          "observed": "v1.18.0-eksbuild.1 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeCluster",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "1.32 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeNodegroup",
+          "region": "us-east-1",
+          "target": "prod/ng-a",
+          "observed": "1.32 1.32.0-20250101 ACTIVE 2/1/3"
+        },
+        {
+          "operation": "eks:DescribeNodegroup",
+          "region": "us-east-1",
+          "target": "prod/ng-b",
+          "observed": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+        },
+        {
+          "operation": "eks:ListAddons",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "[vpc-cni coredns]"
+        },
+        {
+          "operation": "eks:ListClusters",
+          "region": "us-east-1",
+          "observed": "[prod]"
+        },
+        {
+          "operation": "eks:ListNodegroups",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "[ng-a ng-b]"
+        },
+        {
+          "operation": "kube:ListNamespaces",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "default kube-node-lease kube-public kube-system"
+        },
+        {
+          "operation": "kube:ListNodes",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "[eks.amazonaws.com/nodegroup in (ng-a)] a-1=Ready a-2=Ready"
+        },
+        {
+          "operation": "kube:ListPodDisruptionBudgets",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "default/web=allows0 default/api=allows1"
+        },
+        {
+          "operation": "kube:ListPods",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "[default] default/web-1=Running@a-1 default/web-2=Running@a-2 default/api-1=Running@b-1 default/api-2=Running@b-2"
+        }
+      ],
+      "mutation": {
+        "operation": "eks:UpdateNodegroupConfig",
+        "region": "us-east-1",
+        "target": "prod/ng-a",
+        "payload": {
+          "clientRequestToken": "token-1",
+          "scalingConfig": {
+            "desiredSize": 1
+          }
+        },
+        "outcome": "accepted update 00000000-0000-4000-8000-000000000001"
+      },
+      "preconditions": [
+        "eks:DescribeCluster prod: 1.32 ACTIVE",
+        "eks:DescribeNodegroup prod/ng-a: 1.32 1.32.0-20250101 ACTIVE 2/1/3",
+        "eks:ListAddons prod: [vpc-cni coredns]",
+        "eks:ListNodegroups prod: [ng-a ng-b]",
+        "kube:ListNamespaces prod: default kube-node-lease kube-public kube-system",
+        "kube:ListNodes prod: [eks.amazonaws.com/nodegroup in (ng-a)] a-1=Ready a-2=Ready",
+        "kube:ListPodDisruptionBudgets prod: default/web=allows0 default/api=allows1",
+        "kube:ListPods prod: [default] default/web-1=Running@a-1 default/web-2=Running@a-2 default/api-1=Running@b-1 default/api-2=Running@b-2"
+      ]
+    }
+  ],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20250101 ACTIVE 1/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "nodes": {
+        "a-1": "ng-a Ready",
+        "a-2": "ng-a Ready",
+        "b-1": "ng-b Ready",
+        "b-2": "ng-b Ready"
+      },
+      "pods": {
+        "default/api-1": "Running@b-1",
+        "default/api-2": "Running@b-2",
+        "default/web-1": "Running@a-1",
+        "default/web-2": "Running@a-2",
+        "kube-system/coredns-1": "Running@a-1",
+        "kube-system/coredns-2": "Running@b-1"
+      },
+      "updates": [
+        "ng-a ConfigUpdate Successful DesiredSize=1"
+      ]
+    }
+  }
+}

@@ -1,5 +1,20 @@
 package fleettest
 
+// The Kubernetes requests refresh makes, named as operations so that a
+// Fault can apply to them. Their service is "kube". Deny, Code, Delay,
+// Hang, and Reset apply; kubetest ignores the rest.
+const (
+	KubeListNamespaces  Operation = "kube:ListNamespaces"
+	KubeListNodes       Operation = "kube:ListNodes"
+	KubeWatchNodes      Operation = "kube:WatchNodes"
+	KubeListPods        Operation = "kube:ListPods"
+	KubeListPDBs        Operation = "kube:ListPodDisruptionBudgets"
+	KubeListDeployments Operation = "kube:ListDeployments"
+	KubeListEvents      Operation = "kube:ListEvents"
+	KubeWatchEvents     Operation = "kube:WatchEvents"
+	KubeListNodeMetrics Operation = "kube:ListNodeMetrics"
+)
+
 // The AWS operations refresh calls.
 const (
 	STSGetCallerIdentity Operation = "sts:GetCallerIdentity"

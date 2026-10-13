@@ -102,6 +102,23 @@ type Cluster struct {
 	// InsightsRefresh is the state of the last insights refresh. The zero
 	// value means none was started.
 	InsightsRefresh InsightsRefresh
+
+	// Endpoint is the URL of the cluster's Kubernetes API, which
+	// DescribeCluster reports. It defaults to a host that does not resolve.
+	// A test that serves the cluster's Kubernetes API sets it to that
+	// server, because refresh uses a kubeconfig context only when its
+	// server is this endpoint.
+	Endpoint string
+	// Nodes, Pods, PDBs, Deployments, and Events are what the cluster's
+	// Kubernetes API holds. The namespaces are those of the pods, the PDBs,
+	// and the deployments, plus default and the kube-* ones. A version
+	// update of a nodegroup moves its nodes and their pods (see
+	// RollScript).
+	Nodes       []*Node
+	Pods        []*Pod
+	PDBs        []PDB
+	Deployments []Deployment
+	Events      []Event
 }
 
 // Nodegroup is a managed nodegroup.
@@ -424,6 +441,7 @@ func (s *State) applyDefaults(now time.Time) {
 }
 
 func (c *Cluster) applyDefaults(now time.Time) {
+	c.applyKubeDefaults(now)
 	setDefault(&c.Status, StatusActive)
 	setDefault(&c.PlatformVersion, "eks.1")
 	setDefault(&c.CreatedAt, now)

@@ -21,7 +21,8 @@ type World struct {
 	lastUpdate int
 	faults     []*rule
 	blocked    int
-	changed    chan struct{} // closed and replaced when the clock or blocked changes
+	changed    chan struct{} // closed and replaced when the clock, the state, or blocked changes
+	generation int64
 }
 
 // New returns an empty world whose clock reads 2026-01-01T00:00:00Z.
@@ -47,7 +48,7 @@ func (w *World) Advance(d time.Duration) {
 	defer w.mu.Unlock()
 	w.now = w.now.Add(d)
 	w.settle()
-	w.broadcast()
+	w.changedState()
 }
 
 // Edit runs f on the state with the world locked. It is how a test seeds the
@@ -60,6 +61,32 @@ func (w *World) Edit(f func(s *State)) {
 	defer w.mu.Unlock()
 	f(&w.state)
 	w.state.applyDefaults(w.now)
+	w.changedState()
+}
+
+// Generation returns a number that grows each time the state may have
+// changed: on every Edit, Advance, and update. A server uses it as the
+// resource version of what it serves.
+func (w *World) Generation() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.generation
+}
+
+// Changes returns a channel that is closed the next time the state may
+// change. A server that streams the state takes the channel, reads the
+// state, and waits on the channel before it reads again.
+func (w *World) Changes() <-chan struct{} {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.changed
+}
+
+// changedState records that the state may have changed. The caller holds
+// w.mu.
+func (w *World) changedState() {
+	w.generation++
+	w.broadcast()
 }
 
 // View runs f on the state with the world locked, for reading. f must not

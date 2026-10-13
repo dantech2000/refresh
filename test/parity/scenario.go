@@ -50,6 +50,25 @@ type Scenario struct {
 	Clock []fleettest.Operation
 	// Signal, when set, is sent to the binary once.
 	Signal *Signal
+	// Kube gives the scenario's cluster a Kubernetes API, serving the
+	// nodes, pods, and PDBs of the seed, and gives the binary a kubeconfig
+	// for it. Without it the binary has an empty kubeconfig and skips its
+	// Kubernetes checks.
+	Kube bool
+	// Live marks a run that draws the live node view. The view polls the
+	// nodes, their pods, and the scaling activities on tickers of its own,
+	// so the trace of such a run has no reads and no output, as for a run
+	// on a terminal: its steps hold the mutations only.
+	Live bool
+	// Moves change the world while the binary runs, between two of its
+	// requests.
+	Moves []Move
+	// LegacyPreview and V2Preview are a command line to run first on the
+	// same world, such as the dry run of the change. AfterPreview then
+	// changes the world, and the trace is that of the main run alone.
+	LegacyPreview []string
+	V2Preview     []string
+	AfterPreview  func(w *fleettest.World) error
 	// Cluster is a cluster whose final state the trace records even when
 	// no request names it. Empty means "prod".
 	Cluster string
@@ -57,6 +76,15 @@ type Scenario struct {
 	// timing in the binary, such as a watcher on its own ticker. The trace
 	// records that they were called, and leaves them out of the steps.
 	UnstableReads []fleettest.Operation
+}
+
+// Move changes the world at a fixed point of the run: when request number
+// Nth of the operation Before arrives, counted from 1, and before it is
+// answered. The operation is an AWS one or a Kubernetes one.
+type Move struct {
+	Before fleettest.Operation
+	Nth    int
+	Do     func(w *fleettest.World) error
 }
 
 // Signal says when to interrupt the binary.
@@ -115,6 +143,16 @@ const (
 	LostResponse Behaviour = "lost-response"
 	// ThrottledRead: a read is throttled once, and the run goes on.
 	ThrottledRead Behaviour = "throttled-read"
+	// DrainBlocked: a PodDisruptionBudget would refuse the eviction of a
+	// pod on the nodes to drain. Nothing changes. DrainForced: the same,
+	// with --force, and the change is made.
+	DrainBlocked Behaviour = "drain-blocked"
+	DrainForced  Behaviour = "drain-forced"
+	// GateUnreadable: the Kubernetes API refuses to list the budgets, so
+	// the gate cannot tell. Nothing changes. GateUnreadableForced: the
+	// same, with --force.
+	GateUnreadable       Behaviour = "gate-unreadable"
+	GateUnreadableForced Behaviour = "gate-unreadable-forced"
 )
 
 // Check is one assertion on a trace. It returns what is wrong, or nil.
@@ -129,7 +167,7 @@ var behaviourChecks = map[Behaviour][]Check{
 	PromptNo:        {noUpdates},
 	PromptInterrupt: {fails, noUpdates},
 	Blocked:         {fails, noUpdates},
-	Failed:          {fails, changes, worldHasUpdate("Failed")},
+	Failed:          {fails, changes, anUpdateFailed},
 	Busy:            {noUpdates},
 	Attach:          {exits(0), noUpdates},
 	AttachFailed:    {},
@@ -137,6 +175,11 @@ var behaviourChecks = map[Behaviour][]Check{
 	Interrupt:       {exits(1), changes, nothingAfterSignal},
 	LostResponse:    {exits(0), oneUpdatePerLostResponse},
 	ThrottledRead:   {exits(0), changes, sawThrottle},
+
+	DrainBlocked:         {fails, noRolls, sawKubeAnswer(fleettest.KubeListPDBs, "=allows0")},
+	DrainForced:          {rolls, sawKubeAnswer(fleettest.KubeListPDBs, "=allows0")},
+	GateUnreadable:       {fails, noRolls, sawKubeAnswer(fleettest.KubeListPDBs, "error=Forbidden")},
+	GateUnreadableForced: {rolls, sawKubeAnswer(fleettest.KubeListPDBs, "error=Forbidden")},
 }
 
 // check runs the scenario's own checks and those of its behaviour.
@@ -300,18 +343,86 @@ func sawThrottle(t Trace) error {
 	return errors.New("no read was throttled")
 }
 
-// worldHasUpdate: some update in the final world has the status.
-func worldHasUpdate(status string) Check {
+// sawKube: the binary made the Kubernetes request at least once.
+func sawKube(op fleettest.Operation) Check { return sawKubeAnswer(op, "") }
+
+// isRoll reports whether a mutation changes the nodes of a nodegroup.
+func isRoll(m *Mutation) bool {
+	return m != nil && (m.Operation == fleettest.EKSUpdateNodegroupVersion || m.Operation == fleettest.EKSUpdateNodegroupConfig)
+}
+
+// noRolls: no request that changes the nodes of a nodegroup. A cluster
+// upgrade may have updated the control plane and the add-ons before its
+// gate for the first nodegroup.
+func noRolls(t Trace) error {
+	for _, s := range t.Steps {
+		if isRoll(s.Mutation) {
+			return fmt.Errorf("%s %s was sent, want no nodegroup change", s.Mutation.Operation, s.Mutation.Target)
+		}
+	}
+	return nil
+}
+
+// rolls: at least one request that changes the nodes of a nodegroup.
+func rolls(t Trace) error {
+	if noRolls(t) == nil {
+		return errors.New("no nodegroup was changed, want at least one")
+	}
+	return nil
+}
+
+// worldSays: the final state of prod, as the trace records it, contains
+// the text.
+func worldSays(text string) Check {
 	return func(t Trace) error {
-		for _, c := range t.World {
-			for _, u := range c.Updates {
-				if strings.Contains(u, " "+status+" ") {
+		if state := fmt.Sprintf("%+v", t.World[Region+"/prod"]); !strings.Contains(state, text) {
+			return fmt.Errorf("the final state of prod does not contain %q: %s", text, state)
+		}
+		return nil
+	}
+}
+
+// sawKubeAnswer: the binary made the Kubernetes request before it first
+// changed a nodegroup, or without changing one, and an answer to it
+// contained the text. It is how a scenario shows that a gate read the state
+// it then decided on.
+func sawKubeAnswer(op fleettest.Operation, text string) Check {
+	return func(t Trace) error {
+		for _, s := range t.Steps {
+			for _, r := range s.Reads {
+				if r.Operation == op && strings.Contains(r.Observed, text) {
 					return nil
 				}
 			}
+			if isRoll(s.Mutation) {
+				break
+			}
 		}
-		return fmt.Errorf("no update in the final world is %s", status)
+		return fmt.Errorf("no %s answer with %q before the first nodegroup change", op, text)
 	}
+}
+
+// called: the binary made the request at least once, at any point. It is
+// for the requests a trace keeps out of its steps.
+func called(op fleettest.Operation) Check {
+	return func(t Trace) error {
+		if !slices.Contains(t.UnstableReads, op) {
+			return fmt.Errorf("%s was not called (called outside the steps: %v)", op, t.UnstableReads)
+		}
+		return nil
+	}
+}
+
+// anUpdateFailed: some update in the final world is Failed.
+func anUpdateFailed(t Trace) error {
+	for _, c := range t.World {
+		for _, u := range c.Updates {
+			if strings.Contains(u, " Failed ") {
+				return nil
+			}
+		}
+	}
+	return errors.New("no update in the final world is Failed")
 }
 
 // resourceIs: the final line of a nodegroup or an add-on of prod contains

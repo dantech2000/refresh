@@ -60,6 +60,8 @@ type Update struct {
 	ends      time.Time
 	script    UpdateScript
 	finish    func(now time.Time, ok bool)
+	// roll moves the nodes of a nodegroup version update. Nil for the rest.
+	roll *roll
 }
 
 // UpdateParam is one parameter of an update, such as the target version.
@@ -98,6 +100,9 @@ type UpdateScript struct {
 	// ResourceIssues, when not nil, replace the health issues of the
 	// resource when the update ends.
 	ResourceIssues []Issue
+	// Roll says what a nodegroup version update does to the nodegroup's
+	// nodes and pods. Other updates ignore it.
+	Roll RollScript
 }
 
 func (s UpdateScript) clone() UpdateScript {
@@ -284,7 +289,10 @@ func (w *World) UpdateNodegroupVersion(region, cluster, nodegroup string, req No
 		Type: TypeVersionUpdate, Nodegroup: ng.Name, op: EKSUpdateNodegroupVersion, token: req.Token, request: request, Force: value(req.Force),
 		Params: []UpdateParam{{Type: "Version", Value: version}, {Type: "ReleaseVersion", Value: release}},
 	}
-	return w.start(c, u, ng.target(), func() { ng.Version, ng.ReleaseVersion = version, release })
+	t := ng.target()
+	// The roll is planned once the update has its script and its number.
+	t.begin = func() { u.roll = w.startRoll(c, ng, u, release) }
+	return w.start(c, u, t, func() { ng.Version, ng.ReleaseVersion = version, release })
 }
 
 // UpdateNodegroupConfig starts a change of a nodegroup's scaling config. See
@@ -506,6 +514,7 @@ func (w *World) start(c *Cluster, u *Update, t target, apply func()) (Update, er
 
 	started := u.snapshot()
 	w.settle()
+	w.changedState()
 	return started, nil
 }
 
@@ -527,6 +536,9 @@ func (w *World) settle() {
 			r.Status = RefreshCompleted
 		}
 		for _, u := range c.Updates {
+			if u.roll != nil && u.Status == UpdateInProgress {
+				u.roll.advance(c, u.Nodegroup, w.now)
+			}
 			if u.scheduled && !u.ends.After(w.now) {
 				due = append(due, u)
 			}

@@ -13,10 +13,10 @@ import (
 func scenarios() []Scenario {
 	groups := map[Command][]Scenario{
 		AddonUpdate:     addonUpdate(),
-		NodegroupScale:  nodegroupScale(),
-		NodegroupUpdate: nodegroupUpdate(),
-		ClusterUpgrade:  clusterUpgrade(),
-		ClusterRollback: clusterRollback(),
+		NodegroupScale:  slices.Concat(nodegroupScale(), kubeNodegroupScale()),
+		NodegroupUpdate: slices.Concat(nodegroupUpdate(), kubeNodegroupUpdate()),
+		ClusterUpgrade:  slices.Concat(clusterUpgrade(), kubeClusterUpgrade()),
+		ClusterRollback: slices.Concat(clusterRollback(), kubeClusterRollback()),
 	}
 	var out []Scenario
 	for _, command := range commands {
@@ -35,7 +35,11 @@ var commands = []Command{AddonUpdate, NodegroupScale, NodegroupUpdate, ClusterUp
 var behaviours = []Behaviour{
 	Success, DryRun, Unattended, PromptYes, PromptNo, PromptInterrupt, Blocked, Failed,
 	Busy, Attach, AttachFailed, Deadline, Interrupt, LostResponse, ThrottledRead,
+	DrainBlocked, DrainForced, GateUnreadable, GateUnreadableForced,
 }
+
+// noDrain is why an add-on update has no PDB cells.
+const noDrain = "an add-on update drains no node, and the legacy command reads no PodDisruptionBudget for it"
 
 // matrix says, for every command and behaviour, which scenario shows it or
 // why none does. TestMatrix holds it to the scenarios.
@@ -51,6 +55,7 @@ var matrix = map[Command]map[Behaviour]cell{
 		Blocked: by("addon-update-incompatible"), Failed: by("addon-update-failed"), Busy: by("addon-update-busy"),
 		Attach: by("addon-update-attach"), AttachFailed: by("addon-update-attach-failed"), Deadline: by("addon-update-deadline"),
 		Interrupt: by("addon-update-interrupt"), LostResponse: by("addon-update-lost-response"), ThrottledRead: by("addon-update-throttled-read"),
+		DrainBlocked: none(noDrain), DrainForced: none(noDrain), GateUnreadable: none(noDrain), GateUnreadableForced: none(noDrain),
 	},
 	NodegroupScale: {
 		Success: by("nodegroup-scale-yes"), DryRun: by("nodegroup-scale-dry-run"), Unattended: by("nodegroup-scale-unattended"),
@@ -60,6 +65,8 @@ var matrix = map[Command]map[Behaviour]cell{
 		AttachFailed: none("the legacy command refuses a nodegroup that is changing; it never attaches"),
 		Deadline:     by("nodegroup-scale-deadline"), Interrupt: by("nodegroup-scale-interrupt"),
 		LostResponse: by("nodegroup-scale-lost-response"), ThrottledRead: by("nodegroup-scale-throttled-read"),
+		DrainBlocked: by("nodegroup-scale-pdb-blocked"), DrainForced: by("nodegroup-scale-pdb-forced"),
+		GateUnreadable: by("nodegroup-scale-pdbs-unreadable"), GateUnreadableForced: by("nodegroup-scale-pdbs-unreadable-forced"),
 	},
 	NodegroupUpdate: {
 		Success: by("nodegroup-update-yes"), DryRun: by("nodegroup-update-dry-run"),
@@ -70,6 +77,8 @@ var matrix = map[Command]map[Behaviour]cell{
 		AttachFailed: none("the legacy command skips a nodegroup that is UPDATING; it never attaches"),
 		Deadline:     by("nodegroup-update-deadline"), Interrupt: by("nodegroup-update-interrupt"),
 		LostResponse: by("nodegroup-update-lost-response"), ThrottledRead: by("nodegroup-update-throttled-read"),
+		DrainBlocked: by("nodegroup-update-pdb-blocked"), DrainForced: by("nodegroup-update-pdb-forced"),
+		GateUnreadable: by("nodegroup-update-pdbs-unreadable"), GateUnreadableForced: by("nodegroup-update-pdbs-unreadable-forced"),
 	},
 	ClusterUpgrade: {
 		Success: by("cluster-upgrade-yes"), DryRun: by("cluster-upgrade-dry-run"), Unattended: by("cluster-upgrade-unattended"),
@@ -78,6 +87,8 @@ var matrix = map[Command]map[Behaviour]cell{
 		Busy:   none("the legacy command has no busy check (CONTRACT.md lists it as behaviour the new CLI does not copy)"),
 		Attach: by("cluster-upgrade-attach"), AttachFailed: by("cluster-upgrade-attach-failed"), Deadline: by("cluster-upgrade-deadline"),
 		Interrupt: by("cluster-upgrade-interrupt"), LostResponse: by("cluster-upgrade-lost-response"), ThrottledRead: by("cluster-upgrade-throttled-read"),
+		DrainBlocked: by("cluster-upgrade-pdb-blocked"), DrainForced: by("cluster-upgrade-pdb-forced"),
+		GateUnreadable: by("cluster-upgrade-pdbs-unreadable"), GateUnreadableForced: by("cluster-upgrade-pdbs-unreadable-forced"),
 	},
 	ClusterRollback: {
 		Success: by("cluster-rollback-yes"), DryRun: by("cluster-rollback-dry-run"), Unattended: by("cluster-rollback-unattended"),
@@ -86,6 +97,8 @@ var matrix = map[Command]map[Behaviour]cell{
 		Busy:   none("the legacy command has no busy check"),
 		Attach: by("cluster-rollback-attach"), AttachFailed: by("cluster-rollback-attach-failed"), Deadline: by("cluster-rollback-deadline"),
 		Interrupt: by("cluster-rollback-interrupt"), LostResponse: by("cluster-rollback-lost-response"), ThrottledRead: by("cluster-rollback-throttled-read"),
+		DrainBlocked: by("cluster-rollback-pdb-blocked"), DrainForced: by("cluster-rollback-pdb-forced"),
+		GateUnreadable: by("cluster-rollback-pdbs-unreadable"), GateUnreadableForced: by("cluster-rollback-pdbs-unreadable-forced"),
 	},
 }
 
@@ -388,7 +401,7 @@ func clusterUpgrade() []Scenario {
 		{
 			// The in-flight update fails. The legacy command then starts its own.
 			Name: "cluster-upgrade-attach-failed", Behaviour: AttachFailed, Seed: fleet(scripts(slow)), Prepare: inFlight(longFailing), Clock: clusterClock,
-			Legacy: with("--yes", "--only", "control-plane"), Checks: []Check{exits(0), updatesAre(control), worldHasUpdate("Failed")},
+			Legacy: with("--yes", "--only", "control-plane"), Checks: []Check{exits(0), updatesAre(control), anUpdateFailed},
 		},
 		{Name: "cluster-upgrade-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(control)}},
 		{
@@ -492,7 +505,7 @@ func clusterRollback() []Scenario {
 		{
 			// The in-flight rollback fails. The legacy command then starts its own.
 			Name: "cluster-rollback-attach-failed", Behaviour: AttachFailed, Seed: fleet(upgraded, rolledBackNodes), Prepare: inFlight(longFailing), Clock: clusterClock,
-			Legacy: with("--yes"), Checks: []Check{exits(0), updatesAre(control), worldHasUpdate("Failed")},
+			Legacy: with("--yes"), Checks: []Check{exits(0), updatesAre(control), anUpdateFailed},
 		},
 		{Name: "cluster-rollback-deadline", Behaviour: Deadline, Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a)}},
 		{
