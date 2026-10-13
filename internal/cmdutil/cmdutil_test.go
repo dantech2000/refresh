@@ -66,8 +66,9 @@ func TestExitError(t *testing.T) {
 	}
 }
 
-// TestExitCodeOfContextErrors: an interrupt is exit 1 whatever code carries
-// it, and a deadline keeps the code of the partial result.
+// TestExitCodeOfContextErrors: a context error inside an ExitError does not
+// change its code. A cancellation can come from the run itself; main decides
+// what an interrupt is, from the signal context.
 func TestExitCodeOfContextErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -78,12 +79,12 @@ func TestExitCodeOfContextErrors(t *testing.T) {
 		{
 			name: "cancelled inside incomplete",
 			err:  &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: fmt.Errorf("sweep: %w", context.Canceled)},
-			want: cmdutil.ExitFailure,
+			want: cmdutil.ExitIncomplete,
 		},
 		{
 			name: "cancelled around verify failed",
 			err:  fmt.Errorf("%w: %w", context.Canceled, &cmdutil.ExitError{Code: cmdutil.ExitVerifyFailed}),
-			want: cmdutil.ExitFailure,
+			want: cmdutil.ExitVerifyFailed,
 		},
 		{name: "deadline", err: context.DeadlineExceeded, want: cmdutil.ExitFailure},
 		{

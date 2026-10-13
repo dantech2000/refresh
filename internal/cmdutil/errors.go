@@ -1,9 +1,6 @@
 package cmdutil
 
-import (
-	"context"
-	"errors"
-)
+import "errors"
 
 // The exit codes of every command.
 const (
@@ -33,15 +30,15 @@ func (e *ExitError) Error() string {
 func (e *ExitError) Unwrap() error { return e.Err }
 
 // ExitCode returns the exit code for err: ExitOK for nil, the code of an
-// ExitError anywhere in the chain, and ExitFailure for any other error. A
-// cancelled context is an interrupt, which is ExitFailure even inside an
-// ExitError. A deadline is not: an ExitError keeps its code then.
+// ExitError anywhere in the chain, and ExitFailure for any other error.
+//
+// ExitCode does not look for an interrupt. A cancelled context inside err
+// can come from the run itself, such as a fan-out that stops its other
+// calls, and then the code of the ExitError stands. main knows whether the
+// signal context ended, and makes an interrupt exit 1.
 func ExitCode(err error) int {
 	if err == nil {
 		return ExitOK
-	}
-	if errors.Is(err, context.Canceled) {
-		return ExitFailure
 	}
 	var exitErr *ExitError
 	if errors.As(err, &exitErr) {

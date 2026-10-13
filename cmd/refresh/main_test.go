@@ -120,10 +120,19 @@ func TestExitCode(t *testing.T) {
 	}{
 		{name: "success", err: nil, wantCode: 0},
 		{
-			name:       "cancelled inside a result code",
+			// Not an interrupt: the signal context is live, so the run
+			// cancelled something itself, and its result code stands.
+			name:       "cancelled inside a result code, no interrupt",
 			err:        &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: fmt.Errorf("status: %w", context.Canceled)},
-			wantCode:   1,
+			wantCode:   4,
 			wantErrOut: "Error: status: context canceled\n",
+		},
+		{
+			name:        "cancelled inside a result code, interrupted",
+			err:         &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: fmt.Errorf("status: %w", context.Canceled)},
+			interrupted: true,
+			wantCode:    1,
+			wantErrOut:  "Error: status: context canceled\n",
 		},
 		{
 			name:       "deadline keeps the result code",
