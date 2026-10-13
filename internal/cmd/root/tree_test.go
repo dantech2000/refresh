@@ -198,6 +198,7 @@ func TestCommandTree(t *testing.T) {
 		"refresh nodegroup scale",
 		"refresh nodegroup update",
 		"refresh status",
+		"refresh ui",
 		"refresh version",
 	}
 	var got []string

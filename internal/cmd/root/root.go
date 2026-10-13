@@ -18,6 +18,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cmd/gendocs"
 	nodegroupcmd "github.com/dantech2000/refresh/internal/cmd/nodegroup"
 	statuscmd "github.com/dantech2000/refresh/internal/cmd/status"
+	uicmd "github.com/dantech2000/refresh/internal/cmd/ui"
 	versioncmd "github.com/dantech2000/refresh/internal/cmd/version"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
@@ -104,6 +105,7 @@ skip the confirmation prompts.`,
 		nodegroupcmd.NewCmdNodegroup(f),
 		addoncmd.NewCmdAddon(f),
 		contextcmd.NewCmdContext(f),
+		uicmd.NewCmdUI(f),
 	)
 	addCommands(cmd, groupOther,
 		versioncmd.NewCmdVersion(f),
