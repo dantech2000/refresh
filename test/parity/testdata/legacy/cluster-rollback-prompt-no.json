@@ -1,0 +1,23 @@
+{
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "",
+  "refusedBeforeMutation": true,
+  "steps": [],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.33 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.33 1.33.0-20260101 ACTIVE 2/1/3",
+        "ng-b": "1.33 1.33.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.12.0-eksbuild.1 ACTIVE",
+        "vpc-cni": "v1.20.0-eksbuild.1 ACTIVE"
+      },
+      "updates": [
+        "cluster VersionUpdate Successful Version=1.33,PlatformVersion=eks.1"
+      ]
+    }
+  }
+}

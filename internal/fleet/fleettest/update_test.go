@@ -400,7 +400,7 @@ func TestUpdateReplayIgnoresLaterState(t *testing.T) {
 // optional field of the four operations.
 func TestUpdateTokenKeepsPresence(t *testing.T) {
 	no := false
-	zero := int32(0)
+	zero, two := int32(0), int32(2)
 	tests := []struct {
 		name string
 		// call sends the request, with the field left out or sent empty.
@@ -441,7 +441,7 @@ func TestUpdateTokenKeepsPresence(t *testing.T) {
 		{"desired size", func(w *fleettest.World, empty bool) error {
 			req := fleettest.NodegroupConfigRequest{Token: token, Scaling: &fleettest.ScalingRequest{}}
 			if empty {
-				req.Scaling.Desired = &zero
+				req.Scaling.Desired = &two
 			}
 			_, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", req)
 			return err
@@ -525,7 +525,7 @@ func TestUpdateSharesNoMemory(t *testing.T) {
 		s.Cluster(region, "prod").Addon("coredns").UpdateScripts = []fleettest.UpdateScript{script}
 	})
 
-	desired := int32(5)
+	desired := int32(3)
 	scale, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Scaling: &fleettest.ScalingRequest{Desired: &desired}})
 	if err != nil {
 		t.Fatal(err)
@@ -534,8 +534,8 @@ func TestUpdateSharesNoMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desired = 99
-	scale.Params[0].Value = "99"
+	desired = 1
+	scale.Params[0].Value = "1"
 	script.Errors[0].ResourceIDs[0] = "changed"
 	script.Errors[0].Code = "changed"
 	script.ResourceIssues[0].ResourceIDs[0] = "changed"
@@ -543,11 +543,11 @@ func TestUpdateSharesNoMemory(t *testing.T) {
 
 	w.View(func(s *fleettest.State) {
 		c := s.Cluster(region, "prod")
-		if ng := c.Nodegroup("ng-a"); ng.Desired != 5 {
-			t.Errorf("desired size = %d, want the 5 the request held when it was sent", ng.Desired)
+		if ng := c.Nodegroup("ng-a"); ng.Desired != 3 {
+			t.Errorf("desired size = %d, want the 3 the request held when it was sent", ng.Desired)
 		}
-		if got := c.Update(scale.ID).Params[0].Value; got != "5" {
-			t.Errorf("update parameter = %q, want 5", got)
+		if got := c.Update(scale.ID).Params[0].Value; got != "3" {
+			t.Errorf("update parameter = %q, want 3", got)
 		}
 		wantErrors := []fleettest.UpdateError{{Code: "NodeCreationFailure", Message: "m", ResourceIDs: []string{"i-1"}}}
 		if diff := cmp.Diff(wantErrors, c.Update(addon.ID).Errors); diff != "" {

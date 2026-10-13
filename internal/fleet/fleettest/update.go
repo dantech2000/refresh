@@ -212,6 +212,10 @@ type target struct {
 	issues   *[]Issue
 	scripts  *[]UpdateScript
 	modified *time.Time // nil for a cluster, which has no such field
+	// begin, when set, runs when the update starts, and revert when it ends
+	// without success. They are for a resource that shows its target while
+	// the update runs.
+	begin, revert func()
 }
 
 // UpdateClusterVersion starts a control-plane version update, or a rollback
@@ -316,6 +320,28 @@ func (w *World) UpdateNodegroupConfig(region, cluster, nodegroup string, req Nod
 			sizes = append(sizes, size{s.name, s.field, *s.to})
 		}
 	}
+	// EKS checks the sizes the nodegroup would have.
+	desired, lowest, highest := ng.Desired, ng.Min, ng.Max
+	for _, s := range sizes {
+		switch s.field {
+		case &ng.Desired:
+			desired = s.to
+		case &ng.Min:
+			lowest = s.to
+		case &ng.Max:
+			highest = s.to
+		}
+	}
+	switch {
+	case lowest < 0 || highest < 1:
+		return Update{}, &InvalidError{Message: fmt.Sprintf("Minimum capacity %d and maximum capacity %d are not valid sizes", lowest, highest)}
+	case lowest > highest:
+		return Update{}, &InvalidError{Message: fmt.Sprintf("Minimum capacity %d can't be greater than maximum size %d", lowest, highest)}
+	case desired < lowest:
+		return Update{}, &InvalidError{Message: fmt.Sprintf("Minimum capacity %d can't be greater than desired size %d", lowest, desired)}
+	case desired > highest:
+		return Update{}, &InvalidError{Message: fmt.Sprintf("Desired capacity %d can't be greater than max size %d", desired, highest)}
+	}
 	u := &Update{Type: TypeConfigUpdate, Nodegroup: ng.Name, op: EKSUpdateNodegroupConfig, token: req.Token, request: request}
 	for _, s := range sizes {
 		u.Params = append(u.Params, UpdateParam{Type: s.name, Value: fmt.Sprint(s.to)})
@@ -356,11 +382,16 @@ func (w *World) UpdateAddon(region, cluster, addon string, req AddonRequest) (Up
 		u.Params = append(u.Params, UpdateParam{Type: "ConfigurationValues", Value: values})
 		configure = func() { a.ConfigurationValues = values }
 	}
-	t := target{name: a.Name, status: &a.Status, issues: &a.HealthIssues, scripts: &a.UpdateScripts, modified: &a.ModifiedAt}
-	return w.start(c, u, t, func() {
-		a.Version = version
-		configure()
-	})
+	// An add-on reports the version it is moving to while it is UPDATING,
+	// which is how refresh recognises an update of its own that is still in
+	// flight. A cluster and a nodegroup keep their old version until the
+	// update ends. An update that fails puts the old version back.
+	previous := a.Version
+	t := target{
+		name: a.Name, status: &a.Status, issues: &a.HealthIssues, scripts: &a.UpdateScripts, modified: &a.ModifiedAt,
+		begin: func() { a.Version = version }, revert: func() { a.Version = previous },
+	}
+	return w.start(c, u, t, configure)
 }
 
 // StartInsightsRefresh starts an insights refresh of the cluster. It stays
@@ -458,6 +489,8 @@ func (w *World) start(c *Cluster, u *Update, t target, apply func()) (Update, er
 			if t.modified != nil {
 				*t.modified = now
 			}
+		} else if t.revert != nil {
+			t.revert()
 		}
 		if script.ResourceStatus != "" {
 			*t.status = script.ResourceStatus
@@ -465,6 +498,9 @@ func (w *World) start(c *Cluster, u *Update, t target, apply func()) (Update, er
 		if script.ResourceIssues != nil {
 			*t.issues = cloneIssues(script.ResourceIssues)
 		}
+	}
+	if t.begin != nil {
+		t.begin()
 	}
 	c.Updates = append(c.Updates, u)
 

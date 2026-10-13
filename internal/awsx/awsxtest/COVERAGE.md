@@ -59,6 +59,11 @@ must settle each item before a test relies on it.
 - **`DescribeUpdate` without `nodegroupName` or `addonName`** for an update of one answers
   `ResourceNotFoundException`, from the reference's "required if" wording.
 - **`ResourceInUseException`** for a second update of a resource that has one in progress.
+- **An add-on shows its target version while it is UPDATING**, and its old version again
+  after an update that failed. The legacy code attaches to an add-on that is UPDATING at
+  the target version, which is where the first half comes from.
+- **The size checks of `UpdateNodegroupConfig`** (min, desired, max in order) and their
+  messages.
 
 | Operation | Service | Protocol | Mutates | success | denied | throttled | paged | delayed | cancelled | region |
 |---|---|---|---|---|---|---|---|---|---|---|

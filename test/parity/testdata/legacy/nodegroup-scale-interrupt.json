@@ -1,0 +1,112 @@
+{
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "[X] Error: interrupted while waiting for nodegroup prod/ng-a scaling update 00000000-0000-4000-8000-000000000001: context canceled (last poll error: operation error EKS: DescribeUpdate, https response error StatusCode: 0, RequestID: , canceled, context canceled)\n",
+  "refusedBeforeMutation": false,
+  "steps": [
+    {
+      "reads": [
+        {
+          "operation": "ec2:DescribeInstanceTypeOfferings",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "ec2:DescribeSubnets",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "eks:DescribeAddon",
+          "region": "us-east-1",
+          "target": "prod/coredns",
+          "observed": "v1.11.4-eksbuild.2 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeAddon",
+          "region": "us-east-1",
+          "target": "prod/vpc-cni",
+          "observed": "v1.18.0-eksbuild.1 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeCluster",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "1.32 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeNodegroup",
+          "region": "us-east-1",
+          "target": "prod/ng-a",
+          "observed": "1.32 1.32.0-20250101 ACTIVE 2/1/3"
+        },
+        {
+          "operation": "eks:DescribeNodegroup",
+          "region": "us-east-1",
+          "target": "prod/ng-b",
+          "observed": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+        },
+        {
+          "operation": "eks:ListAddons",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "[vpc-cni coredns]"
+        },
+        {
+          "operation": "eks:ListClusters",
+          "region": "us-east-1",
+          "observed": "[prod]"
+        },
+        {
+          "operation": "eks:ListNodegroups",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "[ng-a ng-b]"
+        }
+      ],
+      "mutation": {
+        "operation": "eks:UpdateNodegroupConfig",
+        "region": "us-east-1",
+        "target": "prod/ng-a",
+        "payload": {
+          "clientRequestToken": "token-1",
+          "scalingConfig": {
+            "desiredSize": 3
+          }
+        },
+        "outcome": "accepted update 00000000-0000-4000-8000-000000000001"
+      },
+      "preconditions": [
+        "eks:DescribeCluster prod: 1.32 ACTIVE",
+        "eks:DescribeNodegroup prod/ng-a: 1.32 1.32.0-20250101 ACTIVE 2/1/3",
+        "eks:ListAddons prod: [vpc-cni coredns]",
+        "eks:ListNodegroups prod: [ng-a ng-b]"
+      ]
+    },
+    {
+      "reads": [
+        {
+          "operation": "eks:DescribeUpdate",
+          "region": "us-east-1",
+          "target": "prod/ng-a",
+          "observed": "dropped"
+        }
+      ]
+    }
+  ],
+  "signalAfterMutations": 1,
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20250101 UPDATING 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "updates": [
+        "ng-a ConfigUpdate InProgress DesiredSize=3"
+      ]
+    }
+  }
+}

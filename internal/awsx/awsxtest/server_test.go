@@ -2,6 +2,7 @@ package awsxtest_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http/httptest"
@@ -71,15 +72,15 @@ func TestRequestLog(t *testing.T) {
 
 	want := []awsxtest.Request{
 		{
-			Operation: fleettest.EKSListInsights, Service: "eks", Region: region,
+			ID: 1, Operation: fleettest.EKSListInsights, Service: "eks", Region: region,
 			Input: map[string]any{"clusterName": "prod", "maxResults": float64(50), "filter": map[string]any{"statuses": []any{"ERROR"}}},
 		},
 		{
-			Operation: fleettest.EKSUpdateNodegroupVersion, Service: "eks", Region: region, Mutates: true,
+			ID: 2, Operation: fleettest.EKSUpdateNodegroupVersion, Service: "eks", Region: region, Mutates: true,
 			Input: map[string]any{"clusterName": "prod", "nodegroupName": "ng-a", "version": "1.32", "force": true, "clientRequestToken": token},
 		},
 		{
-			Operation: fleettest.EC2DescribeInstances, Service: "ec2", Region: region,
+			ID: 3, Operation: fleettest.EC2DescribeInstances, Service: "ec2", Region: region,
 			Input: map[string]any{
 				"MaxResults":       "5",
 				"Filter.1.Name":    "tag:eks:eks-cluster-name",
@@ -90,11 +91,11 @@ func TestRequestLog(t *testing.T) {
 			},
 		},
 		{
-			Operation: fleettest.AutoScalingDescribeAutoScalingGroups, Service: "autoscaling", Region: region,
+			ID: 4, Operation: fleettest.AutoScalingDescribeAutoScalingGroups, Service: "autoscaling", Region: region,
 			Input: map[string]any{"AutoScalingGroupNames.member.1": "eks-ng-a"},
 		},
 		{
-			Operation: fleettest.SSMGetParameter, Service: "ssm", Region: region,
+			ID: 5, Operation: fleettest.SSMGetParameter, Service: "ssm", Region: region,
 			Input: map[string]any{"Name": parameter},
 		},
 	}
@@ -869,6 +870,59 @@ func TestConcurrentEditAndDescribe(t *testing.T) {
 		return err
 	})
 	wg.Wait()
+}
+
+// TestOnAnswer checks what the answer hook reports for each way a request
+// can end.
+func TestOnAnswer(t *testing.T) {
+	f := newFixture(t)
+	ctx := testContext(t)
+	type seen struct {
+		ID        int
+		Operation fleettest.Operation
+		Answer    string
+	}
+	var mu sync.Mutex
+	var got []seen
+	f.server.OnAnswer = func(r awsxtest.Request, a awsxtest.Answer) {
+		mu.Lock()
+		defer mu.Unlock()
+		answer := fmt.Sprintf("code=%q dropped=%t committed=%t json=%t", a.Code, a.Dropped, a.Committed, a.JSON != nil)
+		if r.Operation == fleettest.EKSDescribeCluster {
+			var body struct {
+				Cluster struct{ Status, Version string }
+			}
+			if err := json.Unmarshal(a.JSON, &body); a.JSON != nil && err != nil {
+				t.Errorf("the JSON of DescribeCluster: %v", err)
+			}
+			answer += " " + body.Cluster.Status + " " + body.Cluster.Version
+		}
+		got = append(got, seen{r.ID, r.Operation, answer})
+	}
+	f.world.SetFault(fleettest.EKSUpdateAddon, fleettest.Fault{LoseResponse: 1})
+	f.world.SetFault(fleettest.EKSListAddons, fleettest.Fault{Deny: true})
+
+	c := f.once
+	_, _ = c.eks.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String("prod")})
+	_, _ = c.eks.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String("nope")})
+	_, _ = c.eks.ListAddons(ctx, &eks.ListAddonsInput{ClusterName: aws.String("prod")})
+	_, _ = c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{ClusterName: aws.String("prod"), AddonName: aws.String("vpc-cni")})
+	_, _ = c.ec2.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
+	_, _ = c.ec2.DescribeRegions(ctx, &ec2.DescribeRegionsInput{})
+
+	want := []seen{
+		{1, fleettest.EKSDescribeCluster, `code="" dropped=false committed=true json=true ACTIVE 1.32`},
+		{2, fleettest.EKSDescribeCluster, `code="ResourceNotFoundException" dropped=false committed=false json=false  `},
+		{3, fleettest.EKSListAddons, `code="AccessDeniedException" dropped=false committed=false json=false`},
+		{4, fleettest.EKSUpdateAddon, `code="" dropped=true committed=true json=false`},
+		{5, fleettest.EC2DescribeVpcs, `code="" dropped=false committed=true json=false`},
+		{6, "ec2:DescribeRegions", `code="UnsupportedOperation" dropped=false committed=false json=false`},
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("answers (-want +got):\n%s", diff)
+	}
 }
 
 // TestHandlerHooks checks the two hooks a serving program sets.

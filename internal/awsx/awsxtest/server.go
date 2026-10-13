@@ -20,6 +20,7 @@ package awsxtest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -37,6 +38,8 @@ import (
 
 // Request is one request the fake received.
 type Request struct {
+	// ID numbers the requests of a handler in arrival order, from 1.
+	ID int
 	// Operation is the operation, such as "eks:ListClusters". For a call
 	// the fake does not model, it is the service and what identifies the
 	// call on the wire.
@@ -53,6 +56,21 @@ type Request struct {
 	// Numbers from JSON and CBOR are float64; path, query, and form values
 	// are strings.
 	Input map[string]any
+}
+
+// Answer is how a request ended.
+type Answer struct {
+	// Code is the API error code of a request that failed, or "".
+	Code string
+	// Dropped is set when the connection was dropped in place of an answer:
+	// a lost response, a reset, or a client that left.
+	Dropped bool
+	// Committed is set when the operation ran and succeeded. It is true for
+	// a lost response: the change was made and the client was not told.
+	Committed bool
+	// JSON is the body of a successful answer of a JSON protocol (EKS, SSM,
+	// Service Quotas), and nil for the other protocols.
+	JSON []byte
 }
 
 // clone returns a copy of r that shares no memory with it.
@@ -80,6 +98,10 @@ type Handler struct {
 	// world's clock when a poll arrives, or to act on the Nth request of an
 	// operation. Set it before the first request.
 	OnRequest func(ctx context.Context, r Request)
+	// OnAnswer, when set, is called once for each request, when the handler
+	// knows how the request ends and before it writes the answer. Set it
+	// before the first request.
+	OnAnswer func(r Request, a Answer)
 
 	world  *fleettest.World
 	ctx    context.Context
@@ -131,10 +153,33 @@ func (h *Handler) PeakConcurrency(service, region string) int {
 	return h.peak[concurrencyKey{service, region}]
 }
 
-func (h *Handler) record(r Request) {
+// record logs a request and returns its ID.
+func (h *Handler) record(r Request) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	r.ID = len(h.requests) + 1
 	h.requests = append(h.requests, r)
+	return r.ID
+}
+
+// answered tells OnAnswer how a request ended.
+func (h *Handler) answered(r Request, a Answer) {
+	if h.OnAnswer != nil {
+		h.OnAnswer(r.clone(), a)
+	}
+}
+
+// fail answers a request with an API error.
+func (h *Handler) fail(w http.ResponseWriter, svc *service, r Request, e *apiError) {
+	h.answered(r, Answer{Code: e.code})
+	svc.writeError(w, e)
+}
+
+// drop ends a request by dropping its connection.
+func (h *Handler) drop(r Request, committed bool) {
+	h.answered(r, Answer{Dropped: true, Committed: committed})
+	// A plain return would answer 200.
+	panic(http.ErrAbortHandler)
 }
 
 // begin counts a request as in progress. It returns the function that ends
@@ -219,7 +264,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The log, each hook, and the operation get their own copy of the
 	// input, so none can change what another reads.
 	req := Request{Operation: name, Service: svc.name, Region: region, Mutates: op.mutates, Input: in}
-	h.record(req.clone())
+	req.ID = h.record(req.clone())
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -228,14 +273,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.OnRequest != nil {
 		h.OnRequest(ctx, req.clone())
 		if ctx.Err() != nil {
-			panic(http.ErrAbortHandler) // the client left during the hook
+			h.drop(req, false) // the client left during the hook
 		}
 	}
 	if !h.hooks(ctx, w, svc, req) {
 		return
 	}
 	if !known {
-		svc.writeError(w, newError("UnsupportedOperation", "awsxtest does not model "+string(name)))
+		h.fail(w, svc, req, newError("UnsupportedOperation", "awsxtest does not model "+string(name)))
 		return
 	}
 
@@ -246,28 +291,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var fault *fleettest.FaultError
 	switch {
 	case errors.As(err, &fault) && fault.Kind != fleettest.ConnectionReset:
-		svc.writeError(w, svc.faultError(fault))
+		h.fail(w, svc, req, svc.faultError(fault))
 		return
 	case err != nil:
 		// The fault resets the connection, the client left, or the handler
-		// is closing while a fault held the request. A plain return would
-		// answer 200.
-		panic(http.ErrAbortHandler)
+		// is closing while a fault held the request.
+		h.drop(req, false)
 	}
 
 	result, err := op.handle(&call{world: h.world, svc: svc, region: region, in: in, pageSize: admission.PageSize})
 	if err == nil && h.world.LoseResponse(admission) {
 		// The operation ran. The client never learns the result.
-		panic(http.ErrAbortHandler)
+		h.drop(req, true)
 	}
 	if err != nil {
 		var apiErr *apiError
 		if !errors.As(err, &apiErr) {
 			apiErr = newError("InternalFailure", err.Error())
 		}
-		svc.writeError(w, apiErr)
+		h.fail(w, svc, req, apiErr)
 		return
 	}
+	answer := Answer{Committed: true}
+	switch svc.protocol.(type) {
+	case restJSON, awsJSON:
+		// Encoding a value that a handler built for encoding does not fail.
+		answer.JSON, _ = json.Marshal(result)
+	}
+	h.answered(req, answer)
 	svc.protocol.writeResult(w, action, result)
 }
 
@@ -280,12 +331,12 @@ func (h *Handler) hooks(ctx context.Context, w http.ResponseWriter, svc *service
 			select {
 			case <-timer.C:
 			case <-ctx.Done():
-				panic(http.ErrAbortHandler)
+				h.drop(req, false)
 			}
 		}
 	}
 	if h.Throttle != nil && h.Throttle(req.clone()) {
-		svc.writeError(w, svc.faultError(&fleettest.FaultError{Kind: fleettest.Throttled}))
+		h.fail(w, svc, req, svc.faultError(&fleettest.FaultError{Kind: fleettest.Throttled}))
 		return false
 	}
 	return true

@@ -167,7 +167,7 @@ func TestMatrixSuccess(t *testing.T) {
 			if len(logged) != 1 {
 				t.Fatalf("the server logged %d requests, want 1: %+v", len(logged), logged)
 			}
-			want := awsxtest.Request{Operation: tc.op, Service: tc.op.Service(), Region: region, Mutates: tc.mutates}
+			want := awsxtest.Request{ID: 1, Operation: tc.op, Service: tc.op.Service(), Region: region, Mutates: tc.mutates}
 			logged[0].Input = nil // the inputs are checked in TestRequestLog
 			if diff := cmp.Diff(want, logged[0]); diff != "" {
 				t.Errorf("logged request (-want +got):\n%s", diff)
@@ -492,7 +492,12 @@ func TestCoverageDoc(t *testing.T) {
 	b.WriteString("  `InvalidParameterException`. The EKS reference does not say what EKS answers.\n")
 	b.WriteString("- **`DescribeUpdate` without `nodegroupName` or `addonName`** for an update of one answers\n")
 	b.WriteString("  `ResourceNotFoundException`, from the reference's \"required if\" wording.\n")
-	b.WriteString("- **`ResourceInUseException`** for a second update of a resource that has one in progress.\n\n")
+	b.WriteString("- **`ResourceInUseException`** for a second update of a resource that has one in progress.\n")
+	b.WriteString("- **An add-on shows its target version while it is UPDATING**, and its old version again\n")
+	b.WriteString("  after an update that failed. The legacy code attaches to an add-on that is UPDATING at\n")
+	b.WriteString("  the target version, which is where the first half comes from.\n")
+	b.WriteString("- **The size checks of `UpdateNodegroupConfig`** (min, desired, max in order) and their\n")
+	b.WriteString("  messages.\n\n")
 	b.WriteString("| Operation | Service | Protocol | Mutates |")
 	for _, p := range proofs {
 		b.WriteString(" " + p + " |")

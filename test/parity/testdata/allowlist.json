@@ -1,0 +1,58 @@
+[
+  {
+    "scenario": "nodegroup-update-no-yes",
+    "field": "mutations",
+    "reason": "The old command starts the roll without --yes when no terminal is attached and health is clean. The new command refuses, so it sends no update.",
+    "source": "CONTRACT.md, Behaviour the new CLI does not copy, row 1",
+    "ownerApproved": true
+  },
+  {
+    "scenario": "nodegroup-update-no-yes",
+    "field": "preconditions",
+    "reason": "The new command refuses before it sends an update, so there is no update to have preconditions.",
+    "source": "CONTRACT.md, Behaviour the new CLI does not copy, row 1",
+    "ownerApproved": true
+  },
+  {
+    "scenario": "nodegroup-update-no-yes",
+    "field": "world",
+    "reason": "The new command refuses, so the nodegroup keeps its AMI release.",
+    "source": "CONTRACT.md, Behaviour the new CLI does not copy, row 1",
+    "ownerApproved": true
+  },
+  {
+    "scenario": "nodegroup-update-no-yes",
+    "field": "refusedBeforeMutation",
+    "reason": "The new command refuses without --yes when no terminal is attached.",
+    "source": "CONTRACT.md, Behaviour the new CLI does not copy, row 1",
+    "ownerApproved": true
+  },
+  {
+    "scenario": "nodegroup-update-no-yes",
+    "field": "exitCode",
+    "reason": "The old command exits 0 after the roll. The new command exits with the error for a missing --yes.",
+    "source": "CONTRACT.md, Behaviour the new CLI does not copy, row 1",
+    "ownerApproved": true
+  },
+  {
+    "scenario": "nodegroup-scale-check-pdbs",
+    "field": "exitCode",
+    "reason": "The old command exits 1 when the PDB check cannot reach Kubernetes. In the new contract a gate that cannot read exits 4.",
+    "source": "CONTRACT.md, Behaviour the new CLI does not copy, row 2",
+    "ownerApproved": true
+  },
+  {
+    "scenario": "cluster-upgrade-blocked",
+    "field": "mutations",
+    "reason": "The old command starts an insights refresh before it finds that the run is blocked. The new command runs the checks that need no change first, so it sends no request that changes anything.",
+    "source": "CONTRACT.md, Behaviour the new CLI does not copy, row 4",
+    "ownerApproved": true
+  },
+  {
+    "scenario": "cluster-upgrade-blocked",
+    "field": "refusedBeforeMutation",
+    "reason": "With no insights refresh before the block, the new command refuses before any mutating request.",
+    "source": "CONTRACT.md, Behaviour the new CLI does not copy, row 4",
+    "ownerApproved": true
+  }
+]

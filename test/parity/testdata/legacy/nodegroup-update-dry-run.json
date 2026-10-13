@@ -1,31 +1,70 @@
 {
   "exitCode": 0,
-  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupUpdatePlan\",\n  \"cluster\": \"prod\",\n  \"dryRun\": true,\n  \"force\": false,\n  \"nodegroups\": [\n    {\n      \"name\": \"ng-a\",\n      \"action\": \"Update\",\n      \"currentAmi\": \"ami-old132\",\n      \"latestAmi\": \"ami-latest132\",\n      \"reason\": \"AMI is outdated\"\n    }\n  ],\n  \"failures\": []\n}\n",
+  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupUpdatePlan\",\n  \"cluster\": \"prod\",\n  \"dryRun\": true,\n  \"force\": false,\n  \"nodegroups\": [\n    {\n      \"name\": \"ng-a\",\n      \"action\": \"Update\",\n      \"currentAmi\": \"ami-old32x\",\n      \"latestAmi\": \"ami-latest132\",\n      \"reason\": \"AMI is outdated\"\n    }\n  ],\n  \"failures\": []\n}\n",
   "stderr": "Warning: skipping Kubernetes checks: the resolved Kubernetes config does not point at EKS cluster prod (https://prod.eks.fake.invalid), and no other kubeconfig context does\n  To add a context for prod, run: aws eks update-kubeconfig --name prod --region us-east-1 (or pass --kube-context)\n  Workload/PDB checks will be skipped; node readiness falls back to an estimate.\n",
-  "mutations": [],
-  "reads": {
-    "autoscaling:DescribeAutoScalingGroups": 1,
-    "ec2:DescribeInstanceTypeOfferings": 1,
-    "ec2:DescribeInstances": 1,
-    "ec2:DescribeSubnets": 1,
-    "eks:DescribeCluster": 2,
-    "eks:DescribeNodegroup": 2,
-    "eks:ListClusters": 1,
-    "eks:ListNodegroups": 1,
-    "ssm:GetParameter": 1
-  },
-  "peakConcurrency": 1,
+  "refusedBeforeMutation": false,
+  "steps": [
+    {
+      "reads": [
+        {
+          "operation": "autoscaling:DescribeAutoScalingGroups",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "ec2:DescribeInstanceTypeOfferings",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "ec2:DescribeInstances",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "ec2:DescribeSubnets",
+          "region": "us-east-1"
+        },
+        {
+          "operation": "eks:DescribeCluster",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "1.32 ACTIVE"
+        },
+        {
+          "operation": "eks:DescribeNodegroup",
+          "region": "us-east-1",
+          "target": "prod/ng-a",
+          "observed": "1.32 1.32.0-20250101 ACTIVE 2/1/3"
+        },
+        {
+          "operation": "eks:ListClusters",
+          "region": "us-east-1",
+          "observed": "[prod]"
+        },
+        {
+          "operation": "eks:ListNodegroups",
+          "region": "us-east-1",
+          "target": "prod",
+          "observed": "[ng-a ng-b]"
+        },
+        {
+          "operation": "ssm:GetParameter",
+          "region": "us-east-1",
+          "observed": "/aws/service/eks/optimized-ami/1.32/amazon-linux-2023/x86_64/standard/recommended/image_id=ami-latest132"
+        }
+      ]
+    }
+  ],
   "world": {
-    "version": "1.32",
-    "status": "ACTIVE",
-    "nodegroups": {
-      "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3",
-      "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
-    },
-    "addons": {
-      "coredns": "v1.11.4-eksbuild.2 ACTIVE",
-      "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
-    },
-    "updates": []
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "updates": []
+    }
   }
 }
