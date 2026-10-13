@@ -1,6 +1,6 @@
 # Phase 2 design note: the read side
 
-Status: draft 1, for review before any phase 2 code. It belongs to `REWRITE.md` and stays inside `CONTRACT.md`, except for the edits proposed in section 12.
+Status: draft 2. It applies the review of draft 1 and the owner's decisions, which section 11 records. It belongs to `REWRITE.md` and stays inside `CONTRACT.md`.
 
 Scope: `internal/fleet`, `internal/fleet/fleetdata`, `internal/view`, cluster target resolution and the `-f/--filter` helper in `internal/cmdutil`, the v2 read documents in `internal/apidoc`, and seven commands: `status`, `cluster list`, `cluster describe`, `nodegroup list`, `nodegroup describe`, `addon list`, `addon describe`. Watch mode is included.
 
@@ -11,8 +11,8 @@ Out of scope: health checks, every changing command, the TUI. Kubernetes data is
 | # | Decision |
 |---|---|
 | 1 | Provenance is one `State` value for each field group, stored next to the group. Data fields stay plain values. |
-| 2 | `Need` is a struct of booleans. `Fetcher.Fetch` reads one cluster and always returns a snapshot. |
-| 3 | The concurrency limit moves into the AWS clients: at most `--max-concurrency` requests in flight for each region. Fan-out code has no semaphores. |
+| 2 | `Need` is a struct of booleans. `Fetcher.Fetch` reads one cluster and always returns a snapshot, with an error when the cluster itself could not be read. |
+| 3 | The concurrency limit moves into the AWS clients: at most `--max-concurrency` requests in flight for each region. A sweep also works on at most that many clusters of a region at once, so rows finish in order. |
 | 4 | Documents are separate types in `apidoc`. Three functions in `fleet` map a snapshot to them. Views read documents, never snapshots. |
 | 5 | A column has one `Value` function for its text and an optional `Status` function for its glyph and color. Plain output and the table share `Value`, so they cannot differ in text. |
 | 6 | Every command starts all the calls that depend on nothing in one wave. The deepest read command is 6 sequential round trips, down from 10. |
@@ -61,6 +61,23 @@ A field group is the set of fields that one call, or one short chain of calls, f
 
 Rule: a field is valid only when the `State` of its group is `Collected`. A zero value in a group that is not `Collected` means nothing.
 
+A value that depends on two groups is not stored. It is a method that returns the value and whether it is known, so no caller can read it against one state and forget the other.
+
+```go
+// VersionBehind reports whether n runs an older minor than the control
+// plane. It is known when n and the cluster were both read.
+func (s *Snapshot) VersionBehind(n Nodegroup) (behind, known bool)
+
+// AMIStatus compares the current AMI with the latest one. UPDATING and
+// CUSTOM nodegroups are known from the nodegroup alone. Any other needs
+// the AMI group. A nodegroup with no instance to read is Unknown and known.
+func (n Nodegroup) AMIStatus() (status apidoc.AMIStatus, known bool)
+
+// Behind reports whether a newer compatible version exists. It is known
+// when the add-on and its latest version were both read.
+func (a Addon) Behind() (behind, known bool)
+```
+
 Two alternatives were rejected.
 
 | Alternative | Why not |
@@ -68,7 +85,7 @@ Two alternatives were rejected.
 | A pointer or an `Optional[T]` for each field | About 40 fields get wrapped. Every read unwraps, and five states do not fit in nil or not nil. |
 | One set of collected field names on the snapshot, such as `snap.Has(FieldAMI)` | The state sits far from the data. One failed nodegroup out of ten needs a second keyed structure. It is a small language that a reader must learn. |
 
-The chosen form has one cost: code can read a field without checking its state. Two things limit that. Only three kinds of code read `State`: the document mappers in section 5, the derived counters on `Snapshot`, and phase 3 and 4 planners. Views read documents, where "not collected" is "the key is absent". A test sets each group to each state and asserts that the mapper omits the keys.
+The chosen form has one cost: code can read a field without checking its state. Two things limit that. Only three kinds of code read `State`: the document mappers in section 5, the methods above with the counters built on them, and phase 3 and 4 planners. Views read documents, where "not collected" is "the key is absent". A test sets each group to each state and asserts that the mapper omits the keys.
 
 ### Snapshot and its parts
 
@@ -79,10 +96,8 @@ type Snapshot struct {
 	Nodegroups []Nodegroup // sorted by name
 	Addons     []Addon     // sorted by name
 	Have       Have
-	Failures   []apidoc.Failure // every read that failed, for this cluster
+	Failures   []apidoc.Failure // every failed read that counts; see section 4
 	FetchedAt  time.Time
-
-	err error // the error of DescribeCluster; see Err
 }
 
 // Have holds the state of each cluster-level field group.
@@ -94,10 +109,6 @@ type Have struct {
 	Nodegroups State // the list; each Nodegroup has its own State
 	Addons     State // the list; each Addon has its own State
 }
-
-// Err returns the error that stopped the read of the cluster itself, or nil.
-// It wraps the SDK error, so awsx.IsNotFound works on it.
-func (s *Snapshot) Err() error
 
 type Cluster struct {
 	Name, Region string // always set
@@ -128,7 +139,6 @@ type Nodegroup struct {
 
 	Status, AMIType, ReleaseVersion, CapacityType string // EKS values
 	Version               Version
-	VersionBehind         bool // an older minor than the control plane
 	InstanceTypes         []string
 	Desired, Min, Max     int32
 	AutoScalingGroups     []string
@@ -146,8 +156,11 @@ type Nodegroup struct {
 }
 type AMI struct {
 	State           State
-	Status          apidoc.AMIStatus
 	Current, Latest string // AMI IDs
+
+	// CurrentCreatedAt is the creation date of Current. Fetch reads it only
+	// for a stale AMI, with Need.AMIAge. Zero means not read.
+	CurrentCreatedAt time.Time
 }
 type Addon struct {
 	Name  string
@@ -161,7 +174,6 @@ type Addon struct {
 	CreatedAt, ModifiedAt      time.Time
 
 	Latest      string // "" when EKS publishes no compatible version
-	Behind      bool
 	LatestState State
 }
 ```
@@ -189,11 +201,11 @@ The pure functions that produce them live in `fleet`.
 
 | Function | Rule, first match wins |
 |---|---|
-| `amiStatus(amiType, status, current, latest)` | `UPDATING` gives `Updating`. `CUSTOM` gives `Custom`. An empty ID gives `Unknown`. Equal IDs give `Latest`. Else `Outdated`. |
+| `amiStatus(amiType, status, current, latest)`, behind `Nodegroup.AMIStatus` | `UPDATING` gives `Updating`. `CUSTOM` gives `Custom`. An empty ID gives `Unknown`. Equal IDs give `Latest`. Else `Outdated`. |
 | `addonHealth(status)` | `ACTIVE` gives `Healthy`. `DEGRADED` and the three `*_FAILED` values give `Failed`. `CREATING`, `UPDATING`, `DELETING` give `InProgress`. Else `Unknown`. |
 | `supportFor(version, calendar, policy, now)` | Before the standard end: `Standard`. Before the extended end: `Extended`. A known date in the past: `Unsupported`. No dates: `Unknown`. |
 
-`AMIStatus` and `AMI.State` are independent. A nodegroup with no instance to read has `State: Collected` and `Status: Unknown`. A failed lookup has `State: Failed`.
+The AMI status and `AMI.State` are independent. A nodegroup with no instance to read has `AMI.State: Collected` and the status `Unknown`. A failed lookup has `AMI.State: Failed`, and `AMIStatus` returns not known. Fetch makes no latest-AMI call for a `CUSTOM` nodegroup, which has no recommended AMI.
 
 `supportFor` keeps three old rules: a version older than the oldest calendar row is `Unsupported`, a partial day counts as a whole day left, and the `STANDARD` policy sets `AutoUpgrade`.
 
@@ -207,6 +219,7 @@ The pure functions that produce them live in `fleet`.
 type Need struct {
 	Nodegroups   bool // list and describe every nodegroup
 	AMI          bool // current and latest AMI of each nodegroup; sets Nodegroups
+	AMIAge       bool // the creation date of each stale AMI; sets AMI
 	Instances    bool // the EC2 instances of each nodegroup; sets Nodegroups
 	Addons       bool // list and describe every add-on
 	LatestAddons bool // the latest compatible version of each add-on; sets Addons
@@ -230,35 +243,51 @@ type Fetcher struct {
 // Clusters returns the names of the clusters in the region of c.
 func (f *Fetcher) Clusters(ctx context.Context, c *awsx.Clients) ([]string, error)
 
-// Fetch reads one cluster. It always returns a snapshot. A read that fails
-// is a Failure in the snapshot and a State on its group.
-func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, need Need) *Snapshot
+// Fetch reads one cluster. The snapshot is never nil. The error is the
+// error of DescribeCluster: when it is set, the snapshot holds the name,
+// the region, and the failure, which is the row a sweep prints. Any other
+// read that fails is a Failure in the snapshot and a State on its group,
+// and no error.
+func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, need Need) (*Snapshot, error)
 ```
 
 `Need` is a struct of booleans because that is how Go libraries pass options, and a call reads as `fleet.Need{Nodegroups: true, AMI: true}`. A bitmask reads no better and cannot hold `OnlyNodegroups`. One function for each use would put seven command names into `fleet`, and phases 3 and 4 would add more.
 
-`Fetch` returns no error. A sweep wants the row of a cluster that failed, so an error return would leave two values to check. `Snapshot.Err()` follows `sql.Row.Err()`: a single-cluster command calls it first.
+Draft 1 returned only the snapshot, with an `Err()` method. `errcheck` cannot see a forgotten method call, so the error is a return value. The error wraps the SDK error, so `awsx.IsNotFound` works on it. A single-cluster command returns it. A sweep keeps the snapshot as the row and drops the error, because the same failure is in the snapshot.
 
 `REWRITE.md` writes `fleet.Fetch(ctx, clients, cluster, Need)`. It becomes a method because the memos need an owner.
 
-The retry policy comes with the clients. A sweep passes `provider.Clients(region, awsx.Sweep)`. A single-cluster command passes `provider.Clients("", awsx.Read)`.
+The retry policy comes with the clients, and `Fetch` takes the plain `*awsx.Clients`. A single-cluster command passes `provider.Clients("")`. A sweep of named regions passes `provider.Clients(region)`. Only a default sweep passes `provider.SweepClients(region).Clients`, which has the short dial timeout and does not retry a dial failure.
 
 ### The concurrency limit
 
-`--max-concurrency` becomes a limit on the requests in flight for one region. `awsx` enforces it with one middleware on the clients of a region, placed after the SDK retry step. An attempt holds a slot, and a backoff sleep does not.
+`--max-concurrency` is the limit on the requests in flight for one region. The default is 32. `awsx` enforces it with one middleware.
 
 ```go
 // In awsx.ProviderOptions:
 MaxInFlight int // requests in flight for each region; 0 means no limit
 
-// ErrNotSent is in the chain of an error for a request that never left: the
-// context ended while the request waited for a slot.
+// ErrNotSent is in the chain of the error of a call whose first attempt
+// never left: the context ended while it waited for a slot.
 var ErrNotSent = errors.New("request not sent")
 ```
 
-The old tree nested its limits. `status` ran 8 clusters at once, and each cluster ran two fan-outs of 8, so a region could see far more than 8 requests in flight. With the limit in the client, fan-out code calls `fanout.ForEach` with the item count as the limit. `PeakConcurrency` in the fake measures the same number that the flag sets.
+The rules of the middleware:
 
-`ErrNotSent` gives a row its `NotAttempted` state without a second mechanism.
+- **One semaphore for each region.** The `Provider` owns it. The three client sets of a region (`Clients`, `SweepClients`, `PollClients`) share it, and so do the seven services.
+- **Position.** It sits in the Finalize step of the SDK stack, after `Retry` and before signing. A slot therefore covers one attempt: credential retrieval, signing, the round trip, and the read of the body. The slot is free during a backoff sleep and between the pages of a paged call.
+- **`ErrNotSent`.** It is returned only when the first attempt of a call got no slot before the context ended. A later attempt that gets no slot returns the real error of the attempt before it. A part of the middleware in the Initialize step keeps that state for the call.
+
+The request limit alone is not enough. If a sweep started every cluster of a region at once, the work would run breadth-first, and a deadline would leave every row partly read. The old code left finished rows and rows it never started (`legacy/internal/services/status/service.go`). So a sweep also bounds the clusters it works on:
+
+- In each region, `fanout.ForEach(ctx, names, limit, ...)` runs the clusters with the same number as the limit, `--max-concurrency`. Names are in sorted order, so rows finish roughly in order.
+- This number never lowers the request ceiling. Every cluster in work has at least one request in flight or waiting, so 32 clusters can fill 32 slots, also in `cluster list`, where a cluster is one call. A smaller number would leave slots idle there.
+- At a deadline, at most 32 rows of a region are partly read. The rows before them are complete. The rows after them were never started, and the sweep marks them `NotAttempted`, as the old code did.
+- Inside one cluster, the fan-out over nodegroups and add-ons has no limit of its own. The request limit bounds it.
+
+The old tree nested its limits: 8 clusters at once, each with two fan-outs of 8, and 4 regions at once. `PeakConcurrency` in the fake now measures the same number that the flag sets.
+
+The default of 32 has a condition, which `CONTRACT.md` records. The retryer has no client-side rate limiter and at most about 3 s of backoff over its 5 attempts, and every region now runs at once. A burst that EKS throttles would end as failures and exit 4. The default stays 32 only if the throttle test in section 9 passes and a `task test:live` run of `status -A` completes without a `Throttled` failure. If either fails, the default is 16.
 
 ### Calls for each command
 
@@ -268,11 +297,11 @@ A wave is a set of calls that start together. The number of waves is the number 
 |---|---|---|---|---|
 | `cluster list` | `ListClusters` | `DescribeCluster` × C | | |
 | `cluster describe` | `DescribeCluster`, `ListNodegroups`, `ListAddons`, `DescribeClusterVersions` | `DescribeNodegroup` × N, `DescribeAddon` × M, `DescribeVpcs` | | |
-| `nodegroup list` | `DescribeCluster`, `ListNodegroups` | `DescribeNodegroup` × N | `GetParameter` for each distinct version and AMI type, one `DescribeAutoScalingGroups`, `DescribeLaunchTemplateVersions` for each nodegroup with a template | 4: one `DescribeInstances` |
-| `nodegroup describe` | `DescribeCluster`, `DescribeNodegroup` | `GetParameter`, `DescribeAutoScalingGroups`, `DescribeLaunchTemplateVersions` | one `DescribeInstances` | |
+| `nodegroup list` | `DescribeCluster`, `ListNodegroups` | `DescribeNodegroup` × N | `GetParameter` for each distinct version and AMI type, one `DescribeAutoScalingGroups` for each 50 groups, `DescribeLaunchTemplateVersions` for each nodegroup with a template | 4: one `DescribeInstances` with an `instance-id` filter |
+| `nodegroup describe` | `DescribeCluster`, `DescribeNodegroup` | `GetParameter`, `DescribeAutoScalingGroups`, `DescribeLaunchTemplateVersions` | one `DescribeInstances` with an `instance-id` filter | |
 | `addon list` | `ListAddons`, `DescribeCluster` | `DescribeAddon` × M | | |
 | `addon describe` | `DescribeAddon`, `DescribeCluster` | | | |
-| `status`, each region | `ListClusters`, `DescribeClusterVersions` | for each cluster: `DescribeCluster`, `ListNodegroups`, `ListAddons` | `DescribeNodegroup` × N, `DescribeAddon` × M, `DescribeAddonVersions` for each new add-on and version, two Karpenter `DescribeInstances` probes when N is 0 and Auto Mode is off | 4: as wave 3 of `nodegroup list`. 5: one `DescribeInstances`. 6: one `DescribeImages`, only when an AMI is stale |
+| `status`, each region | `ListClusters`, `DescribeClusterVersions` | for each cluster: `DescribeCluster`, `ListNodegroups`, `ListAddons` | `DescribeNodegroup` × N, `DescribeAddon` × M, `DescribeAddonVersions` for each new add-on and version, two Karpenter `DescribeInstances` probes when N is 0 and Auto Mode is off | 4: as wave 3 of `nodegroup list`. 5: one `DescribeInstances`. 6: one `DescribeImages` with an `image-id` filter, only when an AMI is stale |
 
 Old and new, in sequential round trips. The old numbers come from reading the code path with no concurrency limit.
 
@@ -298,15 +327,23 @@ What the new design drops or shares:
 |---|---|
 | `ListClusters` to resolve a name, in every single-cluster command | Dropped. The name is exact. The list runs only after a not-found answer. |
 | `ListAddons` to resolve an add-on name in `addon describe` | Dropped, for the same reason. |
-| `ListNodegroups` and `DescribeNodegroup` for the node count in `cluster list` | Dropped, if the owner agrees. See open question 1. |
+| `ListNodegroups` and `DescribeNodegroup` for the node count in `cluster list` | Dropped with the `NODES` column. `status` shows the nodegroup count, and `cluster describe` shows the nodegroups. |
 | `DescribeClusterVersions` for each version, in series before the fan-out | One unfiltered call for each region, in wave 1. |
-| `DescribeAutoScalingGroups` for each nodegroup | One call for each cluster, with every group name. |
-| `DescribeInstances` for each nodegroup | One call for each cluster, with one instance ID for each group. |
+| `DescribeAutoScalingGroups` for each nodegroup | One call for each cluster, with up to 50 group names. More groups take more calls in the same wave. |
+| `DescribeInstances` for each nodegroup | One call for each cluster, which selects one instance of each group with an `instance-id` filter. |
 | The second `DescribeAutoScalingGroups` and `DescribeInstances` of `--show-instances` | Shared with the AMI lookup. |
 | The second Karpenter probe, in series after the first | Both probes run in one wave. |
 | `diag.WithOperation` tags on errors | Dropped. The SDK's `smithy.OperationError` names the service and the operation. |
 
 The current AMI keeps the old precedence: the launch template image first, then an instance of the first Auto Scaling group. The group call starts in the same wave as the template call. That costs at most one unused call for a cluster and keeps the depth at 4.
+
+The batched calls must not let one bad item fail the others. Three rules:
+
+- **Instances are selected with the `instance-id` filter, never with `InstanceIds`.** `DescribeInstances` with `InstanceIds` fails the whole call with `InvalidInstanceID.NotFound` when one ID is gone, and during a roll instances go all the time. The old code made one call for each nodegroup, so it lost one nodegroup (`legacy/internal/aws/ami.go`). With the filter, a missing instance is absent from the answer. Its nodegroup then has no instance to read: the AMI group is `Collected` and the status is `Unknown`, as for an empty group today.
+- **`DescribeImages` uses the `image-id` filter** for the same reason: `ImageIds` fails the call with `InvalidAMIID.NotFound` when one AMI is deregistered.
+- **Chunks.** A `DescribeAutoScalingGroups` call names at most 50 groups. A filter carries at most 100 values. This relies on EC2 accepting 200 values for one filter, which is to confirm in `task test:live`. A filtered call is paged, so it goes through `awsx.ListAll`.
+
+The fake does not know the `instance-id` and `image-id` filters yet. Step 5 of the build order adds them to `awsxtest`.
 
 `DescribeCluster` runs in `addon list` and `addon describe` so that "cluster not found" and "add-on not found" are told apart by type and not by message text. It adds a call and no round trip.
 
@@ -342,7 +379,7 @@ type Target struct {
 func ResolveCluster(f *Factory, explicit string, readOnly bool) (Target, error)
 ```
 
-The order is the one in `CONTRACT.md`: the explicit value, `REFRESH_CLUSTER`, the active context, then the current kubeconfig context for read-only commands. The kubeconfig step reads the cluster name from the context's cluster ARN or from the `--cluster-name` argument of its exec plugin. That code goes in a new `internal/kube` package, which phase 3 extends.
+The order is the one in `CONTRACT.md`: the explicit value, `REFRESH_CLUSTER`, the active context, then the current kubeconfig context for read-only commands. The kubeconfig step reads the cluster name from the context's cluster ARN or from the `--cluster-name` argument of its exec plugin. That code goes in `internal/kube`, which phase 3 extends.
 
 When nothing resolves, the error names the three ways and makes no list call:
 
@@ -354,7 +391,7 @@ Set one with:
   refresh context use <name>      until you change it
 ```
 
-A name that does not exist is found by the first wave: `Snapshot.Err()` satisfies `awsx.IsNotFound`. Only then does the command call `Fetcher.Clusters`, which is one more round trip on the failure path.
+A name that does not exist is found by the first wave: the error of `Fetch` satisfies `awsx.IsNotFound`. Only then does the command call `Fetcher.Clusters`, which is one more round trip on the failure path.
 
 ```go
 // Suggest returns up to five of candidates that are close to name: those
@@ -415,10 +452,11 @@ Changes from the old code:
 
 | Old | New | Reason |
 |---|---|---|
-| `status` sweeps `min(4, --max-concurrency)` regions at once; `cluster list` sweeps `--max-concurrency` | Every region starts at once | The limit is on requests for each region, so a region cap protects nothing. |
+| `status` sweeps `min(4, --max-concurrency)` regions at once; `cluster list` sweeps `--max-concurrency` | Every region starts at once | The limits are for each region, so a region cap protects nothing. |
 | `Run` is generic over the region's value | `Sweep` returns snapshots | Every caller wants clusters. Fleet mode in phase 4 calls it with an empty `Need`. |
-| Fail-fast dial comes from a context wrapper | It comes from the `awsx.Sweep` clients | Phase 1 built the policy. |
-| A single-region `cluster list` skips the sweep code | `status` and `cluster list` always go through `Sweep` | One path. A one-region run also fails in seconds on a dead endpoint. |
+| Every sweep fails fast on a dial, through a context wrapper | Only a default sweep does, through `provider.SweepClients(region)`. Named regions use `provider.Clients(region)`. | Phase 1 built the policy for the default sweep. A region the user named gets the full retries. |
+| A single-region `cluster list` skips the sweep code | `status` and `cluster list` always go through `Sweep` | One path, also for one named region. |
+| Clusters in a region: 8 at once, with nested fan-outs | `--max-concurrency` clusters at once, under the request limit | See "The concurrency limit" in section 2. |
 
 Which regions a command sweeps, in `cmdutil.SweepRegions(f, home, allRegions)`:
 
@@ -437,7 +475,7 @@ What is silent and what is reported:
 | No region answers | An error, and no document. Before the error, `cmdutil.SweepError` runs the old `NoRegionAnswered` check: one STS call in an always-on region tells bad credentials from closed regions. | 1 |
 | Every region is skipped | The same error path | 1 |
 
-Deadline and cancellation: `run` wraps the context with `cmdutil.WithTimeout(ctx, f.Global.Timeout)`. One budget covers the whole sweep. When it ends, calls in flight return a timeout, queued calls return `ErrNotSent`, every goroutine returns, and `Sweep` returns what it has. `fleet` gets a goleak check. A deadline prints the partial document and exits 4. Ctrl+C prints the same document and exits 1.
+Deadline and cancellation: `run` wraps the context with `cmdutil.WithTimeout(ctx, f.Global.Timeout)`. One budget covers the whole sweep. When it ends, calls in flight return a timeout, calls that wait for their first slot return `ErrNotSent`, clusters that `ForEach` never started become `NotAttempted` rows, every goroutine returns, and `Sweep` returns what it has. `fleet` gets a goleak check. A deadline prints the partial document and exits 4. Ctrl+C prints the same document and exits 1.
 
 ## 4. Failures
 
@@ -468,17 +506,28 @@ func NewFailure(kind FailureKind, name string, reason Reason, msg string) Failur
 func SortFailures(fs []Failure) // kind, region, cluster, name, operation, reason, update ID, error
 ```
 
-`apidoc` and `awsx` import no refresh package, so neither can hold the function that turns an error into a `Failure`. It goes in `fleet`, which imports both.
+`apidoc.NewFailure` is the only constructor with that name. The path from an AWS error to a `Failure` has two parts, because `apidoc` and `awsx` may import no refresh package.
 
 ```go
+package awsx
+
+// ErrorClass is why an AWS call failed, from a closed set.
+type ErrorClass string // AccessDenied, CredentialError, Throttled, NotFound, RegionUnavailable,
+// InvalidRequest, ServiceError, NetworkError, Timeout, Interrupted, NotAttempted, Unknown
+
+// Classify returns the class of err, the AWS error code, and the IAM action
+// of the call. It reads the types in the chain of err, never its text.
+func Classify(err error) (class ErrorClass, code, operation string)
+
 package fleet
 
-// NewFailure returns the Failure for err. The reason comes from the type of
-// the error, never from its text.
-func NewFailure(kind apidoc.FailureKind, name string, err error) apidoc.Failure
+// FailureFromError returns the Failure for an AWS error about the item.
+func FailureFromError(kind apidoc.FailureKind, name string, err error) apidoc.Failure
 ```
 
-It is `diag.FromError` with the same ordered checks, on the `awsx` predicates: interrupt, `ErrNotSent`, dial failure, deadline, credentials, permission, region disabled, throttling, not found, validation, server error, other API code, region error, network error. `ErrNotSent` is new and gives `NotAttempted`. The operation comes from `smithy.OperationError`, with a table from SDK service ID to IAM prefix. A test checks that table against `awsx.RequiredPermissions`.
+`awsx.Classify` holds the ordered checks of `diag.Classify`, beside the typed predicates it calls: interrupt, `ErrNotSent`, dial failure, deadline, credentials, permission, region disabled, throttling, not found, validation, server error, other API code, region error, network error. `ErrNotSent` is new and gives `NotAttempted`. The operation comes from `smithy.OperationError`, with a table from SDK service ID to IAM prefix. A test checks that table against `awsx.RequiredPermissions`.
+
+`fleet.FailureFromError` is a few lines: it calls `Classify` and fills the document type. It lives in `fleet` because that is the lowest package that imports both `awsx` and `apidoc`. Every `ErrorClass` value is also a `Reason` value, and a test asserts that.
 
 How each case appears:
 
@@ -486,17 +535,36 @@ How each case appears:
 |---|---|---|
 | One nodegroup could not be described | The nodegroup has `State: Failed` and its name. `Have.Nodegroups` is `Partial`. One `Nodegroup` failure. | The nodegroup is `{"name": "web", "incomplete": true}`. Its cluster row has `"incomplete": true`. The failure is in the top-level `failures`. |
 | The nodegroup list call failed | `Have.Nodegroups` is `Failed`, the slice is empty. One `Cluster` failure with operation `eks:ListNodegroups`. | No `nodegroups` key. The cluster row is incomplete. |
-| An AMI lookup failed | `AMI.State` is `Failed`, `AMI.Status` is `Unknown`. One `Nodegroup` failure. | No `ami` key. The nodegroup is incomplete. |
-| A cluster could not be described | `Have.Cluster` is `Failed`. `Err()` is set. | The row is `{"name", "region", "incomplete": true}`. |
+| An AMI lookup failed | `AMI.State` is `Failed`, and `AMIStatus` returns not known. One `Nodegroup` failure. | No `ami` key. The nodegroup is incomplete. |
+| A cluster could not be described | `Have.Cluster` is `Failed`. `Fetch` returns the error. | The row is `{"name", "region", "incomplete": true}`. |
 | A region failed | `SweepResult.Failures` | A `Region` failure. No rows for the region. |
-| The deadline passed | Rows not reached have `Have.Cluster: NotAttempted`. Regions not reached are `Region` failures. | The same rows, incomplete, with reason `NotAttempted` or `Timeout`. |
+| The deadline passed | Finished rows are complete. Rows in work have groups that are `Failed` or `NotAttempted`. Rows not started have `Have.Cluster: NotAttempted`. Regions not reached are `Region` failures. | The unfinished rows are incomplete, with reason `Timeout` or `NotAttempted`. |
 | Ctrl+C | As the deadline | The same document, with reason `Interrupted` or `NotAttempted`. Exit 1. |
 
 A row carries no error text. Its failures are in the top-level list, where `cluster`, or `name` for the cluster itself, identifies the row.
 
 Reporting follows `docs/concepts/output.md`. The table view lists failures under `INCOMPLETE DATA` and writes nothing to stderr. Machine and plain output write one `warning:` line for each failure to stderr. All of it comes from the one sorted list. The exit code is 4 unless a higher rule in section 7 applies.
 
-One difference from the old CLI: a failed AMI lookup was advisory in `nodegroup list` (exit 0, an `amiLookupFailure` object on the row) and a failure in `status`. It is a failure in both now. See open question 3.
+### Advisory reads
+
+Not every failed call is a `Failure`. The rule: a failed read that hides a fact the command exists to show is a `Failure` and exits 4. A failed read that only loses an extra, and whose fallback is labelled in the output, is not. Without this rule a user with restricted IAM would get exit 4 from every run. The old code already ignored the errors of the four advisory calls below.
+
+| Call | When it fails | In the document | Exit 4 |
+|---|---|---|---|
+| Any list or describe call for a cluster, nodegroup, or add-on | The row or the item is incomplete | A `Failure` | yes |
+| `GetParameter`, the latest AMI | `AMI.State: Failed` | A `Failure`, no `ami` key | yes |
+| `DescribeLaunchTemplateVersions`, `DescribeAutoScalingGroups`, `DescribeInstances` for the current AMI | `AMI.State: Failed`. One readable source is enough, as today. | A `Failure`, no `ami` key | yes |
+| `DescribeInstances` for `--show-instances` | `InstancesState: Failed` | A `Failure`, no `instances` key | yes |
+| `DescribeAddonVersions`, in `status` | `LatestState: Failed` | A `Failure`, no `latest` key | yes |
+| `DescribeClusterVersions` | The dates come from the built-in calendar. `Have.Support` is `Collected`. | `support.builtIn: true`. The table marks the cell with `*`. | no |
+| `DescribeClusterVersions`, and the built-in calendar does not know the version | `Have.Support: Failed` | A `Failure`, no `support` key | yes |
+| The Karpenter probes | `Have.Compute: Failed` | No `compute` key. The table shows `unknown`, not `none`. | no |
+| `DescribeVpcs` | `Have.VPC: Failed` | No `vpcCidr` key | no |
+| `DescribeImages`, the age of a stale AMI | `CurrentCreatedAt` stays zero | No `currentCreatedAt` key. The table shows the stale count without an age. | no |
+
+An advisory failure sets the `State` of its group, adds nothing to `Snapshot.Failures`, and is logged at the `debug` level with its operation and reason.
+
+Two differences from the old CLI. A failed AMI lookup was advisory in `nodegroup list` (exit 0, an `amiLookupFailure` object on the row) and a failure in `status`. It is a failure in both now, by the rule: the AMI status is what the command shows. And a failed Karpenter probe showed `none`. It shows `unknown` now, because an unlabelled fallback states something the command did not read.
 
 ## 5. Documents
 
@@ -517,6 +585,8 @@ Reasons for separate types:
 3. `apidoc` stays a leaf, and the schema generator reads one package.
 
 The cost is three functions and their test.
+
+The encoder in `apidoc` rejects any `null`. The SDK returns nil for an empty list, so the mappers make every list of a collected group non-nil: `subnetIds`, `securityGroupIds`, `publicAccessCidrs`, `logTypes`, `resourceIds`, and the rest. A test encodes a collected and empty snapshot as each of the seven kinds, in JSON and YAML, and expects `[]` and `{}` and no error.
 
 The document types use `omitzero`, which Go 1.24 added. It omits a nil slice or map and keeps an empty one, and it omits a zero `time.Time`. So `nil` means "not collected" and `[]` means "collected, none", with no pointer. A group whose zero values are real data is a pointer to a small struct. YAML goes through JSON, so the tags cover both. `genschema` must treat an `omitzero` key as optional.
 
@@ -574,7 +644,7 @@ type Nodegroup struct {
 	Name           string        `json:"name"`
 	Status         string        `json:"status,omitzero"`
 	Version        string        `json:"version,omitzero"`
-	VersionBehind  *bool         `json:"versionBehind,omitzero"`
+	VersionBehind  *bool         `json:"versionBehind,omitzero"` // set when known
 	AMIType        string        `json:"amiType,omitzero"`
 	ReleaseVersion string        `json:"releaseVersion,omitzero"`
 	CapacityType   string        `json:"capacityType,omitzero"`
@@ -594,9 +664,10 @@ type Scaling struct {
 	Max     int32 `json:"max"`
 }
 type NodegroupAMI struct {
-	Status  AMIStatus `json:"status"`
-	Current string    `json:"current,omitzero"`
-	Latest  string    `json:"latest,omitzero"`
+	Status           AMIStatus `json:"status"`
+	Current          string    `json:"current,omitzero"`
+	Latest           string    `json:"latest,omitzero"`
+	CurrentCreatedAt time.Time `json:"currentCreatedAt,omitzero"` // read for a stale AMI in status
 }
 type Instance struct {
 	ID               string    `json:"id"`
@@ -615,7 +686,7 @@ type Addon struct {
 	Latest                *AddonLatest   `json:"latest,omitzero"`
 	ARN                   string         `json:"arn,omitzero"`
 	ServiceAccountRoleARN string         `json:"serviceAccountRoleArn,omitzero"`
-	Configuration         map[string]any `json:"configuration,omitzero"`
+	Configuration         string         `json:"configuration,omitzero"` // as EKS returns it
 	Issues                []Issue        `json:"issues,omitzero"`
 	CreatedAt             time.Time      `json:"createdAt,omitzero"`
 	ModifiedAt            time.Time      `json:"modifiedAt,omitzero"`
@@ -627,7 +698,9 @@ type AddonLatest struct {
 }
 ```
 
-Two pointers to scalars remain, `versionBehind` and `readyNodes`, because `false` and `0` are real answers there and each is a single value.
+Two pointers to scalars remain, `versionBehind` and `readyNodes`, because `false` and `0` are real answers there and each is a single value. The mappers fill `versionBehind`, `ami`, and `latest` from the methods of section 1, and leave the key out when the method returns not known.
+
+`configuration` is the string that EKS returns. The old code parsed it into a map. EKS accepts YAML and JSON there, and a `null` that a user wrote would fail the encoder, so the document passes the text through.
 
 The seven documents:
 
@@ -668,7 +741,8 @@ Changes from the v1 documents, beyond the shared shapes:
 
 - A describe document nests its resource under `cluster`, `nodegroup`, or `addon`. v1 put the fields at the top level.
 - `count` is gone from the lists. `length` in jq gives it.
-- The summary objects of `status` (`staleAmi`, `addonsBehind`, `nodegroupCount`) are gone. A row holds its nodegroups and add-ons, each with its own `ami.status` and `latest.behind`.
+- The summary objects of `status` (`staleAmi`, `addonsBehind`, `nodegroupCount`) are gone. A row holds its nodegroups and add-ons, each with its own `ami.status` and `latest.behind`. The age of the oldest stale AMI, `staleAmi.oldestDays` in v1, is now `ami.currentCreatedAt` on each stale nodegroup. The `status` table still shows the age in days.
+- `configuration` of an add-on is a string, not a map.
 - `instanceType`, the first type only, becomes `instanceTypes`, the full list.
 - `extraCostUsdPerHour` is gone. The cost note stays in the table view of `status`.
 
@@ -748,6 +822,7 @@ func (l List[T]) Plain(w io.Writer) error
 - Plain output is the titles joined by tabs, then one line for each row of `Value` results joined by tabs. A tab or newline inside a value becomes a space. An empty value is `-`.
 - The table pads and truncates the `Value` text first and paints it after. Width math never sees an escape code. Widths are display cells, counted with `go-runewidth` and `uniseg` as today.
 - The columns of a command are fixed. No flag adds or removes one, so a column keeps its position in plain output.
+- A table has no column without a title. The old `status` table had one for the row's glyph. The glyph of a row is now the `Status` of the first column: it stands before the cluster name in the table, and plain output has the name alone.
 - Truncation happens only when `width` is above zero, which means a terminal. A piped table is never cut. Columns shrink from the widest, down to `MinWidth`, and `TruncateNever` columns do not shrink. A cut cell ends in `…`, or `...` without Unicode.
 
 ### Describe views
@@ -832,7 +907,7 @@ func AddKubeFlags(cmd *cobra.Command, kubeconfig, kubeContext *string)
 
 | Command | `Use` | Args | Flags beyond the global set | `Need` |
 |---|---|---|---|---|
-| `status` | `status` | none | `-A`, `-f`, `--sort`, `--desc`, `-o` | `Nodegroups`, `AMI`, `Addons`, `LatestAddons`, `Support`, `Compute` |
+| `status` | `status` | none | `-A`, `-f`, `--sort`, `--desc`, `-o` | `Nodegroups`, `AMI`, `AMIAge`, `Addons`, `LatestAddons`, `Support`, `Compute` |
 | `cluster list` | `list` | none | `-A`, `-f`, `--sort`, `--desc`, `-w`, `--watch-interval`, `-o` | none |
 | `cluster describe` | `describe [cluster]` | at most 1 | `--kubeconfig`, `--kube-context`, `-o` | `Nodegroups`, `Addons`, `Support`, `VPC` |
 | `nodegroup list` | `list` | none | `-c`, `-f`, `--sort`, `--desc`, `-w`, `--watch-interval`, `--kubeconfig`, `--kube-context`, `-o` | `Nodegroups`, `AMI` |
@@ -889,7 +964,7 @@ type describeOptions struct {
 | `complete` | Parse the filters. | Take the positional. Resolve the cluster with `cmdutil.ResolveCluster`. No AWS call. |
 | `validate` | Reject `-A` with `-r`. Check the watch rules. | Reject more than one `-r`. Check the watch rules. |
 | `run` 1 | `cmdutil.WithTimeout`. Get the provider. `cmdutil.SweepRegions`. | `cmdutil.WithTimeout`. Get the provider. Fail when it has no region. |
-| `run` 2 | `Fetcher.Sweep`, with `Match` from the `name` and `region` filters. | `Fetcher.Fetch` with `awsx.Read` clients. On a not-found `Err()`, return the suggestion error. Any other `Err()` goes through `awsx.FormatAWSError`. |
+| `run` 2 | `Fetcher.Sweep`, with `Match` from the `name` and `region` filters. | `Fetcher.Fetch` with `provider.Clients("")`. On a not-found error, return the suggestion error. Any other error goes through `awsx.FormatAWSError`. |
 | `run` 3 | Apply the other filters. Sort. | Apply the filters and sort, for a list. A named item with `State: Failed` and reason `NotFound` returns the suggestion error. |
 | `run` 4 | Map to the document. Sort the failures. `cmdutil.Print`. | The same. |
 | `run` 5 | Report failures. Return the exit error. | The same. |
@@ -918,6 +993,7 @@ Parse rules:
 4. A pattern without `*` must equal the whole value. The old `name` filter matched a substring. Write `name=*prod*` for that.
 5. Values compare without regard to case.
 6. Every filter must match. A key may repeat, as in `-f name=web-* -f name=*-spot`.
+7. A key with several values matches when one of them matches. `instanceType=m5.*` selects a nodegroup with the types `m5.large` and `c5.large`. The `instanceType` sort key uses the first type.
 
 | Command | Filter keys | Sort keys, default first |
 |---|---|---|
@@ -938,7 +1014,7 @@ A sort is stable, and ties go to name and then region. `version` sorts by `Versi
 | Any failure in the document | 4 |
 | An error before a result, or an interrupt | 1 |
 
-The highest code wins, as `CONTRACT.md` says. For `status` that changes the old order, which was 3, then 2, then 4. See contract edit 5.
+The highest code wins, as `CONTRACT.md` says, with no exception for `status`. Incomplete data (4) outranks an unsupported cluster (3). The old order was 3, then 2, then 4.
 
 ### Watch mode
 
@@ -953,7 +1029,7 @@ func Watch(ctx context.Context, ios *IOStreams, interval time.Duration, draw fun
 - Each refresh uses a new `Fetcher`, so a new AMI or add-on version shows up, and gets its own `--timeout` budget. The provider and its connections are reused.
 - A refresh with a partial result draws what it has, with the `INCOMPLETE DATA` section, and the watch goes on. The next refresh may be complete.
 - A refresh that returns an error, such as expired credentials, ends the watch with that error.
-- Ctrl+C ends the watch with exit 0. It is the only way to stop one.
+- Ctrl+C ends the watch with exit 0. It is the normal way to stop one, and `CONTRACT.md` names it as the one exception to "an interrupt exits 1".
 - The screen is cleared and redrawn whole, as `watch(1)` does. The old code did the same.
 
 ## 8. Performance
@@ -972,14 +1048,16 @@ Wall time for a read command is close to `latency × max(waves, calls in the bus
 
 The model columns are arithmetic, not measurements. The `status` row assumes 2 nodegroups and 4 add-ons for each cluster, which is about 275 calls for a region.
 
-The `status` row matters. A request limit of 8 does not beat the old binary, because the old binary's real peak for a region was far above 8. The waves are no longer the bound there. The volume is. That is the reason for contract edit 1.
+The `status` row matters. A request limit of 8 does not beat the old binary, because the old binary's real peak for a region was far above 8. The waves are no longer the bound there. The volume is. That is the reason for the default of 32, and the model for 16, the fallback, is about 900 ms.
+
+The cluster-level limit does not change the model: it equals the request limit, so the slots stay full. The `instance-id` filter and the chunks change no wave count.
 
 ### Assertions
 
 Each command has one test that asserts three things against `awsxtest`.
 
 1. **The exact calls.** The request log, grouped by operation, equals a fixed table. An extra call fails the test.
-2. **The waves.** A small helper on the handler's `OnRequest` hook holds every request. `Wave` waits until the named requests are all held, fails on any other held request, and releases them. A call that the command makes in series never arrives while its wave is held, so the test fails on the `--timeout` of the run. No sleep is involved.
+2. **The waves.** A small helper on the handler's `OnRequest` hook holds every request. `Wave` waits until the named requests are all held, fails on any other held request, and releases them. A call that the command makes in series never arrives while its wave is held. `Wave` has its own deadline, 5 s by default, and fails with the list of the requests it holds and the ones it still expects. So a serial call fails fast with a message that names it, not at the `--timeout` of the run. No sleep is involved.
 
 ```go
 gate := awsxtest.NewGate(t, srv.Handler)
@@ -991,7 +1069,7 @@ gate.Wave("ec2:DescribeInstances")
 gate.Done() // nothing else arrived
 ```
 
-3. **The limit.** With `--max-concurrency 4` and 30 clusters, the hook holds requests until 4 are in flight. `PeakConcurrency("", region)` must equal 4. For a sweep, the hook holds until every region has a request in flight, which proves that regions run together.
+3. **The limit.** With `--max-concurrency 4` and 30 clusters, the hook holds requests until 4 are in flight. `PeakConcurrency("", region)` must equal 4, and the held requests must belong to at most 4 clusters. For a sweep, the hook holds until every region has a request in flight, which proves that regions run together.
 
 A memo test asserts that 20 clusters on one version make one `DescribeAddonVersions` call for each add-on and one `GetParameter` call for each AMI type.
 
@@ -1014,34 +1092,44 @@ A memo test asserts that 20 clusters on one version make one `DescribeAddonVersi
 
 ## 9. Test plan
 
-**Table tests for pure functions.** `ParseVersion` and `Compare`, with a fuzz target. `amiStatus`, one row for each outcome. `addonHealth`, one row for each EKS status. `supportFor`, including the day boundary and a version older than the calendar. `CompareAddonVersions`, with the two old fuzz targets. `ParseFilters` and `Match`, including each parse error. Each sort key. `Suggest`. `fleetdata`: the AMI parameter path for every AMI type, and a contiguous calendar. `NewFailure`, one row for each reason. The mappers, one row for each `State` of each group.
+**Table tests for pure functions.** `ParseVersion` and `Compare`, with a fuzz target. `amiStatus`, one row for each outcome. `addonHealth`, one row for each EKS status. `supportFor`, including the day boundary and a version older than the calendar. `CompareAddonVersions`, with the two old fuzz targets. `ParseFilters` and `Match`, including each parse error. Each sort key. `Suggest`. `fleetdata`: the AMI parameter path for every AMI type, and a contiguous calendar. `awsx.Classify`, one row for each class. `VersionBehind`, `AMIStatus`, and `Behind`, one row for each pair of states. The mappers, one row for each `State` of each group, and the encode test over a collected and empty snapshot for all seven kinds.
 
 **View tests.** `List.Plain` and `List.Render` from one fixture, with a test that the plain cells equal the table cells once the glyph and the padding are removed. That is the no-drift test. Width tests: wide runes, combining marks, truncation at each mode, a width of zero. Plain output passes a port of `legacy/internal/ui/plaintest`: a header row, tabs, no empty cell, no escape code.
 
-**Whole-command tests.** `cmdutiltest.NewFactory` with `UseAWS(f, srv.Config(region))`, run through the root command. Each asserts stdout, stderr, the exit code, and the request counts. Cases for each command: complete, empty, one item fails with each of `AccessDenied` and `Throttled`, the list call fails, not found with suggestions, not found when the suggestion list fails, deadline, interrupt. Extra cases for sweeps: a default sweep skips a closed region, a named closed region fails, one region fails and another is empty, no region answers with good credentials and with bad ones, every region skipped. Watch: two refreshes driven by the world's clock, a partial refresh between two complete ones, Ctrl+C.
+**Whole-command tests.** `cmdutiltest.NewFactory` with `UseAWS(f, srv.Config(region))`, run through the root command. Each asserts stdout, stderr, the exit code, and the request counts. Cases for each command: complete, empty, one item fails with each of `AccessDenied` and `Throttled`, the list call fails, not found with suggestions, not found when the suggestion list fails, deadline, interrupt. Extra cases for sweeps: a default sweep skips a closed region, a named closed region fails, one region fails and another is empty, no region answers with good credentials and with bad ones, every region skipped. Watch: two refreshes driven by the world's clock, a partial refresh between two complete ones, Ctrl+C with exit 0.
 
-**Goldens.** For each command, one fixed world and four files: table at 100 columns without color, plain, JSON, YAML. One more table golden at 60 columns for truncation. JSON and YAML goldens validate against `api/schema/v2`.
+**Batch and limit tests.**
+
+- An instance of one nodegroup is gone between the group call and the instance call. That nodegroup's AMI status is `Unknown` with no failure, every other nodegroup keeps its status, and the exit code is 0.
+- A cluster with 120 nodegroups makes three `DescribeAutoScalingGroups` calls in one wave and two filtered `DescribeInstances` calls.
+- A stale AMI that is deregistered: the row has no `currentCreatedAt` and no failure.
+- Each advisory read of section 4 fails with `AccessDenied`: the document has the labelled fallback, no failure, and exit 0.
+- A deadline in the middle of a sweep of 100 clusters with the limit 4: the first rows are complete, at most 4 are partial, and the rest are `NotAttempted`.
+- The middleware: a throttled first attempt whose retry gets no slot before the context ends reports `Throttled`, not `NotAttempted`. A slot is free during backoff. `Clients`, `SweepClients`, and `PollClients` of one region share the 4 slots.
+- **Throttle at the limit.** The fake throttles a share of the calls whenever 32 are in flight in a region, for 200 clusters in 8 regions. `status -A` must complete with no failure and exit as it does without throttling. This test and the `task test:live` reading decide between 32 and 16.
+
+**Goldens.** For each command, one fixed world and four files: table at 100 columns without color, plain, JSON, YAML. One more table golden at 60 columns for truncation. JSON and YAML goldens validate against `api/schema/v2`, which step 2 of the build order starts to generate.
 
 **Carried over.** These old tests name a past regression. Each is ported or covered by a named case above.
 
 | Old test file | What it protects |
 |---|---|
-| `services/status/support_test.go`, `support_fuzz_test.go` | REF-145; partial day rounds up; a cancelled lookup is not shared; `1.-5` is rejected |
+| `services/status/support_test.go`, `support_fuzz_test.go` | A partial day rounds up; a cancelled lookup is not shared; `1.-5` is rejected |
 | `services/status/incomplete_test.go` | A cancelled sweep keeps its rows as not attempted; a late cancel is not partial; an add-on with no compatible version; an AMI lookup failure marks the row |
 | `services/status/sweep_test.go`, `paging_test.go`, `retry_test.go` | Lookups are shared across clusters and do not outlive a sweep; a failed lookup is not kept; paging; the Karpenter probe is scoped to its cluster |
 | `services/status/service_test.go` | A nodegroup behind the control plane; control-plane health issues |
-| `services/cluster/filter_test.go`, `commands/cluster/filter_test.go` | REF-1: status and version filters apply |
-| `services/cluster/service_test.go` | REF-57, REF-130, REF-168 |
-| `services/nodegroup/readiness_test.go`, `commands/nodegroup/list_render_test.go`, `commands/clusterview/detail_render_test.go` | REF-130: a ready count is never invented. Phase 2 ports the rule "no `readyNodes` key unless measured". |
+| `services/cluster/filter_test.go`, `commands/cluster/filter_test.go` | Status and version filters apply |
+| `services/cluster/service_test.go` | The regressions named in the file: partial describes, node counts that are not invented, failures in the result |
+| `services/nodegroup/readiness_test.go`, `commands/nodegroup/list_render_test.go`, `commands/clusterview/detail_render_test.go` | A ready count is never invented. Phase 2 ports the rule "no `readyNodes` key unless measured". |
 | `services/nodegroup/service_test.go`, `list_failures_test.go`, `list_options_test.go` | AMI status for updating and custom nodegroups; a filtered row is not a failure; a cancelled list |
 | `aws/ami_test.go`, `ami_cache_test.go` | Every AMI type's path; unknown types are not guessed; a failed lookup is an error; the Auto Scaling fallback; the key is the nodegroup's version |
 | `services/addons/version_order_test.go`, `version_fuzz_test.go` | A release beats a prerelease; the order is total |
 | `regionsweep/regionsweep_test.go` | Default sweeps skip, named regions never skip, a cancelled sweep marks regions |
-| `commands/statuscmd/*_test.go` | REF-165: exit codes, interrupt is 1, deadline is 4, a failed region with an empty region is 4, cancel does not block |
-| `commands/cluster/list_regions_test.go`, `exitcodes_test.go`, `describe_test.go`, `machine_output_test.go` | REF-165, REF-168; a hanging endpoint fails; failures are in the document |
-| `commands/nodegroup/failure_fields_test.go` | REF-178, REF-179: the failure fields |
-| `commands/clusterview/clusterview_test.go`, `ui/ansi_test.go`, `ui/plain_test.go` | REF-65, REF-66, REF-67: width of wide runes, malformed escapes, plain cells |
-| `commands/runner/runner_test.go`, `exitcodes_test.go`, `deadline_test.go` | REF-48, REF-59, REF-165 |
+| `commands/statuscmd/*_test.go` | Exit codes: interrupt is 1, deadline is 4, a failed region with an empty region is 4, cancel does not block |
+| `commands/cluster/list_regions_test.go`, `exitcodes_test.go`, `describe_test.go`, `machine_output_test.go` | A hanging endpoint fails; exit codes; failures are in the document |
+| `commands/nodegroup/failure_fields_test.go` | The failure fields |
+| `commands/clusterview/clusterview_test.go`, `ui/ansi_test.go`, `ui/plain_test.go` | Width of wide runes, malformed escapes, plain cells |
+| `commands/runner/runner_test.go`, `exitcodes_test.go`, `deadline_test.go` | The regressions named in the files: target resolution, the exit code table, the deadline |
 | `diag/reason_test.go` | The classification table matches the docs |
 
 `legacy/PORTING.md` records the result for each file.
@@ -1050,37 +1138,41 @@ A memo test asserts that 20 clusters on one version make one `DescribeAddonVersi
 
 Each step ends with `task dev:full` green and is one reviewable change.
 
-1. **`cluster list` in one region, table and JSON.** `fleet.Version`, `State`, `Snapshot`, `Cluster`, `Fetcher.Clusters`, `Fetch` with an empty `Need`. `apidoc.Cluster`, `ClusterList`, `Failure`. `fleet.NewFailure`. `view.Theme`, `List`. `cmdutil.Print`. The `awsx` request limit and `ErrNotSent`. The `awsxtest` gate. This is the smallest end-to-end slice.
-2. **Plain and YAML, filters, sort.** `List.Plain`, the no-drift test, `cmdutil.Filters`, the sort flags, and the goldens for all four formats.
-3. **The sweep.** `Fetcher.Sweep`, `fleetdata.Regions`, `cmdutil.SweepRegions` and `SweepError`, `-A`, skipped regions, `view.Live`, output as regions answer.
+1. **`cluster list` in one named region, table and JSON.** `fleet.Version`, `State`, `Snapshot`, `Cluster`, `Fetcher.Clusters`, `Fetch` with an empty `Need`, and `Fetcher.Sweep` called with one named region, with the cluster-level limit. `apidoc.Cluster`, `ClusterList`, `Failure`. `awsx.Classify`, `fleet.FailureFromError`. `view.Theme`, `List`. `cmdutil.Print`. The `awsx` request limit and `ErrNotSent`, with the middleware tests. The `awsxtest` gate. This is the smallest end-to-end slice, and it already runs through the sweep code.
+2. **Plain and YAML, filters, sort, schemas.** `List.Plain`, the no-drift test, `cmdutil.Filters`, the sort flags. `tools/genschema` and `api/schema/v2`, which do not exist yet, for the kinds built so far: `ClusterList` and `Version`. The goldens for all four formats, validated against those schemas. Each later step adds the schemas of its kinds.
+3. **Many regions.** Step 1's `Sweep` gets the default sweep with `SweepClients`, `fleetdata.Regions`, `cmdutil.SweepRegions` and `SweepError`, `-A`, skipped regions, `view.Live`, and output as regions answer. It extends the sweep and does not rewrite it.
 4. **Target resolution and `addon list`, `addon describe`.** `cmdutil.ResolveCluster`, `internal/kube` for the kubeconfig step, `Suggest`, the not-found error, `Need.Addons`, `Need.OnlyAddons`, `view.Description`.
-5. **`nodegroup list`, `nodegroup describe`.** `Need.Nodegroups`, `AMI`, `Instances`, the AMI paths in `fleetdata`, the latest-AMI memo.
+5. **`nodegroup list`, `nodegroup describe`.** `Need.Nodegroups`, `AMI`, `Instances`, the AMI paths in `fleetdata`, the latest-AMI memo, the batched calls with their chunks, and the `instance-id` and `image-id` filters in `awsxtest`.
 6. **`cluster describe`.** `Need.Support`, `VPC`, the calendar in `fleetdata`, and its memo.
-7. **`status`.** `Need.LatestAddons` and `Compute`, the derived counters, the exit rule.
+7. **`status`.** `Need.LatestAddons`, `Compute`, and `AMIAge`, the counters, the advisory reads, the exit rule, and the throttle test.
 8. **Watch mode** on the three list commands.
-9. **Close-out.** `genschema` for the seven kinds, `gen-docs`, the benchmarks and gates, the livecheck tests for the read commands, the `PORTING.md` rows.
+9. **Close-out.** `gen-docs`, the benchmarks and gates, the livecheck tests for the read commands with the two readings this note asks for (the filter value limit and `status -A` at 32), the `PORTING.md` rows.
 
-## 11. Open questions
+## 11. Decisions
 
-| # | Question | Recommended answer |
+The owner decided these on draft 1. Nothing in this note is open.
+
+| # | Question | Decision |
 |---|---|---|
-| 1 | Does `cluster list` keep its `NODES` column? It costs 2 + N calls for each cluster and is the reason for the old 677 ms. | No. `status` shows the nodegroup count, and `cluster describe` shows the nodegroups. With the column, the command is 3 waves and about 100 calls for a region. |
-| 2 | What does `--max-concurrency` limit, and what is its default? | Requests in flight for one region, default 32. See contract edit 1. With 8, `status -A` does not beat the old binary. |
-| 3 | Is a failed AMI lookup a failure in `nodegroup list`, so that the run exits 4? | Yes. One rule for a partly read row. A user without `ssm:GetParameter` then gets exit 4 from `nodegroup list`, which is true: the AMI column is unknown. |
-| 4 | Should `addon list` and `addon describe` show the latest compatible version? It adds calls and no round trip. | Not in phase 2. `REWRITE.md` rule 1 allows no new feature. The `latest` key already exists for `status`, so it is a small change after cutover. |
-| 5 | Should the AMI check compare release versions, which `DescribeNodegroup` returns, in place of AMI IDs? That drops the EC2 and Auto Scaling calls: 2 waves and 2 calls for each cluster. | Not in phase 2. `DecideAMIUpdate` is frozen behaviour and uses the IDs. Decide in phase 4 with `task test:live` data. Windows publishes no release version. |
-| 6 | Disk cache for slow data (`REWRITE.md` decision 5)? | None. The calendar is one call in wave 1, and the memos cover a run. |
+| 1 | Does `cluster list` keep its `NODES` column? | No. It cost 2 + N calls for each cluster and was the reason for the old 677 ms. |
+| 2 | What does `--max-concurrency` limit, and what is its default? | Requests in flight for one region, default 32. The default holds only if the throttle test and the `task test:live` reading pass. Else it is 16. |
+| 3 | Is a failed AMI lookup a failure in `nodegroup list`? | Yes, exit 4. The advisory table in section 4 lists the reads that are not failures. |
+| 4 | Exit code order for `status`? | The highest code wins, with no exception. |
+| 5 | Should `addon list` and `addon describe` show the latest compatible version? | Not in phase 2. `REWRITE.md` rule 1 allows no new feature. The `latest` key exists for `status`, so it is a small change after cutover. |
+| 6 | Should the AMI check compare release versions in place of AMI IDs? | Not in phase 2. `DecideAMIUpdate` is frozen behaviour and uses the IDs. Decide in phase 4 with `task test:live` data. Windows publishes no release version. |
+| 7 | A disk cache for slow data? | None. The calendar is one call in wave 1, and the memos cover a run. |
 
-## 12. Proposed contract edits
+## 12. Contract edits
 
-These need the owner's approval. Nothing here is applied silently.
+The owner accepted these, and `CONTRACT.md` has them.
 
-1. **`--max-concurrency`.** Reword to "Limit for AWS requests in flight in one region". Raise the default from 8 to 32. The old binary's `-C 8` allowed far more than 8, so 8 as a strict limit is a slowdown.
-2. **`addon list --show-health`.** Remove it. Health is a function of the status that the command already has, so the column is always shown.
-3. **`-A` with `-r`.** State that the two are a usage error together.
-4. **`-w`.** State that it needs `-o table` and a terminal, and that `--timeout` applies to each refresh.
-5. **Exit code order for `status`.** The contract's "highest code wins" gives 4, then 3, then 2. The old order was 3, 2, 4. Confirm the new order, or add `status` as an exception. Phase 3 has the same question for `cluster upgrade-check`, whose old order was 3, 4, 2.
-6. **`status --sort`.** The key `cluster` becomes `name`, as in the other list commands.
-7. **Document field lists.** The contract says the field lists are reviewed with the schemas in phase 1. Phase 1 produced only `Version`. Section 5 is the proposal for the seven read kinds, including the removal of `count` and of the `status` summary objects.
+1. **`--max-concurrency`** limits AWS requests in flight in one region. The default is 32, with the condition of decision 2.
+2. **`addon list --show-health`** is removed. Health comes from the status, so the column is always shown.
+3. **`-A` with `-r`** is a usage error.
+4. **`-w`** needs `-o table` and a terminal, and `--timeout` applies to each refresh.
+5. **Exit codes.** The highest code wins for `status` too.
+6. **`status --sort`.** The key `cluster` is now `name`.
+7. **Document field lists.** Section 5 is the field list of the seven read kinds, without `count` and without the `status` summary objects.
+8. **Stopping `--watch` with Ctrl+C exits 0.** It is the normal way to end a watch, and the one exception to "an interrupt exits 1".
 
-Two points in `REWRITE.md` change in this note and need no contract edit: the column shape in "Views (view)", and `fleet.Fetch` as a method of `Fetcher`.
+Two points in `REWRITE.md` change in this note and need no contract edit: the column shape in "Views (view)", and `fleet.Fetch` as a method of `Fetcher` that returns a snapshot and an error.
