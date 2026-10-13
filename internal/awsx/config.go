@@ -139,8 +139,12 @@ func NewHTTPClient(maxConcurrency int) *awshttp.BuildableClient {
 		tr.ResponseHeaderTimeout = responseHeaderTimeout
 		tr.HTTP2 = &http.HTTP2Config{SendPingTimeout: http2PingAfter, PingTimeout: http2PingTimeout}
 		tr.MaxIdleConnsPerHost = max(tr.MaxIdleConnsPerHost, maxConcurrency)
-		// A sweep talks to a few services in each of many regions.
-		tr.MaxIdleConns = max(tr.MaxIdleConns, 4*tr.MaxIdleConnsPerHost)
+		// No limit on the idle connections of all hosts together. A sweep
+		// talks to a few services in each of many regions, and every
+		// region is a host of its own: a total below regions times the
+		// limit for one host would close connections between two waves
+		// and open them again.
+		tr.MaxIdleConns = 0
 		tr.DialContext = sweepDial(tr.DialContext, sweepDialTimeout)
 	})
 }

@@ -36,32 +36,66 @@ type window struct {
 	standardEnd, extendedEnd time.Time
 }
 
-// calendar returns the support window of each version that EKS reports in
-// the region of c. One unfiltered call serves every cluster of the region
-// for the run.
-func (f *Fetcher) calendar(ctx context.Context, c *awsx.Clients) (map[Version]window, error) {
-	return f.calendars.Get(ctx, c.Region, func(ctx context.Context) (map[Version]window, error) {
-		versions, err := awsx.ListAll(ctx,
-			func(ctx context.Context, token *string) (*eks.DescribeClusterVersionsOutput, error) {
-				return c.EKS.DescribeClusterVersions(ctx, &eks.DescribeClusterVersionsInput{NextToken: token})
-			},
-			func(out *eks.DescribeClusterVersionsOutput) ([]ekstypes.ClusterVersionInformation, *string) {
-				return out.ClusterVersions, out.NextToken
-			},
-		)
-		if err != nil {
-			return nil, err
+// calendarRead is the one read of the support calendar of a region in a
+// run. done is closed when live and err are set.
+type calendarRead struct {
+	done chan struct{}
+	live map[Version]window
+	err  error
+}
+
+// startCalendar starts the read of the support calendar of the region of
+// c, once for the region, and returns it. One unfiltered call serves every
+// cluster of the region, and the clusters start no goroutine of their own
+// to wait for it. A read that fails is the same for all of them: the dates
+// then come from the calendar that refresh ships with.
+func (f *Fetcher) startCalendar(ctx context.Context, c *awsx.Clients) *calendarRead {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if read, ok := f.calendars[c.Region]; ok {
+		return read
+	}
+	read := &calendarRead{done: make(chan struct{})}
+	if f.calendars == nil {
+		f.calendars = map[string]*calendarRead{}
+	}
+	f.calendars[c.Region] = read
+	go func() {
+		defer close(read.done)
+		read.live, read.err = readCalendar(ctx, c)
+	}()
+	return read
+}
+
+// wait returns the calendar once it is read.
+func (r *calendarRead) wait() (map[Version]window, error) {
+	<-r.done
+	return r.live, r.err
+}
+
+// readCalendar returns the support window of each version that EKS reports
+// in the region of c.
+func readCalendar(ctx context.Context, c *awsx.Clients) (map[Version]window, error) {
+	versions, err := awsx.ListAll(ctx,
+		func(ctx context.Context, token *string) (*eks.DescribeClusterVersionsOutput, error) {
+			return c.EKS.DescribeClusterVersions(ctx, &eks.DescribeClusterVersionsInput{NextToken: token})
+		},
+		func(out *eks.DescribeClusterVersionsOutput) ([]ekstypes.ClusterVersionInformation, *string) {
+			return out.ClusterVersions, out.NextToken
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := map[Version]window{}
+	for _, v := range versions {
+		version, err := ParseVersion(aws.ToString(v.ClusterVersion))
+		if err != nil || v.EndOfStandardSupportDate == nil {
+			continue
 		}
-		out := map[Version]window{}
-		for _, v := range versions {
-			version, err := ParseVersion(aws.ToString(v.ClusterVersion))
-			if err != nil || v.EndOfStandardSupportDate == nil {
-				continue
-			}
-			out[version] = window{standardEnd: aws.ToTime(v.EndOfStandardSupportDate), extendedEnd: aws.ToTime(v.EndOfExtendedSupportDate)}
-		}
-		return out, nil
-	})
+		out[version] = window{standardEnd: aws.ToTime(v.EndOfStandardSupportDate), extendedEnd: aws.ToTime(v.EndOfExtendedSupportDate)}
+	}
+	return out, nil
 }
 
 // supportFor returns the support of version at the time now. live is the

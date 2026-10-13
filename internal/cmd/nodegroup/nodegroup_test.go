@@ -2,6 +2,7 @@ package nodegroup_test
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"strings"
 	"testing"
@@ -313,12 +314,59 @@ func TestList_Deadline(t *testing.T) {
 			<-hctx.Done()
 		}
 	}
-	err := e.Run(ctx, "nodegroup", "list", "-c", "prod", "-o", "json")
+	// One request slot: the calls go out one at a time, in the order that
+	// they asked for the slot. The cluster asked before any call of the
+	// second wave, so it is answered before the run is cut short.
+	err := e.Run(ctx, "nodegroup", "list", "-c", "prod", "-o", "json", "--max-concurrency", "1")
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
 		t.Fatalf("exit code = %d (%v), want %d", got, err, cmdutil.ExitIncomplete)
 	}
 	cmdutiltest.ValidateJSON(t, apidoc.KindNodegroupList, e.Out.Bytes())
 	if !strings.Contains(e.Out.String(), `"name": "web"`) || !strings.Contains(e.Out.String(), `"scaling": {`) {
 		t.Errorf("the document lost the nodegroups that were read:\n%s", e.Out.String())
+	}
+}
+
+// A watch reads again after each interval and redraws the table. A read
+// with a failure names it and the watch goes on. Ctrl+C ends the watch
+// with ErrStopped, which is exit 0.
+func TestList_Watch(t *testing.T) {
+	e := newFake(t)
+	e.Factory.IOStreams.OutTTY = true
+	e.Factory.IOStreams.TermSize = func() (int, int) { return 120, 40 }
+	ctx, cancel := context.WithCancel(cmdutiltest.Context(t))
+	defer cancel()
+
+	scope := fleettest.Scope{Operation: fleettest.EKSDescribeNodegroup, Nodegroup: "web"}
+	pauses := 0
+	tick := make(chan time.Time, 1)
+	e.Factory.After = func(time.Duration) <-chan time.Time {
+		pauses++
+		switch pauses {
+		case 1:
+			// The second read cannot describe one item.
+			e.World.SetScopedFault(scope, fleettest.Fault{Deny: true})
+		case 2:
+			e.World.SetScopedFault(scope, fleettest.Fault{})
+		case 3:
+			cancel()
+			return make(chan time.Time)
+		}
+		tick <- time.Time{}
+		return tick
+	}
+	err := e.Run(ctx, "nodegroup", "list", "-c", "prod", "-w")
+	if !errors.Is(err, cmdutil.ErrStopped) {
+		t.Fatalf("error = %v, want ErrStopped", err)
+	}
+	frames := strings.Split(e.Out.String(), "\x1b[H\x1b[2J")[1:]
+	if len(frames) != 3 {
+		t.Fatalf("the screen was drawn %d times, want 3:\n%q", len(frames), e.Out.String())
+	}
+	if frames[0] != frames[2] || !strings.Contains(frames[0], "web") || strings.Contains(frames[0], "INCOMPLETE DATA") {
+		t.Errorf("the first and the third read are not the whole table:\n%s\n%s", frames[0], frames[2])
+	}
+	if !strings.Contains(frames[1], "INCOMPLETE DATA") || !strings.Contains(frames[1], "prod/web (us-east-1): AccessDenied") {
+		t.Errorf("the second read does not name what it could not read:\n%s", frames[1])
 	}
 }

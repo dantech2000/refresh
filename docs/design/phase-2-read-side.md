@@ -1,6 +1,6 @@
 # Phase 2 design note: the read side
 
-Status: draft 5. Steps 1 to 8 of section 10 are built, and the parts of step 9 that need no AWS account. Sections 13 to 15 list what the code and its reviews changed in this note. Where a section above and those two differ, they are right.
+Status: draft 6. Steps 1 to 8 of section 10 are built, and the parts of step 9 that need no AWS account. Sections 13 to 16 list what the code and its reviews changed in this note. Where a section above and those two differ, they are right.
 
 Draft 2: It applies the review of draft 1 and the owner's decisions, which section 11 records. It belongs to `REWRITE.md` and stays inside `CONTRACT.md`.
 
@@ -1303,3 +1303,18 @@ The default of 32 under throttling, on the fake fleet with 0 to 100 ms of latenc
 | 10 percent | 2,672 ms, one run with one failure | 1,896 ms | 1,256 ms |
 
 No run at 32 had a failure, and 32 stayed the fastest. The fake throttles a fixed share of calls whatever the load, so this does not show how EKS answers a burst. The `task test:live` reading is still needed before the default is final.
+
+## 16. Memory and connections of a large sweep
+
+A profile of `status -A` on 200 clusters showed where the 125 MB went: about 45 MB were goroutine stacks, for about 3,300 goroutines, and about 45 MB were heap. The request limit kept 256 requests in flight, and every other goroutine waited: one for each nodegroup, add-on, and lookup of every cluster in work. A goroutine that has been through the SDK has a stack of about 15 KB.
+
+| Section | Before | Built |
+|---|---|---|
+| 2 | A fan-out over the items of a cluster starts a goroutine for each item | It starts a goroutine when the region has a ticket: `Fetcher.tickets` has as many as the request limit. The goroutines of the items follow the requests in flight. |
+| 2 | The cluster-level limit is the request limit | It is the request limit for a sweep that reads the clusters alone, and half of it for a sweep that reads more. Such a cluster has two or more calls to make at any time, so the slots stay full. |
+| 2 | Each cluster starts a goroutine that waits for the support calendar | One read for a region, started by the first cluster. The others wait for it at the end of `Fetch`, with no goroutine. |
+| 2 | The newest add-on versions run in a fan-out of their own | They are tasks of the fan-out that describes the add-ons. |
+| 2 | A call waits for its slot below the SDK retry step | The first attempt waits at the first step of the call. A retry waits at the attempt, as before. This did not lower the memory by itself: a goroutine that waited at a small stack grows it when its call runs. |
+| 2 | The idle connections of all hosts are limited to four times the limit for one host | No total limit. Each region is a host of its own, and 128 idle connections were fewer than 8 regions times 32. |
+
+The slow runs at no latency were the benchmark, not the product. Evidence: the failures of those runs were all `dial tcp 127.0.0.1: connect: can't assign requested address`, which is the loopback out of ephemeral ports. A counting proxy between the binaries and the fake shows that one `status -A` opens 548 connections with the new binary and 710 with the old one at no latency, and 273 against 411 with latency. macOS has 16,384 ephemeral ports and keeps a closed one for 30 s, so about 25 runs in 30 s use them up. The new binary opens more than 256 because the fake is one host for all 8 regions: 256 requests in flight share a pool of 32 idle connections. Against AWS each region is its own host, with at most 32 requests in flight and 32 idle connections kept, and the SDK's transport asks for HTTP/2, which needs one connection where the endpoint offers it. The product did what it should with a dial that fails: it retried, and then it named the read as a failure and exited 4.

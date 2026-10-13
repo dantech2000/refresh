@@ -417,9 +417,11 @@ func TestHTTPClientSizesIdleConnections(t *testing.T) {
 		wantPerHost    int
 		wantTotal      int
 	}{
-		{maxConcurrency: 0, wantPerHost: 10, wantTotal: 100},
-		{maxConcurrency: 8, wantPerHost: 10, wantTotal: 100},
-		{maxConcurrency: 32, wantPerHost: 32, wantTotal: 128},
+		// The total has no limit (0): each region of a sweep is a host of
+		// its own, and the limit for one host bounds each.
+		{maxConcurrency: 0, wantPerHost: 10, wantTotal: 0},
+		{maxConcurrency: 8, wantPerHost: 10, wantTotal: 0},
+		{maxConcurrency: 32, wantPerHost: 32, wantTotal: 0},
 	}
 	for _, tt := range tests {
 		tr := NewHTTPClient(tt.maxConcurrency).GetTransport()

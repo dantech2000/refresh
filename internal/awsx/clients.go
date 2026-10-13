@@ -22,6 +22,9 @@ import (
 type Clients struct {
 	Region string
 	Policy Policy
+	// MaxInFlight is the request limit of the region, which these clients
+	// share with the other client sets of the region. 0 means no limit.
+	MaxInFlight int
 
 	EKS           *eks.Client
 	EC2           *ec2.Client
@@ -157,6 +160,7 @@ func (p *Provider) clientsFor(region string, policy Policy) *Clients {
 	c := &Clients{
 		Region:        region,
 		Policy:        policy,
+		MaxInFlight:   p.maxInFlight,
 		EKS:           eks.NewFromConfig(cfg),
 		EC2:           ec2.NewFromConfig(cfg),
 		AutoScaling:   autoscaling.NewFromConfig(cfg),

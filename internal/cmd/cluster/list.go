@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,7 +28,7 @@ const (
 )
 
 type listOptions struct {
-	io     *cmdutil.IOStreams
+	ios    *cmdutil.IOStreams
 	aws    func(ctx context.Context) (*awsx.Provider, error)
 	global *cmdutil.GlobalOptions
 	// now returns the time that a snapshot records.
@@ -50,7 +49,7 @@ type listOptions struct {
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
-	o := &listOptions{io: f.IOStreams, aws: f.AWS, global: &f.Global, now: f.Now, after: f.After}
+	o := &listOptions{ios: f.IOStreams, aws: f.AWS, global: &f.Global, now: f.Now, after: f.After}
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -89,7 +88,7 @@ When no region answers, the command fails with exit 1.`,
 				return err
 			}
 			if o.watch {
-				return cmdutil.Watch(cmd.Context(), o.io, o.interval, o.after, o.run)
+				return cmdutil.Watch(cmd.Context(), o.ios, o.interval, o.after, o.run)
 			}
 			return o.run(cmd.Context())
 		},
@@ -112,7 +111,7 @@ func (o *listOptions) validate() error {
 	if err := fleetcmd.ValidateSweepFlags(o.global, o.allRegions); err != nil {
 		return err
 	}
-	return cmdutil.ValidateWatch(o.io, o.output, o.watch, o.interval)
+	return cmdutil.ValidateWatch(o.ios, o.output, o.watch, o.interval)
 }
 
 func (o *listOptions) run(ctx context.Context) error {
@@ -127,7 +126,13 @@ func (o *listOptions) run(ctx context.Context) error {
 	// The name and the region are known before any describe call, so
 	// those filters save the calls for the clusters they drop.
 	early := o.filters.Only(keyName, keyRegion)
-	progress := o.newProgress(len(regions.Names))
+	// A watch redraws the whole screen for each read, so it shows no rows
+	// before the read is done.
+	progress := fleetcmd.NewProgress(o.ios, o.output == cmdutil.FormatTable && !o.watch, len(regions.Names),
+		func(snaps []*fleet.Snapshot, answered int) []string {
+			width, _ := o.ios.Size()
+			return o.view(apidoc.ClusterList{Clusters: o.rows(snaps)}, answered).Render(o.ios.Theme(), width)
+		})
 	fetcher := fleet.Fetcher{Now: o.now}
 	res := fetcher.Sweep(ctx, provider, regions, fleet.SweepOptions{
 		Match: func(region, name string) bool {
@@ -138,20 +143,20 @@ func (o *listOptions) run(ctx context.Context) error {
 				return []string{name}
 			})
 		},
-		OnRegion: progress.add,
+		OnRegion: progress.Add,
 	})
-	progress.clear()
+	progress.Clear()
 	if err := fleetcmd.SweepError(ctx, provider, res); err != nil {
 		return err
 	}
-	fleetcmd.ReportSkippedRegions(o.io, res.Skipped)
+	fleetcmd.ReportSkippedRegions(o.ios, res.Skipped)
 
 	doc := o.document(res)
-	if err := cmdutil.Print(o.io, o.output, doc, o.view(doc, len(res.Answered))); err != nil {
+	if err := cmdutil.Print(o.ios, o.output, doc, o.view(doc, len(res.Answered))); err != nil {
 		return err
 	}
 	if o.output != cmdutil.FormatTable {
-		cmdutil.ReportFailures(o.io, doc.Failures)
+		cmdutil.ReportFailures(o.ios, doc.Failures)
 	}
 	// An interrupt is not a partial result: the document above shows what
 	// was read, and the run fails.
@@ -255,62 +260,5 @@ func (o *listOptions) view(doc apidoc.ClusterList, regions int) view.List[apidoc
 			},
 			{Title: "VERSION", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, c.Version) }},
 		},
-	}
-}
-
-// progress shows the rows of a sweep as its regions answer. It draws only
-// for a table on a terminal; every other output prints once, at the end.
-type progress struct {
-	o       *listOptions
-	regions int // the regions of the sweep
-	table   *view.Live
-	status  *view.Live
-
-	mu       sync.Mutex
-	answered int
-	snaps    []*fleet.Snapshot
-}
-
-func (o *listOptions) newProgress(regions int) *progress {
-	p := &progress{o: o, regions: regions}
-	// A watch redraws the whole screen for each read, so it shows no
-	// rows before the read is done.
-	if o.output != cmdutil.FormatTable || !o.io.OutTTY || o.watch {
-		return p
-	}
-	p.table = view.NewLive(o.io.Out, o.io.Size)
-	if o.io.ErrTTY {
-		// The terminal behind stderr is the one behind stdout here.
-		p.status = view.NewLive(o.io.ErrOut, o.io.Size)
-	}
-	return p
-}
-
-// add takes the snapshots of one region and redraws the table with every
-// row so far, in the final order. A table taller than the terminal cannot
-// be redrawn in place: one status line on stderr stands in for it.
-func (p *progress) add(_ string, snaps []*fleet.Snapshot) {
-	if p.table == nil {
-		return
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.answered++
-	p.snaps = append(p.snaps, snaps...)
-	width, _ := p.o.io.Size()
-	doc := apidoc.ClusterList{Clusters: p.o.rows(p.snaps)}
-	if p.table.Draw(p.o.view(doc, p.answered).Render(p.o.io.Theme(), width)) || p.status == nil {
-		return
-	}
-	p.status.Draw([]string{p.o.io.ErrTheme().Dim(fmt.Sprintf("%d of %d regions, %d clusters", p.answered, p.regions, len(p.snaps)))})
-}
-
-// clear removes what add drew, so that the final table prints once.
-func (p *progress) clear() {
-	if p.table != nil {
-		p.table.Clear()
-	}
-	if p.status != nil {
-		p.status.Clear()
 	}
 }

@@ -57,6 +57,13 @@ type Need struct {
 	VPC bool
 }
 
+// wide reports whether a cluster makes several calls at once for this
+// need: anything but the cluster alone.
+func (n Need) wide() bool {
+	return n.Nodegroups || n.AMI || n.AMIAge || n.Instances || n.Addons || n.LatestAddons || n.Compute ||
+		len(n.OnlyNodegroups) > 0 || len(n.OnlyAddons) > 0
+}
+
 // The three reads below are advisory. One that fails loses an extra that
 // the output marks as missing, so it sets the state of its group and adds
 // no failure: a user with a narrow IAM policy still gets exit 0 for a
@@ -78,11 +85,16 @@ type Fetcher struct {
 	// latestAMIs shares the latest recommended AMI between the nodegroups
 	// and the clusters of the run. A lookup that failed is not kept.
 	latestAMIs fanout.Memo[amiKey, string]
-	// calendars shares the support calendar of a region.
-	calendars fanout.Memo[string, map[Version]window]
 	// latestAddons shares the newest version of an add-on for a
 	// Kubernetes version. "" is an answer: EKS publishes none.
 	latestAddons fanout.Memo[addonKey, string]
+
+	// regionTickets bounds the goroutines of the item fan-outs of each
+	// region. See tickets.
+	mu            sync.Mutex
+	regionTickets map[string]chan struct{}
+	// calendars has the read of the support calendar of each region.
+	calendars map[string]*calendarRead
 }
 
 func (f *Fetcher) now() time.Time {
@@ -130,11 +142,10 @@ func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, ne
 	// Kubernetes version of the cluster.
 	described := make(chan struct{})
 	var (
-		wg          sync.WaitGroup
-		addons      addonsResult
-		nodegroups  nodegroupsResult
-		live        map[Version]window
-		calendarErr error
+		wg         sync.WaitGroup
+		addons     addonsResult
+		nodegroups nodegroupsResult
+		calendar   *calendarRead
 	)
 	if need.Nodegroups || need.AMI || need.AMIAge || need.Instances || need.Compute || len(need.OnlyNodegroups) > 0 {
 		wg.Go(func() { nodegroups = f.fetchNodegroups(ctx, c, cluster, need) })
@@ -148,7 +159,7 @@ func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, ne
 		})
 	}
 	if need.Support {
-		wg.Go(func() { live, calendarErr = f.calendar(ctx, c) })
+		calendar = f.startCalendar(ctx, c)
 	}
 	out, err := c.EKS.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(cluster)})
 	if err == nil && out.Cluster == nil {
@@ -163,6 +174,15 @@ func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, ne
 		snap.Cluster.Network.VPCCIDR, snap.Have.VPC = vpcCIDR(ctx, c, snap.Cluster.Network.VPCID)
 	}
 	wg.Wait()
+	// The calendar is waited for on every path, so that Fetch leaves no
+	// read behind it.
+	var (
+		live        map[Version]window
+		calendarErr error
+	)
+	if calendar != nil {
+		live, calendarErr = calendar.wait()
+	}
 	snap.FetchedAt = f.now()
 	snap.Addons, snap.Have.Addons = addons.addons, addons.state
 	snap.Nodegroups, snap.Have.Nodegroups = nodegroups.nodegroups, nodegroups.state

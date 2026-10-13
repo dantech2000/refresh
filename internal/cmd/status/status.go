@@ -31,7 +31,7 @@ const (
 )
 
 type options struct {
-	io     *cmdutil.IOStreams
+	ios    *cmdutil.IOStreams
 	aws    func(ctx context.Context) (*awsx.Provider, error)
 	global *cmdutil.GlobalOptions
 	// now returns the time for the age of a stale AMI. Nil means
@@ -50,7 +50,7 @@ type options struct {
 
 // NewCmdStatus returns the status command.
 func NewCmdStatus(f *cmdutil.Factory) *cobra.Command {
-	o := &options{io: f.IOStreams, aws: f.AWS, global: &f.Global, now: f.Now}
+	o := &options{ios: f.IOStreams, aws: f.AWS, global: &f.Global, now: f.Now}
 	filterKeys := []string{keyName, keyRegion, keyVersion, keySupport}
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -132,9 +132,19 @@ func (o *options) run(ctx context.Context) error {
 	// The name and the region are known before any describe call, so
 	// those filters save the calls for the clusters they drop.
 	early := o.filters.Only(keyName, keyRegion)
+	progress := fleetcmd.NewProgress(o.ios, o.output == cmdutil.FormatTable, len(regions.Names),
+		func(snaps []*fleet.Snapshot, answered int) []string {
+			width, _ := o.ios.Size()
+			partial := o.document(&fleet.SweepResult{Snapshots: snaps})
+			// The failures of the rows are listed once, under the final
+			// table.
+			partial.Failures = nil
+			return o.view(partial, answered).Render(o.ios.Theme(), width)
+		})
 	fetcher := fleet.Fetcher{Now: o.now}
 	res := fetcher.Sweep(ctx, provider, regions, fleet.SweepOptions{
-		Need: need,
+		Need:     need,
+		OnRegion: progress.Add,
 		Match: func(region, name string) bool {
 			return early.Match(func(key string) []string {
 				if key == keyRegion {
@@ -144,17 +154,18 @@ func (o *options) run(ctx context.Context) error {
 			})
 		},
 	})
+	progress.Clear()
 	if err := fleetcmd.SweepError(ctx, provider, res); err != nil {
 		return err
 	}
-	fleetcmd.ReportSkippedRegions(o.io, res.Skipped)
+	fleetcmd.ReportSkippedRegions(o.ios, res.Skipped)
 
 	doc := o.document(res)
-	if err := cmdutil.Print(o.io, o.output, doc, o.view(doc, len(res.Answered))); err != nil {
+	if err := cmdutil.Print(o.ios, o.output, doc, o.view(doc, len(res.Answered))); err != nil {
 		return err
 	}
 	if o.output != cmdutil.FormatTable {
-		cmdutil.ReportFailures(o.io, doc.Failures)
+		cmdutil.ReportFailures(o.ios, doc.Failures)
 	}
 	// An interrupt is not a partial result.
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -339,7 +350,7 @@ func (o *options) view(doc apidoc.FleetStatus, regions int) view.List[apidoc.Clu
 		Subtitle: subtitle,
 		Empty:    "No clusters found",
 		Rows:     doc.Clusters,
-		Notes:    notes(o.io.Theme(), doc.Clusters),
+		Notes:    notes(o.ios.Theme(), doc.Clusters),
 		Failures: doc.Failures,
 		Columns: []view.Column[apidoc.Cluster]{
 			{Title: "CLUSTER", MinWidth: 12, Value: func(c apidoc.Cluster) string { return c.Name }, Status: overall},

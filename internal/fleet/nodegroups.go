@@ -62,7 +62,7 @@ func (f *Fetcher) fetchNodegroups(ctx context.Context, c *awsx.Clients, cluster 
 		nodegroup Nodegroup
 		err       error
 	}
-	results := fanout.ForEach(ctx, names, max(len(names), 1), func(ctx context.Context, name string) described {
+	results := each(ctx, f.tickets(c), names, func(ctx context.Context, name string) described {
 		out, err := c.EKS.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{ClusterName: aws.String(cluster), NodegroupName: aws.String(name)})
 		if err == nil && out.Nodegroup == nil {
 			err = fmt.Errorf("describing nodegroup %s: %w", name, errEmptyAnswer)
@@ -193,6 +193,14 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 		groups    map[string][]string // the instance IDs of each group
 		groupsErr error
 	)
+	// The lookups of the nodegroups: one task each, started as the region
+	// has tickets.
+	type task struct {
+		index    int
+		template bool // the image of the launch template, not the latest AMI
+		path     string
+	}
+	var tasks []task
 	var groupNames []string
 	for i := range nodegroups {
 		n := &nodegroups[i]
@@ -206,16 +214,37 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 			continue
 		}
 		if path, ok := fleetdata.AMIParameter(n.Version.String(), n.AMIType); ok {
-			wg.Go(func() { lookups[i].latest, lookups[i].latestErr = f.latestAMI(ctx, c, n, path) })
+			tasks = append(tasks, task{index: i, path: path})
 		}
 		if n.LaunchTemplate.ID != "" && n.LaunchTemplate.Version != "" {
-			wg.Go(func() { lookups[i].template, lookups[i].templErr = templateImage(ctx, c, n.LaunchTemplate) })
+			tasks = append(tasks, task{index: i, template: true})
 		}
 	}
 	if len(groupNames) > 0 {
 		wg.Go(func() { groups, groupsErr = groupInstances(ctx, c, groupNames) })
 	}
+	ran := each(ctx, f.tickets(c), tasks, func(ctx context.Context, t task) bool {
+		// Each task writes its own fields of its own nodegroup.
+		n, l := &nodegroups[t.index], &lookups[t.index]
+		if t.template {
+			l.template, l.templErr = templateImage(ctx, c, n.LaunchTemplate)
+		} else {
+			l.latest, l.latestErr = f.latestAMI(ctx, c, n, t.path)
+		}
+		return true
+	})
 	wg.Wait()
+	for i, t := range tasks {
+		// A task that never started, because the context ended, did not
+		// find "no AMI": it was not sent.
+		if err := chunkError(ctx, ran[i], nil); err != nil {
+			if t.template {
+				lookups[t.index].templErr = err
+			} else {
+				lookups[t.index].latestErr = err
+			}
+		}
+	}
 
 	instances, instancesErr := instancesByID(ctx, c, instancesToRead(nodegroups, lookups, groups, need))
 

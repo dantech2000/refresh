@@ -170,7 +170,10 @@ func TestDescribe_Deadline(t *testing.T) {
 			<-hctx.Done()
 		}
 	}
-	err := e.Run(ctx, "cluster", "describe", "prod", "-o", "json")
+	// One request slot: the calls go out one at a time, in the order that
+	// they asked for the slot. The cluster asked before any call of the
+	// second wave, so it is answered before the run is cut short.
+	err := e.Run(ctx, "cluster", "describe", "prod", "-o", "json", "--max-concurrency", "1")
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
 		t.Fatalf("exit code = %d (%v), want %d", got, err, cmdutil.ExitIncomplete)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
-	"github.com/dantech2000/refresh/internal/fanout"
 )
 
 // addonsResult is the add-on group of a snapshot.
@@ -47,39 +45,45 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 		}
 	}
 
-	type described struct {
-		ran     bool
-		addon   Addon
-		failure *apidoc.Failure
-	}
-	// In name order from here on: the two fan-outs below fill the same
-	// positions.
+	// In name order from here on.
 	names = slices.Sorted(slices.Values(names))
 
-	// The newest versions, next to the describe calls.
-	type newest struct {
+	// One task for each add-on, and with need.LatestAddons one more for
+	// its newest version. They run in one fan-out, so the lookups of the
+	// newest versions run next to the describe calls.
+	type task struct {
+		index  int
+		newest bool // the lookup of the newest version, not the describe
+	}
+	type result struct {
 		ran     bool
-		version string
-		err     error
+		addon   Addon           // of a describe
+		failure *apidoc.Failure // of a describe
+		version string          // of a lookup
+		err     error           // of a lookup
+		skipped bool            // of a lookup: the cluster has no version
 	}
-	var (
-		wg      sync.WaitGroup
-		lookups []newest
-		version Version
-	)
+	tasks := make([]task, 0, 2*len(names))
+	for i := range names {
+		tasks = append(tasks, task{index: i})
+	}
 	if need.LatestAddons {
-		wg.Go(func() {
-			if version = clusterVersion(); version.IsZero() {
-				return
-			}
-			lookups = fanout.ForEach(ctx, names, max(len(names), 1), func(ctx context.Context, name string) newest {
-				latest, err := f.latestAddon(ctx, c, name, version)
-				return newest{ran: true, version: latest, err: err}
-			})
-		})
+		for i := range names {
+			tasks = append(tasks, task{index: i, newest: true})
+		}
 	}
-
-	results := fanout.ForEach(ctx, names, max(len(names), 1), func(ctx context.Context, name string) described {
+	results := each(ctx, f.tickets(c), tasks, func(ctx context.Context, t task) result {
+		name := names[t.index]
+		if t.newest {
+			// The cluster is described in the first wave, so this wait is
+			// over when the task starts, or soon after.
+			version := clusterVersion()
+			if version.IsZero() {
+				return result{ran: true, skipped: true}
+			}
+			latest, err := f.latestAddon(ctx, c, name, version)
+			return result{ran: true, version: latest, err: err}
+		}
 		out, err := c.EKS.DescribeAddon(ctx, &eks.DescribeAddonInput{ClusterName: aws.String(cluster), AddonName: aws.String(name)})
 		if err == nil && out.Addon == nil {
 			err = fmt.Errorf("describing add-on %s: %w", name, errEmptyAnswer)
@@ -87,7 +91,7 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 		if err != nil {
 			failure := inRegion(c, FailureFromError(apidoc.FailureAddon, name, err))
 			failure.Cluster = cluster
-			return described{ran: true, addon: Addon{Name: name, State: stateOf(err)}, failure: &failure}
+			return result{ran: true, addon: Addon{Name: name, State: stateOf(err)}, failure: &failure}
 		}
 		in := out.Addon
 		addon := Addon{
@@ -106,11 +110,11 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 				addon.Issues = append(addon.Issues, Issue{Code: string(issue.Code), Message: aws.ToString(issue.Message), ResourceIDs: issue.ResourceIds})
 			}
 		}
-		return described{ran: true, addon: addon}
+		return result{ran: true, addon: addon}
 	})
 
 	res := addonsResult{addons: make([]Addon, len(names)), state: Collected}
-	for i, r := range results {
+	for i, r := range results[:len(names)] {
 		if !r.ran {
 			// The context ended before this add-on started.
 			failure := inRegion(c, notAttempted(ctx, apidoc.FailureAddon, names[i]))
@@ -123,10 +127,9 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 			res.state = Partial
 		}
 	}
-	wg.Wait()
-	for i := range lookups {
-		a, l := &res.addons[i], lookups[i]
-		if a.State != Collected {
+	for i, l := range results[len(names):] {
+		a := &res.addons[i]
+		if a.State != Collected || l.skipped {
 			continue
 		}
 		err := chunkError(ctx, l.ran, l.err)

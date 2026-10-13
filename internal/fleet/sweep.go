@@ -62,8 +62,9 @@ type regionOutcome struct {
 
 // Sweep reads the clusters of every region in r. All the regions start at
 // once. In each region the request limit of p bounds the calls, and the
-// sweep works on at most that many clusters at a time, in name order, so
-// that rows finish in order: when ctx ends, the rows before the ones in
+// sweep works on at most that many clusters at a time, or half as many
+// when a cluster makes several calls at once, in name order, so that rows
+// finish in order: when ctx ends, the rows before the ones in
 // work are complete and the rows after them are marked not attempted.
 //
 // A region of a default sweep whose cluster list fails because the region
@@ -120,6 +121,12 @@ func (f *Fetcher) sweepRegion(ctx context.Context, c *awsx.Clients, limit int, o
 	slices.Sort(names)
 	if limit <= 0 {
 		limit = max(len(names), 1)
+	} else if opts.Need.wide() {
+		// A cluster that reads more than itself has two or more calls to
+		// make at any time, so half as many clusters in work still fill
+		// the request slots. Each cluster in work costs goroutines and
+		// their stacks, which were most of the memory of a large sweep.
+		limit = max(limit/2, 1)
 	}
 	snaps := fanout.ForEach(ctx, names, limit, func(ctx context.Context, name string) *Snapshot {
 		// The error is in the snapshot too, as the failure of the row.

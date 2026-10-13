@@ -195,30 +195,38 @@ The network sets most of the wall time. The plan controls the number of calls, t
 
 ### Old and new, measured 2026-10-12
 
-Both binaries built with `-trimpath -ldflags='-s -w'`, 40 runs each, on a laptop that was also running tests. The new binary does not link the AWS SDK or client-go yet, so its size, memory, and start time will rise as commands land.
+Both binaries built with `-trimpath -ldflags='-s -w'`. The new binary has the seven read commands of phase 2 and links the AWS SDK and client-go's kubeconfig loader.
+
+Commands with no network call, 40 runs each:
 
 | Command | Old, mean | New, mean | Old memory | New memory |
 |---|---|---|---|---|
-| `--help` | 49 ms | 19 ms | 43 MB | 13 MB |
-| `version` | 34 ms | 16 ms | 43 MB | 13 MB |
-| `current` | 35 ms | 15 ms | 43 MB | 13 MB |
-| `context list` | 33 ms | 12 ms | 43 MB | 13 MB |
-| `completion zsh` | 28 ms | 9 ms | 42 MB | 13 MB |
-| Binary size | 97 MB | 9 MB | | |
+| `--help` | 13.7 ms | 6.5 ms | 45 MB | 22 MB |
+| `version` | 13.3 ms | 6.3 ms | 44 MB | 22 MB |
+| `context current` (old: `current`) | 13.4 ms | 6.4 ms | 44 MB | 22 MB |
+| `context list` | 13.2 ms | 6.4 ms | 44 MB | 22 MB |
+| `completion zsh` | 13.5 ms | 6.6 ms | 44 MB | 23 MB |
+| Binary size | 102 MB | 21 MB | | |
 
-Old binary against a fake fleet of 200 clusters in 8 regions. The new binary has no read commands yet; these are the numbers it must beat.
+The read commands against a fake fleet of 200 clusters in 8 regions (`tools/fakefleet`), with `-o json`. Each number is the mean of 8 runs after one warm-up run, old and new in the same run, with 32 s between two commands so that the loopback ports of the runs before drain. Memory is the largest peak RSS of the runs.
 
-| Command | No latency | Each call waits 0 to 100 ms |
-|---|---|---|
-| `status -A` | 76 ms | 1,990 ms |
-| `cluster list -A` | 37 ms | 790 ms |
-| `cluster list`, one region | 20 ms | 677 ms |
-| `cluster describe` | 17 ms | 394 ms |
-| `nodegroup list` | 17 ms | 315 ms |
-| `addon list` | 17 ms | 224 ms |
-| `cluster upgrade-check` | 22 ms | 769 ms |
+| Command | Old, no latency | New, no latency | Old, each call waits 0 to 100 ms | New, each call waits 0 to 100 ms | Old memory | New memory |
+|---|---|---|---|---|---|---|
+| `status -A` | 67 ms | 78 ms | 1,929 ms | 721 ms | 85 MB | 96 MB |
+| `cluster list -A` | 37 ms | 22 ms | 782 ms | 234 ms | 75 MB | 47 MB |
+| `cluster list`, one region | 20 ms | 12 ms | 767 ms | 172 ms | 53 MB | 30 MB |
+| `cluster describe` | 17 ms | 11 ms | 453 ms | 172 ms | 49 MB | 27 MB |
+| `nodegroup list` | 16 ms | 9 ms | 277 ms | 166 ms | 48 MB | 27 MB |
+| `nodegroup describe` | 16 ms | 10 ms | 255 ms | 137 ms | 47 MB | 26 MB |
+| `addon list` | 16 ms | 10 ms | 262 ms | 148 ms | 49 MB | 27 MB |
+| `addon describe` | 16 ms | 10 ms | 172 ms | 88 ms | 47 MB | 26 MB |
+| `cluster upgrade-check` | 22 ms | phase 3 | 769 ms | phase 3 | | |
 
-What the second table says: local work is already small. With a 50 ms mean call, `cluster list` in one region takes about 13 calls' worth of time and `upgrade-check` about 15. The time goes to calls made one after another. The target for the new read side is fewer sequential round trips per command, and the parity runner's request log measures that directly.
+What the table says:
+
+- With latency, the time of a command is the number of its sequential round trips, or its call volume divided by the requests in flight, whichever is larger. The old `cluster list` in one region took about 13 calls' worth of time for 4 round trips, because it ran 8 clusters at once. The new one takes 2.
+- `status -A` makes 2,256 calls for this fleet. The new binary keeps 32 requests in flight in each region. Its memory follows the requests in flight and the clusters in work: about 96 MB with 16 clusters in work for each region, and about 74 MB with 8, which is about 25 percent slower.
+- With no latency, `status -A` is local work and connection setup, and the new binary is a little slower there: it opens 256 connections at once to the one host of the fake. Against AWS each region is its own host.
 
 ### Gates
 

@@ -356,6 +356,19 @@ func holdUntilFull(e *cmdtest.Fake, regions []string, limit int) {
 	}
 }
 
+// checkPeak fails the test when a region did not come close to the default
+// request limit of 32, or passed it. The server's count is not exact to
+// the request. It counts a request until its answer is written, which can
+// be a moment after the client read the answer and sent the next request:
+// one above the limit. And a request that the transport sent again after
+// a connection closed arrived twice for holdUntilFull: a few below.
+func checkPeak(t *testing.T, e *cmdtest.Fake, region string) {
+	t.Helper()
+	if peak := e.Server.PeakConcurrency("", region); peak < 28 || peak > 33 {
+		t.Errorf("%s: peak requests in flight = %d, want the default limit of 32", region, peak)
+	}
+}
+
 // A sweep of 200 clusters in 8 regions: the number of calls is the one
 // that the design gives, the shared lookups are made once for a region,
 // and every region reaches the request limit and does not pass it.
@@ -373,11 +386,9 @@ func TestStatus_LargeFleetCallsAndLimit(t *testing.T) {
 		t.Errorf("calls = %d, want %d", got, want)
 	}
 	for _, region := range eightRegions {
-		if peak := e.Server.PeakConcurrency("", region); peak != 32 {
-			t.Errorf("%s: peak requests in flight = %d, want the default limit of 32", region, peak)
-		}
+		checkPeak(t, e, region)
 	}
-	t.Logf("calls: %d; peak requests in flight in each region: 32; over all regions: %d", distinctCalls(e), e.Server.PeakConcurrency("", ""))
+	t.Logf("calls: %d; peak requests in flight over all regions: %d", distinctCalls(e), e.Server.PeakConcurrency("", ""))
 }
 
 // Throttling at the limit: once a region has had 32 requests in flight,
@@ -416,9 +427,7 @@ func TestStatus_ThrottledAtTheLimit(t *testing.T) {
 		t.Errorf("%d calls were throttled, want some hundred: the regions did not stay at the limit", len(throttled))
 	}
 	for _, region := range eightRegions {
-		if peak := e.Server.PeakConcurrency("", region); peak != 32 {
-			t.Errorf("%s: peak requests in flight = %d, want 32, also with retries", region, peak)
-		}
+		checkPeak(t, e, region)
 	}
 	t.Logf("%d calls were throttled once each; the run completed with no failure", len(throttled))
 }
@@ -433,7 +442,10 @@ func TestStatus_Deadline(t *testing.T) {
 			<-hctx.Done()
 		}
 	}
-	err := e.Run(ctx, "status", "-o", "json")
+	// One request slot: the calls go out one at a time, in the order that
+	// they asked for the slot. The cluster asked before any call of the
+	// second wave, so it is answered before the run is cut short.
+	err := e.Run(ctx, "status", "-o", "json", "--max-concurrency", "1")
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
 		t.Fatalf("exit code = %d (%v), want %d", got, err, cmdutil.ExitIncomplete)
 	}
@@ -462,5 +474,37 @@ func TestStatus_InvalidInput(t *testing.T) {
 				t.Errorf("requests = %v, want none", e.Operations())
 			}
 		})
+	}
+}
+
+// On a terminal the table appears as the regions answer, and the final
+// table is printed once. A table taller than the terminal gets one status
+// line on stderr in place of the redraw.
+func TestStatus_TerminalProgress(t *testing.T) {
+	plain := newFake(t)
+	_ = plain.Run(cmdutiltest.Context(t), append(twoRegions, "-o", "table")...)
+
+	e := newFake(t)
+	e.Factory.IOStreams.OutTTY, e.Factory.IOStreams.ErrTTY = true, true
+	e.Factory.IOStreams.TermSize = func() (int, int) { return 200, 40 }
+	_ = e.Run(cmdutiltest.Context(t), twoRegions...)
+	out := e.Out.String()
+	if n := strings.Count(out, "\x1b[J"); n < 2 {
+		t.Errorf("stdout has %d redraws, want one for each region and the clear before the final table:\n%q", n, out)
+	}
+	final := out[strings.LastIndex(out, "\x1b[J")+len("\x1b[J"):]
+	if diff := cmp.Diff(plain.Out.String(), final); diff != "" {
+		t.Errorf("the final table is not the table of a run without a terminal (-plain +terminal):\n%s", diff)
+	}
+
+	short := newFake(t)
+	short.Factory.IOStreams.OutTTY, short.Factory.IOStreams.ErrTTY = true, true
+	short.Factory.IOStreams.TermSize = func() (int, int) { return 200, 5 }
+	_ = short.Run(cmdutiltest.Context(t), twoRegions...)
+	if strings.Contains(short.Out.String(), "\x1b[") {
+		t.Errorf("stdout has cursor codes on a terminal that is too short:\n%q", short.Out.String())
+	}
+	if !strings.Contains(short.Err.String(), "of 2 regions") {
+		t.Errorf("stderr = %q, want the status line", short.Err.String())
 	}
 }
