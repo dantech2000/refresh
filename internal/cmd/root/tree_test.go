@@ -60,13 +60,22 @@ func TestCommandsHaveHelpText(t *testing.T) {
 	})
 }
 
-// TestRunnableCommandsSetArgs checks structure only: every command but
-// cobra's help command is runnable and has a non-nil Args. It does not run
-// the commands, so it does not show that Args is the right validator.
+// TestRunnableCommandsSetArgs checks structure only: every command is
+// runnable, and every command but the root and cobra's help command has a
+// non-nil Args. It does not run the commands, so it does not show that Args
+// is the right validator.
 func TestRunnableCommandsSetArgs(t *testing.T) {
 	walk(newTree(), func(cmd *cobra.Command) {
 		// Cobra's help command takes the path of any command and sets no Args.
 		if cmd.CommandPath() == "refresh help" {
+			return
+		}
+		// The root is the exception: with no Args, cobra itself rejects an
+		// unknown command and suggests the nearest one.
+		if !cmd.HasParent() {
+			if cmd.Args != nil {
+				t.Errorf("%s: the root sets Args, which turns off cobra's suggestions", cmd.CommandPath())
+			}
 			return
 		}
 		// Cobra prints help and exits 0 for a group that is not runnable,

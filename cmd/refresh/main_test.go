@@ -48,16 +48,22 @@ func TestRun(t *testing.T) {
 			wantErrOut: "Error: unknown command \"bogus\" for \"refresh\"\n",
 		},
 		{
+			name:       "command with a typing error",
+			args:       []string{"versoin"},
+			wantCode:   1,
+			wantErrOut: "Error: unknown command \"versoin\" for \"refresh\"\n\nDid you mean this?\n\tversion\n",
+		},
+		{
 			name:       "unknown flag",
 			args:       []string{"version", "--bogus"},
 			wantCode:   1,
-			wantErrOut: "Error: unknown flag: --bogus\n",
+			wantErrOut: "Error: unknown flag: --bogus\nRun 'refresh version --help' for usage.\n",
 		},
 		{
 			name:       "invalid output format",
 			args:       []string{"version", "-o", "jsom"},
 			wantCode:   1,
-			wantErrOut: "Error: invalid argument \"jsom\" for \"-o, --output\" flag: must be one of: table, json, yaml\n",
+			wantErrOut: "Error: invalid argument \"jsom\" for \"-o, --output\" flag: must be one of: table, json, yaml\nRun 'refresh version --help' for usage.\n",
 		},
 	}
 	for _, tt := range tests {

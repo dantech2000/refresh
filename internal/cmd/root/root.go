@@ -55,7 +55,9 @@ skip the confirmation prompts.`,
 
   # Show the active context
   refresh context current`,
-		Args:          cobra.NoArgs,
+		// No Args: cobra's own check for a root with subcommands answers an
+		// unknown command with "Did you mean this?" suggestions, and an Args
+		// function here would replace it.
 		Version:       f.Build.Version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -66,6 +68,11 @@ skip the confirmation prompts.`,
 			return cmd.Help()
 		},
 	}
+	// Every command gets this through the root: a flag error ends with the
+	// way to its help.
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		return fmt.Errorf("%w\nRun '%s --help' for usage.", err, c.CommandPath())
+	})
 	cmd.SetIn(f.IOStreams.In)
 	cmd.SetOut(f.IOStreams.Out)
 	cmd.SetErr(f.IOStreams.ErrOut)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/dantech2000/refresh/internal/build"
@@ -63,7 +64,8 @@ func exitCode(ctx context.Context, errOut io.Writer, err error) int {
 	interrupted := ctx.Err() != nil
 	msg := ""
 	if err != nil {
-		msg = err.Error()
+		// Cobra ends its "Did you mean this?" list with a line break.
+		msg = strings.TrimRight(err.Error(), "\n")
 	}
 	if msg == "" && interrupted {
 		msg = "interrupted"

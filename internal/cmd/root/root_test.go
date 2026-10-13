@@ -146,9 +146,33 @@ func TestUsageErrors(t *testing.T) {
 		wantErr string
 	}{
 		{name: "unknown command", args: []string{"bogus"}, wantErr: `unknown command "bogus" for "refresh"`},
-		{name: "unknown flag", args: []string{"version", "--bogus"}, wantErr: "unknown flag: --bogus"},
-		{name: "unknown global flag", args: []string{"--bogus", "version"}, wantErr: "unknown flag: --bogus"},
-		{name: "v is not the version", args: []string{"-v"}, wantErr: "unknown shorthand flag: 'v' in -v"},
+		{
+			name:    "command with a typing error",
+			args:    []string{"versoin"},
+			wantErr: "unknown command \"versoin\" for \"refresh\"\n\nDid you mean this?\n\tversion\n",
+		},
+		{
+			name:    "unknown flag",
+			args:    []string{"version", "--bogus"},
+			wantErr: "unknown flag: --bogus\nRun 'refresh version --help' for usage.",
+		},
+		{
+			name: "unknown global flag",
+			// Cobra does not look for the command after a flag it cannot
+			// read, so the hint names the root.
+			args:    []string{"--bogus", "version"},
+			wantErr: "unknown flag: --bogus\nRun 'refresh --help' for usage.",
+		},
+		{
+			name:    "unknown flag of the root",
+			args:    []string{"--bogus"},
+			wantErr: "unknown flag: --bogus\nRun 'refresh --help' for usage.",
+		},
+		{
+			name:    "v is not the version",
+			args:    []string{"-v"},
+			wantErr: "unknown shorthand flag: 'v' in -v\nRun 'refresh --help' for usage.",
+		},
 		{
 			name:    "extra argument",
 			args:    []string{"version", "extra"},
@@ -157,12 +181,12 @@ func TestUsageErrors(t *testing.T) {
 		{
 			name:    "format that version does not support",
 			args:    []string{"version", "-o", "plain"},
-			wantErr: `invalid argument "plain" for "-o, --output" flag: must be one of: table, json, yaml`,
+			wantErr: "invalid argument \"plain\" for \"-o, --output\" flag: must be one of: table, json, yaml\nRun 'refresh version --help' for usage.",
 		},
 		{
 			name:    "invalid timeout",
 			args:    []string{"--timeout", "soon", "version"},
-			wantErr: `invalid argument "soon" for "-t, --timeout" flag: time: invalid duration "soon"`,
+			wantErr: "invalid argument \"soon\" for \"-t, --timeout\" flag: time: invalid duration \"soon\"\nRun 'refresh version --help' for usage.",
 		},
 		{
 			name:    "invalid timeout in the environment",

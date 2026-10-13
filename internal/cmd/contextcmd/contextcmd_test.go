@@ -208,7 +208,7 @@ func TestContextCommands(t *testing.T) {
 				{args: []string{"context", "add", "", "--cluster", "x"}, wantErr: "context name is required"},
 				{args: []string{"context", "list", "extra"}, wantErr: `unknown command "extra" for "refresh context list"`},
 				{args: []string{"context", "bogus"}, wantErr: `unknown command "bogus" for "refresh context"`},
-				{args: []string{"context", "list", "-o", "json"}, wantErr: "unknown shorthand flag: 'o' in -o"},
+				{args: []string{"context", "list", "-o", "json"}, wantErr: "unknown shorthand flag: 'o' in -o\nRun 'refresh context list --help' for usage."},
 			},
 			wantFile: twoContexts(),
 		},
