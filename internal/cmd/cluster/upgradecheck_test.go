@@ -183,16 +183,31 @@ func TestUpgradeCheck_Incomplete(t *testing.T) {
 	if !strings.Contains(e.Out.String(), "[X] NOT READY") {
 		t.Errorf("stdout should still read NOT READY:\n%s", e.Out.String())
 	}
+	if !strings.HasPrefix(err.Error(), "upgrade blocked: Insights: 1 ERROR insight") || !strings.Contains(err.Error(), "; incomplete data: ") {
+		t.Errorf("error = %q, want the blocker and the failures", err)
+	}
 
-	// The insights cannot be read: the check is unreadable, exit 4.
+	// The insights cannot be read: the check is unreadable, exit 4, and
+	// unread is not "not evaluated".
 	e = newCheckFake(t, ready)
 	e.World.SetFault(fleettest.EKSListInsights, fleettest.Fault{Deny: true})
 	err = e.Run(cmdutiltest.Context(t), "cluster", "upgrade-check", "prod", "-o", "plain")
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
 		t.Errorf("exit code = %d (%v), want 4", got, err)
 	}
-	if !strings.Contains(e.Out.String(), "checks.Insights.outcome\tUnreadable\n") {
-		t.Errorf("stdout:\n%s", e.Out.String())
+	for _, want := range []string{"checks.Insights.outcome\tUnreadable\n", "insights.evaluated\tunreadable; the insights could not be read\n"} {
+		if !strings.Contains(e.Out.String(), want) {
+			t.Errorf("stdout has no %q:\n%s", want, e.Out.String())
+		}
+	}
+	if !strings.Contains(err.Error(), "upgrade check incomplete: Insights:") || !strings.Contains(err.Error(), "incomplete data: 1 failure") {
+		t.Errorf("error = %q, want the verdict and the failures", err)
+	}
+	e = newCheckFake(t, ready)
+	e.World.SetFault(fleettest.EKSListInsights, fleettest.Fault{Deny: true})
+	_ = e.Run(cmdutiltest.Context(t), "cluster", "upgrade-check", "prod", "-o", "json")
+	if strings.Contains(e.Out.String(), "insightsEvaluated") {
+		t.Errorf("the key must be left out when the insights were not read:\n%s", e.Out.String())
 	}
 
 	// The update history is an extra: without it there is no rollback

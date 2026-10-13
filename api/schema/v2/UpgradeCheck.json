@@ -414,7 +414,7 @@
     },
     "insightsEvaluated": {
       "type": "boolean",
-      "description": "insightsEvaluated is false when EKS returned no insight of the category at all, passing ones included: it has not evaluated the cluster yet."
+      "description": "insightsEvaluated is false when EKS returned no insight of the category at all, passing ones included: it has not evaluated the cluster yet. It is left out when the insights could not be read."
     },
     "checks": {
       "items": {
@@ -443,7 +443,6 @@
     "readiness",
     "reasons",
     "insights",
-    "insightsEvaluated",
     "checks",
     "failures"
   ],

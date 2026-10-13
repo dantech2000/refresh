@@ -38,8 +38,8 @@ type UpgradeCheck struct {
 	Insights []Insight `json:"insights"`
 	// InsightsEvaluated is false when EKS returned no insight of the
 	// category at all, passing ones included: it has not evaluated the
-	// cluster yet.
-	InsightsEvaluated bool `json:"insightsEvaluated"`
+	// cluster yet. It is left out when the insights could not be read.
+	InsightsEvaluated *bool `json:"insightsEvaluated,omitzero"`
 	// Checks are the readiness checks: the insights, the version skew, and
 	// the control plane.
 	Checks   []HealthResult `json:"checks"`

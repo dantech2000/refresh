@@ -201,11 +201,13 @@ func (o *upgradeCheckOptions) document(snap *fleet.Snapshot, results []health.Re
 	c := snap.ClusterDoc()
 	doc := apidoc.UpgradeCheck{
 		Cluster: c.Name, Region: c.Region, Version: c.Version, Support: c.Support,
-		Insights:          []apidoc.Insight{},
-		InsightsEvaluated: evaluated && len(insights) > 0,
-		Checks:            health.Documents(results),
-		Rollback:          rollback,
-		Failures:          append(slices.Clone(snap.Failures), health.Failures(results)...),
+		Insights: []apidoc.Insight{},
+		Checks:   health.Documents(results),
+		Rollback: rollback,
+		Failures: append(slices.Clone(snap.Failures), health.Failures(results)...),
+	}
+	if evaluated {
+		doc.InsightsEvaluated = new(len(insights) > 0)
 	}
 	for _, in := range insights {
 		if len(o.statuses) > 0 && !slices.Contains(o.statuses, in.Status) {
@@ -302,23 +304,34 @@ func countInsights(insights []apidoc.Insight) *apidoc.InsightCounts {
 }
 
 // exit returns the exit error of the report: the verdict, or 4 for a
-// document with failures, whichever is higher. --exit-zero drops it.
+// document with failures, whichever is higher. The message names the
+// verdict and the failures both. --exit-zero drops it.
 func (o *upgradeCheckOptions) exit(doc apidoc.UpgradeCheck) error {
 	if o.exitZero {
 		return nil
 	}
-	if len(doc.Failures) > 0 {
-		return cmdutil.IncompleteError(doc.Failures)
-	}
+	reasons := strings.Join(doc.Reasons, "; ")
+	var verdict string
+	code := cmdutil.ExitOK
 	switch doc.Readiness {
 	case apidoc.ReadinessBlocked:
-		return &cmdutil.ExitError{Code: cmdutil.ExitBlocked, Err: fmt.Errorf("upgrade blocked: %s (pass --exit-zero to report only)", strings.Join(doc.Reasons, "; "))}
+		verdict, code = "upgrade blocked: "+reasons, cmdutil.ExitBlocked
 	case apidoc.ReadinessReview:
-		return &cmdutil.ExitError{Code: cmdutil.ExitNeedsAttention, Err: fmt.Errorf("upgrade needs review: %s (pass --exit-zero to report only)", strings.Join(doc.Reasons, "; "))}
+		verdict, code = "upgrade needs review: "+reasons, cmdutil.ExitNeedsAttention
 	case apidoc.ReadinessIncomplete:
-		return &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: fmt.Errorf("upgrade check incomplete: %s", strings.Join(doc.Reasons, "; "))}
+		verdict, code = "upgrade check incomplete: "+reasons, cmdutil.ExitIncomplete
 	}
-	return nil
+	if incomplete := cmdutil.IncompleteError(doc.Failures); incomplete != nil {
+		msg := incomplete.Error()
+		if verdict != "" {
+			msg = verdict + "; " + msg
+		}
+		return &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: errors.New(msg)}
+	}
+	if code == cmdutil.ExitOK {
+		return nil
+	}
+	return &cmdutil.ExitError{Code: code, Err: errors.New(verdict + " (pass --exit-zero to report only)")}
 }
 
 // describeInsight runs the --insight form: one insight in full.
@@ -463,11 +476,13 @@ func upgradeCheckView(doc apidoc.UpgradeCheck) view.Description {
 			{Name: "version", Value: in.KubernetesVersion},
 		}})
 	}
-	if doc.InsightsEvaluated && len(insights.Items) == 0 {
-		insights.Fields = []view.Field{{Name: "shown", Value: "none; pass --show-passing for the passing insights"}}
-	}
-	if !doc.InsightsEvaluated {
+	switch {
+	case doc.InsightsEvaluated == nil:
+		insights.Fields = []view.Field{{Name: "evaluated", Value: "unreadable; the insights could not be read", Status: view.Unknown}}
+	case !*doc.InsightsEvaluated:
 		insights.Fields = []view.Field{{Name: "evaluated", Value: "no; EKS has not evaluated the cluster yet", Status: view.Warn}}
+	case len(insights.Items) == 0:
+		insights.Fields = []view.Field{{Name: "shown", Value: "none; pass --show-passing for the passing insights"}}
 	}
 	nodegroups := view.Section{Title: "NODEGROUP SKEW"}
 	addons := view.Section{Title: "ADD-ON SKEW"}
