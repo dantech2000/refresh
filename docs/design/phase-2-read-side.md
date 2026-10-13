@@ -1,6 +1,8 @@
 # Phase 2 design note: the read side
 
-Status: draft 2. It applies the review of draft 1 and the owner's decisions, which section 11 records. It belongs to `REWRITE.md` and stays inside `CONTRACT.md`.
+Status: draft 3. Steps 1 to 3 of section 10 are built, and section 13 lists what the code changed in this note.
+
+Draft 2: It applies the review of draft 1 and the owner's decisions, which section 11 records. It belongs to `REWRITE.md` and stays inside `CONTRACT.md`.
 
 Scope: `internal/fleet`, `internal/fleet/fleetdata`, `internal/view`, cluster target resolution and the `-f/--filter` helper in `internal/cmdutil`, the v2 read documents in `internal/apidoc`, and seven commands: `status`, `cluster list`, `cluster describe`, `nodegroup list`, `nodegroup describe`, `addon list`, `addon describe`. Watch mode is included.
 
@@ -276,7 +278,7 @@ The rules of the middleware:
 
 - **One semaphore for each region.** The `Provider` owns it. The three client sets of a region (`Clients`, `SweepClients`, `PollClients`) share it, and so do the seven services.
 - **Position.** It sits in the Finalize step of the SDK stack, after `Retry` and before signing. A slot therefore covers one attempt: credential retrieval, signing, the round trip, and the read of the body. The slot is free during a backoff sleep and between the pages of a paged call.
-- **`ErrNotSent`.** It is returned only when the first attempt of a call got no slot before the context ended. A later attempt that gets no slot returns the real error of the attempt before it. A part of the middleware in the Initialize step keeps that state for the call.
+- **`ErrNotSent`.** It is returned only when the first attempt of a call got no slot before the context ended. A later attempt that gets no slot returns the real error of the attempt before it, in a wrapper that `awsx.IsRetryable` refuses, so the retryer stops. A part of the middleware in the Initialize step keeps that state for the call.
 
 The request limit alone is not enough. If a sweep started every cluster of a region at once, the work would run breadth-first, and a deadline would leave every row partly read. The old code left finished rows and rows it never started (`legacy/internal/services/status/service.go`). So a sweep also bounds the clusters it works on:
 
@@ -458,13 +460,13 @@ Changes from the old code:
 | A single-region `cluster list` skips the sweep code | `status` and `cluster list` always go through `Sweep` | One path, also for one named region. |
 | Clusters in a region: 8 at once, with nested fan-outs | `--max-concurrency` clusters at once, under the request limit | See "The concurrency limit" in section 2. |
 
-Which regions a command sweeps, in `cmdutil.SweepRegions(f, home, allRegions)`:
+Which regions a command sweeps, in `cmdutil.SweepRegions(global, home, allRegions)`:
 
 1. `-r` given: those regions, named.
 2. `-A`, or no home region is configured: `REFRESH_EKS_REGIONS` when set, named. Else the list from `fleetdata.Regions` for the partition of the home region, as a default sweep.
 3. Else the home region, named.
 
-`-A` with `-r` is a usage error. The old CLI let one silently win, depending on where the flag stood.
+`-A` with `-r` is a usage error, from `cmdutil.ValidateSweepFlags` in `validate`. The old CLI let one silently win, depending on where the flag stood.
 
 What is silent and what is reported:
 
@@ -515,9 +517,13 @@ package awsx
 type ErrorClass string // AccessDenied, CredentialError, Throttled, NotFound, RegionUnavailable,
 // InvalidRequest, ServiceError, NetworkError, Timeout, Interrupted, NotAttempted, Unknown
 
-// Classify returns the class of err, the AWS error code, and the IAM action
-// of the call. It reads the types in the chain of err, never its text.
-func Classify(err error) (class ErrorClass, code, operation string)
+// Classify returns the class of err. It reads the types in the chain of
+// err, never its text.
+func Classify(err error) ErrorClass
+
+// Operation returns the IAM action of the call that failed, such as
+// "eks:DescribeCluster".
+func Operation(err error) string
 
 package fleet
 
@@ -527,7 +533,7 @@ func FailureFromError(kind apidoc.FailureKind, name string, err error) apidoc.Fa
 
 `awsx.Classify` holds the ordered checks of `diag.Classify`, beside the typed predicates it calls: interrupt, `ErrNotSent`, dial failure, deadline, credentials, permission, region disabled, throttling, not found, validation, server error, other API code, region error, network error. `ErrNotSent` is new and gives `NotAttempted`. The operation comes from `smithy.OperationError`, with a table from SDK service ID to IAM prefix. A test checks that table against `awsx.RequiredPermissions`.
 
-`fleet.FailureFromError` is a few lines: it calls `Classify` and fills the document type. It lives in `fleet` because that is the lowest package that imports both `awsx` and `apidoc`. Every `ErrorClass` value is also a `Reason` value, and a test asserts that.
+`fleet.FailureFromError` is a few lines: it calls `Classify`, `Operation`, and the existing `ErrorCode` and `Summary`, and fills the document type. It lives in `fleet` because that is the lowest package that imports both `awsx` and `apidoc`. Every `ErrorClass` value is also a `Reason` value, and a test asserts that.
 
 How each case appears:
 
@@ -764,10 +770,12 @@ type Theme struct {
 }
 type Status int // Neutral, Healthy, Warn, Fail, Progress, Unknown
 
-func (t Theme) Paint(c Color, s string) string
-func (t Theme) Bold(c Color, s string) string
+func (t Theme) Glyph(s Status) string
 func (t Theme) Token(s Status, label string) string // glyph, a space, the label
 func (t Theme) Heading(title string) string
+func (t Theme) Strong(s string) string
+func (t Theme) Dim(s string) string
+func (t Theme) Caution(s string) string
 
 // StatusOf maps an AWS status string, such as ACTIVE or UPDATE_FAILED, to
 // a Status. Values of refresh's own enums are mapped with a switch on the
@@ -775,7 +783,7 @@ func (t Theme) Heading(title string) string
 func StatusOf(awsStatus string) Status
 ```
 
-The palette, the glyphs, their ASCII forms, the 256-color downgrade, and the status table are ports of `legacy/internal/render` (`theme.go`, `tokens.go`) and `ui.ClassifyStatus`. The palette becomes constants.
+The palette, the glyphs, their ASCII forms, the 256-color downgrade, and the status table are ports of `legacy/internal/render` (`theme.go`, `tokens.go`) and `ui.ClassifyStatus`. The palette is not exported. A caller names what a text is (a heading, dim text, a caution) and never a color, so `Paint` and `Bold` of draft 2 are gone.
 
 The decision about color and glyphs is made once for each stream, in `cmdutil`:
 
@@ -784,10 +792,11 @@ The decision about color and glyphs is made once for each stream, in `cmdutil`:
 // TERM, and LC_ALL, LC_CTYPE, LANG. A test sets them.
 ColorDepth view.ColorDepth
 Unicode    bool
-TermSize   func() (width, height int) // of Out; zeros when Out is no terminal
+TermSize   func() (width, height int) // of the terminal behind Out
 
 func (s *IOStreams) Theme() view.Theme    // NoColor depth unless ColorEnabled()
 func (s *IOStreams) ErrTheme() view.Theme // the same, for ErrOut
+func (s *IOStreams) Size() (width, height int) // zeros when Out is no terminal
 ```
 
 Color is always an addition. Every status has a glyph and a label, so output reads the same with `--no-color`.
@@ -802,13 +811,14 @@ type Column[T any] struct {
 	MinWidth int
 	MaxWidth int // 0 means no limit
 	Align    Align
-	Truncate Truncate // TruncateEnd, TruncateMiddle, TruncateNever
+	Truncate Truncate // TruncateEnd, TruncateNever
 }
 type List[T any] struct {
 	Title    string // "NODEGROUPS"
 	Subtitle string // "prod · 3"
 	Columns  []Column[T]
 	Rows     []T
+	Empty    string           // shown in place of the rows when there are none
 	Notes    []string         // lines after the table; table view only
 	Failures []apidoc.Failure // the INCOMPLETE DATA section; table view only
 }
@@ -882,7 +892,7 @@ func Print(ios *IOStreams, format Format, doc apidoc.Document, v HumanView) erro
 
 ### Live output
 
-`view.Live` redraws a block of lines in place. It has a constructor that takes the writer and a size function, and two methods, `Draw(lines []string)` and `Clear()`. It is a port of `render.LiveRegion`, with one rule added: it redraws in place only when the block fits the terminal height. Section 8 says what a sweep draws when it does not fit.
+`view.Live` redraws a block of lines in place. It has a constructor that takes the writer and a size function, and two methods, `Draw(lines []string) bool` and `Clear()`. `Draw` reports whether it drew. It is a port of `render.LiveRegion`, with one rule added: it redraws in place only when the block fits the terminal height. Section 8 says what a sweep draws when it does not fit.
 
 ### What phase 2 does not build
 
@@ -981,8 +991,13 @@ type Filters []Filter
 
 func ParseFilters(raw []string, keys ...string) (Filters, error)
 
-// Match reports whether every filter matches. get returns the value of a key.
-func (fs Filters) Match(get func(key string) string) bool
+// Match reports whether every filter matches. get returns the values of a
+// key; one matching value is enough.
+func (fs Filters) Match(get func(key string) []string) bool
+
+// Only returns the filters with one of keys. A sweep command uses it to
+// apply the name and region filters before the describe calls.
+func (fs Filters) Only(keys ...string) Filters
 ```
 
 Parse rules:
@@ -1176,3 +1191,35 @@ The owner accepted these, and `CONTRACT.md` has them.
 8. **Stopping `--watch` with Ctrl+C exits 0.** It is the normal way to end a watch, and the one exception to "an interrupt exits 1".
 
 Two points in `REWRITE.md` change in this note and need no contract edit: the column shape in "Views (view)", and `fleet.Fetch` as a method of `Fetcher` that returns a snapshot and an error.
+
+## 13. Changes made while building steps 1 to 3
+
+The code is the reference where it and an earlier draft differ. These are the differences, each applied above.
+
+| Section | Draft 2 | Built |
+|---|---|---|
+| 2 | `Need` has eight fields | `Need` is an empty struct until the step that needs a field adds it. `Fetch` already takes it, so later steps add fields and change no caller. |
+| 2 | The cluster-level limit is `--max-concurrency` | The sweep reads it from `Provider.MaxInFlight()`, so the two numbers cannot drift. |
+| 2 | `ErrNotSent` wraps the cause of the context | It wraps `ctx.Err()`. `context.Cause` returns nil for the deadline of `cmdutil.WithTimeout`, which is not a standard library context. |
+| 4 | `Classify` returns the class, the code, and the operation | `Classify` returns the class. `Operation` is its own function, and the code was already `ErrorCode`. |
+| 4 | The limiter returns the earlier error of a retry that got no slot | It does, inside a wrapper that `IsRetryable` refuses. Without it the retryer would wait for the next backoff and report the cancelled context. |
+| 4 | Failure kinds | The constants are `apidoc.FailureRegion`, `FailureCluster`, and so on. `apidoc` also gets `Documents()`, `Kind.Command()`, and the `Enum` interface, which `genschema` walks. |
+| 5 | `apidoc.Cluster` has `support`, `compute`, `nodegroups`, `addons`, and `network.vpcCidr` | Those keys arrive with steps 4 to 7. The cluster has `upgradePolicy` now, the EKS support type, which draft 2 left out. |
+| 6 | `Theme.Paint` and `Theme.Bold` with exported colors | Methods that name the role of a text. The palette is private. |
+| 6 | `TruncateMiddle` | Not built. No column of steps 1 to 3 wants it. |
+| 6 | `List` | It has an `Empty` line for a list with no rows. `Live.Draw` returns whether it drew, and the command falls back to a status line when it did not. |
+| 7 | `Filters.Match` takes a function that returns one value | The function returns a list, which is rule 7 of the filters. `Filters.Only` splits the filters that apply before the describe calls. |
+| 7 | A cell of a row that was not read | It shows `unknown`, in the table and in plain output. |
+| 7 | `cluster list --show-health` | Not registered. It needs the health checks of phase 3. `-w` waits for step 8. |
+| 8 | `Wave` in `awsxtest` | Built as `awsxtest.Gate`, in its own file, with `Timeout` as a field. |
+| 9 | Goldens at 100 and 60 columns through the command | A terminal run also redraws the table as regions answer, so its output holds cursor codes. The two width goldens render the view from the JSON golden, and a terminal test checks that the final table of a run equals the 100-column golden. |
+| 10 | Step 2 writes a reference page for the schemas | `tools/genschema` writes the schemas only. The docs pages are phase 6. |
+
+Measured on the fake fleet of 200 clusters in 8 regions, 8 runs after one warm-up, old binary and new binary in the same run:
+
+| Command | Old, no latency | New, no latency | Old, 0 to 100 ms | New, 0 to 100 ms |
+|---|---|---|---|---|
+| `cluster list -A -o json` | 37 ms | 18 ms | 787 ms | 218 ms |
+| `cluster list -r us-east-1 -o json` | 19 ms | 10 ms | 704 ms | 151 ms |
+
+The model of section 8 gave 100 ms for one region at the limit 32. The measured 151 ms is two waves whose slowest call is near 100 ms each: the model used the mean latency, and a wave ends with its slowest call.

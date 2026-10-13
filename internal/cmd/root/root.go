@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	clustercmd "github.com/dantech2000/refresh/internal/cmd/cluster"
 	"github.com/dantech2000/refresh/internal/cmd/contextcmd"
 	"github.com/dantech2000/refresh/internal/cmd/gendocs"
 	versioncmd "github.com/dantech2000/refresh/internal/cmd/version"
@@ -68,7 +69,7 @@ skip the confirmation prompts.`,
 	pf.StringArrayVarP(&o.regions, "region", "r", nil, "AWS region; repeatable on commands that sweep regions")
 	pf.StringVar(&o.profile, "profile", "", "AWS shared-config profile")
 	pf.DurationVarP(&o.timeout, "timeout", "t", time.Minute, "Budget for the API calls of a read command (env: REFRESH_TIMEOUT)")
-	pf.IntVar(&o.maxConcurrency, "max-concurrency", 8, "Limit for parallel calls (env: REFRESH_MAX_CONCURRENCY)")
+	pf.IntVar(&o.maxConcurrency, "max-concurrency", 32, "Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY)")
 	pf.BoolVar(&o.noColor, "no-color", false, "Disable color (env: NO_COLOR)")
 	pf.StringVar(&o.logLevel, "log-level", "warn", "Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL)")
 	pf.BoolVar(&o.verbose, "verbose", false, "Same as --log-level debug")
@@ -83,6 +84,7 @@ skip the confirmation prompts.`,
 		&cobra.Group{ID: groupOther, Title: "Other Commands:"},
 	)
 	addCommands(cmd, groupCore,
+		clustercmd.NewCmdCluster(f),
 		contextcmd.NewCmdContext(f),
 	)
 	addCommands(cmd, groupOther,

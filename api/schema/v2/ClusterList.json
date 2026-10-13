@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v2/ClusterList.json",
+  "$defs": {
+    "Cluster": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "arn": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is the EKS status, such as ACTIVE or UPDATING."
+        },
+        "version": {
+          "type": "string",
+          "description": "version is the Kubernetes minor version, such as \"1.33\"."
+        },
+        "platformVersion": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "upgradePolicy": {
+          "type": "string",
+          "description": "upgradePolicy is the EKS support type, STANDARD or EXTENDED."
+        },
+        "tags": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "healthIssues": {
+          "items": {
+            "$ref": "#/$defs/Issue"
+          },
+          "type": "array",
+          "description": "healthIssues are the control-plane issues that EKS reports."
+        },
+        "network": {
+          "$ref": "#/$defs/Network"
+        },
+        "security": {
+          "$ref": "#/$defs/Security"
+        },
+        "incomplete": {
+          "type": "boolean",
+          "description": "incomplete is true when part of the row could not be read. The failures of the row are in the failures list of the document."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "region"
+      ],
+      "description": "Cluster is one EKS cluster. A key is left out when its data was not read: a row that could not be read at all has its name, its region, and incomplete."
+    },
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For a Region failure it is the region."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "cluster is the cluster that the item belongs to."
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether the same command, run again with no other change, may succeed."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of text for people. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the AWS API error code, such as AccessDeniedException, when AWS answered."
+        },
+        "updateId": {
+          "type": "string",
+          "description": "updateId is the EKS update ID, for a failure of a started update."
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item that refresh could not read, or one action that it tried and that did not complete."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "Failures": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "Failures is the failure list of a document. A nil list encodes as [], so a document always has its failures key as a list."
+    },
+    "Issue": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "resourceIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "resourceIds"
+      ],
+      "description": "Issue is a health issue that EKS reports for a resource."
+    },
+    "Network": {
+      "properties": {
+        "vpcId": {
+          "type": "string"
+        },
+        "subnetIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "securityGroupIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "publicAccess": {
+          "type": "boolean",
+          "description": "publicAccess and PrivateAccess say how the API server endpoint can be reached."
+        },
+        "privateAccess": {
+          "type": "boolean"
+        },
+        "publicAccessCidrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "vpcId",
+        "subnetIds",
+        "securityGroupIds",
+        "publicAccess",
+        "privateAccess",
+        "publicAccessCidrs"
+      ],
+      "description": "Network is the VPC configuration of a cluster."
+    },
+    "Reason": {
+      "type": "string",
+      "enum": [
+        "AccessDenied",
+        "CredentialError",
+        "Throttled",
+        "NotFound",
+        "RegionUnavailable",
+        "InvalidRequest",
+        "ServiceError",
+        "NetworkError",
+        "Timeout",
+        "Interrupted",
+        "UpdateFailed",
+        "UpdateCancelled",
+        "NotMonitored",
+        "NotAttempted",
+        "Unknown"
+      ],
+      "description": "Reason is why a Failure happened, from a closed set. A script branches on it. A later release may add a reason, so a consumer must accept a value it does not know."
+    },
+    "Security": {
+      "properties": {
+        "roleArn": {
+          "type": "string"
+        },
+        "kmsKeyArn": {
+          "type": "string",
+          "description": "kmsKeyArn is the key that encrypts secrets. It is left out when secrets are not encrypted with a KMS key."
+        },
+        "logTypes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "logTypes are the enabled control-plane log types."
+        },
+        "deletionProtection": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "roleArn",
+        "logTypes",
+        "deletionProtection"
+      ],
+      "description": "Security is the security configuration of a cluster."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v2",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "ClusterList",
+      "description": "The type of the document."
+    },
+    "clusters": {
+      "items": {
+        "$ref": "#/$defs/Cluster"
+      },
+      "type": "array"
+    },
+    "skippedRegions": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "skippedRegions are the regions of a default sweep that are closed to these credentials. They are not failures. The key is left out when the regions were named."
+    },
+    "failures": {
+      "$ref": "#/$defs/Failures",
+      "description": "Every failure of the run: the items that refresh could not read and the actions that did not complete. The list is sorted by kind, region, cluster, name, and operation. It is [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "clusters",
+    "failures"
+  ],
+  "title": "ClusterList",
+  "description": "The document that `refresh cluster list -o json` prints. -o yaml prints the same structure."
+}

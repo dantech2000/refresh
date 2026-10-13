@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,18 +64,29 @@ func NewContextStore(t *testing.T, f *cmdutil.Factory, file *contexts.File) *con
 	return store
 }
 
-// UseAWS makes f reach AWS through cfg, and returns the provider. A test
-// passes the configuration of a fake server:
+// UseAWS makes f reach AWS through cfg. A test passes the configuration of
+// a fake server:
 //
 //	srv := awsxtest.NewServer(world)
 //	cmdutiltest.UseAWS(f, srv.Config("us-east-1"))
 //
-// A retry follows its failed attempt at once, so a test of a failure does
-// not wait.
-func UseAWS(f *cmdutil.Factory, cfg aws.Config) *awsx.Provider {
-	provider := awsx.NewProvider(cfg, func(o *awsx.ProviderOptions) {
-		o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
-	})
-	f.AWS = func(context.Context) (*awsx.Provider, error) { return provider, nil }
-	return provider
+// The provider is built at the first use, as in a real run, so its request
+// limit is the --max-concurrency of the command line. A retry follows its
+// failed attempt at once, so a test of a failure does not wait.
+func UseAWS(f *cmdutil.Factory, cfg aws.Config) {
+	var (
+		mu       sync.Mutex
+		provider *awsx.Provider
+	)
+	f.AWS = func(context.Context) (*awsx.Provider, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if provider == nil {
+			provider = awsx.NewProvider(cfg, func(o *awsx.ProviderOptions) {
+				o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
+				o.MaxInFlight = f.Global.MaxConcurrency
+			})
+		}
+		return provider, nil
+	}
 }

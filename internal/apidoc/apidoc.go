@@ -17,13 +17,15 @@ type Kind string
 
 // The document kinds.
 const (
-	KindVersion Kind = "Version"
+	KindVersion     Kind = "Version"
+	KindClusterList Kind = "ClusterList"
 )
 
 // Kinds returns every kind, in documentation order.
 func Kinds() []Kind {
 	return []Kind{
 		KindVersion,
+		KindClusterList,
 	}
 }
 
@@ -31,4 +33,31 @@ func Kinds() []Kind {
 // must marshal to a JSON object. Kind must not depend on the value.
 type Document interface {
 	Kind() Kind
+}
+
+// Documents returns one zero value of every document type, in the order of
+// Kinds. The schema generator and the tests walk it.
+func Documents() []Document {
+	return []Document{
+		Version{},
+		ClusterList{},
+	}
+}
+
+// Command returns the command that prints a document of kind k, without
+// the program name, or "" for a kind that is not known.
+func (k Kind) Command() string {
+	switch k {
+	case KindVersion:
+		return "version"
+	case KindClusterList:
+		return "cluster list"
+	}
+	return ""
+}
+
+// Enum is a string type of a document with a closed set of values. The
+// schema generator lists the values.
+type Enum interface {
+	Values() []string
 }

@@ -1,0 +1,6 @@
+CLUSTER	REGION	STATUS	VERSION
+dev	us-east-1	ACTIVE	1.9
+prod-eu	eu-west-1	FAILED	1.33
+prod-payments	us-east-1	ACTIVE	1.33
+prod-search	us-east-1	UPDATING	1.31
+staging-data-platform-shared-services-blue	us-east-1	ACTIVE	1.10

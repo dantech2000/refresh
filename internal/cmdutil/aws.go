@@ -43,7 +43,9 @@ func NewAWS(f *Factory) func(ctx context.Context) (*awsx.Provider, error) {
 		if err != nil {
 			return nil, err
 		}
-		provider = awsx.NewProvider(cfg)
+		provider = awsx.NewProvider(cfg, func(o *awsx.ProviderOptions) {
+			o.MaxInFlight = f.Global.MaxConcurrency
+		})
 		return provider, nil
 	}
 }

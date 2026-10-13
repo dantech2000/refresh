@@ -309,7 +309,7 @@ func TestCompletion(t *testing.T) {
 func TestGlobalFlags(t *testing.T) {
 	defaults := cmdutil.GlobalOptions{
 		Timeout:        time.Minute,
-		MaxConcurrency: 8,
+		MaxConcurrency: 32,
 		LogLevel:       slog.LevelWarn,
 	}
 	with := func(change func(*cmdutil.GlobalOptions)) cmdutil.GlobalOptions {
@@ -350,7 +350,7 @@ func TestGlobalFlags(t *testing.T) {
 		},
 		{
 			name: "a flag with its default value beats the environment",
-			args: []string{"--timeout", "1m", "--max-concurrency", "8", "--log-level", "warn"},
+			args: []string{"--timeout", "1m", "--max-concurrency", "32", "--log-level", "warn"},
 			env: map[string]string{
 				"REFRESH_TIMEOUT":         "90s",
 				"REFRESH_MAX_CONCURRENCY": "3",

@@ -145,6 +145,8 @@ func TestHiddenCommands(t *testing.T) {
 func TestCommandTree(t *testing.T) {
 	want := []string{
 		"refresh",
+		"refresh cluster",
+		"refresh cluster list",
 		"refresh completion",
 		"refresh completion bash",
 		"refresh completion fish",
