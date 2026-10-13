@@ -143,6 +143,12 @@ const defaultRequestTimeout = 30 * time.Second
 // dialTimeout bounds the connection to an API server.
 const dialTimeout = 10 * time.Second
 
+// clientQPS and clientBurst pace the requests of one client.
+const (
+	clientQPS   = 50
+	clientBurst = 100
+)
+
 // Connect returns a client for target. It makes no request. The config is,
 // in order:
 //
@@ -298,6 +304,11 @@ func newClient(cfg *rest.Config, sel Selection, opts Options) (*Client, error) {
 	}
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	cfg.Dial = dialer.DialContext
+	// A command makes a short burst of lists, at most a few dozen at
+	// once, and nothing after. client-go's default of 5 requests a second
+	// with a burst of 10 would hold the later lists of a gate for seconds;
+	// the API server's own fairness bounds a burst it does not like.
+	cfg.QPS, cfg.Burst = clientQPS, clientBurst
 	if cfg.ExecProvider != nil {
 		// A credential plugin never reads the terminal: a prompt of the
 		// command cannot race it for stdin.

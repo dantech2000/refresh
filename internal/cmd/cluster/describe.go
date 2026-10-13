@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -96,15 +97,30 @@ func (o *describeOptions) run(ctx context.Context) error {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
 	}
 	in := &health.Input{Snapshot: snap, Clients: clients, Now: snap.FetchedAt, NoKube: "pass --check-readiness to run the Kubernetes checks"}
+	var wg sync.WaitGroup
+	merge := func() {}
 	if o.checkReadiness {
 		access := fleetcmd.ConnectKube(o.f.Kube, snap)
 		fleetcmd.ReportKube(ios, access)
 		in.Kube, in.Metrics, in.NoKube = access.Client, access.Metrics, access.NoKube
 		if access.Client != nil {
-			fetcher.FetchKube(ctx, access.Client, snap, fleet.KubeNeed{Ready: true})
+			// The Ready counts and the health reads need only the
+			// endpoint and the nodegroups, so they run together: the
+			// counts fill a copy of the snapshot while the checks read
+			// the original, and the copy is merged back after both.
+			kubeSnap := *snap
+			kubeSnap.Nodegroups = slices.Clone(snap.Nodegroups)
+			kubeSnap.Failures = nil
+			wg.Go(func() { fetcher.FetchKube(ctx, access.Client, &kubeSnap, fleet.KubeNeed{Ready: true}) })
+			merge = func() {
+				snap.Nodegroups = kubeSnap.Nodegroups
+				snap.Failures = append(snap.Failures, kubeSnap.Failures...)
+			}
 		}
 	}
 	results := health.Run(ctx, health.Preflight(), in)
+	wg.Wait()
+	merge()
 	hd := health.Doc(results)
 	doc := apidoc.ClusterDescription{Cluster: snap.ClusterDoc(), Failures: append(snap.Failures, health.Failures(results)...)}
 	doc.Cluster.Health = &hd

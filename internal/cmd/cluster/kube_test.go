@@ -130,9 +130,12 @@ func TestList_ShowHealth(t *testing.T) {
 	}
 }
 
-// With --check-readiness the Kubernetes reads are two waves, next to the
-// AWS waves: the lists that depend on nothing, then the pods of the
-// namespaces that a budget or a second budget sends the check to.
+// With --check-readiness the Kubernetes reads are one wave: every list
+// that depends on nothing, the Ready counts' node list included. A second
+// wave reads the pods of a namespace with two budgets, which this cluster
+// has none of. They start when the AWS fetch returns, because they need
+// the endpoint of the cluster and its nodegroups, and run beside the AWS
+// metric wave.
 func TestDescribe_CheckReadinessWaves(t *testing.T) {
 	e := newReadinessFake(t)
 	srv := withKube(t, e)
@@ -141,10 +144,8 @@ func TestDescribe_CheckReadinessWaves(t *testing.T) {
 	go func() {
 		done <- e.Run(cmdutiltest.Context(t), "cluster", "describe", "prod", "--check-readiness", "-o", "json")
 	}()
-	k8s.Wave(fleettest.KubeListNodes)
-	k8s.Wave(fleettest.KubeListNodes, fleettest.KubeListPDBs, fleettest.KubeListDeployments, fleettest.KubeListNodeMetrics,
+	k8s.Wave(fleettest.KubeListNodes, fleettest.KubeListNodes, fleettest.KubeListPDBs, fleettest.KubeListDeployments, fleettest.KubeListNodeMetrics,
 		fleettest.KubeListPods, fleettest.KubeListPods, fleettest.KubeListPods)
-	k8s.Wave(fleettest.KubeListPods)
 	k8s.Done()
 	if err := <-done; err != nil {
 		t.Fatalf("run: %v", err)

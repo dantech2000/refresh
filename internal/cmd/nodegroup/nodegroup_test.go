@@ -375,7 +375,7 @@ func TestList_Watch(t *testing.T) {
 
 // withKube gives the cluster prod a Kubernetes API and points $KUBECONFIG
 // at a file whose one context names it.
-func withKube(t *testing.T, e *cmdtest.Fake) {
+func withKube(t *testing.T, e *cmdtest.Fake) *kubetest.Server {
 	t.Helper()
 	e.World.Edit(func(s *fleettest.State) {
 		c := s.Cluster(east, "prod")
@@ -398,6 +398,7 @@ func withKube(t *testing.T, e *cmdtest.Fake) {
 		t.Fatal(err)
 	}
 	t.Setenv("KUBECONFIG", path)
+	return srv
 }
 
 // --check-readiness reads the nodes once and shows ready/desired.
@@ -427,11 +428,11 @@ func TestList_CheckReadiness(t *testing.T) {
 	}
 }
 
-// --show-workloads counts the pods on the nodes of the nodegroup, one pod
-// list per node with the field selector, and no cluster-wide list.
+// --show-workloads counts the pods on the nodes of the nodegroup from one
+// pod list of the cluster.
 func TestDescribe_ShowWorkloads(t *testing.T) {
 	e := newFake(t)
-	withKube(t, e)
+	srv := withKube(t, e)
 	if err := e.Run(cmdutiltest.Context(t), "nodegroup", "describe", "web", "-c", "prod", "--show-workloads", "-o", "plain"); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -439,6 +440,9 @@ func TestDescribe_ShowWorkloads(t *testing.T) {
 		if !strings.Contains(e.Out.String(), want) {
 			t.Errorf("stdout has no %q:\n%s", want, e.Out.String())
 		}
+	}
+	if n := len(srv.Requests()); n != 2 {
+		t.Errorf("Kubernetes requests = %d, want the node list and one pod list", n)
 	}
 	e = newFake(t)
 	withKube(t, e)

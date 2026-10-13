@@ -12,7 +12,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/fanout"
 )
 
 // labelNodegroup is the label that EKS sets on the nodes of a managed
@@ -24,9 +23,9 @@ type KubeNeed struct {
 	// Ready counts the Ready nodes of each managed nodegroup: one node
 	// list with the nodegroup label.
 	Ready bool
-	// Workloads counts the pods on the nodes of the named nodegroup: one
-	// pod list per node, with the field selector spec.nodeName, in one
-	// wave. A cluster-wide pod list would read every pod of the cluster.
+	// Workloads counts the pods on the nodes of the named nodegroup, from
+	// one pod list of the cluster. A list per node would be one call per
+	// node, which the client paces.
 	Workloads string
 }
 
@@ -98,36 +97,30 @@ func (f *Fetcher) fillWorkloads(ctx context.Context, kube kubernetes.Interface, 
 			}
 			return
 		}
-		var names []string
+		onNodegroup := map[string]bool{}
 		for j := range nodes.Items {
 			if nodes.Items[j].Labels[labelNodegroup] == name {
-				names = append(names, nodes.Items[j].Name)
+				onNodegroup[nodes.Items[j].Name] = true
 			}
 		}
-		type answer struct {
-			pods *corev1.PodList
-			err  error
+		// One list for the whole cluster, filtered by node here: a list
+		// per node would be one call per node, and the client paces its
+		// calls.
+		pods, err := kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			n.WorkloadsState = Failed
+			snap.Failures = append(snap.Failures, inRegionName(snap, kubeFailure(apidoc.FailureNodegroup, n.Name, "listing pods", err)))
+			return
 		}
-		answers := fanout.ForEach(ctx, names, max(len(names), 1), func(ctx context.Context, node string) answer {
-			pods, err := kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: "spec.nodeName=" + node})
-			return answer{pods, err}
-		})
 		n.WorkloadsState = Collected
-		for _, a := range answers {
-			if a.err != nil {
-				n.WorkloadsState = Failed
-				snap.Failures = append(snap.Failures, inRegionName(snap, kubeFailure(apidoc.FailureNodegroup, n.Name, "listing pods", a.err)))
-				return
+		for j := range pods.Items {
+			pod := &pods.Items[j]
+			if !onNodegroup[pod.Spec.NodeName] || pod.Status.Phase == corev1.PodSucceeded {
+				continue
 			}
-			for j := range a.pods.Items {
-				pod := &a.pods.Items[j]
-				if pod.Status.Phase == corev1.PodSucceeded {
-					continue
-				}
-				n.Workloads.Pods++
-				if pod.Namespace == "kube-system" {
-					n.Workloads.SystemPods++
-				}
+			n.Workloads.Pods++
+			if pod.Namespace == "kube-system" {
+				n.Workloads.SystemPods++
 			}
 		}
 		return

@@ -266,13 +266,23 @@ func runNewPendingPods(in *Input, base Baseline) Result {
 		return Result{Outcome: Unreadable, Message: "the Pending pods could not be listed before the roll", Failures: base.Failures}
 	}
 	cluster := in.Snapshot.Cluster.Name
+	// Both lists in one round trip.
+	var (
+		pods    *corev1.PodList
+		podsErr error
+	)
+	together(
+		func() { _, _ = in.reads.Nodes() },
+		func() {
+			pods, podsErr = in.Kube.CoreV1().Pods("").List(in.reads.ctx, metav1.ListOptions{FieldSelector: "status.phase=Pending"})
+		},
+	)
 	nodes, err := in.reads.Nodes()
 	if err != nil {
 		f := kubeFailure(cluster, "listing nodes after the roll", err)
 		return Result{Outcome: Unreadable, Message: "could not list the nodes after the roll: " + f.Error, Failures: []apidoc.Failure{f}}
 	}
-	pods, err := in.Kube.CoreV1().Pods("").List(in.reads.ctx, metav1.ListOptions{FieldSelector: "status.phase=Pending"})
-	if err != nil {
+	if err := podsErr; err != nil {
 		f := kubeFailure(cluster, "listing Pending pods after the roll", err)
 		return Result{Outcome: Unreadable, Message: "could not list the Pending pods after the roll: " + f.Error, Failures: []apidoc.Failure{f}}
 	}
