@@ -89,8 +89,8 @@ func (o *options) run(root *cobra.Command) error {
 		what = "the man pages"
 	}
 	// Cobra writes with os.Create, which follows a symbolic link and leaves
-	// part of the pages when it fails. GenerateFiles prevents both.
-	if err := cmdutil.GenerateFiles(o.out, generate); err != nil {
+	// part of the pages when it fails. generateFiles prevents both.
+	if err := generateFiles(o.out, generate); err != nil {
 		return fmt.Errorf("writing %s to %s: %w", what, o.out, err)
 	}
 	_, err := fmt.Fprintf(o.io.Out, "Generated %s in %s\n", what, o.out)

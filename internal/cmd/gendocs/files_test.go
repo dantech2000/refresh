@@ -1,4 +1,4 @@
-package cmdutil_test
+package gendocs
 
 import (
 	"errors"
@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-
-	"github.com/dantech2000/refresh/internal/cmdutil"
 )
 
 // tree returns the content of each regular file in dir, and the target of
@@ -52,7 +50,7 @@ func TestGenerateFiles(t *testing.T) {
 	write(t, filepath.Join(dir, "page.1"), "old page")
 	write(t, filepath.Join(dir, "other.1"), "another tool")
 
-	err := cmdutil.GenerateFiles(dir, func(tmp string) error {
+	err := generateFiles(dir, func(tmp string) error {
 		if filepath.Dir(tmp) != dir {
 			t.Errorf("temporary directory %s is not inside %s", tmp, dir)
 		}
@@ -61,7 +59,7 @@ func TestGenerateFiles(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("GenerateFiles() error = %v", err)
+		t.Fatalf("generateFiles() error = %v", err)
 	}
 
 	want := map[string]string{"page.1": "new page", "new.1": "new command", "other.1": "another tool"}
@@ -83,12 +81,12 @@ func TestGenerateFilesReplacesSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := cmdutil.GenerateFiles(dir, func(tmp string) error {
+	err := generateFiles(dir, func(tmp string) error {
 		write(t, filepath.Join(tmp, "page.1"), "new page")
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("GenerateFiles() error = %v", err)
+		t.Fatalf("generateFiles() error = %v", err)
 	}
 
 	if diff := cmp.Diff(map[string]string{"page.1": "new page"}, tree(t, dir)); diff != "" {
@@ -128,10 +126,10 @@ func TestGenerateFilesFailure(t *testing.T) {
 			dir := t.TempDir()
 			write(t, filepath.Join(dir, "page.1"), "old page")
 
-			err := cmdutil.GenerateFiles(dir, tt.generate)
+			err := generateFiles(dir, tt.generate)
 
 			if err == nil || (tt.wantErr != nil && !errors.Is(err, tt.wantErr)) {
-				t.Errorf("GenerateFiles() error = %v, want %v", err, tt.wantErr)
+				t.Errorf("generateFiles() error = %v, want %v", err, tt.wantErr)
 			}
 			// The old file is whole, and the temporary directory is gone.
 			if diff := cmp.Diff(map[string]string{"page.1": "old page"}, tree(t, dir)); diff != "" {
@@ -142,12 +140,12 @@ func TestGenerateFilesFailure(t *testing.T) {
 }
 
 func TestGenerateFilesMissingDirectory(t *testing.T) {
-	err := cmdutil.GenerateFiles(filepath.Join(t.TempDir(), "missing"), func(string) error {
+	err := generateFiles(filepath.Join(t.TempDir(), "missing"), func(string) error {
 		t.Error("the generator ran without a destination")
 		return nil
 	})
 	if err == nil {
-		t.Error("GenerateFiles() error = nil for a directory that does not exist")
+		t.Error("generateFiles() error = nil for a directory that does not exist")
 	}
 }
 
@@ -162,7 +160,7 @@ func TestGenerateFilesDirectoryAtDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := cmdutil.GenerateFiles(dir, func(tmp string) error {
+	err := generateFiles(dir, func(tmp string) error {
 		for _, name := range []string{"a.md", "b.md"} {
 			if err := os.WriteFile(filepath.Join(tmp, name), []byte("new"), 0o644); err != nil {
 				return err
@@ -171,7 +169,7 @@ func TestGenerateFilesDirectoryAtDestination(t *testing.T) {
 		return nil
 	})
 	if err == nil {
-		t.Fatal("GenerateFiles() = nil, want an error for the directory at b.md")
+		t.Fatal("generateFiles() = nil, want an error for the directory at b.md")
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "a.md"))
 	if err != nil {

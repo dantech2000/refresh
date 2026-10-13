@@ -1,4 +1,4 @@
-package cmdutil
+package gendocs
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-// GenerateFiles runs generate on a new, empty directory and then moves the
+// generateFiles runs generate on a new, empty directory and then moves the
 // files that it wrote there into dir, which must exist.
 //
 // Nothing in dir changes unless generate succeeds and no generated file
@@ -14,7 +14,7 @@ import (
 // file arrives by a rename. A rename replaces a symbolic link at the
 // destination; it does not write through the link to its target.
 // Entries in dir that generate did not write are not touched.
-func GenerateFiles(dir string, generate func(tmpDir string) error) error {
+func generateFiles(dir string, generate func(tmpDir string) error) error {
 	// The temporary directory is inside dir: a rename needs both ends on
 	// one file system.
 	tmp, err := os.MkdirTemp(dir, ".refresh-tmp-*")
