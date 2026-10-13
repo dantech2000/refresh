@@ -108,6 +108,7 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 	if buildable, ok := cfg.HTTPClient.(*awshttp.BuildableClient); ok {
 		cfg.HTTPClient = freeze(buildable, defaultStallLimits().bodyIdle)
 	}
+	cfg.Credentials = markIdentityFailures(cfg.Credentials)
 	// An SSO login can expire in the middle of a run. Every client built
 	// from this configuration then names the profile to log in with. The
 	// profile is looked up once, when the first such failure needs it.

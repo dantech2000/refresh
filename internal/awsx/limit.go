@@ -44,7 +44,15 @@ type callStateKey struct{}
 //
 // The second step runs once for each attempt. It sits after the retry step
 // and before signing, so a slot covers the credentials, the signature, the
-// round trip, and the read of the answer. The slot is given back after
+// round trip, and the read of the answer.
+//
+// The credentials are in a cache, so getting them takes no time, except
+// when they have expired: then one refresh runs for the whole provider and
+// every call waits for it, each with its slot. That starves nothing. Every
+// call of every region needs the same credentials, so no call that could
+// use a free slot can run before the refresh ends. A refresh that fails is
+// not retried by the calls that waited (see markIdentityFailures), so the
+// slots are held for the attempts of the credential client and no longer. The slot is given back after
 // each attempt: it is free during a backoff and between the pages of a
 // paged call. A retry waits for a new slot at this step.
 func (l *limiter) add(stack *middleware.Stack) error {

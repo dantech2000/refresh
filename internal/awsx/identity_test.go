@@ -13,6 +13,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+
+	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
+	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
 // This file is not named credentials_test.go: .gitignore has *credentials*.
@@ -124,5 +127,85 @@ func TestSSOErrorWithoutAProfile(t *testing.T) {
 	msg := FormatAWSError(&ssocreds.InvalidTokenError{Err: errors.New("expired")}, "x").Error()
 	if !strings.Contains(msg, "aws sso login --profile <name>") {
 		t.Errorf("message = %q, want the placeholder profile", msg)
+	}
+}
+
+// expiringSTS is a fake STS whose first AssumeRole answers with credentials
+// that have already expired, so the next API call refreshes them. Every
+// later request gets the throttling error. It counts the requests.
+func expiringSTS(t *testing.T) (url string, requests *atomic.Int32) {
+	t.Helper()
+	const expired = `<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult>` +
+		`<Credentials><AccessKeyId>AKIDROLEFAKE</AccessKeyId><SecretAccessKey>fake-secret</SecretAccessKey>` +
+		`<SessionToken>token</SessionToken><Expiration>2020-01-01T00:00:00Z</Expiration></Credentials>` +
+		`<AssumedRoleUser><Arn>arn:aws:sts::111122223333:assumed-role/R/s</Arn><AssumedRoleId>AROAFAKE:s</AssumedRoleId></AssumedRoleUser>` +
+		`</AssumeRoleResult><ResponseMetadata><RequestId>1</RequestId></ResponseMetadata></AssumeRoleResponse>`
+	requests = &atomic.Int32{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		if requests.Add(1) == 1 {
+			_, _ = w.Write([]byte(expired))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(stsThrottled))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, requests
+}
+
+// TestCredentialRefreshIsNotRetriedByTheOperation: the credentials expire
+// during a run and STS throttles the refresh. The credential client makes
+// its 5 attempts, and that is all: the service operation that needed the
+// credentials does not start the refresh again for each attempt of its own,
+// which would be 25 requests.
+func TestCredentialRefreshIsNotRetriedByTheOperation(t *testing.T) {
+	for _, policy := range []Policy{Standard, Sweep, Poll} {
+		t.Run(policy.String(), func(t *testing.T) {
+			isolateAWS(t)
+			world := fleettest.New()
+			srv := awsxtest.NewServer(world)
+			defer srv.Close()
+			stsURL, stsRequests := expiringSTS(t)
+			if err := os.WriteFile(os.Getenv("AWS_CONFIG_FILE"), []byte(roleConfig), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("AWS_ENDPOINT_URL", srv.URL)
+			t.Setenv("AWS_ENDPOINT_URL_STS", stsURL)
+			cfg, err := load(context.Background(), Options{Profile: "role"}, NewHTTPClient(8), zeroBackoff{})
+			if err != nil {
+				t.Fatalf("load() error = %v", err)
+			}
+			if got := stsRequests.Load(); got != 1 {
+				t.Fatalf("AssumeRole requests after load = %d, want 1", got)
+			}
+			provider := NewProvider(cfg, func(o *ProviderOptions) {
+				o.Backoff = zeroBackoff{}
+				o.MaxInFlight = 2
+			})
+
+			_, err = provider.clientsFor("", policy).EKS.ListClusters(context.Background(), &eks.ListClustersInput{})
+
+			if !IsThrottling(err) {
+				t.Fatalf("ListClusters error = %v, want the throttling of the refresh", err)
+			}
+			if got := stsRequests.Load() - 1; got != 5 {
+				t.Errorf("AssumeRole requests for the refresh = %d, want 5: the attempts of the credential client alone", got)
+			}
+			for _, r := range srv.Requests() {
+				t.Errorf("%s reached the service without credentials", r.Operation)
+			}
+			// A wait loop goes on through this failure: it is transient.
+			if IsPermanentAPIError(err) || !IsRetryable(err) {
+				t.Errorf("the failed refresh is permanent = %t, retryable = %t; want a transient failure", IsPermanentAPIError(err), IsRetryable(err))
+			}
+			if !isIdentityFailure(err) {
+				t.Error("the error is not marked as a failure to get credentials")
+			}
+			// The call gave its slot back.
+			if held := len(provider.limiters[cfg.Region].slots); held != 0 {
+				t.Errorf("slots held after the call = %d, want 0", held)
+			}
+		})
 	}
 }
