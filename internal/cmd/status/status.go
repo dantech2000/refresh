@@ -269,7 +269,7 @@ func findingsOf(c apidoc.Cluster) findings {
 		}
 	}
 	for _, a := range c.Addons {
-		if a.Latest != nil && a.Latest.Behind {
+		if a.Latest != nil && a.Latest.Behind != nil && *a.Latest.Behind {
 			f.behindAddons = append(f.behindAddons, a.Name)
 		}
 	}

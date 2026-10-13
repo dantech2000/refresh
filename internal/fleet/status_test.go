@@ -135,10 +135,10 @@ func TestFetch_Everything(t *testing.T) {
 	if doc.Support == nil || doc.Support.DaysRemaining != 61 || doc.Compute != apidoc.ComputeManagedNodegroups || doc.Network.VPCCIDR != "10.0.0.0/16" {
 		t.Errorf("document: support %+v, compute %q, network %+v", doc.Support, doc.Compute, doc.Network)
 	}
-	if l := doc.Addons[2].Latest; l == nil || !l.Behind || l.Version != "v1.20.0-eksbuild.1" {
+	if l := doc.Addons[2].Latest; l == nil || l.Behind == nil || !*l.Behind || l.Version != "v1.20.0-eksbuild.1" {
 		t.Errorf("document: latest of vpc-cni = %+v", l)
 	}
-	if l := doc.Addons[1].Latest; l == nil || l.Behind || l.Version != "" {
+	if l := doc.Addons[1].Latest; l == nil || l.Behind != nil || l.Version != "" {
 		t.Errorf("document: latest of custom = %+v, want the group with no version", l)
 	}
 }

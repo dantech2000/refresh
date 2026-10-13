@@ -700,7 +700,7 @@ type Addon struct {
 }
 type AddonLatest struct {
 	Version string `json:"version,omitzero"` // absent: none is published
-	Behind  bool   `json:"behind"`
+	Behind  *bool  `json:"behind,omitzero"` // absent: no version to compare with
 }
 ```
 

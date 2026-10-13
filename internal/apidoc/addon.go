@@ -55,8 +55,9 @@ type Addon struct {
 type AddonLatest struct {
 	// Version is left out when EKS publishes no compatible version.
 	Version string `json:"version,omitzero"`
-	// Behind is true when the installed version is older than Version.
-	Behind bool `json:"behind"`
+	// Behind is true when the installed version is older than Version. It
+	// is left out when there is no version to compare with.
+	Behind *bool `json:"behind,omitzero"`
 }
 
 // AddonList is the document of "refresh addon list".

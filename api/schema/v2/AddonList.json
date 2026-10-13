@@ -76,13 +76,10 @@
         },
         "behind": {
           "type": "boolean",
-          "description": "behind is true when the installed version is older than Version."
+          "description": "behind is true when the installed version is older than Version. It is left out when there is no version to compare with."
         }
       },
       "type": "object",
-      "required": [
-        "behind"
-      ],
       "description": "AddonLatest is the newest version of an add-on that is compatible with the Kubernetes version of its cluster."
     },
     "Failure": {

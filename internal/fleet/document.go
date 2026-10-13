@@ -108,8 +108,10 @@ func AddonDoc(a Addon) apidoc.Addon {
 		Incomplete:            failed(a.LatestState),
 	}
 	if a.LatestState == Collected {
-		behind, _ := a.Behind()
-		doc.Latest = &apidoc.AddonLatest{Version: a.Latest, Behind: behind}
+		doc.Latest = &apidoc.AddonLatest{Version: a.Latest}
+		if behind, known := a.Behind(); known {
+			doc.Latest.Behind = &behind
+		}
 	}
 	return doc
 }
