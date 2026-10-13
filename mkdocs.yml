@@ -125,3 +125,7 @@ nav:
       - Cookbook: usage/cookbook.md
       - Migrating from eksctl / aws CLI: migration.md
   - Changelog: changelog.md
+
+# Design notes for the rewrite are for contributors, not for the site.
+exclude_docs: |
+  design/
