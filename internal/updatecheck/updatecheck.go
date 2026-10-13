@@ -49,16 +49,6 @@ type Checker struct {
 	Now func() time.Time
 }
 
-// DefaultCachePath returns update-check.json in the refresh directory under
-// the user's configuration directory.
-func DefaultCachePath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "refresh", "update-check.json"), nil
-}
-
 func (c *Checker) now() time.Time {
 	if c.Now != nil {
 		return c.Now()

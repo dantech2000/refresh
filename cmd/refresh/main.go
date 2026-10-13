@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -83,11 +84,20 @@ func exitCode(ctx context.Context, errOut io.Writer, err error) int {
 // latestRelease asks GitHub for the newest release tag. A cache file keeps
 // the network call to about one a day.
 func latestRelease(ctx context.Context) (string, error) {
-	// Without a cache path the checker still works; it then uses the
-	// network on every call.
-	cachePath, _ := updatecheck.DefaultCachePath()
-	checker := updatecheck.Checker{CachePath: cachePath}
+	checker := updatecheck.Checker{CachePath: updateCachePath()}
 	return checker.LatestTag(ctx)
+}
+
+// updateCachePath returns the file that records the last update check. It
+// is next to the context file, so refresh has one configuration directory
+// and REFRESH_CONFIG_HOME moves both files. Without a path the checker still
+// works; it then uses the network on every call.
+func updateCachePath() string {
+	store, err := contexts.DefaultStore()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(store.Path), "update-check.json")
 }
 
 // notifyContext returns a context that the first SIGINT or SIGTERM cancels,

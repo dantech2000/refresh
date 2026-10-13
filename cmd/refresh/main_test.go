@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
+	"github.com/dantech2000/refresh/internal/contexts"
 )
 
 func TestMain(m *testing.M) {
@@ -295,5 +297,38 @@ func TestInterruptBeforeRun(t *testing.T) {
 	}
 	if diff := cmp.Diff("Error: interrupted\n", errOut.String()); diff != "" {
 		t.Errorf("stderr (-want +got):\n%s", diff)
+	}
+}
+
+// The update cache is in the directory of the context file, so one variable
+// moves both.
+func TestUpdateCachePath(t *testing.T) {
+	tests := []struct {
+		name       string
+		configHome string
+		xdg        string
+		want       string
+	}{
+		{name: "REFRESH_CONFIG_HOME", configHome: "/cfg", xdg: "/xdg", want: "/cfg/update-check.json"},
+		{name: "XDG_CONFIG_HOME", xdg: "/xdg", want: "/xdg/refresh/update-check.json"},
+		{name: "home", want: "/home/u/.config/refresh/update-check.json"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("REFRESH_CONFIG_HOME", tt.configHome)
+			t.Setenv("XDG_CONFIG_HOME", tt.xdg)
+			t.Setenv("HOME", "/home/u")
+			t.Setenv("USERPROFILE", "/home/u") // the home directory on Windows
+			if got, want := updateCachePath(), filepath.FromSlash(tt.want); got != want {
+				t.Errorf("updateCachePath() = %q, want %q", got, want)
+			}
+			store, err := contexts.DefaultStore()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if filepath.Dir(store.Path) != filepath.Dir(updateCachePath()) {
+				t.Errorf("the context file is in %s and the update cache in %s", filepath.Dir(store.Path), filepath.Dir(updateCachePath()))
+			}
+		})
 	}
 }
