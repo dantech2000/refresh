@@ -297,8 +297,8 @@ func instancesToRead(nodegroups []Nodegroup, lookups []lookup, groups map[string
 }
 
 // fill sets the instances and the AMI group of n from what the calls
-// returned, and returns its failures: at most one, also when the instance
-// list and the AMI failed for the same reason.
+// returned, and returns its failures. A failure of the AMI that repeats the
+// failure of the instance list is reported one time.
 func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instance, groups map[string][]string, fromGroupErr error, need Need) []apidoc.Failure {
 	var failures []apidoc.Failure
 	if need.InstanceIDs {
@@ -316,7 +316,9 @@ func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instan
 		n.InstancesState = Collected
 		if fromGroupErr != nil {
 			n.InstancesState = stateOf(fromGroupErr)
-			failures = append(failures, FailureFromError(apidoc.FailureNodegroup, n.Name, fromGroupErr))
+			if f := FailureFromError(apidoc.FailureNodegroup, n.Name, fromGroupErr); !slices.Contains(failures, f) {
+				failures = append(failures, f)
+			}
 		}
 		for _, id := range members {
 			if inst, ok := instances[id]; ok {
@@ -325,7 +327,7 @@ func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instan
 		}
 	}
 	if need.AMI {
-		if failure := n.setAMI(l, members, instances, fromGroupErr); failure != nil && len(failures) == 0 {
+		if failure := n.setAMI(l, members, instances, fromGroupErr); failure != nil && !slices.Contains(failures, *failure) {
 			failures = append(failures, *failure)
 		}
 	}

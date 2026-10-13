@@ -251,6 +251,43 @@ func TestFetch_AMILookupFails(t *testing.T) {
 	}
 }
 
+// The instance list and the AMI can fail for different reasons, and the
+// run reports both. One reason for the two is one failure.
+func TestFetch_InstancesAndAMIFail(t *testing.T) {
+	tests := []struct {
+		name string
+		ops  []fleettest.Operation
+		want []string
+	}{
+		{
+			name: "two reasons",
+			ops:  []fleettest.Operation{fleettest.AutoScalingDescribeAutoScalingGroups, fleettest.SSMGetParameter},
+			want: []string{"Nodegroup web AccessDenied autoscaling:DescribeAutoScalingGroups", "Nodegroup web AccessDenied ssm:GetParameter"},
+		},
+		{
+			name: "one reason",
+			ops:  []fleettest.Operation{fleettest.AutoScalingDescribeAutoScalingGroups},
+			want: []string{"Nodegroup web AccessDenied autoscaling:DescribeAutoScalingGroups"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			world, _, provider := nodegroupWorld(t)
+			for _, op := range tt.ops {
+				world.SetFault(op, fleettest.Fault{Deny: true})
+			}
+			var fetcher fleet.Fetcher
+			snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{OnlyNodegroups: []string{"web"}, AMI: true, Instances: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tt.want, failureKeys(snap.Failures)); diff != "" {
+				t.Errorf("Failures (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // A launch template that cannot be read is not a failure when an instance
 // answers: one source is enough.
 func TestFetch_OneAMISourceIsEnough(t *testing.T) {
