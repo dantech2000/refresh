@@ -110,7 +110,7 @@ func TestList_Partial(t *testing.T) {
 			cmdutiltest.Golden(t, tt.file, e.Out.String(), *update)
 			if tt.format == "json" {
 				cmdutiltest.ValidateJSON(t, apidoc.KindAddonList, e.Out.Bytes())
-				if !strings.Contains(e.Err.String(), "warning: addon prod/coredns (us-east-1): Throttled:") {
+				if !strings.Contains(e.Err.String(), "warning: addon prod/coredns (us-east-1): Throttled (eks:DescribeAddon):") {
 					t.Errorf("stderr = %q, want the warning line of the failure", e.Err.String())
 				}
 			}

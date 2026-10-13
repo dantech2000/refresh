@@ -137,14 +137,14 @@ func TestList_Partial(t *testing.T) {
 				t.Errorf("error = %v, want %s", err, want)
 			}
 			golden(t, tt.file, e.out.String())
-			warnings := "warning: cluster prod-search (us-east-1): AccessDenied:"
+			warnings := "warning: cluster prod-search (us-east-1): AccessDenied (grant eks:DescribeCluster):"
 			if tt.format == "table" {
 				if e.err.Len() != 0 {
 					t.Errorf("stderr = %q, want nothing: the table lists the failures", e.err.String())
 				}
 				return
 			}
-			if !strings.Contains(e.err.String(), warnings) || !strings.Contains(e.err.String(), "warning: region eu-west-1: RegionUnavailable:") {
+			if !strings.Contains(e.err.String(), warnings) || !strings.Contains(e.err.String(), "warning: region eu-west-1: RegionUnavailable (eks:ListClusters):") {
 				t.Errorf("stderr = %q, want one warning line for each failure", e.err.String())
 			}
 			if tt.format == "json" {

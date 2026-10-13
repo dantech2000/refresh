@@ -237,10 +237,14 @@ func plainCell(s string) string {
 
 // FailureLine returns one line for a failure, for people:
 //
-//	nodegroup prod/web (us-east-1): Throttled: ThrottlingException: Rate exceeded
+//	nodegroup prod/web (us-east-1): Throttled (eks:DescribeNodegroup): ThrottlingException: Rate exceeded
+//	cluster prod (us-east-1): AccessDenied (grant eks:ListAddons): AccessDeniedException: ...
 //
-// The cluster, the region, and the error are left out when they are empty,
-// and the region is left out when it is the name of the item.
+// The call that failed is named, because one item is read with several
+// calls: a cluster whose add-ons could not be listed is not a cluster that
+// could not be described. For a denial the call is the IAM action to grant.
+// The cluster, the region, the call, and the error are left out when they
+// are empty, and the region is left out when it is the name of the item.
 func FailureLine(f apidoc.Failure) string {
 	var b strings.Builder
 	b.WriteString(f.Kind.Noun())
@@ -255,6 +259,13 @@ func FailureLine(f apidoc.Failure) string {
 	}
 	b.WriteString(": ")
 	b.WriteString(string(f.Reason))
+	switch {
+	case f.Operation == "":
+	case f.Reason == apidoc.ReasonAccessDenied:
+		b.WriteString(" (grant " + f.Operation + ")")
+	default:
+		b.WriteString(" (" + f.Operation + ")")
+	}
 	if f.Error != "" {
 		b.WriteString(": ")
 		b.WriteString(f.Error)

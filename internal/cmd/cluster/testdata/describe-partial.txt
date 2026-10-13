@@ -50,5 +50,5 @@ TAGS
   team  payments
 
 INCOMPLETE DATA
-[?] cluster prod (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[?] nodegroup prod/old (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] cluster prod (us-east-1): AccessDenied (grant eks:ListAddons): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod/old (us-east-1): AccessDenied (grant eks:DescribeNodegroup): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action

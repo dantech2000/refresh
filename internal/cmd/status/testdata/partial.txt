@@ -11,12 +11,12 @@ CLUSTER           REGION     VERSION  SUPPORT          COMPUTE       STALE AMI  
 [OK] 2 current   [!] 2 need attention   [X] 1 unsupported   [?] 3 incomplete
 
 INCOMPLETE DATA
-[?] addon prod-current/vpc-cni (us-east-1): Throttled: ThrottlingException: Rate exceeded
-[?] addon prod-stale/coredns (us-east-1): Throttled: ThrottlingException: Rate exceeded
-[?] addon prod-stale/kube-proxy (us-east-1): Throttled: ThrottlingException: Rate exceeded
-[?] addon prod-stale/vpc-cni (us-east-1): Throttled: ThrottlingException: Rate exceeded
-[?] nodegroup legacy/ng (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[?] nodegroup prod-current/ng (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[?] nodegroup prod-stale/api (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[?] nodegroup prod-stale/old (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[?] nodegroup prod-stale/web (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] addon prod-current/vpc-cni (us-east-1): Throttled (eks:DescribeAddonVersions): ThrottlingException: Rate exceeded
+[?] addon prod-stale/coredns (us-east-1): Throttled (eks:DescribeAddonVersions): ThrottlingException: Rate exceeded
+[?] addon prod-stale/kube-proxy (us-east-1): Throttled (eks:DescribeAddonVersions): ThrottlingException: Rate exceeded
+[?] addon prod-stale/vpc-cni (us-east-1): Throttled (eks:DescribeAddonVersions): ThrottlingException: Rate exceeded
+[?] nodegroup legacy/ng (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod-current/ng (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod-stale/api (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod-stale/old (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod-stale/web (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action

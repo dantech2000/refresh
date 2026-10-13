@@ -7,5 +7,5 @@ prod-search                                 us-east-1  [?] unknown  unknown
 staging-data-platform-shared-services-blue  us-east-1  [OK] ACTIVE  1.10
 
 INCOMPLETE DATA
-[?] cluster prod-search (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[?] region eu-west-1: RegionUnavailable: UnrecognizedClientException: The security token included in the request is invalid.
+[?] cluster prod-search (us-east-1): AccessDenied (grant eks:DescribeCluster): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] region eu-west-1: RegionUnavailable (eks:ListClusters): UnrecognizedClientException: The security token included in the request is invalid.

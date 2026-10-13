@@ -9,7 +9,7 @@ old       [OK] ACTIVE   m5.large            [!] 1.32  [?] unknown         2
 web       [OK] ACTIVE   m5.large,m5a.large  1.33      [?] unknown         6
 
 INCOMPLETE DATA
-[?] nodegroup prod/api (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[?] nodegroup prod/empty (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[?] nodegroup prod/old (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[?] nodegroup prod/web (us-east-1): AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod/api (us-east-1): AccessDenied (grant eks:DescribeNodegroup): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod/empty (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod/old (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod/web (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
