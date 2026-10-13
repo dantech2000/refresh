@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,9 @@ func TestValidateWatch(t *testing.T) {
 }
 
 // A watch reads again after each interval, goes on after a partial read,
-// and ends with ErrStopped when the user stops it.
+// and ends with ErrStopped when the user stops it. Each read replaces the
+// one before it when it is done: the screen is not empty during a read,
+// and a read that the user stopped is not drawn.
 func TestWatch(t *testing.T) {
 	var out bytes.Buffer
 	ios := &cmdutil.IOStreams{Out: &out, OutTTY: true}
@@ -60,10 +63,14 @@ func TestWatch(t *testing.T) {
 		intervals = append(intervals, d)
 		return tick
 	}
+	const clearScreen = "\x1b[H\x1b[2J"
 	reads := 0
 	draw := func(context.Context) error {
 		reads++
-		out.WriteString("read\n")
+		if want := strings.Repeat(clearScreen+"read\n", reads-1); out.String() != want {
+			t.Errorf("the screen during read %d = %q, want %q", reads, out.String(), want)
+		}
+		_, _ = fmt.Fprintln(ios.Out, "read")
 		switch reads {
 		case 2:
 			// A partial read: the watch goes on.
@@ -83,8 +90,7 @@ func TestWatch(t *testing.T) {
 	if reads != 3 {
 		t.Errorf("reads = %d, want 3", reads)
 	}
-	const clearScreen = "\x1b[H\x1b[2J"
-	if want := strings.Repeat(clearScreen+"read\n", 3); out.String() != want {
+	if want := strings.Repeat(clearScreen+"read\n", 2); out.String() != want {
 		t.Errorf("output = %q, want %q", out.String(), want)
 	}
 	if len(intervals) != 2 || intervals[0] != 10*time.Second {
