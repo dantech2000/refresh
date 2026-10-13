@@ -197,6 +197,18 @@ func staging(s *fleettest.State, _ *fleettest.Cluster) {
 	addNodegroup(s, c, "ng-s", "1.32", false)
 }
 
+// startControlPlaneUpdate starts an update of prod's control plane to 1.33,
+// as someone else would.
+func startControlPlaneUpdate(w *fleettest.World) error {
+	_, err := w.UpdateClusterVersion(Region, "prod", fleettest.ClusterVersionRequest{Version: new("1.33")})
+	return err
+}
+
+// lastReadBeforeRoll is which DescribeNodegroup request of the legacy
+// "nodegroup update -n ng-a --yes" on the seeded fleet is the last before
+// it sends its update. TestLastReadBeforeRoll holds it to the binary.
+const lastReadBeforeRoll = 9
+
 // fault sets one fault on the world.
 func fault(scope fleettest.Scope, f fleettest.Fault) func(*fleettest.World) error {
 	return func(w *fleettest.World) error {
@@ -255,4 +267,11 @@ var (
 // args returns a function that appends to a base command line.
 func args(base ...string) func(extra ...string) []string {
 	return func(extra ...string) []string { return append(append([]string{}, base...), extra...) }
+}
+
+// scaleElsewhere starts a scaling update of ng-a, as someone else would.
+func scaleElsewhere(w *fleettest.World) error {
+	three := int32(3)
+	_, err := w.UpdateNodegroupConfig(Region, "prod", "ng-a", fleettest.NodegroupConfigRequest{Scaling: &fleettest.ScalingRequest{Desired: &three}})
+	return err
 }

@@ -73,7 +73,18 @@ type Runner struct {
 	// it because the run's context ended. After that its whole process
 	// group is killed. Zero means five seconds.
 	Grace time.Duration
+	// Stall is how long, on the real clock, the world may wait for the
+	// binary: an update is in progress that ends when the clock advances,
+	// and the binary sends no request that advances it. The run then fails
+	// with an error that says so, long before the run's own deadline. It
+	// happens when a wait polls an operation that is not among the
+	// scenario's clock operations. Zero means fifteen seconds, which is
+	// three polls of the commands whose poll interval is fixed.
+	Stall time.Duration
 }
+
+// errStalled is the cause of a run the stall watch ended.
+var errStalled = errors.New("the world waits for the binary")
 
 // RunError is the error of a run that did not produce a trace. It carries
 // what the binary printed until then.
@@ -162,8 +173,20 @@ func (r Runner) RunAfter(ctx context.Context, sc Scenario, preview, args []strin
 	cmd.Env = env
 	startedAt := time.Now()
 
-	out, err := r.run(ctx, cmd, sc, started)
+	runCtx, stop := context.WithCancelCause(ctx)
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		r.watchForStall(runCtx, stop, world, rec)
+	}()
+	out, err := r.run(runCtx, cmd, sc, started)
+	stalled := context.Cause(runCtx)
+	stop(nil)
+	<-watched
 	if err != nil {
+		if errors.Is(stalled, errStalled) {
+			err = stalled
+		}
 		return Trace{}, &RunError{Err: fmt.Errorf("%s %s: %w", r.Binary, strings.Join(args, " "), err), Stdout: out.stdout + out.terminal, Stderr: out.stderr}
 	}
 	if err := rec.err(); err != nil {
@@ -183,6 +206,28 @@ func (r Runner) RunAfter(ctx context.Context, sc Scenario, preview, args []strin
 		trace.Terminal, trace.Stdout, trace.Stderr = trace.Stdout+trace.Stderr, "", ""
 	}
 	return trace, nil
+}
+
+// watchForStall ends the run when the world has waited for the binary for
+// longer than r.Stall. See Runner.Stall.
+func (r Runner) watchForStall(ctx context.Context, stop context.CancelCauseFunc, world *fleettest.World, rec *recorder) {
+	limit := cmp.Or(r.Stall, 15*time.Second)
+	ticker := time.NewTicker(limit / 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		idle, last := rec.idle()
+		if world.Pending() > 0 && idle > limit {
+			stop(fmt.Errorf("%w: an update in the world ends only when the clock advances, and for %s the binary has sent no request "+
+				"that advances it (the scenario's clock operations are %v). Its last requests were %v. If its wait polls another operation, add it to the scenario's Clock",
+				errStalled, idle.Round(time.Second), rec.clock(), last))
+			return
+		}
+	}
 }
 
 // output is what the binary wrote: stdout and stderr, or the transcript of
@@ -271,9 +316,9 @@ func (r Runner) run(ctx context.Context, cmd *exec.Cmd, sc Scenario, started cha
 }
 
 // environment is everything the binary sees: the fake endpoint, static
-// credentials, and empty config. Nothing is inherited, so no AWS_* or
-// REFRESH_* variable, proxy, profile, or kubeconfig of the machine can
-// reach it.
+// credentials, empty config, and a proxy setting that keeps it off the
+// network. Nothing is inherited, so no AWS_* or REFRESH_* variable, proxy,
+// profile, or kubeconfig of the machine can reach it.
 func environment(url, dir, emptyFile, kubeconfig string) []string {
 	return []string{
 		"HOME=" + dir,
@@ -296,8 +341,17 @@ func environment(url, dir, emptyFile, kubeconfig string) []string {
 		"AWS_EC2_METADATA_DISABLED=true",
 		"KUBECONFIG=" + kubeconfig,
 		"REFRESH_CONFIG_HOME=" + filepath.Join(dir, "refresh"),
+		// The binary must reach the fakes and nothing else. Every other
+		// address goes to a proxy that refuses the connection, so a call
+		// to the internet fails at once and does not leave the machine.
+		"HTTP_PROXY=" + deadProxy,
+		"HTTPS_PROXY=" + deadProxy,
+		"NO_PROXY=127.0.0.1,localhost",
 	}
 }
+
+// deadProxy is a proxy address on which nothing listens.
+const deadProxy = "http://127.0.0.1:1"
 
 // Terminal says how to answer the prompts of a binary that runs on a
 // pseudo-terminal.
@@ -426,6 +480,11 @@ type recorder struct {
 	byAWS, byKube map[int]*event
 	// seen counts the requests of each operation, for the moves.
 	seen map[fleettest.Operation]int
+	// progressed is when, on the real clock, the binary last did something
+	// that the world's pending updates depend on: a poll of a clock
+	// operation, or a mutation. recent are its last few requests.
+	progressed time.Time
+	recent     []fleettest.Operation
 	// polled holds what the binary has polled since the clock last moved.
 	polled    map[string]bool
 	mutations int // mutating requests that arrived
@@ -436,12 +495,33 @@ type recorder struct {
 	failure     error
 }
 
-func (rec *recorder) onRequest(ctx context.Context, r awsxtest.Request) {
-	clock := rec.sc.Clock
-	if clock == nil {
-		clock = defaultClock
+// clock returns the scenario's clock operations.
+func (rec *recorder) clock() []fleettest.Operation {
+	if rec.sc.Clock != nil {
+		return rec.sc.Clock
 	}
+	return defaultClock
+}
+
+// idle returns how long ago the binary last polled a clock operation or
+// sent a mutation, and its most recent requests.
+func (rec *recorder) idle() (time.Duration, []fleettest.Operation) {
 	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.progressed.IsZero() {
+		rec.progressed = time.Now()
+	}
+	return time.Since(rec.progressed), slices.Clone(rec.recent)
+}
+
+func (rec *recorder) onRequest(ctx context.Context, r awsxtest.Request) {
+	clock := rec.clock()
+	rec.mu.Lock()
+	rec.recent = append(rec.recent, r.Operation)
+	rec.recent = rec.recent[max(0, len(rec.recent)-8):]
+	if r.Mutates || slices.Contains(clock, r.Operation) {
+		rec.progressed = time.Now()
+	}
 	paused := rec.paused
 	if !paused {
 		rec.add(&event{aws: &r})

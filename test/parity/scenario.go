@@ -56,9 +56,9 @@ type Scenario struct {
 	// Kubernetes checks.
 	Kube bool
 	// Live marks a run that draws the live node view. The view polls the
-	// nodes, their pods, and the scaling activities on tickers of its own,
-	// so the trace of such a run has no reads and no output, as for a run
-	// on a terminal: its steps hold the mutations only.
+	// nodes, their pods, the events, and the scaling activities on tickers
+	// of its own, so those operations are kept out of the steps of the
+	// trace, and so is the run's output.
 	Live bool
 	// Moves change the world while the binary runs, between two of its
 	// requests.
@@ -155,8 +155,32 @@ const (
 	GateUnreadableForced Behaviour = "gate-unreadable-forced"
 )
 
-// Check is one assertion on a trace. It returns what is wrong, or nil.
-type Check func(t Trace) error
+// Check is one assertion on a trace.
+type Check struct {
+	// Field is the part of the trace the check is about. A paired run skips
+	// the check when the allowlist lets that field of the scenario differ:
+	// the check then describes the old binary only.
+	Field Field
+	// Run returns what is wrong, or nil.
+	Run func(t Trace) error
+}
+
+// The checks that take no argument.
+var (
+	fails                    = Check{Field: FieldExitCode, Run: failsIn}
+	noRequests               = Check{Field: FieldPreconditions, Run: noRequestsIn}
+	noMutations              = Check{Field: FieldMutations, Run: noMutationsIn}
+	noUpdates                = Check{Field: FieldMutations, Run: noUpdatesIn}
+	changes                  = Check{Field: FieldMutations, Run: changesIn}
+	allAccepted              = Check{Field: FieldMutations, Run: allAcceptedIn}
+	refusedByEKS             = Check{Field: FieldMutations, Run: refusedByEKSIn}
+	nothingAfterSignal       = Check{Field: FieldMutations, Run: nothingAfterSignalIn}
+	oneUpdatePerLostResponse = Check{Field: FieldMutations, Run: oneUpdatePerLostResponseIn}
+	sawThrottle              = Check{Field: FieldPreconditions, Run: sawThrottleIn}
+	noRolls                  = Check{Field: FieldMutations, Run: noRollsIn}
+	rolls                    = Check{Field: FieldMutations, Run: rollsIn}
+	anUpdateFailed           = Check{Field: FieldWorld, Run: anUpdateFailedIn}
+)
 
 // behaviourChecks are what a scenario of each behaviour must show.
 var behaviourChecks = map[Behaviour][]Check{
@@ -182,15 +206,55 @@ var behaviourChecks = map[Behaviour][]Check{
 	GateUnreadableForced: {rolls, sawKubeAnswer(fleettest.KubeListPDBs, "error=Forbidden")},
 }
 
-// check runs the scenario's own checks and those of its behaviour.
-func (sc Scenario) check(t Trace) error {
+// dryRunReads are the reads a dry run of each command must make: the state
+// of what it would change, and what its gate and its plan rest on. A dry
+// run that changes nothing because it looked at nothing is not a dry run.
+var dryRunReads = map[Command][]fleettest.Operation{
+	AddonUpdate:     {fleettest.EKSDescribeAddon, fleettest.EKSDescribeAddonVersions},
+	NodegroupScale:  {fleettest.EKSDescribeNodegroup},
+	NodegroupUpdate: {fleettest.EKSDescribeNodegroup, fleettest.SSMGetParameter},
+	ClusterUpgrade:  {fleettest.EKSDescribeCluster, fleettest.EKSListInsights, fleettest.EKSDescribeNodegroup, fleettest.EKSDescribeAddonVersions},
+	ClusterRollback: {fleettest.EKSDescribeCluster, fleettest.EKSListUpdates, fleettest.EKSDescribeNodegroup, fleettest.EKSDescribeAddonVersions},
+}
+
+// checks returns the scenario's own checks and those of its behaviour.
+func (sc Scenario) checks() []Check {
+	out := slices.Concat(behaviourChecks[sc.Behaviour], sc.Checks)
+	if sc.Behaviour == DryRun {
+		for _, op := range dryRunReads[sc.Command] {
+			out = append(out, sawRead(op))
+		}
+	}
+	return out
+}
+
+// check runs the scenario's checks, except those about a field that skip
+// accepts. A nil skip runs them all.
+func (sc Scenario) check(t Trace, skip func(Field) bool) error {
 	var errs []error
-	for _, c := range slices.Concat(behaviourChecks[sc.Behaviour], sc.Checks) {
-		if err := c(t); err != nil {
+	for _, c := range sc.checks() {
+		if skip != nil && skip(c.Field) {
+			continue
+		}
+		if err := c.Run(t); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// sawRead: the binary made the read at least once and got an answer.
+func sawRead(op fleettest.Operation) Check {
+	return Check{Field: FieldPreconditions, Run: func(t Trace) error {
+		for _, s := range t.Steps {
+			for _, r := range s.Reads {
+				if r.Operation == op && !strings.HasPrefix(r.Observed, "error=") && r.Observed != "dropped" {
+					return nil
+				}
+			}
+		}
+		return fmt.Errorf("the binary never read %s", op)
+	}}
 }
 
 // updates returns the Update requests of a trace, as "Operation target".
@@ -205,15 +269,15 @@ func updates(t Trace) []string {
 }
 
 func exits(code int) Check {
-	return func(t Trace) error {
+	return Check{Field: FieldExitCode, Run: func(t Trace) error {
 		if t.ExitCode != code {
 			return fmt.Errorf("exit code %d, want %d", t.ExitCode, code)
 		}
 		return nil
-	}
+	}}
 }
 
-func fails(t Trace) error {
+func failsIn(t Trace) error {
 	if t.ExitCode == 0 {
 		return errors.New("exit code 0, want a failure")
 	}
@@ -221,14 +285,14 @@ func fails(t Trace) error {
 }
 
 // noRequests: the binary decided before it called AWS at all.
-func noRequests(t Trace) error {
+func noRequestsIn(t Trace) error {
 	if len(t.Steps) != 0 {
 		return fmt.Errorf("the binary sent requests: %d step(s)", len(t.Steps))
 	}
 	return nil
 }
 
-func noMutations(t Trace) error {
+func noMutationsIn(t Trace) error {
 	if m := t.Mutations(); len(m) != 0 {
 		return fmt.Errorf("%d mutating request(s), want none: first %s %s", len(m), m[0].Operation, m[0].Target)
 	}
@@ -237,21 +301,21 @@ func noMutations(t Trace) error {
 
 // noUpdates: no Update request. It allows StartInsightsRefresh, which
 // changes no resource.
-func noUpdates(t Trace) error {
+func noUpdatesIn(t Trace) error {
 	if u := updates(t); len(u) != 0 {
 		return fmt.Errorf("update requests %v, want none", u)
 	}
 	return nil
 }
 
-func changes(t Trace) error {
+func changesIn(t Trace) error {
 	if len(updates(t)) == 0 {
 		return errors.New("no update request, want at least one")
 	}
 	return nil
 }
 
-func allAccepted(t Trace) error {
+func allAcceptedIn(t Trace) error {
 	for _, m := range t.Mutations() {
 		if !strings.HasPrefix(m.Outcome, "accepted") {
 			return fmt.Errorf("%s %s ended %q, want accepted", m.Operation, m.Target, m.Outcome)
@@ -263,16 +327,16 @@ func allAccepted(t Trace) error {
 // updatesAre: the Update requests are exactly these, in this order, each as
 // "Operation target".
 func updatesAre(want ...string) Check {
-	return func(t Trace) error {
+	return Check{Field: FieldMutations, Run: func(t Trace) error {
 		if got := updates(t); !slices.Equal(got, want) {
 			return fmt.Errorf("update requests %v, want %v", got, want)
 		}
 		return nil
-	}
+	}}
 }
 
 // refusedByEKS: the one update request was sent and EKS refused it.
-func refusedByEKS(t Trace) error {
+func refusedByEKSIn(t Trace) error {
 	m := t.Mutations()
 	if len(m) != 1 || !strings.HasPrefix(m[0].Outcome, "error=") {
 		return fmt.Errorf("mutations %+v, want one that EKS refused", m)
@@ -281,7 +345,7 @@ func refusedByEKS(t Trace) error {
 }
 
 // nothingAfterSignal: no mutating request arrived after the signal.
-func nothingAfterSignal(t Trace) error {
+func nothingAfterSignalIn(t Trace) error {
 	switch {
 	case t.SignalAfterMutations == nil:
 		return errors.New("no signal was sent")
@@ -293,7 +357,7 @@ func nothingAfterSignal(t Trace) error {
 
 // oneUpdatePerLostResponse: a request whose answer was lost is followed by
 // the same request with the same token, and the two started one update.
-func oneUpdatePerLostResponse(t Trace) error {
+func oneUpdatePerLostResponseIn(t Trace) error {
 	m := t.Mutations()
 	lost := 0
 	for i := range m {
@@ -332,7 +396,7 @@ func oneUpdatePerLostResponse(t Trace) error {
 	return nil
 }
 
-func sawThrottle(t Trace) error {
+func sawThrottleIn(t Trace) error {
 	for _, s := range t.Steps {
 		for _, r := range s.Reads {
 			if strings.HasPrefix(r.Observed, "error=") && strings.Contains(r.Observed, "hrottl") {
@@ -341,6 +405,21 @@ func sawThrottle(t Trace) error {
 		}
 	}
 	return errors.New("no read was throttled")
+}
+
+// sawAnswer: at some point of the run, an answer to the read contained the
+// text.
+func sawAnswer(op fleettest.Operation, text string) Check {
+	return Check{Field: FieldPreconditions, Run: func(t Trace) error {
+		for _, s := range t.Steps {
+			for _, r := range s.Reads {
+				if r.Operation == op && strings.Contains(r.Observed, text) {
+					return nil
+				}
+			}
+		}
+		return fmt.Errorf("no %s answer with %q", op, text)
+	}}
 }
 
 // sawKube: the binary made the Kubernetes request at least once.
@@ -354,7 +433,7 @@ func isRoll(m *Mutation) bool {
 // noRolls: no request that changes the nodes of a nodegroup. A cluster
 // upgrade may have updated the control plane and the add-ons before its
 // gate for the first nodegroup.
-func noRolls(t Trace) error {
+func noRollsIn(t Trace) error {
 	for _, s := range t.Steps {
 		if isRoll(s.Mutation) {
 			return fmt.Errorf("%s %s was sent, want no nodegroup change", s.Mutation.Operation, s.Mutation.Target)
@@ -364,8 +443,8 @@ func noRolls(t Trace) error {
 }
 
 // rolls: at least one request that changes the nodes of a nodegroup.
-func rolls(t Trace) error {
-	if noRolls(t) == nil {
+func rollsIn(t Trace) error {
+	if noRollsIn(t) == nil {
 		return errors.New("no nodegroup was changed, want at least one")
 	}
 	return nil
@@ -374,12 +453,12 @@ func rolls(t Trace) error {
 // worldSays: the final state of prod, as the trace records it, contains
 // the text.
 func worldSays(text string) Check {
-	return func(t Trace) error {
+	return Check{Field: FieldWorld, Run: func(t Trace) error {
 		if state := fmt.Sprintf("%+v", t.World[Region+"/prod"]); !strings.Contains(state, text) {
 			return fmt.Errorf("the final state of prod does not contain %q: %s", text, state)
 		}
 		return nil
-	}
+	}}
 }
 
 // sawKubeAnswer: the binary made the Kubernetes request before it first
@@ -387,7 +466,7 @@ func worldSays(text string) Check {
 // contained the text. It is how a scenario shows that a gate read the state
 // it then decided on.
 func sawKubeAnswer(op fleettest.Operation, text string) Check {
-	return func(t Trace) error {
+	return Check{Field: FieldPreconditions, Run: func(t Trace) error {
 		for _, s := range t.Steps {
 			for _, r := range s.Reads {
 				if r.Operation == op && strings.Contains(r.Observed, text) {
@@ -399,22 +478,22 @@ func sawKubeAnswer(op fleettest.Operation, text string) Check {
 			}
 		}
 		return fmt.Errorf("no %s answer with %q before the first nodegroup change", op, text)
-	}
+	}}
 }
 
 // called: the binary made the request at least once, at any point. It is
 // for the requests a trace keeps out of its steps.
 func called(op fleettest.Operation) Check {
-	return func(t Trace) error {
+	return Check{Field: FieldPreconditions, Run: func(t Trace) error {
 		if !slices.Contains(t.UnstableReads, op) {
 			return fmt.Errorf("%s was not called (called outside the steps: %v)", op, t.UnstableReads)
 		}
 		return nil
-	}
+	}}
 }
 
 // anUpdateFailed: some update in the final world is Failed.
-func anUpdateFailed(t Trace) error {
+func anUpdateFailedIn(t Trace) error {
 	for _, c := range t.World {
 		for _, u := range c.Updates {
 			if strings.Contains(u, " Failed ") {
@@ -428,7 +507,7 @@ func anUpdateFailed(t Trace) error {
 // resourceIs: the final line of a nodegroup or an add-on of prod contains
 // the text.
 func resourceIs(name, text string) Check {
-	return func(t Trace) error {
+	return Check{Field: FieldWorld, Run: func(t Trace) error {
 		c := t.World[Region+"/prod"]
 		line, ok := c.Nodegroups[name]
 		if !ok {
@@ -438,7 +517,7 @@ func resourceIs(name, text string) Check {
 			return fmt.Errorf("%s is %q in the end, want it to contain %q", name, line, text)
 		}
 		return nil
-	}
+	}}
 }
 
 // cell is one cell of the behaviour matrix: the scenario that covers it, or

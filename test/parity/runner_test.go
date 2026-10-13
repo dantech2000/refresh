@@ -63,12 +63,58 @@ func TestChildEnvironment(t *testing.T) {
 		"AWS_EC2_METADATA_DISABLED":   "true",
 		"KUBECONFIG":                  "$DIR/empty",
 		"REFRESH_CONFIG_HOME":         "$DIR/refresh",
+		"HTTP_PROXY":                  "http://127.0.0.1:1",
+		"HTTPS_PROXY":                 "http://127.0.0.1:1",
+		"NO_PROXY":                    "127.0.0.1,localhost",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("AWS, refresh, Kubernetes, and proxy variables of the child (-want +got):\n%s", diff)
 	}
 	if !strings.Contains(trace.Stdout, "HOME=$DIR\n") {
 		t.Errorf("the child's HOME is not the run's directory:\n%s", trace.Stdout)
+	}
+}
+
+// TestChildCannotReachTheNetwork checks the proxy setting of the child's
+// environment with a real HTTP client: a call to the internet fails at
+// once, at the proxy that is not there, and a call to the fake goes through.
+func TestChildCannotReachTheNetwork(t *testing.T) {
+	t.Parallel()
+	r, args := stand("fetch")
+	started := time.Now()
+	trace, err := r.Run(t.Context(), Scenario{Seed: fleet()}, args, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(started); took > 10*time.Second {
+		t.Errorf("the child took %s: a call to the network did not fail fast", took)
+	}
+	for _, want := range []string{"https://api.github.com/: error: ", "proxyconnect", "http://example.com/: error: ", "the fake: status 403"} {
+		if !strings.Contains(trace.Stdout, want) {
+			t.Errorf("the child's output lacks %q:\n%s", want, trace.Stdout)
+		}
+	}
+}
+
+// TestStallIsReported runs a child that never polls while the world has an
+// update that only the clock can end. The run must fail soon, and say why.
+func TestStallIsReported(t *testing.T) {
+	t.Parallel()
+	r, args := stand("sleep")
+	r.Stall = 300 * time.Millisecond
+	sc := Scenario{Seed: fleet(scripts(slow)), Prepare: startControlPlaneUpdate}
+	started := time.Now()
+	_, err := r.Run(t.Context(), sc, args, t.TempDir())
+	if err == nil || !errors.Is(err, errStalled) {
+		t.Fatalf("Run returned %v, want the stall error", err)
+	}
+	for _, want := range []string{"the world waits for the binary", "eks:DescribeUpdate", "add it to the scenario's Clock"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error lacks %q: %v", want, err)
+		}
+	}
+	if took := time.Since(started); took > 20*time.Second {
+		t.Errorf("the stall was reported after %s", took)
 	}
 }
 

@@ -4,6 +4,8 @@ package parity
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,6 +43,11 @@ func sampleTrace() Trace {
 					Payload: map[string]any{"version": "1.33", "clientRequestToken": "token-2"}, Outcome: "accepted update 2",
 				},
 			},
+			{Reads: []Read{
+				{Operation: "eks:DescribeUpdate", Region: Region, Target: "prod/ng-a", Observed: "update 2 VersionUpdate Successful"},
+				{Operation: "eks:DescribeNodegroup", Region: Region, Target: "prod/ng-a", Observed: "1.33 r2 ACTIVE 2/1/3"},
+				{Operation: "kube:ListPods", Region: Region, Target: "prod", Observed: "[status.phase=Pending]"},
+			}},
 		},
 		World: map[string]ClusterState{Region + "/prod": {Cluster: "1.33 ACTIVE", Nodegroups: map[string]string{"ng-a": "1.33 r2 ACTIVE 2/1/3"}}},
 	}
@@ -69,8 +76,8 @@ func TestCompareFindsDifferences(t *testing.T) {
 		{"one token for two requests", func(v2 *Trace) { v2.Steps[1].Mutation.Payload["clientRequestToken"] = "token-1" }, []Field{FieldMutations}},
 		{"a mutation that was refused", func(v2 *Trace) { v2.Steps[1].Mutation.Outcome = "error=ResourceInUseException" }, []Field{FieldMutations}},
 		{"a mutation more", func(v2 *Trace) {
-			v2.Steps = append(v2.Steps, Step{Mutation: &Mutation{Operation: "eks:UpdateAddon", Region: Region, Target: "prod/coredns", Outcome: "accepted update 3"}})
-		}, []Field{FieldMutations, FieldPreconditions}},
+			v2.Steps[2].Mutation = &Mutation{Operation: "eks:UpdateAddon", Region: Region, Target: "prod/coredns", Outcome: "accepted update 3"}
+		}, []Field{FieldMutations, FieldPreconditions, FieldPostconditions}},
 		{"the roll started before the control plane was seen to finish", func(v2 *Trace) {
 			v2.Steps[1].Preconditions = v2.Steps[1].Preconditions[:1]
 		}, []Field{FieldPreconditions}},
@@ -80,6 +87,13 @@ func TestCompareFindsDifferences(t *testing.T) {
 		{"the nodegroup was not read before its roll", func(v2 *Trace) {
 			v2.Steps[1].Preconditions = v2.Steps[1].Preconditions[1:]
 		}, []Field{FieldPreconditions}},
+		{"no verification after the last change", func(v2 *Trace) { v2.Steps = v2.Steps[:2] }, []Field{FieldPostconditions}},
+		{"the last update was not seen to finish", func(v2 *Trace) {
+			v2.Steps[2].Reads = v2.Steps[2].Reads[1:]
+		}, []Field{FieldPostconditions}},
+		{"a read more after the last change, of something else", func(v2 *Trace) {
+			v2.Steps[2].Reads = append(v2.Steps[2].Reads, Read{Operation: "eks:DescribeAddon", Region: Region, Target: "prod/coredns", Observed: "v1 ACTIVE"})
+		}, nil},
 		{"another final state", func(v2 *Trace) {
 			v2.World[Region+"/prod"].Nodegroups["ng-a"] = "1.33 r2 DEGRADED 2/1/3 issues=NodeCreationFailure"
 		}, []Field{FieldWorld}},
@@ -87,7 +101,7 @@ func TestCompareFindsDifferences(t *testing.T) {
 		{"a refusal", func(v2 *Trace) {
 			v2.Steps, v2.RefusedBeforeMutation, v2.ExitCode = nil, true, 3
 			v2.World[Region+"/prod"] = ClusterState{Cluster: "1.32 ACTIVE"}
-		}, []Field{FieldMutations, FieldPreconditions, FieldWorld, FieldRefused, FieldExitCode}},
+		}, []Field{FieldMutations, FieldPreconditions, FieldPostconditions, FieldWorld, FieldRefused, FieldExitCode}},
 		{"another exit code", func(v2 *Trace) { v2.ExitCode = 5 }, []Field{FieldExitCode}},
 	}
 	for _, tt := range tests {
@@ -141,6 +155,19 @@ func TestCompareAllowlist(t *testing.T) {
 	if len(left) != 1 || left[0].Field != FieldMutations {
 		t.Errorf("differences that are not allowed = %v, want the mutations only", left)
 	}
+	if unused := Unused("sample", diffs, append(allow, Allowance{Scenario: "sample", Field: FieldWorld})); len(unused) != 1 || unused[0].Field != FieldWorld {
+		t.Errorf("unused allowances = %+v, want the one for the world", unused)
+	}
+
+	// An allowance with an expected value allows that value only.
+	for value, wantAllowed := range map[string]bool{"4": true, "3": false} {
+		pinned := []Allowance{{Scenario: "sample", Field: FieldExitCode, Reason: "the contract picks 4", Expect: json.RawMessage(value)}}
+		for _, d := range Compare("sample", sampleTrace(), v2, pinned) {
+			if d.Field == FieldExitCode && d.Allowed != wantAllowed {
+				t.Errorf("with expect %s the exit code 4 is allowed = %t, want %t:\n%s", value, d.Allowed, wantAllowed, d)
+			}
+		}
+	}
 	if text := diffs[1].String(); !strings.Contains(text, "allowed: the contract picks 4") {
 		t.Errorf("the allowed difference reads %q", text)
 	}
@@ -161,10 +188,41 @@ func TestAllowlistFile(t *testing.T) {
 	for _, sc := range scenarios() {
 		names = append(names, sc.Name)
 	}
+	rows, err := ContractRows("../../CONTRACT.md")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, a := range list {
 		if !slices.Contains(names, a.Scenario) {
 			t.Errorf("the allowlist names the scenario %q, which the suite does not have", a.Scenario)
 		}
+		// The source is the first words of the old-behaviour cell of a row
+		// of the contract's table.
+		if !slices.ContainsFunc(rows, func(row string) bool { return strings.HasPrefix(row, a.Source) }) {
+			t.Errorf("the allowlist entry for %s (%s) cites %q, and no row of the contract's table starts with that", a.Scenario, a.Field, a.Source)
+		}
+	}
+}
+
+func TestContractRows(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "CONTRACT.md")
+	const doc = "# x\n\n## Behaviour the new CLI does not copy\n\nText.\n\n| Old behaviour | New behaviour |\n|---|---|\n| `a b` does X | Y |\n| Z happens | W |\n\nOne is kept.\n\n## Next\n\n| not | this |\n"
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ContractRows(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]string{"`a b` does X", "Z happens"}, rows); diff != "" {
+		t.Errorf("rows (-want +got):\n%s", diff)
+	}
+	if err := os.WriteFile(path, []byte("# nothing here\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ContractRows(path); err == nil {
+		t.Error("a contract with no such table gave no error")
 	}
 }
 
@@ -191,33 +249,117 @@ func TestLoadAllowlistRejects(t *testing.T) {
 	}
 }
 
-// TestPairedSelf pairs the legacy binary with itself on a few scenarios:
-// two real runs of one binary must compare as equal, whatever the reads and
-// the clock did in between.
+// pair runs a scenario with the legacy binary and with another binary, and
+// returns everything that is wrong with the other one: each difference the
+// allowlist does not allow, each allowance of the scenario that no
+// difference used, and each of the scenario's own checks that the other
+// trace fails. A check about a field whose difference is allowed is
+// skipped: it describes the old binary only.
+func pair(t *testing.T, sc Scenario, other Runner, preview, args []string, allow []Allowance) []string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	got, err := other.RunAfter(ctx, sc, preview, args, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var problems []string
+	diffs := Compare(sc.Name, run(t, sc), got, allow)
+	allowed := map[Field]bool{}
+	for _, d := range diffs {
+		if d.Allowed {
+			allowed[d.Field] = true
+			t.Log(d)
+			continue
+		}
+		problems = append(problems, d.String())
+	}
+	for _, a := range Unused(sc.Name, diffs, allow) {
+		problems = append(problems, fmt.Sprintf("%s: the allowlist lets %s differ (%s), and it does not differ as allowed: remove the entry, or the binary has not made the change", sc.Name, a.Field, a.Source))
+	}
+	if err := sc.check(got, func(f Field) bool { return allowed[f] }); err != nil {
+		problems = append(problems, fmt.Sprintf("%s: the run does not show what the scenario is for:\n%v\n%s", sc.Name, err, brief(got)))
+	}
+	return problems
+}
+
+func scenarioNamed(t *testing.T, name string) Scenario {
+	t.Helper()
+	for _, sc := range scenarios() {
+		if sc.Name == name {
+			return sc
+		}
+	}
+	t.Fatalf("no scenario %q", name)
+	return Scenario{}
+}
+
+// TestPairedSelf pairs the legacy binary with itself, through the code
+// TestPaired uses for the v2 binary: two real runs of one binary must
+// compare as equal and pass the scenario's checks, whatever the reads and
+// the clock did in between. The scenarios cover a preview, a dry run, a
+// lost response, a signal, a second cluster, and a Kubernetes gate.
 func TestPairedSelf(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"addon-update-lost-response", "nodegroup-update-interrupt", "cluster-upgrade-yes", "cluster-rollback-blocked", "nodegroup-update-all-clusters"} {
+	for _, name := range []string{
+		"addon-update-lost-response", "nodegroup-update-interrupt", "cluster-upgrade-yes", "cluster-rollback-blocked",
+		"nodegroup-update-all-clusters", "nodegroup-update-dry-run", "nodegroup-update-pdb-tightens-after-dry-run", "cluster-upgrade-pdb-blocked",
+	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			var sc Scenario
-			for _, s := range scenarios() {
-				if s.Name == name {
-					sc = s
-				}
-			}
-			if sc.Name == "" {
-				t.Fatalf("no scenario %q", name)
-			}
-			for _, d := range Compare(name, run(t, sc), run(t, sc), nil) {
-				t.Errorf("two runs of the legacy binary differ:\n%s", d)
+			sc := scenarioNamed(t, name)
+			for _, problem := range pair(t, sc, legacy, sc.LegacyPreview, sc.Legacy, nil) {
+				t.Error(problem)
 			}
 		})
 	}
 }
 
+// TestPairedFindsProblems pairs the legacy binary with itself in ways that
+// must fail: an allowance that nothing uses, and a "new" command line that
+// does something else than the scenario's.
+func TestPairedFindsProblems(t *testing.T) {
+	t.Parallel()
+	t.Run("an allowance that no difference uses", func(t *testing.T) {
+		t.Parallel()
+		sc := scenarioNamed(t, "addon-update-yes")
+		allow := []Allowance{{Scenario: sc.Name, Field: FieldExitCode, Reason: "r", Source: "s", OwnerApproved: true}}
+		problems := pair(t, sc, legacy, nil, sc.Legacy, allow)
+		if len(problems) != 1 || !strings.Contains(problems[0], "does not differ as allowed") {
+			t.Errorf("problems = %q, want the unused allowance", problems)
+		}
+	})
+	t.Run("a preview that is skipped", func(t *testing.T) {
+		t.Parallel()
+		// Without its dry run first, the world is not tightened... and with
+		// it, it is. Run the scenario's real command with no preview on a
+		// world whose AfterPreview never ran: the gate passes and the roll
+		// starts, which the scenario's checks and the comparison refuse.
+		sc := scenarioNamed(t, "nodegroup-update-pdb-tightens-after-dry-run")
+		problems := strings.Join(pair(t, sc, legacy, nil, sc.Legacy, nil), "\n")
+		for _, want := range []string{"mutations differs (NOT ALLOWED)", "update requests [UpdateNodegroupVersion prod/ng-a], want none"} {
+			if !strings.Contains(problems, want) {
+				t.Errorf("the problems lack %q:\n%s", want, problems)
+			}
+		}
+	})
+	t.Run("a dry run in place of the change", func(t *testing.T) {
+		t.Parallel()
+		sc := scenarioNamed(t, "nodegroup-update-yes")
+		dryRun := scenarioNamed(t, "nodegroup-update-dry-run").Legacy
+		problems := strings.Join(pair(t, sc, legacy, nil, dryRun, nil), "\n")
+		for _, want := range []string{"mutations differs", "postconditions differs", "world differs", "no update request, want at least one"} {
+			if !strings.Contains(problems, want) {
+				t.Errorf("the problems lack %q:\n%s", want, problems)
+			}
+		}
+	})
+}
+
 // TestPaired compares the v2 binary with the legacy binary on every
-// scenario that has a v2 command line. Set REFRESH_PARITY_V2 to the v2
-// binary. Until commands exist no scenario has a v2 command line.
+// scenario that has a v2 command line, and runs the scenario's own checks
+// on the v2 trace. Set REFRESH_PARITY_V2 to the v2 binary. Until commands
+// exist no scenario has a v2 command line.
 func TestPaired(t *testing.T) {
 	t.Parallel()
 	v2 := Runner{Binary: os.Getenv("REFRESH_PARITY_V2")}
@@ -234,18 +376,8 @@ func TestPaired(t *testing.T) {
 		}
 		t.Run(sc.Name, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-			defer cancel()
-			got, err := v2.Run(ctx, sc, sc.V2, t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, d := range Compare(sc.Name, run(t, sc), got, allow) {
-				if d.Allowed {
-					t.Log(d)
-					continue
-				}
-				t.Error(d)
+			for _, problem := range pair(t, sc, v2, sc.V2Preview, sc.V2, allow) {
+				t.Error(problem)
 			}
 		})
 	}

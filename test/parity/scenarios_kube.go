@@ -101,12 +101,16 @@ func kubeNodegroupUpdate() []Scenario {
 			}),
 		},
 		{
-			Name: "nodegroup-update-node-not-ready", Kube: true, Legacy: with("--yes"), Checks: []Check{sawKube(fleettest.KubeListNodes)},
-			Seed: fleet(workloads, scripts(slow), func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodes[3].NotReady = true }),
+			// One node of the other nodegroup is NotReady: a warning, which
+			// --yes accepts.
+			Name: "nodegroup-update-node-not-ready", Kube: true, Legacy: with("--yes"),
+			Checks: []Check{exits(0), updatesAre(a), sawKubeAnswer(fleettest.KubeListNodes, "b-2=NotReady")},
+			Seed:   fleet(workloads, scripts(slow), func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodes[3].NotReady = true }),
 		},
 		{
-			Name: "nodegroup-update-node-not-ready-require-healthy", Kube: true, Legacy: with("--yes", "--require-healthy"), Checks: []Check{noUpdates},
-			Seed: fleet(workloads, func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodes[3].NotReady = true }),
+			Name: "nodegroup-update-node-not-ready-require-healthy", Kube: true, Legacy: with("--yes", "--require-healthy"),
+			Checks: []Check{exits(2), noMutations, sawKubeAnswer(fleettest.KubeListNodes, "b-2=NotReady")},
+			Seed:   fleet(workloads, func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodes[3].NotReady = true }),
 		},
 		{
 			// The new nodes never become Ready. The legacy verification reads
@@ -119,7 +123,7 @@ func kubeNodegroupUpdate() []Scenario {
 		{
 			Name: "nodegroup-update-verify-pending-pods", Kube: true, Legacy: with("--yes"),
 			Seed:   fleet(workloads, rollOf("ng-a", fleettest.RollScript{PendingPods: true})),
-			Checks: []Check{exits(5), updatesAre(a), worldSays("default/web-1:Pending")},
+			Checks: []Check{exits(5), updatesAre(a), worldSays("default/web-1-u1:Pending")},
 		},
 		{
 			// The update succeeds and EKS leaves the nodegroup DEGRADED.
@@ -187,7 +191,10 @@ func kubeNodegroupScale() []Scenario {
 			Name: "nodegroup-scale-pdb-safe", Kube: true, Seed: fleet(workloads), Legacy: to("1")("--yes"),
 			Checks: []Check{exits(0), one, sawKube(fleettest.KubeListPDBs)},
 		},
-		{Name: "nodegroup-scale-pdb-blocked", Behaviour: DrainBlocked, Kube: true, Seed: fleet(workloads, tight("web")), Legacy: to("1")("--yes")},
+		{
+			Name: "nodegroup-scale-pdb-blocked", Behaviour: Blocked, Kube: true, Seed: fleet(workloads, tight("web")), Legacy: to("1")("--yes"),
+			Checks: []Check{exits(3), noMutations, sawKubeAnswer(fleettest.KubeListPDBs, "default/web=allows0")},
+		},
 		{
 			Name: "nodegroup-scale-pdb-forced", Behaviour: DrainForced, Kube: true, Seed: fleet(workloads, tight("web")),
 			Legacy: to("1")("--yes", "--force"), Checks: []Check{one},
@@ -269,12 +276,16 @@ func kubeClusterUpgrade() []Scenario {
 		{
 			// After the plan is made, and before the add-on phase, someone
 			// else starts an update of vpc-cni.
-			Name: "cluster-upgrade-addon-updated-elsewhere", Kube: true, Seed: fleet(workloads, scripts(slow)), Legacy: with("--yes"),
+			// The foreign update outlasts the control-plane phase, so it is
+			// still in flight when the add-on phase starts. The legacy
+			// command waits for it and sends no update of its own.
+			Name: "cluster-upgrade-addon-updated-elsewhere", Kube: true, Seed: fleet(workloads, scripts(slow), script("vpc-cni", long)), Legacy: with("--yes"),
+			Clock: []fleettest.Operation{fleettest.EKSDescribeUpdate, fleettest.EKSDescribeInsightsRefresh, fleettest.EKSDescribeAddon},
 			Moves: []Move{{Before: fleettest.EKSUpdateClusterVersion, Nth: 1, Do: func(w *fleettest.World) error {
 				_, err := w.UpdateAddon(Region, "prod", "vpc-cni", fleettest.AddonRequest{Version: new("v1.20.0-eksbuild.1")})
 				return err
 			}}},
-			Checks: []Check{updatesAre(control, dns, a, b)},
+			Checks: []Check{exits(0), updatesAre(control, dns, a, b), sawAnswer(fleettest.EKSDescribeAddon, "v1.20.0-eksbuild.1 UPDATING"), resourceIs("vpc-cni", "v1.20.0-eksbuild.1 ACTIVE")},
 		},
 	}
 }

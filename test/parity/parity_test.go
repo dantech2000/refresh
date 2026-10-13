@@ -21,6 +21,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"go.uber.org/goleak"
+
+	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden traces in testdata")
@@ -78,13 +80,36 @@ func helper(mode string) {
 		for _, kv := range os.Environ() {
 			fmt.Println(kv)
 		}
+	case "fetch":
+		// One call to the internet over TLS, one in plain HTTP, and one to
+		// the fake. The first two must fail at the proxy.
+		for _, url := range []string{"https://api.github.com/", "http://example.com/"} {
+			resp, err := http.Get(url) //nolint:noctx,gosec // a fixed address that must not be reached
+			if err != nil {
+				fmt.Printf("%s: error: %v\n", url, err)
+				continue
+			}
+			_ = resp.Body.Close()
+			fmt.Printf("%s: status %d\n", url, resp.StatusCode)
+		}
+		resp, err := http.Get(os.Getenv("AWS_ENDPOINT_URL") + "/clusters") //nolint:noctx,gosec // the fake
+		if err != nil {
+			fmt.Println("the fake: error:", err)
+			break
+		}
+		_ = resp.Body.Close()
+		fmt.Printf("the fake: status %d\n", resp.StatusCode)
 	case "prompt":
 		fmt.Print("Continue? [y/N] ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		fmt.Printf("answer=%q\n", line)
 	case "sleep":
+		// A bare select would end the process: the runtime sees that no
+		// goroutine can ever run.
 		signal.Ignore(os.Interrupt)
-		select {}
+		for {
+			time.Sleep(time.Hour)
+		}
 	case "stubborn":
 		// Ignore the interrupt, leave a child of its own behind, and wait
 		// for an answer that never comes.
@@ -105,7 +130,7 @@ func helper(mode string) {
 }
 
 // outputOnly are the trace fields no golden file holds.
-var outputOnly = cmpopts.IgnoreFields(Trace{}, "Terminal", "PeakConcurrency")
+var outputOnly = cmp.Options{cmpopts.IgnoreFields(Trace{}, "Terminal", "PeakConcurrency"), cmpopts.IgnoreFields(Step{}, "Requests")}
 
 // TestLegacyTraces runs every scenario's legacy command line, checks what
 // the scenario means, and compares the trace with its golden file. Run with
@@ -121,7 +146,7 @@ func TestLegacyTraces(t *testing.T) {
 				return
 			}
 			got := run(t, sc)
-			if err := sc.check(got); err != nil {
+			if err := sc.check(got, nil); err != nil {
 				t.Errorf("the run does not show what the scenario is for:\n%v\n%s", err, brief(got))
 			}
 			// Peak concurrency depends on how the binary's parallel calls
@@ -165,7 +190,7 @@ func run(t *testing.T, sc Scenario) Trace {
 func record(t *testing.T, sc Scenario) Trace {
 	t.Helper()
 	first := run(t, sc)
-	if err := sc.check(first); err != nil {
+	if err := sc.check(first, nil); err != nil {
 		t.Fatalf("the run does not show what the scenario is for:\n%v\n%s", err, brief(first))
 	}
 	for i := 1; i < updateRuns; i++ {
@@ -210,6 +235,27 @@ func roundTrip(t *testing.T, trace Trace) Trace {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// TestLastReadBeforeRoll holds the constant that times the move of the
+// scenario nodegroup-update-changed-under-the-gate to what the legacy
+// binary does: the number of DescribeNodegroup requests it makes before it
+// sends the roll.
+func TestLastReadBeforeRoll(t *testing.T) {
+	t.Parallel()
+	var sc Scenario
+	for _, s := range scenarios() {
+		if s.Name == "nodegroup-update-yes" {
+			sc = s
+		}
+	}
+	trace := run(t, sc)
+	if len(trace.Steps) == 0 || trace.Steps[0].Mutation == nil {
+		t.Fatalf("the run sent no roll: %s", brief(trace))
+	}
+	if got := trace.Steps[0].Requests[fleettest.EKSDescribeNodegroup]; got != lastReadBeforeRoll {
+		t.Errorf("the legacy binary reads the nodegroups %d times before the roll, and lastReadBeforeRoll is %d", got, lastReadBeforeRoll)
+	}
 }
 
 // TestMatrix holds the behaviour matrix to the scenarios: every cell names

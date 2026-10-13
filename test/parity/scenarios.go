@@ -60,12 +60,13 @@ var matrix = map[Command]map[Behaviour]cell{
 	NodegroupScale: {
 		Success: by("nodegroup-scale-yes"), DryRun: by("nodegroup-scale-dry-run"), Unattended: by("nodegroup-scale-unattended"),
 		PromptYes: by("nodegroup-scale-prompt-yes"), PromptNo: by("nodegroup-scale-prompt-no"), PromptInterrupt: by("nodegroup-scale-prompt-interrupt"),
-		Blocked: by("nodegroup-scale-check-pdbs"), Failed: by("nodegroup-scale-failed"), Busy: by("nodegroup-scale-busy"),
+		Blocked: by("nodegroup-scale-pdb-blocked"), Failed: by("nodegroup-scale-failed"), Busy: by("nodegroup-scale-busy"),
 		Attach:       none("the legacy command refuses a nodegroup that is changing; it never attaches"),
 		AttachFailed: none("the legacy command refuses a nodegroup that is changing; it never attaches"),
 		Deadline:     by("nodegroup-scale-deadline"), Interrupt: by("nodegroup-scale-interrupt"),
 		LostResponse: by("nodegroup-scale-lost-response"), ThrottledRead: by("nodegroup-scale-throttled-read"),
-		DrainBlocked: by("nodegroup-scale-pdb-blocked"), DrainForced: by("nodegroup-scale-pdb-forced"),
+		DrainBlocked:   none("the PDB check is the command's only gate, so the blocked cell is this case: nodegroup-scale-pdb-blocked"),
+		DrainForced:    by("nodegroup-scale-pdb-forced"),
 		GateUnreadable: by("nodegroup-scale-pdbs-unreadable"), GateUnreadableForced: by("nodegroup-scale-pdbs-unreadable-forced"),
 	},
 	NodegroupUpdate: {
@@ -145,7 +146,7 @@ func addonUpdate() []Scenario {
 		},
 		{
 			// UPDATING at the target version, with no update to follow.
-			Name: "addon-update-busy", Behaviour: Busy, Legacy: with("--yes"),
+			Name: "addon-update-busy", Behaviour: Busy, Legacy: with("--yes"), Checks: []Check{exits(0), resourceIs("vpc-cni", target+" UPDATING")},
 			Seed: fleet(func(_ *fleettest.State, c *fleettest.Cluster) {
 				c.Addon("vpc-cni").Status, c.Addon("vpc-cni").Version = fleettest.StatusUpdating, target
 			}),
@@ -166,6 +167,18 @@ func addonUpdate() []Scenario {
 		{
 			Name: "addon-update-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait"),
 			Signal: interruptWait(1, 1), Checks: []Check{one},
+		},
+		{
+			// The control plane is updating. The command's busy check sees it.
+			Name: "addon-update-cluster-updating", Seed: fleet(scripts(never)), Prepare: startControlPlaneUpdate, Legacy: with("--yes"),
+			Checks: []Check{fails, noMutations, sawAnswer(fleettest.EKSDescribeCluster, "UPDATING")},
+		},
+		{
+			// The control plane starts to update just before the command
+			// sends its update. EKS refuses it.
+			Name: "addon-update-cluster-starts-updating", Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Moves:  []Move{{Before: fleettest.EKSUpdateAddon, Nth: 1, Do: startControlPlaneUpdate}},
+			Checks: []Check{fails, refusedByEKS, resourceIs("vpc-cni", "v1.18.0-eksbuild.1 ACTIVE")},
 		},
 		{
 			Name: "addon-update-lost-response", Behaviour: LostResponse, Seed: fleet(), Legacy: with("--yes"),
@@ -219,7 +232,8 @@ func nodegroupScale() []Scenario {
 		},
 		{
 			// The PDBs cannot be read without a Kubernetes API, and the gate fails closed.
-			Name: "nodegroup-scale-check-pdbs", Behaviour: Blocked, Seed: fleet(), Legacy: to("1")("--check-pdbs", "--yes"),
+			Name: "nodegroup-scale-check-pdbs-no-kube", Seed: fleet(), Legacy: to("1")("--check-pdbs", "--yes"),
+			Checks: []Check{fails, noMutations},
 		},
 		{
 			// The legacy command does not check the sizes itself. EKS refuses.
@@ -261,12 +275,51 @@ func nodegroupUpdate() []Scenario {
 		{Name: "nodegroup-update-yes", Behaviour: Success, Seed: fleet(scripts(slow)), Legacy: with("--yes"), Checks: []Check{updatesAre(a), rolled}},
 		{Name: "nodegroup-update-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), Checks: []Check{exits(0)}},
 		{
+			// The release notes come from api.github.com, which the runner
+			// keeps the binary away from. The dry run must still finish.
+			Name: "nodegroup-update-dry-run-changelog", Seed: fleet(), Legacy: with("--dry-run", "--changelog"),
+			Checks: []Check{exits(0), noMutations, sawRead(fleettest.EKSDescribeNodegroup)},
+		},
+		{
+			// Someone else starts to scale the nodegroup while the command
+			// prepares, just before the read the command decides on. The
+			// command must see it and leave the nodegroup alone. A command
+			// that decided on an earlier read would send its update, and
+			// the trace would show the request.
+			Name: "nodegroup-update-changed-before-the-gate", Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Moves:  []Move{{Before: fleettest.EKSDescribeNodegroup, Nth: lastReadBeforeRoll - 1, Do: scaleElsewhere}},
+			Checks: []Check{exits(0), noMutations, sawAnswer(fleettest.EKSDescribeNodegroup, "UPDATING")},
+		},
+		{
+			// The same, one read later: after the command has decided. The
+			// legacy command reads the nodegroup as UPDATING, sends its
+			// update all the same, and EKS refuses it.
+			Name: "nodegroup-update-changed-under-the-gate", Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Moves:  []Move{{Before: fleettest.EKSDescribeNodegroup, Nth: lastReadBeforeRoll, Do: scaleElsewhere}},
+			Checks: []Check{fails, refusedByEKS, sawAnswer(fleettest.EKSDescribeNodegroup, "UPDATING")},
+		},
+		{
+			// The control plane starts to update just before the command
+			// sends its roll. EKS refuses the roll.
+			Name: "nodegroup-update-cluster-starts-updating", Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Moves:  []Move{{Before: fleettest.EKSUpdateNodegroupVersion, Nth: 1, Do: startControlPlaneUpdate}},
+			Checks: []Check{fails, refusedByEKS, resourceIs("ng-a", "1.32.0-20250101 ACTIVE")},
+		},
+		{
+			Name: "nodegroup-update-cluster-updating", Seed: fleet(scripts(never)), Prepare: startControlPlaneUpdate, Legacy: with("--yes"),
+			Checks: []Check{noMutations, sawAnswer(fleettest.EKSDescribeCluster, "UPDATING")},
+		},
+		{
 			// The legacy command does not refuse without --yes when health is clean.
 			Name: "nodegroup-update-no-yes", Seed: fleet(scripts(slow)), Legacy: with(), Checks: []Check{exits(0), updatesAre(a)},
 		},
 		{Name: "nodegroup-update-warnings-unattended", Seed: fleet(noMetrics), Legacy: with(), Checks: []Check{fails, noMutations}},
 		{Name: "nodegroup-update-require-healthy", Seed: fleet(noMetrics), Legacy: with("--yes", "--require-healthy"), Checks: []Check{exits(2), noMutations}},
-		{Name: "nodegroup-update-prompt-yes", Behaviour: PromptYes, Seed: fleet(noMetrics, scripts(slow)), Legacy: onTerminal(), Terminal: sayYes, Checks: []Check{exits(0), updatesAre(a)}},
+		{
+			// On a terminal the command draws the live roll view.
+			Name: "nodegroup-update-prompt-yes", Behaviour: PromptYes, Live: true, Seed: fleet(noMetrics, scripts(slow)),
+			Legacy: onTerminal(), Terminal: sayYes, Checks: []Check{exits(0), updatesAre(a)},
+		},
 		{Name: "nodegroup-update-prompt-no", Behaviour: PromptNo, Seed: fleet(noMetrics), Legacy: onTerminal(), Terminal: sayNo},
 		{Name: "nodegroup-update-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(noMetrics), Legacy: onTerminal(), Terminal: ctrlC},
 		{

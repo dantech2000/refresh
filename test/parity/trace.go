@@ -26,12 +26,15 @@ import (
 // binary seen this before it made that change?", and not "did it read this
 // before that?" or "how often did it poll?".
 //
-// A run on a terminal, or one that draws the live node view, records no
-// reads at all: the view polls the nodes and the scaling activities on
-// tickers of its own, and what those polls see depends on timing. Its steps
-// hold the mutations only. Kubernetes requests are reads like the AWS ones,
-// with the cluster as their target; a watch is not in the steps, and is
-// listed in UnstableReads when one was opened.
+// Kubernetes requests are reads like the AWS ones, with the cluster as
+// their target. A watch is a stream and not an answer, so it is not in the
+// steps; it is listed in UnstableReads when one was opened.
+//
+// A run that draws the live node view (Scenario.Live) polls the nodes,
+// their pods, the events, and the scaling activities on tickers of its
+// own, and what those polls see depends on timing. Those operations
+// (liveViewReads) are kept out of its steps and listed in UnstableReads.
+// Every other read of such a run is recorded as usual.
 type Trace struct {
 	ExitCode int `json:"exitCode"`
 	// Stdout and Stderr are what the binary printed, normalised (see
@@ -66,7 +69,7 @@ type Trace struct {
 // Step is one mutating request and what came before it.
 type Step struct {
 	// Reads are the distinct answers to the read requests since the
-	// previous step's mutation. Empty for a run on a terminal.
+	// previous step's mutation.
 	Reads []Read `json:"reads"`
 	// Mutation is nil in a last step that has only reads.
 	Mutation *Mutation `json:"mutation,omitempty"`
@@ -76,6 +79,9 @@ type Step struct {
 	// (which shows whether the binary saw that change end before it went
 	// on). Each is "operation target: observed", without counts.
 	Preconditions []string `json:"preconditions,omitempty"`
+	// Requests counts the read requests of the step by operation. It is in
+	// no golden file: counts differ between runs wherever the binary polls.
+	Requests map[fleettest.Operation]int `json:"-"`
 }
 
 // Read is one answer the binary got to a read: all requests of the
@@ -123,6 +129,47 @@ type ClusterState struct {
 	Updates []string `json:"updates"`
 }
 
+// liveViewReads are the operations the live node view polls on its own
+// tickers.
+var liveViewReads = []fleettest.Operation{
+	fleettest.AutoScalingDescribeScalingActivities,
+	fleettest.KubeListNodes, fleettest.KubeListPods, fleettest.KubeListEvents,
+}
+
+// Preconditions lists, for each mutation of the trace, what the binary had
+// observed before it.
+func (t Trace) Preconditions() []string {
+	var out []string
+	for _, s := range t.Steps {
+		if s.Mutation != nil {
+			out = append(out, fmt.Sprintf("%s %s after %v", s.Mutation.Operation, s.Mutation.Target, s.Preconditions))
+		}
+	}
+	return out
+}
+
+// Postconditions lists what the binary observed, after its last mutation,
+// about the resources it changed and about their clusters: the wait for
+// the last update, and the verification after it. It is empty for a run
+// that changed nothing.
+func (t Trace) Postconditions() []string {
+	if len(t.Steps) == 0 || t.Steps[len(t.Steps)-1].Mutation != nil {
+		return nil
+	}
+	changed := map[string]bool{}
+	for _, m := range t.Mutations() {
+		cluster, _, _ := strings.Cut(m.Target, "/")
+		changed[m.Target], changed[cluster] = true, true
+	}
+	var out []string
+	for _, r := range t.Steps[len(t.Steps)-1].Reads {
+		if changed[r.Target] {
+			out = append(out, fmt.Sprintf("%s %s: %s", r.Operation, r.Target, r.Observed))
+		}
+	}
+	return out
+}
+
 // Mutations returns the mutations of the trace, in order.
 func (t Trace) Mutations() []Mutation {
 	var out []Mutation
@@ -142,9 +189,11 @@ func buildTrace(sc Scenario, n *normaliser, rec *recorder, world *fleettest.Worl
 	trace := Trace{Steps: []Step{}, SignalAfterMutations: rec.signalAfter}
 	touched := map[string]bool{Region + "/" + cmp.Or(sc.Cluster, "prod"): true}
 	reads := map[Read]bool{}
+	counts := map[fleettest.Operation]int{}
 	previous := ""
 	flush := func(m *Mutation) {
-		step := Step{Reads: []Read{}, Mutation: m}
+		step := Step{Reads: []Read{}, Mutation: m, Requests: counts}
+		counts = map[fleettest.Operation]int{}
 		for r := range reads {
 			step.Reads = append(step.Reads, r)
 		}
@@ -159,17 +208,23 @@ func buildTrace(sc Scenario, n *normaliser, rec *recorder, world *fleettest.Worl
 		reads = map[Read]bool{}
 	}
 	cluster := cmp.Or(sc.Cluster, "prod")
-	noReads := sc.Terminal != nil || sc.Live
+	unstable := slices.Clone(sc.UnstableReads)
+	if sc.Live {
+		unstable = append(unstable, liveViewReads...)
+	}
+	outside := func(op fleettest.Operation) {
+		if !slices.Contains(trace.UnstableReads, op) {
+			trace.UnstableReads = append(trace.UnstableReads, op)
+		}
+	}
 	for _, e := range rec.events {
 		if e.kube != nil {
 			switch op := e.kube.Operation; {
-			case op == fleettest.KubeWatchNodes || op == fleettest.KubeWatchEvents:
+			case op == fleettest.KubeWatchNodes || op == fleettest.KubeWatchEvents, slices.Contains(unstable, op):
 				// A watch is a stream, not an answer, and when it opens
 				// depends on the binary's own timing.
-				if !slices.Contains(trace.UnstableReads, op) {
-					trace.UnstableReads = append(trace.UnstableReads, op)
-				}
-			case !noReads:
+				outside(op)
+			default:
 				reads[Read{Operation: op, Region: Region, Target: cluster, Observed: observeKube(e)}] = true
 			}
 			continue
@@ -185,12 +240,11 @@ func buildTrace(sc Scenario, n *normaliser, rec *recorder, world *fleettest.Worl
 		switch {
 		case r.Mutates:
 			flush(n.mutation(r, target, observed))
-		case slices.Contains(sc.UnstableReads, r.Operation):
-			if !slices.Contains(trace.UnstableReads, r.Operation) {
-				trace.UnstableReads = append(trace.UnstableReads, r.Operation)
-			}
-		case !noReads:
+		case slices.Contains(unstable, r.Operation):
+			outside(r.Operation)
+		default:
 			reads[Read{Operation: r.Operation, Region: r.Region, Target: target, Observed: observed}] = true
+			counts[r.Operation]++
 		}
 	}
 	if len(reads) > 0 {
@@ -298,7 +352,7 @@ func observedIn(r awsxtest.Request, body map[string]any) string {
 	case fleettest.EKSDescribeNodegroup:
 		ng := obj(body, "nodegroup")
 		s := obj(ng, "scalingConfig")
-		return fmt.Sprintf("%v %v %v %v/%v/%v%s", ng["version"], ng["releaseVersion"], ng["status"], s["desiredSize"], s["minSize"], s["maxSize"], issues(ng))
+		return nodegroupLine(ng["version"], ng["releaseVersion"], ng["status"], s["desiredSize"], s["minSize"], s["maxSize"], issues(ng))
 	case fleettest.EKSDescribeAddon:
 		a := obj(body, "addon")
 		return fmt.Sprintf("%v %v%s", a["addonVersion"], a["status"], issues(a))
@@ -374,6 +428,13 @@ func worldState(w *fleettest.World, keys []string) map[string]ClusterState {
 	return out
 }
 
+// nodegroupLine is how a nodegroup reads in a trace, as an observation and
+// in the final state: version, release, status, the desired, minimum, and
+// maximum size, and the health issues.
+func nodegroupLine(version, release, status, desired, lowest, highest any, issues string) string {
+	return fmt.Sprintf("%v %v %v %v/%v/%v%s", version, release, status, desired, lowest, highest, issues)
+}
+
 // issueCodes renders the codes of health issues, or nothing for none.
 func issueCodes(list []fleettest.Issue) string {
 	if len(list) == 0 {
@@ -393,7 +454,7 @@ func stateOf(c *fleettest.Cluster) ClusterState {
 		Nodegroups: map[string]string{}, Addons: map[string]string{}, Updates: []string{},
 	}
 	for _, ng := range c.Nodegroups {
-		state.Nodegroups[ng.Name] = fmt.Sprintf("%s %s %s %d/%d/%d%s", ng.Version, ng.ReleaseVersion, ng.Status, ng.Desired, ng.Min, ng.Max, issueCodes(ng.HealthIssues))
+		state.Nodegroups[ng.Name] = nodegroupLine(ng.Version, ng.ReleaseVersion, ng.Status, ng.Desired, ng.Min, ng.Max, issueCodes(ng.HealthIssues))
 	}
 	for _, n := range c.Nodes {
 		if state.Nodes == nil {
