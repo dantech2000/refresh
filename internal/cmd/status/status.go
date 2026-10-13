@@ -390,8 +390,8 @@ func computeText(c apidoc.Cluster) string {
 }
 
 // staleText returns the stale AMIs of a cluster: how many of the
-// nodegroups, the age of the oldest, and the nodegroups behind the control
-// plane. A cluster with no managed nodegroup has none to be stale.
+// nodegroups, the age of the oldest, the nodegroups behind the control
+// plane, and the nodegroups with no AMI to compare. A cluster with no managed nodegroup has none to be stale.
 func staleText(c apidoc.Cluster, now time.Time) string {
 	if c.Nodegroups == nil {
 		return ""
@@ -400,30 +400,42 @@ func staleText(c apidoc.Cluster, now time.Time) string {
 	if len(c.Nodegroups) == 0 {
 		return "n/a"
 	}
-	// The nodegroups whose AMI could not be compared.
-	unread := 0
+	// The nodegroups whose AMI was not read, and those with nothing to
+	// compare: no instance, or an AMI type with no recommended AMI.
+	unread, notCompared := 0, 0
 	for _, n := range c.Nodegroups {
-		if n.AMI == nil && n.Incomplete {
+		switch {
+		case n.AMI == nil && n.Incomplete:
 			unread++
+		case n.AMI != nil && n.AMI.Status == apidoc.AMIUnknown:
+			notCompared++
 		}
 	}
 	if unread == len(c.Nodegroups) {
 		return unknownCell
 	}
-	text := "0"
-	if f.staleAMIs > 0 {
-		text = strconv.Itoa(f.staleAMIs) + "/" + strconv.Itoa(f.nodegroups)
+	var parts []string
+	switch {
+	case f.staleAMIs > 0:
+		text := strconv.Itoa(f.staleAMIs) + "/" + strconv.Itoa(f.nodegroups)
 		if !f.oldestAMI.IsZero() {
 			text += " (" + strconv.Itoa(int(now.Sub(f.oldestAMI).Hours()/24)) + "d)"
 		}
+		parts = append(parts, text)
+	case notCompared == 0 || notCompared < f.nodegroups:
+		// "0" is for a cluster where an AMI was compared.
+		parts = append(parts, "0")
 	}
 	if f.behindNodegroups > 0 {
-		text += ", " + strconv.Itoa(f.behindNodegroups) + " behind CP"
+		parts = append(parts, strconv.Itoa(f.behindNodegroups)+" behind CP")
 	}
 	if unread > 0 {
-		text += ", " + strconv.Itoa(unread) + " unknown"
+		parts = append(parts, strconv.Itoa(unread)+" unknown")
 	}
-	return text
+	if notCompared > 0 {
+		parts = append(parts, strconv.Itoa(notCompared)+" not compared")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // addonsText returns the add-ons of a cluster that are behind: the count
