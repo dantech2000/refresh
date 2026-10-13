@@ -494,6 +494,21 @@ func TestDrainBlockers(t *testing.T) {
 			check(t, h.run(testContext(t), health.DrainBlockers(), tt.targets...), tt.want)
 		})
 	}
+	t.Run("unscoped, an at-risk budget needs no pod read", func(t *testing.T) {
+		// One budget in the namespace: no pod list at all, and a denied
+		// pod list cannot hide the blocker.
+		h := newHarness(t, tight("api"), func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs = c.PDBs[1:] })
+		h.world.SetFault(fleettest.KubeListPods, fleettest.Fault{Deny: true})
+		check(t, h.run(testContext(t), health.DrainBlockers()), want{outcome: health.Fail, findings: []string{"default/api"}})
+		if n := count(h.kube.Requests(), fleettest.KubeListPods); n != 0 {
+			t.Errorf("pod lists = %d, want none", n)
+		}
+		// Two budgets: the pods are read for the multi-budget rule, and
+		// the blocker is reported with the failed read beside it.
+		h = newHarness(t, tight("api"))
+		h.world.SetFault(fleettest.KubeListPods, fleettest.Fault{Deny: true})
+		check(t, h.run(testContext(t), health.DrainBlockers()), want{outcome: health.Fail, message: "not read: default", findings: []string{"default/api"}, failures: 1})
+	})
 	t.Run("unreadable", func(t *testing.T) {
 		h := newHarness(t)
 		h.world.SetFault(fleettest.KubeListPDBs, fleettest.Fault{Deny: true})
@@ -519,11 +534,23 @@ func TestScaleDownBlockers(t *testing.T) {
 		{name: "two nodes lose more than allowed", remove: 2, want: want{outcome: health.Fail, message: "1 PDB could lose more pods than allowed when 2 nodes leave ng-b", findings: []string{"default/api"}}},
 		{name: "a tight budget", edits: []edit{tight("api")}, remove: 1, want: want{outcome: health.Fail, findings: []string{"default/api"}}},
 		{name: "a tight budget elsewhere", edits: []edit{tight("web")}, remove: 1, want: want{outcome: health.Pass}},
+		{name: "a pod with two budgets is not a scale-down blocker", remove: 1, edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs = append(c.PDBs, fleettest.PDB{Namespace: "default", Name: "api-too", Selector: map[string]string{"app": "api"}, MinAvailable: 1, DisruptionsAllowed: 1, CurrentHealthy: 2, DesiredHealthy: 1, ExpectedPods: 2})
+		}}, want: want{outcome: health.Pass}},
+		{name: "the fallback without nodes drops multi-budget pods too", remove: 1, edits: []edit{tight("web"), func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.Nodes = c.Nodes[:2]
+			c.PDBs = append(c.PDBs, fleettest.PDB{Namespace: "default", Name: "api-too", Selector: map[string]string{"app": "api"}, MinAvailable: 1, DisruptionsAllowed: 1, CurrentHealthy: 2, DesiredHealthy: 1, ExpectedPods: 2})
+		}}, want: want{outcome: health.Fail, findings: []string{"default/web"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newHarness(t, tt.edits...)
 			check(t, h.run(testContext(t), health.ScaleDownBlockers("ng-b", tt.remove)), tt.want)
+			// The pods of the budgets' namespaces are read in one wave: one
+			// list for the one namespace, whatever the number of budgets.
+			if n := count(h.kube.Requests(), fleettest.KubeListPods); n > 1 {
+				t.Errorf("pod lists = %d, want at most 1", n)
+			}
 		})
 	}
 }

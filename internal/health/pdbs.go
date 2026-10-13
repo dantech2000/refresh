@@ -153,7 +153,7 @@ func runDrainBlockers(_ context.Context, in *Input) Result {
 	if r != nil {
 		return *r
 	}
-	return findDrainBlockers(in, budgets, targets, scoped)
+	return findDrainBlockers(in, budgets, targets, scoped, true)
 }
 
 // targetNodes returns the nodes of the target nodegroups, and whether the
@@ -198,13 +198,15 @@ func targetsDesired(snap *fleet.Snapshot, targets []string) (int32, bool) {
 	return total, true
 }
 
-// findDrainBlockers is the rule over the budgets, with the pods of each
-// namespace that has an at-risk budget or more than one budget.
-func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped bool) Result {
-	byNamespace := map[string][]pdb{}
-	for _, p := range budgets {
-		byNamespace[p.namespace] = append(byNamespace[p.namespace], p)
-	}
+// findDrainBlockers is the rule over the budgets. Scoped, it reads the
+// pods of each namespace that has an at-risk budget, to see whether the
+// budget gates a pod on a target node; unscoped, an at-risk budget counts
+// without a pod read, as the old check counted it. With withMulti it also
+// names the pods that more than one budget selects, which needs the pods
+// of each namespace with more than one budget; a scale-down evicts
+// nothing and leaves that rule out.
+func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped, withMulti bool) Result {
+	byNamespace := groupByNamespace(budgets)
 	var (
 		blockers []string
 		multi    []string
@@ -212,32 +214,38 @@ func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped
 		unread   []string
 		reads    []func()
 	)
+	needsPods := func(ns string) bool {
+		return (scoped && slices.ContainsFunc(byNamespace[ns], pdb.atRisk)) || (withMulti && len(byNamespace[ns]) > 1)
+	}
 	namespaces := slices.Sorted(maps.Keys(byNamespace))
-	namespaces = slices.DeleteFunc(namespaces, func(ns string) bool {
-		return !slices.ContainsFunc(byNamespace[ns], pdb.atRisk) && len(byNamespace[ns]) < 2
-	})
-	// The pods of every namespace that matters, in one round trip.
+	// The pods of every namespace that needs them, in one round trip.
 	for _, ns := range namespaces {
-		reads = append(reads, func() { _, _ = in.reads.Pods(ns) })
+		if needsPods(ns) {
+			reads = append(reads, func() { _, _ = in.reads.Pods(ns) })
+		}
 	}
 	together(reads...)
 	for _, ns := range namespaces {
 		list := byNamespace[ns]
-		pods, err := in.reads.Pods(ns)
-		if err != nil {
-			failures = append(failures, kubeFailure(in.Snapshot.Cluster.Name, "listing pods in "+ns, err))
-			unread = append(unread, ns)
-			continue
+		var pods *corev1.PodList
+		if needsPods(ns) {
+			var err error
+			if pods, err = in.reads.Pods(ns); err != nil {
+				failures = append(failures, kubeFailure(in.Snapshot.Cluster.Name, "listing pods in "+ns, err))
+				unread = append(unread, ns)
+				pods = nil
+			}
 		}
 		for _, p := range list {
-			if !p.atRisk() {
-				continue
-			}
-			if !scoped || slices.ContainsFunc(pods.Items, func(pod corev1.Pod) bool { return targets[pod.Spec.NodeName] && p.gates(&pod) }) {
+			switch {
+			case !p.atRisk():
+			case !scoped:
+				blockers = append(blockers, p.summary())
+			case pods != nil && slices.ContainsFunc(pods.Items, func(pod corev1.Pod) bool { return targets[pod.Spec.NodeName] && p.gates(&pod) }):
 				blockers = append(blockers, p.summary())
 			}
 		}
-		if len(list) > 1 {
+		if withMulti && len(list) > 1 && pods != nil {
 			multi = append(multi, multiPDBPods(list, pods.Items, targets, scoped)...)
 		}
 	}
@@ -341,10 +349,16 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 	}
 	if !isScoped {
 		// Without the nodes of the nodegroup the rule of a roll applies:
-		// every budget that allows nothing counts.
-		r := findDrainBlockers(&scoped, budgets, nil, false)
-		return r
+		// every budget that allows nothing counts. A scale-down evicts no
+		// pod, so a pod with several budgets is not a blocker.
+		return findDrainBlockers(&scoped, budgets, nil, false, false)
 	}
+	// The pods of every namespace with a budget, in one round trip.
+	var reads []func()
+	for _, ns := range slices.Sorted(maps.Keys(groupByNamespace(budgets))) {
+		reads = append(reads, func() { _, _ = in.reads.Pods(ns) })
+	}
+	together(reads...)
 	r := Result{}
 	for _, p := range budgets {
 		pods, err := in.reads.Pods(p.namespace)
@@ -372,6 +386,15 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 	r.Outcome = Fail
 	r.Message = fmt.Sprintf("%s could lose more pods than allowed when %s leave %s", plural(len(r.Findings), "PDB"), plural(int(remove), "node"), nodegroup)
 	return r
+}
+
+// groupByNamespace returns the budgets by namespace.
+func groupByNamespace(budgets []pdb) map[string][]pdb {
+	out := map[string][]pdb{}
+	for _, p := range budgets {
+		out[p.namespace] = append(out[p.namespace], p)
+	}
+	return out
 }
 
 // worstCaseLoss returns the number of pods on the k nodes of perNode that
