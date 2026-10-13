@@ -71,7 +71,7 @@ skip the confirmation prompts.`,
 	// Every command gets this through the root: a flag error ends with the
 	// way to its help.
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
-		return fmt.Errorf("%w\nRun '%s --help' for usage.", err, c.CommandPath())
+		return fmt.Errorf("%w\nRun '%s --help' for usage", err, c.CommandPath())
 	})
 	cmd.SetIn(f.IOStreams.In)
 	cmd.SetOut(f.IOStreams.Out)
