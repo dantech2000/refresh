@@ -55,11 +55,16 @@ type Context struct {
 // configuration. Load cannot tell that keys which resolve are revoked: the
 // first API call reports that.
 func Load(ctx context.Context, opts Options) (aws.Config, error) {
+	return load(ctx, opts, NewHTTPClient(opts.MaxConcurrency))
+}
+
+// load is Load with the HTTP client given by the caller.
+func load(ctx context.Context, opts Options, client *awshttp.BuildableClient) (aws.Config, error) {
 	profile, region, err := opts.resolve()
 	if err != nil {
 		return aws.Config{}, err
 	}
-	loadOpts := []func(*config.LoadOptions) error{config.WithHTTPClient(NewHTTPClient(opts.MaxConcurrency))}
+	loadOpts := []func(*config.LoadOptions) error{config.WithHTTPClient(client)}
 	if profile != "" {
 		loadOpts = append(loadOpts, config.WithSharedConfigProfile(profile))
 	}
@@ -75,6 +80,14 @@ func Load(ctx context.Context, opts Options) (aws.Config, error) {
 		}
 		return aws.Config{}, fmt.Errorf("failed to load AWS config: %w", err)
 	}
+	// Freeze the HTTP client. A service client changes a buildable client
+	// when a defaults mode is set (AWS_DEFAULTS_MODE): it then makes its
+	// own copy with another dialer, which would end the sharing of
+	// connections and drop the dial timeout of a sweep. The SDK has
+	// already applied AWS_CA_BUNDLE to the client at this point.
+	if buildable, ok := cfg.HTTPClient.(*awshttp.BuildableClient); ok {
+		cfg.HTTPClient = buildable.Freeze()
+	}
 	if err := opts.resolveCredentials(ctx, cfg); err != nil {
 		return aws.Config{}, fmt.Errorf("AWS credential validation failed: %w", err)
 	}
@@ -88,14 +101,29 @@ func Load(ctx context.Context, opts Options) (aws.Config, error) {
 //
 // The client is the SDK's own, so AWS_CA_BUNDLE and the SDK defaults still
 // apply to it. A call of a Sweep client gets a short dial timeout.
+//
+// A call that gets no answer does not wait for the deadline of the command:
+// the client gives up when the response headers take longer than a minute,
+// and it closes an HTTP/2 connection that is silent for 30 seconds and then
+// does not answer a ping in 15. Both failures are transient, so the retry
+// policy of the call applies.
 func NewHTTPClient(maxConcurrency int) *awshttp.BuildableClient {
 	return awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+		tr.ResponseHeaderTimeout = responseHeaderTimeout
+		tr.HTTP2 = &http.HTTP2Config{SendPingTimeout: http2PingAfter, PingTimeout: http2PingTimeout}
 		tr.MaxIdleConnsPerHost = max(tr.MaxIdleConnsPerHost, maxConcurrency)
 		// A sweep talks to a few services in each of many regions.
 		tr.MaxIdleConns = max(tr.MaxIdleConns, 4*tr.MaxIdleConnsPerHost)
 		tr.DialContext = sweepDial(tr.DialContext, sweepDialTimeout)
 	})
 }
+
+// The limits of the shared transport for a call that stalls.
+const (
+	responseHeaderTimeout = time.Minute
+	http2PingAfter        = 30 * time.Second
+	http2PingTimeout      = 15 * time.Second
+)
 
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 

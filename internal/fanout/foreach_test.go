@@ -20,7 +20,7 @@ func TestForEach_ReturnsInputOrder(t *testing.T) {
 	}
 }
 
-// REF-56: a cancelled context must stop dispatching new work; unstarted items
+// A cancelled context must stop dispatching new work; unstarted items
 // keep their zero value rather than the fn being invoked for all of them.
 func TestForEach_StopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

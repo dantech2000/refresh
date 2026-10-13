@@ -29,18 +29,22 @@ type Clients struct {
 	CloudWatch    *cloudwatch.Client
 	ServiceQuotas *servicequotas.Client
 	STS           *sts.Client
-
-	provider *Provider
 }
 
-// With returns the clients for the same region with another retry policy. A
-// wait loop that got Read clients calls With(Poll) for its polls.
-func (c *Clients) With(policy Policy) *Clients {
-	return c.provider.Clients(c.Region, policy)
-}
+// SweepClients are the clients for the region callback of a default sweep:
+// their policy is Sweep. A function that takes SweepClients says in its
+// signature that it runs inside a sweep. It passes the embedded *Clients to
+// code that reads one region and does not care which policy applies.
+type SweepClients struct{ *Clients }
 
-// Provider hands out the Clients for a region and a retry policy. It builds
-// each one on first use and keeps it. All of them share the HTTP client and
+// PollClients are the clients for a wait loop: their policy is Poll. A
+// function that takes PollClients says in its signature that it polls, and
+// that it handles a transient error itself.
+type PollClients struct{ *Clients }
+
+// Provider hands out the clients for a region: Clients for ordinary calls,
+// SweepClients for a sweep, PollClients for a wait loop. It builds each set
+// on first use and keeps it. All of them share the HTTP client and
 // the credentials of the configuration. A Provider is safe for concurrent
 // use.
 type Provider struct {
@@ -79,9 +83,24 @@ func (p *Provider) Region() string {
 	return p.cfg.Region
 }
 
-// Clients returns the clients for region with the retry policy. An empty
-// region means the region of the configuration.
-func (p *Provider) Clients(region string, policy Policy) *Clients {
+// Clients returns the clients for region with the Standard policy: for the
+// describe, list, and update calls of a command. An empty region means the
+// region of the configuration.
+func (p *Provider) Clients(region string) *Clients {
+	return p.clientsFor(region, Standard)
+}
+
+// SweepClients returns the clients for region with the Sweep policy.
+func (p *Provider) SweepClients(region string) SweepClients {
+	return SweepClients{p.clientsFor(region, Sweep)}
+}
+
+// PollClients returns the clients for region with the Poll policy.
+func (p *Provider) PollClients(region string) PollClients {
+	return PollClients{p.clientsFor(region, Poll)}
+}
+
+func (p *Provider) clientsFor(region string, policy Policy) *Clients {
 	if region == "" {
 		region = p.cfg.Region
 	}
@@ -94,10 +113,13 @@ func (p *Provider) Clients(region string, policy Policy) *Clients {
 
 	cfg := p.cfg.Copy()
 	cfg.Region = region
-	// One retryer for the seven clients: they share its retry quota, as
-	// the calls of one client do.
-	retryer := newRetryer(policy, p.backoff)
-	cfg.Retryer = func() aws.Retryer { return retryer }
+	cfg.Retryer = func() aws.Retryer { return newRetryer(policy, p.backoff) }
+	// AWS_MAX_ATTEMPTS and max_attempts in the shared config would replace
+	// the attempt count of every policy, also the single attempt of Poll.
+	// The retry mode has no effect next to a retryer; it is cleared so that
+	// the configuration says what happens.
+	cfg.RetryMaxAttempts = 0
+	cfg.RetryMode = ""
 	if policy == Sweep {
 		cfg.APIOptions = append(cfg.APIOptions, addSweepDial)
 	}
@@ -111,7 +133,6 @@ func (p *Provider) Clients(region string, policy Policy) *Clients {
 		CloudWatch:    cloudwatch.NewFromConfig(cfg),
 		ServiceQuotas: servicequotas.NewFromConfig(cfg),
 		STS:           sts.NewFromConfig(cfg),
-		provider:      p,
 	}
 	p.clients[key] = c
 	return c

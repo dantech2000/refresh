@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"math/rand/v2"
 	"net"
 	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/smithy-go"
 )
@@ -22,15 +24,14 @@ type Policy int
 
 // The retry policies.
 const (
-	// Read is for describe and list calls: up to 5 attempts.
-	Read Policy = iota
-	// Mutate is for update calls: up to 5 attempts. The SDK fills a
-	// client request token once for the call, so every attempt carries the
-	// same token and a retry after a lost answer starts nothing new.
-	Mutate
+	// Standard is for describe, list, and update calls: up to 5 attempts.
+	// For an update call the SDK fills a client request token once, so
+	// every attempt carries the same token and a retry after a lost answer
+	// starts nothing new.
+	Standard Policy = iota
 	// Sweep is for every call inside the region callback of a default
-	// sweep. It is Read with a short dial timeout, and a connection that
-	// cannot be opened is not tried again: a region whose endpoint is
+	// sweep. It is Standard with a short dial timeout, and a connection
+	// that cannot be opened is not tried again: a region whose endpoint is
 	// unreachable fails in seconds.
 	Sweep
 	// Poll is for calls inside a wait loop: 1 attempt. The loop itself goes
@@ -41,10 +42,8 @@ const (
 
 func (p Policy) String() string {
 	switch p {
-	case Read:
-		return "Read"
-	case Mutate:
-		return "Mutate"
+	case Standard:
+		return "Standard"
 	case Sweep:
 		return "Sweep"
 	case Poll:
@@ -53,18 +52,18 @@ func (p Policy) String() string {
 	return "Policy(?)"
 }
 
-// The numbers of the Read, Mutate, and Sweep policies.
+// The numbers of the Standard and Sweep policies.
 const (
-	maxAttempts = 5
-	maxBackoff  = 5 * time.Second
+	maxAttempts    = 5
+	initialBackoff = 200 * time.Millisecond
+	maxBackoff     = 5 * time.Second
 	// sweepDialTimeout bounds opening a connection (DNS and TCP connect)
 	// in a sweep.
 	sweepDialTimeout = 10 * time.Second
 )
 
 // newRetryer returns the SDK retryer for policy. backoff, when not nil,
-// replaces the delay between attempts: exponential with full jitter, capped
-// at 5 seconds.
+// replaces the delay between attempts.
 func newRetryer(policy Policy, backoff retry.BackoffDelayer) aws.Retryer {
 	if policy == Poll {
 		return aws.NopRetryer{}
@@ -73,12 +72,17 @@ func newRetryer(policy Policy, backoff retry.BackoffDelayer) aws.Retryer {
 	if policy == Sweep {
 		retryable = func(err error) bool { return !IsDialFailure(err) && IsRetryable(err) }
 	}
+	if backoff == nil {
+		backoff = fullJitterBackoff{}
+	}
 	return retry.NewStandard(func(o *retry.StandardOptions) {
 		o.MaxAttempts = maxAttempts
 		o.MaxBackoff = maxBackoff
-		if backoff != nil {
-			o.Backoff = backoff
-		}
+		o.Backoff = backoff
+		// No retry quota. The SDK's token bucket ends a run of throttled
+		// calls with "retry quota exceeded" in place of the throttling
+		// error; the attempt limit and the backoff are the bound here.
+		o.RateLimiter = ratelimit.None
 		// One classification decides, here and in IsPermanentAPIError.
 		o.Retryables = []retry.IsErrorRetryable{
 			retry.IsErrorRetryableFunc(func(err error) aws.Ternary {
@@ -86,6 +90,28 @@ func newRetryer(policy Policy, backoff retry.BackoffDelayer) aws.Retryer {
 			}),
 		}
 	})
+}
+
+// fullJitterBackoff is the delay before a retry: a random time up to a
+// ceiling that starts at 200 ms, doubles with each attempt, and stops at
+// 5 s. The random part keeps callers that fail together from retrying
+// together. Five attempts wait 3 s in total at most.
+type fullJitterBackoff struct{}
+
+// BackoffDelay returns the delay after the failed attempt number attempt,
+// which starts at 1.
+func (fullJitterBackoff) BackoffDelay(attempt int, _ error) (time.Duration, error) {
+	return time.Duration(rand.Int64N(int64(backoffCeiling(attempt)) + 1)), nil //nolint:gosec // G404: jitter needs spread, not secrecy
+}
+
+// backoffCeiling returns the longest delay after the failed attempt number
+// attempt.
+func backoffCeiling(attempt int) time.Duration {
+	ceiling := initialBackoff
+	for i := 1; i < attempt && ceiling < maxBackoff; i++ {
+		ceiling *= 2
+	}
+	return min(ceiling, maxBackoff)
 }
 
 // IsRetryable reports whether err is a transient condition that is worth
@@ -172,6 +198,11 @@ func IsPermanentAPIError(err error) bool {
 // token by itself for one call. A caller sets this one when several calls
 // must count as the same request, such as a submit that it repeats after a
 // restart.
+//
+// The SDK writes the token that it generates into the input struct of the
+// call. A second call with the same input struct therefore sends the same
+// token, and AWS answers with the first update. Build a new input for each
+// request that must start something new.
 //
 // The token is 40 hex characters: EKS takes 33 to 126 characters for the
 // token of UpdateClusterVersion.

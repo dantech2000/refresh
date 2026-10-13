@@ -98,6 +98,36 @@ func TestPausableDeadlineFollowsParentAndCancel(t *testing.T) {
 	}
 }
 
+// A timer that fired while a pause was taking the lock, or just before a
+// resume replaced it, calls expire late. That call must not end the context.
+func TestPausableDeadlineIgnoresAStaleTimer(t *testing.T) {
+	ctx, cancel := newPausableDeadline(t.Context(), time.Hour)
+	defer cancel()
+
+	resume := ctx.pause()
+	ctx.expire() // the timer of before the pause
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("a timer that fired during the pause ended the context: %v", err)
+	}
+	resume()
+	ctx.expire() // the timer of before the resume; the deadline is an hour away
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("a timer from before the resume ended the context: %v", err)
+	}
+
+	// The real expiry still works: no time is left when the pause ends.
+	resume = ctx.pause()
+	ctx.mu.Lock()
+	ctx.remaining = 0
+	ctx.mu.Unlock()
+	resume()
+	select {
+	case <-ctx.Done():
+	case <-time.After(longWait):
+		t.Fatal("the deadline did not expire after a resume with no time left")
+	}
+}
+
 // Err sees the cancellation of the parent at once, not after the goroutine
 // that carries it has run: a check right after Ctrl+C must report an
 // interrupt, and Done is closed by then.

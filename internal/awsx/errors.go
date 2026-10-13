@@ -314,7 +314,7 @@ func FormatAWSError(err error, operation string) error {
 	}
 	// A connect timeout also reports itself as context.DeadlineExceeded,
 	// but a longer --timeout does not help an endpoint that cannot be
-	// reached (#418). A DNS failure keeps its own path below (an invalid
+	// reached. A DNS failure keeps its own path below (an invalid
 	// region's endpoint does not resolve).
 	var dns *net.DNSError
 	if IsDialFailure(err) && !errors.As(err, &dns) && !errors.Is(err, context.Canceled) {

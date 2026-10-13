@@ -26,7 +26,7 @@ func ForEach[T, R any](ctx context.Context, items []T, maxConcurrency int, fn fu
 		// Acquire BEFORE spawning so the cap limits live goroutines. Observe
 		// cancellation at the dispatch point so a cancelled context stops
 		// queueing new work promptly; unstarted items keep their zero value
-		// (e.g. nil pointer), matching best-effort list semantics. (REF-56)
+		// (e.g. nil pointer), matching best-effort list semantics.
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():

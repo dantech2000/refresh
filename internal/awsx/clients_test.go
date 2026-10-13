@@ -46,6 +46,17 @@ func newServer(t *testing.T) (*fleettest.World, *awsxtest.Server, *awsx.Provider
 	return world, srv, awsx.NewProvider(srv.Config(region), noBackoff)
 }
 
+// clientsFor returns the clients of provider for the policy.
+func clientsFor(provider *awsx.Provider, policy awsx.Policy) *awsx.Clients {
+	switch policy {
+	case awsx.Sweep:
+		return provider.SweepClients(region).Clients
+	case awsx.Poll:
+		return provider.PollClients(region).Clients
+	}
+	return provider.Clients(region)
+}
+
 // count returns how many requests for op the server got.
 func count(srv *awsxtest.Server, op fleettest.Operation) int {
 	n := 0
@@ -70,54 +81,54 @@ func testContext(t *testing.T) context.Context {
 // requests one call makes. The server's request log counts them, so a
 // second retry layer anywhere would show.
 func TestPolicyRequestCounts(t *testing.T) {
-	policies := []awsx.Policy{awsx.Read, awsx.Mutate, awsx.Sweep, awsx.Poll}
+	policies := []awsx.Policy{awsx.Standard, awsx.Sweep, awsx.Poll}
 	tests := []struct {
 		name  string
 		fault fleettest.Fault
-		// want is the request count for Read, Mutate, Sweep, and Poll.
-		want    [4]int
+		// want is the request count for Standard, Sweep, and Poll.
+		want    [3]int
 		wantErr func(error) bool // nil means success with a retrying policy
 		pollErr bool             // Poll fails although the others succeed
 	}{
-		{name: "success", want: [4]int{1, 1, 1, 1}},
+		{name: "success", want: [3]int{1, 1, 1}},
 		{
 			name:  "throttled twice, then success",
 			fault: fleettest.Fault{Throttle: 2},
-			want:  [4]int{3, 3, 3, 1}, pollErr: true,
+			want:  [3]int{3, 3, 1}, pollErr: true,
 		},
 		{
 			name:  "throttled four times, then success",
 			fault: fleettest.Fault{Throttle: 4},
-			want:  [4]int{5, 5, 5, 1}, pollErr: true,
+			want:  [3]int{5, 5, 1}, pollErr: true,
 		},
 		{
 			name:    "throttled forever",
 			fault:   fleettest.Fault{Throttle: 1000},
-			want:    [4]int{5, 5, 5, 1},
+			want:    [3]int{5, 5, 1},
 			wantErr: awsx.IsThrottling,
 		},
 		{
 			name:    "access denied",
 			fault:   fleettest.Fault{Deny: true},
-			want:    [4]int{1, 1, 1, 1},
+			want:    [3]int{1, 1, 1},
 			wantErr: awsx.IsPermissionError,
 		},
 		{
 			name:    "server error",
 			fault:   fleettest.Fault{Code: "InternalServerException", Status: 500},
-			want:    [4]int{5, 5, 5, 1},
+			want:    [3]int{5, 5, 1},
 			wantErr: awsx.IsServerError,
 		},
 		{
 			name:    "validation error",
 			fault:   fleettest.Fault{Code: "InvalidParameterException", Status: 400},
-			want:    [4]int{1, 1, 1, 1},
+			want:    [3]int{1, 1, 1},
 			wantErr: awsx.IsValidation,
 		},
 		{
 			name:    "connection reset",
 			fault:   fleettest.Fault{Reset: true},
-			want:    [4]int{5, 5, 5, 1},
+			want:    [3]int{5, 5, 1},
 			wantErr: awsx.IsNetworkError,
 		},
 	}
@@ -127,7 +138,7 @@ func TestPolicyRequestCounts(t *testing.T) {
 				world, srv, provider := newServer(t)
 				world.SetFault(fleettest.EKSListClusters, tt.fault)
 
-				_, err := provider.Clients(region, policy).EKS.ListClusters(testContext(t), &eks.ListClustersInput{})
+				_, err := clientsFor(provider, policy).EKS.ListClusters(testContext(t), &eks.ListClustersInput{})
 
 				if got := count(srv, fleettest.EKSListClusters); got != tt.want[i] {
 					t.Errorf("requests = %d, want %d", got, tt.want[i])
@@ -149,7 +160,7 @@ func TestPolicyRequestCounts(t *testing.T) {
 // A request that hangs is sent once: when the context ends, the call ends,
 // and an ended context is never retried.
 func TestHangIsNotRetried(t *testing.T) {
-	for _, policy := range []awsx.Policy{awsx.Read, awsx.Mutate, awsx.Sweep, awsx.Poll} {
+	for _, policy := range []awsx.Policy{awsx.Standard, awsx.Sweep, awsx.Poll} {
 		t.Run(policy.String(), func(t *testing.T) {
 			world, srv, provider := newServer(t)
 			world.SetFault(fleettest.EKSListClusters, fleettest.Fault{Hang: true})
@@ -158,7 +169,7 @@ func TestHangIsNotRetried(t *testing.T) {
 
 			done := make(chan error, 1)
 			go func() {
-				_, err := provider.Clients(region, policy).EKS.ListClusters(ctx, &eks.ListClustersInput{})
+				_, err := clientsFor(provider, policy).EKS.ListClusters(ctx, &eks.ListClustersInput{})
 				done <- err
 			}()
 			if err := world.AwaitBlocked(testContext(t), 1); err != nil {
@@ -197,7 +208,7 @@ func TestMutateRetryStartsOneUpdate(t *testing.T) {
 			world, srv, provider := newServer(t)
 			world.SetFault(fleettest.EKSUpdateNodegroupVersion, fleettest.Fault{LoseResponse: 1})
 
-			out, err := provider.Clients(region, awsx.Mutate).EKS.UpdateNodegroupVersion(testContext(t), &eks.UpdateNodegroupVersionInput{
+			out, err := provider.Clients(region).EKS.UpdateNodegroupVersion(testContext(t), &eks.UpdateNodegroupVersionInput{
 				ClusterName:        aws.String("prod"),
 				NodegroupName:      aws.String("ng-a"),
 				ClientRequestToken: tt.token,
@@ -240,7 +251,7 @@ func TestPollDoesNotRetryALostResponse(t *testing.T) {
 	world, srv, provider := newServer(t)
 	world.SetFault(fleettest.EKSListClusters, fleettest.Fault{Reset: true})
 
-	_, err := provider.Clients(region, awsx.Poll).EKS.ListClusters(testContext(t), &eks.ListClustersInput{})
+	_, err := provider.PollClients(region).EKS.ListClusters(testContext(t), &eks.ListClustersInput{})
 
 	if err == nil || awsx.IsPermanentAPIError(err) || !awsx.IsRetryable(err) {
 		t.Errorf("error = %v, want a transient error that a wait loop polls through", err)
@@ -253,29 +264,91 @@ func TestPollDoesNotRetryALostResponse(t *testing.T) {
 func TestProviderCachesClients(t *testing.T) {
 	_, _, provider := newServer(t)
 
-	read := provider.Clients(region, awsx.Read)
-	if read.Region != region || read.Policy != awsx.Read {
-		t.Errorf("clients are for %s with %v, want %s with Read", read.Region, read.Policy, region)
+	standard := provider.Clients(region)
+	if standard.Region != region || standard.Policy != awsx.Standard {
+		t.Errorf("Clients() are for %s with %v, want %s with Standard", standard.Region, standard.Policy, region)
 	}
-	if provider.Clients(region, awsx.Read) != read {
+	if provider.Clients(region) != standard {
 		t.Error("a second call built the clients again")
 	}
-	if provider.Clients("", awsx.Read) != read {
+	if provider.Clients("") != standard {
 		t.Error("the empty region is not the region of the configuration")
 	}
 	if provider.Region() != region {
 		t.Errorf("Region() = %q, want %q", provider.Region(), region)
 	}
-	poll := read.With(awsx.Poll)
-	if poll == read || poll.Policy != awsx.Poll || poll.Region != region {
-		t.Errorf("With(Poll) = clients for %s with %v", poll.Region, poll.Policy)
+	sweep, poll := provider.SweepClients(region), provider.PollClients(region)
+	if sweep.Policy != awsx.Sweep || sweep.Region != region {
+		t.Errorf("SweepClients() are for %s with %v", sweep.Region, sweep.Policy)
 	}
-	if poll.With(awsx.Read) != read {
-		t.Error("With(Read) is not the cached Read clients")
+	if poll.Policy != awsx.Poll || poll.Region != region {
+		t.Errorf("PollClients() are for %s with %v", poll.Region, poll.Policy)
 	}
-	other := provider.Clients("eu-west-1", awsx.Read)
-	if other == read || other.Region != "eu-west-1" {
+	if sweep.Clients == standard || poll.Clients == standard || sweep.Clients == poll.Clients {
+		t.Error("two policies share one set of clients")
+	}
+	if provider.SweepClients(region) != sweep || provider.PollClients("") != poll {
+		t.Error("a second call built the sweep or poll clients again")
+	}
+	other := provider.Clients("eu-west-1")
+	if other == standard || other.Region != "eu-west-1" {
 		t.Errorf("clients for eu-west-1 are for %s", other.Region)
+	}
+}
+
+// AWS_MAX_ATTEMPTS, or max_attempts in the shared config, reaches a service
+// client as RetryMaxAttempts and would replace the attempt count of every
+// policy.
+func TestMaxAttemptsSettingDoesNotChangeAPolicy(t *testing.T) {
+	tests := []struct {
+		policy awsx.Policy
+		want   int
+	}{
+		{policy: awsx.Standard, want: 5},
+		{policy: awsx.Sweep, want: 5},
+		{policy: awsx.Poll, want: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.policy.String(), func(t *testing.T) {
+			world := fleettest.New()
+			srv := awsxtest.NewServer(world)
+			defer srv.Close()
+			world.SetFault(fleettest.EKSListClusters, fleettest.Fault{Throttle: 1000})
+			cfg := srv.Config(region)
+			cfg.RetryMaxAttempts = 2 // what AWS_MAX_ATTEMPTS=2 loads
+			cfg.RetryMode = aws.RetryModeAdaptive
+			provider := awsx.NewProvider(cfg, noBackoff)
+
+			_, err := clientsFor(provider, tt.policy).EKS.ListClusters(testContext(t), &eks.ListClustersInput{})
+
+			if !awsx.IsThrottling(err) {
+				t.Errorf("error = %v, want the throttling error", err)
+			}
+			if got := count(srv, fleettest.EKSListClusters); got != tt.want {
+				t.Errorf("requests = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// A long run of throttled calls keeps its throttling error. With the SDK's
+// retry quota, the calls after about a hundred retries would fail with
+// "retry quota exceeded" and send one request each.
+func TestThrottlingHasNoRetryQuota(t *testing.T) {
+	world, srv, provider := newServer(t)
+	world.SetFault(fleettest.EKSListClusters, fleettest.Fault{Throttle: 100000})
+	client := provider.Clients(region).EKS
+	const calls = 150
+
+	for i := range calls {
+		_, err := client.ListClusters(testContext(t), &eks.ListClustersInput{})
+		if !awsx.IsThrottling(err) {
+			t.Fatalf("call %d: error = %v, want the throttling error", i+1, err)
+		}
+	}
+
+	if got := count(srv, fleettest.EKSListClusters); got != calls*5 {
+		t.Errorf("requests = %d, want %d: 5 for each call", got, calls*5)
 	}
 }
 
@@ -283,7 +356,7 @@ func TestProviderCachesClients(t *testing.T) {
 func TestClientsReachEveryService(t *testing.T) {
 	_, srv, provider := newServer(t)
 	ctx := testContext(t)
-	c := provider.Clients("eu-west-1", awsx.Read)
+	c := provider.Clients("eu-west-1")
 
 	// The fake answers some of these calls with an error for the empty
 	// input. The request log is what this test reads.
@@ -324,7 +397,7 @@ func TestListAll(t *testing.T) {
 		}
 	})
 	world.SetFault(fleettest.EKSListClusters, fleettest.Fault{PageSize: 2})
-	client := provider.Clients(region, awsx.Read).EKS
+	client := provider.Clients(region).EKS
 
 	got, err := awsx.ListAll(testContext(t),
 		func(ctx context.Context, token *string) (*eks.ListClustersOutput, error) {
@@ -360,7 +433,14 @@ func TestListAllErrors(t *testing.T) {
 		{
 			name:    "token that does not advance",
 			pages:   []page{{items: []string{"a"}, next: "t1"}, {items: []string{"b"}, next: "t1"}},
-			wantErr: `the list did not advance: the next page token "t1" is the one just used`,
+			wantErr: `the list did not advance: the next page token "t1" was already used`,
+		},
+		{
+			name: "tokens that go in a circle",
+			pages: []page{
+				{items: []string{"a"}, next: "t1"}, {items: []string{"b"}, next: "t2"}, {items: []string{"c"}, next: "t1"},
+			},
+			wantErr: `the list did not advance: the next page token "t1" was already used`,
 		},
 	}
 	for _, tt := range tests {

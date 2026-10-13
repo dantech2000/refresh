@@ -13,7 +13,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
@@ -203,7 +202,7 @@ func TestUseAWS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AWS() error = %v", err)
 	}
-	out, err := provider.Clients("", awsx.Read).EKS.ListClusters(context.Background(), &eks.ListClustersInput{})
+	out, err := provider.Clients("").EKS.ListClusters(context.Background(), &eks.ListClustersInput{})
 	if err != nil || len(out.Clusters) != 1 || out.Clusters[0] != "prod" {
 		t.Errorf("ListClusters = %v, %v; want [prod]", out, err)
 	}

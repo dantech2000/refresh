@@ -284,7 +284,7 @@ func TestFormatPermissionError_AWSMessageFirst(t *testing.T) {
 	}
 }
 
-// #418: a connect timeout reports itself as context.DeadlineExceeded, which
+// A connect timeout reports itself as context.DeadlineExceeded, which
 // read as "timed out … (increase --timeout)". It is a network failure: the
 // endpoint could not be reached.
 func TestFormatAWSError_DialTimeoutIsANetworkFailure(t *testing.T) {

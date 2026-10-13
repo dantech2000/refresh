@@ -7,16 +7,20 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+
+	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
+	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
 // isolateAWS gives a test an AWS environment of its own: a config file with
@@ -176,8 +180,9 @@ func TestLoadPrecedence(t *testing.T) {
 			if cfg.Region != tt.wantRegion {
 				t.Errorf("region = %q, want %q", cfg.Region, tt.wantRegion)
 			}
-			if _, ok := cfg.HTTPClient.(*awshttp.BuildableClient); !ok {
-				t.Errorf("HTTP client is %T, want the SDK's buildable client", cfg.HTTPClient)
+			// A frozen client: no service client can swap its dialer.
+			if _, ok := cfg.HTTPClient.(*http.Client); !ok {
+				t.Errorf("HTTP client is %T, want a frozen *http.Client", cfg.HTTPClient)
 			}
 		})
 	}
@@ -339,7 +344,7 @@ func TestSweepDialIsBoundedOnlyInSweeps(t *testing.T) {
 }
 
 // TestDialFailureAttempts counts the dials of one call to an endpoint that
-// refuses connections. Sweep does not try again; Read and Mutate do.
+// refuses connections. Sweep does not try again; Standard does.
 func TestDialFailureAttempts(t *testing.T) {
 	// A listener that is closed again leaves a port that refuses.
 	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
@@ -355,8 +360,7 @@ func TestDialFailureAttempts(t *testing.T) {
 		wantDials int32
 		wantSweep bool // the dial ran with the sweep bound
 	}{
-		{policy: Read, wantDials: 5},
-		{policy: Mutate, wantDials: 5},
+		{policy: Standard, wantDials: 5},
 		{policy: Sweep, wantDials: 1, wantSweep: true},
 		{policy: Poll, wantDials: 1},
 	}
@@ -384,7 +388,7 @@ func TestDialFailureAttempts(t *testing.T) {
 			}
 			provider := NewProvider(cfg, func(o *ProviderOptions) { o.Backoff = zeroBackoff{} })
 
-			_, err := provider.Clients("", tt.policy).EKS.ListClusters(context.Background(), &eks.ListClustersInput{})
+			_, err := provider.clientsFor("", tt.policy).EKS.ListClusters(context.Background(), &eks.ListClustersInput{})
 
 			if !IsDialFailure(err) {
 				t.Fatalf("error = %v, want a dial failure", err)
@@ -419,5 +423,161 @@ func TestHTTPClientSizesIdleConnections(t *testing.T) {
 			t.Errorf("max concurrency %d: idle connections = %d per host, %d in total; want %d, %d",
 				tt.maxConcurrency, tr.MaxIdleConnsPerHost, tr.MaxIdleConns, tt.wantPerHost, tt.wantTotal)
 		}
+	}
+}
+
+func TestHTTPClientLimitsAStalledCall(t *testing.T) {
+	tr := NewHTTPClient(8).GetTransport()
+	if tr.ResponseHeaderTimeout != time.Minute {
+		t.Errorf("ResponseHeaderTimeout = %v, want 1m", tr.ResponseHeaderTimeout)
+	}
+	if tr.HTTP2 == nil || tr.HTTP2.SendPingTimeout != 30*time.Second || tr.HTTP2.PingTimeout != 15*time.Second {
+		t.Errorf("HTTP2 = %+v, want a ping after 30s of silence and 15s for its answer", tr.HTTP2)
+	}
+}
+
+// With a defaults mode set, a service client gives a buildable HTTP client
+// a dialer of its own, in a copy that no other client shares. Load freezes
+// the client, so two services still share one connection and a sweep keeps
+// its dial timeout.
+func TestLoadSharesOneTransportUnderADefaultsMode(t *testing.T) {
+	isolateAWS(t)
+	srv := awsxtest.NewServer(fleettest.New())
+	defer srv.Close()
+	t.Setenv("AWS_ENDPOINT_URL", srv.URL)
+	t.Setenv("AWS_DEFAULTS_MODE", "standard")
+
+	var dials, sweepDials atomic.Int32
+	client := NewHTTPClient(8).WithTransportOptions(func(tr *http.Transport) {
+		next := tr.DialContext
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dials.Add(1)
+			if sweep, _ := ctx.Value(sweepDialKey{}).(bool); sweep {
+				sweepDials.Add(1)
+			}
+			return next(ctx, network, addr)
+		}
+	})
+
+	cfg, err := load(context.Background(), Options{Region: "us-east-1"}, client)
+	if err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	if cfg.DefaultsMode != aws.DefaultsModeStandard {
+		t.Fatalf("defaults mode = %q, want standard: the test would prove nothing", cfg.DefaultsMode)
+	}
+	frozen, ok := cfg.HTTPClient.(*http.Client)
+	if !ok {
+		t.Fatalf("HTTP client is %T, want a frozen *http.Client", cfg.HTTPClient)
+	}
+	defer frozen.CloseIdleConnections()
+	provider := NewProvider(cfg)
+
+	sweep := provider.SweepClients("")
+	if _, err := sweep.EKS.ListClusters(context.Background(), &eks.ListClustersInput{}); err != nil {
+		t.Fatalf("eks:ListClusters: %v", err)
+	}
+	if _, err := sweep.STS.GetCallerIdentity(context.Background(), &sts.GetCallerIdentityInput{}); err != nil {
+		t.Fatalf("sts:GetCallerIdentity: %v", err)
+	}
+	if _, err := provider.Clients("").EKS.ListClusters(context.Background(), &eks.ListClustersInput{}); err != nil {
+		t.Fatalf("eks:ListClusters with the standard clients: %v", err)
+	}
+
+	if got := dials.Load(); got != 1 {
+		t.Errorf("dials = %d, want 1: three calls of two services and two policies share a connection", got)
+	}
+	if got := sweepDials.Load(); got != 1 {
+		t.Errorf("dials with the sweep bound = %d, want 1: the wrapper of the dialer was dropped", got)
+	}
+}
+
+// The delay before a retry is random up to a ceiling that doubles from
+// 200 ms and stops at 5 s.
+func TestFullJitterBackoff(t *testing.T) {
+	ceilings := []time.Duration{
+		200 * time.Millisecond, 400 * time.Millisecond, 800 * time.Millisecond, 1600 * time.Millisecond,
+		3200 * time.Millisecond, 5 * time.Second, 5 * time.Second,
+	}
+	for i, want := range ceilings {
+		attempt := i + 1
+		if got := backoffCeiling(attempt); got != want {
+			t.Errorf("backoffCeiling(%d) = %v, want %v", attempt, got, want)
+		}
+		var longest time.Duration
+		distinct := map[time.Duration]bool{}
+		for range 2000 {
+			d, err := fullJitterBackoff{}.BackoffDelay(attempt, nil)
+			if err != nil || d < 0 || d > want {
+				t.Fatalf("BackoffDelay(%d) = %v, %v; want a delay from 0 to %v", attempt, d, err, want)
+			}
+			longest = max(longest, d)
+			distinct[d] = true
+		}
+		// Full jitter: the delays spread over the whole range.
+		if longest < want/2 || len(distinct) < 1000 {
+			t.Errorf("BackoffDelay(%d): longest of 2000 = %v with %d distinct values; want a spread up to %v", attempt, longest, len(distinct), want)
+		}
+	}
+	if got := backoffCeiling(1000); got != 5*time.Second {
+		t.Errorf("backoffCeiling(1000) = %v, want the 5s cap", got)
+	}
+	// Five attempts have four delays between them.
+	var worst time.Duration
+	for attempt := 1; attempt < maxAttempts; attempt++ {
+		worst += backoffCeiling(attempt)
+	}
+	if worst != 3*time.Second {
+		t.Errorf("longest total wait of %d attempts = %v, want 3s", maxAttempts, worst)
+	}
+}
+
+// The standard retryer waits by this curve when no test replaces it.
+func TestRetryerUsesFullJitterBackoff(t *testing.T) {
+	for _, policy := range []Policy{Standard, Sweep} {
+		retryer := newRetryer(policy, nil)
+		throttled := &smithy.GenericAPIError{Code: "ThrottlingException"}
+		for attempt := 1; attempt <= 6; attempt++ {
+			for range 200 {
+				d, err := retryer.RetryDelay(attempt, throttled)
+				if err != nil || d > backoffCeiling(attempt) {
+					t.Fatalf("%v: RetryDelay(%d) = %v, %v; want at most %v", policy, attempt, d, err, backoffCeiling(attempt))
+				}
+			}
+		}
+		if got := retryer.MaxAttempts(); got != 5 {
+			t.Errorf("%v: MaxAttempts() = %d, want 5", policy, got)
+		}
+	}
+	if got := newRetryer(Poll, nil).MaxAttempts(); got != 1 {
+		t.Errorf("Poll: MaxAttempts() = %d, want 1", got)
+	}
+}
+
+// A credential_process that stalls does not hold Load past its context: the
+// credentials cache returns when the context ends. The process itself goes
+// on until it ends; the SDK does not stop it.
+func TestLoadIsBoundedWithAStalledCredentialProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the test uses the sleep program as the credential process")
+	}
+	isolateAWS(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	// The process outlives the 20 ms of the context and ends soon after,
+	// so that no goroutine of the SDK is left when the tests end.
+	config := "[profile slow]\nregion = us-east-1\ncredential_process = sleep 0.3\n"
+	if err := os.WriteFile(os.Getenv("AWS_CONFIG_FILE"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := Load(ctx, Options{Profile: "slow"})
+
+	// An unbounded Load would return after the process ended, with the
+	// error for its empty output.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Load() error = %v, want the deadline of its context", err)
 	}
 }

@@ -112,11 +112,26 @@ func newPausableDeadline(parent context.Context, timeout time.Duration) (*pausab
 	return c, func() { c.finish(context.Canceled) }
 }
 
-func (c *pausableDeadline) expire() { c.finish(context.DeadlineExceeded) }
+// expire is what the timer calls. A timer that fired just before a pause
+// stopped it, or before a resume replaced it, must not end the context: the
+// clock is stopped, or the deadline has moved.
+func (c *pausableDeadline) expire() {
+	c.mu.Lock()
+	if c.paused > 0 || time.Now().Before(c.deadline) {
+		c.mu.Unlock()
+		return
+	}
+	c.finishLocked(context.DeadlineExceeded)
+}
 
 // finish ends c with err. Only the first call has an effect.
 func (c *pausableDeadline) finish(err error) {
 	c.mu.Lock()
+	c.finishLocked(err)
+}
+
+// finishLocked is finish for a caller that holds c.mu. It releases c.mu.
+func (c *pausableDeadline) finishLocked(err error) {
 	if c.err != nil {
 		c.mu.Unlock()
 		return

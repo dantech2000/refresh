@@ -12,9 +12,11 @@ import (
 // to use.
 //
 // Failures are never memoized: callers that waited on a failed lookup get its
-// error, and the next Get starts a fresh lookup. If a lookup failed only
-// because its caller's ctx ended, waiters whose own ctx is still live retry
-// it, so one caller's cancellation can't fail the others.
+// error, and the next Get starts a fresh lookup. If the ctx of the caller that
+// ran a lookup ended, waiters whose own ctx is still live retry it, so one
+// caller's cancellation can't fail the others. Any other failure goes to
+// every waiter as it is, also a timeout inside the lookup: N waiters must
+// not repeat a lookup that times out N times.
 type Memo[K comparable, V any] struct {
 	mu      sync.Mutex
 	entries map[K]*memoEntry[V]
@@ -26,6 +28,9 @@ type memoEntry[V any] struct {
 	done  chan struct{}
 	value V
 	err   error
+	// ownerDone reports that the ctx of the caller that ran the lookup had
+	// ended when the lookup returned.
+	ownerDone bool
 }
 
 // Get returns the result of lookup for key. A successful result is shared by
@@ -55,9 +60,9 @@ func (m *Memo[K, V]) Get(ctx context.Context, key K, lookup func(context.Context
 		if e.err == nil {
 			return e.value, nil
 		}
-		// The lookup failed because its owner's ctx ended, but ours is still
-		// live: look it up again instead of inheriting that cancellation.
-		if isContextErr(e.err) && ctx.Err() == nil {
+		// The owner's ctx ended, but ours is still live: look it up again
+		// instead of inheriting that cancellation.
+		if e.ownerDone && ctx.Err() == nil {
 			continue
 		}
 		var zero V
@@ -86,12 +91,9 @@ func (m *Memo[K, V]) run(ctx context.Context, key K, e *memoEntry[V], lookup fun
 		close(e.done)
 	}()
 	e.value, e.err = lookup(ctx)
+	e.ownerDone = e.err != nil && ctx.Err() != nil
 	finished = true
 	return e.value, e.err
 }
 
 var errLookupPanicked = errors.New("memoized lookup panicked")
-
-func isContextErr(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-}
