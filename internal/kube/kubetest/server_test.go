@@ -350,6 +350,52 @@ func nodeText(obj any) string {
 	return text
 }
 
+// TestWatchFromAnOlderList checks that a watch catches up from a list the
+// world has moved on from, as happens when a poll round lands between an
+// informer's list and its watch, and that a watch from a generation the
+// server never listed is told to list again.
+func TestWatchFromAnOlderList(t *testing.T) {
+	w, _, client := newServer(t)
+	ctx := testContext(t)
+	list, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: "eks.amazonaws.com/nodegroup=ng-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The world moves on: twice without touching ng-b, and once with.
+	w.Advance(time.Minute)
+	w.Edit(func(s *fleettest.State) { s.Cluster(region, "prod").Nodes[0].NotReady = true })
+	w.Edit(func(s *fleettest.State) { s.Cluster(region, "prod").Nodes[2].NotReady = false })
+
+	stream, err := client.CoreV1().Nodes().Watch(ctx, metav1.ListOptions{LabelSelector: "eks.amazonaws.com/nodegroup=ng-b", ResourceVersion: list.ResourceVersion})
+	if err != nil {
+		t.Fatalf("a watch from the list's resource version: %v", err)
+	}
+	defer stream.Stop()
+	select {
+	case ev := <-stream.ResultChan():
+		if got := string(ev.Type) + " " + nodeText(ev.Object); got != "MODIFIED b-1 Ready" {
+			t.Errorf("the first event is %q, want the change of b-1 since the list", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("the watch sent no event")
+	}
+
+	old, err := client.CoreV1().Nodes().Watch(ctx, metav1.ListOptions{ResourceVersion: "1"})
+	if err == nil {
+		defer old.Stop()
+		select {
+		case ev := <-old.ResultChan():
+			if status, ok := ev.Object.(*metav1.Status); !ok || status.Reason != metav1.StatusReasonExpired {
+				t.Errorf("a watch from an unknown generation sent %+v, want an Expired status", ev)
+			}
+		case <-ctx.Done():
+			t.Fatal("the watch from an unknown generation sent nothing")
+		}
+	} else if !apierrors.IsResourceExpired(err) && !apierrors.IsGone(err) {
+		t.Errorf("a watch from an unknown generation returned %v, want Gone", err)
+	}
+}
+
 // TestKubeconfig checks that the kubeconfig the server writes loads with
 // client-go's own loader and reaches the server, and that the world reports
 // the server as the cluster's endpoint.

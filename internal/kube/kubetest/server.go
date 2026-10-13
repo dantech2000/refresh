@@ -28,9 +28,13 @@
 // server does not know gets 400, so a test never reads a list that ignored
 // part of the request.
 //
-// Lists carry the world's generation as their resource version. A watch
-// from the current generation streams what changes afterwards; a watch from
-// an older one gets 410 Gone, and the informer lists again. A watch that
+// Lists carry the world's generation as their resource version. The world's
+// generation grows on every change of the world, most of which do not
+// touch the listed collection, so a watch rarely starts from the current
+// one. The handler remembers its recent lists: a watch that starts from one
+// of them first gets what changed in the collection since that list, and
+// then what changes afterwards. A watch from a generation the handler does
+// not remember gets 410 Gone, and the informer lists again. A watch that
 // asks for the initial events (the streaming list of newer client-go
 // versions) gets them, then the bookmark that ends them.
 //
@@ -135,7 +139,23 @@ type Handler struct {
 
 	mu       sync.Mutex
 	requests []Request
+	// lists are the most recent lists the handler answered, newest last. A
+	// watch that starts from one of them gets what changed since.
+	lists []listed
 }
+
+// listed is one list as it was answered.
+type listed struct {
+	// collection names the kind and the selection of the list.
+	collection string
+	generation int64
+	// objects are the listed objects as JSON, by namespace/name.
+	objects map[string]string
+}
+
+// listHistory is how many lists the handler remembers. It only has to span
+// the gap between an informer's list and its watch.
+const listHistory = 64
 
 // NewHandler returns a handler for the cluster of w with the name, as it
 // answers in region. The caller must call Close when it stops serving.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -160,6 +161,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		objects = append(objects, it.object)
 		words = append(words, it.summary)
 	}
+	h.remember(listed{collection: res.kind + " " + sel.String(), generation: generation, objects: encodeAll(items)})
 	h.answered(req, Answer{Observed: strings.Join(words, " ")})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kind": res.kind + "List", "apiVersion": res.apiVersion,
@@ -191,6 +193,43 @@ type selection struct {
 	namespace string
 	labels    labels.Selector
 	fields    fields.Selector
+}
+
+func (s selection) String() string {
+	return fmt.Sprintf("namespace=%q labels=%q fields=%q", s.namespace, s.labels, s.fields)
+}
+
+// encodeAll returns the items as JSON, by namespace/name.
+func encodeAll(items []item) map[string]string {
+	out := make(map[string]string, len(items))
+	for _, it := range items {
+		encoded, _ := json.Marshal(it.object) // an API object built here encodes
+		out[it.namespace+"/"+it.name] = string(encoded)
+	}
+	return out
+}
+
+// remember keeps a list for the watches that start from it.
+func (h *Handler) remember(l listed) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.lists = append(h.lists, l)
+	if len(h.lists) > listHistory {
+		h.lists = h.lists[len(h.lists)-listHistory:]
+	}
+}
+
+// recall returns the objects of the list of a collection that was answered
+// with the generation, or nil when the handler does not remember one.
+func (h *Handler) recall(collection string, generation string) map[string]string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.lists) - 1; i >= 0; i-- {
+		if l := h.lists[i]; l.collection == collection && strconv.FormatInt(l.generation, 10) == generation {
+			return maps.Clone(l.objects)
+		}
+	}
+	return nil
 }
 
 func newSelection(namespace, labelSelector, fieldSelector string) (selection, error) {
@@ -271,12 +310,21 @@ func (h *Handler) watch(ctx context.Context, w http.ResponseWriter, req Request,
 		writeStatus(w, &status{http.StatusBadRequest, metav1.StatusReasonBadRequest, err.Error()})
 		return
 	}
+	// sent is what the client has: namespace/name -> the object as JSON.
+	// The stream sends what differs from it.
 	initial := get("sendInitialEvents") == "true"
-	if from := get("resourceVersion"); !initial && from != "" && from != "0" && from != strconv.FormatInt(generation, 10) {
-		// The server keeps no history. The client lists again.
-		h.answered(req, Answer{Reason: string(metav1.StatusReasonExpired)})
-		writeStatus(w, &status{http.StatusGone, metav1.StatusReasonExpired, "too old resource version: " + from + " (" + strconv.FormatInt(generation, 10) + ")"})
-		return
+	var sent map[string]string
+	switch from := get("resourceVersion"); {
+	case initial:
+		sent = map[string]string{} // the client has nothing: everything is sent
+	case from == "" || from == "0" || from == strconv.FormatInt(generation, 10):
+		sent = encodeAll(items) // the client is current
+	default:
+		if sent = h.recall(res.kind+" "+sel.String(), from); sent == nil {
+			h.answered(req, Answer{Reason: string(metav1.StatusReasonExpired)})
+			writeStatus(w, &status{http.StatusGone, metav1.StatusReasonExpired, "too old resource version: " + from + " (" + strconv.FormatInt(generation, 10) + ")"})
+			return
+		}
 	}
 	h.answered(req, Answer{})
 
@@ -293,8 +341,7 @@ func (h *Handler) watch(ctx context.Context, w http.ResponseWriter, req Request,
 		}
 		return true
 	}
-	sent := map[string]string{} // namespace/name -> the object as it was sent
-	emit := func(items []item, generation int64, replay bool) bool {
+	emit := func(items []item, generation int64) bool {
 		seen := map[string]bool{}
 		for _, it := range items {
 			key := it.namespace + "/" + it.name
@@ -308,9 +355,6 @@ func (h *Handler) watch(ctx context.Context, w http.ResponseWriter, req Request,
 				continue
 			}
 			sent[key] = string(encoded)
-			if replay && kind == "ADDED" && !initial {
-				continue // the client has it from its list
-			}
 			if !send(kind, withVersion(it.object, generation)) {
 				return false
 			}
@@ -327,7 +371,7 @@ func (h *Handler) watch(ctx context.Context, w http.ResponseWriter, req Request,
 		}
 		return true
 	}
-	if !emit(items, generation, true) {
+	if !emit(items, generation) {
 		return
 	}
 	if initial {
@@ -347,7 +391,7 @@ func (h *Handler) watch(ctx context.Context, w http.ResponseWriter, req Request,
 		}
 		changes = h.world.Changes()
 		items, generation, err = h.snapshot(res, sel)
-		if err != nil || !emit(items, generation, false) {
+		if err != nil || !emit(items, generation) {
 			return
 		}
 	}
