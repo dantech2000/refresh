@@ -571,7 +571,7 @@ func (w *World) settle() {
 	var due []*Update
 	for _, c := range w.state.Clusters {
 		if r := &c.InsightsRefresh; r.Status == RefreshInProgress && !r.EndsAt.After(w.now) {
-			r.Status = RefreshCompleted
+			r.Status, r.EndedAt = RefreshCompleted, r.EndsAt
 		}
 		for _, u := range c.Updates {
 			if u.roll != nil && u.Status == UpdateInProgress {

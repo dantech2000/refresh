@@ -689,6 +689,11 @@ func TestInsightsRefresh(t *testing.T) {
 	if got := refresh(); got != "COMPLETED" {
 		t.Errorf("after 60s: %q, want COMPLETED", got)
 	}
+	var r fleettest.InsightsRefresh
+	w.View(func(s *fleettest.State) { r = s.Cluster(region, "prod").InsightsRefresh })
+	if got := r.EndedAt.Sub(r.StartedAt); got != time.Minute {
+		t.Errorf("EndedAt - StartedAt = %s, want 1m0s", got)
+	}
 	var notFound *fleettest.NotFoundError
 	if err := w.StartInsightsRefresh(region, "nope"); !errors.As(err, &notFound) {
 		t.Errorf("unknown cluster: %v, want a NotFoundError", err)

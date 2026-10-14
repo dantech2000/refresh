@@ -239,6 +239,8 @@ type InsightsRefresh struct {
 	StartedAt time.Time
 	// EndsAt is when an IN_PROGRESS refresh becomes COMPLETED.
 	EndsAt time.Time
+	// EndedAt is when it became COMPLETED; zero before that.
+	EndedAt time.Time
 }
 
 // AddonVersion is one version of an add-on in the catalog.

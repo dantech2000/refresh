@@ -601,13 +601,18 @@ func eksStartInsightsRefresh(c *call) (any, error) {
 }
 
 // eksDescribeInsightsRefresh answers COMPLETED for a cluster that never had
-// a refresh started, as it does after one that finished.
+// a refresh started, as it does after one that finished, with no times.
+// The last refresh has startedAt, and endedAt once it completed.
 func eksDescribeInsightsRefresh(c *call) (any, error) {
 	return c.inCluster(func(_ *fleettest.State, cl *fleettest.Cluster) (any, error) {
 		r := cl.InsightsRefresh
 		if r.Status == "" {
 			return object{"status": fleettest.RefreshCompleted}, nil
 		}
-		return object{"status": r.Status, "startedAt": epoch(r.StartedAt)}, nil
+		out := object{"status": r.Status, "startedAt": epoch(r.StartedAt)}
+		if !r.EndedAt.IsZero() {
+			out["endedAt"] = epoch(r.EndedAt)
+		}
+		return out, nil
 	})
 }
