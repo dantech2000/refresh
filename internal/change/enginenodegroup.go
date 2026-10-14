@@ -7,7 +7,6 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/fleet"
 )
 
 // maxAttachRounds is how often a nodegroup step waits for an update that
@@ -151,19 +150,4 @@ func (r *runner) submitEngineRoll(cp *ClusterPlan, s Step) StepResult {
 	}
 	res.Status, res.UpdateID = StepStarted, id
 	return res
-}
-
-// rollDirection reports whether a roll from the version live to goal goes
-// the way of the change: up for an upgrade, and down for a rollback. A
-// version that is not known goes no way.
-func rollDirection(kind Kind, live, goal string) bool {
-	v, err := fleet.ParseVersion(live)
-	g, gerr := fleet.ParseVersion(goal)
-	if err != nil || gerr != nil || v.Major != g.Major {
-		return false
-	}
-	if kind == ClusterRollback {
-		return v.Minor > g.Minor
-	}
-	return v.Minor < g.Minor
 }

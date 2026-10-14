@@ -102,21 +102,6 @@ func (r *runner) runControlPlane(cp *ClusterPlan, s Step, snap *fleet.Snapshot) 
 	return res
 }
 
-// adjacent reports whether a control plane at version live can take the
-// request of a step to goal: an upgrade from the minor version before the
-// goal, and a rollback from the minor version after it.
-func adjacent(kind Kind, live, goal string) bool {
-	v, err := fleet.ParseVersion(live)
-	g, gerr := fleet.ParseVersion(goal)
-	if err != nil || gerr != nil || v.Major != g.Major {
-		return false
-	}
-	if kind == ClusterRollback {
-		return v.Minor == g.Minor+1
-	}
-	return v.Minor+1 == g.Minor
-}
-
 // controlPlaneGate is the gate of a control-plane phase, on the read of
 // the phase. It returns false with the Blocked result when the control
 // plane must not move.

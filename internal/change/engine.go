@@ -314,37 +314,6 @@ func rederive(kind Kind, ph Phase, snap *fleet.Snapshot) []Step {
 	return out
 }
 
-// versionDone reports whether a Kubernetes version meets the goal of a
-// step, by the direction of the change: at the goal or above it for an
-// upgrade, and at the goal or below it for a rollback. A version that is
-// not known is never done.
-func versionDone(kind Kind, version, goal string) bool {
-	v, err := fleet.ParseVersion(version)
-	g, gerr := fleet.ParseVersion(goal)
-	if err != nil || gerr != nil {
-		return false
-	}
-	if kind == ClusterRollback {
-		return atLeast(g, v)
-	}
-	return atLeast(v, g)
-}
-
-// addonDone reports whether an add-on version meets the goal of a step
-// with no further read: at the goal or newer for an upgrade, and exactly
-// the goal for a rollback. A rollback also keeps a version that the
-// catalogue of its target lists, which the step itself reads.
-func addonDone(kind Kind, version, goal string) bool {
-	if version == "" || goal == "" {
-		return false
-	}
-	order := fleet.CompareAddonVersions(version, goal)
-	if kind == ClusterRollback {
-		return order == 0
-	}
-	return order >= 0
-}
-
 // runEngineStep runs one step with work. reported says that the step
 // sent its own last StepChanged event.
 func (r *runner) runEngineStep(cp *ClusterPlan, ph Phase, s Step, snap *fleet.Snapshot) (res StepResult, reported bool) {

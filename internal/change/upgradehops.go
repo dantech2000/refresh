@@ -44,12 +44,6 @@ func Hops(from, to fleet.Version) ([]fleet.Version, error) {
 	return hops, nil
 }
 
-// atLeast reports whether a is b or newer. A version that is not known
-// is at least nothing, and nothing is at least it.
-func atLeast(a, b fleet.Version) bool {
-	return !a.IsZero() && !b.IsZero() && a.Compare(b) >= 0
-}
-
 // beyondKubeletSkew reports whether a nodegroup trails a control plane
 // by more than the supported kubelet skew. It is false when a version is
 // not known.
