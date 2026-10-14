@@ -3,6 +3,7 @@ package change
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -220,5 +221,48 @@ func TestWatch_HungReadEndsUnderTheReadBudget(t *testing.T) {
 	}
 	if len(v.Steps) != 0 {
 		t.Fatalf("a watch that never attached has steps: %+v", v.Steps)
+	}
+}
+
+// A watched roll names the version that its update moves to, not the one
+// that the nodegroup reports while it rolls: a rollback roll of web is a
+// roll to 1.32, though EKS reports 1.33 until it ends.
+func TestWatch_RollIsNamedByItsTargetVersion(t *testing.T) {
+	env := newEnv(t, newWorld(nil))
+	env.world.Edit(func(s *fleettest.State) {
+		s.Cluster(east, "prod").Nodegroup("web").UpdateScripts = []fleettest.UpdateScript{{After: 2 * time.Minute}}
+	})
+	version := "1.32"
+	if _, err := env.world.UpdateNodegroupVersion(east, "prod", "web", fleettest.NodegroupVersionRequest{Version: &version}); err != nil {
+		t.Fatal(err)
+	}
+	h := Watch(testContext(t), env.deps, Resource{Target: handleTarget, Kind: StepNodegroup, Name: "web"}, WatchOptions{Limits: Limits{Wait: time.Hour, Poll: 20 * time.Second}})
+	v := waitFinished(t, h)
+	step := v.Plan.Clusters[0].Phases[0].Steps[0]
+	if step.From != "1.33" || step.To != "1.32" || v.Result.Status != Succeeded {
+		t.Fatalf("step from %s to %s, result %s (%v); want from 1.33 to 1.32, Succeeded", step.From, step.To, v.Result.Status, v.Result.Err)
+	}
+}
+
+// An update that reports Successful and leaves the resource at another
+// version than its target did not succeed.
+func TestWatch_SuccessAwayFromTheTargetFails(t *testing.T) {
+	env := newEnv(t, newWorld(nil))
+	id := startRollElsewhere(t, env.world, fleettest.UpdateScript{After: 2 * time.Minute})
+	// The update says 1.32; the roll leaves web at 1.33.
+	env.world.Edit(func(s *fleettest.State) {
+		for _, u := range s.Cluster(east, "prod").Updates {
+			if u.ID == id {
+				u.Params[0].Value = "1.32"
+			}
+		}
+	})
+	h := Watch(testContext(t), env.deps, Resource{Target: handleTarget, Kind: StepNodegroup, Name: "web"}, WatchOptions{Limits: Limits{Wait: time.Hour, Poll: 20 * time.Second}})
+	v := waitFinished(t, h)
+	if v.Result.Status != Failed || v.Steps[0].Status != StepFailed || v.Steps[0].Failure == nil {
+		t.Fatalf("result %s, step %+v; want Failed", v.Result.Status, v.Steps[0])
+	}
+	if want := "reports version 1.33, not 1.32"; !strings.Contains(v.Steps[0].Failure.Error, want) {
+		t.Errorf("failure = %s, want %q", v.Steps[0].Failure.Error, want)
 	}
 }

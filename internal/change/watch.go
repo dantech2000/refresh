@@ -3,6 +3,7 @@ package change
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -33,7 +34,9 @@ type WatchOptions struct {
 // result has one step, with Attached set, or none when the first read
 // finds nothing in flight, or an update that is not a change of refresh
 // (a configuration update of the control plane). The kind of the handle
-// and its start time are those of the update, once it is read.
+// and its start time are those of the update, once it is read. A step
+// whose update names a version moves to that version, and an update that
+// reports Successful with the resource at another version fails.
 func Watch(ctx context.Context, d Deps, r Resource, o WatchOptions) *Handle {
 	h := newHandle(NodegroupUpdate, r.Target, true, d.now)
 	go func() { h.finish(watch(ctx, d, r, o, h.event, h.describe)) }()
@@ -88,7 +91,14 @@ func watchUpdate(ctx, rctx context.Context, read *budget, d Deps, r Resource, o 
 	if kind == NodegroupScale {
 		stepKind = StepScale
 	}
-	step := Step{Ref: StepRef{Phase: PhaseRef{Target: r.Target, Kind: phase}, Kind: stepKind, Name: r.Name}, Action: Attach, Reason: InFlight, From: settled.Version, To: settled.Version}
+	// The step moves to the version of the update when it names one: a
+	// nodegroup or a control plane reports its old version until the
+	// update ends.
+	to := settled.Version
+	if in.Version != "" {
+		to = in.Version
+	}
+	step := Step{Ref: StepRef{Phase: PhaseRef{Target: r.Target, Kind: phase}, Kind: stepKind, Name: r.Name}, Action: Attach, Reason: InFlight, From: settled.Version, To: to}
 	plan := &Plan{Kind: kind, Clusters: []ClusterPlan{{Target: r.Target, Phases: []Phase{{Ref: step.Ref.Phase, Steps: []Step{step}}}}}, At: d.now()}
 	emit(Event{At: d.now(), Kind: PlanReady, Plan: plan})
 	emit(Event{At: d.now(), Kind: PhaseStarted, Phase: step.Ref.Phase})
@@ -106,11 +116,22 @@ func watchUpdate(ctx, rctx context.Context, read *budget, d Deps, r Resource, o 
 	}}
 	poll := d.AWS.PollClients(r.Region)
 	waitFn := func(ctx context.Context) error {
-		if in.ID != "" {
-			return WaitUpdate(ctx, poll, r, in.ID, opts)
+		if in.ID == "" {
+			_, err := WaitSettled(ctx, poll, r, settledFn(r), opts)
+			return err
 		}
-		_, err := WaitSettled(ctx, poll, r, settledFn(r), opts)
-		return err
+		if err := WaitUpdate(ctx, poll, r, in.ID, opts); err != nil || in.Version == "" {
+			return err
+		}
+		// A Successful update is done only at its version.
+		got, err := WaitSettled(ctx, poll, r, settledFn(r), opts)
+		if err != nil {
+			return err
+		}
+		if v, g, ok := parseVersions(got.Version, in.Version); !ok || v.Compare(g) != 0 {
+			return fmt.Errorf("update %s reported Successful, but %s reports version %s, not %s", in.ID, r, orUnknown(got.Version), in.Version)
+		}
+		return nil
 	}
 
 	// The snapshot gives the endpoint that the kubeconfig is matched to,
