@@ -75,13 +75,15 @@ Columns:
   ADDONS     the add-ons with a newer compatible version
   HEALTH     the control-plane issues that EKS reports
 
-Exit codes, for a script. When several apply, the highest wins.
-  0  every cluster is current and in standard support
-  2  something is out of date: an AMI, an add-on, a nodegroup behind the
-     control plane, or a control-plane issue
-  3  a cluster is in extended support, or unsupported
-  4  a part of the fleet could not be read
-  1  an error, or no region answered`,
+When several exit codes apply, the highest wins.
+
+Exit codes:
+  0  Every cluster is current and in standard support.
+  1  An error, an interrupt, or no region answered.
+  2  Something is out of date: an AMI, an add-on, a nodegroup behind the
+     control plane, or a control-plane issue.
+  3  A cluster is in extended support, or unsupported.
+  4  Incomplete: a part of the fleet could not be read.`,
 		Example: `  # The configured region
   refresh status
 

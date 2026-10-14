@@ -81,8 +81,16 @@ nodegroup with no instance). A version with a warning mark is behind the
 control plane.
 
 A nodegroup that could not be read, or whose AMI could not be looked up, is
-listed under INCOMPLETE DATA, or in "failures" with -o json or -o yaml, and
-the command exits 4.`,
+listed under INCOMPLETE DATA, or in "failures" with -o json or -o yaml.
+
+The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
+refresh context, then the current kubeconfig context.
+
+Exit codes:
+  0  Done, or a --watch that Ctrl+C stopped.
+  1  An error, or an interrupt.
+  4  Incomplete: a nodegroup could not be read, or its AMI could not be
+     looked up. The command prints what it has.`,
 		Example: `  refresh nodegroup list -c prod
 
   # The nodegroups with an outdated AMI

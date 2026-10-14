@@ -26,7 +26,11 @@ func newCmdCurrent(f *cmdutil.Factory) *cobra.Command {
 The active context is the one that REFRESH_CONTEXT names, or else the one
 that "refresh context use" selected. A REFRESH_CONTEXT that names no saved context is
 an error. When no context is active, the command prints a hint on stderr and
-nothing on stdout.`,
+nothing on stdout.
+
+Exit codes:
+  0  Done, also when no context is active.
+  1  An error.`,
 		Example: `  refresh context current
 
   # Use another context for one command

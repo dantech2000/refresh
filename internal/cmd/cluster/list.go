@@ -99,8 +99,13 @@ that need no Kubernetes access on every cluster and adds a HEALTH column;
 the column does not change the exit code.
 
 A cluster or a region that could not be read is listed under INCOMPLETE
-DATA, or in "failures" with -o json or -o yaml, and the command exits 4.
-When no region answers, the command fails with exit 1.`,
+DATA, or in "failures" with -o json or -o yaml.
+
+Exit codes:
+  0  Done, or a --watch that Ctrl+C stopped.
+  1  An error, an interrupt, or no region answered.
+  4  Incomplete: a cluster or a region could not be read. The command
+     prints what it has.`,
 		Example: `  # The clusters of the configured region
   refresh cluster list
 

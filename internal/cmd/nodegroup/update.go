@@ -148,7 +148,7 @@ ignores all three.
 	cmdutil.AddFilterFlag(cmd, &o.rawFilters, updateFilterKeys...)
 	cmd.Flags().BoolVar(&o.allClusters, "all-clusters", false, "Roll every cluster of the regions of -r, one after another")
 	cmd.Flags().BoolVar(&o.reroll, "reroll", false, "Also roll a nodegroup that is on the latest AMI")
-	cmd.Flags().BoolVar(&o.skipVerify, "skip-verify", false, "Skip the verification after the rolls")
+	cmd.Flags().BoolVar(&o.skipVerify, "skip-verify", false, "Skip the verification after each nodegroup roll")
 	cmd.Flags().BoolVar(&o.changelog, "changelog", false, "With --dry-run, show the AMI release notes of each roll")
 	cmd.Flags().BoolVar(&o.live, "live", false, "Show the nodes of the roll as they drain and join, also without a terminal")
 	cmdutil.AddChangeFlags(cmd, &o.change, updateWaitTimeout, "the rolls of a cluster", true, true)

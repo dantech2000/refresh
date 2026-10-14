@@ -35,7 +35,11 @@ argument, list the saved contexts and ask for one.
 
 The flags and the positional of a command still beat the active context.
 REFRESH_CONTEXT selects a context for one shell and beats the context that
-this command saves.`,
+this command saves.
+
+Exit codes:
+  0  Done.
+  1  An error, or an interrupt.`,
 		Example: `  refresh context use prod
 
   # Switch back to the context before

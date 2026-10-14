@@ -13,7 +13,7 @@ var sharedExitHelp = [...]string{
 	0: "Done, or nothing to do.",
 	1: "An error, a question answered no, or an interrupt.",
 	2: "With --dry-run only: a real run would ask about warnings.",
-	3: "Blocked, and nothing changed: the cluster is busy, a gate stops the\n     change, or --require-healthy and a warning.",
+	3: "Blocked: the cluster is busy, a gate stops the change, or\n     --require-healthy and a warning. Nothing changed, or nothing more\n     when the gate stops a later step.",
 	4: "Incomplete: a target was already changing, a wait timed out, or\n     something could not be read.",
 }
 

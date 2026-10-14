@@ -80,19 +80,19 @@ skip the confirmation prompts.`,
 	cmd.SetErr(f.IOStreams.ErrOut)
 
 	pf := cmd.PersistentFlags()
-	pf.StringSliceVarP(&o.regions, "region", "r", nil, "AWS region; a command that sweeps regions takes several, repeated or separated by commas")
-	pf.StringVar(&o.profile, "profile", "", "AWS shared-config profile")
-	pf.DurationVarP(&o.timeout, "timeout", "t", time.Minute, "Budget for the API calls of a read command (env: REFRESH_TIMEOUT)")
+	pf.StringSliceVarP(&o.regions, "region", "r", nil, "AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)")
+	pf.StringVar(&o.profile, "profile", "", "AWS shared-config profile (env: AWS_PROFILE)")
+	pf.DurationVarP(&o.timeout, "timeout", "t", time.Minute, "Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh (env: REFRESH_TIMEOUT)")
 	pf.IntVar(&o.maxConcurrency, "max-concurrency", 32, "Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY)")
 	pf.BoolVar(&o.noColor, "no-color", false, "Disable color (env: NO_COLOR)")
 	pf.StringVar(&o.logLevel, "log-level", "warn", "Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL)")
 	pf.BoolVar(&o.verbose, "verbose", false, "Same as --log-level debug")
 	pf.StringVar(&o.kubeconfig, "kubeconfig", "", "Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)")
-	pf.StringVar(&o.kubeContext, "kube-context", "", "Kubeconfig context (default: the current context)")
+	pf.StringVar(&o.kubeContext, "kube-context", "", "Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)")
 
 	// Defining the flag here keeps cobra from adding its own with the -v
 	// shorthand, which the CLI leaves unused.
-	cmd.Flags().Bool("version", false, "Print the version")
+	cmd.Flags().Bool("version", false, "Print the version, the commit, and the build date")
 	cmd.SetVersionTemplate(versioncmd.Format(f.Build))
 
 	cmd.AddGroup(

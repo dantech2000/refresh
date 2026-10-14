@@ -47,7 +47,17 @@ func newCmdDescribe(f *cmdutil.Factory) *cobra.Command {
 configuration values.
 
 The name is exact. For a name that does not exist, the command lists the
-add-ons whose names are close.`,
+add-ons whose names are close.
+
+The command reads one add-on, so it has no partial result: an add-on that
+cannot be read is an error.
+
+The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
+refresh context, then the current kubeconfig context.
+
+Exit codes:
+  0  Done.
+  1  An error, or an interrupt.`,
 		Example: `  refresh addon describe vpc-cni -c prod
 
   # The configuration values alone

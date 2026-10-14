@@ -44,8 +44,9 @@ Exit codes:
   1  An error, a question answered no, or an interrupt.
      Every roll that was sent failed.
   2  With --dry-run only: a real run would ask about warnings.
-  3  Blocked, and nothing changed: the cluster is busy, a gate stops the
-     change, or --require-healthy and a warning.
+  3  Blocked: the cluster is busy, a gate stops the change, or
+     --require-healthy and a warning. Nothing changed, or nothing more
+     when the gate stops a later step.
   4  Incomplete: a target was already changing, a wait timed out, or
      something could not be read.
      A roll failed beside one that was started.
@@ -92,7 +93,7 @@ refresh nodegroup update [nodegroup...] [flags]
       --require-healthy          Stop on any health warning, and do not ask
       --reroll                   Also roll a nodegroup that is on the latest AMI
       --skip-health-check        Skip the health gate before the change
-      --skip-verify              Skip the verification after the rolls
+      --skip-verify              Skip the verification after each nodegroup roll
       --wait-timeout duration    How long to wait for the rolls of a cluster; 0 means no limit (default 40m0s)
   -y, --yes                      Do not prompt; required with -o json|yaml and without a terminal
 ```
@@ -100,14 +101,14 @@ refresh nodegroup update [nodegroup...] [flags]
 ### Options inherited from parent commands
 
 ```
-      --kube-context string   Kubeconfig context (default: the current context)
+      --kube-context string   Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
       --kubeconfig string     Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
       --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
       --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
       --no-color              Disable color (env: NO_COLOR)
-      --profile string        AWS shared-config profile
-  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas
-  -t, --timeout duration      Budget for the API calls of a read command (env: REFRESH_TIMEOUT) (default 1m0s)
+      --profile string        AWS shared-config profile (env: AWS_PROFILE)
+  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
+  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh (env: REFRESH_TIMEOUT) (default 1m0s)
       --verbose               Same as --log-level debug
 ```
 

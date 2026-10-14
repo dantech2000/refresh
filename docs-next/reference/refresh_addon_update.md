@@ -30,8 +30,9 @@ Exit codes:
   1  An error, a question answered no, or an interrupt.
      Every update that was sent failed.
   2  With --dry-run only: a real run would ask about warnings.
-  3  Blocked, and nothing changed: the cluster is busy, a gate stops the
-     change, or --require-healthy and a warning.
+  3  Blocked: the cluster is busy, a gate stops the change, or
+     --require-healthy and a warning. Nothing changed, or nothing more
+     when the gate stops a later step.
   4  Incomplete: a target was already changing, a wait timed out, or
      something could not be read.
      An add-on failed and another was updated.
@@ -69,7 +70,7 @@ refresh addon update [addon...] [flags]
       --poll-interval duration   Time between two status polls (default 15s)
   -q, --quiet                    Print no progress; questions, warnings, and the result still show
       --require-healthy          Stop on any health warning, and do not ask
-      --skip-addon strings       Add-on that --all leaves out; repeat it or separate the names with commas
+      --skip-addon strings       Leave these add-ons out of --all, by exact name
       --skip-health-check        Skip the health gate before the change
       --version string           Add-on version to move to, with exactly one add-on (default: the latest that the cluster can run)
       --wait-timeout duration    How long to wait for each add-on; 0 means no limit (default 5m0s)
@@ -79,14 +80,14 @@ refresh addon update [addon...] [flags]
 ### Options inherited from parent commands
 
 ```
-      --kube-context string   Kubeconfig context (default: the current context)
+      --kube-context string   Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
       --kubeconfig string     Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
       --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
       --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
       --no-color              Disable color (env: NO_COLOR)
-      --profile string        AWS shared-config profile
-  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas
-  -t, --timeout duration      Budget for the API calls of a read command (env: REFRESH_TIMEOUT) (default 1m0s)
+      --profile string        AWS shared-config profile (env: AWS_PROFILE)
+  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
+  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh (env: REFRESH_TIMEOUT) (default 1m0s)
       --verbose               Same as --log-level debug
 ```
 

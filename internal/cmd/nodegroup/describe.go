@@ -59,8 +59,18 @@ the command also lists the EC2 instances of the nodegroup.
 The name is exact. For a name that does not exist, the command lists the
 nodegroups whose names are close.
 
-When the AMI or the instances cannot be read, the command prints what it
-has, names the failure, and exits 4.`,
+When the AMI, the instances, or the workloads cannot be read, the command
+prints what it has, and names the part under INCOMPLETE DATA or in
+"failures".
+
+The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
+refresh context, then the current kubeconfig context.
+
+Exit codes:
+  0  Done.
+  1  An error, or an interrupt.
+  4  Incomplete: a part of the nodegroup could not be read. The command
+     prints what it has.`,
 		Example: `  refresh nodegroup describe web -c prod
 
   # With the EC2 instances

@@ -82,7 +82,7 @@ The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
 refresh context. It never comes from the kubeconfig.
 
 ` + changecmd.ExitCodeHelp(map[int]string{
-			1: "The update failed, or the sizes cannot hold.",
+			1: "The update failed, the nodegroup is not ACTIVE at the new sizes\n     after it, or the sizes cannot hold. A scale has no verification\n     after it, so it never exits 5.",
 		}),
 		Example: `  # Add a node
   refresh nodegroup scale web -c prod --desired 4

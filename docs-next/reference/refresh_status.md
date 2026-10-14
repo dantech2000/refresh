@@ -24,13 +24,15 @@ Columns:
   ADDONS     the add-ons with a newer compatible version
   HEALTH     the control-plane issues that EKS reports
 
-Exit codes, for a script. When several apply, the highest wins.
-  0  every cluster is current and in standard support
-  2  something is out of date: an AMI, an add-on, a nodegroup behind the
-     control plane, or a control-plane issue
-  3  a cluster is in extended support, or unsupported
-  4  a part of the fleet could not be read
-  1  an error, or no region answered
+When several exit codes apply, the highest wins.
+
+Exit codes:
+  0  Every cluster is current and in standard support.
+  1  An error, an interrupt, or no region answered.
+  2  Something is out of date: an AMI, an add-on, a nodegroup behind the
+     control plane, or a control-plane issue.
+  3  A cluster is in extended support, or unsupported.
+  4  Incomplete: a part of the fleet could not be read.
 
 ```
 refresh status [flags]
@@ -66,14 +68,14 @@ refresh status [flags]
 ### Options inherited from parent commands
 
 ```
-      --kube-context string   Kubeconfig context (default: the current context)
+      --kube-context string   Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
       --kubeconfig string     Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
       --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
       --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
       --no-color              Disable color (env: NO_COLOR)
-      --profile string        AWS shared-config profile
-  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas
-  -t, --timeout duration      Budget for the API calls of a read command (env: REFRESH_TIMEOUT) (default 1m0s)
+      --profile string        AWS shared-config profile (env: AWS_PROFILE)
+  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
+  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh (env: REFRESH_TIMEOUT) (default 1m0s)
       --verbose               Same as --log-level debug
 ```
 

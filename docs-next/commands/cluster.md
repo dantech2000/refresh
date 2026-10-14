@@ -287,7 +287,7 @@ apply, except `--no-wait`.
 | `0` | Done, or nothing to do. |
 | `1` | An error, a question answered no, an interrupt, or a phase that failed. The phases before it stay done. |
 | `2` | With `--dry-run` only: a real run would ask about warnings. |
-| `3` | Blocked, and nothing changed: the cluster is busy, a gate stops the change, `--require-healthy` and a warning, or the insights or the kubelet skew block the next version. |
+| `3` | Blocked: the cluster is busy, a gate stops the change, `--require-healthy` and a warning, or the insights or the kubelet skew block the next version. Nothing changed, or, when a gate stops a later phase, nothing more changed and the message names the phases that completed. |
 | `4` | Incomplete: a target was already changing, a wait timed out, or something could not be read. |
 | `5` | A nodegroup was rolled and the verification found an issue, or an add-on was updated and is not healthy. |
 

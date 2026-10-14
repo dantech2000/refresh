@@ -68,14 +68,24 @@ cluster insights, the version skew of its nodegroups and add-ons, the
 control-plane metrics, the support window, and the rollback window after a
 recent upgrade. Nothing is changed.
 
-The exit code is the verdict, for a CI gate: 0 ready, 2 review (warnings),
-3 blocked, 4 incomplete (a check could not read what it needs, or a
-nodegroup or an add-on could not be read). --exit-zero reports and exits 0.
+The exit code is the verdict, for a CI gate. --exit-zero reports and
+exits 0.
 
 --status narrows the insights that are shown, not the ones that are
 judged: an ERROR insight blocks whatever is shown. --insight shows one
 insight in full, by its ID or by the short ID of the table, and exits with
-that insight's status.`,
+that insight's status.
+
+Without an argument the cluster comes from REFRESH_CLUSTER, then the active
+refresh context, then the current kubeconfig context.
+
+Exit codes:
+  0  Ready, or --exit-zero.
+  1  An error, or an interrupt.
+  2  Review: a warning. With --insight, the insight is WARNING.
+  3  Blocked. With --insight, the insight blocks the upgrade.
+  4  Incomplete: a check could not read what it needs, or a nodegroup
+     or an add-on could not be read. It outranks 2 and 3.`,
 		Example: `  refresh cluster upgrade-check prod
 
   # Every insight, passing ones too, as JSON for a gate

@@ -40,7 +40,11 @@ On a terminal, the command also checks GitHub Releases for a newer version
 and prints a one-line hint on stderr when there is one. The check runs at
 most once a day, and a failed check prints nothing. It does not run when
 stdout is not a terminal. To turn it off, use --no-update-check or set
-REFRESH_NO_UPDATE_CHECK to any value other than 0, false, or no.`,
+REFRESH_NO_UPDATE_CHECK to any value other than 0, false, or no.
+
+Exit codes:
+  0  Done. A failed update check does not change the code.
+  1  An error.`,
 		Example: `  refresh version
 
   # The version as a document, for a script

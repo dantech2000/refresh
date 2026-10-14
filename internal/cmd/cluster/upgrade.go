@@ -91,7 +91,7 @@ func newCmdUpgrade(f *cmdutil.Factory) *cobra.Command {
 		followUp: followUp(f),
 	}
 	cmd := &cobra.Command{
-		Use:   "upgrade [cluster]",
+		Use:   "upgrade [cluster] --to <version>",
 		Short: "Upgrade a cluster to a Kubernetes version",
 		Long: `Upgrade a cluster to a Kubernetes version, one minor version at a time.
 For each minor version the command moves the control plane, then updates
@@ -130,7 +130,7 @@ context. It never comes from the kubeconfig.
 
 ` + changecmd.ExitCodeHelp(map[int]string{
 			1: "A phase failed. The phases before it stay done.",
-			3: "The insights or the kubelet skew block the next version.",
+			3: "The insights or the kubelet skew block the next version. When a\n     gate stops a later phase, the message names the phases that\n     completed.",
 			5: "A nodegroup was rolled and the verification found an issue, or\n     an add-on was updated and is not healthy.",
 		}),
 		Example: `  # See what an upgrade would do

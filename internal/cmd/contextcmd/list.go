@@ -23,7 +23,11 @@ func newCmdList(f *cmdutil.Factory) *cobra.Command {
 		Aliases: []string{"ls"},
 		Short:   "List the saved contexts",
 		Long: `List every saved context with its cluster, region, and profile. A "*" marks
-the active context.`,
+the active context.
+
+Exit codes:
+  0  Done.
+  1  An error.`,
 		Example: `  refresh context list`,
 		Args:    cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {

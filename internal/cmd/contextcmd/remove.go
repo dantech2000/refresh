@@ -23,7 +23,11 @@ func newCmdRemove(f *cmdutil.Factory) *cobra.Command {
 		Aliases: []string{"rm", "delete"},
 		Short:   "Remove a saved context",
 		Long: `Remove a saved context. When it is the active context, no context is active
-afterwards.`,
+afterwards.
+
+Exit codes:
+  0  Done.
+  1  An error.`,
 		Example:           `  refresh context remove prod`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeNames(f.Contexts),

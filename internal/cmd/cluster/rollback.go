@@ -81,7 +81,7 @@ context. It never comes from the kubeconfig.
 
 ` + changecmd.ExitCodeHelp(map[int]string{
 			1: "A phase failed. The phases before it stay done.",
-			3: "The cluster cannot roll back: no upgrade in the last 7 days, a\n     blocking insight, or a nodegroup above the target.",
+			3: "The cluster cannot roll back: no upgrade in the last 7 days, a\n     blocking insight, or a nodegroup above the target. When a gate\n     stops a later phase, the message names the phases that completed.",
 			5: "A nodegroup was rolled and the verification found an issue, or\n     an add-on was downgraded and is not healthy.",
 		}),
 		Example: `  # See what a rollback would do

@@ -2,10 +2,12 @@ package root_test
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/spf13/cobra"
 )
 
 // exitEntry matches the first line of the entry of one exit code.
@@ -48,7 +50,7 @@ func TestChangeCommandsAgreeOnExitCodes(t *testing.T) {
 		"cluster rollback": {"0", "1", "2", "3", "4", "5"},
 	}
 	// shared is the number of lines that every command has for a code.
-	shared := map[string]int{"0": 1, "1": 1, "2": 1, "3": 2, "4": 2}
+	shared := map[string]int{"0": 1, "1": 1, "2": 1, "3": 3, "4": 2}
 	tree := newTree()
 	help := map[string]map[string][]string{}
 	for path, want := range codes {
@@ -83,4 +85,34 @@ func TestChangeCommandsAgreeOnExitCodes(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Every command that runs something lists its exit codes in its help, in
+// one form: an "Exit codes:" paragraph at the end, with the codes in
+// rising order, and 0 and 1 among them. A group of commands only prints
+// its help, and the commands that cobra adds have cobra's own help.
+func TestEveryCommandListsItsExitCodes(t *testing.T) {
+	walk(newTree(), func(cmd *cobra.Command) {
+		if !cmd.Runnable() || cmd.HasSubCommands() || cmd.Hidden || fromCobra(cmd) {
+			return
+		}
+		t.Run(cmd.CommandPath(), func(t *testing.T) {
+			help := exitHelp(t, cmd.Long)
+			for _, code := range []string{"0", "1"} {
+				if help[code] == nil {
+					t.Errorf("the help does not list exit code %s", code)
+				}
+			}
+			var order []string
+			_, list, _ := strings.Cut(cmd.Long, "\nExit codes:\n")
+			for line := range strings.SplitSeq(list, "\n") {
+				if m := exitEntry.FindStringSubmatch(line); m != nil {
+					order = append(order, m[1])
+				}
+			}
+			if !slices.IsSorted(order) {
+				t.Errorf("the exit codes are in the order %v, want them rising", order)
+			}
+		})
+	})
 }

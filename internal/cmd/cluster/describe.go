@@ -71,9 +71,15 @@ a name that does not exist, the command lists the clusters whose names are
 close.
 
 When a part of the cluster cannot be read, the command prints what it has,
-names the part under INCOMPLETE DATA or in "failures", and exits 4. The
-support dates come from EKS; when EKS does not report them, the command
-uses the dates that refresh ships with and says so.`,
+and names the part under INCOMPLETE DATA or in "failures". The support
+dates come from EKS; when EKS does not report them, the command uses the
+dates that refresh ships with and says so.
+
+Exit codes:
+  0  Done. The health summary does not change the code.
+  1  An error, or an interrupt.
+  4  Incomplete: a part of the cluster could not be read. The command
+     prints what it has.`,
 		Example: `  refresh cluster describe prod
 
   # The cluster of the active context

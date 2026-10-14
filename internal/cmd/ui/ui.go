@@ -51,10 +51,10 @@ func NewCmdUI(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ui",
 		Short: "Open the terminal UI for the fleet (experimental)",
-		Long: `Open a full-screen terminal UI (experimental): the fleet with what is out of date, each
-cluster with its nodegroups and add-ons, the readiness checks of
-"cluster upgrade-check" on demand, and the changes of the cluster commands
-with their dry runs, health gates, and live progress.
+		Long: `Open a full-screen terminal UI (experimental): the fleet with what is out
+of date, each cluster with its nodegroups and add-ons, the readiness checks
+of "cluster upgrade-check" on demand, and the changes of the cluster
+commands with their dry runs, health gates, and live progress.
 
 The UI reads the fleet with the same code as "refresh status", every
 --interval and on ctrl+r. The change keys (p, a, U, B) run the dry run of
@@ -69,7 +69,11 @@ screen and can be watched, never stopped or answered, from the UI.
 The UI needs a terminal of at least 100 by 24 cells. While it runs, the
 standard error of refresh and of the programs it starts (such as a
 kubeconfig credential plugin) goes to the null device, so their messages
-cannot write over the screen. Press ? in the UI for the keys.`,
+cannot write over the screen. Press ? in the UI for the keys.
+
+Exit codes:
+  0  The UI was closed.
+  1  An error, or no interactive terminal.`,
 		Example: `  # The configured region
   refresh ui
 

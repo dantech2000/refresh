@@ -46,6 +46,13 @@ The order:
 A command that changes something never uses step 4, with or without
 `--dry-run`. `nodegroup update --all-clusters` ignores steps 2 to 4.
 
+Step 4 counts only a context that names an EKS cluster and its region: a
+cluster ARN (as `aws eks update-kubeconfig` writes it), an eksctl cluster
+entry, or an `aws eks get-token` or `aws-iam-authenticator` credential plugin
+with an EKS API server. A context of kind or of a self-managed cluster names
+no cluster. The command then reads the region of that cluster, unless
+`-r/--region` names one.
+
 If nothing resolves, the command fails and names the ways to set a cluster:
 
 ```text

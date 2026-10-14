@@ -107,7 +107,7 @@ refresh context. It never comes from the kubeconfig.
 	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
 	cmd.Flags().StringVar(&o.version, "version", "", "Add-on version to move to, with exactly one add-on (default: the latest that the cluster can run)")
 	cmd.Flags().BoolVar(&o.all, "all", false, "Update every installed add-on, in dependency order")
-	cmd.Flags().StringSliceVar(&o.skip, "skip-addon", nil, "Add-on that --all leaves out; repeat it or separate the names with commas")
+	cmd.Flags().StringSliceVar(&o.skip, "skip-addon", nil, "Leave these add-ons out of --all, by exact name")
 	cmdutil.AddChangeFlags(cmd, &o.change, addonWaitTimeout, "each add-on", true, false)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd

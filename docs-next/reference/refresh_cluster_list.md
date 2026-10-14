@@ -18,8 +18,13 @@ that need no Kubernetes access on every cluster and adds a HEALTH column;
 the column does not change the exit code.
 
 A cluster or a region that could not be read is listed under INCOMPLETE
-DATA, or in "failures" with -o json or -o yaml, and the command exits 4.
-When no region answers, the command fails with exit 1.
+DATA, or in "failures" with -o json or -o yaml.
+
+Exit codes:
+  0  Done, or a --watch that Ctrl+C stopped.
+  1  An error, an interrupt, or no region answered.
+  4  Incomplete: a cluster or a region could not be read. The command
+     prints what it has.
 
 ```
 refresh cluster list [flags]
@@ -58,14 +63,14 @@ refresh cluster list [flags]
 ### Options inherited from parent commands
 
 ```
-      --kube-context string   Kubeconfig context (default: the current context)
+      --kube-context string   Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
       --kubeconfig string     Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
       --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
       --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
       --no-color              Disable color (env: NO_COLOR)
-      --profile string        AWS shared-config profile
-  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas
-  -t, --timeout duration      Budget for the API calls of a read command (env: REFRESH_TIMEOUT) (default 1m0s)
+      --profile string        AWS shared-config profile (env: AWS_PROFILE)
+  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
+  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh (env: REFRESH_TIMEOUT) (default 1m0s)
       --verbose               Same as --log-level debug
 ```
 
