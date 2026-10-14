@@ -238,6 +238,12 @@ func (h *Handle) event(e Event) {
 		h.bumpLocked()
 		return
 	case PlanReady:
+		// Run goes on writing to the gates of the plan it announced (see
+		// accept): the handle keeps a copy of the clusters, which holds
+		// the gates by value. The phases are never written to again.
+		p := *e.Plan
+		p.Clusters = slices.Clone(p.Clusters)
+		e.Plan = &p
 		h.plan = e.Plan
 		h.steps, h.phases = nil, nil
 		for i := range e.Plan.Clusters {
@@ -260,6 +266,12 @@ func (h *Handle) event(e Event) {
 		if i := h.phaseIndex(e.Phase); i >= 0 {
 			h.phases[i].EndedAt = e.At
 			h.phases[i].Status = h.phaseOutcome(e.Phase, e.Skipped)
+		}
+	case GateReport:
+		if e.Verdict != nil {
+			// The verdict is a gate of the plan, which Run writes to.
+			v := *e.Verdict
+			e.Verdict = &v
 		}
 	case StepChanged:
 		if e.Result != nil {
