@@ -34,7 +34,7 @@ CHECKS  9
   Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
   Kubernetes     [OK] Pass  Kubernetes API reachable
 
-INCOMPLETE DATA
+FAILURES
 [?] update prod/vpc-cni (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Failed: ConfigurationConflict: conflicts found
 --- stderr ---
 refreshing the cluster insights of prod (waits up to 5m0s)

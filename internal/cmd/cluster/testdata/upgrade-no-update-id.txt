@@ -34,7 +34,7 @@ CHECKS  9
   Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
   Kubernetes     [OK] Pass  Kubernetes API reachable
 
-INCOMPLETE DATA
+FAILURES
 [?] cluster prod/ (us-east-1): NotMonitored: EKS accepted the update of the control plane of prod and returned no update ID; it cannot be followed, and it may still be running
 --- stderr ---
 refreshing the cluster insights of prod (waits up to 5m0s)

@@ -24,6 +24,9 @@ type Description struct {
 	// Failures are listed in a section at the end of the table. Plain
 	// output does not have them: the command writes them to stderr.
 	Failures []apidoc.Failure
+	// FailuresTitle is the heading of that section. Empty means
+	// INCOMPLETE DATA, the heading of a read.
+	FailuresTitle string
 }
 
 // Section is one part of a description. A section with no field and no
@@ -78,7 +81,7 @@ func (d Description) Render(th Theme, width int) []string {
 			out = append(out, indent+line)
 		}
 	}
-	return append(out, FailureSection(th, d.Failures)...)
+	return append(out, failureSection(th, d.FailuresTitle, d.Failures)...)
 }
 
 // indent stands before every line of a section.

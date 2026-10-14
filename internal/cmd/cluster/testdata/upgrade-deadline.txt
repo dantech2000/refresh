@@ -34,7 +34,7 @@ CHECKS  9
   Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
   Kubernetes     [OK] Pass  Kubernetes API reachable
 
-INCOMPLETE DATA
+FAILURES
 [?] update prod/ (us-east-1): Timeout: --wait-timeout passed before the update of the control plane of prod finished; it may still be running
 --- stderr ---
 refreshing the cluster insights of prod (waits up to 5m0s)

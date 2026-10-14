@@ -21,7 +21,7 @@ CHECKS  1
   NAME    OUTCOME    MESSAGE
   Quotas  [OK] Pass  31% of the vCPU quota in use (40 of 128)
 
-INCOMPLETE DATA
+FAILURES
 [?] update prod/web (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000001 of nodegroup web ended Failed: AsgInstanceLaunchFailures: Could not launch an instance (asg-web)
 --- stderr ---
 PLAN  NodegroupScale, prod in us-east-1

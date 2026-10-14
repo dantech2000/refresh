@@ -14,7 +14,7 @@ RESULTS  1
   NAME  KIND   STATUS    FROM                     TO                       UPDATE  NOTE                     STARTED  FINISHED  FAILURE
   web   Scale  [!] Busy  desired 2, min 1, max 3  desired 2, min 1, max 3  -       VersionUpdate in flight  -        -         Busy: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes
 
-INCOMPLETE DATA
+FAILURES
 [?] nodegroup prod/web (us-east-1): Busy: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes
 --- stderr ---
 PLAN  NodegroupScale, prod in us-east-1

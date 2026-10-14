@@ -23,7 +23,7 @@ VERIFICATION  3
 NOTICES
   1  the health checks were skipped (--skip-health-check)
 
-INCOMPLETE DATA
+FAILURES
 [?] cluster prod (us-east-1): AccessDenied: listing Pending pods before the roll: Pod is forbidden: User "fake" cannot list the resource at the cluster scope
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1

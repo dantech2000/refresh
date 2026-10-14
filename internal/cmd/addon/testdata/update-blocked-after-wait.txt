@@ -27,7 +27,7 @@ CHECKS  1
   NAME    OUTCOME    MESSAGE
   Addons  [OK] Pass  2 add-ons ACTIVE
 
-INCOMPLETE DATA
+FAILURES
 [?] addon prod/coredns (us-east-1): Unknown: health checks reported 1 warning and --require-healthy is set: Addons: coredns is DEGRADED; the update will try to repair it; add-on coredns was not changed
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1

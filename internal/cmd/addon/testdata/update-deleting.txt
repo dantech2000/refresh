@@ -14,7 +14,7 @@ RESULTS  1
   NAME     KIND   STATUS    FROM                TO                  UPDATE  NOTE  STARTED  FINISHED  FAILURE
   vpc-cni  Addon  [!] Busy  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  -       -     -        -         Busy: add-on vpc-cni is DELETING; it was not changed. Run the command again once that finishes
 
-INCOMPLETE DATA
+FAILURES
 [?] addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is DELETING; it was not changed. Run the command again once that finishes
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1

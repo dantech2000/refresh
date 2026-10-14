@@ -287,6 +287,9 @@ func RunView(doc apidoc.Run) Description {
 		Label:    string(doc.Status),
 		Subtitle: string(doc.Operation),
 		Failures: doc.Failures,
+		// A step that failed is a change that did not happen, and not
+		// only data that could not be read.
+		FailuresTitle: "FAILURES",
 	}
 	manual := 0
 	for _, c := range doc.Clusters {

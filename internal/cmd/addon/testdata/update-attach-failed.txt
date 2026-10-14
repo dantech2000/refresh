@@ -14,7 +14,7 @@ RESULTS  1
   NAME     KIND   STATUS      FROM                TO                  UPDATE  NOTE      STARTED                  FINISHED                 FAILURE
   vpc-cni  Addon  [X] Failed  v1.20.0-eksbuild.1  v1.20.0-eksbuild.1  -       attached  2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  UpdateFailed: the add-on update failed: status UPDATE_FAILED
 
-INCOMPLETE DATA
+FAILURES
 [?] addon prod/vpc-cni (us-east-1): UpdateFailed: the add-on update failed: status UPDATE_FAILED
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1

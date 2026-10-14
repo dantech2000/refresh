@@ -26,7 +26,7 @@ CHECKS  3
   DrainBlockers  [?] Unreadable  could not list the PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
   Kubernetes     [OK] Pass       Kubernetes API reachable
 
-INCOMPLETE DATA
+FAILURES
 [?] cluster prod (us-east-1): AccessDenied: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User "fake" cannot list the resource at the cluster scope
 --- stderr ---
 PLAN  NodegroupScale, prod in us-east-1

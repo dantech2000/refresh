@@ -21,7 +21,7 @@ CHECKS  1
   NAME    OUTCOME    MESSAGE
   Addons  [OK] Pass  1 add-on ACTIVE
 
-INCOMPLETE DATA
+FAILURES
 [?] update prod/vpc-cni (us-east-1): Timeout: --wait-timeout passed before the update of add-on vpc-cni finished; it may still be running
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1

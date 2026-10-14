@@ -217,6 +217,12 @@ func updateCases() []updateCase {
 			prepare: func(_ *testing.T, w *fleettest.World) {
 				w.SetFault(fleettest.EKSDescribeAddonVersions, fleettest.Fault{Deny: true})
 			}},
+		// Every start is denied: nothing changed, the run failed, and the
+		// result names the action to grant. It is not missing data.
+		{name: "denied-start", args: []string{"--all", "--yes"}, exit: cmdutil.ExitFailure, updates: []string{"vpc-cni", "coredns"},
+			prepare: func(_ *testing.T, w *fleettest.World) {
+				w.SetFault(fleettest.EKSUpdateAddon, fleettest.Fault{Deny: true})
+			}},
 		{name: "deleting", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitIncomplete,
 			seed: func(c *fleettest.Cluster) { addon(c, "vpc-cni").Status = fleettest.StatusDeleting }},
 		{name: "delete-failed", args: []string{"coredns", "--yes"}, updates: []string{"coredns"},

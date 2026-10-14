@@ -21,7 +21,7 @@ CHECKS  1
   NAME    OUTCOME    MESSAGE
   Quotas  [OK] Pass  31% of the vCPU quota in use (40 of 128)
 
-INCOMPLETE DATA
+FAILURES
 [?] update prod/web (us-east-1): UpdateFailed: nodegroup web is DEGRADED after the scale to 3 nodes
 --- stderr ---
 PLAN  NodegroupScale, prod in us-east-1

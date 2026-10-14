@@ -278,6 +278,16 @@ func FailureLine(f apidoc.Failure) string {
 // order of fs. What the user stopped is under INTERRUPTED, and everything
 // else under INCOMPLETE DATA. It returns nil when fs is empty.
 func FailureSection(th Theme, fs []apidoc.Failure) []string {
+	return failureSection(th, "", fs)
+}
+
+// failureSection is FailureSection with another heading than INCOMPLETE
+// DATA when title is set. A run uses it: a change that AWS refused is not
+// data that is missing.
+func failureSection(th Theme, title string, fs []apidoc.Failure) []string {
+	if title == "" {
+		title = "INCOMPLETE DATA"
+	}
 	var stopped, missing []string
 	for _, f := range fs {
 		if f.Reason == apidoc.ReasonInterrupted {
@@ -292,7 +302,7 @@ func FailureSection(th Theme, fs []apidoc.Failure) []string {
 		out = append(out, stopped...)
 	}
 	if len(missing) > 0 {
-		out = append(out, "", th.paint(colorPeach, "INCOMPLETE DATA", true))
+		out = append(out, "", th.paint(colorPeach, title, true))
 		out = append(out, missing...)
 	}
 	return out

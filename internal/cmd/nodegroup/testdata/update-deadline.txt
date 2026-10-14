@@ -29,7 +29,7 @@ CHECKS  9
   Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
   Kubernetes     [OK] Pass  Kubernetes API reachable
 
-INCOMPLETE DATA
+FAILURES
 [?] update prod/web (us-east-1): Timeout: --wait-timeout passed before the update of nodegroup web finished; it may still be running
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1

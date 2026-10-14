@@ -14,7 +14,7 @@ RESULTS  1
   NAME  KIND       STATUS    FROM  TO    UPDATE  NOTE                    STARTED  FINISHED  FAILURE
   web   Nodegroup  [!] Busy  1.32  1.32  -       ConfigUpdate in flight  -        -         Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
 
-INCOMPLETE DATA
+FAILURES
 [?] nodegroup prod/web (us-east-1): Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1

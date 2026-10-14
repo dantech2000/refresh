@@ -302,3 +302,23 @@ func TestRunView_NamesTheStepsLeftToTheOperator(t *testing.T) {
 		t.Errorf("a run with no manual step names steps left:\n%s", table)
 	}
 }
+
+// A start that AWS denied is a change that did not happen. The run lists
+// it under FAILURES, with the action to grant, and never as missing data.
+func TestRunView_DeniedStartIsNotIncompleteData(t *testing.T) {
+	denied := apidoc.Failure{Kind: apidoc.FailureAddon, Cluster: "prod", Name: "coredns", Reason: apidoc.ReasonAccessDenied, Operation: "eks:UpdateAddon"}
+	doc := apidoc.Run{Operation: apidoc.OperationAddonUpdate, Status: apidoc.RunFailed, Failures: []apidoc.Failure{denied}, Clusters: []apidoc.ClusterRun{{
+		ClusterPlan: apidoc.ClusterPlan{Cluster: "prod", Region: "us-east-1", Steps: []apidoc.PlanStep{{Kind: apidoc.StepAddon, Name: "coredns", Action: apidoc.ActionSubmit}}},
+		Status:      apidoc.RunFailed,
+		Results:     []apidoc.StepResult{{Kind: apidoc.StepAddon, Name: "coredns", Status: apidoc.StepFailed, Failure: &denied}},
+	}}}
+	table := strings.Join(RunView(doc).Render(Theme{}, 140), "\n")
+	for _, want := range []string{"\nFAILURES\n", "addon prod/coredns: AccessDenied (grant eks:UpdateAddon)"} {
+		if !strings.Contains(table, want) {
+			t.Errorf("the table lacks %q:\n%s", want, table)
+		}
+	}
+	if strings.Contains(table, "INCOMPLETE DATA") {
+		t.Errorf("a denied start is listed as incomplete data:\n%s", table)
+	}
+}

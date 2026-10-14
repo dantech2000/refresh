@@ -21,7 +21,7 @@ CHECKS  1
   NAME    OUTCOME    MESSAGE
   Addons  [OK] Pass  1 add-on ACTIVE
 
-INCOMPLETE DATA
+FAILURES
 [?] update prod/vpc-cni (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Failed: ConfigurationConflict: Conflicts found when trying to apply (kube-system/aws-node)
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1
