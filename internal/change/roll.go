@@ -204,8 +204,23 @@ func (cp *ClusterPlan) rollStep(phase PhaseRef, name string, req RollRequest) St
 		if n.AMI.State == fleet.Collected {
 			step.FromImage, step.ToImage = n.AMI.Current, n.AMI.Latest
 		}
+		if d.Reason == Reroll {
+			// Seen on a real cluster: the update ended Successful in
+			// seconds and the old node still served.
+			cp.Notices = append(cp.Notices, rerollNotice(name, n.ReleaseVersion))
+		}
 	}
 	return step
+}
+
+// rerollNotice is the warning of a roll onto the AMI that the nodegroup
+// already runs.
+func rerollNotice(nodegroup, release string) string {
+	on := "the latest AMI"
+	if release != "" {
+		on = fmt.Sprintf("the latest AMI release (%s)", release)
+	}
+	return fmt.Sprintf("nodegroup %s already runs %s; EKS can end an update to the release that a nodegroup runs without replacing any node", nodegroup, on)
 }
 
 // notRollable is the message of a roll target that is not ACTIVE and not

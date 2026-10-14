@@ -34,9 +34,13 @@ CHECKS  9
   Utilization    [OK] Pass  CPU 20%, memory 25% in use
   Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
   Kubernetes     [OK] Pass  Kubernetes API reachable
+
+NOTICES
+  1  nodegroup api already runs the latest AMI release (1.32.0-20260101); EKS can end an update to the release that a nodegroup runs without replacing any node
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1
   api  roll onto the latest AMI of 1.32 (ami-latest132) (Reroll)
+warning: nodegroup api already runs the latest AMI release (1.32.0-20260101); EKS can end an update to the release that a nodegroup runs without replacing any node
 [~] api: Started (update 00000000-0000-4000-8000-000000000001)
 api: InProgress
 [OK] api: Succeeded
