@@ -123,7 +123,7 @@ func TestContextCommands(t *testing.T) {
 			steps: []step{
 				{
 					args:    []string{"context", "add", "stage", "-c", "stage-2", "-r", "eu-west-1"},
-					wantOut: "Saved context \"stage\"\n",
+					wantOut: "Updated context \"stage\"\n",
 				},
 			},
 			wantFile: &contexts.File{
@@ -206,6 +206,23 @@ func TestContextCommands(t *testing.T) {
 				{args: []string{"context", "add", "new"}, wantErr: `required flag(s) "cluster" not set`},
 				{args: []string{"context", "add", "new", "--cluster", ""}, wantErr: "-c/--cluster is empty: pass a cluster name"},
 				{args: []string{"context", "add", "", "--cluster", "x"}, wantErr: "context name is required"},
+				{
+					args:    []string{"context", "add", "bad name!", "--cluster", "x"},
+					wantErr: `invalid context name "bad name!": a context name has 1 to 63 letters, digits, hyphens, underscores, and dots`,
+				},
+				{
+					args:    []string{"context", "add", strings.Repeat("c", 64), "--cluster", "x"},
+					wantErr: `invalid context name "` + strings.Repeat("c", 64) + `": a context name has 1 to 63 letters, digits, hyphens, underscores, and dots`,
+				},
+				{args: []string{"context", "add", "--cluster", "x", "--", "-"}, wantErr: `invalid context name "-": "-" stands for the previous context in "refresh context use -"`},
+				{
+					args:    []string{"context", "add", "new", "--cluster", "x", "--region", "bogus-1"},
+					wantErr: `invalid --region: "bogus-1" is not a region name: a region name is a partition prefix, a geographic word, and a number, such as us-east-1, us-gov-west-1, or cn-north-1`,
+				},
+				{
+					args:    []string{"context", "add", "new", "--cluster", "x y"},
+					wantErr: `invalid cluster name "x y": a name has 1 to 100 characters, only letters, digits, hyphens, and underscores, and starts with a letter or digit`,
+				},
 				{args: []string{"context", "list", "extra"}, wantErr: `unknown command "extra" for "refresh context list"`},
 				{args: []string{"context", "bogus"}, wantErr: `unknown command "bogus" for "refresh context"`},
 				{args: []string{"context", "list", "-o", "json"}, wantErr: "unknown shorthand flag: 'o' in -o\nRun 'refresh context list --help' for usage"},

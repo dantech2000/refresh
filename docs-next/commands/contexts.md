@@ -29,7 +29,19 @@ refresh context add <name> --cluster <cluster> [--region <region>] [--profile <p
 | `--profile` | AWS shared-config profile to save with the context. |
 | `--use` | Switch to the context after it is saved. |
 
-A context with the same name is replaced.
+A context with the same name is replaced, and the command prints
+`Updated context "<name>"` in place of `Saved context "<name>"`.
+
+The command checks the values before it saves them, and an error saves
+nothing:
+
+- The name has 1 to 63 letters, digits, hyphens (`-`), underscores (`_`), and
+  dots (`.`). The name `-` alone is not allowed: `refresh context use -` means
+  the previous context.
+- The cluster name follows the EKS rules (see
+  [Names are exact](../concepts/configuration.md#names-are-exact)).
+- The region has the shape of a region name, such as `us-east-1` (see
+  [Regions](../concepts/configuration.md#regions)).
 
 ```bash
 refresh context add prod --cluster prod-payments-00 --region us-east-1 --profile prod
