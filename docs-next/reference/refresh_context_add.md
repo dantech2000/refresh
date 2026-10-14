@@ -1,0 +1,48 @@
+## refresh context add
+
+Add or update a saved context
+
+### Synopsis
+
+Save a context that gives a name to a cluster, with an optional region and
+AWS profile. A context with the same name is replaced.
+
+```
+refresh context add <name> [flags]
+```
+
+### Examples
+
+```
+  refresh context add prod --cluster prod-eks --region us-east-1 --profile prod
+
+  # Add the context and switch to it
+  refresh context add stage --cluster stage-eks --use
+```
+
+### Options
+
+```
+  -c, --cluster string   EKS cluster name (required)
+  -h, --help             help for add
+      --profile string   AWS shared-config profile to save with the context
+  -r, --region string    AWS region to save with the context
+      --use              Switch to the context after it is saved
+```
+
+### Options inherited from parent commands
+
+```
+      --kube-context string   Kubeconfig context (default: the current context)
+      --kubeconfig string     Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
+      --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
+      --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
+      --no-color              Disable color (env: NO_COLOR)
+  -t, --timeout duration      Budget for the API calls of a read command (env: REFRESH_TIMEOUT) (default 1m0s)
+      --verbose               Same as --log-level debug
+```
+
+### SEE ALSO
+
+* [refresh context](refresh_context.md)	 - Manage saved contexts
+
