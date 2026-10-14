@@ -9,7 +9,7 @@ import (
 )
 
 // RegionsAsOf is the date of the last check of the region lists.
-const RegionsAsOf = "2026-10-12"
+const RegionsAsOf = "2026-10-14"
 
 // Regions returns the regions of a default sweep for the partition of home:
 // the regions that every account of the partition has enabled and where EKS
@@ -28,7 +28,7 @@ func Regions(home string) []string {
 var commercial = []string{
 	"us-east-1", "us-east-2", "us-west-1", "us-west-2",
 	"eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-north-1",
-	"ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2", "ap-south-1",
+	"ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1",
 	"ca-central-1", "sa-east-1",
 }
 

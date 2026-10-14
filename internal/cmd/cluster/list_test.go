@@ -386,8 +386,8 @@ func TestList_DefaultSweepSkipsAClosedRegion(t *testing.T) {
 			lists++
 		}
 	}
-	if lists != 16 {
-		t.Errorf("ListClusters calls = %d, want one for each of the 16 regions of the default sweep", lists)
+	if lists != 17 {
+		t.Errorf("ListClusters calls = %d, want one for each of the 17 regions of the default sweep", lists)
 	}
 }
 
@@ -451,7 +451,7 @@ func TestList_NoRegionAnswers(t *testing.T) {
 			fault: func(w *fleettest.World) {
 				w.SetFault(fleettest.EKSListClusters, fleettest.Fault{Unauthenticated: true})
 			},
-			want: "could not list clusters in any of 16 region(s): none is accessible to these credentials",
+			want: "could not list clusters in any of 17 region(s): none is accessible to these credentials",
 		},
 	}
 	for _, tt := range tests {

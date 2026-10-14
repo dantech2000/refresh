@@ -14,8 +14,8 @@ func TestRegions(t *testing.T) {
 		wantCount int
 		alwaysOn  string
 	}{
-		{"", "us-east-1", 16, "us-east-1"},
-		{"eu-west-1", "us-east-1", 16, "us-east-1"},
+		{"", "us-east-1", 17, "us-east-1"},
+		{"eu-west-1", "us-east-1", 17, "us-east-1"},
 		{"us-gov-east-1", "us-gov-west-1", 2, "us-gov-west-1"},
 		{"cn-northwest-1", "cn-north-1", 2, "cn-north-1"},
 	}

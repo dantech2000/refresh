@@ -25,8 +25,8 @@ func TestSweepRegions(t *testing.T) {
 		{name: "-r wins over the environment", flag: []string{"us-east-1"}, env: "eu-west-1", wantNames: []string{"us-east-1"}},
 		{name: "the environment does not apply without -A", env: "us-east-1,us-west-2", home: "eu-west-1", wantNames: []string{"eu-west-1"}},
 		{name: "-A reads the environment, as named regions", env: "us-east-1, us-west-2,", home: "eu-west-1", all: true, wantNames: []string{"us-east-1", "us-west-2"}},
-		{name: "-A alone is a default sweep", home: "eu-west-1", all: true, wantDefault: true, wantCount: 16},
-		{name: "no home region is a sweep", wantDefault: true, wantCount: 16},
+		{name: "-A alone is a default sweep", home: "eu-west-1", all: true, wantDefault: true, wantCount: 17},
+		{name: "no home region is a sweep", wantDefault: true, wantCount: 17},
 		{name: "no home region reads the environment", env: "us-east-1", wantNames: []string{"us-east-1"}},
 		{name: "the partition of the home region", home: "us-gov-east-1", all: true, wantDefault: true, wantCount: 2},
 	}
