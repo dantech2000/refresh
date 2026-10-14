@@ -380,3 +380,83 @@ func TestInsightsRefresh_ContextEndsDuringTheRefresh(t *testing.T) {
 		})
 	}
 }
+
+// A completed refresh counts only when it is the one that this run
+// started, or a later one. EKS refuses the first start, the describe
+// shows an older refresh that completed, and the start sent again is
+// accepted. While the describe still shows the older completion, the run
+// waits for its own refresh.
+func TestInsightsRefresh_StaleCompletionIsNotCurrent(t *testing.T) {
+	// staleWorld has a refresh that completed an hour ago. The first start
+	// of the run is refused. From the second describe on, the describe
+	// shows that old refresh while lag lasts: lag < 0 is for ever.
+	staleWorld := func(t *testing.T, lag int) *env {
+		world := engineWorld(nil)
+		if err := world.StartInsightsRefresh(east, "prod"); err != nil {
+			t.Fatal(err)
+		}
+		world.Advance(time.Hour)
+		var old fleettest.InsightsRefresh
+		world.View(func(s *fleettest.State) { old = s.Cluster(east, "prod").InsightsRefresh })
+		e := newEnv(t, world)
+		refuseStart(world, codeInvalidRequest)
+		e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
+			switch {
+			case n == 1:
+				world.SetFault(fleettest.EKSStartInsightsRefresh, fleettest.Fault{})
+			case lag < 0 || n <= 1+lag:
+				world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").InsightsRefresh = old })
+			case n == 2+lag:
+				// The refresh of the run shows up at last.
+				if err := world.StartInsightsRefresh(east, "prod"); err != nil {
+					t.Error(err)
+				}
+			}
+		})
+		return e
+	}
+	t.Run("the describe never shows the refresh of the run", func(t *testing.T) {
+		e := staleWorld(t, -1)
+		var lines []string
+		res := mustRun(t, e, upgradeTo("1.33"), progressOf(&lines))
+		wantRefreshBlocked(t, e, res, "did not finish in time")
+		if !slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, "earlier insights refresh") }) {
+			t.Errorf("no progress line says that the describe shows an older refresh: %q", lines)
+		}
+	})
+	t.Run("the describe shows the refresh of the run later", func(t *testing.T) {
+		e := staleWorld(t, 2)
+		res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
+		if res.Status != Succeeded || res.ExitCode() != exitcode.OK {
+			t.Fatalf("status = %s, exit %d, err %v; want Succeeded", res.Status, res.ExitCode(), res.Err)
+		}
+		if n := e.count(fleettest.EKSDescribeInsightsRefresh); n < 4 {
+			t.Errorf("%d describes; the run took a stale completion before its own refresh showed up", n)
+		}
+	})
+}
+
+// The run tells its own refresh from the earlier one by their start
+// times, both on the clock of EKS. A clock of the run that is an hour
+// ahead of EKS changes nothing.
+func TestInsightsRefresh_ClockOfTheRunDoesNotMatter(t *testing.T) {
+	world := engineWorld(nil)
+	if err := world.StartInsightsRefresh(east, "prod"); err != nil {
+		t.Fatal(err)
+	}
+	world.Advance(time.Hour)
+	e := newEnv(t, world)
+	e.deps.Now = func() time.Time { return world.Now().Add(time.Hour) }
+	refuseStart(world, codeInvalidRequest)
+	e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
+		if n == 1 {
+			world.SetFault(fleettest.EKSStartInsightsRefresh, fleettest.Fault{})
+		}
+	})
+	if err := refreshOnce(testContext(t), e); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if n := e.count(fleettest.EKSStartInsightsRefresh); n != 2 {
+		t.Errorf("%d starts, want 2: the refused one and the one that EKS accepted", n)
+	}
+}

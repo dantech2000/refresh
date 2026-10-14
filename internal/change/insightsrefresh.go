@@ -100,6 +100,12 @@ func (ir *insightsRefresher) say(format string, args ...any) {
 //     show: the start is tried again on each poll until it is accepted.
 //   - The cluster is new and has no insights yet: an error that says so.
 //
+// A refresh that ended counts only when it is newer than every refresh
+// that the describe showed ended while the start was refused: after EKS
+// accepts the start, the describe can still show that older one. Both
+// start times are on the clock of EKS, so no skew of the clock of the run
+// enters the comparison.
+//
 // The error is the error of ctx when ctx ended, and an error that wraps
 // errInsightsRefreshTimeout when the limit of the refresh passed.
 func (ir *insightsRefresher) refresh(ctx context.Context, t Target, live string) error {
@@ -126,6 +132,11 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 
 	ir.say("refreshing the cluster insights of %s (waits up to %s)", t.Cluster, insightsRefreshLimit)
 	began := ir.d.now()
+	// old is the refresh that ended before the run, from the describe
+	// while the start was refused; nil when there was none. stale says
+	// that the describe showed it again after EKS accepted the start.
+	var old *eks.DescribeInsightsRefreshOutput
+	stale := false
 	start := func() error {
 		_, err := clients.EKS.StartInsightsRefresh(wctx, &eks.StartInsightsRefreshInput{ClusterName: name})
 		return err
@@ -139,6 +150,10 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 	timedOut := func() error {
 		if rejected != nil {
 			return &refreshError{msg: fmt.Sprintf("starting an insights refresh for cluster %s (still refused after %s)", t.Cluster, insightsRefreshLimit), err: rejected}
+		}
+		if stale {
+			return fmt.Errorf("%w (%s): EKS still showed the refresh that started at %s, before this run asked for one",
+				errInsightsRefreshTimeout, insightsRefreshLimit, orUnknown(timeText(aws.ToTime(old.StartedAt))))
 		}
 		return fmt.Errorf("%w (%s)", errInsightsRefreshTimeout, insightsRefreshLimit)
 	}
@@ -175,8 +190,12 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 				// The refresh that the describe shows has ended: a
 				// scheduled one that ended since the start was refused, or
 				// an older one. Neither is a refresh of this run, so the
-				// start is tried again.
+				// start is tried again, and a refresh that ends later
+				// counts only when it is newer.
 				rejected, startAgain = startErr, true
+				if old == nil || newerRefresh(out, old) {
+					old = out
+				}
 			case awsx.ErrorCode(startErr) == codeNotFound:
 				return &refreshError{msg: fmt.Sprintf("EKS has not made cluster insights available for %s yet (a new cluster can take 15 minutes); run again later", t.Cluster), err: startErr}
 			default:
@@ -187,6 +206,14 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 				return &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster, err: err}
 			}
 			ir.say("checking the insights refresh of %s: %s; still waiting", t.Cluster, awsx.Summary(err))
+		case old != nil && out.Status != ekstypes.InsightsRefreshStatusInProgress && !newerRefresh(out, old):
+			// EKS accepted the start, and the describe still shows the
+			// refresh that ended before. It says nothing about the
+			// insights now.
+			if !stale {
+				ir.say("EKS still shows the earlier insights refresh of %s; waiting for the one this run started", t.Cluster)
+			}
+			stale = true
 		case out.Status == ekstypes.InsightsRefreshStatusCompleted:
 			if ir.done == nil {
 				ir.done = map[string]time.Time{}
@@ -209,4 +236,19 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 			return timedOut()
 		}
 	}
+}
+
+// newerRefresh reports whether the refresh that out describes started
+// after the refresh old. A refresh with no start time is not known to be
+// newer; any start time is newer than none.
+func newerRefresh(out, old *eks.DescribeInsightsRefreshOutput) bool {
+	return out.StartedAt != nil && (old.StartedAt == nil || out.StartedAt.After(*old.StartedAt))
+}
+
+// timeText is t in RFC 3339, in UTC, or "" for the zero time.
+func timeText(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
