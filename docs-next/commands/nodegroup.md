@@ -179,7 +179,7 @@ Plan   ✗ Blocked   NodegroupUpdate
 
 HEALTH GATE
   decision  ✗ Block
-  reasons   DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  reasons   DrainBlockers: PDB app/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
 ```
 
 The command exits `3` and changes nothing. Fix the blocker and run the command

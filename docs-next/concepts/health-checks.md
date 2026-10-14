@@ -41,7 +41,7 @@ An example from `refresh nodegroup update -c prod-payments-00 --dry-run`:
 ```text
 HEALTH GATE
   decision  ✗ Block
-  reasons   DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  reasons   DrainBlockers: PDB app/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
 
 CHECKS  9
   NAME           OUTCOME  MESSAGE
@@ -49,7 +49,7 @@ CHECKS  9
   Capacity       ● Pass   CPU mean 30%, peak 38%, 13 instances
   ControlPlane   Skipped  control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
   Workloads      ● Pass   28/28 pods running in the system namespaces
-  DrainBlockers  ✗ Fail   1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  DrainBlockers  ✗ Fail   PDB app/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
   PDBCoverage    ● Pass   every deployment has a PodDisruptionBudget (1)
   Utilization    ● Pass   CPU 38%, memory 33% in use
   Quotas         ● Pass   57% of the vCPU quota in use (146 of 256)

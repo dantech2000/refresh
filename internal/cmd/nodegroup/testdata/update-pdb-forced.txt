@@ -22,9 +22,9 @@ VERIFICATION  3
 
 HEALTH GATE
   decision  [OK] Go
-  reasons   DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
-  accepted  DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
-  forced    DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  reasons   DrainBlockers: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
+  accepted  DrainBlockers: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
+  forced    DrainBlockers: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
 
 CHECKS  9
   NAME           OUTCOME    MESSAGE
@@ -32,7 +32,7 @@ CHECKS  9
   Capacity       [OK] Pass  CPU mean 32%, peak 32%, 4 instances
   ControlPlane   Skipped    control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
   Workloads      [OK] Pass  2/2 pods running in the system namespaces
-  DrainBlockers  [X] Fail   1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  DrainBlockers  [X] Fail   PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
   PDBCoverage    [OK] Pass  every deployment has a PodDisruptionBudget (2)
   Utilization    [OK] Pass  CPU 20%, memory 25% in use
   Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
@@ -44,12 +44,12 @@ PLAN  NodegroupUpdate, prod in us-east-1
   [OK] Capacity       CPU mean 32%, peak 32%, 4 instances
        ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
   [OK] Workloads      2/2 pods running in the system namespaces
-  [X]  DrainBlockers  1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  [X]  DrainBlockers  PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
   [OK] PDBCoverage    every deployment has a PodDisruptionBudget (2)
   [OK] Utilization    CPU 20%, memory 25% in use
   [OK] Quotas         31% of the vCPU quota in use (40 of 128)
   [OK] Kubernetes     Kubernetes API reachable
-warning: --force goes past DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+warning: --force goes past DrainBlockers: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
 [~] web: Started (update 00000000-0000-4000-8000-000000000001)
 web: InProgress
 [OK] web: Succeeded

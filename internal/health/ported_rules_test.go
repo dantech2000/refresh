@@ -128,7 +128,7 @@ func TestDrainBlockers_SystemNamespace(t *testing.T) {
 	found := []string{"kube-system/coredns"}
 	t.Run("a roll", func(t *testing.T) {
 		h := newHarness(t, coredns)
-		check(t, h.run(testContext(t), health.DrainBlockers(), "ng-a"), want{outcome: health.Fail, message: "1 PDB allow 0 disruptions on the target nodegroups", findings: found})
+		check(t, h.run(testContext(t), health.DrainBlockers(), "ng-a"), want{outcome: health.Fail, message: "PDB kube-system/coredns allows 0 disruptions on the target nodegroups", findings: found})
 	})
 	t.Run("without targets", func(t *testing.T) {
 		h := newHarness(t, coredns)

@@ -44,7 +44,7 @@ HEALTH  9
   Capacity       Skipped    no managed nodegroup instances
   ControlPlane   [OK] Pass  etcd 12% of 8 GiB
   Workloads      [OK] Pass  1/1 pods running in the system namespaces
-  DrainBlockers  [X] Fail   1 PDB allow 0 disruptions; a drain would stall on eviction
+  DrainBlockers  [X] Fail   PDB default/app allows 0 disruptions; a drain would stall on eviction
   PDBCoverage    [OK] Pass  every deployment has a PodDisruptionBudget (1)
   Utilization    [OK] Pass  CPU 0%, memory 0% in use
   Quotas         Skipped    the EC2 vCPU quota is not reported

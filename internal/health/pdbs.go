@@ -278,11 +278,14 @@ func multiPDBPods(list []pdb, pods []corev1.Pod, targets map[string]bool, scoped
 // drainBlockersResult words the outcome of the drain-blocker check.
 func drainBlockersResult(blockers, multi, unread []string, failures []apidoc.Failure, scoped bool) Result {
 	r := Result{Failures: failures}
+	var blocking []string
 	for _, b := range blockers {
 		r.Details = append(r.Details, "drain blocker: "+b)
 		name, _, _ := strings.Cut(b, " (")
 		r.Findings = append(r.Findings, name)
+		blocking = append(blocking, name)
 	}
+	slices.Sort(blocking)
 	for _, m := range multi {
 		r.Details = append(r.Details, "drain blocker: "+m)
 		name, _, _ := strings.Cut(strings.TrimPrefix(m, "pod "), " is covered")
@@ -293,7 +296,11 @@ func drainBlockersResult(blockers, multi, unread []string, failures []apidoc.Fai
 	case len(blockers)+len(multi) > 0:
 		var parts []string
 		if len(blockers) > 0 {
-			parts = append(parts, plural(len(blockers), "PDB")+" allow 0 disruptions")
+			if len(blocking) == 1 {
+				parts = append(parts, "PDB "+blocking[0]+" allows 0 disruptions")
+			} else {
+				parts = append(parts, "PDBs "+strings.Join(blocking, ", ")+" allow 0 disruptions")
+			}
 		}
 		if len(multi) > 0 {
 			parts = append(parts, plural(len(multi), "pod")+" covered by more than one PDB")

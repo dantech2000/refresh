@@ -1,5 +1,5 @@
 exit: 3
-error: blocked by 1 health check: DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction; nothing was started
+error: blocked by 1 health check: DrainBlockers: PDB default/api allows 0 disruptions on the target nodegroups; the roll would stall on eviction; nothing was started
 --- stdout ---
 apiVersion: refresh.drod.dev/v2
 kind: Plan
@@ -53,7 +53,7 @@ clusters:
     gate:
       decision: Block
       reasons:
-        - 'DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction'
+        - 'DrainBlockers: PDB default/api allows 0 disruptions on the target nodegroups; the roll would stall on eviction'
       accepted: []
       forced: []
       checks:
@@ -88,7 +88,7 @@ clusters:
         - name: DrainBlockers
           outcome: Fail
           blocking: true
-          message: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+          message: PDB default/api allows 0 disruptions on the target nodegroups; the roll would stall on eviction
           details:
             - 'drain blocker: default/api (2/2 pods healthy, 0 disruptions allowed)'
             - let the workloads recover, relax the PDBs, or narrow their selectors so each pod matches one PDB
@@ -135,7 +135,7 @@ PLAN  ClusterUpgrade, prod in us-east-1
   [OK] Capacity       CPU mean 32%, peak 32%, 4 instances
        ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
   [OK] Workloads      1/1 pods running in the system namespaces
-  [X]  DrainBlockers  1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  [X]  DrainBlockers  PDB default/api allows 0 disruptions on the target nodegroups; the roll would stall on eviction
   [OK] PDBCoverage    every deployment has a PodDisruptionBudget (2)
   [OK] Utilization    CPU 20%, memory 25% in use
   [OK] Quotas         31% of the vCPU quota in use (40 of 128)

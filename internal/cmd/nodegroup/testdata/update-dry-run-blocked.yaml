@@ -30,7 +30,7 @@ clusters:
     gate:
       decision: Block
       reasons:
-        - 'DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction'
+        - 'DrainBlockers: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction'
       accepted: []
       forced: []
       checks:
@@ -65,7 +65,7 @@ clusters:
         - name: DrainBlockers
           outcome: Fail
           blocking: true
-          message: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+          message: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
           details:
             - 'drain blocker: default/web (2/2 pods healthy, 0 disruptions allowed)'
             - let the workloads recover, relax the PDBs, or narrow their selectors so each pod matches one PDB

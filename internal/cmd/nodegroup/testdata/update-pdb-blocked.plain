@@ -1,5 +1,5 @@
 exit: 3
-error: blocked by 1 health check: DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction; nothing was started
+error: blocked by 1 health check: DrainBlockers: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction; nothing was started
 --- stdout ---
 FIELD	VALUE
 plan.operation	NodegroupUpdate
@@ -14,7 +14,7 @@ steps.web.from	1.32 (release 1.32.0-20250101, AMI ami-old32x)
 steps.web.to	1.32 (AMI ami-latest132)
 steps.web.note	-
 health_gate.decision	Block
-health_gate.reasons	DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+health_gate.reasons	DrainBlockers: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
 checks.Nodes.outcome	Pass
 checks.Nodes.message	4/4 nodes ready
 checks.Capacity.outcome	Pass
@@ -24,7 +24,7 @@ checks.ControlPlane.message	control-plane metrics not emitted (EKS 1.28+ on a su
 checks.Workloads.outcome	Pass
 checks.Workloads.message	2/2 pods running in the system namespaces
 checks.DrainBlockers.outcome	Fail
-checks.DrainBlockers.message	1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+checks.DrainBlockers.message	PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
 checks.PDBCoverage.outcome	Pass
 checks.PDBCoverage.message	every deployment has a PodDisruptionBudget (2)
 checks.Utilization.outcome	Pass
@@ -40,7 +40,7 @@ PLAN  NodegroupUpdate, prod in us-east-1
   [OK] Capacity       CPU mean 32%, peak 32%, 4 instances
        ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
   [OK] Workloads      2/2 pods running in the system namespaces
-  [X]  DrainBlockers  1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction
+  [X]  DrainBlockers  PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
   [OK] PDBCoverage    every deployment has a PodDisruptionBudget (2)
   [OK] Utilization    CPU 20%, memory 25% in use
   [OK] Quotas         31% of the vCPU quota in use (40 of 128)

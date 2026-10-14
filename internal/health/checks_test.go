@@ -455,13 +455,13 @@ func TestDrainBlockers(t *testing.T) {
 		want    want
 	}{
 		{name: "room everywhere", targets: []string{"ng-a"}, want: want{outcome: health.Pass, message: "no PodDisruptionBudget blocks a drain"}},
-		{name: "a tight budget on the target", edits: []edit{tight("web")}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "1 PDB allow 0 disruptions on the target nodegroups", findings: []string{"default/web"}}},
+		{name: "a tight budget on the target", edits: []edit{tight("web")}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web allows 0 disruptions on the target nodegroups", findings: []string{"default/web"}}},
 		{name: "a tight budget elsewhere", edits: []edit{tight("api")}, targets: []string{"ng-a"}, want: want{outcome: health.Pass, message: "no PodDisruptionBudget blocks"}},
-		{name: "a tight budget, unscoped", edits: []edit{tight("api")}, want: want{outcome: health.Fail, message: "1 PDB allow 0 disruptions; a drain would stall", findings: []string{"default/api"}}},
+		{name: "a tight budget, unscoped", edits: []edit{tight("api")}, want: want{outcome: health.Fail, message: "PDB default/api allows 0 disruptions; a drain would stall", findings: []string{"default/api"}}},
 		{name: "two targets", edits: []edit{tight("api")}, targets: []string{"ng-a", "ng-b"}, want: want{outcome: health.Fail, findings: []string{"default/api"}}},
 		{name: "an unsynced budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[0].Unsynced, c.PDBs[0].DisruptionsAllowed, c.PDBs[0].ExpectedPods = true, 0, 0
-		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "1 PDB allow 0 disruptions", findings: []string{"default/web"}}},
+		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web allows 0 disruptions", findings: []string{"default/web"}}},
 		{name: "a sync-failed budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed, c.PDBs[0].ExpectedPods = true, 0, 0
 		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, findings: []string{"default/web"}}},

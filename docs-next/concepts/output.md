@@ -157,7 +157,7 @@ An example, trimmed, from `refresh nodegroup update -c prod-payments-00 --dry-ru
       "gate": {
         "decision": "Block",
         "reasons": [
-          "DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction"
+          "DrainBlockers: PDB app/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction"
         ],
         "accepted": [],
         "forced": [],
