@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/contexts"
@@ -31,26 +32,39 @@ type options struct {
 	global   *cmdutil.GlobalOptions
 	now      func() time.Time
 	after    func(time.Duration) <-chan time.Time
+	// deps builds the dependencies of a change from the provider.
+	deps func(provider *awsx.Provider) change.Deps
 
-	allRegions   bool
-	interval     time.Duration
-	allowChanges bool
-	waitTimeout  time.Duration
+	allRegions     bool
+	interval       time.Duration
+	allowChanges   bool
+	waitTimeout    time.Duration
+	waitTimeoutSet bool
 }
 
 // NewCmdUI returns the ui command.
 func NewCmdUI(f *cmdutil.Factory) *cobra.Command {
-	o := &options{ios: f.IOStreams, aws: f.AWS, contexts: f.Contexts, global: &f.Global, now: f.Now, after: f.After}
+	o := &options{ios: f.IOStreams, aws: f.AWS, contexts: f.Contexts, global: &f.Global, now: f.Now, after: f.After,
+		deps: func(provider *awsx.Provider) change.Deps {
+			return change.Deps{AWS: provider, Fetch: &fleet.Fetcher{Now: f.Now}, Kube: f.Kube, Now: f.Now, After: f.After, AfterFunc: f.AfterFunc, Tick: f.Tick}
+		}}
 	cmd := &cobra.Command{
 		Use:   "ui",
 		Short: "Open the terminal UI for the fleet (experimental)",
 		Long: `Open a full-screen terminal UI (experimental): the fleet with what is out of date, each
-cluster with its nodegroups and add-ons, and the readiness checks of
-"cluster upgrade-check" on demand.
+cluster with its nodegroups and add-ons, the readiness checks of
+"cluster upgrade-check" on demand, and the changes of the cluster commands
+with their dry runs, health gates, and live progress.
 
 The UI reads the fleet with the same code as "refresh status", every
---interval and on ctrl+r. It is read-only in this version: the screens that
-start a change come in a later one, and --allow-changes has no effect yet.
+--interval and on ctrl+r. The change keys (p, a, U, B) run the dry run of
+"nodegroup update", "addon update", "cluster upgrade", and "cluster
+rollback" and show the plan with the equivalent command. Without
+--allow-changes the UI is read-only: nothing starts from it. With the
+flag, y in a dry run starts that plan and no other; a plan that changed
+since, or a health gate that warns, asks again before anything runs.
+A change started elsewhere (the CLI, the console) shows on the Change
+screen and can be watched, never stopped or answered, from the UI.
 
 The UI needs a terminal of at least 100 by 24 cells. While it runs, the
 standard error of refresh and of the programs it starts (such as a
@@ -60,19 +74,23 @@ cannot write over the screen. Press ? in the UI for the keys.`,
   refresh ui
 
   # Every region, swept every 30 seconds
-  refresh ui -A --interval 30s`,
+  refresh ui -A --interval 30s
+
+  # Let the UI start changes after their dry runs
+  refresh ui --allow-changes`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := o.validate(); err != nil {
 				return err
 			}
+			o.waitTimeoutSet = cmd.Flags().Changed("wait-timeout")
 			return o.run(cmd.Context())
 		},
 	}
 	fleetcmd.AddAllRegionsFlag(cmd, &o.allRegions)
 	cmd.Flags().DurationVar(&o.interval, "interval", time.Minute, "Time between fleet sweeps, at least 10s; ctrl+r sweeps now")
-	cmd.Flags().BoolVar(&o.allowChanges, "allow-changes", false, "Let the UI start changes after their dry runs (no effect yet: the change screens are not built)")
-	cmd.Flags().DurationVar(&o.waitTimeout, "wait-timeout", 0, "How long the UI follows a change it starts; 0 means the default of the command that makes the change (no effect yet)")
+	cmd.Flags().BoolVar(&o.allowChanges, "allow-changes", false, "Let the UI start changes after their dry runs; without it the UI is read-only")
+	cmd.Flags().DurationVar(&o.waitTimeout, "wait-timeout", 0, "How long the UI follows a change it starts or watches; unset means the default of the command that makes the change, 0 means no limit")
 	return cmd
 }
 
@@ -101,12 +119,17 @@ func (o *options) run(ctx context.Context) error {
 	defer cancel()
 
 	b := backend.New(ctx, provider, backend.Options{
-		Regions:      fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions),
-		Interval:     o.interval,
-		AllowChanges: o.allowChanges,
-		ReadTimeout:  o.global.Timeout,
-		Profile:      o.global.Profile,
-		Context:      o.contextName(),
+		Regions:        fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions),
+		Interval:       o.interval,
+		AllowChanges:   o.allowChanges,
+		ReadTimeout:    o.global.Timeout,
+		WaitTimeout:    o.waitTimeout,
+		WaitTimeoutSet: o.waitTimeoutSet,
+		Deps:           o.deps(provider),
+		Profile:        o.global.Profile,
+		Context:        o.contextName(),
+		Kubeconfig:     o.global.Kubeconfig,
+		KubeContext:    o.global.KubeContext,
 		SweepError: func(ctx context.Context, res *fleet.SweepResult) error {
 			return fleetcmd.SweepError(ctx, provider, res)
 		},

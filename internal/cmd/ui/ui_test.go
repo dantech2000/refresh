@@ -45,7 +45,7 @@ func TestUI_FlagsSayWhatTheyDo(t *testing.T) {
 		t.Fatal(err)
 	}
 	help := out.String()
-	for _, want := range []string{"-A, --all-regions", "--interval duration", "--allow-changes", "--wait-timeout duration", "no effect yet", "experimental"} {
+	for _, want := range []string{"-A, --all-regions", "--interval duration", "--allow-changes", "--wait-timeout duration", "read-only", "experimental"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help lacks %q:\n%s", want, help)
 		}
