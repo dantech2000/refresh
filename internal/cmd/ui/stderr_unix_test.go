@@ -30,7 +30,7 @@ func TestDetachStderr_SilencesDescriptorTwo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if err := unix.Dup2(int(file.Fd()), 2); err != nil {
 		t.Fatal(err)
 	}
