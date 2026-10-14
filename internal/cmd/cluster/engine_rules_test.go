@@ -1,6 +1,7 @@
 package cluster_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -95,13 +96,21 @@ func TestUpgrade_InsightsRefreshRefused(t *testing.T) {
 }
 
 // withKubeconfigOf points KUBECONFIG at a file whose current context is
-// the cluster prod of the world.
+// the cluster prod of the world, as an EKS context.
 func withKubeconfigOf(t *testing.T, world *fleettest.World) {
 	t.Helper()
 	srv := kubetest.NewServer(world, east, "prod")
 	t.Cleanup(srv.Close)
+	// An EKS context, as "aws eks update-kubeconfig" writes it: the cluster
+	// entry is the ARN of prod. The fallback of a read command counts no
+	// other kind of context.
+	const arn = "arn:aws:eks:" + east + ":123456789012:cluster/prod"
+	kubeconfig := "apiVersion: v1\nkind: Config\ncurrent-context: " + arn + "\n" +
+		"clusters:\n- name: " + arn + "\n  cluster: {server: " + srv.URL + "}\n" +
+		"contexts:\n- name: " + arn + "\n  context: {cluster: \"" + arn + "\", user: prod}\n" +
+		"users:\n- name: prod\n  user: {token: fake-token}\n"
 	path := filepath.Join(t.TempDir(), "kubeconfig")
-	if err := srv.WriteKubeconfig(path); err != nil {
+	if err := os.WriteFile(path, []byte(kubeconfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("KUBECONFIG", path)
