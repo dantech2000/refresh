@@ -45,6 +45,18 @@ func longRolls(s *fleettest.State, _ *fleettest.Cluster) {
 	s.DefaultNodegroupUpdate = &fleettest.UpdateScript{After: 10 * time.Minute}
 }
 
+// wantRefused checks that a run exits 3, sent nothing, and says want. A
+// refusal of the plan also has the status Refused.
+func wantRefused(t *testing.T, e *env, res Result, plan bool, want string) {
+	t.Helper()
+	if (plan && res.Status != Refused) || res.ExitCode() != exitcode.Blocked || len(e.sent()) != 0 {
+		t.Errorf("status = %s, exit %d, requests %v; want exit 3 and no request (refused by the plan: %v)", res.Status, res.ExitCode(), e.sent(), plan)
+	}
+	if res.Err == nil || !strings.Contains(res.Err.Error(), want) {
+		t.Errorf("message = %v, want %q", res.Err, want)
+	}
+}
+
 // A nodegroup at the goal of a step and UPDATING is attached to only when
 // the update in flight moves it to that goal. The real case: a rollback
 // rolls ng-a back to 1.32, so EKS reports it UPDATING at 1.33 until the
@@ -55,26 +67,14 @@ func TestEngine_UnsettledNodegroupRollingElsewhereIsBusy(t *testing.T) {
 		id := rollElsewhere(t, world, "ng-a", "1.32")
 		e := newEnv(t, world)
 		res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
-		if res.Status != Refused || res.ExitCode() != exitcode.Blocked || len(e.sent()) != 0 {
-			t.Errorf("status = %s, exit %d, requests %v; want Refused, exit 3, and no request", res.Status, res.ExitCode(), e.sent())
-		}
-		want := "nodegroup ng-a is rolling to 1.32 (update " + id + "), not to 1.33"
-		if res.Err == nil || !strings.Contains(res.Err.Error(), want) {
-			t.Errorf("message = %v, want %q", res.Err, want)
-		}
+		wantRefused(t, e, res, true, "nodegroup ng-a is rolling to 1.32 (update "+id+"), not to 1.33")
 	})
 	t.Run("a rollback refuses a nodegroup that rolls forward", func(t *testing.T) {
 		world := rolledBackWorld(longRolls)
 		id := rollElsewhere(t, world, "ng-a", "1.33")
 		e := newEnv(t, world)
 		res := mustRun(t, e, rollbackOf(), Hooks{})
-		if res.Status != Refused || res.ExitCode() != exitcode.Blocked || len(e.sent()) != 0 {
-			t.Errorf("status = %s, exit %d, requests %v; want Refused, exit 3, and no request", res.Status, res.ExitCode(), e.sent())
-		}
-		want := "nodegroup ng-a is rolling to 1.33 (update " + id + "), not to 1.32"
-		if res.Err == nil || !strings.Contains(res.Err.Error(), want) {
-			t.Errorf("message = %v, want %q", res.Err, want)
-		}
+		wantRefused(t, e, res, true, "nodegroup ng-a is rolling to 1.33 (update "+id+"), not to 1.32")
 	})
 	t.Run("a dry run shows the refusal", func(t *testing.T) {
 		world := upgradedWorld(longRolls)
@@ -101,13 +101,7 @@ func TestEngine_UnsettledNodegroupRollingElsewhereIsBusy(t *testing.T) {
 		}
 		e := newEnv(t, world)
 		res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
-		if res.ExitCode() != exitcode.Blocked || len(e.sent()) != 0 {
-			t.Errorf("status = %s, exit %d, requests %v; want exit 3 and no request", res.Status, res.ExitCode(), e.sent())
-		}
-		want := "nodegroup ng-a is UPDATING with a ConfigUpdate (update " + u.ID + "), not rolling to 1.33"
-		if res.Err == nil || !strings.Contains(res.Err.Error(), want) {
-			t.Errorf("message = %v, want %q", res.Err, want)
-		}
+		wantRefused(t, e, res, false, "nodegroup ng-a is UPDATING with a ConfigUpdate (update "+u.ID+"), not rolling to 1.33")
 	})
 	t.Run("an update that turns away after the plan blocks the step", func(t *testing.T) {
 		// The plan sees the roll of an earlier run to 1.33. Before the

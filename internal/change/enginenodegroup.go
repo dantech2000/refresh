@@ -52,8 +52,6 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 		if err != nil {
 			return r.unsent(cp, res, err), false
 		}
-		changing, _ := nodegroupSettled(fresh)
-		changing = !changing
 		atGoal := versionDone(kind, fresh.Version, s.To)
 		switch {
 		case fresh.Status == string(ekstypes.NodegroupStatusDeleting):
@@ -65,45 +63,12 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 			res.Status = StepSkipped
 			return res, false
 		case atGoal:
-			ctx := r.readCtx
-			var wait *budget
-			if changing {
-				if fresh.Status == nodegroupUpdating {
-					u, err := inFlightUpdate(r.readCtx, clients, resource)
-					if r.readCtx.Err() != nil {
-						return r.unsent(cp, res, err), false
-					}
-					if msg := foreignRoll(kind, name, s.To, u, err); msg != "" {
-						res.Status, res.InFlight = StepBlocked, u.Type
-						res.Failure = r.stepFailure(cp, res, apidoc.ReasonBusy, msg+"; it was not changed. Run the command again once that finishes")
-						return res, false
-					}
-				}
-				if round >= maxAttachRounds {
-					res.Status, res.FinishedAt = StepFailed, r.d.now()
-					res.Failure = r.stepFailure(cp, res, apidoc.ReasonBusy, "nodegroup "+name+" keeps changing; it was not rolled. Run the command again")
-					return res, false
-				}
-				r.notice(fmt.Sprintf("nodegroup %s is %s at %s; waiting for it to settle", name, fresh.Status, fresh.Version))
-				res.Attached = true
-				if res.StartedAt.IsZero() {
-					res.StartedAt = r.d.now()
-				}
-				ctx, wait = r.waitBudget()
-				r.read.pause()
-				settled, err := WaitSettled(ctx, poll, resource, nodegroupSettled, r.waitOptions(s, wait))
-				if err != nil {
-					return r.waitFailed(ctx, cp, res, err), false
-				}
-				if !versionDone(kind, settled.Version, s.To) {
-					// Never done away from the goal: the step plans again
-					// from the version that it settled at.
-					r.newRead(r.common.Limits.Read)
-					r.notice(fmt.Sprintf("the update of nodegroup %s that was already running did not reach %s (it is %s at %s)", name, s.To, settled.Status, orUnknown(settled.Version)))
-					continue
-				}
+			out, done := r.settleAtGoal(cp, ph, s, res, fresh, round)
+			if done {
+				return out, false
 			}
-			return r.verifySettled(ctx, cp, ph, s, res, wait), false
+			res = out
+			continue
 		case fresh.Status == nodegroupUpdating:
 			if round >= maxAttachRounds {
 				res.Status, res.FinishedAt = StepFailed, r.d.now()
@@ -136,6 +101,55 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 	s.Action, s.Force = Submit, ownedForce(r.req, StepNodegroup)
 	batch := Phase{Ref: ph.Ref, Batch: true, Steps: []Step{s}}
 	return r.runBatch(cp, batch)[0], true
+}
+
+// settleAtGoal runs the row of a nodegroup that is at the goal of its
+// step: it waits while the nodegroup is changing, and then verifies it.
+// While it is UPDATING, the update in flight must be a roll to the goal
+// (see foreignRoll); any other update blocks the step under the busy
+// rule, and nothing is sent. done is false when the nodegroup settled away
+// from the goal: the caller reads it again and decides from that, and
+// out carries what the step has so far.
+func (r *runner) settleAtGoal(cp *ClusterPlan, ph Phase, s Step, res StepResult, fresh Settled, round int) (out StepResult, done bool) {
+	kind, name, resource := r.req.kind(), s.Ref.Name, s.Ref.Resource()
+	if changing, _ := nodegroupSettled(fresh); changing {
+		return r.verifySettled(r.readCtx, cp, ph, s, res, nil), true
+	}
+	if fresh.Status == nodegroupUpdating {
+		u, err := inFlightUpdate(r.readCtx, r.d.AWS.Clients(cp.Region), resource)
+		if r.readCtx.Err() != nil {
+			return r.unsent(cp, res, err), true
+		}
+		if msg := foreignRoll(kind, name, s.To, u, err); msg != "" {
+			res.Status, res.InFlight = StepBlocked, u.Type
+			res.Failure = r.stepFailure(cp, res, apidoc.ReasonBusy, msg+"; it was not changed. Run the command again once that finishes")
+			return res, true
+		}
+	}
+	if round >= maxAttachRounds {
+		res.Status, res.FinishedAt = StepFailed, r.d.now()
+		res.Failure = r.stepFailure(cp, res, apidoc.ReasonBusy, "nodegroup "+name+" keeps changing; it was not rolled. Run the command again")
+		return res, true
+	}
+	r.notice(fmt.Sprintf("nodegroup %s is %s at %s; waiting for it to settle", name, fresh.Status, fresh.Version))
+	res.Attached = true
+	if res.StartedAt.IsZero() {
+		res.StartedAt = r.d.now()
+	}
+	ctx, wait := r.waitBudget()
+	r.read.pause()
+	settled, err := WaitSettled(ctx, r.d.AWS.PollClients(cp.Region), resource, nodegroupSettled, r.waitOptions(s, wait))
+	if err != nil {
+		return r.waitFailed(ctx, cp, res, err), true
+	}
+	if !versionDone(kind, settled.Version, s.To) {
+		// Never done away from the goal: the step plans again from the
+		// version that it settled at.
+		r.newRead(r.common.Limits.Read)
+		r.notice(fmt.Sprintf("the update of nodegroup %s that was already running did not reach %s (it is %s at %s)", name, s.To, settled.Status, orUnknown(settled.Version)))
+		return res, false
+	}
+	return r.verifySettled(ctx, cp, ph, s, res, wait), true
 }
 
 // verifySettled verifies a nodegroup that is at its goal and was not
