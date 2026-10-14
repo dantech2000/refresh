@@ -44,7 +44,7 @@ STEPS prod  2
 
 BLOCKERS prod  1
   NAME  KIND          STEP  MESSAGE
-  1     [X] NotReady  web   nodegroup web is DEGRADED, not ACTIVE; it was not rolled
+  prod  [X] NotReady  web   nodegroup web is DEGRADED, not ACTIVE; it was not rolled
 
 PLAN staging
   operation  NodegroupUpdate

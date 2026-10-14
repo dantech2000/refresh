@@ -138,7 +138,7 @@ func planSections(op apidoc.Operation, c apidoc.ClusterPlan, suffix string) []Se
 			{Name: "decision", Value: string(c.Decision), Status: DecisionStatus(c.Decision)},
 		}},
 		{Title: "STEPS" + suffix, Items: steps},
-		{Title: "BLOCKERS" + suffix, Items: blockerItems(c.Blockers)},
+		{Title: "BLOCKERS" + suffix, Items: blockerItems(c.Cluster, c.Blockers)},
 	}
 	out = append(out, gateSections(c.Gate, suffix)...)
 	return append(out, Section{Title: "NOTICES" + suffix, Fields: numbered(c.Notices)})
@@ -148,14 +148,18 @@ func planSections(op apidoc.Operation, c apidoc.ClusterPlan, suffix string) []Se
 // cluster. The view of a plan and the view of a run both list them: a
 // cluster that the plan blocked has Blocked rows in a run, and the
 // blockers say why.
-func blockerItems(blockers []apidoc.Blocker) []Item {
+//
+// A row is named by its cluster: a blocker about the whole cluster has no
+// step to name it by. The plain view numbers the rows, which keeps one key
+// for each.
+func blockerItems(cluster string, blockers []apidoc.Blocker) []Item {
 	items := make([]Item, len(blockers))
 	for i, b := range blockers {
 		step := ""
 		if b.Step != nil {
 			step = hopStepName(b.Step.Kind, b.Step.Name, b.Step.Hop)
 		}
-		items[i] = Item{Name: strconv.Itoa(i + 1), Fields: []Field{
+		items[i] = Item{Name: cluster, Key: strconv.Itoa(i + 1), Fields: []Field{
 			{Name: "kind", Value: string(b.Kind), Status: Fail},
 			{Name: "step", Value: step},
 			{Name: "message", Value: b.Message},
@@ -307,7 +311,7 @@ func RunView(doc apidoc.Run) Description {
 				{Name: "left to you", Value: strings.Join(left, ", ")},
 			}},
 			Section{Title: "RESULTS" + suffix, Items: resultItems(c)},
-			Section{Title: "BLOCKERS" + suffix, Items: blockerItems(c.Blockers)},
+			Section{Title: "BLOCKERS" + suffix, Items: blockerItems(c.Cluster, c.Blockers)},
 			Section{Title: "VERIFICATION" + suffix, Items: healthItems(c.Verification)},
 		)
 		d.Sections = append(d.Sections, gateSections(c.Gate, suffix)...)

@@ -21,7 +21,7 @@ STEPS  5
 
 BLOCKERS  1
   NAME  KIND          STEP                MESSAGE
-  1     [X] NotReady  control-plane@1.33  1 blocking insight(s): Deprecated APIs removed in Kubernetes v1.33
+  prod  [X] NotReady  control-plane@1.33  1 blocking insight(s): Deprecated APIs removed in Kubernetes v1.33
 
 HEALTH GATE
   decision  [OK] Go

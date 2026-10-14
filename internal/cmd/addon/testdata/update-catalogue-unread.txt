@@ -16,8 +16,8 @@ STEPS  1
 
 BLOCKERS  2
   NAME  KIND        STEP     MESSAGE
-  1     [X] Unread  vpc-cni  could not read the versions of add-on vpc-cni that Kubernetes 1.33 can run
-  2     [X] Unread  -        could not read every add-on of prod, so nothing shows that no change is running
+  prod  [X] Unread  vpc-cni  could not read the versions of add-on vpc-cni that Kubernetes 1.33 can run
+  prod  [X] Unread  -        could not read every add-on of prod, so nothing shows that no change is running
 
 INCOMPLETE DATA
 [?] addon prod/vpc-cni (us-east-1): AccessDenied (grant eks:DescribeAddonVersions): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action

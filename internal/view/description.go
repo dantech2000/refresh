@@ -1,6 +1,7 @@
 package view
 
 import (
+	"cmp"
 	"io"
 	"strconv"
 	"strings"
@@ -53,6 +54,9 @@ type Field struct {
 type Item struct {
 	Name   string
 	Fields []Field
+	// Key names the item in the plain view when Name is not unique in
+	// its section. "" means Name.
+	Key string
 }
 
 // Render returns the lines of the table view. width is the width of the
@@ -178,7 +182,7 @@ func (d Description) Plain(w io.Writer) error {
 		for _, it := range s.Items {
 			for _, f := range it.Fields {
 				// An item name is an AWS name: it stays as it is.
-				row(f.Value, section, plainCell(it.Name), plainKey(f.Name))
+				row(f.Value, section, plainCell(cmp.Or(it.Key, it.Name)), plainKey(f.Name))
 			}
 		}
 	}

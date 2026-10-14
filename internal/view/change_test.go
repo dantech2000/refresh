@@ -322,3 +322,35 @@ func TestRunView_DeniedStartIsNotIncompleteData(t *testing.T) {
 		t.Errorf("a denied start is listed as incomplete data:\n%s", table)
 	}
 }
+
+// A blocker row is named by its cluster in the table, not by a number. A
+// blocker about the whole cluster has no step. The plain view keeps one
+// key for each blocker, by its number.
+func TestPlanView_BlockersAreNamedByTheirCluster(t *testing.T) {
+	doc := apidoc.Plan{Operation: apidoc.OperationAddonUpdate, Clusters: []apidoc.ClusterPlan{{
+		Cluster: "refresh-e2e", Region: "us-east-1", Decision: apidoc.PlanBlocked,
+		Blockers: []apidoc.Blocker{
+			{Kind: apidoc.BlockerBusy, Message: "refresh-e2e is busy (cluster UPDATING)"},
+			{Kind: apidoc.BlockerBusy, Message: "add-on coredns is UPDATING", Step: &apidoc.StepID{Phase: apidoc.PhaseAddons, Kind: apidoc.StepAddon, Name: "coredns"}},
+		},
+	}}}
+	table := strings.Join(PlanView(doc).Render(Theme{}, 140), "\n")
+	for _, want := range []string{
+		"  NAME         KIND      STEP     MESSAGE",
+		"  refresh-e2e  [X] Busy  -        refresh-e2e is busy (cluster UPDATING)",
+		"  refresh-e2e  [X] Busy  coredns  add-on coredns is UPDATING",
+	} {
+		if !strings.Contains(table, want) {
+			t.Errorf("the table lacks the line %q:\n%s", want, table)
+		}
+	}
+	var b strings.Builder
+	if err := PlanView(doc).Plain(&b); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"blockers.1.kind\tBusy", "blockers.1.step\t-", "blockers.2.step\tcoredns"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("the plain view lacks %q:\n%s", want, b.String())
+		}
+	}
+}

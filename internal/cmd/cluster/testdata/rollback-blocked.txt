@@ -21,7 +21,7 @@ STEPS  5
 
 BLOCKERS  1
   NAME  KIND             STEP  MESSAGE
-  1     [X] Unavailable  -     the update history has no in-place upgrade to 1.33: a cluster created at its version cannot roll back
+  prod  [X] Unavailable  -     the update history has no in-place upgrade to 1.33: a cluster created at its version cannot roll back
 
 HEALTH GATE
   decision  [OK] Go

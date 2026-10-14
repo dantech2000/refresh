@@ -16,5 +16,5 @@ STEPS  1
 
 BLOCKERS  1
   NAME  KIND      STEP  MESSAGE
-  1     [X] Busy  -     prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
+  prod  [X] Busy  -     prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
 --- stderr ---
