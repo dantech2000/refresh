@@ -26,7 +26,7 @@ type unknownRegions struct {
 
 func (u unknownRegions) RoundTrip(req *http.Request) (*http.Response, error) {
 	m := credentialScope.FindStringSubmatch(req.Header.Get("Authorization"))
-	if m != nil && slices.Contains(u.regions, m[1]) {
+	if len(m) == 3 && slices.Contains(u.regions, m[1]) {
 		host := m[2] + "." + m[1] + ".amazonaws.com"
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{
 			Err: "no such host", Name: host, IsNotFound: true,

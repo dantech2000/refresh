@@ -206,6 +206,7 @@ func TestStatus_MalformedEnvRegion(t *testing.T) {
 func TestStatus_UnknownRegion(t *testing.T) {
 	const unknown = "us-east-9"
 	newUnknown := func(t *testing.T) *cmdtest.Fake {
+		t.Helper()
 		e := newFake(t)
 		cmdutiltest.UseAWS(e.Factory, awsxtest.WithUnknownRegions(e.Server.Config(east), unknown))
 		return e
