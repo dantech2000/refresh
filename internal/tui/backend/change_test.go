@@ -84,8 +84,9 @@ func changeRig(t *testing.T, world *fleettest.World, withKube bool) *rig {
 	return pacedRig(t, world, withKube, nil)
 }
 
-// pacedRig is changeRig with a pacer as the clock, when p is not nil.
-func pacedRig(t *testing.T, world *fleettest.World, withKube bool, p *pacer) *rig {
+// pacedRig is changeRig with a pacer as the clock, when p is not nil,
+// and the options edited by each of edits.
+func pacedRig(t *testing.T, world *fleettest.World, withKube bool, p *pacer, edits ...func(o *backend.Options)) *rig {
 	t.Helper()
 	var kubeFn func(kube.Target) (*kube.Client, error)
 	if withKube {
@@ -127,6 +128,9 @@ func pacedRig(t *testing.T, world *fleettest.World, withKube bool, p *pacer) *ri
 		}
 		if p != nil {
 			o.Deps.After, o.Deps.Tick = p.After, p.Tick
+		}
+		for _, edit := range edits {
+			edit(o)
 		}
 	})
 }
@@ -590,52 +594,274 @@ func TestUpgradePausesAndStops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	// pausedAt waits for the run to hold at a checkpoint where the first
+	// phase has the status: a state published while the first pause ends
+	// still reads Paused.
+	pausedAt := func(after uint64, first change.PhaseStatus) state.Change {
+		st := r.wait(t, after, func(st state.State) bool {
+			c, ok := changeOf(st, id)
+			return ok && c.State == change.Paused && len(c.Phases) > 0 && c.Phases[0].Status == first
+		})
+		c, _ := changeOf(st, id)
+		return c
+	}
 	// The pause is asked for before the run reaches its first checkpoint.
 	if err := r.b.Pause(t.Context(), id); err != nil {
 		t.Fatalf("Pause: %v", err)
 	}
-	paused := r.wait(t, 0, func(st state.State) bool {
-		c, ok := changeOf(st, id)
-		return ok && c.State == change.Paused
-	})
-	c, _ := changeOf(paused, id)
-	if !c.Controls.Pause || !c.Controls.Stop || c.Controls.Answer {
-		t.Fatalf("controls while paused = %+v", c.Controls)
+	c := pausedAt(0, change.PhasePending)
+	if !c.Controls.Pause || !c.Controls.Stop || c.Controls.Answer || !c.PauseRequested {
+		t.Fatalf("controls while paused = %+v, pause requested %v", c.Controls, c.PauseRequested)
 	}
 	if err := r.b.Pause(t.Context(), id); err != nil {
 		t.Fatalf("a second Pause while paused = %v", err)
 	}
+	// Resume, and ask for the next pause at once: the control-plane phase
+	// runs, and the run holds again before the phase after it.
 	if err := r.b.Resume(t.Context(), id); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	// The stop lands at the next checkpoint: the phase that runs ends, the
-	// rest never start.
-	if err := r.b.Stop(t.Context(), id); err != nil && !errors.Is(err, change.ErrTooLate) {
+	if err := r.b.Pause(t.Context(), id); err != nil {
+		t.Fatalf("Pause after Resume: %v", err)
+	}
+	c = pausedAt(c.Version, change.PhaseDone)
+	if c.Steps[0].Status != change.StepSucceeded {
+		t.Fatalf("at the second checkpoint: step %s", c.Steps[0].Status)
+	}
+	// The stop lands at this checkpoint: nothing after it starts.
+	if err := r.b.Stop(t.Context(), id); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	c, _ = r.drive(t, id)
-	if c.Result.Status != change.Stopped && c.Result.Status != change.Succeeded {
-		t.Fatalf("result = %s (%v)", c.Result.Status, c.Result.Err)
+	if c.Result.Status != change.Stopped || !c.StopRequested {
+		t.Fatalf("result = %s (%v), stop requested %v", c.Result.Status, c.Result.Err, c.StopRequested)
 	}
-	if c.Result.Status == change.Stopped {
-		stopped := 0
-		for _, ph := range c.Phases {
-			if ph.Status == change.PhaseStopped {
-				stopped++
-			}
+	if c.Phases[0].Status != change.PhaseDone {
+		t.Fatalf("the control-plane phase = %s, want Done", c.Phases[0].Status)
+	}
+	for _, ph := range c.Phases[1:] {
+		if ph.Status != change.PhaseStopped {
+			t.Fatalf("phase %s = %s, want Stopped", ph.Ref.Kind, ph.Status)
 		}
-		if stopped == 0 {
-			t.Fatalf("a stopped run has no stopped phase: %+v", c.Phases)
-		}
-		if !c.StopRequested {
-			t.Fatal("the view does not say that a stop was requested")
+	}
+	for _, s := range c.Steps[1:] {
+		if s.Status != change.StepNotAttempted && s.Status != change.StepSkipped {
+			t.Fatalf("step %s after the stop = %s", s.Ref.Name, s.Status)
 		}
 	}
 	// Nothing steers a finished change.
 	for name, err := range map[string]error{"Pause": r.b.Pause(t.Context(), id), "Resume": r.b.Resume(t.Context(), id), "Stop": r.b.Stop(t.Context(), id)} {
-		if !errors.Is(err, change.ErrFinished) && !errors.Is(err, change.ErrTooLate) {
+		if !errors.Is(err, change.ErrFinished) {
 			t.Errorf("%s after the end = %v", name, err)
 		}
+	}
+}
+
+// A stop requested while a step runs does not turn a failed run into a
+// stopped one.
+func TestAStopDoesNotHideAFailure(t *testing.T) {
+	world := changeWorld(func(s *fleettest.State, c *fleettest.Cluster) {
+		s.DefaultUpdate = fleettest.UpdateScript{After: time.Minute}
+		c.UpdateScripts = []fleettest.UpdateScript{{After: time.Minute, Result: fleettest.UpdateFailed, Errors: []fleettest.UpdateError{{Code: "Unknown", Message: "the control plane could not be upgraded"}}}}
+	})
+	r := changeRig(t, world, true)
+	r.wait(t, 0, swept(1))
+	p := r.propose(t, state.Action{Kind: state.ActionUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 34}})
+	id, err := r.b.Start(t.Context(), p.ID)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := r.b.Pause(t.Context(), id); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	r.wait(t, 0, func(st state.State) bool {
+		c, ok := changeOf(st, id)
+		return ok && c.State == change.Paused
+	})
+	// The run goes on into the control-plane phase; the stop is asked for
+	// once the update is submitted. The phase fails before the next
+	// checkpoint.
+	if err := r.b.Resume(t.Context(), id); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	r.wait(t, 0, func(st state.State) bool {
+		c, ok := changeOf(st, id)
+		return ok && len(c.Steps) > 0 && c.Steps[0].Status == change.StepStarted
+	})
+	if err := r.b.Stop(t.Context(), id); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	c, _ := r.drive(t, id)
+	if c.Result.Status != change.Failed || !c.StopRequested {
+		t.Fatalf("result = %s (%v), stop requested %v; want Failed", c.Result.Status, c.Result.Err, c.StopRequested)
+	}
+	if c.Steps[0].Status != change.StepFailed || c.Phases[0].Status != change.PhaseFailed {
+		t.Fatalf("control plane: step %s, phase %s", c.Steps[0].Status, c.Phases[0].Status)
+	}
+	if !strings.Contains(feedText(r.wait(t, 0, func(st state.State) bool { return strings.Contains(feedText(st), "ended: failed") })), "could not be upgraded") {
+		t.Fatal("the feed does not name the failure")
+	}
+}
+
+// The nodegroup picked for a catch-up is the only one the plan rolls, and
+// the copied command names it.
+func TestPickedNodegroupIsTheOnlyOneRolled(t *testing.T) {
+	world := changeWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
+		c.Nodegroups[0].Version = "1.32"
+		c.Nodegroups = append(c.Nodegroups, &fleettest.Nodegroup{Name: "api", Version: "1.32"})
+	})
+	r := changeRig(t, world, false)
+	r.wait(t, 0, swept(1))
+	p := r.propose(t, state.Action{Kind: state.ActionUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 33}, Nodegroup: "api", Only: []change.Part{change.PartNodegroups}})
+	if !strings.Contains(p.Command, "cluster upgrade prod --to 1.33 --only nodegroups -n api") {
+		t.Fatalf("command = %q", p.Command)
+	}
+	rolled := map[string]apidoc.StepAction{}
+	for _, s := range p.Doc.Clusters[0].Steps {
+		if s.Kind == apidoc.StepNodegroup {
+			rolled[s.Name] = s.Action
+		}
+	}
+	if rolled["api"] != apidoc.ActionSubmit || rolled["web"] == apidoc.ActionSubmit {
+		t.Fatalf("nodegroup steps = %v, want api submitted and web left alone", rolled)
+	}
+}
+
+// A copied command carries the Kubernetes access of the UI when the
+// command uses it, and the profile always.
+func TestCopiedCommandCarriesTheKubeAccess(t *testing.T) {
+	world := changeWorld(nil)
+	r := pacedRig(t, world, false, nil, func(o *backend.Options) {
+		o.Kubeconfig, o.KubeContext = "/home/me/kube config", "prod-admin"
+	})
+	r.wait(t, 0, swept(1))
+	roll := r.propose(t, state.Action{Kind: state.ActionRoll, Cluster: prod, Nodegroup: "web"})
+	want := "refresh --profile test --region us-east-1 nodegroup update web -c prod --kubeconfig '/home/me/kube config' --kube-context prod-admin"
+	if roll.Command != want {
+		t.Fatalf("roll command = %q, want %q", roll.Command, want)
+	}
+	addons := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	if strings.Contains(addons.Command, "kube") || !strings.HasPrefix(addons.Command, "refresh --profile test --region us-east-1 addon update") {
+		t.Fatalf("add-on command = %q", addons.Command)
+	}
+}
+
+// A control-plane upgrade started elsewhere is adopted as an upgrade,
+// from when EKS started it.
+func TestAdoptsAControlPlaneUpgrade(t *testing.T) {
+	world := changeWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
+		c.UpdateScripts = []fleettest.UpdateScript{{After: 3 * time.Minute}}
+	})
+	r := changeRig(t, world, false)
+	first := r.wait(t, 0, swept(1))
+	startedAt := world.Now()
+	version := "1.34"
+	u, err := world.UpdateClusterVersion(east, "prod", fleettest.ClusterVersionRequest{Version: &version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.b.Refresh()
+	adopted := r.wait(t, first.Version, func(st state.State) bool { return len(st.Changes) == 1 && st.Changes[0].Plan != nil })
+	c := adopted.Changes[0]
+	if c.Kind != change.ClusterUpgrade || c.Plan.Kind != change.ClusterUpgrade || !c.Elsewhere || !c.StartedAt.Equal(startedAt) {
+		t.Fatalf("adopted = kind %s, plan %s, elsewhere %v, started %s (want %s)", c.Kind, c.Plan.Kind, c.Elsewhere, c.StartedAt, startedAt)
+	}
+	if !strings.Contains(feedText(adopted), "watching a change started elsewhere: cluster prod") {
+		t.Fatalf("feed:\n%s", feedText(adopted))
+	}
+	done, _ := r.drive(t, c.ID)
+	if done.Result.Status != change.Succeeded || done.Steps[0].UpdateID != u.ID || done.Steps[0].Ref.Kind != change.StepControlPlane {
+		t.Fatalf("watched upgrade = %s, steps %+v", done.Result.Status, done.Steps)
+	}
+	after := r.wait(t, 0, func(st state.State) bool { return st.Clusters[0].Change == 0 && st.Clusters[0].Version.Minor == 34 })
+	if after.Sweep.Count != 2 {
+		t.Fatal("the refetch swept the fleet")
+	}
+}
+
+// A watch whose first read hangs ends as failed under the read budget,
+// releases the cluster, and never claimed to watch anything; a nodegroup
+// that is CREATING is not adopted at all.
+func TestWatchReadThatHangsEndsFailed(t *testing.T) {
+	world := changeWorld(func(s *fleettest.State, c *fleettest.Cluster) {
+		s.DefaultNodegroupUpdate = &fleettest.UpdateScript{After: 4 * time.Minute}
+		c.Nodegroups = append(c.Nodegroups, &fleettest.Nodegroup{Name: "new", Version: "1.33", Status: fleettest.StatusCreating})
+	})
+	r := pacedRig(t, world, false, nil, func(o *backend.Options) {
+		// The budget of a hung read runs out at once.
+		o.Deps.AfterFunc = func(_ time.Duration, f func()) func() bool { f(); return func() bool { return false } }
+	})
+	first := r.wait(t, 0, swept(1))
+	if len(first.Changes) != 0 {
+		t.Fatalf("a CREATING nodegroup was adopted: %+v", first.Changes)
+	}
+	version := "1.33"
+	if _, err := world.UpdateNodegroupVersion(east, "prod", "web", fleettest.NodegroupVersionRequest{Version: &version}); err != nil {
+		t.Fatal(err)
+	}
+	world.SetFault(fleettest.EKSDescribeUpdate, fleettest.Fault{Hang: true})
+	r.b.Refresh()
+	st := r.wait(t, first.Version, func(st state.State) bool { return len(st.Changes) == 1 && st.Changes[0].State == change.Finished })
+	c := st.Changes[0]
+	if c.Result.Status != change.Failed || !errors.Is(c.Result.Err, change.ErrReadTimeout) && !strings.Contains(c.Result.Err.Error(), "timeout") {
+		t.Fatalf("result = %s (%v)", c.Result.Status, c.Result.Err)
+	}
+	if strings.Contains(feedText(st), "watching a change started elsewhere") {
+		t.Fatalf("the feed announced a watch that never attached:\n%s", feedText(st))
+	}
+	released := r.wait(t, 0, func(st state.State) bool { return st.Clusters[0].Change == 0 })
+	if !strings.Contains(feedText(released), "ended: failed") {
+		t.Fatalf("feed:\n%s", feedText(released))
+	}
+}
+
+// The end of a watched roll releases its own cluster only: a change of
+// ours on another cluster keeps its claim.
+func TestWatchEndKeepsOtherClaims(t *testing.T) {
+	world := changeWorld(func(s *fleettest.State, _ *fleettest.Cluster) {
+		s.DefaultNodegroupUpdate = &fleettest.UpdateScript{After: 2 * time.Minute}
+		s.Clusters = append(s.Clusters, &fleettest.Cluster{Name: "prod2", Region: east, Version: "1.33", Addons: []*fleettest.Addon{{Name: "vpc-cni", Version: cniOld}}})
+	})
+	r := changeRig(t, world, false)
+	first := r.wait(t, 0, swept(1))
+	prod2 := state.Key{Region: east, Name: "prod2"}
+	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod2})
+	world.Edit(func(s *fleettest.State) {
+		s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{Addon: "vpc-cni", Version: "v1.21.0-eksbuild.1", ClusterVersions: []string{"1.33"}})
+	})
+	own, err := r.b.Start(t.Context(), p.ID)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	r.wait(t, 0, func(st state.State) bool {
+		c, ok := changeOf(st, own)
+		return ok && c.State == change.Asking
+	})
+	version := "1.33"
+	if _, err := world.UpdateNodegroupVersion(east, "prod", "web", fleettest.NodegroupVersionRequest{Version: &version}); err != nil {
+		t.Fatal(err)
+	}
+	r.b.Refresh()
+	adopted := r.wait(t, first.Version, func(st state.State) bool { return len(st.Changes) == 2 })
+	var watched state.ChangeID
+	for _, c := range adopted.Changes {
+		if c.Elsewhere {
+			watched = c.ID
+		}
+	}
+	done, _ := r.drive(t, watched)
+	if done.Result.Status != change.Succeeded {
+		t.Fatalf("watched roll = %s", done.Result.Status)
+	}
+	st := r.wait(t, 0, func(st state.State) bool { return st.Clusters[0].Change == 0 })
+	if st.Clusters[1].Change != own {
+		t.Fatalf("prod2's claim after the watch ended = %d, want %d", st.Clusters[1].Change, own)
+	}
+	if c, _ := changeOf(st, own); c.State != change.Asking {
+		t.Fatalf("our change = %s, want still Asking", c.State)
+	}
+	if err := r.b.Answer(t.Context(), own, 1, false); err != nil {
+		t.Fatalf("Answer: %v", err)
 	}
 }
 

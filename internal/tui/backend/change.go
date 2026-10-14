@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+
 	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
@@ -43,11 +45,13 @@ type entry struct {
 	key       state.Key
 	handle    *change.Handle
 	elsewhere bool
-	// resource is the resource a watched change follows.
-	resource change.Resource
-	view     change.View
-	log      []change.LogEntry
-	nodes    map[change.StepRef][]noderoll.Event
+	// resource is the resource a watched change follows, and announced
+	// says that the feed has named the watch, once its step attached.
+	resource  change.Resource
+	announced bool
+	view      change.View
+	log       []change.LogEntry
+	nodes     map[change.StepRef][]noderoll.Event
 }
 
 // proposal is the newest dry run, with the request it was computed for.
@@ -84,7 +88,11 @@ func (b *Live) request(a state.Action) (change.Request, error) {
 	case state.ActionAddons:
 		return change.AddonUpdateRequest{Common: common(change.AddonUpdate), Target: target, All: true}, nil
 	case state.ActionUpgrade:
-		return change.UpgradeRequest{Common: common(change.ClusterUpgrade), Target: target, To: a.To, Only: a.Only}, nil
+		req := change.UpgradeRequest{Common: common(change.ClusterUpgrade), Target: target, To: a.To, Only: a.Only}
+		if a.Nodegroup != "" {
+			req.Nodegroups = []string{a.Nodegroup}
+		}
+		return req, nil
 	case state.ActionRollback:
 		return change.RollbackRequest{Common: common(change.ClusterRollback), Target: target}, nil
 	}
@@ -134,6 +142,9 @@ func (b *Live) command(a state.Action) string {
 			}
 			parts = append(parts, "--only", strings.Join(names, ","))
 		}
+		if a.Nodegroup != "" {
+			parts = append(parts, "-n", a.Nodegroup)
+		}
 	case state.ActionRollback:
 		parts, kube = append(parts, "cluster", "rollback", a.Cluster.Name), true
 	}
@@ -176,6 +187,11 @@ func (b *Live) Plan(ctx context.Context, a state.Action) (state.Proposal, error)
 	if err != nil {
 		return state.Proposal{}, err
 	}
+	// A dry run that esc cancelled is not the newest: it must not take
+	// the place of a later one.
+	if err := ctx.Err(); err != nil {
+		return state.Proposal{}, err
+	}
 	b.mu.Lock()
 	b.nextProposal++
 	p := &proposal{Proposal: state.Proposal{
@@ -207,6 +223,9 @@ func (b *Live) Start(_ context.Context, id state.ProposalID) (state.ChangeID, er
 		return 0, errors.New("the dry run is blocked; nothing can start")
 	case len(b.byCluster[p.Action.Cluster]) > 0:
 		return 0, ErrClusterBusy
+	case b.ctx.Err() != nil:
+		// Run has returned and waits for no goroutine any more.
+		return 0, errors.New("the UI is closing; nothing starts")
 	}
 	b.proposal = nil
 	h := change.Start(b.ctx, b.deps, withExpect(p.request, p.Plan))
@@ -255,6 +274,12 @@ func (b *Live) store(e *entry, after uint64) uint64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	e.view = v
+	if e.elsewhere && !e.announced && len(v.Steps) > 0 {
+		// The watch attached to the update: it is a change, and the feed
+		// says so once.
+		e.announced = true
+		b.say(e.key, view.Progress, "watching a change started elsewhere: "+e.resource.String())
+	}
 	if len(entries) > 0 {
 		// The published slice is never written to: a longer copy replaces it.
 		e.log = slices.Concat(e.log, entries)
@@ -322,15 +347,21 @@ func (b *Live) trimLocked() {
 	}
 }
 
-// adopt starts a watch for each nodegroup roll and control-plane update
-// that the sweep shows in flight and that this UI does not run. The
-// caller holds b.mu.
+// adopt starts a watch for each nodegroup and control plane that the
+// sweep shows UPDATING and that this UI does not run. The caller holds
+// b.mu. The feed names the watch once it has attached to the update: a
+// watch that finds nothing, or an update that is not a change of
+// refresh, ends without a word.
 //
 // A cluster with a change of ours is left alone: its handle reports what
 // happens there. A snapshot read before our last change on the cluster
 // ended is left alone too: what it shows may be that change. A watch
-// of the same resource that still runs is not started twice.
+// of the same resource that still runs is not started twice. CREATING
+// and DELETING are not adopted: nothing of refresh is behind them.
 func (b *Live) adopt() {
+	if b.ctx.Err() != nil {
+		return
+	}
 	for _, c := range b.clusters {
 		snap := c.Snapshot
 		if snap == nil || snap.Have.Cluster != fleet.Collected || len(b.byCluster[c.Key]) > 0 {
@@ -341,12 +372,12 @@ func (b *Live) adopt() {
 		}
 		target := change.Target{Region: c.Region, Cluster: c.Name}
 		var resources []change.Resource
-		if view.StatusOf(snap.Cluster.Status) == view.Progress {
+		if snap.Cluster.Status == string(ekstypes.ClusterStatusUpdating) {
 			resources = append(resources, change.Resource{Target: target, Kind: change.StepControlPlane})
 		}
 		rolling := 0
 		for _, n := range snap.Nodegroups {
-			if n.State == fleet.Collected && view.StatusOf(n.Status) == view.Progress {
+			if n.State == fleet.Collected && n.Status == string(ekstypes.NodegroupStatusUpdating) {
 				resources = append(resources, change.Resource{Target: target, Kind: change.StepNodegroup, Name: n.Name})
 				rolling++
 			}
@@ -362,9 +393,22 @@ func (b *Live) adopt() {
 			// The node view is for one roll, as the run has it.
 			h := change.Watch(b.ctx, b.deps, r, change.WatchOptions{Nodes: rolling == 1, Limits: b.limits(kind)})
 			b.add(h, c.Key, true, r)
-			b.say(c.Key, view.Progress, "watching a change started elsewhere: "+r.String())
 		}
 	}
+}
+
+// Unfinished returns the changes of this session that have not ended,
+// for the words on the way out: they keep running in EKS.
+func (b *Live) Unfinished() []state.Change {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []state.Change
+	for _, e := range b.entries {
+		if e.view.State != change.Finished {
+			out = append(out, state.Change{ID: e.id, View: e.view, Log: e.log, Nodes: e.nodes})
+		}
+	}
+	return out
 }
 
 // changes returns the changes for a state: running first, then finished,
