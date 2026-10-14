@@ -151,6 +151,11 @@ type Nodegroup struct {
 	// Desired, Min, and Max are the scaling config. All zero becomes
 	// desired 2, min 1, max 3.
 	Desired, Min, Max int32
+	// MaxUnavailable and MaxUnavailablePercentage are the update config.
+	// Both zero becomes MaxUnavailable 1, as EKS sets it.
+	MaxUnavailable, MaxUnavailablePercentage int32
+	// UpdateStrategy is DEFAULT or MINIMAL. "" reports none.
+	UpdateStrategy string
 	// AutoScalingGroups are the names of the nodegroup's groups.
 	AutoScalingGroups []string
 	LaunchTemplate    *LaunchTemplate
@@ -480,6 +485,9 @@ func (c *Cluster) applyDefaults(now time.Time) {
 		}
 		if ng.Desired == 0 && ng.Min == 0 && ng.Max == 0 {
 			ng.Desired, ng.Min, ng.Max = 2, 1, 3
+		}
+		if ng.MaxUnavailable == 0 && ng.MaxUnavailablePercentage == 0 {
+			ng.MaxUnavailable = 1
 		}
 	}
 	for _, a := range c.Addons {

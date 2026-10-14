@@ -223,7 +223,15 @@ type Nodegroup struct {
 	// SizesKnown says that EKS returned all three sizes. Without it they
 	// are not known, and a size of 0 here is not a size of the nodegroup:
 	// a change must not plan from it.
-	SizesKnown        bool
+	SizesKnown bool
+	// MaxUnavailable and MaxUnavailablePercentage are the update config:
+	// how many nodes a roll takes down at once, as a count or as a
+	// percentage of the nodes. EKS sets one of them. Both are 0 when EKS
+	// returned no update config.
+	MaxUnavailable, MaxUnavailablePercentage int32
+	// UpdateStrategy is the update strategy of a roll, DEFAULT or MINIMAL,
+	// or "" when EKS returned none.
+	UpdateStrategy    string
 	AutoScalingGroups []string
 	// LaunchTemplate is the zero value when the nodegroup has none.
 	LaunchTemplate        LaunchTemplate
@@ -239,6 +247,10 @@ type Nodegroup struct {
 	// of the nodegroup. They are valid when InstanceIDsState is Collected.
 	InstanceIDs      []string
 	InstanceIDsState State
+	// Zones are the Availability Zones of every Auto Scaling group of the
+	// nodegroup, sorted, from the same read. They are valid when
+	// InstanceIDsState is Collected.
+	Zones []string
 
 	// ReadyNodes is the number of Ready nodes of the nodegroup, from the
 	// Kubernetes API. It is valid when ReadyState is Collected.

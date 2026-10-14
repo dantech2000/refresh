@@ -54,7 +54,7 @@ func TestEditAppliesDefaults(t *testing.T) {
 	wantNG := fleettest.Nodegroup{
 		Name: "ng-a", Version: "1.31", ReleaseVersion: "1.31.0-20260101", Status: "ACTIVE", CreatedAt: w.Now(), ModifiedAt: w.Now(),
 		AMIType: "AL2023_x86_64_STANDARD", CapacityType: "ON_DEMAND", InstanceTypes: []string{"m5.large"},
-		Desired: 2, Min: 1, Max: 3,
+		Desired: 2, Min: 1, Max: 3, MaxUnavailable: 1,
 	}
 	if diff := cmp.Diff(wantNG, ng); diff != "" {
 		t.Errorf("nodegroup defaults (-want +got):\n%s", diff)

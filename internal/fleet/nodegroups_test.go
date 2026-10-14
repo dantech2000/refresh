@@ -415,12 +415,22 @@ func TestFetch_OneNodegroupFails(t *testing.T) {
 }
 
 // InstanceIDs keeps every instance of every group of a nodegroup, with no
-// instance call: the group call of the AMI read already returns them.
+// instance call: the group call of the AMI read already returns them. The
+// same call gives the Availability Zones of the groups.
 func TestFetch_InstanceIDs(t *testing.T) {
 	world, srv, provider := nodegroupWorld(t)
 	world.Edit(func(s *fleettest.State) {
-		s.Clusters[0].Nodegroups[0].AutoScalingGroups = []string{"asg-web", "asg-web-2"}
-		s.AutoScalingGroups = append(s.AutoScalingGroups, fleettest.AutoScalingGroup{Name: "asg-web-2", InstanceIDs: []string{"i-web-3"}})
+		web := s.Clusters[0].Nodegroups[0]
+		web.AutoScalingGroups = []string{"asg-web", "asg-web-2"}
+		web.MaxUnavailable, web.MaxUnavailablePercentage, web.UpdateStrategy = 0, 25, "MINIMAL"
+		for i := range s.AutoScalingGroups {
+			if s.AutoScalingGroups[i].Name == "asg-web" {
+				s.AutoScalingGroups[i].AvailabilityZones = []string{"us-east-1b", "us-east-1a"}
+			}
+		}
+		s.AutoScalingGroups = append(s.AutoScalingGroups, fleettest.AutoScalingGroup{
+			Name: "asg-web-2", InstanceIDs: []string{"i-web-3"}, AvailabilityZones: []string{"us-east-1c", "us-east-1a"},
+		})
 	})
 	var fetcher fleet.Fetcher
 	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{InstanceIDs: true})
@@ -442,6 +452,13 @@ func TestFetch_InstanceIDs(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("instance IDs (-want +got):\n%s", diff)
+	}
+	web := snap.Nodegroups[5]
+	if diff := cmp.Diff([]string{"us-east-1a", "us-east-1b", "us-east-1c"}, web.Zones); diff != "" {
+		t.Errorf("zones of web (-want +got):\n%s", diff)
+	}
+	if web.MaxUnavailable != 0 || web.MaxUnavailablePercentage != 25 || web.UpdateStrategy != "MINIMAL" {
+		t.Errorf("update config of web = %d, %d%%, %q; want 0, 25%%, MINIMAL", web.MaxUnavailable, web.MaxUnavailablePercentage, web.UpdateStrategy)
 	}
 	for op, want := range map[fleettest.Operation]int{
 		fleettest.AutoScalingDescribeAutoScalingGroups: 1, fleettest.EC2DescribeInstances: 0, fleettest.SSMGetParameter: 0,

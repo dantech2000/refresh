@@ -60,9 +60,10 @@ type Offering struct {
 
 // AutoScalingGroup is an Auto Scaling group and the instances in it.
 type AutoScalingGroup struct {
-	Region      string
-	Name        string
-	InstanceIDs []string
+	Region            string
+	Name              string
+	InstanceIDs       []string
+	AvailabilityZones []string
 }
 
 // ScalingActivity is one activity of an Auto Scaling group.

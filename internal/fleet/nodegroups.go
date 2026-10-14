@@ -139,6 +139,10 @@ func newNodegroup(name string, in *ekstypes.Nodegroup) Nodegroup {
 		n.Desired, n.Min, n.Max = aws.ToInt32(sc.DesiredSize), aws.ToInt32(sc.MinSize), aws.ToInt32(sc.MaxSize)
 		n.SizesKnown = sc.DesiredSize != nil && sc.MinSize != nil && sc.MaxSize != nil
 	}
+	if uc := in.UpdateConfig; uc != nil {
+		n.MaxUnavailable, n.MaxUnavailablePercentage = aws.ToInt32(uc.MaxUnavailable), aws.ToInt32(uc.MaxUnavailablePercentage)
+		n.UpdateStrategy = string(uc.UpdateStrategy)
+	}
 	if in.Resources != nil {
 		for _, g := range in.Resources.AutoScalingGroups {
 			if name := aws.ToString(g.Name); name != "" {
@@ -193,6 +197,7 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 	var (
 		wg        sync.WaitGroup
 		groups    map[string][]string // the instance IDs of each group
+		zones     map[string][]string // the Availability Zones of each group
 		groupsErr error
 	)
 	// The lookups of the nodegroups: one task each, started as the region
@@ -226,7 +231,7 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 		}
 	}
 	if len(groupNames) > 0 {
-		wg.Go(func() { groups, groupsErr = groupInstances(ctx, c, groupNames) })
+		wg.Go(func() { groups, zones, groupsErr = groupInstances(ctx, c, groupNames) })
 	}
 	ran := each(ctx, f.tickets(c), tasks, func(ctx context.Context, t task) bool {
 		// Each task writes its own fields of its own nodegroup.
@@ -273,7 +278,7 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 		case len(members) > 0 && (need.Instances || need.AMI):
 			fromGroupErr = instancesErr
 		}
-		failures = append(failures, n.fill(lookups[i], members, instances, groups, fromGroupErr, need)...)
+		failures = append(failures, n.fill(lookups[i], members, instances, groups, zones, fromGroupErr, need)...)
 	}
 	return failures
 }
@@ -301,7 +306,7 @@ func instancesToRead(nodegroups []Nodegroup, lookups []lookup, groups map[string
 // fill sets the instances and the AMI group of n from what the calls
 // returned, and returns its failures. A failure of the AMI that repeats the
 // failure of the instance list is reported one time.
-func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instance, groups map[string][]string, fromGroupErr error, need Need) []apidoc.Failure {
+func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instance, groups, zones map[string][]string, fromGroupErr error, need Need) []apidoc.Failure {
 	var failures []apidoc.Failure
 	if need.InstanceIDs {
 		n.InstanceIDsState = Collected
@@ -312,7 +317,9 @@ func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instan
 		n.InstanceIDs = make([]string, 0, len(members))
 		for _, g := range n.AutoScalingGroups {
 			n.InstanceIDs = append(n.InstanceIDs, groups[g]...)
+			n.Zones = append(n.Zones, zones[g]...)
 		}
+		n.Zones = slices.Compact(slices.Sorted(slices.Values(n.Zones)))
 	}
 	if need.Instances {
 		n.InstancesState = Collected
@@ -405,8 +412,9 @@ func templateImage(ctx context.Context, c *awsx.Clients, lt LaunchTemplate) (str
 }
 
 // groupInstances returns the instance IDs of each Auto Scaling group, in
-// the order of the group. The chunks of names run together.
-func groupInstances(ctx context.Context, c *awsx.Clients, names []string) (map[string][]string, error) {
+// the order of the group, and the Availability Zones of each group. The
+// chunks of names run together.
+func groupInstances(ctx context.Context, c *awsx.Clients, names []string) (ids, zones map[string][]string, err error) {
 	chunks := slices.Collect(slices.Chunk(names, groupsPerCall))
 	type answer struct {
 		ran    bool
@@ -426,19 +434,19 @@ func groupInstances(ctx context.Context, c *awsx.Clients, names []string) (map[s
 		)
 		return answer{ran: true, groups: groups, err: err}
 	})
-	out := map[string][]string{}
-	var firstErr error
+	ids, zones = map[string][]string{}, map[string][]string{}
 	for _, a := range answers {
-		firstErr = cmp.Or(firstErr, chunkError(ctx, a.ran, a.err))
+		err = cmp.Or(err, chunkError(ctx, a.ran, a.err))
 		for _, g := range a.groups {
-			ids := make([]string, 0, len(g.Instances))
+			members := make([]string, 0, len(g.Instances))
 			for _, inst := range g.Instances {
-				ids = append(ids, aws.ToString(inst.InstanceId))
+				members = append(members, aws.ToString(inst.InstanceId))
 			}
-			out[aws.ToString(g.AutoScalingGroupName)] = ids
+			name := aws.ToString(g.AutoScalingGroupName)
+			ids[name], zones[name] = members, g.AvailabilityZones
 		}
 	}
-	return out, firstErr
+	return ids, zones, err
 }
 
 // chunkError returns the error of one chunk of a batched call. A chunk that

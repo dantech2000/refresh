@@ -264,6 +264,22 @@ func eksListNodegroups(c *call) (any, error) {
 	})
 }
 
+// updateConfigJSON is the update config of a nodegroup, with the fields
+// that it sets.
+func updateConfigJSON(ng *fleettest.Nodegroup) object {
+	out := object{}
+	if ng.MaxUnavailable > 0 {
+		out["maxUnavailable"] = ng.MaxUnavailable
+	}
+	if ng.MaxUnavailablePercentage > 0 {
+		out["maxUnavailablePercentage"] = ng.MaxUnavailablePercentage
+	}
+	if ng.UpdateStrategy != "" {
+		out["updateStrategy"] = ng.UpdateStrategy
+	}
+	return out
+}
+
 func eksDescribeNodegroup(c *call) (any, error) {
 	return c.inCluster(func(s *fleettest.State, cl *fleettest.Cluster) (any, error) {
 		name := c.in.str("nodegroupName")
@@ -283,6 +299,7 @@ func eksDescribeNodegroup(c *call) (any, error) {
 			"instanceTypes":  ng.InstanceTypes,
 			"subnets":        append([]string{}, ng.Subnets...),
 			"scalingConfig":  object{"minSize": ng.Min, "maxSize": ng.Max, "desiredSize": ng.Desired},
+			"updateConfig":   updateConfigJSON(ng),
 			"health":         object{"issues": issuesJSON(ng.HealthIssues)},
 			"createdAt":      epoch(ng.CreatedAt),
 			"modifiedAt":     epoch(ng.ModifiedAt),

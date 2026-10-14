@@ -20,6 +20,7 @@ func autoScalingDescribeGroups(c *call) (any, error) {
 		for _, g := range s.AutoScalingGroups {
 			if c.sees(g.Region) && (len(asked) == 0 || slices.Contains(asked, g.Name)) {
 				g.InstanceIDs = slices.Clone(g.InstanceIDs)
+				g.AvailabilityZones = slices.Clone(g.AvailabilityZones)
 				groups = append(groups, g)
 			}
 		}
@@ -31,6 +32,7 @@ func autoScalingDescribeGroups(c *call) (any, error) {
 	members := each(groups, func(g fleettest.AutoScalingGroup) node {
 		return tag("member",
 			leaf("AutoScalingGroupName", g.Name),
+			tag("AvailabilityZones", each(g.AvailabilityZones, func(az string) node { return leaf("member", az) })...),
 			tag("Instances", each(g.InstanceIDs, func(id string) node {
 				return tag("member", leaf("InstanceId", id), leaf("LifecycleState", "InService"), leaf("HealthStatus", "Healthy"))
 			})...),

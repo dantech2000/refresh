@@ -170,6 +170,7 @@ func newWorld() *fleettest.World {
 					{
 						Name: "ng-a", Version: "1.32", ReleaseVersion: "1.32.0-20250101", CreatedAt: created,
 						Subnets: []string{"subnet-a"}, AutoScalingGroups: []string{"eks-ng-a"},
+						MaxUnavailable: 2, UpdateStrategy: "MINIMAL",
 						LaunchTemplate: &fleettest.LaunchTemplate{ID: "lt-1", Version: "2"},
 						Labels:         map[string]string{"pool": "general"},
 						HealthIssues:   []fleettest.Issue{{Code: "AsgInstanceLaunchFailures", Message: "no capacity"}},
@@ -257,7 +258,7 @@ func newWorld() *fleettest.World {
 			{Region: otherRegion, InstanceType: "m5.large", AvailabilityZone: "eu-west-1a"},
 		}
 		s.AutoScalingGroups = []fleettest.AutoScalingGroup{
-			{Region: region, Name: "eks-ng-a", InstanceIDs: []string{"i-1", "i-2"}},
+			{Region: region, Name: "eks-ng-a", InstanceIDs: []string{"i-1", "i-2"}, AvailabilityZones: []string{"us-east-1a", "us-east-1b"}},
 			{Region: region, Name: "eks-ng-b"},
 			{Region: otherRegion, Name: "eks-ng-a", InstanceIDs: []string{"i-decoy"}},
 		}

@@ -41,6 +41,8 @@ type nodegroupOut struct {
 	Name, Cluster, Version, Release, Status, AMIType, Capacity string
 	InstanceTypes, Subnets, Groups                             []string
 	Desired, Min, Max                                          int32
+	MaxUnavailable                                             int32
+	UpdateStrategy                                             string
 	TemplateID, TemplateVersion                                string
 	Issues                                                     []string
 	Labels                                                     map[string]string
@@ -246,7 +248,7 @@ func eksReadCases() []opCase {
 			Name: "ng-a", Cluster: "prod", Version: "1.32", Release: "1.32.0-20250101", Status: "ACTIVE",
 			AMIType: "AL2023_x86_64_STANDARD", Capacity: "ON_DEMAND", InstanceTypes: []string{"m5.large"},
 			Subnets: []string{"subnet-a"}, Groups: []string{"eks-ng-a"}, Desired: 2, Min: 1, Max: 3,
-			TemplateID: "lt-1", TemplateVersion: "2", Issues: []string{"AsgInstanceLaunchFailures: no capacity"},
+			MaxUnavailable: 2, UpdateStrategy: "MINIMAL", TemplateID: "lt-1", TemplateVersion: "2", Issues: []string{"AsgInstanceLaunchFailures: no capacity"},
 			Labels: map[string]string{"pool": "general"}, Created: created, Modified: worldStart,
 		}}, func(ctx context.Context, c *clients, _ *string) ([]nodegroupOut, *string, error) {
 			out, err := c.eks.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-a")})
@@ -259,6 +261,7 @@ func eksReadCases() []opCase {
 				Release: aws.ToString(ng.ReleaseVersion), Status: string(ng.Status), AMIType: string(ng.AmiType),
 				Capacity: string(ng.CapacityType), InstanceTypes: ng.InstanceTypes, Subnets: ng.Subnets,
 				Desired: aws.ToInt32(ng.ScalingConfig.DesiredSize), Min: aws.ToInt32(ng.ScalingConfig.MinSize), Max: aws.ToInt32(ng.ScalingConfig.MaxSize),
+				MaxUnavailable: aws.ToInt32(ng.UpdateConfig.MaxUnavailable), UpdateStrategy: string(ng.UpdateConfig.UpdateStrategy),
 				TemplateID: aws.ToString(ng.LaunchTemplate.Id), TemplateVersion: aws.ToString(ng.LaunchTemplate.Version),
 				Labels: ng.Labels, Created: aws.ToTime(ng.CreatedAt).UTC(), Modified: aws.ToTime(ng.ModifiedAt).UTC(),
 				Issues: issueCodes(ng.Health.Issues, func(i ekstypes.Issue) string {
@@ -610,7 +613,7 @@ func ec2Cases() []opCase {
 func autoScalingCases() []opCase {
 	worldStart, created := seedTimes()
 	return []opCase{
-		pagedCase(fleettest.AutoScalingDescribeAutoScalingGroups, []string{"eks-ng-a: i-1 i-2", "eks-ng-b:"},
+		pagedCase(fleettest.AutoScalingDescribeAutoScalingGroups, []string{"eks-ng-a: i-1 i-2 in us-east-1a us-east-1b", "eks-ng-b: in"},
 			func(ctx context.Context, c *clients, token *string) ([]string, *string, error) {
 				out, err := c.asg.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
 					AutoScalingGroupNames: []string{"eks-ng-a", "eks-ng-b", "eks-gone"}, NextToken: token,
@@ -623,6 +626,10 @@ func autoScalingCases() []opCase {
 					line := aws.ToString(g.AutoScalingGroupName) + ":"
 					for _, i := range g.Instances {
 						line += " " + aws.ToString(i.InstanceId)
+					}
+					line += " in"
+					for _, az := range g.AvailabilityZones {
+						line += " " + az
 					}
 					got = append(got, line)
 				}
