@@ -391,6 +391,7 @@ func TestInsightsRefresh_StaleCompletionIsNotCurrent(t *testing.T) {
 	// of the run is refused. From the second describe on, the describe
 	// shows that old refresh while lag lasts: lag < 0 is for ever.
 	staleWorld := func(t *testing.T, lag int) *env {
+		t.Helper()
 		world := engineWorld(nil)
 		if err := world.StartInsightsRefresh(east, "prod"); err != nil {
 			t.Fatal(err)

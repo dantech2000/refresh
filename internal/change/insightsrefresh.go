@@ -132,41 +132,21 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 
 	ir.say("refreshing the cluster insights of %s (waits up to %s)", t.Cluster, insightsRefreshLimit)
 	began := ir.d.now()
-	// old is the refresh that ended before the run, from the describe
-	// while the start was refused; nil when there was none. stale says
-	// that the describe showed it again after EKS accepted the start.
-	var old *eks.DescribeInsightsRefreshOutput
-	stale := false
 	start := func() error {
 		_, err := clients.EKS.StartInsightsRefresh(wctx, &eks.StartInsightsRefreshInput{ClusterName: name})
 		return err
 	}
-	startErr := start()
-	// rejected is the last refusal of a start that is read as a scheduled
-	// refresh. The code has other meanings too, so a wait that ends with
-	// the start still refused reports it.
-	var rejected error
-	startAgain, noted := false, false
-	timedOut := func() error {
-		if rejected != nil {
-			return &refreshError{msg: fmt.Sprintf("starting an insights refresh for cluster %s (still refused after %s)", t.Cluster, insightsRefreshLimit), err: rejected}
-		}
-		if stale {
-			return fmt.Errorf("%w (%s): EKS still showed the refresh that started at %s, before this run asked for one",
-				errInsightsRefreshTimeout, insightsRefreshLimit, orUnknown(timeText(aws.ToTime(old.StartedAt))))
-		}
-		return fmt.Errorf("%w (%s)", errInsightsRefreshTimeout, insightsRefreshLimit)
-	}
+	st := refreshStart{err: start()}
 	o := WaitOptions{Interval: ir.poll, After: ir.d.after, budget: limit}
 	for {
-		if startAgain {
-			startAgain = false
-			startErr = start()
+		if st.again {
+			st.again = false
+			st.err = start()
 			switch {
-			case awsx.ErrorCode(startErr) == codeInvalidRequest:
-				rejected = startErr
-			case startErr == nil, wctx.Err() == nil:
-				rejected = nil
+			case awsx.ErrorCode(st.err) == codeInvalidRequest:
+				st.rejected = st.err
+			case st.err == nil, wctx.Err() == nil:
+				st.rejected = nil
 			}
 		}
 		out, err := poll.EKS.DescribeInsightsRefresh(wctx, &eks.DescribeInsightsRefreshInput{ClusterName: name})
@@ -174,46 +154,24 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 		case ctx.Err() != nil:
 			return ctx.Err()
 		case wctx.Err() != nil:
-			return timedOut()
-		case startErr != nil:
-			switch {
-			case err == nil && out.Status == ekstypes.InsightsRefreshStatusInProgress:
-				startErr, rejected = nil, nil
-				ir.say("an insights refresh is already running for %s; waiting for it", t.Cluster)
-			case awsx.ErrorCode(startErr) == codeInvalidRequest && awsx.ErrorCode(err) == codeNotFound:
-				if !noted {
-					noted = true
-					ir.say("EKS is running a scheduled insights refresh for %s; waiting for it to end", t.Cluster)
-				}
-				rejected, startAgain = startErr, true
-			case awsx.ErrorCode(startErr) == codeInvalidRequest && err == nil:
-				// The refresh that the describe shows has ended: a
-				// scheduled one that ended since the start was refused, or
-				// an older one. Neither is a refresh of this run, so the
-				// start is tried again, and a refresh that ends later
-				// counts only when it is newer.
-				rejected, startAgain = startErr, true
-				if old == nil || newerRefresh(out, old) {
-					old = out
-				}
-			case awsx.ErrorCode(startErr) == codeNotFound:
-				return &refreshError{msg: fmt.Sprintf("EKS has not made cluster insights available for %s yet (a new cluster can take 15 minutes); run again later", t.Cluster), err: startErr}
-			default:
-				return &refreshError{msg: "starting an insights refresh for cluster " + t.Cluster, err: startErr}
+			return st.timedOut(t)
+		case st.err != nil:
+			if err := st.refused(ir, t, out, err); err != nil {
+				return err
 			}
 		case err != nil:
 			if awsx.IsPermanentAPIError(err) {
 				return &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster, err: err}
 			}
 			ir.say("checking the insights refresh of %s: %s; still waiting", t.Cluster, awsx.Summary(err))
-		case old != nil && out.Status != ekstypes.InsightsRefreshStatusInProgress && !newerRefresh(out, old):
+		case st.old != nil && out.Status != ekstypes.InsightsRefreshStatusInProgress && !newerRefresh(out, st.old):
 			// EKS accepted the start, and the describe still shows the
 			// refresh that ended before. It says nothing about the
 			// insights now.
-			if !stale {
+			if !st.stale {
 				ir.say("EKS still shows the earlier insights refresh of %s; waiting for the one this run started", t.Cluster)
 			}
-			stale = true
+			st.stale = true
 		case out.Status == ekstypes.InsightsRefreshStatusCompleted:
 			if ir.done == nil {
 				ir.done = map[string]time.Time{}
@@ -233,9 +191,71 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return timedOut()
+			return st.timedOut(t)
 		}
 	}
+}
+
+// refreshStart is the state of the start of one refresh in wait.
+type refreshStart struct {
+	// err is the refusal of the last start, nil once EKS accepted one or
+	// the wait follows a refresh in progress.
+	err error
+	// rejected is the last refusal of a start that is read as a scheduled
+	// refresh. The code has other meanings too, so a wait that ends with
+	// the start still refused reports it.
+	rejected error
+	// again says to send the start once more before the next describe.
+	again bool
+	// noted says that the scheduled refresh was reported.
+	noted bool
+	// old is the refresh that ended before the run, from the describe
+	// while the start was refused; nil when there was none. stale says
+	// that the describe showed it again after EKS accepted the start.
+	old   *eks.DescribeInsightsRefreshOutput
+	stale bool
+}
+
+// refused handles the answer of the describe while the start is refused.
+// An error ends the wait.
+func (st *refreshStart) refused(ir *insightsRefresher, t Target, out *eks.DescribeInsightsRefreshOutput, err error) error {
+	switch {
+	case err == nil && out.Status == ekstypes.InsightsRefreshStatusInProgress:
+		st.err, st.rejected = nil, nil
+		ir.say("an insights refresh is already running for %s; waiting for it", t.Cluster)
+	case awsx.ErrorCode(st.err) == codeInvalidRequest && awsx.ErrorCode(err) == codeNotFound:
+		if !st.noted {
+			st.noted = true
+			ir.say("EKS is running a scheduled insights refresh for %s; waiting for it to end", t.Cluster)
+		}
+		st.rejected, st.again = st.err, true
+	case awsx.ErrorCode(st.err) == codeInvalidRequest && err == nil:
+		// The refresh that the describe shows has ended: a scheduled one
+		// that ended since the start was refused, or an older one.
+		// Neither is a refresh of this run, so the start is tried again,
+		// and a refresh that ends later counts only when it is newer.
+		st.rejected, st.again = st.err, true
+		if st.old == nil || newerRefresh(out, st.old) {
+			st.old = out
+		}
+	case awsx.ErrorCode(st.err) == codeNotFound:
+		return &refreshError{msg: fmt.Sprintf("EKS has not made cluster insights available for %s yet (a new cluster can take 15 minutes); run again later", t.Cluster), err: st.err}
+	default:
+		return &refreshError{msg: "starting an insights refresh for cluster " + t.Cluster, err: st.err}
+	}
+	return nil
+}
+
+// timedOut returns the error of a wait that reached its limit.
+func (st *refreshStart) timedOut(t Target) error {
+	if st.rejected != nil {
+		return &refreshError{msg: fmt.Sprintf("starting an insights refresh for cluster %s (still refused after %s)", t.Cluster, insightsRefreshLimit), err: st.rejected}
+	}
+	if st.stale {
+		return fmt.Errorf("%w (%s): EKS still showed the refresh that started at %s, before this run asked for one",
+			errInsightsRefreshTimeout, insightsRefreshLimit, orUnknown(timeText(aws.ToTime(st.old.StartedAt))))
+	}
+	return fmt.Errorf("%w (%s)", errInsightsRefreshTimeout, insightsRefreshLimit)
 }
 
 // newerRefresh reports whether the refresh that out describes started
