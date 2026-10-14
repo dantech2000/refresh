@@ -184,6 +184,11 @@ func Start(ctx context.Context, d Deps, req Request) *Handle {
 	if roll, ok := req.(RollRequest); ok && roll.Fleet != nil {
 		h.checkpoints = true
 	}
+	// A run with a reviewed plan announces a plan only when the live one
+	// differs: the reviewed plan is what the view starts from.
+	if expect := req.base().Expect; expect != nil {
+		h.event(Event{At: h.startedAt, Kind: PlanReady, Plan: expect})
+	}
 	go h.run(func(hooks Hooks) (Result, error) { return Run(ctx, d, req, hooks) })
 	return h
 }
@@ -525,11 +530,19 @@ func (h *Handle) Resume() error {
 		return ErrNotPaused
 	}
 	h.pause = false
-	if h.state == Paused {
-		close(h.resume)
-	}
+	h.resumeLocked()
 	h.bumpLocked()
 	return nil
+}
+
+// resumeLocked wakes a paused checkpoint, once: a resume and a stop can
+// both come before the checkpoint has read the first. The caller holds
+// h.mu.
+func (h *Handle) resumeLocked() {
+	if h.state == Paused && h.resume != nil {
+		close(h.resume)
+		h.resume = nil
+	}
 }
 
 // Stop asks the run to end at its next checkpoint: nothing more is
@@ -543,9 +556,7 @@ func (h *Handle) Stop() error {
 		return err
 	}
 	h.stop = true
-	if h.state == Paused {
-		close(h.resume)
-	}
+	h.resumeLocked()
 	if q := h.question; q != nil {
 		_ = h.resolve(q.ID, answeredNo)
 	}
