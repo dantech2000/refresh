@@ -150,10 +150,7 @@ func (r *runner) startRoll(cp *ClusterPlan, s Step) StepResult {
 //
 // Rows 2 to 5 compare everything that DecideAMIUpdate read for the plan
 // and that one DescribeNodegroup returns: the status, the AMI type, and
-// the AMI release version.
-//
-// A request that EKS refuses, or that fails, is Failed. A request that
-// EKS accepts with no update ID is InProgress, and cannot be followed.
+// the AMI release version. sendRoll sends the request.
 func (r *runner) submitRoll(cp *ClusterPlan, s Step) StepResult {
 	res := StepResult{Ref: s.Ref}
 	resource := s.Ref.Resource()
@@ -191,8 +188,18 @@ func (r *runner) submitRoll(cp *ClusterPlan, s Step) StepResult {
 	if err := r.readCtx.Err(); err != nil {
 		return r.unsent(cp, res, err)
 	}
+	return r.sendRoll(cp, res, s, fresh.Version)
+}
+
+// sendRoll sends the roll of the nodegroup of step s: UpdateNodegroupVersion
+// with version and the force of the step, under the read budget. It is
+// the request of submitRoll and of submitEngineRoll, after their own
+// guards. A request that EKS refuses, or that fails, is Failed. A request
+// that EKS accepts with no update ID is InProgress, and cannot be
+// followed.
+func (r *runner) sendRoll(cp *ClusterPlan, res StepResult, s Step, version string) StepResult {
 	res.StartedAt = r.d.now()
-	id, err := StartNodegroupRoll(r.readCtx, clients, cp.Target, s.Ref.Name, fresh.Version, s.Force)
+	id, err := StartNodegroupRoll(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Target, s.Ref.Name, version, s.Force)
 	switch {
 	case err != nil:
 		return r.unsent(cp, res, err)

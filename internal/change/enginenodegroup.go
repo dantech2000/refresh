@@ -131,23 +131,12 @@ func (r *runner) verifySettled(ctx context.Context, cp *ClusterPlan, ph Phase, s
 // upgrade hop or of a rollback, after the baseline of the batch:
 // guardSubmit, and then the request. guardSubmit reads the cluster again
 // and decides whether the roll may start: the control plane, the health
-// gate, and the nodegroup itself. The request is UpdateNodegroupVersion
-// with the version and the force of the step.
+// gate, and the nodegroup itself. sendRoll sends the request with the
+// version and the force of the step.
 func (r *runner) submitEngineRoll(cp *ClusterPlan, s Step) StepResult {
 	res := StepResult{Ref: s.Ref}
 	if out, ok := r.guardSubmit(cp, s, res); !ok {
 		return out
 	}
-	res.StartedAt = r.d.now()
-	id, err := StartNodegroupRoll(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Target, s.Ref.Name, s.To, s.Force)
-	switch {
-	case err != nil:
-		return r.unsent(cp, res, err)
-	case id == "":
-		res.Status = StepInProgress
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the roll of nodegroup "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")
-		return res
-	}
-	res.Status, res.UpdateID = StepStarted, id
-	return res
+	return r.sendRoll(cp, res, s, s.To)
 }
