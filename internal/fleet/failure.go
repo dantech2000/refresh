@@ -25,6 +25,9 @@ func FailureFromError(kind apidoc.FailureKind, name string, err error) apidoc.Fa
 		reason = apidoc.ReasonRegionUnavailable
 	}
 	msg := awsx.Summary(err)
+	if host, ok := awsx.UnknownEndpoint(err); ok {
+		msg = awsx.UnknownRegionMessage(host)
+	}
 	if msg == "" {
 		msg = "unknown error"
 	}

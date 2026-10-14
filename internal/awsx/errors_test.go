@@ -309,6 +309,10 @@ func TestFormatAWSError_DNSFailureKeepsTheRegionPath(t *testing.T) {
 	if IsRegionError(dns) && strings.HasPrefix(got, "network connectivity issue") {
 		t.Errorf("an invalid region's DNS failure lost its region help:\n%s", got)
 	}
+	want := "Cause: not a region where EKS answers: eks.us-bogus-1.amazonaws.com does not resolve; check the region name"
+	if !strings.Contains(got, want) {
+		t.Errorf("message:\n%s\nwant the line %q", got, want)
+	}
 }
 
 // A credential chain that ended at IMDS is "no credentials", with the

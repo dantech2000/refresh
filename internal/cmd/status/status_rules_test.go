@@ -199,3 +199,51 @@ func TestStatus_MalformedEnvRegion(t *testing.T) {
 		t.Errorf("requests = %v, want none", ops)
 	}
 }
+
+// A region name of the right shape whose endpoint does not resolve is not
+// a region where EKS answers. The error says so, and does not blame the
+// account for a region it has not enabled.
+func TestStatus_UnknownRegion(t *testing.T) {
+	const unknown = "us-east-9"
+	newUnknown := func(t *testing.T) *cmdtest.Fake {
+		e := newFake(t)
+		cmdutiltest.UseAWS(e.Factory, awsxtest.WithUnknownRegions(e.Server.Config(east), unknown))
+		return e
+	}
+	wantMsg := "not a region where EKS answers: eks.us-east-9.amazonaws.com does not resolve; check the region name"
+
+	t.Run("the only region", func(t *testing.T) {
+		e := newUnknown(t)
+		err := e.Run(cmdutiltest.Context(t), "status", "-r", unknown)
+		if err == nil || !strings.Contains(err.Error(), wantMsg) {
+			t.Fatalf("error = %v, want one that contains %q", err, wantMsg)
+		}
+		if strings.Contains(err.Error(), "opt-in") {
+			t.Errorf("error = %v, want no opt-in diagnosis", err)
+		}
+		if got := cmdutil.ExitCode(err); got != cmdutil.ExitFailure {
+			t.Errorf("exit code = %d, want %d", got, cmdutil.ExitFailure)
+		}
+	})
+
+	t.Run("one region of a sweep", func(t *testing.T) {
+		e := newUnknown(t)
+		t.Setenv("REFRESH_EKS_REGIONS", east+","+unknown)
+		err := e.Run(cmdutiltest.Context(t), "status", "-A", "-o", "json")
+		if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
+			t.Fatalf("exit code = %d (error: %v), want %d", got, err, cmdutil.ExitIncomplete)
+		}
+		var doc struct {
+			Failures []apidoc.Failure `json:"failures"`
+		}
+		if err := json.Unmarshal(e.Out.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		if len(doc.Failures) != 1 || doc.Failures[0].Name != unknown || doc.Failures[0].Error != wantMsg {
+			t.Errorf("failures = %+v, want one for %s with the message %q", doc.Failures, unknown, wantMsg)
+		}
+		if !strings.Contains(e.Err.String(), wantMsg) {
+			t.Errorf("stderr = %q, want %q", e.Err, wantMsg)
+		}
+	})
+}

@@ -139,7 +139,14 @@ func SweepError(ctx context.Context, p *awsx.Provider, res *fleet.SweepResult) e
 	}
 	lookalike := len(res.Skipped) > 0
 	var closed error // the first region that refused the credentials as closed
+	unknown := 0     // the regions whose endpoint does not resolve
 	for i, err := range res.Errs {
+		// A name of the shape of a region that AWS does not have: no
+		// credential or account setting explains it.
+		if _, ok := awsx.UnknownEndpoint(err); ok {
+			unknown++
+			continue
+		}
 		switch res.Failures[i].Reason {
 		case apidoc.ReasonCredentialError:
 			// FormatAWSError writes the headline and the help for a
@@ -168,6 +175,13 @@ func SweepError(ctx context.Context, p *awsx.Provider, res *fleet.SweepResult) e
 		}
 	}
 	regions := len(res.Regions.Names)
+	if unknown > 0 && unknown == len(res.Errs) && len(res.Skipped) == 0 {
+		var names []string
+		for _, f := range res.Failures {
+			names = append(names, f.Name+": "+f.Error)
+		}
+		return fmt.Errorf("no region answered\n%s", strings.Join(names, "\n"))
+	}
 	if len(res.Errs) == 0 {
 		return fmt.Errorf("could not list clusters in any of %d region(s): none is accessible to these credentials; %s",
 			regions, regionScopeHint)

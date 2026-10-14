@@ -1,8 +1,11 @@
 package awsx
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"regexp"
+	"strings"
 )
 
 // regionPattern is the shape of an AWS region name: a partition prefix of
@@ -20,4 +23,23 @@ func CheckRegion(name string) error {
 		return nil
 	}
 	return fmt.Errorf("%q is not a region name: a region name is a partition prefix, a geographic word, and a number, such as us-east-1, us-gov-west-1, or cn-north-1", name)
+}
+
+// UnknownEndpoint returns the host of the AWS endpoint that err failed to
+// find, when err is a DNS lookup of an AWS host that found no such host. A
+// region name of the right shape that is not a region, such as us-east-9,
+// fails this way: AWS has no endpoint for it.
+func UnknownEndpoint(err error) (host string, ok bool) {
+	var dns *net.DNSError
+	if !errors.As(err, &dns) || !dns.IsNotFound || !isAWSHost(dns.Name) {
+		return "", false
+	}
+	return strings.TrimSuffix(strings.ToLower(dns.Name), "."), true
+}
+
+// UnknownRegionMessage says that EKS does not answer in a region because
+// its endpoint host does not resolve. It does not blame the account: an
+// opt-in region that is not enabled still resolves.
+func UnknownRegionMessage(host string) string {
+	return "not a region where EKS answers: " + host + " does not resolve; check the region name"
 }

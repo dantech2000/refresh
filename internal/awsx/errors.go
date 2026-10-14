@@ -445,7 +445,16 @@ Set a valid region:
   -r <region>              for this command (status and the fleet commands take several)
   AWS_REGION=<region>      for this shell
   region = <region>        in the profile in ~/.aws/config
-  common regions           us-east-1, us-west-2, eu-west-1, ap-southeast-1`, operation, Summary(err))
+  common regions           us-east-1, us-west-2, eu-west-1, ap-southeast-1`, operation, regionCause(err))
+}
+
+// regionCause is the Cause line of a region error. An endpoint that does
+// not resolve names a region that AWS does not have.
+func regionCause(err error) string {
+	if host, ok := UnknownEndpoint(err); ok {
+		return UnknownRegionMessage(host)
+	}
+	return Summary(err)
 }
 
 func formatCredentialError(err error) error {
