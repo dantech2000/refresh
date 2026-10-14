@@ -55,8 +55,8 @@ func TestEngine_UnsettledNodegroupRollingElsewhereIsBusy(t *testing.T) {
 		id := rollElsewhere(t, world, "ng-a", "1.32")
 		e := newEnv(t, world)
 		res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
-		if res.ExitCode() != exitcode.Blocked || len(e.sent()) != 0 {
-			t.Errorf("status = %s, exit %d, requests %v; want exit 3 and no request", res.Status, res.ExitCode(), e.sent())
+		if res.Status != Refused || res.ExitCode() != exitcode.Blocked || len(e.sent()) != 0 {
+			t.Errorf("status = %s, exit %d, requests %v; want Refused, exit 3, and no request", res.Status, res.ExitCode(), e.sent())
 		}
 		want := "nodegroup ng-a is rolling to 1.32 (update " + id + "), not to 1.33"
 		if res.Err == nil || !strings.Contains(res.Err.Error(), want) {
@@ -68,12 +68,28 @@ func TestEngine_UnsettledNodegroupRollingElsewhereIsBusy(t *testing.T) {
 		id := rollElsewhere(t, world, "ng-a", "1.33")
 		e := newEnv(t, world)
 		res := mustRun(t, e, rollbackOf(), Hooks{})
-		if res.ExitCode() != exitcode.Blocked || len(e.sent()) != 0 {
-			t.Errorf("status = %s, exit %d, requests %v; want exit 3 and no request", res.Status, res.ExitCode(), e.sent())
+		if res.Status != Refused || res.ExitCode() != exitcode.Blocked || len(e.sent()) != 0 {
+			t.Errorf("status = %s, exit %d, requests %v; want Refused, exit 3, and no request", res.Status, res.ExitCode(), e.sent())
 		}
 		want := "nodegroup ng-a is rolling to 1.33 (update " + id + "), not to 1.32"
 		if res.Err == nil || !strings.Contains(res.Err.Error(), want) {
 			t.Errorf("message = %v, want %q", res.Err, want)
+		}
+	})
+	t.Run("a dry run shows the refusal", func(t *testing.T) {
+		world := upgradedWorld(longRolls)
+		id := rollElsewhere(t, world, "ng-a", "1.32")
+		e := newEnv(t, world)
+		p, err := NewPlan(testContext(t), e.deps, upgradeTo("1.33"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Decision() != DecisionBlocked || p.ExitCode() != exitcode.Blocked {
+			t.Errorf("decision = %s, exit %d; want Blocked, exit 3", p.Decision(), p.ExitCode())
+		}
+		want := "nodegroup ng-a is rolling to 1.32 (update " + id + "), not to 1.33"
+		if bs := p.Clusters[0].Blockers; len(bs) != 1 || bs[0].Kind != BlockerBusy || bs[0].Step == nil || !strings.Contains(bs[0].Message, want) {
+			t.Errorf("blockers = %+v, want one Busy blocker of ng-a with %q", bs, want)
 		}
 	})
 	t.Run("an update of another type is not attached to", func(t *testing.T) {

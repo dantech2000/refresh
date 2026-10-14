@@ -216,7 +216,9 @@ func rollTargetsOf(steps []Step) []string {
 //
 // The busy rule takes every step of the plan as a step of the run: a
 // control plane that someone else is changing refuses the plan, and the
-// run attaches to its own work.
+// run attaches to its own work. A nodegroup at the goal of its step and
+// UPDATING is its own work only when the update in flight rolls it to
+// that goal (foreignRolls).
 //
 // The gate is health.Preflight over every nodegroup that the plan would
 // roll, in any hop, so a drain blocker of the last nodegroup is known
@@ -225,12 +227,48 @@ func rollTargetsOf(steps []Step) []string {
 // that rolls no nodegroup, run no gate.
 func (cp *ClusterPlan) gateEngine(ctx context.Context, d Deps, kind Kind, policy health.Policy) {
 	refuse, notices := Busy(cp.snapshot, kind, cp.Steps())
+	refuse = append(refuse, cp.foreignRolls(ctx, d.AWS.Clients(cp.Region), kind)...)
 	cp.Blockers = append(cp.Blockers, refuse...)
 	cp.Notices = append(cp.Notices, notices...)
 	if len(refuse) > 0 {
 		return
 	}
 	cp.gateNodegroups(ctx, d, policy, rollTargetsOf(cp.Steps()), false)
+}
+
+// foreignRolls applies foreignRoll to the plan: for each Verify step of
+// a nodegroup that the plan read as UPDATING, it looks up the update in
+// flight, once for each nodegroup, and returns a Busy blocker when that
+// update is not a roll to the goal of the step. The lookup is a read, so
+// a dry run refuses too.
+func (cp *ClusterPlan) foreignRolls(ctx context.Context, c *awsx.Clients, kind Kind) []Blocker {
+	type lookup struct {
+		u   InFlightUpdate
+		err error
+	}
+	seen := map[string]lookup{}
+	var out []Blocker
+	for _, ph := range cp.Phases {
+		for _, s := range ph.Steps {
+			if s.Ref.Kind != StepNodegroup || s.Action != Verify {
+				continue
+			}
+			i := slices.IndexFunc(cp.snapshot.Nodegroups, func(n fleet.Nodegroup) bool { return n.Name == s.Ref.Name })
+			if i < 0 || cp.snapshot.Nodegroups[i].State != fleet.Collected || cp.snapshot.Nodegroups[i].Status != nodegroupUpdating {
+				continue
+			}
+			l, ok := seen[s.Ref.Name]
+			if !ok {
+				l.u, l.err = inFlightUpdate(ctx, c, s.Ref.Resource())
+				seen[s.Ref.Name] = l
+			}
+			if msg := foreignRoll(kind, s.Ref.Name, s.To, l.u, l.err); msg != "" {
+				ref := s.Ref
+				out = append(out, Blocker{Kind: BlockerBusy, Step: &ref, Message: cp.Cluster + " is busy (" + msg + "); nothing was started. Run it again once that finishes"})
+			}
+		}
+	}
+	return out
 }
 
 // engineCommand returns the command line that runs the request again, for
