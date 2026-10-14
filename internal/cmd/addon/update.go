@@ -3,6 +3,7 @@ package addon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cmd/changecmd"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/fleet"
 )
 
 // addonWaitTimeout is the default of --wait-timeout: for each add-on.
@@ -135,6 +137,10 @@ func (o *updateOptions) validate() error {
 		return errors.New("--version needs exactly one add-on")
 	case len(o.skip) > 0 && !o.all:
 		return errors.New("--skip-addon needs --all")
+	// A valid version that the add-on does not list is for the plan to
+	// say; a string that is no version at all is a typing error.
+	case o.version != "" && !fleet.ValidAddonVersion(o.version):
+		return fmt.Errorf("invalid --version %q: not an add-on version, such as v1.11.4-eksbuild.2", o.version)
 	}
 	return o.change.Validate()
 }

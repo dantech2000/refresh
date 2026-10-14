@@ -144,7 +144,7 @@ HEALTH GATE
 |---|---|
 | `--all` | Update every installed add-on, in dependency order. |
 | `--skip-addon` | An add-on that `--all` leaves out. Repeat it, or separate the names with commas. |
-| `--version` | The add-on version to move to, with exactly one add-on. |
+| `--version` | The add-on version to move to, with exactly one add-on, such as `v1.11.4-eksbuild.2`. A string that is not a version is an error before any request. A version that the add-on does not list for the Kubernetes version of the cluster is an error that lists the supported versions. |
 | `--wait-timeout` | How long to wait for each add-on. Default `5m`. |
 
 The [shared flags](../concepts/configuration.md#flags-of-every-changing-command)

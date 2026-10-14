@@ -306,6 +306,7 @@ func TestUpdate_UsageErrors(t *testing.T) {
 		{"names and all", []string{"vpc-cni", "--all", "--yes"}, "name the add-ons or pass --all, not both"},
 		{"version for two", []string{"vpc-cni", "coredns", "--version", "v1", "--yes"}, "--version needs exactly one add-on"},
 		{"version with all", []string{"--all", "--version", "v1", "--yes"}, "--version needs exactly one add-on"},
+		{"version that is not a version", []string{"coredns", "--version", "garbage", "--yes"}, `invalid --version "garbage": not an add-on version, such as v1.11.4-eksbuild.2`},
 		{"skip without all", []string{"vpc-cni", "--skip-addon", "coredns", "--yes"}, "--skip-addon needs --all"},
 		{"dry run with no wait", []string{"vpc-cni", "--dry-run", "--no-wait"}, "--dry-run changes nothing"},
 		{"poll interval", []string{"vpc-cni", "--yes", "--poll-interval", "0s"}, "invalid --poll-interval"},
