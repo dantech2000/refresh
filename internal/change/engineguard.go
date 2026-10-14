@@ -185,6 +185,9 @@ func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap
 //  2. EKS is changing it: Blocked. Someone started a change after the
 //     fresh read of the step. The next run attaches to it.
 //  3. Its version meets the phase now: Skipped.
+//  4. The request would go the wrong way: Blocked. A rollback never sends
+//     a version above the live one, and an upgrade never one below it.
+//     Someone moved the add-on since the plan.
 func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot) (StepResult, bool) {
 	name := s.Ref.Name
 	i := slices.IndexFunc(snap.Addons, func(a fleet.Addon) bool { return a.Name == name })
@@ -204,8 +207,19 @@ func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet
 		r.notice(fmt.Sprintf("add-on %s is at %s now; nothing was sent", name, a.Version))
 		res.Status = StepSkipped
 		return res, false
+	case !addonDirection(r.req.kind(), a.Version, s.To):
+		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, wrongAddonDirection(r.req.kind(), name, a.Version, s.To)), false
 	}
 	return res, true
+}
+
+// wrongAddonDirection is the message of an add-on step whose request
+// would go the wrong way from the live version.
+func wrongAddonDirection(kind Kind, name, live, goal string) string {
+	if kind == ClusterRollback {
+		return fmt.Sprintf("add-on %s is at %s now, and the plan moves it to %s, which is newer: a rollback does not upgrade an add-on; it was not changed. Run the command again", name, live, goal)
+	}
+	return fmt.Sprintf("add-on %s is at %s now, and the plan moves it to %s, which is older: an upgrade does not downgrade an add-on; it was not changed. Run the command again", name, live, goal)
 }
 
 // guardNodegroup is what the roll of a nodegroup needs, on the read of

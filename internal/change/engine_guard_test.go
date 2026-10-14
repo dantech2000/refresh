@@ -669,3 +669,31 @@ func TestEngineGuard_UnreadInsightsAreReported(t *testing.T) {
 		t.Errorf("exit = %d with the failures %v; want 4 and the insights failure", res.ExitCode(), res.Failures)
 	}
 }
+
+// The guard holds the direction of an add-on step against the read right
+// before the request: a rollback never sends a version above the live one.
+// Someone moves vpc-cni below the build of the plan, to one that the
+// rollback target does not list, while the rollback runs.
+func TestEngineGuard_AddonRollbackNeverUpgrades(t *testing.T) {
+	const older = "v1.18.0-eksbuild.1"
+	world := upgradedWorld(func(s *fleettest.State, _ *fleettest.Cluster) {
+		s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{Addon: "vpc-cni", Version: older, ClusterVersions: []string{"1.31"}})
+	})
+	e := newEnv(t, world)
+	moved := false
+	hooks := Hooks{Checkpoint: func(_ context.Context, next StepRef) (Checkpoint, error) {
+		if next.Phase.Kind == PhaseAddons && next.Kind == "" && !moved {
+			moved = true
+			startElsewhere(t, world, "vpc-cni", older, fleettest.UpdateScript{After: 30 * time.Second})
+		}
+		return Checkpoint{}, nil
+	}}
+	res := mustRun(t, e, rollbackOf(), hooks)
+	if !moved {
+		t.Fatal("the run did not reach the add-on phase")
+	}
+	if want := "eks:UpdateAddon vpc-cni " + cni32; slices.Contains(e.sent(), want) {
+		t.Errorf("requests %v: the rollback upgraded vpc-cni from %s", e.sent(), older)
+	}
+	wantBlocked(t, stepResultOf(t, res, StepAddon, "vpc-cni"), "vpc-cni", older, cni32, "a rollback does not upgrade an add-on")
+}

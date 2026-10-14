@@ -73,7 +73,10 @@ func (p *rollbackPlanner) nodegroupSteps() []Step {
 //  1. Not read, or its catalogue could not be read: Blocked.
 //  2. EKS publishes no version for the target: Blocked.
 //  3. The installed version is in the catalogue of the target: Skip.
-//  4. Otherwise: Submit, to the newest version of that catalogue.
+//  4. The catalogue has a version at or below the installed one: Submit,
+//     to the newest of those.
+//  5. Otherwise: Blocked. Every version that the target runs is newer
+//     than the installed one, and a rollback never upgrades an add-on.
 func (p *rollbackPlanner) addonSteps() []Step {
 	target := p.cp.To
 	phase := PhaseRef{Target: p.cp.Target, Kind: PhaseAddons}
@@ -101,7 +104,13 @@ func (p *rollbackPlanner) addonSteps() []Step {
 		case addonVersionListed(a.Version, versions):
 			step.Action, step.Reason, step.To = Skip, AlreadyAtTarget, a.Version
 		default:
-			step.Action, step.Reason, step.To = Submit, VersionAhead, versions[0]
+			to, ok := newestAtOrBelow(a.Version, versions)
+			if !ok {
+				p.block(BlockerUnavailable, &step.Ref, "%s is at %s, and every version of it that %s runs is newer (newest %s); a rollback does not upgrade an add-on. Move it to a version that %s runs yourself",
+					name, a.Version, target, versions[0], target)
+				break
+			}
+			step.Action, step.Reason, step.To = Submit, VersionAhead, to
 		}
 		steps = append(steps, step)
 	}

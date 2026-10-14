@@ -38,6 +38,28 @@ func addonDone(kind Kind, version, goal string) bool {
 	return order >= 0
 }
 
+// addonDirection reports whether moving an add-on from the version live
+// to goal goes the way of the change, or stays: down for a rollback, and
+// up for an upgrade.
+func addonDirection(kind Kind, live, goal string) bool {
+	order := fleet.CompareAddonVersions(goal, live)
+	if kind == ClusterRollback {
+		return order <= 0
+	}
+	return order >= 0
+}
+
+// newestAtOrBelow returns the newest of versions that is at or below
+// version. ok is false when every one of versions is newer.
+func newestAtOrBelow(version string, versions []string) (newest string, ok bool) {
+	for _, v := range versions {
+		if fleet.CompareAddonVersions(v, version) <= 0 && (!ok || fleet.CompareAddonVersions(v, newest) > 0) {
+			newest, ok = v, true
+		}
+	}
+	return newest, ok
+}
+
 // adjacent reports whether a control plane at version live can take the
 // request of a step to goal: an upgrade from the minor version before the
 // goal, and a rollback from the minor version after it.

@@ -767,3 +767,52 @@ func TestRollbackPlan_Refusals(t *testing.T) {
 		t.Errorf("a cluster that was not read: err = %v", err)
 	}
 }
+
+// A rollback moves an add-on that the target cannot run to the newest
+// version of the target's catalogue that is at or below the installed one.
+// A newer version would be an upgrade, so when the catalogue has none at
+// or below, the step is blocked.
+func TestRollbackPlan_AddonNeverMovesUp(t *testing.T) {
+	const installed = "v1.18.0-eksbuild.1"
+	tests := []struct {
+		name      string
+		catalogue []string
+		want      Step
+		blocker   string
+	}{
+		{
+			name:      "an older version is listed",
+			catalogue: []string{"v1.19.0-eksbuild.1", "v1.17.2-eksbuild.1", "v1.17.0-eksbuild.1"},
+			want:      Step{Action: Submit, Reason: VersionAhead, To: "v1.17.2-eksbuild.1"},
+		},
+		{
+			name:      "only newer versions are listed",
+			catalogue: []string{"v1.19.0-eksbuild.1", "v1.18.0-eksbuild.2"},
+			want:      Step{Action: Blocked},
+			blocker:   "kube-proxy is at v1.18.0-eksbuild.1, and every version of it that 1.32 runs is newer (newest v1.19.0-eksbuild.1); a rollback does not upgrade an add-on. Move it to a version that 1.32 runs yourself",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newRollbackWorld()
+			w.addons["kube-proxy"] = installed
+			w.catalogue = func(addon string, k fleet.Version) ([]string, error) {
+				if addon == "kube-proxy" {
+					return tt.catalogue, nil
+				}
+				return w.builds(addon, k), nil
+			}
+			cp := w.rollback(t, RollbackRequest{})
+			s := findStep(t, cp, "", StepAddon, "kube-proxy")
+			if s.Action != tt.want.Action || s.Reason != tt.want.Reason || s.To != tt.want.To {
+				t.Errorf("kube-proxy = %s %s to %q, want %s %s to %q", s.Action, s.Reason, s.To, tt.want.Action, tt.want.Reason, tt.want.To)
+			}
+			if tt.blocker == "" {
+				return
+			}
+			if b := blockerFor(t, cp, StepAddon, "kube-proxy"); b.Kind != BlockerUnavailable || b.Message != tt.blocker {
+				t.Errorf("blocker = %s %q, want Unavailable %q", b.Kind, b.Message, tt.blocker)
+			}
+		})
+	}
+}
