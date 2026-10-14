@@ -88,13 +88,13 @@ ADD-ONS  4
   vpc-cni                 v1.34.2-eksbuild.1  ● ACTIVE  Healthy
 
 HEALTH  9
-  summary  ▲ Warn
+  summary  ● Pass
   NAME           OUTCOME  MESSAGE
   Nodes          ● Pass   13/13 nodes ready (estimated)
   Capacity       ● Pass   CPU mean 30%, peak 38%, 13 instances
   Workloads      Skipped  pass --check-readiness to run the Kubernetes checks
   Quotas         ● Pass   57% of the vCPU quota in use (146 of 256)
-  Kubernetes     ▲ Warn   no Kubernetes access: pass --check-readiness to run the Kubernetes checks; the Kubernetes checks did not run
+  Kubernetes     Skipped  pass --check-readiness to run the Kubernetes checks
 ```
 
 The `HEALTH` section runs the [health checks](../concepts/health-checks.md)

@@ -156,9 +156,9 @@
         },
         {
           "name": "Kubernetes",
-          "outcome": "Warn",
+          "outcome": "Skipped",
           "blocking": false,
-          "message": "no Kubernetes access: pass --check-readiness to run the Kubernetes checks; the Kubernetes checks did not run",
+          "message": "pass --check-readiness to run the Kubernetes checks",
           "details": [],
           "findings": []
         }

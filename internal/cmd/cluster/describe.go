@@ -155,6 +155,16 @@ func (o *describeOptions) run(ctx context.Context) error {
 		}
 	}
 	results := health.Run(ctx, health.Preflight(), in)
+	if !o.checkReadiness {
+		// The Kubernetes checks were not asked for, so that they did not
+		// run is not a warning. The summary is then the one that
+		// "cluster list --show-health" gives the cluster.
+		for i := range results {
+			if results[i].Name == health.AccessCheck {
+				results[i].Outcome, results[i].Message = health.Skipped, in.NoKube
+			}
+		}
+	}
 	wg.Wait()
 	merge()
 	hd := health.Doc(results)

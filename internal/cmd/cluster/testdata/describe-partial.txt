@@ -43,7 +43,7 @@ HEALTH  9
   PDBCoverage    Skipped         pass --check-readiness to run the Kubernetes checks
   Utilization    Skipped         pass --check-readiness to run the Kubernetes checks
   Quotas         Skipped         the EC2 vCPU quota is not reported
-  Kubernetes     [!] Warn        no Kubernetes access: pass --check-readiness to run the Kubernetes checks; the Kubernetes checks did not run
+  Kubernetes     Skipped         pass --check-readiness to run the Kubernetes checks
 
 TAGS
   env   prod

@@ -96,7 +96,7 @@ cluster:
       createdAt: "2026-01-01T00:00:00Z"
       modifiedAt: "2026-01-01T00:00:00Z"
   health:
-    summary: Warn
+    summary: Pass
     checks:
       - name: Nodes
         outcome: Pass
@@ -151,9 +151,9 @@ cluster:
         details: []
         findings: []
       - name: Kubernetes
-        outcome: Warn
+        outcome: Skipped
         blocking: false
-        message: 'no Kubernetes access: pass --check-readiness to run the Kubernetes checks; the Kubernetes checks did not run'
+        message: pass --check-readiness to run the Kubernetes checks
         details: []
         findings: []
 failures: []

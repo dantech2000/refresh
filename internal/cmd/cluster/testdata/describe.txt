@@ -38,7 +38,7 @@ ADD-ONS  2
   vpc-cni  v1.19.0-eksbuild.1  [OK] ACTIVE   Healthy
 
 HEALTH  9
-  summary  [!] Warn
+  summary  [OK] Pass
   NAME           OUTCOME    MESSAGE
   Nodes          [OK] Pass  6/6 nodes ready (estimated)
   Capacity       Skipped    no managed nodegroup instances
@@ -48,7 +48,7 @@ HEALTH  9
   PDBCoverage    Skipped    pass --check-readiness to run the Kubernetes checks
   Utilization    Skipped    pass --check-readiness to run the Kubernetes checks
   Quotas         Skipped    the EC2 vCPU quota is not reported
-  Kubernetes     [!] Warn   no Kubernetes access: pass --check-readiness to run the Kubernetes checks; the Kubernetes checks did not run
+  Kubernetes     Skipped    pass --check-readiness to run the Kubernetes checks
 
 TAGS
   env   prod
