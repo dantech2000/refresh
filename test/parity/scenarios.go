@@ -482,6 +482,8 @@ func clusterUpgrade() []Scenario {
 	}
 	// The wait for a control plane that is already UPDATING polls DescribeCluster.
 	clusterClock := []fleettest.Operation{fleettest.EKSDescribeCluster, fleettest.EKSDescribeUpdate, fleettest.EKSDescribeInsightsRefresh}
+	// The wait for a nodegroup that is already UPDATING polls DescribeNodegroup.
+	nodegroupClock := []fleettest.Operation{fleettest.EKSDescribeNodegroup, fleettest.EKSDescribeUpdate, fleettest.EKSDescribeInsightsRefresh}
 	return []Scenario{
 		{Name: "cluster-upgrade-yes", Behaviour: Success, Seed: fleet(scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{whole}},
 		{Name: "cluster-upgrade-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), V2: v2("--dry-run"), Checks: []Check{exits(0)}},
@@ -519,6 +521,18 @@ func clusterUpgrade() []Scenario {
 				c.Version = "1.33"
 				c.Addon("vpc-cni").Version, c.Addon("coredns").Version = "v1.20.0-eksbuild.1", "v1.12.0-eksbuild.1"
 			}),
+		},
+		{
+			// Everything is at 1.33, and the roll of ng-a to 1.33 of an
+			// earlier run is still in flight: both binaries wait for it
+			// and send nothing.
+			Name: "cluster-upgrade-resume-unsettled-nodegroup", Seed: fleet(upgraded), Clock: nodegroupClock,
+			Prepare: func(w *fleettest.World) error {
+				w.Edit(func(s *fleettest.State) { s.Cluster(Region, "prod").Nodegroup("ng-a").UpdateScripts = []fleettest.UpdateScript{long} })
+				_, err := w.UpdateNodegroupVersion(Region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: new("1.33")})
+				return err
+			},
+			Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(0), noMutations, resourceIs("ng-a", "1.33 ")},
 		},
 		{
 			Name: "cluster-upgrade-attach", Behaviour: Attach, Seed: fleet(scripts(slow)), Prepare: inFlight(long), Clock: clusterClock,
