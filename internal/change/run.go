@@ -754,6 +754,14 @@ func (r *runner) execute(p *Plan) Result {
 	switch {
 	case res.ended.interrupted:
 		res.Status = Interrupted
+		// A cluster whose steps were all left out by the interrupt had
+		// work to do: it is not NothingToDo.
+		for i := range res.Clusters {
+			c := &res.Clusters[i]
+			if c.Status == NothingToDo && slices.ContainsFunc(c.Steps, func(s StepResult) bool { return s.Status == StepNotAttempted }) {
+				c.Status = Interrupted
+			}
+		}
 	case r.stop != nil && r.stop.status == Stopped:
 		// A run that a checkpoint stopped did not do what it was asked to
 		// do, so it is no success: it exits 1, and the highest code of the
@@ -967,6 +975,9 @@ func summary(res Result) error {
 	}
 	msg := strings.Join(parts, "; ")
 	if res.ended.interrupted {
+		if msg == "" {
+			return interruptError("interrupted before the next change was sent")
+		}
 		return interruptError("interrupted: " + msg)
 	}
 	return errors.New(msg)

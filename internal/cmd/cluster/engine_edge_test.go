@@ -17,20 +17,26 @@ func never(s *fleettest.State, _ *fleettest.Cluster) {
 	s.DefaultUpdate = fleettest.UpdateScript{Never: true}
 }
 
-// thirdPoll accepts the third poll of one update: the wait is under way.
-// It counts each update by its ID, so the reads of the update history,
-// which describe every past update once, are not taken for polls. The
-// server calls it from one goroutine for each request.
+// thirdPoll accepts the third poll of one update after the run sent a
+// change: the wait is under way. It counts each update by its ID, and
+// only after the first change, so the reads of the update history, which
+// describe every past update once for each read, are not taken for
+// polls. The server calls it from one goroutine for each request.
 func thirdPoll() func(r awsxtest.Request) bool {
 	var mu sync.Mutex
+	sent := false
 	polls := map[string]int{}
 	return func(r awsxtest.Request) bool {
-		if r.Operation != fleettest.EKSDescribeUpdate {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.Operation {
+		case fleettest.EKSUpdateClusterVersion, fleettest.EKSUpdateNodegroupVersion, fleettest.EKSUpdateAddon:
+			sent = true
+		}
+		if !sent || r.Operation != fleettest.EKSDescribeUpdate {
 			return false
 		}
 		id := fmt.Sprint(r.Input["updateId"])
-		mu.Lock()
-		defer mu.Unlock()
 		polls[id]++
 		return polls[id] == 3
 	}

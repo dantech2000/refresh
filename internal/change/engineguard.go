@@ -30,7 +30,8 @@ import (
 //     guardAddon, and guardNodegroup.
 //  5. After a person answered a question of the gate, and after the gate
 //     waited for an insights refresh, everything runs once more: both
-//     took time.
+//     took time. After the health checks of a nodegroup passed, the read
+//     and every rule but the checks run once more for the same reason.
 //
 // It returns false with the result of the step when nothing must be sent:
 // Blocked or Failed, Skipped when the target met its goal in the meantime,
@@ -42,6 +43,7 @@ func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResul
 			steps[i].Action = Submit
 		}
 	}
+	gated := false
 	for asked := 0; ; asked++ {
 		if err := r.readCtx.Err(); err != nil {
 			return r.unsent(cp, res, err), false
@@ -68,7 +70,14 @@ func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResul
 		case StepAddon:
 			out, ok = r.guardAddon(cp, res, s, snap)
 		case StepNodegroup:
-			out, ok, answered = r.guardNodegroup(cp, res, s, snap, asked < maxQuestions)
+			out, ok, answered = r.guardNodegroup(cp, res, s, snap, asked < maxQuestions, gated)
+			// The health checks call AWS and Kubernetes, which takes
+			// time: everything is read and judged once more, without the
+			// checks, so the request follows a read with no wait after it.
+			if ok && !answered && !gated && !r.common.Policy.Skip {
+				gated = true
+				continue
+			}
 		}
 		if !ok {
 			return out, false
@@ -125,10 +134,10 @@ func (r *runner) guardRollback(cp *ClusterPlan, res StepResult, snap *fleet.Snap
 	if errors.As(err, &changed) {
 		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, changed.Message+"; "+name+" was not changed"), false
 	}
+	r.addFailures(failures)
 	if len(blockers) == 0 {
 		return res, true
 	}
-	r.addFailures(failures)
 	return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown,
 		"the cluster can no longer roll back to "+cp.To.String()+" ("+blockerMessages(blockers)+"); "+name+" was not changed"), false
 }
@@ -211,7 +220,8 @@ func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet
 //     plane some time ago. The rule holds with --skip-health-check too.
 //  3. The health gate, with this nodegroup as its target, compared with
 //     the health that the consent covers: see regate. --skip-health-check
-//     skips this row and no other.
+//     skips this row and no other, and so does gated: the checks passed
+//     on the read before this one.
 //  4. The nodegroup is changing: Blocked. Someone started a change after
 //     the step read it. The next run attaches to it.
 //  5. The nodegroup is not ACTIVE: Blocked.
@@ -220,7 +230,7 @@ func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet
 //     version below the live one, and a rollback never one above it.
 //  8. EKS reports a health issue for the nodegroup: Blocked. A nodegroup
 //     can be ACTIVE with issues, and the gate of row 3 judges its status.
-func (r *runner) guardNodegroup(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot, mayAsk bool) (out StepResult, ok, answered bool) {
+func (r *runner) guardNodegroup(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot, mayAsk, gated bool) (out StepResult, ok, answered bool) {
 	name, kind := s.Ref.Name, r.req.kind()
 	i := slices.IndexFunc(snap.Nodegroups, func(n fleet.Nodegroup) bool { return n.Name == name })
 	if i < 0 || snap.Nodegroups[i].State != fleet.Collected {
@@ -232,7 +242,7 @@ func (r *runner) guardNodegroup(cp *ClusterPlan, res StepResult, s Step, snap *f
 			"the control plane of %s runs %s, and nodegroup %s would roll to %s: the control plane must be at %s first; it was not rolled",
 			cp.Cluster, orUnknown(snap.Cluster.Version.String()), name, s.To, s.To)), false, false
 	}
-	if !r.common.Policy.Skip {
+	if !r.common.Policy.Skip && !gated {
 		in := &health.Input{Snapshot: snap, Targets: []string{name}, Clients: r.d.AWS.Clients(cp.Region), Now: snap.FetchedAt}
 		in.Kube, in.Metrics, in.NoKube = kubeAccess(r.d, snap)
 		checks := health.Run(r.readCtx, health.Preflight(), in)

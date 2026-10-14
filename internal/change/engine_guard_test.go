@@ -605,3 +605,67 @@ func TestEngine_PhaseQuestionNamesTheLiveSteps(t *testing.T) {
 		t.Errorf("requests %v; want the roll of ng-b alone", e.sent())
 	}
 }
+
+// The health checks of the guard call AWS, which takes time. The control
+// plane starts to change while the last of them is under way: the read
+// after the checks applies the busy rule, and the roll is not sent.
+func TestEngineGuard_ChangeDuringTheHealthChecks(t *testing.T) {
+	world := func() *fleettest.World {
+		return engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.Version = "1.33"
+			c.Addon("vpc-cni").Version, c.Addon("coredns").Version, c.Addon("kube-proxy").Version = cni33, dns33, proxy33
+		})
+	}
+	req := upgradeTo("1.33")
+	req.Only = []Part{PartNodegroups}
+
+	// A first run counts the metric reads before the first roll.
+	e := newEnv(t, world())
+	mustRun(t, e, req, Hooks{})
+	before := 0
+	for _, r := range e.srv.Requests() {
+		if r.Operation == fleettest.EKSUpdateNodegroupVersion {
+			break
+		}
+		if r.Operation == fleettest.CloudWatchGetMetricData {
+			before++
+		}
+	}
+	if before == 0 {
+		t.Fatal("the health checks read no metric before the first roll")
+	}
+
+	w := world()
+	e = newEnv(t, w)
+	e.onRequest(fleettest.CloudWatchGetMetricData, func(n int) {
+		if n == before {
+			startControlPlaneElsewhere(t, w, "1.34", fleettest.UpdateScript{Never: true})
+		}
+	})
+	res := mustRun(t, e, req, Hooks{})
+	if slices.Contains(e.sent(), sentA33) || slices.Contains(e.sent(), sentB33) {
+		t.Errorf("requests %v: a nodegroup was rolled while the control plane changes", e.sent())
+	}
+	if res.ExitCode() != exitcode.Blocked {
+		t.Errorf("exit = %d, want 3 (%v)", res.ExitCode(), res.Err)
+	}
+}
+
+// With --skip-insights-check, insights that the guard could not read block
+// nothing, and the run still reports them: it is not a clean success.
+func TestEngineGuard_UnreadInsightsAreReported(t *testing.T) {
+	world := upgradedWorld(nil)
+	e := newEnv(t, world)
+	req := rollbackOf()
+	req.SkipInsights = true
+	hooks := Hooks{Checkpoint: atCheckpoint(PhaseNodegroups, func() {
+		world.SetFault(fleettest.EKSListInsights, fleettest.Fault{Deny: true})
+	})}
+	res := mustRun(t, e, req, hooks)
+	if !slices.Contains(e.sent(), sentCP32+" force") {
+		t.Errorf("requests %v; want the rollback of the control plane", e.sent())
+	}
+	if res.ExitCode() != exitcode.Incomplete || len(res.Failures) == 0 {
+		t.Errorf("exit = %d with the failures %v; want 4 and the insights failure", res.ExitCode(), res.Failures)
+	}
+}
