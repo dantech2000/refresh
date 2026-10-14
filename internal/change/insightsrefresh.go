@@ -101,10 +101,12 @@ func (ir *insightsRefresher) say(format string, args ...any) {
 //   - The cluster is new and has no insights yet: an error that says so.
 //
 // A refresh that ended counts only when it is newer than every refresh
-// that the describe showed ended while the start was refused: after EKS
-// accepts the start, the describe can still show that older one. Both
-// start times are on the clock of EKS, so no skew of the clock of the run
-// enters the comparison.
+// that the describe showed ended before EKS accepted a start of the run:
+// the one before the first start, and the ones while the start was
+// refused. After EKS accepts the start, the describe can still show that
+// older one. Both start times are on the clock of EKS, so no skew of the
+// clock of the run enters the comparison. When the describe before the
+// first start shows no refresh, any that ends counts.
 //
 // The error is the error of ctx when ctx ended, and an error that wraps
 // errInsightsRefreshTimeout when the limit of the refresh passed.
@@ -136,7 +138,16 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 		_, err := clients.EKS.StartInsightsRefresh(wctx, &eks.StartInsightsRefreshInput{ClusterName: name})
 		return err
 	}
-	st := refreshStart{err: start()}
+	before, err := ir.before(wctx, poll, t)
+	switch {
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case wctx.Err() != nil:
+		return fmt.Errorf("%w (%s)", errInsightsRefreshTimeout, insightsRefreshLimit)
+	case err != nil:
+		return err
+	}
+	st := refreshStart{old: before, err: start()}
 	o := WaitOptions{Interval: ir.poll, After: ir.d.after, budget: limit}
 	for {
 		if st.again {
@@ -209,11 +220,30 @@ type refreshStart struct {
 	again bool
 	// noted says that the scheduled refresh was reported.
 	noted bool
-	// old is the refresh that ended before the run, from the describe
-	// while the start was refused; nil when there was none. stale says
-	// that the describe showed it again after EKS accepted the start.
+	// old is the newest refresh that ended before the run, from the
+	// describe before the first start and the ones while the start was
+	// refused; nil when there was none. stale says that the describe
+	// showed it again after EKS accepted the start.
 	old   *eks.DescribeInsightsRefreshOutput
 	stale bool
+}
+
+// before returns the refresh that ended before the run asks for one, or
+// nil when there is none to confuse with the refresh of the run: EKS
+// reports none, a refresh with no start time, or one in progress, which
+// the run then follows. Any other error of the describe ends the wait:
+// without it, an older refresh could pass as the one of the run.
+func (ir *insightsRefresher) before(ctx context.Context, poll awsx.PollClients, t Target) (*eks.DescribeInsightsRefreshOutput, error) {
+	out, err := poll.EKS.DescribeInsightsRefresh(ctx, &eks.DescribeInsightsRefreshInput{ClusterName: aws.String(t.Cluster)})
+	switch {
+	case awsx.ErrorCode(err) == codeNotFound:
+		return nil, nil
+	case err != nil:
+		return nil, &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster + " before starting one", err: err}
+	case out.Status == ekstypes.InsightsRefreshStatusInProgress || out.StartedAt == nil:
+		return nil, nil
+	}
+	return out, nil
 }
 
 // refused handles the answer of the describe while the start is refused.

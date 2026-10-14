@@ -76,9 +76,10 @@ func TestInsightsRefresh_WaitsOutAScheduledRefresh(t *testing.T) {
 	e := newEnv(t, world)
 	refuseStart(world, codeInvalidRequest)
 	hideRefresh(world)
-	// The scheduled refresh ends before the third poll.
+	// The scheduled refresh ends before the third poll, the fourth
+	// describe: the first is the one before the start.
 	e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
-		if n == 3 {
+		if n == 4 {
 			world.SetFault(fleettest.EKSStartInsightsRefresh, fleettest.Fault{})
 			world.SetFault(fleettest.EKSDescribeInsightsRefresh, fleettest.Fault{})
 		}
@@ -149,7 +150,7 @@ func TestInsightsRefresh_AdoptedRefreshClearsTheRefusal(t *testing.T) {
 	refuseStart(world, codeInvalidRequest)
 	hideRefresh(world)
 	e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
-		if n == 2 {
+		if n == 3 {
 			world.SetFault(fleettest.EKSDescribeInsightsRefresh, fleettest.Fault{})
 			if err := world.StartInsightsRefresh(east, "prod"); err != nil {
 				t.Error(err)
@@ -196,7 +197,7 @@ func TestInsightsRefresh_ErrorText(t *testing.T) {
 		ctx, cancel := context.WithCancel(testContext(t))
 		defer cancel()
 		e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
-			if n == 2 {
+			if n == 3 {
 				cancel()
 			}
 		})
@@ -358,9 +359,10 @@ func TestInsightsRefresh_ContextEndsDuringTheRefresh(t *testing.T) {
 			e := newEnv(t, world)
 			ctx, cancel := context.WithCancelCause(testContext(t))
 			defer cancel(nil)
-			// The second poll is the handshake: the wait is under way.
+			// The second poll, the third describe, is the handshake: the
+			// wait is under way.
 			e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
-				if n == 2 {
+				if n == 3 {
 					cancel(tt.cause)
 				}
 			})
@@ -388,7 +390,8 @@ func TestInsightsRefresh_ContextEndsDuringTheRefresh(t *testing.T) {
 // waits for its own refresh.
 func TestInsightsRefresh_StaleCompletionIsNotCurrent(t *testing.T) {
 	// staleWorld has a refresh that completed an hour ago. The first start
-	// of the run is refused. From the second describe on, the describe
+	// of the run is refused. From the second poll on (the describe before
+	// the start is the first describe), the describe
 	// shows that old refresh while lag lasts: lag < 0 is for ever.
 	staleWorld := func(t *testing.T, lag int) *env {
 		t.Helper()
@@ -403,11 +406,11 @@ func TestInsightsRefresh_StaleCompletionIsNotCurrent(t *testing.T) {
 		refuseStart(world, codeInvalidRequest)
 		e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
 			switch {
-			case n == 1:
+			case n == 2:
 				world.SetFault(fleettest.EKSStartInsightsRefresh, fleettest.Fault{})
-			case lag < 0 || n <= 1+lag:
+			case lag < 0 || n <= 2+lag:
 				world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").InsightsRefresh = old })
-			case n == 2+lag:
+			case n == 3+lag:
 				// The refresh of the run shows up at last.
 				if err := world.StartInsightsRefresh(east, "prod"); err != nil {
 					t.Error(err)
@@ -450,7 +453,7 @@ func TestInsightsRefresh_ClockOfTheRunDoesNotMatter(t *testing.T) {
 	e.deps.Now = func() time.Time { return world.Now().Add(time.Hour) }
 	refuseStart(world, codeInvalidRequest)
 	e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
-		if n == 1 {
+		if n == 2 {
 			world.SetFault(fleettest.EKSStartInsightsRefresh, fleettest.Fault{})
 		}
 	})
@@ -460,4 +463,65 @@ func TestInsightsRefresh_ClockOfTheRunDoesNotMatter(t *testing.T) {
 	if n := e.count(fleettest.EKSStartInsightsRefresh); n != 2 {
 		t.Errorf("%d starts, want 2: the refused one and the one that EKS accepted", n)
 	}
+}
+
+// The describe before the first start names the refresh that ended
+// before the run. When EKS accepts the first start at once and the
+// describe still shows that refresh, it does not count.
+func TestInsightsRefresh_EarlierRefreshAfterAnAcceptedStart(t *testing.T) {
+	// oldWorld has a refresh that completed an hour ago, and the describe
+	// shows it after the start while lag lasts: lag < 0 is for ever.
+	oldWorld := func(t *testing.T, lag int) *env {
+		t.Helper()
+		world := engineWorld(nil)
+		if err := world.StartInsightsRefresh(east, "prod"); err != nil {
+			t.Fatal(err)
+		}
+		world.Advance(time.Hour)
+		var old fleettest.InsightsRefresh
+		world.View(func(s *fleettest.State) { old = s.Cluster(east, "prod").InsightsRefresh })
+		e := newEnv(t, world)
+		e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
+			switch {
+			case n == 1:
+				// The describe before the start.
+			case lag < 0 || n <= 1+lag:
+				world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").InsightsRefresh = old })
+			case n == 2+lag:
+				if err := world.StartInsightsRefresh(east, "prod"); err != nil {
+					t.Error(err)
+				}
+			}
+		})
+		return e
+	}
+	t.Run("the describe never shows the refresh of the run", func(t *testing.T) {
+		e := oldWorld(t, -1)
+		res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
+		msg, _ := wantRefreshBlocked(t, e, res, "did not finish in time", "before this run asked for one")
+		if n := e.count(fleettest.EKSStartInsightsRefresh); n != 1 {
+			t.Errorf("%d starts, want 1: EKS accepted the first (%s)", n, msg)
+		}
+	})
+	t.Run("the describe shows the refresh of the run later", func(t *testing.T) {
+		e := oldWorld(t, 2)
+		res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
+		if res.Status != Succeeded || res.ExitCode() != exitcode.OK {
+			t.Fatalf("status = %s, exit %d, err %v; want Succeeded", res.Status, res.ExitCode(), res.Err)
+		}
+		if n := e.count(fleettest.EKSDescribeInsightsRefresh); n < 4 {
+			t.Errorf("%d describes; the run took the earlier refresh before its own showed up", n)
+		}
+	})
+	t.Run("the describe before the start is denied", func(t *testing.T) {
+		e := newEnv(t, engineWorld(nil))
+		e.world.SetFault(fleettest.EKSDescribeInsightsRefresh, fleettest.Fault{Deny: true})
+		err := refreshOnce(testContext(t), e)
+		if err == nil || !strings.Contains(err.Error(), "before starting one") {
+			t.Errorf("err = %v; want the failed describe before the start", err)
+		}
+		if n := e.count(fleettest.EKSStartInsightsRefresh); n != 0 {
+			t.Errorf("%d starts, want none", n)
+		}
+	})
 }
