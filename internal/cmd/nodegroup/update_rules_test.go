@@ -43,7 +43,7 @@ func TestScale_SizeBeyondInt32(t *testing.T) {
 			t.Run(flag+" "+value, func(t *testing.T) {
 				e := cmdtest.NewFake(t, scaleWorld(nil), east)
 				err := e.Run(cmdutiltest.Context(t), "nodegroup", "scale", "web", "-c", "prod", "--yes", flag, value)
-				if err == nil || !strings.Contains(err.Error(), "invalid argument") || !strings.Contains(err.Error(), flag) {
+				if err == nil || !strings.HasPrefix(err.Error(), flag+" is too ") {
 					t.Fatalf("error = %v, want that the value of %s is invalid", err, flag)
 				}
 				if got := cmdutil.ExitCode(err); got != cmdutil.ExitFailure {

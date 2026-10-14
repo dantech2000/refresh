@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,7 +79,7 @@ skip the confirmation prompts.`,
 	// Every command gets this through the root: a flag error ends with the
 	// way to its help.
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
-		return fmt.Errorf("%w\nRun '%s --help' for usage", err, c.CommandPath())
+		return fmt.Errorf("%w\nRun '%s --help' for usage", numberFlagError(err, ""), c.CommandPath())
 	})
 	cmd.SetIn(f.IOStreams.In)
 	cmd.SetOut(f.IOStreams.Out)
@@ -163,6 +164,9 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 			continue
 		}
 		if err := flags.Set(e.flag, v); err != nil {
+			if plain := numberFlagError(err, e.env); plain != err {
+				return plain
+			}
 			return fmt.Errorf("invalid %s: %w", e.env, err)
 		}
 		source[e.flag] = e.env
@@ -241,4 +245,38 @@ func parseLogLevel(s string) (slog.Level, error) {
 		return slog.LevelError, nil
 	}
 	return 0, fmt.Errorf("invalid log level %q: must be one of debug, info, warn, error", s)
+}
+
+// intBits is the size of each integer flag type that the CLI uses.
+var intBits = map[string]int{"int": strconv.IntSize, "int32": 32, "int64": 64}
+
+// numberFlagError rewrites the error of a whole-number flag whose value
+// does not parse, which pflag reports with the text of strconv:
+//
+//	--desired must be a whole number, not "abc"
+//	--desired is too large (at most 2147483647)
+//
+// name is how to call the value, such as an environment variable; "" means
+// the flag. Any other error is returned as it is.
+func numberFlagError(err error, name string) error {
+	var invalid *pflag.InvalidValueError
+	var num *strconv.NumError
+	if !errors.As(err, &invalid) || !errors.As(err, &num) {
+		return err
+	}
+	bits, ok := intBits[invalid.GetFlag().Value.Type()]
+	if !ok {
+		return err
+	}
+	if name == "" {
+		name = "--" + invalid.GetFlag().Name
+	}
+	if errors.Is(num.Err, strconv.ErrRange) {
+		limit := int64(1)<<(bits-1) - 1
+		if strings.HasPrefix(strings.TrimSpace(invalid.GetValue()), "-") {
+			return fmt.Errorf("%s is too small (at least %d)", name, -limit-1)
+		}
+		return fmt.Errorf("%s is too large (at most %d)", name, limit)
+	}
+	return fmt.Errorf("%s must be a whole number, not %q", name, invalid.GetValue())
 }

@@ -198,7 +198,27 @@ func TestUsageErrors(t *testing.T) {
 			name:    "invalid concurrency in the environment",
 			args:    []string{"version"},
 			env:     map[string]string{"REFRESH_MAX_CONCURRENCY": "many"},
-			wantErr: `invalid REFRESH_MAX_CONCURRENCY: invalid argument "many" for "--max-concurrency" flag: strconv.ParseInt: parsing "many": invalid syntax`,
+			wantErr: `REFRESH_MAX_CONCURRENCY must be a whole number, not "many"`,
+		},
+		{
+			name:    "a word for a number flag",
+			args:    []string{"nodegroup", "scale", "web", "--desired", "abc"},
+			wantErr: "--desired must be a whole number, not \"abc\"\nRun 'refresh nodegroup scale --help' for usage",
+		},
+		{
+			name:    "a number flag above its range",
+			args:    []string{"nodegroup", "scale", "web", "--desired", "99999999999"},
+			wantErr: "--desired is too large (at most 2147483647)\nRun 'refresh nodegroup scale --help' for usage",
+		},
+		{
+			name:    "a number flag below its range",
+			args:    []string{"nodegroup", "scale", "web", "--min", "-99999999999"},
+			wantErr: "--min is too small (at least -2147483648)\nRun 'refresh nodegroup scale --help' for usage",
+		},
+		{
+			name:    "a word for a global number flag",
+			args:    []string{"--max-concurrency", "lots", "version"},
+			wantErr: "--max-concurrency must be a whole number, not \"lots\"\nRun 'refresh version --help' for usage",
 		},
 		{
 			name:    "negative timeout",
