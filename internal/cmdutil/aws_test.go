@@ -208,3 +208,43 @@ func TestUseAWS(t *testing.T) {
 		t.Errorf("ListClusters = %v, %v; want [prod]", out, err)
 	}
 }
+
+// The profile in effect follows the rules of NewAWS: the flag, the
+// context, then AWS_PROFILE and AWS_DEFAULT_PROFILE.
+func TestProfileInEffect(t *testing.T) {
+	withProfile := &contexts.File{
+		Current:  "prod",
+		Contexts: map[string]contexts.Context{"prod": {Cluster: "prod-eks", Profile: "ctx-profile"}},
+	}
+	tests := []struct {
+		name string
+		flag string
+		file *contexts.File
+		env  map[string]string
+		want string
+	}{
+		{name: "nothing"},
+		{name: "the flag", flag: "flag-profile", file: withProfile, want: "flag-profile"},
+		{name: "the context", file: withProfile, want: "ctx-profile"},
+		{name: "AWS_PROFILE", env: map[string]string{"AWS_PROFILE": "refresh-e2e"}, want: "refresh-e2e"},
+		{name: "AWS_DEFAULT_PROFILE", env: map[string]string{"AWS_DEFAULT_PROFILE": "default-e2e"}, want: "default-e2e"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateAWS(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			f, _, _, _ := cmdutiltest.NewFactory()
+			cmdutiltest.NewContextStore(t, f, tt.file)
+			f.Global.Profile = tt.flag
+			got, err := cmdutil.ProfileInEffect(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("profile = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

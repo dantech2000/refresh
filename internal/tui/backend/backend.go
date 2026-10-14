@@ -5,6 +5,7 @@
 package backend
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -47,7 +48,12 @@ type Options struct {
 	Deps change.Deps
 	// Profile and Context are shown in the top bar. Profile, Kubeconfig,
 	// and KubeContext go into the command a dry run names.
-	Profile, Context        string
+	Profile, Context string
+	// ProfileInEffect is the profile that the run uses, from --profile,
+	// the context, or AWS_PROFILE. The top bar shows it when it is set.
+	// It does not go into a command: a profile from the environment is
+	// the environment's to set.
+	ProfileInEffect         string
 	Kubeconfig, KubeContext string
 	// SweepError, when set, explains a sweep in which no region answered,
 	// as the read commands do. Nil uses the first failure.
@@ -211,7 +217,7 @@ func (b *Live) build() state.State {
 		Version:  b.version,
 		Now:      b.opts.Now(),
 		ReadOnly: !b.opts.AllowChanges,
-		Profile:  b.opts.Profile,
+		Profile:  cmp.Or(b.opts.ProfileInEffect, b.opts.Profile),
 		Context:  b.opts.Context,
 		Sweep:    b.sweep,
 		Clusters: clusters,

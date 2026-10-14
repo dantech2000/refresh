@@ -43,11 +43,17 @@ type options struct {
 	allowChanges   bool
 	waitTimeout    time.Duration
 	waitTimeoutSet bool
+
+	// profileInEffect returns the AWS profile of the run, and profile
+	// holds it.
+	profileInEffect func() (string, error)
+	profile         string
 }
 
 // NewCmdUI returns the ui command.
 func NewCmdUI(f *cmdutil.Factory) *cobra.Command {
 	o := &options{ios: f.IOStreams, aws: f.AWS, contexts: f.Contexts, global: &f.Global, now: f.Now, after: f.After,
+		profileInEffect: func() (string, error) { return cmdutil.ProfileInEffect(f) },
 		deps: func(provider *awsx.Provider) change.Deps {
 			return change.Deps{AWS: provider, Fetch: &fleet.Fetcher{Now: f.Now}, Kube: f.Kube, Now: f.Now, After: f.After, AfterFunc: f.AfterFunc, Tick: f.Tick}
 		}}
@@ -122,21 +128,27 @@ func (o *options) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// The top bar shows the profile in effect also when AWS_PROFILE or
+	// the context names it. Loading the provider read the same settings.
+	if o.profile, err = o.profileInEffect(); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	b := backend.New(ctx, provider, backend.Options{
-		Regions:        fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions),
-		Interval:       o.interval,
-		AllowChanges:   o.allowChanges,
-		ReadTimeout:    o.global.Timeout,
-		WaitTimeout:    o.waitTimeout,
-		WaitTimeoutSet: o.waitTimeoutSet,
-		Deps:           o.deps(provider),
-		Profile:        o.global.Profile,
-		Context:        o.contextName(),
-		Kubeconfig:     o.global.Kubeconfig,
-		KubeContext:    o.global.KubeContext,
+		Regions:         fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions),
+		Interval:        o.interval,
+		AllowChanges:    o.allowChanges,
+		ReadTimeout:     o.global.Timeout,
+		WaitTimeout:     o.waitTimeout,
+		WaitTimeoutSet:  o.waitTimeoutSet,
+		Deps:            o.deps(provider),
+		Profile:         o.global.Profile,
+		ProfileInEffect: o.profile,
+		Context:         o.contextName(),
+		Kubeconfig:      o.global.Kubeconfig,
+		KubeContext:     o.global.KubeContext,
 		SweepError: func(ctx context.Context, res *fleet.SweepResult) error {
 			return fleetcmd.SweepError(ctx, provider, res)
 		},

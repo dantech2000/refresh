@@ -50,6 +50,19 @@ func NewAWS(f *Factory) func(ctx context.Context) (*awsx.Provider, error) {
 	}
 }
 
+// ProfileInEffect returns the AWS profile that the run uses, by the rules
+// of NewAWS: --profile, else the profile of the active context, else
+// AWS_PROFILE, else AWS_DEFAULT_PROFILE, else "". It is for display, such
+// as the top bar of the UI.
+func ProfileInEffect(f *Factory) (string, error) {
+	opts, err := awsOptions(f)
+	if err != nil {
+		return "", err
+	}
+	profile, _, err := opts.EffectiveProfile()
+	return profile, err
+}
+
 // awsOptions collects what decides the AWS profile and region of the run.
 // It reads the context store also when the flags set both: a REFRESH_CONTEXT
 // with a typing error, or a store that cannot be read, fails every command

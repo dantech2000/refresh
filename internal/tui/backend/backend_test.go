@@ -358,3 +358,16 @@ func TestRunStopsWhenTheSessionEnds(t *testing.T) {
 		t.Fatal("Run did not return after the session ended")
 	}
 }
+
+// The top bar shows the profile in effect, also when it came from
+// AWS_PROFILE or the context and not from --profile.
+func TestLiveShowsTheProfileInEffect(t *testing.T) {
+	world := fleettest.New()
+	r := newRig(t, world, fleet.Regions{Names: []string{east}}, func(o *backend.Options) {
+		o.Profile = ""
+		o.ProfileInEffect = "refresh-e2e"
+	})
+	if st := r.wait(t, 0, func(state.State) bool { return true }); st.Profile != "refresh-e2e" {
+		t.Errorf("profile = %q, want refresh-e2e", st.Profile)
+	}
+}
