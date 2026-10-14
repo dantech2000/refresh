@@ -217,6 +217,11 @@ func TestUsageErrors(t *testing.T) {
 			wantErr: `invalid --region "us-east-1,,eu-west-1": an empty region name`,
 		},
 		{
+			name:    "an empty region alone",
+			args:    []string{"-r", "", "version"},
+			wantErr: `invalid --region "": an empty region name`,
+		},
+		{
 			name:    "concurrency below one",
 			args:    []string{"--max-concurrency", "0", "version"},
 			wantErr: "invalid --max-concurrency 0: must be at least 1",

@@ -2,6 +2,7 @@
 package root
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -172,6 +173,12 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 	// A region that is named twice is one region. Cobra also parses the
 	// flags of a line twice for a shell completion, which repeats every
 	// value of a list flag.
+	//
+	// pflag reads -r "" as no value at all, so an empty flag shows only as
+	// a flag that is set and holds nothing.
+	if flags.Changed("region") && len(o.regions) == 0 {
+		return errors.New(`invalid --region "": an empty region name`)
+	}
 	var regions []string
 	for _, r := range o.regions {
 		if strings.TrimSpace(r) == "" {
