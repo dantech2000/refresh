@@ -8,7 +8,9 @@ import (
 
 	"github.com/dantech2000/refresh/internal/cmd/cmdtest"
 	"github.com/dantech2000/refresh/internal/cmd/root"
+	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
+	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/kube/kubetest"
 )
 
@@ -68,5 +70,36 @@ func TestUpdateHelp_PinnedVersionHasABuild(t *testing.T) {
 		if !build.MatchString(m[1]) {
 			t.Errorf("the example pins %q, which is not a version of the EKS catalogue (vX.Y.Z-eksbuild.N)", m[1])
 		}
+	}
+}
+
+// A pinned downgrade on a terminal shows its warning once, and before the
+// question, so the answer covers it.
+func TestUpdate_DowngradeWarningComesOnceBeforeTheQuestion(t *testing.T) {
+	downgrade := "warning: downgrading vpc-cni from " + cniNew + " to " + cniOld
+	for _, tt := range []struct {
+		answer  string
+		exit    int
+		updates []string
+	}{
+		{"y\n", cmdutil.ExitOK, []string{"vpc-cni"}},
+		{"n\n", cmdutil.ExitFailure, nil},
+	} {
+		t.Run(strings.TrimSpace(tt.answer), func(t *testing.T) {
+			tc := updateCase{
+				seed:   func(c *fleettest.Cluster) { c.Addon("vpc-cni").Version = cniNew },
+				args:   []string{"vpc-cni", "--version", cniOld},
+				answer: tt.answer, exit: tt.exit, updates: tt.updates,
+			}
+			e, _ := runUpdate(t, tc)
+			said := e.Err.String()
+			if n := strings.Count(said, downgrade); n != 1 {
+				t.Errorf("the warning is on stderr %d times, want 1:\n%s", n, said)
+			}
+			warning, question := strings.Index(said, downgrade), strings.Index(said, "[y/N]")
+			if question < 0 || warning < 0 || warning > question {
+				t.Errorf("the warning is at %d and the question at %d; want the warning first:\n%s", warning, question, said)
+			}
+		})
 	}
 }
