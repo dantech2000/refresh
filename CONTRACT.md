@@ -133,8 +133,8 @@ Only flags beyond the global and shared sets.
 | `cluster list` | `-A`, `-f`, `--sort`, `--desc`, `--show-health`, `-w/--watch`, `--watch-interval` |
 | `cluster describe` | `--check-readiness` |
 | `cluster upgrade-check` | `--category`, `--status`, `--show-passing`, `--insight`, `--exit-zero` |
-| `cluster upgrade` | `--to`, `--only`, `-n/--nodegroup`, `--skip-addon`, `--skip-nodegroup`, `--skip-insights-check` |
-| `cluster rollback` | `--skip-nodegroup`, `--skip-insights-check`, `--rollback-timeout` |
+| `cluster upgrade` | `--to`, `--only`, `-n/--nodegroup`, `--skip-addon`, `--skip-nodegroup`, `--skip-insights-check`, `--skip-verify`, `--require-healthy` |
+| `cluster rollback` | `--skip-nodegroup`, `--skip-insights-check`, `--rollback-timeout`, `--skip-verify`, `--require-healthy` |
 | `nodegroup list` | `-c`, `-f`, `--sort`, `--desc`, `--check-readiness`, `-w`, `--watch-interval` |
 | `nodegroup describe` | `-c`, `--show-instances`, `--show-workloads` |
 | `nodegroup update` | `-c`, `-f`, `--all-clusters`, `--reroll`, `--require-healthy`, `--skip-verify`, `--changelog`, `--live` |
@@ -198,7 +198,7 @@ Unchanged.
 | `0` | OK |
 | `1` | Error or interrupt |
 | `2` | Needs attention: warnings or stale items |
-| `3` | Blocked or unsupported: a gate stopped the change and nothing changed |
+| `3` | Blocked or unsupported: a gate stopped the change. Nothing changed, or, when a gate stops a later phase of an upgrade or rollback, nothing more changed and the message names the phases that completed. |
 | `4` | Incomplete data or partial failure |
 | `5` | The change was applied and the check after it found issues |
 
