@@ -13,9 +13,8 @@ func atLeast(a, b fleet.Version) bool {
 // upgrade, and at the goal or below it for a rollback. A version that is
 // not known is never done.
 func versionDone(kind Kind, version, goal string) bool {
-	v, err := fleet.ParseVersion(version)
-	g, gerr := fleet.ParseVersion(goal)
-	if err != nil || gerr != nil {
+	v, g, ok := parseVersions(version, goal)
+	if !ok {
 		return false
 	}
 	if kind == ClusterRollback {
@@ -43,28 +42,37 @@ func addonDone(kind Kind, version, goal string) bool {
 // request of a step to goal: an upgrade from the minor version before the
 // goal, and a rollback from the minor version after it.
 func adjacent(kind Kind, live, goal string) bool {
-	v, err := fleet.ParseVersion(live)
-	g, gerr := fleet.ParseVersion(goal)
-	if err != nil || gerr != nil || v.Major != g.Major {
-		return false
-	}
-	if kind == ClusterRollback {
-		return v.Minor == g.Minor+1
-	}
-	return v.Minor+1 == g.Minor
+	n, ok := minorsLeft(kind, live, goal)
+	return ok && n == 1
 }
 
 // rollDirection reports whether a roll from the version live to goal goes
 // the way of the change: up for an upgrade, and down for a rollback. A
 // version that is not known goes no way.
 func rollDirection(kind Kind, live, goal string) bool {
-	v, err := fleet.ParseVersion(live)
-	g, gerr := fleet.ParseVersion(goal)
-	if err != nil || gerr != nil || v.Major != g.Major {
-		return false
+	n, ok := minorsLeft(kind, live, goal)
+	return ok && n > 0
+}
+
+// minorsLeft returns how many minor versions a version at live has to
+// move in the direction of the change to reach goal: more than zero
+// before the goal, zero at it, and less than zero past it. ok is false
+// when a version is not known or the major versions differ.
+func minorsLeft(kind Kind, live, goal string) (n int, ok bool) {
+	v, g, ok := parseVersions(live, goal)
+	if !ok || v.Major != g.Major {
+		return 0, false
 	}
 	if kind == ClusterRollback {
-		return v.Minor > g.Minor
+		return v.Minor - g.Minor, true
 	}
-	return v.Minor < g.Minor
+	return g.Minor - v.Minor, true
+}
+
+// parseVersions parses a Kubernetes version and the goal of a step. ok is
+// false when either one does not parse.
+func parseVersions(version, goal string) (v, g fleet.Version, ok bool) {
+	v, err := fleet.ParseVersion(version)
+	g, gerr := fleet.ParseVersion(goal)
+	return v, g, err == nil && gerr == nil
 }
