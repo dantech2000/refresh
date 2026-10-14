@@ -229,10 +229,14 @@ type InFlightUpdate struct {
 	// Type is the EKS update type, such as VersionUpdate.
 	Type      string
 	CreatedAt time.Time
+	// Version is the Kubernetes version that the update moves to: its
+	// Version parameter, or "" when it has none.
+	Version string
 }
 
 // inFlightUpdate returns the update of a resource that is in progress:
-// its ID, its type, such as AddonUpdate, and when it was created. It
+// its ID, its type, such as AddonUpdate, when it was created, and the
+// version that it moves to. It
 // returns the zero value when EKS lists none. EKS lists the update IDs
 // with no status, so each one is described, newest first.
 func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightUpdate, error) {
@@ -263,7 +267,13 @@ func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightU
 		case out.Update == nil:
 			return InFlightUpdate{}, fmt.Errorf("EKS returned no update for %s", ids[i])
 		case out.Update.Status == ekstypes.UpdateStatusInProgress:
-			return InFlightUpdate{ID: aws.ToString(out.Update.Id), Type: string(out.Update.Type), CreatedAt: aws.ToTime(out.Update.CreatedAt)}, nil
+			u := InFlightUpdate{ID: aws.ToString(out.Update.Id), Type: string(out.Update.Type), CreatedAt: aws.ToTime(out.Update.CreatedAt)}
+			for _, p := range out.Update.Params {
+				if p.Type == ekstypes.UpdateParamTypeVersion {
+					u.Version = aws.ToString(p.Value)
+				}
+			}
+			return u, nil
 		}
 	}
 	return InFlightUpdate{}, nil
