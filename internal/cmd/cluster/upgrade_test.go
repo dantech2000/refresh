@@ -228,6 +228,31 @@ const (
 	proxyTo3 = "UpdateAddon kube-proxy " + proxy33
 )
 
+// atTheGoal puts every part of the engine world at 1.33, and makes a
+// nodegroup roll take ten minutes.
+func atTheGoal(s *fleettest.State, c *fleettest.Cluster) {
+	c.Version = "1.33"
+	c.Addon("vpc-cni").Version, c.Addon("kube-proxy").Version = cni33, proxy33
+	for _, ng := range c.Nodegroups {
+		ng.Version = "1.33"
+	}
+	s.DefaultNodegroupUpdate = &fleettest.UpdateScript{After: 10 * time.Minute}
+}
+
+// rollWebTo starts a roll of the nodegroup web to a version, as another
+// process does.
+func rollWebTo(version string) func(t *testing.T, w *fleettest.World) {
+	return func(t *testing.T, w *fleettest.World) {
+		t.Helper()
+		if _, err := w.UpdateNodegroupVersion(east, "prod", "web", fleettest.NodegroupVersionRequest{Version: &version}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// rollWebBack is the roll of a rollback of web to 1.32.
+var rollWebBack = rollWebTo("1.32")
+
 func upgradeCases() []engineCase {
 	whole := []string{refresh, cp33, cniTo33, api33, web33, proxyTo3}
 	failing := fleettest.UpdateScript{After: 30 * time.Second, Result: fleettest.UpdateFailed, Errors: []fleettest.UpdateError{{Code: "ConfigurationConflict", Message: "conflicts found"}}}
@@ -281,6 +306,12 @@ func upgradeCases() []engineCase {
 			seed: func(s *fleettest.State, _ *fleettest.Cluster) { s.DefaultUpdate = fleettest.UpdateScript{Never: true} }},
 		{name: "only-control-plane", args: []string{"--yes", "--only", "control-plane"}, sent: []string{refresh, cp33}},
 		{name: "one-nodegroup", args: []string{"--yes", "-n", "web", "--skip-addon", "kube-proxy"}, sent: []string{refresh, cp33, cniTo33, web33}},
+		// A rollback rolls web back to 1.32, so EKS still reports it
+		// UPDATING at 1.33, and the upgrade to 1.33 starts meanwhile.
+		{name: "unsettled-rolling-elsewhere", args: []string{"--yes"}, exit: cmdutil.ExitBlocked, seed: atTheGoal, prepare: rollWebBack},
+		// The roll in flight is the one of an earlier upgrade to 1.33:
+		// the run attaches to it.
+		{name: "unsettled-resume", args: []string{"--yes"}, seed: atTheGoal, prepare: rollWebTo("1.33")},
 		{name: "nothing-to-do", args: []string{"--yes"}, seed: func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.Version = "1.33"
 			c.Addon("vpc-cni").Version, c.Addon("kube-proxy").Version = cni33, proxy33

@@ -1,0 +1,31 @@
+exit: 3
+error: prod is busy: nodegroup web is rolling to 1.32 (update 00000000-0000-4000-8000-000000000001), not to 1.33; nothing was started. Run it again once that finishes
+--- stdout ---
+Plan   [X] Blocked   ClusterUpgrade
+
+PLAN
+  operation       ClusterUpgrade
+  cluster         prod
+  region          us-east-1
+  version         1.33
+  target version  1.33
+  decision        [X] Blocked
+
+STEPS  5
+  NAME                KIND          ACTION  REASON           FROM                TO                  NOTE
+  control-plane@1.33  ControlPlane  Skip    AlreadyAtTarget  1.33                1.33                -
+  api@1.33            Nodegroup     Skip    AlreadyAtTarget  1.33                1.33                -
+  web@1.33            Nodegroup     Verify  Unsettled        1.33                1.33                -
+  vpc-cni@1.33        Addon         Skip    AlreadyAtTarget  v1.20.0-eksbuild.1  v1.20.0-eksbuild.1  -
+  kube-proxy@1.33     Addon         Skip    AlreadyAtTarget  v1.33.0-eksbuild.1  v1.33.0-eksbuild.1  -
+
+BLOCKERS  1
+  NAME  KIND      STEP      MESSAGE
+  1     [X] Busy  web@1.33  prod is busy: nodegroup web is rolling to 1.32 (update 00000000-0000-4000-8000-000000000001), not to 1.33; nothing was started. Run it again once that finishes
+--- stderr ---
+PLAN  ClusterUpgrade, prod in us-east-1
+  control-plane@1.33  skip, at 1.33 (AlreadyAtTarget)
+  api@1.33            skip, at 1.33 (AlreadyAtTarget)
+  web@1.33            verify at 1.33 (Unsettled)
+  vpc-cni@1.33        skip, at v1.20.0-eksbuild.1 (AlreadyAtTarget)
+  kube-proxy@1.33     skip, at v1.33.0-eksbuild.1 (AlreadyAtTarget)
