@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,6 +22,7 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/tui"
 	"github.com/dantech2000/refresh/internal/tui/backend"
+	"github.com/dantech2000/refresh/internal/tui/state"
 )
 
 // minInterval is the shortest time between two sweeps.
@@ -156,7 +159,7 @@ func (o *options) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer restore()
+	defer restore() // a second call is harmless
 
 	m := tui.New(ctx, b, o.ios.Theme())
 	opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithInput(o.ios.In), tea.WithOutput(o.ios.Out)}
@@ -164,11 +167,61 @@ func (o *options) run(ctx context.Context) error {
 		opts = append(opts, tea.WithColorProfile(colorprofile.ASCII))
 	}
 	_, err = tea.NewProgram(m, opts...).Run()
+	restore()
+	sayUnfinished(o.ios.ErrOut, b.Unfinished())
 	if err != nil && ctx.Err() != nil {
 		// The session was interrupted; main says so.
 		return nil
 	}
 	return err
+}
+
+// sayUnfinished names the changes of the session that had not ended when
+// the UI closed: EKS goes on with them, and the commands can watch them.
+func sayUnfinished(w io.Writer, changes []state.Change) {
+	if len(changes) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%s still running in EKS; the UI no longer follows them:\n", plural(len(changes), "change"))
+	for _, c := range changes {
+		var ids []string
+		for _, s := range c.Steps {
+			if s.UpdateID != "" && s.FinishedAt.IsZero() {
+				ids = append(ids, s.UpdateID)
+			}
+		}
+		line := "  " + kindWord(c.Kind) + " " + c.Target.Cluster + " (" + c.Target.Region + ")"
+		if len(ids) > 0 {
+			line += ": update " + strings.Join(ids, ", ")
+		}
+		if c.Elsewhere {
+			line += " (started elsewhere)"
+		}
+		_, _ = fmt.Fprintln(w, line)
+	}
+}
+
+func kindWord(k change.Kind) string {
+	switch k {
+	case change.NodegroupUpdate:
+		return "roll of"
+	case change.AddonUpdate:
+		return "add-on update of"
+	case change.ClusterUpgrade:
+		return "upgrade of"
+	case change.ClusterRollback:
+		return "rollback of"
+	case change.NodegroupScale:
+		return "scale of"
+	}
+	return string(k) + " of"
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // contextName is the active refresh context, for the top bar, or "".
