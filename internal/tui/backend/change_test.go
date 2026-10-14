@@ -671,8 +671,9 @@ func TestStopBeforeTheFirstPhaseSendsNothing(t *testing.T) {
 			t.Fatal("a run stopped before its first phase sent UpdateClusterVersion")
 		}
 	}
+	// A step that the plan leaves out is Skipped; no step did any work.
 	for _, s := range c.Steps {
-		if s.Status != change.StepNotAttempted {
+		if s.Status != change.StepNotAttempted && s.Status != change.StepSkipped {
 			t.Fatalf("step %s = %s", s.Ref.Name, s.Status)
 		}
 	}
