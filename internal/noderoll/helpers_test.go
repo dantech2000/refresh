@@ -59,7 +59,7 @@ func listing(t *testing.T, client kubernetes.Interface, id Identity, c *clock) *
 // ends its watches.
 func watching(t *testing.T, client kubernetes.Interface, id Identity, c *clock) *Observer {
 	t.Helper()
-	o, err := attach(testContext(t), client, ng, id, c.now, syncLimit)
+	o, err := attach(testContext(t), client, ng, id, c.now, AttachOptions{}.syncLimit())
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}

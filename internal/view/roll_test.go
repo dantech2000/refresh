@@ -284,7 +284,7 @@ func TestRollPanel_FromObserver(t *testing.T) {
 	}
 	ctx := t.Context()
 	client := fake.NewClientset(node("ip-1", true, false), node("ip-2", true, false), node("ip-3", true, false))
-	obs, err := noderoll.Attach(ctx, client, "spot-burst", noderoll.Identity{}) // ip-1 to ip-3 are old
+	obs, err := noderoll.Attach(ctx, client, "spot-burst", noderoll.Identity{}, noderoll.AttachOptions{}) // ip-1 to ip-3 are old
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -189,7 +189,7 @@ func rollIdentity(s Step, startedAt time.Time) noderoll.Identity {
 func observeNodes(ctx context.Context, d Deps, emit func(Event), kube kubernetes.Interface, s Step, startedAt time.Time, poll time.Duration) {
 	notice := func(text string) { emit(Event{Kind: Notice, Text: text}) }
 	name := s.Ref.Name
-	obs, err := noderoll.Attach(ctx, kube, name, rollIdentity(s, startedAt))
+	obs, err := noderoll.Attach(ctx, kube, name, rollIdentity(s, startedAt), noderoll.AttachOptions{After: d.Tick})
 	if err != nil {
 		if ctx.Err() == nil {
 			notice("could not read the nodes of nodegroup " + name + " (" + err.Error() + "); the roll goes on without the node view")

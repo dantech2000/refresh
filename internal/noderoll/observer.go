@@ -56,10 +56,10 @@ type Observer struct {
 // call Close.
 //
 // It starts a watch of the nodes and one of the Warning events, and
-// serves the snapshots from their caches. When the caches do not sync in
-// 10 seconds, as with credentials that may list and not watch, it lists on
-// each snapshot: the watch makes the observer faster, and nothing depends
-// on it. Attach fails only when its first list of the nodes fails.
+// serves the snapshots from their caches. When the caches do not sync
+// within SyncLimit, as with credentials that may list and not watch, it
+// lists on each snapshot: the watch makes the observer faster, and nothing
+// depends on it. Attach fails only when its first list of the nodes fails.
 //
 // Attach chooses once how a node counts as new, from that first list. The
 // first row that matches decides.
@@ -73,8 +73,17 @@ type Observer struct {
 //
 // Row 2 needs no AMI, and the image label of a node is not read. That is
 // why TargetAMI changes nothing here.
-func Attach(ctx context.Context, kube kubernetes.Interface, nodegroup string, id Identity) (*Observer, error) {
-	return attach(ctx, kube, nodegroup, id, time.Now, syncLimit)
+func Attach(ctx context.Context, kube kubernetes.Interface, nodegroup string, id Identity, o AttachOptions) (*Observer, error) {
+	return attach(ctx, kube, nodegroup, id, time.Now, o.syncLimit())
+}
+
+// AttachOptions are the options of Attach. The zero value uses the real
+// clock.
+type AttachOptions struct {
+	// After is the clock of the limit of the first sync: when the
+	// channel that it returns for SyncLimit receives first, the observer
+	// lists on each snapshot. Nil means time.After.
+	After func(time.Duration) <-chan time.Time
 }
 
 // attach is Attach with the clock and the limit of the first sync, which

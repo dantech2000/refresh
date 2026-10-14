@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	// informerSyncLimit is how long Attach waits for the caches of the
-	// watches to fill.
-	informerSyncLimit = 10 * time.Second
+	// SyncLimit is how long Attach waits for the caches of the watches
+	// to fill.
+	SyncLimit = 10 * time.Second
 	// watchPodRefresh is the least time between two reads of the pods of
 	// the same draining nodes while the observer watches. See drainCache.
 	watchPodRefresh = 3 * time.Second
@@ -24,9 +24,25 @@ const (
 // caches.
 type syncLimiter func(parent context.Context) (context.Context, context.CancelFunc)
 
-// syncLimit is the limit of Attach.
-func syncLimit(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, informerSyncLimit)
+// syncLimit returns the limit of the first sync: SyncLimit on the clock
+// of the options.
+func (o AttachOptions) syncLimit() syncLimiter {
+	after := o.After
+	if after == nil {
+		after = time.After
+	}
+	return func(parent context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(parent)
+		expired := after(SyncLimit)
+		go func() {
+			select {
+			case <-expired:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		return ctx, cancel
+	}
 }
 
 // informerSet is the caches of two watches: the nodes of one nodegroup,

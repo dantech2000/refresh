@@ -70,7 +70,7 @@ func requests(srv *kubetest.Server, op fleettest.Operation) []string {
 func TestAttach_WatchesARoll(t *testing.T) {
 	w := kubeWorld()
 	srv, client := serve(t, w, nil)
-	obs, err := Attach(testContext(t), client, ng, Identity{})
+	obs, err := Attach(testContext(t), client, ng, Identity{}, AttachOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

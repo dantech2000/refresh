@@ -168,7 +168,8 @@ type Deps struct {
 	// a call hangs.
 	AfterFunc func(time.Duration, func()) (stop func() bool)
 	// Tick is the clock of the node observer beside a wait: the pause
-	// between two of its snapshots. It is apart from After, because the
+	// between two of its snapshots, and the limit of the first sync of
+	// its watches. It is apart from After, because the
 	// observer runs on a goroutine of its own, and a test clock that moves
 	// with each pause of the wait must not move for the observer too. Nil
 	// means time.After. Only a run with Common.Nodes calls it.
