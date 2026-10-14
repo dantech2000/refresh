@@ -407,10 +407,17 @@ func NewServer(w *fleettest.World) *Server {
 
 // Close stops the server. Requests that a fault still holds are released
 // first, and the connections of clients built from Config are closed.
+//
+// The server closes its own side of every connection before it waits for
+// the handlers. A client that gave up a request after its headers and
+// before its body resets the connection, and the loopback interface of
+// macOS can lose that reset: the handler then reads the body until the
+// TCP keep-alive probe finds the peer gone, 15 seconds later.
 func (s *Server) Close() {
 	s.Handler.Close()
 	s.client.CloseIdleConnections()
 	s.multiplexed.CloseIdleConnections()
+	s.http.CloseClientConnections()
 	s.http.Close()
 }
 
