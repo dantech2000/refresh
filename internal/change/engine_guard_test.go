@@ -3,6 +3,7 @@ package change
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -696,4 +697,36 @@ func TestEngineGuard_AddonRollbackNeverUpgrades(t *testing.T) {
 		t.Errorf("requests %v: the rollback upgraded vpc-cni from %s", e.sent(), older)
 	}
 	wantBlocked(t, stepResultOf(t, res, StepAddon, "vpc-cni"), "vpc-cni", older, cni32, "a rollback does not upgrade an add-on")
+}
+
+// An add-on version that is empty or does not parse is neither at the
+// goal nor behind it: the step is blocked and names the add-on and the
+// value, and nothing is sent for it.
+func TestEngineGuard_AddonVersionMustParse(t *testing.T) {
+	for _, bad := range []string{"", "garbage"} {
+		t.Run("upgrade, live "+strconv.Quote(bad), func(t *testing.T) {
+			world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) { c.Version = "1.33" })
+			e := newEnv(t, world)
+			hooks := Hooks{Checkpoint: atCheckpoint(PhaseAddonsBefore, func() {
+				world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Addon("vpc-cni").Version = bad })
+			})}
+			res := mustRun(t, e, upgradeTo("1.33"), hooks)
+			if slices.Contains(e.sent(), sentCNI33) {
+				t.Errorf("requests %v: vpc-cni was updated from the version %q", e.sent(), bad)
+			}
+			wantBlocked(t, stepResultOf(t, res, StepAddon, "vpc-cni"), "add-on vpc-cni", strconv.Quote(bad), "not a version")
+		})
+		t.Run("rollback, live "+strconv.Quote(bad), func(t *testing.T) {
+			world := upgradedWorld(nil)
+			e := newEnv(t, world)
+			hooks := Hooks{Checkpoint: atCheckpoint(PhaseAddons, func() {
+				world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Addon("vpc-cni").Version = bad })
+			})}
+			res := mustRun(t, e, rollbackOf(), hooks)
+			if want := "eks:UpdateAddon vpc-cni " + cni32; slices.Contains(e.sent(), want) {
+				t.Errorf("requests %v: vpc-cni was updated from the version %q", e.sent(), bad)
+			}
+			wantBlocked(t, stepResultOf(t, res, StepAddon, "vpc-cni"), "add-on vpc-cni", strconv.Quote(bad), "not a version")
+		})
+	}
 }

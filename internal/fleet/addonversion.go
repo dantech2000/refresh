@@ -1,6 +1,9 @@
 package fleet
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // CompareAddonVersions compares EKS add-on version strings such as
 // "v1.18.1-eksbuild.3", returning >0 when a is newer than b. A version is
@@ -25,6 +28,17 @@ func CompareAddonVersions(a, b string) int {
 		return c
 	}
 	return compareSegments(va.meta, vb.meta)
+}
+
+// ValidAddonVersion reports whether v is an add-on version that
+// CompareAddonVersions can order by meaning: a core of one or more
+// numeric segments ("1.18.1"), with an optional leading "v" and the
+// optional parts above. An empty string and a word such as "latest" are
+// not versions; CompareAddonVersions still orders them, but the order
+// says nothing about which one is newer.
+func ValidAddonVersion(v string) bool {
+	core := parseAddonVersion(v).core
+	return len(core) > 0 && !slices.ContainsFunc(core, func(s string) bool { return !isDigits(s) })
 }
 
 // addonVersion is a version string split into the parts CompareAddonVersions

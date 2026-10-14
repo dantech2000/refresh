@@ -72,10 +72,11 @@ func (p *rollbackPlanner) nodegroupSteps() []Step {
 //
 //  1. Not read, or its catalogue could not be read: Blocked.
 //  2. EKS publishes no version for the target: Blocked.
-//  3. The installed version is in the catalogue of the target: Skip.
-//  4. The catalogue has a version at or below the installed one: Submit,
+//  3. The installed version does not parse: Blocked.
+//  4. The installed version is in the catalogue of the target: Skip.
+//  5. The catalogue has a version at or below the installed one: Submit,
 //     to the newest of those.
-//  5. Otherwise: Blocked. Every version that the target runs is newer
+//  6. Otherwise: Blocked. Every version that the target runs is newer
 //     than the installed one, and a rollback never upgrades an add-on.
 func (p *rollbackPlanner) addonSteps() []Step {
 	target := p.cp.To
@@ -101,6 +102,8 @@ func (p *rollbackPlanner) addonSteps() []Step {
 			p.block(BlockerUnread, &step.Ref, "could not look up versions of %s compatible with %s (rerun to retry)", name, target)
 		case len(versions) == 0:
 			p.block(BlockerUnavailable, &step.Ref, "no version of %s is compatible with %s", name, target)
+		case !fleet.ValidAddonVersion(a.Version):
+			p.block(BlockerUnavailable, &step.Ref, "%s", &AddonVersionError{Addon: name, Version: a.Version})
 		case addonVersionListed(a.Version, versions):
 			step.Action, step.Reason, step.To = Skip, AlreadyAtTarget, a.Version
 		default:

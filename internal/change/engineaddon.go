@@ -1,6 +1,7 @@
 package change
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -15,7 +16,8 @@ import (
 //     sent after it. When the add-on settles ACTIVE at a version that
 //     meets the phase, the step is done. When it settles ACTIVE at a
 //     version that does not, the step goes on to send its own update.
-//  3. DELETING: blocked.
+//  3. DELETING, or a version that does not parse, live or of the step:
+//     blocked.
 //  4. At a version that meets the phase: nothing is sent.
 //  5. guardSubmit: a new read of the cluster, the busy rule, and the
 //     add-on once more. An update of the control plane that someone else
@@ -58,7 +60,10 @@ func (r *runner) runEngineAddon(cp *ClusterPlan, s Step) StepResult {
 		return res
 	}
 	keep, err := r.keepsAddon(cp, s, fresh.Version)
+	var bad *AddonVersionError
 	switch {
+	case errors.As(err, &bad):
+		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, bad.Error()+"; it was not changed")
 	case err != nil:
 		return r.unsent(cp, res, err)
 	case keep && attached:
@@ -101,11 +106,13 @@ func (r *runner) runEngineAddon(cp *ClusterPlan, s Step) StepResult {
 // keepsAddon reports whether an add-on at version needs no update in the
 // phase of the step. See runEngineAddon for the rule of each direction. A
 // rollback reads the catalogue of its target, and only for a version that
-// is neither the one that the plan read nor the one that it moves to.
+// is neither the one that the plan read nor the one that it moves to. A
+// version or a goal that does not parse is an *AddonVersionError, and
+// the caller blocks the step.
 func (r *runner) keepsAddon(cp *ClusterPlan, s Step, version string) (bool, error) {
 	kind := r.req.kind()
-	if addonDone(kind, version, s.To) {
-		return true, nil
+	if done, err := addonDone(kind, s.Ref.Name, version, s.To); done || err != nil {
+		return done, err
 	}
 	if kind != ClusterRollback || version == s.From {
 		return false, nil

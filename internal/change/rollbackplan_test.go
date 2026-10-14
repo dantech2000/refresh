@@ -3,6 +3,7 @@ package change
 import (
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -814,5 +815,20 @@ func TestRollbackPlan_AddonNeverMovesUp(t *testing.T) {
 				t.Errorf("blocker = %s %q, want Unavailable %q", b.Kind, b.Message, tt.blocker)
 			}
 		})
+	}
+}
+
+// An installed add-on version that does not parse is neither at the goal
+// nor behind it: the rollback planner blocks its step and names the value.
+func TestRollbackPlan_AddonVersionMustParse(t *testing.T) {
+	for _, bad := range []string{"", "garbage"} {
+		w := newRollbackWorld()
+		w.addons["kube-proxy"] = bad
+		cp := w.rollback(t, RollbackRequest{})
+		s := findStep(t, cp, "", StepAddon, "kube-proxy")
+		b := blockerFor(t, cp, StepAddon, "kube-proxy")
+		if s.Action != Blocked || b.Kind != BlockerUnavailable || !strings.Contains(b.Message, strconv.Quote(bad)) {
+			t.Errorf("installed %q: step = %s, blocker = %s %q; want Blocked, Unavailable, naming the value", bad, s.Action, b.Kind, b.Message)
+		}
 	}
 }

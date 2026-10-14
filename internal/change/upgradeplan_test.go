@@ -3,6 +3,7 @@ package change
 import (
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -442,4 +443,19 @@ func TestPlanUpgrade_StepsPassTheBusyRule(t *testing.T) {
 			t.Fatalf("the busy rule refused the plan: %+v", refuse)
 		}
 	})
+}
+
+// An installed add-on version that does not parse is neither at the goal
+// nor behind it: the upgrade planner blocks its step and names the value.
+func TestPlanUpgrade_AddonVersionMustParse(t *testing.T) {
+	for _, bad := range []string{"", "garbage"} {
+		w := newPlanWorld()
+		w.addons = map[string]string{"vpc-cni": bad}
+		cp := w.upgrade(t, "1.32", UpgradeRequest{})
+		s := findStep(t, cp, "1.32", StepAddon, "vpc-cni")
+		b := blockerFor(t, cp, StepAddon, "vpc-cni")
+		if s.Action != Blocked || b.Kind != BlockerUnavailable || !strings.Contains(b.Message, strconv.Quote(bad)) {
+			t.Errorf("installed %q: step = %s, blocker = %s %q; want Blocked, Unavailable, naming the value", bad, s.Action, b.Kind, b.Message)
+		}
+	}
 }

@@ -302,14 +302,20 @@ func rederive(kind Kind, ph Phase, snap *fleet.Snapshot) []Step {
 			}
 		case StepAddon:
 			j := slices.IndexFunc(snap.Addons, func(a fleet.Addon) bool { return a.Name == s.Ref.Name })
-			switch {
-			case j < 0:
+			if j < 0 {
 				s.Action, s.Reason = Skip, NoChange
+				continue
+			}
+			done, bad := addonDone(kind, s.Ref.Name, snap.Addons[j].Version, s.To)
+			switch {
 			case snap.Addons[j].State != fleet.Collected:
 				// The fresh read of the step decides.
 			case snap.Addons[j].Status == "CREATING" || snap.Addons[j].Status == "UPDATING":
 				s.Action, s.Reason = Attach, InFlight
-			case addonDone(kind, snap.Addons[j].Version, s.To):
+			case bad != nil:
+				// A version that does not parse: the fresh read of the
+				// step decides, and blocks it.
+			case done:
 				s.Action, s.Reason = Skip, AlreadyAtTarget
 			default:
 				s.Action = Submit

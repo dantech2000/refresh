@@ -184,8 +184,10 @@ func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap
 //  1. The add-on was not read: Blocked.
 //  2. EKS is changing it: Blocked. Someone started a change after the
 //     fresh read of the step. The next run attaches to it.
-//  3. Its version meets the phase now: Skipped.
-//  4. The request would go the wrong way: Blocked. A rollback never sends
+//  3. Its version, or the version of the step, does not parse: Blocked.
+//     It is neither at the goal nor behind it.
+//  4. Its version meets the phase now: Skipped.
+//  5. The request would go the wrong way: Blocked. A rollback never sends
 //     a version above the live one, and an upgrade never one below it.
 //     Someone moved the add-on since the plan.
 func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot) (StepResult, bool) {
@@ -200,7 +202,10 @@ func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet
 			fmt.Sprintf("add-on %s started changing before its update was sent (%s); it was not changed. Run the command again to wait for that change", name, a.Status)), false
 	}
 	keep, err := r.keepsAddon(cp, s, a.Version)
+	var bad *AddonVersionError
 	switch {
+	case errors.As(err, &bad):
+		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, bad.Error()+"; it was not changed"), false
 	case err != nil:
 		return r.unsent(cp, res, err), false
 	case keep:

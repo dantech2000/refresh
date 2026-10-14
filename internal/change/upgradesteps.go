@@ -121,11 +121,13 @@ func (p *upgradePlanner) nodegroupSteps(nodegroups []fleet.Nodegroup, to fleet.V
 //     skipped add-on is never a blocker.
 //  2. Not read, or its catalogue could not be read: Blocked, before.
 //  3. EKS publishes no version for the hop target: Blocked, before.
-//  4. The installed version is the newest one for the hop target, or
+//  4. The installed version does not parse: Blocked, before. It is
+//     neither at the goal nor behind it.
+//  5. The installed version is the newest one for the hop target, or
 //     newer: Skip, after.
-//  5. The version at the start of the hop is not in the catalogue:
+//  6. The version at the start of the hop is not in the catalogue:
 //     Submit, before.
-//  6. Otherwise: Submit, after.
+//  7. Otherwise: Submit, after.
 func (p *upgradePlanner) addonSteps(to fleet.Version) (before, after []Step) {
 	for _, a := range p.addons {
 		step := Step{Ref: StepRef{Kind: StepAddon, Name: a.Name}, From: a.Version}
@@ -153,6 +155,12 @@ func (p *upgradePlanner) addonSteps(to fleet.Version) (before, after []Step) {
 		case len(versions) == 0:
 			step.Action = Blocked
 			p.block(BlockerUnavailable, &ref, "no version of %s is compatible with %s", a.Name, to)
+			before = append(before, step)
+			continue
+		}
+		if !fleet.ValidAddonVersion(a.Version) {
+			step.Action = Blocked
+			p.block(BlockerUnavailable, &ref, "%s", &AddonVersionError{Addon: a.Name, Version: a.Version})
 			before = append(before, step)
 			continue
 		}

@@ -1,6 +1,10 @@
 package change
 
-import "github.com/dantech2000/refresh/internal/fleet"
+import (
+	"fmt"
+
+	"github.com/dantech2000/refresh/internal/fleet"
+)
 
 // atLeast reports whether a is b or newer. A version that is not known
 // is at least nothing, and nothing is at least it.
@@ -27,20 +31,39 @@ func versionDone(kind Kind, version, goal string) bool {
 // with no further read: at the goal or newer for an upgrade, and exactly
 // the goal for a rollback. A rollback also keeps a version that the
 // catalogue of its target lists, which the step itself reads.
-func addonDone(kind Kind, version, goal string) bool {
-	if version == "" || goal == "" {
-		return false
+//
+// A version or a goal that is empty or does not parse is neither done
+// nor behind: addonDone returns an *AddonVersionError for it, and the
+// step is blocked.
+func addonDone(kind Kind, name, version, goal string) (bool, error) {
+	for _, v := range []string{version, goal} {
+		if !fleet.ValidAddonVersion(v) {
+			return false, &AddonVersionError{Addon: name, Version: v}
+		}
 	}
 	order := fleet.CompareAddonVersions(version, goal)
 	if kind == ClusterRollback {
-		return order == 0
+		return order == 0, nil
 	}
-	return order >= 0
+	return order >= 0, nil
+}
+
+// AddonVersionError is a version of an add-on, read from EKS or chosen
+// from its catalogue, that is empty or does not parse. Nothing can say
+// whether it is older or newer than another, so no request is sent for
+// the add-on.
+type AddonVersionError struct {
+	Addon   string
+	Version string
+}
+
+func (e *AddonVersionError) Error() string {
+	return fmt.Sprintf("add-on %s has the version %q, which is not a version that refresh can compare", e.Addon, e.Version)
 }
 
 // addonDirection reports whether moving an add-on from the version live
 // to goal goes the way of the change, or stays: down for a rollback, and
-// up for an upgrade.
+// up for an upgrade. The caller has checked both versions with addonDone.
 func addonDirection(kind Kind, live, goal string) bool {
 	order := fleet.CompareAddonVersions(goal, live)
 	if kind == ClusterRollback {

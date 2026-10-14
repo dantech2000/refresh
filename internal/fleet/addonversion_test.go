@@ -126,3 +126,27 @@ func FuzzCompareAddonVersionsNumeric(f *testing.F) {
 		}
 	})
 }
+
+func TestValidAddonVersion(t *testing.T) {
+	tests := []struct {
+		v    string
+		want bool
+	}{
+		{"v1.18.1-eksbuild.3", true},
+		{"1.18.1", true},
+		{"v1.14.0+build", true},
+		{"v2.4.0-rc1", true},
+		{" v1.0 ", true},
+		{"", false},
+		{"v", false},
+		{"garbage", false},
+		{"latest", false},
+		{"v1.x.0", false},
+		{"-eksbuild.1", false},
+	}
+	for _, tt := range tests {
+		if got := fleet.ValidAddonVersion(tt.v); got != tt.want {
+			t.Errorf("fleet.ValidAddonVersion(%q) = %v, want %v", tt.v, got, tt.want)
+		}
+	}
+}
