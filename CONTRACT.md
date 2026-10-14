@@ -101,7 +101,7 @@ A filter is `key=value`, repeatable, and all filters must match. The value may u
 | Flag | Env | Default | Meaning |
 |---|---|---|---|
 | `-o, --output` | | `table` | `table`, `json`, `yaml`, or `plain`. Each command registers it with the formats that command supports, so it goes after the command name. |
-| `-r, --region` | `REFRESH_EKS_REGIONS` for sweeps | from the context or AWS config | Region. On sweep commands it takes several: repeat the flag or separate the values with commas. |
+| `-r, --region` | `REFRESH_EKS_REGIONS` for sweeps | from the context or AWS config | Region. On sweep commands it takes several: repeat the flag or separate the values with commas. Every region name, from here, `REFRESH_EKS_REGIONS`, a context, or the AWS configuration, must have the shape of a region (`us-east-1`, `us-gov-west-1`); an empty or malformed name is an error before any request. |
 | `--profile` | `AWS_PROFILE` | | AWS shared-config profile |
 | `-t, --timeout` | `REFRESH_TIMEOUT` | `1m` | Budget for the API calls of a read. In a changing command, for the reads and the requests outside a wait. With `--watch`, for each refresh. `0` means no limit; a negative value is an error. |
 | `--max-concurrency` | `REFRESH_MAX_CONCURRENCY` | `32` | Limit for AWS requests in flight in one region |
@@ -114,6 +114,10 @@ A filter is `key=value`, repeatable, and all filters must match. The value may u
 | `--version` | | | Print the version, the commit, and the build date. On the root command only. |
 
 Other env vars, unchanged: `REFRESH_CONTEXT`, `REFRESH_CONFIG_HOME`, `REFRESH_NO_UPDATE_CHECK`, `REFRESH_IN_CLUSTER_NAME`.
+
+A number flag or variable that is not a whole number, or that is out of range, is an error that says so in words: `--desired must be a whole number, not "abc"`, `--desired is too large (at most 2147483647)`.
+
+`context add` checks what it saves: a name of 1 to 63 letters, digits, `-`, `_`, and `.` (not `-` alone), a cluster name by the EKS rules, and a region of the right shape. Replacing a context is allowed; the command then prints `Updated context "<name>"`.
 
 Flag letters keep one meaning everywhere: `-c` cluster, `-n` nodegroup, `-a` add-on, `-o` output, `-r` region, `-t` timeout, `-d` dry-run, `-y` yes, `-q` quiet, `-w` watch, `-f` filter, `-A` all regions.
 
