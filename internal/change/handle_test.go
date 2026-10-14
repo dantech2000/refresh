@@ -128,7 +128,9 @@ func TestHandle_StateTable(t *testing.T) {
 		if cp := <-checkpointAsync(s, StepRef{Phase: plan.Clusters[0].Phases[0].Ref}); cp.Stop || cp.Waited {
 			t.Fatalf("the first checkpoint = %+v, want go on", cp)
 		}
-		s.do(func(hk Hooks) { hk.Event(Event{Kind: PhaseStarted, Phase: plan.Clusters[0].Phases[0].Ref, At: handleNow}) })
+		s.do(func(hk Hooks) {
+			hk.Event(Event{Kind: PhaseStarted, Phase: plan.Clusters[0].Phases[0].Ref, At: handleNow})
+		})
 		wantState(t, h, Running)
 
 		// A pause holds the next checkpoint; a resume lets it go.
