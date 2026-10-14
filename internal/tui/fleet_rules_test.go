@@ -76,7 +76,6 @@ func TestKeyBarKeepsWordsOnLetterKeys(t *testing.T) {
 // No width cuts a word of the bar: a form that does not fit gives way to
 // a shorter one.
 func TestKeyBarNeverCutsAWord(t *testing.T) {
-	t.Skip("known defect: keyBar (internal/tui/view.go:216) takes a form as fitting when it leaves no cell between the keys and the right side, and joinRight (draw.go:370) then cuts the last word: \"upgrad…\" at 100 columns")
 	h := newHarness(t, 100, 40, colorTheme)
 	h.state(fleetState(3))
 	for w := minWidth; w <= 200; w++ {

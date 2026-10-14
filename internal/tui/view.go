@@ -213,11 +213,13 @@ func (m Model) keyBar(w int) Line {
 			}
 			l = append(l, sp(gap))
 		}
-		if l.Width()+full.Width() <= w {
+		// joinRight keeps one cell between the keys and the right side,
+		// and cuts the keys to make room for it.
+		if l.Width()+full.Width() < w {
 			right = full
 			break
 		}
-		if l.Width()+compact.Width() <= w {
+		if l.Width()+compact.Width() < w {
 			right = compact
 			break
 		}
