@@ -15,7 +15,7 @@ commit: b62e59d
 built: 2026-10-14T01:16:43Z
 ```
 
-`refresh --version` prints the version line alone. `-v` is not a flag.
+`refresh --version` prints the same lines. `-v` is not a flag.
 
 ### The update check
 
