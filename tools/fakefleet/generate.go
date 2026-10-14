@@ -87,6 +87,9 @@ var situations = []situation{
 	{name: "insight-error", what: "an upgrade-readiness insight is ERROR (deprecated APIs in use)", apply: func(g *generator, c *fleettest.Cluster) {
 		next := fmt.Sprintf("1.%d", minorOf(c.Version)+1)
 		c.Insights = []fleettest.Insight{{
+			// An ID as EKS gives one: "cluster upgrade-check" shows its
+			// first characters, and --insight takes them.
+			ID:   "5d0e1b7c-6a4f-4b0e-9c1d-3f2a8b7c6d5e",
 			Name: "Deprecated APIs removed in Kubernetes v" + next, Status: fleettest.InsightError, KubernetesVersion: next,
 			Reason:      "Deprecated API usage detected within the last 30 days.",
 			Description: "Checks for usage of deprecated APIs that are scheduled for removal in Kubernetes v" + next,

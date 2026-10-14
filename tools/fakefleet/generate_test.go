@@ -228,8 +228,8 @@ func testInsightError(t *testing.T, f *fleet) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Insights) != 1 || list.Insights[0].InsightStatus.Status != ekstypes.InsightStatusValueError {
-		t.Fatalf("insights = %+v, want one ERROR", list.Insights)
+	if len(list.Insights) != 1 || list.Insights[0].InsightStatus.Status != ekstypes.InsightStatusValueError || aws.ToString(list.Insights[0].Id) == "" {
+		t.Fatalf("insights = %+v, want one ERROR with an ID", list.Insights)
 	}
 }
 
