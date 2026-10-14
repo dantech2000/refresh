@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 
+	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleetdata"
 )
 
@@ -21,14 +21,14 @@ import (
 // AWS: the regions that every account of the partition has enabled (EC2
 // reports them as opt-in-not-required) and where EKS answers. It reads a
 // real account, with read-only calls that cost nothing, and runs only with
-// the livecheck tag.
+// the livecheck tag:
+//
+//   - ec2:DescribeRegions, in the region of the profile
+//   - eks:ListClusters with a page of one, in each region
 func TestLiveRegions(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	cfg := awsxtest.LiveConfig(t, "")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
 	out, err := ec2.NewFromConfig(cfg).DescribeRegions(ctx, &ec2.DescribeRegionsInput{
 		Filters: []ec2types.Filter{{Name: aws.String("opt-in-status"), Values: []string{"opt-in-not-required"}}},
 	})
