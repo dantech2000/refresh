@@ -13,7 +13,8 @@ import (
 // would land on a directory, so a failed run leaves no partial output. Each
 // file arrives by a rename. A rename replaces a symbolic link at the
 // destination; it does not write through the link to its target.
-// Entries in dir that generate did not write are not touched.
+// Entries in dir that generate did not write are not touched; the command
+// removes its own stale pages afterwards.
 func generateFiles(dir string, generate func(tmpDir string) error) error {
 	// The temporary directory is inside dir: a rename needs both ends on
 	// one file system.

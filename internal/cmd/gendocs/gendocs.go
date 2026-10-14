@@ -6,6 +6,9 @@ package gendocs
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
@@ -37,6 +40,9 @@ func NewCmdGenDocs(f *cmdutil.Factory) *cobra.Command {
 		Long: `Write one page for each command to a directory, as Markdown or as man
 pages. The pages come from the command tree of this binary, so they match
 its commands and flags.
+
+A page in the directory for a command that this binary does not have is
+removed. Other files there are kept.
 
 Two runs of the same binary write the same Markdown. A man page holds its
 date, which is the time of the run, or SOURCE_DATE_EPOCH when that is set.`,
@@ -83,6 +89,9 @@ func (o *options) run(root *cobra.Command) error {
 
 	generate := func(dir string) error { return doc.GenMarkdownTree(root, dir) }
 	what := "the command reference"
+	// Cobra names a page for the path of its command: refresh_cluster_list.md,
+	// and refresh-cluster-list.1 for a man page.
+	sep, ext := "_", ".md"
 	if o.format == formatMan {
 		header := &doc.GenManHeader{
 			Title:   "REFRESH",
@@ -92,14 +101,55 @@ func (o *options) run(root *cobra.Command) error {
 		}
 		generate = func(dir string) error { return doc.GenManTree(root, header, dir) }
 		what = "the man pages"
+		sep, ext = "-", ".1"
 	}
+	var pages []string
 	// Cobra writes with os.Create, which follows a symbolic link and leaves
 	// part of the pages when it fails. generateFiles prevents both.
-	if err := generateFiles(o.out, generate); err != nil {
+	err := generateFiles(o.out, func(dir string) error {
+		if err := generate(dir); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(dir)
+		for _, e := range entries {
+			pages = append(pages, e.Name())
+		}
+		return err
+	})
+	if err != nil {
 		return fmt.Errorf("writing %s to %s: %w", what, o.out, err)
 	}
-	_, err := fmt.Fprintf(o.ios.Out, "Generated %s in %s\n", what, o.out)
+	if err := removeStalePages(o.out, root.Name(), sep, ext, pages); err != nil {
+		return fmt.Errorf("writing %s to %s: %w", what, o.out, err)
+	}
+	_, err = fmt.Fprintf(o.ios.Out, "Generated %s in %s\n", what, o.out)
 	return err
+}
+
+// removeStalePages deletes the pages in dir that this run did not write:
+// the pages of commands that the tree no longer has. Without that, a check
+// that compares dir with the committed pages does not see a removed
+// command. A page is a regular file with the name that cobra gives the
+// page of a command of root. Any other file in dir stays: a page written
+// by hand, or the man page of another tool.
+func removeStalePages(dir, root, sep, ext string, pages []string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !e.Type().IsRegular() || slices.Contains(pages, name) {
+			continue
+		}
+		if name != root+ext && !(strings.HasPrefix(name, root+sep) && strings.HasSuffix(name, ext)) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func disableAutoGenTag(cmd *cobra.Command) {

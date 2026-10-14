@@ -208,3 +208,56 @@ func TestGenDocsMan(t *testing.T) {
 		t.Errorf("two runs with one SOURCE_DATE_EPOCH differ (-first +second):\n%s", diff)
 	}
 }
+
+// A page of a command that the tree no longer has is removed, so that a
+// check of the committed reference sees the removal. A file that is not a
+// page of refresh stays.
+func TestGenDocs_RemovesStalePages(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		stale []string
+		kept  []string
+		page  string
+	}{
+		{
+			name:  "markdown",
+			stale: []string{"refresh_removed.md", "refresh_cluster_removed.md"},
+			kept:  []string{"schemas.md", "handwritten.md", "refresh_removed.txt", "refreshing.md"},
+			page:  "refresh_cluster_list.md",
+		},
+		{
+			name:  "man",
+			args:  []string{"--format", "man"},
+			stale: []string{"refresh-removed.1"},
+			kept:  []string{"other.1", "refresh_removed.md"},
+			page:  "refresh-cluster-list.1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, name := range append(append([]string{tt.page}, tt.stale...), tt.kept...) {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("old"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			pages := generate(t, dir, tt.args...)
+
+			for _, name := range tt.stale {
+				if _, ok := pages[name]; ok {
+					t.Errorf("%s is still there, want the stale page removed", name)
+				}
+			}
+			for _, name := range tt.kept {
+				if pages[name] != "old" {
+					t.Errorf("%s = %q, want the file untouched", name, pages[name])
+				}
+			}
+			if got := pages[tt.page]; got == "" || got == "old" {
+				t.Errorf("%s = %q, want the new page", tt.page, got)
+			}
+		})
+	}
+}
