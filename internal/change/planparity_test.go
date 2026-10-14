@@ -107,8 +107,9 @@ func legacyRows(steps []legacyStep) (rows []parityRow, blocked bool) {
 }
 
 // planRows returns the steps of phases as rows, with the status that the
-// old plan had for the action of each.
-func planRows(t *testing.T, phases []Phase, controlPlane Action) []parityRow {
+// old plan had for the action of each. want is the action of a pending
+// step.
+func planRows(t *testing.T, phases []Phase, want func(Step) Action) []parityRow {
 	t.Helper()
 	var rows []parityRow
 	for _, ph := range phases {
@@ -123,12 +124,8 @@ func planRows(t *testing.T, phases []Phase, controlPlane Action) []parityRow {
 				row.Status = "Pending"
 				// The old plan said in words which pending step attaches.
 				// The scenario says which one it is.
-				want := Submit
-				if s.Ref.Kind == StepControlPlane {
-					want = controlPlane
-				}
-				if s.Action != want {
-					t.Errorf("step %s is %s, want %s", s.Ref, s.Action, want)
+				if w := want(s); s.Action != w {
+					t.Errorf("step %s is %s, want %s", s.Ref, s.Action, w)
 				}
 			}
 			rows = append(rows, row)
@@ -238,15 +235,21 @@ type parityScenario struct {
 	controlPlane Action
 	// noDocument: the old binary printed no document.
 	noDocument bool
+	// verify are the nodegroups whose pending step is Verify.
+	verify []string
 }
 
 func edits(e ...func(w *planWorld)) []func(w *planWorld) { return e }
 
-func (sc parityScenario) controlPlaneAction() Action {
-	if sc.controlPlane == "" {
-		return Submit
+// action is the action of a pending step of the scenario's plan.
+func (sc parityScenario) action(s Step) Action {
+	switch {
+	case s.Ref.Kind == StepControlPlane && sc.controlPlane != "":
+		return sc.controlPlane
+	case s.Ref.Kind == StepNodegroup && slices.Contains(sc.verify, s.Ref.Name):
+		return Verify
 	}
-	return sc.controlPlane
+	return Submit
 }
 
 // TestPlanUpgrade_ParityTraces plans every cluster-upgrade scenario and
@@ -278,6 +281,11 @@ func TestPlanUpgrade_ParityTraces(t *testing.T) {
 		"skip-addon":               {upgrade: UpgradeRequest{SkipAddons: []string{"coredns"}}},
 		"skip-nodegroup":           {upgrade: UpgradeRequest{SkipNodegroups: []string{"ng-b"}}},
 		"one-nodegroup":            {upgrade: UpgradeRequest{Nodegroups: []string{"ng-a"}}},
+		// Everything is at 1.33, and the roll of ng-a of an earlier run
+		// is still in flight.
+		"resume-unsettled-nodegroup": {verify: []string{"ng-a"}, edits: edits(upgradedAgo(24*time.Hour), func(w *planWorld) {
+			w.nodegroups[0].status = "UPDATING"
+		})},
 		// The control plane and the add-ons are done, and the nodegroups
 		// are not.
 		"resume": {edits: edits(func(w *planWorld) {
@@ -315,7 +323,7 @@ func TestPlanUpgrade_ParityTraces(t *testing.T) {
 				hops = append(hops, h.To)
 				want, b := legacyRows(h.Steps)
 				blocked = blocked || b
-				if diff := cmp.Diff(want, planRows(t, hopOf(cp, h.To), sc.controlPlaneAction())); diff != "" {
+				if diff := cmp.Diff(want, planRows(t, hopOf(cp, h.To), sc.action)); diff != "" {
 					t.Errorf("steps of the hop to %s (-trace +plan):\n%s", h.To, diff)
 				}
 			}
@@ -384,7 +392,7 @@ func TestPlanRollback_ParityTraces(t *testing.T) {
 				t.Errorf("plan from %s to %s, the trace has %s to %s", cp.From, cp.To, old.CurrentVersion, old.TargetVersion)
 			}
 			want, blocked := legacyRows(old.Steps)
-			if diff := cmp.Diff(want, planRows(t, cp.Phases, sc.controlPlaneAction())); diff != "" {
+			if diff := cmp.Diff(want, planRows(t, cp.Phases, sc.action)); diff != "" {
 				t.Errorf("steps (-trace +plan):\n%s", diff)
 			}
 			if got := len(cp.Blockers) > 0; got != blocked {
