@@ -78,11 +78,16 @@ func (r *runner) engineEnded(cp *ClusterPlan, what string) bool {
 	if r.ctx.Err() == nil && (r.runWaitCtx == nil || r.runWaitCtx.Err() == nil) {
 		return false
 	}
-	f := apidoc.NewFailure(apidoc.FailureCluster, cp.Cluster, apidoc.ReasonTimeout,
-		"--wait-timeout passed before "+what+"; nothing more was started")
+	f := apidoc.NewFailure(apidoc.FailureCluster, cp.Cluster, apidoc.ReasonTimeout, waitPassedBefore(what))
 	f.Region = cp.Region
 	r.addFailures([]apidoc.Failure{f})
 	return true
+}
+
+// waitPassedBefore is the failure of a run whose wait budget passed
+// before what.
+func waitPassedBefore(what string) string {
+	return "--wait-timeout passed before " + what + "; nothing more was started"
 }
 
 // runEnginePhase runs one phase and fills results, which has one
@@ -156,7 +161,7 @@ func (r *runner) runEngineSteps(cp *ClusterPlan, ph Phase, results []StepResult)
 		steps := rederive(r.req.kind(), ph, snap)
 		if first && !slices.ContainsFunc(steps, Step.work) {
 			// Everything of the phase was done since the plan.
-			r.notice(capitalize(phaseTitle(ph)) + ": nothing is left to do")
+			r.notice(nothingLeft(ph))
 			return true
 		}
 		first = false
@@ -168,7 +173,7 @@ func (r *runner) runEngineSteps(cp *ClusterPlan, ph Phase, results []StepResult)
 		s := steps[i]
 		if !s.work() {
 			if s.Action == Skip {
-				r.notice(fmt.Sprintf("%s needs no change any more; nothing was sent", stepName(s.Ref)))
+				r.notice(noChangeLeft(s.Ref))
 			}
 			results[i].Status = StepSkipped
 			r.reportStep(results[i])
@@ -185,6 +190,18 @@ func (r *runner) runEngineSteps(cp *ClusterPlan, ph Phase, results []StepResult)
 		}
 	}
 	return true
+}
+
+// nothingLeft is the notice of a phase whose steps were all done since
+// the plan.
+func nothingLeft(ph Phase) string {
+	return capitalize(phaseTitle(ph)) + ": nothing is left to do"
+}
+
+// noChangeLeft is the notice of a step that the plan gave work and that
+// needs none at its fresh read.
+func noChangeLeft(ref StepRef) string {
+	return stepName(ref) + " needs no change any more; nothing was sent"
 }
 
 // reportStep sends the result of a step to the event hook, and after it
@@ -230,7 +247,7 @@ func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot
 	reason := apidoc.ReasonBusy
 	parts := make([]string, len(refuse))
 	for i, b := range refuse {
-		parts[i] = strings.Replace(b.Message, "nothing was started", stepName(res.Ref)+" was not changed", 1)
+		parts[i] = busyStepMessage(b, res.Ref)
 		if b.Kind != BlockerBusy {
 			reason = apidoc.ReasonUnknown
 			r.addFailures(snap.Failures)
@@ -239,6 +256,13 @@ func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot
 	res.Status = StepBlocked
 	res.Failure = r.stepFailure(cp, res, reason, strings.Join(parts, "; "))
 	return res, true
+}
+
+// busyStepMessage is the message of a blocker of the busy rule for the
+// step that it stopped: the rule says that nothing was started, and the
+// step names itself.
+func busyStepMessage(b Blocker, ref StepRef) string {
+	return strings.Replace(b.Message, "nothing was started", stepName(ref)+" was not changed", 1)
 }
 
 // rederive derives the steps of a phase again from a read of the cluster.
@@ -361,7 +385,7 @@ func (r *runner) confirmPhase(cp *ClusterPlan, ph Phase) bool {
 	}
 	q := Question{Kind: ConfirmPhase, Step: StepRef{Phase: ph.Ref}, Text: phaseQuestion(cp, ph)}
 	if r.hooks.Ask == nil {
-		r.stop = &stop{status: Failed, err: fmt.Errorf("%s needs an answer and nobody can be asked; pass --yes. Nothing more was changed", phaseTitle(ph))}
+		r.stop = &stop{status: Failed, err: phaseUnanswered(ph)}
 		return false
 	}
 	switch a, _ := r.askDuringRun(q); a {
@@ -372,11 +396,23 @@ func (r *runner) confirmPhase(cp *ClusterPlan, ph Phase) bool {
 		return false
 	case answeredNo:
 		// The message names the phase that was declined.
-		r.stop.err = fmt.Errorf("declined before %s; nothing more was changed", phaseTitle(ph))
+		r.stop.err = phaseDeclined(ph)
 		return false
 	case answeredYes:
 	}
 	return true
+}
+
+// phaseUnanswered is the error of a run that stopped before a phase whose
+// question nobody can answer.
+func phaseUnanswered(ph Phase) error {
+	return fmt.Errorf("%s needs an answer and nobody can be asked; pass --yes. Nothing more was changed", phaseTitle(ph))
+}
+
+// phaseDeclined is the error of a run that stopped because the question
+// of a phase was answered no.
+func phaseDeclined(ph Phase) error {
+	return fmt.Errorf("declined before %s; nothing more was changed", phaseTitle(ph))
 }
 
 // workNames returns the names of the steps with work.
@@ -449,7 +485,7 @@ func (r *runner) engineQuestion(p *Plan) *Question {
 	up, _ := r.req.(UpgradeRequest)
 	switch {
 	case p.Kind == ClusterRollback:
-		text = "Roll back " + cp.Cluster + " from " + cp.From.String() + " to " + cp.To.String() + ": " + strings.Join(orderOf(cp), ", then ")
+		text = sequenceText("Roll back", cp)
 	case up.ConfirmPhases:
 		for _, ph := range cp.Phases {
 			if slices.ContainsFunc(ph.Steps, Step.work) {
@@ -459,17 +495,24 @@ func (r *runner) engineQuestion(p *Plan) *Question {
 			}
 		}
 	default:
-		text = "Upgrade " + cp.Cluster + " from " + cp.From.String() + " to " + cp.To.String() + ": " + strings.Join(orderOf(cp), ", then ")
+		text = sequenceText("Upgrade", cp)
 	}
 	if v := cp.Gate; v.Decision == health.Ask {
 		q.Reasons = reasonStrings(v.Reasons)
 		if q.Kind == ConfirmStart {
 			q.Kind = GateWarnings
 		}
-		text += ", despite the health warnings (" + strings.Join(q.Reasons, "; ") + ")"
+		text += despiteWarnings(q.Reasons)
 	}
 	q.Text = text + "?"
 	return q
+}
+
+// sequenceText is the start of the question of a whole upgrade or
+// rollback: the verb, the cluster, the versions, and the phases in run
+// order.
+func sequenceText(verb string, cp *ClusterPlan) string {
+	return verb + " " + cp.Cluster + " from " + cp.From.String() + " to " + cp.To.String() + ": " + strings.Join(orderOf(cp), ", then ")
 }
 
 // orderOf lists the phases of a plan that have work, in run order, for a

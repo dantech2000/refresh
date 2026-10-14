@@ -167,11 +167,18 @@ func fleetQuestion(p *Plan) *Question {
 	}
 	q.Text = fmt.Sprintf("Roll %d nodegroup(s) in %d cluster(s) (%s)", count, len(rolls), strings.Join(rolls, "; "))
 	if len(q.Reasons) > 0 {
-		q.Text += ", despite the health warnings (" + strings.Join(q.Reasons, "; ") + ")"
+		q.Text += despiteWarnings(q.Reasons)
 	}
 	if len(left) > 0 {
 		q.Text += ", and leave out the blocked " + strings.Join(left, ", ")
 	}
 	q.Text += "?"
 	return q
+}
+
+// despiteWarnings is the end of a question whose yes accepts the warnings
+// of a gate: ", despite the health warnings (...)". The engine question
+// ends the same way.
+func despiteWarnings(reasons []string) string {
+	return ", despite the health warnings (" + strings.Join(reasons, "; ") + ")"
 }
