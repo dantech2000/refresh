@@ -65,8 +65,9 @@ func planUpgrade(ctx context.Context, d Deps, req UpgradeRequest, refresh *insig
 		// A refresh can take minutes, and the read of the cluster is from
 		// before it. The plan that is shown, gated, and confirmed comes
 		// from a read after the refresh: the cluster is read once more,
-		// and the second plan reuses the refresh.
-		if refresh == nil || refresh.ran == ran || again {
+		// and the second plan reuses the refresh. A refresh that failed
+		// is not tried a second time: the plan blocks on it.
+		if refresh == nil || refresh.ran == ran || refresh.failed || again {
 			break
 		}
 		d.Fetch = d.Fetch.Fresh()

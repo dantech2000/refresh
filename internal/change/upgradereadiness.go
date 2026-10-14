@@ -89,7 +89,7 @@ func hopReadiness(snap *fleet.Snapshot, hop fleet.Version, versions map[string]f
 		f := fleet.FailureFromError(apidoc.FailureCluster, target.Cluster, err)
 		f.Region = target.Region
 		return Readiness{
-			Blocker:  blocked(BlockerUnread, fmt.Sprintf("could not %s cluster insights for %s: %s; %s", what, hop, awsx.Summary(err), skipInsightsHint)),
+			Blocker:  blocked(BlockerUnread, fmt.Sprintf("could not %s cluster insights for %s: %s; %s", what, hop, refreshSummary(err), skipInsightsHint)),
 			Failures: []apidoc.Failure{f},
 		}
 	}

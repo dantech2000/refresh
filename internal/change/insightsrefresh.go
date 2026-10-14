@@ -32,6 +32,29 @@ const (
 // within insightsRefreshLimit.
 var errInsightsRefreshTimeout = errors.New("the insights refresh did not finish in time")
 
+// refreshError is an error of the refresh that says, in the words of the
+// refresher, what EKS answered. Its message keeps those words and the one
+// line of the cause: a blocker shows it whole, where awsx.Summary would
+// keep the API error alone.
+type refreshError struct {
+	msg string
+	err error
+}
+
+func (e *refreshError) Error() string { return e.msg + ": " + awsx.Summary(e.err) }
+
+func (e *refreshError) Unwrap() error { return e.err }
+
+// refreshSummary returns the one line of a refresh error for a blocker:
+// the words of the refresher and the cause, or the summary of an error
+// that the refresher did not word.
+func refreshSummary(err error) string {
+	if re, ok := errors.AsType[*refreshError](err); ok {
+		return re.Error()
+	}
+	return awsx.Summary(err)
+}
+
 // insightsRefresher starts the insights refreshes of one run and waits
 // for them. A dry run has none: it starts no refresh.
 //
@@ -47,6 +70,10 @@ type insightsRefresher struct {
 	// ran counts the refreshes that were started or waited for. A plan
 	// that sees it move knows that time passed since its read.
 	ran int
+	// failed says that the last refresh ended with an error. A plan that
+	// sees it does not read the cluster again: a second refresh would
+	// fail the same way, after a second wait.
+	failed bool
 	// progress reports what the wait does. It may be nil.
 	progress func(text string)
 	// hold stops the read budget of the caller while the refresh waits,
@@ -76,6 +103,13 @@ func (ir *insightsRefresher) say(format string, args ...any) {
 // The error is the error of ctx when ctx ended, and an error that wraps
 // errInsightsRefreshTimeout when the limit of the refresh passed.
 func (ir *insightsRefresher) refresh(ctx context.Context, t Target, live string) error {
+	err := ir.wait(ctx, t, live)
+	ir.failed = err != nil
+	return err
+}
+
+// wait is refresh without the record of its outcome.
+func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) error {
 	key := t.Region + "|" + t.Cluster + "|" + live
 	if at, ok := ir.done[key]; ok && ir.d.now().Sub(at) < insightsRefreshReuse {
 		return nil
@@ -104,7 +138,7 @@ func (ir *insightsRefresher) refresh(ctx context.Context, t Target, live string)
 	startAgain, noted := false, false
 	timedOut := func() error {
 		if rejected != nil {
-			return fmt.Errorf("starting an insights refresh for cluster %s (still refused after %s): %w", t.Cluster, insightsRefreshLimit, rejected)
+			return &refreshError{msg: fmt.Sprintf("starting an insights refresh for cluster %s (still refused after %s)", t.Cluster, insightsRefreshLimit), err: rejected}
 		}
 		return fmt.Errorf("%w (%s)", errInsightsRefreshTimeout, insightsRefreshLimit)
 	}
@@ -137,14 +171,20 @@ func (ir *insightsRefresher) refresh(ctx context.Context, t Target, live string)
 					ir.say("EKS is running a scheduled insights refresh for %s; waiting for it to end", t.Cluster)
 				}
 				rejected, startAgain = startErr, true
+			case awsx.ErrorCode(startErr) == codeInvalidRequest && err == nil:
+				// The refresh that the describe shows has ended: a
+				// scheduled one that ended since the start was refused, or
+				// an older one. Neither is a refresh of this run, so the
+				// start is tried again.
+				rejected, startAgain = startErr, true
 			case awsx.ErrorCode(startErr) == codeNotFound:
-				return fmt.Errorf("EKS has not made cluster insights available for %s yet (a new cluster can take 15 minutes); run again later: %w", t.Cluster, startErr)
+				return &refreshError{msg: fmt.Sprintf("EKS has not made cluster insights available for %s yet (a new cluster can take 15 minutes); run again later", t.Cluster), err: startErr}
 			default:
-				return fmt.Errorf("starting an insights refresh for cluster %s: %w", t.Cluster, startErr)
+				return &refreshError{msg: "starting an insights refresh for cluster " + t.Cluster, err: startErr}
 			}
 		case err != nil:
 			if awsx.IsPermanentAPIError(err) {
-				return fmt.Errorf("checking the insights refresh of cluster %s: %w", t.Cluster, err)
+				return &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster, err: err}
 			}
 			ir.say("checking the insights refresh of %s: %s; still waiting", t.Cluster, awsx.Summary(err))
 		case out.Status == ekstypes.InsightsRefreshStatusCompleted:

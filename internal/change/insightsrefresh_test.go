@@ -88,8 +88,10 @@ func TestInsightsRefresh_WaitsOutAScheduledRefresh(t *testing.T) {
 	if res.Status != Succeeded || res.ExitCode() != exitcode.OK {
 		t.Fatalf("status = %s, exit %d, err %v; want Succeeded", res.Status, res.ExitCode(), res.Err)
 	}
-	// The start is sent again on each poll until EKS accepts it: the
-	// first one, two that are refused again, and the one that starts.
+	// The start is sent again on each poll until EKS accepts it: three
+	// that are refused while the scheduled refresh runs, then the one
+	// that starts. The answer of the third poll is the end of the
+	// scheduled refresh, which is not a refresh of the run.
 	want := append([]string{sentRefresh, sentRefresh, sentRefresh}, wholeUpgrade()...)
 	if diff := cmp.Diff(want, e.sent()); diff != "" {
 		t.Errorf("requests (-want +got):\n%s", diff)
@@ -318,7 +320,6 @@ func TestInsightsRefresh_FailuresBlock(t *testing.T) {
 // A new cluster is told to run again later, in the words of the refresher
 // ("a new cluster can take 15 minutes"), and not only the API error.
 func TestInsightsRefresh_NewClusterSaysWhenToRetry(t *testing.T) {
-	t.Skip("known defect: hopReadiness (upgradereadiness.go:92) puts awsx.Summary of the refresh error in the blocker, which keeps the API error alone and drops the text of insightsRefresher.refresh")
 	e := newEnv(t, engineWorld(nil))
 	refuseStart(e.world, codeNotFound)
 	res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
@@ -328,7 +329,6 @@ func TestInsightsRefresh_NewClusterSaysWhenToRetry(t *testing.T) {
 // A refresh that failed is not run a second time by the same plan. A
 // start that stays refused blocks after one wait of five minutes.
 func TestInsightsRefresh_FailedRefreshRunsOnce(t *testing.T) {
-	t.Skip("known defect: planUpgrade (enginewire.go:69) plans again after every refresh, also one that failed, so the refresh is started and waited for twice")
 	e := newEnv(t, engineWorld(nil))
 	refuseStart(e.world, codeInvalidRequest)
 	hideRefresh(e.world)
