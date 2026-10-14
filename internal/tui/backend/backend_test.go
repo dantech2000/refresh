@@ -274,23 +274,49 @@ func TestOneReadinessRunPerCluster(t *testing.T) {
 	// joins the goroutine; goleak checks that.
 }
 
+// Without --allow-changes every entry point that could change a cluster
+// is refused in the backend, whatever the model asks. Plan stays: a dry
+// run reads only, and the dialog names the command.
 func TestStartIsRefusedWithoutAllowChanges(t *testing.T) {
 	world := fleettest.New()
-	world.Edit(func(s *fleettest.State) { seed(s); s.Clusters = append(s.Clusters, cluster("prod", east, "1.33")) })
+	world.Edit(func(s *fleettest.State) {
+		seed(s)
+		c := cluster("prod", east, "1.33")
+		c.Addons[0].Version = "v1.19.0-eksbuild.1"
+		s.Clusters = append(s.Clusters, c)
+	})
 	r := newRig(t, world, fleet.Regions{Names: []string{east}}, nil)
-	r.wait(t, 0, swept(1))
-	if err := r.b.Start(t.Context(), 1); !errors.Is(err, backend.ErrReadOnly) {
+	st := r.wait(t, 0, swept(1))
+	if !st.ReadOnly {
+		t.Fatal("a backend without --allow-changes reads as writable")
+	}
+	key := state.Key{Region: east, Name: "prod"}
+	p, err := r.b.Plan(t.Context(), state.Action{Kind: state.ActionAddons, Cluster: key})
+	if err != nil {
+		t.Fatalf("Plan read-only: %v", err)
+	}
+	if p.Blocked || !strings.Contains(p.Command, "addon update --all -c prod") {
+		t.Fatalf("read-only proposal = %+v", p)
+	}
+	if _, err := r.b.Start(t.Context(), p.ID); !errors.Is(err, backend.ErrReadOnly) {
 		t.Fatalf("Start without --allow-changes = %v, want ErrReadOnly", err)
 	}
-	allowed := newRig(t, world, fleet.Regions{Names: []string{east}}, func(o *backend.Options) { o.AllowChanges = true })
-	st := allowed.wait(t, 0, swept(1))
-	if st.ReadOnly {
-		t.Fatal("a backend with --allow-changes reads as read-only")
+	// The steering calls find no change: there is none to steer.
+	for name, err := range map[string]error{
+		"Answer": r.b.Answer(t.Context(), 1, 1, true),
+		"Pause":  r.b.Pause(t.Context(), 1),
+		"Resume": r.b.Resume(t.Context(), 1),
+		"Stop":   r.b.Stop(t.Context(), 1),
+	} {
+		if !errors.Is(err, backend.ErrUnknownChange) {
+			t.Errorf("%s without a change = %v, want ErrUnknownChange", name, err)
+		}
 	}
-	if err := allowed.b.Start(t.Context(), 1); !errors.Is(err, backend.ErrNotBuilt) {
-		t.Fatalf("Start with --allow-changes = %v, want ErrNotBuilt", err)
+	// A second read-only proposal does not change the answer.
+	if _, err := r.b.Start(t.Context(), p.ID+1); !errors.Is(err, backend.ErrReadOnly) {
+		t.Fatalf("Start of an unknown proposal without --allow-changes = %v, want ErrReadOnly", err)
 	}
-	for _, req := range append(r.server.Requests(), allowed.server.Requests()...) {
+	for _, req := range r.server.Requests() {
 		if strings.HasPrefix(string(req.Operation), "eks:Update") {
 			t.Fatalf("a mutation was sent: %s", req.Operation)
 		}

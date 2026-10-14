@@ -122,6 +122,28 @@ func (b *Live) finish(res *fleet.SweepResult, sweepErr error) {
 	for _, c := range b.clusters {
 		b.previous[c.Key] = summarize(c)
 	}
+	b.adopt()
+}
+
+// refetchCluster reads one cluster again, after a change on it ended, and
+// replaces its row. The whole fleet is not swept for one cluster.
+func (b *Live) refetchCluster(key state.Key) {
+	ctx, cancel := b.withTimeout()
+	defer cancel()
+	fetcher := &fleet.Fetcher{Now: b.opts.Now}
+	snap, _ := fetcher.Fetch(ctx, b.provider.Clients(key.Region), key.Name, need)
+	fresh := row(snap)
+	b.mu.Lock()
+	rows := b.rowsByRegion[key.Region]
+	if i := slices.IndexFunc(rows, func(c state.Cluster) bool { return c.Key == key }); i >= 0 {
+		rows = slices.Clone(rows)
+		rows[i] = fresh
+		b.rowsByRegion[key.Region] = rows
+		b.clusters = b.sorted()
+		b.previous[key] = summarize(fresh)
+	}
+	b.mu.Unlock()
+	b.bump()
 }
 
 // sayFirstSweep writes one summary of the fleet, then one line per

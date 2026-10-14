@@ -16,9 +16,7 @@ import (
 // Key names one cluster of the fleet.
 type Key struct{ Region, Name string }
 
-// ProposalID names a dry run that a dialog shows. Changes from the UI are
-// not built yet; the type exists so that the one place that refuses a
-// start without --allow-changes exists too.
+// ProposalID names a dry run that a dialog shows.
 type ProposalID uint64
 
 // State is what the model draws.
@@ -30,7 +28,10 @@ type State struct {
 	Context  string
 	Sweep    Sweep
 	Clusters []Cluster // sorted by region, then name
-	Feed     []Line    // the fleet feed, oldest first
+	// Changes are the changes the UI started or watches: running first,
+	// then finished, newest last.
+	Changes []Change
+	Feed    []Line // the fleet feed, oldest first
 }
 
 // Sweep is the last sweep of the fleet, or the one that runs.
@@ -66,6 +67,12 @@ type Cluster struct {
 	Incomplete bool
 	// Readiness is the last readiness run of the cluster, or nil.
 	Readiness *Readiness
+	// Change is the running change of this UI on the cluster, own or
+	// watched, or 0 for none.
+	Change ChangeID
+	// Rollback is the rollback window that the last readiness run found,
+	// or nil.
+	Rollback *fleet.Rollback
 }
 
 // Stale counts what is behind in a cluster.

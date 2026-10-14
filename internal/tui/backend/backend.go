@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/tui/state"
@@ -21,7 +22,6 @@ import (
 // The errors that a call of the backend returns.
 var (
 	ErrReadOnly         = errors.New("the UI is read-only; start it with --allow-changes")
-	ErrNotBuilt         = errors.New("changes from the UI are not built yet; run the CLI command")
 	ErrReadinessRunning = errors.New("the readiness checks of this cluster are running")
 	ErrUnknownCluster   = errors.New("the cluster is not in the fleet")
 )
@@ -34,11 +34,21 @@ type Options struct {
 	// AllowChanges is --allow-changes. It is read once, here, and enforced
 	// in Start.
 	AllowChanges bool
-	// ReadTimeout bounds a sweep and a readiness run: --timeout. Zero
-	// means no limit.
+	// ReadTimeout bounds a sweep, a readiness run, and the reads of a
+	// change: --timeout. Zero means no limit.
 	ReadTimeout time.Duration
-	// Profile and Context are shown in the top bar.
-	Profile, Context string
+	// WaitTimeout bounds a change the UI starts or watches. With
+	// WaitTimeoutSet false each kind of change gets the default of its
+	// command; 0 with it set means no limit.
+	WaitTimeout    time.Duration
+	WaitTimeoutSet bool
+	// Deps are what a change needs: the clients, the Kubernetes access,
+	// and the clock.
+	Deps change.Deps
+	// Profile and Context are shown in the top bar. Profile, Kubeconfig,
+	// and KubeContext go into the command a dry run names.
+	Profile, Context        string
+	Kubeconfig, KubeContext string
 	// SweepError, when set, explains a sweep in which no region answered,
 	// as the read commands do. Nil uses the first failure.
 	SweepError func(ctx context.Context, res *fleet.SweepResult) error
@@ -51,9 +61,13 @@ type Options struct {
 type Live struct {
 	ctx      context.Context //nolint:containedctx // the context of the session, which every goroutine derives from
 	provider *awsx.Provider
+	deps     change.Deps
 	opts     Options
 	refresh  chan struct{}
-	wg       sync.WaitGroup
+	// refetch carries the cluster of a change that ended, for one read of
+	// it between sweeps.
+	refetch chan state.Key
+	wg      sync.WaitGroup
 
 	mu           sync.Mutex
 	version      uint64
@@ -67,6 +81,17 @@ type Live struct {
 	// skippedBefore are the skipped regions of the sweep before: a feed
 	// line names them when the list changes.
 	skippedBefore []string
+
+	// entries are the changes the UI started or watches, oldest first.
+	// byCluster has the running ones of each cluster: the claim. ended is
+	// when the last own change of a cluster ended, for adoption.
+	entries   []*entry
+	byCluster map[state.Key][]state.ChangeID
+	ended     map[state.Key]time.Time
+	// proposal is the newest dry run, which Start consumes.
+	proposal     *proposal
+	nextProposal state.ProposalID
+	nextChange   state.ChangeID
 }
 
 // feedLines is how many lines the feed keeps.
@@ -81,29 +106,53 @@ func New(ctx context.Context, provider *awsx.Provider, o Options) *Live {
 	if o.After == nil {
 		o.After = time.After
 	}
+	deps := o.Deps
+	if deps.AWS == nil {
+		deps.AWS = provider
+	}
+	if deps.Fetch == nil {
+		deps.Fetch = &fleet.Fetcher{Now: o.Now}
+	}
+	if deps.Now == nil {
+		deps.Now = o.Now
+	}
+	if deps.After == nil {
+		deps.After = o.After
+	}
 	return &Live{
 		ctx:          ctx,
 		provider:     provider,
+		deps:         deps,
 		opts:         o,
 		refresh:      make(chan struct{}, 1),
+		refetch:      make(chan state.Key, 16),
 		changed:      make(chan struct{}),
 		rowsByRegion: map[string][]state.Cluster{},
 		readiness:    map[state.Key]*state.Readiness{},
+		byCluster:    map[state.Key][]state.ChangeID{},
+		ended:        map[state.Key]time.Time{},
 	}
 }
 
 // Run sweeps the fleet until the context of the session ends, and then
 // waits for every goroutine of the backend. A sweep runs at once, then
-// every Interval, and when Refresh asks for one.
+// every Interval, and when Refresh asks for one; between sweeps, a
+// cluster whose change ended is read again on its own.
 func (b *Live) Run() {
 	defer b.wg.Wait()
 	for {
 		b.doSweep()
-		select {
-		case <-b.ctx.Done():
-			return
-		case <-b.opts.After(b.opts.Interval):
-		case <-b.refresh:
+		for {
+			select {
+			case <-b.ctx.Done():
+				return
+			case <-b.opts.After(b.opts.Interval):
+			case <-b.refresh:
+			case key := <-b.refetch:
+				b.refetchCluster(key)
+				continue
+			}
+			break
 		}
 	}
 }
@@ -115,15 +164,6 @@ func (b *Live) Refresh() {
 	case b.refresh <- struct{}{}:
 	default:
 	}
-}
-
-// Start would run a proposal. Without --allow-changes it is refused here,
-// and nowhere else: this is the one function that will call change.Start.
-func (b *Live) Start(context.Context, state.ProposalID) error {
-	if !b.opts.AllowChanges {
-		return ErrReadOnly
-	}
-	return ErrNotBuilt
 }
 
 // Next returns the first state whose version is above after. It blocks
@@ -149,9 +189,7 @@ func (b *Live) Next(ctx context.Context, after uint64) (state.State, error) {
 // bump records a change and wakes Next. It never blocks.
 func (b *Live) bump() {
 	b.mu.Lock()
-	b.version++
-	close(b.changed)
-	b.changed = make(chan struct{})
+	b.bumpLocked()
 	b.mu.Unlock()
 }
 
@@ -162,7 +200,12 @@ func (b *Live) bump() {
 func (b *Live) build() state.State {
 	clusters := slices.Clone(b.clusters)
 	for i := range clusters {
-		clusters[i].Readiness = b.readiness[clusters[i].Key]
+		c := &clusters[i]
+		c.Readiness = b.readiness[c.Key]
+		if c.Readiness != nil && c.Readiness.Report != nil {
+			c.Rollback = c.Readiness.Report.Rollback
+		}
+		c.Change = b.running(c.Key)
 	}
 	return state.State{
 		Version:  b.version,
@@ -172,6 +215,7 @@ func (b *Live) build() state.State {
 		Context:  b.opts.Context,
 		Sweep:    b.sweep,
 		Clusters: clusters,
+		Changes:  b.changes(),
 		Feed:     b.feed,
 	}
 }
@@ -188,5 +232,17 @@ func (b *Live) say(cluster state.Key, status view.Status, text string) {
 
 // withTimeout bounds a read of the backend by ReadTimeout.
 func (b *Live) withTimeout() (context.Context, context.CancelFunc) {
-	return cmdutil.WithTimeout(b.ctx, b.opts.ReadTimeout)
+	return b.withTimeoutOf(b.ctx)
+}
+
+// withTimeoutOf bounds a read under ctx by ReadTimeout.
+func (b *Live) withTimeoutOf(ctx context.Context) (context.Context, context.CancelFunc) {
+	return cmdutil.WithTimeout(ctx, b.opts.ReadTimeout)
+}
+
+// bumpLocked is bump for a caller that holds b.mu.
+func (b *Live) bumpLocked() {
+	b.version++
+	close(b.changed)
+	b.changed = make(chan struct{})
 }
