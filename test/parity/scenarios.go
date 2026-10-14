@@ -528,7 +528,9 @@ func clusterUpgrade() []Scenario {
 			// and send nothing.
 			Name: "cluster-upgrade-resume-unsettled-nodegroup", Seed: fleet(upgraded), Clock: nodegroupClock,
 			Prepare: func(w *fleettest.World) error {
-				w.Edit(func(s *fleettest.State) { s.Cluster(Region, "prod").Nodegroup("ng-a").UpdateScripts = []fleettest.UpdateScript{long} })
+				w.Edit(func(s *fleettest.State) {
+					s.Cluster(Region, "prod").Nodegroup("ng-a").UpdateScripts = []fleettest.UpdateScript{long}
+				})
 				_, err := w.UpdateNodegroupVersion(Region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: new("1.33")})
 				return err
 			},
