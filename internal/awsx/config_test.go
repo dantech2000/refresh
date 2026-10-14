@@ -151,6 +151,21 @@ func TestLoadPrecedence(t *testing.T) {
 			wantErr: `AWS_DEFAULT_PROFILE=env-profile conflicts with profile "ctx-profile" of the active context "prod"`,
 		},
 		{
+			name:    "a malformed AWS_REGION",
+			env:     map[string]string{"AWS_REGION": "bogus-region-1"},
+			wantErr: `invalid AWS region from AWS_REGION, AWS_DEFAULT_REGION, or the profile in ~/.aws/config: "bogus-region-1" is not a region name`,
+		},
+		{
+			name:    "a malformed region of the context",
+			opts:    Options{Context: &Context{Name: "prod", Region: "notaregion"}},
+			wantErr: `invalid region of the active context "prod": "notaregion" is not a region name`,
+		},
+		{
+			name:    "a malformed region flag",
+			opts:    Options{Region: "notaregion"},
+			wantErr: `invalid --region: "notaregion" is not a region name`,
+		},
+		{
 			// The SDK reads AWS_REGION before AWS_DEFAULT_REGION, so the
 			// first one decides.
 			name:       "the first variable that the SDK reads decides",

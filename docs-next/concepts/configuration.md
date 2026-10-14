@@ -177,6 +177,16 @@ read several regions. This is a sweep. The regions of a sweep are:
 
 `-A` together with `-r` is a usage error.
 
+refresh checks the shape of every region name before it sends a request: a
+partition prefix, a geographic word, and a number, such as `us-east-1`,
+`us-gov-west-1`, or `cn-north-1`. This applies to `-r`, `REFRESH_EKS_REGIONS`,
+the region of a context, and the region of the AWS configuration
+(`AWS_REGION`, `AWS_DEFAULT_REGION`, or the profile). A name of another shape,
+such as `notaregion` or `bogus-1`, is an error, exit `1`. An empty name, such
+as `-r ""`, is an error too. refresh does not keep a list of regions, because
+AWS adds new ones. A name of the right shape that is not a region, such as
+`us-east-9`, reaches AWS, and the error says that EKS does not answer there.
+
 In a default sweep, a region that these credentials cannot use is skipped with
 one note on stderr. It is not a failure. A region that you name with `-r` or
 `REFRESH_EKS_REGIONS` is never skipped: if it cannot be read, it is a failure,

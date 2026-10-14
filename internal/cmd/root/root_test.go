@@ -222,6 +222,11 @@ func TestUsageErrors(t *testing.T) {
 			wantErr: `invalid --region "": an empty region name`,
 		},
 		{
+			name:    "a malformed region",
+			args:    []string{"-r", "us-east-1,notaregion", "version"},
+			wantErr: `invalid --region: "notaregion" is not a region name: a region name is a partition prefix, a geographic word, and a number, such as us-east-1, us-gov-west-1, or cn-north-1`,
+		},
+		{
 			name:    "concurrency below one",
 			args:    []string{"--max-concurrency", "0", "version"},
 			wantErr: "invalid --max-concurrency 0: must be at least 1",
@@ -474,7 +479,7 @@ func TestGlobalFlags(t *testing.T) {
 		},
 		{
 			name: "regions separated by commas",
-			args: []string{"-r", "us-east-1,eu-west-1", "-r", "us-west-2"},
+			args: []string{"-r", "us-east-1, eu-west-1", "-r", "us-west-2"},
 			want: with(func(o *cmdutil.GlobalOptions) { o.Regions = []string{"us-east-1", "eu-west-1", "us-west-2"} }),
 		},
 	}

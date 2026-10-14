@@ -181,3 +181,21 @@ func TestStatus_NoProgressInAMachineFormat(t *testing.T) {
 		})
 	}
 }
+
+// A region name in REFRESH_EKS_REGIONS that cannot be a region is refused
+// before any call.
+func TestStatus_MalformedEnvRegion(t *testing.T) {
+	e := newFake(t)
+	t.Setenv("REFRESH_EKS_REGIONS", "us-east-1,bogus-1")
+	err := e.Run(cmdutiltest.Context(t), "status", "-A")
+	want := `invalid REFRESH_EKS_REGIONS: "bogus-1" is not a region name`
+	if err == nil || !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("error = %v, want one that starts with %q", err, want)
+	}
+	if got := cmdutil.ExitCode(err); got != cmdutil.ExitFailure {
+		t.Errorf("exit code = %d, want %d", got, cmdutil.ExitFailure)
+	}
+	if ops := e.Operations(); len(ops) != 0 {
+		t.Errorf("requests = %v, want none", ops)
+	}
+}

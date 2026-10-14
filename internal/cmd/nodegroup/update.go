@@ -187,6 +187,11 @@ func (o *updateOptions) validate() error {
 	case o.live && o.change.Quiet:
 		return errors.New("--live and --quiet cannot be used together: one shows the progress and the other hides it")
 	}
+	if o.allClusters {
+		if err := fleetcmd.CheckEnvRegions(); err != nil {
+			return err
+		}
+	}
 	return o.change.Validate()
 }
 

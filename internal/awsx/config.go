@@ -94,6 +94,11 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 		}
 		return aws.Config{}, fmt.Errorf("failed to load AWS config: %w", err)
 	}
+	// Before any call: a region name that cannot exist would otherwise
+	// fail as an endpoint that does not resolve.
+	if err := checkLoadedRegion(cfg.Region, region, opts); err != nil {
+		return aws.Config{}, err
+	}
 	// Freeze the HTTP client. A service client changes a buildable client
 	// when a defaults mode is set (AWS_DEFAULTS_MODE): it then makes its
 	// own copy with another dialer, which would end the sharing of
@@ -124,6 +129,25 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 		return aws.Config{}, err
 	}
 	return cfg, nil
+}
+
+// checkLoadedRegion checks the shape of the region of the run, and names
+// where it came from: the flag, the context, or the AWS configuration.
+// given is the region that refresh passed to the SDK, or "".
+func checkLoadedRegion(loaded, given string, opts Options) error {
+	if loaded == "" {
+		return nil
+	}
+	err := CheckRegion(loaded)
+	switch {
+	case err == nil:
+		return nil
+	case given != "" && strings.TrimSpace(opts.Region) == "" && opts.Context != nil:
+		return fmt.Errorf("invalid region of the active context %q: %w", opts.Context.Name, err)
+	case given != "":
+		return fmt.Errorf("invalid --region: %w", err)
+	}
+	return fmt.Errorf("invalid AWS region from AWS_REGION, AWS_DEFAULT_REGION, or the profile in ~/.aws/config: %w", err)
 }
 
 // NewHTTPClient returns the HTTP client that every region and service

@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/dantech2000/refresh/internal/awsx"
 	addoncmd "github.com/dantech2000/refresh/internal/cmd/addon"
 	clustercmd "github.com/dantech2000/refresh/internal/cmd/cluster"
 	"github.com/dantech2000/refresh/internal/cmd/contextcmd"
@@ -181,8 +182,13 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 	}
 	var regions []string
 	for _, r := range o.regions {
-		if strings.TrimSpace(r) == "" {
+		// "-r 'us-east-1, us-west-2'" has a space after the comma.
+		r = strings.TrimSpace(r)
+		if r == "" {
 			return fmt.Errorf("invalid --region %q: an empty region name", strings.Join(o.regions, ","))
+		}
+		if err := awsx.CheckRegion(r); err != nil {
+			return fmt.Errorf("invalid --region: %w", err)
 		}
 		if !slices.Contains(regions, r) {
 			regions = append(regions, r)
