@@ -270,11 +270,13 @@ func (m Model) nodeTable(c state.Change, ref change.StepRef, w int) Block {
 	for _, n := range nodes {
 		nameW = max(nameW, width(n.Name))
 	}
-	nameW = min(nameW, 30) + 2
-	out = append(out, Line{sp(1), bold(view.RoleDim, padRight("NODE", nameW)+padRight("OLD/NEW", 9)+"STATE")})
+	nameW = min(nameW, 30)
+	out = append(out, Line{sp(1), bold(view.RoleDim, padRight("NODE", nameW+2)+padRight("OLD/NEW", 9)+"STATE")})
 	for _, n := range nodes {
+		// The name column keeps its two-cell gap however long the name.
 		l := Line{sp(1)}
 		l = append(l, Line{tx(n.Name)}.Fit(nameW)...)
+		l = append(l, sp(2))
 		age := "old"
 		if n.OnTarget {
 			age = "new"
@@ -282,6 +284,17 @@ func (m Model) nodeTable(c state.Change, ref change.StepRef, w int) Block {
 		l = append(l, Line{sub(age)}.Fit(9)...)
 		l = append(l, m.nodeState(n)...)
 		out = append(out, l.Fit(w))
+		// The pods left on a draining node get rows of their own, so a
+		// long node name or a long list hides no name.
+		if n.Phase == noderoll.PhaseDraining && len(n.PodList) > 0 {
+			names := make([]string, 0, len(n.PodList))
+			for _, pod := range n.PodList {
+				names = append(names, pod.Name)
+			}
+			for _, line := range wrap("left: "+strings.Join(names, ", "), w-6) {
+				out = append(out, Line{sp(5), dim(line)})
+			}
+		}
 	}
 	for _, warn := range snap.Warnings {
 		out = append(out, Line{sp(1), m.mark(view.Warn), sp(1), sub(warn.Node + ": " + warn.Message)}.Fit(w))

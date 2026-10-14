@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -510,4 +512,98 @@ func TestCopyCommand(t *testing.T) {
 	if got := fmt.Sprint(cmd()); !strings.Contains(got, "refresh --profile prod-admin") {
 		t.Fatalf("c sent %T %q", cmd(), got)
 	}
+}
+
+// A dry run that ends after esc, or after a newer one, never opens; esc
+// cancels the context of the dry run on its way, and a newer dry run is
+// the only one whose reply opens.
+func TestOnlyTheNewestDryRunOpens(t *testing.T) {
+	h := newHarness(t, 120, 40, colorTheme)
+	h.state(writable(fleetState(3)))
+	// The key handler alone: the command of the dry run is held, so its
+	// reply can land later.
+	m, cmd := h.m.key("a")
+	if cmd == nil || m.planning == nil {
+		t.Fatal("a did not start a dry run")
+	}
+	older := m.planning
+	if _, again := m.key("a"); again != nil {
+		t.Fatal("a second a while a dry run is on its way started another")
+	}
+	m, _ = m.key("esc")
+	if m.planning != nil || older.cancel == nil || !strings.Contains(m.notice, "cancelled") {
+		t.Fatalf("esc did not cancel the dry run: planning %v, notice %q", m.planning != nil, m.notice)
+	}
+	m, _ = m.key("a")
+	newer := m.planning
+	if newer == nil || newer.seq == older.seq {
+		t.Fatal("a after esc did not start a newer dry run")
+	}
+	h.m = m
+	h.b.proposal = proposalOf(7, state.Action{Kind: state.ActionAddons, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
+	h.update(proposalMsg{seq: older.seq, p: h.b.proposal})
+	if h.m.confirm != nil {
+		t.Fatal("the reply of a cancelled dry run opened the dialog")
+	}
+	h.update(proposalMsg{seq: newer.seq, p: h.b.proposal})
+	if h.m.confirm == nil || h.m.planning != nil {
+		t.Fatal("the newest dry run did not open the dialog")
+	}
+	h.keys("esc")
+	// A picker takes the keys; esc closes it and nothing opens behind it.
+	h.keys("U", "down", "esc")
+	if h.m.pick != nil || h.m.confirm != nil || h.m.planning != nil {
+		t.Fatal("esc did not close the picker")
+	}
+}
+
+// The node table names the pods left on a draining node, keeps a gap
+// after a long node name, and keeps a long warning on one row at the
+// minimum width.
+func TestNodeTableNamesPodsAndKeepsItsGaps(t *testing.T) {
+	h := newHarness(t, 160, 42, colorTheme)
+	c := rollChange(1, false)
+	step := c.Steps[0].Ref
+	nodes := c.Progress[step].Nodes
+	nodes.Snapshot.Nodes[0].Name = "ip-10-0-1-10.a-very-long-subdomain-of-the-vpc.us-east-1.compute.internal"
+	nodes.Snapshot.Warnings[0].Message = strings.Repeat("Cannot evict pod as it would violate the pod's disruption budget. ", 4)
+	h.state(withChanges(fleetState(3), c))
+	h.keys("3")
+	h.contains("left: default/web-7f9c-abcde, default/web-7f9c-fghij", "3/5 pods evicted")
+	for _, l := range h.m.frame() {
+		text := l.Plain()
+		if strings.Contains(text, "ip-10-0-1-10.a-very-long") && !strings.Contains(text, "…  old ") {
+			t.Fatalf("a long node name has no gap before its age: %q", text)
+		}
+		if strings.Contains(text, "Cannot evict pod") && strings.Count(text, "Cannot evict") > 1 {
+			t.Fatalf("a long warning took more than its row: %q", text)
+		}
+	}
+	checkFrame(t, "long names", h.m)
+	h.update(tea.WindowSizeMsg{Width: minWidth, Height: minHeight})
+	checkFrame(t, "long names at the minimum width", h.m)
+	rows := 0
+	for _, l := range h.m.frame() {
+		if strings.Contains(l.Plain(), "Cannot evict") {
+			rows++
+		}
+	}
+	if rows != 1 {
+		t.Fatalf("the warning takes %d rows at the minimum width, want 1", rows)
+	}
+}
+
+// A watched control-plane update is titled by its kind: an upgrade, or a
+// rollback.
+func TestWatchedControlPlaneTitle(t *testing.T) {
+	h := newHarness(t, 120, 40, colorTheme)
+	up := upgradeChange(1, true)
+	back := upgradeChange(2, true)
+	back.Kind = change.ClusterRollback
+	h.state(withChanges(fleetState(3), up, back))
+	h.keys("3")
+	h.contains("Upgrade c-000", "started elsewhere · watch only")
+	h.keys("]")
+	h.contains("Rollback c-000")
+	h.lacks("Roll c-000")
 }
