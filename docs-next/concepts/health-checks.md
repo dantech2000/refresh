@@ -30,7 +30,7 @@ Each check has one outcome. There is no score.
 | [`DrainBlockers`](#drainblockers) | PodDisruptionBudgets, nodes, pods | Blocking, `--force` goes past it | Yes |
 | [`PDBCoverage`](#pdbcoverage) | Deployments and PodDisruptionBudgets | Advisory | Yes |
 | [`Utilization`](#utilization) | Node metrics from metrics-server | Advisory | Yes |
-| [`Quotas`](#quotas) | The EC2 vCPU quota and its usage | Advisory | No |
+| [`Quotas`](#quotas) | The EC2 vCPU quota, its usage, and the nodes that the change launches | Advisory | No |
 | `Kubernetes` | Whether the Kubernetes API was reachable | Asks when it was not | |
 
 `cluster upgrade-check`, `cluster upgrade`, and `cluster rollback` also run
@@ -62,7 +62,7 @@ CHECKS  9
 |---|---|
 | `nodegroup update`; each nodegroup roll of `cluster upgrade` and `cluster rollback` | All nine in the table above |
 | `nodegroup scale`, when the desired size goes down | `Nodes`, and the scale-down form of `DrainBlockers` |
-| `nodegroup scale`, otherwise | `Quotas` |
+| `nodegroup scale`, otherwise | `Quotas`, with the nodes that the scale adds |
 | `addon update` | The state of the target add-ons |
 
 ## The gate
@@ -233,13 +233,48 @@ The check reads node CPU and memory from metrics-server.
 ## Quotas
 
 The check compares the usage of the EC2 On-Demand Standard vCPU quota with its
-limit. A roll starts new instances before it removes the old ones.
+limit. A roll starts new instances before it removes the old ones, so the
+check also counts the nodes that the change launches.
+
+For a roll, EKS raises the Auto Scaling group of each nodegroup by the larger
+of two numbers: the number of its Availability Zones, and `maxUnavailable`. It
+documents a maximum of twice the number of zones, or `maxUnavailable` when that
+is larger. See [Understand each phase of node
+updates](https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html).
+The check counts this rule for each target nodegroup:
+
+- The zones are the Availability Zones of the nodegroup's Auto Scaling groups.
+  When they are not known, each subnet of the nodegroup counts as one zone.
+- `maxUnavailable` is the count of the update config. A percentage is a share
+  of the desired size, rounded up. Without an update config it is 1, as EKS
+  sets it.
+- Each node counts with the vCPUs of its instance type. A nodegroup with
+  several instance types counts the largest, and says so.
+- A nodegroup with the `MINIMAL` update strategy launches no extra node: it
+  removes old nodes before it starts new ones.
+- Spot nodegroups, and instance types outside the Standard families (A, C, D,
+  H, I, M, R, T, Z), count against other quotas, and the check leaves them out.
+
+`nodegroup update` rolls its targets at once, so their nodes add up.
+`cluster upgrade` and `cluster rollback` roll one nodegroup after another, so
+the largest roll counts. For `nodegroup scale`, the new nodes are the new
+desired size minus the current one.
 
 | Case | Outcome |
 |---|---|
+| Usage plus the likely surge is over the quota | `Fail` (advisory: the gate asks) |
+| Usage plus the documented maximum is over the quota | `Warn` |
 | Usage at 95 percent or more | `Fail` (advisory: the gate asks) |
 | Usage at 85 percent or more | `Warn` |
-| The usage metric is not reported | `Skipped` |
+| The quota or the usage metric is not reported | `Skipped` |
+| The quota, the usage, or the vCPUs of an instance type cannot be read | `Unreadable` |
+
+The worse of the two rules decides. A failed roll names the nodegroup, the
+numbers, and the fix:
+
+```text
+Quotas  ✗ Fail  rolling ng-a may launch 3 to 6 t3.medium nodes (6 to 12 vCPU) and 4 of 8 vCPU are in use: request a higher EC2 On-Demand vCPU quota, or set the update strategy to MINIMAL
+```
 
 ## Insights and VersionSkew
 

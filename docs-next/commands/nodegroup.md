@@ -294,8 +294,9 @@ HEALTH GATE
 
 - `--force` goes past that, with a warning.
 - Without Kubernetes access, the command asks before it goes on.
-- Any other scale checks the EC2 vCPU quota. A scale-up warns when an
-  availability zone of the nodegroup does not offer one of its instance types.
+- Any other scale checks the EC2 vCPU quota, with the vCPUs of the nodes that
+  it adds. A scale-up warns when an availability zone of the nodegroup does not
+  offer one of its instance types.
 
 ### What a run does
 
