@@ -29,6 +29,12 @@ const (
 	// their product in events.
 	warningEventPageSize = 500
 	warningEventMaxPages = 4
+	// startupGrace is how young a node is when its kubelet reports the
+	// events of its start. Of those, reasonStartupDisk is noise: the
+	// kubelet reports it once, before it has the stats of the image
+	// filesystem, on every node.
+	startupGrace      = 5 * time.Minute
+	reasonStartupDisk = "InvalidDiskCapacity"
 )
 
 // warningCache is the last read of the Warning events of the cluster.
@@ -50,7 +56,7 @@ type warningCache struct {
 // a node that was just cordoned is when the warnings of a drain matter. A
 // read that fails uses the last one again, and leaves the warnings empty
 // when there is none.
-func (o *Observer) fillWarnings(ctx context.Context, snap *Snapshot, names map[string]bool) {
+func (o *Observer) fillWarnings(ctx context.Context, snap *Snapshot, names map[string]time.Time) {
 	w := &o.warnings
 	now := o.now()
 	nodes := strings.Join(drainingNames(snap.Nodes), ",")
@@ -104,11 +110,15 @@ func (o *Observer) listWarningEvents(ctx context.Context) (events []corev1.Event
 }
 
 // scopeWarnings returns the Warning events about the nodes in names that
-// are at most window old at now. An event is about a node when the node
-// is its involved object, or when the kubelet of the node sent it. Of
-// several events with the same node, object, and reason it keeps the
-// newest. The result is sorted by node and then by reason.
-func scopeWarnings(events []corev1.Event, names map[string]bool, now time.Time, window time.Duration) []WarnEvent {
+// are at most window old at now. names maps each node to the time it was
+// created, or the zero time when that is not known. An event is about a
+// node when the node is its involved object, or when the kubelet of the
+// node sent it. Of several events with the same node, object, and reason
+// it keeps the newest. The result is sorted by node and then by reason.
+//
+// An InvalidDiskCapacity event from the first minutes of a node is left
+// out: every kubelet reports it as it starts.
+func scopeWarnings(events []corev1.Event, names map[string]time.Time, now time.Time, window time.Duration) []WarnEvent {
 	type key struct{ node, object, reason string }
 	latest := map[key]*corev1.Event{}
 	var order []key
@@ -121,7 +131,11 @@ func scopeWarnings(events []corev1.Event, names map[string]bool, now time.Time, 
 		if node == "" {
 			continue
 		}
-		if at := warningTime(e); !at.IsZero() && now.Sub(at) > window {
+		at := warningTime(e)
+		if !at.IsZero() && now.Sub(at) > window {
+			continue
+		}
+		if created := names[node]; e.Reason == reasonStartupDisk && !created.IsZero() && !at.IsZero() && at.Sub(created) < startupGrace {
 			continue
 		}
 		k := key{node: node, object: e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name, reason: e.Reason}
@@ -148,11 +162,11 @@ func scopeWarnings(events []corev1.Event, names map[string]bool, now time.Time, 
 }
 
 // warningNode returns the node in names that an event is about, or "".
-func warningNode(e *corev1.Event, names map[string]bool) string {
-	if e.InvolvedObject.Kind == "Node" && names[e.InvolvedObject.Name] {
+func warningNode(e *corev1.Event, names map[string]time.Time) string {
+	if _, ok := names[e.InvolvedObject.Name]; ok && e.InvolvedObject.Kind == "Node" {
 		return e.InvolvedObject.Name
 	}
-	if names[e.Source.Host] {
+	if _, ok := names[e.Source.Host]; ok {
 		return e.Source.Host
 	}
 	return ""

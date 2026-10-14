@@ -163,9 +163,10 @@ func (o *Observer) Snapshot(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("listing the nodes of nodegroup %s: %w", o.nodegroup, err)
 	}
 	var snap Snapshot
-	names := make(map[string]bool, len(nodes))
+	// The nodes by name, with the time each one was created.
+	names := make(map[string]time.Time, len(nodes))
 	for _, n := range nodes {
-		names[n.Name] = true
+		names[n.Name] = n.CreationTimestamp.Time
 		v := classify(n, o.id.TargetAMI, o.baseline)
 		if m := kubeletMinor(n); o.byVersion && m != "" {
 			v.OnTarget = m == o.id.TargetVersion

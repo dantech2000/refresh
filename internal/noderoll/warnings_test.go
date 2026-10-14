@@ -18,7 +18,7 @@ func TestScopeWarnings(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	recent := metav1.NewTime(now.Add(-2 * time.Minute))
 	stale := metav1.NewTime(now.Add(-30 * time.Minute))
-	names := map[string]bool{"ip-1": true, "ip-2": true}
+	names := map[string]time.Time{"ip-1": {}, "ip-2": {}}
 
 	events := []corev1.Event{
 		// About a node of the nodegroup: kept.
@@ -50,9 +50,41 @@ func TestScopeWarnings(t *testing.T) {
 	}
 }
 
+// A kubelet reports InvalidDiskCapacity once as it starts, before it has
+// the stats of the image filesystem. On a new node that event is noise; on
+// a node that has run for a while it is kept, and so is every other
+// warning of a new node.
+func TestScopeWarnings_StartupDiskCapacity(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	created := now.Add(-3 * time.Minute)
+	names := map[string]time.Time{"new": created, "old": now.Add(-time.Hour)}
+	at := func(d time.Duration) metav1.Time { return metav1.NewTime(created.Add(d)) }
+	startup := func(node string, d time.Duration) corev1.Event {
+		return corev1.Event{
+			Type: "Warning", Reason: "InvalidDiskCapacity", Message: "invalid capacity 0 on image filesystem",
+			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: node}, LastTimestamp: at(d),
+		}
+	}
+	events := []corev1.Event{
+		startup("new", 10*time.Second),
+		startup("old", 10*time.Second),
+		{
+			Type: "Warning", Reason: "NodeNotReady", Message: "kubelet stopped posting status",
+			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "new"}, LastTimestamp: at(time.Minute),
+		},
+	}
+	want := []WarnEvent{
+		{Node: "new", Object: "Node/new", Reason: "NodeNotReady", Message: "kubelet stopped posting status"},
+		{Node: "old", Object: "Node/old", Reason: "InvalidDiskCapacity", Message: "invalid capacity 0 on image filesystem"},
+	}
+	if diff := cmp.Diff(want, scopeWarnings(events, names, now, 10*time.Minute)); diff != "" {
+		t.Errorf("scopeWarnings (-want +got):\n%s", diff)
+	}
+}
+
 func TestScopeWarnings_DedupKeepsLatest(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	names := map[string]bool{"ip-1": true}
+	names := map[string]time.Time{"ip-1": {}}
 	older := metav1.NewTime(now.Add(-5 * time.Minute))
 	newer := metav1.NewTime(now.Add(-1 * time.Minute))
 	obj := corev1.ObjectReference{Kind: "Node", Name: "ip-1"}
