@@ -77,6 +77,16 @@ Cluster resolution order:
 
 A command that changes something never uses step 4, with or without `--dry-run`. When nothing resolves, the command fails and names the three ways to set a cluster. Fleet mode (`nodegroup update --all-clusters`) ignores steps 2 to 4.
 
+Step 4 reads the context that `--kube-context` names, or else the current context, of the kubeconfig that `--kubeconfig` names, or else `$KUBECONFIG`, then `~/.kube/config`. It counts only a context that names an EKS cluster and its region. The name and the region come from, in this order:
+
+1. An EKS cluster ARN, as `aws eks update-kubeconfig` writes it: the cluster entry of the context, or the name of the context.
+2. A cluster entry `<name>.<region>.eksctl.io`, as eksctl writes it.
+3. The exec credential plugin of the context: the name is its `--cluster-name` or `-i` argument, and the region is the one in the host of the API server. For `aws eks get-token` with an API server that is not an EKS host, the region is the one that the plugin signs with: `--region`, then `AWS_REGION`, then `AWS_DEFAULT_REGION`, each from the plugin's own `env` before the environment of refresh. Another plugin, such as `aws-iam-authenticator`, names a cluster only with an EKS API server.
+
+Any other context names no cluster: kind, a self-managed cluster, a plain cluster name with no credential plugin, or `aws eks get-token --cluster-id` (a cluster on Outposts). Step 4 then gives nothing, and the command fails as when nothing resolves. A missing kubeconfig is the same; a kubeconfig that cannot be parsed is an error.
+
+When step 4 gives the cluster, the command reads the region of that cluster. `-r/--region` wins over it. It wins over the region of the active context and of the AWS configuration.
+
 Names are exact. A name that matches nothing is an error that lists the close matches. To select by pattern, use `-f`:
 
 ```
@@ -138,10 +148,10 @@ Only flags beyond the global and shared sets.
 | `nodegroup list` | `-c`, `-f`, `--sort`, `--desc`, `--check-readiness`, `-w`, `--watch-interval` |
 | `nodegroup describe` | `-c`, `--show-instances`, `--show-workloads` |
 | `nodegroup update` | `-c`, `-f`, `--all-clusters`, `--reroll`, `--require-healthy`, `--skip-verify`, `--changelog`, `--live` |
-| `nodegroup scale` | `-c`, `--desired`, `--min`, `--max` |
+| `nodegroup scale` | `-c`, `--desired`, `--min`, `--max`, `--require-healthy` |
 | `addon list` | `-c`, `-w`, `--watch-interval` |
 | `addon describe` | `-c` |
-| `addon update` | `-c`, `--version`, `--all`, `--skip-addon` |
+| `addon update` | `-c`, `--version`, `--all`, `--skip-addon`, `--require-healthy` |
 | `context add` | `-c`, `-r`, `--profile`, `--use` |
 | `ui` | `-A`, `-r`, `--interval`, `--allow-changes`, `--wait-timeout` |
 | `version` | `--no-update-check` |
@@ -167,8 +177,8 @@ Unchanged rules:
 | Shape | Used in |
 |---|---|
 | `Cluster` | `ClusterList`, `ClusterDescription`, `FleetStatus`, every plan and run |
-| `Nodegroup` | `NodegroupList`, `NodegroupDescription`, `ClusterDescription`, `FleetStatus`, plans and runs |
-| `Addon` | `AddonList`, `AddonDescription`, `ClusterDescription`, `FleetStatus`, plans and runs |
+| `Nodegroup` | `NodegroupList`, `NodegroupDescription`, `ClusterDescription`, `FleetStatus` |
+| `Addon` | `AddonList`, `AddonDescription`, `ClusterDescription`, `FleetStatus` |
 | `HealthResult` | `ClusterDescription`, plans and runs |
 | `Failure` | Every document's `failures` |
 
@@ -183,7 +193,19 @@ Unchanged rules:
 | `Run` | Every finished change: the plan, the result of each step, and failures |
 | `Version` | `version -o json` |
 
-`Plan` and `Run` replace eleven kinds: `NodegroupUpdatePlan`, `NodegroupUpdate`, `FleetUpdatePlan`, `FleetUpdate`, `NodegroupScale`, `AddonUpdate`, `AddonUpdateAll`, `UpgradePlan`, `UpgradeRun`, `RollbackPlan`, `RollbackRun`. A plan has an `operation` field and a list of steps per cluster.
+`Plan` and `Run` replace eleven kinds: `NodegroupUpdatePlan`, `NodegroupUpdate`, `FleetUpdatePlan`, `FleetUpdate`, `NodegroupScale`, `AddonUpdate`, `AddonUpdateAll`, `UpgradePlan`, `UpgradeRun`, `RollbackPlan`, `RollbackRun`.
+
+`Plan` has `operation` (`AddonUpdate`, `NodegroupScale`, `NodegroupUpdate`, `ClusterUpgrade`, `ClusterRollback`), `clusters`, `skippedRegions`, and `failures`.
+
+Each entry of `clusters` has `cluster`, `region`, `version`, `targetVersion`, `decision` (`Proceed`, `Ask`, `Blocked`, `NothingToDo`), `steps`, `gate`, `blockers` (each with `kind`, `step`, `message`), `notices`, and `rollback`.
+
+Each step has `phase` (`ControlPlane`, `AddonsBefore`, `Nodegroups`, `AddonsAfter`, `Addons`, `Roll`, `Scale`), `hop`, `kind` (`ControlPlane`, `Addon`, `Nodegroup`, `Scale`), `name`, `action` (`Submit`, `Attach`, `Verify`, `Skip`, `Manual`, `Blocked`), `reason`, `from`, `to`, `fromRelease`, `fromImage`, `toImage`, `force`, `inFlight`, and `sizes` (`before` and `after`, each with `desired`, `min`, `max`).
+
+A step is identified by `region`, `cluster`, `phase`, `hop`, `kind`, and `name` together. No field is a composite ID to parse.
+
+`Run` has `operation`, `status`, `clusters`, and `failures`. Each entry of `clusters` has the fields of a plan cluster, and `status`, `results`, and `verification` (a list of `HealthResult`). `results` has one entry for each step of the plan, in plan order, with the six identity fields and `status` (`NotAttempted`, `Started`, `Succeeded`, `Failed`, `Cancelled`, `InProgress`, `Busy`, `Skipped`, `Blocked`), `attached`, `updateId`, `inFlight`, `startedAt`, `finishedAt`, `failure`, and `note`.
+
+`status` of a run and of a cluster is one of `Succeeded`, `NothingToDo`, `Started`, `Refused`, `Declined`, `Stopped`, `Blocked`, `Failed`, `VerifyFailed`, `Incomplete`, `Interrupted`. A run that did every step of its own is `Succeeded` also when its plan left steps to the operator (`action` `Manual`); the table view names those steps.
 
 A health result has an `outcome`: `Pass`, `Warn`, `Fail`, `Skipped`, or `Unreadable`. There is no score.
 
@@ -201,6 +223,8 @@ Unchanged.
 | `3` | Blocked or unsupported: a gate stopped the change. Nothing changed, or, when a gate stops a later phase of an upgrade or rollback, nothing more changed and the message names the phases that completed. |
 | `4` | Incomplete data or partial failure |
 | `5` | The change was applied and the check after it found issues |
+
+Exit 5 needs a check after the change: the verification after a nodegroup roll, and the health of an add-on after its update. `nodegroup scale` has no such check, so it never exits 5. It waits until EKS reports the update done and the nodegroup is `ACTIVE` at the new sizes. A nodegroup that is not `ACTIVE` then, such as `DEGRADED`, is a failed change, exit 1.
 
 When one run has several results, the highest code wins, except that an interrupt is always `1`. This holds for `status` too: incomplete data (4) outranks an unsupported cluster (3). One exception to the interrupt rule: stopping `--watch` with Ctrl+C exits `0`, because that is the normal way to end a watch.
 
@@ -229,7 +253,7 @@ The parity suite found these in the old binary. The new CLI does the stated thin
 | A wait that reaches `--wait-timeout` exits 1 | It exits 4 in every changing command. The change may still be running in AWS, so the result is incomplete, and the output says so. |
 | A change that AWS accepted but that could not be watched exits 4 in `nodegroup update` and 1 elsewhere | It exits 4 in every command |
 | `nodegroup update` skips a nodegroup that is already updating, or submits and lets EKS refuse, depending on timing | A target that the last read before a change shows as already updating is not changed and not attached to in `nodegroup update`, `nodegroup scale`, and `addon update`. One exception: `addon update` attaches when the update in flight is already to the requested version. Its row names the update in flight, it is listed in `failures`, the other targets go on, and the run exits 4. |
-| `nodegroup scale` does no size check of its own beyond refusing a `--min` or `--max` that excludes the current desired size | It validates the sizes before any request: `0 <= min <= desired <= max`, and `max` is at least 1, as EKS requires. Invalid sizes are a usage error and nothing is sent. |
+| `nodegroup scale` does no size check of its own beyond refusing a lone `--min` or `--max` that excludes the current desired size. It sends every other combination to EKS, which refuses sizes that cannot hold, and it sends a request that changes nothing. | `nodegroup scale` checks the sizes before it sends anything: against each other, and against the nodegroup's current sizes for the ones that were not given. The rule is `0 <= min <= desired <= max`, and `max` is at least 1, as EKS requires. Sizes that cannot hold are an error, exit 1, with no request. A lone `--min` or `--max` that excludes the current desired size says to pass `--desired` too. A scale to the current sizes sends nothing and exits 0. |
 | A run that `--require-healthy` stops over a warning exits 2 | It exits 3: a gate stopped the change and nothing changed. Exit 2 is for a dry run whose real run would ask. |
 | `--force` also re-rolls a nodegroup that is already on the latest AMI | `--force` only goes past drain blockers. `--reroll` re-rolls. |
 | `nodegroup update` on a terminal starts an exact-name roll without asking | Every changing command asks once on a terminal, and needs `--yes` when unattended |
