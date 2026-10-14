@@ -236,6 +236,19 @@ The check compares the usage of the EC2 On-Demand Standard vCPU quota with its
 limit. A roll starts new instances before it removes the old ones, so the
 check also counts the nodes that the change launches.
 
+The usage is the newest minute of the `AWS/Usage` CloudWatch metric. On a new
+account, or in a region where the account has run few instances, the metric
+has no data points for a while. Then the check reads the usage from EC2:
+
+1. It lists the pending and running instances (`ec2:DescribeInstances`).
+2. It keeps the On-Demand instances of the Standard families (A, C, D, H, I,
+   M, R, T, Z). Spot instances and other families count against other quotas.
+3. It adds up their vCPUs, from `ec2:DescribeInstanceTypes`.
+
+The details say that the usage came from the instance list. The list stops
+when the sum passes the quota, because the result is then `Fail`. The details
+then give the sum as "at least".
+
 For a roll, EKS raises the Auto Scaling group of each nodegroup by the larger
 of two numbers: the number of its Availability Zones, and `maxUnavailable`. It
 documents a maximum of twice the number of zones, or `maxUnavailable` when that
@@ -266,8 +279,9 @@ desired size minus the current one.
 | Usage plus the documented maximum is over the quota | `Warn` |
 | Usage at 95 percent or more | `Fail` (advisory: the gate asks) |
 | Usage at 85 percent or more | `Warn` |
-| The quota or the usage metric is not reported | `Skipped` |
-| The quota, the usage, or the vCPUs of an instance type cannot be read | `Unreadable` |
+| The quota is not reported | `Skipped` |
+| The usage metric has no data points, and the instance list cannot be read | `Skipped` |
+| The quota, the usage metric, or the vCPUs of an instance type cannot be read | `Unreadable` |
 
 The worse of the two rules decides. A failed roll names the nodegroup, the
 numbers, and the fix:
