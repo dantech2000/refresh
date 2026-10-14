@@ -153,11 +153,10 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 	// and the refresh takes longer than a poll interval anyway. A start
 	// that EKS refused is followed by a describe at once: it may show
 	// the refresh that runs already.
-	if st.err == nil && (o.over(wctx) || !o.pause(wctx)) {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	if st.err == nil {
+		if err := st.pause(ctx, wctx, o, t); err != nil {
+			return err
 		}
-		return st.timedOut(t)
 	}
 	for {
 		if st.again {
@@ -181,15 +180,9 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 				return err
 			}
 		case err != nil:
-			if awsx.IsPermanentAPIError(err) {
-				return &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster, err: err}
+			if err := ir.pollFailed(t, err); err != nil {
+				return err
 			}
-			// Throttling is polled again like the rest, and says nothing
-			// that the user can act on: no line for it.
-			if awsx.IsThrottling(err) {
-				break
-			}
-			ir.say("checking the insights refresh of %s: %s; still waiting", t.Cluster, awsx.Summary(err))
 		case st.old != nil && out.Status != ekstypes.InsightsRefreshStatusInProgress && !newerRefresh(out, st.old):
 			// EKS accepted the start, and the describe still shows the
 			// refresh that ended before. It says nothing about the
@@ -213,13 +206,35 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 		default:
 			ir.say("the insights refresh is in progress (%s so far)", ir.d.now().Sub(began).Round(time.Second))
 		}
-		if o.over(wctx) || !o.pause(wctx) {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return st.timedOut(t)
+		if err := st.pause(ctx, wctx, o, t); err != nil {
+			return err
 		}
 	}
+}
+
+// pause waits one poll interval of o. It returns the error that ends the
+// wait when ctx or the limit of the refresh (wctx) ends first.
+func (st *refreshStart) pause(ctx, wctx context.Context, o WaitOptions, t Target) error {
+	if !o.over(wctx) && o.pause(wctx) {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return st.timedOut(t)
+}
+
+// pollFailed handles a describe of the wait that failed: a permanent error
+// ends the wait, and any other is polled again. Throttling says nothing
+// that the user can act on, so it gets no progress line.
+func (ir *insightsRefresher) pollFailed(t Target, err error) error {
+	switch {
+	case awsx.IsPermanentAPIError(err):
+		return &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster, err: err}
+	case !awsx.IsThrottling(err):
+		ir.say("checking the insights refresh of %s: %s; still waiting", t.Cluster, awsx.Summary(err))
+	}
+	return nil
 }
 
 // refreshStart is the state of the start of one refresh in wait.
