@@ -103,7 +103,7 @@ A filter is `key=value`, repeatable, and all filters must match. The value may u
 | `-o, --output` | | `table` | `table`, `json`, `yaml`, or `plain`. Each command registers it with the formats that command supports, so it goes after the command name. |
 | `-r, --region` | `REFRESH_EKS_REGIONS` for sweeps | from the context or AWS config | Region. On sweep commands it takes several: repeat the flag or separate the values with commas. |
 | `--profile` | `AWS_PROFILE` | | AWS shared-config profile |
-| `-t, --timeout` | `REFRESH_TIMEOUT` | `1m` | Budget for the API calls of a read command |
+| `-t, --timeout` | `REFRESH_TIMEOUT` | `1m` | Budget for the API calls of a read. In a changing command, for the reads and the requests outside a wait. With `--watch`, for each refresh. |
 | `--max-concurrency` | `REFRESH_MAX_CONCURRENCY` | `32` | Limit for AWS requests in flight in one region |
 | `--no-color` | `NO_COLOR` | | Disable color |
 | `--log-level` | `REFRESH_LOG_LEVEL` | `warn` | `debug`, `info`, `warn`, `error` |
@@ -111,7 +111,7 @@ A filter is `key=value`, repeatable, and all filters must match. The value may u
 | `--kubeconfig` | `KUBECONFIG` | `~/.kube/config` | Kubeconfig file, for the cluster of a read command and for the Kubernetes checks |
 | `--kube-context` | | | Kubeconfig context to use. It is trusted even when its server does not match the cluster endpoint. |
 | `-h, --help` | | | Help |
-| `--version` | | | Print the version. On the root command only. |
+| `--version` | | | Print the version, the commit, and the build date. On the root command only. |
 
 Other env vars, unchanged: `REFRESH_CONTEXT`, `REFRESH_CONFIG_HOME`, `REFRESH_NO_UPDATE_CHECK`, `REFRESH_IN_CLUSTER_NAME`.
 
@@ -131,7 +131,7 @@ Flag letters keep one meaning everywhere: `-c` cluster, `-n` nodegroup, `-a` add
 | `--poll-interval` | How often to poll. Default 15s. |
 | `--skip-health-check` | Skip the pre-flight health gate. |
 | `--force` | Proceed past drain blockers, with a warning. Not on `addon update`, which drains nothing. |
-| `-q, --quiet` | Minimal progress output. |
+| `-q, --quiet` | Print no progress. Questions, warnings, and the result still show. |
 
 ## Command flags
 

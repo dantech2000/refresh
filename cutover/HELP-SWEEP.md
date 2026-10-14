@@ -27,7 +27,7 @@ commands. `docs-next/reference/` has the full help text.
 |---|---|---|---|
 | 10 | `--require-healthy` | `nodegroup scale` and `addon update` have it. The "Command flags" table of `CONTRACT.md` lists it for `cluster upgrade`, `cluster rollback`, and `nodegroup update` only, and the shared-flags table does not have it. The phase 4 note says the edit was accepted; the contract was not updated. | Fixed in `8c79b23`: both rows of the contract have `--require-healthy`. |
 | 11 | `--kube-context` | Help: "Kubeconfig context (default: the current context)". The default is not the current context: without the flag, refresh picks the context whose server matches the cluster endpoint. The contract's point, "trusted even when its server does not match the cluster endpoint", is not in the help. | Fixed in `fb41208`. |
-| 12 | `-t, --timeout` | Help: "Budget for the API calls of a read command". The flag is on every command. In a changing command it bounds the reads before the first change, and with `--watch` each refresh. The help says neither. The contract has the same short text. | Fixed in `fb41208`, in the help. Open for the contract: its cell has the short text. |
+| 12 | `-t, --timeout` | Help: "Budget for the API calls of a read command". The flag is on every command. In a changing command it bounds the reads before the first change, and with `--watch` each refresh. The help says neither. The contract has the same short text. | Fixed in `fb41208`, in the help. The contract cell has the same text now. |
 | 13 | `--profile` | The help names no env var. The contract's table gives `AWS_PROFILE`, and the other global flags name theirs. | Fixed in `fb41208`. |
 | 14 | `-r, --region` | The help does not name `REFRESH_EKS_REGIONS`, which the contract gives as its env var for sweeps. `-A` names it. | Fixed in `fb41208`. |
 | 15 | `-a` | The contract reserves `-a` for add-on. No command has a flag with that letter. | Open. A contract decision: keep `-a` reserved, or remove it from the list. |
@@ -36,7 +36,7 @@ commands. `docs-next/reference/` has the full help text.
 | 18 | `context add -r`, `--profile` | They shadow the global `--region` and `--profile`. On purpose, and no test stops a second command from doing the same. | Fixed in `43a4f27`: `TestNoCommandFlagShadowsGlobalFlag`. |
 | 19 | `context *`, `version`, `completion` | They list every global flag (`--timeout`, `--max-concurrency`, `--kubeconfig`, `--kube-context`), and none applies. | Open. A decision: cobra shows the persistent flags on every command. |
 | 20 | `cluster upgrade --to` | Required, and the usage line is `refresh cluster upgrade [cluster] [flags]`. `gen-docs` shows its required flag in the usage line (`gen-docs --out <directory>`). | Fixed in `fb41208`: `refresh cluster upgrade [cluster] --to <version> [flags]`. |
-| 21 | `--version` | `refresh --version` prints three lines (version, commit, build date), the same as `refresh version`. The contract says "Print the version". | Fixed in `fb41208`, in the help. Open for the contract: its cell says "Print the version". |
+| 21 | `--version` | `refresh --version` prints three lines (version, commit, build date), the same as `refresh version`. The contract says "Print the version". | Fixed in `fb41208`, in the help. The contract cell has the same text now. |
 
 ## The same thing in different words
 
@@ -44,7 +44,7 @@ commands. `docs-next/reference/` has the full help text.
 |---|---|---|---|
 | 22 | `--skip-addon` | `cluster upgrade`: "Leave these add-ons alone, by exact name". `addon update`: "Add-on that --all leaves out; repeat it or separate the names with commas". | Fixed in `fb41208`: `addon update` says "Leave these add-ons out of --all, by exact name". |
 | 23 | `--skip-verify` | `cluster upgrade`, `cluster rollback`: "after each nodegroup roll". `nodegroup update`: "after the rolls". | Fixed in `fb41208`: all three say "after each nodegroup roll". |
-| 24 | `-q, --quiet` | Help: "Print no progress; questions, warnings, and the result still show". Contract: "Minimal progress output". | Open. The help is the exact text; the contract cell needs the edit. |
+| 24 | `-q, --quiet` | Help: "Print no progress; questions, warnings, and the result still show". Contract: "Minimal progress output". | Fixed: the contract cell has the help's text now. |
 | 25 | Where the cluster comes from | `nodegroup update`, `nodegroup scale`, `addon update`, `cluster upgrade`, `cluster rollback`, and `cluster describe` say it in their own help. `nodegroup list`, `nodegroup describe`, `addon list`, `addon describe`, and `cluster upgrade-check` do not; only the flag text or the group help says it. | Fixed in `fb41208`: the five commands say it in their own help. |
 | 26 | `completion` | The help is cobra's own text ("Generate the autocompletion script for the specified shell"), in another voice than the rest. `help` is a command of the tree and is not in the contract's command list. | Open. A decision: replace cobra's text, and name `help` in the contract or hide it. |
 | 27 | `ui` | The first line of the long help is 87 characters wide; every other help wraps at 76. | Fixed in `fb41208`. |
