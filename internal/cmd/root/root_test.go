@@ -201,6 +201,17 @@ func TestUsageErrors(t *testing.T) {
 			wantErr: `invalid REFRESH_MAX_CONCURRENCY: invalid argument "many" for "--max-concurrency" flag: strconv.ParseInt: parsing "many": invalid syntax`,
 		},
 		{
+			name:    "negative timeout",
+			args:    []string{"--timeout", "-5s", "version"},
+			wantErr: "invalid --timeout -5s: must be 0 (no limit) or more",
+		},
+		{
+			name:    "negative timeout in the environment",
+			args:    []string{"version"},
+			env:     map[string]string{"REFRESH_TIMEOUT": "-1s"},
+			wantErr: "invalid REFRESH_TIMEOUT -1s: must be 0 (no limit) or more",
+		},
+		{
 			name:    "an empty region",
 			args:    []string{"-r", "us-east-1,,eu-west-1", "version"},
 			wantErr: `invalid --region "us-east-1,,eu-west-1": an empty region name`,

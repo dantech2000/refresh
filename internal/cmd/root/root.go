@@ -82,7 +82,7 @@ skip the confirmation prompts.`,
 	pf := cmd.PersistentFlags()
 	pf.StringSliceVarP(&o.regions, "region", "r", nil, "AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)")
 	pf.StringVar(&o.profile, "profile", "", "AWS shared-config profile (env: AWS_PROFILE)")
-	pf.DurationVarP(&o.timeout, "timeout", "t", time.Minute, "Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh (env: REFRESH_TIMEOUT)")
+	pf.DurationVarP(&o.timeout, "timeout", "t", time.Minute, "Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT)")
 	pf.IntVar(&o.maxConcurrency, "max-concurrency", 32, "Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY)")
 	pf.BoolVar(&o.noColor, "no-color", false, "Disable color (env: NO_COLOR)")
 	pf.StringVar(&o.logLevel, "log-level", "warn", "Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL)")
@@ -143,7 +143,9 @@ func addCommands(parent *cobra.Command, groupID string, cmds ...*cobra.Command) 
 // command line, checks the values, and stores them in f. It is the only
 // place that reads the environment for a global flag.
 func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
-	// A flag on the command line beats its environment variable.
+	// A flag on the command line beats its environment variable. source
+	// names where each value came from, for the error of a bad one.
+	source := map[string]string{"timeout": "--timeout", "max-concurrency": "--max-concurrency"}
 	for _, e := range []struct{ flag, env string }{
 		{"timeout", "REFRESH_TIMEOUT"},
 		{"max-concurrency", "REFRESH_MAX_CONCURRENCY"},
@@ -158,6 +160,7 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 		if err := flags.Set(e.flag, v); err != nil {
 			return fmt.Errorf("invalid %s: %w", e.env, err)
 		}
+		source[e.flag] = e.env
 	}
 
 	// Any one of the three turns color off; nothing turns it back on.
@@ -178,8 +181,11 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 			regions = append(regions, r)
 		}
 	}
+	if o.timeout < 0 {
+		return fmt.Errorf("invalid %s %s: must be 0 (no limit) or more", source["timeout"], o.timeout)
+	}
 	if o.maxConcurrency < 1 {
-		return fmt.Errorf("invalid --max-concurrency %d: must be at least 1", o.maxConcurrency)
+		return fmt.Errorf("invalid %s %d: must be at least 1", source["max-concurrency"], o.maxConcurrency)
 	}
 	// --verbose is --log-level debug: it wins, and the level it replaces
 	// is not checked.
