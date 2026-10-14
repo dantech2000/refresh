@@ -277,3 +277,28 @@ func TestRunView_ListsBlockers(t *testing.T) {
 		t.Errorf("the table has no BLOCKERS section:\n%s", table)
 	}
 }
+
+// A run that leaves steps to the operator did its own steps, so its
+// status is Succeeded. The head and the RUN section say that steps are
+// left, and name them, so that the run does not read as complete.
+func TestRunView_NamesTheStepsLeftToTheOperator(t *testing.T) {
+	doc := apidoc.Run{Operation: apidoc.OperationClusterUpgrade, Status: apidoc.RunSucceeded, Clusters: []apidoc.ClusterRun{{
+		ClusterPlan: apidoc.ClusterPlan{Cluster: "prod", Region: "us-east-1", Steps: []apidoc.PlanStep{
+			{Phase: apidoc.PhaseNodegroups, Hop: "1.33", Kind: apidoc.StepNodegroup, Name: "web", Action: apidoc.ActionSubmit},
+			{Phase: apidoc.PhaseNodegroups, Hop: "1.33", Kind: apidoc.StepNodegroup, Name: "gpu", Action: apidoc.ActionManual, Reason: apidoc.ReasonCustomAMI},
+			{Phase: apidoc.PhaseNodegroups, Hop: "1.33", Kind: apidoc.StepNodegroup, Name: "batch", Action: apidoc.ActionManual, Reason: apidoc.ReasonSkippedByFlag},
+		}},
+		Status: apidoc.RunSucceeded,
+	}}}
+	table := strings.Join(RunView(doc).Render(Theme{}, 140), "\n")
+	for _, want := range []string{"ClusterUpgrade, 2 steps left to you", "left to you", "gpu@1.33 (CustomAMI), batch@1.33 (SkippedByFlag)"} {
+		if !strings.Contains(table, want) {
+			t.Errorf("the table lacks %q:\n%s", want, table)
+		}
+	}
+
+	doc.Clusters[0].Steps = doc.Clusters[0].Steps[:1]
+	if table := strings.Join(RunView(doc).Render(Theme{}, 140), "\n"); strings.Contains(table, "left to you") {
+		t.Errorf("a run with no manual step names steps left:\n%s", table)
+	}
+}

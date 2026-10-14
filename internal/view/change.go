@@ -288,8 +288,11 @@ func RunView(doc apidoc.Run) Description {
 		Subtitle: string(doc.Operation),
 		Failures: doc.Failures,
 	}
+	manual := 0
 	for _, c := range doc.Clusters {
 		suffix := sectionSuffix(len(doc.Clusters), c.Cluster)
+		left := manualSteps(c.Steps)
+		manual += len(left)
 		d.Sections = append(d.Sections,
 			Section{Title: "RUN" + suffix, Fields: []Field{
 				{Name: "operation", Value: string(doc.Operation)},
@@ -298,6 +301,7 @@ func RunView(doc apidoc.Run) Description {
 				{Name: "version", Value: c.Version},
 				{Name: "target version", Value: c.TargetVersion},
 				{Name: "status", Value: string(c.Status), Status: RunStatus(c.Status)},
+				{Name: "left to you", Value: strings.Join(left, ", ")},
 			}},
 			Section{Title: "RESULTS" + suffix, Items: resultItems(c)},
 			Section{Title: "BLOCKERS" + suffix, Items: blockerItems(c.Blockers)},
@@ -306,7 +310,33 @@ func RunView(doc apidoc.Run) Description {
 		d.Sections = append(d.Sections, gateSections(c.Gate, suffix)...)
 		d.Sections = append(d.Sections, Section{Title: "NOTICES" + suffix, Fields: numbered(c.Notices)})
 	}
+	// A run that did all of its own steps is Succeeded. The head says
+	// when the plan left steps to the operator, so that it does not read
+	// as "everything is done".
+	switch {
+	case manual == 1:
+		d.Subtitle += ", 1 step left to you"
+	case manual > 1:
+		d.Subtitle += ", " + strconv.Itoa(manual) + " steps left to you"
+	}
 	return d
+}
+
+// manualSteps returns the steps that a plan leaves to the operator, each
+// with the reason: "gpu@1.33 (CustomAMI)".
+func manualSteps(steps []apidoc.PlanStep) []string {
+	var out []string
+	for _, s := range steps {
+		if s.Action != apidoc.ActionManual {
+			continue
+		}
+		name := hopStepName(s.Kind, s.Name, s.Hop)
+		if s.Reason != "" {
+			name += " (" + string(s.Reason) + ")"
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 // resultItems returns one item for each step of a cluster, with what the

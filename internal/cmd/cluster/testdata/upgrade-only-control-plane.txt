@@ -1,7 +1,7 @@
 exit: 0
 error: 
 --- stdout ---
-Run   [OK] Succeeded   ClusterUpgrade
+Run   [OK] Succeeded   ClusterUpgrade, 4 steps left to you
 
 RUN
   operation       ClusterUpgrade
@@ -10,6 +10,7 @@ RUN
   version         1.32
   target version  1.33
   status          [OK] Succeeded
+  left to you     vpc-cni@1.33 (OutOfScope), api@1.33 (OutOfScope), web@1.33 (OutOfScope), kube-proxy@1.33 (OutOfScope)
 
 RESULTS  5
   NAME                KIND          STATUS          FROM                TO                  UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
