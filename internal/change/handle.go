@@ -210,6 +210,15 @@ func newHandle(kind Kind, target Target, elsewhere bool, now func() time.Time) *
 	}
 }
 
+// describe names a watched change once its update is read: the kind of
+// the update, and when it started.
+func (h *Handle) describe(kind Kind, startedAt time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.kind, h.startedAt = kind, startedAt
+	h.bumpLocked()
+}
+
 // run runs the change with the hooks of the handle, then finishes.
 func (h *Handle) run(fn func(Hooks) (Result, error)) {
 	res, _ := fn(Hooks{Event: h.event, Ask: h.ask, Checkpoint: h.checkpoint})
@@ -290,12 +299,31 @@ func (h *Handle) event(e Event) {
 	if e.Kind == PlanReady {
 		h.lastPlan = len(h.log) - 1
 	}
-	if len(h.log) > maxLog && h.lastPlan > 0 {
-		h.dropped += uint64(h.lastPlan) //nolint:gosec // an index
-		h.log = slices.Clone(h.log[h.lastPlan:])
-		h.lastPlan = 0
-	}
+	h.trimLocked()
 	h.bumpLocked()
+}
+
+// trimLocked drops the oldest entries past the cap, by count. The newest
+// plan entry is kept whatever its age, so the view can always say what
+// plan the later entries belong to. The caller holds h.mu.
+func (h *Handle) trimLocked() {
+	if len(h.log) <= maxLog {
+		return
+	}
+	cut := len(h.log) - maxLog
+	if h.lastPlan >= 0 && h.lastPlan < cut {
+		// The plan is older than the cut: it stays as the first entry,
+		// and every other entry before the cut goes.
+		h.dropped += uint64(cut - 1) //nolint:gosec // a count
+		h.log = slices.Concat([]LogEntry{h.log[h.lastPlan]}, h.log[cut:])
+		h.lastPlan = 0
+		return
+	}
+	h.dropped += uint64(cut) //nolint:gosec // a count
+	h.log = slices.Clone(h.log[cut:])
+	if h.lastPlan >= 0 {
+		h.lastPlan -= cut
+	}
 }
 
 // phaseOutcome is the status of a phase that ended, from its steps.

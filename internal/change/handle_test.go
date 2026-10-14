@@ -384,10 +384,34 @@ func TestHandle_EventsAndProgress(t *testing.T) {
 				hk.Event(Event{Kind: Notice, Text: fmt.Sprint("new ", i)})
 			}
 		})
+		// The cap drops by count and keeps the newest plan entry: maxLog
+		// entries after it, whatever came before.
 		v = h.View()
 		entries = h.Events(0)
-		if v.Dropped != 11 || len(entries) != maxLog+101 || entries[0].Kind != PlanReady {
-			t.Fatalf("after the cap: dropped %d, %d entries, first %s; want 11, %d, PlanReady", v.Dropped, len(entries), entries[0].Kind, maxLog+101)
+		if v.Dropped != 111 || len(entries) != maxLog+1 || entries[0].Kind != PlanReady || entries[1].Text != "new 100" {
+			t.Fatalf("after the cap: dropped %d, %d entries, first %s then %q; want 111, %d, PlanReady, new 100", v.Dropped, len(entries), entries[0].Kind, entries[1].Text, maxLog+1)
+		}
+		s.end(Result{})
+		<-h.Done()
+	})
+}
+
+// The plan that Start seeds is entry one: the cap still trims the
+// notices after it, and keeps it.
+func TestHandle_CapTrimsWithThePlanFirst(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := &scripted{ops: make(chan func(Hooks))}
+		h := start(ClusterUpgrade, handleTarget, handleClock, true, s.run)
+		s.do(func(hk Hooks) {
+			hk.Event(Event{Kind: PlanReady, Plan: twoPhasePlan()})
+			for i := range maxLog + 10 {
+				hk.Event(Event{Kind: Notice, Text: fmt.Sprint("asg ", i)})
+			}
+		})
+		v := h.View()
+		entries := h.Events(0)
+		if v.Dropped != 10 || len(entries) != maxLog+1 || entries[0].Kind != PlanReady || entries[1].Text != "asg 10" {
+			t.Fatalf("dropped %d, %d entries, first %s then %q; want 10, %d, PlanReady, asg 10", v.Dropped, len(entries), entries[0].Kind, entries[1].Text, maxLog+1)
 		}
 		s.end(Result{})
 		<-h.Done()

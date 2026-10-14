@@ -21,7 +21,8 @@ import (
 type WatchOptions struct {
 	// Nodes starts the node observer of a nodegroup roll.
 	Nodes bool
-	// Limits: Wait bounds the watch, and Poll is its interval.
+	// Limits: Read bounds the first reads, Wait bounds the watch, and
+	// Poll is its interval.
 	Limits Limits
 }
 
@@ -30,38 +31,67 @@ type WatchOptions struct {
 // nodegroup or on the control plane, shows the nodes of a nodegroup roll,
 // and verifies a nodegroup after it. The handle has no controls. The
 // result has one step, with Attached set, or none when the first read
-// finds nothing in flight.
+// finds nothing in flight, or an update that is not a change of refresh
+// (a configuration update of the control plane). The kind of the handle
+// and its start time are those of the update, once it is read.
 func Watch(ctx context.Context, d Deps, r Resource, o WatchOptions) *Handle {
 	h := newHandle(NodegroupUpdate, r.Target, true, d.now)
-	go func() { h.finish(watch(ctx, d, r, o, h.event)) }()
+	go func() { h.finish(watch(ctx, d, r, o, h.event, h.describe)) }()
 	return h
 }
 
 // watch is the run of a Watch. It reports through emit with the events
-// of a run, so a front end draws it as one.
-func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Event)) Result {
+// of a run, so a front end draws it as one, and names the change through
+// describe once the update is read.
+func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Event), describeAs func(Kind, time.Time)) Result {
 	clients := d.AWS.Clients(r.Region)
-	in, err := inFlightUpdate(ctx, clients, r)
-	if err != nil {
-		return watchFailed(r, err)
+	// The first reads have the read budget: a read that hangs ends the
+	// watch, not the claim of its cluster.
+	rctx, read := d.budget(ctx, o.Limits.Read, ErrReadTimeout)
+	read.start()
+	in, err := inFlightUpdate(rctx, clients, r)
+	if err == nil {
+		var settled Settled
+		settled, err = describe(rctx, clients, r)
+		if err == nil && in.ID == "" && !changing(r, settled) {
+			read.stop()
+			return Result{Status: NothingToDo, Err: errors.New(r.String() + " is not changing")}
+		}
+		if err == nil {
+			return watchUpdate(ctx, rctx, read, d, r, o, in, settled, emit, describeAs)
+		}
 	}
-	settled, err := describe(ctx, clients, r)
-	if err != nil {
-		return watchFailed(r, err)
+	read.stop()
+	if rctx.Err() != nil {
+		// The budget names why the read ended; the read itself only says
+		// that its context did.
+		err = context.Cause(rctx)
 	}
-	if in.ID == "" && !changing(r, settled) {
-		return Result{Status: NothingToDo, Err: errors.New(r.String() + " is not changing")}
-	}
+	return watchFailed(r, err)
+}
 
-	kind, phase := watchKind(r, in)
-	step := Step{Ref: StepRef{Phase: PhaseRef{Target: r.Target, Kind: phase}, Kind: r.Kind, Name: r.Name}, Action: Attach, Reason: InFlight, From: settled.Version, To: settled.Version}
-	plan := &Plan{Kind: kind, Clusters: []ClusterPlan{{Target: r.Target, Phases: []Phase{{Ref: step.Ref.Phase, Steps: []Step{step}}}}}, At: d.now()}
-	emit(Event{At: d.now(), Kind: PlanReady, Plan: plan})
-	emit(Event{At: d.now(), Kind: PhaseStarted, Phase: step.Ref.Phase})
+// watchUpdate follows the update in flight. rctx and read are the read
+// budget of the first reads, which ends with them.
+func watchUpdate(ctx, rctx context.Context, read *budget, d Deps, r Resource, o WatchOptions, in InFlightUpdate, settled Settled, emit func(Event), describeAs func(Kind, time.Time)) Result {
+	clients := d.AWS.Clients(r.Region)
+	kind, phase, ok := watchKind(r, in)
+	if !ok {
+		read.stop()
+		return Result{Status: NothingToDo, Err: errors.New(r.String() + ": the update in flight (" + in.Type + ") is not a change that refresh makes")}
+	}
 	startedAt := in.CreatedAt
 	if startedAt.IsZero() {
 		startedAt = d.now()
 	}
+	describeAs(kind, startedAt)
+	stepKind := r.Kind
+	if kind == NodegroupScale {
+		stepKind = StepScale
+	}
+	step := Step{Ref: StepRef{Phase: PhaseRef{Target: r.Target, Kind: phase}, Kind: stepKind, Name: r.Name}, Action: Attach, Reason: InFlight, From: settled.Version, To: settled.Version}
+	plan := &Plan{Kind: kind, Clusters: []ClusterPlan{{Target: r.Target, Phases: []Phase{{Ref: step.Ref.Phase, Steps: []Step{step}}}}}, At: d.now()}
+	emit(Event{At: d.now(), Kind: PlanReady, Plan: plan})
+	emit(Event{At: d.now(), Kind: PhaseStarted, Phase: step.Ref.Phase})
 	res := StepResult{Ref: step.Ref, Status: StepStarted, Attached: true, UpdateID: in.ID, StartedAt: startedAt}
 	report := func() {
 		emit(Event{At: d.now(), Kind: StepChanged, Phase: step.Ref.Phase, Step: step.Ref, Result: &res})
@@ -84,21 +114,29 @@ func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Ev
 	}
 
 	// The snapshot gives the endpoint that the kubeconfig is matched to,
-	// and the nodegroup that the verification judges.
+	// and the nodegroup that the verification judges. It is the last of
+	// the first reads.
 	fetcher := &fleet.Fetcher{Now: d.Now}
 	var snap *fleet.Snapshot
 	var kube kubeClients
 	if r.Kind == StepNodegroup {
-		snap, _ = fetcher.Fetch(ctx, clients, r.Cluster, fleet.Need{})
+		snap, _ = fetcher.Fetch(rctx, clients, r.Cluster, fleet.Need{})
+		if rctx.Err() != nil {
+			read.stop()
+			res = watchWaitFailed(rctx, r, res, rctx.Err(), d.now())
+			report()
+			emit(Event{At: d.now(), Kind: PhaseEnded, Phase: step.Ref.Phase})
+			return watchResult(plan, r, res, nil)
+		}
 		kube.client, kube.metrics, kube.noKube = kubeAccess(d, snap)
 	}
+	read.stop()
 	observe := func(ctx context.Context) {
-		if r.Kind == StepNodegroup && o.Nodes && kube.client != nil {
+		if kind == NodegroupUpdate && o.Nodes && kube.client != nil {
 			observeNodes(ctx, d, emit, kube.client, step, startedAt, opts.interval())
 		}
 	}
-	err = fanout.RunAlongside(wctx, observe, waitFn)
-	if err != nil {
+	if err := fanout.RunAlongside(wctx, observe, waitFn); err != nil {
 		res = watchWaitFailed(wctx, r, res, err, d.now())
 		report()
 		emit(Event{At: d.now(), Kind: PhaseEnded, Phase: step.Ref.Phase})
@@ -131,31 +169,41 @@ type kubeClients struct {
 	noKube  string
 }
 
-// changing reports whether the resource is in a status that a change
-// leaves it in while it runs.
+// changing reports whether the resource is in the status that an update
+// leaves it in while it runs. A resource that is being created or
+// deleted is busy, but no change of refresh is behind it.
 func changing(r Resource, s Settled) bool {
 	switch r.Kind {
 	case StepControlPlane:
 		return s.Status == string(ekstypes.ClusterStatusUpdating)
 	case StepAddon:
-		return s.Status == string(ekstypes.AddonStatusUpdating) || s.Status == string(ekstypes.AddonStatusCreating)
+		return s.Status == string(ekstypes.AddonStatusUpdating)
 	}
-	return s.Status == string(ekstypes.NodegroupStatusUpdating) || s.Status == string(ekstypes.NodegroupStatusCreating)
+	return s.Status == string(ekstypes.NodegroupStatusUpdating)
 }
 
 // watchKind names the change behind an update in flight on r, and the
-// phase of its one step.
-func watchKind(r Resource, in InFlightUpdate) (Kind, PhaseKind) {
+// phase of its one step. It reports false for an update that is not a
+// change refresh makes: a configuration update of the control plane, or
+// a control plane that is UPDATING with no update listed, which cannot
+// be told apart from one.
+func watchKind(r Resource, in InFlightUpdate) (Kind, PhaseKind, bool) {
 	switch r.Kind {
 	case StepControlPlane:
-		if in.Type == string(ekstypes.UpdateTypeVersionUpdate) || in.Type == "" {
-			return ClusterUpgrade, PhaseControlPlane
+		switch in.Type {
+		case string(ekstypes.UpdateTypeVersionUpdate):
+			return ClusterUpgrade, PhaseControlPlane, true
+		case string(ekstypes.UpdateTypeVersionRollback):
+			return ClusterRollback, PhaseControlPlane, true
 		}
-		return ClusterRollback, PhaseControlPlane
+		return "", "", false
 	case StepAddon:
-		return AddonUpdate, PhaseAddons
+		return AddonUpdate, PhaseAddons, true
 	}
-	return NodegroupUpdate, PhaseRoll
+	if in.Type == string(ekstypes.UpdateTypeVersionUpdate) || in.Type == "" {
+		return NodegroupUpdate, PhaseRoll, true
+	}
+	return NodegroupScale, PhaseScale, true
 }
 
 // settledFn is the done function of a wait for r when it has no update
