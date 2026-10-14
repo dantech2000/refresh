@@ -87,10 +87,12 @@ func DefaultInstanceTypes() []InstanceType {
 		{Name: "m6i.large", VCPUs: 2},
 		{Name: "m7g.large", VCPUs: 2},
 		{Name: "m7i.large", VCPUs: 2},
+		{Name: "p3.2xlarge", VCPUs: 8},
 		{Name: "r5.large", VCPUs: 2},
 		{Name: "r8g.large", VCPUs: 2},
 		{Name: "t3.large", VCPUs: 2},
 		{Name: "t3.medium", VCPUs: 2},
+		{Name: "t4g.small", VCPUs: 2},
 	}
 }
 
