@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/exitcode"
@@ -137,3 +138,35 @@ func TestEngine_UnsettledNodegroupOwnRollIsAttached(t *testing.T) {
 	}
 }
 
+// A nodegroup that settles away from the goal of its step is never done.
+// The step plans again: the roll that it then sends is its own, and here
+// that roll fails, so the step fails.
+func TestEngine_UnsettledNodegroupThatMissesTheGoalIsNotDone(t *testing.T) {
+	failing := fleettest.UpdateScript{After: 2 * time.Minute, Result: fleettest.UpdateFailed}
+	world := upgradedWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
+		c.Nodegroup("ng-a").UpdateScripts = []fleettest.UpdateScript{failing, failing}
+	})
+	rollElsewhere(t, world, "ng-a", "1.33")
+	e := newEnv(t, world)
+	var notices []string
+	res := mustRun(t, e, upgradeTo("1.33"), Hooks{Event: func(ev Event) {
+		if ev.Kind != Notice {
+			return
+		}
+		notices = append(notices, ev.Text)
+		if strings.Contains(ev.Text, "waiting for it to settle") {
+			// Something else moves the nodegroup back while the run waits.
+			world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Nodegroup("ng-a").Version = "1.32" })
+		}
+	}})
+	a := stepResultOf(t, res, StepNodegroup, "ng-a")
+	if a.Status == StepSucceeded || res.ExitCode() == exitcode.OK {
+		t.Errorf("ng-a = %s, exit %d; want a step that did not succeed", a.Status, res.ExitCode())
+	}
+	if diff := cmp.Diff([]string{sentA33}, e.sent()); diff != "" {
+		t.Errorf("requests (-want +got):\n%s", diff)
+	}
+	if text := strings.Join(notices, "\n"); !strings.Contains(text, "did not reach 1.33 (it is ACTIVE at 1.32)") {
+		t.Errorf("notices = %q, want one that says the update did not reach 1.33", notices)
+	}
+}

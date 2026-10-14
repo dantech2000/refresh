@@ -26,7 +26,8 @@ const maxAttachRounds = 2
 //     this run. A nodegroup that is not ACTIVE is a verification issue.
 //     While it is UPDATING, the update in flight must be a roll to the
 //     goal (see foreignRoll); any other update blocks the step under the
-//     busy rule, and nothing is sent.
+//     busy rule, and nothing is sent. A nodegroup that settles away from
+//     the goal is not done: the next round decides again.
 //  4. Below the goal and UPDATING: the run waits for that update and
 //     reads again.
 //  5. Otherwise the roll: a batch of one. The batch takes the baseline,
@@ -78,6 +79,11 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 						return res, false
 					}
 				}
+				if round >= maxAttachRounds {
+					res.Status, res.FinishedAt = StepFailed, r.d.now()
+					res.Failure = r.stepFailure(cp, res, apidoc.ReasonBusy, "nodegroup "+name+" keeps changing; it was not rolled. Run the command again")
+					return res, false
+				}
 				r.notice(fmt.Sprintf("nodegroup %s is %s at %s; waiting for it to settle", name, fresh.Status, fresh.Version))
 				res.Attached = true
 				if res.StartedAt.IsZero() {
@@ -85,8 +91,16 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 				}
 				ctx, wait = r.waitBudget()
 				r.read.pause()
-				if _, err := WaitSettled(ctx, poll, resource, nodegroupSettled, r.waitOptions(s, wait)); err != nil {
+				settled, err := WaitSettled(ctx, poll, resource, nodegroupSettled, r.waitOptions(s, wait))
+				if err != nil {
 					return r.waitFailed(ctx, cp, res, err), false
+				}
+				if !versionDone(kind, settled.Version, s.To) {
+					// Never done away from the goal: the step plans again
+					// from the version that it settled at.
+					r.newRead(r.common.Limits.Read)
+					r.notice(fmt.Sprintf("the update of nodegroup %s that was already running did not reach %s (it is %s at %s)", name, s.To, settled.Status, orUnknown(settled.Version)))
+					continue
 				}
 			}
 			return r.verifySettled(ctx, cp, ph, s, res, wait), false
