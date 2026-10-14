@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -33,7 +34,8 @@ const (
 
 // Quotas checks the headroom of the EC2 On-Demand vCPU quota: the limit
 // from Service Quotas, and the use of the newest minute from the AWS/Usage
-// metric. It is advisory.
+// metric. When the metric has no data points, as on a new account, the use
+// is the sum of the vCPUs of the instance list. It is advisory.
 //
 // With targets it also counts the nodes that their roll launches, by the
 // rule of an EKS managed node update: the scale-up phase raises the Auto
@@ -219,8 +221,19 @@ func runQuotas(ctx context.Context, in *Input, ls launches) Result {
 	switch {
 	case !haveLimit || limit <= 0:
 		return Result{Outcome: Skipped, Message: "the EC2 vCPU quota is not reported"}
-	case !used:
-		return Result{Outcome: Skipped, Message: "the AWS/Usage vCPU metric is not reported"}
+	}
+	var source string
+	if !used {
+		var complete bool
+		usage, complete, vcpus, useErr = instanceUsage(ctx, in, limit, vcpus)
+		if useErr != nil {
+			f := fleet.FailureFromError(apidoc.FailureCluster, cluster, useErr)
+			return Result{Outcome: Skipped, Message: "the AWS/Usage vCPU metric is not reported, and the instance list could not be read: " + f.Error + failureAction(f)}
+		}
+		source = "the vCPUs in use come from the instance list, not from CloudWatch: the AWS/Usage metric has no data points, so the check sums the vCPUs of the running On-Demand instances of the Standard families"
+		if !complete {
+			source += fmt.Sprintf("; at least %.0f vCPUs are in use, and the list stopped once the sum passed the quota", usage)
+		}
 	}
 	for i := range ls.list {
 		l := &ls.list[i]
@@ -233,7 +246,11 @@ func runQuotas(ctx context.Context, in *Input, ls launches) Result {
 			ls.notes = append(ls.notes, "EC2 reported no vCPU count for the instance types of nodegroup "+l.nodegroup+": the nodes that it launches are not counted")
 		}
 	}
-	return evaluateQuota(usage, limit, ls)
+	r := evaluateQuota(usage, limit, ls)
+	if source != "" {
+		r.Details = slices.Insert(r.Details, 1, source)
+	}
+	return r
 }
 
 // quotaLimit reads the quota. A quota that Service Quotas does not know
@@ -290,28 +307,90 @@ func quotaUsage(ctx context.Context, in *Input) (float64, bool, error) {
 	return 0, false, nil
 }
 
-// typeVCPUs reads the default vCPU count of each of types, in one paged
-// DescribeInstanceTypes call.
-func typeVCPUs(ctx context.Context, in *Input, types []string) (map[string]int32, error) {
-	names := make([]ec2types.InstanceType, len(types))
-	for i, t := range types {
-		names[i] = ec2types.InstanceType(t)
+// instanceUsage is the use when the AWS/Usage metric has no data points,
+// as for a while on a new account or in a region where the account has run
+// few instances: the sum of the vCPUs of the pending and running instances
+// that the quota counts, On-Demand of the Standard families. vcpus holds
+// the types already read, and the types of each page that it lacks are
+// read with that page; the map with them is returned. The list stops once
+// the sum passes limit, since the answer is then Fail, and complete says
+// whether it was read to the end.
+func instanceUsage(ctx context.Context, in *Input, limit float64, vcpus map[string]int32) (usage float64, complete bool, known map[string]int32, err error) {
+	known = maps.Clone(vcpus)
+	if known == nil {
+		known = map[string]int32{}
 	}
-	infos, err := awsx.ListAll(ctx,
-		func(ctx context.Context, token *string) (*ec2.DescribeInstanceTypesOutput, error) {
-			return in.Clients.EC2.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{InstanceTypes: names, NextToken: token})
+	_, err = awsx.ListAll(ctx,
+		func(ctx context.Context, token *string) (*ec2.DescribeInstancesOutput, error) {
+			out, err := in.Clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+				Filters:    []ec2types.Filter{{Name: aws.String("instance-state-name"), Values: []string{"pending", "running"}}},
+				MaxResults: aws.Int32(1000),
+				NextToken:  token,
+			})
+			if err != nil {
+				return nil, err
+			}
+			var types []string
+			for _, r := range out.Reservations {
+				for _, i := range r.Instances {
+					if i.InstanceLifecycle != ec2types.InstanceLifecycleTypeSpot {
+						types = append(types, string(i.InstanceType))
+					}
+				}
+			}
+			types = standardTypes(types)
+			missing := slices.DeleteFunc(sortedSet(types), func(t string) bool { _, ok := known[t]; return ok })
+			if len(missing) > 0 {
+				read, err := typeVCPUs(ctx, in, missing)
+				if err != nil {
+					return nil, err
+				}
+				maps.Copy(known, read)
+			}
+			for _, t := range types {
+				usage += float64(known[t])
+			}
+			return out, nil
 		},
-		func(out *ec2.DescribeInstanceTypesOutput) ([]ec2types.InstanceTypeInfo, *string) {
-			return out.InstanceTypes, out.NextToken
+		// The sum is the result, so no page is kept.
+		func(out *ec2.DescribeInstancesOutput) ([]ec2types.Reservation, *string) {
+			if usage > limit {
+				return nil, nil
+			}
+			return nil, out.NextToken
 		},
 	)
 	if err != nil {
-		return nil, err
+		return 0, false, vcpus, err
 	}
+	return usage, usage <= limit, known, nil
+}
+
+// typeVCPUs reads the default vCPU count of each of types, in paged
+// DescribeInstanceTypes calls of up to 100 types, the most that one call
+// takes.
+func typeVCPUs(ctx context.Context, in *Input, types []string) (map[string]int32, error) {
 	out := map[string]int32{}
-	for _, info := range infos {
-		if info.VCpuInfo != nil {
-			out[string(info.InstanceType)] = aws.ToInt32(info.VCpuInfo.DefaultVCpus)
+	for batch := range slices.Chunk(types, 100) {
+		names := make([]ec2types.InstanceType, len(batch))
+		for i, t := range batch {
+			names[i] = ec2types.InstanceType(t)
+		}
+		infos, err := awsx.ListAll(ctx,
+			func(ctx context.Context, token *string) (*ec2.DescribeInstanceTypesOutput, error) {
+				return in.Clients.EC2.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{InstanceTypes: names, NextToken: token})
+			},
+			func(out *ec2.DescribeInstanceTypesOutput) ([]ec2types.InstanceTypeInfo, *string) {
+				return out.InstanceTypes, out.NextToken
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+		for _, info := range infos {
+			if info.VCpuInfo != nil {
+				out[string(info.InstanceType)] = aws.ToInt32(info.VCpuInfo.DefaultVCpus)
+			}
 		}
 	}
 	return out, nil

@@ -3,6 +3,7 @@ package health_test
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -370,7 +371,6 @@ func TestQuotas(t *testing.T) {
 		{name: "the newest minute counts", edits: []edit{usage(120, 60)}, want: want{outcome: health.Pass, message: "47% of the vCPU quota"}},
 		{name: "high", edits: []edit{usage(110)}, want: want{outcome: health.Warn, message: "86% of the vCPU quota in use"}},
 		{name: "nearly exhausted", edits: []edit{usage(125)}, want: want{outcome: health.Fail, message: "nearly exhausted (98% in use)"}},
-		{name: "no usage metric", edits: []edit{usage()}, want: want{outcome: health.Skipped, message: "AWS/Usage vCPU metric is not reported"}},
 		{name: "no quota", edits: []edit{func(s *fleettest.State, _ *fleettest.Cluster) { s.Quotas = nil }}, want: want{outcome: health.Skipped, message: "quota is not reported"}},
 	}
 	for _, tt := range tests {
@@ -550,6 +550,111 @@ func TestQuotas_Surge(t *testing.T) {
 		h.run(testContext(t), health.Quotas())
 		if n := countAWS(h.aws, fleettest.EC2DescribeInstanceTypes); n != 0 {
 			t.Errorf("DescribeInstanceTypes calls = %d, want 0", n)
+		}
+	})
+}
+
+// instanceWorld is quotaWorld of a new account: the AWS/Usage metric has
+// no data points, and the account runs 2 On-Demand t4g.small instances (4
+// vCPU), a Spot t3.medium, a p3.2xlarge, and a stopped m5.2xlarge.
+func instanceWorld(quota float64) edit {
+	return func(s *fleettest.State, c *fleettest.Cluster) {
+		quotaWorld(quota, 0)(s, c)
+		s.Metrics = slices.DeleteFunc(s.Metrics, func(m fleettest.Metric) bool { return m.Namespace == "AWS/Usage" })
+		for i := range s.Instances {
+			s.Instances[i].Type = "t4g.small"
+		}
+		s.Instances[2].Type, s.Instances[2].Lifecycle = "t3.medium", "spot"
+		s.Instances[3].Type = "p3.2xlarge"
+		s.Instances = append(s.Instances, fleettest.Instance{ID: "i-stopped", ImageID: "ami-1", Type: "m5.2xlarge", State: "stopped"})
+	}
+}
+
+// TestQuotas_InstanceList counts the vCPUs in use from the instance list
+// when the AWS/Usage metric has no data points.
+func TestQuotas_InstanceList(t *testing.T) {
+	const source = "the vCPUs in use come from the instance list, not from CloudWatch"
+	tests := []struct {
+		name  string
+		edits []edit
+		check health.Check
+		want  want
+	}{
+		{
+			name: "a scale-up that fits", edits: []edit{instanceWorld(8)}, check: health.ScaleUpQuotas("ng-a", 2),
+			want: want{outcome: health.Pass, message: "50% of the vCPU quota in use (4 of 8)"},
+		},
+		{
+			name: "a scale-up that does not fit", edits: []edit{instanceWorld(8)}, check: health.ScaleUpQuotas("ng-a", 3),
+			want: want{outcome: health.Fail, message: "scaling ng-a up by 3 launches 3 t3.medium nodes (6 vCPU) and 4 of 8 vCPU are in use"},
+		},
+		{
+			name: "Spot, other families, and stopped instances are left out", edits: []edit{instanceWorld(100)}, check: health.Quotas(),
+			want: want{outcome: health.Pass, message: "4% of the vCPU quota in use (4 of 100)"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, tt.edits...)
+			got := h.run(testContext(t), tt.check, "ng-a")
+			check(t, got, tt.want)
+			if !slices.ContainsFunc(got.Details, func(d string) bool { return strings.Contains(d, source) }) {
+				t.Errorf("details = %q, want one with %q", got.Details, source)
+			}
+		})
+	}
+	t.Run("the list stops once the use passes the quota", func(t *testing.T) {
+		h := newHarness(t, instanceWorld(8), func(s *fleettest.State, _ *fleettest.Cluster) {
+			for i := range 10 {
+				s.Instances = append(s.Instances, fleettest.Instance{ID: "i-big-" + strconv.Itoa(i), ImageID: "ami-1", Type: "m5.2xlarge"})
+			}
+		})
+		ctx := testContext(t)
+		in := h.input(ctx)
+		h.world.SetFault(fleettest.EC2DescribeInstances, fleettest.Fault{PageSize: 1})
+		before := countAWS(h.aws, fleettest.EC2DescribeInstances)
+		got := health.Run(ctx, []health.Check{health.Quotas()}, in)[0]
+		check(t, got, want{outcome: health.Fail, message: "nearly exhausted (150% in use)"})
+		// Pages of one: 2, 2, Spot, p3, and the first m5.2xlarge passes 8.
+		if n := countAWS(h.aws, fleettest.EC2DescribeInstances) - before; n != 5 {
+			t.Errorf("DescribeInstances calls = %d, want 5", n)
+		}
+		if !slices.ContainsFunc(got.Details, func(d string) bool { return strings.Contains(d, "at least 12") }) {
+			t.Errorf("details = %q, want one with %q", got.Details, "at least 12")
+		}
+	})
+	t.Run("the instance list fails too", func(t *testing.T) {
+		for _, op := range []fleettest.Operation{fleettest.EC2DescribeInstances, fleettest.EC2DescribeInstanceTypes} {
+			t.Run(string(op), func(t *testing.T) {
+				h := newHarness(t, instanceWorld(8))
+				ctx := testContext(t)
+				in := h.input(ctx)
+				h.world.SetFault(op, fleettest.Fault{Deny: true})
+				got := health.Run(ctx, []health.Check{health.Quotas()}, in)[0]
+				check(t, got, want{outcome: health.Skipped, message: "AWS/Usage vCPU metric is not reported, and the instance list could not be read"})
+			})
+		}
+	})
+	t.Run("the metric fails", func(t *testing.T) {
+		h := newHarness(t, instanceWorld(8))
+		ctx := testContext(t)
+		in := h.input(ctx)
+		h.world.SetFault(fleettest.CloudWatchGetMetricData, fleettest.Fault{Deny: true})
+		before := countAWS(h.aws, fleettest.EC2DescribeInstances)
+		check(t, health.Run(ctx, []health.Check{health.Quotas()}, in)[0], want{outcome: health.Unreadable, message: "cloudwatch:GetMetricData", failures: 1})
+		if n := countAWS(h.aws, fleettest.EC2DescribeInstances) - before; n != 0 {
+			t.Errorf("DescribeInstances calls = %d, want 0", n)
+		}
+	})
+	t.Run("no instance list when the metric has data", func(t *testing.T) {
+		h := newHarness(t, quotaWorld(8, 4))
+		ctx := testContext(t)
+		in := h.input(ctx)
+		before := countAWS(h.aws, fleettest.EC2DescribeInstances)
+		got := health.Run(ctx, []health.Check{health.Quotas()}, in)[0]
+		check(t, got, want{outcome: health.Pass, message: "50% of the vCPU quota in use (4 of 8)"})
+		if n := countAWS(h.aws, fleettest.EC2DescribeInstances) - before; n != 0 {
+			t.Errorf("DescribeInstances calls = %d, want 0", n)
 		}
 	})
 }
