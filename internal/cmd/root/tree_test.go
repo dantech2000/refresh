@@ -1,6 +1,7 @@
 package root_test
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -152,6 +153,44 @@ func TestFlagShorthands(t *testing.T) {
 		cmd.LocalFlags().VisitAll(check)
 		cmd.InheritedFlags().VisitAll(check)
 	})
+}
+
+// A flag of a command with the name or the letter of a global flag hides
+// the global one for that command: "refresh -t 5s cluster list" would run
+// with the default of the local flag, and cobra reports no error. Only
+// the commands in the table may do it, each for the reason given.
+func TestNoCommandFlagShadowsGlobalFlag(t *testing.T) {
+	allowed := map[string]string{
+		"refresh context add --region":  "it is the region that the context stores, not the region of this run",
+		"refresh context add --profile": "it is the profile that the context stores, not the profile of this run",
+	}
+	tree := newTree()
+	global := tree.PersistentFlags()
+	var got []string
+	walk(tree, func(cmd *cobra.Command) {
+		if cmd == tree {
+			return
+		}
+		cmd.LocalFlags().VisitAll(func(fl *pflag.Flag) {
+			g := global.Lookup(fl.Name)
+			if g == nil && fl.Shorthand != "" {
+				g = global.ShorthandLookup(fl.Shorthand)
+			}
+			if g == nil || g == fl {
+				return
+			}
+			key := cmd.CommandPath() + " --" + fl.Name
+			got = append(got, key)
+			if allowed[key] == "" {
+				t.Errorf("%s shadows the global --%s", key, g.Name)
+			}
+		})
+	})
+	for key := range allowed {
+		if !slices.Contains(got, key) {
+			t.Errorf("%s no longer shadows a global flag: remove it from the table", key)
+		}
+	}
 }
 
 func TestHiddenCommands(t *testing.T) {
