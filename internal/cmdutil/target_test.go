@@ -1,9 +1,11 @@
 package cmdutil_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
@@ -38,5 +40,22 @@ func TestNotFoundError(t *testing.T) {
 	want := "cluster \"prd\" not found in us-east-1\nDid you mean:\n  prod\nList the clusters with: refresh cluster list"
 	if diff := cmp.Diff(want, err.Error()); diff != "" {
 		t.Errorf("error (-want +got):\n%s", diff)
+	}
+}
+
+// A command that changes a cluster never takes its cluster from the
+// kubeconfig, so the help of its -c flag does not offer that, and the
+// hint for a run with no cluster names only the ways that work.
+func TestChangeClusterFlagHelp(t *testing.T) {
+	read, change := &cobra.Command{Use: "list"}, &cobra.Command{Use: "update"}
+	var name string
+	cmdutil.AddClusterFlag(read, &name)
+	cmdutil.AddChangeClusterFlag(change, &name)
+	if usage := read.Flags().Lookup("cluster").Usage; !strings.Contains(usage, "then the current kubeconfig context") {
+		t.Errorf("the help of a read command = %q, want the kubeconfig as the last default", usage)
+	}
+	usage := change.Flags().Lookup("cluster").Usage
+	if !strings.Contains(usage, "never the kubeconfig") || strings.Contains(usage, "then the current kubeconfig context") {
+		t.Errorf("the help of a changing command = %q, want it to say that the kubeconfig is never used", usage)
 	}
 }

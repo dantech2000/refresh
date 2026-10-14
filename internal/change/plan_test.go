@@ -132,7 +132,7 @@ func TestDiff(t *testing.T) {
 	submit := addonStep("vpc-cni", Submit, VersionBehind, "v1", "v2")
 	ref := submit.Ref
 	rollPhase := PhaseRef{Target: prod, Kind: PhaseRoll}
-	roll := Step{Ref: StepRef{Phase: rollPhase, Kind: StepNodegroup, Name: "web"}, Action: Submit, Reason: AMIOutdated, From: "1.33", To: "1.33", ToRelease: "1.33.0-20260101"}
+	roll := Step{Ref: StepRef{Phase: rollPhase, Kind: StepNodegroup, Name: "web"}, Action: Submit, Reason: AMIOutdated, From: "1.33", To: "1.33", FromRelease: "1.33.0-20250101", FromImage: "ami-old", ToImage: "ami-new1"}
 	scale := Step{
 		Ref: StepRef{Phase: PhaseRef{Target: prod, Kind: PhaseScale}, Kind: StepScale, Name: "web"}, Action: Submit,
 		Sizes: &ScaleSizes{Before: Sizes{Desired: 2, Min: 1, Max: 3}, After: Sizes{Desired: 3, Min: 1, Max: 3}},
@@ -176,8 +176,8 @@ func TestDiff(t *testing.T) {
 		},
 		{
 			name: "Release", kind: NodegroupScale, prev: []Step{roll},
-			cur:    []Step{with(roll, func(s *Step) { s.ToRelease = "1.33.0-20260201" })},
-			want:   []Change{{Step: roll.Ref, Kind: Release, Message: "nodegroup web now gets the AMI release 1.33.0-20260201, not 1.33.0-20260101"}},
+			cur:    []Step{with(roll, func(s *Step) { s.ToImage = "ami-new2" })},
+			want:   []Change{{Step: roll.Ref, Kind: Image, Message: "nodegroup web now gets the AMI ami-new2, not ami-new1"}},
 			effect: AskAgain,
 		},
 		{
@@ -250,10 +250,10 @@ func TestDiff(t *testing.T) {
 		},
 		{
 			name: "a refusal wins over a question", kind: NodegroupScale, prev: []Step{roll},
-			cur: []Step{with(roll, func(s *Step) { s.To, s.ToRelease = "1.34", "1.34.0-20260201" })},
+			cur: []Step{with(roll, func(s *Step) { s.To, s.ToImage = "1.34", "ami-new2" })},
 			want: []Change{
 				{Step: roll.Ref, Kind: KubernetesVersion, Message: "nodegroup web now goes to 1.34, not 1.33"},
-				{Step: roll.Ref, Kind: Release, Message: "nodegroup web now gets the AMI release 1.34.0-20260201, not 1.33.0-20260101"},
+				{Step: roll.Ref, Kind: Image, Message: "nodegroup web now gets the AMI ami-new2, not ami-new1"},
 			},
 			effect: Refuse,
 		},
@@ -280,7 +280,7 @@ func TestChangeKindEffect(t *testing.T) {
 	want := map[ChangeKind]Effect{
 		Done: Continue, NowInFlight: Continue,
 		KubernetesVersion: Refuse, NowBlocked: Refuse,
-		Release: AskAgain, Version: AskAgain, SizesChanged: AskAgain, Added: AskAgain, Removed: AskAgain, GateWorse: AskAgain, StepDiffers: AskAgain,
+		Image: AskAgain, Version: AskAgain, SizesChanged: AskAgain, Added: AskAgain, Removed: AskAgain, GateWorse: AskAgain, StepDiffers: AskAgain,
 	}
 	for kind, effect := range want {
 		if got := kind.Effect(); got != effect {

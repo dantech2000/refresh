@@ -130,6 +130,9 @@ const (
 	ReasonSkippedByFlag   StepReason = "SkippedByFlag"
 	ReasonOutOfScope      StepReason = "OutOfScope"
 	ReasonNoChange        StepReason = "NoChange"
+	// ReasonVersionAhead: the resource runs a version above the one that a
+	// rollback returns to, or one that the older version cannot run.
+	ReasonVersionAhead StepReason = "VersionAhead"
 )
 
 // Values implements Enum.
@@ -139,6 +142,7 @@ func (StepReason) Values() []string {
 		string(ReasonPreRoll), string(ReasonRepair), string(ReasonUnsettled), string(ReasonInFlight),
 		string(ReasonAlreadyLatest), string(ReasonAlreadyAtTarget), string(ReasonNewerThanLatest),
 		string(ReasonCustomAMI), string(ReasonSkippedByFlag), string(ReasonOutOfScope), string(ReasonNoChange),
+		string(ReasonVersionAhead),
 	}
 }
 
@@ -232,11 +236,17 @@ type PlanStep struct {
 	From string `json:"from,omitzero"`
 	To   string `json:"to,omitzero"`
 	// FromRelease is the AMI release version that the nodegroup of a roll
-	// ran when the plan read it. A run does not roll a nodegroup that is on
-	// another release by the time of its request: it was rolled elsewhere.
+	// ran when the plan read it, such as 1.32.0-20250101. A run does not
+	// roll a nodegroup that is on another release by the time of its
+	// request: it was rolled elsewhere.
 	FromRelease string `json:"fromRelease,omitzero"`
-	// ToRelease is the AMI release that a roll expects.
-	ToRelease string `json:"toRelease,omitzero"`
+	// FromImage is the ID of the AMI that the nodes of a roll ran when the
+	// plan read them, such as ami-0abc. It is an image ID, and not a
+	// release version.
+	FromImage string `json:"fromImage,omitzero"`
+	// ToImage is the ID of the latest recommended AMI, which a roll moves
+	// the nodegroup to. It is an image ID, and not a release version.
+	ToImage string `json:"toImage,omitzero"`
 	// Force is true when the request carries the force flag.
 	Force bool        `json:"force,omitzero"`
 	Sizes *ScaleSizes `json:"sizes,omitzero"`
@@ -371,4 +381,10 @@ type StepResult struct {
 	// Failure is why the step did not succeed. It is also in the failures
 	// list of the document.
 	Failure *Failure `json:"failure,omitzero"`
+	// Note says what the run found right before its request, when it then
+	// did something else than the step of the plan says: a nodegroup that
+	// was rolled elsewhere since the plan is Skipped, and its step of the
+	// plan still says Submit. The plan in a Run document is the plan that
+	// was confirmed.
+	Note string `json:"note,omitzero"`
 }

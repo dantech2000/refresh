@@ -29,9 +29,6 @@ const (
 	// maxSnapshotErrors is how many snapshots in a row may fail before
 	// the observer of a roll gives up.
 	maxSnapshotErrors = 5
-	// recentNodeEvents is how many events of a roll a NodeProgress event
-	// carries.
-	recentNodeEvents = 8
 )
 
 // observers returns the function that runs beside the wait of a batch,
@@ -79,7 +76,7 @@ func (r *runner) observers(cp *ClusterPlan, ph Phase, started []int, results []S
 		})
 		if nodes && kube != nil {
 			for _, ro := range rolls {
-				wg.Go(func() { r.observeNodes(ctx, kube, ro.step, ro.startedAt) })
+				wg.Go(func() { observeNodes(ctx, r.d, r.emit, kube, ro.step, ro.startedAt, r.common.Limits.Poll) })
 			}
 		}
 		wg.Wait()
@@ -164,6 +161,18 @@ func scalingFailures(ctx context.Context, c *awsx.Clients, groups []string, sinc
 	return out, nil
 }
 
+// rollIdentity says how the observer of a roll tells the new nodes from
+// the old ones. A roll that moves the nodegroup to another Kubernetes
+// version, as an upgrade and a rollback do, tells them by that version. A
+// roll onto a new AMI keeps the version, and tells them by their age.
+func rollIdentity(s Step, startedAt time.Time) noderoll.Identity {
+	id := noderoll.Identity{TargetAMI: s.ToImage, StartedAt: startedAt}
+	if s.From != s.To {
+		id.TargetVersion = s.To
+	}
+	return id
+}
+
 // observeNodes follows the nodes of one roll and reports each snapshot as
 // a NodeProgress event, until ctx ends. A failed attach, or
 // maxSnapshotErrors failed snapshots in a row, ends it with one notice:
@@ -171,24 +180,30 @@ func scalingFailures(ctx context.Context, c *awsx.Clients, groups []string, sinc
 //
 // The pause between two snapshots is one second when the observer reads
 // from a watch, which costs no request, and the poll interval, at most
-// three seconds, when it lists. The clock is Deps.Tick.
-func (r *runner) observeNodes(ctx context.Context, kube kubernetes.Interface, s Step, startedAt time.Time) {
+// three seconds, when it lists. The clock of the pause is Deps.Tick, and
+// the time of an event is Deps.Now.
+//
+// It reports through emit and belongs to no run, so a front end that
+// watches a roll started elsewhere can call it too. A NodeProgress event
+// carries every event that the tracker keeps.
+func observeNodes(ctx context.Context, d Deps, emit func(Event), kube kubernetes.Interface, s Step, startedAt time.Time, poll time.Duration) {
+	notice := func(text string) { emit(Event{Kind: Notice, Text: text}) }
 	name := s.Ref.Name
-	obs, err := noderoll.Attach(ctx, kube, name, noderoll.Identity{TargetAMI: s.ToRelease, StartedAt: startedAt})
+	obs, err := noderoll.Attach(ctx, kube, name, rollIdentity(s, startedAt))
 	if err != nil {
 		if ctx.Err() == nil {
-			r.notice("could not read the nodes of nodegroup " + name + " (" + err.Error() + "); the roll goes on without the node view")
+			notice("could not read the nodes of nodegroup " + name + " (" + err.Error() + "); the roll goes on without the node view")
 		}
 		return
 	}
 	defer obs.Close()
-	tick := r.d.Tick
+	tick := d.Tick
 	if tick == nil {
 		tick = time.After
 	}
 	pause := watchedSnapshotInterval
 	if !obs.Watching() {
-		pause = min(max(r.common.Limits.Poll, time.Second), listedSnapshotInterval)
+		pause = min(max(poll, time.Second), listedSnapshotInterval)
 	}
 	tracker := noderoll.NewTracker()
 	failed := 0
@@ -199,14 +214,14 @@ func (r *runner) observeNodes(ctx context.Context, kube kubernetes.Interface, s 
 			return
 		case err != nil:
 			if failed++; failed >= maxSnapshotErrors {
-				r.notice("could not read the nodes of nodegroup " + name + " any more; the roll goes on without the node view")
+				notice("could not read the nodes of nodegroup " + name + " any more; the roll goes on without the node view")
 				return
 			}
 		default:
 			failed = 0
-			tracker.Observe(snap)
-			view := NodeView{Nodegroup: name, Snapshot: snap, Recent: tracker.Recent(recentNodeEvents), Watching: obs.Watching(), StartedAt: startedAt}
-			r.emit(Event{Kind: NodeProgress, Phase: s.Ref.Phase, Step: s.Ref, Nodes: &view})
+			tracker.ObserveAt(snap, d.now())
+			view := NodeView{Nodegroup: name, Snapshot: snap, Recent: tracker.Recent(0), Watching: obs.Watching(), StartedAt: startedAt}
+			emit(Event{Kind: NodeProgress, Phase: s.Ref.Phase, Step: s.Ref, Nodes: &view})
 		}
 		select {
 		case <-ctx.Done():

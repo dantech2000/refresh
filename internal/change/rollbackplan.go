@@ -119,7 +119,7 @@ func PlanRollback(snap *fleet.Snapshot, req RollbackRequest, in RollbackInputs) 
 	}
 	p.workSteps()
 
-	step := Step{Ref: control, Action: Submit, From: live.String(), To: p.cp.To.String(), Force: req.SkipInsights}
+	step := Step{Ref: control, Action: Submit, Reason: VersionAhead, From: live.String(), To: p.cp.To.String(), Force: req.SkipInsights}
 	if rollingBack {
 		// The rollback in flight has its own request; this run sends none.
 		step.Action, step.Reason, step.Force = Attach, InFlight, false

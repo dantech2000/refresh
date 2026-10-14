@@ -73,5 +73,5 @@ error: add-on vpc-cni ended in status DEGRADED (expected ACTIVE)
 PLAN  AddonUpdate, prod in us-east-1
   vpc-cni  update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)
 [~] vpc-cni: Started (update 00000000-0000-4000-8000-000000000001)
-  [X] AddonHealth/vpc-cni  add-on vpc-cni ended in status DEGRADED (expected ACTIVE)
 [OK] vpc-cni: Succeeded
+  [X] AddonHealth/vpc-cni  add-on vpc-cni ended in status DEGRADED (expected ACTIVE)

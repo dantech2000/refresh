@@ -114,7 +114,8 @@ var stepFieldRows = map[string]func(s *Step){
 	"From":        func(s *Step) { s.From += "-other" },
 	"To":          func(s *Step) { s.To += "-other" },
 	"FromRelease": func(s *Step) { s.FromRelease += "-other" },
-	"ToRelease":   func(s *Step) { s.ToRelease += "-other" },
+	"FromImage":   func(s *Step) { s.FromImage += "-other" },
+	"ToImage":     func(s *Step) { s.ToImage += "-other" },
 	"Force":       func(s *Step) { s.Force = !s.Force },
 	"Sizes": func(s *Step) {
 		if s.Sizes == nil {

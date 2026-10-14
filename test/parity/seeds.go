@@ -242,6 +242,15 @@ func interrupt(op fleettest.Operation, nth int) *Signal {
 	return &Signal{Signal: os.Interrupt, Nth: nth, Match: func(r awsxtest.Request) bool { return r.Operation == op }}
 }
 
+// interruptAfterPrompt sends SIGINT when the first request of op arrives
+// after the prompt with the number was answered: the binary was told to go
+// on, and reads again before it changes anything.
+func interruptAfterPrompt(prompt int, op fleettest.Operation) *Signal {
+	s := interrupt(op, 1)
+	s.AfterPrompt = prompt
+	return s
+}
+
 // updateID is the ID of the nth update a world starts.
 func updateID(nth int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", nth) }
 

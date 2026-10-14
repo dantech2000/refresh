@@ -161,9 +161,9 @@ func TestFleet_InterruptAndStop(t *testing.T) {
 	t.Run("stop at the checkpoint", func(t *testing.T) {
 		e := newEnv(t, fleetWorld(nil))
 		var seen []string
-		hooks := Hooks{Checkpoint: func(_ context.Context, next PhaseRef) (Checkpoint, error) {
-			seen = append(seen, next.Target.Cluster)
-			return Checkpoint{Stop: true}, nil
+		hooks := Hooks{Checkpoint: func(_ context.Context, next StepRef) (Checkpoint, error) {
+			seen = append(seen, next.Phase.Target.Cluster)
+			return Checkpoint{Stop: next.Phase.Target.Cluster == "staging"}, nil
 		}}
 		res, err := Run(testContext(t), e.deps, fleetRoll(), hooks)
 		if err != nil {
@@ -173,8 +173,8 @@ func TestFleet_InterruptAndStop(t *testing.T) {
 		if diff := cmp.Diff(want, clusterStatuses(res)); diff != "" {
 			t.Errorf("statuses (-want +got):\n%s", diff)
 		}
-		// The hook runs before each cluster after the first.
-		if diff := cmp.Diff([]string{"staging"}, seen); diff != "" {
+		// The hook runs before every cluster, the first included.
+		if diff := cmp.Diff([]string{"prod", "staging"}, seen); diff != "" {
 			t.Errorf("checkpoints (-want +got):\n%s", diff)
 		}
 		if res.Status != Stopped || res.ExitCode() != exitcode.Failure || len(e.rolls()) != 1 {
@@ -188,8 +188,8 @@ func TestFleet_InterruptAndStop(t *testing.T) {
 		e := newEnv(t, fleetWorld(func(_ *fleettest.State, prod, _ *fleettest.Cluster) {
 			prod.Nodegroup("ng-a").Status = fleettest.StatusDegraded
 		}))
-		res, err := Run(testContext(t), e.deps, fleetRoll(), Hooks{Checkpoint: func(context.Context, PhaseRef) (Checkpoint, error) {
-			return Checkpoint{Stop: true}, nil
+		res, err := Run(testContext(t), e.deps, fleetRoll(), Hooks{Checkpoint: func(_ context.Context, next StepRef) (Checkpoint, error) {
+			return Checkpoint{Stop: next.Phase.Target.Cluster == "staging"}, nil
 		}})
 		if err != nil {
 			t.Fatal(err)
@@ -206,8 +206,11 @@ func TestFleet_InterruptAndStop(t *testing.T) {
 	t.Run("a checkpoint that fails", func(t *testing.T) {
 		e := newEnv(t, fleetWorld(nil))
 		broken := errors.New("the pause broke")
-		res, err := Run(testContext(t), e.deps, fleetRoll(), Hooks{Checkpoint: func(context.Context, PhaseRef) (Checkpoint, error) {
-			return Checkpoint{}, broken
+		res, err := Run(testContext(t), e.deps, fleetRoll(), Hooks{Checkpoint: func(_ context.Context, next StepRef) (Checkpoint, error) {
+			if next.Phase.Target.Cluster == "staging" {
+				return Checkpoint{}, broken
+			}
+			return Checkpoint{}, nil
 		}})
 		if !errors.Is(err, broken) || res.Status != Failed || res.ExitCode() != exitcode.Failure || len(e.rolls()) != 1 {
 			t.Errorf("err = %v, status %s, exit %d, rolls %v", err, res.Status, res.ExitCode(), e.rolls())
@@ -244,7 +247,7 @@ func TestFleet_InterruptBetweenClusters(t *testing.T) {
 						cancel()
 					}
 				},
-				Checkpoint: func(context.Context, PhaseRef) (Checkpoint, error) {
+				Checkpoint: func(context.Context, StepRef) (Checkpoint, error) {
 					checkpoints++
 					return Checkpoint{}, nil
 				},
@@ -259,8 +262,9 @@ func TestFleet_InterruptBetweenClusters(t *testing.T) {
 			if after := e.operations(sent); len(after) != 0 {
 				t.Errorf("requests after the interrupt: %v, want none", after)
 			}
-			if checkpoints != 0 {
-				t.Errorf("%d checkpoint(s) after the interrupt, want none", checkpoints)
+			// One checkpoint, before prod. None follows the interrupt.
+			if checkpoints != 1 {
+				t.Errorf("%d checkpoint(s), want the one before prod and none after the interrupt", checkpoints)
 			}
 			want := map[string]StepStatus{"prod/ng-a": StepSucceeded, "staging/ng-a": StepNotAttempted}
 			if diff := cmp.Diff(want, clusterStatuses(res)); diff != "" {
@@ -313,13 +317,13 @@ func TestFleet_PlanChangedAfterConfirmation(t *testing.T) {
 	}{
 		{name: "another Kubernetes version refuses", yes: true, staging: StepBlocked, exit: exitcode.Blocked, say: "now goes to 1.31, not 1.32",
 			change: func(e *env) { e.world.Edit(func(s *fleettest.State) { stagingA(s).Version = "1.31" }) }},
-		{name: "a new AMI release, with --yes", yes: true, staging: StepSucceeded, say: "staging: nodegroup ng-a now gets the AMI release ami-newer",
+		{name: "a new AMI, with --yes", yes: true, staging: StepSucceeded, say: "staging: nodegroup ng-a now gets the AMI ami-newer, not ami-latest132",
 			change: newRelease},
-		{name: "a new AMI release, asked and accepted", answers: []bool{true, true}, asked: 2, staging: StepSucceeded, say: "staging: The plan changed",
+		{name: "a new AMI, asked and accepted", answers: []bool{true, true}, asked: 2, staging: StepSucceeded, say: "staging: The plan changed",
 			change: newRelease},
-		{name: "a new AMI release, asked and declined", answers: []bool{true, false}, asked: 2, staging: StepNotAttempted, exit: exitcode.Failure, say: "staging: The plan changed",
+		{name: "a new AMI, asked and declined", answers: []bool{true, false}, asked: 2, staging: StepNotAttempted, exit: exitcode.Failure, say: "staging: The plan changed",
 			change: newRelease},
-		{name: "a new AMI release, nobody to ask", nobody: true, staging: StepBlocked, exit: exitcode.Blocked, say: "nobody can be asked",
+		{name: "a new AMI, nobody to ask", nobody: true, staging: StepBlocked, exit: exitcode.Blocked, say: "nobody can be asked",
 			change: newRelease},
 		{name: "the target is now changing", yes: true, staging: StepBusy, exit: exitcode.Incomplete, say: "staging: nodegroup ng-a is now changing elsewhere",
 			change: func(e *env) {

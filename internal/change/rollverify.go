@@ -54,24 +54,28 @@ func (r *runner) verifyRoll(ctx context.Context, cp *ClusterPlan, ph Phase, star
 	if unfollowed {
 		return
 	}
-	if ctx.Err() != nil {
-		// The rolls ended, and the run ended before they were verified.
-		// An interrupt is the result of the run. A deadline leaves the
-		// run incomplete: nothing says that the new nodes are healthy.
-		if !r.interruptedNow() {
-			f := apidoc.NewFailure(apidoc.FailureCluster, cp.Cluster, apidoc.ReasonTimeout,
-				"--wait-timeout passed before the verification; the rolls ended and were not verified")
-			f.Region = cp.Region
-			r.addFailures([]apidoc.Failure{f})
-		}
-		return
-	}
+	// A roll that did not succeed says why in its own row: one that is
+	// still in progress after a deadline has its Timeout failure there, and
+	// nothing ended that could be verified.
 	var names []string
 	for _, i := range started {
 		if results[i].Status != StepSucceeded {
 			return
 		}
 		names = append(names, ph.Steps[i].Ref.Name)
+	}
+	if ctx.Err() != nil {
+		// Every roll ended, and the run ended before they were verified.
+		// An interrupt is the result of the run. A deadline leaves the
+		// run incomplete: nothing says that the new nodes are healthy.
+		if !r.recordInterrupt() {
+			f := apidoc.NewFailure(apidoc.FailureCluster, cp.Cluster, apidoc.ReasonTimeout,
+				"--wait-timeout passed before the verification of "+cp.Cluster+"; its rolls ended and were not verified")
+			f.Region = cp.Region
+			r.addFailures([]apidoc.Failure{f})
+			r.unverified = true
+		}
+		return
 	}
 	clients := r.d.AWS.Clients(cp.Region)
 	fetch := r.d.Fetch
@@ -104,7 +108,7 @@ func (r *runner) verifyRoll(ctx context.Context, cp *ClusterPlan, ph Phase, star
 		unreached = a.base.Taken && c.Outcome != health.Pass
 		return true
 	})
-	r.verification = append(r.verification, checks...)
+	r.verification = append(r.verification, r.verificationRows(ph, names, checks)...)
 	r.emit(Event{Kind: VerifyReport, Phase: ph.Ref, Checks: checks})
 
 	for _, c := range checks {
@@ -123,7 +127,7 @@ func (r *runner) verifyRoll(ctx context.Context, cp *ClusterPlan, ph Phase, star
 			}
 		}
 	}
-	if r.interruptedNow() {
+	if r.recordInterrupt() {
 		return
 	}
 	failures := slices.Concat(health.Failures(checks), snap.Failures)
@@ -140,13 +144,29 @@ func (r *runner) verifyRoll(ctx context.Context, cp *ClusterPlan, ph Phase, star
 		failures = append(failures, apidoc.NewFailure(apidoc.FailureCluster, cp.Cluster, apidoc.ReasonUnknown,
 			"the verification after the roll could not read what it needs ("+strings.Join(unread, "; ")+")"))
 	}
-	for i := range failures {
-		if failures[i].Cluster == "" && failures[i].Kind != apidoc.FailureCluster {
-			failures[i].Cluster = cp.Cluster
-		}
-		if failures[i].Region == "" {
-			failures[i].Region = cp.Region
-		}
-	}
+	health.Locate(failures, cp.Cluster, cp.Region)
 	r.addFailures(failures)
+	r.unverified = r.unverified || len(failures) > 0
+}
+
+// verificationRows returns the checks of one verification as rows of the
+// result. A roll onto a new AMI verifies its batch once, and its rows
+// keep the names of the checks. An upgrade and a rollback verify each
+// nodegroup alone, and an upgrade over several hops verifies it once for
+// each hop, so the name of a row there also has the nodegroup and the
+// hop: "NodegroupActive/ng-a@1.33". The name of a row is its FIELD in the
+// plain output, and no FIELD is on two rows.
+func (r *runner) verificationRows(ph Phase, names []string, checks []health.Result) []health.Result {
+	if r.req.kind().independent() || len(names) != 1 {
+		return checks
+	}
+	suffix := "/" + names[0]
+	if !ph.Ref.Hop.IsZero() {
+		suffix += "@" + ph.Ref.Hop.String()
+	}
+	out := slices.Clone(checks)
+	for i := range out {
+		out[i].Name += suffix
+	}
+	return out
 }

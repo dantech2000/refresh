@@ -11,8 +11,8 @@ RUN
   status     [OK] Succeeded
 
 RESULTS  1
-  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  web   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+  NAME  KIND       STATUS          FROM                                            TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  web   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
 
 VERIFICATION  3
   NAME             OUTCOME    MESSAGE
@@ -38,7 +38,7 @@ CHECKS  9
   Kubernetes     [!] Warn   no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
   [OK] Nodes          4/4 nodes ready (estimated)
   [OK] Capacity       CPU mean 32%, peak 32%, 4 instances
        ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)

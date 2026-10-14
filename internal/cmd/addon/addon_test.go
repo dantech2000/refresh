@@ -26,7 +26,7 @@ var update = flag.Bool("update", false, "write the golden files in testdata")
 const east = "us-east-1"
 
 // newFake returns a fake AWS with the fleet of the golden files: the
-// cluster prod with three add-ons, and the clusters prod-eu and dev with
+// cluster prod with four add-ons, and the clusters prod-eu and dev with
 // none.
 func newFake(t *testing.T) *cmdtest.Fake {
 	t.Helper()
@@ -40,6 +40,10 @@ func newFake(t *testing.T) *cmdtest.Fake {
 					{Code: "InsufficientNumberOfReplicas", Message: "The add-on is unhealthy because it has no replicas", ResourceIDs: []string{"kube-system/coredns"}},
 				}},
 				{Name: "kube-proxy", Version: "v1.33.0-eksbuild.2", Status: fleettest.StatusUpdating},
+				// ACTIVE, and EKS reports an issue for it: it is not healthy.
+				{Name: "metrics-server", Version: "v0.7.2-eksbuild.1", HealthIssues: []fleettest.Issue{
+					{Code: "InsufficientNumberOfReplicas", Message: "The add-on has fewer replicas than it needs", ResourceIDs: []string{"kube-system/metrics-server"}},
+				}},
 			}},
 			&fleettest.Cluster{Name: "prod-eu", Region: east, Version: "1.33"},
 			&fleettest.Cluster{Name: "dev", Region: east, Version: "1.32"},
@@ -140,13 +144,13 @@ func TestWavesAndCalls(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- e.Run(cmdutiltest.Context(t), "addon", "list", "-c", "prod", "-o", "json") }()
 		gate.Wave(fleettest.EKSDescribeCluster, fleettest.EKSListAddons)
-		gate.Wave(fleettest.EKSDescribeAddon, fleettest.EKSDescribeAddon, fleettest.EKSDescribeAddon)
+		gate.Wave(fleettest.EKSDescribeAddon, fleettest.EKSDescribeAddon, fleettest.EKSDescribeAddon, fleettest.EKSDescribeAddon)
 		gate.Done()
 		if err := <-done; err != nil {
 			t.Fatalf("run: %v", err)
 		}
-		if n := len(e.Server.Requests()); n != 5 {
-			t.Errorf("requests = %v, want 5", e.Operations())
+		if n := len(e.Server.Requests()); n != 6 {
+			t.Errorf("requests = %v, want 6", e.Operations())
 		}
 	})
 	t.Run("describe", func(t *testing.T) {
@@ -364,8 +368,8 @@ func TestList_Deadline(t *testing.T) {
 		t.Fatalf("exit code = %d (%v), want %d", got, err, cmdutil.ExitIncomplete)
 	}
 	cmdutiltest.ValidateJSON(t, apidoc.KindAddonList, e.Out.Bytes())
-	if n := strings.Count(e.Out.String(), `"incomplete": true`); n != 3 {
-		t.Errorf("incomplete add-ons = %d, want 3:\n%s", n, e.Out.String())
+	if n := strings.Count(e.Out.String(), `"incomplete": true`); n != 4 {
+		t.Errorf("incomplete add-ons = %d, want 4:\n%s", n, e.Out.String())
 	}
 }
 

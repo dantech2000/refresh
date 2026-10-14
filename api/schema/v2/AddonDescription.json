@@ -16,7 +16,7 @@
         },
         "health": {
           "$ref": "#/$defs/AddonHealth",
-          "description": "health is the status as one of a closed set of values."
+          "description": "health is the status and the health issues as one of a closed set of values. An add-on with a health issue is never Healthy."
         },
         "arn": {
           "type": "string"
@@ -66,7 +66,7 @@
         "InProgress",
         "Unknown"
       ],
-      "description": "AddonHealth is the health of an add-on, from its EKS status."
+      "description": "AddonHealth is the health of an add-on, from its EKS status and its health issues."
     },
     "AddonLatest": {
       "properties": {

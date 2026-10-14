@@ -1,0 +1,118 @@
+exit: 1
+error: update 00000000-0000-4000-8000-000000000005 of cluster prod ended Failed: Unknown: the update did not complete; completed: the nodegroup rolls to 1.32, the add-on downgrades; to go on from the live state of the cluster, run: refresh cluster rollback prod
+--- stdout ---
+FIELD	VALUE
+run.operation	ClusterRollback
+run.cluster	prod
+run.region	us-east-1
+run.version	1.33
+run.target_version	1.32
+run.status	Failed
+results.api.kind	Nodegroup
+results.api.status	Succeeded
+results.api.from	1.33
+results.api.to	1.32
+results.api.update	00000000-0000-4000-8000-000000000001
+results.api.note	-
+results.api.started	2026-01-01 00:00:00 UTC
+results.api.finished	2026-01-01 00:00:30 UTC
+results.api.failure	-
+results.web.kind	Nodegroup
+results.web.status	Succeeded
+results.web.from	1.33
+results.web.to	1.32
+results.web.update	00000000-0000-4000-8000-000000000002
+results.web.note	-
+results.web.started	2026-01-01 00:00:30 UTC
+results.web.finished	2026-01-01 00:01:00 UTC
+results.web.failure	-
+results.vpc-cni.kind	Addon
+results.vpc-cni.status	Succeeded
+results.vpc-cni.from	v1.20.0-eksbuild.1
+results.vpc-cni.to	v1.19.0-eksbuild.1
+results.vpc-cni.update	00000000-0000-4000-8000-000000000003
+results.vpc-cni.note	-
+results.vpc-cni.started	2026-01-01 00:01:00 UTC
+results.vpc-cni.finished	2026-01-01 00:01:30 UTC
+results.vpc-cni.failure	-
+results.kube-proxy.kind	Addon
+results.kube-proxy.status	Succeeded
+results.kube-proxy.from	v1.33.0-eksbuild.1
+results.kube-proxy.to	v1.32.0-eksbuild.1
+results.kube-proxy.update	00000000-0000-4000-8000-000000000004
+results.kube-proxy.note	-
+results.kube-proxy.started	2026-01-01 00:01:30 UTC
+results.kube-proxy.finished	2026-01-01 00:02:00 UTC
+results.kube-proxy.failure	-
+results.control-plane.kind	ControlPlane
+results.control-plane.status	Failed
+results.control-plane.from	1.33
+results.control-plane.to	1.32
+results.control-plane.update	00000000-0000-4000-8000-000000000005
+results.control-plane.note	-
+results.control-plane.started	2026-01-01 00:02:00 UTC
+results.control-plane.finished	2026-01-01 00:02:30 UTC
+results.control-plane.failure	UpdateFailed: update 00000000-0000-4000-8000-000000000005 of cluster prod ended Failed: Unknown: the update did not complete
+verification.NodegroupActive/api.outcome	Pass
+verification.NodegroupActive/api.message	api ACTIVE
+verification.NodesReady/api.outcome	Pass
+verification.NodesReady/api.message	2 new nodes ready
+verification.NewPendingPods/api.outcome	Pass
+verification.NewPendingPods/api.message	no new Pending pods
+verification.NodegroupActive/web.outcome	Pass
+verification.NodegroupActive/web.message	web ACTIVE
+verification.NodesReady/web.outcome	Pass
+verification.NodesReady/web.message	2 new nodes ready
+verification.NewPendingPods/web.outcome	Pass
+verification.NewPendingPods/web.message	no new Pending pods
+verification.AddonHealth/vpc-cni.outcome	Pass
+verification.AddonHealth/vpc-cni.message	vpc-cni is ACTIVE at v1.19.0-eksbuild.1
+verification.AddonHealth/kube-proxy.outcome	Pass
+verification.AddonHealth/kube-proxy.message	kube-proxy is ACTIVE at v1.32.0-eksbuild.1
+health_gate.decision	Go
+checks.Nodes.outcome	Pass
+checks.Nodes.message	4/4 nodes ready
+checks.Capacity.outcome	Pass
+checks.Capacity.message	CPU mean 32%, peak 32%, 4 instances
+checks.ControlPlane.outcome	Skipped
+checks.ControlPlane.message	control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+checks.Workloads.outcome	Pass
+checks.Workloads.message	1/1 pods running in the system namespaces
+checks.DrainBlockers.outcome	Pass
+checks.DrainBlockers.message	no PodDisruptionBudget blocks a drain
+checks.PDBCoverage.outcome	Pass
+checks.PDBCoverage.message	every deployment has a PodDisruptionBudget (2)
+checks.Utilization.outcome	Pass
+checks.Utilization.message	CPU 20%, memory 25% in use
+checks.Quotas.outcome	Pass
+checks.Quotas.message	31% of the vCPU quota in use (40 of 128)
+checks.Kubernetes.outcome	Pass
+checks.Kubernetes.message	Kubernetes API reachable
+notices.1	self-managed and hybrid nodes are not rolled back by EKS or refresh: move them to 1.32 yourself before the control plane rolls back. Fargate pods at 1.33 trigger the kubelet skew insight: delete them first, and they come back at 1.32
+--- stderr ---
+PLAN  ClusterRollback, prod in us-east-1
+  api            update 1.33 to 1.32 (VersionAhead)
+  web            update 1.33 to 1.32 (VersionAhead)
+  vpc-cni        update v1.20.0-eksbuild.1 to v1.19.0-eksbuild.1 (VersionAhead)
+  kube-proxy     update v1.33.0-eksbuild.1 to v1.32.0-eksbuild.1 (VersionAhead)
+  control-plane  update 1.33 to 1.32 (VersionAhead)
+warning: self-managed and hybrid nodes are not rolled back by EKS or refresh: move them to 1.32 yourself before the control plane rolls back. Fargate pods at 1.33 trigger the kubelet skew insight: delete them first, and they come back at 1.32
+phase: nodegroups
+[~] api: Started (update 00000000-0000-4000-8000-000000000001)
+api: InProgress
+[OK] api: Succeeded
+[~] web: Started (update 00000000-0000-4000-8000-000000000002)
+web: InProgress
+[OK] web: Succeeded
+phase: add-ons
+[~] vpc-cni: Started (update 00000000-0000-4000-8000-000000000003)
+vpc-cni: InProgress
+[OK] vpc-cni: Succeeded
+[~] kube-proxy: Started (update 00000000-0000-4000-8000-000000000004)
+kube-proxy: InProgress
+[OK] kube-proxy: Succeeded
+phase: control plane
+[~] control-plane: Started (update 00000000-0000-4000-8000-000000000005)
+control-plane: InProgress
+[X] control-plane: Failed: update 00000000-0000-4000-8000-000000000005 of cluster prod ended Failed: Unknown: the update did not complete
+warning: update prod/ (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000005 of cluster prod ended Failed: Unknown: the update did not complete

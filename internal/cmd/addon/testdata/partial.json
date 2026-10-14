@@ -19,6 +19,24 @@
       "modifiedAt": "2026-01-01T00:00:00Z"
     },
     {
+      "name": "metrics-server",
+      "version": "v0.7.2-eksbuild.1",
+      "status": "ACTIVE",
+      "health": "Failed",
+      "arn": "arn:aws:eks:us-east-1:123456789012:addon/prod/metrics-server/fake",
+      "issues": [
+        {
+          "code": "InsufficientNumberOfReplicas",
+          "message": "The add-on has fewer replicas than it needs",
+          "resourceIds": [
+            "kube-system/metrics-server"
+          ]
+        }
+      ],
+      "createdAt": "2026-01-01T00:00:00Z",
+      "modifiedAt": "2026-01-01T00:00:00Z"
+    },
+    {
       "name": "vpc-cni",
       "version": "v1.19.0-eksbuild.1",
       "status": "ACTIVE",

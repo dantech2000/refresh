@@ -30,7 +30,8 @@ error:
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {
@@ -150,7 +151,8 @@ error:
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {
@@ -270,7 +272,8 @@ error:
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {

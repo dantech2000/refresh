@@ -16,8 +16,8 @@ steps.api.note	-
 steps.web.kind	Nodegroup
 steps.web.action	Submit
 steps.web.reason	AMIOutdated
-steps.web.from	1.32
-steps.web.to	1.32 (ami-latest132)
+steps.web.from	1.32 (release 1.32.0-20250101, AMI ami-old32x)
+steps.web.to	1.32 (AMI ami-latest132)
 steps.web.note	-
 health_gate.decision	Block
 health_gate.reasons	DrainBlockers: 1 PDB allow 0 disruptions on the target nodegroups; the roll would stall on eviction

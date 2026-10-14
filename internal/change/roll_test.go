@@ -477,10 +477,9 @@ func TestRoll_FreshReadDecidesAgain(t *testing.T) {
 		edit   func(r *RollRequest)
 		rolls  []sentRoll
 		// skipped is the nodegroup that the fresh read leaves alone, with
-		// the action and the reason that its step of the plan then has,
-		// and say a text of the notice.
+		// the reason that its step of the plan has and keeps, and say a
+		// text of the notice and of the note of its result.
 		skipped string
-		action  Action
 		reason  Reason
 		say     string
 		status  RunStatus
@@ -490,16 +489,16 @@ func TestRoll_FreshReadDecidesAgain(t *testing.T) {
 		{name: "rolled elsewhere", status: Succeeded,
 			change:  func(s *fleettest.State) { ng(s, "ng-a").ReleaseVersion = "1.32.0-20260101" },
 			rolls:   []sentRoll{{"prod", "ng-b", "1.32", false}},
-			skipped: "ng-a", action: Skip, reason: AlreadyLatest,
+			skipped: "ng-a", reason: AMIOutdated,
 			say: "nodegroup ng-a of prod runs the AMI release 1.32.0-20260101, and the plan read 1.32.0-20250101: it was rolled elsewhere since the plan, and is not rolled again"},
 		{name: "rolled elsewhere, with --reroll", status: NothingToDo,
 			edit:    func(r *RollRequest) { r.Nodegroups, r.Reroll = []string{"ng-c"}, true },
 			change:  func(s *fleettest.State) { ng(s, "ng-c").ReleaseVersion = "1.32.0-20270101" },
-			skipped: "ng-c", action: Skip, reason: AlreadyLatest, say: "it was rolled elsewhere since the plan, and is not rolled again"},
+			skipped: "ng-c", reason: Reroll, say: "it was rolled elsewhere since the plan, and is not rolled again"},
 		{name: "a custom AMI now", status: Succeeded,
 			change:  func(s *fleettest.State) { ng(s, "ng-a").AMIType = amiTypeCustom },
 			rolls:   []sentRoll{{"prod", "ng-b", "1.32", false}},
-			skipped: "ng-a", action: Manual, reason: CustomAMI, say: "nodegroup ng-a of prod has a custom AMI (AMI type CUSTOM) since the plan, and is not rolled"},
+			skipped: "ng-a", reason: AMIOutdated, say: "nodegroup ng-a of prod has a custom AMI (AMI type CUSTOM) since the plan, and is not rolled"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -531,16 +530,46 @@ func TestRoll_FreshReadDecidesAgain(t *testing.T) {
 			if got := statuses(res)[tt.skipped]; got != StepSkipped {
 				t.Errorf("%s = %s, want Skipped", tt.skipped, got)
 			}
-			cp := &res.Plan.Clusters[0]
-			for _, step := range cp.Steps() {
-				if step.Ref.Name == tt.skipped && (step.Action != tt.action || step.Reason != tt.reason || step.Force) {
-					t.Errorf("the step of %s in the plan is %s, %s, force %t; want %s, %s", tt.skipped, step.Action, step.Reason, step.Force, tt.action, tt.reason)
-				}
-			}
-			if said := strings.Join(s.events, "\n"); !strings.Contains(said, tt.say) || !slices.ContainsFunc(cp.Notices, func(n string) bool { return strings.Contains(n, tt.say) }) {
-				t.Errorf("the events and the notices of the plan do not both say %q:\n%s\n%q", tt.say, said, cp.Notices)
-			}
+			leftAlone(t, res, s.events, tt.skipped, tt.reason, tt.say)
 		})
+	}
+}
+
+// leftAlone holds the result of a run to a nodegroup that the fresh read
+// before its request left alone: its step of the plan is unchanged, with
+// the reason that the plan had, and its result says what the read found,
+// in the events, in its note, and in the document.
+func leftAlone(t *testing.T, res Result, events []string, name string, reason Reason, say string) {
+	t.Helper()
+	// The plan stays the plan that was confirmed: the step still
+	// says Submit, and the result of the step says what the fresh
+	// read found.
+	cp := &res.Plan.Clusters[0]
+	for _, step := range cp.Steps() {
+		if step.Ref.Name == name && (step.Action != Submit || step.Reason != reason) {
+			t.Errorf("the step of %s in the plan is %s, %s; want it unchanged: Submit, %s", name, step.Action, step.Reason, reason)
+		}
+	}
+	if slices.ContainsFunc(cp.Notices, func(n string) bool { return strings.Contains(n, say) }) {
+		t.Errorf("the run wrote into the notices of the plan: %q", cp.Notices)
+	}
+	note := ""
+	for _, row := range res.Clusters[0].Steps {
+		if row.Ref.Name == name {
+			note = row.Note
+		}
+	}
+	if said := strings.Join(events, "\n"); !strings.Contains(said, say) || !strings.Contains(note, say) {
+		t.Errorf("the events and the note of the result do not both say %q:\n%s\n%q", say, said, note)
+	}
+	doc, ok := res.Document().(apidoc.Run)
+	if !ok {
+		t.Fatalf("document = %T, want a Run", res.Document())
+	}
+	for i, row := range doc.Clusters[0].Results {
+		if row.Name == name && (row.Note == "" || doc.Clusters[0].Steps[i].Action != Submit) {
+			t.Errorf("the document has the step %+v and the result %+v; want the plan as confirmed and a note", doc.Clusters[0].Steps[i], row)
+		}
 	}
 }
 
@@ -735,11 +764,11 @@ func TestRoll_NoWait(t *testing.T) {
 }
 
 // After a person answers, the plan is computed again and compared: a new
-// AMI release asks again, and a target that is done needs no roll.
+// AMI asks again, and a target that is done needs no roll.
 func TestRoll_PlanAgainAfterAnAnswer(t *testing.T) {
 	interactive := rollOf("ng-a")
 	interactive.Policy = health.Policy{Skip: true}
-	t.Run("a new AMI release asks again", func(t *testing.T) {
+	t.Run("a new AMI asks again", func(t *testing.T) {
 		e := newEnv(t, rollWorld(nil))
 		s := &script{t: t, answers: []bool{true, true}, onAsk: func(i int) {
 			if i > 0 {
@@ -762,7 +791,7 @@ func TestRoll_PlanAgainAfterAnAnswer(t *testing.T) {
 			t.Fatalf("run: %v, exit %d (%v)", err, res.ExitCode(), res.Err)
 		}
 		if len(s.asked) != 2 || s.asked[1].Kind != PlanChanged || !strings.Contains(s.asked[1].Text, "ami-newer") {
-			t.Errorf("questions = %+v, want a second one about the AMI release ami-newer", s.asked)
+			t.Errorf("questions = %+v, want a second one about the AMI ami-newer", s.asked)
 		}
 		if len(e.rolls()) != 1 {
 			t.Errorf("rolls = %v, want one", e.rolls())

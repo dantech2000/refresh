@@ -390,11 +390,15 @@
         },
         "fromRelease": {
           "type": "string",
-          "description": "fromRelease is the AMI release version that the nodegroup of a roll ran when the plan read it. A run does not roll a nodegroup that is on another release by the time of its request: it was rolled elsewhere."
+          "description": "fromRelease is the AMI release version that the nodegroup of a roll ran when the plan read it, such as 1.32.0-20250101. A run does not roll a nodegroup that is on another release by the time of its request: it was rolled elsewhere."
         },
-        "toRelease": {
+        "fromImage": {
           "type": "string",
-          "description": "toRelease is the AMI release that a roll expects."
+          "description": "fromImage is the ID of the AMI that the nodes of a roll ran when the plan read them, such as ami-0abc. It is an image ID, and not a release version."
+        },
+        "toImage": {
+          "type": "string",
+          "description": "toImage is the ID of the latest recommended AMI, which a roll moves the nodegroup to. It is an image ID, and not a release version."
         },
         "force": {
           "type": "boolean",
@@ -559,7 +563,8 @@
         "CustomAMI",
         "SkippedByFlag",
         "OutOfScope",
-        "NoChange"
+        "NoChange",
+        "VersionAhead"
       ],
       "description": "StepReason is why a step has its action."
     },
@@ -604,6 +609,10 @@
         "failure": {
           "$ref": "#/$defs/Failure",
           "description": "failure is why the step did not succeed. It is also in the failures list of the document."
+        },
+        "note": {
+          "type": "string",
+          "description": "note says what the run found right before its request, when it then did something else than the step of the plan says: a nodegroup that was rolled elsewhere since the plan is Skipped, and its step of the plan still says Submit. The plan in a Run document is the plan that was confirmed."
         }
       },
       "type": "object",

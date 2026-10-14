@@ -187,23 +187,13 @@ func (r *runner) turn(p *Plan, i int) (outcome turnOutcome, why string) {
 	switch {
 	case r.stop != nil || r.interrupted:
 		return turnHalt, ""
-	case r.interruptedNow() || r.ctx.Err() != nil:
+	case r.recordInterrupt() || r.ctx.Err() != nil:
 		return turnHalt, ""
 	}
-	if i > 0 && r.hooks.Checkpoint != nil {
-		answer, err := r.hooks.Checkpoint(r.ctx, PhaseRef{Target: cp.Target, Kind: PhaseRoll})
-		switch {
-		case err != nil && r.ctx.Err() != nil:
-			r.interruptedNow()
-			return turnHalt, ""
-		case err != nil:
-			r.stop = &stop{status: Failed, err: fmt.Errorf("the checkpoint before cluster %s failed: %w; nothing more was changed", cp.Cluster, err)}
-			r.hookErr = err
-			return turnHalt, ""
-		case answer.Stop:
-			r.stop = &stop{status: Stopped, err: fmt.Errorf("stopped before cluster %s; nothing more was changed", cp.Cluster)}
-			return turnHalt, ""
-		}
+	// The hook runs before every cluster, the first included: a stop
+	// there ends the run before its first submit.
+	if !r.checkpoint(StepRef{Phase: PhaseRef{Target: cp.Target, Kind: PhaseRoll}}, "cluster "+cp.Cluster) {
+		return turnHalt, ""
 	}
 	r.newRead(r.common.Limits.Read)
 	if cp.Decision() == DecisionBlocked {
@@ -222,7 +212,7 @@ func (r *runner) turn(p *Plan, i int) (outcome turnOutcome, why string) {
 		d.Fetch = d.Fetch.Fresh()
 		cur, err := planRollCluster(r.readCtx, d, req, prev.Target)
 		if err != nil {
-			if r.interruptedNow() {
+			if r.recordInterrupt() {
 				return turnHalt, ""
 			}
 			r.addFailures(unplannedCluster(prev.Target, err).Failures)
@@ -253,31 +243,28 @@ func (r *runner) turn(p *Plan, i int) (outcome turnOutcome, why string) {
 			return turnBlocked, cp.Cluster + " keeps changing (" + strings.Join(q.Reasons, "; ") + "); nothing was started there"
 		}
 		q.Text = cp.Cluster + ": " + q.Text
-		// The budgets do not run while a person answers.
-		r.read.pause()
-		ok, err := r.hooks.Ask(r.ctx, *q)
-		r.read.start()
-		switch {
-		case err != nil && r.ctx.Err() != nil:
-			r.interruptedNow()
+		switch a, _ := r.askDuringRun(*q); a {
+		case askInterrupted:
+			r.recordInterrupt()
 			return turnHalt, ""
-		case err != nil:
-			r.stop = &stop{status: Failed, err: fmt.Errorf("could not ask %q: %w; nothing more was changed", q.Text, err)}
-			r.hookErr = err
+		case askFailed, answeredNo:
 			return turnHalt, ""
-		case !ok:
-			r.stop = &stop{status: Declined, err: errors.New("declined; nothing more was changed")}
-			return turnHalt, ""
+		case answeredYes:
 		}
 		prev = *cur
 	}
 }
 
 // blockedResults returns the results of a cluster of a fleet that is not
-// changed: a step with work is Blocked, with why as its failure when
-// there is a reason beside the blockers of the plan, and a target that is
-// already changing keeps its Busy row.
+// changed: a step with work is Blocked, and a target that is already
+// changing keeps its Busy row. The failure of a Blocked row says why: why
+// when the turn of the cluster gave a reason, and else what blocked the
+// plan of the cluster, which is its blockers or the verdict of its gate.
+// A row never says Blocked with no reason beside it.
 func (r *runner) blockedResults(cp *ClusterPlan, why string) []StepResult {
+	if why == "" {
+		why = blockedSummary(&Plan{Clusters: []ClusterPlan{*cp}})
+	}
 	var out []StepResult
 	for _, s := range cp.Steps() {
 		res := StepResult{Ref: s.Ref, Status: StepSkipped}

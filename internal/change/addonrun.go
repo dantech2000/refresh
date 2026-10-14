@@ -31,9 +31,6 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 	res := StepResult{Ref: s.Ref}
 	resource := s.Ref.Resource()
 	clients := r.d.AWS.Clients(cp.Region)
-	if s.busy() {
-		return cp.busyResult(s)
-	}
 	if s.Action == Submit {
 		// The steps before this one waited, so the read of the plan is old.
 		if r.waited {
@@ -224,6 +221,9 @@ func (r *runner) unsent(cp *ClusterPlan, res StepResult, err error) StepResult {
 		if timedOut(r.readCtx) {
 			f.Reason, f.Retryable = apidoc.ReasonTimeout, true
 			f.Error = "the --timeout budget ran out before " + stepName(res.Ref) + " was " + done + " (increase --timeout)"
+			if errors.Is(context.Cause(r.readCtx), ErrWaitTimeout) {
+				f.Error = "--wait-timeout passed before " + stepName(res.Ref) + " was " + done + "; nothing was sent for it"
+			}
 			r.failures = append(r.failures, f)
 		} else {
 			r.interrupted = true
@@ -286,13 +286,19 @@ func (r *runner) waitFailed(ctx context.Context, cp *ClusterPlan, res StepResult
 func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settled, err error) StepResult {
 	name := s.Ref.Name
 	res.Status, res.FinishedAt = StepSucceeded, r.d.now()
-	check := health.Result{Name: addonCheck + "/" + name, Outcome: health.Pass, Message: fmt.Sprintf("%s is %s at %s", name, got.Status, got.Version)}
+	row := addonCheck + "/" + name
+	if hop := s.Ref.Phase.Hop; !hop.IsZero() {
+		// An upgrade over several hops updates an add-on once for each.
+		row += "@" + hop.String()
+	}
+	check := health.Result{Name: row, Outcome: health.Pass, Message: fmt.Sprintf("%s is %s at %s", name, got.Status, got.Version)}
 	switch {
 	case err != nil:
 		f := fleet.FailureFromError(apidoc.FailureAddon, name, err)
 		f.Cluster, f.Region, f.UpdateID = cp.Cluster, cp.Region, res.UpdateID
 		f.Error = "the update of add-on " + name + " succeeded, and the add-on could not be read after it: " + f.Error
 		r.failures = append(r.failures, f)
+		r.unverified = true
 		check.Outcome, check.Message = health.Unreadable, "could not read "+name+" after its update"
 	case fleet.CompareAddonVersions(got.Version, s.To) != 0:
 		res.Status = StepFailed
@@ -308,6 +314,7 @@ func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settl
 		check.Outcome, check.Message, check.Findings = health.Fail, res.VerifyIssue, []string{name}
 	}
 	r.verification = append(r.verification, check)
-	r.emit(Event{Kind: VerifyReport, Phase: s.Ref.Phase, Step: s.Ref, Checks: []health.Result{check}})
+	// The check is reported after the result of its step: see stepEnded.
+	r.afterStep = append(r.afterStep, Event{Kind: VerifyReport, Phase: s.Ref.Phase, Step: s.Ref, Checks: []health.Result{check}})
 	return res
 }

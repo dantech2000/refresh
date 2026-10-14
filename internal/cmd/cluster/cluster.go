@@ -16,7 +16,9 @@ func NewCmdCluster(f *cmdutil.Factory) *cobra.Command {
 
 "refresh cluster list" reads one region, the regions you name with -r, or
 every region with -A. "refresh cluster describe" reads one cluster, and
-"refresh cluster upgrade-check" reports whether it is ready to upgrade.`,
+"refresh cluster upgrade-check" reports whether it is ready to upgrade.
+"refresh cluster upgrade" moves a cluster to a Kubernetes version, and
+"refresh cluster rollback" returns it to the version before its upgrade.`,
 		Example: `  # The clusters of the configured region
   refresh cluster list
 
@@ -27,6 +29,6 @@ every region with -A. "refresh cluster describe" reads one cluster, and
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newCmdList(f), newCmdDescribe(f), newCmdUpgradeCheck(f))
+	cmd.AddCommand(newCmdList(f), newCmdDescribe(f), newCmdUpgradeCheck(f), newCmdUpgrade(f), newCmdRollback(f))
 	return cmd
 }

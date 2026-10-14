@@ -1,8 +1,6 @@
 package change
 
 import (
-	"errors"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -71,22 +69,13 @@ func (r *runner) regate(cp *ClusterPlan, res StepResult, checks []health.Result,
 		return res, false, false
 	default:
 		q := Question{Kind: GateWarnings, Step: res.Ref, Text: capitalize(text) + ". Continue with " + name + "?", Reasons: reasons}
-		// The budgets do not run while a person answers.
-		r.read.pause()
-		yes, err := r.hooks.Ask(r.ctx, q)
-		r.read.start()
-		switch {
-		case err != nil && r.ctx.Err() != nil:
+		switch a, err := r.askDuringRun(q); a {
+		case askInterrupted:
 			return r.unsent(cp, res, err), false, false
-		case err != nil:
-			r.stop = &stop{status: Failed, err: fmt.Errorf("could not ask %q: %w; nothing more was changed", q.Text, err)}
-			r.hookErr = err
-		case !yes:
-			r.stop = &stop{status: Declined, err: errors.New("declined; nothing more was changed")}
-		}
-		if r.stop != nil {
+		case askFailed, answeredNo:
 			res.Status = StepNotAttempted
 			return res, false, false
+		case answeredYes:
 		}
 		asked = true
 	}
@@ -204,10 +193,13 @@ func (r *runner) remainingAddons(snap *fleet.Snapshot) []health.Check {
 // freshAddonHealth returns the result of the add-on check for one target,
 // from the fresh read before its submit.
 func (r *runner) freshAddonHealth(cp *ClusterPlan, name string, fresh Settled) []health.Result {
-	snap := &fleet.Snapshot{
-		Cluster: cp.snapshot.Cluster,
-		Addons:  []fleet.Addon{{Name: name, State: fleet.Collected, Version: fresh.Version, Status: fresh.Status}},
+	addon := fleet.Addon{Name: name, State: fleet.Collected, Version: fresh.Version, Status: fresh.Status}
+	// The health of an add-on reads its issues too: fleet.Addon.Health.
+	for _, issue := range fresh.Issues {
+		code, message, _ := strings.Cut(issue, ": ")
+		addon.Issues = append(addon.Issues, fleet.Issue{Code: code, Message: message})
 	}
+	snap := &fleet.Snapshot{Cluster: cp.snapshot.Cluster, Addons: []fleet.Addon{addon}}
 	return health.Run(r.readCtx, []health.Check{health.Addons([]string{name})}, &health.Input{
 		Snapshot: snap, Clients: r.d.AWS.Clients(cp.Region), Now: r.d.now(),
 	})

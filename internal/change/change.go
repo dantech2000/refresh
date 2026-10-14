@@ -1,6 +1,6 @@
 // Package change plans and runs the changes that refresh makes to a
-// cluster: an add-on update, a nodegroup scale, and a nodegroup roll, for
-// one cluster or for a fleet. Upgrade and rollback come as they are built.
+// cluster: an add-on update, a nodegroup scale, a nodegroup roll for one
+// cluster or for a fleet, a cluster upgrade, and a cluster rollback.
 //
 // One function builds the plan of a change. NewPlan returns it for a dry
 // run, and Run calls the same function, so a dry run shows what a real run
@@ -23,8 +23,8 @@ import (
 // Kind names a change.
 type Kind string
 
-// The kinds of change that this package can plan and run. Each other
-// kind arrives with its planner.
+// The kinds of change whose targets are independent. ClusterUpgrade and
+// ClusterRollback, whose phases are a sequence, are beside their requests.
 const (
 	AddonUpdate     Kind = "AddonUpdate"
 	NodegroupScale  Kind = "NodegroupScale"
@@ -33,17 +33,16 @@ const (
 
 // independent reports whether the steps of a change of kind k are
 // independent targets: one that fails beside one that changed something
-// is a partial failure. The three kinds that are built are: the add-ons
-// of an update, the nodegroups of a roll, and the clusters of a fleet. A
-// kind whose phases are a sequence is not: a failed phase has failed the
-// whole operation.
+// is a partial failure: the add-ons of an update, the nodegroups of a
+// roll, and the clusters of a fleet. An upgrade and a rollback are not:
+// their phases are a sequence, and a failed phase has failed the whole
+// operation.
 func (k Kind) independent() bool {
 	return k == AddonUpdate || k == NodegroupScale || k == NodegroupUpdate
 }
 
 // Request is one of the request types of this package: AddonUpdateRequest,
-// ScaleRequest, or RollRequest. The kinds that are not built yet add
-// theirs.
+// ScaleRequest, RollRequest, UpgradeRequest, or RollbackRequest.
 type Request interface {
 	kind() Kind
 	base() Common
@@ -174,6 +173,10 @@ type Deps struct {
 	// with each pause of the wait must not move for the observer too. Nil
 	// means time.After. Only a run with Common.Nodes calls it.
 	Tick func(time.Duration) <-chan time.Time
+	// FollowUp holds the words around a command that a notice of an
+	// upgrade names, so that the command reaches the same account and
+	// region as the run. The zero value gives "refresh".
+	FollowUp FollowUp
 }
 
 // budget returns a context under parent and its budget of limit, on the
@@ -203,13 +206,18 @@ func (d Deps) after(dur time.Duration) <-chan time.Time {
 // the request is invalid, a name does not exist, or the cluster could not
 // be read at all.
 func NewPlan(ctx context.Context, d Deps, req Request) (*Plan, error) {
-	return plan(ctx, d, req)
+	return plan(ctx, d, req, nil)
 }
 
 // plan builds the plan of a request. NewPlan and Run both call it, so
 // there is no dry-run code path. A new kind adds a case here and a file
 // with its planner.
-func plan(ctx context.Context, d Deps, req Request) (*Plan, error) {
+//
+// refresh is the one difference between the two callers. Run passes its
+// insights refresher, and the plan of an upgrade then asks EKS to
+// evaluate the insights anew before it reads them. NewPlan passes nil: a
+// dry run sends no request that is not a read.
+func plan(ctx context.Context, d Deps, req Request, refresh *insightsRefresher) (*Plan, error) {
 	// Every plan reads anew. The fetcher of the command remembers the
 	// newest version of an add-on, which may have changed since the plan
 	// before this one.
@@ -224,6 +232,10 @@ func plan(ctx context.Context, d Deps, req Request) (*Plan, error) {
 		return planScale(ctx, d, r)
 	case RollRequest:
 		return planRoll(ctx, d, r)
+	case UpgradeRequest:
+		return planUpgrade(ctx, d, r, refresh)
+	case RollbackRequest:
+		return planRollback(ctx, d, r)
 	}
 	return nil, &UnsupportedError{Kind: req.kind()}
 }

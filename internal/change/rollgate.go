@@ -32,7 +32,13 @@ func submitTargets(steps []Step) []string {
 // also with --skip-health-check. What that finds is a notice, and never
 // part of the verdict.
 func (cp *ClusterPlan) gateRoll(ctx context.Context, d Deps, policy health.Policy) {
-	targets := submitTargets(cp.Steps())
+	cp.gateNodegroups(ctx, d, policy, submitTargets(cp.Steps()))
+}
+
+// gateNodegroups is the gate of gateRoll over the nodegroups in targets.
+// The plan of an upgrade or a rollback calls it with every nodegroup that
+// the plan would roll, in any hop.
+func (cp *ClusterPlan) gateNodegroups(ctx context.Context, d Deps, policy health.Policy, targets []string) {
 	if len(targets) == 0 {
 		return
 	}

@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -670,7 +669,7 @@ func TestLoadAllowlistRejects(t *testing.T) {
 // also held to what the scenario asks of the v2 binary alone.
 func pair(t *testing.T, sc Scenario, other Runner, preview, args []string, allow []Allowance, isV2 bool) []string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), sc.limit())
 	defer cancel()
 	got, err := other.RunAfter(ctx, sc, preview, args, t.TempDir())
 	if err != nil {

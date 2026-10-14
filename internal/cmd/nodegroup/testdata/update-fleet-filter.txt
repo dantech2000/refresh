@@ -11,8 +11,8 @@ RUN dev
   status     [OK] Succeeded
 
 RESULTS dev  1
-  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  api   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+  NAME  KIND       STATUS          FROM                                               TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  api   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20260101, AMI ami-latest132)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
 
 VERIFICATION dev  3
   NAME             OUTCOME    MESSAGE
@@ -46,8 +46,8 @@ RUN prod
   status     [OK] Succeeded
 
 RESULTS prod  1
-  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  api   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  -
+  NAME  KIND       STATUS          FROM                                               TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  api   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20260101, AMI ami-latest132)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  -
 
 VERIFICATION prod  3
   NAME             OUTCOME    MESSAGE
@@ -81,8 +81,8 @@ RUN staging
   status     [OK] Succeeded
 
 RESULTS staging  1
-  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  api   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000003  -     2026-01-01 00:01:00 UTC  2026-01-01 00:01:30 UTC  -
+  NAME  KIND       STATUS          FROM                                               TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  api   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20260101, AMI ami-latest132)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000003  -     2026-01-01 00:01:00 UTC  2026-01-01 00:01:30 UTC  -
 
 VERIFICATION staging  3
   NAME             OUTCOME    MESSAGE
@@ -109,11 +109,11 @@ NOTICES staging
   1  -f name=api selects the nodegroups api
 --- stderr ---
 PLAN  NodegroupUpdate, dev in us-east-1
-  api  roll onto the latest AMI of 1.32, ami-latest132 (Reroll)
+  api  roll onto the latest AMI of 1.32 (ami-latest132) (Reroll)
 PLAN  NodegroupUpdate, prod in us-east-1
-  api  roll onto the latest AMI of 1.32, ami-latest132 (Reroll)
+  api  roll onto the latest AMI of 1.32 (ami-latest132) (Reroll)
 PLAN  NodegroupUpdate, staging in us-east-1
-  api  roll onto the latest AMI of 1.32, ami-latest132 (Reroll)
+  api  roll onto the latest AMI of 1.32 (ami-latest132) (Reroll)
 warning: -f name=api selects the nodegroups api
 warning: -f name=api selects the nodegroups api
 warning: -f name=api selects the nodegroups api

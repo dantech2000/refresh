@@ -58,7 +58,7 @@ func (p *rollbackPlanner) nodegroupSteps() []Step {
 		case n.Status == nodegroupUpdating:
 			step.Action, step.Reason = Attach, InFlight
 		default:
-			step.Action, step.Force = Submit, p.req.Policy.Force
+			step.Action, step.Reason, step.Force = Submit, VersionAhead, p.req.Policy.Force
 		}
 		steps = append(steps, step)
 	}
@@ -99,7 +99,7 @@ func (p *rollbackPlanner) addonSteps() []Step {
 		case addonVersionListed(a.Version, versions):
 			step.Action, step.Reason, step.To = Skip, AlreadyAtTarget, a.Version
 		default:
-			step.Action, step.To = Submit, versions[0]
+			step.Action, step.Reason, step.To = Submit, VersionAhead, versions[0]
 		}
 		steps = append(steps, step)
 	}

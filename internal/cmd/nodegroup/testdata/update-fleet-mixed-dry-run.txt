@@ -11,9 +11,9 @@ PLAN dev
   decision   [OK] Proceed
 
 STEPS dev  2
-  NAME  KIND       ACTION  REASON         FROM  TO                    NOTE
-  api   Nodegroup  Skip    AlreadyLatest  1.32  1.32                  -
-  web   Nodegroup  Submit  AMIOutdated    1.32  1.32 (ami-latest132)  -
+  NAME  KIND       ACTION  REASON         FROM                                            TO                        NOTE
+  api   Nodegroup  Skip    AlreadyLatest  1.32                                            1.32                      -
+  web   Nodegroup  Submit  AMIOutdated    1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  -
 
 HEALTH GATE dev
   decision  [OK] Go
@@ -54,9 +54,9 @@ PLAN staging
   decision   [OK] Proceed
 
 STEPS staging  2
-  NAME  KIND       ACTION  REASON         FROM  TO                    NOTE
-  api   Nodegroup  Skip    AlreadyLatest  1.32  1.32                  -
-  web   Nodegroup  Submit  AMIOutdated    1.32  1.32 (ami-latest132)  -
+  NAME  KIND       ACTION  REASON         FROM                                            TO                        NOTE
+  api   Nodegroup  Skip    AlreadyLatest  1.32                                            1.32                      -
+  web   Nodegroup  Submit  AMIOutdated    1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  -
 
 HEALTH GATE staging
   decision  [OK] Go

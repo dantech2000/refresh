@@ -35,6 +35,13 @@ func TestAddons(t *testing.T) {
 			message: "vpc-cni is DEGRADED (InsufficientNumberOfReplicas); the update will try to repair it",
 		},
 		{
+			// EKS reports an issue for an add-on whose status still says
+			// ACTIVE. The add-on is not healthy, as every list says.
+			name: "active with an issue", addons: []fleet.Addon{addon("coredns", "ACTIVE", replicas)}, targets: []string{"coredns"},
+			outcome: health.Warn, findings: []string{"coredns"},
+			message: "coredns is ACTIVE with health issues (InsufficientNumberOfReplicas); the update will try to repair it",
+		},
+		{
 			name: "update failed", addons: []fleet.Addon{addon("vpc-cni", "UPDATE_FAILED")}, targets: []string{"vpc-cni"},
 			outcome: health.Warn, findings: []string{"vpc-cni"}, message: "vpc-cni is UPDATE_FAILED; the update will try to repair it",
 		},

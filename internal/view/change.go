@@ -66,10 +66,30 @@ func PlanView(doc apidoc.Plan) Description {
 		d.Sections = append(d.Sections, planSections(doc.Operation, c, sectionSuffix(len(doc.Clusters), c.Cluster))...)
 	}
 	d.Status, d.Label = DecisionStatus(worst), string(worst)
+	if worst == apidoc.PlanNothingToDo && planHasBusyTarget(doc) {
+		// Nothing would be changed, and not because nothing needs a
+		// change: a target is changing already, and the plan is
+		// incomplete until that ends.
+		d.Status, d.Label = Warn, "TargetBusy"
+	}
 	if len(doc.SkippedRegions) > 0 {
 		d.Sections = append(d.Sections, Section{Title: "SKIPPED REGIONS", Fields: []Field{{Name: "regions", Value: strings.Join(doc.SkippedRegions, ", ")}}})
 	}
 	return d
+}
+
+// planHasBusyTarget reports whether a step of the plan is a target that
+// is already changing: the plan leaves it alone, lists it as a failure,
+// and exits 4.
+func planHasBusyTarget(doc apidoc.Plan) bool {
+	for _, c := range doc.Clusters {
+		for _, s := range c.Steps {
+			if s.Action == apidoc.ActionSkip && s.Reason == apidoc.ReasonInFlight {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // decisionRank orders the decisions: the worst one stands in the head of
@@ -99,25 +119,13 @@ func sectionSuffix(clusters int, cluster string) string {
 func planSections(op apidoc.Operation, c apidoc.ClusterPlan, suffix string) []Section {
 	steps := make([]Item, len(c.Steps))
 	for i, s := range c.Steps {
-		steps[i] = Item{Name: stepName(s.Kind, s.Name), Fields: []Field{
+		steps[i] = Item{Name: hopStepName(s.Kind, s.Name, s.Hop), Fields: []Field{
 			{Name: "kind", Value: string(s.Kind)},
 			{Name: "action", Value: string(s.Action)},
 			{Name: "reason", Value: string(s.Reason)},
 			{Name: "from", Value: stepOrigin(s)},
 			{Name: "to", Value: stepTarget(s)},
 			{Name: "note", Value: inFlightNote(s.InFlight)},
-		}}
-	}
-	blockers := make([]Item, len(c.Blockers))
-	for i, b := range c.Blockers {
-		step := ""
-		if b.Step != nil {
-			step = stepName(b.Step.Kind, b.Step.Name)
-		}
-		blockers[i] = Item{Name: strconv.Itoa(i + 1), Fields: []Field{
-			{Name: "kind", Value: string(b.Kind), Status: Fail},
-			{Name: "step", Value: step},
-			{Name: "message", Value: b.Message},
 		}}
 	}
 	out := []Section{
@@ -130,10 +138,30 @@ func planSections(op apidoc.Operation, c apidoc.ClusterPlan, suffix string) []Se
 			{Name: "decision", Value: string(c.Decision), Status: DecisionStatus(c.Decision)},
 		}},
 		{Title: "STEPS" + suffix, Items: steps},
-		{Title: "BLOCKERS" + suffix, Items: blockers},
+		{Title: "BLOCKERS" + suffix, Items: blockerItems(c.Blockers)},
 	}
 	out = append(out, gateSections(c.Gate, suffix)...)
 	return append(out, Section{Title: "NOTICES" + suffix, Fields: numbered(c.Notices)})
+}
+
+// blockerItems returns one item for each blocker of the plan of a
+// cluster. The view of a plan and the view of a run both list them: a
+// cluster that the plan blocked has Blocked rows in a run, and the
+// blockers say why.
+func blockerItems(blockers []apidoc.Blocker) []Item {
+	items := make([]Item, len(blockers))
+	for i, b := range blockers {
+		step := ""
+		if b.Step != nil {
+			step = hopStepName(b.Step.Kind, b.Step.Name, b.Step.Hop)
+		}
+		items[i] = Item{Name: strconv.Itoa(i + 1), Fields: []Field{
+			{Name: "kind", Value: string(b.Kind), Status: Fail},
+			{Name: "step", Value: step},
+			{Name: "message", Value: b.Message},
+		}}
+	}
+	return items
 }
 
 // gateSections returns the sections of a health gate: the verdict and
@@ -193,6 +221,17 @@ func stepName(kind apidoc.StepKind, name string) string {
 	return strings.ToLower(string(kind))
 }
 
+// hopStepName is stepName for a step of an upgrade, which has the hop of
+// its phase after it: "ng-a@1.33". The same nodegroup has a step in each
+// hop, so the hop is part of the name of a row. Every other step has no
+// hop, and keeps its name.
+func hopStepName(kind apidoc.StepKind, name, hop string) string {
+	if hop == "" {
+		return stepName(kind, name)
+	}
+	return stepName(kind, name) + "@" + hop
+}
+
 // sizesText returns the sizes of a nodegroup as words.
 func sizesText(z apidoc.Sizes) string {
 	return "desired " + strconv.Itoa(int(z.Desired)) + ", min " + strconv.Itoa(int(z.Min)) + ", max " + strconv.Itoa(int(z.Max))
@@ -207,23 +246,35 @@ func inFlightNote(updateType string) string {
 	return updateType + " in flight"
 }
 
-// stepOrigin returns where a step starts: its version, or the sizes of a
-// scale.
+// stepOrigin returns where a step starts: the sizes of a scale, or its
+// version. A roll adds what its nodes run, each fact with its name, since
+// a release version and an image ID are different things:
+// "1.32 (release 1.32.0-20250101, AMI ami-0abc)".
 func stepOrigin(s apidoc.PlanStep) string {
 	if s.Sizes != nil {
 		return sizesText(s.Sizes.Before)
 	}
-	return s.From
+	var runs []string
+	if s.FromRelease != "" {
+		runs = append(runs, "release "+s.FromRelease)
+	}
+	if s.FromImage != "" {
+		runs = append(runs, "AMI "+s.FromImage)
+	}
+	if len(runs) == 0 {
+		return s.From
+	}
+	return s.From + " (" + strings.Join(runs, ", ") + ")"
 }
 
-// stepTarget returns where a step ends: its version, with the AMI release
-// of a roll, or the sizes of a scale.
+// stepTarget returns where a step ends: the sizes of a scale, or its
+// version, with the image that a roll moves to: "1.32 (AMI ami-0def)".
 func stepTarget(s apidoc.PlanStep) string {
 	switch {
 	case s.Sizes != nil:
 		return sizesText(s.Sizes.After)
-	case s.ToRelease != "":
-		return s.To + " (" + s.ToRelease + ")"
+	case s.ToImage != "":
+		return s.To + " (AMI " + s.ToImage + ")"
 	}
 	return s.To
 }
@@ -249,6 +300,7 @@ func RunView(doc apidoc.Run) Description {
 				{Name: "status", Value: string(c.Status), Status: RunStatus(c.Status)},
 			}},
 			Section{Title: "RESULTS" + suffix, Items: resultItems(c)},
+			Section{Title: "BLOCKERS" + suffix, Items: blockerItems(c.Blockers)},
 			Section{Title: "VERIFICATION" + suffix, Items: healthItems(c.Verification)},
 		)
 		d.Sections = append(d.Sections, gateSections(c.Gate, suffix)...)
@@ -267,7 +319,7 @@ func resultItems(c apidoc.ClusterRun) []Item {
 		if i < len(c.Steps) {
 			from, to = stepOrigin(c.Steps[i]), stepTarget(c.Steps[i])
 		}
-		note, failure := "", ""
+		note, failure := r.Note, ""
 		switch {
 		case r.InFlight != "":
 			note = inFlightNote(r.InFlight)
@@ -277,7 +329,7 @@ func resultItems(c apidoc.ClusterRun) []Item {
 		if r.Failure != nil {
 			failure = string(r.Failure.Reason) + ": " + r.Failure.Error
 		}
-		items[i] = Item{Name: stepName(r.Kind, r.Name), Fields: []Field{
+		items[i] = Item{Name: hopStepName(r.Kind, r.Name, r.Hop), Fields: []Field{
 			{Name: "kind", Value: string(r.Kind)},
 			{Name: "status", Value: string(r.Status), Status: StepStatus(r.Status)},
 			{Name: "from", Value: from},
@@ -309,10 +361,10 @@ func PlanLines(th Theme, doc apidoc.Plan) []string {
 		out = append(out, th.Heading("PLAN")+"  "+th.Dim(string(doc.Operation)+", "+c.Cluster+" in "+c.Region))
 		width := 0
 		for _, s := range c.Steps {
-			width = max(width, Width(stepName(s.Kind, s.Name)))
+			width = max(width, Width(hopStepName(s.Kind, s.Name, s.Hop)))
 		}
 		for _, s := range c.Steps {
-			line := pad(stepName(s.Kind, s.Name), width, false) + columnGap + planStepText(s)
+			line := pad(hopStepName(s.Kind, s.Name, s.Hop), width, false) + columnGap + planStepText(s)
 			switch s.Action {
 			case apidoc.ActionSubmit, apidoc.ActionAttach, apidoc.ActionVerify:
 				out = append(out, indent+line)
@@ -340,8 +392,8 @@ func planStepText(s apidoc.PlanStep) string {
 		case s.Kind == apidoc.StepNodegroup && s.From == s.To:
 			// A roll keeps the Kubernetes version and moves the AMI.
 			text := "roll onto the latest AMI of " + s.To
-			if s.ToRelease != "" {
-				text += ", " + s.ToRelease
+			if s.ToImage != "" {
+				text += " (" + s.ToImage + ")"
 			}
 			if s.Force {
 				text += ", with --force"
@@ -370,7 +422,7 @@ func planStepText(s apidoc.PlanStep) string {
 // StepLine returns the progress line of a step whose result changed, such
 // as "vpc-cni: Started (update 0000)".
 func StepLine(th Theme, r apidoc.StepResult) string {
-	text := stepName(r.Kind, r.Name) + ": " + string(r.Status)
+	text := hopStepName(r.Kind, r.Name, r.Hop) + ": " + string(r.Status)
 	switch {
 	case r.Failure != nil:
 		text += ": " + r.Failure.Error

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"slices"
 	"strings"
@@ -264,11 +265,13 @@ func generate(rng *rand.Rand, n int, regions []string, now time.Time, d duration
 		}
 		s.Clusters = append(s.Clusters, c)
 	}
-	for region, n := range g.vcpus {
+	// In the order of the region names: a map has no order, and one seed
+	// gives one fleet.
+	for _, region := range slices.Sorted(maps.Keys(g.vcpus)) {
 		s.Metrics = append(s.Metrics, fleettest.Metric{
 			Region: region, Namespace: "AWS/Usage", Name: "ResourceCount",
 			Dimensions: map[string]string{"Service": "EC2", "Type": "Resource", "Resource": "vCPU", "Class": "Standard/OnDemand"},
-			Values:     []float64{float64(n)},
+			Values:     []float64{float64(g.vcpus[region])},
 		})
 	}
 	return *s, placements

@@ -2,15 +2,17 @@ package apidoc
 
 import "time"
 
-// AddonHealth is the health of an add-on, from its EKS status.
+// AddonHealth is the health of an add-on, from its EKS status and its
+// health issues.
 type AddonHealth string
 
 // The add-on health values.
 const (
-	// AddonHealthy: the add-on is ACTIVE.
+	// AddonHealthy: the add-on is ACTIVE and EKS reports no health issue
+	// for it.
 	AddonHealthy AddonHealth = "Healthy"
 	// AddonFailed: the add-on is DEGRADED, or a create, an update, or a
-	// delete failed.
+	// delete failed, or it is ACTIVE and EKS reports a health issue for it.
 	AddonFailed AddonHealth = "Failed"
 	// AddonInProgress: the add-on is CREATING, UPDATING, or DELETING.
 	AddonInProgress AddonHealth = "InProgress"
@@ -31,7 +33,8 @@ type Addon struct {
 	Version string `json:"version,omitzero"`
 	// Status is the EKS status, such as ACTIVE or DEGRADED.
 	Status string `json:"status,omitzero"`
-	// Health is the status as one of a closed set of values.
+	// Health is the status and the health issues as one of a closed set of
+	// values. An add-on with a health issue is never Healthy.
 	Health                AddonHealth `json:"health,omitzero"`
 	ARN                   string      `json:"arn,omitzero"`
 	ServiceAccountRoleARN string      `json:"serviceAccountRoleArn,omitzero"`

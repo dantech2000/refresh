@@ -6,17 +6,19 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
 // Addons checks the add-ons that an add-on update is about to change. It
 // makes no call: it reads the add-ons of the snapshot.
 //
-// An ACTIVE target passes. A DEGRADED target, or one whose create, update,
-// or delete failed, is a warning: the update is how such an add-on is
-// repaired. A target that EKS is deleting, creating, or updating fails:
-// EKS refuses a second change. A target that the snapshot did not read
-// makes the check Unreadable.
+// The health of a target is fleet.Addon.Health, the one rule for an
+// add-on. A Healthy target passes. A Failed target is a warning: it is
+// DEGRADED, a change of it failed, or it is ACTIVE with a health issue,
+// and the update is how such an add-on is repaired. A target that EKS is
+// deleting, creating, or updating fails: EKS refuses a second change. A
+// target that the snapshot did not read makes the check Unreadable.
 func Addons(targets []string) Check {
 	targets = slices.Clone(targets)
 	return Check{
@@ -36,11 +38,15 @@ func runAddons(snap *fleet.Snapshot, targets []string) Result {
 			continue
 		}
 		a := snap.Addons[i]
-		switch a.Status {
-		case "ACTIVE":
-		case "DEGRADED", "UPDATE_FAILED", "CREATE_FAILED", "DELETE_FAILED":
+		switch a.Health() {
+		case apidoc.AddonHealthy:
+		case apidoc.AddonFailed:
+			state := a.Status
+			if state == "ACTIVE" {
+				state += " with health issues"
+			}
 			warned = append(warned, name)
-			details = append(details, name+" is "+a.Status+issueCodes(a.Issues)+"; the update will try to repair it")
+			details = append(details, name+" is "+state+issueCodes(a.Issues)+"; the update will try to repair it")
 		default:
 			failed = append(failed, name)
 			details = append(details, name+" is "+a.Status+" and cannot be updated")

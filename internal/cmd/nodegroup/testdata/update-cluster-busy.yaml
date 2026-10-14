@@ -18,7 +18,8 @@ clusters:
         from: "1.32"
         to: "1.32"
         fromRelease: 1.32.0-20250101
-        toRelease: ami-latest132
+        fromImage: ami-old32x
+        toImage: ami-latest132
     blockers:
       - kind: Busy
         message: prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
@@ -26,4 +27,4 @@ clusters:
 failures: []
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)

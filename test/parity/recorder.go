@@ -259,6 +259,11 @@ func (rec *recorder) interrupt(ctx context.Context, e *event, r awsxtest.Request
 		return
 	}
 	rec.mu.Lock()
+	if len(rec.confirmations) < s.AfterPrompt {
+		// The prompt that the signal waits for is not answered yet.
+		rec.mu.Unlock()
+		return
+	}
 	rec.matched++
 	send := rec.matched == s.Nth
 	if send {

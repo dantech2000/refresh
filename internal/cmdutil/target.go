@@ -47,6 +47,14 @@ func AddClusterFlag(cmd *cobra.Command, p *string) {
 		"EKS cluster name (env: "+EnvCluster+"; default: the active context, then the current kubeconfig context)")
 }
 
+// AddChangeClusterFlag adds -c/--cluster to a command that changes a
+// cluster. Its help does not name the kubeconfig: a change never takes its
+// cluster from there.
+func AddChangeClusterFlag(cmd *cobra.Command, p *string) {
+	cmd.Flags().StringVarP(p, "cluster", "c", "",
+		"EKS cluster name (env: "+EnvCluster+"; default: the active context; never the kubeconfig)")
+}
+
 // ResolveCluster returns the cluster that a command acts on. It makes no
 // AWS call, and the name is taken as it is: a name is exact. The order is:
 //
@@ -92,7 +100,7 @@ func ResolveCluster(f *Factory, explicit string, readOnly bool) (Target, error) 
 	}
 	return Target{}, errors.New("no cluster specified\n" +
 		"Set one with:\n" +
-		"  the argument, or -c/--cluster   for this command\n" +
+		"  -c/--cluster, or [cluster]      for this command, whichever it has\n" +
 		"  " + EnvCluster + "                 for this shell\n" +
 		"  refresh context use <name>      until you change it")
 }

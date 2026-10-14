@@ -103,7 +103,7 @@ refresh context. It never comes from the kubeconfig.
 			return o.run(cmd.Context())
 		},
 	}
-	cmdutil.AddClusterFlag(cmd, &o.cluster)
+	cmdutil.AddChangeClusterFlag(cmd, &o.cluster)
 	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
 	cmd.Flags().StringVar(&o.version, "version", "", "Add-on version to move to, with exactly one add-on (default: the latest that the cluster can run)")
 	cmd.Flags().BoolVar(&o.all, "all", false, "Update every installed add-on, in dependency order")

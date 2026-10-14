@@ -200,3 +200,16 @@ func TestDescribe_Deadline(t *testing.T) {
 	}
 	cmdutiltest.ValidateJSON(t, apidoc.KindClusterDescription, e.Out.Bytes())
 }
+
+// The help of "cluster describe" says what its HEALTH section does not
+// show: upgrade readiness is the job of "cluster upgrade-check".
+func TestDescribe_HelpNamesUpgradeCheckForInsights(t *testing.T) {
+	e := cmdtest.NewFake(t, fleettest.New(), east)
+	if err := e.Run(cmdutiltest.Context(t), "cluster", "describe", "--help"); err != nil {
+		t.Fatal(err)
+	}
+	help := strings.Join(strings.Fields(e.Out.String()), " ")
+	if want := `it reads no upgrade insight and no version skew, so an insight in ERROR shows in "cluster upgrade-check" and not here`; !strings.Contains(help, want) {
+		t.Errorf("the help lacks %q:\n%s", want, e.Out)
+	}
+}

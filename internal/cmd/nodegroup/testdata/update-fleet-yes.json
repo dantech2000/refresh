@@ -31,7 +31,8 @@ error:
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {
@@ -195,7 +196,8 @@ error:
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {
@@ -359,7 +361,8 @@ error:
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {
@@ -505,13 +508,13 @@ error:
 --- stderr ---
 PLAN  NodegroupUpdate, dev in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 PLAN  NodegroupUpdate, prod in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 PLAN  NodegroupUpdate, staging in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 [~] dev/web: Started (update 00000000-0000-4000-8000-000000000001)
 dev/web: InProgress
 [OK] dev/web: Succeeded

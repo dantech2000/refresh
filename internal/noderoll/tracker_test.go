@@ -1,6 +1,8 @@
 package noderoll
 
 import (
+	"time"
+
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -52,10 +54,10 @@ func TestTracker_DerivesLifecycleEvents(t *testing.T) {
 	tr.Observe(snapOf(oldReady("b"), oldReady("c"), newReady("d")))
 
 	want := []Event{
-		{"a", EvtDraining},
-		{"d", EvtJoining},
-		{"d", EvtOnline},
-		{"a", EvtTerminated},
+		{Node: "a", Kind: EvtDraining},
+		{Node: "d", Kind: EvtJoining},
+		{Node: "d", Kind: EvtOnline},
+		{Node: "a", Kind: EvtTerminated},
 	}
 	if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
 		t.Fatalf("events (-want +got):\n%s", diff)
@@ -63,7 +65,7 @@ func TestTracker_DerivesLifecycleEvents(t *testing.T) {
 }
 
 func TestRecent(t *testing.T) {
-	tr := &Tracker{events: []Event{{"a", EvtJoining}, {"b", EvtOnline}, {"c", EvtDraining}}}
+	tr := &Tracker{events: []Event{{Node: "a", Kind: EvtJoining}, {Node: "b", Kind: EvtOnline}, {Node: "c", Kind: EvtDraining}}}
 	if got := tr.Recent(2); len(got) != 2 || got[0].Node != "b" {
 		t.Errorf("Recent(2) = %v, want the last two", got)
 	}
@@ -86,8 +88,8 @@ func TestTracker_TerminatedEventsSorted(t *testing.T) {
 		tr.Observe(snapOf(oldReady("n-c"), oldReady("n-a"), oldReady("n-d"), oldReady("n-b")))
 		tr.Observe(snapOf())
 		want := []Event{
-			{"n-a", EvtTerminated}, {"n-b", EvtTerminated},
-			{"n-c", EvtTerminated}, {"n-d", EvtTerminated},
+			{Node: "n-a", Kind: EvtTerminated}, {Node: "n-b", Kind: EvtTerminated},
+			{Node: "n-c", Kind: EvtTerminated}, {Node: "n-d", Kind: EvtTerminated},
 		}
 		if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
 			t.Fatalf("events (-want +got):\n%s", diff)
@@ -118,5 +120,21 @@ func TestTracker_EventHistoryBounded(t *testing.T) {
 	}
 	if cap(tr.events) > 2*trackerEventCapacity {
 		t.Errorf("the backing array grew to %d, want at most %d", cap(tr.events), 2*trackerEventCapacity)
+	}
+}
+
+// ObserveAt gives each event the time of the snapshot that showed it.
+func TestObserveAt(t *testing.T) {
+	first := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	tr := NewTracker()
+	tr.ObserveAt(snapOf(oldReady("a")), first)
+	tr.ObserveAt(snapOf(draining("a", 1, 1)), first.Add(time.Second))
+	tr.ObserveAt(snapOf(), first.Add(2*time.Second))
+	want := []Event{
+		{Node: "a", Kind: EvtDraining, At: first.Add(time.Second)},
+		{Node: "a", Kind: EvtTerminated, At: first.Add(2 * time.Second)},
+	}
+	if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
+		t.Errorf("events (-want +got):\n%s", diff)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -187,6 +188,23 @@ func (cp *ClusterPlan) busyResult(s Step) StepResult {
 	return res
 }
 
+// decided returns the result of a step that the plan decided and that a
+// run sends nothing for, and false for a step with work. A step that the
+// plan blocked is Blocked, a target that is already changing has its Busy
+// row, and every other step with no work is Skipped. It is the one mapping
+// from the plan to these rows, for a batch and for a step that runs alone.
+func (cp *ClusterPlan) decided(s Step) (StepResult, bool) {
+	switch {
+	case s.Action == Blocked:
+		return StepResult{Ref: s.Ref, Status: StepBlocked}, true
+	case s.busy():
+		return cp.busyResult(s), true
+	case !s.work():
+		return StepResult{Ref: s.Ref, Status: StepSkipped}, true
+	}
+	return StepResult{}, false
+}
+
 // unknownUpdate is what a busy failure says when the update in flight
 // could not be looked up.
 const unknownUpdate = "an update of unknown type"
@@ -198,17 +216,26 @@ const unknownUpdate = "an update of unknown type"
 // reads that happen only for a busy target: in the plan, and at the fresh
 // read before a submit that finds a target changing since the plan.
 func lookupInFlight(ctx context.Context, c *awsx.Clients, res Resource) (kind, note string) {
-	kind, err := inFlightUpdate(ctx, c, res)
+	u, err := inFlightUpdate(ctx, c, res)
 	if err != nil {
 		return "", unknownUpdate
 	}
-	return kind, kind
+	return u.Type, u.Type
 }
 
-// inFlightUpdate returns the type of the update of a resource that is in
-// progress, such as AddonUpdate, or "" when EKS lists none. EKS lists the
-// update IDs with no status, so each one is described, newest first.
-func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (string, error) {
+// InFlightUpdate is an EKS update of a resource that is in progress.
+type InFlightUpdate struct {
+	ID string
+	// Type is the EKS update type, such as VersionUpdate.
+	Type      string
+	CreatedAt time.Time
+}
+
+// inFlightUpdate returns the update of a resource that is in progress:
+// its ID, its type, such as AddonUpdate, and when it was created. It
+// returns the zero value when EKS lists none. EKS lists the update IDs
+// with no status, so each one is described, newest first.
+func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightUpdate, error) {
 	list := &eks.ListUpdatesInput{Name: aws.String(r.Cluster)}
 	describe := &eks.DescribeUpdateInput{Name: aws.String(r.Cluster)}
 	switch r.Kind {
@@ -225,19 +252,19 @@ func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (string, e
 		func(out *eks.ListUpdatesOutput) ([]string, *string) { return out.UpdateIds, out.NextToken },
 	)
 	if err != nil {
-		return "", err
+		return InFlightUpdate{}, err
 	}
 	for i := len(ids) - 1; i >= 0; i-- {
 		describe.UpdateId = aws.String(ids[i])
 		out, err := c.EKS.DescribeUpdate(ctx, describe)
 		switch {
 		case err != nil:
-			return "", err
+			return InFlightUpdate{}, err
 		case out.Update == nil:
-			return "", fmt.Errorf("EKS returned no update for %s", ids[i])
+			return InFlightUpdate{}, fmt.Errorf("EKS returned no update for %s", ids[i])
 		case out.Update.Status == ekstypes.UpdateStatusInProgress:
-			return string(out.Update.Type), nil
+			return InFlightUpdate{ID: aws.ToString(out.Update.Id), Type: string(out.Update.Type), CreatedAt: aws.ToTime(out.Update.CreatedAt)}, nil
 		}
 	}
-	return "", nil
+	return InFlightUpdate{}, nil
 }

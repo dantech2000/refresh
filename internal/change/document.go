@@ -40,7 +40,7 @@ func (cp *ClusterPlan) document() apidoc.ClusterPlan {
 		id := stepID(s.Ref)
 		step := apidoc.PlanStep{
 			Phase: id.Phase, Hop: id.Hop, Kind: id.Kind, Name: id.Name,
-			Action: s.Action, Reason: s.Reason, From: s.From, To: s.To, FromRelease: s.FromRelease, ToRelease: s.ToRelease, Force: s.Force,
+			Action: s.Action, Reason: s.Reason, From: s.From, To: s.To, FromRelease: s.FromRelease, FromImage: s.FromImage, ToImage: s.ToImage, Force: s.Force,
 			InFlight: s.InFlight,
 		}
 		if s.Sizes != nil {
@@ -76,13 +76,17 @@ func stepID(r StepRef) apidoc.StepID {
 }
 
 // Document returns the document of the run: the Plan document for a run
-// that was refused or had nothing to do, and the Run document otherwise.
-// A run with no plan has no document, and Document returns nil.
+// that ended at its plan, because it was refused or its plan had nothing
+// to do, and the Run document for every run that got past its plan. That
+// includes a run in which every fresh read before a request found that
+// nothing is left to do: its rows say so, and its plan stays the plan
+// that was confirmed. A run with no plan has no document, and Document
+// returns nil.
 func (r Result) Document() apidoc.Document {
 	switch {
 	case r.Plan == nil:
 		return nil
-	case r.Status == Refused || r.Status == NothingToDo:
+	case r.Status == Refused || (r.Status == NothingToDo && !r.ended.executed):
 		return r.Plan.Document()
 	}
 	doc := apidoc.Run{
@@ -101,7 +105,8 @@ func (r Result) Document() apidoc.Document {
 			run.Results = append(run.Results, apidoc.StepResult{
 				Phase: id.Phase, Hop: id.Hop, Kind: id.Kind, Name: id.Name,
 				Status: s.Status, Attached: s.Attached, UpdateID: s.UpdateID, InFlight: s.InFlight,
-				StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Failure: s.Failure,
+				// The clock of the run is local. A document has one zone.
+				StartedAt: s.StartedAt.UTC(), FinishedAt: s.FinishedAt.UTC(), Failure: s.Failure, Note: s.Note,
 			})
 			if s.Failure != nil {
 				doc.Failures = append(doc.Failures, *s.Failure)

@@ -1,0 +1,42 @@
+exit: 0
+error: 
+--- stdout ---
+Run   [OK] Succeeded   ClusterUpgrade
+
+RUN
+  operation       ClusterUpgrade
+  cluster         prod
+  region          us-east-1
+  version         1.33
+  target version  1.33
+  status          [OK] Succeeded
+
+RESULTS  5
+  NAME                KIND          STATUS          FROM                TO                  UPDATE                                NOTE      STARTED                  FINISHED                 FAILURE
+  control-plane@1.33  ControlPlane  - Skipped       1.33                1.33                -                                     -         -                        -                        -
+  api@1.33            Nodegroup     [OK] Succeeded  1.32                1.33                -                                     attached  2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+  web@1.33            Nodegroup     - Skipped       1.33                1.33                -                                     -         -                        -                        -
+  vpc-cni@1.33        Addon         - Skipped       v1.20.0-eksbuild.1  v1.20.0-eksbuild.1  -                                     -         -                        -                        -
+  kube-proxy@1.33     Addon         [OK] Succeeded  v1.32.0-eksbuild.1  v1.33.0-eksbuild.1  00000000-0000-4000-8000-000000000002  -         2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  -
+
+VERIFICATION  4
+  NAME                         OUTCOME    MESSAGE
+  NodegroupActive/api@1.33     [OK] Pass  api ACTIVE
+  NodesReady/api@1.33          Skipped    no baseline of the nodes before the roll
+  NewPendingPods/api@1.33      Skipped    no baseline of the Pending pods before the roll
+  AddonHealth/kube-proxy@1.33  [OK] Pass  kube-proxy is ACTIVE at v1.33.0-eksbuild.1
+--- stderr ---
+PLAN  ClusterUpgrade, prod in us-east-1
+  control-plane@1.33  skip, at 1.33 (AlreadyAtTarget)
+  api@1.33            wait for the update to 1.33 that is running (InFlight)
+  web@1.33            skip, at 1.33 (AlreadyAtTarget)
+  vpc-cni@1.33        skip, at v1.20.0-eksbuild.1 (AlreadyAtTarget)
+  kube-proxy@1.33     update v1.32.0-eksbuild.1 to v1.33.0-eksbuild.1 (VersionBehind)
+phase: nodegroups, 1.33
+warning: nodegroup api is UPDATING already; waiting for that update
+api: UPDATING
+[OK] api@1.33: Succeeded
+phase: add-ons, 1.33
+[~] kube-proxy@1.33: Started (update 00000000-0000-4000-8000-000000000002)
+kube-proxy: InProgress
+[OK] kube-proxy@1.33: Succeeded

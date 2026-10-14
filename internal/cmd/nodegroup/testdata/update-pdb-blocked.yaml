@@ -18,7 +18,8 @@ clusters:
         from: "1.32"
         to: "1.32"
         fromRelease: 1.32.0-20250101
-        toRelease: ami-latest132
+        fromImage: ami-old32x
+        toImage: ami-latest132
     gate:
       decision: Block
       reasons:
@@ -94,7 +95,7 @@ clusters:
 failures: []
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
   [OK] Nodes          4/4 nodes ready
   [OK] Capacity       CPU mean 32%, peak 32%, 4 instances
        ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)

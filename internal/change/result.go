@@ -62,6 +62,11 @@ type StepResult struct {
 	// VerifyIssue says that the change was applied and the check after it
 	// found an issue: the step counts as exit code 5.
 	VerifyIssue string
+	// Note says what the fresh read before the request found, when the
+	// run then did something else than the plan said: a nodegroup that
+	// was rolled elsewhere since the plan, or that has a custom AMI now.
+	// The plan is the plan that was confirmed, and stays as it was.
+	Note string
 }
 
 // ClusterResult is what a run did in one cluster.
@@ -102,6 +107,9 @@ type ending struct {
 	code int
 	// interrupted makes the run exit 1, whatever else happened.
 	interrupted bool
+	// executed says that the run got past its plan: its steps ran, so the
+	// result has rows that say what happened, and its document is a Run.
+	executed bool
 }
 
 // stepCode returns the exit code of one step, and false for a step that

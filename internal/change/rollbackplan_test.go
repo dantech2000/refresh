@@ -126,14 +126,14 @@ func TestRollbackPlan_Eligible(t *testing.T) {
 		t.Errorf("fleet.RollbackWindowOf = %+v, %v; the plan has %+v", open, ok, cp.Rollback)
 	}
 	steps := []stepRow{
-		{Kind: StepNodegroup, Name: "ng-new", Action: Submit, From: "1.33", To: "1.32"},
+		{Kind: StepNodegroup, Name: "ng-new", Action: Submit, Reason: VersionAhead, From: "1.33", To: "1.32"},
 		{Kind: StepNodegroup, Name: "ng-old", Action: Skip, Reason: AlreadyAtTarget, From: "1.32", To: "1.32"},
 		// The add-ons are in dependency order. The build of vpc-cni is
 		// one that 1.32 runs already, and kube-proxy goes to the newest
 		// build that 1.32 runs.
 		{Kind: StepAddon, Name: "vpc-cni", Action: Skip, Reason: AlreadyAtTarget, From: latestFor("1.32"), To: latestFor("1.32")},
-		{Kind: StepAddon, Name: "kube-proxy", Action: Submit, From: latestFor("1.33"), To: latestFor("1.32")},
-		{Kind: StepControlPlane, Action: Submit, From: "1.33", To: "1.32"},
+		{Kind: StepAddon, Name: "kube-proxy", Action: Submit, Reason: VersionAhead, From: latestFor("1.33"), To: latestFor("1.32")},
+		{Kind: StepControlPlane, Action: Submit, Reason: VersionAhead, From: "1.33", To: "1.32"},
 	}
 	if diff := cmp.Diff(steps, stepRows(cp)); diff != "" {
 		t.Errorf("steps (-want +got):\n%s", diff)

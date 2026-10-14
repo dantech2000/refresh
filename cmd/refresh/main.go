@@ -86,7 +86,8 @@ func execute(ctx context.Context, args []string, f *cmdutil.Factory) int {
 // For every other command a result
 // that Ctrl+C cut short is not a partial result. The rule reads the signal
 // context and not the error, because a run that the --timeout deadline cut
-// short keeps its own code.
+// short keeps its own code. The message of an interrupted run says
+// "interrupted", and never "context canceled": see interruptWords.
 func exitCode(ctx context.Context, errOut io.Writer, err error) int {
 	// A watch that the user stopped ended the normal way.
 	if errors.Is(err, cmdutil.ErrStopped) {
@@ -98,8 +99,8 @@ func exitCode(ctx context.Context, errOut io.Writer, err error) int {
 		// Cobra ends its "Did you mean this?" list with a line break.
 		msg = strings.TrimRight(err.Error(), "\n")
 	}
-	if msg == "" && interrupted {
-		msg = "interrupted"
+	if interrupted {
+		msg = interruptWords(msg)
 	}
 	if msg != "" {
 		// Nothing can report a failed write to stderr.
@@ -109,6 +110,29 @@ func exitCode(ctx context.Context, errOut io.Writer, err error) int {
 		return cmdutil.ExitFailure
 	}
 	return cmdutil.ExitCode(err)
+}
+
+// interruptWords returns the message of a run that the user interrupted.
+// An error that ends in the cancelled context says "context canceled",
+// which are the words of the Go runtime and not of the user: the message
+// says "interrupted" in their place, once. An empty message is
+// "interrupted" too.
+func interruptWords(msg string) string {
+	raw := context.Canceled.Error()
+	if !strings.HasSuffix(msg, raw) {
+		if msg == "" {
+			return "interrupted"
+		}
+		return msg
+	}
+	msg = strings.TrimSuffix(strings.TrimSuffix(msg, raw), ": ")
+	switch {
+	case msg == "":
+		return "interrupted"
+	case strings.Contains(msg, "interrupted"):
+		return msg
+	}
+	return msg + ": interrupted"
 }
 
 // latestRelease asks GitHub for the newest release tag. A cache file keeps

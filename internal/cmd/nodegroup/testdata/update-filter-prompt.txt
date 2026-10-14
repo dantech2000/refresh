@@ -11,9 +11,9 @@ RUN
   status     [OK] Succeeded
 
 RESULTS  2
-  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  api   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
-  web   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+  NAME  KIND       STATUS          FROM                                            TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  api   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+  web   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
 
 VERIFICATION  3
   NAME             OUTCOME    MESSAGE
@@ -40,8 +40,8 @@ NOTICES
   1  -f version=1.32 selects the nodegroups api, web
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1
-  api  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  api  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 warning: -f version=1.32 selects the nodegroups api, web
 Roll 2 nodegroups in prod (api, web)? [y/N]: [~] api: Started (update 00000000-0000-4000-8000-000000000001)
 [~] web: Started (update 00000000-0000-4000-8000-000000000002)

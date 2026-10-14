@@ -1,5 +1,5 @@
 exit: 4
-error: prod: nodegroup web is Blocked; staging: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete
+error: prod: nodegroup web is DEGRADED, not ACTIVE; it was not rolled; staging: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete
 --- stdout ---
 {
   "apiVersion": "refresh.drod.dev/v2",
@@ -31,7 +31,8 @@ error: prod: nodegroup web is Blocked; staging: update 00000000-0000-4000-8000-0
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {
@@ -219,7 +220,16 @@ error: prod: nodegroup web is Blocked; staging: update 00000000-0000-4000-8000-0
           "phase": "Roll",
           "kind": "Nodegroup",
           "name": "web",
-          "status": "Blocked"
+          "status": "Blocked",
+          "failure": {
+            "kind": "Nodegroup",
+            "name": "web",
+            "cluster": "prod",
+            "region": "us-east-1",
+            "reason": "Unknown",
+            "retryable": false,
+            "error": "nodegroup web is DEGRADED, not ACTIVE; it was not rolled"
+          }
         }
       ],
       "verification": []
@@ -248,7 +258,8 @@ error: prod: nodegroup web is Blocked; staging: update 00000000-0000-4000-8000-0
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {
@@ -376,6 +387,15 @@ error: prod: nodegroup web is Blocked; staging: update 00000000-0000-4000-8000-0
   ],
   "failures": [
     {
+      "kind": "Nodegroup",
+      "name": "web",
+      "cluster": "prod",
+      "region": "us-east-1",
+      "reason": "Unknown",
+      "retryable": false,
+      "error": "nodegroup web is DEGRADED, not ACTIVE; it was not rolled"
+    },
+    {
       "kind": "Update",
       "name": "web",
       "cluster": "staging",
@@ -390,18 +410,19 @@ error: prod: nodegroup web is Blocked; staging: update 00000000-0000-4000-8000-0
 --- stderr ---
 PLAN  NodegroupUpdate, dev in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 PLAN  NodegroupUpdate, prod in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
   [X] web  blocked
 PLAN  NodegroupUpdate, staging in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 [~] dev/web: Started (update 00000000-0000-4000-8000-000000000001)
 dev/web: InProgress
 [OK] dev/web: Succeeded
-[X] prod/web: Blocked
+[X] prod/web: Blocked: nodegroup web is DEGRADED, not ACTIVE; it was not rolled
 [~] staging/web: Started (update 00000000-0000-4000-8000-000000000002)
 staging/web: InProgress
 [X] staging/web: Failed: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete
+warning: nodegroup prod/web (us-east-1): Unknown: nodegroup web is DEGRADED, not ACTIVE; it was not rolled
 warning: update staging/web (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete

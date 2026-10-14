@@ -51,9 +51,10 @@ func DecideAMIUpdate(ng fleet.Nodegroup, reroll bool) RollDecision {
 	return RollDecision{Action: Submit, Reason: AMIOutdated}
 }
 
-// redecideRoll is the decision table of a roll again, for a step that the
-// plan would submit, with the fresh read of the nodegroup before the
-// request. The plan is minutes old by then: the gate ran, a person
+// redecideRoll decides again about a roll that the plan would submit, with
+// the fresh read of the nodegroup before the request. fromRelease is the
+// AMI release version that the plan read. changed is false when the
+// decision of the plan stands, and d is then the zero value. The plan is minutes old by then: the gate ran, a person
 // answered, and the clusters before this one were rolled.
 //
 // The fresh read is one DescribeNodegroup, so it has the AMI type and the
@@ -66,16 +67,16 @@ func DecideAMIUpdate(ng fleet.Nodegroup, reroll bool) RollDecision {
 //     a second roll would replace nodes that were just replaced. That
 //     holds for a reroll too: it was planned for the nodes that the plan
 //     saw, and they are gone.
-//  3. Otherwise: the decision of the plan.
+//  3. Otherwise: the decision of the plan stands.
 //
 // The caller handles a nodegroup that is changing, that is not ACTIVE, or
 // that has another Kubernetes version before it asks: see submitRoll.
-func redecideRoll(s Step, fresh Settled) RollDecision {
+func redecideRoll(fromRelease string, fresh Settled) (d RollDecision, changed bool) {
 	switch {
 	case fresh.AMIType == amiTypeCustom:
-		return RollDecision{Action: Manual, Reason: CustomAMI}
-	case fresh.Release != s.FromRelease:
-		return RollDecision{Action: Skip, Reason: AlreadyLatest}
+		return RollDecision{Action: Manual, Reason: CustomAMI}, true
+	case fresh.Release != fromRelease:
+		return RollDecision{Action: Skip, Reason: AlreadyLatest}, true
 	}
-	return RollDecision{Action: s.Action, Reason: s.Reason}
+	return RollDecision{}, false
 }

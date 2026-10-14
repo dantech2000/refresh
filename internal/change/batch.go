@@ -36,34 +36,27 @@ func (r *runner) runBatch(cp *ClusterPlan, ph Phase) []StepResult {
 	report := func(i int) {
 		r.emit(Event{Kind: StepChanged, Phase: ph.Ref, Step: ph.Steps[i].Ref, Result: &results[i]})
 	}
+	// The plan decided the steps that send nothing: Blocked, Busy, and
+	// Skipped. Their rows are what was decided, and they are reported
+	// whatever happens to the submits, also when the run has no time left
+	// to start one.
 	var submit []int
 	for i, s := range ph.Steps {
 		results[i] = StepResult{Ref: s.Ref, Status: StepNotAttempted}
 		if s.Action == Submit {
 			submit = append(submit, i)
-		}
-	}
-	if len(submit) > 0 && r.outOfTime(cp) {
-		return results
-	}
-	for i, s := range ph.Steps {
-		switch {
-		case s.Action == Submit:
 			continue
-		case s.Action == Blocked:
-			results[i].Status = StepBlocked
-		case s.busy():
-			results[i] = cp.busyResult(s)
-		case s.work():
+		}
+		if res, ok := cp.decided(s); ok {
+			results[i] = res
+		} else {
 			// The roll table gives no Attach and no Verify step.
 			results[i].Status = StepFailed
 			results[i].Failure = r.stepFailure(cp, results[i], apidoc.ReasonUnknown, "a roll cannot "+string(s.Action)+" "+stepName(s.Ref))
-		default:
-			results[i].Status = StepSkipped
 		}
 		report(i)
 	}
-	if len(submit) == 0 {
+	if len(submit) == 0 || r.outOfTime(cp) {
 		return results
 	}
 	kube, _, noKube := kubeAccess(r.d, cp.snapshot)
@@ -81,20 +74,16 @@ func (r *runner) runBatch(cp *ClusterPlan, ph Phase) []StepResult {
 		// follow: nothing shows that it succeeded.
 		unfollowed bool
 	)
-	defer func() {
-		if wait != nil {
-			wait.stop()
-		}
-	}()
+	defer func() { r.releaseWait(wait) }()
 	for _, i := range submit {
-		// The step is the one of the plan, and not a copy: a fresh read
-		// that decides against the roll says so in the plan.
-		results[i] = r.submitRoll(cp, &ph.Steps[i])
-		// The run ended: the steps that were not reached stay NotAttempted.
-		if r.readCtx.Err() != nil {
-			if results[i].Status != StepNotAttempted {
-				report(i)
-			}
+		// A step whose request never left says so itself: startRoll checks
+		// the context before its read and before its request, and records
+		// the interrupt or the timeout. A roll that EKS accepted is always
+		// followed, also when the read context ended right after the
+		// answer: the wait has its own budget, and it records an interrupt.
+		results[i] = r.startRoll(cp, ph.Steps[i])
+		if results[i].Status == StepNotAttempted {
+			// The run ended: this step and the later ones were not reached.
 			break
 		}
 		switch results[i].Status {
@@ -129,6 +118,16 @@ func (r *runner) runBatch(cp *ClusterPlan, ph Phase) []StepResult {
 	return results
 }
 
+// startRoll sends the roll of one step of a batch: submitRoll for a roll
+// onto the latest AMI, and submitEngineRoll for the roll of an upgrade or
+// a rollback, which moves the nodegroup to another Kubernetes version.
+func (r *runner) startRoll(cp *ClusterPlan, s Step) StepResult {
+	if r.req.kind().independent() {
+		return r.submitRoll(cp, s)
+	}
+	return r.submitEngineRoll(cp, s)
+}
+
 // submitRoll starts the roll of one nodegroup: a fresh read of the
 // nodegroup, after the gate, and then the request. The fresh read decides
 // first, and the first row that matches wins. Only the last row sends a
@@ -143,9 +142,9 @@ func (r *runner) runBatch(cp *ClusterPlan, ph Phase) []StepResult {
 //     that was shown and accepted pins another version.
 //  5. redecideRoll decides against the roll: Skipped, with a notice. The
 //     nodegroup was rolled elsewhere since the plan, or has a custom AMI
-//     now. The step of the plan gets the new action and reason, and the
-//     plan the notice, so the document of the run says why nothing was
-//     sent.
+//     now. The plan is not changed: it stays the plan that was confirmed.
+//     The result of the step carries the words, in Note, so the document
+//     of the run shows what the plan said and what the fresh read found.
 //  6. Otherwise: UpdateNodegroupVersion, with the version of the fresh
 //     read, which is the version of the plan, and the force of the plan.
 //
@@ -155,7 +154,7 @@ func (r *runner) runBatch(cp *ClusterPlan, ph Phase) []StepResult {
 //
 // A request that EKS refuses, or that fails, is Failed. A request that
 // EKS accepts with no update ID is InProgress, and cannot be followed.
-func (r *runner) submitRoll(cp *ClusterPlan, s *Step) StepResult {
+func (r *runner) submitRoll(cp *ClusterPlan, s Step) StepResult {
 	res := StepResult{Ref: s.Ref}
 	resource := s.Ref.Resource()
 	clients := r.d.AWS.Clients(cp.Region)
@@ -179,16 +178,14 @@ func (r *runner) submitRoll(cp *ClusterPlan, s *Step) StepResult {
 			fmt.Sprintf("nodegroup %s changed to Kubernetes %s since the plan, which pins %s; nothing was sent. Run the command again", s.Ref.Name, orUnknown(fresh.Version), s.To))
 		return res
 	}
-	if d := redecideRoll(*s, fresh); d.Action != Submit {
+	if d, changed := redecideRoll(s.FromRelease, fresh); changed {
 		note := fmt.Sprintf("nodegroup %s of %s runs the AMI release %s, and the plan read %s: it was rolled elsewhere since the plan, and is not rolled again",
 			s.Ref.Name, cp.Cluster, orUnknown(fresh.Release), orUnknown(s.FromRelease))
 		if d.Action == Manual {
 			note = fmt.Sprintf("nodegroup %s of %s has a custom AMI (AMI type CUSTOM) since the plan, and is not rolled", s.Ref.Name, cp.Cluster)
 		}
-		s.Action, s.Reason, s.Force = d.Action, d.Reason, false
-		cp.Notices = append(cp.Notices, note)
 		r.notice(note)
-		res.Status = StepSkipped
+		res.Status, res.Note = StepSkipped, note
 		return res
 	}
 	if err := r.readCtx.Err(); err != nil {
@@ -216,84 +213,59 @@ func orUnknown(s string) string {
 	return s
 }
 
-// waitTogether waits for every accepted update of a batch on one ticker.
-// On each tick every update that has not ended is polled, all at once,
-// with the poll of WaitUpdate, and the answers are reported in plan
-// order.
+// waitTogether waits for every accepted update of a batch on one ticker,
+// with the loop of WaitUpdate (waitUpdates), and turns what that reports
+// into the events and the results of the steps, in plan order.
 //
-// An update that ends does not end the wait for the others. A poll error
-// that another poll will not fix settles its own step as InProgress, and
-// no other step. When ctx ends, each update that has not ended is
-// InProgress, with the reason Timeout or Interrupted. The answer of the
-// last poll counts: an update that it shows as finished is finished.
+// A poll error that another poll will not fix settles its own step as
+// InProgress, and no other step. When ctx ends, each update that has not
+// ended is InProgress, with the reason Timeout or Interrupted.
 //
 // It sends on ticks after the polls of each tick, without blocking, which
 // paces the Auto Scaling watch beside the wait.
 func (r *runner) waitTogether(ctx context.Context, cp *ClusterPlan, ph Phase, started []int, results []StepResult, wait *budget, ticks chan<- struct{}) {
 	clients := r.d.AWS.PollClients(cp.Region)
 	o := WaitOptions{Interval: r.common.Limits.Poll, After: r.d.after, budget: wait}
-	type follow struct {
-		step int
-		poll *updatePoll
-	}
-	type answer struct {
-		progress     UpdateProgress
-		report, done bool
-		err          error
-	}
-	open := make([]follow, len(started))
+	polls := make([]*updatePoll, len(started))
 	for n, i := range started {
-		open[n] = follow{step: i, poll: newUpdatePoll(ph.Steps[i].Ref.Resource(), results[i].UpdateID)}
+		polls[n] = newUpdatePoll(ph.Steps[i].Ref.Resource(), results[i].UpdateID)
 	}
-	settle := func(f follow, err error) {
-		res := results[f.step]
-		if err == nil {
-			res.Status, res.FinishedAt = StepSucceeded, r.d.now()
-		} else {
-			res = r.waitFailed(ctx, cp, res, err)
-		}
-		results[f.step] = res
-		r.emit(Event{Kind: StepChanged, Phase: ph.Ref, Step: res.Ref, Result: &res})
-	}
-	for len(open) > 0 && o.pause(ctx) {
-		answers := fanout.ForEach(ctx, open, len(open), func(ctx context.Context, f follow) answer {
-			var a answer
-			a.progress, a.report, a.done, a.err = f.poll.poll(ctx, clients)
-			return a
-		})
-		select {
-		case ticks <- struct{}{}:
-		default:
-		}
-		var still []follow
-		for n, f := range open {
-			a := answers[n]
-			if a.report {
-				ref := ph.Steps[f.step].Ref
-				r.emit(Event{Kind: UpdatePolled, Phase: ph.Ref, Step: ref, Update: &a.progress})
+	waitUpdates(ctx, clients, polls, o, updateHooks{
+		progress: func(n int, p UpdateProgress) {
+			r.emit(Event{Kind: UpdatePolled, Phase: ph.Ref, Step: ph.Steps[started[n]].Ref, Update: &p})
+		},
+		settled: func(n int, err error) {
+			res := results[started[n]]
+			if err == nil {
+				res.Status, res.FinishedAt = StepSucceeded, r.d.now()
+			} else {
+				res = r.waitFailed(ctx, cp, res, err)
 			}
-			if a.done {
-				settle(f, a.err)
-				continue
+			results[started[n]] = res
+			r.emit(Event{Kind: StepChanged, Phase: ph.Ref, Step: res.Ref, Result: &res})
+		},
+		tick: func() {
+			select {
+			case ticks <- struct{}{}:
+			default:
 			}
-			still = append(still, f)
-		}
-		open = still
-		if len(open) > 0 && o.over(ctx) {
-			break
-		}
-	}
-	for _, f := range open {
-		settle(f, f.poll.ended(ctx))
-	}
+		},
+	})
 }
 
-// interruptedNow records an interrupt of the run, and reports whether
-// there was one. A deadline is not an interrupt.
-func (r *runner) interruptedNow() bool {
-	if r.ctx.Err() != nil && !timedOut(r.ctx) {
-		r.interrupted = true
-		return true
+// userInterrupted reports whether the user stopped the run. A deadline is
+// not an interrupt. It records nothing: see recordInterrupt.
+func (r *runner) userInterrupted() bool {
+	return r.ctx.Err() != nil && !timedOut(r.ctx)
+}
+
+// recordInterrupt makes an interrupt of the run its result: the run then
+// ends as Interrupted, with exit code 1, whatever its steps did. It
+// reports whether there was an interrupt to record.
+func (r *runner) recordInterrupt() bool {
+	if !r.userInterrupted() {
+		return false
 	}
-	return false
+	r.interrupted = true
+	return true
 }

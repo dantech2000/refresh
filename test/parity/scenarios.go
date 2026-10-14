@@ -459,6 +459,12 @@ func clusterUpgrade() []Scenario {
 	}
 	with := to("1.33")
 	onTerminal := args("cluster", "upgrade", "-c", "prod", "--to", "1.33", "--poll-interval", pollArg)
+	// The cluster is the argument of the new command.
+	v2To := func(version string) func(extra ...string) []string {
+		return args("cluster", "upgrade", "prod", "--to", version, "--poll-interval", pollArg, "-o", "json")
+	}
+	v2 := v2To("1.33")
+	v2OnTerminal := args("cluster", "upgrade", "prod", "--to", "1.33", "--poll-interval", pollArg)
 	const (
 		control = "UpdateClusterVersion prod"
 		cni     = "UpdateAddon prod/vpc-cni"
@@ -477,38 +483,38 @@ func clusterUpgrade() []Scenario {
 	// The wait for a control plane that is already UPDATING polls DescribeCluster.
 	clusterClock := []fleettest.Operation{fleettest.EKSDescribeCluster, fleettest.EKSDescribeUpdate, fleettest.EKSDescribeInsightsRefresh}
 	return []Scenario{
-		{Name: "cluster-upgrade-yes", Behaviour: Success, Seed: fleet(scripts(slow)), Legacy: with("--yes"), Checks: []Check{whole}},
-		{Name: "cluster-upgrade-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), Checks: []Check{exits(0)}},
-		{Name: "cluster-upgrade-unattended", Behaviour: Unattended, Seed: fleet(), Legacy: with()},
-		{Name: "cluster-upgrade-prompt-yes", Behaviour: PromptYes, Seed: fleet(scripts(slow)), Legacy: onTerminal(), Terminal: sayYes, Checks: []Check{exits(0), whole}},
-		{Name: "cluster-upgrade-prompt-no", Behaviour: PromptNo, Seed: fleet(), Legacy: onTerminal(), Terminal: sayNo},
-		{Name: "cluster-upgrade-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(), Legacy: onTerminal(), Terminal: ctrlC},
-		{Name: "cluster-upgrade-blocked", Behaviour: Blocked, Seed: fleet(blockingInsight), Legacy: with("--yes"), Checks: []Check{exits(3)}},
+		{Name: "cluster-upgrade-yes", Behaviour: Success, Seed: fleet(scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{whole}},
+		{Name: "cluster-upgrade-dry-run", Behaviour: DryRun, Seed: fleet(), Legacy: with("--dry-run"), V2: v2("--dry-run"), Checks: []Check{exits(0)}},
+		{Name: "cluster-upgrade-unattended", Behaviour: Unattended, Seed: fleet(), Legacy: with(), V2: v2()},
+		{Name: "cluster-upgrade-prompt-yes", Behaviour: PromptYes, Seed: fleet(scripts(slow)), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayYes, Checks: []Check{exits(0), whole}},
+		{Name: "cluster-upgrade-prompt-no", Behaviour: PromptNo, Seed: fleet(), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayNo},
+		{Name: "cluster-upgrade-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: ctrlC},
+		{Name: "cluster-upgrade-blocked", Behaviour: Blocked, Seed: fleet(blockingInsight), Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(3)}},
 		{
 			// ListInsights answers one insight per page. The one that blocks
 			// is on the second page.
-			Name: "cluster-upgrade-blocked-on-second-page", Legacy: with("--yes"), Checks: []Check{exits(3), noUpdates},
+			Name: "cluster-upgrade-blocked-on-second-page", Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(3), noUpdates},
 			Seed: fleet(blockingInsight, func(_ *fleettest.State, c *fleettest.Cluster) {
 				c.Insights = append([]fleettest.Insight{{ID: "in-0", Name: "Kubelet version skew", Status: fleettest.InsightPassing}}, c.Insights...)
 			}),
 			Prepare: fault(on(fleettest.EKSListInsights), fleettest.Fault{PageSize: 1}),
 		},
 		{
-			Name: "cluster-upgrade-skip-insights", Seed: fleet(blockingInsight, scripts(slow)), Legacy: with("--yes", "--skip-insights-check"),
+			Name: "cluster-upgrade-skip-insights", Seed: fleet(blockingInsight, scripts(slow)), Legacy: with("--yes", "--skip-insights-check"), V2: v2("--yes", "--skip-insights-check"),
 			Checks: []Check{exits(0), whole},
 		},
-		{Name: "cluster-upgrade-failed", Behaviour: Failed, Seed: fleet(scripts(slow), script("", failing)), Legacy: with("--yes"), Checks: []Check{updatesAre(control)}},
+		{Name: "cluster-upgrade-failed", Behaviour: Failed, Seed: fleet(scripts(slow), script("", failing)), Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{updatesAre(control)}},
 		{
-			Name: "cluster-upgrade-addon-failed", Seed: fleet(scripts(slow), script("vpc-cni", failing)), Legacy: with("--yes"),
+			Name: "cluster-upgrade-addon-failed", Seed: fleet(scripts(slow), script("vpc-cni", failing)), Legacy: with("--yes"), V2: v2("--yes"),
 			Checks: []Check{fails, updatesAre(control, cni), resourceIs("ng-a", "1.32 ")},
 		},
 		{
-			Name: "cluster-upgrade-nodegroup-failed", Seed: fleet(scripts(slow), script("ng-a", failing)), Legacy: with("--yes"),
+			Name: "cluster-upgrade-nodegroup-failed", Seed: fleet(scripts(slow), script("ng-a", failing)), Legacy: with("--yes"), V2: v2("--yes"),
 			Checks: []Check{fails, updatesAre(control, cni, dns, a), resourceIs("ng-b", "1.32 ")},
 		},
 		{
 			// The control plane and the add-ons are done; the nodegroups are not.
-			Name: "cluster-upgrade-resume", Legacy: with("--yes"), Checks: []Check{exits(0), updatesAre(a, b)},
+			Name: "cluster-upgrade-resume", Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(0), updatesAre(a, b)},
 			Seed: fleet(scripts(slow), func(_ *fleettest.State, c *fleettest.Cluster) {
 				c.Version = "1.33"
 				c.Addon("vpc-cni").Version, c.Addon("coredns").Version = "v1.20.0-eksbuild.1", "v1.12.0-eksbuild.1"
@@ -516,12 +522,12 @@ func clusterUpgrade() []Scenario {
 		},
 		{
 			Name: "cluster-upgrade-attach", Behaviour: Attach, Seed: fleet(scripts(slow)), Prepare: inFlight(long), Clock: clusterClock,
-			Legacy: with("--yes", "--only", "control-plane"),
+			Legacy: with("--yes", "--only", "control-plane"), V2: v2("--yes", "--only", "control-plane"),
 		},
 		{
 			// The in-flight control-plane update ends, and the run goes on with the rest.
 			Name: "cluster-upgrade-attach-continue", Seed: fleet(scripts(slow)), Prepare: inFlight(long), Clock: clusterClock,
-			Legacy: with("--yes"), Checks: []Check{exits(0), updatesAre(cni, dns, a, b)},
+			Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(0), updatesAre(cni, dns, a, b)},
 		},
 		{
 			// The control plane is updating, and ListUpdates does not list
@@ -531,55 +537,55 @@ func clusterUpgrade() []Scenario {
 				w.HideUpdates(Region, "prod", 1)
 				return inFlight(long)(w)
 			},
-			Legacy: with("--yes", "--only", "control-plane"), Checks: []Check{exits(0), noUpdates, resourceIs("ng-a", "1.32 ")},
+			Legacy: with("--yes", "--only", "control-plane"), V2: v2("--yes", "--only", "control-plane"), Checks: []Check{exits(0), noUpdates, resourceIs("ng-a", "1.32 ")},
 		},
 		{
 			// The in-flight update fails. The legacy command then starts its own.
 			Name: "cluster-upgrade-attach-failed", Behaviour: AttachFailed, Seed: fleet(scripts(slow)), Prepare: inFlight(longFailing), Clock: clusterClock,
-			Legacy: with("--yes", "--only", "control-plane"), Checks: []Check{exits(0), updatesAre(control), anUpdateFailed},
+			Legacy: with("--yes", "--only", "control-plane"), V2: v2("--yes", "--only", "control-plane"), Checks: []Check{exits(0), updatesAre(control), anUpdateFailed},
 			// The new command must have seen the attached update fail, and
 			// must say so before it starts its own.
 			V2Require: []Fact{{Subject: "update prod 1", Attribute: "status", Value: "Failed"}},
 			V2Checks:  []Check{says(updateID(1)), says("failed")},
 		},
-		{Name: "cluster-upgrade-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(control), worldMoved}},
+		{Name: "cluster-upgrade-deadline", Behaviour: Deadline, Seed: fleet(scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), V2: v2("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(control), worldMoved}},
 		{
-			Name: "cluster-upgrade-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes"),
+			Name: "cluster-upgrade-interrupt", Behaviour: Interrupt, Seed: fleet(scripts(never)), Legacy: with("--yes"), V2: v2("--yes"),
 			Signal: interruptWait(1, 2), Checks: []Check{updatesAre(control)},
 		},
 		{
 			// The signal lands in the wait for the first nodegroup roll, the
 			// fourth update of the run.
-			Name: "cluster-upgrade-interrupt-nodegroup", Seed: fleet(scripts(slow), script("ng-a", never)), Legacy: with("--yes"),
+			Name: "cluster-upgrade-interrupt-nodegroup", Seed: fleet(scripts(slow), script("ng-a", never)), Legacy: with("--yes"), V2: v2("--yes"),
 			Signal: interruptWait(4, 2), Checks: []Check{exits(1), updatesAre(control, cni, dns, a), nothingAfterSignal, resourceIs("ng-b", "1.32 ")},
 		},
 		{
-			Name: "cluster-upgrade-lost-response", Behaviour: LostResponse, Seed: fleet(scripts(slow)), Legacy: with("--yes"),
+			Name: "cluster-upgrade-lost-response", Behaviour: LostResponse, Seed: fleet(scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"),
 			Prepare: fault(on(fleettest.EKSUpdateClusterVersion), fleettest.Fault{LoseResponse: 1}),
 		},
 		{
-			Name: "cluster-upgrade-throttled-read", Behaviour: ThrottledRead, Seed: fleet(scripts(slow)), Legacy: with("--yes"),
+			Name: "cluster-upgrade-throttled-read", Behaviour: ThrottledRead, Seed: fleet(scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"),
 			Prepare: fault(on(fleettest.EKSListInsights), fleettest.Fault{Throttle: 1}),
 		},
 		{
-			Name: "cluster-upgrade-two-hops", Seed: fleet(scripts(slow)), Legacy: to("1.34")("--yes"),
+			Name: "cluster-upgrade-two-hops", Seed: fleet(scripts(slow)), Legacy: to("1.34")("--yes"), V2: v2To("1.34")("--yes"),
 			Checks: []Check{exits(0), updatesAre(control, cni, dns, a, b, control, cni, dns, a, b), resourceIs("ng-a", "1.34 ")},
 		},
-		{Name: "cluster-upgrade-only-control-plane", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--only", "control-plane"), Checks: []Check{exits(0), updatesAre(control)}},
+		{Name: "cluster-upgrade-only-control-plane", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--only", "control-plane"), V2: v2("--yes", "--only", "control-plane"), Checks: []Check{exits(0), updatesAre(control)}},
 		{
-			Name: "cluster-upgrade-skip-addon", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--skip", "coredns"),
+			Name: "cluster-upgrade-skip-addon", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--skip", "coredns"), V2: v2("--yes", "--skip-addon", "coredns"),
 			Checks: []Check{updatesAre(control, cni, a, b)},
 		},
 		{
-			Name: "cluster-upgrade-skip-nodegroup", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--skip-nodegroup", "ng-b"),
+			Name: "cluster-upgrade-skip-nodegroup", Seed: fleet(scripts(slow)), Legacy: with("--yes", "--skip-nodegroup", "ng-b"), V2: v2("--yes", "--skip-nodegroup", "ng-b"),
 			Checks: []Check{updatesAre(control, cni, dns, a), resourceIs("ng-b", "1.32 ")},
 		},
 		{
-			Name: "cluster-upgrade-one-nodegroup", Seed: fleet(scripts(slow)), Legacy: with("--yes", "-n", "ng-a"),
+			Name: "cluster-upgrade-one-nodegroup", Seed: fleet(scripts(slow)), Legacy: with("--yes", "-n", "ng-a"), V2: v2("--yes", "-n", "ng-a"),
 			Checks: []Check{updatesAre(control, cni, dns, a), resourceIs("ng-b", "1.32 ")},
 		},
 		{
-			Name: "cluster-upgrade-skip-health-check", Seed: fleet(noMetrics, scripts(slow)), Legacy: with("--yes", "--skip-health-check"),
+			Name: "cluster-upgrade-skip-health-check", Seed: fleet(noMetrics, scripts(slow)), Legacy: with("--yes", "--skip-health-check"), V2: v2("--yes", "--skip-health-check"),
 			Checks: []Check{exits(0), whole},
 		},
 	}
@@ -588,6 +594,8 @@ func clusterUpgrade() []Scenario {
 func clusterRollback() []Scenario {
 	with := args("cluster", "rollback", "-c", "prod", "--poll-interval", pollArg, "-o", "json")
 	onTerminal := args("cluster", "rollback", "-c", "prod", "--poll-interval", pollArg)
+	v2 := args("cluster", "rollback", "prod", "--poll-interval", pollArg, "-o", "json")
+	v2OnTerminal := args("cluster", "rollback", "prod", "--poll-interval", pollArg)
 	const (
 		control = "UpdateClusterVersion prod"
 		cni     = "UpdateAddon prod/vpc-cni"
@@ -605,63 +613,71 @@ func clusterRollback() []Scenario {
 	}
 	clusterClock := []fleettest.Operation{fleettest.EKSDescribeCluster, fleettest.EKSDescribeUpdate, fleettest.EKSDescribeInsightsRefresh}
 	return []Scenario{
-		{Name: "cluster-rollback-yes", Behaviour: Success, Seed: fleet(upgraded, scripts(slow)), Legacy: with("--yes"), Checks: []Check{whole}},
-		{Name: "cluster-rollback-dry-run", Behaviour: DryRun, Seed: fleet(upgraded), Legacy: with("--dry-run"), Checks: []Check{exits(0)}},
-		{Name: "cluster-rollback-unattended", Behaviour: Unattended, Seed: fleet(upgraded), Legacy: with()},
-		{Name: "cluster-rollback-prompt-yes", Behaviour: PromptYes, Seed: fleet(upgraded, scripts(slow)), Legacy: onTerminal(), Terminal: sayYes, Checks: []Check{exits(0), whole}},
-		{Name: "cluster-rollback-prompt-no", Behaviour: PromptNo, Seed: fleet(upgraded), Legacy: onTerminal(), Terminal: sayNo},
-		{Name: "cluster-rollback-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(upgraded), Legacy: onTerminal(), Terminal: ctrlC},
+		{Name: "cluster-rollback-yes", Behaviour: Success, Seed: fleet(upgraded, scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{whole}},
+		{Name: "cluster-rollback-dry-run", Behaviour: DryRun, Seed: fleet(upgraded), Legacy: with("--dry-run"), V2: v2("--dry-run"), Checks: []Check{exits(0)}},
+		{Name: "cluster-rollback-unattended", Behaviour: Unattended, Seed: fleet(upgraded), Legacy: with(), V2: v2()},
+		{Name: "cluster-rollback-prompt-yes", Behaviour: PromptYes, Seed: fleet(upgraded, scripts(slow)), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayYes, Checks: []Check{exits(0), whole}},
+		{Name: "cluster-rollback-prompt-no", Behaviour: PromptNo, Seed: fleet(upgraded), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayNo},
+		{Name: "cluster-rollback-prompt-interrupt", Behaviour: PromptInterrupt, Seed: fleet(upgraded), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: ctrlC},
 		{
 			// A cluster with no in-place upgrade in its history cannot roll back.
-			Name: "cluster-rollback-blocked", Behaviour: Blocked, Seed: fleet(), Legacy: with("--yes"), Checks: []Check{exits(3)},
+			Name: "cluster-rollback-blocked", Behaviour: Blocked, Seed: fleet(), Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(3)},
 		},
 		{
 			// The upgrade was ten days ago; EKS allows a rollback for seven.
-			Name: "cluster-rollback-expired", Seed: fleet(upgradedAt(10 * 24 * time.Hour)), Legacy: with("--yes"), Checks: []Check{exits(3), noMutations},
+			Name: "cluster-rollback-expired", Seed: fleet(upgradedAt(10 * 24 * time.Hour)), Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(3), noMutations},
 		},
 		{
 			// The request carries force and the rollback timeout.
 			Name: "cluster-rollback-force-and-timeout", Seed: fleet(upgraded, scripts(slow)),
-			Legacy: with("--yes", "--skip-insights-check", "--rollback-timeout", "3h"), Checks: []Check{exits(0), whole},
+			Legacy: with("--yes", "--skip-insights-check", "--rollback-timeout", "3h"), V2: v2("--yes", "--skip-insights-check", "--rollback-timeout", "3h"), Checks: []Check{exits(0), whole},
 		},
 		{
-			Name: "cluster-rollback-failed", Behaviour: Failed, Seed: fleet(upgraded, scripts(slow), script("", failing)), Legacy: with("--yes"),
+			Name: "cluster-rollback-failed", Behaviour: Failed, Seed: fleet(upgraded, scripts(slow), script("", failing)), Legacy: with("--yes"), V2: v2("--yes"),
 			Checks: []Check{whole},
 		},
 		{
-			Name: "cluster-rollback-nodegroup-failed", Seed: fleet(upgraded, scripts(slow), script("ng-a", failing)), Legacy: with("--yes"),
+			Name: "cluster-rollback-nodegroup-failed", Seed: fleet(upgraded, scripts(slow), script("ng-a", failing)), Legacy: with("--yes"), V2: v2("--yes"),
 			Checks: []Check{fails, updatesAre(a)},
 		},
 		{
 			// The nodegroups and the add-ons are back; the control plane is not.
-			Name: "cluster-rollback-resume", Seed: fleet(upgraded, rolledBackNodes, scripts(slow)), Legacy: with("--yes"),
+			Name: "cluster-rollback-resume", Seed: fleet(upgraded, rolledBackNodes, scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"),
 			Checks: []Check{exits(0), updatesAre(control)},
 		},
 		{
 			Name: "cluster-rollback-attach", Behaviour: Attach, Seed: fleet(upgraded, rolledBackNodes), Prepare: inFlight(long), Clock: clusterClock,
-			Legacy: with("--yes"),
+			Legacy: with("--yes"), V2: v2("--yes"),
 		},
 		{
 			// The in-flight rollback fails. The legacy command then starts its own.
 			Name: "cluster-rollback-attach-failed", Behaviour: AttachFailed, Seed: fleet(upgraded, rolledBackNodes), Prepare: inFlight(longFailing), Clock: clusterClock,
-			Legacy: with("--yes"), Checks: []Check{exits(0), updatesAre(control), anUpdateFailed},
+			Legacy: with("--yes"), V2: v2("--yes"), Checks: []Check{exits(0), updatesAre(control), anUpdateFailed},
 		},
-		{Name: "cluster-rollback-deadline", Behaviour: Deadline, Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a), worldMoved}},
+		{Name: "cluster-rollback-deadline", Behaviour: Deadline, Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), V2: v2("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a), worldMoved}},
 		{
-			// The signal lands while the plan is checked again, before any update.
-			Name: "cluster-rollback-interrupt-before-start", Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes"),
-			Signal: interrupt(fleettest.EKSListInsights, 2), Checks: []Check{exits(1), noMutations},
+			// The user confirms the plan, and the signal lands while the
+			// plan is checked again, before any update. Nothing is sent.
+			// The anchor is the first insights read after the answer:
+			// both binaries plan again after a person said yes. With --yes
+			// only the old binary planned twice, so a count of its reads
+			// named a request that the new one never sends.
+			Name: "cluster-rollback-interrupt-before-start", Seed: fleet(upgraded, scripts(never)), Legacy: onTerminal(), V2: v2OnTerminal(), Terminal: sayYes,
+			Signal: interruptAfterPrompt(1, fleettest.EKSListInsights), Checks: []Check{exits(1), noMutations},
+			// The contract: an interrupt before the start is Interrupted,
+			// and not Failed.
+			V2Checks: []Check{says("Interrupted")},
 		},
 		{
-			Name: "cluster-rollback-interrupt", Behaviour: Interrupt, Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes"),
+			Name: "cluster-rollback-interrupt", Behaviour: Interrupt, Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes"), V2: v2("--yes"),
 			Signal: interruptWait(1, 2), Checks: []Check{updatesAre(a)},
 		},
 		{
-			Name: "cluster-rollback-lost-response", Behaviour: LostResponse, Seed: fleet(upgraded, scripts(slow)), Legacy: with("--yes"),
+			Name: "cluster-rollback-lost-response", Behaviour: LostResponse, Seed: fleet(upgraded, scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"),
 			Prepare: fault(on(fleettest.EKSUpdateClusterVersion), fleettest.Fault{LoseResponse: 1}),
 		},
 		{
-			Name: "cluster-rollback-throttled-read", Behaviour: ThrottledRead, Seed: fleet(upgraded, scripts(slow)), Legacy: with("--yes"),
+			Name: "cluster-rollback-throttled-read", Behaviour: ThrottledRead, Seed: fleet(upgraded, scripts(slow)), Legacy: with("--yes"), V2: v2("--yes"),
 			Prepare: fault(on(fleettest.EKSListUpdates), fleettest.Fault{Throttle: 1}),
 		},
 	}

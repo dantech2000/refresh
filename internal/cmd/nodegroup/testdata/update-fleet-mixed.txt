@@ -1,5 +1,5 @@
 exit: 4
-error: prod: nodegroup web is Blocked; staging: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete
+error: prod: nodegroup web is DEGRADED, not ACTIVE; it was not rolled; staging: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete
 --- stdout ---
 Run   [!] Incomplete   NodegroupUpdate
 
@@ -11,9 +11,9 @@ RUN dev
   status     [OK] Succeeded
 
 RESULTS dev  2
-  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  api   Nodegroup  - Skipped       1.32  1.32                  -                                     -     -                        -                        -
-  web   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+  NAME  KIND       STATUS          FROM                                            TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  api   Nodegroup  - Skipped       1.32                                            1.32                      -                                     -     -                        -                        -
+  web   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
 
 VERIFICATION dev  3
   NAME             OUTCOME    MESSAGE
@@ -46,7 +46,11 @@ RUN prod
 RESULTS prod  2
   NAME  KIND       STATUS       FROM  TO    UPDATE  NOTE  STARTED  FINISHED  FAILURE
   api   Nodegroup  - Skipped    1.32  1.32  -       -     -        -         -
-  web   Nodegroup  [X] Blocked  1.32  1.32  -       -     -        -         -
+  web   Nodegroup  [X] Blocked  1.32  1.32  -       -     -        -         Unknown: nodegroup web is DEGRADED, not ACTIVE; it was not rolled
+
+BLOCKERS prod  1
+  NAME  KIND          STEP  MESSAGE
+  1     [X] NotReady  web   nodegroup web is DEGRADED, not ACTIVE; it was not rolled
 
 RUN staging
   operation  NodegroupUpdate
@@ -56,9 +60,9 @@ RUN staging
   status     [X] Failed
 
 RESULTS staging  2
-  NAME  KIND       STATUS      FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  api   Nodegroup  - Skipped   1.32  1.32                  -                                     -     -                        -                        -
-  web   Nodegroup  [X] Failed  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  UpdateFailed: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete
+  NAME  KIND       STATUS      FROM                                            TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  api   Nodegroup  - Skipped   1.32                                            1.32                      -                                     -     -                        -                        -
+  web   Nodegroup  [X] Failed  1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  UpdateFailed: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete
 
 HEALTH GATE staging
   decision  [OK] Go
@@ -76,21 +80,22 @@ CHECKS staging  9
   Kubernetes     [OK] Pass  Kubernetes API reachable
 
 INCOMPLETE DATA
+[?] nodegroup prod/web (us-east-1): Unknown: nodegroup web is DEGRADED, not ACTIVE; it was not rolled
 [?] update staging/web (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete
 --- stderr ---
 PLAN  NodegroupUpdate, dev in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 PLAN  NodegroupUpdate, prod in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
   [X] web  blocked
 PLAN  NodegroupUpdate, staging in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 [~] dev/web: Started (update 00000000-0000-4000-8000-000000000001)
 dev/web: InProgress
 [OK] dev/web: Succeeded
-[X] prod/web: Blocked
+[X] prod/web: Blocked: nodegroup web is DEGRADED, not ACTIVE; it was not rolled
 [~] staging/web: Started (update 00000000-0000-4000-8000-000000000002)
 staging/web: InProgress
 [X] staging/web: Failed: update 00000000-0000-4000-8000-000000000002 of nodegroup web ended Failed: Unknown: the update did not complete

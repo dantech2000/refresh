@@ -138,7 +138,23 @@ func TestExitCode(t *testing.T) {
 			err:         &cmdutil.ExitError{Code: cmdutil.ExitIncomplete, Err: fmt.Errorf("status: %w", context.Canceled)},
 			interrupted: true,
 			wantCode:    1,
-			wantErrOut:  "Error: status: context canceled\n",
+			wantErrOut:  "Error: status: interrupted\n",
+		},
+		{
+			// The run already says that it was interrupted, and what it
+			// had done: the words of the cancelled context are left out.
+			name:        "interrupted, the message says so",
+			err:         &cmdutil.ExitError{Code: cmdutil.ExitFailure, Err: fmt.Errorf("interrupted: nodegroup web is InProgress: %w", context.Canceled)},
+			interrupted: true,
+			wantCode:    1,
+			wantErrOut:  "Error: interrupted: nodegroup web is InProgress\n",
+		},
+		{
+			name:        "interrupted, the cancelled context alone",
+			err:         fmt.Errorf("interrupted: %w", context.Canceled),
+			interrupted: true,
+			wantCode:    1,
+			wantErrOut:  "Error: interrupted\n",
 		},
 		{
 			name:       "deadline keeps the result code",

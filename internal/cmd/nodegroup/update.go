@@ -143,7 +143,7 @@ ignores all three.
 			return o.run(cmd.Context())
 		},
 	}
-	cmdutil.AddClusterFlag(cmd, &o.cluster)
+	cmdutil.AddChangeClusterFlag(cmd, &o.cluster)
 	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
 	cmdutil.AddFilterFlag(cmd, &o.rawFilters, updateFilterKeys...)
 	cmd.Flags().BoolVar(&o.allClusters, "all-clusters", false, "Roll every cluster of the regions of -r, one after another")

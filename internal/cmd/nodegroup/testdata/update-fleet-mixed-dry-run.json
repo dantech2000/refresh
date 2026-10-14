@@ -30,7 +30,8 @@ error: dry run: a real run would ask about health warnings
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {
@@ -187,7 +188,8 @@ error: dry run: a real run would ask about health warnings
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {

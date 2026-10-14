@@ -27,6 +27,9 @@ type LineRenderer struct {
 	// fleet says that the plan has several clusters: a line about a step
 	// then names the cluster of the step.
 	fleet bool
+	// phases says that the change is an upgrade or a rollback, whose
+	// phases run one after another: a line names each as it starts.
+	phases bool
 	// hold, when set, takes each line in place of stderr. The panel of a
 	// roll holds the lines while it is on the screen.
 	hold func(line string)
@@ -72,6 +75,7 @@ func (r *LineRenderer) Render(e change.Event) {
 	case change.PlanReady:
 		doc := e.Plan.Document()
 		r.fleet = len(doc.Clusters) > 1
+		r.phases = doc.Operation == apidoc.Operation(change.ClusterUpgrade) || doc.Operation == apidoc.Operation(change.ClusterRollback)
 		if !r.quiet {
 			r.lines(view.PlanLines(th, doc))
 		}
@@ -82,7 +86,7 @@ func (r *LineRenderer) Render(e change.Event) {
 		}
 	case change.GateReport:
 		if e.Verdict.Decision != health.Go || len(e.Verdict.Reasons) > 0 {
-			r.lines(view.HealthLines(th, health.Documents(e.Checks)))
+			r.lines(view.HealthLines(th, health.Documents(r.shown(e.Checks))))
 		}
 		// A blocker that --force went past is said in words, also with
 		// --quiet: the change goes on against a check that failed.
@@ -91,6 +95,15 @@ func (r *LineRenderer) Render(e change.Event) {
 		}
 	case change.Notice:
 		r.warn(e.Text)
+	case change.Progress:
+		if !r.quiet {
+			r.line(th.Dim(e.Text))
+		}
+	case change.PhaseStarted:
+		// A change with several phases says which one runs.
+		if !r.quiet && r.phases {
+			r.line(th.Strong(phaseLine(e.Phase)))
+		}
 	case change.StepChanged:
 		if !r.quiet && e.Result.Status != change.StepSkipped {
 			doc := stepDoc(*e.Result)
@@ -101,7 +114,7 @@ func (r *LineRenderer) Render(e change.Event) {
 		for _, c := range e.Checks {
 			// A check that was skipped found nothing: the result lists it.
 			if c.Outcome != health.Pass && c.Outcome != health.Skipped {
-				r.lines(view.HealthLines(th, health.Documents(e.Checks)))
+				r.lines(view.HealthLines(th, health.Documents(r.shown(e.Checks))))
 				break
 			}
 		}
@@ -110,11 +123,46 @@ func (r *LineRenderer) Render(e change.Event) {
 	}
 }
 
+// shown returns the checks that a report lists. With --quiet those are
+// the ones that found something: a warning, a failure, or a read that
+// could not be made. A check that passed, and one that was skipped, found
+// nothing, and the result of the run still lists every check.
+func (r *LineRenderer) shown(checks []health.Result) []health.Result {
+	if !r.quiet {
+		return checks
+	}
+	var out []health.Result
+	for _, c := range checks {
+		if c.Outcome != health.Pass && c.Outcome != health.Skipped {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// phaseLine names a phase of an upgrade or a rollback as it starts.
+func phaseLine(ph change.PhaseRef) string {
+	words := map[change.PhaseKind]string{
+		change.PhaseControlPlane: "control plane",
+		change.PhaseAddonsBefore: "add-ons before the nodegroup rolls",
+		change.PhaseNodegroups:   "nodegroups",
+		change.PhaseAddonsAfter:  "add-ons",
+		change.PhaseAddons:       "add-ons",
+	}[ph.Kind]
+	if ph.Hop.IsZero() {
+		return "phase: " + words
+	}
+	return "phase: " + words + ", " + ph.Hop.String()
+}
+
 // name returns the name of a step for a line: the add-on or the
 // nodegroup, with its cluster before it in a fleet.
 func (r *LineRenderer) name(ref change.StepRef) string {
 	if r.fleet {
 		return ref.Phase.Target.Cluster + "/" + ref.Name
+	}
+	if ref.Kind == change.StepControlPlane {
+		return "control-plane"
 	}
 	return ref.Name
 }
@@ -146,8 +194,8 @@ func (r *LineRenderer) poll(e change.Event) {
 // stepDoc returns the document form of a step result, for its line.
 func stepDoc(s change.StepResult) apidoc.StepResult {
 	return apidoc.StepResult{
-		Kind: s.Ref.Kind, Name: s.Ref.Name, Status: s.Status,
-		Attached: s.Attached, UpdateID: s.UpdateID, InFlight: s.InFlight, Failure: s.Failure,
+		Kind: s.Ref.Kind, Name: s.Ref.Name, Hop: s.Ref.Phase.Hop.String(), Status: s.Status,
+		Attached: s.Attached, UpdateID: s.UpdateID, InFlight: s.InFlight, Failure: s.Failure, Note: s.Note,
 	}
 }
 

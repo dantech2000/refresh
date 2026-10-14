@@ -22,7 +22,8 @@ error: update 00000000-0000-4000-8000-000000000001 of nodegroup web ended Failed
           "from": "1.32",
           "to": "1.32",
           "fromRelease": "1.32.0-20250101",
-          "toRelease": "ami-latest132"
+          "fromImage": "ami-old32x",
+          "toImage": "ami-latest132"
         }
       ],
       "gate": {
@@ -157,7 +158,7 @@ error: update 00000000-0000-4000-8000-000000000001 of nodegroup web ended Failed
 }
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 [~] web: Started (update 00000000-0000-4000-8000-000000000001)
 web: InProgress
 [X] web: Failed: update 00000000-0000-4000-8000-000000000001 of nodegroup web ended Failed: PodEvictionFailure: Reached max retries while trying to evict pods (api-1)

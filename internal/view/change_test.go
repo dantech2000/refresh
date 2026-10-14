@@ -11,7 +11,7 @@ import (
 )
 
 // A plan of two clusters: each section names its cluster, a roll shows
-// its AMI release, a scale shows its sizes, a busy target shows the update
+// what its nodes run and the AMI that it moves to, a scale shows its sizes, a busy target shows the update
 // in flight, and a blocker names its step.
 func TestPlanView_Plain(t *testing.T) {
 	doc := apidoc.Plan{
@@ -21,7 +21,7 @@ func TestPlanView_Plain(t *testing.T) {
 				Cluster: "prod", Region: "us-east-1", Version: "1.33", TargetVersion: "1.34", Decision: apidoc.PlanBlocked,
 				Steps: []apidoc.PlanStep{
 					{Phase: apidoc.PhaseControlPlane, Kind: apidoc.StepControlPlane, Action: apidoc.ActionSubmit, From: "1.33", To: "1.34"},
-					{Phase: apidoc.PhaseRoll, Kind: apidoc.StepNodegroup, Name: "web", Action: apidoc.ActionSubmit, Reason: apidoc.ReasonAMIOutdated, From: "1.33", To: "1.33", ToRelease: "1.33.0-20260101"},
+					{Phase: apidoc.PhaseRoll, Kind: apidoc.StepNodegroup, Name: "web", Action: apidoc.ActionSubmit, Reason: apidoc.ReasonAMIOutdated, From: "1.33", To: "1.33", FromRelease: "1.33.0-20250101", FromImage: "ami-old", ToImage: "ami-new"},
 					{Phase: apidoc.PhaseRoll, Kind: apidoc.StepNodegroup, Name: "batch", Action: apidoc.ActionSkip, Reason: apidoc.ReasonInFlight, From: "1.33", To: "1.33", InFlight: "ConfigUpdate"},
 				},
 				Blockers: []apidoc.Blocker{
@@ -70,8 +70,8 @@ func TestPlanView_Plain(t *testing.T) {
 		"steps_prod.web.kind\tNodegroup",
 		"steps_prod.web.action\tSubmit",
 		"steps_prod.web.reason\tAMIOutdated",
-		"steps_prod.web.from\t1.33",
-		"steps_prod.web.to\t1.33 (1.33.0-20260101)",
+		"steps_prod.web.from\t1.33 (release 1.33.0-20250101, AMI ami-old)",
+		"steps_prod.web.to\t1.33 (AMI ami-new)",
 		"steps_prod.web.note\t-",
 		"steps_prod.batch.kind\tNodegroup",
 		"steps_prod.batch.action\tSkip",
@@ -222,5 +222,58 @@ func TestPlanLinesAndStepLine(t *testing.T) {
 		if got := StepLine(Theme{}, tt.step); got != tt.want {
 			t.Errorf("StepLine = %q, want %q", got, tt.want)
 		}
+	}
+}
+
+// A plan in which nothing would be changed because a target is changing
+// already is not a plan with nothing to do: its head says so, beside the
+// Busy failure that it lists.
+func TestPlanView_BusyOnlyHasItsOwnWords(t *testing.T) {
+	plan := func(reason apidoc.StepReason) apidoc.Plan {
+		return apidoc.Plan{Operation: apidoc.OperationNodegroupUpdate, Clusters: []apidoc.ClusterPlan{{
+			Cluster: "prod", Region: "us-east-1", Decision: apidoc.PlanNothingToDo,
+			Steps: []apidoc.PlanStep{{Phase: apidoc.PhaseRoll, Kind: apidoc.StepNodegroup, Name: "web", Action: apidoc.ActionSkip, Reason: reason, From: "1.33", To: "1.33"}},
+		}}}
+	}
+	busy := PlanView(plan(apidoc.ReasonInFlight))
+	if busy.Label != "TargetBusy" || busy.Status != Warn {
+		t.Errorf("a busy-only plan is %q (%v), want TargetBusy as a warning", busy.Label, busy.Status)
+	}
+	if head := busy.Render(Theme{}, 100)[0]; strings.Contains(head, "NothingToDo") {
+		t.Errorf("the head of a busy-only plan says NothingToDo: %q", head)
+	}
+	idle := PlanView(plan(apidoc.ReasonAlreadyLatest))
+	if idle.Label != string(apidoc.PlanNothingToDo) || idle.Status != Neutral {
+		t.Errorf("a plan with nothing to do is %q (%v), want NothingToDo", idle.Label, idle.Status)
+	}
+}
+
+// The view of a run lists the blockers of the plan of each cluster: a
+// cluster that its plan blocked has Blocked rows, and the blockers say
+// why.
+func TestRunView_ListsBlockers(t *testing.T) {
+	doc := apidoc.Run{Operation: apidoc.OperationNodegroupUpdate, Status: apidoc.RunBlocked, Clusters: []apidoc.ClusterRun{{
+		ClusterPlan: apidoc.ClusterPlan{
+			Cluster: "prod", Region: "us-east-1", Decision: apidoc.PlanBlocked,
+			Steps: []apidoc.PlanStep{{Phase: apidoc.PhaseRoll, Kind: apidoc.StepNodegroup, Name: "web", Action: apidoc.ActionBlocked}},
+			Blockers: []apidoc.Blocker{{
+				Kind: apidoc.BlockerNotReady, Message: "nodegroup web is DEGRADED, not ACTIVE; it was not rolled",
+				Step: &apidoc.StepID{Phase: apidoc.PhaseRoll, Kind: apidoc.StepNodegroup, Name: "web"},
+			}},
+		},
+		Status:  apidoc.RunBlocked,
+		Results: []apidoc.StepResult{{Phase: apidoc.PhaseRoll, Kind: apidoc.StepNodegroup, Name: "web", Status: apidoc.StepBlocked}},
+	}}}
+	var b strings.Builder
+	if err := RunView(doc).Plain(&b); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"blockers.1.kind\tNotReady", "blockers.1.step\tweb", "blockers.1.message\tnodegroup web is DEGRADED, not ACTIVE; it was not rolled"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("the plain view lacks %q:\n%s", want, b.String())
+		}
+	}
+	if table := strings.Join(RunView(doc).Render(Theme{}, 140), "\n"); !strings.Contains(table, "BLOCKERS") {
+		t.Errorf("the table has no BLOCKERS section:\n%s", table)
 	}
 }

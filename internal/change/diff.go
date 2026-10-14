@@ -20,8 +20,9 @@ const (
 	// KubernetesVersion: the To of a nodegroup step differs. The run
 	// refuses.
 	KubernetesVersion ChangeKind = "KubernetesVersion"
-	// Release: the ToRelease of a step differs. The run asks.
-	Release ChangeKind = "Release"
+	// Image: the ToImage of a step differs: the roll would move to another
+	// AMI than the plan showed. The run asks.
+	Image ChangeKind = "Image"
 	// Version: the To of any other step differs. The run asks.
 	Version ChangeKind = "Version"
 	// SizesChanged: the sizes that a scale step starts from, or the sizes
@@ -82,9 +83,10 @@ type Change struct {
 // It compares everything that a step submits or acts on. The steps are
 // matched by their ref, so a target that is new or gone is Added or
 // Removed. For a step with work in both plans, every field of Step is
-// compared: the action, the reason, From, FromRelease, To, ToRelease,
-// Force, and the sizes before and after. The reason, From, and FromRelease
-// are not compared for a step that now attaches to a change in flight:
+// compared: the action, the reason, From, FromRelease, FromImage, To,
+// ToImage, Force, and the sizes before and after. The reason, From,
+// FromRelease, and FromImage are not compared for a step that now attaches
+// to a change in flight:
 // they are the ones of that change. InFlight is not compared at all: it names the update of someone
 // else on a target that the run leaves alone, so no change of it needs an
 // answer or a notice, and the row of the step says what it is now. It
@@ -202,7 +204,10 @@ func diffStep(old Step, had bool, cur Step) []Change {
 			out = append(out, change(StepDiffers, "%s is now at %s, not %s", name, cur.From, old.From)...)
 		}
 		if old.FromRelease != cur.FromRelease {
-			out = append(out, change(StepDiffers, "%s now runs the AMI release %s, not %s", name, cur.FromRelease, old.FromRelease)...)
+			out = append(out, change(StepDiffers, "%s now runs the AMI release %s, not %s", name, orUnknown(cur.FromRelease), orUnknown(old.FromRelease))...)
+		}
+		if old.FromImage != cur.FromImage {
+			out = append(out, change(StepDiffers, "%s now runs the AMI %s, not %s", name, orUnknown(cur.FromImage), orUnknown(old.FromImage))...)
 		}
 	}
 	if old.To != cur.To {
@@ -212,8 +217,8 @@ func diffStep(old Step, had bool, cur Step) []Change {
 		}
 		out = append(out, change(k, "%s now goes to %s, not %s", name, cur.To, old.To)...)
 	}
-	if old.ToRelease != cur.ToRelease {
-		out = append(out, change(Release, "%s now gets the AMI release %s, not %s", name, cur.ToRelease, old.ToRelease)...)
+	if old.ToImage != cur.ToImage {
+		out = append(out, change(Image, "%s now gets the AMI %s, not %s", name, orUnknown(cur.ToImage), orUnknown(old.ToImage))...)
 	}
 	if old.Force != cur.Force {
 		with := map[bool]string{true: "with", false: "without"}

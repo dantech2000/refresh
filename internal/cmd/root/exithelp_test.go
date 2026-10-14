@@ -35,7 +35,7 @@ func exitHelp(t *testing.T, long string) map[string][]string {
 	return out
 }
 
-// The three standalone commands that change a cluster list their exit
+// The five commands that change a cluster list their exit
 // codes in their help, and say the same case in the same words. Each
 // lists the codes that it can return: 2 is for a dry run alone, and a
 // scale has no check after the change that could give 5.
@@ -44,6 +44,8 @@ func TestChangeCommandsAgreeOnExitCodes(t *testing.T) {
 		"nodegroup update": {"0", "1", "2", "3", "4", "5"},
 		"nodegroup scale":  {"0", "1", "2", "3", "4"},
 		"addon update":     {"0", "1", "2", "3", "4", "5"},
+		"cluster upgrade":  {"0", "1", "2", "3", "4", "5"},
+		"cluster rollback": {"0", "1", "2", "3", "4", "5"},
 	}
 	// shared is the number of lines that every command has for a code.
 	shared := map[string]int{"0": 1, "1": 1, "2": 1, "3": 2, "4": 2}

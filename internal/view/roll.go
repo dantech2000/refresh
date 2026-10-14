@@ -19,14 +19,22 @@ type RollProgress struct {
 	// Watching says that the snapshot comes from a watch. Without it the
 	// panel says that the nodes are polled, so a reader knows that it lags.
 	Watching bool
-	// OldVersion and NewVersion name what the roll moves from and to: a
-	// Kubernetes version, or an AMI release. Either may be "".
+	// OldVersion and NewVersion name what the roll moves from and to, in
+	// the words of the caller, which say what each one is: "Kubernetes
+	// 1.33", "AMI ami-0abc", or "AMI release 1.32.0-20250101". Either may
+	// be "".
 	OldVersion, NewVersion string
+	// Notes are problems that were found beside the roll while the panel
+	// is up, oldest first, such as a node that Auto Scaling could not
+	// launch. The panel shows the last rollNotes of them under the bar.
+	Notes []string
 }
 
 const (
 	// rollEvents is how many events the panel shows.
 	rollEvents = 6
+	// rollNotes is how many notes the panel shows: the newest.
+	rollNotes = 2
 	// rollBarWidth and evictionBarWidth are the cells of the bar of
 	// replaced nodes and of the bar of evicted pods.
 	rollBarWidth     = 16
@@ -46,7 +54,7 @@ var rollSpinner = [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "
 
 // RollPanel returns the lines of the panel of a roll: a header with the
 // nodegroup and the old and new version, a bar of the nodes that are
-// replaced, a table of the nodes with the progress of each drain and the
+// replaced, the newest notes about the roll, a table of the nodes with the progress of each drain and the
 // pressure on each node, the last events, and the Warning events about
 // the nodes.
 //
@@ -85,7 +93,15 @@ func RollPanel(th Theme, p RollProgress, desired int, elapsed time.Duration) []s
 	if !p.Watching {
 		progress += th.Dim(", polled")
 	}
-	out := []string{head, progress, ""}
+	out := []string{head, progress}
+	notes := p.Notes
+	if len(notes) > rollNotes {
+		notes = notes[len(notes)-rollNotes:]
+	}
+	for _, note := range notes {
+		out = append(out, th.Token(Warn, strings.Join(strings.Fields(note), " ")))
+	}
+	out = append(out, "")
 	out = append(out, rollNodeTable(th, snap.Nodes)...)
 
 	out = append(out, "", th.Dim("events"))

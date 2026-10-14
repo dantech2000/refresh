@@ -11,9 +11,9 @@ RUN dev
   status     [OK] Succeeded
 
 RESULTS dev  2
-  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  api   Nodegroup  - Skipped       1.32  1.32                  -                                     -     -                        -                        -
-  web   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+  NAME  KIND       STATUS          FROM                                            TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  api   Nodegroup  - Skipped       1.32                                            1.32                      -                                     -     -                        -                        -
+  web   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
 
 VERIFICATION dev  3
   NAME             OUTCOME    MESSAGE
@@ -44,9 +44,9 @@ RUN prod
   status     [OK] Succeeded
 
 RESULTS prod  2
-  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  api   Nodegroup  - Skipped       1.32  1.32                  -                                     -     -                        -                        -
-  web   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  -
+  NAME  KIND       STATUS          FROM                                            TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  api   Nodegroup  - Skipped       1.32                                            1.32                      -                                     -     -                        -                        -
+  web   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  -
 
 VERIFICATION prod  3
   NAME             OUTCOME    MESSAGE
@@ -77,9 +77,9 @@ RUN staging
   status     [OK] Succeeded
 
 RESULTS staging  2
-  NAME  KIND       STATUS          FROM  TO                    UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  api   Nodegroup  - Skipped       1.32  1.32                  -                                     -     -                        -                        -
-  web   Nodegroup  [OK] Succeeded  1.32  1.32 (ami-latest132)  00000000-0000-4000-8000-000000000003  -     2026-01-01 00:01:00 UTC  2026-01-01 00:01:30 UTC  -
+  NAME  KIND       STATUS          FROM                                            TO                        UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  api   Nodegroup  - Skipped       1.32                                            1.32                      -                                     -     -                        -                        -
+  web   Nodegroup  [OK] Succeeded  1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  00000000-0000-4000-8000-000000000003  -     2026-01-01 00:01:00 UTC  2026-01-01 00:01:30 UTC  -
 
 VERIFICATION staging  3
   NAME             OUTCOME    MESSAGE
@@ -104,13 +104,13 @@ CHECKS staging  9
 --- stderr ---
 PLAN  NodegroupUpdate, dev in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 PLAN  NodegroupUpdate, prod in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 PLAN  NodegroupUpdate, staging in us-east-1
   api  skip, at 1.32 (AlreadyLatest)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 Roll 3 nodegroup(s) in 3 cluster(s) (dev: web; prod: web; staging: web)? [y/N]: [~] dev/web: Started (update 00000000-0000-4000-8000-000000000001)
 dev/web: InProgress
 [OK] dev/web: Succeeded

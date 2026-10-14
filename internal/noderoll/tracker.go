@@ -1,6 +1,9 @@
 package noderoll
 
-import "slices"
+import (
+	"slices"
+	"time"
+)
 
 // EventKind is a step of a node through a roll.
 type EventKind string
@@ -21,6 +24,10 @@ const (
 type Event struct {
 	Node string
 	Kind EventKind
+	// At is when the snapshot that showed the step was taken, on the
+	// clock of the loop that feeds the Tracker. It is zero when that loop
+	// gives no time.
+	At time.Time
 }
 
 // trackerEventCapacity is how many events a Tracker keeps. A panel shows
@@ -43,7 +50,11 @@ func NewTracker() *Tracker { return &Tracker{prev: map[string]Phase{}} }
 // Observe compares s with the snapshot before it and adds an event for
 // each difference. The first snapshot is the starting point and gives no
 // event, so a roll that is already running does not replay its history.
-func (t *Tracker) Observe(s Snapshot) {
+func (t *Tracker) Observe(s Snapshot) { t.ObserveAt(s, time.Time{}) }
+
+// ObserveAt is Observe with the time of the snapshot, which each event
+// that it adds carries.
+func (t *Tracker) ObserveAt(s Snapshot, at time.Time) {
 	cur := make(map[string]Phase, len(s.Nodes))
 	for _, n := range s.Nodes {
 		cur[n.Name] = n.Phase
@@ -60,7 +71,7 @@ func (t *Tracker) Observe(s Snapshot) {
 			continue
 		}
 		if k := eventForPhase(n.Phase); k != "" {
-			t.add(Event{Node: n.Name, Kind: k})
+			t.add(Event{Node: n.Name, Kind: k, At: at})
 		}
 	}
 	// A node that is gone, by name: the order of a map is random.
@@ -72,7 +83,7 @@ func (t *Tracker) Observe(s Snapshot) {
 	}
 	slices.Sort(gone)
 	for _, name := range gone {
-		t.add(Event{Node: name, Kind: EvtTerminated})
+		t.add(Event{Node: name, Kind: EvtTerminated, At: at})
 	}
 	t.prev = cur
 }

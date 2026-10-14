@@ -161,9 +161,10 @@ func rollTargets(snap *fleet.Snapshot, req RollRequest) ([]string, error) {
 // The step pins the Kubernetes version of the nodegroup itself: From and
 // To are both that version, so a roll never moves a nodegroup to another
 // minor. FromRelease is the AMI release version that the nodegroup runs,
-// for the fresh read before the submit. ToRelease is the latest
-// recommended AMI, as the ID that the snapshot read. Force is --force. The
-// three are set only on a step that submits.
+// for the fresh read before the submit. FromImage is the ID of the AMI
+// that its nodes run, and ToImage the ID of the latest recommended AMI,
+// both as the snapshot read them. Force is --force. The four are set only
+// on a step that submits.
 //
 // Two rows come after the table of DecideAMIUpdate, for a step that it
 // would submit. A nodegroup with no Kubernetes version cannot be pinned:
@@ -201,7 +202,7 @@ func (cp *ClusterPlan) rollStep(phase PhaseRef, name string, req RollRequest) St
 		step.Force = req.Policy.Force
 		step.FromRelease = n.ReleaseVersion
 		if n.AMI.State == fleet.Collected {
-			step.ToRelease = n.AMI.Latest
+			step.FromImage, step.ToImage = n.AMI.Current, n.AMI.Latest
 		}
 	}
 	return step

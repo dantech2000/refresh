@@ -127,12 +127,13 @@ func TestRun_EventOrder(t *testing.T) {
 		"StepChanged vpc-cni Started",
 		"UpdateProgress vpc-cni InProgress",
 		"UpdateProgress vpc-cni Successful",
-		"VerifyReport vpc-cni Pass",
+		// The outcome of a step comes before its verification.
 		"StepChanged vpc-cni Succeeded",
+		"VerifyReport vpc-cni Pass",
 		"StepChanged coredns Started",
 		"UpdateProgress coredns Successful",
-		"VerifyReport coredns Pass",
 		"StepChanged coredns Succeeded",
+		"VerifyReport coredns Pass",
 		"StepChanged kube-proxy Skipped",
 		"PhaseEnded prod/Addons",
 	}

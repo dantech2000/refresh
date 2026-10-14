@@ -23,9 +23,6 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	res := StepResult{Ref: s.Ref}
 	resource := s.Ref.Resource()
 	clients := r.d.AWS.Clients(cp.Region)
-	if s.busy() {
-		return cp.busyResult(s)
-	}
 	req, _ := r.req.(ScaleRequest)
 	// The read is fresh: after the gate.
 	fresh, err := describe(r.readCtx, clients, resource)

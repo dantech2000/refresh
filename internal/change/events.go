@@ -27,10 +27,15 @@ type Hooks struct {
 	// change, and so is a run that would need an answer about health
 	// warnings or a changed plan.
 	Ask func(ctx context.Context, q Question) (yes bool, err error)
-	// Checkpoint is called before each cluster of a fleet after the first.
-	// It may block: that is a pause. It returns when the run may go on or
-	// must stop. Nil means go on.
-	Checkpoint func(ctx context.Context, next PhaseRef) (Checkpoint, error)
+	// Checkpoint is called before work that the run can still leave
+	// undone: before every phase of an upgrade or a rollback that has
+	// work, the first included, after consent and before the first
+	// submit; before each step of such a phase after its first; and
+	// before every cluster of a fleet, the first included. next names
+	// what comes: a zero Kind means the phase itself. It may block: that
+	// is a pause, and the budgets of the run do not run in it. It returns
+	// when the run may go on or must stop. Nil means go on.
+	Checkpoint func(ctx context.Context, next StepRef) (Checkpoint, error)
 }
 
 // Checkpoint is the answer of the checkpoint hook.
@@ -38,8 +43,10 @@ type Checkpoint struct {
 	// Stop ends the run here. Nothing more is submitted, and the steps
 	// that were not reached are NotAttempted.
 	Stop bool
-	// Waited says that time passed in the hook. A fleet reads each
-	// cluster again at its turn whatever the value.
+	// Waited says that time passed in the hook, so what the run read
+	// before it is old. The run reads again after every checkpoint,
+	// whatever the value: a phase and a step of an engine begin with a
+	// read, and a cluster of a fleet is planned again at its turn.
 	Waited bool
 }
 
@@ -53,7 +60,7 @@ const (
 	PlanReady EventKind = "PlanReady"
 	// GateReport: Checks, Verdict. The health gate of a plan ran.
 	GateReport EventKind = "GateReport"
-	// PhaseStarted, PhaseEnded: Phase.
+	// PhaseStarted: Phase. PhaseEnded: Phase, Skipped.
 	PhaseStarted EventKind = "PhaseStarted"
 	PhaseEnded   EventKind = "PhaseEnded"
 	// StepChanged: Step, Result. An update was accepted, or the step
@@ -68,6 +75,9 @@ const (
 	// NodeProgress: Step, Nodes. The nodes of a roll, from the observer
 	// beside its wait.
 	NodeProgress EventKind = "NodeProgress"
+	// Progress: Text. What the run does while nothing else reports, such
+	// as the wait for an insights refresh. It is not a warning.
+	Progress EventKind = "Progress"
 )
 
 // Event is one thing that happened in a run.
@@ -81,6 +91,9 @@ type Event struct {
 	Verdict *health.Verdict
 	Checks  []health.Result
 	Result  *StepResult
+	// Skipped says that a phase that ended had nothing to do: no step of
+	// it was run.
+	Skipped bool
 	Text    string
 	Update  *UpdateProgress
 	Nodes   *NodeView
@@ -90,7 +103,8 @@ type Event struct {
 type NodeView struct {
 	Nodegroup string
 	Snapshot  noderoll.Snapshot
-	// Recent are the last events of the roll, oldest first.
+	// Recent are the events of the roll that the tracker keeps, oldest
+	// first, each with its time. A panel shows the last few.
 	Recent []noderoll.Event
 	// Watching says that the snapshot comes from a watch, and not from a
 	// list for each snapshot.
@@ -113,6 +127,10 @@ const (
 	GateWarnings QuestionKind = "GateWarnings"
 	// PlanChanged: the plan differs from the one that was confirmed.
 	PlanChanged QuestionKind = "PlanChanged"
+	// ConfirmPhase: an upgrade with ConfirmPhases asks it before each
+	// phase that has work. The one before the first phase also confirms
+	// the start, and accepts the warnings of the gate that it names.
+	ConfirmPhase QuestionKind = "ConfirmPhase"
 )
 
 // Question is what a run asks a person. The answer is yes or no.

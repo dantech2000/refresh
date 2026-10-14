@@ -12,6 +12,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/fanout"
 )
 
 // DefaultPollInterval is the pause between two polls when the caller
@@ -213,27 +214,79 @@ func WaitUpdate(ctx context.Context, c awsx.PollClients, r Resource, updateID st
 	if updateID == "" {
 		return &UnobservedError{Resource: r, Err: errors.New("EKS returned no update ID")}
 	}
-	p := newUpdatePoll(r, updateID)
-	for {
-		if !o.pause(ctx) {
-			return p.ended(ctx)
+	var result error
+	waitUpdates(ctx, c, []*updatePoll{newUpdatePoll(r, updateID)}, o, updateHooks{
+		progress: func(_ int, p UpdateProgress) { o.progress(p) },
+		settled:  func(_ int, err error) { result = err },
+	})
+	return result
+}
+
+// updateHooks are what a wait for several updates reports. i is the index
+// of the update in the list of the wait.
+type updateHooks struct {
+	// progress receives each poll that has something to show.
+	progress func(i int, p UpdateProgress)
+	// settled is called once for each update, with the result of its
+	// wait: the one that WaitUpdate documents.
+	settled func(i int, err error)
+	// tick, when set, is called after the polls of each round.
+	tick func()
+}
+
+// waitUpdates is the one wait loop for EKS updates: WaitUpdate follows one
+// update with it, and the wait of a batch follows several. Each round is
+// one pause and then one poll of every update that has not ended, all at
+// once, with the answers reported in the order of polls.
+//
+// An update that ends does not end the wait for the others, and a poll
+// error that another poll will not fix settles its own update alone. When
+// ctx ends, or the budget of o runs out, each update that has not ended is
+// settled with the error of ctx. The answer of the last poll counts: an
+// update that it shows as finished is finished.
+func waitUpdates(ctx context.Context, c awsx.PollClients, polls []*updatePoll, o WaitOptions, h updateHooks) {
+	type answer struct {
+		progress     UpdateProgress
+		report, done bool
+		err          error
+	}
+	open := make([]int, len(polls))
+	for i := range polls {
+		open[i] = i
+	}
+	for len(open) > 0 && o.pause(ctx) {
+		answers := fanout.ForEach(ctx, open, len(open), func(ctx context.Context, i int) answer {
+			var a answer
+			a.progress, a.report, a.done, a.err = polls[i].poll(ctx, c)
+			return a
+		})
+		if h.tick != nil {
+			h.tick()
 		}
-		progress, report, done, err := p.poll(ctx, c)
-		if report {
-			o.progress(progress)
+		var still []int
+		for n, i := range open {
+			a := answers[n]
+			if a.report {
+				h.progress(i, a.progress)
+			}
+			if a.done {
+				h.settled(i, a.err)
+				continue
+			}
+			still = append(still, i)
 		}
-		if done {
-			return err
+		open = still
+		if len(open) > 0 && o.over(ctx) {
+			break
 		}
-		if o.over(ctx) {
-			return p.ended(ctx)
-		}
+	}
+	for _, i := range open {
+		h.settled(i, polls[i].ended(ctx))
 	}
 }
 
-// updatePoll follows one update, one poll at a time. WaitUpdate polls
-// one, and the wait of a batch polls several on one ticker, so the rules
-// of a poll are in one place.
+// updatePoll follows one update, one poll at a time: the rules of a poll.
+// waitUpdates is the loop around it.
 type updatePoll struct {
 	r  Resource
 	id string

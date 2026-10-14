@@ -1,0 +1,74 @@
+exit: 0
+error: 
+--- stdout ---
+Run   [OK] Succeeded   ClusterUpgrade
+
+RUN
+  operation       ClusterUpgrade
+  cluster         prod
+  region          us-east-1
+  version         1.33
+  target version  1.33
+  status          [OK] Succeeded
+
+RESULTS  5
+  NAME                KIND          STATUS          FROM                TO                  UPDATE                                NOTE      STARTED                  FINISHED                 FAILURE
+  control-plane@1.33  ControlPlane  - Skipped       1.33                1.33                -                                     -         -                        -                        -
+  api@1.33            Nodegroup     [OK] Succeeded  1.32                1.33                -                                     attached  2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+  web@1.33            Nodegroup     [OK] Succeeded  1.32                1.33                00000000-0000-4000-8000-000000000002  -         2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  -
+  vpc-cni@1.33        Addon         - Skipped       v1.20.0-eksbuild.1  v1.20.0-eksbuild.1  -                                     -         -                        -                        -
+  kube-proxy@1.33     Addon         [OK] Succeeded  v1.32.0-eksbuild.1  v1.33.0-eksbuild.1  00000000-0000-4000-8000-000000000003  -         2026-01-01 00:01:00 UTC  2026-01-01 00:01:30 UTC  -
+
+VERIFICATION  7
+  NAME                         OUTCOME    MESSAGE
+  NodegroupActive/api@1.33     [OK] Pass  api ACTIVE
+  NodesReady/api@1.33          Skipped    no baseline of the nodes before the roll
+  NewPendingPods/api@1.33      Skipped    no baseline of the Pending pods before the roll
+  NodegroupActive/web@1.33     [OK] Pass  web ACTIVE
+  NodesReady/web@1.33          [OK] Pass  2 new nodes ready
+  NewPendingPods/web@1.33      [OK] Pass  no new Pending pods
+  AddonHealth/kube-proxy@1.33  [OK] Pass  kube-proxy is ACTIVE at v1.33.0-eksbuild.1
+
+HEALTH GATE
+  decision  [OK] Go
+  reasons   Nodes: 4/6 nodes ready; issues: api-u1-1, api-u1-2
+  accepted  Nodes: 4/6 nodes ready; issues: api-u1-1, api-u1-2
+
+CHECKS  9
+  NAME           OUTCOME    MESSAGE
+  Nodes          [!] Warn   4/6 nodes ready; issues: api-u1-1, api-u1-2
+  Capacity       [OK] Pass  CPU mean 32%, peak 32%, 6 instances
+  ControlPlane   Skipped    control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+  Workloads      [OK] Pass  1/1 pods running in the system namespaces
+  DrainBlockers  [OK] Pass  no PodDisruptionBudget blocks a drain
+  PDBCoverage    [OK] Pass  every deployment has a PodDisruptionBudget (2)
+  Utilization    [OK] Pass  CPU 13%, memory 17% in use
+  Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
+  Kubernetes     [OK] Pass  Kubernetes API reachable
+--- stderr ---
+PLAN  ClusterUpgrade, prod in us-east-1
+  control-plane@1.33  skip, at 1.33 (AlreadyAtTarget)
+  api@1.33            wait for the update to 1.33 that is running (InFlight)
+  web@1.33            update 1.32 to 1.33 (VersionBehind)
+  vpc-cni@1.33        skip, at v1.20.0-eksbuild.1 (AlreadyAtTarget)
+  kube-proxy@1.33     update v1.32.0-eksbuild.1 to v1.33.0-eksbuild.1 (VersionBehind)
+  [!]  Nodes          4/6 nodes ready; issues: api-u1-1, api-u1-2
+  [OK] Capacity       CPU mean 32%, peak 32%, 6 instances
+       ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+  [OK] Workloads      1/1 pods running in the system namespaces
+  [OK] DrainBlockers  no PodDisruptionBudget blocks a drain
+  [OK] PDBCoverage    every deployment has a PodDisruptionBudget (2)
+  [OK] Utilization    CPU 13%, memory 17% in use
+  [OK] Quotas         31% of the vCPU quota in use (40 of 128)
+  [OK] Kubernetes     Kubernetes API reachable
+phase: nodegroups, 1.33
+warning: nodegroup api is UPDATING already; waiting for that update
+api: UPDATING
+[OK] api@1.33: Succeeded
+[~] web@1.33: Started (update 00000000-0000-4000-8000-000000000002)
+web: InProgress
+[OK] web@1.33: Succeeded
+phase: add-ons, 1.33
+[~] kube-proxy@1.33: Started (update 00000000-0000-4000-8000-000000000003)
+kube-proxy: InProgress
+[OK] kube-proxy@1.33: Succeeded

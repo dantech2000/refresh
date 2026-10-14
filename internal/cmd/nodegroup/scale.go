@@ -110,7 +110,7 @@ refresh context. It never comes from the kubeconfig.
 			return o.run(cmd.Context())
 		},
 	}
-	cmdutil.AddClusterFlag(cmd, &o.cluster)
+	cmdutil.AddChangeClusterFlag(cmd, &o.cluster)
 	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
 	cmd.Flags().Int32Var(&o.desired, "desired", 0, "Desired number of nodes")
 	cmd.Flags().Int32Var(&o.min, "min", 0, "Minimum number of nodes")

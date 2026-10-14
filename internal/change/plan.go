@@ -203,6 +203,7 @@ const (
 	SkippedByFlag   = apidoc.ReasonSkippedByFlag
 	OutOfScope      = apidoc.ReasonOutOfScope
 	NoChange        = apidoc.ReasonNoChange
+	VersionAhead    = apidoc.ReasonVersionAhead
 )
 
 // Sizes are the scaling sizes of a nodegroup. All three were read: a
@@ -230,11 +231,18 @@ type Step struct {
 	// roll and the control plane, the add-on version for an add-on.
 	From, To string
 	// FromRelease is the AMI release version that the nodegroup of a roll
-	// ran when the plan read it. The fresh read before the submit compares
-	// with it: a nodegroup on another release was rolled elsewhere since
-	// the plan. ToRelease is the AMI release that a roll expects.
-	FromRelease, ToRelease string
-	Sizes                  *ScaleSizes
+	// ran when the plan read it, such as "1.32.0-20250101". The fresh read
+	// before the submit compares with it: a nodegroup on another release
+	// was rolled elsewhere since the plan.
+	FromRelease string
+	// FromImage and ToImage are AMI IDs, such as "ami-0abc": the image
+	// that the nodes of a roll ran when the plan read them, and the latest
+	// recommended image, which the roll moves to. An image ID is not a
+	// release version: EKS names the release of a nodegroup, and SSM names
+	// the recommended image. The release version of the recommended image
+	// is not read, so there is no ToRelease.
+	FromImage, ToImage string
+	Sizes              *ScaleSizes
 	// Force is sent with the request.
 	Force bool
 	// InFlight is the type of the update that makes a busy target busy,

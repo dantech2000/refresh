@@ -75,7 +75,7 @@ same value. A `before the prompt` obligation needs evidence from before the
 prompt. A `carried` obligation is met by carried or fresh evidence. A fresh
 obligation needs fresh evidence.
 
-The baseline rule: the verification baseline (the whole-cluster Pending-pod list before a roll) is owed only when a mutation follows it in the new trace, so a run that both binaries refuse before any mutation owes none, and still owes every gate read.
+The baseline rule drops one fact, and only one: `pods <cluster>: pending`, the answer of the Pending-pod list over the whole cluster that a roll takes as its verification baseline. It is dropped only from the decision evidence of a run that both binaries refused before any mutation, and that followed no update. Every other fact of such a run is still owed, the node list and every gate read included.
 
 What the new binary read in addition is not a difference. An obligation that
 is not met reads like this:
@@ -113,6 +113,22 @@ A scenario changes the world at a point that both binaries reach: before or
 after a named mutating request, when an update gets a status, or after a
 prompt. It never counts reads. `Scenario.Holds` keeps a request unanswered
 until another request arrived or was answered.
+
+A signal is sent when the Nth request that a rule accepts arrives. A count
+of reads is how one binary happens to be written, so a signal counts
+something that both binaries do the same number of times: the polls of an
+update (`interruptWait`), or, with `Signal.AfterPrompt`, the requests after
+a prompt was answered (`interruptAfterPrompt`).
+
+## Time
+
+The clock of the world is virtual and moves with the polls of a binary.
+The clock of a binary is the real one. A wait that a binary measures on
+its own clock takes that long: no request can shorten it. One scenario has
+such a wait, `nodegroup-update-verify-node-not-ready`: the new binary
+waits 2 minutes for a new node to be Ready. `Scenario.RealTime` gives it a
+longer limit for either binary. No command line gets a flag that the other
+does not have.
 
 ## Commands
 

@@ -16,8 +16,8 @@ steps.api.note	-
 steps.web.kind	Nodegroup
 steps.web.action	Submit
 steps.web.reason	AMIOutdated
-steps.web.from	1.32
-steps.web.to	1.32 (ami-latest132)
+steps.web.from	1.32 (release 1.32.0-20250101, AMI ami-old32x)
+steps.web.to	1.32 (AMI ami-latest132)
 steps.web.note	-
 health_gate.decision	Go
 health_gate.reasons	Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run

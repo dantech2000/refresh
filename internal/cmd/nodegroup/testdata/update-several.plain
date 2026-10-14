@@ -9,8 +9,8 @@ run.version	1.32
 run.status	Succeeded
 results.api.kind	Nodegroup
 results.api.status	Succeeded
-results.api.from	1.32
-results.api.to	1.32 (ami-latest132)
+results.api.from	1.32 (release 1.32.0-20250101, AMI ami-old32x)
+results.api.to	1.32 (AMI ami-latest132)
 results.api.update	00000000-0000-4000-8000-000000000001
 results.api.note	-
 results.api.started	2026-01-01 00:00:00 UTC
@@ -18,8 +18,8 @@ results.api.finished	2026-01-01 00:00:30 UTC
 results.api.failure	-
 results.web.kind	Nodegroup
 results.web.status	Succeeded
-results.web.from	1.32
-results.web.to	1.32 (ami-latest132)
+results.web.from	1.32 (release 1.32.0-20250101, AMI ami-old32x)
+results.web.to	1.32 (AMI ami-latest132)
 results.web.update	00000000-0000-4000-8000-000000000002
 results.web.note	-
 results.web.started	2026-01-01 00:00:00 UTC
@@ -52,8 +52,8 @@ checks.Kubernetes.outcome	Pass
 checks.Kubernetes.message	Kubernetes API reachable
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1
-  api  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  api  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 [~] api: Started (update 00000000-0000-4000-8000-000000000001)
 [~] web: Started (update 00000000-0000-4000-8000-000000000002)
 api: InProgress

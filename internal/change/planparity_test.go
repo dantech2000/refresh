@@ -343,11 +343,13 @@ func TestPlanRollback_ParityTraces(t *testing.T) {
 	attach := parityScenario{edits: edits(upgraded, rolledBackNodes, updatingTo("VersionRollback", "1.32")), controlPlane: Attach}
 	silent := parityScenario{noDocument: true}
 	scenarios := map[string]parityScenario{
-		"yes": base, "dry-run": base, "deadline": base, "failed": base, "interrupt": base, "interrupt-before-start": base,
+		"yes": base, "dry-run": base, "deadline": base, "failed": base, "interrupt": base,
 		"kube-yes": base, "lost-response": base, "nodegroup-failed": base, "pdb-blocked": base,
 		"pdb-blocks-second-nodegroup": base, "pdb-forced": base, "pdbs-unreadable": base,
 		"pdbs-unreadable-forced": base, "throttled-read": base,
 		"prompt-yes": silent, "prompt-no": silent, "prompt-interrupt": silent, "unattended": silent,
+		// It runs on a terminal: the signal lands after the answer.
+		"interrupt-before-start": silent,
 		// A cluster with no in-place upgrade in its history.
 		"blocked": {},
 		// The upgrade was ten days ago, and EKS allows a rollback for

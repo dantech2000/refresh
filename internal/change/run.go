@@ -45,6 +45,18 @@ const maxQuestions = 2
 // regate.
 func Run(ctx context.Context, d Deps, req Request, h Hooks) (Result, error) {
 	r := &runner{ctx: ctx, d: d, req: req, common: req.base(), hooks: h}
+	if _, ok := req.(UpgradeRequest); ok {
+		r.refresh = &insightsRefresher{
+			d: d, poll: r.common.Limits.Poll,
+			progress: func(text string) { r.emit(Event{Kind: Progress, Text: text}) },
+			// The refresh has its own limit, and the read budget does not
+			// run while it waits.
+			hold: func() func() {
+				r.read.pause()
+				return r.read.start
+			},
+		}
+	}
 	if expect := r.common.Expect; expect != nil {
 		if err := sameRequest(expect, req); err != nil {
 			return Result{Status: Failed, Err: err, ended: ending{code: exitcode.Failure}}, err
@@ -54,7 +66,12 @@ func Run(ctx context.Context, d Deps, req Request, h Hooks) (Result, error) {
 	if p == nil {
 		return res, err
 	}
-	defer r.read.stop()
+	defer func() {
+		r.read.stop()
+		if r.runWait != nil {
+			r.runWait.stop()
+		}
+	}()
 	return r.execute(p), r.hookErr
 }
 
@@ -98,6 +115,25 @@ type runner struct {
 	// hook in the second case, which Run returns.
 	stop    *stop
 	hookErr error
+
+	// refresh starts the insights refreshes of an upgrade. It is nil for
+	// every other kind.
+	refresh *insightsRefresher
+	// runWaitCtx and runWait are the context and the wait budget of an
+	// upgrade or a rollback: one --wait-timeout for the whole run, from
+	// its first submit or attachment on. They are nil before that, and
+	// for every other kind, whose steps each have their own budget.
+	runWaitCtx context.Context //nolint:containedctx // see ctx
+	runWait    *budget
+	// unverified says that the check after the step that runs could not
+	// read what it needs. A run that is a sequence stops there.
+	unverified bool
+	// afterStep are the events that the step that runs holds back until
+	// its result is reported: see stepEnded.
+	afterStep []Event
+	// confirmedPhase is the phase that the start question of an upgrade
+	// with ConfirmPhases named. Its own question is answered already.
+	confirmedPhase *PhaseRef
 }
 
 // stop is how a run ended that a question during the run stopped.
@@ -128,8 +164,109 @@ func (r *runner) newRead(limit time.Duration) {
 	if r.read != nil {
 		r.read.stop()
 	}
-	r.readCtx, r.read = r.d.budget(r.ctx, limit, ErrReadTimeout)
+	// Once the wait budget of an upgrade or a rollback runs, it bounds
+	// the reads of the later phases too.
+	parent := r.ctx
+	if r.runWaitCtx != nil {
+		parent = r.runWaitCtx
+	}
+	r.readCtx, r.read = r.d.budget(parent, limit, ErrReadTimeout)
 	r.read.start()
+}
+
+// holdBudgets stops the clocks of the run while a person answers a
+// question or a checkpoint holds the run, and returns the function that
+// runs them again.
+func (r *runner) holdBudgets() (release func()) {
+	r.read.pause()
+	wait := r.runWait
+	held := wait != nil && wait.running
+	if held {
+		wait.pause()
+	}
+	return func() {
+		r.read.start()
+		if held {
+			wait.start()
+		}
+	}
+}
+
+// checkpoint calls the checkpoint hook before next, and reports whether
+// the run may go on. what names next in a message. A hook that says stop
+// ends the run as Stopped, and a hook that fails ends it as Failed: the
+// steps that were not reached are NotAttempted. A nil hook says go on.
+func (r *runner) checkpoint(next StepRef, what string) bool {
+	if r.hooks.Checkpoint == nil {
+		return true
+	}
+	release := r.holdBudgets()
+	answer, err := r.hooks.Checkpoint(r.ctx, next)
+	release()
+	switch {
+	case err != nil && r.ctx.Err() != nil:
+		r.recordInterrupt()
+		return false
+	case err != nil:
+		r.stop = &stop{status: Failed, err: fmt.Errorf("the checkpoint before %s failed: %w; nothing more was changed", what, err)}
+		r.hookErr = err
+		return false
+	case answer.Stop:
+		r.stop = &stop{status: Stopped, err: fmt.Errorf("stopped before %s; nothing more was changed", what)}
+		return false
+	}
+	return true
+}
+
+// answer is how a question to a person ended.
+type answer int
+
+const (
+	// answeredYes: the person said yes.
+	answeredYes answer = iota
+	// answeredNo: the person said no.
+	answeredNo
+	// askInterrupted: the run ended before an answer came.
+	askInterrupted
+	// askFailed: the question could not be asked, or its answer not read.
+	askFailed
+)
+
+// ask asks q through the hook and says how that ended, with the error of
+// the hook for the two endings that have one. It is the one reading of
+// what Ask returns: every question of a run goes through it. The caller
+// stops the budgets, and decides what each ending does to the run.
+func (r *runner) ask(q Question) (answer, error) {
+	yes, err := r.hooks.Ask(r.ctx, q)
+	switch {
+	case err != nil && r.ctx.Err() != nil:
+		return askInterrupted, err
+	case err != nil:
+		return askFailed, err
+	case !yes:
+		return answeredNo, nil
+	}
+	return answeredYes, nil
+}
+
+// askDuringRun asks a question that comes up after the run started: about
+// a plan of a cluster of a fleet that changed, or about health that got
+// worse. The budgets do not run while a person answers. A no ends the run
+// as Declined, and a question that could not be asked ends it as Failed,
+// with the error of the hook as the error of Run: either way nothing more
+// is submitted. The caller handles an interrupt, and goes on after a yes.
+func (r *runner) askDuringRun(q Question) (answer, error) {
+	release := r.holdBudgets()
+	a, err := r.ask(q)
+	release()
+	switch a {
+	case askFailed:
+		r.stop = &stop{status: Failed, err: fmt.Errorf("could not ask %q: %w; nothing more was changed", q.Text, err)}
+		r.hookErr = err
+	case answeredNo:
+		r.stop = &stop{status: Declined, err: errors.New("declined; nothing more was changed")}
+	}
+	return a, err
 }
 
 // planLimit returns the read budget of one plan of the request.
@@ -152,11 +289,25 @@ func (r *runner) prepare() (*Plan, Result, error) {
 	asked := 0
 	for {
 		r.newRead(r.planLimit())
-		p, err := plan(r.readCtx, r.d, r.req)
+		p, err := plan(r.readCtx, r.d, r.req, r.refresh)
 		if err != nil {
 			res, err := r.unplanned(prev, err)
 			r.read.stop()
 			return nil, res, err
+		}
+		// A rollback that would now return to another version than the
+		// one that was confirmed is refused, whatever the answer and the
+		// flags: the nodes and the add-ons would go to a version that
+		// nobody confirmed.
+		if prev != nil {
+			if changed := RollbackTargetChanged(prev, p); changed != nil {
+				// A refusal is a result of the run, and not an error of Run.
+				r.announce(p)
+				res := r.unstarted(p, Refused, ending{code: exitcode.Blocked})
+				res.Err = changed
+				r.read.stop()
+				return nil, res, nil //nolint:nilerr // see above
+			}
 		}
 		var diff []Change
 		if prev != nil {
@@ -176,19 +327,23 @@ func (r *runner) prepare() (*Plan, Result, error) {
 		}
 		// The budgets do not run while a person answers.
 		r.read.stop()
-		yes, err := r.hooks.Ask(r.ctx, *q)
-		switch {
-		case err != nil && r.ctx.Err() != nil:
+		switch a, err := r.ask(*q); a {
+		case askInterrupted:
 			// An interrupt is a result of the run, not an error of Run.
-			return nil, r.stopped(p, "before anything was changed"), nil //nolint:nilerr // see above
-		case err != nil:
+			return nil, r.stopped(p, "before anything was changed"), nil
+		case askFailed:
 			res := r.unstarted(p, Failed, ending{code: exitcode.Failure})
 			res.Err = fmt.Errorf("could not ask %q: %w; nothing was changed", q.Text, err)
 			return nil, res, err
-		case !yes:
+		case answeredNo:
 			res := r.unstarted(p, Declined, ending{code: exitcode.Failure})
 			res.Err = errors.New("declined; nothing was changed")
 			return nil, res, nil
+		case answeredYes:
+			if q.Kind == ConfirmPhase {
+				phase := q.Step.Phase
+				r.confirmedPhase = &phase
+			}
 		}
 		prev, confirmed = p, true
 		asked++
@@ -308,6 +463,9 @@ func (r *runner) question(p *Plan, diff []Change, confirmed bool) *Question {
 	}
 	if !confirmed && p.fleet() {
 		return fleetQuestion(p)
+	}
+	if !confirmed && !p.Kind.independent() {
+		return r.engineQuestion(p)
 	}
 	if !confirmed {
 		for i := range p.Clusters {
@@ -472,7 +630,7 @@ func (r *runner) unplanned(prev *Plan, err error) (Result, error) {
 		return Result{Status: Failed, Plan: prev, Err: err, ended: ending{code: exitcode.Failure}}, err
 	}
 	res := Result{Status: Interrupted, Plan: prev, ended: ending{interrupted: true}}
-	res.Err = fmt.Errorf("interrupted before anything was changed: %w", context.Canceled)
+	res.Err = interruptError("interrupted before anything was changed")
 	if timedOut(r.readCtx) {
 		// Nothing was read, so there is no document to call incomplete.
 		res.Status, res.ended = Failed, ending{code: exitcode.Failure}
@@ -488,11 +646,22 @@ func (r *runner) unplanned(prev *Plan, err error) (Result, error) {
 	return res, nil
 }
 
+// interruptError is the message of a run that the user interrupted. It
+// says "interrupted" in its own words, and is still the cancelled context
+// for errors.Is: the words of the runtime, "context canceled", are not
+// part of what a person reads.
+type interruptError string
+
+func (e interruptError) Error() string { return string(e) }
+
+// Is reports that an interrupt is the cancelled context.
+func (interruptError) Is(target error) bool { return target == context.Canceled }
+
 // stopped returns the result of a run that an interrupt ended before it
 // submitted anything.
 func (r *runner) stopped(p *Plan, when string) Result {
 	res := r.unstarted(p, Interrupted, ending{interrupted: true})
-	res.Err = fmt.Errorf("interrupted %s: %w", when, context.Canceled)
+	res.Err = interruptError("interrupted " + when)
 	if timedOut(r.ctx) {
 		res.Status, res.ended = Failed, ending{code: exitcode.Failure}
 		res.Err = fmt.Errorf("timed out %s", when)
@@ -530,7 +699,7 @@ func notAttempted(p *Plan) []ClusterResult {
 // that is left out, or that fails, does not stop the next one. A run that
 // was halted does: the steps of every later cluster are NotAttempted.
 func (r *runner) execute(p *Plan) Result {
-	res := Result{Plan: p}
+	res := Result{Plan: p, ended: ending{executed: true}}
 	fleet := p.fleet()
 	for i := range p.Clusters {
 		outcome, why := turnRun, ""
@@ -540,14 +709,16 @@ func (r *runner) execute(p *Plan) Result {
 		cp := &p.Clusters[i]
 		cr := ClusterResult{Target: cp.Target}
 		r.accepted, r.waited = slices.Clone(cp.Checks), false
-		switch outcome {
-		case turnRun:
+		switch {
+		case outcome == turnRun && !p.Kind.independent():
+			cr.Steps = r.runEngine(cp)
+		case outcome == turnRun:
 			for _, ph := range cp.Phases {
 				r.emit(Event{Kind: PhaseStarted, Phase: ph.Ref})
 				cr.Steps = append(cr.Steps, r.runPhase(cp, ph)...)
 				r.emit(Event{Kind: PhaseEnded, Phase: ph.Ref})
 			}
-		case turnBlocked:
+		case outcome == turnBlocked:
 			cr.Steps = r.blockedResults(cp, why)
 			for i := range cr.Steps {
 				r.emit(Event{Kind: StepChanged, Phase: cr.Steps[i].Ref.Phase, Step: cr.Steps[i].Ref, Result: &cr.Steps[i]})
@@ -568,6 +739,9 @@ func (r *runner) execute(p *Plan) Result {
 	res.ended.interrupted = r.interrupted || res.interruptedStep()
 	res.Status = statusOf(p.Kind, allSteps(res.Clusters), res.Failures)
 	res.Err = summary(res)
+	if hint := r.resumeHint(res); hint != "" && res.Err != nil {
+		res.Err = fmt.Errorf("%w; %s", res.Err, hint)
+	}
 	switch {
 	case res.ended.interrupted:
 		res.Status = Interrupted
@@ -639,12 +813,26 @@ func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 		if !halted {
 			r.steps, r.remaining = ph.Steps, ph.Steps[i:]
 			res = r.runStep(cp, s)
-			r.emit(Event{Kind: StepChanged, Phase: ph.Ref, Step: s.Ref, Result: &res})
+			r.stepEnded(ph.Ref, &res)
 		}
 		results = append(results, res)
 		halted = halted || r.stop != nil
 	}
 	return results
+}
+
+// stepEnded reports the result of a step that ran alone, and then what
+// the step held back for after it: the check of its confirmation. The
+// events are in the order of what happened: the update ended, and then it
+// was checked. A front end that prints both shows the outcome of a step
+// above the verification of that step.
+func (r *runner) stepEnded(ph PhaseRef, res *StepResult) {
+	r.emit(Event{Kind: StepChanged, Phase: ph, Step: res.Ref, Result: res})
+	held := r.afterStep
+	r.afterStep = nil
+	for _, e := range held {
+		r.emit(e)
+	}
 }
 
 // outOfTime reports whether the run can start no further step: the user
@@ -670,11 +858,8 @@ func (r *runner) outOfTime(cp *ClusterPlan) bool {
 // runStep runs one step. A new kind of step adds a case here and a file
 // with its submit, its wait, and its confirmation.
 func (r *runner) runStep(cp *ClusterPlan, s Step) StepResult {
-	switch {
-	case s.Action == Blocked:
-		return StepResult{Ref: s.Ref, Status: StepBlocked}
-	case !s.work() && !s.busy():
-		return StepResult{Ref: s.Ref, Status: StepSkipped}
+	if res, ok := cp.decided(s); ok {
+		return res
 	}
 	switch s.Ref.Kind {
 	case StepAddon:
@@ -688,12 +873,34 @@ func (r *runner) runStep(cp *ClusterPlan, s Step) StepResult {
 
 // waitBudget starts the wait budget of one step: --wait-timeout from its
 // submit or its attachment on. Its timer has the grace of the last poll.
+//
+// An upgrade and a rollback have one wait budget for the whole run: it
+// starts at the first submit or attachment, and every later call returns
+// the same budget. It bounds the waits, the reads and the submits of the
+// later phases, and the verification.
 func (r *runner) waitBudget() (context.Context, *budget) {
+	if !r.req.kind().independent() {
+		if r.runWait == nil {
+			r.runWaitCtx, r.runWait = r.d.budget(r.ctx, r.common.Limits.Wait, ErrWaitTimeout)
+			r.runWait.grace = finalPollGrace
+			r.runWait.start()
+		}
+		r.waited = true
+		return r.runWaitCtx, r.runWait
+	}
 	ctx, wait := r.d.budget(r.ctx, r.common.Limits.Wait, ErrWaitTimeout)
 	wait.grace = finalPollGrace
 	wait.start()
 	r.waited = true
 	return ctx, wait
+}
+
+// releaseWait ends the wait budget of a step. The wait budget of an
+// upgrade or a rollback is the budget of the whole run, and stays.
+func (r *runner) releaseWait(wait *budget) {
+	if wait != nil && wait != r.runWait {
+		wait.stop()
+	}
 }
 
 // waitOptions returns the options of a wait for step s under the budget
@@ -745,7 +952,7 @@ func summary(res Result) error {
 	}
 	msg := strings.Join(parts, "; ")
 	if res.ended.interrupted {
-		return fmt.Errorf("interrupted: %s: %w", msg, context.Canceled)
+		return interruptError("interrupted: " + msg)
 	}
 	return errors.New(msg)
 }

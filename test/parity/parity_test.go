@@ -230,7 +230,7 @@ func TestLegacyTraces(t *testing.T) {
 
 func run(t *testing.T, sc Scenario) Trace {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), sc.limit())
 	defer cancel()
 	trace, err := legacy.RunAfter(ctx, sc, sc.LegacyPreview, sc.Legacy, t.TempDir())
 	if err != nil {

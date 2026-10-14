@@ -37,6 +37,12 @@ type UpgradeRequest struct {
 	// SkipInsights leaves the EKS cluster insights out of the readiness
 	// of a hop.
 	SkipInsights bool
+	// ConfirmPhases asks before each phase that has work, and not once
+	// for the whole upgrade. The question before the first phase is the
+	// start question of the run. It has no effect with Policy.Yes. Like
+	// Policy.Yes, it is how consent is given and no part of the plan, so
+	// a reviewed plan is not compared on it.
+	ConfirmPhases bool
 }
 
 func (UpgradeRequest) kind() Kind { return ClusterUpgrade }

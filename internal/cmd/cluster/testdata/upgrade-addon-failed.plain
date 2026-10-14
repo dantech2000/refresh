@@ -1,0 +1,91 @@
+exit: 1
+error: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Failed: ConfigurationConflict: conflicts found; completed: the control plane to 1.33; to go on from the live state of the cluster, run: refresh cluster upgrade prod --to 1.33
+--- stdout ---
+FIELD	VALUE
+run.operation	ClusterUpgrade
+run.cluster	prod
+run.region	us-east-1
+run.version	1.32
+run.target_version	1.33
+run.status	Failed
+results.control-plane@1.33.kind	ControlPlane
+results.control-plane@1.33.status	Succeeded
+results.control-plane@1.33.from	1.32
+results.control-plane@1.33.to	1.33
+results.control-plane@1.33.update	00000000-0000-4000-8000-000000000001
+results.control-plane@1.33.note	-
+results.control-plane@1.33.started	2026-01-01 00:00:00 UTC
+results.control-plane@1.33.finished	2026-01-01 00:00:45 UTC
+results.control-plane@1.33.failure	-
+results.vpc-cni@1.33.kind	Addon
+results.vpc-cni@1.33.status	Failed
+results.vpc-cni@1.33.from	v1.19.0-eksbuild.1
+results.vpc-cni@1.33.to	v1.20.0-eksbuild.1
+results.vpc-cni@1.33.update	00000000-0000-4000-8000-000000000002
+results.vpc-cni@1.33.note	-
+results.vpc-cni@1.33.started	2026-01-01 00:00:45 UTC
+results.vpc-cni@1.33.finished	2026-01-01 00:01:15 UTC
+results.vpc-cni@1.33.failure	UpdateFailed: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Failed: ConfigurationConflict: conflicts found
+results.api@1.33.kind	Nodegroup
+results.api@1.33.status	NotAttempted
+results.api@1.33.from	1.32
+results.api@1.33.to	1.33
+results.api@1.33.update	-
+results.api@1.33.note	-
+results.api@1.33.started	-
+results.api@1.33.finished	-
+results.api@1.33.failure	-
+results.web@1.33.kind	Nodegroup
+results.web@1.33.status	NotAttempted
+results.web@1.33.from	1.32
+results.web@1.33.to	1.33
+results.web@1.33.update	-
+results.web@1.33.note	-
+results.web@1.33.started	-
+results.web@1.33.finished	-
+results.web@1.33.failure	-
+results.kube-proxy@1.33.kind	Addon
+results.kube-proxy@1.33.status	NotAttempted
+results.kube-proxy@1.33.from	v1.32.0-eksbuild.1
+results.kube-proxy@1.33.to	v1.33.0-eksbuild.1
+results.kube-proxy@1.33.update	-
+results.kube-proxy@1.33.note	-
+results.kube-proxy@1.33.started	-
+results.kube-proxy@1.33.finished	-
+results.kube-proxy@1.33.failure	-
+health_gate.decision	Go
+checks.Nodes.outcome	Pass
+checks.Nodes.message	4/4 nodes ready
+checks.Capacity.outcome	Pass
+checks.Capacity.message	CPU mean 32%, peak 32%, 4 instances
+checks.ControlPlane.outcome	Skipped
+checks.ControlPlane.message	control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+checks.Workloads.outcome	Pass
+checks.Workloads.message	1/1 pods running in the system namespaces
+checks.DrainBlockers.outcome	Pass
+checks.DrainBlockers.message	no PodDisruptionBudget blocks a drain
+checks.PDBCoverage.outcome	Pass
+checks.PDBCoverage.message	every deployment has a PodDisruptionBudget (2)
+checks.Utilization.outcome	Pass
+checks.Utilization.message	CPU 20%, memory 25% in use
+checks.Quotas.outcome	Pass
+checks.Quotas.message	31% of the vCPU quota in use (40 of 128)
+checks.Kubernetes.outcome	Pass
+checks.Kubernetes.message	Kubernetes API reachable
+--- stderr ---
+refreshing the cluster insights of prod (waits up to 5m0s)
+PLAN  ClusterUpgrade, prod in us-east-1
+  control-plane@1.33  update 1.32 to 1.33 (VersionBehind)
+  vpc-cni@1.33        update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)
+  api@1.33            update 1.32 to 1.33 (VersionBehind)
+  web@1.33            update 1.32 to 1.33 (VersionBehind)
+  kube-proxy@1.33     update v1.32.0-eksbuild.1 to v1.33.0-eksbuild.1 (VersionBehind)
+phase: control plane, 1.33
+[~] control-plane@1.33: Started (update 00000000-0000-4000-8000-000000000001)
+control-plane: InProgress
+[OK] control-plane@1.33: Succeeded
+phase: add-ons before the nodegroup rolls, 1.33
+[~] vpc-cni@1.33: Started (update 00000000-0000-4000-8000-000000000002)
+vpc-cni: InProgress
+[X] vpc-cni@1.33: Failed: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Failed: ConfigurationConflict: conflicts found
+warning: update prod/vpc-cni (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Failed: ConfigurationConflict: conflicts found

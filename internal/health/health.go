@@ -149,15 +149,7 @@ func Run(ctx context.Context, checks []Check, in *Input) []Result {
 		if results[i].Outcome == "" {
 			results[i] = unreadableCheck(ctx, results[i])
 		}
-		for j := range results[i].Failures {
-			f := &results[i].Failures[j]
-			if f.Cluster == "" && f.Kind != apidoc.FailureCluster {
-				f.Cluster = in.Snapshot.Cluster.Name
-			}
-			if f.Region == "" {
-				f.Region = in.Snapshot.Cluster.Region
-			}
-		}
+		Locate(results[i].Failures, in.Snapshot.Cluster.Name, in.Snapshot.Cluster.Region)
 	}
 	if !slices.ContainsFunc(checks, func(c Check) bool { return c.Needs.Kube }) {
 		return results
@@ -283,4 +275,21 @@ func nonNil(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// Locate says where each of failures happened, for the ones that do not
+// say it yet: the cluster, and its region. A failure of the cluster itself
+// names the cluster already, in its name. Run does this for the failures
+// of its checks, and a caller does it for the failures that it adds beside
+// them, so that every failure of one verification reads the same.
+func Locate(failures []apidoc.Failure, cluster, region string) {
+	for i := range failures {
+		f := &failures[i]
+		if f.Cluster == "" && f.Kind != apidoc.FailureCluster {
+			f.Cluster = cluster
+		}
+		if f.Region == "" {
+			f.Region = region
+		}
+	}
 }

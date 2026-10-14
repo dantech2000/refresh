@@ -178,6 +178,8 @@ func TestCommandTree(t *testing.T) {
 		"refresh cluster",
 		"refresh cluster describe",
 		"refresh cluster list",
+		"refresh cluster rollback",
+		"refresh cluster upgrade",
 		"refresh cluster upgrade-check",
 		"refresh completion",
 		"refresh completion bash",

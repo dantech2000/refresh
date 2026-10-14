@@ -1,5 +1,5 @@
 exit: 4
-error: --wait-timeout passed before the update of nodegroup web finished; it may still be running; --wait-timeout passed before the verification; the rolls ended and were not verified
+error: --wait-timeout passed before the update of nodegroup web finished; it may still be running
 --- stdout ---
 FIELD	VALUE
 run.operation	NodegroupUpdate
@@ -9,8 +9,8 @@ run.version	1.32
 run.status	Incomplete
 results.web.kind	Nodegroup
 results.web.status	InProgress
-results.web.from	1.32
-results.web.to	1.32 (ami-latest132)
+results.web.from	1.32 (release 1.32.0-20250101, AMI ami-old32x)
+results.web.to	1.32 (AMI ami-latest132)
 results.web.update	00000000-0000-4000-8000-000000000001
 results.web.note	-
 results.web.started	2026-01-01 00:00:00 UTC
@@ -37,10 +37,9 @@ checks.Kubernetes.outcome	Pass
 checks.Kubernetes.message	Kubernetes API reachable
 --- stderr ---
 PLAN  NodegroupUpdate, prod in us-east-1
-  web  roll onto the latest AMI of 1.32, ami-latest132 (AMIOutdated)
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
 [~] web: Started (update 00000000-0000-4000-8000-000000000001)
 web: InProgress
 web: still InProgress
 [~] web: InProgress: --wait-timeout passed before the update of nodegroup web finished; it may still be running
-warning: cluster prod (us-east-1): Timeout: --wait-timeout passed before the verification; the rolls ended and were not verified
 warning: update prod/web (us-east-1): Timeout: --wait-timeout passed before the update of nodegroup web finished; it may still be running

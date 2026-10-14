@@ -177,10 +177,24 @@ func (a Addon) Behind() (behind, known bool) {
 	return CompareAddonVersions(a.Version, a.Latest) < 0, true
 }
 
-// Health returns the health of the add-on, from its status.
+// Health returns the health of the add-on. It is the one rule for the
+// health of an add-on: every list, every description, the add-on check of
+// the health gate, and the check after an update read it here. The first
+// row that matches decides.
+//
+//  1. CREATING, UPDATING, DELETING: InProgress. EKS is changing it.
+//  2. DEGRADED, or a create, an update, or a delete that failed: Failed.
+//  3. ACTIVE with a health issue: Failed. EKS reports issues for an add-on
+//     whose status still says ACTIVE, such as too few replicas, and an
+//     add-on with an issue is not healthy whatever its status says.
+//  4. ACTIVE: Healthy.
+//  5. Any other status: Unknown.
 func (a Addon) Health() apidoc.AddonHealth {
 	switch a.Status {
 	case "ACTIVE":
+		if len(a.Issues) > 0 {
+			return apidoc.AddonFailed
+		}
 		return apidoc.AddonHealthy
 	case "DEGRADED", "CREATE_FAILED", "UPDATE_FAILED", "DELETE_FAILED":
 		return apidoc.AddonFailed
