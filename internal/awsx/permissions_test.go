@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,10 +16,11 @@ import (
 // text, because Go's internal rule keeps this package from importing it, and
 // checks that this table has the same actions in the same rows and order.
 // The text of a row is not compared: it names the commands and flags of the
-// v2 contract, which differ from the old ones.
+// v2 contract, which differ from the old ones. The rows in added are the
+// actions that only the new tree calls.
 //
-// Remove this test at cutover, with the one in awsxtest that reads the same
-// file. From then on the docs table is checked against this table alone.
+// Remove this test at cutover. From then on the docs table is checked
+// against this table alone.
 func TestRequiredPermissionsMatchLegacy(t *testing.T) {
 	const path = "../../legacy/internal/aws/awserr/permissions.go"
 	src, err := os.ReadFile(path)
@@ -41,9 +43,15 @@ func TestRequiredPermissionsMatchLegacy(t *testing.T) {
 	if len(legacy) < 20 {
 		t.Fatalf("read %d rows from %s; the pattern no longer matches the file", len(legacy), path)
 	}
+	// added are the rows of the actions that the new tree calls and the old
+	// one does not: the vCPUs of an instance type, for the quota check of a
+	// roll and a scale-up.
+	added := [][]string{{"ec2:DescribeInstanceTypes"}}
 	var got [][]string
 	for _, p := range RequiredPermissions() {
-		got = append(got, p.Actions)
+		if !slices.ContainsFunc(added, func(a []string) bool { return slices.Equal(a, p.Actions) }) {
+			got = append(got, p.Actions)
+		}
 	}
 	if diff := cmp.Diff(legacy, got); diff != "" {
 		t.Errorf("the actions of RequiredPermissions() differ from the legacy table (-legacy +new):\n%s", diff)

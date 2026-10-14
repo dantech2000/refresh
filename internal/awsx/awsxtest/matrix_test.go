@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +19,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
@@ -397,26 +397,19 @@ func TestMatrixRegion(t *testing.T) {
 	}
 }
 
-// permissionAction matches an IAM action in the legacy permission table.
-var permissionAction = regexp.MustCompile(`"([a-z0-9]+:[A-Za-z0-9]+)"`)
-
 // TestMatrixCoversEveryOperation holds the matrix and the server to the
-// list of AWS operations the product calls. Until cutover that list is the
-// legacy IAM table, which Go's internal rule keeps this package from
-// importing, so the test reads the source file.
+// list of AWS operations the product calls: the IAM table of
+// awsx.RequiredPermissions. The new tree calls an operation that the legacy
+// table does not list (ec2:DescribeInstanceTypes), so the table of the new
+// tree is the list.
 func TestMatrixCoversEveryOperation(t *testing.T) {
-	const table = "../../../legacy/internal/aws/awserr/permissions.go"
-	src, err := os.ReadFile(table)
-	if err != nil {
-		t.Fatalf("reading the IAM table (point this test at its new home if it moved): %v", err)
-	}
 	var want []string
-	for _, m := range permissionAction.FindAllStringSubmatch(string(src), -1) {
-		want = append(want, m[1])
+	for _, p := range awsx.RequiredPermissions() {
+		want = append(want, p.Actions...)
 	}
 	slices.Sort(want)
 	if len(want) == 0 {
-		t.Fatalf("found no IAM actions in %s", table)
+		t.Fatal("found no IAM actions in awsx.RequiredPermissions")
 	}
 
 	var cases, served []string

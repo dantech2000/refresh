@@ -257,6 +257,11 @@ func newWorld() *fleettest.World {
 			{Region: region, InstanceType: "m5.xlarge", AvailabilityZone: "us-east-1a"},
 			{Region: otherRegion, InstanceType: "m5.large", AvailabilityZone: "eu-west-1a"},
 		}
+		s.InstanceTypes = []fleettest.InstanceType{
+			{Region: region, Name: "m5.large", VCPUs: 2},
+			{Region: region, Name: "t3.medium", VCPUs: 2},
+			{Region: otherRegion, Name: "m5.large", VCPUs: 99},
+		}
 		s.AutoScalingGroups = []fleettest.AutoScalingGroup{
 			{Region: region, Name: "eks-ng-a", InstanceIDs: []string{"i-1", "i-2"}, AvailabilityZones: []string{"us-east-1a", "us-east-1b"}},
 			{Region: region, Name: "eks-ng-b"},

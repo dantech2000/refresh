@@ -66,6 +66,30 @@ type AutoScalingGroup struct {
 	AvailabilityZones []string
 }
 
+// InstanceType is one EC2 instance type and its default vCPU count.
+type InstanceType struct {
+	Region string
+	Name   string
+	VCPUs  int32
+}
+
+// DefaultInstanceTypes returns the catalog of a world that sets none: a
+// few common types with their real vCPU counts.
+func DefaultInstanceTypes() []InstanceType {
+	return []InstanceType{
+		{Name: "c5.large", VCPUs: 2},
+		{Name: "c5.xlarge", VCPUs: 4},
+		{Name: "g5.xlarge", VCPUs: 4},
+		{Name: "m5.large", VCPUs: 2},
+		{Name: "m5.xlarge", VCPUs: 4},
+		{Name: "m5.2xlarge", VCPUs: 8},
+		{Name: "m6i.large", VCPUs: 2},
+		{Name: "r5.large", VCPUs: 2},
+		{Name: "t3.large", VCPUs: 2},
+		{Name: "t3.medium", VCPUs: 2},
+	}
+}
+
 // ScalingActivity is one activity of an Auto Scaling group.
 type ScalingActivity struct {
 	Region string

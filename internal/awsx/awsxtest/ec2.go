@@ -15,6 +15,7 @@ var ec2Operations = map[string]operation{
 	"DescribeLaunchTemplateVersions": {handle: ec2DescribeLaunchTemplateVersions},
 	"DescribeSubnets":                {handle: ec2DescribeSubnets},
 	"DescribeInstanceTypeOfferings":  {handle: ec2DescribeInstanceTypeOfferings},
+	"DescribeInstanceTypes":          {handle: ec2DescribeInstanceTypes},
 	"DescribeVpcs":                   {handle: ec2DescribeVpcs},
 }
 
@@ -251,6 +252,23 @@ func ec2DescribeInstanceTypeOfferings(c *call) (any, error) {
 	}
 	return ec2Paged(c, "instanceTypeOfferingSet", offerings, func(o fleettest.Offering) []node {
 		return []node{leaf("instanceType", o.InstanceType), leaf("locationType", "availability-zone"), leaf("location", o.AvailabilityZone)}
+	})
+}
+
+// ec2DescribeInstanceTypes answers the vCPU count of each type, from the
+// world's catalog. An asked type that the catalog does not hold fails the
+// request, as in EC2.
+func ec2DescribeInstanceTypes(c *call) (any, error) {
+	var types []fleettest.InstanceType
+	c.world.View(func(s *fleettest.State) {
+		types = inRegion(c, s.InstanceTypes, func(t fleettest.InstanceType) string { return t.Region })
+	})
+	types, err := ec2Select(c, types, "InstanceType", "InvalidInstanceType", func(t fleettest.InstanceType) string { return t.Name }, noFilters)
+	if err != nil {
+		return nil, err
+	}
+	return ec2Paged(c, "instanceTypeSet", types, func(t fleettest.InstanceType) []node {
+		return []node{leaf("instanceType", t.Name), tag("vCpuInfo", leaf("defaultVCpus", strconv.Itoa(int(t.VCPUs))))}
 	})
 }
 

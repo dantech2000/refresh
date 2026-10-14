@@ -94,6 +94,7 @@ must settle each item before a test relies on it.
 | `ec2:DescribeLaunchTemplateVersions` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
 | `ec2:DescribeSubnets` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
 | `ec2:DescribeInstanceTypeOfferings` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
+| `ec2:DescribeInstanceTypes` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
 | `ec2:DescribeVpcs` | ec2 | ec2Query | no | yes | yes | yes | yes | yes | yes | yes |
 | `autoscaling:DescribeAutoScalingGroups` | autoscaling | awsQuery | no | yes | yes | yes | yes | yes | yes | yes |
 | `autoscaling:DescribeScalingActivities` | autoscaling | awsQuery | no | yes | yes | yes | yes | yes | yes | yes |

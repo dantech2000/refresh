@@ -595,6 +595,21 @@ func ec2Cases() []opCase {
 				return got, out.NextToken, nil
 			}),
 
+		pagedCase(fleettest.EC2DescribeInstanceTypes, []string{"m5.large 2", "t3.medium 2"},
+			func(ctx context.Context, c *clients, token *string) ([]string, *string, error) {
+				out, err := c.ec2.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{
+					InstanceTypes: []ec2types.InstanceType{"m5.large", "t3.medium"}, NextToken: token,
+				})
+				if err != nil {
+					return nil, nil, err
+				}
+				var got []string
+				for _, t := range out.InstanceTypes {
+					got = append(got, string(t.InstanceType)+" "+fmt.Sprint(aws.ToInt32(t.VCpuInfo.DefaultVCpus)))
+				}
+				return got, out.NextToken, nil
+			}),
+
 		pagedCase(fleettest.EC2DescribeVpcs, []string{"vpc-1 10.0.0.0/16", "vpc-2 10.1.0.0/16"},
 			func(ctx context.Context, c *clients, token *string) ([]string, *string, error) {
 				out, err := c.ec2.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: []string{"vpc-1", "vpc-2"}, NextToken: token})

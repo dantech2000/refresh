@@ -43,6 +43,7 @@ const (
 	EC2DescribeLaunchTemplateVersions    Operation = "ec2:DescribeLaunchTemplateVersions"
 	EC2DescribeSubnets                   Operation = "ec2:DescribeSubnets"
 	EC2DescribeInstanceTypeOfferings     Operation = "ec2:DescribeInstanceTypeOfferings"
+	EC2DescribeInstanceTypes             Operation = "ec2:DescribeInstanceTypes"
 	EC2DescribeVpcs                      Operation = "ec2:DescribeVpcs"
 	AutoScalingDescribeAutoScalingGroups Operation = "autoscaling:DescribeAutoScalingGroups"
 	AutoScalingDescribeScalingActivities Operation = "autoscaling:DescribeScalingActivities"

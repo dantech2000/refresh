@@ -39,7 +39,10 @@ type State struct {
 	Subnets                []Subnet
 	VPCs                   []VPC
 	// Offerings are the instance types offered per availability zone.
-	Offerings         []Offering
+	Offerings []Offering
+	// InstanceTypes is the EC2 instance-type catalog. Nil becomes
+	// DefaultInstanceTypes. Set an empty, non-nil slice for none.
+	InstanceTypes     []InstanceType
 	AutoScalingGroups []AutoScalingGroup
 	// ScalingActivities are listed newest first, as Auto Scaling does.
 	ScalingActivities []ScalingActivity
@@ -456,6 +459,9 @@ func (s *State) applyDefaults(now time.Time) {
 	}
 	for i := range s.ClusterVersions {
 		setDefault(&s.ClusterVersions[i].Status, StandardSupport)
+	}
+	if s.InstanceTypes == nil {
+		s.InstanceTypes = DefaultInstanceTypes()
 	}
 	for _, c := range s.Clusters {
 		c.applyDefaults(now)

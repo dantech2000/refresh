@@ -302,6 +302,7 @@ action.
 | `ec2:DescribeInstances` | `status` (Karpenter detection), `nodegroup describe --show-instances`, current AMI of a nodegroup without a launch-template image (`status`, `cluster describe`, `nodegroup list`/`describe`/`update`) |
 | `ec2:DescribeLaunchTemplateVersions` | Current AMI of a launch-template nodegroup: `status`, `nodegroup list`/`describe`/`update` |
 | `ec2:DescribeSubnets`, `ec2:DescribeInstanceTypeOfferings` | Instance-type availability warning in `nodegroup update`/`scale` |
+| `ec2:DescribeInstanceTypes` | The vCPUs of the nodes that a roll or a scale-up launches, for the quota check of `nodegroup update`/`scale`, `cluster upgrade`, `cluster rollback` |
 | `ec2:DescribeVpcs` | `cluster describe` |
 | `autoscaling:DescribeAutoScalingGroups` | Health checks, the instances of a nodegroup (`status`, `cluster describe`, `nodegroup list`/`describe`/`update`) |
 | `autoscaling:DescribeScalingActivities` | A roll's failed node launches (such as the EC2 vCPU quota): `nodegroup update`, `cluster upgrade`, `cluster rollback`, `ui` |
