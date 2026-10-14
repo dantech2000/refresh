@@ -34,6 +34,10 @@ type FollowUp struct {
 	Prefix string
 	// Suffix ends it: the --kubeconfig and the --kube-context of the run.
 	Suffix string
+	// Resume holds the flags that only the command of a stopped run
+	// repeats, and that the request cannot tell from a default: the
+	// --wait-timeout that the user chose.
+	Resume string
 }
 
 // checkScope refuses a scope that the plan cannot keep safe. Without the

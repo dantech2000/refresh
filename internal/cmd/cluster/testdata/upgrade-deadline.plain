@@ -1,5 +1,5 @@
 exit: 4
-error: --wait-timeout passed before the update of the control plane of prod finished; it may still be running; no phase completed; to go on from the live state of the cluster, run: refresh cluster upgrade prod --to 1.33
+error: --wait-timeout passed before the update of the control plane of prod finished; it may still be running; no phase completed; to go on from the live state of the cluster, run: refresh cluster upgrade prod --to 1.33 --wait-timeout 2m0s --yes
 --- stdout ---
 FIELD	VALUE
 run.operation	ClusterUpgrade

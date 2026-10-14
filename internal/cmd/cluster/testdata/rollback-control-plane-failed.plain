@@ -1,5 +1,5 @@
 exit: 1
-error: update 00000000-0000-4000-8000-000000000005 of cluster prod ended Failed: Unknown: the update did not complete; completed: the nodegroup rolls to 1.32, the add-on downgrades; to go on from the live state of the cluster, run: refresh cluster rollback prod
+error: update 00000000-0000-4000-8000-000000000005 of cluster prod ended Failed: Unknown: the update did not complete; completed: the nodegroup rolls to 1.32, the add-on downgrades; to go on from the live state of the cluster, run: refresh cluster rollback prod --yes
 --- stdout ---
 FIELD	VALUE
 run.operation	ClusterRollback

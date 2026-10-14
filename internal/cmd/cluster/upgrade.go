@@ -72,6 +72,16 @@ func followUp(f *cmdutil.Factory) func() change.FollowUp {
 	}
 }
 
+// resumeFlags returns the flags of the run that the command of a stopped
+// run repeats and that the request does not hold: a --wait-timeout that
+// is not the default.
+func resumeFlags(flags *cmdutil.ChangeFlags) string {
+	if flags.WaitTimeout == engineWaitTimeout {
+		return ""
+	}
+	return "--wait-timeout " + flags.WaitTimeout.String()
+}
+
 func newCmdUpgrade(f *cmdutil.Factory) *cobra.Command {
 	o := &upgradeOptions{
 		ios:      f.IOStreams,
@@ -220,6 +230,7 @@ func (o *upgradeOptions) run(ctx context.Context) error {
 		return err
 	}
 	d.FollowUp = o.followUp()
+	d.FollowUp.Resume = resumeFlags(&o.change)
 	req := o.request()
 	if o.change.DryRun {
 		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout(), nil)

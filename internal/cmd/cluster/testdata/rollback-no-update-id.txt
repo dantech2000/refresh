@@ -1,5 +1,5 @@
 exit: 4
-error: EKS accepted the roll of nodegroup api and returned no update ID; it cannot be followed, and it may still be running; no phase completed; to go on from the live state of the cluster, run: refresh cluster rollback prod
+error: EKS accepted the roll of nodegroup api and returned no update ID; it cannot be followed, and it may still be running; no phase completed; to go on from the live state of the cluster, run: refresh cluster rollback prod --yes
 --- stdout ---
 Run   [!] Incomplete   ClusterRollback
 

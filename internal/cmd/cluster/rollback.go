@@ -153,6 +153,7 @@ func (o *rollbackOptions) run(ctx context.Context) error {
 		return err
 	}
 	d.FollowUp = o.followUp()
+	d.FollowUp.Resume = resumeFlags(&o.change)
 	req := o.request()
 	if o.change.DryRun {
 		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout(), nil)

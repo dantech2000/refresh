@@ -235,6 +235,13 @@ func (cp *ClusterPlan) gateEngine(ctx context.Context, d Deps, kind Kind, policy
 // engineCommand returns the command line that runs the request again, for
 // the message of a run that stopped: planning again from live state is
 // how a run resumes.
+//
+// The command repeats every flag that decides what the run changes and
+// what stops it, so a resume never widens the run and never meets a gate
+// that the first run was told to pass: the parts, the exclusions, and
+// --force, --skip-health-check, --require-healthy, --skip-verify, and
+// --wait-timeout. It keeps --yes, so the resume of an unattended run is
+// unattended too.
 func engineCommand(f FollowUp, req Request) string {
 	prefix := f.Prefix
 	if prefix == "" {
@@ -270,6 +277,26 @@ func engineCommand(f FollowUp, req Request) string {
 		if r.RollbackTimeout > 0 {
 			words = append(words, "--rollback-timeout", r.RollbackTimeout.String())
 		}
+	}
+	c := req.base()
+	for _, fl := range []struct {
+		set  bool
+		name string
+	}{
+		{c.Policy.Force, "--force"},
+		{c.Policy.Skip, "--skip-health-check"},
+		{c.Policy.RequireHealthy, "--require-healthy"},
+		{c.SkipVerify, "--skip-verify"},
+	} {
+		if fl.set {
+			words = append(words, fl.name)
+		}
+	}
+	if s := strings.TrimSpace(f.Resume); s != "" {
+		words = append(words, s)
+	}
+	if c.Policy.Yes {
+		words = append(words, "--yes")
 	}
 	if s := strings.TrimSpace(f.Suffix); s != "" {
 		words = append(words, s)
