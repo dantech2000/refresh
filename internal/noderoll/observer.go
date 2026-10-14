@@ -80,10 +80,11 @@ func Attach(ctx context.Context, kube kubernetes.Interface, nodegroup string, id
 // AttachOptions are the options of Attach. The zero value uses the real
 // clock.
 type AttachOptions struct {
-	// After is the clock of the limit of the first sync: when the
-	// channel that it returns for SyncLimit receives first, the observer
-	// lists on each snapshot. Nil means time.After.
-	After func(time.Duration) <-chan time.Time
+	// AfterFunc starts the timer of the limit of the first sync: when it
+	// fires before the caches fill, the observer lists on each snapshot.
+	// It returns the function that stops the timer. Nil means
+	// time.AfterFunc.
+	AfterFunc func(time.Duration, func()) (stop func() bool)
 }
 
 // attach is Attach with the clock and the limit of the first sync, which

@@ -24,24 +24,20 @@ const (
 // caches.
 type syncLimiter func(parent context.Context) (context.Context, context.CancelFunc)
 
-// syncLimit returns the limit of the first sync: SyncLimit on the clock
+// syncLimit returns the limit of the first sync: SyncLimit on the timer
 // of the options.
 func (o AttachOptions) syncLimit() syncLimiter {
-	after := o.After
-	if after == nil {
-		after = time.After
+	afterFunc := o.AfterFunc
+	if afterFunc == nil {
+		afterFunc = func(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop }
 	}
 	return func(parent context.Context) (context.Context, context.CancelFunc) {
 		ctx, cancel := context.WithCancel(parent)
-		expired := after(SyncLimit)
-		go func() {
-			select {
-			case <-expired:
-				cancel()
-			case <-ctx.Done():
-			}
-		}()
-		return ctx, cancel
+		stop := afterFunc(SyncLimit, cancel)
+		return ctx, func() {
+			stop()
+			cancel()
+		}
 	}
 }
 

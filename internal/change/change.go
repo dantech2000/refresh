@@ -163,13 +163,14 @@ type Deps struct {
 	Now   func() time.Time
 	After func(time.Duration) <-chan time.Time
 	// AfterFunc starts the timer of a budget, which ends a call that
-	// hangs. It is part of the clock: nil means time.AfterFunc. A test
+	// hangs, and the timer of the node observer's wait for its watches
+	// (noderoll.SyncLimit). It is part of the clock: nil means
+	// time.AfterFunc. A test
 	// with a clock of its own sets it, holds the timer, and fires it when
 	// a call hangs.
 	AfterFunc func(time.Duration, func()) (stop func() bool)
 	// Tick is the clock of the node observer beside a wait: the pause
-	// between two of its snapshots, and the limit of the first sync of
-	// its watches. It is apart from After, because the
+	// between two of its snapshots. It is apart from After, because the
 	// observer runs on a goroutine of its own, and a test clock that moves
 	// with each pause of the wait must not move for the observer too. Nil
 	// means time.After. Only a run with Common.Nodes calls it.

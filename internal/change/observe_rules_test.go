@@ -12,13 +12,13 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/kube"
 	"github.com/dantech2000/refresh/internal/kube/kubetest"
+	"github.com/dantech2000/refresh/internal/noderoll"
 )
 
 // listingObserver sets up a roll of ng-a whose update never ends, with a
 // node observer that lists on each snapshot: the Warning events may not
-// be read, so the watches never fill, and the clock of the observer ends
-// the wait for them at once. Its pause between two snapshots ends at once
-// too.
+// be read, so the watches never fill, and the timer of the wait for them
+// fires at once. The pause between two snapshots ends at once too.
 func listingObserver(t *testing.T) (*env, *kubetest.Server, RollRequest) {
 	t.Helper()
 	e := newEnv(t, rollWorld(neverEnds))
@@ -35,6 +35,14 @@ func listingObserver(t *testing.T) (*env, *kubetest.Server, RollRequest) {
 	e.deps.Kube = func(kube.Target) (*kube.Client, error) { return &kube.Client{Clientset: client}, nil }
 	e.world.SetFault(fleettest.KubeListEvents, fleettest.Fault{Deny: true})
 	e.world.SetFault(fleettest.KubeWatchEvents, fleettest.Fault{Deny: true})
+	// The wait for the watches ends at once; every other timer is held.
+	e.deps.AfterFunc = func(d time.Duration, f func()) (stop func() bool) {
+		if d == noderoll.SyncLimit {
+			f()
+			return func() bool { return false }
+		}
+		return heldTimer(d, f)
+	}
 	e.deps.Tick = func(time.Duration) <-chan time.Time {
 		now := make(chan time.Time, 1)
 		now <- e.world.Now()
