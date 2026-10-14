@@ -218,8 +218,7 @@ func runQuotas(ctx context.Context, in *Input, ls launches) Result {
 		f := fleet.FailureFromError(apidoc.FailureCluster, cluster, read.err)
 		return Result{Outcome: Unreadable, Message: "could not read " + read.what + ": " + f.Error + failureAction(f), Failures: []apidoc.Failure{f}}
 	}
-	switch {
-	case !haveLimit || limit <= 0:
+	if !haveLimit || limit <= 0 {
 		return Result{Outcome: Skipped, Message: "the EC2 vCPU quota is not reported"}
 	}
 	var source string
