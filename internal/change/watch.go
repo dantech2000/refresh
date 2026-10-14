@@ -56,21 +56,21 @@ func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Ev
 	kind, phase := watchKind(r, in)
 	step := Step{Ref: StepRef{Phase: PhaseRef{Target: r.Target, Kind: phase}, Kind: r.Kind, Name: r.Name}, Action: Attach, Reason: InFlight, From: settled.Version, To: settled.Version}
 	plan := &Plan{Kind: kind, Clusters: []ClusterPlan{{Target: r.Target, Phases: []Phase{{Ref: step.Ref.Phase, Steps: []Step{step}}}}}, At: d.now()}
-	emit(Event{Kind: PlanReady, Plan: plan})
-	emit(Event{Kind: PhaseStarted, Phase: step.Ref.Phase})
+	emit(Event{At: d.now(), Kind: PlanReady, Plan: plan})
+	emit(Event{At: d.now(), Kind: PhaseStarted, Phase: step.Ref.Phase})
 	startedAt := in.CreatedAt
 	if startedAt.IsZero() {
 		startedAt = d.now()
 	}
 	res := StepResult{Ref: step.Ref, Status: StepStarted, Attached: true, UpdateID: in.ID, StartedAt: startedAt}
-	report := func() { emit(Event{Kind: StepChanged, Phase: step.Ref.Phase, Step: step.Ref, Result: &res}) }
+	report := func() { emit(Event{At: d.now(), Kind: StepChanged, Phase: step.Ref.Phase, Step: step.Ref, Result: &res}) }
 	report()
 
 	wctx, wait := d.budget(ctx, o.Limits.Wait, ErrWaitTimeout)
 	wait.start()
 	defer wait.stop()
 	opts := WaitOptions{Interval: o.Limits.Poll, After: d.After, budget: wait, Progress: func(p UpdateProgress) {
-		emit(Event{Kind: UpdatePolled, Phase: step.Ref.Phase, Step: step.Ref, Update: &p})
+		emit(Event{At: d.now(), Kind: UpdatePolled, Phase: step.Ref.Phase, Step: step.Ref, Update: &p})
 	}}
 	poll := d.AWS.PollClients(r.Region)
 	waitFn := func(ctx context.Context) error {
@@ -99,7 +99,7 @@ func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Ev
 	if err != nil {
 		res = watchWaitFailed(wctx, r, res, err, d.now())
 		report()
-		emit(Event{Kind: PhaseEnded, Phase: step.Ref.Phase})
+		emit(Event{At: d.now(), Kind: PhaseEnded, Phase: step.Ref.Phase})
 		return watchResult(plan, r, res, nil)
 	}
 	res.Status, res.FinishedAt = StepSucceeded, d.now()
@@ -109,7 +109,7 @@ func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Ev
 		after, _ := fetcher.Fresh().Fetch(wctx, clients, r.Cluster, fleet.Need{Nodegroups: true})
 		checks := health.Verify([]string{r.Name}, health.Baseline{}, health.WaitOptions{Interval: opts.interval(), After: d.After, Now: d.Now})
 		verification = health.Run(wctx, checks, &health.Input{Snapshot: after, Clients: clients, Kube: kube.client, NoKube: kube.noKube, Metrics: kube.metrics, Now: d.now()})
-		emit(Event{Kind: VerifyReport, Phase: step.Ref.Phase, Step: step.Ref, Checks: verification})
+		emit(Event{At: d.now(), Kind: VerifyReport, Phase: step.Ref.Phase, Step: step.Ref, Checks: verification})
 		for _, v := range verification {
 			if v.Outcome == health.Fail {
 				res.VerifyIssue = v.Message
@@ -118,7 +118,7 @@ func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Ev
 		}
 	}
 	report()
-	emit(Event{Kind: PhaseEnded, Phase: step.Ref.Phase})
+	emit(Event{At: d.now(), Kind: PhaseEnded, Phase: step.Ref.Phase})
 	return watchResult(plan, r, res, verification)
 }
 

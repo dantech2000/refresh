@@ -65,6 +65,11 @@ func TestWatch_RollStartedElsewhere(t *testing.T) {
 	for _, e := range h.Events(0) {
 		kinds[e.Kind]++
 	}
+	for _, e := range h.Events(0) {
+		if e.At.IsZero() {
+			t.Errorf("the %s event has no time", e.Kind)
+		}
+	}
 	for _, k := range []EventKind{PlanReady, PhaseStarted, StepChanged, VerifyReport, PhaseEnded} {
 		if kinds[k] == 0 {
 			t.Errorf("no %s event", k)
