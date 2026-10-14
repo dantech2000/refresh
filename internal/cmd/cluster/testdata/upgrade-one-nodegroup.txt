@@ -14,10 +14,10 @@ RUN
 
 RESULTS  5
   NAME                KIND          STATUS          FROM                TO                  UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  control-plane@1.33  ControlPlane  [OK] Succeeded  1.32                1.33                00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:45 UTC  -
-  vpc-cni@1.33        Addon         [OK] Succeeded  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:45 UTC  2026-01-01 00:01:15 UTC  -
+  control-plane@1.33  ControlPlane  [OK] Succeeded  1.32                1.33                00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:15 UTC  2026-01-01 00:01:00 UTC  -
+  vpc-cni@1.33        Addon         [OK] Succeeded  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:01:00 UTC  2026-01-01 00:01:30 UTC  -
   api@1.33            Nodegroup     - Skipped       1.32                1.33                -                                     -     -                        -                        -
-  web@1.33            Nodegroup     [OK] Succeeded  1.32                1.33                00000000-0000-4000-8000-000000000003  -     2026-01-01 00:01:15 UTC  2026-01-01 00:01:45 UTC  -
+  web@1.33            Nodegroup     [OK] Succeeded  1.32                1.33                00000000-0000-4000-8000-000000000003  -     2026-01-01 00:01:30 UTC  2026-01-01 00:02:00 UTC  -
   kube-proxy@1.33     Addon         - Skipped       v1.32.0-eksbuild.1  -                   -                                     -     -                        -                        -
 
 VERIFICATION  4

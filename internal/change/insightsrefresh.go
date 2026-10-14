@@ -149,6 +149,16 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 	}
 	st := refreshStart{old: before, err: start()}
 	o := WaitOptions{Interval: ir.poll, After: ir.d.after, budget: limit}
+	// EKS throttles a describe sent right after the start it accepted,
+	// and the refresh takes longer than a poll interval anyway. A start
+	// that EKS refused is followed by a describe at once: it may show
+	// the refresh that runs already.
+	if st.err == nil && (o.over(wctx) || !o.pause(wctx)) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return st.timedOut(t)
+	}
 	for {
 		if st.again {
 			st.again = false
@@ -173,6 +183,11 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 		case err != nil:
 			if awsx.IsPermanentAPIError(err) {
 				return &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster, err: err}
+			}
+			// Throttling is polled again like the rest, and says nothing
+			// that the user can act on: no line for it.
+			if awsx.IsThrottling(err) {
+				break
 			}
 			ir.say("checking the insights refresh of %s: %s; still waiting", t.Cluster, awsx.Summary(err))
 		case st.old != nil && out.Status != ekstypes.InsightsRefreshStatusInProgress && !newerRefresh(out, st.old):

@@ -14,8 +14,8 @@ results.control-plane@1.33.from	1.32
 results.control-plane@1.33.to	1.33
 results.control-plane@1.33.update	00000000-0000-4000-8000-000000000001
 results.control-plane@1.33.note	-
-results.control-plane@1.33.started	2026-01-01 00:00:00 UTC
-results.control-plane@1.33.finished	2026-01-01 00:00:45 UTC
+results.control-plane@1.33.started	2026-01-01 00:00:15 UTC
+results.control-plane@1.33.finished	2026-01-01 00:01:00 UTC
 results.control-plane@1.33.failure	-
 results.vpc-cni@1.33.kind	Addon
 results.vpc-cni@1.33.status	Failed
@@ -23,8 +23,8 @@ results.vpc-cni@1.33.from	v1.19.0-eksbuild.1
 results.vpc-cni@1.33.to	v1.20.0-eksbuild.1
 results.vpc-cni@1.33.update	00000000-0000-4000-8000-000000000002
 results.vpc-cni@1.33.note	-
-results.vpc-cni@1.33.started	2026-01-01 00:00:45 UTC
-results.vpc-cni@1.33.finished	2026-01-01 00:01:15 UTC
+results.vpc-cni@1.33.started	2026-01-01 00:01:00 UTC
+results.vpc-cni@1.33.finished	2026-01-01 00:01:30 UTC
 results.vpc-cni@1.33.failure	UpdateFailed: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Failed: ConfigurationConflict: conflicts found
 results.api@1.33.kind	Nodegroup
 results.api@1.33.status	NotAttempted

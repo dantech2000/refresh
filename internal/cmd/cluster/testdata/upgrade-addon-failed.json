@@ -168,8 +168,8 @@ error: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Faile
           "kind": "ControlPlane",
           "status": "Succeeded",
           "updateId": "00000000-0000-4000-8000-000000000001",
-          "startedAt": "2026-01-01T00:00:00Z",
-          "finishedAt": "2026-01-01T00:00:45Z"
+          "startedAt": "2026-01-01T00:00:15Z",
+          "finishedAt": "2026-01-01T00:01:00Z"
         },
         {
           "phase": "AddonsBefore",
@@ -178,8 +178,8 @@ error: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Faile
           "name": "vpc-cni",
           "status": "Failed",
           "updateId": "00000000-0000-4000-8000-000000000002",
-          "startedAt": "2026-01-01T00:00:45Z",
-          "finishedAt": "2026-01-01T00:01:15Z",
+          "startedAt": "2026-01-01T00:01:00Z",
+          "finishedAt": "2026-01-01T00:01:30Z",
           "failure": {
             "kind": "Update",
             "name": "vpc-cni",

@@ -14,7 +14,7 @@ results.control-plane@1.33.from	1.32
 results.control-plane@1.33.to	1.33
 results.control-plane@1.33.update	00000000-0000-4000-8000-000000000001
 results.control-plane@1.33.note	-
-results.control-plane@1.33.started	2026-01-01 00:00:00 UTC
+results.control-plane@1.33.started	2026-01-01 00:00:15 UTC
 results.control-plane@1.33.finished	-
 results.control-plane@1.33.failure	Timeout: --wait-timeout passed before the update of the control plane of prod finished; it may still be running
 results.vpc-cni@1.33.kind	Addon

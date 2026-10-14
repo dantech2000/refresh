@@ -14,8 +14,8 @@ results.control-plane@1.33.from	1.32
 results.control-plane@1.33.to	1.33
 results.control-plane@1.33.update	00000000-0000-4000-8000-000000000001
 results.control-plane@1.33.note	-
-results.control-plane@1.33.started	2026-01-01 00:00:00 UTC
-results.control-plane@1.33.finished	2026-01-01 00:00:45 UTC
+results.control-plane@1.33.started	2026-01-01 00:00:15 UTC
+results.control-plane@1.33.finished	2026-01-01 00:01:00 UTC
 results.control-plane@1.33.failure	-
 results.vpc-cni@1.33.kind	Addon
 results.vpc-cni@1.33.status	Succeeded
@@ -23,8 +23,8 @@ results.vpc-cni@1.33.from	v1.19.0-eksbuild.1
 results.vpc-cni@1.33.to	v1.20.0-eksbuild.1
 results.vpc-cni@1.33.update	00000000-0000-4000-8000-000000000002
 results.vpc-cni@1.33.note	-
-results.vpc-cni@1.33.started	2026-01-01 00:00:45 UTC
-results.vpc-cni@1.33.finished	2026-01-01 00:01:15 UTC
+results.vpc-cni@1.33.started	2026-01-01 00:01:00 UTC
+results.vpc-cni@1.33.finished	2026-01-01 00:01:30 UTC
 results.vpc-cni@1.33.failure	-
 results.api@1.33.kind	Nodegroup
 results.api@1.33.status	Succeeded
@@ -32,8 +32,8 @@ results.api@1.33.from	1.32
 results.api@1.33.to	1.33
 results.api@1.33.update	00000000-0000-4000-8000-000000000003
 results.api@1.33.note	-
-results.api@1.33.started	2026-01-01 00:01:15 UTC
-results.api@1.33.finished	2026-01-01 00:01:45 UTC
+results.api@1.33.started	2026-01-01 00:01:30 UTC
+results.api@1.33.finished	2026-01-01 00:02:00 UTC
 results.api@1.33.failure	-
 results.web@1.33.kind	Nodegroup
 results.web@1.33.status	Succeeded
@@ -41,8 +41,8 @@ results.web@1.33.from	1.32
 results.web@1.33.to	1.33
 results.web@1.33.update	00000000-0000-4000-8000-000000000004
 results.web@1.33.note	-
-results.web@1.33.started	2026-01-01 00:01:45 UTC
-results.web@1.33.finished	2026-01-01 00:02:15 UTC
+results.web@1.33.started	2026-01-01 00:02:00 UTC
+results.web@1.33.finished	2026-01-01 00:02:30 UTC
 results.web@1.33.failure	-
 results.kube-proxy@1.33.kind	Addon
 results.kube-proxy@1.33.status	Succeeded
@@ -50,8 +50,8 @@ results.kube-proxy@1.33.from	v1.32.0-eksbuild.1
 results.kube-proxy@1.33.to	v1.33.0-eksbuild.1
 results.kube-proxy@1.33.update	00000000-0000-4000-8000-000000000005
 results.kube-proxy@1.33.note	-
-results.kube-proxy@1.33.started	2026-01-01 00:02:15 UTC
-results.kube-proxy@1.33.finished	2026-01-01 00:02:45 UTC
+results.kube-proxy@1.33.started	2026-01-01 00:02:30 UTC
+results.kube-proxy@1.33.finished	2026-01-01 00:03:00 UTC
 results.kube-proxy@1.33.failure	-
 verification.AddonHealth/vpc-cni@1.33.outcome	Pass
 verification.AddonHealth/vpc-cni@1.33.message	vpc-cni is ACTIVE at v1.20.0-eksbuild.1

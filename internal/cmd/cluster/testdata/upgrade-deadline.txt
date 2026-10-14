@@ -13,7 +13,7 @@ RUN
 
 RESULTS  5
   NAME                KIND          STATUS            FROM                TO                  UPDATE                                NOTE  STARTED                  FINISHED  FAILURE
-  control-plane@1.33  ControlPlane  [~] InProgress    1.32                1.33                00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  -         Timeout: --wait-timeout passed before the update of the control plane of prod finished; it may still be running
+  control-plane@1.33  ControlPlane  [~] InProgress    1.32                1.33                00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:15 UTC  -         Timeout: --wait-timeout passed before the update of the control plane of prod finished; it may still be running
   vpc-cni@1.33        Addon         [?] NotAttempted  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  -                                     -     -                        -         -
   api@1.33            Nodegroup     [?] NotAttempted  1.32                1.33                -                                     -     -                        -         -
   web@1.33            Nodegroup     [?] NotAttempted  1.32                1.33                -                                     -     -                        -         -

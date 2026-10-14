@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
@@ -311,8 +313,10 @@ func TestInsightsRefresh_FailuresBlock(t *testing.T) {
 			if n := e.count(fleettest.EKSListInsights); n != 0 {
 				t.Errorf("%d reads of the insights after a refresh that did not complete, want none", n)
 			}
-			if e.world.Now() != fleettest.New().Now() {
-				t.Errorf("the run waited %s for a refresh that had ended", e.world.Now().Sub(fleettest.New().Now()))
+			// The first poll comes one poll interval after an accepted
+			// start; the run waits no longer than that.
+			if waited := e.world.Now().Sub(fleettest.New().Now()); waited > 15*time.Second {
+				t.Errorf("the run waited %s for a refresh that had ended", waited)
 			}
 		})
 	}
@@ -524,4 +528,44 @@ func TestInsightsRefresh_EarlierRefreshAfterAnAcceptedStart(t *testing.T) {
 			t.Errorf("%d starts, want none", n)
 		}
 	})
+}
+
+// EKS throttles a DescribeInsightsRefresh sent right after the start. The
+// first poll waits one poll interval after the start that EKS accepted,
+// and a throttled poll is polled again with no progress line: the wait
+// handles it, and it says nothing the user can act on.
+func TestInsightsRefresh_FirstPollWaitsAndThrottlingIsQuiet(t *testing.T) {
+	world := engineWorld(nil)
+	e := newEnv(t, world)
+	var (
+		mu               sync.Mutex
+		startAt, firstAt time.Time
+		started, polled  bool
+	)
+	e.srv.OnRequest = func(_ context.Context, r awsxtest.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Operation == fleettest.EKSStartInsightsRefresh && !started:
+			started, startAt = true, world.Now()
+			world.SetFault(fleettest.EKSDescribeInsightsRefresh, fleettest.Fault{Throttle: 2})
+		case r.Operation == fleettest.EKSDescribeInsightsRefresh && started && !polled:
+			polled, firstAt = true, world.Now()
+		}
+	}
+	var lines []string
+	res := mustRun(t, e, upgradeTo("1.33"), progressOf(&lines))
+	if res.Status != Succeeded {
+		t.Fatalf("status = %s, err %v; want Succeeded", res.Status, res.Err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !polled || firstAt.Sub(startAt) < 15*time.Second {
+		t.Errorf("the first poll came %s after the start, want at least the poll interval of 15s", firstAt.Sub(startAt))
+	}
+	for _, l := range lines {
+		if strings.Contains(l, "TooManyRequests") || strings.Contains(l, "Throttl") {
+			t.Errorf("a progress line about throttling: %q", l)
+		}
+	}
 }

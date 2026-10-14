@@ -13,8 +13,8 @@ RUN
 
 RESULTS  5
   NAME                KIND          STATUS            FROM                TO                  UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  control-plane@1.33  ControlPlane  [OK] Succeeded    1.32                1.33                00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:45 UTC  -
-  vpc-cni@1.33        Addon         [X] Failed        v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:45 UTC  2026-01-01 00:01:15 UTC  UpdateFailed: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Failed: ConfigurationConflict: conflicts found
+  control-plane@1.33  ControlPlane  [OK] Succeeded    1.32                1.33                00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:15 UTC  2026-01-01 00:01:00 UTC  -
+  vpc-cni@1.33        Addon         [X] Failed        v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:01:00 UTC  2026-01-01 00:01:30 UTC  UpdateFailed: update 00000000-0000-4000-8000-000000000002 of add-on vpc-cni ended Failed: ConfigurationConflict: conflicts found
   api@1.33            Nodegroup     [?] NotAttempted  1.32                1.33                -                                     -     -                        -                        -
   web@1.33            Nodegroup     [?] NotAttempted  1.32                1.33                -                                     -     -                        -                        -
   kube-proxy@1.33     Addon         [?] NotAttempted  v1.32.0-eksbuild.1  v1.33.0-eksbuild.1  -                                     -     -                        -                        -
