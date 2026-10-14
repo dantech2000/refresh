@@ -848,7 +848,7 @@ A rollback:
 | Phase | Steps | Before the submit |
 |---|---|---|
 | `Nodegroups` | Serial, `StopOnFailure` | Per step: the gate and the baseline |
-| `Addons`: the add-ons the target version cannot run | Serial, dependency order, `StopOnFailure` | |
+| `Addons`: the add-ons the target version cannot run | Serial, dependency order, `StopOnFailure` | Each goes to the newest version of the target's catalogue at or below the installed one. With none, the step is blocked: a rollback never upgrades an add-on. The guard refuses a request above the live version, and a version that does not parse, live or of the step. |
 | `ControlPlane` | One | Every managed nodegroup in the phase read is at or below the target (`rollback.go:803`). A nodegroup above it blocks the phase. A nodegroup group that could not be read is an `Unread` blocker, exit 4. |
 
 Every phase begins with the read, the recheck, and the busy rule of section 4. A catch-up hop has no control-plane step to run.

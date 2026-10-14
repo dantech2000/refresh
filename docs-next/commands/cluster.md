@@ -346,6 +346,10 @@ STEPS  9
 - An upgrade that is more than 7 days old.
 - A control plane while a managed nodegroup is above the target version. A
   nodegroup that you skip, and one with a custom AMI, are yours to move first.
+- An add-on that the target version cannot run, when every version of it that
+  the target runs is newer than the installed one. A rollback never upgrades an
+  add-on. It moves an add-on to the newest version that the target runs and
+  that is at or below the installed one.
 
 EKS and `refresh` do not roll back self-managed nodes or Fargate pods.
 
