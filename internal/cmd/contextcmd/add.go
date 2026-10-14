@@ -24,7 +24,11 @@ func newCmdAdd(f *cmdutil.Factory) *cobra.Command {
 		Use:   "add <name>",
 		Short: "Add or update a saved context",
 		Long: `Save a context that gives a name to a cluster, with an optional region and
-AWS profile. A context with the same name is replaced.`,
+AWS profile. A context with the same name is replaced.
+
+Exit codes:
+  0  Done.
+  1  An error.`,
 		Example: `  refresh context add prod --cluster prod-eks --region us-east-1 --profile prod
 
   # Add the context and switch to it
@@ -73,6 +77,12 @@ func (o *addOptions) run() error {
 	if err := store.Save(file); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(o.ios.Out, "Saved context %q\n", o.name)
+	if _, err := fmt.Fprintf(o.ios.Out, "Saved context %q\n", o.name); err != nil {
+		return err
+	}
+	if o.use {
+		// The line of "context use", so that both say a switch the same way.
+		_, err = fmt.Fprintf(o.ios.Out, "Switched to context %q (%s)\n", o.name, describe(file.Contexts[o.name]))
+	}
 	return err
 }

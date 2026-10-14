@@ -86,7 +86,7 @@ func TestContextCommands(t *testing.T) {
 				},
 				{
 					args:    []string{"context", "add", "stage", "-c", "stage-eks", "--use"},
-					wantOut: "Saved context \"stage\"\n",
+					wantOut: "Saved context \"stage\"\nSwitched to context \"stage\" (cluster=stage-eks region=- profile=-)\n",
 				},
 				{args: []string{"context", "current"}, wantOut: "stage  cluster=stage-eks  region=-  profile=-\n"},
 				{
@@ -219,7 +219,11 @@ func TestContextCommands(t *testing.T) {
 			name: "flag positions and the end-of-flags marker",
 			file: twoContexts(),
 			steps: []step{
-				{args: []string{"context", "add", "one", "-c", "one-eks", "--use"}, wantOut: "Saved context \"one\"\n"},
+				{
+					// --use says the switch with the line of "context use".
+					args:    []string{"context", "add", "one", "-c", "one-eks", "--use"},
+					wantOut: "Saved context \"one\"\nSwitched to context \"one\" (cluster=one-eks region=- profile=-)\n",
+				},
 				{args: []string{"context", "add", "-c", "two-eks", "two", "-r", "eu-west-1"}, wantOut: "Saved context \"two\"\n"},
 				{args: []string{"--no-color", "context", "add", "--cluster=three-eks", "three"}, wantOut: "Saved context \"three\"\n"},
 				{
