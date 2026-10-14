@@ -69,7 +69,7 @@ func (o *Observer) fillWarnings(ctx context.Context, snap *Snapshot, names map[s
 			return
 		}
 	}
-	snap.Warnings = scopeWarnings(w.events, names, now, warningWindow)
+	snap.Warnings = scopeWarnings(w.events, names, now)
 	if w.capped {
 		snap.WarningsCapped = len(w.events)
 	}
@@ -110,7 +110,7 @@ func (o *Observer) listWarningEvents(ctx context.Context) (events []corev1.Event
 }
 
 // scopeWarnings returns the Warning events about the nodes in names that
-// are at most window old at now. names maps each node to the time it was
+// are at most warningWindow old at now. names maps each node to the time it was
 // created, or the zero time when that is not known. An event is about a
 // node when the node is its involved object, or when the kubelet of the
 // node sent it. Of several events with the same node, object, and reason
@@ -118,7 +118,7 @@ func (o *Observer) listWarningEvents(ctx context.Context) (events []corev1.Event
 //
 // An InvalidDiskCapacity event from the first minutes of a node is left
 // out: every kubelet reports it as it starts.
-func scopeWarnings(events []corev1.Event, names map[string]time.Time, now time.Time, window time.Duration) []WarnEvent {
+func scopeWarnings(events []corev1.Event, names map[string]time.Time, now time.Time) []WarnEvent {
 	type key struct{ node, object, reason string }
 	latest := map[key]*corev1.Event{}
 	var order []key
@@ -132,7 +132,7 @@ func scopeWarnings(events []corev1.Event, names map[string]time.Time, now time.T
 			continue
 		}
 		at := warningTime(e)
-		if !at.IsZero() && now.Sub(at) > window {
+		if !at.IsZero() && now.Sub(at) > warningWindow {
 			continue
 		}
 		if created := names[node]; e.Reason == reasonStartupDisk && !created.IsZero() && !at.IsZero() && at.Sub(created) < startupGrace {

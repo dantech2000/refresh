@@ -45,7 +45,7 @@ func TestScopeWarnings(t *testing.T) {
 		{Node: "ip-1", Object: "Node/ip-1", Reason: "NodeNotReady", Message: "kubelet stopped posting status"},
 		{Node: "ip-2", Object: "Pod/web-x", Reason: "FailedCreatePodSandbox", Message: "network plugin not ready"},
 	}
-	if diff := cmp.Diff(want, scopeWarnings(events, names, now, 10*time.Minute)); diff != "" {
+	if diff := cmp.Diff(want, scopeWarnings(events, names, now)); diff != "" {
 		t.Errorf("scopeWarnings (-want +got):\n%s", diff)
 	}
 }
@@ -77,7 +77,7 @@ func TestScopeWarnings_StartupDiskCapacity(t *testing.T) {
 		{Node: "new", Object: "Node/new", Reason: "NodeNotReady", Message: "kubelet stopped posting status"},
 		{Node: "old", Object: "Node/old", Reason: "InvalidDiskCapacity", Message: "invalid capacity 0 on image filesystem"},
 	}
-	if diff := cmp.Diff(want, scopeWarnings(events, names, now, 10*time.Minute)); diff != "" {
+	if diff := cmp.Diff(want, scopeWarnings(events, names, now)); diff != "" {
 		t.Errorf("scopeWarnings (-want +got):\n%s", diff)
 	}
 }
@@ -100,7 +100,7 @@ func TestScopeWarnings_DedupKeepsLatest(t *testing.T) {
 			{Type: "Warning", Reason: "FailedDraining", Message: "older", InvolvedObject: obj, LastTimestamp: older},
 		},
 	} {
-		got := scopeWarnings(events, names, now, 10*time.Minute)
+		got := scopeWarnings(events, names, now)
 		if len(got) != 1 || got[0].Message != "newer" {
 			t.Errorf("scopeWarnings = %+v, want the newest of the two alone", got)
 		}
