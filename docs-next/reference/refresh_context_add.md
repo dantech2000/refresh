@@ -5,7 +5,11 @@ Add or update a saved context
 ### Synopsis
 
 Save a context that gives a name to a cluster, with an optional region and
-AWS profile. A context with the same name is replaced.
+AWS profile. A context with the same name is replaced, and the command says
+"Updated" in place of "Saved".
+
+The name has 1 to 63 letters, digits, hyphens, underscores, and dots. The
+cluster name and the region are checked before the context is saved.
 
 Exit codes:
   0  Done.
@@ -42,7 +46,7 @@ refresh context add <name> [flags]
       --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
       --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
       --no-color              Disable color (env: NO_COLOR)
-  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh (env: REFRESH_TIMEOUT) (default 1m0s)
+  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT) (default 1m0s)
       --verbose               Same as --log-level debug
 ```
 
