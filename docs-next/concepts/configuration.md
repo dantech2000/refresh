@@ -75,6 +75,14 @@ Did you mean:
 List the clusters with: refresh cluster list -r us-east-1
 ```
 
+Before any request, refresh checks each name against the EKS rules. A name
+has only letters, digits, hyphens, and underscores, and starts with a letter or
+digit. A cluster or add-on name has 1 to 100 characters, and a nodegroup name 1
+to 63. The check applies to an argument, `-c`, `REFRESH_CLUSTER`, and the
+cluster of the active context. A name that breaks the rules is an error, exit
+`1`, and the message names the value and the rule. An empty argument or an
+empty `-c ""` is an error too: it does not fall back to the defaults.
+
 ### Filters
 
 To select by pattern, use `-f/--filter` on the commands that have it:

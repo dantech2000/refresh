@@ -71,12 +71,15 @@ func AddChangeClusterFlag(cmd *cobra.Command, p *string) {
 // A command that changes something passes readOnly false, with or without
 // --dry-run: a kubeconfig that happens to point at production must never
 // choose the target of a change.
+//
+// The name is checked against the EKS rules for a cluster name, whatever
+// its source, so a name that EKS cannot have fails before any call.
 func ResolveCluster(f *Factory, explicit string, readOnly bool) (Target, error) {
 	if name := strings.TrimSpace(explicit); name != "" {
-		return Target{Cluster: name, Source: TargetExplicit}, nil
+		return checkedTarget(name, TargetExplicit, "")
 	}
 	if name := strings.TrimSpace(os.Getenv(EnvCluster)); name != "" {
-		return Target{Cluster: name, Source: TargetEnv}, nil
+		return checkedTarget(name, TargetEnv, EnvCluster)
 	}
 	store, err := f.Contexts()
 	if err != nil {
@@ -86,12 +89,12 @@ func ResolveCluster(f *Factory, explicit string, readOnly bool) (Target, error) 
 	if err != nil {
 		return Target{}, err
 	}
-	_, active, ok, err := file.Active(os.Getenv(contexts.EnvContext))
+	ctxName, active, ok, err := file.Active(os.Getenv(contexts.EnvContext))
 	if err != nil {
 		return Target{}, err
 	}
 	if ok && active.Cluster != "" {
-		return Target{Cluster: active.Cluster, Source: TargetContext}, nil
+		return checkedTarget(active.Cluster, TargetContext, fmt.Sprintf("the active context %q", ctxName))
 	}
 	if readOnly {
 		name, region, ok, err := kube.CurrentCluster(f.Global.Kubeconfig, f.Global.KubeContext)
@@ -113,6 +116,53 @@ func ResolveCluster(f *Factory, explicit string, readOnly bool) (Target, error) 
 		"  -c/--cluster, or [cluster]      for this command, whichever it has\n" +
 		"  " + EnvCluster + "                 for this shell\n" +
 		"  refresh context use <name>      until you change it")
+}
+
+// checkedTarget returns the target for name, or the error of a name that
+// EKS cannot have. from names where the name came from, or "" for the
+// command line, which the user just typed.
+func checkedTarget(name string, source TargetSource, from string) (Target, error) {
+	if err := awsx.CheckClusterName(name); err != nil {
+		var nameErr *awsx.NameError
+		if errors.As(err, &nameErr) {
+			nameErr.From = from
+		}
+		return Target{}, err
+	}
+	return Target{Cluster: name, Source: source}, nil
+}
+
+// CheckNames returns the error of the first of names that check refuses,
+// such as awsx.CheckNodegroupName, or nil.
+func CheckNames(check func(string) error, names ...string) error {
+	for _, n := range names {
+		if err := check(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// NoEmptyArgs is a cobra.PositionalArgs that refuses an argument that is
+// empty, such as "": cobra passes it on as it is, and a command would read
+// it as no argument and fall back to its defaults.
+func NoEmptyArgs(_ *cobra.Command, args []string) error {
+	for _, a := range args {
+		if strings.TrimSpace(a) == "" {
+			return errors.New("the argument is empty: pass a name")
+		}
+	}
+	return nil
+}
+
+// CheckClusterFlag refuses a -c/--cluster that is given empty, which would
+// otherwise fall back to the defaults. A command without the flag passes.
+func CheckClusterFlag(cmd *cobra.Command) error {
+	fl := cmd.Flags().Lookup("cluster")
+	if fl == nil || !fl.Changed || strings.TrimSpace(fl.Value.String()) != "" {
+		return nil
+	}
+	return errors.New("-c/--cluster is empty: pass a cluster name")
 }
 
 // NotFoundError returns the error for a named thing that does not exist:

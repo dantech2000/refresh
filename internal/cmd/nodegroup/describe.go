@@ -75,7 +75,7 @@ Exit codes:
 
   # With the EC2 instances
   refresh nodegroup describe web -c prod --show-instances`,
-		Args:              cobra.ExactArgs(1),
+		Args:              cobra.MatchAll(cobra.ExactArgs(1), cmdutil.NoEmptyArgs),
 		ValidArgsFunction: fleetcmd.CompleteNodegroups(f, &o.cluster),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
@@ -105,6 +105,9 @@ func (o *describeOptions) complete(args []string) error {
 // validate rejects a --kube-context that the kubeconfig does not have,
 // before any AWS call.
 func (o *describeOptions) validate() error {
+	if err := awsx.CheckNodegroupName(o.nodegroup); err != nil {
+		return err
+	}
 	if !o.showWorkloads {
 		return nil
 	}

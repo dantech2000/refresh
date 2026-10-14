@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmd/changecmd"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
@@ -92,7 +93,7 @@ context. It never comes from the kubeconfig.
 
   # Roll back without a prompt, and give EKS three hours
   refresh cluster rollback prod --yes --rollback-timeout 3h`,
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cobra.MatchAll(cobra.MaximumNArgs(1), cmdutil.NoEmptyArgs),
 		ValidArgsFunction: fleetcmd.CompleteClusters(f),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
@@ -127,6 +128,9 @@ func (o *rollbackOptions) complete(args []string) error {
 }
 
 func (o *rollbackOptions) validate() error {
+	if err := cmdutil.CheckNames(awsx.CheckNodegroupName, o.skipNodegroups...); err != nil {
+		return err
+	}
 	if err := change.ValidateRollbackTimeout(o.rollbackTimeout); err != nil {
 		return err
 	}

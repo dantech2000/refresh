@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmd/changecmd"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
@@ -147,7 +149,7 @@ context. It never comes from the kubeconfig.
 
   # Roll the nodegroups later, and leave one alone
   refresh cluster upgrade prod --to 1.33 --only nodegroups --skip-nodegroup gpu`,
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cobra.MatchAll(cobra.MaximumNArgs(1), cmdutil.NoEmptyArgs),
 		ValidArgsFunction: fleetcmd.CompleteClusters(f),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
@@ -195,6 +197,12 @@ func (o *upgradeOptions) complete(args []string) error {
 }
 
 func (o *upgradeOptions) validate() error {
+	if err := cmdutil.CheckNames(awsx.CheckNodegroupName, slices.Concat(o.nodegroups, o.skipNodegroups)...); err != nil {
+		return err
+	}
+	if err := cmdutil.CheckNames(awsx.CheckAddonName, o.skipAddons...); err != nil {
+		return err
+	}
 	return o.change.Validate()
 }
 

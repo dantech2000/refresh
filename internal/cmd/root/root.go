@@ -66,6 +66,9 @@ skip the confirmation prompts.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := cmdutil.CheckClusterFlag(cmd); err != nil {
+				return err
+			}
 			return o.complete(cmd.Root().PersistentFlags(), f)
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {

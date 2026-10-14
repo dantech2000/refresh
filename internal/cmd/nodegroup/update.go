@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmd/changecmd"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
@@ -128,7 +129,7 @@ ignores all three.
 
   # Roll every cluster of two regions
   refresh nodegroup update --all-clusters -r us-east-1,us-west-2 --yes`,
-		Args:              cobra.ArbitraryArgs,
+		Args:              cobra.MatchAll(cobra.ArbitraryArgs, cmdutil.NoEmptyArgs),
 		ValidArgsFunction: fleetcmd.CompleteNodegroupNames(f, &o.cluster),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
@@ -173,6 +174,9 @@ func (o *updateOptions) complete(args []string) error {
 }
 
 func (o *updateOptions) validate() error {
+	if err := cmdutil.CheckNames(awsx.CheckNodegroupName, o.nodegroups...); err != nil {
+		return err
+	}
 	switch {
 	case o.allClusters && o.cluster != "":
 		return errors.New("--all-clusters and -c/--cluster cannot be used together: one names every cluster and the other names one")

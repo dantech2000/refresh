@@ -87,7 +87,7 @@ Any other context names no cluster: kind, a self-managed cluster, a plain cluste
 
 When step 4 gives the cluster, the command reads the region of that cluster. `-r/--region` wins over it. It wins over the region of the active context and of the AWS configuration.
 
-Names are exact. A name that matches nothing is an error that lists the close matches. To select by pattern, use `-f`:
+Names are exact. A name that matches nothing is an error that lists the close matches. A name that EKS cannot have (a cluster or add-on: 1 to 100 letters, digits, hyphens, and underscores, starting with a letter or digit; a nodegroup: the same, 1 to 63) is an error before any request, from any source. An empty argument or `-c ""` is an error, not the default. To select by pattern, use `-f`:
 
 ```
 refresh cluster list -f name=prod-*

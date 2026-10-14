@@ -3,10 +3,12 @@ package addon
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmd/changecmd"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
@@ -88,7 +90,7 @@ refresh context. It never comes from the kubeconfig.
 
   # Move one add-on to a version, and do not wait for it
   refresh addon update coredns --version v1.11.4-eksbuild.2 -c prod --yes --no-wait`,
-		Args:              cobra.ArbitraryArgs,
+		Args:              cobra.MatchAll(cobra.ArbitraryArgs, cmdutil.NoEmptyArgs),
 		ValidArgsFunction: fleetcmd.CompleteAddonNames(f, &o.cluster),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
@@ -121,6 +123,9 @@ func (o *updateOptions) complete(args []string) error {
 }
 
 func (o *updateOptions) validate() error {
+	if err := cmdutil.CheckNames(awsx.CheckAddonName, slices.Concat(o.addons, o.skip)...); err != nil {
+		return err
+	}
 	switch {
 	case o.all && len(o.addons) > 0:
 		return errors.New("name the add-ons or pass --all, not both")

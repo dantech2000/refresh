@@ -62,7 +62,7 @@ Exit codes:
 
   # The configuration values alone
   refresh addon describe coredns -c prod -o json | jq -r .addon.configuration`,
-		Args:              cobra.ExactArgs(1),
+		Args:              cobra.MatchAll(cobra.ExactArgs(1), cmdutil.NoEmptyArgs),
 		ValidArgsFunction: fleetcmd.CompleteAddons(f, &o.cluster),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
@@ -87,9 +87,9 @@ func (o *describeOptions) complete(args []string) error {
 	return err
 }
 
-// validate has nothing to reject: the name is exact, and the output flag
-// is checked as it is parsed.
-func (o *describeOptions) validate() error { return nil }
+// validate rejects a name that EKS cannot have, before any call. The
+// output flag is checked as it is parsed.
+func (o *describeOptions) validate() error { return awsx.CheckAddonName(o.addon) }
 
 func (o *describeOptions) run(ctx context.Context) error {
 	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)

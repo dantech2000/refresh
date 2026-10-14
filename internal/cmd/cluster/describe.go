@@ -87,7 +87,7 @@ Exit codes:
 
   # The add-on versions for a script
   refresh cluster describe prod -o json | jq -r '.cluster.addons[] | "\(.name) \(.version)"'`,
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cobra.MatchAll(cobra.MaximumNArgs(1), cmdutil.NoEmptyArgs),
 		ValidArgsFunction: fleetcmd.CompleteClusters(f),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {

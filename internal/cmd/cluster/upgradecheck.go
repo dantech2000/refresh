@@ -96,7 +96,7 @@ Exit codes:
 
   # One insight in full
   refresh cluster upgrade-check prod --insight bc8b2f86`,
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cobra.MatchAll(cobra.MaximumNArgs(1), cmdutil.NoEmptyArgs),
 		ValidArgsFunction: fleetcmd.CompleteClusters(f),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmd/changecmd"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
@@ -95,7 +96,7 @@ refresh context. It never comes from the kubeconfig.
 
   # Change only the bounds, and do not wait
   refresh nodegroup scale web -c prod --min 2 --max 12 --yes --no-wait`,
-		Args:              cobra.ExactArgs(1),
+		Args:              cobra.MatchAll(cobra.ExactArgs(1), cmdutil.NoEmptyArgs),
 		ValidArgsFunction: fleetcmd.CompleteNodegroups(f, &o.cluster),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(cmd, args); err != nil {
@@ -139,6 +140,9 @@ func (o *scaleOptions) complete(cmd *cobra.Command, args []string) error {
 }
 
 func (o *scaleOptions) validate() error {
+	if err := awsx.CheckNodegroupName(o.nodegroup); err != nil {
+		return err
+	}
 	if err := change.ValidateSizes(o.sizes.desired, o.sizes.min, o.sizes.max); err != nil {
 		return err
 	}

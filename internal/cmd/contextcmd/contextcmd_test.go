@@ -204,7 +204,7 @@ func TestContextCommands(t *testing.T) {
 				{args: []string{"context", "remove", "nope"}, wantErr: `unknown context "nope"`},
 				{args: []string{"context", "add", "--cluster", "x"}, wantErr: "accepts 1 arg(s), received 0"},
 				{args: []string{"context", "add", "new"}, wantErr: `required flag(s) "cluster" not set`},
-				{args: []string{"context", "add", "new", "--cluster", ""}, wantErr: "cluster is required"},
+				{args: []string{"context", "add", "new", "--cluster", ""}, wantErr: "-c/--cluster is empty: pass a cluster name"},
 				{args: []string{"context", "add", "", "--cluster", "x"}, wantErr: "context name is required"},
 				{args: []string{"context", "list", "extra"}, wantErr: `unknown command "extra" for "refresh context list"`},
 				{args: []string{"context", "bogus"}, wantErr: `unknown command "bogus" for "refresh context"`},
