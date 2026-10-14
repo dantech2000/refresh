@@ -34,7 +34,7 @@ error: dry run: a real run would be blocked
       "gate": {
         "decision": "Block",
         "reasons": [
-          "DrainBlockers: 1 PDB could lose more pods than allowed when 1 node leave web"
+          "DrainBlockers: removing 1 node from web could evict more pods than PDB default/shop allows"
         ],
         "accepted": [],
         "forced": [],
@@ -51,7 +51,7 @@ error: dry run: a real run would be blocked
             "name": "DrainBlockers",
             "outcome": "Fail",
             "blocking": true,
-            "message": "1 PDB could lose more pods than allowed when 1 node leave web",
+            "message": "removing 1 node from web could evict more pods than PDB default/shop allows",
             "details": [
               "drain blocker: default/shop (2/2 pods healthy, 0 allowed; covered pods run on 2 of the nodes, so removing 1 can take down 1)"
             ],

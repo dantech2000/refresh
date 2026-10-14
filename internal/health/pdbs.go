@@ -384,7 +384,11 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 		return r
 	}
 	r.Outcome = Fail
-	r.Message = fmt.Sprintf("%s could lose more pods than allowed when %s leave %s", plural(len(r.Findings), "PDB"), plural(int(remove), "node"), nodegroup)
+	budgetsWord := "PDB " + r.Findings[0] + " allows"
+	if len(r.Findings) > 1 {
+		budgetsWord = "PDBs " + strings.Join(r.Findings, ", ") + " allow"
+	}
+	r.Message = fmt.Sprintf("removing %s from %s could evict more pods than %s", plural(int(remove), "node"), nodegroup, budgetsWord)
 	return r
 }
 

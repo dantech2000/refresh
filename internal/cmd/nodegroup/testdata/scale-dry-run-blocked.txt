@@ -16,11 +16,11 @@ STEPS  1
 
 HEALTH GATE
   decision  [X] Block
-  reasons   DrainBlockers: 1 PDB could lose more pods than allowed when 1 node leave web
+  reasons   DrainBlockers: removing 1 node from web could evict more pods than PDB default/shop allows
 
 CHECKS  3
   NAME           OUTCOME    MESSAGE
   Nodes          [OK] Pass  2/2 nodes ready
-  DrainBlockers  [X] Fail   1 PDB could lose more pods than allowed when 1 node leave web
+  DrainBlockers  [X] Fail   removing 1 node from web could evict more pods than PDB default/shop allows
   Kubernetes     [OK] Pass  Kubernetes API reachable
 --- stderr ---

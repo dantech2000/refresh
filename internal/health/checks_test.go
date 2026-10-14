@@ -533,7 +533,7 @@ func TestScaleDownBlockers(t *testing.T) {
 	}{
 		{name: "a scale-up", remove: 0, want: want{outcome: health.Pass, message: "a scale-up removes no node"}},
 		{name: "one node with room", remove: 1, want: want{outcome: health.Pass, message: "no PodDisruptionBudget stops removing 1 node from ng-b"}},
-		{name: "two nodes lose more than allowed", remove: 2, want: want{outcome: health.Fail, message: "1 PDB could lose more pods than allowed when 2 nodes leave ng-b", findings: []string{"default/api"}}},
+		{name: "two nodes lose more than allowed", remove: 2, want: want{outcome: health.Fail, message: "removing 2 nodes from ng-b could evict more pods than PDB default/api allows", findings: []string{"default/api"}}},
 		{name: "a tight budget", edits: []edit{tight("api")}, remove: 1, want: want{outcome: health.Fail, findings: []string{"default/api"}}},
 		{name: "a tight budget elsewhere", edits: []edit{tight("web")}, remove: 1, want: want{outcome: health.Pass}},
 		{name: "a pod with two budgets is not a scale-down blocker", remove: 1, edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {

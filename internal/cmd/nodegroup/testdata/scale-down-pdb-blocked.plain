@@ -1,5 +1,5 @@
 exit: 3
-error: blocked by 1 health check: DrainBlockers: 1 PDB could lose more pods than allowed when 1 node leave web; nothing was started
+error: blocked by 1 health check: DrainBlockers: removing 1 node from web could evict more pods than PDB default/shop allows; nothing was started
 --- stdout ---
 FIELD	VALUE
 plan.operation	NodegroupScale
@@ -14,16 +14,16 @@ steps.web.from	desired 2, min 1, max 3
 steps.web.to	desired 1, min 1, max 3
 steps.web.note	-
 health_gate.decision	Block
-health_gate.reasons	DrainBlockers: 1 PDB could lose more pods than allowed when 1 node leave web
+health_gate.reasons	DrainBlockers: removing 1 node from web could evict more pods than PDB default/shop allows
 checks.Nodes.outcome	Pass
 checks.Nodes.message	2/2 nodes ready
 checks.DrainBlockers.outcome	Fail
-checks.DrainBlockers.message	1 PDB could lose more pods than allowed when 1 node leave web
+checks.DrainBlockers.message	removing 1 node from web could evict more pods than PDB default/shop allows
 checks.Kubernetes.outcome	Pass
 checks.Kubernetes.message	Kubernetes API reachable
 --- stderr ---
 PLAN  NodegroupScale, prod in us-east-1
   web  scale from desired 2, min 1, max 3 to desired 1, min 1, max 3
   [OK] Nodes          2/2 nodes ready
-  [X]  DrainBlockers  1 PDB could lose more pods than allowed when 1 node leave web
+  [X]  DrainBlockers  removing 1 node from web could evict more pods than PDB default/shop allows
   [OK] Kubernetes     Kubernetes API reachable

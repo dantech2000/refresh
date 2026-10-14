@@ -1129,7 +1129,7 @@ func TestRunScale_BecomesAScaleDownWhileAsking(t *testing.T) {
 		if res.Status != Refused || res.ExitCode() != 3 || len(e.scaleRequests()) != 0 {
 			t.Errorf("result = %s, exit %d, %d requests; want Refused, 3, none", res.Status, res.ExitCode(), len(e.scaleRequests()))
 		}
-		if res.Err == nil || !strings.Contains(res.Err.Error(), "DrainBlockers: 1 PDB could lose more pods than allowed when 2 nodes leave web") {
+		if res.Err == nil || !strings.Contains(res.Err.Error(), "DrainBlockers: removing 2 nodes from web could evict more pods than PDB ") {
 			t.Errorf("message = %v, want the check that blocks", res.Err)
 		}
 		if got := res.Plan.Clusters[0].Gate.Blockers; len(got) != 1 || got[0].Check != "DrainBlockers" {

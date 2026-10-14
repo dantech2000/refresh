@@ -212,7 +212,7 @@ more pods than it allows.
 ```text
 HEALTH GATE
   decision  ✗ Block
-  reasons   DrainBlockers: 1 PDB could lose more pods than allowed when 2 nodes leave ng-b
+  reasons   DrainBlockers: removing 2 nodes from ng-b could evict more pods than PDB default/api allows
 ```
 
 ## PDBCoverage
