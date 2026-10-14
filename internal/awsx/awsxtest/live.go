@@ -4,6 +4,7 @@ package awsxtest
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -38,9 +39,15 @@ const liveCredentialLimit = 20 * time.Second
 // It makes no AWS API call. A profile that assumes a role calls STS
 // AssumeRole, and an SSO profile calls the SSO portal, as any command does.
 // An empty region leaves the region of the profile.
-func LiveConfig(t testing.TB, region string) aws.Config {
+func LiveConfig(t *testing.T, region string) aws.Config {
 	t.Helper()
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: 10 * time.Second,
+		IdleConnTimeout:     90 * time.Second,
+	}
 	t.Cleanup(tr.CloseIdleConnections)
 	ctx, cancel := context.WithTimeout(t.Context(), liveCredentialLimit)
 	defer cancel()
