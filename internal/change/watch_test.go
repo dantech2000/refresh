@@ -184,6 +184,26 @@ func TestWatch_HandleIsNamedByTheUpdate(t *testing.T) {
 	}
 }
 
+// The phase of a watched change started when its update did, not when the
+// watch began: the phase time and the elapsed time of the change agree.
+func TestWatch_PhaseStartsWithTheUpdate(t *testing.T) {
+	env := newEnv(t, newWorld(nil))
+	env.world.Edit(func(s *fleettest.State) {
+		s.Cluster(east, "prod").UpdateScripts = []fleettest.UpdateScript{{After: 10 * time.Minute}}
+	})
+	createdAt := env.world.Now()
+	version := "1.34"
+	if _, err := env.world.UpdateClusterVersion(east, "prod", fleettest.ClusterVersionRequest{Version: &version}); err != nil {
+		t.Fatal(err)
+	}
+	env.world.Advance(7 * time.Minute)
+	h := Watch(testContext(t), env.deps, Resource{Target: handleTarget, Kind: StepControlPlane}, WatchOptions{Limits: Limits{Wait: time.Hour, Poll: 20 * time.Second}})
+	v := waitFinished(t, h)
+	if len(v.Phases) != 1 || !v.Phases[0].StartedAt.Equal(createdAt) || !v.StartedAt.Equal(createdAt) {
+		t.Fatalf("phases %+v, change started %s; want both started at %s", v.Phases, v.StartedAt, createdAt)
+	}
+}
+
 // The first reads of a watch run under the read budget: a read that
 // hangs ends the watch as failed.
 func TestWatch_HungReadEndsUnderTheReadBudget(t *testing.T) {

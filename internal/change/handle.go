@@ -269,7 +269,13 @@ func (h *Handle) event(e Event) {
 			h.state = Running
 		}
 		if i := h.phaseIndex(e.Phase); i >= 0 {
-			h.phases[i].Status, h.phases[i].StartedAt = PhaseRunning, e.At
+			at := e.At
+			// A watched change began before the watch: its phase runs
+			// from the start of the update, as the change does.
+			if h.elsewhere && h.startedAt.Before(at) {
+				at = h.startedAt
+			}
+			h.phases[i].Status, h.phases[i].StartedAt = PhaseRunning, at
 		}
 	case PhaseEnded:
 		if i := h.phaseIndex(e.Phase); i >= 0 {
