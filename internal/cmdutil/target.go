@@ -62,7 +62,11 @@ func AddChangeClusterFlag(cmd *cobra.Command, p *string) {
 //  2. REFRESH_CLUSTER.
 //  3. The active refresh context.
 //  4. For a read-only command: the cluster of the kubeconfig context, which
-//     --kubeconfig and --kube-context choose.
+//     --kubeconfig and --kube-context choose. Only a context that names an
+//     EKS cluster and its region counts (see kube.CurrentCluster). The
+//     command then reads that region: ResolveCluster stores it in
+//     f.Global.Regions when -r/--region named none, so a command must
+//     resolve its cluster before it calls f.AWS.
 //
 // A command that changes something passes readOnly false, with or without
 // --dry-run: a kubeconfig that happens to point at production must never
@@ -90,11 +94,17 @@ func ResolveCluster(f *Factory, explicit string, readOnly bool) (Target, error) 
 		return Target{Cluster: active.Cluster, Source: TargetContext}, nil
 	}
 	if readOnly {
-		name, ok, err := kube.CurrentCluster(f.Global.Kubeconfig, f.Global.KubeContext)
+		name, region, ok, err := kube.CurrentCluster(f.Global.Kubeconfig, f.Global.KubeContext)
 		if err != nil {
 			return Target{}, fmt.Errorf("reading the kubeconfig for the cluster: %w", err)
 		}
 		if ok {
+			// The kubeconfig also says where the cluster is. That region
+			// is the region of the run unless -r/--region names one: the
+			// region of the AWS configuration may be another one.
+			if len(f.Global.Regions) == 0 {
+				f.Global.Regions = []string{region}
+			}
 			return Target{Cluster: name, Source: TargetKubeconfig}, nil
 		}
 	}
