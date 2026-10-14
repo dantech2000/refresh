@@ -79,7 +79,10 @@ skip the confirmation prompts.`,
 	// Every command gets this through the root: a flag error ends with the
 	// way to its help.
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
-		return fmt.Errorf("%w\nRun '%s --help' for usage", numberFlagError(err, ""), c.CommandPath())
+		if plain := numberFlagError(err, ""); plain != nil {
+			err = plain
+		}
+		return fmt.Errorf("%w\nRun '%s --help' for usage", err, c.CommandPath())
 	})
 	cmd.SetIn(f.IOStreams.In)
 	cmd.SetOut(f.IOStreams.Out)
@@ -164,7 +167,7 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 			continue
 		}
 		if err := flags.Set(e.flag, v); err != nil {
-			if plain := numberFlagError(err, e.env); plain != err {
+			if plain := numberFlagError(err, e.env); plain != nil {
 				return plain
 			}
 			return fmt.Errorf("invalid %s: %w", e.env, err)
@@ -257,16 +260,16 @@ var intBits = map[string]int{"int": strconv.IntSize, "int32": 32, "int64": 64}
 //	--desired is too large (at most 2147483647)
 //
 // name is how to call the value, such as an environment variable; "" means
-// the flag. Any other error is returned as it is.
+// the flag. It returns nil for any other error.
 func numberFlagError(err error, name string) error {
 	var invalid *pflag.InvalidValueError
 	var num *strconv.NumError
 	if !errors.As(err, &invalid) || !errors.As(err, &num) {
-		return err
+		return nil
 	}
 	bits, ok := intBits[invalid.GetFlag().Value.Type()]
 	if !ok {
-		return err
+		return nil
 	}
 	if name == "" {
 		name = "--" + invalid.GetFlag().Name
