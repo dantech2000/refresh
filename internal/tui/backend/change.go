@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -247,28 +248,32 @@ func (b *Live) add(h *change.Handle, key state.Key, elsewhere bool, r change.Res
 
 // follow reads the handle on every change and publishes it, and at the
 // end releases the claim and asks for a read of the cluster. It takes the
-// channel before the read, so no change is missed.
+// channel before the read, so no change is missed, and it ends with the
+// read that sees the handle finished: that read releases the claim under
+// the same lock, so no state shows the change finished with its claim
+// held or its end unsaid.
 func (b *Live) follow(e *entry) {
 	after := uint64(0)
 	for {
 		ch := e.handle.Changed()
-		after = b.store(e, after)
+		var finished bool
+		after, finished = b.store(e, after)
 		b.bump()
+		if finished {
+			return
+		}
 		select {
 		case <-ch:
-			continue
 		case <-e.handle.Done():
 		}
-		b.store(e, after)
-		b.release(e)
-		b.bump()
-		return
 	}
 }
 
 // store copies the view and the new log entries of the handle into the
-// entry, and returns the sequence number of the last entry read.
-func (b *Live) store(e *entry, after uint64) uint64 {
+// entry, and returns the sequence number of the last entry read and
+// whether the handle has finished. A published state keeps what it got:
+// the log and the node feed are replaced, never written to.
+func (b *Live) store(e *entry, after uint64) (uint64, bool) {
 	v := e.handle.View()
 	entries := e.handle.Events(after)
 	b.mu.Lock()
@@ -281,28 +286,37 @@ func (b *Live) store(e *entry, after uint64) uint64 {
 		b.say(e.key, view.Progress, "watching a change started elsewhere: "+e.resource.String())
 	}
 	if len(entries) > 0 {
-		// The published slice is never written to: a longer copy replaces it.
 		e.log = slices.Concat(e.log, entries)
 		after = entries[len(entries)-1].Seq
 	}
+	var nodes map[change.StepRef][]noderoll.Event
 	for ref, p := range v.Progress {
-		if p.Nodes != nil {
-			if e.nodes == nil {
-				e.nodes = map[change.StepRef][]noderoll.Event{}
-			}
-			e.nodes[ref] = p.Nodes.Recent
+		if p.Nodes == nil {
+			continue
 		}
+		if nodes == nil {
+			nodes = maps.Clone(e.nodes)
+			if nodes == nil {
+				nodes = map[change.StepRef][]noderoll.Event{}
+			}
+		}
+		nodes[ref] = p.Nodes.Recent
 	}
-	return after
+	if nodes != nil {
+		e.nodes = nodes
+	}
+	finished := v.State == change.Finished
+	if finished {
+		b.releaseLocked(e)
+	}
+	return after, finished
 }
 
-// release ends the claim of a finished change, says how it ended, and
-// asks the sweep loop to read its cluster again. A watch that found
+// releaseLocked ends the claim of a finished change, says how it ended,
+// and asks the sweep loop to read its cluster again. A watch that found
 // nothing in flight is dropped without a word: the sweep that started
-// it read a state that is gone.
-func (b *Live) release(e *entry) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+// it read a state that is gone. The caller holds b.mu.
+func (b *Live) releaseLocked(e *entry) {
 	b.byCluster[e.key] = slices.DeleteFunc(b.byCluster[e.key], func(id state.ChangeID) bool { return id == e.id })
 	if !e.elsewhere {
 		b.ended[e.key] = b.opts.Now()

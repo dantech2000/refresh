@@ -499,8 +499,10 @@ func TestPlanChangedAsksAndOneChangePerCluster(t *testing.T) {
 			t.Fatal("a declined change sent UpdateAddon")
 		}
 	}
-	if !strings.Contains(feedText(done), "prod ended: declined") {
-		t.Fatalf("feed:\n%s", feedText(done))
+	// The state that shows the change finished shows its end in the feed
+	// and its claim released, in the same version.
+	if !strings.Contains(feedText(done), "prod ended: declined") || done.Clusters[0].Change != 0 {
+		t.Fatalf("claim %d, feed:\n%s", done.Clusters[0].Change, feedText(done))
 	}
 }
 
