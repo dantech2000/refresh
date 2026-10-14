@@ -322,7 +322,7 @@ func (g *generator) nodegroup(c *fleettest.Cluster, name, version, amiType strin
 	if stale {
 		image = oldImage(version)
 	}
-	group := fleettest.AutoScalingGroup{Region: region, Name: ng.AutoScalingGroups[0]}
+	group := fleettest.AutoScalingGroup{Region: region, Name: ng.AutoScalingGroups[0], AvailabilityZones: []string{region + "a", region + "b"}}
 	for k := range int(ng.Desired) {
 		az := region + string(rune('a'+k%2))
 		id := fmt.Sprintf("i-%s-%s-%d", c.Name, name, k+1)
