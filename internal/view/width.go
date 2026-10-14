@@ -42,6 +42,11 @@ func pad(s string, width int, right bool) string {
 
 // visibleWidth returns the cells of a line that may hold color codes.
 func visibleWidth(line string) int {
+	return Width(stripCodes(line))
+}
+
+// stripCodes returns line without its color codes.
+func stripCodes(line string) string {
 	var b strings.Builder
 	for i := 0; i < len(line); i++ {
 		if line[i] == 0x1b && i+1 < len(line) && line[i+1] == '[' {
@@ -54,5 +59,5 @@ func visibleWidth(line string) int {
 		}
 		b.WriteByte(line[i])
 	}
-	return Width(b.String())
+	return b.String()
 }

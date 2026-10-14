@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // Live redraws a block of lines in place on a terminal. It moves the cursor
@@ -68,10 +70,20 @@ func (l *Live) erase() string {
 }
 
 // screenRows returns the rows that line takes on a terminal of width
-// columns: a line longer than the terminal wraps.
+// columns: a line longer than the terminal wraps. A wide rune cannot start
+// in the last column, so it wraps one cell early.
 func screenRows(line string, width int) int {
 	if width <= 0 {
 		return 1
 	}
-	return max(1, (visibleWidth(line)+width-1)/width)
+	rows, col := 1, 0
+	for _, r := range stripCodes(line) {
+		w := runewidth.RuneWidth(r)
+		if col > 0 && col+w > width {
+			rows++
+			col = 0
+		}
+		col += w
+	}
+	return rows
 }

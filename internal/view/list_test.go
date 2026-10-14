@@ -286,3 +286,35 @@ func TestLive(t *testing.T) {
 		t.Errorf("Clear (-want +got):\n%s", diff)
 	}
 }
+
+// A wide rune cannot use the last column of a row, so three of them take
+// three rows of a terminal that is three columns wide, not two.
+func TestLive_WideRunesWrapEarly(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string
+		width int
+		want  string
+	}{
+		{name: "wide runes at an odd width", line: "日本語", width: 3, want: "\x1b[3A\x1b[J"},
+		{name: "wide runes at an even width", line: "日本語", width: 4, want: "\x1b[2A\x1b[J"},
+		{name: "one wide rune a row", line: "日本語", width: 1, want: "\x1b[3A\x1b[J"},
+		{name: "narrow runes fill the row", line: "abcdef", width: 3, want: "\x1b[2A\x1b[J"},
+		{name: "color codes take no cell", line: "\x1b[31m日本\x1b[0m", width: 4, want: "\x1b[1A\x1b[J"},
+		{name: "empty line", line: "", width: 3, want: "\x1b[1A\x1b[J"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			live := view.NewLive(&buf, func() (int, int) { return tt.width, 10 })
+			if !live.Draw([]string{tt.line}) {
+				t.Fatal("Draw refused a block that fits")
+			}
+			buf.Reset()
+			live.Clear()
+			if diff := cmp.Diff(tt.want, buf.String()); diff != "" {
+				t.Errorf("Clear (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
