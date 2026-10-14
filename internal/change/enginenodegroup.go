@@ -24,6 +24,9 @@ const maxAttachRounds = 2
 //  3. At the goal: the run waits while the nodegroup is changing, and
 //     then verifies it with no baseline, because the roll began before
 //     this run. A nodegroup that is not ACTIVE is a verification issue.
+//     While it is UPDATING, the update in flight must be a roll to the
+//     goal (see foreignRoll); any other update blocks the step under the
+//     busy rule, and nothing is sent.
 //  4. Below the goal and UPDATING: the run waits for that update and
 //     reads again.
 //  5. Otherwise the roll: a batch of one. The batch takes the baseline,
@@ -64,6 +67,17 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 			ctx := r.readCtx
 			var wait *budget
 			if changing {
+				if fresh.Status == nodegroupUpdating {
+					u, err := inFlightUpdate(r.readCtx, clients, resource)
+					if r.readCtx.Err() != nil {
+						return r.unsent(cp, res, err), false
+					}
+					if msg := foreignRoll(kind, name, s.To, u, err); msg != "" {
+						res.Status, res.InFlight = StepBlocked, u.Type
+						res.Failure = r.stepFailure(cp, res, apidoc.ReasonBusy, msg+"; it was not changed. Run the command again once that finishes")
+						return res, false
+					}
+				}
 				r.notice(fmt.Sprintf("nodegroup %s is %s at %s; waiting for it to settle", name, fresh.Status, fresh.Version))
 				res.Attached = true
 				if res.StartedAt.IsZero() {
@@ -139,4 +153,25 @@ func (r *runner) submitEngineRoll(cp *ClusterPlan, s Step) StepResult {
 		return out
 	}
 	return r.sendRoll(cp, res, s, s.To)
+}
+
+// foreignRoll returns why the update in flight on a nodegroup that is at
+// the goal of its step and UPDATING is not the roll to that goal, and ""
+// when it is. Only a version update whose target version meets the goal,
+// by the direction of the run, is attached to: the tail of a roll of an
+// earlier run. err is the error of the lookup of the update.
+func foreignRoll(kind Kind, name, goal string, u InFlightUpdate, err error) string {
+	switch {
+	case err != nil:
+		return fmt.Sprintf("nodegroup %s is UPDATING and its update could not be read (%v)", name, err)
+	case u.ID == "":
+		return fmt.Sprintf("nodegroup %s is UPDATING and EKS lists no update in progress for it", name)
+	case u.Type != string(ekstypes.UpdateTypeVersionUpdate):
+		return fmt.Sprintf("nodegroup %s is UPDATING with a %s (update %s), not rolling to %s", name, u.Type, u.ID, goal)
+	case u.Version == "":
+		return fmt.Sprintf("nodegroup %s is rolling with no target version (update %s), not to %s", name, u.ID, goal)
+	case !versionDone(kind, u.Version, goal):
+		return fmt.Sprintf("nodegroup %s is rolling to %s (update %s), not to %s", name, u.Version, u.ID, goal)
+	}
+	return ""
 }
