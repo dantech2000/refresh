@@ -1,0 +1,159 @@
+site_name: refresh
+site_description: >-
+  Documentation for refresh, a command-line tool that keeps Amazon EKS
+  clusters up to date: status, readiness, patch, upgrade.
+site_url: https://drod.dev/refresh/
+repo_url: https://github.com/dantech2000/refresh
+repo_name: dantech2000/refresh
+# Read-only docs site: no per-page "Edit this page" link. The reference pages
+# are generated (gen-docs) and the rest is maintained in-repo via PRs, so an
+# edit link would point readers at a non-editable workflow. (edit_uri empty +
+# content.action.edit removed from theme.features below disables the button.)
+edit_uri: ""
+copyright: Copyright &copy; Daniel Rodriguez
+
+# Source markdown lives in docs/; the built site goes to site/ (gitignored).
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle: { icon: material/brightness-auto, name: Switch to light mode }
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/brightness-7, name: Switch to dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/brightness-4, name: Switch to system preference }
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+plugins:
+  - search
+
+# Copies api/schema/ into the site, at /schema/<version>/<Kind>.json.
+hooks:
+  - tools/mkdocs/publish_schemas.py
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/dantech2000/refresh
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - Concepts:
+      - The upgrade lifecycle: concepts/lifecycle.md
+      - Configuration: concepts/configuration.md
+      - Logging in to AWS: concepts/logging-in.md
+      - Contexts: concepts/contexts.md
+      - Health checks: concepts/health-checks.md
+      - Output formats: concepts/output.md
+      - Exit codes: concepts/exit-codes.md
+  - Commands:
+      - Overview: commands/index.md
+      - status: commands/status.md
+      - cluster: commands/cluster.md
+      - nodegroup: commands/nodegroup.md
+      - addon: commands/addon.md
+      - context: commands/contexts.md
+      - ui (experimental): commands/ui.md
+      - version and completion: commands/utility.md
+  - Reference:
+      - refresh: reference/refresh.md
+      - status: reference/refresh_status.md
+      - cluster:
+          - reference/refresh_cluster.md
+          - list: reference/refresh_cluster_list.md
+          - describe: reference/refresh_cluster_describe.md
+          - upgrade-check: reference/refresh_cluster_upgrade-check.md
+          - upgrade: reference/refresh_cluster_upgrade.md
+          - rollback: reference/refresh_cluster_rollback.md
+      - nodegroup:
+          - reference/refresh_nodegroup.md
+          - list: reference/refresh_nodegroup_list.md
+          - describe: reference/refresh_nodegroup_describe.md
+          - update: reference/refresh_nodegroup_update.md
+          - scale: reference/refresh_nodegroup_scale.md
+      - addon:
+          - reference/refresh_addon.md
+          - list: reference/refresh_addon_list.md
+          - describe: reference/refresh_addon_describe.md
+          - update: reference/refresh_addon_update.md
+      - context:
+          - reference/refresh_context.md
+          - list: reference/refresh_context_list.md
+          - add: reference/refresh_context_add.md
+          - remove: reference/refresh_context_remove.md
+          - use: reference/refresh_context_use.md
+          - current: reference/refresh_context_current.md
+      - ui: reference/refresh_ui.md
+      - version: reference/refresh_version.md
+      - completion:
+          - reference/refresh_completion.md
+          - bash: reference/refresh_completion_bash.md
+          - zsh: reference/refresh_completion_zsh.md
+          - fish: reference/refresh_completion_fish.md
+          - powershell: reference/refresh_completion_powershell.md
+      - JSON schemas: reference/schemas.md
+  - Usage:
+      - Cookbook: usage/cookbook.md
+      - Migrating from 0.16: migrating.md
+      - Coming from eksctl or the AWS CLI: migration.md
+  - Changelog: changelog.md
+
+# Design notes of the rewrite are for contributors, not for the site.
+exclude_docs: |
+  design/

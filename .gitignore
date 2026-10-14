@@ -19,6 +19,8 @@ go.work
 
 # Build artifacts
 dist/
+# Man pages that the GoReleaser before-hook generates for the archives.
+/build/
 /refresh
 coverage.out
 coverage.html
