@@ -132,6 +132,14 @@ tasks:
       - task: build
       - go test -tags livecheck -count=1 -v -run TestLive ./legacy/internal/aws/ ./legacy/internal/services/status/ ./legacy/internal/services/addons/ ./legacy/internal/services/nodegroup/ ./legacy/internal/tools/livecheck/
 
+  test:live:next:
+    desc: Read-only checks of the rewrite against a real AWS account (AWS_PROFILE); free, never changes anything
+    cmds:
+      # Every package: a livecheck is a TestLive<Name> function behind the build
+      # tag. The pattern leaves out the unit tests of internal/view named
+      # TestLive and TestLive_*. The schema check builds ./cmd/refresh itself.
+      - go test -tags livecheck -count=1 -v -run '^TestLive[A-Z]' ./internal/... ./tools/...
+
   test:coverage:
     desc: Run tests with coverage
     cmds:
