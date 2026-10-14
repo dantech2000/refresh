@@ -142,7 +142,8 @@ func removeStalePages(dir, root, sep, ext string, pages []string) error {
 		if !e.Type().IsRegular() || slices.Contains(pages, name) {
 			continue
 		}
-		if name != root+ext && !(strings.HasPrefix(name, root+sep) && strings.HasSuffix(name, ext)) {
+		page := name == root+ext || (strings.HasPrefix(name, root+sep) && strings.HasSuffix(name, ext))
+		if !page {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, name)); err != nil {
