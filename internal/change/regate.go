@@ -135,29 +135,15 @@ func (r *runner) addFailures(failures []apidoc.Failure) {
 // It returns false when the step must not go on, with its result.
 func (r *runner) recheck(cp *ClusterPlan, res StepResult, checks func(snap *fleet.Snapshot) []health.Check) (StepResult, bool) {
 	clients := r.d.AWS.Clients(cp.Region)
-	fetch := r.d.Fetch
-	if fetch == nil {
-		fetch = &fleet.Fetcher{Now: r.d.Now}
-	}
+	fetch := r.d.fetcher()
 	snap, err := fetch.Fresh().Fetch(r.readCtx, clients, cp.Cluster, fleet.Need{Nodegroups: true, Addons: true})
 	if err != nil {
 		return r.unsent(cp, res, err), false
 	}
-	name := stepName(res.Ref)
-	if refuse, _ := Busy(snap, r.req.kind(), r.steps); len(refuse) > 0 {
-		reason := apidoc.ReasonBusy
-		parts := make([]string, len(refuse))
-		for i, b := range refuse {
-			parts[i] = strings.Replace(b.Message, "nothing was started", name+" was not changed", 1)
-			if b.Kind != BlockerBusy {
-				// The cluster could not be read in full: exit code 4.
-				reason = apidoc.ReasonUnknown
-				r.addFailures(snap.Failures)
-			}
-		}
-		res.Status = StepBlocked
-		res.Failure = r.stepFailure(cp, res, reason, strings.Join(parts, "; "))
-		return res, false
+	// A change of an independent kind gets no notice from the busy rule:
+	// what is in flight and is not a target refuses.
+	if blocked, stop := r.phaseBusy(cp, res, snap, r.steps); stop {
+		return blocked, false
 	}
 	if r.common.Policy.Skip {
 		return res, true

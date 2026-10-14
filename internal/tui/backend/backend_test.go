@@ -3,6 +3,7 @@ package backend_test
 import (
 	"context"
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -303,7 +304,10 @@ func TestNextHonoursCancel(t *testing.T) {
 	st := r.wait(t, 0, swept(1))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := r.b.Next(ctx, st.Version); !errors.Is(err, context.Canceled) {
+	// The backend may publish a state after the one of the first sweep at
+	// any time, and Next returns a state that is there. So the test asks
+	// for a version that no state has: only the context can end the call.
+	if _, err := r.b.Next(ctx, math.MaxUint64); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Next after cancel = %v", err)
 	}
 	// Versions come in order, each above the one asked for.

@@ -15,13 +15,16 @@ RESULTS  5
   NAME                KIND          STATUS          FROM                TO                  UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
   control-plane@1.33  ControlPlane  - Skipped       1.33                1.33                -                                     -     -                        -                        -
   vpc-cni@1.33        Addon         [OK] Succeeded  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  00000000-0000-4000-8000-000000000002  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
-  api@1.33            Nodegroup     - Skipped       1.32                1.33                -                                     -     -                        -                        -
+  api@1.33            Nodegroup     [OK] Succeeded  1.32                1.33                -                                     -     -                        2026-01-01 00:00:30 UTC  -
   web@1.33            Nodegroup     [OK] Succeeded  1.32                1.33                00000000-0000-4000-8000-000000000003  -     2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  -
   kube-proxy@1.33     Addon         [OK] Succeeded  v1.32.0-eksbuild.1  v1.33.0-eksbuild.1  00000000-0000-4000-8000-000000000004  -     2026-01-01 00:01:00 UTC  2026-01-01 00:01:30 UTC  -
 
-VERIFICATION  5
+VERIFICATION  8
   NAME                         OUTCOME    MESSAGE
   AddonHealth/vpc-cni@1.33     [OK] Pass  vpc-cni is ACTIVE at v1.20.0-eksbuild.1
+  NodegroupActive/api@1.33     [OK] Pass  api ACTIVE
+  NodesReady/api@1.33          Skipped    no baseline of the nodes before the roll
+  NewPendingPods/api@1.33      Skipped    no baseline of the Pending pods before the roll
   NodegroupActive/web@1.33     [OK] Pass  web ACTIVE
   NodesReady/web@1.33          [OK] Pass  2 new nodes ready
   NewPendingPods/web@1.33      [OK] Pass  no new Pending pods
@@ -65,7 +68,7 @@ warning: nodegroup api is UPDATING; the run does not wait for it
 vpc-cni: InProgress
 [OK] vpc-cni@1.33: Succeeded
 phase: nodegroups, 1.33
-warning: nodegroup api needs no change any more; nothing was sent
+[OK] api@1.33: Succeeded
 [~] web@1.33: Started (update 00000000-0000-4000-8000-000000000003)
 web: InProgress
 [OK] web@1.33: Succeeded

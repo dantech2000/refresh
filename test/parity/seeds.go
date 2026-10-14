@@ -271,6 +271,11 @@ var (
 	pollArg = "20ms"
 )
 
+// verifyWaitArg is the --wait-timeout of a scenario in which the binary
+// waits on its own clock until that deadline. A roll ends after a few
+// polls of pollArg, so no run reaches it before its verification.
+const verifyWaitArg = "5s"
+
 // args returns a function that appends to a base command line.
 func args(base ...string) func(extra ...string) []string {
 	return func(extra ...string) []string { return append(append([]string{}, base...), extra...) }

@@ -3,8 +3,6 @@
 package parity
 
 import (
-	"time"
-
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
@@ -121,12 +119,13 @@ func kubeNodegroupUpdate() []Scenario {
 			// it passes.
 			// The new verification waits for a new node to be Ready: for
 			// two minutes after the update ended, and never past
-			// --wait-timeout. Both command lines are the same, with no
-			// flag that shortens the wait. The binary measures the two
-			// minutes on its own clock, which is the real one, and no
-			// request of the world can move it. So this run takes two
-			// real minutes, and the scenario has a longer limit.
-			Name: "nodegroup-update-verify-node-not-ready", Kube: true, Legacy: with("--yes"), V2: v2("--yes"), RealTime: 4 * time.Minute,
+			// --wait-timeout. The binary measures that wait on its own
+			// clock, which is the real one, and no request of the world can
+			// move it. So both command lines get the same short
+			// --wait-timeout, which the roll itself never reaches: it ends
+			// after three polls.
+			Name: "nodegroup-update-verify-node-not-ready", Kube: true,
+			Legacy: with("--yes", "--wait-timeout", verifyWaitArg), V2: v2("--yes", "--wait-timeout", verifyWaitArg),
 			Seed:      fleet(workloads, rollOf("ng-a", fleettest.RollScript{NodesNeverReady: true})),
 			Checks:    []Check{exits(0), updatesAre(a), worldSays("ng-a NotReady")},
 			V2Require: []Fact{{Subject: "node prod/ng-a-u1-1", Attribute: "condition", Value: "NotReady"}},

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/fleet"
 )
 
 // runEngineAddon runs the step of one add-on inside an upgrade or a
@@ -18,7 +17,10 @@ import (
 //     version that does not, the step goes on to send its own update.
 //  3. DELETING: blocked.
 //  4. At a version that meets the phase: nothing is sent.
-//  5. The request, the wait for the update, and the check of the add-on
+//  5. guardSubmit: a new read of the cluster, the busy rule, and the
+//     add-on once more. An update of the control plane that someone else
+//     started while the run waited in row 2 stops the request here.
+//  6. The request, the wait for the update, and the check of the add-on
 //     after it, as for an add-on update.
 //
 // An upgrade is met by the version of the step or a newer one, so it
@@ -71,9 +73,8 @@ func (r *runner) runEngineAddon(cp *ClusterPlan, s Step) StepResult {
 		r.notice(fmt.Sprintf("the update of add-on %s that was already running ended at %s, which does not meet the phase; updating it to %s", name, fresh.Version, s.To))
 		res.Attached, res.StartedAt = false, res.FinishedAt
 	}
-	// A run that ended sends nothing.
-	if err := r.readCtx.Err(); err != nil {
-		return r.unsent(cp, res, err)
+	if out, ok := r.guardSubmit(cp, s, res); !ok {
+		return out
 	}
 	res.StartedAt = r.d.now()
 	id, err := submitAddon(r.readCtx, clients, resource, s.To)
@@ -109,10 +110,7 @@ func (r *runner) keepsAddon(cp *ClusterPlan, s Step, version string) (bool, erro
 	if kind != ClusterRollback || version == s.From {
 		return false, nil
 	}
-	fetch := r.d.Fetch
-	if fetch == nil {
-		fetch = &fleet.Fetcher{Now: r.d.Now}
-	}
+	fetch := r.d.fetcher()
 	versions, err := fetch.AddonVersions(r.readCtx, r.d.AWS.Clients(cp.Region), s.Ref.Name, cp.To)
 	if err != nil {
 		return false, err

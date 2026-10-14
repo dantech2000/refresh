@@ -126,9 +126,10 @@ The clock of the world is virtual and moves with the polls of a binary.
 The clock of a binary is the real one. A wait that a binary measures on
 its own clock takes that long: no request can shorten it. One scenario has
 such a wait, `nodegroup-update-verify-node-not-ready`: the new binary
-waits 2 minutes for a new node to be Ready. `Scenario.RealTime` gives it a
-longer limit for either binary. No command line gets a flag that the other
-does not have.
+waits for a new node to be Ready for 2 minutes, and never past
+`--wait-timeout`. Both command lines of that scenario have the same short
+`--wait-timeout`, so the run takes that long. No command line gets a flag
+that the other does not have.
 
 ## Commands
 

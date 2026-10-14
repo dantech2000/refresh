@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -356,9 +357,38 @@ type Server struct {
 	multiplexed *http.Client
 }
 
+// maxIdleConns is how many idle connections the client of Config keeps. It
+// is more than the requests that a test has in flight at once.
+const maxIdleConns = 256
+
+// dialNoLinger dials a connection that is reset when the client closes
+// it. A connection that is closed in the normal way holds its port of the
+// loopback interface for twice the segment lifetime, and the tests of a
+// package open some thousand connections, one or more for each fake. With
+// CI's repeated runs they use up the ports ("can't assign requested
+// address"). A reset frees the port at once. Nothing is lost: the client
+// closes a connection only when it is idle or its request was given up.
+func dialNoLinger(ctx context.Context, network, addr string) (net.Conn, error) {
+	conn, err := new(net.Dialer).DialContext(ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		if err := tcp.SetLinger(0); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+	}
+	return conn, nil
+}
+
 // NewServer starts a server that answers from w. The caller must call Close.
 func NewServer(w *fleettest.World) *Server {
-	s := &Server{Handler: NewHandler(w), client: &http.Client{Transport: &http.Transport{}}}
+	// The client keeps every connection that it opened, for the next
+	// request. The default keeps two for a host, so a test with more
+	// requests in flight than that opens and closes a connection for most
+	// of them.
+	s := &Server{Handler: NewHandler(w), client: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: maxIdleConns, DialContext: dialNoLinger}}}
 	// The server speaks HTTP/1.1 and HTTP/2 without TLS. A program that
 	// reaches it by its URL, such as the old binary, gets HTTP/1.1.
 	protocols := new(http.Protocols)
@@ -371,7 +401,7 @@ func NewServer(w *fleettest.World) *Server {
 
 	only2 := new(http.Protocols)
 	only2.SetUnencryptedHTTP2(true)
-	s.multiplexed = &http.Client{Transport: &http.Transport{Protocols: only2}}
+	s.multiplexed = &http.Client{Transport: &http.Transport{Protocols: only2, DialContext: dialNoLinger}}
 	return s
 }
 

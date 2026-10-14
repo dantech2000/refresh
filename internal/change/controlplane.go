@@ -19,32 +19,25 @@ import (
 // runControlPlane runs the control-plane step of an upgrade hop or of a
 // rollback. snap is the read of the phase.
 //
-//  1. The gate of the phase, on that read: see controlPlaneGate. A gate
-//     that refuses blocks the step, and nothing is sent.
-//  2. A fresh read of the cluster.
-//  3. At the goal: nothing is sent.
-//  4. UPDATING: the run attaches to the update in flight and waits for
-//     it. At the goal after it, the step is done. Otherwise a notice says
-//     that the update did not reach the goal, and the step goes on to
-//     send its own.
-//  5. Not ACTIVE: blocked.
-//  6. The version is not the one that the request starts from: failed.
-//     EKS moves one minor version at a time, so an upgrade is sent only
-//     from the minor version before its goal, and a rollback only from
-//     the one after it. An upgrade therefore never sends a version below
-//     the live one.
-//  7. The request, with the fields of the plan: the version of the step,
-//     its force, and for a rollback the timeout of the request.
-//  8. The wait for the update, the wait for ACTIVE, and the version by
+//  1. A fresh read of the cluster.
+//  2. At the goal: nothing is sent.
+//  3. UPDATING: the gate of the phase, on the read of the phase (see
+//     controlPlaneGate), and then the run attaches to the update in
+//     flight and waits for it. At the goal after it, the step is done.
+//     Otherwise a notice says that the update did not reach the goal, and
+//     the step goes on to send its own.
+//  4. guardSubmit: a new read of the cluster, the busy rule, the version
+//     that the request starts from, and the gate of the phase. An upgrade
+//     never sends a version below the live one.
+//  5. The request: the version of the step, the force of the request,
+//     and for a rollback the timeout of the request.
+//  6. The wait for the update, the wait for ACTIVE, and the version by
 //     direction.
 func (r *runner) runControlPlane(cp *ClusterPlan, s Step, snap *fleet.Snapshot) StepResult {
 	res := StepResult{Ref: s.Ref}
 	kind := r.req.kind()
 	clients, poll := r.d.AWS.Clients(cp.Region), r.d.AWS.PollClients(cp.Region)
 	resource := s.Ref.Resource()
-	if out, ok := r.controlPlaneGate(cp, res, s, snap); !ok {
-		return out
-	}
 	if err := r.readCtx.Err(); err != nil {
 		return r.unsent(cp, res, err)
 	}
@@ -58,28 +51,23 @@ func (r *runner) runControlPlane(cp *ClusterPlan, s Step, snap *fleet.Snapshot) 
 		return res
 	}
 	if fresh.Status == clusterUpdating {
-		settled, out, done := r.attachControlPlane(cp, res, s, clients, poll)
+		// The gate of the phase decides whether the run waits for an
+		// update that it did not start.
+		if out, ok := r.controlPlaneGate(cp, res, s, snap); !ok {
+			return out
+		}
+		out, done := r.attachControlPlane(cp, res, s, clients, poll)
 		if done {
 			return out
 		}
-		res, fresh = out, settled
+		res = out
 		// From here the step is its own request, which has not started.
 		res.Attached, res.StartedAt = false, time.Time{}
 	}
-	switch {
-	case fresh.Status != clusterActive:
-		res.Status = StepBlocked
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown, fmt.Sprintf("cluster %s is %s, not ACTIVE; its control plane was not changed", cp.Cluster, fresh.Status))
-		return res
-	case !adjacent(kind, fresh.Version, s.To):
-		res.Status, res.FinishedAt = StepFailed, r.d.now()
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown,
-			fmt.Sprintf("the control plane of %s runs %s now, and the plan moves it from %s to %s; nothing was sent. Run the command again", cp.Cluster, orUnknown(fresh.Version), s.From, s.To))
-		return res
-	}
-	// A run that ended sends nothing.
-	if err := r.readCtx.Err(); err != nil {
-		return r.unsent(cp, res, err)
+	// The request of the run, with the force of the request.
+	s.Force = ownedForce(r.req, StepControlPlane)
+	if out, ok := r.guardSubmit(cp, s, res); !ok {
+		return out
 	}
 	res.StartedAt = r.d.now()
 	id, err := r.submitControlPlane(clients, cp.Target, s)
@@ -200,15 +188,15 @@ func (r *runner) controlPlaneGate(cp *ClusterPlan, res StepResult, s Step, snap 
 //
 // done says that the step ends here, with out as its result: the update
 // reached the goal, or the wait did not end in a state that the run can
-// go on from. Otherwise settled is the cluster after the update, ACTIVE
-// and not at the goal, and a notice has said so: the caller sends its own
-// update. An update that ended Failed or Cancelled gets its own notice
+// go on from. Otherwise the cluster is ACTIVE after the update and not at
+// the goal, and a notice has said so: the caller sends its own update,
+// after guardSubmit. An update that ended Failed or Cancelled gets its own notice
 // first, with its ID.
-func (r *runner) attachControlPlane(cp *ClusterPlan, res StepResult, s Step, clients *awsx.Clients, poll awsx.PollClients) (settled Settled, out StepResult, done bool) {
+func (r *runner) attachControlPlane(cp *ClusterPlan, res StepResult, s Step, clients *awsx.Clients, poll awsx.PollClients) (out StepResult, done bool) {
 	resource := s.Ref.Resource()
 	u, err := inFlightUpdate(r.readCtx, clients, resource)
 	if err != nil && r.readCtx.Err() != nil {
-		return Settled{}, r.unsent(cp, res, err), true
+		return r.unsent(cp, res, err), true
 	}
 	res.Attached, res.StartedAt = true, r.d.now()
 	if err == nil {
@@ -224,22 +212,22 @@ func (r *runner) attachControlPlane(cp *ClusterPlan, res StepResult, s Step, cli
 		case errors.As(err, &ended):
 			r.notice(fmt.Sprintf("the control-plane update %s that was already running %s", res.UpdateID, strings.TrimPrefix(ended.Error(), "update "+res.UpdateID+" of "+resource.String()+" ")))
 		case err != nil:
-			return Settled{}, r.waitFailed(ctx, cp, res, err), true
+			return r.waitFailed(ctx, cp, res, err), true
 		}
 	}
-	settled, err = WaitSettled(ctx, poll, resource, clusterSettled, r.waitOptions(s, wait))
+	settled, err := WaitSettled(ctx, poll, resource, clusterSettled, r.waitOptions(s, wait))
 	if err != nil {
-		return settled, r.waitFailed(ctx, cp, res, err), true
+		return r.waitFailed(ctx, cp, res, err), true
 	}
 	if versionDone(r.req.kind(), settled.Version, s.To) {
 		res.Status, res.FinishedAt = StepSucceeded, r.d.now()
-		return settled, res, true
+		return res, true
 	}
 	r.notice(fmt.Sprintf("the control-plane update that was already running did not reach %s (the cluster is %s at %s); starting a new one", s.To, settled.Status, orUnknown(settled.Version)))
 	// The step now sends its own request, under a new read budget.
 	r.newRead(r.common.Limits.Read)
 	res.UpdateID = ""
-	return settled, res, false
+	return res, false
 }
 
 // submitControlPlane sends UpdateClusterVersion with the fields of the

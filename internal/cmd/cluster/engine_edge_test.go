@@ -2,7 +2,7 @@ package cluster_test
 
 import (
 	"fmt"
-	"sync/atomic"
+	"sync"
 	"testing"
 
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
@@ -17,15 +17,22 @@ func never(s *fleettest.State, _ *fleettest.Cluster) {
 	s.DefaultUpdate = fleettest.UpdateScript{Never: true}
 }
 
-// thirdPoll accepts the third poll of an update: the wait is under way.
-// The server calls it from one goroutine for each request.
+// thirdPoll accepts the third poll of one update: the wait is under way.
+// It counts each update by its ID, so the reads of the update history,
+// which describe every past update once, are not taken for polls. The
+// server calls it from one goroutine for each request.
 func thirdPoll() func(r awsxtest.Request) bool {
-	var polls atomic.Int32
+	var mu sync.Mutex
+	polls := map[string]int{}
 	return func(r awsxtest.Request) bool {
 		if r.Operation != fleettest.EKSDescribeUpdate {
 			return false
 		}
-		return polls.Add(1) == 3
+		id := fmt.Sprint(r.Input["updateId"])
+		mu.Lock()
+		defer mu.Unlock()
+		polls[id]++
+		return polls[id] == 3
 	}
 }
 

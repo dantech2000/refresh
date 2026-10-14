@@ -78,10 +78,7 @@ func (r *runner) verifyRoll(ctx context.Context, cp *ClusterPlan, ph Phase, star
 		return
 	}
 	clients := r.d.AWS.Clients(cp.Region)
-	fetch := r.d.Fetch
-	if fetch == nil {
-		fetch = &fleet.Fetcher{Now: r.d.Now}
-	}
+	fetch := r.d.fetcher()
 	// The error of the read is in the snapshot, as a failure, and the
 	// nodegroup check then says that it could not read.
 	snap, _ := fetch.Fresh().Fetch(ctx, clients, cp.Cluster, fleet.Need{OnlyNodegroups: names})

@@ -160,17 +160,7 @@ func planRollback(ctx context.Context, d Deps, req RollbackRequest) (*Plan, erro
 	if err != nil {
 		return nil, &ClusterReadError{Target: Target{Region: clients.Region, Cluster: req.Cluster}, Err: err}
 	}
-	p, err := PlanRollback(snap, req, RollbackInputs{
-		Now:     d.now(),
-		Version: versionOffer(ctx, clients),
-		AddonVersions: func(addon string, kubernetes fleet.Version) ([]string, error) {
-			return d.Fetch.AddonVersions(ctx, clients, addon, kubernetes)
-		},
-		Insights: func() InsightsRead {
-			insights, err := health.ListInsights(ctx, clients, snap.Cluster.Name, categoryRollbackReadiness)
-			return InsightsRead{Insights: insights, Err: err}
-		},
-	})
+	p, err := PlanRollback(snap, req, rollbackInputs(ctx, d, clients, snap.Cluster.Name))
 	if err := planEnded(ctx, err); err != nil {
 		return nil, err
 	}
@@ -182,6 +172,23 @@ func planRollback(ctx context.Context, d Deps, req RollbackRequest) (*Plan, erro
 	}
 	cp.gateEngine(ctx, d, ClusterRollback, req.Policy)
 	return p, planEnded(ctx, nil)
+}
+
+// rollbackInputs returns the reads of PlanRollback and of
+// RollbackStillEligible against live AWS.
+func rollbackInputs(ctx context.Context, d Deps, clients *awsx.Clients, cluster string) RollbackInputs {
+	fetch := d.fetcher()
+	return RollbackInputs{
+		Now:     d.now(),
+		Version: versionOffer(ctx, clients),
+		AddonVersions: func(addon string, kubernetes fleet.Version) ([]string, error) {
+			return fetch.AddonVersions(ctx, clients, addon, kubernetes)
+		},
+		Insights: func() InsightsRead {
+			insights, err := health.ListInsights(ctx, clients, cluster, categoryRollbackReadiness)
+			return InsightsRead{Insights: insights, Err: err}
+		},
+	}
 }
 
 // rollbackMinutes returns the rollback timeout of the request in whole

@@ -431,7 +431,8 @@ func TestRollbackPlan_ResumeAfterEachPhase(t *testing.T) {
 }
 
 // The rollback to the target is in progress: the plan is eligible with
-// no check, and its control-plane step attaches and sends nothing.
+// no check, and its control-plane step attaches. It carries the force of
+// the request that the run sends when that rollback fails.
 func TestRollbackPlan_AttachesToItsOwnRollback(t *testing.T) {
 	w := newRollbackWorld()
 	w.status = "UPDATING"
@@ -442,8 +443,8 @@ func TestRollbackPlan_AttachesToItsOwnRollback(t *testing.T) {
 	if len(cp.Blockers) > 0 {
 		t.Fatalf("blockers = %q", blockerText(cp))
 	}
-	if s := findStep(t, cp, "", StepControlPlane, ""); s.Action != Attach || s.Reason != InFlight || s.Force {
-		t.Fatalf("control-plane step = %+v, want Attach InFlight with no force", s)
+	if s := findStep(t, cp, "", StepControlPlane, ""); s.Action != Attach || s.Reason != InFlight || !s.Force {
+		t.Fatalf("control-plane step = %+v, want Attach InFlight with the force of the request that follows a failed attachment", s)
 	}
 	if len(w.offerCalls) != 0 || w.insightCalls != 0 {
 		t.Errorf("the planner asked about the versions %v, and %d times for the insights; want nothing", w.offerCalls, w.insightCalls)

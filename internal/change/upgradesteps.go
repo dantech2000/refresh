@@ -11,8 +11,18 @@ import (
 // controlPlaneStep derives the control-plane step of a hop: Skip when
 // the live control plane is at the hop target or past it, Attach when the
 // cluster is updating already, and Submit otherwise.
+//
+// From is the version that the control plane has when the hop starts: the
+// minor version before the hop, which the hop before it reached. EKS
+// moves one minor version at a time, so the plan and the question of a
+// later hop never show a jump from the live version. The run compares the
+// live version with To, and never with From: see adjacent.
 func (p *upgradePlanner) controlPlaneStep(to fleet.Version) Step {
-	step := Step{Ref: StepRef{Kind: StepControlPlane}, Action: Submit, Reason: VersionBehind, From: p.live.String(), To: to.String()}
+	from := p.live
+	if !atLeast(p.live, to) && to.Minor > 0 {
+		from = fleet.Version{Major: to.Major, Minor: to.Minor - 1}
+	}
+	step := Step{Ref: StepRef{Kind: StepControlPlane}, Action: Submit, Reason: VersionBehind, From: from.String(), To: to.String()}
 	switch {
 	case atLeast(p.live, to):
 		step.Action, step.Reason = Skip, AlreadyAtTarget
@@ -61,7 +71,14 @@ func unsettled(n fleet.Nodegroup) bool {
 func (p *upgradePlanner) nodegroupSteps(nodegroups []fleet.Nodegroup, to fleet.Version, reason Reason) []Step {
 	steps := make([]Step, 0, len(nodegroups))
 	for _, n := range nodegroups {
-		step := Step{Ref: StepRef{Kind: StepNodegroup, Name: n.Name}, From: n.Version.String(), To: to.String()}
+		// From is the version that the nodegroup has when the hop starts:
+		// the live one, or the one that an earlier hop of the plan rolls
+		// it to. What the step does is decided on the live version.
+		from := n.Version
+		if sim, ok := p.simNodegroups[n.Name]; ok {
+			from = sim
+		}
+		step := Step{Ref: StepRef{Kind: StepNodegroup, Name: n.Name}, From: from.String(), To: to.String()}
 		ref := StepRef{Phase: PhaseRef{Target: p.cp.Target, Kind: PhaseNodegroups, Hop: to}, Kind: StepNodegroup, Name: n.Name}
 		done, skipped := atLeast(n.Version, to), p.skipsNodegroup(n.Name)
 		switch {
@@ -82,7 +99,9 @@ func (p *upgradePlanner) nodegroupSteps(nodegroups []fleet.Nodegroup, to fleet.V
 				"Amazon Linux 2 AMIs end at Kubernetes %s: replace nodegroup %s with an AL2023 or Bottlerocket nodegroup first, or leave it at %s with --skip-nodegroup %s",
 				al2LastVersion, n.Name, n.Version, shellQuote(n.Name))
 		case n.Status == nodegroupUpdating:
-			step.Action, step.Reason = Attach, InFlight
+			// The force is the one of the roll that the run sends when
+			// the update in flight does not reach the hop.
+			step.Action, step.Reason, step.Force = Attach, InFlight, p.req.Policy.Force
 		default:
 			step.Action, step.Reason, step.Force = Submit, reason, p.req.Policy.Force
 		}

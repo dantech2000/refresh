@@ -3,7 +3,6 @@
 package parity
 
 import (
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,11 +51,6 @@ type Scenario struct {
 	Clock []fleettest.Operation
 	// Signal, when set, is sent to the binary once.
 	Signal *Signal
-	// RealTime is how long a run of the scenario may take on the real
-	// clock, for either binary. Zero means two minutes. A scenario sets it
-	// only when a binary waits on its own clock for something that the
-	// world's clock cannot move: see "Time" in the package comment.
-	RealTime time.Duration
 	// Kube gives the scenario's cluster a Kubernetes API, serving the
 	// nodes, pods, and PDBs of the seed, and gives the binary a kubeconfig
 	// for it. Without it the binary has an empty kubeconfig and skips its
@@ -94,8 +88,8 @@ type Scenario struct {
 	UnstableReads []fleettest.Operation
 }
 
-// limit returns how long a run of the scenario may take on the real clock.
-func (sc Scenario) limit() time.Duration { return cmp.Or(sc.RealTime, 2*time.Minute) }
+// runLimit is how long a run of a scenario may take on the real clock.
+const runLimit = 2 * time.Minute
 
 // Move changes the world once, at a point of the run that both binaries
 // reach whatever they read on the way there.

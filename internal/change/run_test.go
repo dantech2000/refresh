@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/smithy-go/middleware"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -805,6 +807,39 @@ func TestRun_DeadlineAndInterrupt(t *testing.T) {
 			t.Errorf("result = %s, exit %d, plan %v; want Interrupted, 1, and no plan", res.Status, res.ExitCode(), res.Plan)
 		}
 	})
+}
+
+// The cluster was read, and the interrupt ends the reads after it. The
+// planner then has a snapshot with parts that were not read, which is
+// the snapshot of a plan that is blocked. An interrupted run has no
+// plan: it is not a blocked change.
+func TestRun_InterruptDuringThePlanAfterTheClusterWasRead(t *testing.T) {
+	e := newEnv(t, newWorld(nil))
+	ctx, cancel := context.WithCancel(testContext(t))
+	defer cancel()
+	// The interrupt comes when the client has the answer of
+	// DescribeCluster, so that read always succeeds.
+	cfg := e.srv.Config(east)
+	cfg.APIOptions = append(cfg.APIOptions, func(stack *middleware.Stack) error {
+		return stack.Initialize.Add(middleware.InitializeMiddlewareFunc("interruptAfterDescribeCluster",
+			func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
+				out, md, err := next.HandleInitialize(ctx, in)
+				if _, ok := in.Parameters.(*eks.DescribeClusterInput); ok && err == nil {
+					cancel()
+				}
+				return out, md, err
+			}), middleware.After)
+	})
+	res, err := Run(ctx, depsFor(e.world, cfg), yes(request("vpc-cni")), Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode() != 1 || res.Status != Interrupted || res.Plan != nil || res.Document() != nil {
+		t.Errorf("result = %s, exit %d, plan %v; want Interrupted, 1, and no plan", res.Status, res.ExitCode(), res.Plan)
+	}
+	if n := len(e.mutations()); n != 0 {
+		t.Errorf("%d requests that change the cluster, want none", n)
+	}
 }
 
 // The budgets of a run. They follow the clock of the run, which these

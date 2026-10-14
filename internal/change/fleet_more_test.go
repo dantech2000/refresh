@@ -50,15 +50,13 @@ func TestFleet_BlockedClusterSaysWhy(t *testing.T) {
 }
 
 // With --yes, the plan of a cluster at its turn replaces the plan that was
-// confirmed, and a difference that would ask a person is a notice. So a
-// nodegroup that --reroll targets and that someone else rolled while the
-// cluster before it ran is rolled all the same: the plan of the turn has
-// the new release, and the fresh read before the request agrees with it.
-// In one cluster the same change, between the plan and the request, skips
-// the roll (TestRoll_FreshReadDecidesAgain). The difference is the open
-// point of the design note, section 14: this test pins what the fleet
-// does, so a change of the rule shows here.
-func TestFleet_YesAcceptsAChangedReleaseAndRerolls(t *testing.T) {
+// confirmed, and a difference that would ask a person is a notice. Another
+// AMI release is the exception: a nodegroup that --reroll targets and that
+// someone else rolled while the cluster before it ran is not rolled again.
+// Its step keeps the release that was confirmed, and the fresh read before
+// the request skips it, as it does in one cluster
+// (TestRoll_FreshReadDecidesAgain).
+func TestFleet_YesSkipsARerollOfAChangedRelease(t *testing.T) {
 	e := newEnv(t, fleetWorld(nil))
 	req := fleetRoll()
 	req.Reroll = true
@@ -76,19 +74,27 @@ func TestFleet_YesAcceptsAChangedReleaseAndRerolls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []sentRoll{{"prod", "ng-c", "1.32", false}, {"staging", "ng-c", "1.32", false}}
+	want := []sentRoll{{"prod", "ng-c", "1.32", false}}
 	if diff := cmp.Diff(want, e.rolls()); diff != "" {
 		t.Errorf("rolls (-want +got):\n%s", diff)
 	}
-	if notice := "Notice staging: nodegroup ng-c now runs the AMI release 1.32.0-20270101, not 1.32.0-20260101"; !strings.Contains(strings.Join(s.events, "\n"), notice) {
-		t.Errorf("nothing says %q:\n%s", notice, strings.Join(s.events, "\n"))
+	wantStatuses := map[string]StepStatus{"prod/ng-c": StepSucceeded, "staging/ng-c": StepSkipped}
+	if diff := cmp.Diff(wantStatuses, clusterStatuses(res)); diff != "" {
+		t.Fatalf("statuses (-want +got):\n%s", diff)
+	}
+	note := "nodegroup ng-c of staging runs the AMI release 1.32.0-20270101, and the plan read 1.32.0-20260101: it was rolled elsewhere since the plan, and is not rolled again"
+	if got := res.Clusters[1].Steps[0].Note; got != note {
+		t.Errorf("the note of staging/ng-c = %q, want %q", got, note)
+	}
+	if !strings.Contains(strings.Join(s.events, "\n"), "Notice "+note) {
+		t.Errorf("nothing says %q:\n%s", "Notice "+note, strings.Join(s.events, "\n"))
 	}
 	if res.ExitCode() != exitcode.OK {
 		t.Errorf("exit = %d, want 0 (%v)", res.ExitCode(), res.Err)
 	}
-	// The plan in the result is the plan of the turn.
-	if got := res.Plan.Clusters[1].Steps()[0].FromRelease; got != "1.32.0-20270101" {
-		t.Errorf("the plan of staging has the release %q, want the one of its turn", got)
+	// The step of staging keeps the release that was confirmed.
+	if got := res.Plan.Clusters[1].Steps()[0].FromRelease; got != "1.32.0-20260101" {
+		t.Errorf("the plan of staging has the release %q, want the one that was confirmed", got)
 	}
 }
 

@@ -128,6 +128,12 @@ type runner struct {
 	// unverified says that the check after the step that runs could not
 	// read what it needs. A run that is a sequence stops there.
 	unverified bool
+	// busySaid are the notices of the busy rule that the step of an
+	// upgrade or a rollback has said already.
+	busySaid struct {
+		step    StepRef
+		notices []string
+	}
 	// afterStep are the events that the step that runs holds back until
 	// its result is reported: see stepEnded.
 	afterStep []Event
@@ -290,6 +296,12 @@ func (r *runner) prepare() (*Plan, Result, error) {
 	for {
 		r.newRead(r.planLimit())
 		p, err := plan(r.readCtx, r.d, r.req, r.refresh)
+		if err == nil && r.userInterrupted() {
+			// The interrupt ended some of the reads, and the planner took
+			// what they left for a cluster that cannot be read: a plan
+			// with blockers. An interrupted run has no plan.
+			err = fmt.Errorf("the plan was not finished: %w", context.Cause(r.ctx))
+		}
 		if err != nil {
 			res, err := r.unplanned(prev, err)
 			r.read.stop()
@@ -739,9 +751,6 @@ func (r *runner) execute(p *Plan) Result {
 	res.ended.interrupted = r.interrupted || res.interruptedStep()
 	res.Status = statusOf(p.Kind, allSteps(res.Clusters), res.Failures)
 	res.Err = summary(res)
-	if hint := r.resumeHint(res); hint != "" && res.Err != nil {
-		res.Err = fmt.Errorf("%w; %s", res.Err, hint)
-	}
 	switch {
 	case res.ended.interrupted:
 		res.Status = Interrupted
@@ -760,6 +769,12 @@ func (r *runner) execute(p *Plan) Result {
 		// The steps keep their results, and the highest code still wins.
 		res.ended.code = exitcode.Failure
 		res.Status, res.Err = r.stop.status, r.stop.err
+	}
+	// The message of the run is final here. An upgrade or a rollback that
+	// stopped part way, a declined later phase included, says after it
+	// what completed and how to go on.
+	if hint := r.resumeHint(res); hint != "" && res.Err != nil {
+		res.Err = fmt.Errorf("%w; %s", res.Err, hint)
 	}
 	return res
 }

@@ -56,7 +56,9 @@ func (p *rollbackPlanner) nodegroupSteps() []Step {
 			step.Action, step.Reason = Manual, CustomAMI
 			p.notice("nodegroup %s has a custom AMI: roll it to a %s AMI yourself; the control plane does not roll back while it is at %s", n.Name, target, n.Version)
 		case n.Status == nodegroupUpdating:
-			step.Action, step.Reason = Attach, InFlight
+			// The force is the one of the roll that the run sends when
+			// the update in flight does not reach the target.
+			step.Action, step.Reason, step.Force = Attach, InFlight, p.req.Policy.Force
 		default:
 			step.Action, step.Reason, step.Force = Submit, VersionAhead, p.req.Policy.Force
 		}

@@ -155,6 +155,12 @@ func stepCode(s StepResult) (code int, ok bool) {
 //     an upgrade and of a rollback are a sequence, so the move does not
 //     apply to them.
 //  3. The highest code wins. An interrupt is always 1.
+//  4. A step of an upgrade or of a rollback that failed makes the run
+//     exit 1, whatever failure belongs to no step: a failed phase is a
+//     failed run, also when an advisory read failed beside it. Only the
+//     code of another step can be higher. A deadline, a change that
+//     cannot be followed, and a verification that could not read are no
+//     failed step, and keep 4.
 func (r Result) ExitCode() int {
 	if r.ended.interrupted || r.interruptedStep() {
 		return exitcode.Failure
@@ -164,6 +170,7 @@ func (r Result) ExitCode() int {
 		code = max(code, exitcode.Incomplete)
 	}
 	var failed, changed bool
+	steps := exitcode.OK
 	for _, c := range r.Clusters {
 		for _, s := range c.Steps {
 			sc, ok := stepCode(s)
@@ -175,16 +182,20 @@ func (r Result) ExitCode() int {
 				continue
 			}
 			changed = changed || s.Status == StepSucceeded || s.Status == StepStarted
-			code = max(code, sc)
+			steps = max(steps, sc)
 		}
 	}
-	if failed {
-		if changed && r.kind().independent() {
-			return max(code, exitcode.Incomplete)
-		}
-		return max(code, exitcode.Failure)
+	switch {
+	case failed && !r.kind().independent():
+		// A phase of an upgrade or a rollback failed: 1. A read that
+		// failed beside it does not make the run "incomplete".
+		return max(steps, exitcode.Failure)
+	case failed && changed:
+		return max(code, steps, exitcode.Incomplete)
+	case failed:
+		return max(code, steps, exitcode.Failure)
 	}
-	return code
+	return max(code, steps)
 }
 
 // interruptedStep reports whether a step ended because the user stopped

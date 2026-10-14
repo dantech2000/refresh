@@ -1038,6 +1038,15 @@ How a question ends:
 
 The budgets of section 8 do not run while `Run` is inside `Ask` or `Checkpoint`.
 
+**How many questions `cluster upgrade` asks.** On a terminal, without `--yes`, the command asks one question for each phase that has work, right before that phase. With `--yes` it asks none. An upgrade of one minor version in which every phase has work asks four:
+
+1. The control plane, which is also the start question and names the health warnings: "Upgrade the control plane of prod from 1.32 to 1.33?"
+2. The add-ons that the new version cannot run as they are: "Update 2 add-on(s) of prod that Kubernetes 1.33 cannot run as they are (vpc-cni, coredns)?"
+3. The nodegroups: "Roll 2 nodegroup(s) of prod to Kubernetes 1.33 (ng-a, ng-b)?"
+4. The other add-ons: "Update 1 add-on(s) of prod for Kubernetes 1.33 (kube-proxy)?"
+
+A phase with no work asks nothing. The question of a phase is built after a read of the cluster, so it names the steps that the phase has at that time. The old binary also asks once for each phase with work ("Proceed with control plane 1.32 → 1.33?"). On the fleet of the parity scenario `cluster-upgrade-prompt-yes`, which has no add-on left for the last phase, both binaries ask three questions on a pseudo-terminal.
+
 ### Result
 
 ```go
@@ -1680,7 +1689,7 @@ Each row is a change of behaviour, with its test.
 |---|---|---|
 | 4, 7 | A run that a checkpoint stopped exits 1, and no longer 0. The status is `Stopped` and the message says where it stopped. A higher code of the steps before the stop wins, with its status. | `TestFleet_InterruptAndStop`, `TestResultExitCode_NotAStep` |
 | 1, 4 | `Step` and `PlanStep` have `FromRelease` (`fromRelease`): the AMI release version of the nodegroup when the plan read it, on a step that submits a roll. `Diff` reports a change of it as `Step`, which asks. | `TestDiff_EveryStepField` |
-| 4 | The fresh read before a roll decides again (`redecideRoll`) with all that `DecideAMIUpdate` read and one `DescribeNodegroup` returns: the status, the AMI type, and the release version. A nodegroup that is `ACTIVE` on another release was rolled elsewhere: `Skipped`, no request, exit 0, also with `--reroll`. One that has a custom AMI now is `Skipped` too. The step of the plan becomes `Skip` (`AlreadyLatest`) or `Manual`, and the plan gets the notice, so the document says why nothing was sent. In a fleet the plan of the turn is the plan: with `--yes` a changed release is accepted there with a notice, as every `Step` difference. | `TestRoll_FreshReadDecidesAgain` |
+| 4 | The fresh read before a roll decides again (`redecideRoll`) with all that `DecideAMIUpdate` read and one `DescribeNodegroup` returns: the status, the AMI type, and the release version. A nodegroup that is `ACTIVE` on another release was rolled elsewhere: `Skipped`, no request, exit 0, also with `--reroll`. One that has a custom AMI now is `Skipped` too. The step of the plan becomes `Skip` (`AlreadyLatest`) or `Manual`, and the plan gets the notice, so the document says why nothing was sent. In a fleet the plan of the turn is the plan, with one exception: a roll keeps the release that was confirmed (`pinConfirmedReleases`), so a release that changed with nobody to accept it is skipped by the same fresh read. | `TestRoll_FreshReadDecidesAgain`, `TestFleet_YesSkipsARerollOfAChangedRelease` |
 | 4 | The interrupt guard at the turn of a cluster stays. Without it the cancelled context stops every read, and still a checkpoint is called and a cluster that the plan blocked gets `Blocked` rows and exit 3. | `TestFleet_InterruptBetweenClusters` |
 | 2, 4 | The failure of a change that EKS accepted with no update ID ends with "it may still be running", for a roll, a scale, and an add-on. | `TestRoll_NoUpdateID` |
 | 9 | klog is routed: see the row of section 9 above. | `TestKubeLogs` |
@@ -1770,9 +1779,9 @@ No behaviour changed in these, which only remove a second copy: `ClusterPlan.dec
 | A nodegroup that is deleted between the plan and its submit is `Failed` with `NotFound`, and the other rolls go on: exit 4 | `TestRoll_NodegroupDeletedAfterThePlan` |
 | `--skip-health-check` does not go past a target that is not `ACTIVE`, in the plan and at the fresh read | `TestRoll_SkipHealthCheckStillNeedsAnActiveTarget` |
 | A fleet of two regions, one of which fails, rolls the other and exits 4 | `TestFleet_OneRegionFails` |
-| Fleet mode with `--yes` and `--reroll`: see the open point below | `TestFleet_YesAcceptsAChangedReleaseAndRerolls` |
+| Fleet mode with `--yes`: a nodegroup whose AMI release changed since the confirmation is not rolled, also with `--reroll` | `TestFleet_YesSkipsARerollOfAChangedRelease` |
 
-**Open point.** In a fleet with `--yes`, the plan of a cluster at its turn replaces the confirmed one, and a changed release is accepted with a notice. So a nodegroup that `--reroll` targets, and that someone rolled while the clusters before it ran, is rolled again. In one cluster the same change between the plan and the request skips the roll. The test pins what the fleet does today. The owner has not decided whether the fleet should skip too.
+**Closed point: a changed release in a fleet.** The fleet now follows the rule of one cluster. The plan of a cluster at its turn still replaces the confirmed one, and `--yes` still accepts the other `Step` differences with a notice. A roll keeps the AMI release of the plan that was accepted last: by `--yes` at the start, or by a person at that turn. The fresh read before the request (`redecideRoll`) then finds another release and skips the roll: the step is `Skipped` with a note, nothing is sent, and the exit code is 0 if nothing else is wrong. A person who is asked about the new release and answers yes has accepted it, and the nodegroup is rolled.
 
 #### Parity
 
@@ -1784,3 +1793,20 @@ No behaviour changed in these, which only remove a second copy: `ClusterPlan.dec
 #### Whole-command goldens of the engines
 
 `internal/cmd/cluster/engine_edge_test.go` has, for `cluster upgrade` and for `cluster rollback`: an interrupt during a wait, an answer that is lost after EKS committed the update (one update, one token), an update that EKS accepted with no ID, and a second run after each phase with the roll of a nodegroup still under way.
+
+### The third review pass: one boundary before every request of an engine
+
+| # | Change | Test |
+|---|---|---|
+| 1 | `guardSubmit` (`engineguard.go`) runs right before every request that an upgrade or a rollback sends of its own, with nothing after it but the request: a read of the whole cluster, the rollback judged again against the target of the plan (`RollbackStillEligible`: the window, the offer of the target, the rollback insights; a changed target refuses), the busy rule, and what the step needs. After an answered question and after an insights refresh it runs once more. `submitEngineRoll`, the control-plane step, and the add-on step all send through it. | `TestEngineGuard_RollbackEligibility`, `TestEngineGuard_SubmitAfterAttachment`, `TestEngineGuard_BusyRuleAfterARenewedConsent`, parity `cluster-rollback-interrupt-before-start-yes` |
+| 2 | A nodegroup is never rolled to a version above the live control plane, also with `--skip-health-check`. | `TestEngineGuard_NodegroupNeedsTheControlPlane` |
+| 3 | An `ACTIVE` nodegroup with a health issue is not rolled by an engine, with the health gate and without it, as the old engine refused it. The standalone `nodegroup update` does not have the rule: the old command did not look at the issues either. | `TestEngineGuard_NodegroupWithIssuesIsNotRolled` |
+| 4 | A step that attaches carries the force of the request that follows a failed attachment, and that request takes its force from the request of the run. | `TestEngineGuard_ForceAfterAnAttachment`, `TestRollbackPlan_AttachesToItsOwnRollback` |
+| 5 | A step of an engine that failed makes the run exit 1, whatever read failed beside it. | `TestResultExitCode` |
+| 6 | The message of a run that stopped part way always ends with what completed and the command that goes on, also after a declined phase and after a gate that stops a later phase (exit 3). | `TestEngine_DeclinedPhaseKeepsTheResumeHint`, `TestEngine_GateStopsALaterPhase` |
+| 7 | The `From` of a later hop is the version that the hop before it reaches, for the control plane and the nodegroups. The run compares the live version with `To`. | `TestEngine_LaterHopStartsWhereTheHopBeforeEnds` |
+| 8 | A nodegroup that the plan would attach to, and that is `ACTIVE` at the goal when its phase comes, is verified and not skipped: no run verified that roll. The old engine skipped it. | `TestEngine_VerifiesAnAttachedRollThatEndedBeforeItsPhase` |
+| 9 | A step with no work is `Skipped` also after the run halted, and a skipped step of an engine is reported with `StepChanged`. | `TestEngine_GateStopsALaterPhase` |
+| 10 | The question of a phase is built after a read of the cluster and names the live steps. | `TestEngine_PhaseQuestionNamesTheLiveSteps` |
+| 11 | `Diff` words the force of a control-plane step as `--skip-insights-check`. A step that was planned to attach or verify and ends as a roll says so in a notice. | `TestDiff_ForceIsWordedAsTheFlag`, `TestEngineGuard_ForceAfterAnAttachment` |
+| 12 | An interrupt during the plan that ends only some of its reads is an interrupted run with no plan, and not a blocked plan. | `TestRun_InterruptDuringThePlanAfterTheClusterWasRead` |

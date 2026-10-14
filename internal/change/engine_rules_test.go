@@ -130,6 +130,82 @@ func TestEngine_GatesRunInThePlanAndBeforeEachPhase(t *testing.T) {
 			}
 		}
 	})
+	t.Run("each check of the plan gate has its outcome", func(t *testing.T) {
+		e := newEnv(t, engineWorld(nil))
+		plan, err := NewPlan(testContext(t), e.deps, upgradeTo("1.33"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]health.Outcome{}
+		for _, c := range plan.Clusters[0].Checks {
+			got[c.Name] = c.Outcome
+		}
+		// The world has no Kubernetes API and no control-plane metrics:
+		// the checks that need them are skipped, and the gate says that
+		// it has no Kubernetes access. The others read AWS, and pass.
+		want := map[string]health.Outcome{
+			"Nodes": health.Pass, "Capacity": health.Pass, "Quotas": health.Pass,
+			"ControlPlane": health.Skipped, "Workloads": health.Skipped, "DrainBlockers": health.Skipped,
+			"PDBCoverage": health.Skipped, "Utilization": health.Skipped, health.AccessCheck: health.Warn,
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("outcomes of the plan gate (-want +got):\n%s", diff)
+		}
+		if len(health.Preflight())+1 != len(want) {
+			t.Errorf("Preflight has %d checks, and the test names %d of them", len(health.Preflight()), len(want)-1)
+		}
+	})
+	// A blocker that appears at the checkpoint before a phase refuses the
+	// request of that phase: the gate of the phase ran, and decided.
+	blockers := []struct {
+		name    string
+		before  PhaseKind
+		req     Request
+		world   func() *fleettest.World
+		change  func(c *fleettest.Cluster)
+		notSent string
+		words   string
+		step    StepKind
+		target  string
+	}{
+		{
+			name: "an ERROR insight before the control plane", before: PhaseControlPlane, req: upgradeTo("1.33"), world: func() *fleettest.World { return engineWorld(nil) },
+			change:  func(c *fleettest.Cluster) { errorInsight(nil, c) },
+			notSent: sentCP33, words: "insight", step: StepControlPlane,
+		},
+		{
+			name: "a kubelet too far behind before the control plane", before: PhaseControlPlane, req: upgradeTo("1.33"), world: func() *fleettest.World { return engineWorld(nil) },
+			change:  func(c *fleettest.Cluster) { c.Nodegroup("ng-b").Version = "1.29" },
+			notSent: sentCP33, words: "VersionSkew", step: StepControlPlane,
+		},
+		{
+			name: "a degraded nodegroup before its roll", before: PhaseNodegroups, req: upgradeTo("1.33"), world: func() *fleettest.World { return engineWorld(nil) },
+			change:  func(c *fleettest.Cluster) { degradeNodegroup("ng-a")(nil, c) },
+			notSent: sentA33, words: "blocked by", step: StepNodegroup, target: "ng-a",
+		},
+		{
+			name: "a nodegroup above the target before the control plane rolls back", before: PhaseControlPlane, req: rollbackOf(), world: func() *fleettest.World { return upgradedWorld(nil) },
+			change:  func(c *fleettest.Cluster) { c.Nodegroup("ng-b").Version = "1.33" },
+			notSent: sentCP32, words: "nodegroups above 1.32", step: StepControlPlane,
+		},
+	}
+	for _, tt := range blockers {
+		t.Run("a blocker refuses the request: "+tt.name, func(t *testing.T) {
+			world := tt.world()
+			e := newEnv(t, world)
+			hooks := Hooks{Checkpoint: atCheckpoint(tt.before, func() {
+				world.Edit(func(s *fleettest.State) { tt.change(s.Cluster(east, "prod")) })
+			})}
+			res := mustRun(t, e, tt.req, hooks)
+			if slices.Contains(e.sent(), tt.notSent) {
+				t.Errorf("requests %v: %s was sent past a blocker", e.sent(), tt.notSent)
+			}
+			wantBlocked(t, stepResultOf(t, res, tt.step, tt.target), tt.words)
+			if res.ExitCode() != exitcode.Blocked {
+				t.Errorf("exit = %d, want 3 (%v)", res.ExitCode(), res.Err)
+			}
+		})
+	}
 	t.Run("a blocker of the last nodegroup stops the first change", func(t *testing.T) {
 		e := newEnv(t, engineWorld(degradeNodegroup("ng-b")))
 		res := mustRun(t, e, upgradeTo("1.33"), Hooks{})

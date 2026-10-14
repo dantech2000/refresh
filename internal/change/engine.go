@@ -49,6 +49,15 @@ func (r *runner) runEngine(cp *ClusterPlan) []StepResult {
 		}
 		if !halted {
 			halted = !r.runEnginePhase(cp, ph, results)
+		} else {
+			// A step that the plan gave no work was never going to be
+			// attempted: it is Skipped, whatever ended the run.
+			for i, s := range ph.Steps {
+				if !s.work() && s.Action != Blocked {
+					results[i].Status = StepSkipped
+					r.reportStep(results[i])
+				}
+			}
 		}
 		out = append(out, results...)
 	}
@@ -83,6 +92,9 @@ func (r *runner) runEnginePhase(cp *ClusterPlan, ph Phase, results []StepResult)
 		for i, s := range ph.Steps {
 			if !s.work() {
 				results[i].Status = StepSkipped
+				if s.Action != Blocked {
+					r.reportStep(results[i])
+				}
 			}
 		}
 	}
@@ -110,6 +122,7 @@ func (r *runner) runEnginePhase(cp *ClusterPlan, ph Phase, results []StepResult)
 		for i := range results {
 			if results[i].Status == StepNotAttempted {
 				results[i].Status = StepSkipped
+				r.reportStep(results[i])
 			}
 		}
 	}
@@ -125,6 +138,7 @@ func (r *runner) runEngineSteps(cp *ClusterPlan, ph Phase, results []StepResult)
 	for i := range ph.Steps {
 		if !ph.Steps[i].work() {
 			results[i].Status = StepSkipped
+			r.reportStep(results[i])
 			continue
 		}
 		if !first && (r.engineEnded(cp, stepName(ph.Steps[i].Ref)) || !r.checkpoint(ph.Steps[i].Ref, stepName(ph.Steps[i].Ref))) {
@@ -157,6 +171,7 @@ func (r *runner) runEngineSteps(cp *ClusterPlan, ph Phase, results []StepResult)
 				r.notice(fmt.Sprintf("%s needs no change any more; nothing was sent", stepName(s.Ref)))
 			}
 			results[i].Status = StepSkipped
+			r.reportStep(results[i])
 			continue
 		}
 		r.steps, r.remaining, r.unverified = steps, steps[i:], false
@@ -187,10 +202,7 @@ func cleanStep(res StepResult) bool {
 
 // phaseRead reads the whole cluster for a phase or a step of an engine.
 func (r *runner) phaseRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
-	fetch := r.d.Fetch
-	if fetch == nil {
-		fetch = &fleet.Fetcher{Now: r.d.Now}
-	}
+	fetch := r.d.fetcher()
 	return fetch.Fresh().Fetch(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Cluster, engineNeed(false))
 }
 
@@ -202,7 +214,15 @@ func (r *runner) phaseRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
 func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot, steps []Step) (StepResult, bool) {
 	refuse, notices := Busy(snap, r.req.kind(), steps)
 	for _, n := range notices {
-		r.notice(n)
+		// The read of a step and the read before its request find the
+		// same thing: it is said once for the step.
+		if r.busySaid.step != res.Ref {
+			r.busySaid.step, r.busySaid.notices = res.Ref, nil
+		}
+		if !slices.Contains(r.busySaid.notices, n) {
+			r.busySaid.notices = append(r.busySaid.notices, n)
+			r.notice(n)
+		}
 	}
 	if len(refuse) == 0 {
 		return res, false
@@ -230,7 +250,9 @@ func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot
 //   - An add-on: Skip when it is gone or at the goal, Attach while it is
 //     CREATING or UPDATING at any version, and Submit otherwise.
 //   - A nodegroup: Skip when it is gone, or at the goal and ACTIVE. Verify
-//     at the goal and not ACTIVE. Attach below the goal while UPDATING,
+//     at the goal and not ACTIVE, and at the goal for a step that the plan
+//     would attach to or verify: its roll ended since the plan, and no
+//     run verified it. Attach below the goal while UPDATING,
 //     and Submit otherwise: a nodegroup that is CREATING below the goal is
 //     not attached to, and its gate refuses it.
 //
@@ -275,6 +297,10 @@ func rederive(kind Kind, ph Phase, snap *fleet.Snapshot) []Step {
 				s.Action, s.Reason = Skip, NoChange
 			case snap.Nodegroups[j].State != fleet.Collected:
 			case versionDone(kind, snap.Nodegroups[j].Version.String(), s.To) && unsettled(snap.Nodegroups[j]):
+				s.Action, s.Reason = Verify, Unsettled
+			case versionDone(kind, snap.Nodegroups[j].Version.String(), s.To) && (s.Action == Attach || s.Action == Verify):
+				// The roll that the plan would wait for ended since the
+				// plan. Nobody verified it: this run does.
 				s.Action, s.Reason = Verify, Unsettled
 			case versionDone(kind, snap.Nodegroups[j].Version.String(), s.To):
 				s.Action, s.Reason = Skip, AlreadyAtTarget
@@ -328,7 +354,7 @@ func (r *runner) runEngineStep(cp *ClusterPlan, ph Phase, s Step, snap *fleet.Sn
 	case StepAddon:
 		return r.runEngineAddon(cp, s), false
 	case StepNodegroup:
-		return r.runEngineNodegroup(cp, ph, s, snap)
+		return r.runEngineNodegroup(cp, ph, s)
 	}
 	res = StepResult{Ref: s.Ref, Status: StepFailed}
 	res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown, "this build cannot run a "+string(s.Ref.Kind)+" step")
@@ -337,6 +363,9 @@ func (r *runner) runEngineStep(cp *ClusterPlan, ph Phase, s Step, snap *fleet.Sn
 
 // confirmPhase asks the question of a phase of an upgrade with
 // ConfirmPhases, and reports whether the run may go on. --yes answers it.
+// The question comes before any request of the phase. What was read for
+// it is not used after it: each step reads again, and guardSubmit reads
+// once more right before each request.
 // The phase that the start question named is confirmed already. A no ends
 // the run as Declined: nothing of the phase was read or sent.
 func (r *runner) confirmPhase(cp *ClusterPlan, ph Phase) bool {
@@ -346,6 +375,20 @@ func (r *runner) confirmPhase(cp *ClusterPlan, ph Phase) bool {
 	}
 	if r.confirmedPhase != nil && *r.confirmedPhase == ph.Ref {
 		return true
+	}
+	// The question names what the phase does now, and not what the plan
+	// said: the steps are derived again from a read of the cluster. A
+	// phase with nothing left asks nothing. When the read fails, the
+	// question is the one of the plan: consent still comes first.
+	r.newRead(r.common.Limits.Read)
+	if snap, err := r.phaseRead(cp); err == nil {
+		ph.Steps = rederive(r.req.kind(), ph, snap)
+		if !slices.ContainsFunc(ph.Steps, Step.work) {
+			return true
+		}
+	}
+	if r.engineEnded(cp, phaseTitle(ph)) {
+		return false
 	}
 	q := Question{Kind: ConfirmPhase, Step: StepRef{Phase: ph.Ref}, Text: phaseQuestion(cp, ph)}
 	if r.hooks.Ask == nil {

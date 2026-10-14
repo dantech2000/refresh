@@ -174,10 +174,15 @@ const (
 // the table of Diff:
 //
 //   - a difference that only says that less is to do: a notice.
-//   - a difference that needs an answer, such as a new AMI release: --yes
-//     accepts it with a notice. Without it a person is asked, and after a
-//     yes the cluster is planned once more. With nobody to ask, the
-//     cluster is blocked.
+//   - a difference that needs an answer, such as another reason for a
+//     roll: --yes accepts it with a notice. Without it a person is asked,
+//     and after a yes the cluster is planned once more. With nobody to
+//     ask, the cluster is blocked.
+//   - another AMI release of a nodegroup that is to be rolled, which no
+//     person accepted: the roll keeps the release that was confirmed
+//     (pinConfirmedReleases), so submitRoll skips it with a notice, as it
+//     does in one cluster. Someone else rolled the nodegroup since the
+//     confirmation. That holds with --reroll too.
 //   - a difference that refuses, such as another Kubernetes version or a
 //     new blocker: the cluster is blocked.
 //
@@ -206,10 +211,7 @@ func (r *runner) turn(p *Plan, i int) (outcome turnOutcome, why string) {
 	prev := *cp
 	for asked := 0; ; asked++ {
 		d := r.d
-		if d.Fetch == nil {
-			d.Fetch = &fleet.Fetcher{Now: d.Now}
-		}
-		d.Fetch = d.Fetch.Fresh()
+		d.Fetch = d.fetcher().Fresh()
 		cur, err := planRollCluster(r.readCtx, d, req, prev.Target)
 		if err != nil {
 			if r.recordInterrupt() {
@@ -235,6 +237,7 @@ func (r *runner) turn(p *Plan, i int) (outcome turnOutcome, why string) {
 		q := r.question(single(p, cur), diff, true)
 		switch {
 		case q == nil:
+			pinConfirmedReleases(&prev, &p.Clusters[i])
 			acceptCluster(&p.Clusters[i])
 			return turnRun, ""
 		case r.hooks.Ask == nil:
@@ -252,6 +255,30 @@ func (r *runner) turn(p *Plan, i int) (outcome turnOutcome, why string) {
 		case answeredYes:
 		}
 		prev = *cur
+	}
+}
+
+// pinConfirmedReleases gives each roll of cur the AMI release version
+// that the same roll has in confirmed, the plan of the cluster that was
+// accepted last: by --yes at the start of the run, or by a person at this
+// turn. The fresh read before the request compares the release of the
+// nodegroup with the one of its step (redecideRoll). So a nodegroup whose
+// release changed with nobody to accept it is skipped there, and is not
+// rolled a second time.
+func pinConfirmedReleases(confirmed, cur *ClusterPlan) {
+	releases := map[StepRef]string{}
+	for _, s := range confirmed.Steps() {
+		if s.Ref.Kind == StepNodegroup && s.Action == Submit {
+			releases[s.Ref] = s.FromRelease
+		}
+	}
+	for i := range cur.Phases {
+		for j := range cur.Phases[i].Steps {
+			s := &cur.Phases[i].Steps[j]
+			if release, ok := releases[s.Ref]; ok && s.Action == Submit {
+				s.FromRelease = release
+			}
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package change
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -109,6 +110,55 @@ func (p *rollbackPlanner) eligibility(h versionHistory, rollingBack bool) {
 			p.notice("the 7-day rollback window may have just closed (the upgrade to %s started about %s, and EKS counts from when it finished); EKS decides", p.live, aboutDate(started))
 		}
 	}
+}
+
+// RollbackStillEligible judges a rollback again on a read of the cluster
+// from right before one of its requests, against target, the version
+// that the plan returns to. The plan is old by then: a question was open,
+// or a nodegroup rolled for an hour. It makes the checks of PlanRollback
+// that say whether EKS will take the control-plane rollback, and none
+// about the steps: the update history and the rollback window
+// (eligibility), the offer of the target version (targetOffer), and the
+// rollback insights (insights). Without them a run could roll nodegroups
+// and add-ons back for a control-plane rollback that EKS then refuses.
+//
+// The error is a RefusalError when the cluster would now return to
+// another version than target: no answer and no flag accepts that. The
+// blockers are what stops the rollback now, with the failures of the reads
+// behind them. A cluster whose control plane is back at target already has
+// nothing left to judge.
+func RollbackStillEligible(snap *fleet.Snapshot, req RollbackRequest, in RollbackInputs, target fleet.Version) ([]Blocker, []apidoc.Failure, error) {
+	t := Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}
+	live := snap.Cluster.Version
+	p := &rollbackPlanner{snap: snap, req: req, in: in, live: live, cp: &ClusterPlan{Target: t, From: live, To: target}}
+	if snap.Have.Cluster != fleet.Collected || live.IsZero() {
+		p.block(BlockerUnread, nil, "the Kubernetes version of cluster %s is not known", t.Cluster)
+		return p.cp.Blockers, p.cp.Failures, nil
+	}
+	h := versionHistoryOf(snap)
+	if !h.read {
+		p.eligibility(h, false)
+		return p.cp.Blockers, p.cp.Failures, nil
+	}
+	rollingBack := h.inFlight != nil && h.inFlight.Type == updateRollback
+	to := live
+	if (!h.rolledBack() || rollingBack) && live.Minor > 0 {
+		to = fleet.Version{Major: live.Major, Minor: live.Minor - 1}
+	}
+	if to != target {
+		return nil, nil, &RefusalError{Reason: RefusalTargetChanged, Message: fmt.Sprintf(
+			"the rollback target changed from %s to %s since the plan: plan again", target, to)}
+	}
+	if to == live {
+		return nil, nil, nil
+	}
+	p.eligibility(h, rollingBack)
+	if !rollingBack {
+		control := StepRef{Phase: PhaseRef{Target: t, Kind: PhaseControlPlane}, Kind: StepControlPlane}
+		p.targetOffer()
+		p.insights(&control)
+	}
+	return p.cp.Blockers, p.cp.Failures, nil
 }
 
 // unreadHistory is the failure of an update history that the snapshot

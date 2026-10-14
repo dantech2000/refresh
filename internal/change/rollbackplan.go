@@ -122,7 +122,9 @@ func PlanRollback(snap *fleet.Snapshot, req RollbackRequest, in RollbackInputs) 
 	step := Step{Ref: control, Action: Submit, Reason: VersionAhead, From: live.String(), To: p.cp.To.String(), Force: req.SkipInsights}
 	if rollingBack {
 		// The rollback in flight has its own request; this run sends none.
-		step.Action, step.Reason, step.Force = Attach, InFlight, false
+		// The step keeps its force: it is what the run sends when that
+		// rollback fails and the run starts its own.
+		step.Action, step.Reason = Attach, InFlight
 	}
 	p.cp.Phases = append(p.cp.Phases, Phase{Ref: control.Phase, Steps: []Step{step}})
 	p.notice("self-managed and hybrid nodes are not rolled back by EKS or refresh: move them to %s yourself before the control plane rolls back. Fargate pods at %s trigger the kubelet skew insight: delete them first, and they come back at %s",

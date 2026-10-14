@@ -222,7 +222,13 @@ func diffStep(old Step, had bool, cur Step) []Change {
 	}
 	if old.Force != cur.Force {
 		with := map[bool]string{true: "with", false: "without"}
-		out = append(out, change(StepDiffers, "%s is now changed %s --force, not %s it", name, with[cur.Force], with[old.Force])...)
+		// The force of a control plane is what --skip-insights-check
+		// sends, and the force of a roll is --force.
+		flag := "--force"
+		if cur.Ref.Kind == StepControlPlane {
+			flag = "--skip-insights-check"
+		}
+		out = append(out, change(StepDiffers, "%s is now changed %s %s, not %s it", name, with[cur.Force], flag, with[old.Force])...)
 	}
 	switch {
 	case old.Sizes == nil && cur.Sizes == nil:

@@ -656,6 +656,14 @@ func clusterRollback() []Scenario {
 		},
 		{Name: "cluster-rollback-deadline", Behaviour: Deadline, Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes", "--wait-timeout", "300ms"), V2: v2("--yes", "--wait-timeout", "300ms"), Checks: []Check{updatesAre(a), worldMoved}},
 		{
+			// With --yes nobody is asked, and both binaries still judge
+			// the rollback a second time before the first update: the
+			// plan may be old. The signal lands at that second read of
+			// the rollback insights. Nothing is sent.
+			Name: "cluster-rollback-interrupt-before-start-yes", Seed: fleet(upgraded, scripts(never)), Legacy: with("--yes"), V2: v2("--yes"),
+			Signal: interrupt(fleettest.EKSListInsights, 2), Checks: []Check{exits(1), noMutations},
+		},
+		{
 			// The user confirms the plan, and the signal lands while the
 			// plan is checked again, before any update. Nothing is sent.
 			// The anchor is the first insights read after the answer:

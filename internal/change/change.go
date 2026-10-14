@@ -221,10 +221,7 @@ func plan(ctx context.Context, d Deps, req Request, refresh *insightsRefresher) 
 	// Every plan reads anew. The fetcher of the command remembers the
 	// newest version of an add-on, which may have changed since the plan
 	// before this one.
-	if d.Fetch == nil {
-		d.Fetch = &fleet.Fetcher{Now: d.Now}
-	}
-	d.Fetch = d.Fetch.Fresh()
+	d.Fetch = d.fetcher().Fresh()
 	switch r := req.(type) {
 	case AddonUpdateRequest:
 		return planAddons(ctx, d, r)
@@ -238,6 +235,15 @@ func plan(ctx context.Context, d Deps, req Request, refresh *insightsRefresher) 
 		return planRollback(ctx, d, r)
 	}
 	return nil, &UnsupportedError{Kind: req.kind()}
+}
+
+// fetcher returns the fetcher of the dependencies, or one on their clock
+// when the caller set none.
+func (d Deps) fetcher() *fleet.Fetcher {
+	if d.Fetch != nil {
+		return d.Fetch
+	}
+	return &fleet.Fetcher{Now: d.Now}
 }
 
 // UnsupportedError is the error for a kind of change that this build

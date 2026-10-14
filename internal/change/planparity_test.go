@@ -350,6 +350,8 @@ func TestPlanRollback_ParityTraces(t *testing.T) {
 		"prompt-yes": silent, "prompt-no": silent, "prompt-interrupt": silent, "unattended": silent,
 		// It runs on a terminal: the signal lands after the answer.
 		"interrupt-before-start": silent,
+		// With --yes: the signal lands at the second read of the insights.
+		"interrupt-before-start-yes": base,
 		// A cluster with no in-place upgrade in its history.
 		"blocked": {},
 		// The upgrade was ten days ago, and EKS allows a rollback for
