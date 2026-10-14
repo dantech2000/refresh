@@ -63,7 +63,9 @@ func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Ev
 		startedAt = d.now()
 	}
 	res := StepResult{Ref: step.Ref, Status: StepStarted, Attached: true, UpdateID: in.ID, StartedAt: startedAt}
-	report := func() { emit(Event{At: d.now(), Kind: StepChanged, Phase: step.Ref.Phase, Step: step.Ref, Result: &res}) }
+	report := func() {
+		emit(Event{At: d.now(), Kind: StepChanged, Phase: step.Ref.Phase, Step: step.Ref, Result: &res})
+	}
 	report()
 
 	wctx, wait := d.budget(ctx, o.Limits.Wait, ErrWaitTimeout)
