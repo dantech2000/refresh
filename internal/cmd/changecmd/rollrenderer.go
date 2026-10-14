@@ -55,11 +55,11 @@ type RollRenderer struct {
 }
 
 // NewRollRenderer returns the renderer of a roll that shows the nodes. It
-// redraws the panel in place when stderr is a terminal, and appends
-// frames otherwise.
+// redraws the panel in place when stderr is a terminal that can redraw,
+// and appends frames otherwise.
 func NewRollRenderer(ios *cmdutil.IOStreams) *RollRenderer {
 	r := &RollRenderer{LineRenderer: NewRenderer(ios, false), desired: map[change.StepRef]int{}, moves: map[change.StepRef]move{}}
-	if ios.ErrTTY {
+	if ios.ErrTTY && !ios.Dumb {
 		r.live = view.NewLive(ios.ErrOut, ios.Size)
 	}
 	return r

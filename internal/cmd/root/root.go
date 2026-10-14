@@ -163,7 +163,8 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 	// Any one of the three turns color off; nothing turns it back on.
 	// NO_COLOR is not parsed as a boolean: no-color.org says that any
 	// non-empty value counts.
-	f.IOStreams.NoColor = o.noColor || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb"
+	f.IOStreams.Dumb = os.Getenv("TERM") == "dumb"
+	f.IOStreams.NoColor = o.noColor || os.Getenv("NO_COLOR") != "" || f.IOStreams.Dumb
 
 	// A region that is named twice is one region. Cobra also parses the
 	// flags of a line twice for a shell completion, which repeats every

@@ -160,3 +160,25 @@ func TestRollRenderer_KeysByCluster(t *testing.T) {
 		t.Errorf("the panel of staging/web does not show its own images:\n%s", got)
 	}
 }
+
+// TERM=dumb cannot move the cursor, so the panel is appended there, as it
+// is without a terminal, and no cursor code is written.
+func TestRollRenderer_DumbTerminalAppendsFrames(t *testing.T) {
+	ios, errOut := terminal()
+	ios.Dumb = true
+	r := NewRollRenderer(ios)
+	ref := rollRef("prod", "web")
+	at := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	r.Render(change.Event{Kind: change.PlanReady, Plan: rollPlan(map[string]string{"prod": "ami-new"})})
+	r.Render(nodes(ref, at))
+	res := change.StepResult{Ref: ref, Status: change.StepSucceeded}
+	r.Render(change.Event{Kind: change.StepChanged, At: at, Phase: ref.Phase, Step: ref, Result: &res})
+
+	got := errOut.String()
+	if !strings.Contains(got, "web-1") {
+		t.Errorf("the frame of the roll is missing:\n%q", got)
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Errorf("a dumb terminal got cursor codes:\n%q", got)
+	}
+}

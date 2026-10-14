@@ -16,6 +16,7 @@ import (
 func TestValidateWatch(t *testing.T) {
 	tty := &cmdutil.IOStreams{OutTTY: true}
 	pipe := &cmdutil.IOStreams{}
+	dumb := &cmdutil.IOStreams{OutTTY: true, Dumb: true}
 	tests := []struct {
 		name     string
 		ios      *cmdutil.IOStreams
@@ -29,6 +30,7 @@ func TestValidateWatch(t *testing.T) {
 		{name: "json", ios: tty, format: cmdutil.FormatJSON, watch: true, interval: time.Second, wantErr: "--watch cannot be used with -o json"},
 		{name: "plain", ios: tty, format: cmdutil.FormatPlain, watch: true, interval: time.Second, wantErr: "--watch cannot be used with -o plain"},
 		{name: "not a terminal", ios: pipe, format: cmdutil.FormatTable, watch: true, interval: time.Second, wantErr: "--watch needs a terminal on stdout"},
+		{name: "a dumb terminal", ios: dumb, format: cmdutil.FormatTable, watch: true, interval: time.Second, wantErr: "--watch needs a terminal that can clear its screen"},
 		{name: "an interval that is too short", ios: tty, format: cmdutil.FormatTable, watch: true, interval: 100 * time.Millisecond, wantErr: "invalid --watch-interval 100ms: must be at least 1s"},
 	}
 	for _, tt := range tests {

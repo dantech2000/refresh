@@ -527,6 +527,9 @@ func TestColor(t *testing.T) {
 			if got := f.IOStreams.ErrColorEnabled(); got != tt.want {
 				t.Errorf("ErrColorEnabled() = %t, want %t", got, tt.want)
 			}
+			if got, want := f.IOStreams.Dumb, tt.term == "dumb"; got != want {
+				t.Errorf("Dumb = %t, want %t", got, want)
+			}
 		})
 	}
 }

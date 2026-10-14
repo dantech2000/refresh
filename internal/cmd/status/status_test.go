@@ -512,3 +512,24 @@ func TestStatus_TerminalProgress(t *testing.T) {
 		t.Errorf("stderr = %q, want the status line", short.Err.String())
 	}
 }
+
+// TERM=dumb cannot move the cursor or erase a line, so nothing is redrawn
+// there: the table prints once, as it does without a terminal.
+func TestStatus_DumbTerminalDoesNotRedraw(t *testing.T) {
+	t.Setenv("TERM", "dumb")
+	plain := newFake(t)
+	_ = plain.Run(cmdutiltest.Context(t), append(twoRegions, "-o", "table")...)
+
+	for _, height := range []int{40, 5} {
+		e := newFake(t)
+		e.Factory.IOStreams.OutTTY, e.Factory.IOStreams.ErrTTY = true, true
+		e.Factory.IOStreams.TermSize = func() (int, int) { return 200, height }
+		_ = e.Run(cmdutiltest.Context(t), twoRegions...)
+		if strings.Contains(e.Out.String()+e.Err.String(), "\x1b[") {
+			t.Errorf("height %d: a dumb terminal got escape codes:\nstdout %q\nstderr %q", height, e.Out.String(), e.Err.String())
+		}
+		if diff := cmp.Diff(plain.Out.String(), e.Out.String()); diff != "" {
+			t.Errorf("height %d: the table is not the table of a run without a terminal (-plain +dumb):\n%s", height, diff)
+		}
+	}
+}

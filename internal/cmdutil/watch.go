@@ -38,6 +38,8 @@ func ValidateWatch(ios *IOStreams, format Format, watch bool, interval time.Dura
 		return fmt.Errorf("--watch cannot be used with -o %s: it redraws a table; run the command in a loop for a script", format)
 	case !ios.OutTTY:
 		return errors.New("--watch needs a terminal on stdout: it redraws a table; run the command in a loop for a script")
+	case ios.Dumb:
+		return errors.New("--watch needs a terminal that can clear its screen, and TERM is dumb; run the command in a loop for a script")
 	case interval < minWatchInterval:
 		return fmt.Errorf("invalid --watch-interval %s: must be at least %s", interval, minWatchInterval)
 	}

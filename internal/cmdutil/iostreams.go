@@ -28,6 +28,11 @@ type IOStreams struct {
 	// it from --no-color, NO_COLOR, and TERM=dumb.
 	NoColor bool
 
+	// Dumb says that the terminal cannot move its cursor or erase a line,
+	// so nothing is redrawn in place. The root command sets it from
+	// TERM=dumb.
+	Dumb bool
+
 	// ColorDepth is how many colors the terminal shows, and Unicode
 	// whether it shows glyphs outside ASCII. System reads both from the
 	// environment. They apply to a stream only when it is a terminal and

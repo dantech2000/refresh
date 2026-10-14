@@ -28,10 +28,11 @@ type Progress struct {
 // NewProgress returns the progress of a sweep of some regions. render
 // returns the table for the snapshots that have arrived, in the final
 // order, and for the number of regions that have answered. With enabled
-// false, or when stdout is not a terminal, the progress draws nothing.
+// false, or when stdout is not a terminal that can redraw, the progress
+// draws nothing.
 func NewProgress(ios *cmdutil.IOStreams, enabled bool, regions int, render func(snaps []*fleet.Snapshot, answered int) []string) *Progress {
 	p := &Progress{ios: ios, regions: regions, render: render}
-	if !enabled || !ios.OutTTY {
+	if !enabled || !ios.OutTTY || ios.Dumb {
 		return p
 	}
 	p.table = view.NewLive(ios.Out, ios.Size)
