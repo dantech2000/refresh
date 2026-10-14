@@ -53,14 +53,16 @@ func (m Model) frame() Block {
 		main = Block{{}, {sp(1), m.tok(view.Progress, "loading the fleet")}}
 	case m.screen == screenCluster:
 		main = m.clusterScreen(w, body)
+	case m.screen == screenChange:
+		main = m.changeScreen(w, body)
 	default:
 		main = m.fleetScreen(w, body)
 	}
 	out := Block{m.topBar(w).WithBG(view.RoleMantle)}
 	out = append(out, main.fit(w, body)...)
 	out = append(out, m.logStrip(w).WithBG(view.RoleMantle), m.keyBar(w).WithBG(view.RoleCrust))
-	if m.help {
-		out = m.withDialog(out, m.drawDialog(m.helpParts(dialogWidth(m.w, 100))))
+	if d, ok := m.openDialog(); ok {
+		out = m.withDialog(out, m.drawDialog(d))
 	}
 	return out
 }
@@ -139,6 +141,9 @@ func orDash(s string) string {
 // logStrip shows the notice of the moment, or the newest line of the feed
 // about the cluster on screen.
 func (m Model) logStrip(w int) Line {
+	if p := m.planning; p != nil {
+		return Line{sp(1), m.tok(view.Progress, "dry run of "+describeAction(p.action)), sp(2), chip("esc"), sp(1), dim("cancel")}.Fit(w)
+	}
 	if m.notice != "" && m.now.Before(m.noticeTill) {
 		return Line{sp(1), m.mark(m.noticeStatus), sp(1), tx(m.notice)}.Fit(w)
 	}
@@ -279,10 +284,10 @@ func (m Model) bodyRows(d dialogParts) int {
 
 // clampScroll limits a scroll offset to the open dialog's body.
 func (m Model) clampScroll(v int) int {
-	if !m.help {
+	d, ok := m.openDialog()
+	if !ok {
 		return 0
 	}
-	d := m.helpParts(dialogWidth(m.w, 100))
 	return min(max(0, v), max(0, len(d.body)-m.bodyRows(d)))
 }
 
@@ -343,10 +348,11 @@ func (m Model) helpParts(w int) dialogParts {
 	group("THIS SCREEN", here)
 	group("ON EVERY SCREEN", everywhere)
 	group("IN A DIALOG", append([]binding{{label: "esc", desc: "close"}}, scrollBindings()...))
+	group("IN A DRY RUN", dialogBindings())
 	if m.st.ReadOnly {
-		body = append(body, Line{role(view.RoleWarn, "Read-only: the UI reads the fleet and runs readiness checks. Changes come in a later version.")})
+		body = append(body, Line{role(view.RoleWarn, "Read-only: p, a, U, and B dry-run a change and name the command; nothing starts from this UI.")})
 	} else {
-		body = append(body, Line{role(view.RoleFail, "Changes on: the change screens are not built yet, so nothing changes from the UI in this version.")})
+		body = append(body, Line{role(view.RoleFail, "Changes on: y in a dry run starts that plan on a real cluster. A change started elsewhere is watched, never steered.")})
 	}
 	foot := Block{{}, {chip("esc"), sp(1), dim("close")}}
 	return dialogParts{head: head, body: body, foot: foot, w: w}

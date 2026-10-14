@@ -4,6 +4,10 @@ import (
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/dantech2000/refresh/internal/change"
+	"github.com/dantech2000/refresh/internal/tui/state"
+	"github.com/dantech2000/refresh/internal/view"
 )
 
 // binding is one key action. The same table drives the key handler, the
@@ -54,8 +58,9 @@ func (m Model) hasCluster() bool { return m.cluster().Name != "" }
 // globalBindings apply on every screen.
 func globalBindings() []binding {
 	return []binding{
-		{keys: []string{"1"}, label: "1-2", desc: "switch screen: fleet, cluster", do: func(m *Model) tea.Cmd { return m.goTo(screenFleet) }},
+		{keys: []string{"1"}, label: "1-3", desc: "switch screen: fleet, cluster, change", do: func(m *Model) tea.Cmd { return m.goTo(screenFleet) }},
 		{keys: []string{"2"}, do: func(m *Model) tea.Cmd { return m.goTo(screenCluster) }},
+		{keys: []string{"3"}, do: func(m *Model) tea.Cmd { return m.goTo(screenChange) }},
 		{keys: []string{"esc", "backspace"}, label: "esc", desc: "back to the fleet", short: "back", bar: true,
 			when: func(m Model) bool { return m.screen != screenFleet },
 			do:   func(m *Model) tea.Cmd { m.screen = screenFleet; return nil }},
@@ -118,7 +123,108 @@ func screenBindings() []binding {
 		binding{keys: []string{"r", "R"}, label: "r", desc: "run the readiness checks", short: "readiness", bar: true, primary: true,
 			when: here, do: func(m *Model) tea.Cmd { return m.runReadiness() }},
 	)
+	bs = append(bs, actionBindings(here)...)
+	bs = append(bs, changeBindings()...)
 	return bs
+}
+
+// actionBindings propose a change on the selected cluster: each opens a
+// dry run, and nothing starts before y in its dialog. In a read-only UI
+// the dialog shows the plan and the command; the keys stay, so that the
+// dry run is the same with and without --allow-changes.
+func actionBindings(here func(Model) bool) []binding {
+	propose := func(do func(*Model) tea.Cmd) func(*Model) tea.Cmd {
+		return func(m *Model) tea.Cmd {
+			if m.saidBusy() {
+				return nil
+			}
+			return do(m)
+		}
+	}
+	return []binding{
+		{keys: []string{"p"}, label: "p", desc: "dry-run a roll of a stale nodegroup (patch)", short: "patch", bar: true, primary: true,
+			when: here, do: propose(func(m *Model) tea.Cmd { return m.planRoll() })},
+		{keys: []string{"a"}, label: "a", desc: "dry-run the update of the stale add-ons", short: "add-ons", bar: true, primary: true,
+			when: here, do: propose(func(m *Model) tea.Cmd {
+				return m.plan(state.Action{Kind: state.ActionAddons, Cluster: m.cluster().Key})
+			})},
+		{keys: []string{"U"}, label: "U", desc: "dry-run an upgrade: choose the parts", short: "upgrade", bar: true, primary: true,
+			when: here, do: propose(func(m *Model) tea.Cmd { return m.planUpgrade() })},
+		{keys: []string{"B"}, label: "B", desc: "dry-run the rollback of the control plane (in its window)", short: "rollback", bar: true, primary: true,
+			when: func(m Model) bool { return here(m) && m.cluster().Rollback != nil },
+			do: propose(func(m *Model) tea.Cmd {
+				return m.plan(state.Action{Kind: state.ActionRollback, Cluster: m.cluster().Key})
+			})},
+	}
+}
+
+// changeBindings steer the change on the Change screen. The steering keys
+// show only while the handle offers them: a change started elsewhere, or
+// one past its last checkpoint, has none.
+func changeBindings() []binding {
+	on := onScreen(screenChange)
+	controls := func(m Model) change.Controls {
+		if c, ok := m.change(); ok && on(m) {
+			return c.Controls
+		}
+		return change.Controls{}
+	}
+	steer := func(m Model) bool { return controls(m).Pause || controls(m).Stop }
+	asking := func(m Model) bool { return controls(m).Answer }
+	paused := func(m Model) bool {
+		c, ok := m.change()
+		return ok && on(m) && c.State == change.Paused && c.Controls.Pause
+	}
+	several := func(m Model) bool { return on(m) && len(m.st.Changes) > 1 }
+	call := func(name string, f func(m *Model, c state.Change) error) func(*Model) tea.Cmd {
+		return func(m *Model) tea.Cmd {
+			c, ok := m.change()
+			if !ok {
+				return nil
+			}
+			if err := f(m, c); err != nil {
+				m.say(view.Fail, "%s: %v", name, err)
+			}
+			return nil
+		}
+	}
+	return []binding{
+		{keys: []string{"y"}, label: "y", desc: "answer the question: go on", short: "go on", bar: true, primary: true, when: asking,
+			do: call("answer", func(m *Model, c state.Change) error { return m.b.Answer(m.ctx, c.ID, c.Question.ID, true) })},
+		{keys: []string{"n"}, label: "n", desc: "answer the question: stop", short: "stop here", bar: true, primary: true, when: asking,
+			do: call("answer", func(m *Model, c state.Change) error { return m.b.Answer(m.ctx, c.ID, c.Question.ID, false) })},
+		{keys: []string{"P"}, label: "P", desc: "pause before the next phase; again to resume", short: "pause", bar: true, primary: true,
+			when: func(m Model) bool { return steer(m) && !asking(m) && !paused(m) },
+			do: call("pause", func(m *Model, c state.Change) error {
+				m.say(progressStatus, "pause requested: the change pauses before its next phase")
+				return m.b.Pause(m.ctx, c.ID)
+			})},
+		{keys: []string{"P"}, label: "P", desc: "resume", short: "resume", bar: true, primary: true, when: paused,
+			do: call("resume", func(m *Model, c state.Change) error { return m.b.Resume(m.ctx, c.ID) })},
+		{keys: []string{"S"}, label: "S", desc: "stop before the next phase; what started finishes", short: "stop", bar: true, primary: true,
+			when: func(m Model) bool { return steer(m) && !asking(m) },
+			do: call("stop", func(m *Model, c state.Change) error {
+				m.say(view.Warn, "stop requested: the change stops before its next phase")
+				return m.b.Stop(m.ctx, c.ID)
+			})},
+		{keys: []string{"space"}, label: "space", desc: "freeze the log; again to follow", short: "freeze", bar: true,
+			when: func(m Model) bool { _, ok := m.change(); return ok && on(m) },
+			do: func(m *Model) tea.Cmd {
+				c, _ := m.change()
+				if m.frozen != 0 {
+					m.frozen = 0
+				} else {
+					m.frozen = c.LastSeq
+				}
+				return nil
+			}},
+		{keys: []string{"w"}, label: "w", desc: "log: warnings and failures only", short: "warnings", bar: true, when: on,
+			do: func(m *Model) tea.Cmd { m.warnOnly = !m.warnOnly; return nil }},
+		{keys: []string{"["}, label: "[ ]", desc: "the change before, the change after", short: "other change", bar: true, when: several,
+			do: func(m *Model) tea.Cmd { m.chg, m.frozen = max(0, m.chg-1), 0; return nil }},
+		{keys: []string{"]"}, when: several,
+			do: func(m *Model) tea.Cmd { m.chg, m.frozen = min(len(m.st.Changes)-1, m.chg+1), 0; return nil }},
+	}
 }
 
 // scrollBindings scroll the open dialog.
@@ -137,15 +243,23 @@ func scrollBindings() []binding {
 	}
 }
 
-// key handles one key press.
+// key handles one key press. A dialog takes every key; the screen keys
+// do nothing behind it.
 func (m Model) key(k string) (Model, tea.Cmd) {
 	if k == "ctrl+c" {
 		return m, tea.Quit
 	}
 	var table []binding
-	if m.help {
+	switch {
+	case m.help:
 		table = append([]binding{{keys: []string{"esc", "?", "q"}, do: func(m *Model) tea.Cmd { m.help = false; return nil }}}, scrollBindings()...)
-	} else {
+	case m.pick != nil:
+		table = pickerBindings()
+	case m.confirm != nil:
+		table = append(dialogBindings(), scrollBindings()...)
+	case m.planning != nil:
+		table = []binding{{keys: []string{"esc", "q"}, do: func(m *Model) tea.Cmd { m.cancelPlan(); return nil }}}
+	default:
 		table = append(screenBindings(), globalBindings()...)
 	}
 	for _, b := range table {

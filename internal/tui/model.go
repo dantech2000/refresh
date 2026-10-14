@@ -1,6 +1,6 @@
 // Package tui is the full-screen terminal UI for refresh: the fleet, the
-// readiness checks, and, in later steps, the changes. It draws a
-// state.State from a Backend and never calls AWS or Kubernetes itself.
+// readiness checks, and the changes. It draws a state.State from a Backend
+// and never calls AWS or Kubernetes itself.
 //
 // Every backend call runs in a Bubble Tea command, off the UI loop, and
 // comes back as a message, so a slow backend never freezes the screen or
@@ -17,6 +17,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/view"
 )
@@ -41,6 +42,17 @@ type Backend interface {
 	// Readiness starts the readiness checks of a cluster. The result
 	// lands in a later state.
 	Readiness(ctx context.Context, c state.Key) error
+	// Plan dry-runs an action and returns the proposal to show. It works
+	// read-only too: the dialog then names the command.
+	Plan(ctx context.Context, a state.Action) (state.Proposal, error)
+	// Start runs the proposal, which must be the newest. It is the one
+	// call that changes a cluster, and the one that --allow-changes gates.
+	Start(ctx context.Context, id state.ProposalID) (state.ChangeID, error)
+	// Answer, Pause, Resume, and Stop steer a running change of this UI.
+	Answer(ctx context.Context, id state.ChangeID, q change.QuestionID, yes bool) error
+	Pause(ctx context.Context, id state.ChangeID) error
+	Resume(ctx context.Context, id state.ChangeID) error
+	Stop(ctx context.Context, id state.ChangeID) error
 }
 
 type screen int
@@ -48,9 +60,10 @@ type screen int
 const (
 	screenFleet screen = iota
 	screenCluster
+	screenChange
 )
 
-var screenNames = []string{"Fleet", "Cluster"}
+var screenNames = []string{"Fleet", "Cluster", "Change"}
 
 // Model is the Bubble Tea model.
 type Model struct {
@@ -84,6 +97,26 @@ type Model struct {
 	help     bool
 	scroll   int // the first body row shown in the open dialog
 
+	// chg is the index of the change on the Change screen. frozen holds
+	// its log at a sequence number (space), 0 follows; warnOnly filters
+	// the log to warnings and failures.
+	chg      int
+	frozen   uint64
+	warnOnly bool
+	// focusAfter is a change the model started: the next state that
+	// carries it opens the Change screen on it.
+	focusAfter state.ChangeID
+
+	// The dialogs. pick chooses what to dry-run; planning is a dry run on
+	// its way; confirm is a dry run on screen, and starting is set from y
+	// until the backend answers.
+	pick       *picker
+	planning   *planning
+	planSeq    int
+	confirm    *state.Proposal
+	confirmErr string
+	starting   bool
+
 	notice       string
 	noticeStatus view.Status
 	noticeTill   time.Time
@@ -107,6 +140,17 @@ type (
 	tickMsg struct{ at time.Time }
 	// doneMsg reports a call with no result.
 	doneMsg struct{ err error }
+	// proposalMsg is the reply of a dry run; seq says which.
+	proposalMsg struct {
+		seq int
+		p   state.Proposal
+		err error
+	}
+	// startedMsg is the reply of Start.
+	startedMsg struct {
+		id  state.ChangeID
+		err error
+	}
 )
 
 // next waits for the state after version after, in a command.
@@ -146,6 +190,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.say(view.Fail, "%v", msg.err)
 		}
 		return m, nil
+	case proposalMsg:
+		m.applyProposal(msg)
+		return m, nil
+	case startedMsg:
+		m.applyStarted(msg)
+		return m, nil
 	case tea.KeyPressMsg:
 		next, cmd := m.key(msg.String())
 		return next, cmd
@@ -165,20 +215,72 @@ func (m Model) applyState(msg stateMsg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tea.ClearScreen)
 	}
 	selected := m.cluster().Key
+	shown, hadChange := m.change()
 	m.st = msg.st
 	m.loaded = true
 	if msg.st.Now.After(m.now) {
 		m.now = msg.st.Now
 	}
-	// The selection stays on its cluster, wherever the row moved to.
+	// The selection stays on its cluster, wherever the row moved to; the
+	// Change screen stays on its change.
 	for i, c := range m.st.Clusters {
 		if c.Key == selected {
 			m.sel = i
 		}
 	}
+	if hadChange {
+		m.chg = m.changeIndex(shown.ID)
+	}
+	if m.focusAfter != 0 {
+		if i := m.changeIndex(m.focusAfter); i >= 0 {
+			m.chg, m.screen, m.focusAfter = i, screenChange, 0
+			m.frozen = 0
+		}
+	}
 	m.clamp()
 	cmds = append(cmds, m.next(m.st.Version), m.scheduleTick())
 	return m, tea.Batch(cmds...)
+}
+
+// changeIndex is the index of a change in the state, or -1.
+func (m Model) changeIndex(id state.ChangeID) int {
+	for i, c := range m.st.Changes {
+		if c.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// applyProposal takes the reply of a dry run. An older dry run, or one
+// that esc cancelled, is dropped.
+func (m *Model) applyProposal(msg proposalMsg) {
+	if m.planning == nil || msg.seq != m.planning.seq {
+		return
+	}
+	a := m.planning.action
+	m.planning = nil
+	if msg.err != nil {
+		m.say(view.Fail, "dry run of %s: %v", describeAction(a), msg.err)
+		return
+	}
+	p := msg.p
+	m.confirm, m.confirmErr, m.starting, m.scroll = &p, "", false, 0
+}
+
+// applyStarted takes the reply of Start. On success the dialog closes and
+// the next state that carries the change opens it.
+func (m *Model) applyStarted(msg startedMsg) {
+	m.starting = false
+	if msg.err != nil {
+		m.confirmErr = msg.err.Error()
+		return
+	}
+	m.confirm, m.confirmErr = nil, ""
+	m.focusAfter = msg.id
+	if i := m.changeIndex(msg.id); i >= 0 {
+		m.chg, m.screen, m.focusAfter, m.frozen = i, screenChange, 0, 0
+	}
 }
 
 // needsTick reports whether something on screen shows an elapsed time.
@@ -191,6 +293,11 @@ func (m Model) needsTick() bool {
 	}
 	for _, c := range m.st.Clusters {
 		if c.Readiness != nil && c.Readiness.Running() {
+			return true
+		}
+	}
+	for _, c := range m.st.Changes {
+		if c.Running() {
 			return true
 		}
 	}
@@ -226,6 +333,7 @@ const minRedraw = 30 * time.Second
 func (m *Model) clamp() {
 	m.sel = min(max(0, m.sel), max(0, len(m.st.Clusters)-1))
 	m.checkSel = min(max(0, m.checkSel), max(0, len(m.checks())-1))
+	m.chg = min(max(0, m.chg), max(0, len(m.st.Changes)-1))
 }
 
 // cluster is the selected cluster, or the zero value with no fleet.

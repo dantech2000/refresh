@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/tui/state"
@@ -29,6 +30,19 @@ type scripted struct {
 	refreshed    int
 	readiness    []state.Key
 	readinessErr error
+
+	// plans are the dry runs asked for; proposal and planErr answer them.
+	plans    []state.Action
+	proposal state.Proposal
+	planErr  error
+	// starts are the proposals started; started and startErr answer them.
+	starts   []state.ProposalID
+	started  state.ChangeID
+	startErr error
+	// calls records the steering calls as "pause 3", "answer 3 yes";
+	// steerErr answers them.
+	calls    []string
+	steerErr error
 }
 
 func (s *scripted) Next(context.Context, uint64) (state.State, error) {
@@ -41,6 +55,36 @@ func (s *scripted) Refresh() { s.refreshed++ }
 func (s *scripted) Readiness(_ context.Context, key state.Key) error {
 	s.readiness = append(s.readiness, key)
 	return s.readinessErr
+}
+
+func (s *scripted) Plan(_ context.Context, a state.Action) (state.Proposal, error) {
+	s.plans = append(s.plans, a)
+	return s.proposal, s.planErr
+}
+
+func (s *scripted) Start(_ context.Context, id state.ProposalID) (state.ChangeID, error) {
+	s.starts = append(s.starts, id)
+	return s.started, s.startErr
+}
+
+func (s *scripted) Answer(_ context.Context, id state.ChangeID, q change.QuestionID, yes bool) error {
+	s.calls = append(s.calls, fmt.Sprintf("answer %d %d %v", id, q, yes))
+	return s.steerErr
+}
+
+func (s *scripted) Pause(_ context.Context, id state.ChangeID) error {
+	s.calls = append(s.calls, fmt.Sprintf("pause %d", id))
+	return s.steerErr
+}
+
+func (s *scripted) Resume(_ context.Context, id state.ChangeID) error {
+	s.calls = append(s.calls, fmt.Sprintf("resume %d", id))
+	return s.steerErr
+}
+
+func (s *scripted) Stop(_ context.Context, id state.ChangeID) error {
+	s.calls = append(s.calls, fmt.Sprintf("stop %d", id))
+	return s.steerErr
 }
 
 // harness drives a Model. It runs every command a key returns,
