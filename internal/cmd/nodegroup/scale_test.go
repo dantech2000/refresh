@@ -161,6 +161,14 @@ func scaleCases() []scaleCase {
 			t.Fatalf("starting the roll of web: %v", err)
 		}
 	}
+	// smallQuota is the account of the roll that stalled: 4 of 8 vCPUs
+	// in use, and web of t3.medium nodes.
+	smallQuota := func(_ *testing.T, w *fleettest.World) {
+		w.Edit(func(s *fleettest.State) {
+			s.Quotas[0].Value, s.Metrics[0].Values = 8, []float64{4}
+			web(s.Cluster(east, "prod")).InstanceTypes = []string{"t3.medium"}
+		})
+	}
 	denyBudgets := func(_ *testing.T, w *fleettest.World) {
 		w.SetFault(fleettest.KubeListPDBs, fleettest.Fault{Deny: true})
 	}
@@ -191,6 +199,7 @@ func scaleCases() []scaleCase {
 				w.SetFault(fleettest.EKSListUpdates, fleettest.Fault{Deny: true})
 			}},
 		{name: "dry-run", args: []string{"--desired", "3", "--dry-run"}},
+		{name: "quota-surge", args: []string{"--desired", "5", "--max", "6", "--dry-run"}, exit: cmdutil.ExitNeedsAttention, prepare: smallQuota},
 		{name: "dry-run-down", kube: true, args: []string{"--desired", "1", "--dry-run"}},
 		{name: "dry-run-no-kube", args: []string{"--desired", "1", "--dry-run", "--yes"}, exit: cmdutil.ExitNeedsAttention},
 		{name: "dry-run-blocked", kube: true, args: []string{"--desired", "1", "--dry-run"}, exit: cmdutil.ExitBlocked, seed: tightBudget},

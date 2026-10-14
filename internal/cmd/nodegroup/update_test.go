@@ -225,6 +225,25 @@ func updateCases() []updateCase {
 		Errors: []fleettest.UpdateError{{Code: "PodEvictionFailure", Message: "Reached max retries while trying to evict pods", ResourceIDs: []string{"api-1"}}},
 	}
 	never := fleettest.UpdateScript{Never: true}
+	// smallQuota is the account of the roll that stalled: 4 of a quota
+	// of quota vCPUs in use, and nodegroups of t3.medium nodes in Auto
+	// Scaling groups in 3 Availability Zones.
+	smallQuota := func(quota float64) func(*fleettest.State, *fleettest.Cluster) {
+		return func(s *fleettest.State, c *fleettest.Cluster) {
+			s.Quotas[0].Value = quota
+			for i := range s.Metrics {
+				if s.Metrics[i].Namespace == "AWS/Usage" {
+					s.Metrics[i].Values = []float64{4}
+				}
+			}
+			for _, ng := range c.Nodegroups {
+				ng.InstanceTypes = []string{"t3.medium"}
+			}
+			for i := range s.AutoScalingGroups {
+				s.AutoScalingGroups[i].AvailabilityZones = []string{"us-east-1a", "us-east-1b", "us-east-1c"}
+			}
+		}
+	}
 	scaleElsewhere := func(t *testing.T, w *fleettest.World) {
 		t.Helper()
 		three := int32(3)
@@ -244,6 +263,11 @@ func updateCases() []updateCase {
 		{name: "dry-run", args: []string{"--dry-run"}},
 		{name: "dry-run-ask", noKube: true, args: []string{"--dry-run", "--yes"}, exit: cmdutil.ExitNeedsAttention},
 		{name: "dry-run-blocked", args: []string{"--dry-run"}, exit: cmdutil.ExitBlocked, seed: tightWeb},
+		{name: "quota-surge", args: []string{"web", "--dry-run"}, exit: cmdutil.ExitNeedsAttention, seed: smallQuota(8)},
+		{name: "quota-surge-require-healthy", args: []string{"web", "--yes", "--require-healthy"}, exit: cmdutil.ExitBlocked, seed: smallQuota(8)},
+		// One roll of 3 to 6 nodes fits a quota of 16 with 4 in use; two
+		// at once may launch 12 to 24 vCPU.
+		{name: "quota-together", args: []string{"--dry-run"}, exit: cmdutil.ExitNeedsAttention, seed: both(stale, smallQuota(16))},
 		{name: "needs-yes", args: []string{"web"}, exit: cmdutil.ExitFailure},
 		{name: "prompt-yes", args: []string{"web"}, answer: "y\n", rolls: []string{"web"}},
 		{name: "prompt-no", args: []string{"web"}, answer: "n\n", exit: cmdutil.ExitFailure},

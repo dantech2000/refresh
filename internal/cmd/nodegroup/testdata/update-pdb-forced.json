@@ -114,7 +114,9 @@ error:
             "blocking": false,
             "message": "31% of the vCPU quota in use (40 of 128)",
             "details": [
-              "EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)"
+              "EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)",
+              "rolling web may launch 2 to 4 m5.large nodes, 2 vCPU each (4 to 8 vCPU)",
+              "the Availability Zones of nodegroup web are not known: each of its subnets counts as one zone (2)"
             ],
             "findings": []
           },

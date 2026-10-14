@@ -234,12 +234,37 @@ func upgradeCases() []engineCase {
 	tight := func(_ *fleettest.State, c *fleettest.Cluster) {
 		c.PDBs[1].MinAvailable, c.PDBs[1].DesiredHealthy, c.PDBs[1].DisruptionsAllowed = 2, 2, 0
 	}
+	// smallQuota is the account of the roll that stalled: 4 of a quota of
+	// quota vCPUs in use, and nodegroups of t3.medium nodes in Auto
+	// Scaling groups in 3 Availability Zones.
+	smallQuota := func(quota float64) func(*fleettest.State, *fleettest.Cluster) {
+		return func(s *fleettest.State, c *fleettest.Cluster) {
+			s.Quotas[0].Value = quota
+			for i := range s.Metrics {
+				if s.Metrics[i].Namespace == "AWS/Usage" {
+					s.Metrics[i].Values = []float64{4}
+				}
+			}
+			for _, ng := range c.Nodegroups {
+				ng.InstanceTypes = []string{"t3.medium"}
+			}
+			for i := range s.AutoScalingGroups {
+				s.AutoScalingGroups[i].AvailabilityZones = []string{"us-east-1a", "us-east-1b", "us-east-1c"}
+			}
+		}
+	}
 	return []engineCase{
 		{name: "yes", args: []string{"--yes"}, sent: whole},
 		{name: "quiet", args: []string{"--yes", "--quiet"}, sent: whole},
 		{name: "dry-run", args: []string{"--dry-run"}},
 		{name: "dry-run-ask", noKube: true, args: []string{"--dry-run"}, exit: cmdutil.ExitNeedsAttention},
 		{name: "dry-run-blocked", args: []string{"--dry-run"}, exit: cmdutil.ExitBlocked, seed: tight},
+		{name: "quota-surge", args: []string{"--dry-run"}, exit: cmdutil.ExitNeedsAttention, seed: smallQuota(8)},
+		{name: "quota-surge-require-healthy", args: []string{"--yes", "--require-healthy"}, exit: cmdutil.ExitBlocked, seed: smallQuota(8), sent: []string{refresh}},
+		// The engine rolls one nodegroup after another: the 3 to 6 nodes of
+		// one roll count, not the 6 to 12 of two, so the likely surge fits a
+		// quota of 14 with 4 in use and the most does not.
+		{name: "quota-one-at-a-time", args: []string{"--dry-run"}, exit: cmdutil.ExitNeedsAttention, seed: smallQuota(14)},
 		{name: "pdb-blocked", args: []string{"--yes"}, exit: cmdutil.ExitBlocked, seed: tight, sent: []string{refresh}},
 		{name: "pdb-forced", args: []string{"--yes", "--force"}, seed: tight, sent: []string{refresh, cp33, cniTo33, api33 + " force", web33 + " force", proxyTo3}},
 		{name: "insight-blocked", args: []string{"--yes"}, exit: cmdutil.ExitBlocked, sent: []string{refresh},

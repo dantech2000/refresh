@@ -253,7 +253,8 @@ func (cp *ClusterPlan) scaleStep(phase PhaseRef, req ScaleRequest) (Step, error)
 // The step table has blocked a target that is not ACTIVE before it, for
 // every direction. The direction picks the checks. A scale that removes
 // nodes reads the nodes and the PodDisruptionBudgets, so it needs
-// Kubernetes access. Any other scale asks nothing of Kubernetes. Beside the gate, a scale-up
+// Kubernetes access. Any other scale asks nothing of Kubernetes, and its
+// quota check counts the nodes that it adds. Beside the gate, a scale-up
 // reads the instance-type offerings, and what it finds is a notice.
 func (cp *ClusterPlan) gateScale(ctx context.Context, d Deps, policy health.Policy, s Step) {
 	if s.Action != Submit {
@@ -279,7 +280,7 @@ func (cp *ClusterPlan) gateScale(ctx context.Context, d Deps, policy health.Poli
 		return
 	}
 	in := &health.Input{Snapshot: cp.snapshot, Targets: []string{s.Ref.Name}, Clients: clients, Now: cp.snapshot.FetchedAt}
-	checks := []health.Check{health.Quotas()}
+	checks := []health.Check{health.ScaleUpQuotas(s.Ref.Name, s.Sizes.After.Desired-s.Sizes.Before.Desired)}
 	if remove := s.Sizes.Before.Desired - s.Sizes.After.Desired; remove > 0 {
 		checks = []health.Check{health.Nodes(), health.ScaleDownBlockers(s.Ref.Name, remove)}
 		in.Kube, in.Metrics, in.NoKube = kubeAccess(d, cp.snapshot)

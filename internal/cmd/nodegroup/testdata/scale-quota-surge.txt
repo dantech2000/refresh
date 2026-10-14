@@ -1,0 +1,27 @@
+exit: 2
+error: dry run: a real run would ask about health warnings
+--- stdout ---
+Plan   [!] Ask   NodegroupScale
+
+PLAN
+  operation  NodegroupScale
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   [!] Ask
+
+STEPS  1
+  NAME  KIND   ACTION  REASON  FROM                     TO                       NOTE
+  web   Scale  Submit  -       desired 2, min 1, max 3  desired 5, min 1, max 6  -
+
+HEALTH GATE
+  decision  [!] Ask
+  reasons   Quotas: scaling web up by 3 launches 3 t3.medium nodes (6 vCPU) and 4 of 8 vCPU are in use: request a higher EC2 On-Demand vCPU quota, or scale up by fewer nodes
+
+CHECKS  1
+  NAME    OUTCOME   MESSAGE
+  Quotas  [X] Fail  scaling web up by 3 launches 3 t3.medium nodes (6 vCPU) and 4 of 8 vCPU are in use: request a higher EC2 On-Demand vCPU quota, or scale up by fewer nodes
+
+NOTICES
+  1  EC2 does not offer every instance type of nodegroup web in each of its availability zones (t3.medium in us-east-1a, t3.medium in us-east-1b); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now
+--- stderr ---

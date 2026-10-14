@@ -3,12 +3,17 @@ package health
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/servicequotas"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -29,27 +34,187 @@ const (
 // Quotas checks the headroom of the EC2 On-Demand vCPU quota: the limit
 // from Service Quotas, and the use of the newest minute from the AWS/Usage
 // metric. It is advisory.
+//
+// With targets it also counts the nodes that their roll launches, by the
+// rule of an EKS managed node update: the scale-up phase raises the Auto
+// Scaling group by the larger of the number of its Availability Zones and
+// maxUnavailable, and by up to twice the number of zones. Current use and
+// the likely surge over the quota fail; current use and the documented
+// maximum over it warn. A nodegroup with the MINIMAL update strategy
+// launches no extra node. See rollLaunches for what counts.
 func Quotas() Check {
-	return Check{Name: "Quotas", Run: runQuotas}
+	return Check{Name: "Quotas", Run: func(ctx context.Context, in *Input) Result {
+		return runQuotas(ctx, in, rollLaunches(in))
+	}}
 }
 
-func runQuotas(ctx context.Context, in *Input) Result {
+// ScaleUpQuotas is the quota check of a scale of nodegroup that adds add
+// nodes: the launch is known, and counts as both the likely and the most.
+// A scale that adds no node has the rule of Quotas with no targets.
+func ScaleUpQuotas(nodegroup string, add int32) Check {
+	return Check{Name: "Quotas", Run: func(ctx context.Context, in *Input) Result {
+		return runQuotas(ctx, in, scaleLaunches(in, nodegroup, add))
+	}}
+}
+
+// launch is the nodes that the change of one nodegroup may launch at once.
+type launch struct {
+	nodegroup string
+	// likely and most are node counts: the surge that EKS adds for a roll,
+	// and the most that it documents. A scale-up has one number for both.
+	likely, most int32
+	// scale says that the change is a scale-up, not a roll.
+	scale bool
+	// types are the instance types of the nodegroup that the quota counts.
+	// largest is the one with the most vCPUs, and vcpus its count: every
+	// node counts as one of it. Both are set after the read.
+	types   []string
+	largest string
+	vcpus   int32
+}
+
+// launches is what the quota check counts: the launches, and a line for
+// every target that is not counted, and why.
+type launches struct {
+	list     []launch
+	together bool
+	notes    []string
+}
+
+// rollLaunches returns the nodes that the roll of each target may launch.
+// The count of a nodegroup:
+//
+//   - zones are the Availability Zones of its Auto Scaling groups, or, when
+//     they were not read, one per distinct subnet: each subnet is in one
+//     zone.
+//   - maxUnavailable is the count of its update config, or its percentage
+//     of the desired size rounded up, and 1 when EKS returned neither, as
+//     EKS sets it.
+//   - likely is the larger of zones and maxUnavailable, and most the larger
+//     of twice the zones and maxUnavailable.
+//
+// A nodegroup that was not read, that runs Spot capacity, that uses the
+// MINIMAL update strategy, or whose instance types are not On-Demand
+// Standard types is not counted, with a note.
+func rollLaunches(in *Input) launches {
+	out := launches{together: in.RollTogether}
+	for _, name := range in.Targets {
+		n, ok := targetNodegroup(in, name, &out)
+		if !ok {
+			continue
+		}
+		if n.UpdateStrategy == string(ekstypes.NodegroupUpdateStrategiesMinimal) {
+			out.notes = append(out.notes, "nodegroup "+name+" uses the MINIMAL update strategy: its roll launches no extra node")
+			continue
+		}
+		zones := int32(len(n.Zones)) //nolint:gosec // a count of Availability Zones
+		if n.InstanceIDsState != fleet.Collected || zones == 0 {
+			zones = int32(len(sortedSet(n.Subnets))) //nolint:gosec // a count of subnets
+			note := fmt.Sprintf("the Availability Zones of nodegroup %s are not known: each of its subnets counts as one zone (%d)", name, zones)
+			if zones == 0 {
+				note = "the Availability Zones of nodegroup " + name + " are not known, nor its subnets: its maxUnavailable alone counts"
+			}
+			out.notes = append(out.notes, note)
+		}
+		unavailable := maxUnavailable(n)
+		out.list = append(out.list, launch{
+			nodegroup: name, types: standardTypes(n.InstanceTypes),
+			likely: max(zones, unavailable), most: max(2*zones, unavailable),
+		})
+	}
+	return out
+}
+
+// scaleLaunches returns the launch of a scale of nodegroup by add nodes.
+func scaleLaunches(in *Input, nodegroup string, add int32) launches {
+	var out launches
+	if add <= 0 {
+		return out
+	}
+	if n, ok := targetNodegroup(in, nodegroup, &out); ok {
+		out.list = append(out.list, launch{nodegroup: nodegroup, likely: add, most: add, scale: true, types: standardTypes(n.InstanceTypes)})
+	}
+	return out
+}
+
+// targetNodegroup returns the nodegroup name of the snapshot when the
+// quota counts its nodes, and adds a note to out when it does not.
+func targetNodegroup(in *Input, name string, out *launches) (fleet.Nodegroup, bool) {
+	i := slices.IndexFunc(in.Snapshot.Nodegroups, func(n fleet.Nodegroup) bool { return n.Name == name })
+	var note string
+	switch {
+	case i < 0 || in.Snapshot.Nodegroups[i].State != fleet.Collected:
+		note = "nodegroup " + name + " was not read: the nodes that it launches are not counted"
+	case in.Snapshot.Nodegroups[i].CapacityType == string(ekstypes.CapacityTypesSpot):
+		note = "nodegroup " + name + " runs Spot capacity, which the Spot quota counts"
+	case len(in.Snapshot.Nodegroups[i].InstanceTypes) == 0:
+		note = "nodegroup " + name + " names no instance type (its launch template sets it): the nodes that it launches are not counted"
+	case len(standardTypes(in.Snapshot.Nodegroups[i].InstanceTypes)) == 0:
+		note = "the instance types of nodegroup " + name + " (" + strings.Join(in.Snapshot.Nodegroups[i].InstanceTypes, ", ") +
+			") count against another On-Demand quota than the Standard one"
+	default:
+		return in.Snapshot.Nodegroups[i], true
+	}
+	out.notes = append(out.notes, note)
+	return fleet.Nodegroup{}, false
+}
+
+// maxUnavailable returns the nodes that a roll of n takes down at once.
+func maxUnavailable(n fleet.Nodegroup) int32 {
+	switch {
+	case n.MaxUnavailable > 0:
+		return n.MaxUnavailable
+	case n.MaxUnavailablePercentage > 0:
+		return max(1, (n.Desired*n.MaxUnavailablePercentage+99)/100)
+	}
+	return 1
+}
+
+// standardTypes returns the types that the On-Demand Standard quota
+// counts: the A, C, D, H, I, M, R, T, and Z families. The others, such as
+// the G and P GPU families, have quotas of their own.
+func standardTypes(types []string) []string {
+	var out []string
+	for _, t := range types {
+		// The family is the letters before the first digit: t3.medium is
+		// t, trn1.2xlarge is trn, and is4gen.large is is.
+		i := strings.IndexAny(t, "0123456789")
+		if i > 0 && slices.Contains([]string{"a", "c", "d", "h", "i", "im", "is", "m", "r", "t", "z"}, t[:i]) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func runQuotas(ctx context.Context, in *Input, ls launches) Result {
+	var types []string
+	for _, l := range ls.list {
+		types = append(types, l.types...)
+	}
+	types = sortedSet(types)
 	var (
-		wg               sync.WaitGroup
-		limit, usage     float64
-		haveLimit, used  bool
-		limitErr, useErr error
+		wg                        sync.WaitGroup
+		limit, usage              float64
+		haveLimit, used           bool
+		vcpus                     map[string]int32
+		limitErr, useErr, typeErr error
 	)
 	wg.Go(func() { limit, haveLimit, limitErr = quotaLimit(ctx, in) })
 	wg.Go(func() { usage, used, useErr = quotaUsage(ctx, in) })
+	if len(types) > 0 {
+		wg.Go(func() { vcpus, typeErr = typeVCPUs(ctx, in, types) })
+	}
 	wg.Wait()
 	cluster := in.Snapshot.Cluster.Name
-	for _, err := range []error{limitErr, useErr} {
-		if err == nil {
+	for _, read := range []struct {
+		what string
+		err  error
+	}{{"the vCPU quota", limitErr}, {"the vCPU quota", useErr}, {"the vCPUs of the instance types", typeErr}} {
+		if read.err == nil {
 			continue
 		}
-		f := fleet.FailureFromError(apidoc.FailureCluster, cluster, err)
-		return Result{Outcome: Unreadable, Message: "could not read the vCPU quota: " + f.Error + failureAction(f), Failures: []apidoc.Failure{f}}
+		f := fleet.FailureFromError(apidoc.FailureCluster, cluster, read.err)
+		return Result{Outcome: Unreadable, Message: "could not read " + read.what + ": " + f.Error + failureAction(f), Failures: []apidoc.Failure{f}}
 	}
 	switch {
 	case !haveLimit || limit <= 0:
@@ -57,7 +222,18 @@ func runQuotas(ctx context.Context, in *Input) Result {
 	case !used:
 		return Result{Outcome: Skipped, Message: "the AWS/Usage vCPU metric is not reported"}
 	}
-	return evaluateQuota(usage, limit)
+	for i := range ls.list {
+		l := &ls.list[i]
+		for _, t := range l.types {
+			if v := vcpus[t]; v > l.vcpus {
+				l.largest, l.vcpus = t, v
+			}
+		}
+		if l.vcpus == 0 {
+			ls.notes = append(ls.notes, "EC2 reported no vCPU count for the instance types of nodegroup "+l.nodegroup+": the nodes that it launches are not counted")
+		}
+	}
+	return evaluateQuota(usage, limit, ls)
 }
 
 // quotaLimit reads the quota. A quota that Service Quotas does not know
@@ -114,8 +290,37 @@ func quotaUsage(ctx context.Context, in *Input) (float64, bool, error) {
 	return 0, false, nil
 }
 
-// evaluateQuota is the rule, apart from the reads.
-func evaluateQuota(usage, limit float64) Result {
+// typeVCPUs reads the default vCPU count of each of types, in one paged
+// DescribeInstanceTypes call.
+func typeVCPUs(ctx context.Context, in *Input, types []string) (map[string]int32, error) {
+	names := make([]ec2types.InstanceType, len(types))
+	for i, t := range types {
+		names[i] = ec2types.InstanceType(t)
+	}
+	infos, err := awsx.ListAll(ctx,
+		func(ctx context.Context, token *string) (*ec2.DescribeInstanceTypesOutput, error) {
+			return in.Clients.EC2.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{InstanceTypes: names, NextToken: token})
+		},
+		func(out *ec2.DescribeInstanceTypesOutput) ([]ec2types.InstanceTypeInfo, *string) {
+			return out.InstanceTypes, out.NextToken
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int32{}
+	for _, info := range infos {
+		if info.VCpuInfo != nil {
+			out[string(info.InstanceType)] = aws.ToInt32(info.VCpuInfo.DefaultVCpus)
+		}
+	}
+	return out, nil
+}
+
+// evaluateQuota is the rule, apart from the reads: the thresholds of
+// current use, and then the launches. The worse of the two decides, and
+// the launch names the fix of a tie.
+func evaluateQuota(usage, limit float64, ls launches) Result {
 	pct := usage / limit * 100
 	r := Result{Details: []string{fmt.Sprintf("EC2 On-Demand Standard vCPUs: %.0f of %.0f in use (%.1f%%, %.0f free)", usage, limit, pct, limit-usage)}}
 	switch {
@@ -126,5 +331,122 @@ func evaluateQuota(usage, limit float64) Result {
 	default:
 		r.Outcome, r.Message = Pass, fmt.Sprintf("%.0f%% of the vCPU quota in use (%.0f of %.0f)", pct, usage, limit)
 	}
+	for _, l := range ls.list {
+		if l.vcpus > 0 {
+			r.Details = append(r.Details, launchDetail(l))
+		}
+	}
+	r.Details = append(r.Details, ls.notes...)
+	outcome, message := evaluateLaunches(usage, limit, ls)
+	if outcome != Pass && severity(outcome) >= severity(r.Outcome) {
+		r.Outcome, r.Message = outcome, message
+	}
 	return r
+}
+
+// evaluateLaunches returns Fail when current use and the likely launch
+// exceed the quota, Warn when current use and the most exceed it, and Pass
+// otherwise. The launch is the sum of the targets when they roll
+// together, and the largest one when they roll one after another.
+func evaluateLaunches(usage, limit float64, ls launches) (Outcome, string) {
+	var counted []launch
+	for _, l := range ls.list {
+		if l.vcpus > 0 && l.most > 0 {
+			counted = append(counted, l)
+		}
+	}
+	if len(counted) == 0 {
+		return Pass, ""
+	}
+	vcpus := func(l launch, nodes int32) float64 { return float64(nodes * l.vcpus) }
+	if ls.together && len(counted) > 1 {
+		var likely, most float64
+		var nodesLikely, nodesMost int32
+		var names []string
+		for _, l := range counted {
+			likely, most = likely+vcpus(l, l.likely), most+vcpus(l, l.most)
+			nodesLikely, nodesMost = nodesLikely+l.likely, nodesMost+l.most
+			names = append(names, l.nodegroup)
+		}
+		outcome := launchOutcome(usage, limit, likely, most)
+		slices.Sort(names)
+		what := fmt.Sprintf("rolling %s at once may launch %s nodes (%s vCPU)", joinNames(names), span(nodesLikely, nodesMost), spanF(likely, most))
+		return outcome, launchMessage(what, usage, limit, false)
+	}
+	worst, worstOutcome := counted[0], Pass
+	for _, l := range counted {
+		o := launchOutcome(usage, limit, vcpus(l, l.likely), vcpus(l, l.most))
+		if severity(o) > severity(worstOutcome) || severity(o) == severity(worstOutcome) && vcpus(l, l.most) > vcpus(worst, worst.most) {
+			worst, worstOutcome = l, o
+		}
+	}
+	if worstOutcome == Pass {
+		return Pass, ""
+	}
+	verb := "rolling " + worst.nodegroup + " may launch"
+	if worst.scale {
+		verb = fmt.Sprintf("scaling %s up by %d launches", worst.nodegroup, worst.likely)
+	}
+	what := fmt.Sprintf("%s %s (%s vCPU)", verb, nodes(worst), spanF(vcpus(worst, worst.likely), vcpus(worst, worst.most)))
+	return worstOutcome, launchMessage(what, usage, limit, worst.scale)
+}
+
+// launchOutcome is the rule for one launch of likely to most vCPUs.
+func launchOutcome(usage, limit, likely, most float64) Outcome {
+	switch {
+	case usage+likely > limit:
+		return Fail
+	case usage+most > limit:
+		return Warn
+	}
+	return Pass
+}
+
+// launchMessage is the message of a launch that does not fit: what it
+// launches, the use, and the fix.
+func launchMessage(what string, usage, limit float64, scale bool) string {
+	fix := "request a higher EC2 On-Demand vCPU quota, or set the update strategy to MINIMAL"
+	if scale {
+		fix = "request a higher EC2 On-Demand vCPU quota, or scale up by fewer nodes"
+	}
+	return fmt.Sprintf("%s and %.0f of %.0f vCPU are in use: %s", what, usage, limit, fix)
+}
+
+// launchDetail is the detail line of one launch: the count and its
+// reason.
+func launchDetail(l launch) string {
+	line := fmt.Sprintf("rolling %s may launch %s, %d vCPU each (%s vCPU)", l.nodegroup, nodes(l), l.vcpus,
+		spanF(float64(l.likely*l.vcpus), float64(l.most*l.vcpus)))
+	if l.scale {
+		line = fmt.Sprintf("scaling %s up by %d launches %s, %d vCPU each (%d vCPU)", l.nodegroup, l.likely, nodes(l), l.vcpus, l.likely*l.vcpus)
+	}
+	if len(l.types) > 1 {
+		line += fmt.Sprintf("; of its instance types (%s), each node counts as the largest, %s", strings.Join(l.types, ", "), l.largest)
+	}
+	return line
+}
+
+// nodes names the nodes of l: "3 to 6 t3.medium nodes", or "3 to 6 nodes
+// of up to m5.xlarge" for a nodegroup with several types.
+func nodes(l launch) string {
+	noun := "nodes"
+	if l.likely == 1 && l.most == 1 {
+		noun = "node"
+	}
+	if len(l.types) > 1 {
+		return span(l.likely, l.most) + " " + noun + " of up to " + l.largest
+	}
+	return span(l.likely, l.most) + " " + l.largest + " " + noun
+}
+
+// span is "3 to 6", or "3" when both are equal.
+func span(low, high int32) string {
+	if low == high {
+		return fmt.Sprint(low)
+	}
+	return fmt.Sprintf("%d to %d", low, high)
+}
+
+func spanF(low, high float64) string {
+	return span(int32(low), int32(high))
 }

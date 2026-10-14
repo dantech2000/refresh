@@ -135,7 +135,11 @@ error: update 00000000-0000-4000-8000-000000000005 of cluster prod ended Failed:
             "blocking": false,
             "message": "31% of the vCPU quota in use (40 of 128)",
             "details": [
-              "EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)"
+              "EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)",
+              "rolling api may launch 1 to 2 m5.large nodes, 2 vCPU each (2 to 4 vCPU)",
+              "rolling web may launch 1 to 2 m5.large nodes, 2 vCPU each (2 to 4 vCPU)",
+              "the Availability Zones of nodegroup api are not known: each of its subnets counts as one zone (1)",
+              "the Availability Zones of nodegroup web are not known: each of its subnets counts as one zone (1)"
             ],
             "findings": []
           },

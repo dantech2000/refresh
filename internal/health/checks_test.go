@@ -386,6 +386,174 @@ func TestQuotas(t *testing.T) {
 	})
 }
 
+// quotaWorld is the account of the roll that stalled: a quota of 8 vCPUs
+// with 4 in use, and ng-a of t3.medium nodes in an Auto Scaling group in 3
+// Availability Zones, with the maxUnavailable of 1 that EKS sets.
+func quotaWorld(quota, usage float64) edit {
+	return func(s *fleettest.State, c *fleettest.Cluster) {
+		s.Quotas[0].Value = quota
+		s.Metrics = slices.DeleteFunc(s.Metrics, func(m fleettest.Metric) bool { return m.Namespace == "AWS/Usage" })
+		s.Metrics = append(s.Metrics, usageMetric(usage))
+		for _, ng := range c.Nodegroups {
+			ng.InstanceTypes = []string{"t3.medium"}
+		}
+		for i := range s.AutoScalingGroups {
+			s.AutoScalingGroups[i].AvailabilityZones = []string{"us-east-1a", "us-east-1b", "us-east-1c"}
+		}
+	}
+}
+
+// ngA changes the nodegroup ng-a of the seed.
+func ngA(f func(ng *fleettest.Nodegroup)) edit {
+	return func(_ *fleettest.State, c *fleettest.Cluster) { f(c.Nodegroup("ng-a")) }
+}
+
+// TestQuotas_Surge counts the nodes that a roll or a scale-up launches
+// against the vCPU quota.
+func TestQuotas_Surge(t *testing.T) {
+	const fix = ": request a higher EC2 On-Demand vCPU quota, or set the update strategy to MINIMAL"
+	tests := []struct {
+		name     string
+		edits    []edit
+		check    health.Check
+		targets  []string
+		together bool
+		want     want
+		detail   string // a part of one detail line
+	}{
+		{
+			name: "the roll that stalled", edits: []edit{quotaWorld(8, 4)}, targets: []string{"ng-a"},
+			want:   want{outcome: health.Fail, message: "rolling ng-a may launch 3 to 6 t3.medium nodes (6 to 12 vCPU) and 4 of 8 vCPU are in use" + fix},
+			detail: "rolling ng-a may launch 3 to 6 t3.medium nodes, 2 vCPU each (6 to 12 vCPU)",
+		},
+		{
+			name: "the same account with no roll", edits: []edit{quotaWorld(8, 4)},
+			want: want{outcome: health.Pass, message: "50% of the vCPU quota in use (4 of 8)"},
+		},
+		{
+			name: "room for the likely surge, not for the most", edits: []edit{quotaWorld(12, 4)}, targets: []string{"ng-a"},
+			want: want{outcome: health.Warn, message: "rolling ng-a may launch 3 to 6 t3.medium nodes (6 to 12 vCPU) and 4 of 12 vCPU are in use" + fix},
+		},
+		{
+			name: "room for the most", edits: []edit{quotaWorld(16, 4)}, targets: []string{"ng-a"},
+			want: want{outcome: health.Pass, message: "25% of the vCPU quota in use (4 of 16)"},
+		},
+		{
+			name: "maxUnavailable above twice the zones", targets: []string{"ng-a"},
+			edits: []edit{quotaWorld(20, 4), ngA(func(ng *fleettest.Nodegroup) { ng.MaxUnavailable = 10 })},
+			want:  want{outcome: health.Fail, message: "rolling ng-a may launch 10 t3.medium nodes (20 vCPU) and 4 of 20 vCPU are in use" + fix},
+		},
+		{
+			name: "maxUnavailable as a percentage", targets: []string{"ng-a"},
+			edits: []edit{quotaWorld(20, 4), ngA(func(ng *fleettest.Nodegroup) { ng.Desired, ng.MaxUnavailable, ng.MaxUnavailablePercentage = 20, 0, 50 })},
+			want:  want{outcome: health.Fail, message: "rolling ng-a may launch 10 t3.medium nodes (20 vCPU)"},
+		},
+		{
+			name: "the MINIMAL strategy launches no extra node", targets: []string{"ng-a"},
+			edits:  []edit{quotaWorld(8, 4), ngA(func(ng *fleettest.Nodegroup) { ng.UpdateStrategy = "MINIMAL" })},
+			want:   want{outcome: health.Pass, message: "50% of the vCPU quota in use (4 of 8)"},
+			detail: "nodegroup ng-a uses the MINIMAL update strategy",
+		},
+		{
+			name: "a mixed nodegroup counts its largest type", targets: []string{"ng-a"},
+			edits:  []edit{quotaWorld(14, 4), ngA(func(ng *fleettest.Nodegroup) { ng.InstanceTypes = []string{"t3.medium", "m5.xlarge"} })},
+			want:   want{outcome: health.Fail, message: "rolling ng-a may launch 3 to 6 nodes of up to m5.xlarge (12 to 24 vCPU) and 4 of 14 vCPU are in use" + fix},
+			detail: "of its instance types (t3.medium, m5.xlarge), each node counts as the largest, m5.xlarge",
+		},
+		{
+			name: "rolls one after another count the largest", edits: []edit{quotaWorld(14, 4)}, targets: []string{"ng-a", "ng-b"},
+			want: want{outcome: health.Warn, message: "rolling ng-a may launch 3 to 6 t3.medium nodes (6 to 12 vCPU)"},
+		},
+		{
+			name: "rolls at once add up", edits: []edit{quotaWorld(14, 4)}, targets: []string{"ng-a", "ng-b"}, together: true,
+			want: want{outcome: health.Fail, message: "rolling ng-a, ng-b at once may launch 6 to 12 nodes (12 to 24 vCPU) and 4 of 14 vCPU are in use" + fix},
+		},
+		{
+			name: "without the zones of the group, a subnet counts as a zone", targets: []string{"ng-a"},
+			edits: []edit{quotaWorld(7, 4), func(s *fleettest.State, c *fleettest.Cluster) {
+				s.AutoScalingGroups[0].AvailabilityZones = nil
+				c.Nodegroup("ng-a").Subnets = []string{"subnet-1", "subnet-2"}
+			}},
+			want:   want{outcome: health.Fail, message: "rolling ng-a may launch 2 to 4 t3.medium nodes (4 to 8 vCPU)"},
+			detail: "each of its subnets counts as one zone (2)",
+		},
+		{
+			name: "Spot nodes are not counted", targets: []string{"ng-a"},
+			edits:  []edit{quotaWorld(8, 4), ngA(func(ng *fleettest.Nodegroup) { ng.CapacityType = "SPOT" })},
+			want:   want{outcome: health.Pass},
+			detail: "nodegroup ng-a runs Spot capacity",
+		},
+		{
+			name: "a GPU type has a quota of its own", targets: []string{"ng-a"},
+			edits:  []edit{quotaWorld(8, 4), ngA(func(ng *fleettest.Nodegroup) { ng.InstanceTypes = []string{"g5.xlarge"} })},
+			want:   want{outcome: health.Pass},
+			detail: "count against another On-Demand quota than the Standard one",
+		},
+		{
+			name: "the surge decides a tie", edits: []edit{quotaWorld(8, 7.8)}, targets: []string{"ng-a"},
+			want: want{outcome: health.Fail, message: "rolling ng-a may launch"},
+		},
+		{
+			name: "current use decides when it is worse", targets: []string{"ng-a"},
+			edits: []edit{quotaWorld(100, 96), ngA(func(ng *fleettest.Nodegroup) { ng.UpdateStrategy = "MINIMAL" })},
+			want:  want{outcome: health.Fail, message: "EC2 vCPU quota nearly exhausted (96% in use)"},
+		},
+		{
+			name: "a scale-up launches what it adds", edits: []edit{quotaWorld(8, 4)}, check: health.ScaleUpQuotas("ng-a", 3), targets: []string{"ng-a"},
+			want: want{outcome: health.Fail, message: "scaling ng-a up by 3 launches 3 t3.medium nodes (6 vCPU) and 4 of 8 vCPU are in use: " +
+				"request a higher EC2 On-Demand vCPU quota, or scale up by fewer nodes"},
+		},
+		{
+			name: "a scale-up that fits", edits: []edit{quotaWorld(8, 4)}, check: health.ScaleUpQuotas("ng-a", 2), targets: []string{"ng-a"},
+			want:   want{outcome: health.Pass, message: "50% of the vCPU quota in use (4 of 8)"},
+			detail: "scaling ng-a up by 2 launches 2 t3.medium nodes, 2 vCPU each (4 vCPU)",
+		},
+		{
+			name: "a scale that adds no node", edits: []edit{quotaWorld(8, 4)}, check: health.ScaleUpQuotas("ng-a", 0), targets: []string{"ng-a"},
+			want: want{outcome: health.Pass, message: "50% of the vCPU quota in use (4 of 8)"},
+		},
+		{
+			name: "no quota", targets: []string{"ng-a"},
+			edits: []edit{quotaWorld(8, 4), func(s *fleettest.State, _ *fleettest.Cluster) { s.Quotas = nil }},
+			want:  want{outcome: health.Skipped, message: "quota is not reported"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, tt.edits...)
+			ctx := testContext(t)
+			in := h.input(ctx, tt.targets...)
+			in.RollTogether = tt.together
+			c := tt.check
+			if c.Run == nil {
+				c = health.Quotas()
+			}
+			got := health.Run(ctx, []health.Check{c}, in)[0]
+			check(t, got, tt.want)
+			if tt.detail != "" && !slices.ContainsFunc(got.Details, func(d string) bool { return strings.Contains(d, tt.detail) }) {
+				t.Errorf("details = %q, want one with %q", got.Details, tt.detail)
+			}
+		})
+	}
+	t.Run("the quota is unreadable", func(t *testing.T) {
+		h := newHarness(t, quotaWorld(8, 4))
+		h.world.SetFault(fleettest.ServiceQuotasGetServiceQuota, fleettest.Fault{Deny: true})
+		check(t, h.run(testContext(t), health.Quotas(), "ng-a"), want{outcome: health.Unreadable, message: "servicequotas:GetServiceQuota", failures: 1})
+	})
+	t.Run("the instance types are unreadable", func(t *testing.T) {
+		h := newHarness(t, quotaWorld(8, 4))
+		h.world.SetFault(fleettest.EC2DescribeInstanceTypes, fleettest.Fault{Deny: true})
+		check(t, h.run(testContext(t), health.Quotas(), "ng-a"), want{outcome: health.Unreadable, message: "could not read the vCPUs of the instance types", failures: 1})
+	})
+	t.Run("no instance-type read without a target", func(t *testing.T) {
+		h := newHarness(t, quotaWorld(8, 4))
+		h.run(testContext(t), health.Quotas())
+		if n := countAWS(h.aws, fleettest.EC2DescribeInstanceTypes); n != 0 {
+			t.Errorf("DescribeInstanceTypes calls = %d, want 0", n)
+		}
+	})
+}
+
 func TestWorkloads(t *testing.T) {
 	addPods := func(pods ...*fleettest.Pod) edit {
 		return func(_ *fleettest.State, c *fleettest.Cluster) { c.Pods = append(c.Pods, pods...) }

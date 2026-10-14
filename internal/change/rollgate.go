@@ -31,14 +31,18 @@ func submitTargets(steps []Step) []string {
 // Beside the gate it reads the instance-type offerings of the targets,
 // also with --skip-health-check. What that finds is a notice, and never
 // part of the verdict.
+//
+// The targets roll at once (runBatch submits every roll and then waits
+// for them together), so the quota check adds up the nodes they launch.
 func (cp *ClusterPlan) gateRoll(ctx context.Context, d Deps, policy health.Policy) {
-	cp.gateNodegroups(ctx, d, policy, submitTargets(cp.Steps()))
+	cp.gateNodegroups(ctx, d, policy, submitTargets(cp.Steps()), true)
 }
 
 // gateNodegroups is the gate of gateRoll over the nodegroups in targets.
 // The plan of an upgrade or a rollback calls it with every nodegroup that
-// the plan would roll, in any hop.
-func (cp *ClusterPlan) gateNodegroups(ctx context.Context, d Deps, policy health.Policy, targets []string) {
+// the plan would roll, in any hop, and together false: the engine rolls
+// one nodegroup after another.
+func (cp *ClusterPlan) gateNodegroups(ctx context.Context, d Deps, policy health.Policy, targets []string, together bool) {
 	if len(targets) == 0 {
 		return
 	}
@@ -59,7 +63,7 @@ func (cp *ClusterPlan) gateNodegroups(ctx context.Context, d Deps, policy health
 		cp.Notices = append(cp.Notices, "the health checks were skipped (--skip-health-check)")
 		return
 	}
-	in := &health.Input{Snapshot: cp.snapshot, Targets: targets, Clients: clients, Now: cp.snapshot.FetchedAt}
+	in := &health.Input{Snapshot: cp.snapshot, Targets: targets, RollTogether: together, Clients: clients, Now: cp.snapshot.FetchedAt}
 	in.Kube, in.Metrics, in.NoKube = kubeAccess(d, cp.snapshot)
 	cp.Checks = health.Run(ctx, health.Preflight(), in)
 	cp.Gate = health.Gate(cp.Checks, policy)

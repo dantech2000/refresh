@@ -230,7 +230,7 @@ func (cp *ClusterPlan) gateEngine(ctx context.Context, d Deps, kind Kind, policy
 	if len(refuse) > 0 {
 		return
 	}
-	cp.gateNodegroups(ctx, d, policy, rollTargetsOf(cp.Steps()))
+	cp.gateNodegroups(ctx, d, policy, rollTargetsOf(cp.Steps()), false)
 }
 
 // engineCommand returns the command line that runs the request again, for

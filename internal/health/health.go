@@ -57,9 +57,14 @@ type Input struct {
 	// only the targets.
 	Snapshot *fleet.Snapshot
 	// Targets names the nodegroups about to roll. Empty means the whole
-	// cluster. Only the drain-blocker check and the target rule of the
-	// node check read it.
+	// cluster. Only the drain-blocker check, the target rule of the node
+	// check, and the surge rule of the quota check read it.
 	Targets []string
+	// RollTogether says that the targets roll at once, as nodegroup
+	// update rolls them, so the quota check adds up the nodes that they
+	// launch. Without it the targets roll one after another, as the
+	// phases of an upgrade do, and the largest launch counts.
+	RollTogether bool
 	// Clients are the AWS clients of the region of the cluster.
 	Clients *awsx.Clients
 	// Kube is nil without Kubernetes access. NoKube then says why, in the
