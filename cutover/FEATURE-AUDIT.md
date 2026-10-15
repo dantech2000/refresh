@@ -58,7 +58,7 @@ in `docs-next/migrating.md`.
 | The hidden `nodegroup update --simulate`, and `REFRESH_DEV_SIMULATE`, `REFRESH_DEV_SIM_SPEED`, `REFRESH_DEV_SIM_SEED` | Dropped: `tools/fakefleet` | Row 37 |
 | `refresh ui`: `ctrl+u`, `e` (session export, `XDG_STATE_HOME`), the AWS call pane and `tab`, the kubectl-cluster cursor and its region in the sweep, the Rolls and Upgrade screens | Dropped by owner decisions D2 to D5 of `docs/design/phase-5-tui.md`, which no user doc recorded | Row 38; `migrating.md` "refresh ui"; `docs-next/commands/ui.md` |
 | The health check names, and the Resource Balance check | Renamed; Balance dropped by decision 7 of `docs/design/phase-3-health.md` | Row 39; `migrating.md` "Health check names" |
-| Document keys: `count`, `support.extraCostUsdPerHour` and the `+$0.50/hr` text, `readyNodes`/`readyKnown`, `podDisruption`, `scaling.autoScaling`, `support.fallback` | Dropped or renamed | Row 40; `migrating.md` "Renamed and removed keys" |
+| Document keys: `count`, `support.extraCostUsdPerHour` and the `+$0.50/hr` text, `readyNodes`/`readyKnown`, `podDisruption`, `scaling.autoScaling`, `support.fallback` | Dropped or renamed; the premium is `support.extendedSupportPremiumUsdPerHour` | Row 40; `migrating.md` "Renamed and removed keys" |
 | The nesting of the describe documents, and 25 renamed keys | Renamed under row 8, with no key list | `migrating.md` "Renamed and removed keys" |
 | `migrating.md` said that `refresh ui` does not start changes | Wrong since the change screens were built | `migrating.md` "refresh ui" |
 
@@ -405,16 +405,12 @@ wrote. The keys of the plan documents (`currentAmi`, `latestAmi`, `dryRun`,
 | `refresh ui`: Rolls and Upgrade screens | Merged into the Change screen (row 38) | |
 | Health checks Node Health, Cluster Capacity, Control Plane, Service Quotas, Critical Workloads, PDBs, Node Utilization | Renamed (row 39) | `cluster describe` with both binaries |
 | Health check Resource Balance | Removed on purpose (row 39) | |
-| The extended-support premium (`+$0.50/hr`) | Missing: recorded (row 40) | |
+| The extended-support premium (`+$0.50/hr`) | Ported, with a total per month in the `status` totals line (row 40) | `TestSupportPremium`, `TestSupport_Premium`, the `status` golden files |
 | `cluster list` node count | Removed on purpose (row 18) | |
 | Health score | Removed on purpose (row 8) | |
 
 ## For the owner to decide
 
-- Row 40 drops the extended-support premium. It is a hard-coded price, and
-  cost is out of scope, but it is also the strongest reason to leave extended
-  support. Porting it means one optional key of `Support` and its text in the
-  `SUPPORT` cell.
 - Row 38 records the phase 5 decisions. The session export is the one real
   loss: a change run from the UI leaves no record on disk.
 - `nodegroup describe` no longer counts the PodDisruptionBudgets of a

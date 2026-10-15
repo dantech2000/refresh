@@ -309,7 +309,7 @@ See [Plan and Run](concepts/output.md#plan-and-run) for every key.
 | `count` of `ClusterList`, `NodegroupList`, `AddonList` | Removed. Use the length of the list. |
 | `FleetStatus`: `nodegroupCount`, `staleAmi`, `addonsBehind`, `nodegroupsBehindControlPlane` | `.clusters[].nodegroups[]` (with `ami.status` and `versionBehind`) and `.clusters[].addons[]` (with `latest.behind`) |
 | `support.fallback` | `support.builtIn` |
-| `support.extraCostUsdPerHour` | Removed. The extended-support premium is a price, and pricing is out of scope. |
+| `support.extraCostUsdPerHour` | `support.extendedSupportPremiumUsdPerHour` |
 | `ClusterDescription`: `networking` | `network` |
 | `ClusterDescription`: `security.serviceRoleArn`, `security.loggingEnabled`, `security.encryptionEnabled` | `security.roleArn`, `security.logTypes`, `security.kmsKeyArn` (left out when secrets have no KMS key) |
 | `ClusterDescription`: `nodegroups[].readyNodes`, `readyKnown` | Removed. The `Nodes` health check counts the ready nodes. |
