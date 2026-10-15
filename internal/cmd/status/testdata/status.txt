@@ -1,14 +1,14 @@
 FLEET  6 in 2 regions
 
-CLUSTER            REGION     VERSION  SUPPORT          COMPUTE       STALE AMI                ADDONS                     HEALTH
-[X] ancient        eu-west-1  1.29     unsupported      none          n/a                      0                          ok
-[OK] auto          eu-west-1  1.34     standard (243d)  Auto Mode     n/a                      0                          ok
-[OK] karpenter     eu-west-1  1.34     standard (243d)  Karpenter     n/a                      0                          ok
-[!] legacy         us-east-1  1.31     extended (243d)  1 nodegroup   1 not compared           0                          ok
-[OK] prod-current  us-east-1  1.34     standard (243d)  1 nodegroup   1 not compared           0                          ok
-[!] prod-stale     us-east-1  1.33     standard (61d)   3 nodegroups  2/3 (153d), 1 behind CP  3 (coredns,kube-proxy +1)  1 issue
+CLUSTER            REGION     VERSION  SUPPORT                    COMPUTE       STALE AMI                ADDONS                     HEALTH
+[X] ancient        eu-west-1  1.29     unsupported                none          n/a                      0                          ok
+[OK] auto          eu-west-1  1.34     standard (243d)            Auto Mode     n/a                      0                          ok
+[OK] karpenter     eu-west-1  1.34     standard (243d)            Karpenter     n/a                      0                          ok
+[!] legacy         us-east-1  1.31     extended (243d) +$0.50/hr  1 nodegroup   1 not compared           0                          ok
+[OK] prod-current  us-east-1  1.34     standard (243d)            1 nodegroup   1 not compared           0                          ok
+[!] prod-stale     us-east-1  1.33     standard (61d)             3 nodegroups  2/3 (153d), 1 behind CP  3 (coredns,kube-proxy +1)  1 issue
 
 [OK] 3 current   [!] 2 need attention   [X] 1 unsupported
-2 stale AMIs · 3 add-ons behind · 1 nodegroup behind the control plane · 2 clusters out of standard support
+2 stale AMIs · 3 add-ons behind · 1 nodegroup behind the control plane · 2 clusters out of standard support (+$365/mo)
 
 [X] ancient is on a version that EKS no longer supports: refresh cluster upgrade-check ancient -r eu-west-1

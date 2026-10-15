@@ -66,7 +66,13 @@ or else the regions that every account has enabled.
 Columns:
   SUPPORT    standard, extended, or unsupported, with the days left. A "*"
              marks dates that refresh ships with, because EKS did not
-             report them.
+             report them. A cluster in extended support shows what it
+             costs per hour on top of standard support, such as
+             +$0.50/hr, unless its upgrade policy is STANDARD.
+
+Under the table, the totals line gives that premium for the whole fleet per
+month, at 730 hours a month. The price is the one on the EKS pricing page
+when refresh was released.
   COMPUTE    the managed nodegroups, Auto Mode, Karpenter, or none
   STALE AMI  the nodegroups that do not run the latest AMI for their own
              Kubernetes version, of all nodegroups, with the age of the
@@ -544,11 +550,17 @@ func notes(th view.Theme, clusters []apidoc.Cluster) []string {
 	return lines
 }
 
+// hoursPerMonth is the hours of a month in the premium of the fleet
+// totals: 365 days of 24 hours, over 12 months.
+const hoursPerMonth = 730
+
 // totals counts what is out of date in the whole fleet: stale AMIs,
 // add-ons behind, nodegroups behind their control plane, and clusters out
-// of standard support. It is "" when nothing is.
+// of standard support, with what extended support costs them a month on
+// top of standard support. It is "" when nothing is.
 func totals(clusters []apidoc.Cluster) string {
 	var stale, addons, behind, support int
+	var premium float64
 	for _, c := range clusters {
 		f := findingsOf(c)
 		stale += f.staleAMIs
@@ -557,6 +569,13 @@ func totals(clusters []apidoc.Cluster) string {
 		if supportRisk(c) {
 			support++
 		}
+		if c.Support != nil {
+			premium += c.Support.ExtendedSupportPremiumUSDPerHour * hoursPerMonth
+		}
+	}
+	supportPart := plural(support, "cluster") + " out of standard support"
+	if premium > 0 {
+		supportPart += fmt.Sprintf(" (+$%.0f/mo)", premium)
 	}
 	var parts []string
 	for _, p := range []struct {
@@ -566,7 +585,7 @@ func totals(clusters []apidoc.Cluster) string {
 		{stale, plural(stale, "stale AMI")},
 		{addons, plural(addons, "add-on") + " behind"},
 		{behind, plural(behind, "nodegroup") + " behind the control plane"},
-		{support, plural(support, "cluster") + " out of standard support"},
+		{support, supportPart},
 	} {
 		if p.n > 0 {
 			parts = append(parts, p.text)
@@ -619,9 +638,10 @@ func plural(n int, noun string) string {
 }
 
 // supportText returns the support of a cluster as a short cell: the tier,
-// and the days left while a window is open, such as "standard (61d)". A
-// "*" marks dates that refresh ships with, because EKS did not report
-// them. It returns "" when the support was not read.
+// the days left while a window is open, and the premium of extended
+// support, such as "standard (61d)" or "extended (40d) +$0.50/hr". A "*"
+// marks dates that refresh ships with, because EKS did not report them.
+// It returns "" when the support was not read.
 func supportText(s *apidoc.Support) string {
 	if s == nil {
 		return ""
@@ -632,6 +652,9 @@ func supportText(s *apidoc.Support) string {
 	}
 	if s.BuiltIn {
 		text += "*"
+	}
+	if s.ExtendedSupportPremiumUSDPerHour > 0 {
+		text += fmt.Sprintf(" +$%.2f/hr", s.ExtendedSupportPremiumUSDPerHour)
 	}
 	return text
 }

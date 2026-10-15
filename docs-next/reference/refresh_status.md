@@ -15,7 +15,13 @@ or else the regions that every account has enabled.
 Columns:
   SUPPORT    standard, extended, or unsupported, with the days left. A "*"
              marks dates that refresh ships with, because EKS did not
-             report them.
+             report them. A cluster in extended support shows what it
+             costs per hour on top of standard support, such as
+             +$0.50/hr, unless its upgrade policy is STANDARD.
+
+Under the table, the totals line gives that premium for the whole fleet per
+month, at 730 hours a month. The price is the one on the EKS pricing page
+when refresh was released.
   COMPUTE    the managed nodegroups, Auto Mode, Karpenter, or none
   STALE AMI  the nodegroups that do not run the latest AMI for their own
              Kubernetes version, of all nodegroups, with the age of the

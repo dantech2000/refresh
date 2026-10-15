@@ -19,32 +19,38 @@ refresh status -r us-east-1
 ```text
 FLEET  8
 
-CLUSTER                REGION     VERSION  SUPPORT           COMPUTE       STALE AMI                ADDONS                      HEALTH
-▲ dev-orders-32        us-east-1  1.34     standard (49d)*   3 nodegroups  1/3 (130d)               1 (vpc-cni)                 ok
-▲ dev-orders-56        us-east-1  1.31     extended (43d)*   4 nodegroups  1/4 (130d)               0                           ok
-▲ dev-platform-08      us-east-1  1.34     standard (49d)*   2 nodegroups  1/2 (130d)               0                           ok
-▲ prod-billing-24      us-east-1  1.33     extended (288d)*  1 nodegroup   0                        1 (vpc-cni)                 ok
-▲ prod-data-48         us-east-1  1.32     extended (160d)*  4 nodegroups  1/4 (130d), 1 behind CP  1 (eks-pod-identity-agent)  ok
-▲ prod-payments-00     us-east-1  1.34     standard (49d)*   3 nodegroups  1/3 (130d)               0                           ok
-▲ staging-checkout-16  us-east-1  1.35     standard (164d)*  2 nodegroups  0                        2 (coredns,vpc-cni)         ok
-▲ staging-data-40      us-east-1  1.32     extended (160d)*  1 nodegroup   0                        0                           ok
+CLUSTER                REGION     VERSION  SUPPORT                     COMPUTE       STALE AMI                ADDONS                      HEALTH
+▲ dev-orders-32        us-east-1  1.34     standard (49d)*             3 nodegroups  1/3 (130d)               1 (vpc-cni)                 ok
+▲ dev-orders-56        us-east-1  1.31     extended (43d)* +$0.50/hr   4 nodegroups  1/4 (130d)               0                           ok
+▲ dev-platform-08      us-east-1  1.34     standard (49d)*             2 nodegroups  1/2 (130d)               0                           ok
+▲ prod-billing-24      us-east-1  1.33     extended (288d)* +$0.50/hr  1 nodegroup   0                        1 (vpc-cni)                 ok
+▲ prod-data-48         us-east-1  1.32     extended (160d)* +$0.50/hr  4 nodegroups  1/4 (130d), 1 behind CP  1 (eks-pod-identity-agent)  ok
+▲ prod-payments-00     us-east-1  1.34     standard (49d)*             3 nodegroups  1/3 (130d)               0                           ok
+▲ staging-checkout-16  us-east-1  1.35     standard (164d)*            2 nodegroups  0                        2 (coredns,vpc-cni)         ok
+▲ staging-data-40      us-east-1  1.32     extended (160d)* +$0.50/hr  1 nodegroup   0                        0                           ok
 
 ● 0 current   ▲ 8 need attention
-5 stale AMIs · 5 add-ons behind · 1 nodegroup behind the control plane · 4 clusters out of standard support
+5 stale AMIs · 5 add-ons behind · 1 nodegroup behind the control plane · 4 clusters out of standard support (+$1460/mo)
 
 ▲ dev-orders-32 has stale AMIs or add-ons: refresh cluster upgrade-check dev-orders-32 -r us-east-1
 ```
 
 Under the table, the first line counts the clusters by what they need, and
-the second line adds up what is out of date. The last line names the most
+the second line adds up what is out of date. When clusters pay for extended
+support, the second line also gives what that costs the fleet per month on
+top of standard support, at 730 hours a month. The last line names the most
 urgent cluster, an unsupported one first, with the command that checks
 whether it is ready to upgrade.
+
+The premium is the price on the [EKS pricing page](https://aws.amazon.com/eks/pricing/)
+when `refresh` was released: $0.50 per cluster per hour. The JSON and YAML
+documents have it as `support.extendedSupportPremiumUsdPerHour`.
 
 ## Columns
 
 | Column | Content |
 |---|---|
-| `SUPPORT` | `standard`, `extended`, or `unsupported`, with the days left. A `*` marks dates that `refresh` ships with, because EKS did not report them. |
+| `SUPPORT` | `standard`, `extended`, or `unsupported`, with the days left. A `*` marks dates that `refresh` ships with, because EKS did not report them. A cluster in extended support also shows the premium over standard support, `+$0.50/hr`, unless its upgrade policy is `STANDARD`. |
 | `COMPUTE` | The managed nodegroups, Auto Mode, Karpenter, or none. |
 | `STALE AMI` | "1/3 (130d)": one of three nodegroups does not run the latest AMI for its own Kubernetes version, and the oldest such AMI is 130 days old. "1 behind CP": one nodegroup is on an older Kubernetes version than the control plane. |
 | `ADDONS` | The add-ons that have a newer compatible version. |
