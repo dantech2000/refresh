@@ -126,7 +126,8 @@ here. `cluster upgrade` does that.
 1. It reads the whole cluster and builds the plan.
 2. It refuses while the cluster or anything else in it is changing. It leaves
    a target alone that is already changing: that target is listed in
-   `failures`, the other targets go on, and the run exits `4`.
+   `failures`, the other targets go on, and the run exits `4`. If no other
+   target changes, nothing changed, and the run exits `3`.
 3. It runs the [health gate](../concepts/health-checks.md) for all the targets
    together, before the first roll starts.
 4. It asks once. `--yes` skips the question.
@@ -228,8 +229,8 @@ apply.
 | `0` | Done, or nothing to do. |
 | `1` | An error, a question answered no, or an interrupt. Every roll that was sent failed. |
 | `2` | With `--dry-run` only: a real run would ask about warnings. |
-| `3` | Blocked: the cluster is busy, a gate stops the change, or `--require-healthy` and a warning. Nothing changed, or nothing more when the gate stops a later step. |
-| `4` | Incomplete: a target was already changing, a wait timed out, something could not be read, or a roll failed beside one that was started. |
+| `3` | Blocked: the cluster is busy, every target is already changing, a gate stops the change, or `--require-healthy` and a warning. Nothing changed, or nothing more when the gate stops a later step. |
+| `4` | Incomplete: a target was already changing beside targets that changed, a wait timed out, something could not be read, or a roll failed beside one that was started. |
 | `5` | The rolls were applied and the verification found an issue. |
 
 ### Examples
@@ -332,8 +333,8 @@ apply.
 | `0` | Done, or nothing to do. |
 | `1` | An error, a question answered no, or an interrupt. The update failed, or the sizes cannot hold. |
 | `2` | With `--dry-run` only: a real run would ask about warnings. |
-| `3` | Blocked: the cluster is busy, a gate stops the change, or `--require-healthy` and a warning. Nothing changed, or nothing more when the gate stops a later step. |
-| `4` | Incomplete: the nodegroup was already changing, the wait timed out, or something could not be read. |
+| `3` | Blocked: the cluster is busy, the nodegroup is already changing, a gate stops the change, or `--require-healthy` and a warning. Nothing changed. |
+| `4` | Incomplete: the wait timed out, or something could not be read. |
 
 ### Examples
 

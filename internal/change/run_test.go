@@ -352,7 +352,7 @@ func TestRun_WorldChangesWhileAsking(t *testing.T) {
 			changes: []func(e *env){func(e *env) {
 				startElsewhere(e.t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
 			}},
-			status: Incomplete, exit: 4, notice: "Notice add-on vpc-cni is now changing elsewhere",
+			status: RunBlocked, exit: 3, notice: "Notice add-on vpc-cni is now changing elsewhere",
 		},
 		{
 			name: "a newer version is published: the run asks again", answers: []bool{true, true},
@@ -570,7 +570,7 @@ func TestRun_FreshReadBeforeSubmit(t *testing.T) {
 			},
 		},
 		{
-			name: "another update started elsewhere: busy", status: StepBusy, exit: 4,
+			name: "another update started elsewhere: busy", status: StepBusy, exit: 3,
 			change: func(t *testing.T, e *env) {
 				t.Helper()
 				startElsewhere(t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})

@@ -190,9 +190,9 @@ func scaleCases() []scaleCase {
 			seed: func(c *fleettest.Cluster) { c.Status = fleettest.StatusUpdating }},
 		{name: "other-nodegroup-busy", args: []string{"--desired", "3", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: func(c *fleettest.Cluster) { c.Nodegroup("api").Status = fleettest.StatusUpdating }},
-		{name: "busy-target", args: []string{"--desired", "3", "--yes"}, exit: cmdutil.ExitIncomplete,
+		{name: "busy-target", args: []string{"--desired", "3", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: script(fleettest.UpdateScript{Never: true}), prepare: rollElsewhere},
-		{name: "busy-target-lookup-failed", args: []string{"--desired", "3", "--yes"}, exit: cmdutil.ExitIncomplete,
+		{name: "busy-target-lookup-failed", args: []string{"--desired", "3", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: script(fleettest.UpdateScript{Never: true}), prepare: func(t *testing.T, w *fleettest.World) {
 				t.Helper()
 				rollElsewhere(t, w)

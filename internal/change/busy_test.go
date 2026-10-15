@@ -170,8 +170,9 @@ func TestNewPlan_BusyTarget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.Decision() != DecisionNothingToDo || p.ExitCode() != 4 {
-			t.Errorf("the plan is %s with exit %d; want NothingToDo, 4", p.Decision(), p.ExitCode())
+		// The busy target is the only work: a real run changes nothing.
+		if p.Decision() != DecisionNothingToDo || p.ExitCode() != 3 {
+			t.Errorf("the plan is %s with exit %d; want NothingToDo, 3", p.Decision(), p.ExitCode())
 		}
 		for _, op := range e.operations(from) {
 			if strings.Contains(op, ":Update") {

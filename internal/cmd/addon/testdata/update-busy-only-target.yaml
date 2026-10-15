@@ -1,10 +1,10 @@
-exit: 4
+exit: 3
 error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
 --- stdout ---
 apiVersion: refresh.drod.dev/v2
 kind: Run
 operation: AddonUpdate
-status: Incomplete
+status: Blocked
 clusters:
   - cluster: prod
     region: us-east-1
@@ -21,7 +21,7 @@ clusters:
         inFlight: AddonUpdate
     blockers: []
     notices: []
-    status: Incomplete
+    status: Blocked
     results:
       - phase: Addons
         kind: Addon

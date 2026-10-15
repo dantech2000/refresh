@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -142,12 +143,17 @@ func planExit(plan *change.Plan) error {
 	if code == cmdutil.ExitOK {
 		return nil
 	}
+	// A cluster of a fleet can be blocked while the fleet asks.
+	blocked := slices.ContainsFunc(plan.Clusters, func(cp change.ClusterPlan) bool { return cp.Decision() == change.DecisionBlocked })
 	var why string
 	switch {
 	case code == cmdutil.ExitIncomplete:
 		why = "the plan is incomplete: something could not be read, or a target is already changing"
-	case plan.Decision() == change.DecisionBlocked:
+	case blocked:
 		why = "a real run would be blocked"
+	case code == cmdutil.ExitBlocked:
+		// No gate and no blocker: every target is already changing.
+		why = "a real run would change nothing: every target is already changing"
 	default:
 		why = "a real run would ask about health warnings"
 	}

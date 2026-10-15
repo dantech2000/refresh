@@ -36,8 +36,8 @@ incomplete data or a partial failure (`4`), and a failed verification (`5`).
 | `status` | Everything current, in standard support | Error; no region answered | Something is out of date | A cluster in extended support, or unsupported | A part of the fleet could not be read | |
 | `cluster list`, `cluster describe`, `nodegroup list`, `nodegroup describe`, `addon list`, `addon describe` | Read | Error; not found | | | A part could not be read | |
 | `cluster upgrade-check` | Ready | Error | Review: warnings | Blocked | A check or an item could not be read | |
-| `nodegroup update`, `addon update` | Done, or nothing to do | Error; answered no; interrupt; every change failed | Dry run only: the real run would ask | Blocked | Partial failure; busy target; wait timed out; unread data | The verification found an issue |
-| `nodegroup scale` | Done, or nothing to do | Error; answered no; interrupt; the update failed; sizes that cannot hold | Dry run only | Blocked | Busy target; wait timed out; unread data | |
+| `nodegroup update`, `addon update` | Done, or nothing to do | Error; answered no; interrupt; every change failed | Dry run only: the real run would ask | Blocked; every target busy | Partial failure; a busy target beside others that changed; wait timed out; unread data | The verification found an issue |
+| `nodegroup scale` | Done, or nothing to do | Error; answered no; interrupt; the update failed; sizes that cannot hold | Dry run only | Blocked; busy target | Wait timed out; unread data | |
 | `cluster upgrade`, `cluster rollback` | Done, or nothing to do | Error; answered no; interrupt; a phase failed | Dry run only | Blocked | Wait timed out; unread data | The verification found an issue |
 | `context ...`, `version`, `completion` | Done | Error | | | | |
 | `ui` | Quit | Error | | | | |
@@ -97,7 +97,8 @@ Each step of the run has a code. The run exits with the highest.
 | The update failed, or EKS refused the request | `1` |
 | The busy rule, the health gate, or `--require-healthy` over a warning stopped it | `3` |
 | The gate or the plan could not read what it needs | `4` |
-| The target was already changing | `4` |
+| The target was already changing, and no other target changed | `3` |
+| The target was already changing, and another target changed or failed | `4` |
 | `--wait-timeout` passed before the change finished | `4` |
 | AWS accepted the change, and it could not be followed | `4` |
 | The verification found an issue; an add-on was updated and is not healthy | `5` |

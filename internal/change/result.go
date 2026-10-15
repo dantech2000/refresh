@@ -113,7 +113,9 @@ type ending struct {
 }
 
 // stepCode returns the exit code of one step, and false for a step that
-// has none: one that was never attempted.
+// has none: one that was never attempted. A Busy step is a block, 3: it
+// is the code of a run whose only work is busy. ExitCode makes it 4 beside
+// a change.
 func stepCode(s StepResult) (code int, ok bool) {
 	switch s.Status {
 	case StepSucceeded:
@@ -133,7 +135,7 @@ func stepCode(s StepResult) (code int, ok bool) {
 	case StepBlocked:
 		return exitcode.Blocked, true
 	case StepBusy:
-		return exitcode.Incomplete, true
+		return exitcode.Blocked, true
 	case StepInProgress:
 		// An attach under --no-wait is in progress with no failure.
 		if s.Failure == nil {
@@ -153,7 +155,9 @@ func stepCode(s StepResult) (code int, ok bool) {
 //  2. Among independent targets, a step with code 1 beside a step that
 //     succeeded or started counts as 4: a partial failure. The phases of
 //     an upgrade and of a rollback are a sequence, so the move does not
-//     apply to them.
+//     apply to them. A Busy step is 3 when no step succeeded, started, or
+//     failed: the target was the run's only work, and nothing changed.
+//     Beside one that did, it is a partial failure, 4.
 //  3. The highest code wins. An interrupt is always 1.
 //  4. A step of an upgrade or of a rollback that failed makes the run
 //     exit 1, whatever failure belongs to no step: a failed phase is a
@@ -169,7 +173,7 @@ func (r Result) ExitCode() int {
 	if len(r.Failures) > 0 {
 		code = max(code, exitcode.Incomplete)
 	}
-	var failed, changed bool
+	var failed, changed, busy bool
 	steps := exitcode.OK
 	for _, c := range r.Clusters {
 		for _, s := range c.Steps {
@@ -181,9 +185,13 @@ func (r Result) ExitCode() int {
 				failed = true
 				continue
 			}
+			busy = busy || s.Status == StepBusy
 			changed = changed || s.Status == StepSucceeded || s.Status == StepStarted
 			steps = max(steps, sc)
 		}
+	}
+	if busy && (changed || failed) {
+		steps = max(steps, exitcode.Incomplete)
 	}
 	switch {
 	case failed && !r.kind().independent():

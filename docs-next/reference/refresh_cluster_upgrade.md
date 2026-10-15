@@ -44,14 +44,14 @@ Exit codes:
   1  An error, a question answered no, or an interrupt.
      A phase failed. The phases before it stay done.
   2  With --dry-run only: a real run would ask about warnings.
-  3  Blocked: the cluster is busy, a gate stops the change, or
-     --require-healthy and a warning. Nothing changed, or nothing more
-     when the gate stops a later step.
+  3  Blocked: the cluster is busy, every target is already changing, a
+     gate stops the change, or --require-healthy and a warning. Nothing
+     changed, or nothing more when the gate stops a later step.
      The insights or the kubelet skew block the next version. When a
      gate stops a later phase, the message names the phases that
      completed.
-  4  Incomplete: a target was already changing, a wait timed out, or
-     something could not be read.
+  4  Incomplete: a target was already changing beside targets that
+     changed, a wait timed out, or something could not be read.
   5  A nodegroup was rolled and the verification found an issue, or
      an add-on was updated and is not healthy.
 

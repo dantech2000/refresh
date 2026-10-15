@@ -39,6 +39,7 @@ func TestPlanDecision(t *testing.T) {
 	}
 	pass := health.Result{Name: "Addons", Outcome: health.Pass, Blocking: true}
 	failure := apidoc.Failure{Kind: apidoc.FailureAddon, Name: "kube-proxy"}
+	busyFailure := apidoc.Failure{Kind: apidoc.FailureAddon, Name: "vpc-cni", Reason: apidoc.ReasonBusy}
 	blocker := Blocker{Kind: BlockerBusy, Message: "prod is busy"}
 
 	tests := []struct {
@@ -59,7 +60,9 @@ func TestPlanDecision(t *testing.T) {
 		{name: "--require-healthy over a warning", steps: []Step{submit}, checks: []health.Result{warn}, policy: health.Policy{RequireHealthy: true}, want: DecisionBlocked, exit: 3},
 		{name: "nothing to do", steps: []Step{skip}, want: DecisionNothingToDo, exit: 0},
 		{name: "nothing to do, with a failure", steps: []Step{skip}, failures: []apidoc.Failure{failure}, want: DecisionNothingToDo, exit: 4},
-		{name: "every target is busy", steps: []Step{busy}, failures: []apidoc.Failure{{Kind: apidoc.FailureAddon, Name: "vpc-cni", Reason: apidoc.ReasonBusy}}, want: DecisionNothingToDo, exit: 4},
+		{name: "every target is busy", steps: []Step{busy}, failures: []apidoc.Failure{busyFailure}, want: DecisionNothingToDo, exit: 3},
+		{name: "every target is busy or done", steps: []Step{busy, skip}, failures: []apidoc.Failure{busyFailure}, want: DecisionNothingToDo, exit: 3},
+		{name: "every target is busy, and a read failed", steps: []Step{busy}, failures: []apidoc.Failure{busyFailure, failure}, want: DecisionNothingToDo, exit: 4},
 		{name: "gate asks", steps: []Step{submit}, checks: []health.Result{warn}, want: Ask, exit: 2},
 		{name: "gate went past a warning with --yes", steps: []Step{submit}, checks: []health.Result{warn}, policy: health.Policy{Yes: true}, want: Ask, exit: 2},
 		{name: "gate asks about a read that failed", steps: []Step{submit}, checks: []health.Result{unreadable}, want: Ask, exit: 4},
@@ -67,7 +70,8 @@ func TestPlanDecision(t *testing.T) {
 		{name: "proceed", steps: []Step{submit, skip}, checks: []health.Result{pass}, want: Proceed, exit: 0},
 		{name: "proceed with --yes", steps: []Step{submit}, checks: []health.Result{pass}, policy: health.Policy{Yes: true}, want: Proceed, exit: 0},
 		{name: "proceed, with a failure", steps: []Step{submit}, checks: []health.Result{pass}, failures: []apidoc.Failure{failure}, want: Proceed, exit: 4},
-		{name: "proceed, one target busy", steps: []Step{submit, busy}, checks: []health.Result{pass}, failures: []apidoc.Failure{failure}, want: Proceed, exit: 4},
+		{name: "proceed, one target busy", steps: []Step{submit, busy}, checks: []health.Result{pass}, failures: []apidoc.Failure{busyFailure}, want: Proceed, exit: 4},
+		{name: "proceed, one target busy, and a read failed", steps: []Step{submit, busy}, checks: []health.Result{pass}, failures: []apidoc.Failure{failure}, want: Proceed, exit: 4},
 		{name: "the checks were skipped", steps: []Step{submit}, policy: health.Policy{Skip: true}, want: Proceed, exit: 0},
 		{name: "attach alone runs no gate", steps: []Step{addonStep("vpc-cni", Attach, InFlight, "v2", "v2")}, want: Proceed, exit: 0},
 	}
@@ -107,6 +111,23 @@ func TestPlanDecision_Fleet(t *testing.T) {
 	p.Failures = []apidoc.Failure{{Kind: apidoc.FailureRegion, Name: "eu-west-1"}}
 	if code := p.ExitCode(); code != 4 {
 		t.Errorf("ExitCode() with a region failure = %d, want 4", code)
+	}
+}
+
+// A busy target is a block when it is the only work of the plan, and a
+// partial failure beside work in another cluster of the fleet.
+func TestPlanDecision_FleetBusy(t *testing.T) {
+	busy := planOf(NodegroupUpdate, addonStep("a", Skip, InFlight, "v1", "v2")).Clusters[0]
+	busy.Failures = []apidoc.Failure{{Kind: apidoc.FailureNodegroup, Name: "a", Reason: apidoc.ReasonBusy}}
+	work := planOf(NodegroupUpdate, addonStep("b", Submit, VersionBehind, "v1", "v2")).Clusters[0]
+	work.Cluster = "dev"
+	p := &Plan{Kind: NodegroupUpdate, Clusters: []ClusterPlan{busy}}
+	if code := p.ExitCode(); code != 3 {
+		t.Errorf("a busy target alone: ExitCode() = %d, want 3", code)
+	}
+	p.Clusters = append(p.Clusters, work)
+	if code := p.ExitCode(); code != 4 {
+		t.Errorf("a busy target beside work in another cluster: ExitCode() = %d, want 4", code)
 	}
 }
 

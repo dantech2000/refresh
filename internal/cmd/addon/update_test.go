@@ -185,10 +185,10 @@ func updateCases() []updateCase {
 			seed: func(c *fleettest.Cluster) { addon(c, "kube-proxy").Status = fleettest.StatusUpdating }},
 		{name: "busy-target", args: []string{"--all", "--yes"}, exit: cmdutil.ExitIncomplete, updates: []string{"coredns"},
 			prepare: startElsewhere("vpc-cni", cniPatch, never)},
-		{name: "busy-only-target", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitIncomplete,
+		{name: "busy-only-target", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitBlocked,
 			prepare: startElsewhere("vpc-cni", cniPatch, never)},
 		// A dry run names the update in flight too: the lookup is a read.
-		{name: "dry-run-busy-target", args: []string{"vpc-cni", "--dry-run"}, exit: cmdutil.ExitIncomplete,
+		{name: "dry-run-busy-target", args: []string{"vpc-cni", "--dry-run"}, exit: cmdutil.ExitBlocked,
 			prepare: startElsewhere("vpc-cni", cniPatch, never)},
 		{name: "attach", args: []string{"vpc-cni", "--yes"},
 			prepare: startElsewhere("vpc-cni", cniNew, fleettest.UpdateScript{After: 4 * time.Minute})},
@@ -223,7 +223,7 @@ func updateCases() []updateCase {
 			prepare: func(_ *testing.T, w *fleettest.World) {
 				w.SetFault(fleettest.EKSUpdateAddon, fleettest.Fault{Deny: true})
 			}},
-		{name: "deleting", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitIncomplete,
+		{name: "deleting", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: func(c *fleettest.Cluster) { addon(c, "vpc-cni").Status = fleettest.StatusDeleting }},
 		{name: "delete-failed", args: []string{"coredns", "--yes"}, updates: []string{"coredns"},
 			seed: func(c *fleettest.Cluster) { addon(c, "coredns").Status = "DELETE_FAILED" }},

@@ -47,7 +47,7 @@ func TestStepCode(t *testing.T) {
 		{name: "Blocked", step: stepBlocked, code: 3},
 		{name: "InProgress with Timeout", step: stepTimeout, code: 4},
 		{name: "InProgress with NotMonitored", step: stepUnseen, code: 4},
-		{name: "Busy", step: stepBusy, code: 4},
+		{name: "Busy, a block when it is the only work", step: stepBusy, code: 3},
 		{name: "Failed from a verification issue", step: stepIssue, code: 5},
 		{name: "an add-on that is updated and not healthy", step: stepUnwell, code: 5},
 		{name: "NotAttempted", step: stepNever, none: true},
@@ -110,7 +110,12 @@ func TestResultExitCode(t *testing.T) {
 		{name: "one Cancelled, one Succeeded", kind: AddonUpdate, steps: []StepResult{stepCanceled, stepOK}, want: 4},
 		{name: "one Cancelled alone", kind: AddonUpdate, steps: []StepResult{stepCanceled}, want: 1},
 		{name: "one NotMonitored, one Failed", kind: AddonUpdate, steps: []StepResult{stepUnseen, stepFailed}, want: 4},
-		{name: "one Busy, one Blocked", kind: AddonUpdate, steps: []StepResult{stepBusy, stepBlocked}, want: 4},
+		{name: "one Busy, one Blocked", kind: AddonUpdate, steps: []StepResult{stepBusy, stepBlocked}, want: 3},
+		{name: "one Busy alone", kind: NodegroupScale, steps: []StepResult{stepBusy}, want: 3},
+		{name: "one Busy, one Skipped", kind: AddonUpdate, steps: []StepResult{stepBusy, stepSkipped}, want: 3},
+		{name: "one Busy, one Started", kind: NodegroupUpdate, steps: []StepResult{stepBusy, stepStarted}, want: 4},
+		{name: "one Busy, one Failed", kind: AddonUpdate, steps: []StepResult{stepBusy, stepFailed}, want: 4},
+		{name: "one Busy, and a read failed", kind: AddonUpdate, steps: []StepResult{stepBusy}, failures: gateRead, want: 4},
 		{name: "one unhealthy add-on, one Busy", kind: AddonUpdate, steps: []StepResult{stepUnwell, stepBusy}, want: 5},
 		{name: "one unhealthy add-on, one Failed", kind: AddonUpdate, steps: []StepResult{stepUnwell, stepFailed}, want: 5},
 		{name: "an attach under --no-wait, one Started", kind: AddonUpdate, steps: []StepResult{stepAttached, stepStarted}, want: 0},
@@ -153,6 +158,14 @@ func TestResultExitCode_FleetPools(t *testing.T) {
 	res.Clusters[1].Steps = []StepResult{stepFailed}
 	if got := res.ExitCode(); got != 1 {
 		t.Errorf("every cluster failed: ExitCode() = %d, want 1", got)
+	}
+	res.Clusters[0].Steps, res.Clusters[1].Steps = []StepResult{stepBusy}, []StepResult{stepOK}
+	if got := res.ExitCode(); got != 4 {
+		t.Errorf("one cluster busy and one changed: ExitCode() = %d, want 4", got)
+	}
+	res.Clusters[1].Steps = []StepResult{stepSkipped}
+	if got := res.ExitCode(); got != 3 {
+		t.Errorf("one cluster busy and one with nothing to do: ExitCode() = %d, want 3", got)
 	}
 }
 
@@ -201,7 +214,8 @@ func TestStatusOf(t *testing.T) {
 		{"partial failure", AddonUpdate, []StepResult{stepFailed, stepOK}, Incomplete},
 		{"a failed phase of an upgrade", testUpgrade, []StepResult{stepOK, stepFailed}, Failed},
 		{"blocked", testUpgrade, []StepResult{stepOK, stepBlocked}, RunBlocked},
-		{"busy", AddonUpdate, []StepResult{stepBusy}, Incomplete},
+		{"busy", AddonUpdate, []StepResult{stepBusy}, RunBlocked},
+		{"busy beside a change", AddonUpdate, []StepResult{stepBusy, stepOK}, Incomplete},
 		{"verify failed", AddonUpdate, []StepResult{stepUnwell}, VerifyFailed},
 		{"interrupted", AddonUpdate, []StepResult{stepStopped}, Interrupted},
 	}

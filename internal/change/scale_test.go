@@ -424,8 +424,8 @@ func TestPlanScale_Steps(t *testing.T) {
 		if s := cp.Steps()[0]; !s.busy() || len(cp.Blockers) != 0 {
 			t.Errorf("step = %s %s with blockers %v; want a busy target and no refusal", s.Action, s.Reason, cp.Blockers)
 		}
-		if len(cp.Failures) != 1 || cp.Failures[0].Reason != apidoc.ReasonBusy || cp.Failures[0].Kind != apidoc.FailureNodegroup || p.ExitCode() != 4 {
-			t.Errorf("failures = %+v, exit %d; want one Busy failure of the nodegroup and 4", cp.Failures, p.ExitCode())
+		if len(cp.Failures) != 1 || cp.Failures[0].Reason != apidoc.ReasonBusy || cp.Failures[0].Kind != apidoc.FailureNodegroup || p.ExitCode() != 3 {
+			t.Errorf("failures = %+v, exit %d; want one Busy failure of the nodegroup and 3", cp.Failures, p.ExitCode())
 		}
 	})
 	t.Run("something else in the cluster is changing", func(t *testing.T) {
@@ -854,8 +854,8 @@ func TestRunScale_FreshReadBeforeSubmit(t *testing.T) {
 			!strings.Contains(s.Failure.Error, "nodegroup web is UPDATING (ConfigUpdate); it was not changed") {
 			t.Errorf("step = %s, in flight %q, failure %+v; want Busy with the type of the update", s.Status, s.InFlight, s.Failure)
 		}
-		if res.ExitCode() != 4 || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
-			t.Errorf("exit %d with %d requests to scale; want 4 and none", res.ExitCode(), e.count(fleettest.EKSUpdateNodegroupConfig))
+		if res.ExitCode() != 3 || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
+			t.Errorf("exit %d with %d requests to scale; want 3 and none", res.ExitCode(), e.count(fleettest.EKSUpdateNodegroupConfig))
 		}
 	})
 	t.Run("the sizes changed", func(t *testing.T) {
@@ -921,8 +921,8 @@ func TestRunScale_BusyTarget(t *testing.T) {
 			s.Failure.Error != "nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes" {
 			t.Errorf("step = %s, in flight %q, failure %+v; want Busy with the type of the update", s.Status, s.InFlight, s.Failure)
 		}
-		if res.Status != Incomplete || res.ExitCode() != 4 || e.count(fleettest.EKSListUpdates) != 1 || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
-			t.Errorf("result = %s, exit %d, %d lookups; want Incomplete, 4, and one", res.Status, res.ExitCode(), e.count(fleettest.EKSListUpdates))
+		if res.Status != RunBlocked || res.ExitCode() != 3 || e.count(fleettest.EKSListUpdates) != 1 || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
+			t.Errorf("result = %s, exit %d, %d lookups; want Blocked, 3, and one", res.Status, res.ExitCode(), e.count(fleettest.EKSListUpdates))
 		}
 		if len(sc.kinds()) != 0 {
 			t.Errorf("questions = %v, want none: nothing would be submitted", sc.kinds())
@@ -950,8 +950,8 @@ func TestRunScale_BusyTarget(t *testing.T) {
 				s.Failure.Error != "nodegroup web is UPDATING (an update of unknown type); it was not changed. Run the command again once that finishes" {
 				t.Errorf("step = %s, in flight %q, failure %+v; want Busy with an update of unknown type", s.Status, s.InFlight, s.Failure)
 			}
-			if res.ExitCode() != 4 || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
-				t.Errorf("exit %d with %d requests to scale; want 4 and none", res.ExitCode(), e.count(fleettest.EKSUpdateNodegroupConfig))
+			if res.ExitCode() != 3 || e.count(fleettest.EKSUpdateNodegroupConfig) != 0 {
+				t.Errorf("exit %d with %d requests to scale; want 3 and none", res.ExitCode(), e.count(fleettest.EKSUpdateNodegroupConfig))
 			}
 		})
 	}

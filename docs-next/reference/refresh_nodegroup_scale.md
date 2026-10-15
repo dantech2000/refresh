@@ -42,11 +42,11 @@ Exit codes:
      after it, or the sizes cannot hold. A scale has no verification
      after it, so it never exits 5.
   2  With --dry-run only: a real run would ask about warnings.
-  3  Blocked: the cluster is busy, a gate stops the change, or
-     --require-healthy and a warning. Nothing changed, or nothing more
-     when the gate stops a later step.
-  4  Incomplete: a target was already changing, a wait timed out, or
-     something could not be read.
+  3  Blocked: the cluster is busy, every target is already changing, a
+     gate stops the change, or --require-healthy and a warning. Nothing
+     changed, or nothing more when the gate stops a later step.
+  4  Incomplete: a target was already changing beside targets that
+     changed, a wait timed out, or something could not be read.
 
 ```
 refresh nodegroup scale <nodegroup> [flags]

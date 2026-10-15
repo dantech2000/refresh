@@ -1,5 +1,5 @@
-exit: 4
-error: dry run: the plan is incomplete: something could not be read, or a target is already changing
+exit: 3
+error: dry run: a real run would change nothing: every target is already changing
 --- stdout ---
 apiVersion: refresh.drod.dev/v2
 kind: Plan

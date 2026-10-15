@@ -152,7 +152,9 @@ blocks. Either way the run exits `4`.
 
 `nodegroup update`, `nodegroup scale`, and `addon update` do not change a
 target that is already changing, and do not attach to it. The target is listed
-in `failures`, the other targets go on, and the run exits `4`. One exception:
+in `failures`, the other targets go on, and the run exits `4`. When the target
+was the run's only work, nothing changed, and the run exits `3`, whether the
+plan found it or the read right before the request. One exception:
 `addon update` waits for an update in flight that is already to the requested
 version.
 

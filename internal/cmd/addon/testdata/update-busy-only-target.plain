@@ -1,4 +1,4 @@
-exit: 4
+exit: 3
 error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
 --- stdout ---
 FIELD	VALUE
@@ -6,7 +6,7 @@ run.operation	AddonUpdate
 run.cluster	prod
 run.region	us-east-1
 run.version	1.33
-run.status	Incomplete
+run.status	Blocked
 results.vpc-cni.kind	Addon
 results.vpc-cni.status	Busy
 results.vpc-cni.from	v1.19.5-eksbuild.1

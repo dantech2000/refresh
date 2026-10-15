@@ -107,7 +107,8 @@ HEALTH GATE
 2. It refuses while the cluster or anything else in it is changing.
 3. It leaves an add-on alone that is already at its target.
 4. It leaves an add-on alone that is already changing. That add-on is listed
-   in `failures`, and the run exits `4`. There is one exception: if the add-on
+   in `failures`. If another add-on was updated, the run exits `4`; if not,
+   nothing changed, and the run exits `3`. There is one exception: if the add-on
    is changing to the version that this run wants, the command waits for that
    update and sends none.
 5. It asks once. `--yes` skips the question.
@@ -159,8 +160,8 @@ apply, except `--force`: an add-on update drains nothing.
 | `0` | Done, or nothing to do. |
 | `1` | An error, a question answered no, or an interrupt. Every update that was sent failed. |
 | `2` | With `--dry-run` only: a real run would ask about warnings. |
-| `3` | Blocked: the cluster is busy, a gate stops the change, or `--require-healthy` and a warning. Nothing changed, or nothing more when the gate stops a later step. |
-| `4` | Incomplete: a target was already changing, a wait timed out, something could not be read, or an add-on failed and another was updated. |
+| `3` | Blocked: the cluster is busy, every target is already changing, a gate stops the change, or `--require-healthy` and a warning. Nothing changed, or nothing more when the gate stops a later step. |
+| `4` | Incomplete: a target was already changing beside targets that changed, a wait timed out, something could not be read, or an add-on failed and another was updated. |
 | `5` | An add-on was updated and is not healthy. |
 
 ### Examples

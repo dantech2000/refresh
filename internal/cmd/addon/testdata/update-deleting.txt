@@ -1,14 +1,14 @@
-exit: 4
+exit: 3
 error: add-on vpc-cni is DELETING; it was not changed. Run the command again once that finishes
 --- stdout ---
-Run   [!] Incomplete   AddonUpdate
+Run   [X] Blocked   AddonUpdate
 
 RUN
   operation  AddonUpdate
   cluster    prod
   region     us-east-1
   version    1.33
-  status     [!] Incomplete
+  status     [X] Blocked
 
 RESULTS  1
   NAME     KIND   STATUS    FROM                TO                  UPDATE  NOTE  STARTED  FINISHED  FAILURE

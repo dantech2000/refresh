@@ -1,10 +1,10 @@
-exit: 4
+exit: 3
 error: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes
 --- stdout ---
 apiVersion: refresh.drod.dev/v2
 kind: Run
 operation: NodegroupScale
-status: Incomplete
+status: Blocked
 clusters:
   - cluster: prod
     region: us-east-1
@@ -28,7 +28,7 @@ clusters:
         inFlight: VersionUpdate
     blockers: []
     notices: []
-    status: Incomplete
+    status: Blocked
     results:
       - phase: Scale
         kind: Scale

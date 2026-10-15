@@ -1,5 +1,5 @@
 exit: 3
-error: dry run: a real run would ask about health warnings
+error: dry run: a real run would be blocked
 --- stdout ---
 {
   "apiVersion": "refresh.drod.dev/v2",

@@ -312,19 +312,38 @@ func (cp *ClusterPlan) Decision() Decision {
 // blocked plan exits 3, also when --require-healthy blocks it over
 // warnings alone; a plan that asks exits with the code of the gate, 2;
 // and the other two exit 0.
+//
+// A target that is already changing is not a failure of the reads: the
+// plan exits 3 for it, as a real run whose only work it is, which changes
+// nothing. Beside a step with work it is 4, as the real run that changes
+// the others: Plan.ExitCode applies that across the clusters of a fleet.
 func (cp *ClusterPlan) ExitCode() int {
-	if len(cp.Failures) > 0 || len(cp.Gate.Failures) > 0 {
+	if slices.ContainsFunc(cp.Failures, notBusy) || len(cp.Gate.Failures) > 0 {
 		return exitcode.Incomplete
 	}
+	code := exitcode.OK
 	switch cp.Decision() {
 	case DecisionBlocked:
 		// A Block is 3, also when --require-healthy made it one from
 		// warnings alone: health.Gate says so.
-		return max(exitcode.Blocked, cp.Gate.Exit)
+		code = max(exitcode.Blocked, cp.Gate.Exit)
 	case Ask:
-		return cp.Gate.Exit
+		code = cp.Gate.Exit
 	}
-	return exitcode.OK
+	if cp.hasBusyTarget() {
+		code = max(code, exitcode.Blocked)
+	}
+	return code
+}
+
+// notBusy reports whether a failure is not the one of a target that is
+// already changing.
+func notBusy(f apidoc.Failure) bool { return f.Reason != apidoc.ReasonBusy }
+
+// hasBusyTarget reports whether a step of the plan is a target that is
+// already changing.
+func (cp *ClusterPlan) hasBusyTarget() bool {
+	return slices.ContainsFunc(cp.Steps(), Step.busy)
 }
 
 // decisionRank orders the decisions for a plan of several clusters.
@@ -369,14 +388,21 @@ func (p *Plan) Decision() Decision {
 }
 
 // ExitCode returns the exit code of a dry run: the highest code of the
-// clusters, and 4 when a read that belongs to no cluster failed.
+// clusters, and 4 when a read that belongs to no cluster failed, or when a
+// target is already changing beside a step with work, in any cluster.
 func (p *Plan) ExitCode() int {
 	code := exitcode.OK
 	if len(p.Failures) > 0 {
 		code = exitcode.Incomplete
 	}
+	var busy, work bool
 	for i := range p.Clusters {
 		code = max(code, p.Clusters[i].ExitCode())
+		busy = busy || p.Clusters[i].hasBusyTarget()
+		work = work || slices.ContainsFunc(p.Clusters[i].Steps(), Step.work)
+	}
+	if busy && work {
+		code = max(code, exitcode.Incomplete)
 	}
 	return code
 }

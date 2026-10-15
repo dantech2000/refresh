@@ -281,7 +281,7 @@ func updateCases() []updateCase {
 		{name: "skip-health-check", args: []string{"web", "--yes", "--skip-health-check"}, rolls: []string{"web"}, seed: tightWeb},
 		{name: "cluster-busy", args: []string{"web", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: func(_ *fleettest.State, c *fleettest.Cluster) { c.Status = fleettest.StatusUpdating }},
-		{name: "busy-target", args: []string{"web", "--yes"}, exit: cmdutil.ExitIncomplete, seed: script("web", never), prepare: scaleElsewhere},
+		{name: "busy-target", args: []string{"web", "--yes"}, exit: cmdutil.ExitBlocked, seed: script("web", never), prepare: scaleElsewhere},
 		{name: "degraded-target", args: []string{"web", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodegroup("web").Status = fleettest.StatusDegraded }},
 		{name: "deadline", args: []string{"web", "--yes", "--wait-timeout", "2m"}, rolls: []string{"web"}, exit: cmdutil.ExitIncomplete, seed: script("web", never)},

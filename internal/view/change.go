@@ -68,8 +68,8 @@ func PlanView(doc apidoc.Plan) Description {
 	d.Status, d.Label = DecisionStatus(worst), string(worst)
 	if worst == apidoc.PlanNothingToDo && planHasBusyTarget(doc) {
 		// Nothing would be changed, and not because nothing needs a
-		// change: a target is changing already, and the plan is
-		// incomplete until that ends.
+		// change: a target is changing already, and the run is blocked
+		// until that ends.
 		d.Status, d.Label = Warn, "TargetBusy"
 	}
 	if len(doc.SkippedRegions) > 0 {
@@ -80,7 +80,7 @@ func PlanView(doc apidoc.Plan) Description {
 
 // planHasBusyTarget reports whether a step of the plan is a target that
 // is already changing: the plan leaves it alone, lists it as a failure,
-// and exits 4.
+// and exits 3, or 4 beside other work.
 func planHasBusyTarget(doc apidoc.Plan) bool {
 	for _, c := range doc.Clusters {
 		for _, s := range c.Steps {

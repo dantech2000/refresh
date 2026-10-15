@@ -326,26 +326,18 @@
   {
     "scenario": "nodegroup-update-busy",
     "field": "exitCode",
-    "reason": "The old command exits 0 for a target that is already updating. The new command lists it as a Busy failure and exits 4.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "reason": "The old command exits 0 for a target that is already updating. The new command lists it as a Busy failure, and exits 3: it was the run's only work, and nothing changed.",
+    "source": "A target that is already changing exits 0 in `nodegroup update` and 3 in `nodegroup scale`",
     "ownerApproved": true,
-    "expect": 4
-  },
-  {
-    "scenario": "nodegroup-scale-busy",
-    "field": "exitCode",
-    "reason": "The old command exits 3 for a target that is already updating. The new command lists it as a Busy failure and exits 4.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
-    "ownerApproved": true,
-    "expect": 4
+    "expect": 3
   },
   {
     "scenario": "nodegroup-update-changed-at-the-prompt",
     "field": "exitCode",
-    "reason": "The old command exits 0 for a target that is already updating. The new command lists it as a Busy failure and exits 4.",
-    "source": "`nodegroup update` skips a nodegroup that is already updating",
+    "reason": "The old command exits 0 for a target that is already updating. The new command lists it as a Busy failure, and exits 3: it was the run's only work, and nothing changed.",
+    "source": "A target that is already changing exits 0 in `nodegroup update` and 3 in `nodegroup scale`",
     "ownerApproved": true,
-    "expect": 4
+    "expect": 3
   },
   {
     "scenario": "nodegroup-update-force-up-to-date",

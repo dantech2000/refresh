@@ -209,7 +209,7 @@ A `Run` has `operation`, `status`, `clusters`, and `failures`. Each entry of
 | `Stopped` | The run was stopped between phases. | `1` |
 | `Failed` | A change failed. | `1` |
 | `Interrupted` | Ctrl+C. | `1` |
-| `Refused`, `Blocked` | The busy rule or a gate stopped the change. | `3`, or `4` when something could not be read |
+| `Refused`, `Blocked` | The busy rule or a gate stopped the change, or every target was already changing. | `3`, or `4` when something could not be read |
 | `Incomplete` | A partial failure, a wait that timed out, or a read that failed. | `4` |
 | `VerifyFailed` | The change was applied and the verification found an issue. | `5` |
 
