@@ -15,8 +15,13 @@ import (
 type Node struct {
 	Name string
 	// Nodegroup is the managed nodegroup the node belongs to, which the
-	// eks.amazonaws.com/nodegroup label carries.
+	// eks.amazonaws.com/nodegroup label carries. "" is a node of no
+	// managed nodegroup, such as a self-managed, Karpenter, Fargate, or
+	// hybrid node: it has no such label.
 	Nodegroup string
+	// Labels are more labels of the node, such as
+	// eks.amazonaws.com/compute-type: fargate or karpenter.sh/nodepool.
+	Labels map[string]string
 	// ImageID is the node's AMI, which the eks.amazonaws.com/nodegroup-image
 	// label carries.
 	ImageID string
@@ -70,6 +75,10 @@ type PDB struct {
 	Selector map[string]string
 	// MinAvailable is the budget, as a pod count.
 	MinAvailable int32
+	// MaxUnavailable, when not nil, is the budget in place of
+	// MinAvailable: the spec has maxUnavailable and no minAvailable.
+	// maxUnavailable: 0 allows no voluntary disruption at all.
+	MaxUnavailable *int32
 	// DisruptionsAllowed, CurrentHealthy, DesiredHealthy, and ExpectedPods
 	// are the status. A budget blocks a drain when DisruptionsAllowed is 0.
 	DisruptionsAllowed, CurrentHealthy, DesiredHealthy, ExpectedPods int32

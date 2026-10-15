@@ -2,6 +2,7 @@ package kubetest
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -64,7 +65,11 @@ func namespaces(c *fleettest.Cluster) []item {
 func nodes(c *fleettest.Cluster) []item {
 	out := make([]item, 0, len(c.Nodes))
 	for _, n := range c.Nodes {
-		labels := map[string]string{labelNodegroup: n.Nodegroup, "kubernetes.io/hostname": n.Name}
+		labels := map[string]string{"kubernetes.io/hostname": n.Name}
+		maps.Copy(labels, n.Labels)
+		if n.Nodegroup != "" {
+			labels[labelNodegroup] = n.Nodegroup
+		}
 		if n.ImageID != "" {
 			labels[labelImage] = n.ImageID
 		}
@@ -170,6 +175,10 @@ func pdbs(c *fleettest.Cluster) []item {
 		if p.NoSelector {
 			budget.Spec.Selector = nil
 		}
+		if p.MaxUnavailable != nil {
+			maxUnavailable := intstr.FromInt32(*p.MaxUnavailable)
+			budget.Spec.MinAvailable, budget.Spec.MaxUnavailable = nil, &maxUnavailable
+		}
 		if p.AlwaysAllow {
 			policy := policyv1.AlwaysAllow
 			budget.Spec.UnhealthyPodEvictionPolicy = &policy
@@ -240,7 +249,7 @@ func nodeMetrics(c *fleettest.Cluster) []item {
 	out := make([]item, 0, len(c.Nodes))
 	for _, n := range c.Nodes {
 		out = append(out, item{
-			name: n.Name, labels: map[string]string{labelNodegroup: n.Nodegroup}, fields: map[string]string{"metadata.name": n.Name},
+			name: n.Name, labels: nodegroupLabel(n), fields: map[string]string{"metadata.name": n.Name},
 			summary: fmt.Sprintf("%s=%dm", n.Name, n.UsedMilliCPU),
 			object: metricsv1beta1.NodeMetrics{
 				TypeMeta: metav1.TypeMeta{Kind: "NodeMetrics", APIVersion: "metrics.k8s.io/v1beta1"}, ObjectMeta: meta("", n.Name, nil, n.CreatedAt),
@@ -253,4 +262,13 @@ func nodeMetrics(c *fleettest.Cluster) []item {
 		})
 	}
 	return out
+}
+
+// nodegroupLabel is the nodegroup label of a node, or none for a node of
+// no managed nodegroup.
+func nodegroupLabel(n *fleettest.Node) map[string]string {
+	if n.Nodegroup == "" {
+		return map[string]string{}
+	}
+	return map[string]string{labelNodegroup: n.Nodegroup}
 }
