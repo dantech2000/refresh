@@ -72,7 +72,9 @@ refresh addon update --all -c <cluster> [flags]
 ```
 
 The command updates add-ons to the latest version that the cluster can run.
-With `--version`, it moves one add-on to that version.
+With `--version`, it moves one add-on to that version. A version older than
+the installed one is a downgrade: the command warns, and the step has the
+reason `VersionAhead`.
 
 ### `--all`
 

@@ -130,7 +130,7 @@ Each step:
 | `hop` | The minor version of this step, in an upgrade of several versions |
 | `kind`, `name` | `ControlPlane`, `Addon`, `Nodegroup`, or `Scale`, and the name of the resource |
 | `action` | `Submit`, `Attach`, `Verify`, `Skip`, `Manual`, or `Blocked` |
-| `reason` | Why, such as `AMIOutdated`, `AlreadyLatest`, `CustomAMI`, `VersionBehind` |
+| `reason` | Why, such as `AMIOutdated`, `AlreadyLatest`, `CustomAMI`, `VersionBehind`. A step that moves a resource to an older version, in a rollback or an `addon update --version`, is `VersionAhead`. |
 | `from`, `to` | The versions. `fromRelease`, `fromImage`, and `toImage` give the AMI of a roll. |
 | `sizes` | `before` and `after` of a scale, each with `desired`, `min`, `max` |
 

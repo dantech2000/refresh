@@ -77,7 +77,8 @@ const maxListedVersions = 5
 //     version, Repair.
 //  7. UPDATING or CREATING away from the target, or DELETING: Skip,
 //     InFlight. The target is busy.
-//  8. Otherwise: Submit, VersionBehind.
+//  8. Otherwise: Submit, VersionBehind, or VersionAhead when the target
+//     is older than the installed version.
 func decideAddon(a fleet.Addon, t addonTarget, kubernetes string) addonDecision {
 	if t.Pinned && t.Known && !slices.Contains(t.Supported, t.Version) {
 		return addonDecision{Err: fmt.Errorf("add-on %s version %s is not compatible with Kubernetes %s; supported versions (newest first): %s",
@@ -107,6 +108,7 @@ func decideAddon(a fleet.Addon, t addonTarget, kubernetes string) addonDecision 
 	}
 	d := addonDecision{Action: Submit, Reason: VersionBehind, To: t.Version}
 	if order > 0 {
+		d.Reason = VersionAhead
 		d.Notice = fmt.Sprintf("downgrading %s from %s to %s", a.Name, a.Version, t.Version)
 	}
 	return d

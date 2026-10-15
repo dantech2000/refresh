@@ -44,6 +44,7 @@ Say no to any row and it reverts to today's behaviour.
 | 30 | `context list` and `context current` print no document, and the contract lists every command without `-o` | They print for people. A script reads the name, the first field of `refresh context current`. |
 | 31 | `completion` has help text in the voice of the other commands, with an `Exit codes:` block, and the command list names `help` | Cobra's stock text read like another tool |
 | 32 | The message of a verdict, exit 2 or 3, prints without `Error:` | A warning or a block is the answer of the command, not a crash. Exit 1 and 4 keep `Error:`. |
+| 33 | An `addon update` step that moves an add-on to an older version has the reason `VersionAhead`, as a rollback step does | The plan labelled a downgrade `VersionBehind`, the reason of an upgrade |
 
 ## Commands
 

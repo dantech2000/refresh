@@ -130,8 +130,9 @@ const (
 	ReasonSkippedByFlag   StepReason = "SkippedByFlag"
 	ReasonOutOfScope      StepReason = "OutOfScope"
 	ReasonNoChange        StepReason = "NoChange"
-	// ReasonVersionAhead: the resource runs a version above the one that a
-	// rollback returns to, or one that the older version cannot run.
+	// ReasonVersionAhead: the resource runs a version above the one that
+	// the step moves it to: a rollback, an add-on that the older version
+	// cannot run, or an add-on update to an older version.
 	ReasonVersionAhead StepReason = "VersionAhead"
 )
 

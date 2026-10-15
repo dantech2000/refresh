@@ -96,7 +96,7 @@ func TestDecideAddon(t *testing.T) {
 		},
 		{
 			name: "8: a pinned version that is older", installed: "v1.20.0", status: "ACTIVE", target: pinned("v1.19.0", "v1.20.0", "v1.19.0"),
-			want: addonDecision{Action: Submit, Reason: VersionBehind, To: "v1.19.0", Notice: "downgrading vpc-cni from v1.20.0 to v1.19.0"},
+			want: addonDecision{Action: Submit, Reason: VersionAhead, To: "v1.19.0", Notice: "downgrading vpc-cni from v1.20.0 to v1.19.0"},
 		},
 	}
 	for _, tt := range tests {
