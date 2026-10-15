@@ -8,6 +8,9 @@ of 0.16 will notice.
 The new release has no hidden aliases for the old flags. An old command line
 fails with a usage error. It does not do something different in silence.
 
+The docs of 0.16 and earlier stay at
+[drod.dev/refresh/v1](https://drod.dev/refresh/v1/).
+
 ## Checklist for a script
 
 1. Replace `--format` with `--output`. `-o` still works.
