@@ -30,6 +30,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/encoding/cbor"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
@@ -100,7 +101,9 @@ func TestRequestLog(t *testing.T) {
 		},
 	}
 	got := f.server.Requests()
-	if diff := cmp.Diff(want, got); diff != "" {
+	// The invocation IDs are random; TestRequestsCarryTheInvocationID
+	// checks them.
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(awsxtest.Request{}, "Invocation")); diff != "" {
 		t.Fatalf("request log (-want +got):\n%s", diff)
 	}
 
@@ -110,7 +113,7 @@ func TestRequestLog(t *testing.T) {
 		filter["statuses"] = []any{"changed"}
 		delete(filter, "categories")
 	}
-	if diff := cmp.Diff(want, f.server.Requests()); diff != "" {
+	if diff := cmp.Diff(want, f.server.Requests(), cmpopts.IgnoreFields(awsxtest.Request{}, "Invocation")); diff != "" {
 		t.Errorf("the log changed after a reader wrote to its copy (-want +got):\n%s", diff)
 	}
 }

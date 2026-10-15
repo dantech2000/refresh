@@ -168,7 +168,8 @@ func TestMatrixSuccess(t *testing.T) {
 				t.Fatalf("the server logged %d requests, want 1: %+v", len(logged), logged)
 			}
 			want := awsxtest.Request{ID: 1, Operation: tc.op, Service: tc.op.Service(), Region: region, Mutates: tc.mutates}
-			logged[0].Input = nil // the inputs are checked in TestRequestLog
+			logged[0].Input = nil     // the inputs are checked in TestRequestLog
+			logged[0].Invocation = "" // checked in TestRequestsCarryTheInvocationID
 			if diff := cmp.Diff(want, logged[0]); diff != "" {
 				t.Errorf("logged request (-want +got):\n%s", diff)
 			}
