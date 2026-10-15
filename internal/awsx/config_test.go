@@ -449,8 +449,14 @@ func TestHTTPClientSizesIdleConnections(t *testing.T) {
 
 // With a defaults mode set, a service client gives a buildable HTTP client
 // a dialer of its own, in a copy that no other client shares. Load freezes
-// the client, so two services still share one connection and a sweep keeps
-// its dial timeout.
+// the client, so two services and two policies still share one transport,
+// with its pool of connections, and a sweep keeps its dial timeout.
+//
+// The test does not count the dials of the later calls. net/http drops a
+// connection from the pool when its write loop has not reported the write
+// of the last request within 50 ms, so a loaded machine dials again on one
+// shared transport. The clients hold the frozen client itself, and that
+// is what the sharing rests on.
 func TestLoadSharesOneTransportUnderADefaultsMode(t *testing.T) {
 	isolateAWS(t)
 	srv := awsxtest.NewServer(fleettest.New())
@@ -485,21 +491,33 @@ func TestLoadSharesOneTransportUnderADefaultsMode(t *testing.T) {
 	provider := NewProvider(cfg)
 
 	sweep := provider.SweepClients("")
+	standard := provider.Clients("")
+	for name, got := range map[string]aws.HTTPClient{
+		"sweep EKS":    sweep.EKS.Options().HTTPClient,
+		"sweep STS":    sweep.STS.Options().HTTPClient,
+		"standard EKS": standard.EKS.Options().HTTPClient,
+	} {
+		if got != frozen {
+			t.Errorf("%s client: HTTP client is %T %p, want the frozen client %p", name, got, got, frozen)
+		}
+	}
+
+	// The first call finds the pool empty and dials once, with the bound
+	// of a sweep.
 	if _, err := sweep.EKS.ListClusters(context.Background(), &eks.ListClustersInput{}); err != nil {
 		t.Fatalf("eks:ListClusters: %v", err)
+	}
+	if got := dials.Load(); got != 1 {
+		t.Errorf("dials = %d, want 1", got)
+	}
+	if got := sweepDials.Load(); got != 1 {
+		t.Errorf("dials with the sweep bound = %d, want 1: the wrapper of the dialer was dropped", got)
 	}
 	if _, err := sweep.STS.GetCallerIdentity(context.Background(), &sts.GetCallerIdentityInput{}); err != nil {
 		t.Fatalf("sts:GetCallerIdentity: %v", err)
 	}
-	if _, err := provider.Clients("").EKS.ListClusters(context.Background(), &eks.ListClustersInput{}); err != nil {
+	if _, err := standard.EKS.ListClusters(context.Background(), &eks.ListClustersInput{}); err != nil {
 		t.Fatalf("eks:ListClusters with the standard clients: %v", err)
-	}
-
-	if got := dials.Load(); got != 1 {
-		t.Errorf("dials = %d, want 1: three calls of two services and two policies share a connection", got)
-	}
-	if got := sweepDials.Load(); got != 1 {
-		t.Errorf("dials with the sweep bound = %d, want 1: the wrapper of the dialer was dropped", got)
 	}
 }
 
