@@ -29,6 +29,10 @@ type Support struct {
 	// BuiltIn is true when the dates are the ones that refresh ships
 	// with, because EKS did not answer.
 	BuiltIn bool
+	// PremiumUSDPerHour is what extended support costs per hour on top of
+	// standard support. It is 0 unless the cluster is in extended support
+	// and its upgrade policy is EXTENDED.
+	PremiumUSDPerHour float64
 }
 
 // window is the two end dates of a version.
@@ -122,6 +126,9 @@ func supportFor(version Version, live map[Version]window, upgradePolicy string, 
 		s.Tier, s.DaysRemaining = apidoc.SupportStandard, daysLeft(now, w.standardEnd)
 	case !w.extendedEnd.IsZero() && now.Before(w.extendedEnd):
 		s.Tier, s.DaysRemaining = apidoc.SupportExtended, daysLeft(now, w.extendedEnd)
+		if !s.AutoUpgrade {
+			s.PremiumUSDPerHour = fleetdata.ExtendedSupportPremiumUSDPerHour
+		}
 	default:
 		s.Tier = apidoc.SupportUnsupported
 	}

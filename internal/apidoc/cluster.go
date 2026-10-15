@@ -123,6 +123,11 @@ type Support struct {
 	// BuiltIn is true when the dates are the ones that refresh ships
 	// with, because EKS did not report them.
 	BuiltIn bool `json:"builtIn"`
+	// ExtendedSupportPremiumUSDPerHour is what extended support costs per
+	// hour on top of standard support, in US dollars, from the EKS pricing
+	// page as of the release of refresh. It is left out unless the tier is
+	// Extended and the upgrade policy keeps the cluster in extended support.
+	ExtendedSupportPremiumUSDPerHour float64 `json:"extendedSupportPremiumUsdPerHour,omitzero"`
 }
 
 // ComputeType says how a cluster runs its nodes.

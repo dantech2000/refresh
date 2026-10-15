@@ -61,6 +61,8 @@ func (s *Snapshot) ClusterDoc() apidoc.Cluster {
 			DaysRemaining: c.Support.DaysRemaining,
 			AutoUpgrade:   c.Support.AutoUpgrade,
 			BuiltIn:       c.Support.BuiltIn,
+
+			ExtendedSupportPremiumUSDPerHour: c.Support.PremiumUSDPerHour,
 		}
 	}
 	if s.Have.Compute == Collected {

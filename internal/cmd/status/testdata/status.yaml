@@ -122,6 +122,7 @@ clusters:
       daysRemaining: 243
       autoUpgrade: false
       builtIn: false
+      extendedSupportPremiumUsdPerHour: 0.5
     compute: ManagedNodegroups
     nodegroups:
       - name: ng

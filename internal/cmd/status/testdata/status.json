@@ -140,7 +140,8 @@
         "extendedUntil": "2027-06-01T00:00:00Z",
         "daysRemaining": 243,
         "autoUpgrade": false,
-        "builtIn": false
+        "builtIn": false,
+        "extendedSupportPremiumUsdPerHour": 0.5
       },
       "compute": "ManagedNodegroups",
       "nodegroups": [

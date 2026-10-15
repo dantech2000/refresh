@@ -350,6 +350,10 @@
         "builtIn": {
           "type": "boolean",
           "description": "builtIn is true when the dates are the ones that refresh ships with, because EKS did not report them."
+        },
+        "extendedSupportPremiumUsdPerHour": {
+          "type": "number",
+          "description": "extendedSupportPremiumUsdPerHour is what extended support costs per hour on top of standard support, in US dollars, from the EKS pricing page as of the release of refresh. It is left out unless the tier is Extended and the upgrade policy keeps the cluster in extended support."
         }
       },
       "type": "object",

@@ -10,6 +10,7 @@ import (
 	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet"
+	"github.com/dantech2000/refresh/internal/fleet/fleetdata"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
@@ -345,6 +346,40 @@ func TestSupportOfTheBuiltInCalendar(t *testing.T) {
 		}
 		if s := snap.Cluster.Support; s.Tier != tt.want || !s.BuiltIn || snap.Incomplete() {
 			t.Errorf("%s: support %+v, failures %+v, want %s from the built-in calendar", tt.version, s, snap.Failures, tt.want)
+		}
+	}
+}
+
+// A cluster in extended support pays the premium, unless its upgrade
+// policy is STANDARD. A cluster in standard support never pays it.
+func TestSupportPremium(t *testing.T) {
+	world, _, provider := statusWorld(t)
+	world.SetFault(fleettest.EKSDescribeClusterVersions, fleettest.Fault{Deny: true})
+	tests := []struct {
+		version, policy string
+		want            float64
+	}{
+		{"1.33", "EXTENDED", fleetdata.ExtendedSupportPremiumUSDPerHour},
+		{"1.33", "", fleetdata.ExtendedSupportPremiumUSDPerHour},
+		{"1.33", "STANDARD", 0},
+		{"1.36", "EXTENDED", 0},
+		{"1.29", "EXTENDED", 0},
+	}
+	for _, tt := range tests {
+		world.Edit(func(s *fleettest.State) {
+			s.Clusters[0].Version, s.Clusters[0].SupportType = tt.version, tt.policy
+		})
+		fetcher := fleet.Fetcher{Now: func() time.Time { return now }}
+		snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{Support: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := snap.Cluster.Support.PremiumUSDPerHour; got != tt.want {
+			t.Errorf("%s with policy %q: premium %v, want %v", tt.version, tt.policy, got, tt.want)
+		}
+		doc := snap.ClusterDoc()
+		if got := doc.Support.ExtendedSupportPremiumUSDPerHour; got != tt.want {
+			t.Errorf("%s with policy %q: document premium %v, want %v", tt.version, tt.policy, got, tt.want)
 		}
 	}
 }

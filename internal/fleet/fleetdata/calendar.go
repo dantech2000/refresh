@@ -35,3 +35,15 @@ func Calendar() []SupportWindow {
 		{"1.37", day(2027, 12, 1), day(2028, 12, 1)},
 	}
 }
+
+// PremiumAsOf is the date of the last check of
+// ExtendedSupportPremiumUSDPerHour against the EKS pricing page.
+const PremiumAsOf = "2026-10-14"
+
+// ExtendedSupportPremiumUSDPerHour is what a cluster in extended support
+// costs per hour on top of standard support. EKS prices standard support
+// at $0.10 per cluster per hour and extended support at $0.60, "the
+// standard rate plus an additional $0.50 per cluster per hour":
+// https://aws.amazon.com/eks/pricing/, checked 2026-10-14. No API that
+// refresh calls reports it, so it is checked by hand.
+const ExtendedSupportPremiumUSDPerHour = 0.50

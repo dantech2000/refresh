@@ -59,3 +59,13 @@ func TestCalendar_NotStale(t *testing.T) {
 		t.Errorf("the oldest version %s is still supported on %s; an older cluster would have an unknown version", first.Version, CalendarAsOf)
 	}
 }
+
+// The premium is a positive price with a date of its last check.
+func TestExtendedSupportPremium(t *testing.T) {
+	if _, err := time.Parse(time.DateOnly, PremiumAsOf); err != nil {
+		t.Errorf("PremiumAsOf = %q: %v", PremiumAsOf, err)
+	}
+	if ExtendedSupportPremiumUSDPerHour <= 0 {
+		t.Errorf("ExtendedSupportPremiumUSDPerHour = %v, want a positive price", ExtendedSupportPremiumUSDPerHour)
+	}
+}
