@@ -93,6 +93,29 @@ func (s *Snapshot) Incomplete() bool {
 	return len(s.Failures) > 0
 }
 
+// HealthIssues counts the health issues that EKS reports for the control
+// plane, the nodegroups, and the add-ons that were read. An add-on that is
+// DEGRADED with no issue listed counts as one. It is the count of the
+// HEALTH column of "refresh status".
+func (s *Snapshot) HealthIssues() int {
+	n := len(s.Cluster.HealthIssues)
+	for _, ng := range s.Nodegroups {
+		if ng.State == Collected {
+			n += len(ng.HealthIssues)
+		}
+	}
+	for _, a := range s.Addons {
+		switch {
+		case a.State != Collected:
+		case len(a.Issues) > 0:
+			n += len(a.Issues)
+		case a.Status == "DEGRADED":
+			n++
+		}
+	}
+	return n
+}
+
 // Cluster is an EKS cluster.
 type Cluster struct {
 	// Name and Region are always set.

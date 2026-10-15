@@ -139,3 +139,36 @@ func TestSweepRowWithAnUnreadAMI(t *testing.T) {
 	}
 	t.Fatalf("no prod in %+v", st.Clusters)
 }
+
+// The fleet view counts the health issues that "refresh status" counts in
+// its HEALTH column: of the control plane, of the nodegroups, and of the
+// add-ons, and a DEGRADED add-on with no issue listed as one. A row with
+// any of them has failed, and the feed says how many.
+func TestSweepCountsTheHealthIssuesOfStatus(t *testing.T) {
+	ngIssue := cluster("ng-issue", east, "1.34")
+	ngIssue.Nodegroups[0].HealthIssues = []fleettest.Issue{{Code: "AsgInstanceLaunchFailures", Message: "no capacity"}}
+	addonIssue := cluster("addon-issue", east, "1.34")
+	addonIssue.Addons[0].HealthIssues = []fleettest.Issue{{Code: "InsufficientNumberOfReplicas", Message: "0 of 2 replicas are ready"}}
+	every := cluster("every", east, "1.34")
+	every.HealthIssues = []fleettest.Issue{{Code: "Ec2SubnetInvalidConfiguration", Message: "a subnet is gone"}}
+	every.Nodegroups[0].HealthIssues = []fleettest.Issue{{Code: "AsgInstanceLaunchFailures", Message: "no capacity"}}
+	every.Addons[0].Status = fleettest.StatusDegraded
+	st := firstSweep(t, cluster("ok", east, "1.34"), ngIssue, addonIssue, every)
+
+	want := map[string]string{"ng-issue": "1 health issue", "addon-issue": "1 health issue", "every": "3 health issues"}
+	for name, words := range want {
+		if got := statusOf(t, st, name); got != view.Fail {
+			t.Errorf("%s = %v, want %v", name, got, view.Fail)
+		}
+		found := false
+		for _, l := range clusterLines(st, view.Fail) {
+			found = found || strings.HasPrefix(l, name+" ") && strings.Contains(l, words)
+		}
+		if !found {
+			t.Errorf("no failed line for %s with %q: %q", name, words, clusterLines(st, view.Fail))
+		}
+	}
+	if got := statusOf(t, st, "ok"); got != view.Healthy {
+		t.Errorf("ok = %v, want %v", got, view.Healthy)
+	}
+}

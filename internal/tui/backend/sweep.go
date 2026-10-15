@@ -183,8 +183,11 @@ func failText(c state.Cluster) string {
 		parts = append(parts, strings.ToLower(string(c.Support))+" support")
 	}
 	if c.Snapshot != nil {
-		if n := len(c.Snapshot.Cluster.HealthIssues); n > 0 {
-			parts = append(parts, strconv.Itoa(n)+" control-plane issues")
+		switch n := c.Snapshot.HealthIssues(); {
+		case n == 1:
+			parts = append(parts, "1 health issue")
+		case n > 1:
+			parts = append(parts, strconv.Itoa(n)+" health issues")
 		}
 		for _, n := range c.Snapshot.Nodegroups {
 			if view.StatusOf(n.Status) == view.Fail {

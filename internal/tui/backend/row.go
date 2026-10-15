@@ -35,7 +35,9 @@ func row(snap *fleet.Snapshot) state.Cluster {
 	if view.StatusOf(snap.Cluster.Status) == view.Progress {
 		c.InFlight = append(c.InFlight, "control plane "+snap.Cluster.Status)
 	}
-	failed := len(snap.Cluster.HealthIssues) > 0 || view.StatusOf(snap.Cluster.Status) == view.Fail
+	// A health issue of any part fails the row: the issues that the
+	// HEALTH column of "refresh status" counts.
+	failed := snap.HealthIssues() > 0 || view.StatusOf(snap.Cluster.Status) == view.Fail
 	for _, n := range snap.Nodegroups {
 		if n.State != fleet.Collected {
 			c.Stale.Unknown++
